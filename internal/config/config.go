@@ -34,7 +34,13 @@ type Config struct {
 	LogLevel           string
 	TelegramEnabled    bool
 	TelegramBotToken   string
+	TelegramAPIBase    string
 	LitestreamEnabled  bool
+	LitestreamBucket   string
+	LitestreamPath     string
+	LitestreamEndpoint string
+	LitestreamAccessID string
+	LitestreamSecret   string
 }
 
 // Load reads configuration from the environment, applying safe defaults.
@@ -63,7 +69,13 @@ func Load() (Config, error) {
 		LogLevel:           env("DIARY_LOG_LEVEL", "info"),
 		TelegramEnabled:    envBool("DIARY_TELEGRAM_ENABLED", false),
 		TelegramBotToken:   env("DIARY_TELEGRAM_BOT_TOKEN", ""),
+		TelegramAPIBase:    env("DIARY_TELEGRAM_API_BASE", ""),
 		LitestreamEnabled:  envBool("DIARY_LITESTREAM_ENABLED", false),
+		LitestreamBucket:   env("DIARY_LITESTREAM_BUCKET", ""),
+		LitestreamPath:     env("DIARY_LITESTREAM_PATH", ""),
+		LitestreamEndpoint: env("DIARY_LITESTREAM_ENDPOINT", ""),
+		LitestreamAccessID: env("DIARY_LITESTREAM_ACCESS_KEY_ID", ""),
+		LitestreamSecret:   env("DIARY_LITESTREAM_SECRET_ACCESS_KEY", ""),
 	}
 
 	if cfg.Token == "" {

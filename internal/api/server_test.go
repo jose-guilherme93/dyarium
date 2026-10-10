@@ -32,7 +32,7 @@ func newTestServer(t *testing.T) *Server {
 		t.Fatalf("migrate: %v", err)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return New(cfg, st, logger, Version{Version: "test"})
+	return New(Deps{Config: cfg, Store: st, Logger: logger, Version: Version{Version: "test"}})
 }
 
 func TestHealthz(t *testing.T) {
