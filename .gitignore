@@ -1,0 +1,18 @@
+# Dados e artefatos locais
+/data/
+/models/
+/bin/
+/tmp/
+
+# Frontend
+web/node_modules/
+web/dist/
+
+# Banco SQLite
+*.db
+*.db-wal
+*.db-shm
+
+# Ambiente
+.env
+*.local
