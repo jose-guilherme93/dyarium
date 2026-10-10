@@ -33,6 +33,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN git clone --depth 1 --branch "${WHISPER_REF}" "${WHISPER_REPO}" /whisper
 WORKDIR /whisper
 RUN cmake -B build -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_SHARED_LIBS=OFF \
     -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON \
     && cmake --build build --config Release -j"$(nproc)" --target whisper-cli
 
