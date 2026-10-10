@@ -15,12 +15,18 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"trim_silence":     settings["trim_silence"] == "true",
-		"analyze_enabled":  s.deps.Config.AnalyzeEnabled,
-		"analyze_base_url": s.deps.Config.AnalyzeBaseURL,
-		"analyze_model":    s.deps.Config.AnalyzeModel,
-		"whisper_model":    s.deps.Config.WhisperModel,
+		"trim_silence":       settings["trim_silence"] == "true",
+		"max_whisper_rss_mb": toInt(settings["max_whisper_rss_mb"]),
+		"analyze_enabled":    s.deps.Config.AnalyzeEnabled,
+		"analyze_base_url":   s.deps.Config.AnalyzeBaseURL,
+		"analyze_model":      s.deps.Config.AnalyzeModel,
+		"whisper_model":      s.deps.Config.WhisperModel,
 	})
+}
+
+func toInt(s string) int {
+	n, _ := strconv.Atoi(s)
+	return n
 }
 
 func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
@@ -39,6 +45,16 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if err := s.deps.Store.SetSetting(ctx, "trim_silence", strconv.FormatBool(b)); err != nil {
+				writeError(w, http.StatusInternalServerError, "internal", err.Error())
+				return
+			}
+		case "max_whisper_rss_mb":
+			n, err := toNumber(value)
+			if err != nil || n < 0 {
+				writeError(w, http.StatusBadRequest, "invalid_value", "max_whisper_rss_mb deve ser um inteiro >= 0")
+				return
+			}
+			if err := s.deps.Store.SetSetting(ctx, "max_whisper_rss_mb", strconv.Itoa(n)); err != nil {
 				writeError(w, http.StatusInternalServerError, "internal", err.Error())
 				return
 			}
@@ -63,6 +79,19 @@ var errInvalidBool = &boolError{}
 type boolError struct{}
 
 func (*boolError) Error() string { return "valor booleano invalido" }
+
+func toNumber(v any) (int, error) {
+	switch t := v.(type) {
+	case float64:
+		return int(t), nil
+	case int:
+		return t, nil
+	case string:
+		return strconv.Atoi(t)
+	default:
+		return 0, errInvalidBool
+	}
+}
 
 func (s *Server) handleGetAnalysis(w http.ResponseWriter, r *http.Request) {
 	a, ok, err := s.deps.Store.GetAnalysis(r.Context(), r.PathValue("id"))

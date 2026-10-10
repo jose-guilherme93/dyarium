@@ -28,6 +28,7 @@ type Config struct {
 	MaxUploadBytes     int64
 	MaxDurationSeconds int
 	AllowedFormats     []string
+	MaxWhisperRSSMB    int
 	TrimSilence        bool
 	WorkerConcurrency  int
 	JobLeaseSeconds    int
@@ -62,7 +63,8 @@ func Load() (Config, error) {
 		AnalyzeModel:       env("DIARY_ANALYZE_MODEL", ""),
 		MaxUploadBytes:     envInt64("DIARY_MAX_UPLOAD_BYTES", 2<<30),
 		MaxDurationSeconds: envInt("DIARY_MAX_DURATION_SECONDS", 3000),
-		AllowedFormats:     splitList(env("DIARY_ALLOWED_FORMATS", "wav,mp3,m4a,ogg,flac")),
+		AllowedFormats:     splitList(env("DIARY_ALLOWED_FORMATS", "wav,mp3,m4a,ogg,flac,aac,adts")),
+		MaxWhisperRSSMB:    envInt("DIARY_MAX_WHISPER_RSS_MB", 0),
 		TrimSilence:        envBool("DIARY_TRIM_SILENCE", false),
 		WorkerConcurrency:  envInt("DIARY_WORKER_CONCURRENCY", 1),
 		JobLeaseSeconds:    envInt("DIARY_JOB_LEASE_SECONDS", 120),

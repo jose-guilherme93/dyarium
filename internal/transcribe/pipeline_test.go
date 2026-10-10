@@ -104,11 +104,11 @@ func fakeDeps(t *testing.T, sliced *[]int64, failAt int64) transcribe.Deps {
 			last = startMS
 			return nil
 		},
-		Transcribe: func(context.Context, string) ([]transcribe.Segment, error) {
+		Transcribe: func(context.Context, string) ([]transcribe.Segment, int64, error) {
 			if failAt >= 0 && last == failAt {
-				return nil, fmt.Errorf("falha simulada no chunk %d", last)
+				return nil, 0, fmt.Errorf("falha simulada no chunk %d", last)
 			}
-			return []transcribe.Segment{{StartMS: 0, EndMS: 1000, Text: fmt.Sprintf("chunk-%d", last)}}, nil
+			return []transcribe.Segment{{StartMS: 0, EndMS: 1000, Text: fmt.Sprintf("chunk-%d", last)}}, 128, nil
 		},
 	}
 }

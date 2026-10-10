@@ -22,6 +22,7 @@ export interface Metrics {
   silence_total_ms: number;
   sample_rate: number;
   channels: number;
+  whisper_peak_rss_mb: number;
 }
 
 export interface Segment {
@@ -66,6 +67,7 @@ export interface Tag {
 
 export interface Settings {
   trim_silence: boolean;
+  max_whisper_rss_mb: number;
   analyze_enabled: boolean;
   analyze_base_url: string;
   analyze_model: string;

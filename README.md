@@ -86,7 +86,8 @@ make bench-transcricao   # benchmark de transcricao (pico de RSS)
 | DIARY_JOB_LEASE_SECONDS | 120 | Prazo do lease de job |
 | DIARY_MAX_UPLOAD_BYTES | 2147483648 | Tamanho maximo de upload |
 | DIARY_MAX_DURATION_SECONDS | 3000 | Duracao maxima (50 min) |
-| DIARY_ALLOWED_FORMATS | wav,mp3,m4a,ogg,flac | Formatos aceitos |
+| DIARY_ALLOWED_FORMATS | wav,mp3,m4a,ogg,flac,aac,adts | Formatos aceitos (inclui ADTS/AAC) |
+| DIARY_MAX_WHISPER_RSS_MB | 0 | Teto de RAM (MB) do whisper; 0 = sem limite |
 | DIARY_ANALYZE_ENABLED | false | Liga a analise por IA |
 | DIARY_ANALYZE_BASE_URL | http://localhost:11434/v1 | Base compativel com OpenAI (Ollama) |
 | DIARY_ANALYZE_API_KEY | (vazio) | Chave da API de analise |

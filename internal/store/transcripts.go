@@ -85,10 +85,11 @@ func (s *Store) GetMetrics(ctx context.Context, entryID string) (AudioMetrics, b
 	var m AudioMetrics
 	err := s.db.QueryRowContext(ctx, `
 		SELECT entry_id, duration_ms, COALESCE(loudness_lufs,0), COALESCE(true_peak,0),
-			silence_count, silence_total_ms, COALESCE(sample_rate,0), COALESCE(channels,0)
+			silence_count, silence_total_ms, COALESCE(sample_rate,0), COALESCE(channels,0),
+			whisper_peak_rss_mb
 		FROM audio_metrics WHERE entry_id = ?`, entryID).Scan(
 		&m.EntryID, &m.DurationMS, &m.LoudnessLUFS, &m.TruePeak,
-		&m.SilenceCount, &m.SilenceTotalMS, &m.SampleRate, &m.Channels)
+		&m.SilenceCount, &m.SilenceTotalMS, &m.SampleRate, &m.Channels, &m.WhisperPeakRSSMB)
 	if err == sql.ErrNoRows {
 		return AudioMetrics{}, false, nil
 	}

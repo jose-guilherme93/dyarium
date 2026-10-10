@@ -113,7 +113,15 @@ func serve() error {
 
 	checkpointDir := filepath.Join(cfg.DataDir, "checkpoints")
 	whisper := transcribe.NewWhisperCLI(cfg.WhisperBin, cfg.WhisperModel, "")
-	pipeline := transcribe.NewPipeline(st, transcribe.RealDeps(ingestSvc, prober, whisper), checkpointDir, cfg.WhisperModel)
+	ceiling := func(ctx context.Context) int64 {
+		v, ok, err := st.GetSetting(ctx, "max_whisper_rss_mb")
+		if err != nil || !ok {
+			return 0
+		}
+		n, _ := strconv.ParseInt(v, 10, 64)
+		return n
+	}
+	pipeline := transcribe.NewPipeline(st, transcribe.RealDeps(ingestSvc, prober, whisper, ceiling), checkpointDir, cfg.WhisperModel)
 
 	startWorkers(ctx, cfg, st, queue, pipeline, analyzer, bus, logger)
 
@@ -185,6 +193,13 @@ func seedSettings(ctx context.Context, st *store.Store, cfg config.Config) error
 		return err
 	} else if !ok {
 		if err := st.SetSetting(ctx, "trim_silence", strconv.FormatBool(cfg.TrimSilence)); err != nil {
+			return err
+		}
+	}
+	if _, ok, err := st.GetSetting(ctx, "max_whisper_rss_mb"); err != nil {
+		return err
+	} else if !ok {
+		if err := st.SetSetting(ctx, "max_whisper_rss_mb", strconv.Itoa(cfg.MaxWhisperRSSMB)); err != nil {
 			return err
 		}
 	}

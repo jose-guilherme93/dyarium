@@ -95,14 +95,15 @@ type Segment struct {
 
 // AudioMetrics holds ffmpeg/ffprobe measurements.
 type AudioMetrics struct {
-	EntryID        string
-	DurationMS     int64
-	LoudnessLUFS   float64
-	TruePeak       float64
-	SilenceCount   int
-	SilenceTotalMS int64
-	SampleRate     int
-	Channels       int
+	EntryID          string
+	DurationMS       int64
+	LoudnessLUFS     float64
+	TruePeak         float64
+	SilenceCount     int
+	SilenceTotalMS   int64
+	SampleRate       int
+	Channels         int
+	WhisperPeakRSSMB int64
 }
 
 // Note is a free-form note attached to an entry (BlockNote JSON document).

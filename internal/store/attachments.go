@@ -62,8 +62,8 @@ func (s *Store) scanAttachment(row interface {
 func (s *Store) UpsertMetrics(ctx context.Context, m AudioMetrics) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO audio_metrics (entry_id, duration_ms, loudness_lufs, true_peak,
-			silence_count, silence_total_ms, sample_rate, channels, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			silence_count, silence_total_ms, sample_rate, channels, whisper_peak_rss_mb, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (entry_id) DO UPDATE SET
 			duration_ms = excluded.duration_ms,
 			loudness_lufs = excluded.loudness_lufs,
@@ -71,11 +71,25 @@ func (s *Store) UpsertMetrics(ctx context.Context, m AudioMetrics) error {
 			silence_count = excluded.silence_count,
 			silence_total_ms = excluded.silence_total_ms,
 			sample_rate = excluded.sample_rate,
-			channels = excluded.channels`,
+			channels = excluded.channels,
+			whisper_peak_rss_mb = excluded.whisper_peak_rss_mb`,
 		m.EntryID, m.DurationMS, m.LoudnessLUFS, m.TruePeak,
-		m.SilenceCount, m.SilenceTotalMS, m.SampleRate, m.Channels, ts(nowUTC()))
+		m.SilenceCount, m.SilenceTotalMS, m.SampleRate, m.Channels, m.WhisperPeakRSSMB, ts(nowUTC()))
 	if err != nil {
 		return fmt.Errorf("store: upsert metrics: %w", err)
+	}
+	return nil
+}
+
+// SetWhisperPeakRSS records the peak RSS (MB) of the whisper subprocess.
+func (s *Store) SetWhisperPeakRSS(ctx context.Context, entryID string, mb int64) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO audio_metrics (entry_id, whisper_peak_rss_mb, created_at)
+		VALUES (?, ?, ?)
+		ON CONFLICT (entry_id) DO UPDATE SET whisper_peak_rss_mb = excluded.whisper_peak_rss_mb`,
+		entryID, mb, ts(nowUTC()))
+	if err != nil {
+		return fmt.Errorf("store: set whisper peak rss: %w", err)
 	}
 	return nil
 }

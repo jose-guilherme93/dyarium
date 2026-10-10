@@ -328,3 +328,33 @@
     grid-template-columns: 1fr;
   }
 }
+
+.ceiling {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 2);
+  flex-wrap: wrap;
+}
+
+.ceiling input {
+  width: 110px;
+  padding: calc(var(--space)) calc(var(--space) * 2);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.ram-track {
+  height: 10px;
+  max-width: 420px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+  overflow: hidden;
+}
+
+.ram-fill {
+  height: 100%;
+  background: var(--color-accent);
+}

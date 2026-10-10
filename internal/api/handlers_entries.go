@@ -54,13 +54,14 @@ func (s *Server) handleGetEntry(w http.ResponseWriter, r *http.Request) {
 	body := entryJSON(entry)
 	if m, ok, err := s.deps.Store.GetMetrics(ctx, entry.ID); err == nil && ok {
 		body["metrics"] = map[string]any{
-			"duration_ms":      m.DurationMS,
-			"loudness_lufs":    m.LoudnessLUFS,
-			"true_peak":        m.TruePeak,
-			"silence_count":    m.SilenceCount,
-			"silence_total_ms": m.SilenceTotalMS,
-			"sample_rate":      m.SampleRate,
-			"channels":         m.Channels,
+			"duration_ms":         m.DurationMS,
+			"loudness_lufs":       m.LoudnessLUFS,
+			"true_peak":           m.TruePeak,
+			"silence_count":       m.SilenceCount,
+			"silence_total_ms":    m.SilenceTotalMS,
+			"sample_rate":         m.SampleRate,
+			"channels":            m.Channels,
+			"whisper_peak_rss_mb": m.WhisperPeakRSSMB,
 		}
 	}
 	writeJSON(w, http.StatusOK, body)

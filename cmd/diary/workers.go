@@ -46,6 +46,8 @@ func transcribeHandler(st *store.Store, pipeline *transcribe.Pipeline, analyzer 
 		if err := jobs.DecodePayload(job, &payload); err != nil {
 			return err
 		}
+		_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryTranscribing)
+		bus.Publish("entry.status", map[string]string{"entry_id": payload.EntryID, "status": store.EntryTranscribing})
 		if err := pipeline.Run(ctx, payload.EntryID, heartbeat); err != nil {
 			_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryFailed)
 			bus.Publish("entry.failed", map[string]string{"entry_id": payload.EntryID, "reason": err.Error()})

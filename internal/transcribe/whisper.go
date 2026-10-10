@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 
 	"github.com/joseti/dyarium/internal/audio"
 	"github.com/joseti/dyarium/internal/store"
@@ -18,6 +19,8 @@ type WhisperCLI struct {
 	Bin      string
 	Model    string
 	Language string
+	// MaxRSSMB caps the address space of the subprocess (0 means no limit).
+	MaxRSSMB int64
 }
 
 // NewWhisperCLI builds a WhisperCLI.
@@ -35,12 +38,12 @@ type whisperOutput struct {
 	} `json:"transcription"`
 }
 
-// Transcribe returns segments relative to wavPath (whisper-cli output offsets are
-// already in milliseconds).
-func (w *WhisperCLI) Transcribe(ctx context.Context, wavPath string) ([]Segment, error) {
+// Transcribe returns segments relative to wavPath and the peak RSS (MB) observed
+// for the subprocess. Offsets from whisper-cli are already in milliseconds.
+func (w *WhisperCLI) Transcribe(ctx context.Context, wavPath string) ([]Segment, int64, error) {
 	base, err := os.CreateTemp("", "whisper-out-*")
 	if err != nil {
-		return nil, fmt.Errorf("transcribe: temp output: %w", err)
+		return nil, 0, fmt.Errorf("transcribe: temp output: %w", err)
 	}
 	outBase := base.Name()
 	base.Close()
@@ -52,20 +55,21 @@ func (w *WhisperCLI) Transcribe(ctx context.Context, wavPath string) ([]Segment,
 	if w.Language != "" {
 		args = append(args, "-l", w.Language)
 	}
-	cmd := exec.CommandContext(ctx, w.Bin, args...)
+	cmd := w.command(ctx, args)
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("transcribe: whisper-cli: %w (%s)", err, tail(stderr.String(), 400))
+		return nil, 0, fmt.Errorf("transcribe: whisper-cli: %w (%s)", err, tail(stderr.String(), 400))
 	}
+	peak := peakRSSMB(cmd.ProcessState)
 
 	data, err := os.ReadFile(jsonPath)
 	if err != nil {
-		return nil, fmt.Errorf("transcribe: read whisper output: %w", err)
+		return nil, peak, fmt.Errorf("transcribe: read whisper output: %w", err)
 	}
 	var out whisperOutput
 	if err := json.Unmarshal(data, &out); err != nil {
-		return nil, fmt.Errorf("transcribe: parse whisper output: %w", err)
+		return nil, peak, fmt.Errorf("transcribe: parse whisper output: %w", err)
 	}
 	segs := make([]Segment, 0, len(out.Transcription))
 	for _, seg := range out.Transcription {
@@ -75,7 +79,37 @@ func (w *WhisperCLI) Transcribe(ctx context.Context, wavPath string) ([]Segment,
 		}
 		segs = append(segs, Segment{StartMS: seg.Offsets.From, EndMS: seg.Offsets.To, Text: text})
 	}
-	return segs, nil
+	return segs, peak, nil
+}
+
+// command builds the exec.Cmd, applying an address-space limit through the shell
+// when a RAM ceiling is configured.
+func (w *WhisperCLI) command(ctx context.Context, args []string) *exec.Cmd {
+	if w.MaxRSSMB > 0 {
+		limitKB := w.MaxRSSMB * 1024
+		full := append([]string{w.Bin}, args...)
+		script := fmt.Sprintf("ulimit -v %d; exec %s", limitKB, shellJoin(full))
+		return exec.CommandContext(ctx, "sh", "-c", script)
+	}
+	return exec.CommandContext(ctx, w.Bin, args...)
+}
+
+func peakRSSMB(state *os.ProcessState) int64 {
+	if state == nil {
+		return 0
+	}
+	if usage, ok := state.SysUsage().(*syscall.Rusage); ok && usage.Maxrss > 0 {
+		return int64(usage.Maxrss) / 1024
+	}
+	return 0
+}
+
+func shellJoin(args []string) string {
+	quoted := make([]string, len(args))
+	for i, a := range args {
+		quoted[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
+	}
+	return strings.Join(quoted, " ")
 }
 
 func tail(s string, n int) string {
@@ -93,8 +127,9 @@ type BlobStore interface {
 	SaveDerived(ctx context.Context, entryID, cacheKey, contentType, srcPath string) error
 }
 
-// RealDeps wires the production dependencies (ffmpeg and whisper-cli).
-func RealDeps(blobs BlobStore, prober *audio.Prober, whisper *WhisperCLI) Deps {
+// RealDeps wires the production dependencies (ffmpeg and whisper-cli). ceiling
+// returns the current RAM ceiling in MB (0 for none), read per run from settings.
+func RealDeps(blobs BlobStore, prober *audio.Prober, whisper *WhisperCLI, ceiling func(ctx context.Context) int64) Deps {
 	return Deps{
 		Decrypt:    blobs.DecryptToTemp,
 		GetDerived: blobs.GetDerived,
@@ -119,8 +154,12 @@ func RealDeps(blobs BlobStore, prober *audio.Prober, whisper *WhisperCLI) Deps {
 			return prober.Silences(ctx, path, -30, 0.5)
 		},
 		Slice: prober.ExtractSlice,
-		Transcribe: func(ctx context.Context, wavPath string) ([]Segment, error) {
-			return whisper.Transcribe(ctx, wavPath)
+		Transcribe: func(ctx context.Context, wavPath string) ([]Segment, int64, error) {
+			cli := *whisper
+			if ceiling != nil {
+				cli.MaxRSSMB = ceiling(ctx)
+			}
+			return cli.Transcribe(ctx, wavPath)
 		},
 	}
 }

@@ -51,7 +51,7 @@ type Deps struct {
 	Metrics     func(ctx context.Context, src string) (audio.Metrics, error)
 	Silences    func(ctx context.Context, path string) ([]audio.Interval, error)
 	Slice       func(ctx context.Context, src, dst string, startMS, durMS int64) error
-	Transcribe  func(ctx context.Context, wavPath string) ([]Segment, error)
+	Transcribe  func(ctx context.Context, wavPath string) ([]Segment, int64, error)
 }
 
 // Pipeline runs the transcription pipeline for an entry.
@@ -127,6 +127,7 @@ func (p *Pipeline) Run(ctx context.Context, entryID string, heartbeat func() err
 	ckptPath := filepath.Join(p.checkpointDir, entryID+".json")
 	results := loadCheckpoint(ckptPath)
 
+	var peakMB int64
 	for _, ch := range chunks {
 		if _, done := results[ch.Index]; done {
 			continue
@@ -134,9 +135,12 @@ func (p *Pipeline) Run(ctx context.Context, entryID string, heartbeat func() err
 		if trim && ch.Silence {
 			results[ch.Index] = chunkResult{Chunk: ch}
 		} else {
-			segs, err := p.transcribeChunk(ctx, derived, ch)
+			segs, peak, err := p.transcribeChunk(ctx, derived, ch)
 			if err != nil {
 				return err
+			}
+			if peak > peakMB {
+				peakMB = peak
 			}
 			results[ch.Index] = chunkResult{Chunk: ch, Segments: segs}
 		}
@@ -145,6 +149,12 @@ func (p *Pipeline) Run(ctx context.Context, entryID string, heartbeat func() err
 			if err := heartbeat(); err != nil {
 				return err
 			}
+		}
+	}
+
+	if peakMB > 0 {
+		if err := p.store.SetWhisperPeakRSS(ctx, entryID, peakMB); err != nil {
+			return err
 		}
 	}
 
@@ -160,27 +170,27 @@ func (p *Pipeline) Run(ctx context.Context, entryID string, heartbeat func() err
 	return nil
 }
 
-func (p *Pipeline) transcribeChunk(ctx context.Context, derived string, ch Chunk) ([]Segment, error) {
+func (p *Pipeline) transcribeChunk(ctx context.Context, derived string, ch Chunk) ([]Segment, int64, error) {
 	tmp, err := os.CreateTemp("", "dyarium-slice-*.wav")
 	if err != nil {
-		return nil, fmt.Errorf("transcribe: temp slice: %w", err)
+		return nil, 0, fmt.Errorf("transcribe: temp slice: %w", err)
 	}
 	slicePath := tmp.Name()
 	tmp.Close()
 	defer os.Remove(slicePath)
 
 	if err := p.deps.Slice(ctx, derived, slicePath, ch.StartMS, ch.EndMS-ch.StartMS); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	segs, err := p.deps.Transcribe(ctx, slicePath)
+	segs, peak, err := p.deps.Transcribe(ctx, slicePath)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	for i := range segs {
 		segs[i].StartMS += ch.StartMS
 		segs[i].EndMS += ch.StartMS
 	}
-	return segs, nil
+	return segs, peak, nil
 }
 
 func (p *Pipeline) derived(ctx context.Context, entryID, src string) (string, error) {

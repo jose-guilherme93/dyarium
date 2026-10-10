@@ -10,12 +10,16 @@ services:
       DIARY_MASTER_KEY: "${DIARY_MASTER_KEY:-0000000000000000000000000000000000000000000000000000000000000000}"
       DIARY_DB_PATH: /data/diary.db
       DIARY_DATA_DIR: /data
+      DIARY_WHISPER_BIN: whisper-cli
+      DIARY_WHISPER_MODEL: "${DIARY_WHISPER_MODEL:-/models/ggml-tiny.bin}"
+      DIARY_MAX_WHISPER_RSS_MB: "${DIARY_MAX_WHISPER_RSS_MB:-0}"
       DIARY_LOG_LEVEL: "${DIARY_LOG_LEVEL:-debug}"
     ports:
       - "${DIARY_API_PORT:-8080}:8080"
     volumes:
       - ..:/src
       - diary-data:/data
+      - ../models:/models
 
   web:
     image: node:22-bookworm

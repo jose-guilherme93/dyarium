@@ -49,7 +49,11 @@ RUN curl -fsSL -o /tmp/litestream.tar.gz \
 # ---- Dev: Go toolchain with air for hot reload ---------------------------
 FROM golang:1.27-bookworm AS dev
 WORKDIR /src
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 RUN go install github.com/air-verse/air@v1.62.0
+COPY --from=whisper /whisper/build/bin/whisper-cli /usr/local/bin/whisper-cli
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .

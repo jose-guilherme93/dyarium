@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, api } from "../api";
 import { NotesEditor } from "../editor/NotesEditor";
-import type { Analysis, Entry, Note, Transcript } from "../types";
+import type { Analysis, Entry, Note, Settings, Transcript } from "../types";
 
 interface EntryViewProps {
   id: string;
@@ -21,6 +21,7 @@ export function EntryView({ id, refreshKey, onBack }: EntryViewProps) {
   const [transcript, setTranscript] = useState<Transcript | null>(null);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [notes, setNotes] = useState<Note[]>([]);
+  const [settings, setSettings] = useState<Settings | null>(null);
   const [error, setError] = useState("");
   const [editing, setEditing] = useState(false);
   const [noteDocument, setNoteDocument] = useState<unknown>([]);
@@ -47,6 +48,11 @@ export function EntryView({ id, refreshKey, onBack }: EntryViewProps) {
       setNotes(result.notes ?? []);
     } catch {
       setNotes([]);
+    }
+    try {
+      setSettings(await api.getSettings());
+    } catch {
+      setSettings(null);
     }
   }, [id]);
 
@@ -123,6 +129,7 @@ export function EntryView({ id, refreshKey, onBack }: EntryViewProps) {
       <div className="panels">
         <div className="panel">
           <h2>Transcricao</h2>
+          {transcript && <p className="muted">Modelo de IA: {transcript.model || "(desconhecido)"}</p>}
           {transcript ? (
             transcript.segments.length > 0 ? (
               <ol className="segments">
@@ -169,6 +176,13 @@ export function EntryView({ id, refreshKey, onBack }: EntryViewProps) {
         </div>
       </div>
 
+      {entry.metrics && (
+        <div className="panel">
+          <h2>Recursos</h2>
+          <RamBar peak={entry.metrics.whisper_peak_rss_mb} ceiling={settings?.max_whisper_rss_mb ?? 0} />
+        </div>
+      )}
+
       <div className="panel">
         <div className="view-header">
           <h2>Notas</h2>
@@ -190,6 +204,29 @@ export function EntryView({ id, refreshKey, onBack }: EntryViewProps) {
         </ul>
       </div>
     </section>
+  );
+}
+
+function RamBar({ peak, ceiling }: { peak: number; ceiling: number }) {
+  const percent = ceiling > 0 ? Math.min(100, Math.round((peak / ceiling) * 100)) : 0;
+  return (
+    <div className="ram">
+      <p className="muted">
+        Pico de RAM da transcricao: {peak} MB
+        {ceiling > 0 ? ` / limite ${ceiling} MB` : " (sem limite configurado)"}
+      </p>
+      {ceiling > 0 && (
+        <div
+          className="ram-track"
+          role="progressbar"
+          aria-valuenow={percent}
+          aria-valuemin={0}
+          aria-valuemax={100}
+        >
+          <div className="ram-fill" style={{ width: `${percent}%` }} />
+        </div>
+      )}
+    </div>
   );
 }
 
