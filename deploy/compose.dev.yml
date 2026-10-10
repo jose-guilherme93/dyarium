@@ -20,6 +20,8 @@ services:
       - ..:/src
       - diary-data:/data
       - ../models:/models
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   web:
     image: node:22-bookworm
