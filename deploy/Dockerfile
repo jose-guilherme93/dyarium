@@ -36,7 +36,17 @@ RUN cmake -B build -DCMAKE_BUILD_TYPE=Release \
     -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON \
     && cmake --build build --config Release -j"$(nproc)" --target whisper-cli
 
-# ---- Runtime: lean base image -------------------------------------------
+# ---- Dev: Go toolchain with air for hot reload ---------------------------
+FROM golang:1.27-bookworm AS dev
+WORKDIR /src
+RUN go install github.com/air-verse/air@v1.62.0
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+EXPOSE 8080
+CMD ["air", "-c", ".air.toml"]
+
+# ---- Runtime: lean base image (default target) ---------------------------
 FROM debian:bookworm-slim AS final
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates ffmpeg libgomp1 libstdc++6 \
@@ -55,13 +65,3 @@ VOLUME ["/data", "/models"]
 EXPOSE 8080
 ENTRYPOINT ["diary"]
 CMD ["serve"]
-
-# ---- Dev: Go toolchain with air for hot reload ---------------------------
-FROM golang:1.27-bookworm AS dev
-WORKDIR /src
-RUN go install github.com/air-verse/air@v1.62.0
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-EXPOSE 8080
-CMD ["air", "-c", ".air.toml"]
