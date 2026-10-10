@@ -67,7 +67,12 @@ export function EntriesView({ refreshKey, onOpen }: EntriesViewProps) {
         <h1>Entradas</h1>
         <label className="upload-button">
           Enviar audio
-          <input type="file" accept="audio/*" onChange={handleFile} hidden />
+          <input
+            type="file"
+            accept="audio/*,.wav,.mp3,.m4a,.aac,.adts,.ogg,.oga,.opus,.flac,.webm,.amr,.wma,.3gp,.mp4"
+            onChange={handleFile}
+            hidden
+          />
         </label>
       </div>
 

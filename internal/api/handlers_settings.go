@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 
@@ -14,19 +15,31 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
+	whisperModel := settings["whisper_model"]
+	if whisperModel == "" {
+		whisperModel = s.deps.Config.WhisperModel
+	}
+	analyzeEnabled := settings["analyze_enabled"]
+	if analyzeEnabled == "" {
+		analyzeEnabled = strconv.FormatBool(s.deps.Config.AnalyzeEnabled)
+	}
+	analyzeBaseURL := settings["analyze_base_url"]
+	if analyzeBaseURL == "" {
+		analyzeBaseURL = s.deps.Config.AnalyzeBaseURL
+	}
+	analyzeModel := settings["analyze_model"]
+	if analyzeModel == "" {
+		analyzeModel = s.deps.Config.AnalyzeModel
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"trim_silence":       settings["trim_silence"] == "true",
-		"max_whisper_rss_mb": toInt(settings["max_whisper_rss_mb"]),
-		"analyze_enabled":    s.deps.Config.AnalyzeEnabled,
-		"analyze_base_url":   s.deps.Config.AnalyzeBaseURL,
-		"analyze_model":      s.deps.Config.AnalyzeModel,
-		"whisper_model":      s.deps.Config.WhisperModel,
+		"trim_silence":        settings["trim_silence"] == "true",
+		"max_whisper_rss_mb":  toInt(settings["max_whisper_rss_mb"]),
+		"whisper_model":       whisperModel,
+		"analyze_enabled":     analyzeEnabled == "true",
+		"analyze_base_url":    analyzeBaseURL,
+		"analyze_model":       analyzeModel,
+		"analyze_api_key_set": settings["analyze_api_key"] != "",
 	})
-}
-
-func toInt(s string) int {
-	n, _ := strconv.Atoi(s)
-	return n
 }
 
 func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
@@ -36,6 +49,13 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	set := func(key, value string) bool {
+		if err := s.deps.Store.SetSetting(ctx, key, value); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			return false
+		}
+		return true
+	}
 	for key, value := range body {
 		switch key {
 		case "trim_silence":
@@ -44,18 +64,34 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusBadRequest, "invalid_value", "trim_silence deve ser booleano")
 				return
 			}
-			if err := s.deps.Store.SetSetting(ctx, "trim_silence", strconv.FormatBool(b)); err != nil {
-				writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			if !set(key, strconv.FormatBool(b)) {
 				return
 			}
 		case "max_whisper_rss_mb":
 			n, err := toNumber(value)
 			if err != nil || n < 0 {
-				writeError(w, http.StatusBadRequest, "invalid_value", "max_whisper_rss_mb deve ser um inteiro >= 0")
+				writeError(w, http.StatusBadRequest, "invalid_value", "max_whisper_rss_mb deve ser inteiro >= 0")
 				return
 			}
-			if err := s.deps.Store.SetSetting(ctx, "max_whisper_rss_mb", strconv.Itoa(n)); err != nil {
-				writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			if !set(key, strconv.Itoa(n)) {
+				return
+			}
+		case "whisper_model", "analyze_base_url", "analyze_model", "analyze_api_key":
+			str, ok := value.(string)
+			if !ok {
+				writeError(w, http.StatusBadRequest, "invalid_value", key+" deve ser texto")
+				return
+			}
+			if !set(key, str) {
+				return
+			}
+		case "analyze_enabled":
+			b, err := toBool(value)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid_value", "analyze_enabled deve ser booleano")
+				return
+			}
+			if !set(key, strconv.FormatBool(b)) {
 				return
 			}
 		}
@@ -78,7 +114,7 @@ var errInvalidBool = &boolError{}
 
 type boolError struct{}
 
-func (*boolError) Error() string { return "valor booleano invalido" }
+func (*boolError) Error() string { return "valor invalido" }
 
 func toNumber(v any) (int, error) {
 	switch t := v.(type) {
@@ -91,6 +127,11 @@ func toNumber(v any) (int, error) {
 	default:
 		return 0, errInvalidBool
 	}
+}
+
+func toInt(s string) int {
+	n, _ := strconv.Atoi(s)
+	return n
 }
 
 func (s *Server) handleGetAnalysis(w http.ResponseWriter, r *http.Request) {
@@ -114,11 +155,11 @@ func (s *Server) handleGetAnalysis(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
-	if s.deps.Analyzer == nil || !s.deps.Analyzer.Enabled() {
+	ctx := r.Context()
+	if !s.analyzeEnabled(ctx) {
 		writeError(w, http.StatusConflict, "analyze_disabled", "analise desligada")
 		return
 	}
-	ctx := r.Context()
 	id := r.PathValue("id")
 	if _, err := s.deps.Store.GetEntry(ctx, id); err != nil {
 		writeError(w, http.StatusNotFound, "not_found", "entrada inexistente")
@@ -131,6 +172,14 @@ func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	_ = s.deps.Store.UpdateEntryStatus(ctx, id, store.EntryAnalyzing)
 	s.deps.Events.Publish("entry.status", map[string]string{"entry_id": id, "status": store.EntryAnalyzing})
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": store.EntryAnalyzing})
+}
+
+func (s *Server) analyzeEnabled(ctx context.Context) bool {
+	v, ok, err := s.deps.Store.GetSetting(ctx, "analyze_enabled")
+	if err != nil || !ok {
+		return s.deps.Config.AnalyzeEnabled
+	}
+	return v == "true"
 }
 
 func analyzeKey(entryID, model string) string {

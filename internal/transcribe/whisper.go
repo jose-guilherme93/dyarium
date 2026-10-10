@@ -170,9 +170,15 @@ type BlobStore interface {
 	SaveDerived(ctx context.Context, entryID, cacheKey, contentType, srcPath string) error
 }
 
-// RealDeps wires the production dependencies (ffmpeg and whisper-cli). ceiling
-// returns the current RAM ceiling in MB (0 for none), read per run from settings.
-func RealDeps(blobs BlobStore, prober *audio.Prober, whisper *WhisperCLI, ceiling func(ctx context.Context) int64) Deps {
+// Runtime holds per-run settings read from the database.
+type Runtime struct {
+	Model    string
+	MaxRSSMB int64
+}
+
+// RealDeps wires the production dependencies (ffmpeg and whisper-cli). runtime
+// returns the current model and RAM ceiling, read per run from settings.
+func RealDeps(blobs BlobStore, prober *audio.Prober, whisper *WhisperCLI, runtime func(ctx context.Context) Runtime) Deps {
 	return Deps{
 		Decrypt:    blobs.DecryptToTemp,
 		GetDerived: blobs.GetDerived,
@@ -199,8 +205,12 @@ func RealDeps(blobs BlobStore, prober *audio.Prober, whisper *WhisperCLI, ceilin
 		Slice: prober.ExtractSlice,
 		Transcribe: func(ctx context.Context, wavPath string) ([]Segment, int64, error) {
 			cli := *whisper
-			if ceiling != nil {
-				cli.MaxRSSMB = ceiling(ctx)
+			if runtime != nil {
+				r := runtime(ctx)
+				if r.Model != "" {
+					cli.Model = r.Model
+				}
+				cli.MaxRSSMB = r.MaxRSSMB
 			}
 			return cli.Transcribe(ctx, wavPath)
 		},

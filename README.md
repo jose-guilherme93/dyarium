@@ -77,6 +77,7 @@ make bench-transcricao   # benchmark de transcricao (pico de RSS)
 | DIARY_DB_PATH | data/diary.db | Caminho do banco SQLite |
 | DIARY_DATA_DIR | data | Diretorio dos audios cifrados |
 | DIARY_MODELS_DIR | models | Diretorio dos modelos ggml |
+| DIARY_MODELS_BASE_URL | (registro do whisper.cpp) | URL base para baixar modelos |
 | DIARY_WHISPER_BIN | whisper-cli | Binario do whisper.cpp |
 | DIARY_WHISPER_MODEL | models/ggml-small-q5_1.bin | Modelo padrao |
 | DIARY_FFMPEG_BIN | ffmpeg | Binario do ffmpeg |

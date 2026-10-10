@@ -15,6 +15,7 @@ import (
 	"github.com/joseti/dyarium/internal/events"
 	"github.com/joseti/dyarium/internal/ingest"
 	"github.com/joseti/dyarium/internal/jobs"
+	"github.com/joseti/dyarium/internal/models"
 	"github.com/joseti/dyarium/internal/store"
 	"github.com/joseti/dyarium/internal/webui"
 )
@@ -29,6 +30,7 @@ type Deps struct {
 	Queue    *jobs.Queue
 	Analyzer *analyze.Client
 	Events   *events.Bus
+	Models   *models.Manager
 }
 
 // Server holds the HTTP handlers and their dependencies.
@@ -86,6 +88,9 @@ func (s *Server) Handler() http.Handler {
 
 	protected.HandleFunc("GET /api/v1/settings", s.handleGetSettings)
 	protected.HandleFunc("PUT /api/v1/settings", s.handlePutSettings)
+
+	protected.HandleFunc("GET /api/v1/models", s.handleListModels)
+	protected.HandleFunc("POST /api/v1/models/download", s.handleDownloadModel)
 
 	protected.HandleFunc("GET /api/v1/events", s.handleEvents)
 

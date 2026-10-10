@@ -17,6 +17,7 @@ type Config struct {
 	DBPath             string
 	DataDir            string
 	ModelsDir          string
+	ModelsBaseURL      string
 	WhisperBin         string
 	WhisperModel       string
 	FFmpegBin          string
@@ -53,6 +54,7 @@ func Load() (Config, error) {
 		DBPath:             env("DIARY_DB_PATH", "data/diary.db"),
 		DataDir:            env("DIARY_DATA_DIR", "data"),
 		ModelsDir:          env("DIARY_MODELS_DIR", "models"),
+		ModelsBaseURL:      env("DIARY_MODELS_BASE_URL", "https://huggingface.co/ggerganov/whisper.cpp/resolve/main"),
 		WhisperBin:         env("DIARY_WHISPER_BIN", "whisper-cli"),
 		WhisperModel:       env("DIARY_WHISPER_MODEL", "models/ggml-small-q5_1.bin"),
 		FFmpegBin:          env("DIARY_FFMPEG_BIN", "ffmpeg"),

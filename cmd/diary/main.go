@@ -23,6 +23,7 @@ import (
 	"github.com/joseti/dyarium/internal/events"
 	"github.com/joseti/dyarium/internal/ingest"
 	"github.com/joseti/dyarium/internal/jobs"
+	"github.com/joseti/dyarium/internal/models"
 	"github.com/joseti/dyarium/internal/store"
 	"github.com/joseti/dyarium/internal/telegram"
 	"github.com/joseti/dyarium/internal/transcribe"
@@ -113,17 +114,22 @@ func serve() error {
 
 	checkpointDir := filepath.Join(cfg.DataDir, "checkpoints")
 	whisper := transcribe.NewWhisperCLI(cfg.WhisperBin, cfg.WhisperModel, "")
-	ceiling := func(ctx context.Context) int64 {
-		v, ok, err := st.GetSetting(ctx, "max_whisper_rss_mb")
-		if err != nil || !ok {
-			return 0
+	runtime := func(ctx context.Context) transcribe.Runtime {
+		var model string
+		if v, ok, err := st.GetSetting(ctx, "whisper_model"); err == nil && ok {
+			model = v
 		}
-		n, _ := strconv.ParseInt(v, 10, 64)
-		return n
+		var mb int64
+		if v, ok, err := st.GetSetting(ctx, "max_whisper_rss_mb"); err == nil && ok {
+			mb, _ = strconv.ParseInt(v, 10, 64)
+		}
+		return transcribe.Runtime{Model: model, MaxRSSMB: mb}
 	}
-	pipeline := transcribe.NewPipeline(st, transcribe.RealDeps(ingestSvc, prober, whisper, ceiling), checkpointDir, cfg.WhisperModel)
+	pipeline := transcribe.NewPipeline(st, transcribe.RealDeps(ingestSvc, prober, whisper, runtime), checkpointDir, cfg.WhisperModel)
 
-	startWorkers(ctx, cfg, st, queue, pipeline, analyzer, bus, logger)
+	modelsMgr := models.NewManager(cfg.ModelsDir, cfg.ModelsBaseURL, bus)
+
+	startWorkers(ctx, cfg, st, queue, pipeline, bus, logger)
 
 	if cfg.TelegramEnabled {
 		bot := telegram.New(telegram.Config{Enabled: true, BotToken: cfg.TelegramBotToken, APIBase: cfg.TelegramAPIBase})
@@ -145,6 +151,7 @@ func serve() error {
 		Queue:    queue,
 		Analyzer: analyzer,
 		Events:   bus,
+		Models:   modelsMgr,
 	})
 
 	httpServer := &http.Server{
@@ -175,10 +182,10 @@ func serve() error {
 	return httpServer.Shutdown(shutdownCtx)
 }
 
-func startWorkers(ctx context.Context, cfg config.Config, st *store.Store, queue *jobs.Queue, pipeline *transcribe.Pipeline, analyzer *analyze.Client, bus *events.Bus, logger *slog.Logger) {
+func startWorkers(ctx context.Context, cfg config.Config, st *store.Store, queue *jobs.Queue, pipeline *transcribe.Pipeline, bus *events.Bus, logger *slog.Logger) {
 	lease := time.Duration(cfg.JobLeaseSeconds) * time.Second
-	transcribeH := transcribeHandler(st, pipeline, analyzer, queue, bus, logger)
-	analyzeH := analyzeHandler(st, analyzer, bus, logger)
+	transcribeH := transcribeHandler(st, cfg, pipeline, queue, bus, logger)
+	analyzeH := analyzeHandler(st, cfg, bus, logger)
 	for i := 0; i < cfg.WorkerConcurrency; i++ {
 		runner := jobs.NewRunner(queue, fmt.Sprintf("worker-%d", i+1), lease, 2*time.Second, logger)
 		runner.Register(jobs.TypeTranscribe, transcribeH)
@@ -189,18 +196,21 @@ func startWorkers(ctx context.Context, cfg config.Config, st *store.Store, queue
 }
 
 func seedSettings(ctx context.Context, st *store.Store, cfg config.Config) error {
-	if _, ok, err := st.GetSetting(ctx, "trim_silence"); err != nil {
-		return err
-	} else if !ok {
-		if err := st.SetSetting(ctx, "trim_silence", strconv.FormatBool(cfg.TrimSilence)); err != nil {
-			return err
-		}
+	defaults := map[string]string{
+		"trim_silence":       strconv.FormatBool(cfg.TrimSilence),
+		"max_whisper_rss_mb": strconv.Itoa(cfg.MaxWhisperRSSMB),
+		"whisper_model":      cfg.WhisperModel,
+		"analyze_enabled":    strconv.FormatBool(cfg.AnalyzeEnabled),
+		"analyze_base_url":   cfg.AnalyzeBaseURL,
+		"analyze_model":      cfg.AnalyzeModel,
 	}
-	if _, ok, err := st.GetSetting(ctx, "max_whisper_rss_mb"); err != nil {
-		return err
-	} else if !ok {
-		if err := st.SetSetting(ctx, "max_whisper_rss_mb", strconv.Itoa(cfg.MaxWhisperRSSMB)); err != nil {
+	for key, value := range defaults {
+		if _, ok, err := st.GetSetting(ctx, key); err != nil {
 			return err
+		} else if !ok {
+			if err := st.SetSetting(ctx, key, value); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

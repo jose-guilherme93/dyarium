@@ -1,6 +1,7 @@
 import type {
   Analysis,
   Entry,
+  ModelInfo,
   Note,
   Settings,
   Tag,
@@ -74,8 +75,11 @@ export const api = {
   createTag: (name: string, color: string) =>
     request<{ id: string }>("/tags", { method: "POST", body: JSON.stringify({ name, color }) }),
   getSettings: () => request<Settings>("/settings"),
-  putSettings: (patch: Partial<Settings>) =>
+  putSettings: (patch: Record<string, unknown>) =>
     request<{ status: string }>("/settings", { method: "PUT", body: JSON.stringify(patch) }),
+  listModels: () => request<{ models: ModelInfo[] }>("/models"),
+  downloadModel: (name: string) =>
+    request<{ status: string }>("/models/download", { method: "POST", body: JSON.stringify({ name }) }),
 };
 
 async function sha256Hex(data: ArrayBuffer): Promise<string> {

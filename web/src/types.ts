@@ -68,10 +68,20 @@ export interface Tag {
 export interface Settings {
   trim_silence: boolean;
   max_whisper_rss_mb: number;
+  whisper_model: string;
   analyze_enabled: boolean;
   analyze_base_url: string;
   analyze_model: string;
-  whisper_model: string;
+  analyze_api_key_set: boolean;
+}
+
+export interface ModelInfo {
+  name: string;
+  filename: string;
+  size_mb: number;
+  path: string;
+  downloaded: boolean;
+  local_bytes: number;
 }
 
 export interface ServerEvent {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/joseti/dyarium/internal/analyze"
+	"github.com/joseti/dyarium/internal/config"
 	"github.com/joseti/dyarium/internal/events"
 	"github.com/joseti/dyarium/internal/id"
 	"github.com/joseti/dyarium/internal/ingest"
@@ -38,9 +39,35 @@ func (s telegramSink) IngestAudio(ctx context.Context, source, filename, content
 	return entry.ID, nil
 }
 
+// analyzeConfigFromSettings merges the environment defaults with the values
+// stored in the database, so the dashboard can configure paid APIs.
+func analyzeConfigFromSettings(ctx context.Context, st *store.Store, cfg config.Config) analyze.Config {
+	result := analyze.Config{
+		Enabled: cfg.AnalyzeEnabled,
+		BaseURL: cfg.AnalyzeBaseURL,
+		APIKey:  cfg.AnalyzeAPIKey,
+		Model:   cfg.AnalyzeModel,
+	}
+	if settings, err := st.ListSettings(ctx); err == nil {
+		if v, ok := settings["analyze_enabled"]; ok {
+			result.Enabled = v == "true"
+		}
+		if v, ok := settings["analyze_base_url"]; ok && v != "" {
+			result.BaseURL = v
+		}
+		if v, ok := settings["analyze_api_key"]; ok {
+			result.APIKey = v
+		}
+		if v, ok := settings["analyze_model"]; ok && v != "" {
+			result.Model = v
+		}
+	}
+	return result
+}
+
 // transcribeHandler runs the transcription pipeline and, on success, either
 // enqueues analysis or marks the entry ready.
-func transcribeHandler(st *store.Store, pipeline *transcribe.Pipeline, analyzer *analyze.Client, queue *jobs.Queue, bus *events.Bus, logger *slog.Logger) jobs.Handler {
+func transcribeHandler(st *store.Store, cfg config.Config, pipeline *transcribe.Pipeline, queue *jobs.Queue, bus *events.Bus, logger *slog.Logger) jobs.Handler {
 	return func(ctx context.Context, job *jobs.Job, heartbeat func() error) error {
 		var payload jobs.TranscribePayload
 		if err := jobs.DecodePayload(job, &payload); err != nil {
@@ -54,7 +81,7 @@ func transcribeHandler(st *store.Store, pipeline *transcribe.Pipeline, analyzer 
 			return err
 		}
 		bus.Publish("transcript.ready", map[string]string{"entry_id": payload.EntryID})
-		if analyzer != nil && analyzer.Enabled() {
+		if analyzeConfigFromSettings(ctx, st, cfg).Enabled {
 			if _, err := queue.Enqueue(ctx, jobs.TypeAnalyze, "analyze:"+payload.EntryID, jobs.AnalyzePayload{EntryID: payload.EntryID}); err != nil {
 				logger.Error("worker: enfileirar analise", "erro", err)
 			}
@@ -69,20 +96,22 @@ func transcribeHandler(st *store.Store, pipeline *transcribe.Pipeline, analyzer 
 }
 
 // analyzeHandler enriches a transcript and stores the analysis.
-func analyzeHandler(st *store.Store, analyzer *analyze.Client, bus *events.Bus, logger *slog.Logger) jobs.Handler {
+func analyzeHandler(st *store.Store, cfg config.Config, bus *events.Bus, logger *slog.Logger) jobs.Handler {
 	return func(ctx context.Context, job *jobs.Job, _ func() error) error {
 		var payload jobs.AnalyzePayload
 		if err := jobs.DecodePayload(job, &payload); err != nil {
 			return err
 		}
-		if analyzer == nil || !analyzer.Enabled() {
+		analysisCfg := analyzeConfigFromSettings(ctx, st, cfg)
+		if !analysisCfg.Enabled {
 			return analyze.ErrDisabled
 		}
+		client := analyze.New(analysisCfg)
 		transcript, _, err := st.GetTranscript(ctx, payload.EntryID)
 		if err != nil {
 			return fmt.Errorf("worker: transcript: %w", err)
 		}
-		result, err := analyzer.Analyze(ctx, transcript.Text)
+		result, err := client.Analyze(ctx, transcript.Text)
 		if err != nil {
 			_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryFailed)
 			bus.Publish("entry.failed", map[string]string{"entry_id": payload.EntryID, "reason": err.Error()})
