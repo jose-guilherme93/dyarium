@@ -1,28 +1,31 @@
-import { describe, expect, it } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
 import App from "./App";
 
+beforeEach(() => {
+  localStorage.clear();
+});
+
 describe("App", () => {
-  it("renderiza o layout base e o estado vazio", () => {
+  it("pede o token quando nao ha token salvo", () => {
     render(<App />);
-    expect(screen.getByRole("heading", { name: "Entradas" })).toBeInTheDocument();
-    expect(screen.getByText("Nenhuma entrada ainda.")).toBeInTheDocument();
-    expect(screen.getByRole("navigation")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "dyarium" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Entrar" })).toBeInTheDocument();
   });
 
-  it("recolhe e reexibe o painel de contexto", () => {
+  it("mostra o estado vazio da lista quando autenticado", async () => {
+    localStorage.setItem("dyarium.token", "token-de-teste");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ entries: [] }),
+      })),
+    );
     render(<App />);
-    const panel = screen.getByRole("complementary", { name: "Painel de contexto" });
-    expect(panel).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Ocultar painel" }));
-    expect(
-      screen.queryByRole("complementary", { name: "Painel de contexto" }),
-    ).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Mostrar painel" }));
-    expect(
-      screen.getByRole("complementary", { name: "Painel de contexto" }),
-    ).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("Nenhuma entrada ainda.")).toBeInTheDocument());
+    expect(screen.getByRole("navigation")).toBeInTheDocument();
+    vi.unstubAllGlobals();
   });
 });

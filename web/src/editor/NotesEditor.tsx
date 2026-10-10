@@ -1,13 +1,17 @@
+import type { Block, PartialBlock } from "@blocknote/core";
 import { useCreateBlockNote } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/mantine/style.css";
 
-// NotesEditor provides the rich text note editor. It is wired into the entry
-// view in a later phase; here it verifies the BlockNote integration compiles
-// and is ready to use.
-export function NotesEditor() {
-  const editor = useCreateBlockNote();
-  return <BlockNoteView editor={editor} />;
+interface NotesEditorProps {
+  initialContent?: PartialBlock[];
+  onChange?: (blocks: Block[]) => void;
+}
+
+// NotesEditor provides the rich text note editor backed by BlockNote.
+export function NotesEditor({ initialContent, onChange }: NotesEditorProps) {
+  const editor = useCreateBlockNote({ initialContent });
+  return <BlockNoteView editor={editor} onChange={() => onChange?.(editor.document)} />;
 }
 
 export default NotesEditor;

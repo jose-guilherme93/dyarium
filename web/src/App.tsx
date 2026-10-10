@@ -1,21 +1,47 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
+import { clearToken, getToken, setToken } from "./api";
+import { useEvents } from "./useEvents";
+import { TokenGate } from "./components/TokenGate";
+import { EntriesView } from "./views/EntriesView";
+import { EntryView } from "./views/EntryView";
+import { MoodView } from "./views/MoodView";
+import { SearchView } from "./views/SearchView";
+import { SettingsView } from "./views/SettingsView";
 import "./App.css";
 
-type ViewId = "entries" | "tags" | "mood" | "search" | "settings";
+type ViewId = "entries" | "mood" | "search" | "settings";
 
 const navigation: { id: ViewId; label: string }[] = [
   { id: "entries", label: "Entradas" },
-  { id: "tags", label: "Tags" },
   { id: "mood", label: "Humor" },
   { id: "search", label: "Busca" },
   { id: "settings", label: "Configuracao" },
 ];
 
 export function App() {
-  const [active, setActive] = useState<ViewId>("entries");
+  const [token, setTokenState] = useState(getToken());
+  const [view, setView] = useState<ViewId>("entries");
+  const [openEntry, setOpenEntry] = useState<string | null>(null);
   const [panelOpen, setPanelOpen] = useState(true);
+  const [refreshKey, setRefreshKey] = useState(0);
 
-  const activeLabel = navigation.find((item) => item.id === active)?.label ?? "";
+  const handleEvent = useCallback(() => setRefreshKey((key) => key + 1), []);
+  useEvents(handleEvent);
+
+  if (!token) {
+    return (
+      <TokenGate
+        onSubmit={(value) => {
+          setToken(value);
+          setTokenState(value);
+        }}
+      />
+    );
+  }
+
+  const activeLabel = openEntry
+    ? "Entrada"
+    : navigation.find((item) => item.id === view)?.label ?? "";
 
   return (
     <div className="app">
@@ -27,9 +53,12 @@ export function App() {
               <li key={item.id}>
                 <button
                   type="button"
-                  className={active === item.id ? "nav-item nav-item--active" : "nav-item"}
-                  aria-current={active === item.id ? "page" : undefined}
-                  onClick={() => setActive(item.id)}
+                  className={view === item.id && !openEntry ? "nav-item nav-item--active" : "nav-item"}
+                  aria-current={view === item.id && !openEntry ? "page" : undefined}
+                  onClick={() => {
+                    setOpenEntry(null);
+                    setView(item.id);
+                  }}
                 >
                   {item.label}
                 </button>
@@ -37,6 +66,16 @@ export function App() {
             ))}
           </ul>
         </nav>
+        <button
+          type="button"
+          className="link-button"
+          onClick={() => {
+            clearToken();
+            setTokenState("");
+          }}
+        >
+          Sair
+        </button>
       </aside>
 
       <div className="content">
@@ -54,10 +93,17 @@ export function App() {
         </header>
 
         <main className="main" aria-label="Conteudo">
-          <div className="empty-state">
-            <p>Nenhuma entrada ainda.</p>
-            <p>Envie um audio para comecar a sua primeira entrada.</p>
-          </div>
+          {openEntry ? (
+            <EntryView id={openEntry} refreshKey={refreshKey} onBack={() => setOpenEntry(null)} />
+          ) : view === "entries" ? (
+            <EntriesView refreshKey={refreshKey} onOpen={setOpenEntry} />
+          ) : view === "mood" ? (
+            <MoodView refreshKey={refreshKey} onOpen={setOpenEntry} />
+          ) : view === "search" ? (
+            <SearchView refreshKey={refreshKey} onOpen={setOpenEntry} />
+          ) : (
+            <SettingsView />
+          )}
         </main>
       </div>
 
