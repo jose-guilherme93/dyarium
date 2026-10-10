@@ -75,7 +75,15 @@ func transcribeHandler(st *store.Store, cfg config.Config, pipeline *transcribe.
 		}
 		_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryTranscribing)
 		bus.Publish("entry.status", map[string]string{"entry_id": payload.EntryID, "status": store.EntryTranscribing})
-		if err := pipeline.Run(ctx, payload.EntryID, heartbeat); err != nil {
+		progress := func(stage string, done, total int) {
+			bus.Publish("job.progress", map[string]any{
+				"entry_id": payload.EntryID,
+				"stage":    stage,
+				"done":     done,
+				"total":    total,
+			})
+		}
+		if err := pipeline.Run(ctx, payload.EntryID, heartbeat, progress); err != nil {
 			_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryFailed)
 			bus.Publish("entry.failed", map[string]string{"entry_id": payload.EntryID, "reason": err.Error()})
 			return err

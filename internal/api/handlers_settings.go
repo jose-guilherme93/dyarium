@@ -35,6 +35,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		"trim_silence":        settings["trim_silence"] == "true",
 		"max_whisper_rss_mb":  toInt(settings["max_whisper_rss_mb"]),
 		"whisper_model":       whisperModel,
+		"whisper_language":    settings["whisper_language"],
 		"analyze_enabled":     analyzeEnabled == "true",
 		"analyze_base_url":    analyzeBaseURL,
 		"analyze_model":       analyzeModel,
@@ -76,7 +77,7 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 			if !set(key, strconv.Itoa(n)) {
 				return
 			}
-		case "whisper_model", "analyze_base_url", "analyze_model", "analyze_api_key":
+		case "whisper_model", "whisper_language", "analyze_base_url", "analyze_model", "analyze_api_key":
 			str, ok := value.(string)
 			if !ok {
 				writeError(w, http.StatusBadRequest, "invalid_value", key+" deve ser texto")

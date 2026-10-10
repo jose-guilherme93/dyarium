@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, api } from "../api";
 import { NotesEditor } from "../editor/NotesEditor";
-import type { Analysis, Entry, Note, Settings, Transcript } from "../types";
+import { ProgressBar, Spinner, isBusy, stageText } from "../components/Status";
+import type { Analysis, Entry, EntryProgress, Note, Settings, Transcript } from "../types";
 
 interface EntryViewProps {
   id: string;
   refreshKey: number;
+  progress?: EntryProgress;
   onBack: () => void;
 }
 
@@ -16,7 +18,7 @@ function formatTime(ms: number): string {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
-export function EntryView({ id, refreshKey, onBack }: EntryViewProps) {
+export function EntryView({ id, refreshKey, progress, onBack }: EntryViewProps) {
   const [entry, setEntry] = useState<Entry | null>(null);
   const [transcript, setTranscript] = useState<Transcript | null>(null);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
@@ -25,6 +27,7 @@ export function EntryView({ id, refreshKey, onBack }: EntryViewProps) {
   const [error, setError] = useState("");
   const [editing, setEditing] = useState(false);
   const [noteDocument, setNoteDocument] = useState<unknown>([]);
+  const [busy, setBusy] = useState<"retranscribe" | "analyze" | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -60,25 +63,38 @@ export function EntryView({ id, refreshKey, onBack }: EntryViewProps) {
     void load();
   }, [load, refreshKey]);
 
+  const status = progress?.status ?? entry?.status;
+  const running = isBusy(status);
+
+  useEffect(() => {
+    if (status === "ready" || status === "transcribed" || status === "enriched" || status === "failed") {
+      setBusy(null);
+    }
+  }, [status]);
+
   const retranscribe = async () => {
+    setBusy("retranscribe");
+    setError("");
     try {
       await api.retranscribe(id);
-      await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "falha");
+      setBusy(null);
     }
   };
 
   const analyze = async () => {
+    setBusy("analyze");
+    setError("");
     try {
       await api.analyze(id);
-      await load();
     } catch (err) {
       if (err instanceof ApiError && err.code === "analyze_disabled") {
-        setError("A analise por IA esta desligada.");
+        setError("A analise por IA esta desligada. Ative em Configuracao e informe a API.");
       } else {
-        setError(err instanceof Error ? err.message : "falha");
+        setError(err instanceof Error ? err.message : "falha ao analisar");
       }
+      setBusy(null);
     }
   };
 
@@ -103,6 +119,8 @@ export function EntryView({ id, refreshKey, onBack }: EntryViewProps) {
     );
   }
 
+  const canAnalyze = settings?.analyze_enabled ?? false;
+
   return (
     <section className="view">
       <div className="view-header">
@@ -111,25 +129,44 @@ export function EntryView({ id, refreshKey, onBack }: EntryViewProps) {
         </button>
         <h1>{entry.title || entry.original_filename || "Entrada"}</h1>
         <div className="actions">
-          <button type="button" onClick={retranscribe}>
-            Retranscrever
+          <button type="button" onClick={retranscribe} disabled={busy === "retranscribe" || running}>
+            {busy === "retranscribe" ? <Spinner /> : null} Retranscrever
           </button>
-          <button type="button" onClick={analyze}>
-            Analisar
+          <button type="button" onClick={analyze} disabled={busy === "analyze" || running || !canAnalyze}>
+            {busy === "analyze" ? <Spinner /> : null} Analisar
           </button>
         </div>
       </div>
 
       <p className="muted">
         {new Date(entry.created_at).toLocaleString("pt-BR")} · {Math.round(entry.duration_seconds)}s ·{" "}
-        {entry.status}
+        {status}
       </p>
+
+      {running && (
+        <div className="entry-progress">
+          <Spinner />
+          <span className="muted">{stageText(progress ?? { status })}</span>
+          {progress && (progress.total ?? 0) > 0 && (
+            <ProgressBar done={progress.done ?? 0} total={progress.total ?? 0} />
+          )}
+        </div>
+      )}
+      {progress?.error && <p className="error">{progress.error}</p>}
       {error && <p className="error">{error}</p>}
+      {!canAnalyze && (
+        <p className="muted">A analise por IA esta desligada. Ative em Configuracao para enriquecer as entradas.</p>
+      )}
 
       <div className="panels">
         <div className="panel">
           <h2>Transcricao</h2>
-          {transcript && <p className="muted">Modelo de IA: {transcript.model || "(desconhecido)"}</p>}
+          {transcript && (
+            <p className="muted">
+              Modelo de IA: {transcript.model || "(desconhecido)"}
+              {transcript.language ? ` · idioma: ${transcript.language}` : ""}
+            </p>
+          )}
           {transcript ? (
             transcript.segments.length > 0 ? (
               <ol className="segments">
@@ -144,7 +181,9 @@ export function EntryView({ id, refreshKey, onBack }: EntryViewProps) {
               <p className="muted">{transcript.text || "Transcricao vazia."}</p>
             )
           ) : (
-            <p className="muted">Transcricao ainda nao disponivel.</p>
+            <p className="muted">
+              {running ? "Transcricao em andamento..." : "Transcricao ainda nao disponivel."}
+            </p>
           )}
         </div>
 
@@ -163,15 +202,13 @@ export function EntryView({ id, refreshKey, onBack }: EntryViewProps) {
                   ))}
                 </ul>
               )}
-              {analysis.people && analysis.people.length > 0 && (
-                <p>Pessoas: {analysis.people.join(", ")}</p>
-              )}
-              {analysis.places && analysis.places.length > 0 && (
-                <p>Lugares: {analysis.places.join(", ")}</p>
-              )}
+              {analysis.people && analysis.people.length > 0 && <p>Pessoas: {analysis.people.join(", ")}</p>}
+              {analysis.places && analysis.places.length > 0 && <p>Lugares: {analysis.places.join(", ")}</p>}
             </div>
           ) : (
-            <p className="muted">Sem analise.</p>
+            <p className="muted">
+              {busy === "analyze" || status === "analyzing" ? "Analisando..." : "Sem analise."}
+            </p>
           )}
         </div>
       </div>
@@ -216,13 +253,7 @@ function RamBar({ peak, ceiling }: { peak: number; ceiling: number }) {
         {ceiling > 0 ? ` / limite ${ceiling} MB` : " (sem limite configurado)"}
       </p>
       {ceiling > 0 && (
-        <div
-          className="ram-track"
-          role="progressbar"
-          aria-valuenow={percent}
-          aria-valuemin={0}
-          aria-valuemax={100}
-        >
+        <div className="ram-track" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}>
           <div className="ram-fill" style={{ width: `${percent}%` }} />
         </div>
       )}

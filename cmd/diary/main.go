@@ -119,11 +119,15 @@ func serve() error {
 		if v, ok, err := st.GetSetting(ctx, "whisper_model"); err == nil && ok {
 			model = v
 		}
+		var language string
+		if v, ok, err := st.GetSetting(ctx, "whisper_language"); err == nil && ok {
+			language = v
+		}
 		var mb int64
 		if v, ok, err := st.GetSetting(ctx, "max_whisper_rss_mb"); err == nil && ok {
 			mb, _ = strconv.ParseInt(v, 10, 64)
 		}
-		return transcribe.Runtime{Model: model, MaxRSSMB: mb}
+		return transcribe.Runtime{Model: model, Language: language, MaxRSSMB: mb}
 	}
 	pipeline := transcribe.NewPipeline(st, transcribe.RealDeps(ingestSvc, prober, whisper, runtime), checkpointDir, cfg.WhisperModel)
 
@@ -200,6 +204,7 @@ func seedSettings(ctx context.Context, st *store.Store, cfg config.Config) error
 		"trim_silence":       strconv.FormatBool(cfg.TrimSilence),
 		"max_whisper_rss_mb": strconv.Itoa(cfg.MaxWhisperRSSMB),
 		"whisper_model":      cfg.WhisperModel,
+		"whisper_language":   cfg.WhisperLanguage,
 		"analyze_enabled":    strconv.FormatBool(cfg.AnalyzeEnabled),
 		"analyze_base_url":   cfg.AnalyzeBaseURL,
 		"analyze_model":      cfg.AnalyzeModel,

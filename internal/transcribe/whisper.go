@@ -34,6 +34,9 @@ func NewWhisperCLI(bin, model, language string) *WhisperCLI {
 }
 
 type whisperOutput struct {
+	Result struct {
+		Language string `json:"language"`
+	} `json:"result"`
 	Transcription []struct {
 		Offsets struct {
 			From int64 `json:"from"`
@@ -43,12 +46,12 @@ type whisperOutput struct {
 	} `json:"transcription"`
 }
 
-// Transcribe returns segments relative to wavPath and the peak RSS (MB) observed
-// for the subprocess. Offsets from whisper-cli are already in milliseconds.
-func (w *WhisperCLI) Transcribe(ctx context.Context, wavPath string) ([]Segment, int64, error) {
+// Transcribe returns the segments relative to wavPath, the peak RSS (MB) of the
+// subprocess and the detected/forced language.
+func (w *WhisperCLI) Transcribe(ctx context.Context, wavPath string) ([]Segment, int64, string, error) {
 	base, err := os.CreateTemp("", "whisper-out-*")
 	if err != nil {
-		return nil, 0, fmt.Errorf("transcribe: temp output: %w", err)
+		return nil, 0, "", fmt.Errorf("transcribe: temp output: %w", err)
 	}
 	outBase := base.Name()
 	base.Close()
@@ -65,7 +68,7 @@ func (w *WhisperCLI) Transcribe(ctx context.Context, wavPath string) ([]Segment,
 	cmd.Stderr = &stderr
 
 	if err := cmd.Start(); err != nil {
-		return nil, 0, fmt.Errorf("transcribe: whisper-cli: %w", err)
+		return nil, 0, "", fmt.Errorf("transcribe: whisper-cli: %w", err)
 	}
 
 	var peak atomic.Int64
@@ -103,19 +106,19 @@ func (w *WhisperCLI) Transcribe(ctx context.Context, wavPath string) ([]Segment,
 		}
 	}
 	if exceeded.Load() {
-		return nil, peak.Load(), fmt.Errorf("transcribe: limite de RAM (%d MB) excedido", w.MaxRSSMB)
+		return nil, peak.Load(), "", fmt.Errorf("transcribe: limite de RAM (%d MB) excedido", w.MaxRSSMB)
 	}
 	if waitErr != nil {
-		return nil, peak.Load(), fmt.Errorf("transcribe: whisper-cli: %w (%s)", waitErr, tail(stderr.String(), 400))
+		return nil, peak.Load(), "", fmt.Errorf("transcribe: whisper-cli: %w (%s)", waitErr, tail(stderr.String(), 400))
 	}
 
 	data, err := os.ReadFile(jsonPath)
 	if err != nil {
-		return nil, peak.Load(), fmt.Errorf("transcribe: read whisper output: %w", err)
+		return nil, peak.Load(), "", fmt.Errorf("transcribe: read whisper output: %w", err)
 	}
 	var out whisperOutput
 	if err := json.Unmarshal(data, &out); err != nil {
-		return nil, peak.Load(), fmt.Errorf("transcribe: parse whisper output: %w", err)
+		return nil, peak.Load(), "", fmt.Errorf("transcribe: parse whisper output: %w", err)
 	}
 	segs := make([]Segment, 0, len(out.Transcription))
 	for _, seg := range out.Transcription {
@@ -125,7 +128,7 @@ func (w *WhisperCLI) Transcribe(ctx context.Context, wavPath string) ([]Segment,
 		}
 		segs = append(segs, Segment{StartMS: seg.Offsets.From, EndMS: seg.Offsets.To, Text: text})
 	}
-	return segs, peak.Load(), nil
+	return segs, peak.Load(), out.Result.Language, nil
 }
 
 func readRSSMB(pid int) int64 {
@@ -173,11 +176,12 @@ type BlobStore interface {
 // Runtime holds per-run settings read from the database.
 type Runtime struct {
 	Model    string
+	Language string
 	MaxRSSMB int64
 }
 
 // RealDeps wires the production dependencies (ffmpeg and whisper-cli). runtime
-// returns the current model and RAM ceiling, read per run from settings.
+// returns the current model, language and RAM ceiling, read per run from settings.
 func RealDeps(blobs BlobStore, prober *audio.Prober, whisper *WhisperCLI, runtime func(ctx context.Context) Runtime) Deps {
 	return Deps{
 		Decrypt:    blobs.DecryptToTemp,
@@ -203,13 +207,14 @@ func RealDeps(blobs BlobStore, prober *audio.Prober, whisper *WhisperCLI, runtim
 			return prober.Silences(ctx, path, -30, 0.5)
 		},
 		Slice: prober.ExtractSlice,
-		Transcribe: func(ctx context.Context, wavPath string) ([]Segment, int64, error) {
+		Transcribe: func(ctx context.Context, wavPath string) ([]Segment, int64, string, error) {
 			cli := *whisper
 			if runtime != nil {
 				r := runtime(ctx)
 				if r.Model != "" {
 					cli.Model = r.Model
 				}
+				cli.Language = r.Language
 				cli.MaxRSSMB = r.MaxRSSMB
 			}
 			return cli.Transcribe(ctx, wavPath)

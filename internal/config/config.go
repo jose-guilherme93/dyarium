@@ -20,6 +20,7 @@ type Config struct {
 	ModelsBaseURL      string
 	WhisperBin         string
 	WhisperModel       string
+	WhisperLanguage    string
 	FFmpegBin          string
 	FFprobeBin         string
 	AnalyzeEnabled     bool
@@ -57,6 +58,7 @@ func Load() (Config, error) {
 		ModelsBaseURL:      env("DIARY_MODELS_BASE_URL", "https://huggingface.co/ggerganov/whisper.cpp/resolve/main"),
 		WhisperBin:         env("DIARY_WHISPER_BIN", "whisper-cli"),
 		WhisperModel:       env("DIARY_WHISPER_MODEL", "models/ggml-small-q5_1.bin"),
+		WhisperLanguage:    env("DIARY_WHISPER_LANGUAGE", ""),
 		FFmpegBin:          env("DIARY_FFMPEG_BIN", "ffmpeg"),
 		FFprobeBin:         env("DIARY_FFPROBE_BIN", "ffprobe"),
 		AnalyzeEnabled:     envBool("DIARY_ANALYZE_ENABLED", false),

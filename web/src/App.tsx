@@ -7,6 +7,7 @@ import { EntryView } from "./views/EntryView";
 import { MoodView } from "./views/MoodView";
 import { SearchView } from "./views/SearchView";
 import { SettingsView } from "./views/SettingsView";
+import type { EntryProgress, ServerEvent } from "./types";
 import "./App.css";
 
 type ViewId = "entries" | "mood" | "search" | "settings";
@@ -24,8 +25,44 @@ export function App() {
   const [openEntry, setOpenEntry] = useState<string | null>(null);
   const [panelOpen, setPanelOpen] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [progress, setProgress] = useState<Record<string, EntryProgress>>({});
 
-  const handleEvent = useCallback(() => setRefreshKey((key) => key + 1), []);
+  const handleEvent = useCallback((event: ServerEvent) => {
+    setRefreshKey((key) => key + 1);
+    const id = typeof event.data.entry_id === "string" ? event.data.entry_id : "";
+    if (!id) {
+      return;
+    }
+    setProgress((current) => {
+      const previous = current[id] ?? {};
+      switch (event.name) {
+        case "job.progress":
+          return {
+            ...current,
+            [id]: {
+              ...previous,
+              stage: String(event.data.stage ?? ""),
+              done: Number(event.data.done ?? 0),
+              total: Number(event.data.total ?? 0),
+              error: undefined,
+            },
+          };
+        case "entry.status":
+          return { ...current, [id]: { ...previous, status: String(event.data.status ?? ""), error: undefined } };
+        case "transcript.ready":
+          return { ...current, [id]: { ...previous, status: "transcribed" } };
+        case "analysis.ready":
+          return { ...current, [id]: { ...previous, status: "ready" } };
+        case "entry.failed":
+          return {
+            ...current,
+            [id]: { ...previous, status: "failed", error: String(event.data.reason ?? "falha") },
+          };
+        default:
+          return current;
+      }
+    });
+  }, []);
   useEvents(handleEvent);
 
   if (!token) {
@@ -94,9 +131,14 @@ export function App() {
 
         <main className="main" aria-label="Conteudo">
           {openEntry ? (
-            <EntryView id={openEntry} refreshKey={refreshKey} onBack={() => setOpenEntry(null)} />
+            <EntryView
+              id={openEntry}
+              refreshKey={refreshKey}
+              progress={progress[openEntry]}
+              onBack={() => setOpenEntry(null)}
+            />
           ) : view === "entries" ? (
-            <EntriesView refreshKey={refreshKey} onOpen={setOpenEntry} />
+            <EntriesView refreshKey={refreshKey} progress={progress} onOpen={setOpenEntry} />
           ) : view === "mood" ? (
             <MoodView refreshKey={refreshKey} onOpen={setOpenEntry} />
           ) : view === "search" ? (

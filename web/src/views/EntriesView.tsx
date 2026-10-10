@@ -1,34 +1,19 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ChangeEvent } from "react";
 import { api, uploadFile } from "../api";
-import type { Entry } from "../types";
+import type { Entry, EntryProgress } from "../types";
+import { ProgressBar, Spinner, isBusy, stageText, statusLabel } from "../components/Status";
 
 interface EntriesViewProps {
   refreshKey: number;
+  progress: Record<string, EntryProgress>;
   onOpen: (id: string) => void;
 }
 
-function statusLabel(status: string): string {
-  const labels: Record<string, string> = {
-    received: "Recebido",
-    validating: "Validando",
-    stored: "Armazenado",
-    queued: "Na fila",
-    transcribing: "Transcrevendo",
-    transcribed: "Transcrito",
-    analyzing: "Analisando",
-    enriched: "Enriquecido",
-    ready: "Pronto",
-    failed: "Falhou",
-    deleted: "Removido",
-  };
-  return labels[status] ?? status;
-}
-
-export function EntriesView({ refreshKey, onOpen }: EntriesViewProps) {
+export function EntriesView({ refreshKey, progress, onOpen }: EntriesViewProps) {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [error, setError] = useState("");
-  const [progress, setProgress] = useState<{ sent: number; total: number } | null>(null);
+  const [upload, setUpload] = useState<{ sent: number; total: number; name: string } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -49,14 +34,14 @@ export function EntriesView({ refreshKey, onOpen }: EntriesViewProps) {
     if (!file) {
       return;
     }
-    setProgress({ sent: 0, total: file.size });
+    setUpload({ sent: 0, total: file.size, name: file.name });
     try {
-      await uploadFile(file, (sent, total) => setProgress({ sent, total }));
+      await uploadFile(file, (sent, total) => setUpload({ sent, total, name: file.name }));
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "falha no envio");
     } finally {
-      setProgress(null);
+      setUpload(null);
       event.target.value = "";
     }
   };
@@ -76,32 +61,49 @@ export function EntriesView({ refreshKey, onOpen }: EntriesViewProps) {
         </label>
       </div>
 
-      {progress && (
-        <p className="muted">
-          Enviando {Math.round((progress.sent / progress.total) * 100)}% (
-          {Math.round(progress.sent / 1024)} de {Math.round(progress.total / 1024)} KiB)
-        </p>
+      {upload && (
+        <div className="upload-status">
+          <p className="muted">
+            <Spinner /> Enviando {upload.name} —{" "}
+            {Math.round((upload.sent / Math.max(upload.total, 1)) * 100)}% (
+            {Math.round(upload.sent / 1024)} de {Math.round(upload.total / 1024)} KiB)
+          </p>
+          <ProgressBar done={upload.sent} total={upload.total} />
+        </div>
       )}
       {error && <p className="error">{error}</p>}
 
-      {entries.length === 0 ? (
+      {entries.length === 0 && !upload ? (
         <div className="empty-state">
           <p>Nenhuma entrada ainda.</p>
           <p>Envie um audio para comecar a sua primeira entrada.</p>
         </div>
       ) : (
         <ul className="entry-list">
-          {entries.map((entry) => (
-            <li key={entry.id}>
-              <button type="button" className="entry-item" onClick={() => onOpen(entry.id)}>
-                <span className="entry-title">{entry.title || entry.original_filename || "Entrada"}</span>
-                <span className="entry-meta">
-                  {new Date(entry.created_at).toLocaleString("pt-BR")} ·{" "}
-                  {Math.round(entry.duration_seconds)}s · {statusLabel(entry.status)}
-                </span>
-              </button>
-            </li>
-          ))}
+          {entries.map((entry) => {
+            const p = progress[entry.id];
+            const status = p?.status ?? entry.status;
+            const busy = isBusy(status);
+            return (
+              <li key={entry.id}>
+                <button type="button" className="entry-item" onClick={() => onOpen(entry.id)}>
+                  <span className="entry-title">{entry.title || entry.original_filename || "Entrada"}</span>
+                  <span className="entry-meta">
+                    {new Date(entry.created_at).toLocaleString("pt-BR")} ·{" "}
+                    {Math.round(entry.duration_seconds)}s · {statusLabel(status)}
+                  </span>
+                  {busy && (
+                    <span className="entry-progress">
+                      <Spinner />
+                      <span className="muted">{stageText(p ?? { status })}</span>
+                      {p && (p.total ?? 0) > 0 && <ProgressBar done={p.done ?? 0} total={p.total ?? 0} />}
+                    </span>
+                  )}
+                  {p?.error && <span className="error">{p.error}</span>}
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
     </section>

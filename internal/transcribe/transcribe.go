@@ -51,7 +51,7 @@ type Deps struct {
 	Metrics     func(ctx context.Context, src string) (audio.Metrics, error)
 	Silences    func(ctx context.Context, path string) ([]audio.Interval, error)
 	Slice       func(ctx context.Context, src, dst string, startMS, durMS int64) error
-	Transcribe  func(ctx context.Context, wavPath string) ([]Segment, int64, error)
+	Transcribe  func(ctx context.Context, wavPath string) ([]Segment, int64, string, error)
 }
 
 // Pipeline runs the transcription pipeline for an entry.
@@ -73,8 +73,15 @@ type chunkResult struct {
 	Segments []Segment `json:"segments"`
 }
 
-// Run transcribes an entry. heartbeat is called after each checkpointed chunk.
-func (p *Pipeline) Run(ctx context.Context, entryID string, heartbeat func() error) error {
+// Run transcribes an entry. heartbeat is called after each checkpointed chunk;
+// progress reports the current stage and chunk counts for the dashboard.
+func (p *Pipeline) Run(ctx context.Context, entryID string, heartbeat func() error, progress func(stage string, done, total int)) error {
+	report := func(stage string, done, total int) {
+		if progress != nil {
+			progress(stage, done, total)
+		}
+	}
+	report("preparando", 0, 0)
 	entry, err := p.store.GetEntry(ctx, entryID)
 	if err != nil {
 		return fmt.Errorf("transcribe: get entry: %w", err)
@@ -121,6 +128,7 @@ func (p *Pipeline) Run(ctx context.Context, entryID string, heartbeat func() err
 		silences = nil
 	}
 	chunks := PlanChunks(metrics.DurationMS, silences)
+	report("transcrevendo", 0, len(chunks))
 
 	trim := p.trimSilence(ctx)
 
@@ -128,6 +136,8 @@ func (p *Pipeline) Run(ctx context.Context, entryID string, heartbeat func() err
 	results := loadCheckpoint(ckptPath)
 
 	var peakMB int64
+	language := ""
+	completed := 0
 	for _, ch := range chunks {
 		if _, done := results[ch.Index]; done {
 			continue
@@ -135,16 +145,21 @@ func (p *Pipeline) Run(ctx context.Context, entryID string, heartbeat func() err
 		if trim && ch.Silence {
 			results[ch.Index] = chunkResult{Chunk: ch}
 		} else {
-			segs, peak, err := p.transcribeChunk(ctx, derived, ch)
+			segs, peak, lang, err := p.transcribeChunk(ctx, derived, ch)
 			if err != nil {
 				return err
 			}
 			if peak > peakMB {
 				peakMB = peak
 			}
+			if language == "" && lang != "" {
+				language = lang
+			}
 			results[ch.Index] = chunkResult{Chunk: ch, Segments: segs}
 		}
 		saveCheckpoint(ckptPath, results)
+		completed++
+		report("transcrevendo", completed, len(chunks))
 		if heartbeat != nil {
 			if err := heartbeat(); err != nil {
 				return err
@@ -158,7 +173,7 @@ func (p *Pipeline) Run(ctx context.Context, entryID string, heartbeat func() err
 		}
 	}
 
-	transcript, segments := assemble(entryID, chunks, results, metrics.DurationMS, trim, p.modelName())
+	transcript, segments := assemble(entryID, chunks, results, metrics.DurationMS, trim, p.modelName(), language)
 	if err := p.store.SaveTranscript(ctx, transcript, segments); err != nil {
 		return err
 	}
@@ -170,27 +185,27 @@ func (p *Pipeline) Run(ctx context.Context, entryID string, heartbeat func() err
 	return nil
 }
 
-func (p *Pipeline) transcribeChunk(ctx context.Context, derived string, ch Chunk) ([]Segment, int64, error) {
+func (p *Pipeline) transcribeChunk(ctx context.Context, derived string, ch Chunk) ([]Segment, int64, string, error) {
 	tmp, err := os.CreateTemp("", "dyarium-slice-*.wav")
 	if err != nil {
-		return nil, 0, fmt.Errorf("transcribe: temp slice: %w", err)
+		return nil, 0, "", fmt.Errorf("transcribe: temp slice: %w", err)
 	}
 	slicePath := tmp.Name()
 	tmp.Close()
 	defer os.Remove(slicePath)
 
 	if err := p.deps.Slice(ctx, derived, slicePath, ch.StartMS, ch.EndMS-ch.StartMS); err != nil {
-		return nil, 0, err
+		return nil, 0, "", err
 	}
-	segs, peak, err := p.deps.Transcribe(ctx, slicePath)
+	segs, peak, language, err := p.deps.Transcribe(ctx, slicePath)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, "", err
 	}
 	for i := range segs {
 		segs[i].StartMS += ch.StartMS
 		segs[i].EndMS += ch.StartMS
 	}
-	return segs, peak, nil
+	return segs, peak, language, nil
 }
 
 func (p *Pipeline) derived(ctx context.Context, entryID, src string) (string, error) {

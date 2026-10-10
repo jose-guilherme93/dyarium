@@ -104,11 +104,11 @@ func fakeDeps(t *testing.T, sliced *[]int64, failAt int64) transcribe.Deps {
 			last = startMS
 			return nil
 		},
-		Transcribe: func(context.Context, string) ([]transcribe.Segment, int64, error) {
+		Transcribe: func(context.Context, string) ([]transcribe.Segment, int64, string, error) {
 			if failAt >= 0 && last == failAt {
-				return nil, 0, fmt.Errorf("falha simulada no chunk %d", last)
+				return nil, 0, "", fmt.Errorf("falha simulada no chunk %d", last)
 			}
-			return []transcribe.Segment{{StartMS: 0, EndMS: 1000, Text: fmt.Sprintf("chunk-%d", last)}}, 128, nil
+			return []transcribe.Segment{{StartMS: 0, EndMS: 1000, Text: fmt.Sprintf("chunk-%d", last)}}, 128, "pt", nil
 		},
 	}
 }
@@ -125,7 +125,7 @@ func TestPipelineResumesAfterFailure(t *testing.T) {
 
 	// First run fails on the second chunk.
 	p1 := transcribe.NewPipeline(st, fakeDeps(t, &sliced, secondStart), ckpt, "modelo-teste")
-	if err := p1.Run(ctx, "en1", nil); err == nil {
+	if err := p1.Run(ctx, "en1", nil, nil); err == nil {
 		t.Fatal("esperava falha no primeiro run")
 	}
 	if len(sliced) != 2 {
@@ -135,7 +135,7 @@ func TestPipelineResumesAfterFailure(t *testing.T) {
 	// Second run must skip the already checkpointed first chunk.
 	sliced = nil
 	p2 := transcribe.NewPipeline(st, fakeDeps(t, &sliced, -1), ckpt, "modelo-teste")
-	if err := p2.Run(ctx, "en1", nil); err != nil {
+	if err := p2.Run(ctx, "en1", nil, nil); err != nil {
 		t.Fatalf("segundo run: %v", err)
 	}
 	if len(sliced) != 2 {
@@ -179,7 +179,7 @@ func TestPipelineTrimSilenceSkipsChunks(t *testing.T) {
 	}
 
 	p := transcribe.NewPipeline(st, deps, filepath.Join(dir, "checkpoints"), "modelo-teste")
-	if err := p.Run(ctx, "en1", nil); err != nil {
+	if err := p.Run(ctx, "en1", nil, nil); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	// Only the two non-silent chunks should have been transcribed.

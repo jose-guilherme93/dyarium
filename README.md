@@ -80,6 +80,7 @@ make bench-transcricao   # benchmark de transcricao (pico de RSS)
 | DIARY_MODELS_BASE_URL | (registro do whisper.cpp) | URL base para baixar modelos |
 | DIARY_WHISPER_BIN | whisper-cli | Binario do whisper.cpp |
 | DIARY_WHISPER_MODEL | models/ggml-small-q5_1.bin | Modelo padrao |
+| DIARY_WHISPER_LANGUAGE | (vazio) | Idioma da transcricao; vazio = auto (ex.: pt) |
 | DIARY_FFMPEG_BIN | ffmpeg | Binario do ffmpeg |
 | DIARY_FFPROBE_BIN | ffprobe | Binario do ffprobe |
 | DIARY_TRIM_SILENCE | false | Valor inicial do corte de silencio |

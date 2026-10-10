@@ -16,6 +16,7 @@ export function SettingsView() {
   const [ceiling, setCeiling] = useState("0");
   const [apiKey, setApiKey] = useState("");
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
 
   const loadSettings = useCallback(async () => {
     const value = await api.getSettings();
@@ -64,6 +65,7 @@ export function SettingsView() {
       await api.putSettings(patch);
       await loadSettings();
       setError("");
+      setMessage("Configuracao salva.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "falha ao salvar");
     }
@@ -89,6 +91,7 @@ export function SettingsView() {
         <h1>Configuracao</h1>
       </div>
       {error && <p className="error">{error}</p>}
+      {message && <p className="ok">{message}</p>}
 
       {settings && (
         <>
@@ -141,6 +144,27 @@ export function SettingsView() {
           <div className="config-block">
             <h2>Transcricao</h2>
             <dl className="settings">
+              <dt>Idioma da transcricao</dt>
+              <dd>
+                <select
+                  aria-label="Idioma da transcricao"
+                  value={settings.whisper_language}
+                  onChange={(event) => void save({ whisper_language: event.target.value })}
+                >
+                  <option value="">Detectar automaticamente</option>
+                  <option value="pt">Portugues</option>
+                  <option value="en">Ingles</option>
+                  <option value="es">Espanhol</option>
+                  <option value="fr">Frances</option>
+                  <option value="de">Alemao</option>
+                  <option value="it">Italiano</option>
+                  <option value="ja">Japones</option>
+                  <option value="zh">Chines</option>
+                  <option value="ru">Russo</option>
+                  <option value="ar">Arabe</option>
+                  <option value="hi">Hindi</option>
+                </select>
+              </dd>
               <dt>Corte de silencio</dt>
               <dd>
                 <label className="switch">

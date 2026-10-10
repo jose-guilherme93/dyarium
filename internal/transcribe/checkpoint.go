@@ -39,7 +39,7 @@ func saveCheckpoint(path string, results map[int]chunkResult) {
 
 // assemble concatenates the per-chunk results into a transcript, keeping the
 // segments ordered by their position in the original audio.
-func assemble(entryID string, chunks []Chunk, results map[int]chunkResult, durationMS int64, trim bool, model string) (store.Transcript, []store.Segment) {
+func assemble(entryID string, chunks []Chunk, results map[int]chunkResult, durationMS int64, trim bool, model, language string) (store.Transcript, []store.Segment) {
 	var all []Segment
 	index := map[int]Chunk{}
 	for _, ch := range chunks {
@@ -82,6 +82,7 @@ func assemble(entryID string, chunks []Chunk, results map[int]chunkResult, durat
 		ID:              transcriptID,
 		EntryID:         entryID,
 		Model:           model,
+		Language:        language,
 		Text:            text.String(),
 		TrimSilence:     trim,
 		DurationSeconds: float64(durationMS) / 1000,

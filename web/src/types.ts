@@ -69,10 +69,19 @@ export interface Settings {
   trim_silence: boolean;
   max_whisper_rss_mb: number;
   whisper_model: string;
+  whisper_language: string;
   analyze_enabled: boolean;
   analyze_base_url: string;
   analyze_model: string;
   analyze_api_key_set: boolean;
+}
+
+export interface EntryProgress {
+  status?: string;
+  stage?: string;
+  done?: number;
+  total?: number;
+  error?: string;
 }
 
 export interface ModelInfo {
