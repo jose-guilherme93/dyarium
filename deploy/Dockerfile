@@ -19,7 +19,7 @@ COPY --from=web /web/dist ./internal/webui/dist
 ARG VERSION=dev
 ARG COMMIT=none
 ARG DATE=unknown
-RUN CGO_ENABLED=0 go build -trimpath \
+RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false \
     -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}" \
     -o /out/diary ./cmd/diary
 

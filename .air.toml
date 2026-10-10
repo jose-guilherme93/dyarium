@@ -2,7 +2,7 @@ root = "."
 tmp_dir = "tmp"
 
 [build]
-  cmd = "go build -o ./tmp/diary ./cmd/diary"
+  cmd = "go build -buildvcs=false -o ./tmp/diary ./cmd/diary"
   full_bin = "./tmp/diary serve"
   include_ext = ["go", "sql"]
   exclude_dir = ["web", "tmp", "data", "models", "deploy", ".git", "docs"]
