@@ -34,13 +34,15 @@
 
 ### Corte opcional de silencio (trim_silence)
 
-- Booleano em `Settings`, desligado por padrao. Quando ligado, o silencio e removido do
-  audio de trabalho antes de transcrever, por exemplo para acelerar audios com muitas pausas.
-- Como o audio derivado deixa de ter a mesma duracao do original, cada segmento transcrito
-  carrega um deslocamento acumulado. O remapeamento soma os deslocamentos para que
-  `Segment.start_ms` e `Segment.end_ms` sempre se refiram ao audio ORIGINAL.
-- Ligar/desligar muda a `cache_key` do derivado (por exemplo `16k:trim=off` vs
-  `16k:trim=on`), invalidando o cache e forcando a regeracao.
+- Booleano em `Settings`, desligado por padrao. Quando ligado, trechos inteiramente
+  silenciosos sao **pulados** na transcricao (nao sao enviados ao whisper), o que acelera
+  audios com muitas pausas.
+- O audio derivado 16 kHz mono NAO e cortado: ele permanece identico ao original em duracao.
+  Assim, cada trecho transcrito tem um deslocamento fixo na linha do tempo original e os
+  `Segment.start_ms`/`end_ms` sempre se referem ao audio ORIGINAL, sem remapeamento fragil.
+- Como o derivado nao depende do corte de silencio, a `cache_key` e constante (`16k:v1`) e
+  ligar/desligar `trim_silence` nao invalida o cache; apenas muda quais trechos sao
+  transcritos.
 
 ## Checkpoints por trecho
 

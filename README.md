@@ -93,7 +93,33 @@ make bench-transcricao   # benchmark de transcricao (pico de RSS)
 | DIARY_ANALYZE_MODEL | (vazio) | Modelo da analise |
 | DIARY_TELEGRAM_ENABLED | false | Liga o modulo Telegram |
 | DIARY_TELEGRAM_BOT_TOKEN | (vazio) | Token do bot |
+| DIARY_TELEGRAM_API_BASE | (vazio) | Base da API do Telegram (obrigatoria se habilitado) |
 | DIARY_LITESTREAM_ENABLED | false | Liga o backup com Litestream |
+| DIARY_LITESTREAM_BUCKET | (vazio) | Bucket S3 de destino |
+| DIARY_LITESTREAM_PATH | dyarium | Prefixo dentro do bucket |
+| DIARY_LITESTREAM_ENDPOINT | (vazio) | Endpoint S3 (para provedores compativeis) |
+| DIARY_LITESTREAM_ACCESS_KEY_ID | (vazio) | Chave de acesso S3 |
+| DIARY_LITESTREAM_SECRET_ACCESS_KEY | (vazio) | Segredo S3 |
+
+## Modulos opcionais
+
+- Analise por IA: desligada por padrao. Com `DIARY_ANALYZE_ENABLED=true` e um servidor
+  compativel com OpenAI (por exemplo, Ollama em `http://localhost:11434/v1`), as entradas
+  recebem sentimento, emocoes, pessoas, lugares e resumo. Sem a analise, transcricao e
+  metricas continuam funcionando.
+- Litestream: quando `DIARY_LITESTREAM_ENABLED=true` e um bucket S3 configurado, o
+  `entrypoint.sh` inicia a replicacao continua e executa o servidor sob o Litestream. Sem
+  essa configuracao, nada relacionado ao Litestream e executado.
+- Telegram: desligado por padrao. Com `DIARY_TELEGRAM_ENABLED=true`, o bot baixa audios
+  recebidos e os ingere como novas entradas. Desligado, nenhuma conexao e iniciada.
+
+## API
+
+A API fica sob `/api/v1` e exige `Authorization: Bearer <token>`. O upload e resumivel:
+`POST /uploads` (metadados e SHA-256), `PUT /uploads/{id}` (header `X-Upload-Offset`),
+`GET /uploads/{id}` (retomar) e `POST /uploads/{id}/complete`. Ha endpoints de entradas,
+transcricao, analise, notas, tags, configuracoes e um fluxo de eventos SSE em
+`/api/v1/events` (o token pode ir na query `?token=`, pois o EventSource nao envia headers).
 
 ## Estrutura
 

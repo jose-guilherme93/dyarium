@@ -110,6 +110,24 @@ Resultado do enriquecimento por IA, versionado por modelo.
 
 Indices: `entry_id`, (`entry_id`, `model`).
 
+## AudioMetrics
+
+Medicoes de audio (ffmpeg/ffprobe) por entrada. O audio original nunca e alterado.
+
+| Campo | Tipo | Notas |
+|---|---|---|
+| entry_id | TEXT PK FK -> Entry.id | |
+| duration_ms | INTEGER | duracao |
+| loudness_lufs | REAL | loudness integrado (EBU R128) |
+| true_peak | REAL | true peak |
+| silence_count | INTEGER | numero de intervalos de silencio |
+| silence_total_ms | INTEGER | total de silencio |
+| sample_rate | INTEGER | do original |
+| channels | INTEGER | do original |
+| created_at | TEXT | |
+
+Indices: chave primaria em `entry_id`.
+
 ## Note
 
 Notas livres por entrada, no formato do editor BlockNote (JSON).
@@ -213,7 +231,8 @@ Estado do upload resumivel.
 | sha256 | TEXT | esperado |
 | received_bytes | INTEGER | confirmado |
 | storage_key | TEXT | ciphertext em construcao |
-| cipher_nonce | BLOB | nonce do streaming |
+| prefix | BLOB | prefixo de nonce da cifra em streaming |
+| next_counter | INTEGER | proximo contador de nonce |
 | created_at | TEXT | |
 | expires_at | TEXT | |
 

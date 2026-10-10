@@ -37,6 +37,15 @@ RUN cmake -B build -DCMAKE_BUILD_TYPE=Release \
     -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON \
     && cmake --build build --config Release -j"$(nproc)" --target whisper-cli
 
+# ---- Litestream: optional continuous replication -------------------------
+FROM debian:bookworm-slim AS litestream
+ARG LITESTREAM_VERSION=0.5.17
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL -o /tmp/litestream.tar.gz \
+    "https://github.com/benbjohnson/litestream/releases/download/v${LITESTREAM_VERSION}/litestream-${LITESTREAM_VERSION}-linux-x86_64.tar.gz" \
+    && tar -C /usr/local/bin -xzf /tmp/litestream.tar.gz litestream
+
 # ---- Dev: Go toolchain with air for hot reload ---------------------------
 FROM golang:1.27-bookworm AS dev
 WORKDIR /src
@@ -53,7 +62,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates ffmpeg libgomp1 libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=whisper /whisper/build/bin/whisper-cli /usr/local/bin/whisper-cli
+COPY --from=litestream /usr/local/bin/litestream /usr/local/bin/litestream
 COPY --from=gobuild /out/diary /usr/local/bin/diary
+COPY deploy/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
 
 ENV DIARY_HTTP_ADDR=:8080 \
     DIARY_DB_PATH=/data/diary.db \
@@ -64,5 +76,4 @@ ENV DIARY_HTTP_ADDR=:8080 \
 
 VOLUME ["/data", "/models"]
 EXPOSE 8080
-ENTRYPOINT ["diary"]
-CMD ["serve"]
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
