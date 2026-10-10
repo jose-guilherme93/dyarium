@@ -11,7 +11,7 @@ services:
       DIARY_DB_PATH: /data/diary.db
       DIARY_DATA_DIR: /data
       DIARY_WHISPER_BIN: whisper-cli
-      DIARY_WHISPER_MODEL: "${DIARY_WHISPER_MODEL:-/models/ggml-tiny.bin}"
+      DIARY_WHISPER_MODEL: "${DIARY_WHISPER_MODEL:-/models/ggml-small-q5_1.bin}"
       DIARY_MAX_WHISPER_RSS_MB: "${DIARY_MAX_WHISPER_RSS_MB:-0}"
       DIARY_LOG_LEVEL: "${DIARY_LOG_LEVEL:-debug}"
     ports:

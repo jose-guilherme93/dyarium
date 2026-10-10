@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/joseti/dyarium/internal/audio"
 	"github.com/joseti/dyarium/internal/store"
@@ -19,7 +22,9 @@ type WhisperCLI struct {
 	Bin      string
 	Model    string
 	Language string
-	// MaxRSSMB caps the address space of the subprocess (0 means no limit).
+	// MaxRSSMB caps the resident memory of the subprocess (0 means no limit).
+	// The limit is enforced by watching the process RSS and killing it when the
+	// ceiling is exceeded, so it matches the "RAM" concept shown in the UI.
 	MaxRSSMB int64
 }
 
@@ -55,21 +60,62 @@ func (w *WhisperCLI) Transcribe(ctx context.Context, wavPath string) ([]Segment,
 	if w.Language != "" {
 		args = append(args, "-l", w.Language)
 	}
-	cmd := w.command(ctx, args)
+	cmd := exec.CommandContext(ctx, w.Bin, args...)
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return nil, 0, fmt.Errorf("transcribe: whisper-cli: %w (%s)", err, tail(stderr.String(), 400))
+
+	if err := cmd.Start(); err != nil {
+		return nil, 0, fmt.Errorf("transcribe: whisper-cli: %w", err)
 	}
-	peak := peakRSSMB(cmd.ProcessState)
+
+	var peak atomic.Int64
+	var exceeded atomic.Bool
+	done := make(chan struct{})
+	if w.MaxRSSMB > 0 && cmd.Process != nil {
+		pid := cmd.Process.Pid
+		go func() {
+			ticker := time.NewTicker(200 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-done:
+					return
+				case <-ticker.C:
+					rss := readRSSMB(pid)
+					if rss > peak.Load() {
+						peak.Store(rss)
+					}
+					if rss > w.MaxRSSMB {
+						exceeded.Store(true)
+						_ = cmd.Process.Kill()
+						return
+					}
+				}
+			}
+		}()
+	}
+
+	waitErr := cmd.Wait()
+	close(done)
+	if state := cmd.ProcessState; state != nil {
+		if mb := peakRSSMB(state); mb > peak.Load() {
+			peak.Store(mb)
+		}
+	}
+	if exceeded.Load() {
+		return nil, peak.Load(), fmt.Errorf("transcribe: limite de RAM (%d MB) excedido", w.MaxRSSMB)
+	}
+	if waitErr != nil {
+		return nil, peak.Load(), fmt.Errorf("transcribe: whisper-cli: %w (%s)", waitErr, tail(stderr.String(), 400))
+	}
 
 	data, err := os.ReadFile(jsonPath)
 	if err != nil {
-		return nil, peak, fmt.Errorf("transcribe: read whisper output: %w", err)
+		return nil, peak.Load(), fmt.Errorf("transcribe: read whisper output: %w", err)
 	}
 	var out whisperOutput
 	if err := json.Unmarshal(data, &out); err != nil {
-		return nil, peak, fmt.Errorf("transcribe: parse whisper output: %w", err)
+		return nil, peak.Load(), fmt.Errorf("transcribe: parse whisper output: %w", err)
 	}
 	segs := make([]Segment, 0, len(out.Transcription))
 	for _, seg := range out.Transcription {
@@ -79,19 +125,24 @@ func (w *WhisperCLI) Transcribe(ctx context.Context, wavPath string) ([]Segment,
 		}
 		segs = append(segs, Segment{StartMS: seg.Offsets.From, EndMS: seg.Offsets.To, Text: text})
 	}
-	return segs, peak, nil
+	return segs, peak.Load(), nil
 }
 
-// command builds the exec.Cmd, applying an address-space limit through the shell
-// when a RAM ceiling is configured.
-func (w *WhisperCLI) command(ctx context.Context, args []string) *exec.Cmd {
-	if w.MaxRSSMB > 0 {
-		limitKB := w.MaxRSSMB * 1024
-		full := append([]string{w.Bin}, args...)
-		script := fmt.Sprintf("ulimit -v %d; exec %s", limitKB, shellJoin(full))
-		return exec.CommandContext(ctx, "sh", "-c", script)
+func readRSSMB(pid int) int64 {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
+	if err != nil {
+		return 0
 	}
-	return exec.CommandContext(ctx, w.Bin, args...)
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "VmRSS:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				kb, _ := strconv.ParseInt(fields[1], 10, 64)
+				return kb / 1024
+			}
+		}
+	}
+	return 0
 }
 
 func peakRSSMB(state *os.ProcessState) int64 {
@@ -102,14 +153,6 @@ func peakRSSMB(state *os.ProcessState) int64 {
 		return int64(usage.Maxrss) / 1024
 	}
 	return 0
-}
-
-func shellJoin(args []string) string {
-	quoted := make([]string, len(args))
-	for i, a := range args {
-		quoted[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
-	}
-	return strings.Join(quoted, " ")
 }
 
 func tail(s string, n int) string {
