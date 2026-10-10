@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/joseti/dyarium/internal/id"
 	_ "modernc.org/sqlite"
 )
 
@@ -51,6 +52,10 @@ func Open(path string) (*Store, error) {
 
 // DB exposes the underlying connection for repository methods.
 func (s *Store) DB() *sql.DB { return s.db }
+
+func nowUTC() time.Time { return time.Now().UTC() }
+
+func newID() string { return id.New() }
 
 // Close closes the database.
 func (s *Store) Close() error { return s.db.Close() }

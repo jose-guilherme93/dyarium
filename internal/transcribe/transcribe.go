@@ -1,55 +1,211 @@
 // Package transcribe orchestrates the whisper.cpp subprocess: it decrypts the
 // audio to a temporary directory, derives a 16 kHz mono working copy, chunks it
-// by silence, transcribes with checkpoints and maps timestamps back to the
-// original audio. This phase defines the surface; the pipeline is a later phase.
+// by silence, transcribes each chunk with checkpoints and maps timestamps back
+// to the original audio. The original file is never modified.
 package transcribe
 
-import "context"
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 
-// Config configures the transcriber.
-type Config struct {
-	WhisperBin  string
-	Model       string
-	TrimSilence bool
-	Language    string
+	"github.com/joseti/dyarium/internal/audio"
+	"github.com/joseti/dyarium/internal/store"
+)
+
+// cacheKeyVersion identifies the derived 16 kHz mono artifact. Trimming
+// silences does not change the derived audio (it only skips silent chunks), so
+// it is intentionally not part of the key.
+const cacheKeyVersion = "16k:v1"
+
+// Chunk is a transcribed span of the original timeline.
+type Chunk struct {
+	Index   int
+	StartMS int64
+	EndMS   int64
+	Silence bool
 }
 
-// Segment is a transcribed span mapped to the original audio timeline.
+// Segment is a transcribed span relative to a chunk or the original audio.
 type Segment struct {
 	StartMS int64
 	EndMS   int64
 	Text    string
 }
 
-// Result is the outcome of a transcription.
-type Result struct {
-	Model      string
-	Language   string
-	Text       string
-	Segments   []Segment
-	DurationMS int64
+// Config configures the transcriber.
+type Config struct {
+	Model       string
+	Language    string
+	TrimSilence bool
 }
 
-// Transcriber transcribes an audio file.
-type Transcriber interface {
-	Transcribe(ctx context.Context, audioPath string) (Result, error)
+// Deps groups the operations the pipeline depends on. Tests replace these with
+// fakes; production wires the real ffmpeg/whisper implementations.
+type Deps struct {
+	Decrypt     func(ctx context.Context, att store.Attachment) (string, error)
+	GetDerived  func(ctx context.Context, entryID, cacheKey string) (string, bool, error)
+	SaveDerived func(ctx context.Context, entryID, cacheKey, contentType, srcPath string) error
+	Derive16k   func(ctx context.Context, src string) (string, error)
+	Metrics     func(ctx context.Context, src string) (audio.Metrics, error)
+	Silences    func(ctx context.Context, path string) ([]audio.Interval, error)
+	Slice       func(ctx context.Context, src, dst string, startMS, durMS int64) error
+	Transcribe  func(ctx context.Context, wavPath string) ([]Segment, error)
 }
 
-// WhisperCLI runs the whisper-cli binary as a subprocess.
-type WhisperCLI struct {
-	cfg Config
+// Pipeline runs the transcription pipeline for an entry.
+type Pipeline struct {
+	store         *store.Store
+	deps          Deps
+	checkpointDir string
+	model         string
 }
 
-// NewWhisperCLI builds a WhisperCLI.
-func NewWhisperCLI(cfg Config) *WhisperCLI { return &WhisperCLI{cfg: cfg} }
-
-// Transcribe is implemented in a later phase.
-func (w *WhisperCLI) Transcribe(context.Context, string) (Result, error) {
-	return Result{}, errNotImplemented
+// NewPipeline builds a Pipeline. checkpointDir stores per-chunk checkpoints so a
+// restarted worker resumes without reprocessing.
+func NewPipeline(st *store.Store, deps Deps, checkpointDir, model string) *Pipeline {
+	return &Pipeline{store: st, deps: deps, checkpointDir: checkpointDir, model: model}
 }
 
-var errNotImplemented = &notImplementedError{}
+type chunkResult struct {
+	Chunk    Chunk     `json:"chunk"`
+	Segments []Segment `json:"segments"`
+}
 
-type notImplementedError struct{}
+// Run transcribes an entry. heartbeat is called after each checkpointed chunk.
+func (p *Pipeline) Run(ctx context.Context, entryID string, heartbeat func() error) error {
+	entry, err := p.store.GetEntry(ctx, entryID)
+	if err != nil {
+		return fmt.Errorf("transcribe: get entry: %w", err)
+	}
+	att, err := p.store.GetAttachmentByKind(ctx, entryID, store.AttachmentOriginal)
+	if err != nil {
+		return fmt.Errorf("transcribe: original attachment: %w", err)
+	}
+	if err := p.store.UpdateEntryStatus(ctx, entryID, store.EntryTranscribing); err != nil {
+		return err
+	}
 
-func (*notImplementedError) Error() string { return "transcribe: not implemented yet" }
+	src, err := p.deps.Decrypt(ctx, att)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(src)
+
+	metrics, err := p.deps.Metrics(ctx, src)
+	if err != nil {
+		return fmt.Errorf("transcribe: metrics: %w", err)
+	}
+	if err := p.store.UpsertMetrics(ctx, store.AudioMetrics{
+		EntryID:        entryID,
+		DurationMS:     metrics.DurationMS,
+		LoudnessLUFS:   metrics.LoudnessLUFS,
+		TruePeak:       metrics.TruePeak,
+		SilenceCount:   metrics.SilenceCount,
+		SilenceTotalMS: metrics.SilenceTotalMS,
+		SampleRate:     metrics.SampleRate,
+		Channels:       metrics.Channels,
+	}); err != nil {
+		return err
+	}
+
+	derived, err := p.derived(ctx, entryID, src)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(derived)
+
+	silences, err := p.deps.Silences(ctx, derived)
+	if err != nil {
+		silences = nil
+	}
+	chunks := PlanChunks(metrics.DurationMS, silences)
+
+	trim := p.trimSilence(ctx)
+
+	ckptPath := filepath.Join(p.checkpointDir, entryID+".json")
+	results := loadCheckpoint(ckptPath)
+
+	for _, ch := range chunks {
+		if _, done := results[ch.Index]; done {
+			continue
+		}
+		if trim && ch.Silence {
+			results[ch.Index] = chunkResult{Chunk: ch}
+		} else {
+			segs, err := p.transcribeChunk(ctx, derived, ch)
+			if err != nil {
+				return err
+			}
+			results[ch.Index] = chunkResult{Chunk: ch, Segments: segs}
+		}
+		saveCheckpoint(ckptPath, results)
+		if heartbeat != nil {
+			if err := heartbeat(); err != nil {
+				return err
+			}
+		}
+	}
+
+	transcript, segments := assemble(entryID, chunks, results, metrics.DurationMS, trim, p.modelName())
+	if err := p.store.SaveTranscript(ctx, transcript, segments); err != nil {
+		return err
+	}
+	if err := p.store.UpdateEntryStatus(ctx, entryID, store.EntryTranscribed); err != nil {
+		return err
+	}
+	os.Remove(ckptPath)
+	_ = entry
+	return nil
+}
+
+func (p *Pipeline) transcribeChunk(ctx context.Context, derived string, ch Chunk) ([]Segment, error) {
+	tmp, err := os.CreateTemp("", "dyarium-slice-*.wav")
+	if err != nil {
+		return nil, fmt.Errorf("transcribe: temp slice: %w", err)
+	}
+	slicePath := tmp.Name()
+	tmp.Close()
+	defer os.Remove(slicePath)
+
+	if err := p.deps.Slice(ctx, derived, slicePath, ch.StartMS, ch.EndMS-ch.StartMS); err != nil {
+		return nil, err
+	}
+	segs, err := p.deps.Transcribe(ctx, slicePath)
+	if err != nil {
+		return nil, err
+	}
+	for i := range segs {
+		segs[i].StartMS += ch.StartMS
+		segs[i].EndMS += ch.StartMS
+	}
+	return segs, nil
+}
+
+func (p *Pipeline) derived(ctx context.Context, entryID, src string) (string, error) {
+	if path, ok, err := p.deps.GetDerived(ctx, entryID, cacheKeyVersion); err != nil {
+		return "", err
+	} else if ok {
+		return path, nil
+	}
+	path, err := p.deps.Derive16k(ctx, src)
+	if err != nil {
+		return "", fmt.Errorf("transcribe: derive: %w", err)
+	}
+	// Caching is best effort; a failure to cache must not fail the job.
+	_ = p.deps.SaveDerived(ctx, entryID, cacheKeyVersion, "audio/wav", path)
+	return path, nil
+}
+
+func (p *Pipeline) trimSilence(ctx context.Context) bool {
+	v, ok, err := p.store.GetSetting(ctx, "trim_silence")
+	if err != nil || !ok {
+		return false
+	}
+	return v == "true"
+}
+
+func (p *Pipeline) modelName() string {
+	return p.model
+}
