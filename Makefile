@@ -22,10 +22,10 @@ help: ## Lista os alvos disponiveis
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
 
 dev: ## Sobe os containers de desenvolvimento com recarga automatica
-	$(COMPOSE) -f $(DEV_FILE) up --build
+	DIARY_API_PORT=$(API_PORT) DIARY_WEB_PORT=$(WEB_PORT) $(COMPOSE) -f $(DEV_FILE) up --build
 
 down: ## Derruba os containers de desenvolvimento
-	$(COMPOSE) -f $(DEV_FILE) down
+	DIARY_API_PORT=$(API_PORT) DIARY_WEB_PORT=$(WEB_PORT) $(COMPOSE) -f $(DEV_FILE) down
 
 build: ## Gera a imagem de producao (tag local diary:dev)
 	docker build -f deploy/Dockerfile -t $(IMAGE) \

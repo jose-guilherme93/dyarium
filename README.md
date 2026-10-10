@@ -26,6 +26,12 @@ make dev
 - API (Go, com recarga automatica via air): http://localhost:8080
 - Verificacao rapida: `curl localhost:8080/healthz`
 
+Se as portas 8080 ou 5173 estiverem ocupadas, sobreponha-as:
+
+```
+make dev API_PORT=18080 WEB_PORT=15173
+```
+
 O Vite faz proxy de `/api` e `/healthz` para a API, entao basta abrir a porta
 5173 no navegador.
 

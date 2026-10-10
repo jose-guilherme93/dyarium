@@ -12,7 +12,7 @@ services:
       DIARY_DATA_DIR: /data
       DIARY_LOG_LEVEL: "${DIARY_LOG_LEVEL:-debug}"
     ports:
-      - "8080:8080"
+      - "${DIARY_API_PORT:-8080}:8080"
     volumes:
       - ..:/src
       - diary-data:/data
@@ -24,7 +24,7 @@ services:
     environment:
       VITE_API_URL: "http://api:8080"
     ports:
-      - "5173:5173"
+      - "${DIARY_WEB_PORT:-5173}:5173"
     volumes:
       - ../web:/web
       - web-node-modules:/web/node_modules
