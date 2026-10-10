@@ -1,0 +1,14 @@
+.git
+.gitignore
+.github
+docs
+data
+models
+web/node_modules
+web/dist
+tmp
+bin
+*.db
+*.db-wal
+*.db-shm
+.env
