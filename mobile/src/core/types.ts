@@ -55,5 +55,10 @@ export interface ServerConfig {
 export const ACTIVE_STATUSES: RecordingStatus[] = ['recording', 'interrupted'];
 
 export function isUploadable(r: Recording): boolean {
-  return r.status === 'queued' || r.status === 'uploading' || r.status === 'failed';
+  return (
+    r.status === 'queued' ||
+    r.status === 'uploading' ||
+    r.status === 'failed' ||
+    r.status === 'recorded'
+  );
 }

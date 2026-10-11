@@ -42,8 +42,12 @@ export async function runUploadQueueOnce(): Promise<void> {
       const next = pickNextToUpload(recordings, new Date());
       if (!next) break;
       if (!next.filePath || !next.sizeBytes) {
-        // Sem arquivo nao ha o que enviar; deixa como esta para o usuario agir.
-        break;
+        // Sem arquivo local nao ha o que enviar: marca falha e segue para o
+        // proximo (nao trava a fila inteira).
+        const failed = markFailed(next, 'gravacao sem arquivo local', new Date());
+        await upsertRecording(failed);
+        emit(failed);
+        continue;
       }
       await uploadOne(api, next);
     }

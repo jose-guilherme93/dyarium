@@ -84,6 +84,14 @@ export function RecordingCard({ recording, onRetry, onDelete }: RecordingCardPro
               <Text style={styles.ringText}>{Math.round(uploadProgress * 100)}</Text>
             </View>
           </View>
+        ) : recording.status === 'failed' ? (
+          <Pressable style={styles.trailing} onPress={onRetry} accessibilityLabel="Reenviar">
+            <Ionicons name="refresh" size={20} color={colors.warning} />
+          </Pressable>
+        ) : recording.status === 'queued' || recording.status === 'recorded' ? (
+          <Pressable style={styles.trailing} onPress={onRetry} accessibilityLabel="Enviar agora">
+            <Ionicons name="cloud-upload-outline" size={20} color={colors.accent} />
+          </Pressable>
         ) : (
           <Pressable
             style={styles.trailing}

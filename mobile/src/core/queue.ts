@@ -78,7 +78,7 @@ export function markFailed(r: Recording, error: string, now = new Date()): Recor
 /** Uma gravacao esta pronta para (re)tentar agora? */
 export function isDue(r: Recording, now = new Date()): boolean {
   if (r.status === 'uploading') return true; // retomar
-  if (r.status !== 'queued' && r.status !== 'failed') return false;
+  if (r.status !== 'queued' && r.status !== 'failed' && r.status !== 'recorded') return false;
   if (!r.nextAttemptAt) return true;
   return new Date(r.nextAttemptAt).getTime() <= now.getTime();
 }
