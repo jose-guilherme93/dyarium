@@ -46,7 +46,15 @@ type Meta struct {
 	Filename    string
 	ContentType string
 	SizeBytes   int64
-	SHA256      string
+	// SHA256 is optional. When empty, the server computes and stores the hash
+	// of the received content at Complete without comparing it to anything.
+	SHA256 string
+	// Title and RecordedAt are optional client-provided metadata applied to the
+	// entry created at Complete.
+	Title      string
+	RecordedAt *time.Time
+	// ClientKey makes Start idempotent: repeating it returns the same upload.
+	ClientKey string
 }
 
 // Error carries an HTTP status so handlers can map failures precisely.
@@ -64,12 +72,24 @@ func newError(status int, code, msg string) *Error {
 
 // Start reserves a new upload and writes the ciphertext stream header.
 func (s *Service) Start(ctx context.Context, meta Meta) (store.Upload, error) {
-	sha := strings.ToLower(strings.TrimSpace(meta.SHA256))
-	if len(sha) != 64 {
-		return store.Upload{}, newError(400, "invalid_sha256", "sha256 deve ter 64 caracteres hexadecimais")
+	clientKey := strings.TrimSpace(meta.ClientKey)
+	if clientKey != "" {
+		existing, ok, err := s.store.GetUploadByClientKey(ctx, clientKey)
+		if err != nil {
+			return store.Upload{}, err
+		}
+		if ok {
+			return existing, nil
+		}
 	}
-	if _, err := hex.DecodeString(sha); err != nil {
-		return store.Upload{}, newError(400, "invalid_sha256", "sha256 invalido")
+	sha := strings.ToLower(strings.TrimSpace(meta.SHA256))
+	if sha != "" {
+		if len(sha) != 64 {
+			return store.Upload{}, newError(400, "invalid_sha256", "sha256 deve ter 64 caracteres hexadecimais")
+		}
+		if _, err := hex.DecodeString(sha); err != nil {
+			return store.Upload{}, newError(400, "invalid_sha256", "sha256 invalido")
+		}
 	}
 	if meta.SizeBytes <= 0 {
 		return store.Upload{}, newError(400, "invalid_size", "tamanho deve ser maior que zero")
@@ -112,6 +132,9 @@ func (s *Service) Start(ctx context.Context, meta Meta) (store.Upload, error) {
 		ContentType: meta.ContentType,
 		SizeBytes:   meta.SizeBytes,
 		SHA256:      sha,
+		Title:       strings.TrimSpace(meta.Title),
+		RecordedAt:  meta.RecordedAt,
+		ClientKey:   clientKey,
 		StorageKey:  storageKey,
 		Prefix:      prefix[:],
 		NextCounter: 0,
@@ -209,7 +232,8 @@ func (s *Service) Complete(ctx context.Context, uploadID string) (store.Entry, e
 	if n != u.SizeBytes {
 		return store.Entry{}, newError(422, "size_mismatch", "tamanho do conteudo diverge do esperado")
 	}
-	if got := hex.EncodeToString(hasher.Sum(nil)); got != u.SHA256 {
+	sum := hex.EncodeToString(hasher.Sum(nil))
+	if u.SHA256 != "" && sum != u.SHA256 {
 		return store.Entry{}, newError(422, "integrity", "sha256 do conteudo diverge do informado")
 	}
 
@@ -227,13 +251,15 @@ func (s *Service) Complete(ctx context.Context, uploadID string) (store.Entry, e
 	now := time.Now().UTC()
 	entry := store.Entry{
 		ID:               id.New(),
+		Title:            u.Title,
 		Status:           store.EntryStored,
 		Source:           "upload",
 		OriginalFilename: u.Filename,
 		ContentType:      u.ContentType,
 		SizeBytes:        u.SizeBytes,
 		DurationSeconds:  durationSeconds,
-		SHA256:           u.SHA256,
+		SHA256:           sum,
+		RecordedAt:       u.RecordedAt,
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/joseti/dyarium/internal/ingest"
 	"github.com/joseti/dyarium/internal/jobs"
@@ -17,6 +18,9 @@ type createUploadRequest struct {
 	ContentType string `json:"content_type"`
 	SizeBytes   int64  `json:"size_bytes"`
 	SHA256      string `json:"sha256"`
+	Title       string `json:"title"`
+	RecordedAt  string `json:"recorded_at"`
+	ClientKey   string `json:"client_key"`
 }
 
 func (s *Server) handleCreateUpload(w http.ResponseWriter, r *http.Request) {
@@ -25,11 +29,20 @@ func (s *Server) handleCreateUpload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_body", "corpo invalido")
 		return
 	}
+	var recordedAt *time.Time
+	if req.RecordedAt != "" {
+		if t, err := time.Parse(time.RFC3339, req.RecordedAt); err == nil {
+			recordedAt = &t
+		}
+	}
 	up, err := s.deps.Ingest.Start(r.Context(), ingest.Meta{
 		Filename:    req.Filename,
 		ContentType: req.ContentType,
 		SizeBytes:   req.SizeBytes,
 		SHA256:      req.SHA256,
+		Title:       req.Title,
+		RecordedAt:  recordedAt,
+		ClientKey:   req.ClientKey,
 	})
 	if err != nil {
 		s.writeIngestError(w, err)
@@ -37,7 +50,7 @@ func (s *Server) handleCreateUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":         up.ID,
-		"offset":     0,
+		"offset":     up.ReceivedBytes,
 		"expires_at": up.ExpiresAt,
 	})
 }

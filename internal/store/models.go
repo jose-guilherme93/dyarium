@@ -31,6 +31,9 @@ type Upload struct {
 	ContentType   string
 	SizeBytes     int64
 	SHA256        string
+	Title         string
+	RecordedAt    *time.Time
+	ClientKey     string
 	ReceivedBytes int64
 	StorageKey    string
 	Prefix        []byte

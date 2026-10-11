@@ -1,0 +1,4 @@
+# Configuracao do pnpm para este pacote.
+# unrs-resolver (usado pelo eslint) compila um binario nativo; permitimos o build.
+allowBuilds:
+  unrs-resolver: true
