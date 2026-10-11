@@ -63,7 +63,7 @@ CMD ["air", "-c", ".air.toml"]
 # ---- Runtime: lean base image (default target) ---------------------------
 FROM debian:bookworm-slim AS final
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates ffmpeg libgomp1 libstdc++6 \
+    ca-certificates curl ffmpeg libgomp1 libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=whisper /whisper/build/bin/whisper-cli /usr/local/bin/whisper-cli
 COPY --from=litestream /usr/local/bin/litestream /usr/local/bin/litestream
@@ -80,4 +80,6 @@ ENV DIARY_HTTP_ADDR=:8080 \
 
 VOLUME ["/data", "/models"]
 EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:8080/healthz || exit 1
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

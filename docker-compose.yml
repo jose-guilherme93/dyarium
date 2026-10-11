@@ -1,0 +1,33 @@
+# Deploy de producao do dyarium.
+#
+# Uso direto:
+#   docker compose up -d
+#
+# Nenhuma variavel de ambiente e obrigatoria: na primeira subida o servidor
+# gera e guarda a chave mestra e o token no volume de dados. Acesse a porta
+# publicada e conclua o primeiro acesso em /setup.
+#
+# Para o Dokploy, cole este arquivo como um servico Compose e aponte o dominio
+# para a porta 8080 do servico.
+services:
+  dyarium:
+    image: ghcr.io/jose-guilherme93/dyarium:${DIARY_VERSION:-latest}
+    container_name: dyarium
+    restart: unless-stopped
+    ports:
+      - "${DIARY_PORT:-8080}:8080"
+    volumes:
+      - dyarium-data:/data
+      - dyarium-models:/models
+    environment:
+      DIARY_LOG_LEVEL: ${DIARY_LOG_LEVEL:-info}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  dyarium-data:
+  dyarium-models:
