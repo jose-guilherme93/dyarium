@@ -155,6 +155,41 @@ func TestAnalysisIncludesRichFields(t *testing.T) {
 	}
 }
 
+func TestListAnalyzeModelsRequiresAuth(t *testing.T) {
+	srv := newTestServer(t)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/analyze/models", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("sem token: status = %d, want 401", rec.Code)
+	}
+}
+
+func TestListAnalyzeModels(t *testing.T) {
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" {
+			t.Errorf("path = %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]string{{"id": "qwen3.8-flash"}, {"id": "glm-5.3-flash"}},
+		})
+	}))
+	defer provider.Close()
+
+	srv := newTestServer(t)
+	if err := srv.deps.Store.SetSetting(context.Background(), "analyze_base_url", provider.URL); err != nil {
+		t.Fatalf("set base url: %v", err)
+	}
+
+	rec, body := doJSON(t, srv, http.MethodGet, "/api/v1/analyze/models", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	models, _ := body["models"].([]any)
+	if len(models) != 2 || models[0] != "qwen3.8-flash" {
+		t.Fatalf("models = %+v", body)
+	}
+}
+
 func TestSettingsExposeThemes(t *testing.T) {
 	srv := newTestServer(t)
 	rec, body := doJSON(t, srv, http.MethodGet, "/api/v1/settings", nil)

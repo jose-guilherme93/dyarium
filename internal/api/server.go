@@ -94,6 +94,7 @@ func (s *Server) Handler() http.Handler {
 
 	protected.HandleFunc("GET /api/v1/settings", s.handleGetSettings)
 	protected.HandleFunc("PUT /api/v1/settings", s.handlePutSettings)
+	protected.HandleFunc("GET /api/v1/analyze/models", s.handleListAnalyzeModels)
 
 	protected.HandleFunc("GET /api/v1/models", s.handleListModels)
 	protected.HandleFunc("POST /api/v1/models/download", s.handleDownloadModel)
