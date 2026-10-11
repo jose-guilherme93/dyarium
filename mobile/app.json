@@ -2,7 +2,7 @@
   "expo": {
     "name": "dyarium",
     "slug": "dyarium",
-    "version": "0.1.1",
+    "version": "0.2.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "dyarium",
@@ -51,8 +51,12 @@
         {
           "android": {
             "enabled": true,
-            "singleShareMimeTypes": ["audio/*"],
-            "multipleShareMimeTypes": ["audio/*"]
+            "singleShareMimeTypes": [
+              "audio/*"
+            ],
+            "multipleShareMimeTypes": [
+              "audio/*"
+            ]
           }
         }
       ],
