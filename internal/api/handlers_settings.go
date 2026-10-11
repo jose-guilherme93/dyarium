@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/joseti/dyarium/internal/jobs"
 	"github.com/joseti/dyarium/internal/store"
@@ -148,11 +150,21 @@ func (s *Server) handleGetAnalysis(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"model":     a.Model,
 		"sentiment": a.Sentiment,
-		"emotions":  a.Emotions,
-		"people":    a.People,
-		"places":    a.Places,
+		"emotions":  rawJSON(a.Emotions),
+		"people":    rawJSON(a.People),
+		"places":    rawJSON(a.Places),
 		"summary":   a.Summary,
 	})
+}
+
+// rawJSON embeds a stored JSON string as a real JSON value (object/array),
+// returning nil when the stored value is empty or invalid.
+func rawJSON(s string) any {
+	s = strings.TrimSpace(s)
+	if s == "" || !json.Valid([]byte(s)) {
+		return nil
+	}
+	return json.RawMessage(s)
 }
 
 func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {

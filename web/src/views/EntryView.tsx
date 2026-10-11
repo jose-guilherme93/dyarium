@@ -217,19 +217,23 @@ export function EntryView({ id, refreshKey, progress, partials, onBack }: EntryV
           <h2>Analise</h2>
           {analysis ? (
             <div>
-              <p>Sentimento: {analysis.sentiment.toFixed(2)}</p>
+              <p>Sentimento: {Number(analysis.sentiment ?? 0).toFixed(2)}</p>
               {analysis.summary && <p>{analysis.summary}</p>}
-              {analysis.emotions && (
+              {analysis.emotions && typeof analysis.emotions === "object" && !Array.isArray(analysis.emotions) && (
                 <ul className="chips">
                   {Object.entries(analysis.emotions).map(([name, value]) => (
                     <li key={name}>
-                      {name} ({value.toFixed(2)})
+                      {name} ({typeof value === "number" ? value.toFixed(2) : String(value)})
                     </li>
                   ))}
                 </ul>
               )}
-              {analysis.people && analysis.people.length > 0 && <p>Pessoas: {analysis.people.join(", ")}</p>}
-              {analysis.places && analysis.places.length > 0 && <p>Lugares: {analysis.places.join(", ")}</p>}
+              {Array.isArray(analysis.people) && analysis.people.length > 0 && (
+                <p>Pessoas: {analysis.people.join(", ")}</p>
+              )}
+              {Array.isArray(analysis.places) && analysis.places.length > 0 && (
+                <p>Lugares: {analysis.places.join(", ")}</p>
+              )}
             </div>
           ) : (
             <p className="muted">

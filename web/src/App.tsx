@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { clearToken, getToken, setToken } from "./api";
 import { useEvents } from "./useEvents";
 import { TokenGate } from "./components/TokenGate";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { EntriesView } from "./views/EntriesView";
 import { EntryView } from "./views/EntryView";
 import { MoodView } from "./views/MoodView";
@@ -143,23 +144,25 @@ export function App() {
         </header>
 
         <main className="main" aria-label="Conteudo">
-          {openEntry ? (
-            <EntryView
-              id={openEntry}
-              refreshKey={refreshKey}
-              progress={progress[openEntry]}
-              partials={partials[openEntry]}
-              onBack={() => setOpenEntry(null)}
-            />
-          ) : view === "entries" ? (
-            <EntriesView refreshKey={refreshKey} progress={progress} partials={partials} onOpen={setOpenEntry} />
-          ) : view === "mood" ? (
-            <MoodView refreshKey={refreshKey} onOpen={setOpenEntry} />
-          ) : view === "search" ? (
-            <SearchView refreshKey={refreshKey} onOpen={setOpenEntry} />
-          ) : (
-            <SettingsView />
-          )}
+          <ErrorBoundary>
+            {openEntry ? (
+              <EntryView
+                id={openEntry}
+                refreshKey={refreshKey}
+                progress={progress[openEntry]}
+                partials={partials[openEntry]}
+                onBack={() => setOpenEntry(null)}
+              />
+            ) : view === "entries" ? (
+              <EntriesView refreshKey={refreshKey} progress={progress} partials={partials} onOpen={setOpenEntry} />
+            ) : view === "mood" ? (
+              <MoodView refreshKey={refreshKey} onOpen={setOpenEntry} />
+            ) : view === "search" ? (
+              <SearchView refreshKey={refreshKey} onOpen={setOpenEntry} />
+            ) : (
+              <SettingsView />
+            )}
+          </ErrorBoundary>
         </main>
       </div>
 
