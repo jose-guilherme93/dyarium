@@ -9,6 +9,40 @@ interface DownloadProgress {
   error: string;
 }
 
+interface ProviderPreset {
+  label: string;
+  baseUrl: string;
+  model: string;
+}
+
+// PROVIDER_PRESETS fills the base URL and a suggested model when the user picks
+// a known analysis provider. "custom" keeps whatever is typed.
+const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
+  opencode: { label: "opencode go", baseUrl: "https://opencode.ai/zen/go/v1", model: "qwen3.8-flash" },
+  ollama: { label: "Ollama local", baseUrl: "http://ollama:11434/v1", model: "qwen2.5:0.5b" },
+  custom: { label: "Personalizado", baseUrl: "", model: "" },
+};
+
+// OPENCODE_MODELS are suggested model ids for the opencode go provider.
+const OPENCODE_MODELS = [
+  "qwen3.8-flash",
+  "glm-5.3-flash",
+  "deepseek-v4.1-flash",
+  "gpt-6-luna",
+  "claude-haiku-5-5",
+  "space-bunny",
+];
+
+function providerFromBaseUrl(baseUrl: string): string {
+  if (baseUrl.includes("opencode.ai")) {
+    return "opencode";
+  }
+  if (baseUrl.includes("ollama") || baseUrl.includes("11434")) {
+    return "ollama";
+  }
+  return "custom";
+}
+
 export function SettingsView() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [models, setModels] = useState<ModelInfo[]>([]);
@@ -17,6 +51,7 @@ export function SettingsView() {
   const [apiKey, setApiKey] = useState("");
   const [deepgramKey, setDeepgramKey] = useState("");
   const [themes, setThemes] = useState("");
+  const [provider, setProvider] = useState("custom");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
@@ -25,6 +60,7 @@ export function SettingsView() {
     setSettings(value);
     setCeiling(String(value.max_whisper_rss_mb));
     setThemes(value.analysis_themes ?? "");
+    setProvider(providerFromBaseUrl(value.analyze_base_url));
   }, []);
 
   const loadModels = useCallback(async () => {
@@ -242,7 +278,8 @@ export function SettingsView() {
           <div className="config-block">
             <h2>Analise por IA (API compativel com OpenAI)</h2>
             <p className="muted">
-              Funciona com Ollama local ou APIs pagas (OpenAI e compativeis). Informe a base, a chave e o modelo.
+              Escolha um provedor para preencher a base e o modelo, ou use Personalizado. Funciona com
+              Ollama local ou APIs pagas compativeis com OpenAI.
             </p>
             <dl className="settings">
               <dt>Ativar analise</dt>
@@ -256,9 +293,31 @@ export function SettingsView() {
                   {settings.analyze_enabled ? "Ligada" : "Desligada"}
                 </label>
               </dd>
+              <dt>Provedor</dt>
+              <dd>
+                <select
+                  aria-label="Provedor da analise"
+                  value={provider}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setProvider(value);
+                    const preset = PROVIDER_PRESETS[value];
+                    if (preset && value !== "custom") {
+                      void save({ analyze_base_url: preset.baseUrl, analyze_model: preset.model });
+                    }
+                  }}
+                >
+                  {Object.entries(PROVIDER_PRESETS).map(([id, preset]) => (
+                    <option key={id} value={id}>
+                      {preset.label}
+                    </option>
+                  ))}
+                </select>
+              </dd>
               <dt>Base URL</dt>
               <dd>
                 <input
+                  key={settings.analyze_base_url}
                   type="text"
                   aria-label="Base URL da analise"
                   defaultValue={settings.analyze_base_url}
@@ -268,11 +327,18 @@ export function SettingsView() {
               <dt>Modelo</dt>
               <dd>
                 <input
+                  key={settings.analyze_model}
                   type="text"
                   aria-label="Modelo da analise"
+                  list="analyze-models"
                   defaultValue={settings.analyze_model}
                   onBlur={(event) => void save({ analyze_model: event.target.value })}
                 />
+                <datalist id="analyze-models">
+                  {OPENCODE_MODELS.map((model) => (
+                    <option key={model} value={model} />
+                  ))}
+                </datalist>
               </dd>
               <dt>Temas</dt>
               <dd className="ceiling">
