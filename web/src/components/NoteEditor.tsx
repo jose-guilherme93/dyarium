@@ -14,9 +14,34 @@ interface NoteEditorProps {
   entryId: string;
   refreshKey: number;
   failureReason?: string;
+  progress?: { stage: string; done: number; total: number };
   onChanged: () => void;
   onDeleted: () => void;
   onOpenEntity: (kind: EntityKind, name: string) => void;
+}
+
+function processingText(
+  progress: { stage: string; done: number; total: number } | undefined,
+  status?: string,
+): string {
+  if (progress?.stage === "analyzing") {
+    return progress.total > 1
+      ? `Analisando com a IA... trecho ${Math.min(progress.done + 1, progress.total)} de ${progress.total}`
+      : "Analisando com a IA...";
+  }
+  if (progress?.stage === "summarizing") {
+    return "Gerando o resumo final...";
+  }
+  switch (status) {
+    case "queued":
+      return "Na fila...";
+    case "transcribing":
+      return "Transcrevendo o audio...";
+    case "analyzing":
+      return "Analisando com a IA...";
+    default:
+      return "Processando...";
+  }
 }
 
 function sentimentText(label?: string): string {
@@ -38,6 +63,7 @@ export function NoteEditor({
   entryId,
   refreshKey,
   failureReason,
+  progress,
   onChanged,
   onDeleted,
   onOpenEntity,
@@ -52,9 +78,12 @@ export function NoteEditor({
   const [busy, setBusy] = useState<"analyze" | "retranscribe" | null>(null);
   const [saving, setSaving] = useState<"idle" | "saving" | "saved">("idle");
   const [error, setError] = useState("");
+  const [currentTime, setCurrentTime] = useState(0);
+  const [playing, setPlaying] = useState(false);
   const noteIdRef = useRef<string | null>(null);
   const saveTimer = useRef<number | null>(null);
   const playerRef = useRef<AudioPlayerHandle | null>(null);
+  const transcriptRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const mountedRefresh = useRef(refreshKey);
 
   // Full load: everything the page needs, fetched in parallel.
@@ -119,6 +148,23 @@ export function NoteEditor({
       setBusy(null);
     }
   }, [status]);
+
+  // Keep the active transcription line visible while the audio plays.
+  useEffect(() => {
+    if (!playing || !transcript || transcript.segments.length === 0) {
+      return;
+    }
+    const ms = currentTime * 1000;
+    let index = -1;
+    for (let i = 0; i < transcript.segments.length; i++) {
+      if (transcript.segments[i].start_ms <= ms) {
+        index = i;
+      } else {
+        break;
+      }
+    }
+    transcriptRefs.current[index]?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [playing, currentTime, transcript]);
 
   const saveBody = useCallback(
     async (document: unknown) => {
@@ -225,6 +271,19 @@ export function NoteEditor({
 
   const hasAudio = entry.content_type !== "";
   const hasTranscript = !!transcript && (transcript.text.trim() !== "" || transcript.segments.length > 0);
+  const processing = running || busy !== null;
+
+  // Highlight the transcription line that matches the current audio position.
+  let activeSegment = -1;
+  if (currentTime > 0 && transcript && transcript.segments.length > 0) {
+    for (let i = 0; i < transcript.segments.length; i++) {
+      if (transcript.segments[i].start_ms <= currentTime * 1000) {
+        activeSegment = i;
+      } else {
+        break;
+      }
+    }
+  }
 
   return (
     <div className="editor-layout">
@@ -266,11 +325,6 @@ export function NoteEditor({
 
         {failureReason && <div className="banner banner--error">Falha: {failureReason}</div>}
         {error && <p className="error">{error}</p>}
-        {running && (
-          <p className="muted">
-            <Spinner /> Processando...
-          </p>
-        )}
 
         {/* The page is one continuous canvas: text, then the audio block. */}
         <div className="page-canvas">
@@ -280,15 +334,25 @@ export function NoteEditor({
 
           {hasAudio && (
             <div className="audio-block">
-              <AudioPlayer ref={playerRef} src={audioUrl(entry.id)} />
+              <AudioPlayer
+                ref={playerRef}
+                src={audioUrl(entry.id)}
+                onTime={setCurrentTime}
+                onPlaying={setPlaying}
+              />
               {hasTranscript && (
                 <blockquote className="transcript">
                   {transcript && transcript.segments.length > 0 ? (
                     transcript.segments.map((segment, index) => (
                       <p key={index}>
                         <button
+                          ref={(el) => {
+                            transcriptRefs.current[index] = el;
+                          }}
                           type="button"
-                          className="transcript-line"
+                          className={
+                            index === activeSegment ? "transcript-line transcript-line--active" : "transcript-line"
+                          }
                           onClick={() => playerRef.current?.seek(segment.start_ms / 1000)}
                           title="Ouvir a partir daqui"
                         >
@@ -324,7 +388,31 @@ export function NoteEditor({
           </button>
         </div>
 
-        {analysis ? (
+        {processing ? (
+          <div className="analysis-loading">
+            <div className="analysis-loading-head">
+              <Spinner />
+              <span>{processingText(progress, status)}</span>
+            </div>
+            {progress && progress.stage === "analyzing" && progress.total > 1 && (
+              <div
+                className="ram-track"
+                role="progressbar"
+                aria-valuenow={Math.round((progress.done / progress.total) * 100)}
+                aria-valuemin={0}
+                aria-valuemax={100}
+              >
+                <div
+                  className="ram-fill"
+                  style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }}
+                />
+              </div>
+            )}
+            <div className="skeleton skeleton-line" />
+            <div className="skeleton skeleton-line" style={{ width: "85%" }} />
+            <div className="skeleton skeleton-line" style={{ width: "65%" }} />
+          </div>
+        ) : analysis ? (
           <div className="insights">
             <p>
               Sentimento: <strong>{sentimentText(analysis.sentiment_label)}</strong>{" "}
@@ -441,11 +529,7 @@ export function NoteEditor({
             )}
           </div>
         ) : (
-          <p className="muted">
-            {busy === "analyze" || status === "analyzing"
-              ? "Analisando..."
-              : "Sem analise ainda. Clique em Analisar para extrair temas, pessoas, emocoes e mais."}
-          </p>
+          <p className="muted">Sem analise ainda. Clique em Analisar para extrair temas, pessoas, emocoes e mais.</p>
         )}
       </aside>
     </div>
