@@ -12,11 +12,13 @@ texto, guarda local, enfileira e envia para o servidor self-hosted.
   nuvem**. Cada card tem um menu de **tres pontinhos** (arquivar/apagar) e da para
   **arrastar para o lado** para apagar ou arquivar (configuravel nas Opcoes).
 - **Tela da nota** (`/note/[id]`): sempre editavel (titulo e texto), com
-  **autosave** (sem botao de salvar), **barra de formatacao** (negrito, italico,
-  lista), **contador de palavras** e **gravacao de audio** dentro da nota. Enter no
-  titulo desce para o corpo. Nota so de texto e enviada como conteudo textual; com
-  audio, o audio sobe e o texto vai junto. Ao sair, a nota e enviada (rascunho com
-  conteudo) ou sincronizada (nota ja enviada).
+  **autosave** (sem botao de salvar), **editor rico** (negrito, italico, lista
+  renderizados de verdade via WebView), **contador de palavras** e **gravacao de
+  audio** dentro da nota. Enter no titulo desce para o corpo. Nota so de texto e
+  enviada como conteudo textual; com audio, o audio sobe e o texto vai junto. Ao
+  sair, a nota e enviada (rascunho com conteudo) ou sincronizada (nota ja enviada).
+  O editor rico exige o `react-native-webview` (novo development build); ate o
+  rebuild, cai para um editor simples com marcadores.
 - Grava em **AAC ADTS** (48 kHz mono ~128 kbps), em **segmentos de 60 s**, com
   foreground service do `expo-audio` (continua gravando com a tela bloqueada).
 - Concatena os segmentos e enfileira automaticamente ao parar.

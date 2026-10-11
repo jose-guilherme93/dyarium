@@ -2,27 +2,23 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import {
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { STATUS_META } from '@/components/StatusChip';
+import { RichEditor, type RichEditorHandle } from '@/components/RichEditor';
 import { Screen } from '@/components/Screen';
+import { STATUS_META } from '@/components/StatusChip';
 import { Waveform } from '@/components/Waveform';
 import { formatDuration } from '@/core/format';
+import { countWords } from '@/core/richText';
 import { useLibrary } from '@/state/LibraryContext';
 import { useRecording } from '@/state/RecordingContext';
 import { colors, fontSize, radius, spacing } from '@/theme/tokens';
 
 /**
  * Tela da nota: sempre editavel (titulo e texto), com gravacao de audio embutida
- * e autosave. Nao ha botao de salvar; ao sair, a nota e enviada (rascunho com
- * conteudo) ou sincronizada (nota ja enviada).
+ * e autosave. O corpo usa um editor rico (negrito/italico/lista renderizados de
+ * verdade); se o modulo nativo ainda nao estiver no build, cai para um editor
+ * simples. Nao ha botao de salvar; ao sair, a nota e enviada ou sincronizada.
  */
 
 function AudioPlayer({ uri }: { uri: string }) {
@@ -68,6 +64,7 @@ export default function NoteScreen() {
   const [body, setBody] = useState(() => note?.text ?? '');
   const initializedRef = useRef(false);
   const dirtyRef = useRef(false);
+  const editorRef = useRef<RichEditorHandle>(null);
 
   const titleRef = useRef(title);
   const bodyRef = useRef(body);
@@ -77,32 +74,6 @@ export default function NoteScreen() {
   useEffect(() => {
     bodyRef.current = body;
   }, [body]);
-
-  const bodyInputRef = useRef<TextInput>(null);
-  const selectionRef = useRef<{ start: number; end: number }>({ start: 0, end: 0 });
-  const [forcedSelection, setForcedSelection] = useState<{ start: number; end: number } | null>(
-    null,
-  );
-
-  const applyFormat = (type: 'bold' | 'italic' | 'list') => {
-    const current = bodyRef.current;
-    const { start, end } = selectionRef.current;
-    if (type === 'list') {
-      const lineStart = current.lastIndexOf('\n', Math.max(0, start - 1)) + 1;
-      const next = `${current.slice(0, lineStart)}- ${current.slice(lineStart)}`;
-      dirtyRef.current = true;
-      setBody(next);
-      const pos = end + 2;
-      setForcedSelection({ start: pos, end: pos });
-      return;
-    }
-    const marker = type === 'bold' ? '**' : '_';
-    const selected = current.slice(start, end) || 'texto';
-    const next = `${current.slice(0, start)}${marker}${selected}${marker}${current.slice(end)}`;
-    dirtyRef.current = true;
-    setBody(next);
-    setForcedSelection({ start: start + marker.length, end: start + marker.length + selected.length });
-  };
 
   const statusRef = useRef(note?.status);
   useEffect(() => {
@@ -185,7 +156,7 @@ export default function NoteScreen() {
 
   const meta = STATUS_META[note.status];
   const hasAudio = Boolean(note.filePath);
-  const wordCount = body.trim() ? body.trim().split(/\s+/).length : 0;
+  const words = countWords(body);
 
   return (
     <Screen>
@@ -217,28 +188,28 @@ export default function NoteScreen() {
           selectionColor={colors.accent}
           returnKeyType="next"
           blurOnSubmit={false}
-          onSubmitEditing={() => bodyInputRef.current?.focus()}
+          onSubmitEditing={() => editorRef.current?.focus()}
           style={styles.titleInput}
         />
 
         <View style={styles.toolbar}>
           <Pressable
             style={styles.tool}
-            onPress={() => applyFormat('bold')}
+            onPress={() => editorRef.current?.format('bold')}
             accessibilityLabel="Negrito"
           >
             <Text style={styles.toolBold}>B</Text>
           </Pressable>
           <Pressable
             style={styles.tool}
-            onPress={() => applyFormat('italic')}
+            onPress={() => editorRef.current?.format('italic')}
             accessibilityLabel="Italico"
           >
             <Text style={styles.toolItalic}>I</Text>
           </Pressable>
           <Pressable
             style={styles.tool}
-            onPress={() => applyFormat('list')}
+            onPress={() => editorRef.current?.format('list')}
             accessibilityLabel="Lista"
           >
             <Ionicons name="list" size={18} color={colors.text} />
@@ -273,28 +244,18 @@ export default function NoteScreen() {
           </View>
         ) : null}
 
-        <TextInput
-          ref={bodyInputRef}
+        <RichEditor
+          ref={editorRef}
           value={body}
-          onChangeText={(value) => {
+          onChangeMarkdown={(markdown) => {
             dirtyRef.current = true;
-            setBody(value);
+            setBody(markdown);
           }}
-          onSelectionChange={(event) => {
-            selectionRef.current = event.nativeEvent.selection;
-            if (forcedSelection) setForcedSelection(null);
-          }}
-          selection={forcedSelection ?? undefined}
           placeholder={hasAudio ? 'Escreva sobre este audio...' : 'Comece a escrever...'}
-          placeholderTextColor={colors.textTertiary}
-          selectionColor={colors.accent}
-          multiline
-          textAlignVertical="top"
-          style={styles.bodyInput}
         />
 
         <Text style={styles.wordCount}>
-          {wordCount} {wordCount === 1 ? 'palavra' : 'palavras'}
+          {words} {words === 1 ? 'palavra' : 'palavras'}
         </Text>
 
         {hasAudio && note.transcript && note.transcript !== note.text ? (
@@ -368,7 +329,6 @@ const styles = StyleSheet.create({
   },
   toolBold: { color: colors.text, fontSize: fontSize.md, fontWeight: '800' },
   toolItalic: { color: colors.text, fontSize: fontSize.md, fontWeight: '600', fontStyle: 'italic' },
-  wordCount: { color: colors.textTertiary, fontSize: fontSize.xs, textAlign: 'right' },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
   dot: { width: 7, height: 7, borderRadius: 4 },
   meta: { color: colors.textSecondary, fontSize: fontSize.sm },
@@ -397,13 +357,7 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
   },
   recHint: { color: colors.textSecondary, fontSize: fontSize.sm },
-  bodyInput: {
-    color: colors.text,
-    fontSize: fontSize.lg,
-    lineHeight: 24,
-    minHeight: 160,
-    paddingVertical: spacing.sm,
-  },
+  wordCount: { color: colors.textTertiary, fontSize: fontSize.xs, textAlign: 'right' },
   section: { gap: spacing.sm },
   sectionLabel: {
     color: colors.textTertiary,
