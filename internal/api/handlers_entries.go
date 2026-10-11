@@ -1,14 +1,30 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/joseti/dyarium/internal/id"
 	"github.com/joseti/dyarium/internal/jobs"
 	"github.com/joseti/dyarium/internal/store"
 )
+
+// entryTagNames returns the tag names attached to an entry.
+func (s *Server) entryTagNames(ctx context.Context, entryID string) ([]string, error) {
+	tags, err := s.deps.Store.ListEntryTags(ctx, entryID)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		names = append(names, tag.Name)
+	}
+	return names, nil
+}
 
 func entryJSON(e store.Entry) map[string]any {
 	return map[string]any{
@@ -28,16 +44,48 @@ func entryJSON(e store.Entry) map[string]any {
 }
 
 func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
-	entries, err := s.deps.Store.ListEntries(r.Context(), 100)
+	query := r.URL.Query()
+	entries, err := s.deps.Store.ListEntriesFiltered(r.Context(), 100,
+		query.Get("person"), query.Get("place"), query.Get("theme"))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
 	out := make([]map[string]any, 0, len(entries))
 	for _, e := range entries {
-		out = append(out, entryJSON(e))
+		item := entryJSON(e)
+		if names, err := s.entryTagNames(r.Context(), e.ID); err == nil {
+			item["tags"] = names
+		}
+		out = append(out, item)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"entries": out})
+}
+
+// handleCreateEntry creates a written note (no audio). The body is stored as a
+// note document, like the written part of an audio note.
+func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Title string `json:"title"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_body", "corpo invalido")
+		return
+	}
+	now := time.Now().UTC()
+	entry := store.Entry{
+		ID:        id.New(),
+		Title:     strings.TrimSpace(req.Title),
+		Status:    store.EntryReady,
+		Source:    "text",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := s.deps.Store.CreateEntry(r.Context(), entry); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, entryJSON(entry))
 }
 
 func (s *Server) handleGetEntry(w http.ResponseWriter, r *http.Request) {
@@ -52,6 +100,9 @@ func (s *Server) handleGetEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body := entryJSON(entry)
+	if names, err := s.entryTagNames(ctx, entry.ID); err == nil {
+		body["tags"] = names
+	}
 	if m, ok, err := s.deps.Store.GetMetrics(ctx, entry.ID); err == nil && ok {
 		body["metrics"] = map[string]any{
 			"duration_ms":         m.DurationMS,

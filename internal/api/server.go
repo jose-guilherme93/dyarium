@@ -68,14 +68,25 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("POST /api/v1/uploads/{id}/complete", s.handleCompleteUpload)
 
 	protected.HandleFunc("GET /api/v1/entries", s.handleListEntries)
+	protected.HandleFunc("POST /api/v1/entries", s.handleCreateEntry)
 	protected.HandleFunc("GET /api/v1/entries/{id}", s.handleGetEntry)
 	protected.HandleFunc("PATCH /api/v1/entries/{id}", s.handlePatchEntry)
 	protected.HandleFunc("DELETE /api/v1/entries/{id}", s.handleDeleteEntry)
+	protected.HandleFunc("GET /api/v1/entries/{id}/audio", s.handleGetEntryAudio)
+	protected.HandleFunc("GET /api/v1/entries/{id}/attachments", s.handleListAttachments)
+	protected.HandleFunc("POST /api/v1/entries/{id}/attachments", s.handleCreateAttachment)
+	protected.HandleFunc("GET /api/v1/attachments/{id}", s.handleGetAttachment)
+	protected.HandleFunc("DELETE /api/v1/attachments/{id}", s.handleDeleteAttachment)
+
 	protected.HandleFunc("GET /api/v1/entries/{id}/transcript", s.handleGetTranscript)
 	protected.HandleFunc("POST /api/v1/entries/{id}/retranscribe", s.handleRetranscribe)
 	protected.HandleFunc("POST /api/v1/entries/{id}/cancel", s.handleCancelEntry)
 	protected.HandleFunc("GET /api/v1/entries/{id}/analysis", s.handleGetAnalysis)
 	protected.HandleFunc("POST /api/v1/entries/{id}/analyze", s.handleAnalyze)
+
+	protected.HandleFunc("GET /api/v1/entities", s.handleListEntities)
+	protected.HandleFunc("GET /api/v1/entities/{kind}/{name}", s.handleGetEntity)
+	protected.HandleFunc("GET /api/v1/mood", s.handleMood)
 
 	protected.HandleFunc("GET /api/v1/entries/{id}/notes", s.handleListNotes)
 	protected.HandleFunc("POST /api/v1/entries/{id}/notes", s.handleCreateNote)
@@ -84,12 +95,16 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("DELETE /api/v1/notes/{id}", s.handleDeleteNote)
 	protected.HandleFunc("GET /api/v1/notes/{id}/revisions", s.handleListRevisions)
 
+	protected.HandleFunc("GET /api/v1/entries/{id}/tags", s.handleListEntryTags)
+	protected.HandleFunc("PUT /api/v1/entries/{id}/tags", s.handleSetEntryTags)
+
 	protected.HandleFunc("GET /api/v1/tags", s.handleListTags)
 	protected.HandleFunc("POST /api/v1/tags", s.handleCreateTag)
 	protected.HandleFunc("DELETE /api/v1/tags/{id}", s.handleDeleteTag)
 
 	protected.HandleFunc("GET /api/v1/settings", s.handleGetSettings)
 	protected.HandleFunc("PUT /api/v1/settings", s.handlePutSettings)
+	protected.HandleFunc("GET /api/v1/analyze/models", s.handleListAnalyzeModels)
 
 	protected.HandleFunc("GET /api/v1/models", s.handleListModels)
 	protected.HandleFunc("POST /api/v1/models/download", s.handleDownloadModel)

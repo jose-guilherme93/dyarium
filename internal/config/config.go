@@ -25,6 +25,7 @@ type Config struct {
 	FFmpegBin          string
 	FFprobeBin         string
 	AnalyzeEnabled     bool
+	AnalyzeProvider    string
 	AnalyzeBaseURL     string
 	AnalyzeAPIKey      string
 	AnalyzeModel       string
@@ -64,12 +65,13 @@ func Load() (Config, error) {
 		FFmpegBin:          env("DIARY_FFMPEG_BIN", "ffmpeg"),
 		FFprobeBin:         env("DIARY_FFPROBE_BIN", "ffprobe"),
 		AnalyzeEnabled:     envBool("DIARY_ANALYZE_ENABLED", false),
+		AnalyzeProvider:    env("DIARY_ANALYZE_PROVIDER", "openai"),
 		AnalyzeBaseURL:     env("DIARY_ANALYZE_BASE_URL", "http://localhost:11434/v1"),
 		AnalyzeAPIKey:      env("DIARY_ANALYZE_API_KEY", ""),
 		AnalyzeModel:       env("DIARY_ANALYZE_MODEL", ""),
 		MaxUploadBytes:     envInt64("DIARY_MAX_UPLOAD_BYTES", 2<<30),
 		MaxDurationSeconds: envInt("DIARY_MAX_DURATION_SECONDS", 3000),
-		AllowedFormats:     splitList(env("DIARY_ALLOWED_FORMATS", "wav,mp3,m4a,ogg,flac,aac,adts")),
+		AllowedFormats:     splitList(env("DIARY_ALLOWED_FORMATS", "wav,mp3,m4a,ogg,flac,aac,adts,webm")),
 		MaxWhisperRSSMB:    envInt("DIARY_MAX_WHISPER_RSS_MB", 0),
 		TrimSilence:        envBool("DIARY_TRIM_SILENCE", false),
 		WorkerConcurrency:  envInt("DIARY_WORKER_CONCURRENCY", 1),
