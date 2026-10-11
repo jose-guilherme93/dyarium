@@ -16,6 +16,7 @@ export function SettingsView() {
   const [ceiling, setCeiling] = useState("0");
   const [apiKey, setApiKey] = useState("");
   const [deepgramKey, setDeepgramKey] = useState("");
+  const [themes, setThemes] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
@@ -23,6 +24,7 @@ export function SettingsView() {
     const value = await api.getSettings();
     setSettings(value);
     setCeiling(String(value.max_whisper_rss_mb));
+    setThemes(value.analysis_themes ?? "");
   }, []);
 
   const loadModels = useCallback(async () => {
@@ -272,6 +274,20 @@ export function SettingsView() {
                   onBlur={(event) => void save({ analyze_model: event.target.value })}
                 />
               </dd>
+              <dt>Temas</dt>
+              <dd className="ceiling">
+                <input
+                  type="text"
+                  aria-label="Temas da analise"
+                  value={themes}
+                  onChange={(event) => setThemes(event.target.value)}
+                />
+                <button type="button" onClick={() => void save({ analysis_themes: themes })}>
+                  Salvar
+                </button>
+              </dd>
+              <dt />
+              <dd className="muted">Temas preferidos na analise, separados por virgulas.</dd>
               <dt>Chave da API</dt>
               <dd className="ceiling">
                 <input

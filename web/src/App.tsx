@@ -4,26 +4,43 @@ import { useEvents } from "./useEvents";
 import { TokenGate } from "./components/TokenGate";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { EntriesView } from "./views/EntriesView";
+import { EntitiesView } from "./views/EntitiesView";
 import { EntryView } from "./views/EntryView";
 import { MoodView } from "./views/MoodView";
 import { SearchView } from "./views/SearchView";
 import { SettingsView } from "./views/SettingsView";
-import type { EntryProgress, Segment, ServerEvent } from "./types";
+import type { EntityKind, EntryProgress, Segment, ServerEvent } from "./types";
 import "./App.css";
 
-type ViewId = "entries" | "mood" | "search" | "settings";
+type ViewId = "entries" | "people" | "places" | "themes" | "mood" | "search" | "settings";
 
 const navigation: { id: ViewId; label: string }[] = [
   { id: "entries", label: "Entradas" },
+  { id: "people", label: "Pessoas" },
+  { id: "places", label: "Lugares" },
+  { id: "themes", label: "Temas" },
   { id: "mood", label: "Humor" },
   { id: "search", label: "Busca" },
   { id: "settings", label: "Configuracao" },
 ];
 
+const viewKind: Record<string, EntityKind> = {
+  people: "person",
+  places: "place",
+  themes: "theme",
+};
+
+const kindView: Record<EntityKind, ViewId> = {
+  person: "people",
+  place: "places",
+  theme: "themes",
+};
+
 export function App() {
   const [token, setTokenState] = useState(getToken());
   const [view, setView] = useState<ViewId>("entries");
   const [openEntry, setOpenEntry] = useState<string | null>(null);
+  const [entitySelection, setEntitySelection] = useState<{ kind: EntityKind; name: string } | null>(null);
   const [panelOpen, setPanelOpen] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
   const [progress, setProgress] = useState<Record<string, EntryProgress>>({});
@@ -108,6 +125,7 @@ export function App() {
                   aria-current={view === item.id && !openEntry ? "page" : undefined}
                   onClick={() => {
                     setOpenEntry(null);
+                    setEntitySelection(null);
                     setView(item.id);
                   }}
                 >
@@ -152,11 +170,27 @@ export function App() {
                 progress={progress[openEntry]}
                 partials={partials[openEntry]}
                 onBack={() => setOpenEntry(null)}
+                onOpenEntity={(kind, name) => {
+                  setOpenEntry(null);
+                  setEntitySelection({ kind, name });
+                  setView(kindView[kind]);
+                }}
               />
             ) : view === "entries" ? (
               <EntriesView refreshKey={refreshKey} progress={progress} partials={partials} onOpen={setOpenEntry} />
+            ) : viewKind[view] ? (
+              <EntitiesView
+                kind={viewKind[view]}
+                title={navigation.find((item) => item.id === view)?.label ?? ""}
+                selected={entitySelection && entitySelection.kind === viewKind[view] ? entitySelection.name : null}
+                onSelect={(name) =>
+                  setEntitySelection(name ? { kind: viewKind[view], name } : null)
+                }
+                onOpen={setOpenEntry}
+                refreshKey={refreshKey}
+              />
             ) : view === "mood" ? (
-              <MoodView refreshKey={refreshKey} onOpen={setOpenEntry} />
+              <MoodView refreshKey={refreshKey} />
             ) : view === "search" ? (
               <SearchView refreshKey={refreshKey} onOpen={setOpenEntry} />
             ) : (
