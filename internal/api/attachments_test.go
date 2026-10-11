@@ -100,6 +100,29 @@ func TestAttachmentRequiresAuth(t *testing.T) {
 	}
 }
 
+func TestParseRange(t *testing.T) {
+	cases := []struct {
+		header     string
+		size       int64
+		start, end int64
+		partial    bool
+	}{
+		{"", 100, 0, 99, false},
+		{"bytes=0-9", 100, 0, 9, true},
+		{"bytes=10-", 100, 10, 99, true},
+		{"bytes=-10", 100, 90, 99, true},
+		{"bytes=50-200", 100, 50, 99, true},
+		{"bytes=200-300", 100, 0, 99, false},
+	}
+	for _, c := range cases {
+		start, end, partial := parseRange(c.header, c.size)
+		if start != c.start || end != c.end || partial != c.partial {
+			t.Errorf("parseRange(%q, %d) = %d,%d,%v; queria %d,%d,%v",
+				c.header, c.size, start, end, partial, c.start, c.end, c.partial)
+		}
+	}
+}
+
 func TestEntryAudioStream(t *testing.T) {
 	srv := newTestServer(t)
 	seedPlainEntry(t, srv, "e1")
