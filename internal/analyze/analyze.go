@@ -1,6 +1,6 @@
 // Package analyze enriches transcripts using an OpenAI-compatible API (for
-// example, a local Ollama server). It is optional: when disabled, transcription
-// and audio metrics keep working.
+// example, a local Ollama server or a hosted provider). It is optional: when
+// disabled, transcription and audio metrics keep working.
 package analyze
 
 import (
@@ -20,17 +20,9 @@ type Config struct {
 	BaseURL string
 	APIKey  string
 	Model   string
-}
-
-// Result is the enrichment of a transcript.
-type Result struct {
-	Model     string
-	Sentiment float64
-	Emotions  map[string]float64
-	People    []string
-	Places    []string
-	Summary   string
-	Raw       string
+	// Themes is the preferred theme list sent to the model. Empty means
+	// DefaultThemes.
+	Themes []string
 }
 
 // Client talks to an OpenAI-compatible endpoint.
@@ -50,10 +42,9 @@ func (c *Client) Enabled() bool { return c.cfg.Enabled }
 // ErrDisabled is returned when analysis is disabled.
 var ErrDisabled = errors.New("analyze: disabled")
 
-const systemPrompt = `Responda SOMENTE com um JSON valido, sem texto antes ou depois e sem markdown.
-Use exatamente este formato:
-{"sentiment": <numero entre -1 e 1>, "emotions": {"<emocao>": <0 a 1>}, "people": ["<nome>"], "places": ["<lugar>"], "summary": "<resumo com no maximo 15 palavras>"}
-Seja breve. Nao invente pessoas ou lugares se nao houver.`
+// errUnsupportedFormat signals that the provider rejected the structured
+// response format, so the caller can fall back to a plain JSON object.
+var errUnsupportedFormat = errors.New("analyze: formato estruturado nao suportado")
 
 type chatRequest struct {
 	Model          string        `json:"model"`
@@ -69,7 +60,14 @@ type chatMessage struct {
 }
 
 type respFormat struct {
-	Type string `json:"type"`
+	Type       string          `json:"type"`
+	JSONSchema *jsonSchemaSpec `json:"json_schema,omitempty"`
+}
+
+type jsonSchemaSpec struct {
+	Name   string          `json:"name"`
+	Strict bool            `json:"strict"`
+	Schema json.RawMessage `json:"schema"`
 }
 
 type chatResponse struct {
@@ -80,15 +78,33 @@ type chatResponse struct {
 	} `json:"choices"`
 }
 
-type analysisPayload struct {
-	Sentiment float64            `json:"sentiment"`
-	Emotions  map[string]float64 `json:"emotions"`
-	People    []string           `json:"people"`
-	Places    []string           `json:"places"`
-	Summary   string             `json:"summary"`
-}
+// analysisSchemaJSON is the JSON schema requested when the provider supports
+// structured outputs. It mirrors the Result type.
+const analysisSchemaJSON = `{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["sentiment", "emotions", "people", "places", "themes", "summary", "key_moments", "questions", "decisions"],
+  "properties": {
+    "sentiment": {"type": "object", "additionalProperties": false, "required": ["score", "label"],
+      "properties": {"score": {"type": "number"}, "label": {"type": "string"}}},
+    "emotions": {"type": "array", "items": {"type": "object", "additionalProperties": false,
+      "required": ["name", "intensity"], "properties": {"name": {"type": "string"}, "intensity": {"type": "number"}}}},
+    "people": {"type": "array", "items": {"type": "object", "additionalProperties": false,
+      "required": ["name", "count", "relation", "sentiment"],
+      "properties": {"name": {"type": "string"}, "count": {"type": "integer"}, "relation": {"type": "string"}, "sentiment": {"type": "number"}}}},
+    "places": {"type": "array", "items": {"type": "object", "additionalProperties": false,
+      "required": ["name", "count"], "properties": {"name": {"type": "string"}, "count": {"type": "integer"}}}},
+    "themes": {"type": "array", "items": {"type": "object", "additionalProperties": false,
+      "required": ["name", "confidence"], "properties": {"name": {"type": "string"}, "confidence": {"type": "number"}}}},
+    "summary": {"type": "string"},
+    "key_moments": {"type": "array", "items": {"type": "object", "additionalProperties": false,
+      "required": ["start_ms", "text"], "properties": {"start_ms": {"type": "integer"}, "text": {"type": "string"}}}},
+    "questions": {"type": "array", "items": {"type": "string"}},
+    "decisions": {"type": "array", "items": {"type": "string"}}
+  }
+}`
 
-// Analyze enriches the transcript text.
+// Analyze enriches a single window of transcript text.
 func (c *Client) Analyze(ctx context.Context, text string) (Result, error) {
 	if !c.cfg.Enabled {
 		return Result{}, ErrDisabled
@@ -96,24 +112,76 @@ func (c *Client) Analyze(ctx context.Context, text string) (Result, error) {
 	if strings.TrimSpace(text) == "" {
 		return Result{}, errors.New("analyze: texto vazio")
 	}
+	content, err := c.do(ctx, c.systemPrompt(), text, 1500)
+	if err != nil {
+		return Result{}, err
+	}
+	result, err := decodeJSONRepair[Result](content)
+	if err != nil {
+		return Result{}, fmt.Errorf("analyze: decode content: %w", err)
+	}
+	result.Model = c.cfg.Model
+	result.Raw = content
+	return result, nil
+}
+
+// Summarize combines the partial summaries into a single one (meta-summary).
+func (c *Client) Summarize(ctx context.Context, summaries []string) (string, error) {
+	joined := strings.TrimSpace(strings.Join(summaries, "\n"))
+	if joined == "" {
+		return "", nil
+	}
+	content, err := c.do(ctx, summarySystemPrompt, joined, 300)
+	if err != nil {
+		return "", err
+	}
+	payload, err := decodeJSONRepair[summaryPayload](content)
+	if err != nil {
+		return "", fmt.Errorf("analyze: decode summary: %w", err)
+	}
+	return payload.Summary, nil
+}
+
+// do performs a chat completion, trying a strict JSON schema first and falling
+// back to a plain JSON object when the provider rejects it.
+func (c *Client) do(ctx context.Context, system, user string, maxTokens int) (string, error) {
+	content, err := c.call(ctx, system, user, maxTokens, true)
+	if errors.Is(err, errUnsupportedFormat) {
+		return c.call(ctx, system, user, maxTokens, false)
+	}
+	return content, err
+}
+
+func (c *Client) call(ctx context.Context, system, user string, maxTokens int, useSchema bool) (string, error) {
 	body := chatRequest{
 		Model: c.cfg.Model,
 		Messages: []chatMessage{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: text},
+			{Role: "system", Content: system},
+			{Role: "user", Content: user},
 		},
-		Temperature:    0,
-		MaxTokens:      400,
-		ResponseFormat: &respFormat{Type: "json_object"},
+		Temperature: 0,
+		MaxTokens:   maxTokens,
+	}
+	if useSchema {
+		body.ResponseFormat = &respFormat{
+			Type: "json_schema",
+			JSONSchema: &jsonSchemaSpec{
+				Name:   "analysis",
+				Strict: true,
+				Schema: json.RawMessage(analysisSchemaJSON),
+			},
+		}
+	} else {
+		body.ResponseFormat = &respFormat{Type: "json_object"}
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {
-		return Result{}, err
+		return "", err
 	}
 	url := strings.TrimRight(c.cfg.BaseURL, "/") + "/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw))
 	if err != nil {
-		return Result{}, err
+		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if c.cfg.APIKey != "" {
@@ -121,46 +189,75 @@ func (c *Client) Analyze(ctx context.Context, text string) (Result, error) {
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return Result{}, fmt.Errorf("analyze: request: %w", err)
+		return "", fmt.Errorf("analyze: request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return Result{}, fmt.Errorf("analyze: status %d", resp.StatusCode)
+		if useSchema && (resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnprocessableEntity) {
+			return "", fmt.Errorf("%w: status %d", errUnsupportedFormat, resp.StatusCode)
+		}
+		return "", fmt.Errorf("analyze: status %d", resp.StatusCode)
 	}
 	var out chatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return Result{}, fmt.Errorf("analyze: decode response: %w", err)
+		return "", fmt.Errorf("analyze: decode response: %w", err)
 	}
 	if len(out.Choices) == 0 {
-		return Result{}, errors.New("analyze: resposta sem escolhas")
+		return "", errors.New("analyze: resposta sem escolhas")
 	}
 	content := out.Choices[0].Message.Content
-
-	payload, err := decodeAnalysis(content)
-	if err != nil {
-		return Result{}, fmt.Errorf("analyze: decode content: %w", err)
+	if strings.TrimSpace(content) == "" {
+		return "", errors.New("analyze: resposta sem conteudo")
 	}
-	return Result{
-		Model:     c.cfg.Model,
-		Sentiment: payload.Sentiment,
-		Emotions:  payload.Emotions,
-		People:    payload.People,
-		Places:    payload.Places,
-		Summary:   payload.Summary,
-		Raw:       content,
-	}, nil
+	return content, nil
 }
 
-// decodeAnalysis parses the model output, repairing truncated JSON by closing
+// systemPrompt builds the pt-BR analyst prompt with the preferred theme list.
+func (c *Client) systemPrompt() string {
+	themes := c.cfg.Themes
+	if len(themes) == 0 {
+		themes = DefaultThemes
+	}
+	return strings.Replace(systemPromptTemplate, "{themes}", strings.Join(themes, ", "), 1)
+}
+
+const systemPromptTemplate = `Voce analisa a transcricao de um diario pessoal falado em portugues.
+Responda SOMENTE com um objeto JSON valido, sem texto antes ou depois e sem markdown.
+Use exatamente este formato:
+{"sentiment": {"score": <-1 a 1>, "label": "positivo|neutro|negativo"},
+ "emotions": [{"name": "<emocao em pt-BR>", "intensity": <0 a 1>}],
+ "people": [{"name": "<nome>", "count": <numero de mencoes>, "relation": "<relacao com o autor ou vazio>", "sentiment": <-1 a 1>}],
+ "places": [{"name": "<lugar>", "count": <numero de mencoes>}],
+ "themes": [{"name": "<tema>", "confidence": <0 a 1>}],
+ "summary": "<resumo curto, ate 60 palavras>",
+ "key_moments": [{"start_ms": <tempo em milissegundos>, "text": "<trecho marcante>"}],
+ "questions": ["<pergunta que o autor fez>"],
+ "decisions": ["<decisao que o autor tomou>"]}
+Regras: seja fiel ao texto e nao invente pessoas, lugares ou fatos; preencha "relation" e "sentiment" de pessoas
+somente quando for inferivel; use os tempos [mm:ss] presentes no texto para calcular "start_ms"; prefira os temas:
+{themes}; liste no maximo 5 momentos-chave; perguntas e decisoes devem ser curtas, no maximo 5 cada.`
+
+const summarySystemPrompt = `Voce resume analises parciais de um diario falado.
+Recebe, em ordem, os resumos dos trechos e devolve SOMENTE um JSON no formato
+{"summary": "<resumo unico, ate 60 palavras, em pt-BR>"}.
+Combine os resumos sem inventar fatos.`
+
+type summaryPayload struct {
+	Summary string `json:"summary"`
+}
+
+// decodeJSONRepair parses the model output, repairing truncated JSON by closing
 // dangling strings/objects and dropping incomplete trailing members.
-func decodeAnalysis(content string) (analysisPayload, error) {
+func decodeJSONRepair[T any](content string) (T, error) {
 	candidate := extractObject(content)
 	for {
-		if payload, ok := tryParse(candidate); ok {
-			return payload, nil
+		var value T
+		if json.Unmarshal([]byte(candidate), &value) == nil {
+			return value, nil
 		}
-		if payload, ok := tryParse(closeJSON(candidate)); ok {
-			return payload, nil
+		var closed T
+		if json.Unmarshal([]byte(closeJSON(candidate)), &closed) == nil {
+			return closed, nil
 		}
 		cut := lastBoundary(candidate)
 		if cut <= 0 {
@@ -168,15 +265,8 @@ func decodeAnalysis(content string) (analysisPayload, error) {
 		}
 		candidate = strings.TrimRight(candidate[:cut], " \t\r\n")
 	}
-	return analysisPayload{}, errors.New("json invalido")
-}
-
-func tryParse(s string) (analysisPayload, bool) {
-	var payload analysisPayload
-	if err := json.Unmarshal([]byte(s), &payload); err != nil {
-		return analysisPayload{}, false
-	}
-	return payload, true
+	var zero T
+	return zero, errors.New("json invalido")
 }
 
 // extractObject returns the substring starting at the first '{', up to the
