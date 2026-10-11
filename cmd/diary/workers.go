@@ -75,15 +75,26 @@ func transcribeHandler(st *store.Store, cfg config.Config, pipeline *transcribe.
 		}
 		_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryTranscribing)
 		bus.Publish("entry.status", map[string]string{"entry_id": payload.EntryID, "status": store.EntryTranscribing})
-		progress := func(stage string, done, total int) {
-			bus.Publish("job.progress", map[string]any{
-				"entry_id": payload.EntryID,
-				"stage":    stage,
-				"done":     done,
-				"total":    total,
-			})
+		cb := transcribe.Callbacks{
+			Heartbeat: heartbeat,
+			Progress: func(stage string, done, total int) {
+				bus.Publish("job.progress", map[string]any{
+					"entry_id": payload.EntryID,
+					"stage":    stage,
+					"done":     done,
+					"total":    total,
+				})
+			},
+			Segment: func(seg transcribe.Segment) {
+				bus.Publish("transcript.partial", map[string]any{
+					"entry_id": payload.EntryID,
+					"start_ms": seg.StartMS,
+					"end_ms":   seg.EndMS,
+					"text":     seg.Text,
+				})
+			},
 		}
-		if err := pipeline.Run(ctx, payload.EntryID, heartbeat, progress); err != nil {
+		if err := pipeline.Run(ctx, payload.EntryID, cb); err != nil {
 			_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryFailed)
 			bus.Publish("entry.failed", map[string]string{"entry_id": payload.EntryID, "reason": err.Error()})
 			return err

@@ -2,12 +2,13 @@ import { useCallback, useEffect, useState } from "react";
 import { ApiError, api } from "../api";
 import { NotesEditor } from "../editor/NotesEditor";
 import { ProgressBar, Spinner, isBusy, stageText } from "../components/Status";
-import type { Analysis, Entry, EntryProgress, Note, Settings, Transcript } from "../types";
+import type { Analysis, Entry, EntryProgress, Note, Segment, Settings, Transcript } from "../types";
 
 interface EntryViewProps {
   id: string;
   refreshKey: number;
   progress?: EntryProgress;
+  partials?: Segment[];
   onBack: () => void;
 }
 
@@ -18,7 +19,7 @@ function formatTime(ms: number): string {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
-export function EntryView({ id, refreshKey, progress, onBack }: EntryViewProps) {
+export function EntryView({ id, refreshKey, progress, partials, onBack }: EntryViewProps) {
   const [entry, setEntry] = useState<Entry | null>(null);
   const [transcript, setTranscript] = useState<Transcript | null>(null);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
@@ -176,13 +177,23 @@ export function EntryView({ id, refreshKey, progress, onBack }: EntryViewProps) 
       <div className="panels">
         <div className="panel">
           <h2>Transcricao</h2>
-          {transcript && (
+          {running && <p className="muted"><Spinner /> transcrevendo ao vivo...</p>}
+          {!running && transcript && (
             <p className="muted">
               Modelo de IA: {transcript.model || "(desconhecido)"}
               {transcript.language ? ` · idioma: ${transcript.language}` : ""}
             </p>
           )}
-          {transcript ? (
+          {running && partials && partials.length > 0 ? (
+            <ol className="segments">
+              {partials.map((segment, index) => (
+                <li key={index}>
+                  <span className="timestamp">{formatTime(segment.start_ms)}</span>
+                  <span>{segment.text}</span>
+                </li>
+              ))}
+            </ol>
+          ) : transcript ? (
             transcript.segments.length > 0 ? (
               <ol className="segments">
                 {transcript.segments.map((segment, index) => (

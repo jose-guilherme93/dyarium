@@ -7,7 +7,7 @@ import { EntryView } from "./views/EntryView";
 import { MoodView } from "./views/MoodView";
 import { SearchView } from "./views/SearchView";
 import { SettingsView } from "./views/SettingsView";
-import type { EntryProgress, ServerEvent } from "./types";
+import type { EntryProgress, Segment, ServerEvent } from "./types";
 import "./App.css";
 
 type ViewId = "entries" | "mood" | "search" | "settings";
@@ -26,6 +26,7 @@ export function App() {
   const [panelOpen, setPanelOpen] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
   const [progress, setProgress] = useState<Record<string, EntryProgress>>({});
+  const [partials, setPartials] = useState<Record<string, Segment[]>>({});
 
   const handleEvent = useCallback((event: ServerEvent) => {
     setRefreshKey((key) => key + 1);
@@ -33,35 +34,47 @@ export function App() {
     if (!id) {
       return;
     }
-    setProgress((current) => {
-      const previous = current[id] ?? {};
-      switch (event.name) {
-        case "job.progress":
-          return {
-            ...current,
-            [id]: {
-              ...previous,
-              stage: String(event.data.stage ?? ""),
-              done: Number(event.data.done ?? 0),
-              total: Number(event.data.total ?? 0),
-              error: undefined,
-            },
-          };
-        case "entry.status":
-          return { ...current, [id]: { ...previous, status: String(event.data.status ?? ""), error: undefined } };
-        case "transcript.ready":
-          return { ...current, [id]: { ...previous, status: "transcribed" } };
-        case "analysis.ready":
-          return { ...current, [id]: { ...previous, status: "ready" } };
-        case "entry.failed":
-          return {
-            ...current,
-            [id]: { ...previous, status: "failed", error: String(event.data.reason ?? "falha") },
-          };
-        default:
-          return current;
+    switch (event.name) {
+      case "transcript.partial": {
+        const segment: Segment = {
+          start_ms: Number(event.data.start_ms ?? 0),
+          end_ms: Number(event.data.end_ms ?? 0),
+          text: String(event.data.text ?? ""),
+        };
+        setPartials((p) => ({ ...p, [id]: [...(p[id] ?? []), segment] }));
+        setProgress((p) => ({ ...p, [id]: { ...p[id], status: "transcribing" } }));
+        break;
       }
-    });
+      case "entry.status": {
+        const status = String(event.data.status ?? "");
+        if (status === "queued" || status === "transcribing") {
+          setPartials((p) => ({ ...p, [id]: [] }));
+        }
+        setProgress((p) => ({ ...p, [id]: { ...p[id], status, error: undefined } }));
+        break;
+      }
+      case "job.progress":
+        setProgress((p) => ({
+          ...p,
+          [id]: {
+            ...p[id],
+            stage: String(event.data.stage ?? ""),
+            done: Number(event.data.done ?? 0),
+            total: Number(event.data.total ?? 0),
+            error: undefined,
+          },
+        }));
+        break;
+      case "transcript.ready":
+        setProgress((p) => ({ ...p, [id]: { ...p[id], status: "transcribed" } }));
+        break;
+      case "analysis.ready":
+        setProgress((p) => ({ ...p, [id]: { ...p[id], status: "ready" } }));
+        break;
+      case "entry.failed":
+        setProgress((p) => ({ ...p, [id]: { ...p[id], status: "failed", error: String(event.data.reason ?? "falha") } }));
+        break;
+    }
   }, []);
   useEvents(handleEvent);
 
@@ -135,10 +148,11 @@ export function App() {
               id={openEntry}
               refreshKey={refreshKey}
               progress={progress[openEntry]}
+              partials={partials[openEntry]}
               onBack={() => setOpenEntry(null)}
             />
           ) : view === "entries" ? (
-            <EntriesView refreshKey={refreshKey} progress={progress} onOpen={setOpenEntry} />
+            <EntriesView refreshKey={refreshKey} progress={progress} partials={partials} onOpen={setOpenEntry} />
           ) : view === "mood" ? (
             <MoodView refreshKey={refreshKey} onOpen={setOpenEntry} />
           ) : view === "search" ? (

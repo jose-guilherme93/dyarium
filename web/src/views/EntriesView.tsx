@@ -1,16 +1,17 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ChangeEvent } from "react";
 import { api, uploadFile } from "../api";
-import type { Entry, EntryProgress } from "../types";
+import type { Entry, EntryProgress, Segment } from "../types";
 import { ProgressBar, Spinner, isBusy, stageText, statusLabel } from "../components/Status";
 
 interface EntriesViewProps {
   refreshKey: number;
   progress: Record<string, EntryProgress>;
+  partials: Record<string, Segment[]>;
   onOpen: (id: string) => void;
 }
 
-export function EntriesView({ refreshKey, progress, onOpen }: EntriesViewProps) {
+export function EntriesView({ refreshKey, progress, partials, onOpen }: EntriesViewProps) {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [error, setError] = useState("");
   const [upload, setUpload] = useState<{ sent: number; total: number; name: string } | null>(null);
@@ -105,6 +106,11 @@ export function EntriesView({ refreshKey, progress, onOpen }: EntriesViewProps) 
                       <Spinner />
                       <span className="muted">{stageText(p ?? { status })}</span>
                       {p && (p.total ?? 0) > 0 && <ProgressBar done={p.done ?? 0} total={p.total ?? 0} />}
+                    </span>
+                  )}
+                  {busy && (partials[entry.id]?.length ?? 0) > 0 && (
+                    <span className="entry-live muted">
+                      {partials[entry.id].slice(-1)[0].text}
                     </span>
                   )}
                   {p?.error && <span className="error">{p.error}</span>}

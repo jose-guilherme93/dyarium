@@ -1,13 +1,15 @@
 package transcribe
 
 import (
+	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -16,15 +18,14 @@ import (
 	"github.com/joseti/dyarium/internal/store"
 )
 
-// WhisperCLI runs the whisper-cli binary as a subprocess, requesting JSON output
-// so chunk segments can be mapped back to the original timeline.
+// WhisperCLI runs the whisper-cli binary as a subprocess. It parses the segment
+// lines printed while processing so the dashboard can show the transcription
+// growing in real time.
 type WhisperCLI struct {
 	Bin      string
 	Model    string
 	Language string
 	// MaxRSSMB caps the resident memory of the subprocess (0 means no limit).
-	// The limit is enforced by watching the process RSS and killing it when the
-	// ceiling is exceeded, so it matches the "RAM" concept shown in the UI.
 	MaxRSSMB int64
 }
 
@@ -33,47 +34,31 @@ func NewWhisperCLI(bin, model, language string) *WhisperCLI {
 	return &WhisperCLI{Bin: bin, Model: model, Language: language}
 }
 
-type whisperOutput struct {
-	Result struct {
-		Language string `json:"language"`
-	} `json:"result"`
-	Transcription []struct {
-		Offsets struct {
-			From int64 `json:"from"`
-			To   int64 `json:"to"`
-		} `json:"offsets"`
-		Text string `json:"text"`
-	} `json:"transcription"`
-}
+var segmentRe = regexp.MustCompile(`^\[(\d{2}):(\d{2}):(\d{2})\.(\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})\.(\d{3})\]\s*(.*)$`)
 
-// Transcribe returns the segments relative to wavPath, the peak RSS (MB) of the
-// subprocess and the detected/forced language.
-func (w *WhisperCLI) Transcribe(ctx context.Context, wavPath string) ([]Segment, int64, string, error) {
-	base, err := os.CreateTemp("", "whisper-out-*")
-	if err != nil {
-		return nil, 0, "", fmt.Errorf("transcribe: temp output: %w", err)
-	}
-	outBase := base.Name()
-	base.Close()
-	defer os.Remove(outBase)
-	jsonPath := outBase + ".json"
-	defer os.Remove(jsonPath)
-
-	args := []string{"-m", w.Model, "-f", wavPath, "-oj", "-np", "-of", outBase}
+// Transcribe returns the segments relative to wavPath, the peak RSS (MB) and the
+// language. onSegment, when set, is called for each segment as it is printed.
+func (w *WhisperCLI) Transcribe(ctx context.Context, wavPath string, onSegment func(Segment)) ([]Segment, int64, string, error) {
+	args := []string{"-m", w.Model, "-f", wavPath}
 	if w.Language != "" {
 		args = append(args, "-l", w.Language)
 	}
 	cmd := exec.CommandContext(ctx, w.Bin, args...)
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, 0, "", fmt.Errorf("transcribe: stderr pipe: %w", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, 0, "", fmt.Errorf("transcribe: stdout pipe: %w", err)
+	}
 	if err := cmd.Start(); err != nil {
 		return nil, 0, "", fmt.Errorf("transcribe: whisper-cli: %w", err)
 	}
 
 	var peak atomic.Int64
 	var exceeded atomic.Bool
-	done := make(chan struct{})
+	stopMonitor := make(chan struct{})
 	if w.MaxRSSMB > 0 && cmd.Process != nil {
 		pid := cmd.Process.Pid
 		go func() {
@@ -81,7 +66,7 @@ func (w *WhisperCLI) Transcribe(ctx context.Context, wavPath string) ([]Segment,
 			defer ticker.Stop()
 			for {
 				select {
-				case <-done:
+				case <-stopMonitor:
 					return
 				case <-ticker.C:
 					rss := readRSSMB(pid)
@@ -98,37 +83,66 @@ func (w *WhisperCLI) Transcribe(ctx context.Context, wavPath string) ([]Segment,
 		}()
 	}
 
+	var (
+		mu    sync.Mutex
+		segs  []Segment
+		wg    sync.WaitGroup
+		lines []string
+	)
+	parse := func(line string) {
+		m := segmentRe.FindStringSubmatch(strings.TrimRight(line, "\r"))
+		if m == nil {
+			return
+		}
+		text := strings.TrimSpace(m[9])
+		if text == "" {
+			return
+		}
+		seg := Segment{StartMS: clockMS(m[1], m[2], m[3], m[4]), EndMS: clockMS(m[5], m[6], m[7], m[8]), Text: text}
+		mu.Lock()
+		segs = append(segs, seg)
+		mu.Unlock()
+		if onSegment != nil {
+			onSegment(seg)
+		}
+	}
+	scan := func(r interface{ Read([]byte) (int, error) }) {
+		defer wg.Done()
+		scanner := bufio.NewScanner(r)
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		for scanner.Scan() {
+			line := scanner.Text()
+			lines = append(lines, line)
+			parse(line)
+		}
+	}
+	wg.Add(2)
+	go scan(stdout)
+	go scan(stderr)
+
 	waitErr := cmd.Wait()
-	close(done)
+	wg.Wait()
+	close(stopMonitor)
 	if state := cmd.ProcessState; state != nil {
 		if mb := peakRSSMB(state); mb > peak.Load() {
 			peak.Store(mb)
 		}
 	}
 	if exceeded.Load() {
-		return nil, peak.Load(), "", fmt.Errorf("transcribe: limite de RAM (%d MB) excedido", w.MaxRSSMB)
+		return nil, peak.Load(), w.Language, fmt.Errorf("transcribe: limite de RAM (%d MB) excedido", w.MaxRSSMB)
 	}
 	if waitErr != nil {
-		return nil, peak.Load(), "", fmt.Errorf("transcribe: whisper-cli: %w (%s)", waitErr, tail(stderr.String(), 400))
+		return nil, peak.Load(), w.Language, fmt.Errorf("transcribe: whisper-cli: %w (%s)", waitErr, tail(strings.Join(lines, "\n"), 400))
 	}
+	return segs, peak.Load(), w.Language, nil
+}
 
-	data, err := os.ReadFile(jsonPath)
-	if err != nil {
-		return nil, peak.Load(), "", fmt.Errorf("transcribe: read whisper output: %w", err)
-	}
-	var out whisperOutput
-	if err := json.Unmarshal(data, &out); err != nil {
-		return nil, peak.Load(), "", fmt.Errorf("transcribe: parse whisper output: %w", err)
-	}
-	segs := make([]Segment, 0, len(out.Transcription))
-	for _, seg := range out.Transcription {
-		text := strings.TrimSpace(seg.Text)
-		if text == "" {
-			continue
-		}
-		segs = append(segs, Segment{StartMS: seg.Offsets.From, EndMS: seg.Offsets.To, Text: text})
-	}
-	return segs, peak.Load(), out.Result.Language, nil
+func clockMS(h, m, s, ms string) int64 {
+	hi, _ := strconv.ParseInt(h, 10, 64)
+	mi, _ := strconv.ParseInt(m, 10, 64)
+	si, _ := strconv.ParseInt(s, 10, 64)
+	msi, _ := strconv.ParseInt(ms, 10, 64)
+	return ((hi*60+mi)*60+si)*1000 + msi
 }
 
 func readRSSMB(pid int) int64 {
@@ -207,7 +221,7 @@ func RealDeps(blobs BlobStore, prober *audio.Prober, whisper *WhisperCLI, runtim
 			return prober.Silences(ctx, path, -30, 0.5)
 		},
 		Slice: prober.ExtractSlice,
-		Transcribe: func(ctx context.Context, wavPath string) ([]Segment, int64, string, error) {
+		Transcribe: func(ctx context.Context, wavPath string, onSegment func(Segment)) ([]Segment, int64, string, error) {
 			cli := *whisper
 			if runtime != nil {
 				r := runtime(ctx)
@@ -217,7 +231,7 @@ func RealDeps(blobs BlobStore, prober *audio.Prober, whisper *WhisperCLI, runtim
 				cli.Language = r.Language
 				cli.MaxRSSMB = r.MaxRSSMB
 			}
-			return cli.Transcribe(ctx, wavPath)
+			return cli.Transcribe(ctx, wavPath, onSegment)
 		},
 	}
 }

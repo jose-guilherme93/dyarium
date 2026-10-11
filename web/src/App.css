@@ -485,3 +485,13 @@
   background: #b3261e;
   color: #ffffff;
 }
+
+.entry-live {
+  display: block;
+  margin-top: calc(var(--space));
+  font-style: italic;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}

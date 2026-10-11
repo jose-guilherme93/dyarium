@@ -51,7 +51,14 @@ type Deps struct {
 	Metrics     func(ctx context.Context, src string) (audio.Metrics, error)
 	Silences    func(ctx context.Context, path string) ([]audio.Interval, error)
 	Slice       func(ctx context.Context, src, dst string, startMS, durMS int64) error
-	Transcribe  func(ctx context.Context, wavPath string) ([]Segment, int64, string, error)
+	Transcribe  func(ctx context.Context, wavPath string, onSegment func(Segment)) ([]Segment, int64, string, error)
+}
+
+// Callbacks report pipeline progress to the caller (the worker).
+type Callbacks struct {
+	Heartbeat func() error
+	Progress  func(stage string, done, total int)
+	Segment   func(seg Segment)
 }
 
 // Pipeline runs the transcription pipeline for an entry.
@@ -73,12 +80,12 @@ type chunkResult struct {
 	Segments []Segment `json:"segments"`
 }
 
-// Run transcribes an entry. heartbeat is called after each checkpointed chunk;
-// progress reports the current stage and chunk counts for the dashboard.
-func (p *Pipeline) Run(ctx context.Context, entryID string, heartbeat func() error, progress func(stage string, done, total int)) error {
+// Run transcribes an entry. The callbacks report progress and stream segments
+// for the dashboard.
+func (p *Pipeline) Run(ctx context.Context, entryID string, cb Callbacks) error {
 	report := func(stage string, done, total int) {
-		if progress != nil {
-			progress(stage, done, total)
+		if cb.Progress != nil {
+			cb.Progress(stage, done, total)
 		}
 	}
 	report("preparando", 0, 0)
@@ -145,7 +152,7 @@ func (p *Pipeline) Run(ctx context.Context, entryID string, heartbeat func() err
 		if trim && ch.Silence {
 			results[ch.Index] = chunkResult{Chunk: ch}
 		} else {
-			segs, peak, lang, err := p.transcribeChunk(ctx, derived, ch)
+			segs, peak, lang, err := p.transcribeChunk(ctx, derived, ch, cb.Segment)
 			if err != nil {
 				return err
 			}
@@ -160,8 +167,8 @@ func (p *Pipeline) Run(ctx context.Context, entryID string, heartbeat func() err
 		saveCheckpoint(ckptPath, results)
 		completed++
 		report("transcrevendo", completed, len(chunks))
-		if heartbeat != nil {
-			if err := heartbeat(); err != nil {
+		if cb.Heartbeat != nil {
+			if err := cb.Heartbeat(); err != nil {
 				return err
 			}
 		}
@@ -185,7 +192,7 @@ func (p *Pipeline) Run(ctx context.Context, entryID string, heartbeat func() err
 	return nil
 }
 
-func (p *Pipeline) transcribeChunk(ctx context.Context, derived string, ch Chunk) ([]Segment, int64, string, error) {
+func (p *Pipeline) transcribeChunk(ctx context.Context, derived string, ch Chunk, onSegment func(Segment)) ([]Segment, int64, string, error) {
 	tmp, err := os.CreateTemp("", "dyarium-slice-*.wav")
 	if err != nil {
 		return nil, 0, "", fmt.Errorf("transcribe: temp slice: %w", err)
@@ -197,7 +204,15 @@ func (p *Pipeline) transcribeChunk(ctx context.Context, derived string, ch Chunk
 	if err := p.deps.Slice(ctx, derived, slicePath, ch.StartMS, ch.EndMS-ch.StartMS); err != nil {
 		return nil, 0, "", err
 	}
-	segs, peak, language, err := p.deps.Transcribe(ctx, slicePath)
+	forward := func(seg Segment) {
+		if onSegment == nil {
+			return
+		}
+		seg.StartMS += ch.StartMS
+		seg.EndMS += ch.StartMS
+		onSegment(seg)
+	}
+	segs, peak, language, err := p.deps.Transcribe(ctx, slicePath, forward)
 	if err != nil {
 		return nil, 0, "", err
 	}
