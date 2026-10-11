@@ -5,11 +5,10 @@ import { ImageIcon, TrashIcon } from "./icons";
 
 interface ImageGalleryProps {
   entryId: string;
-  refreshKey: number;
 }
 
 // ImageGallery shows and manages the images attached to a note.
-export function ImageGallery({ entryId, refreshKey }: ImageGalleryProps) {
+export function ImageGallery({ entryId }: ImageGalleryProps) {
   const [images, setImages] = useState<Attachment[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -28,7 +27,7 @@ export function ImageGallery({ entryId, refreshKey }: ImageGalleryProps) {
 
   useEffect(() => {
     void load();
-  }, [load, refreshKey]);
+  }, [load]);
 
   const handleFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) {
