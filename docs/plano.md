@@ -71,3 +71,52 @@ derivados, nunca sobre o arquivo enviado.
    tocar no original.
 7. Dependencia de binarios externos (`whisper-cli`, `ffmpeg`).
    Mitigacao: compilar/instalar com versoes fixadas no Dockerfile.
+
+## App mobile (captura e notas)
+
+Superficie Android em Expo (development build). O nucleo puro fica em `mobile/src/core`
+(testado com Jest); servicos nativos e telas ficam finos.
+
+### Implementado
+
+- Gravacao em AAC ADTS, segmentos de 60 s, foreground service (tela bloqueada) e
+  recuperacao de sessao interrompida.
+- Upload resumivel e idempotente (`client_key`); fila persistida em SQLite (WAL) com
+  migracoes versionadas (`PRAGMA user_version`, append-only) e trava no banco para nao
+  ter dois workers (primeiro plano e background task).
+- Importacao de audios compartilhados por outros apps (share sheet): ate 50 por vez, com
+  revisao (titulo, ano do lote, ordem dia/mes, 24h/AM-PM, duracao e playback). O audio
+  original e preservado; dedupe por SHA-256 no servidor.
+- App de notas (texto e audio): tela da nota sempre editavel, autosave, editor rico
+  (negrito/italico/lista via WebView), contador de palavras e gravar audio embutido.
+  Nota so de texto entra na fila e e enviada como conteudo (endpoint do servidor pendente).
+- Biblioteca por ano, busca local, pull-to-refresh, swipe para apagar/arquivar e opcoes.
+- Status de sincronizacao no cabecalho e tela de fila; notificacao quando a transcricao
+  fica pronta; compartilhar o texto da nota.
+- Painel com as metricas do servidor (resumo, humor, tags, status).
+- Armazenamento local: uso no aparelho e liberar espaco (remove o audio local de notas ja
+  sincronizadas; o audio continua no servidor).
+
+### Proximos passos
+
+1. **Backup local em .zip (proximo)**: exportar banco + audios num arquivo .zip e restaurar
+   (rollback). Sem dependencia nativa; testavel logo. Requer uma lib de zip em JS (ex.:
+   `jszip`).
+2. **Integridade**: gerar o SHA-256 do arquivo local (`expo-crypto`) e enviar no
+   `createUpload` para o servidor validar.
+3. **Backup no Google Drive via OAuth (pendente)**: `expo-auth-session` + Drive
+   (`appDataFolder`). Depende de um OAuth client no Google Cloud (tipo Android, package
+   `com.dyarium.app` + SHA-1 do keystore). Cada usuario autentica a propria conta; o backup
+   vai para o Drive do usuario, nao do dono do projeto.
+4. **Cifra em repouso no aparelho (pendente)**: AES-256-GCM com chave no SecureStore;
+   requer lib nativa de cripto.
+5. **Endpoint de nota de texto no servidor** (`POST /api/v1/entries`), para o texto tambem
+   entrar no backup do servidor.
+
+### Notas de confiabilidade
+
+- SQLite em WAL, migracoes versionadas; audio imutavel; importados copiados antes de
+  enfileirar.
+- Armazenamento local em `recordings/<id>/` (diretorio de documentos, nao apagado pelo SO).
+- `android.allowBackup=false` (sem backup automatico do SO); o backup sera explicito
+  (zip local primeiro; Drive depois).
