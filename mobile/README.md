@@ -9,6 +9,12 @@ a tela bloqueada, guarda local, enfileira e envia para o servidor self-hosted.
   foreground service do `expo-audio` (continua gravando com a tela bloqueada).
 - Concatena os segmentos e enfileira automaticamente ao parar.
 - Envia por upload resumivel e **idempotente** (`client_key` por gravacao).
+- **Importa audios compartilhados** por outros apps (share sheet do Android): ate 5 por
+  vez, com tela de revisao (titulo, data em DD/MM/AAAA em 24h ou AM/PM, formato, duracao e
+  playback) antes de enviar. O audio original e preservado; reimportar o mesmo conteudo nao
+  duplica a entrada (dedupe por SHA-256 no servidor).
+- A biblioteca organiza as notas **por ano** (mais novo no topo), pela data do evento, para
+  que notas antigas importadas apareçam no ano a que pertencem.
 - Biblioteca local com estado, reproducao, retry e apagar.
 - Tela de recuperacao para gravacao interrompida (Enviar / Descartar / Continuar).
 

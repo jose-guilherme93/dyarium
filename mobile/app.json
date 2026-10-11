@@ -46,6 +46,16 @@
       "expo-router",
       "expo-secure-store",
       "expo-sqlite",
+      [
+        "expo-sharing",
+        {
+          "android": {
+            "enabled": true,
+            "singleShareMimeTypes": ["audio/*"],
+            "multipleShareMimeTypes": ["audio/*"]
+          }
+        }
+      ],
       "expo-background-task",
       [
         "expo-build-properties",

@@ -46,11 +46,22 @@ export interface Recording {
   transcript?: string;
   transcriptLanguage?: string;
   transcriptStatus?: TranscriptStatus;
+  /** Origem do audio (default: gravado no microfone). */
+  source?: RecordingSource;
+  /** Content-Type usado no upload (default audio/aac para gravacoes). */
+  contentType?: string;
+  /** Nome enviado ao servidor; a extensao define o formato aceito. */
+  fileName?: string;
+  /** Marcado quando o servidor encontrou um audio identico (dedupe). */
+  duplicate?: boolean;
   createdAt: string;
   updatedAt: string;
 }
 
 export type TranscriptStatus = 'pending' | 'ready' | 'failed';
+
+/** De onde veio o audio: gravado no app ou importado de outro app. */
+export type RecordingSource = 'microphone' | 'share';
 
 /** Configuracao do servidor (o token nunca e persistido fora do SecureStore). */
 export interface ServerConfig {

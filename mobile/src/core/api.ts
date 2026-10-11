@@ -65,6 +65,8 @@ export interface GetUploadResponse {
 export interface CompleteUploadResponse {
   entry_id: string;
   status: string;
+  /** true quando o servidor encontrou um audio identico (dedupe). */
+  duplicate?: boolean;
 }
 
 export interface TranscriptSegment {

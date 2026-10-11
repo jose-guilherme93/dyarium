@@ -5,7 +5,7 @@
 
 import * as SQLite from 'expo-sqlite';
 
-import type { Recording, RecordingStatus, TranscriptStatus } from '@/core/types';
+import type { Recording, RecordingSource, RecordingStatus, TranscriptStatus } from '@/core/types';
 
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
@@ -28,6 +28,10 @@ interface Row {
   transcript: string | null;
   transcript_language: string | null;
   transcript_status: string | null;
+  source: string | null;
+  content_type: string | null;
+  file_name: string | null;
+  duplicate: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -56,13 +60,25 @@ function getDb(): Promise<SQLite.SQLiteDatabase> {
           transcript TEXT,
           transcript_language TEXT,
           transcript_status TEXT,
+          source TEXT,
+          content_type TEXT,
+          file_name TEXT,
+          duplicate INTEGER,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_recordings_status ON recordings(status);
       `);
       // Migracao leve para bancos criados antes destas colunas.
-      for (const column of ['transcript', 'transcript_language', 'transcript_status']) {
+      for (const column of [
+        'transcript',
+        'transcript_language',
+        'transcript_status',
+        'source',
+        'content_type',
+        'file_name',
+        'duplicate',
+      ]) {
         await db
           .execAsync(`ALTER TABLE recordings ADD COLUMN ${column} TEXT`)
           .catch(() => undefined);
@@ -93,6 +109,10 @@ function rowToRecording(row: Row): Recording {
     transcript: row.transcript ?? undefined,
     transcriptLanguage: row.transcript_language ?? undefined,
     transcriptStatus: (row.transcript_status as TranscriptStatus | null) ?? undefined,
+    source: (row.source as RecordingSource | null) ?? undefined,
+    contentType: row.content_type ?? undefined,
+    fileName: row.file_name ?? undefined,
+    duplicate: row.duplicate ? true : undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -105,8 +125,9 @@ export async function upsertRecording(r: Recording): Promise<void> {
       id, title, recorded_at, dir, file_path, segment_count, duration_ms, size_bytes,
       status, upload_id, offset, attempts, next_attempt_at, last_error, entry_id,
       transcript, transcript_language, transcript_status,
+      source, content_type, file_name, duplicate,
       created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
       recorded_at = excluded.recorded_at,
@@ -125,6 +146,10 @@ export async function upsertRecording(r: Recording): Promise<void> {
       transcript = excluded.transcript,
       transcript_language = excluded.transcript_language,
       transcript_status = excluded.transcript_status,
+      source = excluded.source,
+      content_type = excluded.content_type,
+      file_name = excluded.file_name,
+      duplicate = excluded.duplicate,
       updated_at = excluded.updated_at`,
     [
       r.id,
@@ -145,6 +170,10 @@ export async function upsertRecording(r: Recording): Promise<void> {
       r.transcript ?? null,
       r.transcriptLanguage ?? null,
       r.transcriptStatus ?? null,
+      r.source ?? null,
+      r.contentType ?? null,
+      r.fileName ?? null,
+      r.duplicate ? 1 : null,
       r.createdAt,
       r.updatedAt,
     ],

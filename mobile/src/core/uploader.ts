@@ -45,6 +45,8 @@ export interface UploadResult {
   uploadId: string;
   entryId: string;
   sizeBytes: number;
+  /** true quando o servidor encontraram um audio identico (dedupe). */
+  duplicate?: boolean;
 }
 
 export const DEFAULT_CHUNK_SIZE = 4 * 1024 * 1024;
@@ -99,5 +101,5 @@ export async function uploadRecording(
   }
 
   const done = await deps.api.completeUpload(uploadId);
-  return { uploadId, entryId: done.entry_id, sizeBytes: total };
+  return { uploadId, entryId: done.entry_id, sizeBytes: total, duplicate: done.duplicate };
 }
