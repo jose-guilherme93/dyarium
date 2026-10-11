@@ -104,6 +104,7 @@ export const api = {
   listModels: () => request<{ models: ModelInfo[] }>("/models"),
   downloadModel: (name: string) =>
     request<{ status: string }>("/models/download", { method: "POST", body: JSON.stringify({ name }) }),
+  listAnalyzeModels: () => request<{ models: string[] }>("/analyze/models"),
   listEntities: (kind?: string) =>
     request<{ entities: EntitySummary[] }>(`/entities${kind ? `?kind=${encodeURIComponent(kind)}` : ""}`),
   getEntity: (kind: string, name: string) =>
