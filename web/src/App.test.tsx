@@ -28,4 +28,21 @@ describe("App", () => {
     expect(screen.getByRole("navigation")).toBeInTheDocument();
     vi.unstubAllGlobals();
   });
+
+  it("mostra o wizard de primeiro acesso quando o servidor pede setup", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/setup/state")) {
+          return { ok: true, status: 200, text: async () => JSON.stringify({ required: true }) };
+        }
+        return { ok: true, status: 200, text: async () => JSON.stringify({}) };
+      }),
+    );
+    render(<App />);
+    expect(await screen.findByText(/Primeiro acesso/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Confirme o token")).toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
 });

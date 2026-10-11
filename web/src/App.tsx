@@ -1,7 +1,8 @@
-import { useCallback, useState } from "react";
-import { clearToken, getToken, setToken } from "./api";
+import { useCallback, useEffect, useState } from "react";
+import { clearToken, getSetupState, getToken, setToken } from "./api";
 import { useEvents } from "./useEvents";
 import { TokenGate } from "./components/TokenGate";
+import { SetupGate } from "./components/SetupGate";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { EntriesView } from "./views/EntriesView";
 import { EntryView } from "./views/EntryView";
@@ -22,6 +23,7 @@ const navigation: { id: ViewId; label: string }[] = [
 
 export function App() {
   const [token, setTokenState] = useState(getToken());
+  const [setupRequired, setSetupRequired] = useState(false);
   const [view, setView] = useState<ViewId>("entries");
   const [openEntry, setOpenEntry] = useState<string | null>(null);
   const [panelOpen, setPanelOpen] = useState(true);
@@ -78,6 +80,33 @@ export function App() {
     }
   }, []);
   useEvents(handleEvent);
+
+  useEffect(() => {
+    let active = true;
+    getSetupState().then((state) => {
+      if (active && state.required) {
+        setSetupRequired(true);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  if (setupRequired) {
+    return (
+      <SetupGate
+        onDone={(value) => {
+          setToken(value);
+          setTokenState(value);
+          setSetupRequired(false);
+          if (window.location.pathname.startsWith("/setup")) {
+            window.history.replaceState({}, "", "/");
+          }
+        }}
+      />
+    );
+  }
 
   if (!token) {
     return (
