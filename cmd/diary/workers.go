@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -131,13 +132,13 @@ func analyzeHandler(st *store.Store, cfg config.Config, bus *events.Bus, logger 
 		_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryAnalyzing)
 		bus.Publish("entry.status", map[string]string{"entry_id": payload.EntryID, "status": store.EntryAnalyzing})
 		client := analyze.New(analysisCfg)
-		transcript, segments, err := st.GetTranscript(ctx, payload.EntryID)
+		input, err := analysisInput(ctx, st, payload.EntryID)
 		if err != nil {
 			_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryFailed)
-			bus.Publish("entry.failed", map[string]string{"entry_id": payload.EntryID, "reason": "transcricao indisponivel"})
-			return fmt.Errorf("worker: transcript: %w", err)
+			bus.Publish("entry.failed", map[string]string{"entry_id": payload.EntryID, "reason": err.Error()})
+			return err
 		}
-		result, err := analyze.NewPipeline(client).Run(ctx, analyzeSegments(transcript.Text, segments))
+		result, err := analyze.NewPipeline(client).Run(ctx, input)
 		if err != nil {
 			_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryFailed)
 			bus.Publish("entry.failed", map[string]string{"entry_id": payload.EntryID, "reason": err.Error()})
@@ -170,6 +171,62 @@ func analyzeSegments(text string, segments []store.Segment) []analyze.Segment {
 		out = append(out, analyze.Segment{Text: text})
 	}
 	return out
+}
+
+// analysisInput prefers the audio transcript and falls back to the written note
+// body, so a text note can be analyzed too.
+func analysisInput(ctx context.Context, st *store.Store, entryID string) ([]analyze.Segment, error) {
+	transcript, segments, err := st.GetTranscript(ctx, entryID)
+	if err == nil {
+		return analyzeSegments(transcript.Text, segments), nil
+	}
+	text, noteErr := noteBodyText(ctx, st, entryID)
+	if noteErr != nil {
+		return nil, fmt.Errorf("worker: transcript: %w", err)
+	}
+	if strings.TrimSpace(text) == "" {
+		return nil, errors.New("transcricao indisponivel")
+	}
+	return []analyze.Segment{{Text: text}}, nil
+}
+
+// noteBodyText extracts the plain text of the entry's first note document.
+func noteBodyText(ctx context.Context, st *store.Store, entryID string) (string, error) {
+	notes, err := st.ListNotes(ctx, entryID)
+	if err != nil {
+		return "", err
+	}
+	if len(notes) == 0 {
+		return "", nil
+	}
+	return extractText(notes[0].Document), nil
+}
+
+// extractText walks a BlockNote document and concatenates every inline "text".
+func extractText(raw string) string {
+	var doc any
+	if json.Unmarshal([]byte(raw), &doc) != nil {
+		return ""
+	}
+	var parts []string
+	var walk func(value any)
+	walk = func(value any) {
+		switch node := value.(type) {
+		case map[string]any:
+			if s, ok := node["text"].(string); ok && strings.TrimSpace(s) != "" {
+				parts = append(parts, s)
+			}
+			for _, child := range node {
+				walk(child)
+			}
+		case []any:
+			for _, item := range node {
+				walk(item)
+			}
+		}
+	}
+	walk(doc)
+	return strings.Join(parts, " ")
 }
 
 // buildAnalysis converts a rich result into the stored analysis row plus the

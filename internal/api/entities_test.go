@@ -45,6 +45,25 @@ func seedRichEntry(t *testing.T, srv *Server, id string, when time.Time, sentime
 	}
 }
 
+func TestCreateTextEntry(t *testing.T) {
+	srv := newTestServer(t)
+	rec, body := doJSON(t, srv, http.MethodPost, "/api/v1/entries", strings.NewReader(`{"title":"Ideia escrita"}`))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d body %s", rec.Code, rec.Body.String())
+	}
+	if body["title"] != "Ideia escrita" || body["source"] != "text" {
+		t.Fatalf("entrada = %+v", body)
+	}
+	rec, body = doJSON(t, srv, http.MethodGet, "/api/v1/entries", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list status = %d", rec.Code)
+	}
+	entries, _ := body["entries"].([]any)
+	if len(entries) != 1 {
+		t.Fatalf("entries = %+v", entries)
+	}
+}
+
 func TestEntitiesRequireAuth(t *testing.T) {
 	srv := newTestServer(t)
 	for _, path := range []string{"/api/v1/entities", "/api/v1/mood", "/api/v1/entities/person/Maria"} {

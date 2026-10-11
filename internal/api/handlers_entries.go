@@ -4,8 +4,10 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/joseti/dyarium/internal/id"
 	"github.com/joseti/dyarium/internal/jobs"
 	"github.com/joseti/dyarium/internal/store"
 )
@@ -40,6 +42,32 @@ func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 		out = append(out, entryJSON(e))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"entries": out})
+}
+
+// handleCreateEntry creates a written note (no audio). The body is stored as a
+// note document, like the written part of an audio note.
+func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Title string `json:"title"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_body", "corpo invalido")
+		return
+	}
+	now := time.Now().UTC()
+	entry := store.Entry{
+		ID:        id.New(),
+		Title:     strings.TrimSpace(req.Title),
+		Status:    store.EntryReady,
+		Source:    "text",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := s.deps.Store.CreateEntry(r.Context(), entry); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, entryJSON(entry))
 }
 
 func (s *Server) handleGetEntry(w http.ResponseWriter, r *http.Request) {
