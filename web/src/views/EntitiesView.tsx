@@ -113,9 +113,11 @@ export function EntitiesView({ kind, title, selected, onSelect, onOpen, refreshK
 
   return (
     <section className="view">
-      <div className="view-header">
-        <h1>{title}</h1>
-      </div>
+      {title && (
+        <div className="view-header">
+          <h1>{title}</h1>
+        </div>
+      )}
       {error && <p className="error">{error}</p>}
       {loading && entities.length === 0 ? (
         <p className="muted">

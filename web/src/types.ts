@@ -128,6 +128,15 @@ export interface Tag {
   entry_count: number;
 }
 
+export interface Attachment {
+  id: string;
+  entry_id: string;
+  kind: string;
+  content_type: string;
+  size_bytes: number;
+  created_at: string;
+}
+
 export interface Settings {
   trim_silence: boolean;
   max_whisper_rss_mb: number;
