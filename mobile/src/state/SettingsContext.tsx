@@ -2,7 +2,14 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 
 import { DyariumApi, type FetchLike } from '@/core/api';
 import type { ServerConfig } from '@/core/types';
-import { clearServerConfig, loadServerConfig, saveServerConfig } from '@/services/secure';
+import {
+  clearServerConfig,
+  loadPrefs,
+  loadServerConfig,
+  savePrefs,
+  saveServerConfig,
+  type SwipeAction,
+} from '@/services/secure';
 
 const doFetch = globalThis.fetch as unknown as FetchLike;
 
@@ -15,6 +22,9 @@ export interface ConnectionResult {
 interface SettingsValue {
   config: ServerConfig | null;
   ready: boolean;
+  /** O que o gesto de arrastar na lista faz. */
+  swipeAction: SwipeAction;
+  setSwipeAction(action: SwipeAction): Promise<void>;
   /** Testa alcance (healthz) e token (version) sem salvar. */
   test(baseUrl: string, token: string): Promise<ConnectionResult>;
   /** Testa e, se ok, persiste no SecureStore. */
@@ -33,6 +43,7 @@ function normalizeUrl(baseUrl: string): string {
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const [config, setConfig] = useState<ServerConfig | null>(null);
   const [ready, setReady] = useState(false);
+  const [swipeAction, setSwipeActionState] = useState<SwipeAction>('delete');
 
   useEffect(() => {
     let alive = true;
@@ -45,9 +56,19 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       .finally(() => {
         if (alive) setReady(true);
       });
+    loadPrefs()
+      .then((prefs) => {
+        if (alive) setSwipeActionState(prefs.swipeAction);
+      })
+      .catch(() => undefined);
     return () => {
       alive = false;
     };
+  }, []);
+
+  const setSwipeAction = useCallback(async (action: SwipeAction) => {
+    setSwipeActionState(action);
+    await savePrefs({ swipeAction: action });
   }, []);
 
   const test = useCallback(async (baseUrl: string, token: string): Promise<ConnectionResult> => {
@@ -88,8 +109,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<SettingsValue>(
-    () => ({ config, ready, test, save, disconnect }),
-    [config, ready, test, save, disconnect],
+    () => ({ config, ready, swipeAction, setSwipeAction, test, save, disconnect }),
+    [config, ready, swipeAction, setSwipeAction, test, save, disconnect],
   );
 
   return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>;
