@@ -189,13 +189,17 @@ type BlobStore interface {
 
 // Runtime holds per-run settings read from the database.
 type Runtime struct {
-	Model    string
-	Language string
-	MaxRSSMB int64
+	Provider        string
+	Model           string
+	Language        string
+	MaxRSSMB        int64
+	DeepgramKey     string
+	DeepgramModel   string
+	DeepgramBaseURL string
 }
 
-// RealDeps wires the production dependencies (ffmpeg and whisper-cli). runtime
-// returns the current model, language and RAM ceiling, read per run from settings.
+// RealDeps wires the production dependencies (ffmpeg and whisper-cli or
+// Deepgram). runtime returns the current settings, read per run.
 func RealDeps(blobs BlobStore, prober *audio.Prober, whisper *WhisperCLI, runtime func(ctx context.Context) Runtime) Deps {
 	return Deps{
 		Decrypt:    blobs.DecryptToTemp,
@@ -222,15 +226,21 @@ func RealDeps(blobs BlobStore, prober *audio.Prober, whisper *WhisperCLI, runtim
 		},
 		Slice: prober.ExtractSlice,
 		Transcribe: func(ctx context.Context, wavPath string, onSegment func(Segment)) ([]Segment, int64, string, error) {
-			cli := *whisper
+			r := Runtime{}
 			if runtime != nil {
-				r := runtime(ctx)
-				if r.Model != "" {
-					cli.Model = r.Model
-				}
-				cli.Language = r.Language
-				cli.MaxRSSMB = r.MaxRSSMB
+				r = runtime(ctx)
 			}
+			if r.Provider == "deepgram" {
+				dg := NewDeepgram(r.DeepgramKey, r.DeepgramModel, r.DeepgramBaseURL)
+				segs, lang, err := dg.Transcribe(ctx, wavPath, r.Language, onSegment)
+				return segs, 0, lang, err
+			}
+			cli := *whisper
+			if r.Model != "" {
+				cli.Model = r.Model
+			}
+			cli.Language = r.Language
+			cli.MaxRSSMB = r.MaxRSSMB
 			return cli.Transcribe(ctx, wavPath, onSegment)
 		},
 	}

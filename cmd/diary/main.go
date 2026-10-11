@@ -115,19 +115,26 @@ func serve() error {
 	checkpointDir := filepath.Join(cfg.DataDir, "checkpoints")
 	whisper := transcribe.NewWhisperCLI(cfg.WhisperBin, cfg.WhisperModel, "")
 	runtime := func(ctx context.Context) transcribe.Runtime {
-		var model string
-		if v, ok, err := st.GetSetting(ctx, "whisper_model"); err == nil && ok {
-			model = v
+		get := func(key string) string {
+			if v, ok, err := st.GetSetting(ctx, key); err == nil && ok {
+				return v
+			}
+			return ""
 		}
-		var language string
-		if v, ok, err := st.GetSetting(ctx, "whisper_language"); err == nil && ok {
-			language = v
+		mb, _ := strconv.ParseInt(get("max_whisper_rss_mb"), 10, 64)
+		provider := get("transcribe_provider")
+		if provider == "" {
+			provider = "whisper"
 		}
-		var mb int64
-		if v, ok, err := st.GetSetting(ctx, "max_whisper_rss_mb"); err == nil && ok {
-			mb, _ = strconv.ParseInt(v, 10, 64)
+		return transcribe.Runtime{
+			Provider:        provider,
+			Model:           get("whisper_model"),
+			Language:        get("whisper_language"),
+			MaxRSSMB:        mb,
+			DeepgramKey:     get("deepgram_api_key"),
+			DeepgramModel:   get("deepgram_model"),
+			DeepgramBaseURL: cfg.DeepgramBaseURL,
 		}
-		return transcribe.Runtime{Model: model, Language: language, MaxRSSMB: mb}
 	}
 	pipeline := transcribe.NewPipeline(st, transcribe.RealDeps(ingestSvc, prober, whisper, runtime), checkpointDir, cfg.WhisperModel)
 
@@ -203,13 +210,15 @@ func startWorkers(ctx context.Context, cfg config.Config, st *store.Store, queue
 
 func seedSettings(ctx context.Context, st *store.Store, cfg config.Config) error {
 	defaults := map[string]string{
-		"trim_silence":       strconv.FormatBool(cfg.TrimSilence),
-		"max_whisper_rss_mb": strconv.Itoa(cfg.MaxWhisperRSSMB),
-		"whisper_model":      cfg.WhisperModel,
-		"whisper_language":   cfg.WhisperLanguage,
-		"analyze_enabled":    strconv.FormatBool(cfg.AnalyzeEnabled),
-		"analyze_base_url":   cfg.AnalyzeBaseURL,
-		"analyze_model":      cfg.AnalyzeModel,
+		"trim_silence":        strconv.FormatBool(cfg.TrimSilence),
+		"max_whisper_rss_mb":  strconv.Itoa(cfg.MaxWhisperRSSMB),
+		"whisper_model":       cfg.WhisperModel,
+		"whisper_language":    cfg.WhisperLanguage,
+		"transcribe_provider": "whisper",
+		"deepgram_model":      "nova-2",
+		"analyze_enabled":     strconv.FormatBool(cfg.AnalyzeEnabled),
+		"analyze_base_url":    cfg.AnalyzeBaseURL,
+		"analyze_model":       cfg.AnalyzeModel,
 	}
 	for key, value := range defaults {
 		if _, ok, err := st.GetSetting(ctx, key); err != nil {

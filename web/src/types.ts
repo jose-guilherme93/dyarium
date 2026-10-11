@@ -70,6 +70,9 @@ export interface Settings {
   max_whisper_rss_mb: number;
   whisper_model: string;
   whisper_language: string;
+  transcribe_provider: string;
+  deepgram_model: string;
+  deepgram_api_key_set: boolean;
   analyze_enabled: boolean;
   analyze_base_url: string;
   analyze_model: string;

@@ -34,15 +34,25 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		analyzeModel = s.deps.Config.AnalyzeModel
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"trim_silence":        settings["trim_silence"] == "true",
-		"max_whisper_rss_mb":  toInt(settings["max_whisper_rss_mb"]),
-		"whisper_model":       whisperModel,
-		"whisper_language":    settings["whisper_language"],
-		"analyze_enabled":     analyzeEnabled == "true",
-		"analyze_base_url":    analyzeBaseURL,
-		"analyze_model":       analyzeModel,
-		"analyze_api_key_set": settings["analyze_api_key"] != "",
+		"trim_silence":         settings["trim_silence"] == "true",
+		"max_whisper_rss_mb":   toInt(settings["max_whisper_rss_mb"]),
+		"whisper_model":        whisperModel,
+		"whisper_language":     settings["whisper_language"],
+		"transcribe_provider":  defaultString(settings["transcribe_provider"], "whisper"),
+		"deepgram_model":       defaultString(settings["deepgram_model"], "nova-2"),
+		"deepgram_api_key_set": settings["deepgram_api_key"] != "",
+		"analyze_enabled":      analyzeEnabled == "true",
+		"analyze_base_url":     analyzeBaseURL,
+		"analyze_model":        analyzeModel,
+		"analyze_api_key_set":  settings["analyze_api_key"] != "",
 	})
+}
+
+func defaultString(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
 }
 
 func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
@@ -79,7 +89,8 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 			if !set(key, strconv.Itoa(n)) {
 				return
 			}
-		case "whisper_model", "whisper_language", "analyze_base_url", "analyze_model", "analyze_api_key":
+		case "whisper_model", "whisper_language", "analyze_base_url", "analyze_model", "analyze_api_key",
+			"transcribe_provider", "deepgram_api_key", "deepgram_model":
 			str, ok := value.(string)
 			if !ok {
 				writeError(w, http.StatusBadRequest, "invalid_value", key+" deve ser texto")

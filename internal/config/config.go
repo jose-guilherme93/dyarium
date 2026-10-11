@@ -21,6 +21,7 @@ type Config struct {
 	WhisperBin         string
 	WhisperModel       string
 	WhisperLanguage    string
+	DeepgramBaseURL    string
 	FFmpegBin          string
 	FFprobeBin         string
 	AnalyzeEnabled     bool
@@ -59,6 +60,7 @@ func Load() (Config, error) {
 		WhisperBin:         env("DIARY_WHISPER_BIN", "whisper-cli"),
 		WhisperModel:       env("DIARY_WHISPER_MODEL", "models/ggml-small-q5_1.bin"),
 		WhisperLanguage:    env("DIARY_WHISPER_LANGUAGE", ""),
+		DeepgramBaseURL:    env("DIARY_DEEPGRAM_BASE_URL", "https://api.deepgram.com"),
 		FFmpegBin:          env("DIARY_FFMPEG_BIN", "ffmpeg"),
 		FFprobeBin:         env("DIARY_FFPROBE_BIN", "ffprobe"),
 		AnalyzeEnabled:     envBool("DIARY_ANALYZE_ENABLED", false),

@@ -15,6 +15,7 @@ export function SettingsView() {
   const [progress, setProgress] = useState<Record<string, DownloadProgress>>({});
   const [ceiling, setCeiling] = useState("0");
   const [apiKey, setApiKey] = useState("");
+  const [deepgramKey, setDeepgramKey] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
@@ -144,6 +145,49 @@ export function SettingsView() {
           <div className="config-block">
             <h2>Transcricao</h2>
             <dl className="settings">
+              <dt>Provedor</dt>
+              <dd>
+                <select
+                  aria-label="Provedor de transcricao"
+                  value={settings.transcribe_provider}
+                  onChange={(event) => void save({ transcribe_provider: event.target.value })}
+                >
+                  <option value="whisper">Whisper local</option>
+                  <option value="deepgram">Deepgram (API na nuvem)</option>
+                </select>
+              </dd>
+              {settings.transcribe_provider === "deepgram" && (
+                <>
+                  <dt>Modelo Deepgram</dt>
+                  <dd>
+                    <input
+                      type="text"
+                      aria-label="Modelo Deepgram"
+                      defaultValue={settings.deepgram_model}
+                      onBlur={(event) => void save({ deepgram_model: event.target.value })}
+                    />
+                  </dd>
+                  <dt>Chave da Deepgram</dt>
+                  <dd className="ceiling">
+                    <input
+                      type="password"
+                      aria-label="Chave da Deepgram"
+                      placeholder={settings.deepgram_api_key_set ? "definida (deixe vazio para manter)" : "nao definida"}
+                      value={deepgramKey}
+                      onChange={(event) => setDeepgramKey(event.target.value)}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void save({ deepgram_api_key: deepgramKey });
+                        setDeepgramKey("");
+                      }}
+                    >
+                      Salvar chave
+                    </button>
+                  </dd>
+                </>
+              )}
               <dt>Idioma da transcricao</dt>
               <dd>
                 <select
