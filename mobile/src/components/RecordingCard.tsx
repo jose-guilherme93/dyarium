@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
-import { useState } from 'react';
+import { createAudioPlayer, type AudioPlayer } from 'expo-audio';
+import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { formatDuration } from '@/core/format';
@@ -63,16 +63,45 @@ export function RecordingCard({
 }: RecordingCardProps) {
   const [expanded, setExpanded] = useState(false);
   const hasAudio = Boolean(recording.filePath);
-  const player = useAudioPlayer(recording.filePath ?? null);
-  const status = useAudioPlayerStatus(player);
   const meta = STATUS_META[recording.status];
 
-  const duration = status.duration || (recording.durationMs ?? 0) / 1000;
-  const current = status.currentTime || 0;
+  // O player e criado sob demanda (so quando o usuario toca), para nao criar um
+  // AudioPlayer por item da lista (isso quebra o expo-audio no Android).
+  const playerRef = useRef<AudioPlayer | null>(null);
+  const subRef = useRef<{ remove: () => void } | null>(null);
+  const [playState, setPlayState] = useState({ playing: false, currentTime: 0, duration: 0 });
+
+  useEffect(
+    () => () => {
+      subRef.current?.remove();
+      playerRef.current?.remove();
+      playerRef.current = null;
+    },
+    [],
+  );
+
+  const ensurePlayer = (): AudioPlayer | null => {
+    if (playerRef.current || !recording.filePath) return playerRef.current;
+    const player = createAudioPlayer(recording.filePath);
+    subRef.current = player.addListener('playbackStatusUpdate', (status) => {
+      setPlayState({
+        playing: status.playing,
+        currentTime: status.currentTime,
+        duration: status.duration,
+      });
+    });
+    playerRef.current = player;
+    return player;
+  };
+
+  const duration = playState.duration || (recording.durationMs ?? 0) / 1000;
+  const current = playState.currentTime;
   const progress = duration > 0 ? Math.min(1, current / duration) : 0;
 
   const togglePlay = () => {
-    if (status.playing) {
+    const player = ensurePlayer();
+    if (!player) return;
+    if (playState.playing) {
       player.pause();
     } else {
       if (duration > 0 && current >= duration - 0.1) player.seekTo(0);
@@ -81,6 +110,8 @@ export function RecordingCard({
   };
 
   const skip = (seconds: number) => {
+    const player = playerRef.current;
+    if (!player) return;
     const target = Math.max(0, Math.min(duration, current + seconds));
     player.seekTo(target);
   };
@@ -105,13 +136,13 @@ export function RecordingCard({
           <Pressable
             style={styles.leading}
             onPress={togglePlay}
-            accessibilityLabel={status.playing ? 'Pausar' : 'Tocar'}
+            accessibilityLabel={playState.playing ? 'Pausar' : 'Tocar'}
           >
             <Ionicons
-              name={status.playing ? 'pause' : 'play'}
+              name={playState.playing ? 'pause' : 'play'}
               size={20}
               color={colors.text}
-              style={status.playing ? undefined : { marginLeft: 2 }}
+              style={playState.playing ? undefined : { marginLeft: 2 }}
             />
           </Pressable>
         ) : (
@@ -190,7 +221,7 @@ export function RecordingCard({
               <Ionicons name="play-back" size={22} color={colors.text} />
             </Pressable>
             <Pressable style={styles.control} onPress={togglePlay}>
-              <Ionicons name={status.playing ? 'pause' : 'play'} size={26} color={colors.text} />
+              <Ionicons name={playState.playing ? 'pause' : 'play'} size={26} color={colors.text} />
             </Pressable>
             <Pressable style={styles.control} onPress={() => skip(15)}>
               <Ionicons name="play-forward" size={22} color={colors.text} />
