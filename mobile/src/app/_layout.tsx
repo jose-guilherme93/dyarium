@@ -1,4 +1,5 @@
 import { Stack } from 'expo-router';
+import { setAudioModeAsync } from 'expo-audio';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
@@ -15,6 +16,8 @@ SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
 export default function RootLayout() {
   useEffect(() => {
+    // Configura a sessao de audio cedo para o player nao falhar no Android.
+    void setAudioModeAsync({ playsInSilentMode: true }).catch(() => undefined);
     void registerUploadTask();
     SplashScreen.hideAsync().catch(() => undefined);
   }, []);

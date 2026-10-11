@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
+import { createAudioPlayer, type AudioPlayer } from 'expo-audio';
 import { router } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -42,49 +42,23 @@ const YEARS = Array.from({ length: 25 }, (_, index) => CURRENT_YEAR - index);
 interface ItemCardProps {
   item: ReviewItem;
   use24h: boolean;
+  isPlaying: boolean;
   onTitleChange: (value: string) => void;
   onDateChange: (value: string) => void;
-  onDuration: (ms: number) => void;
+  onTogglePlay: () => void;
   onRemove: () => void;
 }
 
 function ItemCard({
   item,
   use24h,
+  isPlaying,
   onTitleChange,
   onDateChange,
-  onDuration,
+  onTogglePlay,
   onRemove,
 }: ItemCardProps) {
   const { draft } = item;
-  const player = useAudioPlayer(draft.filePath ?? null);
-  const status = useAudioPlayerStatus(player);
-  const reportedDurationRef = useRef(0);
-
-  // Dispara o carregamento da midia sem tocar (play seguido de pause antes de
-  // carregar) para que a duracao fique disponivel na revisao.
-  useEffect(() => {
-    if (!draft.supported || !draft.filePath) return;
-    player.play();
-    player.pause();
-  }, [draft.supported, draft.filePath, player]);
-
-  // Reporta a duracao assim que o player carrega.
-  useEffect(() => {
-    if (status.isLoaded && status.duration > 0) {
-      const ms = Math.round(status.duration * 1000);
-      if (reportedDurationRef.current !== ms) {
-        reportedDurationRef.current = ms;
-        onDuration(ms);
-      }
-    }
-  }, [status.isLoaded, status.duration, onDuration]);
-
-  const togglePlay = () => {
-    if (!draft.filePath) return;
-    if (status.playing) player.pause();
-    else player.play();
-  };
 
   const durationLabel = item.durationMs ? formatDuration(item.durationMs) : '--:--';
   const meta = [
@@ -101,15 +75,15 @@ function ItemCard({
       <View style={styles.cardHead}>
         <Pressable
           style={[styles.play, !draft.supported && styles.playDisabled]}
-          onPress={togglePlay}
+          onPress={onTogglePlay}
           disabled={!draft.supported || !draft.filePath}
-          accessibilityLabel={status.playing ? 'Pausar' : 'Tocar'}
+          accessibilityLabel={isPlaying ? 'Pausar' : 'Tocar'}
         >
           <Ionicons
-            name={status.playing ? 'pause' : 'play'}
+            name={isPlaying ? 'pause' : 'play'}
             size={20}
             color={draft.supported ? colors.text : colors.textTertiary}
-            style={status.playing ? undefined : { marginLeft: 2 }}
+            style={isPlaying ? undefined : { marginLeft: 2 }}
           />
         </Pressable>
         <View style={styles.cardHeadText}>
@@ -158,6 +132,26 @@ function ItemCard({
   );
 }
 
+function probeDuration(player: AudioPlayer, uri: string): Promise<number | null> {
+  return new Promise((resolve) => {
+    let done = false;
+    let sub: { remove: () => void } | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const finish = (value: number | null) => {
+      if (done) return;
+      done = true;
+      if (sub) sub.remove();
+      if (timer) clearTimeout(timer);
+      resolve(value);
+    };
+    sub = player.addListener('playbackStatusUpdate', (status) => {
+      if (status.isLoaded && status.duration > 0) finish(Math.round(status.duration * 1000));
+    });
+    timer = setTimeout(() => finish(null), 4000);
+    player.replace(uri);
+  });
+}
+
 export default function ImportReviewScreen() {
   const library = useLibrary();
   const { importYear, setImportYear } = useSettings();
@@ -193,7 +187,73 @@ export default function ImportReviewScreen() {
     [],
   );
 
+  // Um unico player para toda a revisao: sonda as duracoes em sequencia e toca
+  // sob demanda. Criar um AudioPlayer por item quebra o expo-audio no Android.
+  const playerRef = useRef<AudioPlayer | null>(null);
+  const playerSubRef = useRef<{ remove: () => void } | null>(null);
+  const cancelledRef = useRef(false);
+  const loadedRef = useRef(false);
+  const [playingKey, setPlayingKey] = useState<string | null>(null);
+
+  const ensurePlayer = useCallback((): AudioPlayer => {
+    if (playerRef.current) return playerRef.current;
+    const player = createAudioPlayer();
+    playerSubRef.current = player.addListener('playbackStatusUpdate', (status) => {
+      if (status.didJustFinish) setPlayingKey(null);
+    });
+    playerRef.current = player;
+    return player;
+  }, []);
+
+  const probeDurations = useCallback(
+    async (drafts: ImportDraft[]) => {
+      const player = ensurePlayer();
+      for (const draft of drafts) {
+        if (cancelledRef.current) break;
+        if (!draft.supported || !draft.filePath) continue;
+        const ms = await probeDuration(player, draft.filePath);
+        if (!cancelledRef.current && ms) {
+          setItems(
+            (prev) =>
+              prev?.map((it) => (it.draft.key === draft.key ? { ...it, durationMs: ms } : it)) ??
+              prev,
+          );
+        }
+      }
+    },
+    [ensurePlayer],
+  );
+
+  const togglePlay = useCallback(
+    (item: ReviewItem) => {
+      const uri = item.draft.filePath;
+      if (!uri) return;
+      const player = ensurePlayer();
+      if (playingKey === item.draft.key) {
+        player.pause();
+        setPlayingKey(null);
+        return;
+      }
+      player.replace(uri);
+      player.play();
+      setPlayingKey(item.draft.key);
+    },
+    [ensurePlayer, playingKey],
+  );
+
+  useEffect(
+    () => () => {
+      cancelledRef.current = true;
+      playerSubRef.current?.remove();
+      playerRef.current?.remove();
+      playerRef.current = null;
+    },
+    [],
+  );
+
   useEffect(() => {
+    if (loadedRef.current) return undefined;
+    loadedRef.current = true;
     let alive = true;
     prepareSharedAudios()
       .then(({ drafts, ignored: extra }) => {
@@ -209,20 +269,27 @@ export default function ImportReviewScreen() {
           })),
         );
         setIgnored(extra);
+        void probeDurations(drafts);
       })
       .catch(() => {
         if (alive) setError('Nao foi possivel ler o audio compartilhado.');
       });
     return () => {
       alive = false;
-      // Saiu sem enviar: descarta os arquivos copiados (nada foi persistido).
+    };
+  }, [computeDateText, probeDurations]);
+
+  // Ao desmontar sem enviar, descarta os arquivos copiados (nada foi persistido).
+  useEffect(
+    () => () => {
       if (!committedRef.current) {
         for (const item of itemsRef.current) {
           if (item.draft.id) deleteSessionFiles(item.draft.id);
         }
       }
-    };
-  }, [computeDateText]);
+    },
+    [],
+  );
 
   const updateItem = useCallback((key: string, patch: Partial<ReviewItem>) => {
     setItems((prev) => prev?.map((it) => (it.draft.key === key ? { ...it, ...patch } : it)) ?? prev);
@@ -269,6 +336,8 @@ export default function ImportReviewScreen() {
   const removeItem = useCallback((key: string) => {
     const removed = itemsRef.current.find((it) => it.draft.key === key);
     if (removed?.draft.id) deleteSessionFiles(removed.draft.id);
+    playerRef.current?.pause();
+    setPlayingKey((current) => (current === key ? null : current));
     setItems((prev) => prev?.filter((it) => it.draft.key !== key) ?? prev);
   }, []);
 
@@ -416,9 +485,10 @@ export default function ImportReviewScreen() {
                   key={item.draft.key}
                   item={item}
                   use24h={use24h}
+                  isPlaying={playingKey === item.draft.key}
                   onTitleChange={(value) => updateItem(item.draft.key, { title: value })}
                   onDateChange={(value) => updateItem(item.draft.key, { dateText: value })}
-                  onDuration={(ms) => updateItem(item.draft.key, { durationMs: ms })}
+                  onTogglePlay={() => togglePlay(item)}
                   onRemove={() => removeItem(item.draft.key)}
                 />
               ))
