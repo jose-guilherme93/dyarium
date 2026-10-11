@@ -28,7 +28,9 @@ func entryJSON(e store.Entry) map[string]any {
 }
 
 func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
-	entries, err := s.deps.Store.ListEntries(r.Context(), 100)
+	query := r.URL.Query()
+	entries, err := s.deps.Store.ListEntriesFiltered(r.Context(), 100,
+		query.Get("person"), query.Get("place"), query.Get("theme"))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
