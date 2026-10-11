@@ -21,6 +21,7 @@ type Config struct {
 	WhisperBin         string
 	WhisperModel       string
 	WhisperLanguage    string
+	AutoDownloadModel  bool
 	DeepgramBaseURL    string
 	FFmpegBin          string
 	FFprobeBin         string
@@ -60,6 +61,7 @@ func Load() (Config, error) {
 		WhisperBin:         env("DIARY_WHISPER_BIN", "whisper-cli"),
 		WhisperModel:       env("DIARY_WHISPER_MODEL", "models/ggml-small-q5_1.bin"),
 		WhisperLanguage:    env("DIARY_WHISPER_LANGUAGE", ""),
+		AutoDownloadModel:  envBool("DIARY_AUTO_DOWNLOAD_MODEL", true),
 		DeepgramBaseURL:    env("DIARY_DEEPGRAM_BASE_URL", "https://api.deepgram.com"),
 		FFmpegBin:          env("DIARY_FFMPEG_BIN", "ffmpeg"),
 		FFprobeBin:         env("DIARY_FFPROBE_BIN", "ffprobe"),
@@ -86,12 +88,6 @@ func Load() (Config, error) {
 		LitestreamSecret:   env("DIARY_LITESTREAM_SECRET_ACCESS_KEY", ""),
 	}
 
-	if cfg.Token == "" {
-		return Config{}, fmt.Errorf("DIARY_TOKEN is required")
-	}
-	if cfg.MasterKey == "" {
-		return Config{}, fmt.Errorf("DIARY_MASTER_KEY is required")
-	}
 	if cfg.WorkerConcurrency < 1 {
 		return Config{}, fmt.Errorf("DIARY_WORKER_CONCURRENCY must be at least 1")
 	}

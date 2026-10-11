@@ -18,6 +18,7 @@ import (
 	"github.com/jose-guilherme93/dyarium/internal/analyze"
 	"github.com/jose-guilherme93/dyarium/internal/api"
 	"github.com/jose-guilherme93/dyarium/internal/audio"
+	"github.com/jose-guilherme93/dyarium/internal/bootstrap"
 	"github.com/jose-guilherme93/dyarium/internal/config"
 	"github.com/jose-guilherme93/dyarium/internal/crypto"
 	"github.com/jose-guilherme93/dyarium/internal/events"
@@ -74,6 +75,13 @@ func serve() error {
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: parseLevel(cfg.LogLevel)}))
 	slog.SetDefault(logger)
+
+	secrets, err := bootstrap.Resolve(cfg.DataDir, cfg.MasterKey, cfg.Token)
+	if err != nil {
+		return err
+	}
+	cfg.MasterKey = secrets.MasterKey
+	cfg.Token = secrets.Token
 
 	key, err := crypto.ParseKey(cfg.MasterKey)
 	if err != nil {
@@ -141,6 +149,15 @@ func serve() error {
 	modelsMgr := models.NewManager(cfg.ModelsDir, cfg.ModelsBaseURL, bus)
 	canceller := jobs.NewCanceller()
 
+	if cfg.AutoDownloadModel {
+		startDefaultModelDownload(cfg, modelsMgr, logger)
+	}
+
+	tokens := api.NewTokenSource(cfg.Token, secrets.SetupRequired)
+	if secrets.SetupRequired {
+		logger.Info("configuracao inicial pendente: acesse /setup para definir o token de acesso")
+	}
+
 	startWorkers(ctx, cfg, st, queue, pipeline, bus, logger, canceller)
 
 	if cfg.TelegramEnabled {
@@ -165,6 +182,7 @@ func serve() error {
 		Events:    bus,
 		Models:    modelsMgr,
 		Canceller: canceller,
+		Tokens:    tokens,
 	})
 
 	httpServer := &http.Server{
@@ -206,6 +224,21 @@ func startWorkers(ctx context.Context, cfg config.Config, st *store.Store, queue
 		go runner.Run(ctx)
 	}
 	logger.Info("workers iniciados", "quantidade", cfg.WorkerConcurrency)
+}
+
+// startDefaultModelDownload triggers a background download of the configured
+// whisper model when it is missing from the catalog and not yet on disk. This
+// keeps a fresh install usable without a manual step.
+func startDefaultModelDownload(cfg config.Config, mgr *models.Manager, logger *slog.Logger) {
+	name, ok := models.NameForFile(cfg.WhisperModel)
+	if !ok || mgr.Downloaded(name) {
+		return
+	}
+	if err := mgr.StartDownload(name); err != nil {
+		logger.Warn("nao foi possivel baixar o modelo padrao", "modelo", name, "erro", err)
+		return
+	}
+	logger.Info("baixando modelo padrao em segundo plano", "modelo", name)
 }
 
 func seedSettings(ctx context.Context, st *store.Store, cfg config.Config) error {

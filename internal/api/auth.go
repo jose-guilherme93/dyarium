@@ -23,7 +23,7 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "unauthorized", "missing bearer token")
 			return
 		}
-		if subtle.ConstantTimeCompare([]byte(token), []byte(s.deps.Config.Token)) != 1 {
+		if subtle.ConstantTimeCompare([]byte(token), []byte(s.deps.Tokens.Get())) != 1 {
 			writeError(w, http.StatusUnauthorized, "unauthorized", "invalid token")
 			return
 		}
