@@ -5,7 +5,7 @@ tmp_dir = "tmp"
   cmd = "go build -buildvcs=false -o ./tmp/diary ./cmd/diary"
   full_bin = "./tmp/diary serve"
   include_ext = ["go", "sql"]
-  exclude_dir = ["web", "tmp", "data", "models", "deploy", ".git", "docs"]
+  exclude_dir = ["web", "tmp", "data", "models", "deploy", ".git", "docs", "mobile"]
   delay = 500
   stop_on_error = true
 
