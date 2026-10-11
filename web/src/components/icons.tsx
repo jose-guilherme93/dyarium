@@ -144,3 +144,20 @@ export function SparkIcon({ size = 18 }: IconProps) {
     </svg>
   );
 }
+
+export function PanelIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M9 4v16" />
+    </svg>
+  );
+}
+
+export function MenuIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M4 6h16M4 12h16M4 18h16" />
+    </svg>
+  );
+}

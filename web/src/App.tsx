@@ -8,7 +8,7 @@ import { NoteList } from "./components/NoteList";
 import { NoteEditor } from "./components/NoteEditor";
 import { OfflineBanner } from "./components/OfflineBanner";
 import { useToast } from "./components/Toasts";
-import { InsightsIcon, NoteIcon, SearchIcon, SettingsIcon } from "./components/icons";
+import { InsightsIcon, NoteIcon, PanelIcon, SearchIcon, SettingsIcon } from "./components/icons";
 import { InsightsView } from "./views/InsightsView";
 import { SearchView } from "./views/SearchView";
 import { SettingsView } from "./views/SettingsView";
@@ -33,8 +33,38 @@ export function App() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [failures, setFailures] = useState<Record<string, string>>({});
   const [entryProgress, setEntryProgress] = useState<Record<string, { stage: string; done: number; total: number }>>({});
+  const [sidebarOpen, setSidebarOpen] = useState(() => {
+    try {
+      return localStorage.getItem("dyarium.sidebar") !== "closed";
+    } catch {
+      return true;
+    }
+  });
   const { notify } = useToast();
   const refreshTimer = useRef<number | null>(null);
+
+  const toggleSidebar = useCallback(() => {
+    setSidebarOpen((open) => {
+      const next = !open;
+      try {
+        localStorage.setItem("dyarium.sidebar", next ? "open" : "closed");
+      } catch {
+        // ignore storage errors
+      }
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === "\\") {
+        event.preventDefault();
+        toggleSidebar();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toggleSidebar]);
 
   // Coalesce bursts of events into a single refresh so the UI stays responsive.
   const bumpRefresh = useCallback(() => {
@@ -153,7 +183,7 @@ export function App() {
 
   const createText = async () => {
     try {
-      const entry = await api.createEntry("Nova nota");
+      const entry = await api.createEntry("");
       setOpenEntryId(entry.id);
       setView("notes");
       refresh();
@@ -168,10 +198,22 @@ export function App() {
   };
 
   return (
-    <div className="app">
+    <div className={sidebarOpen ? "app" : "app app--sidebar-closed"}>
       <OfflineBanner />
-      <aside className="sidebar" aria-label="Navegacao principal">
-        <div className="brand">dyarium</div>
+      <aside id="app-sidebar" className="sidebar" aria-label="Navegacao principal" hidden={!sidebarOpen}>
+        <div className="sidebar-head">
+          <span className="brand">dyarium</span>
+          <button
+            type="button"
+            className="icon-button sidebar-toggle"
+            onClick={toggleSidebar}
+            aria-label="Ocultar menu"
+            aria-expanded
+            aria-controls="app-sidebar"
+          >
+            <PanelIcon size={16} />
+          </button>
+        </div>
         <nav>
           <ul>
             {navigation.map((item) => (
@@ -205,6 +247,18 @@ export function App() {
       </aside>
 
       <main className="workspace" aria-label="Conteudo">
+        {!sidebarOpen && (
+          <button
+            type="button"
+            className="sidebar-open"
+            onClick={toggleSidebar}
+            aria-label="Mostrar menu"
+            aria-expanded={false}
+            aria-controls="app-sidebar"
+          >
+            <PanelIcon size={16} />
+          </button>
+        )}
         <ErrorBoundary>
           {view === "notes" ? (
             <>

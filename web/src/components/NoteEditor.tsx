@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Block, PartialBlock } from "@blocknote/core";
 import { api, audioUrl } from "../api";
-import { NotesEditor } from "../editor/NotesEditor";
+import { NotesEditor, type NotesEditorHandle } from "../editor/NotesEditor";
 import { formatDateTime, formatDuration } from "../lib/format";
 import type { Analysis, EntityKind, Entry, Transcript } from "../types";
 import { AudioPlayer, type AudioPlayerHandle } from "./AudioPlayer";
@@ -102,6 +102,11 @@ export function NoteEditor({
   const playerRef = useRef<AudioPlayerHandle | null>(null);
   const transcriptRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const mountedRefresh = useRef(refreshKey);
+  const bodyRef = useRef<NotesEditorHandle | null>(null);
+  const titleRef = useRef<HTMLInputElement | null>(null);
+  const insightsHeadingRef = useRef<HTMLHeadingElement | null>(null);
+  const insightsToggleRef = useRef<HTMLButtonElement | null>(null);
+  const focusedEmptyTitle = useRef(false);
 
   const loadFull = useCallback(async () => {
     setError("");
@@ -163,6 +168,34 @@ export function NoteEditor({
       setBusy(null);
     }
   }, [status]);
+
+  // Focus the empty title of a fresh note so the user can just start typing.
+  useEffect(() => {
+    if (bodyLoaded && title === "" && !focusedEmptyTitle.current) {
+      focusedEmptyTitle.current = true;
+      titleRef.current?.focus();
+    }
+  }, [bodyLoaded, title]);
+
+  const closeInsights = useCallback(() => {
+    setShowInsights(false);
+    insightsToggleRef.current?.focus();
+  }, []);
+
+  // Move focus into the panel when it opens, and let Escape close it.
+  useEffect(() => {
+    if (!showInsights) {
+      return;
+    }
+    insightsHeadingRef.current?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeInsights();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [showInsights, closeInsights]);
 
   // Keep the active transcription line visible while the audio plays.
   useEffect(() => {
@@ -284,12 +317,14 @@ export function NoteEditor({
 
   if (!entry) {
     return (
-      <div className="editor-layout">
-        <div className="editor">
-          <div className="skeleton skeleton-title" />
-          <div className="skeleton skeleton-line" />
-          <div className="skeleton skeleton-block" />
-          {error && <p className="error">{error}</p>}
+      <div className="note-shell">
+        <div className="editor-layout">
+          <div className="editor">
+            <div className="skeleton skeleton-title" />
+            <div className="skeleton skeleton-line" />
+            <div className="skeleton skeleton-block" />
+            {error && <p className="error">{error}</p>}
+          </div>
         </div>
       </div>
     );
@@ -452,19 +487,38 @@ export function NoteEditor({
   );
 
   return (
-    <>
+    <div className={showInsights ? "note-shell note-shell--insights" : "note-shell"}>
       <div className={`editor-layout note-font--${font}`}>
         <div className="editor">
           <header className="editor-head">
             <input
+              ref={titleRef}
               className="editor-title"
               value={title}
               onChange={(event) => setTitle(event.target.value)}
               onBlur={() => void saveTitle()}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void saveTitle();
+                  bodyRef.current?.focus();
+                }
+              }}
               placeholder="Titulo da nota"
               aria-label="Titulo da nota"
             />
             <div className="editor-actions">
+              <button
+                type="button"
+                className="icon-button"
+                ref={insightsToggleRef}
+                onClick={() => setShowInsights((value) => !value)}
+                aria-label="Insights da IA"
+                aria-expanded={showInsights}
+                aria-controls="insights-panel"
+              >
+                <SparkIcon size={16} />
+              </button>
               {saving !== "idle" && (
                 <span className="muted save-state">{saving === "saving" ? "salvando..." : "salvo"}</span>
               )}
@@ -570,7 +624,7 @@ export function NoteEditor({
             )}
 
             <div className="page-text">
-              {bodyLoaded && <NotesEditor initialContent={initialBody} onChange={handleBodyChange} />}
+              {bodyLoaded && <NotesEditor ref={bodyRef} initialContent={initialBody} onChange={handleBodyChange} />}
             </div>
 
             <div className="page-images">
@@ -580,38 +634,34 @@ export function NoteEditor({
         </div>
       </div>
 
-      <button
-        type="button"
-        className={showInsights ? "fab fab--active" : "fab"}
-        onClick={() => setShowInsights((value) => !value)}
-        aria-label="Insights da IA"
-        aria-expanded={showInsights}
+      <aside
+        id="insights-panel"
+        className="insights-panel"
+        role="complementary"
+        aria-labelledby="insights-heading"
+        hidden={!showInsights}
       >
-        <SparkIcon size={20} />
-      </button>
-
-      {showInsights && (
-        <aside className="insights-drawer" aria-label="Insights da IA">
-          <div className="drawer-head">
-            <h3>Insights da IA</h3>
-            <div className="drawer-actions">
-              <button
-                type="button"
-                className="primary small"
-                onClick={() => void analyze()}
-                disabled={busy === "analyze" || running}
-              >
-                {busy === "analyze" ? <Spinner /> : <SparkIcon size={15} />} Analisar
-              </button>
-              <button type="button" className="icon-button" onClick={() => setShowInsights(false)} aria-label="Fechar">
-                <CloseIcon size={16} />
-              </button>
-            </div>
+        <div className="panel-head">
+          <h3 id="insights-heading" ref={insightsHeadingRef} tabIndex={-1}>
+            Insights da IA
+          </h3>
+          <div className="panel-actions">
+            <button
+              type="button"
+              className="primary small"
+              onClick={() => void analyze()}
+              disabled={busy === "analyze" || running}
+            >
+              {busy === "analyze" ? <Spinner /> : <SparkIcon size={15} />} Analisar
+            </button>
+            <button type="button" className="icon-button" onClick={closeInsights} aria-label="Fechar insights">
+              <CloseIcon size={16} />
+            </button>
           </div>
-          {insights}
-        </aside>
-      )}
-    </>
+        </div>
+        <div className="panel-body">{insights}</div>
+      </aside>
+    </div>
   );
 }
 
