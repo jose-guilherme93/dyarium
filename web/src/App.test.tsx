@@ -41,7 +41,7 @@ describe("App", () => {
       }),
     );
     render(<App />);
-    expect(await screen.findByText(/Primeiro acesso/)).toBeInTheDocument();
+    expect(await screen.findByText(/Bem-vindo/)).toBeInTheDocument();
     expect(screen.getByLabelText("Confirme o token")).toBeInTheDocument();
     vi.unstubAllGlobals();
   });

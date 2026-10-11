@@ -17,7 +17,7 @@ export function SetupGate({ onDone }: SetupGateProps) {
     event.preventDefault();
     const value = token.trim();
     if (value.length < 8) {
-      setError("Use ao menos 8 caracteres.");
+      setError("O token precisa ter ao menos 8 caracteres.");
       return;
     }
     if (value !== confirm.trim()) {
@@ -30,7 +30,7 @@ export function SetupGate({ onDone }: SetupGateProps) {
       await claimSetup(value);
       onDone(value);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Falha ao configurar.");
+      setError(err instanceof Error ? err.message : "Nao foi possivel salvar o token.");
       setBusy(false);
     }
   };
@@ -38,27 +38,45 @@ export function SetupGate({ onDone }: SetupGateProps) {
   return (
     <div className="token-gate">
       <div className="token-card">
-        <h1>dyarium</h1>
-        <p>Primeiro acesso: defina o token que protege este diario.</p>
+        <div>
+          <h1 className="token-card__brand">dyarium</h1>
+          <p className="token-card__lead">
+            Bem-vindo. Defina o token que protege este diario. Voce vai usa-lo para entrar
+            aqui e no app do celular.
+          </p>
+        </div>
         <form onSubmit={submit}>
-          <input
-            type="password"
-            aria-label="Token de acesso"
-            placeholder="Escolha um token"
-            value={token}
-            onChange={(event) => setToken(event.target.value)}
-          />
-          <input
-            type="password"
-            aria-label="Confirme o token"
-            placeholder="Repita o token"
-            value={confirm}
-            onChange={(event) => setConfirm(event.target.value)}
-          />
-          {error && <p role="alert">{error}</p>}
-          <button type="submit" disabled={busy}>
-            {busy ? "Salvando..." : "Comecar"}
+          <div className="token-field">
+            <label htmlFor="setup-token">Token de acesso</label>
+            <input
+              id="setup-token"
+              type="password"
+              autoComplete="new-password"
+              placeholder="Ao menos 8 caracteres"
+              value={token}
+              onChange={(event) => setToken(event.target.value)}
+            />
+          </div>
+          <div className="token-field">
+            <label htmlFor="setup-confirm">Confirme o token</label>
+            <input
+              id="setup-confirm"
+              type="password"
+              autoComplete="new-password"
+              placeholder="Repita o token"
+              value={confirm}
+              onChange={(event) => setConfirm(event.target.value)}
+            />
+          </div>
+          {error && (
+            <p className="token-error" role="alert">
+              {error}
+            </p>
+          )}
+          <button type="submit" className="token-submit" disabled={busy}>
+            {busy ? "Salvando..." : "Criar token e entrar"}
           </button>
+          <p className="token-hint">Guarde o token com cuidado: ele tambem protege seus audios.</p>
         </form>
       </div>
     </div>

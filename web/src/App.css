@@ -1143,35 +1143,99 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 100%;
+  min-height: 100%;
+  padding: calc(var(--space) * 6);
+  background:
+    radial-gradient(900px 480px at 50% -20%, var(--color-accent-soft), transparent 70%),
+    var(--color-bg);
 }
 
 .token-card {
-  width: 320px;
-  padding: calc(var(--space) * 6);
+  width: min(400px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space) * 5);
+  padding: calc(var(--space) * 8) calc(var(--space) * 7);
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
   background: var(--color-surface);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.18);
 }
 
-.token-card h1 {
+.token-card__brand {
   font-family: var(--font-serif);
-  margin: 0 0 calc(var(--space) * 3);
+  font-size: 30px;
+  letter-spacing: 0.02em;
+  margin: 0;
+}
+
+.token-card__lead {
+  margin: calc(var(--space) * 2) 0 0;
+  color: var(--color-muted);
+  line-height: 1.55;
 }
 
 .token-card form {
   display: flex;
-  gap: calc(var(--space) * 2);
-  margin-top: calc(var(--space) * 3);
+  flex-direction: column;
+  gap: calc(var(--space) * 4);
+  margin: 0;
 }
 
-.token-card input {
-  flex: 1;
-  padding: calc(var(--space) * 2) calc(var(--space) * 3);
+.token-field {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space) * 2);
+}
+
+.token-field label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-muted);
+}
+
+.token-field input {
+  padding: calc(var(--space) * 3);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: var(--color-bg);
   color: var(--color-text);
+  font-size: 14px;
+}
+
+.token-field input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-soft);
+}
+
+.token-error {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-danger);
+}
+
+.token-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-muted);
+}
+
+.token-submit {
+  padding: calc(var(--space) * 3);
+  border-radius: var(--radius-sm);
+  background: var(--color-accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.token-submit:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+
+.token-submit:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .spinner {
