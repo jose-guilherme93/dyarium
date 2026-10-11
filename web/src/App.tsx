@@ -5,11 +5,12 @@ import { TokenGate } from "./components/TokenGate";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { NoteList } from "./components/NoteList";
 import { NoteEditor } from "./components/NoteEditor";
+import { useToast } from "./components/Toasts";
 import { InsightsIcon, NoteIcon, SearchIcon, SettingsIcon } from "./components/icons";
 import { InsightsView } from "./views/InsightsView";
 import { SearchView } from "./views/SearchView";
 import { SettingsView } from "./views/SettingsView";
-import type { EntityKind } from "./types";
+import type { EntityKind, ServerEvent } from "./types";
 import "./App.css";
 
 type ViewId = "notes" | "insights" | "search" | "settings";
@@ -27,10 +28,33 @@ export function App() {
   const [openEntryId, setOpenEntryId] = useState<string | null>(null);
   const [entityFocus, setEntityFocus] = useState<{ kind: EntityKind; name: string } | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [failures, setFailures] = useState<Record<string, string>>({});
+  const { notify } = useToast();
 
-  const handleEvent = useCallback(() => {
-    setRefreshKey((key) => key + 1);
-  }, []);
+  const handleEvent = useCallback(
+    (event: ServerEvent) => {
+      setRefreshKey((key) => key + 1);
+      const id = typeof event.data.entry_id === "string" ? event.data.entry_id : "";
+      if (!id) {
+        return;
+      }
+      if (event.name === "entry.failed") {
+        const reason = String(event.data.reason ?? "falha ao processar");
+        setFailures((map) => ({ ...map, [id]: reason }));
+        notify(reason, "error");
+      } else if (event.name === "entry.status") {
+        setFailures((map) => {
+          if (!(id in map)) {
+            return map;
+          }
+          const next = { ...map };
+          delete next[id];
+          return next;
+        });
+      }
+    },
+    [notify],
+  );
   useEvents(handleEvent);
 
   if (!token) {
@@ -105,6 +129,7 @@ export function App() {
               <NoteList
                 refreshKey={refreshKey}
                 activeId={openEntryId}
+                failures={failures}
                 onOpen={setOpenEntryId}
                 onChanged={refresh}
                 onCreateText={() => void createText()}
@@ -115,6 +140,7 @@ export function App() {
                     key={openEntryId}
                     entryId={openEntryId}
                     refreshKey={refreshKey}
+                    failureReason={failures[openEntryId]}
                     onChanged={refresh}
                     onDeleted={() => {
                       setOpenEntryId(null);

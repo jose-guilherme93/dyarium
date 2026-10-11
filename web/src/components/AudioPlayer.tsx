@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { formatDuration } from "../lib/format";
-import { PauseIcon, PlayIcon } from "./icons";
+import { CheckIcon, MoreIcon, PauseIcon, PlayIcon } from "./icons";
 
 interface AudioPlayerProps {
   src: string;
@@ -9,6 +9,8 @@ interface AudioPlayerProps {
 export interface AudioPlayerHandle {
   seek: (seconds: number) => void;
 }
+
+const RATES = [0.75, 1, 1.25, 1.5, 2];
 
 // AudioPlayer is a compact player for a note's original audio.
 export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(function AudioPlayer(
@@ -20,12 +22,14 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
   const [duration, setDuration] = useState(0);
   const [current, setCurrent] = useState(0);
   const [rate, setRate] = useState(1);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
     setPlaying(false);
     setCurrent(0);
     setDuration(0);
     setRate(1);
+    setMenuOpen(false);
   }, [src]);
 
   const toggle = () => {
@@ -48,6 +52,13 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
     setCurrent(value);
   };
 
+  const changeRate = (value: number) => {
+    setRate(value);
+    if (ref.current) {
+      ref.current.playbackRate = value;
+    }
+  };
+
   useImperativeHandle(handle, () => ({
     seek: (seconds: number) => {
       const el = ref.current;
@@ -57,13 +68,6 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
       }
     },
   }));
-
-  const changeRate = (value: number) => {
-    setRate(value);
-    if (ref.current) {
-      ref.current.playbackRate = value;
-    }
-  };
 
   const total = Number.isFinite(duration) ? duration : 0;
   const percent = total > 0 ? (current / total) * 100 : 0;
@@ -96,21 +100,44 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
         value={current}
         onChange={(event) => seek(Number(event.target.value))}
         aria-label="Progresso do audio"
-        style={{ background: `linear-gradient(to right, var(--accent) ${percent}%, var(--border) ${percent}%)` }}
+        style={{ background: `linear-gradient(to right, var(--color-accent) ${percent}%, var(--color-border) ${percent}%)` }}
       />
       <span className="player-time">{formatDuration(duration)}</span>
-      <select
-        className="player-rate"
-        value={rate}
-        onChange={(event) => changeRate(Number(event.target.value))}
-        aria-label="Velocidade de reproducao"
-      >
-        <option value={0.75}>0.75x</option>
-        <option value={1}>1x</option>
-        <option value={1.25}>1.25x</option>
-        <option value={1.5}>1.5x</option>
-        <option value={2}>2x</option>
-      </select>
+      <div className="player-menu">
+        <button
+          type="button"
+          className="icon-button"
+          onClick={() => setMenuOpen((value) => !value)}
+          aria-label="Opcoes do audio"
+          aria-expanded={menuOpen}
+        >
+          <MoreIcon size={16} />
+        </button>
+        {menuOpen && (
+          <>
+            <div className="menu-backdrop" onClick={() => setMenuOpen(false)} />
+            <div className="menu" role="menu">
+              <div className="menu-label">Velocidade</div>
+              {RATES.map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={value === rate}
+                  className={value === rate ? "menu-item menu-item--active" : "menu-item"}
+                  onClick={() => {
+                    changeRate(value);
+                    setMenuOpen(false);
+                  }}
+                >
+                  <span>{value}x</span>
+                  {value === rate && <CheckIcon size={14} />}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 });
