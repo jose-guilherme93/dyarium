@@ -17,7 +17,7 @@ const PENDING_STATUSES = ['recorded', 'queued', 'uploading', 'failed'];
 
 export default function RecordScreen() {
   const { config } = useSettings();
-  const { recordings, retry, remove } = useLibrary();
+  const { recordings, retry, remove, kick } = useLibrary();
   const { active, elapsedMs, level, error, busy, start, stop } = useRecording();
 
   const recording = Boolean(active);
@@ -69,6 +69,14 @@ export default function RecordScreen() {
                   : `${interrupted} gravacoes interrompidas`}
               </Text>
               <Ionicons name="chevron-forward" size={16} color={colors.warning} />
+            </Pressable>
+          ) : null}
+
+          {pending > 0 ? (
+            <Pressable style={styles.queueBar} onPress={kick}>
+              <Ionicons name="cloud-upload-outline" size={16} color={colors.accent} />
+              <Text style={styles.queueText}>{pending} na fila · Enviar agora</Text>
+              <Ionicons name="chevron-forward" size={14} color={colors.accent} />
             </Pressable>
           ) : null}
 
@@ -161,6 +169,17 @@ const styles = StyleSheet.create({
     padding: spacing.md,
   },
   alertText: { flex: 1, color: colors.warning, fontSize: fontSize.sm, fontWeight: '600' },
+  queueBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginHorizontal: spacing.xl,
+    marginBottom: spacing.md,
+    backgroundColor: colors.accentSoft,
+    borderRadius: 14,
+    padding: spacing.md,
+  },
+  queueText: { flex: 1, color: colors.accent, fontSize: fontSize.sm, fontWeight: '600' },
   empty: { alignItems: 'center', gap: spacing.md, paddingTop: spacing.xxxl },
   emptyIcon: {
     width: 68,

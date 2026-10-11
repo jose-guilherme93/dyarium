@@ -1,10 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { AppState } from 'react-native';
 
 import { markQueued } from '@/core/queue';
-import type { Recording } from '@/core/types';
+import { isUploadable, type Recording } from '@/core/types';
 import { deleteRecordingRow, listRecordings, upsertRecording } from '@/services/db';
 import { deleteSessionFiles } from '@/services/files';
 import { observeUploads, runUploadQueueOnce } from '@/services/uploaderLoop';
+
+import { useSettings } from './SettingsContext';
 
 interface LibraryValue {
   recordings: Recording[];
@@ -14,12 +17,17 @@ interface LibraryValue {
   enqueue(recording: Recording): Promise<void>;
   retry(id: string): Promise<void>;
   remove(id: string): Promise<void>;
+  /** Dispara a fila agora (envio manual). */
   kick(): void;
 }
 
 const LibraryContext = createContext<LibraryValue | null>(null);
 
+/** Enquanto houver itens na fila, tenta enviar neste intervalo. */
+const WORKER_INTERVAL_MS = 15_000;
+
 export function LibraryProvider({ children }: { children: ReactNode }) {
+  const { config } = useSettings();
   const [recordings, setRecordings] = useState<Recording[]>([]);
   const [ready, setReady] = useState(false);
 
@@ -46,8 +54,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     const unsubscribe = observeUploads((updated) => {
       setRecordings((prev) => {
         const exists = prev.some((r) => r.id === updated.id);
-        const next = exists ? prev.map((r) => (r.id === updated.id ? updated : r)) : [updated, ...prev];
-        return next;
+        return exists ? prev.map((r) => (r.id === updated.id ? updated : r)) : [updated, ...prev];
       });
     });
     return () => {
@@ -55,6 +62,31 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       unsubscribe();
     };
   }, []);
+
+  // Worker: tenta enviar assim que a fila carrega, quando o servidor e
+  // configurado, periodicamente enquanto houver itens, e ao voltar ao app.
+  const hasPending = recordings.some(isUploadable);
+
+  useEffect(() => {
+    if (ready) kick();
+  }, [ready, kick]);
+
+  useEffect(() => {
+    if (config) kick();
+  }, [config, kick]);
+
+  useEffect(() => {
+    if (!hasPending) return undefined;
+    const id = setInterval(() => kick(), WORKER_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [hasPending, kick]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') kick();
+    });
+    return () => subscription.remove();
+  }, [kick]);
 
   const enqueue = useCallback(
     async (recording: Recording) => {
