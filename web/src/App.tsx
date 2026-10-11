@@ -5,6 +5,7 @@ import { TokenGate } from "./components/TokenGate";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { NoteList } from "./components/NoteList";
 import { NoteEditor } from "./components/NoteEditor";
+import { OfflineBanner } from "./components/OfflineBanner";
 import { useToast } from "./components/Toasts";
 import { InsightsIcon, NoteIcon, SearchIcon, SettingsIcon } from "./components/icons";
 import { InsightsView } from "./views/InsightsView";
@@ -139,6 +140,7 @@ export function App() {
 
   return (
     <div className="app">
+      <OfflineBanner />
       <aside className="sidebar" aria-label="Navegacao principal">
         <div className="brand">dyarium</div>
         <nav>

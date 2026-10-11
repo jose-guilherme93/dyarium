@@ -1,3 +1,5 @@
+import { cacheGet, cacheSet } from "./lib/idb";
+import { setOffline } from "./lib/offline";
 import type {
   Analysis,
   Attachment,
@@ -41,6 +43,8 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const method = (init?.method ?? "GET").toUpperCase();
+  const isGet = method === "GET";
   const headers: Record<string, string> = {
     Authorization: `Bearer ${getToken()}`,
     ...(init?.headers as Record<string, string> | undefined),
@@ -48,16 +52,34 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (init?.body && !(init.body instanceof Blob)) {
     headers["Content-Type"] = "application/json";
   }
-  const res = await fetch(`/api/v1${path}`, { ...init, headers });
-  if (res.status === 204) {
-    return undefined as T;
+  const url = `/api/v1${path}`;
+  try {
+    const res = await fetch(url, { ...init, headers });
+    if (res.status === 204) {
+      setOffline(false);
+      return undefined as T;
+    }
+    const text = await res.text();
+    if (!res.ok) {
+      const body = text ? JSON.parse(text) : {};
+      throw new ApiError(body?.error?.message ?? res.statusText, res.status, body?.error?.code);
+    }
+    setOffline(false);
+    if (isGet) {
+      void cacheSet(url, text);
+    }
+    return (text ? JSON.parse(text) : {}) as T;
+  } catch (err) {
+    // Serve the last cached copy when the network is unavailable.
+    if (isGet && !(err instanceof ApiError)) {
+      const cached = await cacheGet(url);
+      if (cached !== undefined) {
+        setOffline(true);
+        return JSON.parse(cached) as T;
+      }
+    }
+    throw err;
   }
-  const text = await res.text();
-  const body = text ? JSON.parse(text) : {};
-  if (!res.ok) {
-    throw new ApiError(body?.error?.message ?? res.statusText, res.status, body?.error?.code);
-  }
-  return body as T;
 }
 
 export interface EntryFilters {
@@ -99,6 +121,12 @@ export const api = {
   updateNote: (id: string, title: string, document: unknown) =>
     request<{ status: string }>(`/notes/${id}`, { method: "PUT", body: JSON.stringify({ title, document }) }),
   listTags: () => request<{ tags: Tag[] }>("/tags"),
+  listEntryTags: (entryId: string) => request<{ tags: Tag[] }>(`/entries/${entryId}/tags`),
+  setEntryTags: (entryId: string, tags: string[]) =>
+    request<{ status: string }>(`/entries/${entryId}/tags`, {
+      method: "PUT",
+      body: JSON.stringify({ tags }),
+    }),
   createTag: (name: string, color: string) =>
     request<{ id: string }>("/tags", { method: "POST", body: JSON.stringify({ name, color }) }),
   getSettings: () => request<Settings>("/settings"),
