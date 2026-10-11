@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/joseti/dyarium/internal/audio"
-	"github.com/joseti/dyarium/internal/store"
-	"github.com/joseti/dyarium/internal/transcribe"
+	"github.com/jose-guilherme93/dyarium/internal/audio"
+	"github.com/jose-guilherme93/dyarium/internal/store"
+	"github.com/jose-guilherme93/dyarium/internal/transcribe"
 )
 
 func TestPlanChunksCutsAtSilence(t *testing.T) {

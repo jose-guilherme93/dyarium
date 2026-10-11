@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joseti/dyarium/internal/config"
-	"github.com/joseti/dyarium/internal/store"
+	"github.com/jose-guilherme93/dyarium/internal/config"
+	"github.com/jose-guilherme93/dyarium/internal/store"
 )
 
 func newTestServer(t *testing.T) *Server {

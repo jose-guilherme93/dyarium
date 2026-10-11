@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/joseti/dyarium/internal/id"
-	"github.com/joseti/dyarium/internal/store"
+	"github.com/jose-guilherme93/dyarium/internal/id"
+	"github.com/jose-guilherme93/dyarium/internal/store"
 )
 
 type noteRequest struct {

@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/joseti/dyarium/internal/events"
+	"github.com/jose-guilherme93/dyarium/internal/events"
 )
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {

@@ -1,4 +1,4 @@
-module github.com/joseti/dyarium
+module github.com/jose-guilherme93/dyarium
 
 go 1.26.0
 

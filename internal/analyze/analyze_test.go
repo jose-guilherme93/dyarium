@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/joseti/dyarium/internal/analyze"
+	"github.com/jose-guilherme93/dyarium/internal/analyze"
 )
 
 func TestAnalyzeParsesResponse(t *testing.T) {

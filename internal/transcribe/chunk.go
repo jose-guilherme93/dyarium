@@ -1,6 +1,6 @@
 package transcribe
 
-import "github.com/joseti/dyarium/internal/audio"
+import "github.com/jose-guilherme93/dyarium/internal/audio"
 
 const (
 	chunkTargetMS = 10 * 60 * 1000 // prefer a cut near 10 minutes

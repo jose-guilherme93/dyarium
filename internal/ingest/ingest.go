@@ -14,10 +14,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joseti/dyarium/internal/audio"
-	"github.com/joseti/dyarium/internal/crypto"
-	"github.com/joseti/dyarium/internal/id"
-	"github.com/joseti/dyarium/internal/store"
+	"github.com/jose-guilherme93/dyarium/internal/audio"
+	"github.com/jose-guilherme93/dyarium/internal/crypto"
+	"github.com/jose-guilherme93/dyarium/internal/id"
+	"github.com/jose-guilherme93/dyarium/internal/store"
 )
 
 // Config holds the upload limits.

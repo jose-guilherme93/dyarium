@@ -10,14 +10,14 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/joseti/dyarium/internal/analyze"
-	"github.com/joseti/dyarium/internal/config"
-	"github.com/joseti/dyarium/internal/events"
-	"github.com/joseti/dyarium/internal/ingest"
-	"github.com/joseti/dyarium/internal/jobs"
-	"github.com/joseti/dyarium/internal/models"
-	"github.com/joseti/dyarium/internal/store"
-	"github.com/joseti/dyarium/internal/webui"
+	"github.com/jose-guilherme93/dyarium/internal/analyze"
+	"github.com/jose-guilherme93/dyarium/internal/config"
+	"github.com/jose-guilherme93/dyarium/internal/events"
+	"github.com/jose-guilherme93/dyarium/internal/ingest"
+	"github.com/jose-guilherme93/dyarium/internal/jobs"
+	"github.com/jose-guilherme93/dyarium/internal/models"
+	"github.com/jose-guilherme93/dyarium/internal/store"
+	"github.com/jose-guilherme93/dyarium/internal/webui"
 )
 
 // Deps groups the server dependencies.

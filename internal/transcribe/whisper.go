@@ -14,8 +14,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/joseti/dyarium/internal/audio"
-	"github.com/joseti/dyarium/internal/store"
+	"github.com/jose-guilherme93/dyarium/internal/audio"
+	"github.com/jose-guilherme93/dyarium/internal/store"
 )
 
 // WhisperCLI runs the whisper-cli binary as a subprocess. It parses the segment

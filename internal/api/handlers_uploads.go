@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joseti/dyarium/internal/ingest"
-	"github.com/joseti/dyarium/internal/jobs"
-	"github.com/joseti/dyarium/internal/store"
+	"github.com/jose-guilherme93/dyarium/internal/ingest"
+	"github.com/jose-guilherme93/dyarium/internal/jobs"
+	"github.com/jose-guilherme93/dyarium/internal/store"
 )
 
 type createUploadRequest struct {

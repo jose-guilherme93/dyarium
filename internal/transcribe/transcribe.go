@@ -10,8 +10,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/joseti/dyarium/internal/audio"
-	"github.com/joseti/dyarium/internal/store"
+	"github.com/jose-guilherme93/dyarium/internal/audio"
+	"github.com/jose-guilherme93/dyarium/internal/store"
 )
 
 // cacheKeyVersion identifies the derived 16 kHz mono artifact. Trimming

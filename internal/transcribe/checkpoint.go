@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joseti/dyarium/internal/id"
-	"github.com/joseti/dyarium/internal/store"
+	"github.com/jose-guilherme93/dyarium/internal/id"
+	"github.com/jose-guilherme93/dyarium/internal/store"
 )
 
 func loadCheckpoint(path string) map[int]chunkResult {

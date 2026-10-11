@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/joseti/dyarium/internal/events"
+	"github.com/jose-guilherme93/dyarium/internal/events"
 )
 
 // Info describes a model in the catalog.

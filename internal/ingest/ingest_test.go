@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/joseti/dyarium/internal/store"
+	"github.com/jose-guilherme93/dyarium/internal/store"
 )
 
 func newService(t *testing.T) (*Service, *store.Store, string) {
