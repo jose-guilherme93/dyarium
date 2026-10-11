@@ -121,6 +121,31 @@ func TestAnalyzeFallsBackToJSONObject(t *testing.T) {
 	}
 }
 
+func TestListModels(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" {
+			t.Errorf("path = %s", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer chave" {
+			t.Errorf("authorization = %q", got)
+		}
+		resp := map[string]any{
+			"data": []map[string]string{{"id": "modelo-a"}, {"id": "modelo-b"}, {"id": "modelo-a"}},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	client := analyze.New(analyze.Config{BaseURL: server.URL, APIKey: "chave"})
+	models, err := client.ListModels(context.Background())
+	if err != nil {
+		t.Fatalf("list models: %v", err)
+	}
+	if len(models) != 2 || models[0] != "modelo-a" || models[1] != "modelo-b" {
+		t.Fatalf("models = %v", models)
+	}
+}
+
 func TestAnalyzeDisabled(t *testing.T) {
 	client := analyze.New(analyze.Config{Enabled: false})
 	if client.Enabled() {

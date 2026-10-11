@@ -125,6 +125,58 @@ func (c *Client) Analyze(ctx context.Context, text string) (Result, error) {
 	return result, nil
 }
 
+// ListModels returns the model ids advertised by the provider's /models
+// endpoint (OpenAI-compatible).
+func (c *Client) ListModels(ctx context.Context) ([]string, error) {
+	url := strings.TrimRight(c.cfg.BaseURL, "/") + "/models"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.cfg.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("analyze: list models: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("analyze: list models: status %d", resp.StatusCode)
+	}
+	var payload struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+		Models []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"models"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, fmt.Errorf("analyze: list models: %w", err)
+	}
+	var ids []string
+	seen := map[string]bool{}
+	add := func(id string) {
+		if id != "" && !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	for _, m := range payload.Data {
+		add(m.ID)
+	}
+	for _, m := range payload.Models {
+		if m.ID != "" {
+			add(m.ID)
+		} else {
+			add(m.Name)
+		}
+	}
+	return ids, nil
+}
+
 // Summarize combines the partial summaries into a single one (meta-summary).
 func (c *Client) Summarize(ctx context.Context, summaries []string) (string, error) {
 	joined := strings.TrimSpace(strings.Join(summaries, "\n"))
