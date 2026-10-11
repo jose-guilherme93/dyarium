@@ -9,7 +9,7 @@ import { deleteRecordingRow, getRecording, listRecordings, upsertRecording } fro
 import { deleteSessionFiles } from '@/services/files';
 import { syncNote } from '@/services/noteSync';
 import { fetchTranscriptsOnce } from '@/services/transcripts';
-import { observeUploads, runUploadQueueOnce } from '@/services/uploaderLoop';
+import { emitRecording, observeUploads, runUploadQueueOnce } from '@/services/uploaderLoop';
 
 import { useSettings } from './SettingsContext';
 
@@ -32,6 +32,8 @@ interface LibraryValue {
   /** Arquiva/desarquiva a nota (sai da lista principal). */
   archiveNote(id: string): Promise<void>;
   unarchiveNote(id: string): Promise<void>;
+  /** Remove o audio local de notas ja sincronizadas (o audio continua no servidor). */
+  freeSyncedAudio(): Promise<number>;
   retry(id: string): Promise<void>;
   remove(id: string): Promise<void>;
   /** Dispara a fila agora (envio manual). */
@@ -254,6 +256,27 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   const archiveNote = useCallback((id: string) => setArchived(id, true), [setArchived]);
   const unarchiveNote = useCallback((id: string) => setArchived(id, false), [setArchived]);
 
+  const freeSyncedAudio = useCallback(async () => {
+    const list = await listRecordings();
+    let freed = 0;
+    for (const recording of list) {
+      if (recording.status !== 'completed' || !recording.filePath) continue;
+      deleteSessionFiles(recording.id);
+      const updated: Recording = {
+        ...recording,
+        filePath: undefined,
+        dir: '',
+        sizeBytes: undefined,
+        updatedAt: new Date().toISOString(),
+      };
+      await upsertRecording(updated);
+      emitRecording(updated);
+      freed += 1;
+    }
+    await refresh();
+    return freed;
+  }, [refresh]);
+
   const value = useMemo<LibraryValue>(
     () => ({
       recordings,
@@ -267,6 +290,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       submitNote,
       archiveNote,
       unarchiveNote,
+      freeSyncedAudio,
       retry,
       remove,
       kick,
@@ -283,6 +307,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       submitNote,
       archiveNote,
       unarchiveNote,
+      freeSyncedAudio,
       retry,
       remove,
       kick,

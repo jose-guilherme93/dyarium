@@ -68,6 +68,17 @@ export default function SettingsScreen() {
           </Card>
         </Pressable>
 
+        <Pressable onPress={() => router.push('/storage')}>
+          <Card style={styles.row}>
+            <Ionicons name="save-outline" size={20} color={colors.info} />
+            <View style={styles.rowText}>
+              <Text style={styles.cardTitle}>Armazenamento</Text>
+              <Text style={styles.cardHint}>Uso no aparelho e liberar espaco.</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
+          </Card>
+        </Pressable>
+
         <Text style={styles.sectionLabel}>Servidor</Text>
         <Pressable onPress={() => router.push('/server')}>
           <Card style={styles.row}>

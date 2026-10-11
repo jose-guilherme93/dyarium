@@ -35,6 +35,9 @@ texto, guarda local, enfileira e envia para o servidor self-hosted.
   status, puxados do servidor.
 - **Busca local** e **pull-to-refresh** na lista; **compartilhar** o texto da nota;
   **notificacao** quando a transcricao fica pronta.
+- **Armazenamento** (nas Opcoes): uso no aparelho e liberar espaco (remove o audio local de
+  notas ja sincronizadas; o audio continua no servidor). Migracoes do banco versionadas e
+  trava de fila para nao ter dois workers ao mesmo tempo.
 - A biblioteca organiza as notas **por ano** (mais novo no topo), pela data do evento, para
   que notas antigas importadas apareçam no ano a que pertencem.
 - **Notas somente texto** entram na mesma fila e sao enviadas como conteudo textual (o texto
