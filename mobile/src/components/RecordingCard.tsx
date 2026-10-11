@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { formatBytes, formatDuration } from '@/core/format';
 import type { Recording } from '@/core/types';
@@ -76,6 +76,11 @@ export function RecordingCard({ recording, onRetry, onDelete }: RecordingCardPro
               <Text style={styles.sub}>· {formatBytes(recording.sizeBytes)}</Text>
             ) : null}
           </View>
+          {recording.transcriptStatus === 'ready' && recording.transcript ? (
+            <Text style={styles.preview} numberOfLines={1}>
+              {recording.transcript}
+            </Text>
+          ) : null}
         </Pressable>
 
         {uploading ? (
@@ -138,6 +143,17 @@ export function RecordingCard({ recording, onRetry, onDelete }: RecordingCardPro
               <Ionicons name="trash-outline" size={20} color={colors.danger} />
             </Pressable>
           </View>
+          {recording.transcriptStatus === 'ready' && recording.transcript ? (
+            <View style={styles.transcriptBox}>
+              <Text style={styles.transcriptLabel}>Transcricao</Text>
+              <Text style={styles.transcriptText}>{recording.transcript}</Text>
+            </View>
+          ) : recording.transcriptStatus === 'pending' ? (
+            <View style={styles.transcriptRow}>
+              <ActivityIndicator size="small" color={colors.textSecondary} />
+              <Text style={styles.transcriptHint}>Transcrevendo...</Text>
+            </View>
+          ) : null}
           {recording.status === 'failed' && recording.lastError ? (
             <Text style={styles.error} numberOfLines={2}>
               {recording.lastError}
@@ -169,6 +185,7 @@ const styles = StyleSheet.create({
   subRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   dot: { width: 6, height: 6, borderRadius: 3 },
   sub: { color: colors.textSecondary, fontSize: fontSize.xs },
+  preview: { color: colors.textTertiary, fontSize: fontSize.sm, marginTop: 2 },
   trailing: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   ring: {
     width: 34,
@@ -192,4 +209,15 @@ const styles = StyleSheet.create({
   control: { padding: spacing.sm },
   spacer: { flex: 1 },
   error: { color: colors.danger, fontSize: fontSize.xs },
+  transcriptBox: { gap: 6 },
+  transcriptLabel: {
+    color: colors.textTertiary,
+    fontSize: fontSize.xs,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  transcriptText: { color: colors.text, fontSize: fontSize.sm, lineHeight: 20 },
+  transcriptRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  transcriptHint: { color: colors.textSecondary, fontSize: fontSize.sm },
 });

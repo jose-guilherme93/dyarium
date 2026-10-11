@@ -67,6 +67,21 @@ export interface CompleteUploadResponse {
   status: string;
 }
 
+export interface TranscriptSegment {
+  start_ms: number;
+  end_ms: number;
+  text: string;
+}
+
+export interface TranscriptResponse {
+  model: string;
+  language: string;
+  text: string;
+  trim_silence?: boolean;
+  duration_seconds?: number;
+  segments: TranscriptSegment[];
+}
+
 export interface VersionResponse {
   version: string;
   commit: string;
@@ -169,6 +184,16 @@ export class DyariumApi {
   async completeUpload(uploadId: string): Promise<CompleteUploadResponse> {
     const res = await this.fetchImpl(this.url(`/api/v1/uploads/${uploadId}/complete`), {
       method: 'POST',
+      headers: this.authHeaders(),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    return JSON.parse(await res.text());
+  }
+
+  /** Transcricao da entrada. Lanca ApiError 404 enquanto nao estiver pronta. */
+  async getTranscript(entryId: string): Promise<TranscriptResponse> {
+    const res = await this.fetchImpl(this.url(`/api/v1/entries/${entryId}/transcript`), {
+      method: 'GET',
       headers: this.authHeaders(),
     });
     if (!res.ok) throw await this.parseError(res);

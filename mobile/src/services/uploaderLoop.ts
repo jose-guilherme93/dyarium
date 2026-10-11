@@ -23,7 +23,7 @@ export function observeUploads(observer: Observer): () => void {
   return () => observers.delete(observer);
 }
 
-function emit(recording: Recording): void {
+export function emitRecording(recording: Recording): void {
   for (const observer of observers) observer(recording);
 }
 
@@ -46,7 +46,7 @@ export async function runUploadQueueOnce(): Promise<void> {
         // proximo (nao trava a fila inteira).
         const failed = markFailed(next, 'gravacao sem arquivo local', new Date());
         await upsertRecording(failed);
-        emit(failed);
+        emitRecording(failed);
         continue;
       }
       await uploadOne(api, next);
@@ -63,7 +63,7 @@ async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
     updatedAt: new Date().toISOString(),
   };
   await upsertRecording(current);
-  emit(current);
+  emitRecording(current);
 
   try {
     const result = await uploadRecording(
@@ -88,23 +88,23 @@ async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
           onUploadCreated: async (uploadId, offset) => {
             current = { ...current, uploadId, offset, updatedAt: new Date().toISOString() };
             await upsertRecording(current);
-            emit(current);
+            emitRecording(current);
           },
           onProgress: async (sent) => {
             current = { ...current, offset: sent, updatedAt: new Date().toISOString() };
             await upsertRecording(current);
-            emit(current);
+            emitRecording(current);
           },
         },
       },
     );
-    current = markCompleted(current, result.entryId, new Date());
+    current = { ...markCompleted(current, result.entryId, new Date()), transcriptStatus: 'pending' };
     await upsertRecording(current);
-    emit(current);
+    emitRecording(current);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'falha no envio';
     current = markFailed(current, message, new Date());
     await upsertRecording(current);
-    emit(current);
+    emitRecording(current);
   }
 }
