@@ -29,6 +29,7 @@ export function App() {
   const [entityFocus, setEntityFocus] = useState<{ kind: EntityKind; name: string } | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [failures, setFailures] = useState<Record<string, string>>({});
+  const [entryProgress, setEntryProgress] = useState<Record<string, { stage: string; done: number; total: number }>>({});
   const { notify } = useToast();
   const refreshTimer = useRef<number | null>(null);
 
@@ -54,6 +55,18 @@ export function App() {
         case "model.download":
           bumpRefresh();
           break;
+        case "job.progress":
+          if (id) {
+            setEntryProgress((map) => ({
+              ...map,
+              [id]: {
+                stage: String(event.data.stage ?? ""),
+                done: Number(event.data.done ?? 0),
+                total: Number(event.data.total ?? 0),
+              },
+            }));
+          }
+          break;
         default:
           break;
       }
@@ -63,8 +76,24 @@ export function App() {
       if (event.name === "entry.failed") {
         const reason = String(event.data.reason ?? "falha ao processar");
         setFailures((map) => ({ ...map, [id]: reason }));
+        setEntryProgress((map) => {
+          const next = { ...map };
+          delete next[id];
+          return next;
+        });
         notify(reason, "error");
       } else if (event.name === "entry.status") {
+        const status = String(event.data.status ?? "");
+        if (status === "ready" || status === "transcribed" || status === "failed") {
+          setEntryProgress((map) => {
+            if (!(id in map)) {
+              return map;
+            }
+            const next = { ...map };
+            delete next[id];
+            return next;
+          });
+        }
         setFailures((map) => {
           if (!(id in map)) {
             return map;
@@ -163,6 +192,7 @@ export function App() {
                     entryId={openEntryId}
                     refreshKey={refreshKey}
                     failureReason={failures[openEntryId]}
+                    progress={entryProgress[openEntryId]}
                     onChanged={refresh}
                     onDeleted={() => {
                       setOpenEntryId(null);

@@ -4,6 +4,10 @@ import { CheckIcon, MoreIcon, PauseIcon, PlayIcon } from "./icons";
 
 interface AudioPlayerProps {
   src: string;
+  /** Reports the current playback position (seconds). */
+  onTime?: (seconds: number) => void;
+  /** Reports whether the audio is currently playing. */
+  onPlaying?: (playing: boolean) => void;
 }
 
 export interface AudioPlayerHandle {
@@ -14,7 +18,7 @@ const RATES = [0.75, 1, 1.25, 1.5, 2];
 
 // AudioPlayer is a compact player for a note's original audio.
 export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(function AudioPlayer(
-  { src }: AudioPlayerProps,
+  { src, onTime, onPlaying }: AudioPlayerProps,
   handle,
 ) {
   const ref = useRef<HTMLAudioElement | null>(null);
@@ -44,12 +48,18 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
     }
   };
 
+  const setPlayingState = (value: boolean) => {
+    setPlaying(value);
+    onPlaying?.(value);
+  };
+
   const seek = (value: number) => {
     const el = ref.current;
     if (el) {
       el.currentTime = value;
     }
     setCurrent(value);
+    onTime?.(value);
   };
 
   const changeRate = (value: number) => {
@@ -78,10 +88,14 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
         ref={ref}
         src={src}
         preload="metadata"
-        onPlay={() => setPlaying(true)}
-        onPause={() => setPlaying(false)}
-        onEnded={() => setPlaying(false)}
-        onTimeUpdate={(event) => setCurrent(event.currentTarget.currentTime)}
+        onPlay={() => setPlayingState(true)}
+        onPause={() => setPlayingState(false)}
+        onEnded={() => setPlayingState(false)}
+        onTimeUpdate={(event) => {
+          const value = event.currentTarget.currentTime;
+          setCurrent(value);
+          onTime?.(value);
+        }}
         onLoadedMetadata={(event) => {
           const value = event.currentTarget.duration;
           setDuration(Number.isFinite(value) ? value : 0);
