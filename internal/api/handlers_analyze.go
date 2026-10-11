@@ -12,12 +12,16 @@ import (
 // analyzeClientConfig merges the environment defaults with the stored settings.
 func (s *Server) analyzeClientConfig(ctx context.Context) analyze.Config {
 	cfg := analyze.Config{
-		Enabled: true,
-		BaseURL: s.deps.Config.AnalyzeBaseURL,
-		APIKey:  s.deps.Config.AnalyzeAPIKey,
-		Model:   s.deps.Config.AnalyzeModel,
+		Enabled:  true,
+		Provider: s.deps.Config.AnalyzeProvider,
+		BaseURL:  s.deps.Config.AnalyzeBaseURL,
+		APIKey:   s.deps.Config.AnalyzeAPIKey,
+		Model:    s.deps.Config.AnalyzeModel,
 	}
 	if settings, err := s.deps.Store.ListSettings(ctx); err == nil {
+		if v := settings["analyze_provider"]; v != "" {
+			cfg.Provider = v
+		}
 		if v := settings["analyze_base_url"]; v != "" {
 			cfg.BaseURL = v
 		}

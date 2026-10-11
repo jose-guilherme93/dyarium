@@ -6,6 +6,7 @@ package analyze
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,15 +16,37 @@ import (
 	"time"
 )
 
+// Provider kinds.
+const (
+	ProviderOpenAI   = "openai"   // OpenAI-compatible /chat/completions
+	ProviderOpenCode = "opencode" // local OpenCode server
+)
+
 // Config configures the analysis client.
 type Config struct {
 	Enabled bool
-	BaseURL string
-	APIKey  string
-	Model   string
+	// Provider selects the API shape: "openai" (default) or "opencode" (local
+	// OpenCode server, using the user's OpenCode login instead of an API key).
+	Provider string
+	BaseURL  string
+	APIKey   string
+	Model    string
 	// Themes is the preferred theme list sent to the model. Empty means
 	// DefaultThemes.
 	Themes []string
+}
+
+// ParseModelRef splits a "provider/model" reference. Without a slash the model
+// id is returned alone.
+func ParseModelRef(ref string) (providerID, modelID string) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", ""
+	}
+	if i := strings.IndexByte(ref, '/'); i >= 0 {
+		return ref[:i], ref[i+1:]
+	}
+	return "", ref
 }
 
 // Client talks to an OpenAI-compatible endpoint.
@@ -157,6 +180,9 @@ func (c *Client) Analyze(ctx context.Context, text string) (Result, error) {
 // ListModels returns the model ids advertised by the provider's /models
 // endpoint (OpenAI-compatible).
 func (c *Client) ListModels(ctx context.Context) ([]string, error) {
+	if c.cfg.Provider == ProviderOpenCode {
+		return c.listModelsOpenCode(ctx)
+	}
 	url := strings.TrimRight(c.cfg.BaseURL, "/") + "/models"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -234,6 +260,9 @@ func (c *Client) do(ctx context.Context, system, user string, maxTokens int) (st
 }
 
 func (c *Client) call(ctx context.Context, system, user string, maxTokens int, useSchema bool) (string, error) {
+	if c.cfg.Provider == ProviderOpenCode {
+		return c.callOpenCode(ctx, system, user)
+	}
 	body := chatRequest{
 		Model: c.cfg.Model,
 		Messages: []chatMessage{
@@ -293,6 +322,105 @@ func (c *Client) call(ctx context.Context, system, user string, maxTokens int, u
 		return "", errors.New("analyze: resposta sem conteudo")
 	}
 	return content, nil
+}
+
+// authBasic builds the HTTP Basic header used by the local OpenCode server
+// (username "opencode", password from the service registration).
+func (c *Client) authBasic() string {
+	return "Basic " + base64.StdEncoding.EncodeToString([]byte("opencode:"+c.cfg.APIKey))
+}
+
+// callOpenCode runs a one-shot generation on the local OpenCode server, which
+// authenticates the user via their OpenCode login.
+func (c *Client) callOpenCode(ctx context.Context, system, user string) (string, error) {
+	prompt := user
+	if strings.TrimSpace(system) != "" {
+		prompt = system + "\n\n" + user
+	}
+	body := map[string]any{"prompt": prompt}
+	if providerID, modelID := ParseModelRef(c.cfg.Model); providerID != "" && modelID != "" {
+		body["model"] = map[string]string{"providerID": providerID, "id": modelID}
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return "", err
+	}
+	url := strings.TrimRight(c.cfg.BaseURL, "/") + "/api/experimental/generate"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", c.authBasic())
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("analyze: opencode: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return "", fmt.Errorf("analyze: status %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
+	}
+	var out struct {
+		Data struct {
+			Text string `json:"text"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", fmt.Errorf("analyze: opencode decode: %w", err)
+	}
+	if strings.TrimSpace(out.Data.Text) == "" {
+		return "", errors.New("analyze: opencode resposta vazia")
+	}
+	return out.Data.Text, nil
+}
+
+// listModelsOpenCode lists "provider/model" ids from the local OpenCode server.
+func (c *Client) listModelsOpenCode(ctx context.Context) ([]string, error) {
+	url := strings.TrimRight(c.cfg.BaseURL, "/") + "/api/model"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", c.authBasic())
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("analyze: opencode models: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("analyze: opencode models: status %d", resp.StatusCode)
+	}
+	var payload any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, fmt.Errorf("analyze: opencode models decode: %w", err)
+	}
+	var ids []string
+	seen := map[string]bool{}
+	var walk func(value any)
+	walk = func(value any) {
+		switch node := value.(type) {
+		case map[string]any:
+			id, _ := node["id"].(string)
+			providerID, _ := node["providerID"].(string)
+			if id != "" && providerID != "" {
+				ref := providerID + "/" + id
+				if !seen[ref] {
+					seen[ref] = true
+					ids = append(ids, ref)
+				}
+			}
+			for _, child := range node {
+				walk(child)
+			}
+		case []any:
+			for _, item := range node {
+				walk(item)
+			}
+		}
+	}
+	walk(payload)
+	return ids, nil
 }
 
 // systemPrompt builds the pt-BR analyst prompt with the preferred theme list.

@@ -45,14 +45,18 @@ func (s telegramSink) IngestAudio(ctx context.Context, source, filename, content
 // stored in the database, so the dashboard can configure paid APIs.
 func analyzeConfigFromSettings(ctx context.Context, st *store.Store, cfg config.Config) analyze.Config {
 	result := analyze.Config{
-		Enabled: cfg.AnalyzeEnabled,
-		BaseURL: cfg.AnalyzeBaseURL,
-		APIKey:  cfg.AnalyzeAPIKey,
-		Model:   cfg.AnalyzeModel,
+		Enabled:  cfg.AnalyzeEnabled,
+		Provider: cfg.AnalyzeProvider,
+		BaseURL:  cfg.AnalyzeBaseURL,
+		APIKey:   cfg.AnalyzeAPIKey,
+		Model:    cfg.AnalyzeModel,
 	}
 	if settings, err := st.ListSettings(ctx); err == nil {
 		if v, ok := settings["analyze_enabled"]; ok {
 			result.Enabled = v == "true"
+		}
+		if v, ok := settings["analyze_provider"]; ok && v != "" {
+			result.Provider = v
 		}
 		if v, ok := settings["analyze_base_url"]; ok && v != "" {
 			result.BaseURL = v

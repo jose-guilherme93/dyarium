@@ -231,6 +231,18 @@ Retorna as configuracoes atuais (por exemplo, `trim_silence`, modelo de transcri
 de analise e `analysis_themes`). `analysis_themes` e a lista de temas preferidos separada
 por virgulas; quando vazia, o servidor devolve a lista padrao.
 
+`analyze_provider` escolhe o formato da API de analise:
+- `openai` (padrao): endpoint compativel com OpenAI (`/chat/completions`) autenticado por
+  chave (`analyze_api_key`).
+- `opencode`: conecta ao OpenCode local do usuario, reutilizando o login dele no OpenCode.
+  Nesse modo `analyze_base_url` e a URL do servidor do OpenCode, `analyze_api_key` e a senha
+  do servico (em `~/.config/opencode/service.json` ou a senha impressa por `opencode serve`)
+  e `analyze_model` usa o formato `provedor/modelo` (ex.: `opencode-go/qwen3.8-flash`). A
+  lista de modelos vem de `GET /analyze/models`.
+
+Nota de rede: quando o dyarium roda em container e o OpenCode roda no host, o container
+precisa alcancar a URL informada (o OpenCode escuta em `127.0.0.1` por padrao).
+
 ### PUT /api/v1/settings
 Atualiza configuracoes. Alterar `trim_silence` invalida o artefato derivado em cache
 (regenerado na proxima transcricao).
