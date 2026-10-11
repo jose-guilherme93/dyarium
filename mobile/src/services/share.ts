@@ -69,6 +69,8 @@ export async function prepareSharedAudios(now = new Date()): Promise<PreparedSha
       reason: analysis.reason,
       contentType: analysis.contentType,
       extension: analysis.extension,
+      date: analysis.date,
+      fallbackMs: analysis.fallbackMs,
     };
 
     if (analysis.supported && analysis.extension) {

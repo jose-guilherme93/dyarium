@@ -6,7 +6,9 @@ import {
   formatBrDateTime,
   mimeForExtension,
   parseBrDateTime,
+  parseNameDate,
   parseUsDateTime,
+  resolveRecordedAt,
   type ImportDraft,
 } from '../import';
 
@@ -109,19 +111,100 @@ describe('analyzeShareAudio', () => {
     expect(formatBrDateTime(new Date(analysis.recordedAt))).toBe('25/12/2025 10:30');
   });
 
-  it('cai para a data de modificacao quando o nome e ambiguo', () => {
+  it('cai para a data de modificacao quando o nome nao tem data', () => {
     const modified = new Date('2024-05-01T12:00:00.000Z');
     const analysis = analyzeShareAudio(
-      { uri: 'content://x/y', name: '03-04-2025.m4a' },
+      { uri: 'content://x/y', name: 'minha nota.m4a' },
       { now: NOW, lastModifiedMs: modified.getTime() },
     );
     expect(analysis.recordedAt).toBe(modified.toISOString());
+  });
+
+  it('interpreta nome ambiguo como dia primeiro, com o ano do nome', () => {
+    const analysis = analyzeShareAudio(
+      { uri: 'content://x/y', name: '03-04-2025.m4a' },
+      { now: NOW },
+    );
+    expect(formatBrDateTime(new Date(analysis.recordedAt))).toBe('03/04/2025 00:00');
+  });
+
+  it('expoe a data extraida do nome para a revisao ajustar', () => {
+    const analysis = analyzeShareAudio(
+      { uri: 'content://x/y', name: '25/12 18:05.m4a' },
+      { now: NOW },
+    );
+    expect(analysis.date).toMatchObject({ a: 25, b: 12, order: 'day-first', hour: 18, minute: 5 });
   });
 
   it('bloqueia formato nao suportado sem copiar', () => {
     const analysis = analyzeShareAudio({ uri: 'content://x/y', name: 'anotacao.txt' }, { now: NOW });
     expect(analysis.supported).toBe(false);
     expect(analysis.reason).toBeTruthy();
+  });
+});
+
+describe('parseNameDate', () => {
+  it('detecta mes/dia quando o segundo campo passa de 12', () => {
+    expect(parseNameDate('12-25-2025 10:30 AM')).toMatchObject({
+      a: 12,
+      b: 25,
+      year: 2025,
+      order: 'month-first',
+      hour: 10,
+      minute: 30,
+    });
+  });
+
+  it('detecta dia/mes quando o primeiro campo passa de 12 (sem ano)', () => {
+    const date = parseNameDate('25/12 18:05');
+    expect(date).toMatchObject({ a: 25, b: 12, order: 'day-first', hour: 18, minute: 5 });
+    expect(date?.year).toBeUndefined();
+  });
+
+  it('marca como unknown quando dia e mes sao ambos <= 12', () => {
+    const date = parseNameDate('03/04 08:00');
+    expect(date?.order).toBe('unknown');
+    expect(date?.year).toBeUndefined();
+  });
+
+  it('aceita so a data (ISO)', () => {
+    expect(parseNameDate('2023-05-01')).toMatchObject({ year: 2023, order: 'month-first' });
+  });
+
+  it('devolve null sem data', () => {
+    expect(parseNameDate('minha nota de voz')).toBeNull();
+  });
+});
+
+describe('resolveRecordedAt', () => {
+  const fallback = new Date('2026-10-10T22:00:00.000Z');
+
+  it('usa o ano escolhido quando o nome nao tem ano', () => {
+    const date = parseNameDate('25/12 18:05');
+    expect(formatBrDateTime(resolveRecordedAt(date, { year: 2019, invert: false, fallback }))).toBe(
+      '25/12/2019 18:05',
+    );
+  });
+
+  it('inverte dia/mes quando pedido (nome ambiguo)', () => {
+    const date = parseNameDate('03/04 08:00');
+    expect(formatBrDateTime(resolveRecordedAt(date, { year: 2020, invert: false, fallback }))).toBe(
+      '03/04/2020 08:00',
+    );
+    expect(formatBrDateTime(resolveRecordedAt(date, { year: 2020, invert: true, fallback }))).toBe(
+      '04/03/2020 08:00',
+    );
+  });
+
+  it('o ano do nome vence o ano escolhido', () => {
+    const date = parseNameDate('12-25-2025 10:30');
+    expect(formatBrDateTime(resolveRecordedAt(date, { year: 2000, invert: false, fallback }))).toBe(
+      '25/12/2025 10:30',
+    );
+  });
+
+  it('sem data no nome usa o fallback', () => {
+    expect(resolveRecordedAt(null, { year: 2020, invert: false, fallback })).toBe(fallback);
   });
 });
 

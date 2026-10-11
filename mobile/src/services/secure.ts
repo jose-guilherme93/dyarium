@@ -38,6 +38,8 @@ export type SwipeAction = 'delete' | 'archive';
 export interface Prefs {
   /** O que o gesto de arrastar na lista faz. */
   swipeAction: SwipeAction;
+  /** Ultimo ano usado na importacao (agiliza remessas do mesmo ano). */
+  importYear?: number;
 }
 
 const PREFS_KEY = 'dyarium.prefs';
@@ -48,7 +50,10 @@ export async function loadPrefs(): Promise<Prefs> {
     const raw = await SecureStore.getItemAsync(PREFS_KEY);
     if (!raw) return DEFAULT_PREFS;
     const parsed = JSON.parse(raw) as Partial<Prefs>;
-    return { swipeAction: parsed.swipeAction === 'archive' ? 'archive' : 'delete' };
+    return {
+      swipeAction: parsed.swipeAction === 'archive' ? 'archive' : 'delete',
+      importYear: typeof parsed.importYear === 'number' ? parsed.importYear : undefined,
+    };
   } catch {
     return DEFAULT_PREFS;
   }

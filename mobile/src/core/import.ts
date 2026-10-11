@@ -35,10 +35,29 @@ export interface ShareAudioAnalysis {
   title: string;
   /** Inicio do audio em ISO 8601 UTC. */
   recordedAt: string;
+  /** Data extraida do nome (dia/mes/hora, talvez sem ano), para a revisao ajustar. */
+  date?: NameDate;
+  /** Data de modificacao do arquivo, usada como fallback. */
+  fallbackMs?: number;
+}
+
+/** Data extraida do nome do arquivo, antes de decidir o ano/ordem. */
+export interface NameDate {
+  /** Primeiro componente numerico (na ordem do nome). */
+  a: number;
+  /** Segundo componente numerico. */
+  b: number;
+  /** Ano, quando presente no nome. */
+  year?: number;
+  hour: number;
+  minute: number;
+  second: number;
+  /** Ordem detectada; 'unknown' quando dia e mes sao ambos <= 12. */
+  order: 'day-first' | 'month-first' | 'unknown';
 }
 
 /** Limite de audios aceitos por compartilhamento (o Android nao limita isto). */
-export const MAX_SHARED_FILES = 5;
+export const MAX_SHARED_FILES = 50;
 
 const SUPPORTED_EXTENSIONS = ['wav', 'mp3', 'm4a', 'ogg', 'flac', 'aac', 'adts'];
 
@@ -190,24 +209,83 @@ export function parseUsDateTime(text: string): Date | null {
   return date;
 }
 
+function normalizeYear(value: number): number {
+  return value < 100 ? 2000 + value : value;
+}
+
 /**
- * Data de inicio do audio importado: usa a data do nome do arquivo quando
- * inequivoca, senao a data de modificacao do arquivo, senao agora.
+ * Extrai a data do nome do arquivo, com ou sem ano. Detecta a ordem quando e
+ * inequivoca (um componente > 12); quando dia e mes sao ambos <= 12, a ordem e
+ * 'unknown' e a revisao usa um padrao (dia primeiro) com opcao de inverter.
  */
-export function deriveRecordedAt(
-  name: string,
-  opts: { now: Date; lastModifiedMs?: number | null },
-): Date {
-  const fromName = parseUsDateTime(name);
-  if (fromName) return fromName;
-  if (
-    typeof opts.lastModifiedMs === 'number' &&
-    Number.isFinite(opts.lastModifiedMs) &&
-    opts.lastModifiedMs > 0
-  ) {
-    return new Date(opts.lastModifiedMs);
+export function parseNameDate(name: string): NameDate | null {
+  const match = name.match(
+    /(\d{1,4})[/.-](\d{1,2})(?:[/.-](\d{2,4}))?(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*([AaPp])\.?[Mm]\.?)?)?/,
+  );
+  if (!match) return null;
+
+  const g1 = match[1];
+  const g2 = match[2];
+  const g3 = match[3];
+  let a: number;
+  let b: number;
+  let year: number | undefined;
+  let order: NameDate['order'];
+
+  if (g1.length === 4) {
+    // ISO: AAAA-MM-DD
+    year = Number(g1);
+    a = Number(g2);
+    b = g3 ? Number(g3) : 1;
+    order = 'month-first';
+  } else {
+    a = Number(g1);
+    b = Number(g2);
+    year = g3 ? normalizeYear(Number(g3)) : undefined;
+    if (a > 12 && b <= 12) order = 'day-first';
+    else if (b > 12 && a <= 12) order = 'month-first';
+    else order = 'unknown';
   }
-  return opts.now;
+
+  let hour = match[4] ? Number(match[4]) : 0;
+  const minute = match[5] ? Number(match[5]) : 0;
+  const second = match[6] ? Number(match[6]) : 0;
+  const meridiem = match[7] ? match[7].toLowerCase() : '';
+  if (meridiem) {
+    if (hour < 1 || hour > 12) return null;
+    if (meridiem === 'p' && hour !== 12) hour += 12;
+    if (meridiem === 'a' && hour === 12) hour = 0;
+  }
+
+  return { a, b, year, hour, minute, second, order };
+}
+
+/**
+ * Resolve a data do evento a partir do que foi extraido do nome, aplicando o ano
+ * escolhido (quando o nome nao tem ano) e a opcao de inverter dia/mes. Sem data
+ * no nome, usa o fallback (data de modificacao do arquivo ou agora).
+ */
+export function resolveRecordedAt(
+  date: NameDate | null,
+  opts: { year: number; invert: boolean; fallback: Date },
+): Date {
+  if (!date) return opts.fallback;
+  // Padrao quando ambiguo: dia primeiro (pt-BR); o usuario pode inverter.
+  let dayFirst = date.order !== 'month-first';
+  if (opts.invert) dayFirst = !dayFirst;
+  const day = dayFirst ? date.a : date.b;
+  const month = dayFirst ? date.b : date.a;
+  const year = date.year ?? opts.year;
+  if (month < 1 || month > 12 || day < 1 || day > 31) return opts.fallback;
+  const result = new Date(year, month - 1, day, date.hour, date.minute, date.second, 0);
+  if (
+    result.getFullYear() !== year ||
+    result.getMonth() !== month - 1 ||
+    result.getDate() !== day
+  ) {
+    return opts.fallback;
+  }
+  return result;
 }
 
 /** Formata uma data como "DD/MM/AAAA HH:mm" (24h) ou "DD/MM/AAAA hh:mm AM". */
@@ -267,26 +345,36 @@ export function buildShareFileName(title: string, extension: string): string {
 /** Analisa um payload do expo-sharing sem tocar em disco. */
 export function analyzeShareAudio(
   payload: ShareAudioPayload,
-  opts: { now: Date; lastModifiedMs?: number | null },
+  opts: { now: Date; lastModifiedMs?: number | null; year?: number; invert?: boolean },
 ): ShareAudioAnalysis {
   const originalName = fileNameOf(payload) || 'Audio';
   const title = baseNameOf(originalName) || 'Audio';
-  const recordedAt = deriveRecordedAt(originalName, opts).toISOString();
+  const date = parseNameDate(originalName);
+  const fallback =
+    typeof opts.lastModifiedMs === 'number' && opts.lastModifiedMs > 0
+      ? new Date(opts.lastModifiedMs)
+      : opts.now;
+  const recordedAt = resolveRecordedAt(date, {
+    year: opts.year ?? opts.now.getFullYear(),
+    invert: opts.invert ?? false,
+    fallback,
+  }).toISOString();
   const extension = extensionFor(payload);
+  const base = {
+    originalName,
+    title,
+    recordedAt,
+    date: date ?? undefined,
+    fallbackMs: opts.lastModifiedMs ?? undefined,
+  };
 
   if (!extension) {
-    return {
-      originalName,
-      supported: false,
-      reason: 'Formato de audio nao suportado.',
-      title,
-      recordedAt,
-    };
+    return { ...base, supported: false, reason: 'Formato de audio nao suportado.' };
   }
 
   const mime = normalizeMime(payload.mimeType);
   const contentType = mime.startsWith('audio/') ? mime : mimeForExtension(extension);
-  return { originalName, supported: true, extension, contentType, title, recordedAt };
+  return { ...base, supported: true, extension, contentType };
 }
 
 /**
@@ -305,6 +393,10 @@ export interface ImportDraft {
   extension?: string;
   sizeBytes?: number;
   durationMs?: number;
+  /** Data extraida do nome (para a revisao aplicar ano/ordem). */
+  date?: NameDate;
+  /** Data de modificacao do arquivo (fallback). */
+  fallbackMs?: number;
   /** Preenchidos quando o arquivo ja foi copiado para o storage do app. */
   id?: string;
   dir?: string;
