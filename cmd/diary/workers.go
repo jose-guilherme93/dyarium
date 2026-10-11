@@ -118,6 +118,8 @@ func analyzeHandler(st *store.Store, cfg config.Config, bus *events.Bus, logger 
 		client := analyze.New(analysisCfg)
 		transcript, _, err := st.GetTranscript(ctx, payload.EntryID)
 		if err != nil {
+			_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryFailed)
+			bus.Publish("entry.failed", map[string]string{"entry_id": payload.EntryID, "reason": "transcricao indisponivel"})
 			return fmt.Errorf("worker: transcript: %w", err)
 		}
 		result, err := client.Analyze(ctx, transcript.Text)

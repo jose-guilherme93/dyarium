@@ -71,9 +71,21 @@ func (q *Queue) Enqueue(ctx context.Context, jobType, idempotencyKey string, pay
 		raw = b
 	}
 	var existing string
+	var existingStatus string
 	err := q.db.QueryRowContext(ctx,
-		`SELECT id FROM jobs WHERE idempotency_key = ?`, idempotencyKey).Scan(&existing)
+		`SELECT id, status FROM jobs WHERE idempotency_key = ?`, idempotencyKey).Scan(&existing, &existingStatus)
 	if err == nil {
+		// If the job is not currently running, (re)queue it so a manual trigger
+		// takes effect immediately, even after a failure/backoff.
+		if existingStatus != string(StatusRunning) && existingStatus != string(StatusLeased) {
+			now := ts(time.Now())
+			if _, uerr := q.db.ExecContext(ctx, `
+				UPDATE jobs SET status = ?, attempts = 0, available_at = ?, last_error = '',
+					worker_id = '', lease_expires_at = NULL, updated_at = ?
+				WHERE id = ?`, string(StatusQueued), now, now, existing); uerr != nil {
+				return "", fmt.Errorf("jobs: requeue: %w", uerr)
+			}
+		}
 		return existing, nil
 	}
 	if err != sql.ErrNoRows {
