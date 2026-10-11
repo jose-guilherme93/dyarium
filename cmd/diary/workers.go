@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/joseti/dyarium/internal/analyze"
@@ -60,6 +61,9 @@ func analyzeConfigFromSettings(ctx context.Context, st *store.Store, cfg config.
 		}
 		if v, ok := settings["analyze_model"]; ok && v != "" {
 			result.Model = v
+		}
+		if v, ok := settings["analysis_themes"]; ok && strings.TrimSpace(v) != "" {
+			result.Themes = analyze.ParseThemes(v)
 		}
 	}
 	return result
@@ -127,34 +131,20 @@ func analyzeHandler(st *store.Store, cfg config.Config, bus *events.Bus, logger 
 		_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryAnalyzing)
 		bus.Publish("entry.status", map[string]string{"entry_id": payload.EntryID, "status": store.EntryAnalyzing})
 		client := analyze.New(analysisCfg)
-		transcript, _, err := st.GetTranscript(ctx, payload.EntryID)
+		transcript, segments, err := st.GetTranscript(ctx, payload.EntryID)
 		if err != nil {
 			_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryFailed)
 			bus.Publish("entry.failed", map[string]string{"entry_id": payload.EntryID, "reason": "transcricao indisponivel"})
 			return fmt.Errorf("worker: transcript: %w", err)
 		}
-		result, err := client.Analyze(ctx, transcript.Text)
+		result, err := analyze.NewPipeline(client).Run(ctx, analyzeSegments(transcript.Text, segments))
 		if err != nil {
 			_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryFailed)
 			bus.Publish("entry.failed", map[string]string{"entry_id": payload.EntryID, "reason": err.Error()})
 			return err
 		}
-		emotions, _ := json.Marshal(result.Emotions)
-		people, _ := json.Marshal(result.People)
-		places, _ := json.Marshal(result.Places)
-		analysis := store.Analysis{
-			ID:        id.New(),
-			EntryID:   payload.EntryID,
-			Model:     result.Model,
-			Sentiment: result.Sentiment,
-			Emotions:  string(emotions),
-			People:    string(people),
-			Places:    string(places),
-			Summary:   result.Summary,
-			Raw:       result.Raw,
-			CreatedAt: time.Now().UTC(),
-		}
-		if err := st.SaveAnalysis(ctx, analysis); err != nil {
+		analysis, links := buildAnalysis(payload.EntryID, result)
+		if err := st.SaveRichAnalysis(ctx, analysis, links); err != nil {
 			return err
 		}
 		_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryReady)
@@ -163,4 +153,73 @@ func analyzeHandler(st *store.Store, cfg config.Config, bus *events.Bus, logger 
 		logger.Info("worker: analise concluida", "entry_id", payload.EntryID)
 		return nil
 	}
+}
+
+// analyzeSegments maps the stored transcript segments to the analysis package
+// and falls back to a single synthetic segment when none is available.
+func analyzeSegments(text string, segments []store.Segment) []analyze.Segment {
+	out := make([]analyze.Segment, 0, len(segments))
+	for _, seg := range segments {
+		out = append(out, analyze.Segment{
+			StartMS: int(seg.StartMS),
+			EndMS:   int(seg.EndMS),
+			Text:    seg.Text,
+		})
+	}
+	if len(out) == 0 && strings.TrimSpace(text) != "" {
+		out = append(out, analyze.Segment{Text: text})
+	}
+	return out
+}
+
+// buildAnalysis converts a rich result into the stored analysis row plus the
+// entity links. The legacy columns keep the previous JSON shape so the current
+// dashboard keeps working.
+func buildAnalysis(entryID string, result analyze.Result) (store.Analysis, []store.EntityLink) {
+	emotions := make(map[string]float64, len(result.Emotions))
+	for _, e := range result.Emotions {
+		emotions[e.Name] = e.Intensity
+	}
+	people := make([]string, 0, len(result.People))
+	for _, p := range result.People {
+		people = append(people, p.Name)
+	}
+	places := make([]string, 0, len(result.Places))
+	for _, p := range result.Places {
+		places = append(places, p.Name)
+	}
+	emotionsJSON, _ := json.Marshal(emotions)
+	peopleJSON, _ := json.Marshal(people)
+	placesJSON, _ := json.Marshal(places)
+	dataJSON, _ := json.Marshal(result)
+
+	links := make([]store.EntityLink, 0, len(result.People)+len(result.Places)+len(result.Themes))
+	for _, p := range result.People {
+		sentiment := p.Sentiment
+		links = append(links, store.EntityLink{
+			Kind: store.EntityPerson, Name: p.Name, Count: max(p.Count, 1),
+			Relation: p.Relation, Sentiment: &sentiment,
+		})
+	}
+	for _, p := range result.Places {
+		links = append(links, store.EntityLink{Kind: store.EntityPlace, Name: p.Name, Count: max(p.Count, 1)})
+	}
+	for _, t := range result.Themes {
+		links = append(links, store.EntityLink{Kind: store.EntityTheme, Name: t.Name, Count: 1})
+	}
+
+	return store.Analysis{
+		ID:             id.New(),
+		EntryID:        entryID,
+		Model:          result.Model,
+		Sentiment:      result.Sentiment.Score,
+		SentimentLabel: result.Sentiment.Label,
+		Emotions:       string(emotionsJSON),
+		People:         string(peopleJSON),
+		Places:         string(placesJSON),
+		Summary:        result.Summary,
+		Raw:            result.Raw,
+		Data:           string(dataJSON),
+		CreatedAt:      time.Now().UTC(),
+	}, links
 }
