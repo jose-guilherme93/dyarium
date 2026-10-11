@@ -2,14 +2,14 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { RichEditor, type RichEditorHandle } from '@/components/RichEditor';
 import { Screen } from '@/components/Screen';
 import { STATUS_META } from '@/components/StatusChip';
 import { Waveform } from '@/components/Waveform';
 import { formatDuration } from '@/core/format';
-import { countWords } from '@/core/richText';
+import { countWords, markdownToPlain } from '@/core/richText';
 import { useLibrary } from '@/state/LibraryContext';
 import { useRecording } from '@/state/RecordingContext';
 import { colors, fontSize, radius, spacing } from '@/theme/tokens';
@@ -158,6 +158,20 @@ export default function NoteScreen() {
   const hasAudio = Boolean(note.filePath);
   const words = countWords(body);
 
+  const handleShare = async () => {
+    const parts: string[] = [title.trim() || note.title];
+    const plain = markdownToPlain(body).trim();
+    if (plain) parts.push('', plain);
+    if (hasAudio && note.transcript && note.transcript.trim() && note.transcript !== body) {
+      parts.push('', note.transcript.trim());
+    }
+    try {
+      await Share.share({ message: parts.join('\n') });
+    } catch {
+      // compartilhamento cancelado ou indisponivel
+    }
+  };
+
   return (
     <Screen>
       <View style={styles.header}>
@@ -169,7 +183,13 @@ export default function NoteScreen() {
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
         <Text style={styles.headerTitle}>Nota</Text>
-        <View style={styles.iconButton} />
+        <Pressable
+          onPress={() => void handleShare()}
+          style={styles.iconButton}
+          accessibilityLabel="Compartilhar"
+        >
+          <Ionicons name="share-outline" size={22} color={colors.text} />
+        </Pressable>
       </View>
 
       <ScrollView
