@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, getToken } from "../api";
 import type { ModelInfo, Settings } from "../types";
 
@@ -34,6 +34,15 @@ const OPENCODE_MODELS = [
   "space-bunny",
 ];
 
+// FALLBACK_MODELS keep the model selector usable before (or when) the provider
+// model list is fetched.
+const FALLBACK_MODELS: Record<string, string[]> = {
+  opencode: OPENCODE_MODELS,
+  deepseek: ["deepseek-chat", "deepseek-reasoner"],
+  ollama: [],
+  custom: [],
+};
+
 function providerFromBaseUrl(baseUrl: string): string {
   if (baseUrl.includes("opencode.ai")) {
     return "opencode";
@@ -58,6 +67,13 @@ export function SettingsView() {
   const [provider, setProvider] = useState("custom");
   const [providerModels, setProviderModels] = useState<string[]>([]);
   const [modelsNote, setModelsNote] = useState("");
+
+  const modelOptions = useMemo(() => {
+    const fallback = FALLBACK_MODELS[provider] ?? [];
+    const list = providerModels.length > 0 ? providerModels : fallback;
+    const current = settings?.analyze_model ?? "";
+    return [...new Set([...list, current])].filter((model) => model !== "");
+  }, [provider, providerModels, settings?.analyze_model]);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
@@ -130,6 +146,12 @@ export function SettingsView() {
       setModelsNote(err instanceof Error ? err.message : "falha ao buscar modelos");
     }
   }, []);
+
+  useEffect(() => {
+    if (settings?.analyze_base_url) {
+      void fetchModels();
+    }
+  }, [settings?.analyze_base_url, fetchModels]);
 
   const download = async (name: string) => {
     try {
@@ -299,8 +321,8 @@ export function SettingsView() {
           <div className="config-block">
             <h2>Analise por IA (API compativel com OpenAI)</h2>
             <p className="muted">
-              Escolha um provedor para preencher a base e o modelo, ou use Personalizado. Funciona com
-              Ollama local ou APIs pagas compativeis com OpenAI.
+              Escolha o provedor, cole a chave e selecione o modelo. A lista de modelos e buscada do
+              provedor; use Personalizado para informar a base manualmente.
             </p>
             <dl className="settings">
               <dt>Ativar analise</dt>
@@ -324,10 +346,7 @@ export function SettingsView() {
                     setProvider(value);
                     const preset = PROVIDER_PRESETS[value];
                     if (preset && value !== "custom") {
-                      void (async () => {
-                        await save({ analyze_base_url: preset.baseUrl, analyze_model: preset.model });
-                        await fetchModels();
-                      })();
+                      void save({ analyze_base_url: preset.baseUrl, analyze_model: preset.model });
                     }
                   }}
                 >
@@ -338,61 +357,14 @@ export function SettingsView() {
                   ))}
                 </select>
               </dd>
-              <dt>Base URL</dt>
-              <dd>
-                <input
-                  key={settings.analyze_base_url}
-                  type="text"
-                  aria-label="Base URL da analise"
-                  defaultValue={settings.analyze_base_url}
-                  onBlur={(event) => void save({ analyze_base_url: event.target.value })}
-                />
-              </dd>
-              <dt>Modelo</dt>
-              <dd className="ceiling">
-                <input
-                  key={settings.analyze_model}
-                  type="text"
-                  aria-label="Modelo da analise"
-                  list="analyze-models"
-                  defaultValue={settings.analyze_model}
-                  onBlur={(event) => void save({ analyze_model: event.target.value })}
-                />
-                <button type="button" onClick={() => void fetchModels()}>
-                  Buscar modelos
-                </button>
-                <datalist id="analyze-models">
-                  {[...new Set([...providerModels, ...OPENCODE_MODELS])].map((model) => (
-                    <option key={model} value={model} />
-                  ))}
-                </datalist>
-              </dd>
-              {modelsNote && (
-                <>
-                  <dt />
-                  <dd className="muted">{modelsNote}</dd>
-                </>
-              )}
-              <dt>Temas</dt>
-              <dd className="ceiling">
-                <input
-                  type="text"
-                  aria-label="Temas da analise"
-                  value={themes}
-                  onChange={(event) => setThemes(event.target.value)}
-                />
-                <button type="button" onClick={() => void save({ analysis_themes: themes })}>
-                  Salvar
-                </button>
-              </dd>
-              <dt />
-              <dd className="muted">Temas preferidos na analise, separados por virgulas.</dd>
               <dt>Chave da API</dt>
               <dd className="ceiling">
                 <input
                   type="password"
                   aria-label="Chave da API de analise"
-                  placeholder={settings.analyze_api_key_set ? "definida (deixe vazio para manter)" : "nao definida"}
+                  placeholder={
+                    settings.analyze_api_key_set ? "definida (deixe vazio para manter)" : "cole a chave do provedor"
+                  }
                   value={apiKey}
                   onChange={(event) => setApiKey(event.target.value)}
                 />
@@ -411,6 +383,54 @@ export function SettingsView() {
                   Salvar chave
                 </button>
               </dd>
+              <dt>Modelo</dt>
+              <dd className="ceiling">
+                <select
+                  aria-label="Modelo da analise"
+                  value={settings.analyze_model}
+                  onChange={(event) => void save({ analyze_model: event.target.value })}
+                >
+                  {settings.analyze_model === "" && <option value="">(nenhum)</option>}
+                  {modelOptions.map((model) => (
+                    <option key={model} value={model}>
+                      {model}
+                    </option>
+                  ))}
+                </select>
+                <button type="button" onClick={() => void fetchModels()}>
+                  Buscar modelos
+                </button>
+              </dd>
+              {modelsNote && (
+                <>
+                  <dt />
+                  <dd className="muted">{modelsNote}</dd>
+                </>
+              )}
+              <dt>Base URL</dt>
+              <dd>
+                <input
+                  key={settings.analyze_base_url}
+                  type="text"
+                  aria-label="Base URL da analise"
+                  defaultValue={settings.analyze_base_url}
+                  onBlur={(event) => void save({ analyze_base_url: event.target.value })}
+                />
+              </dd>
+              <dt>Temas</dt>
+              <dd className="ceiling">
+                <input
+                  type="text"
+                  aria-label="Temas da analise"
+                  value={themes}
+                  onChange={(event) => setThemes(event.target.value)}
+                />
+                <button type="button" onClick={() => void save({ analysis_themes: themes })}>
+                  Salvar
+                </button>
+              </dd>
+              <dt />
+              <dd className="muted">Temas preferidos na analise, separados por virgulas.</dd>
             </dl>
           </div>
         </>
