@@ -135,13 +135,15 @@ func analyzeHandler(st *store.Store, cfg config.Config, bus *events.Bus, logger 
 		input, err := analysisInput(ctx, st, payload.EntryID)
 		if err != nil {
 			_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryFailed)
-			bus.Publish("entry.failed", map[string]string{"entry_id": payload.EntryID, "reason": err.Error()})
+			bus.Publish("entry.failed", map[string]string{"entry_id": payload.EntryID, "reason": analyze.FriendlyError(err)})
+			logger.Error("worker: analise sem entrada", "entry_id", payload.EntryID, "erro", err)
 			return err
 		}
 		result, err := analyze.NewPipeline(client).Run(ctx, input)
 		if err != nil {
 			_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryFailed)
-			bus.Publish("entry.failed", map[string]string{"entry_id": payload.EntryID, "reason": err.Error()})
+			bus.Publish("entry.failed", map[string]string{"entry_id": payload.EntryID, "reason": analyze.FriendlyError(err)})
+			logger.Error("worker: analise falhou", "entry_id", payload.EntryID, "erro", err)
 			return err
 		}
 		analysis, links := buildAnalysis(payload.EntryID, result)

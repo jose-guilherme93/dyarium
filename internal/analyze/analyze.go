@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -45,6 +46,34 @@ var ErrDisabled = errors.New("analyze: disabled")
 // errUnsupportedFormat signals that the provider rejected the structured
 // response format, so the caller can fall back to a plain JSON object.
 var errUnsupportedFormat = errors.New("analyze: formato estruturado nao suportado")
+
+// FriendlyError maps a provider error to a short pt-BR message safe to show to
+// the user. The technical detail stays in the server log.
+func FriendlyError(err error) string {
+	if err == nil {
+		return ""
+	}
+	message := err.Error()
+	switch {
+	case strings.Contains(message, "status 401"), strings.Contains(message, "status 403"):
+		return "chave da API invalida ou sem permissao no provedor"
+	case strings.Contains(message, "status 402"):
+		return "sem saldo ou cota no provedor de IA"
+	case strings.Contains(message, "status 404"):
+		return "modelo nao encontrado no provedor"
+	case strings.Contains(message, "status 429"):
+		return "limite de uso do provedor atingido, tente mais tarde"
+	case strings.Contains(message, "status 5"):
+		return "provedor de IA indisponivel no momento"
+	case strings.Contains(message, "texto vazio"), strings.Contains(message, "transcricao vazia"),
+		strings.Contains(message, "transcricao indisponivel"):
+		return "nao ha texto para analisar nesta nota"
+	case strings.Contains(message, "json invalido"):
+		return "a IA respondeu em um formato inesperado"
+	default:
+		return "falha ao analisar com a IA"
+	}
+}
 
 type chatRequest struct {
 	Model          string        `json:"model"`
@@ -245,10 +274,12 @@ func (c *Client) call(ctx context.Context, system, user string, maxTokens int, u
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		detail := strings.TrimSpace(string(snippet))
 		if useSchema && (resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnprocessableEntity) {
-			return "", fmt.Errorf("%w: status %d", errUnsupportedFormat, resp.StatusCode)
+			return "", fmt.Errorf("%w: status %d: %s", errUnsupportedFormat, resp.StatusCode, detail)
 		}
-		return "", fmt.Errorf("analyze: status %d", resp.StatusCode)
+		return "", fmt.Errorf("analyze: status %d: %s", resp.StatusCode, detail)
 	}
 	var out chatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
