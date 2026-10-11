@@ -42,9 +42,15 @@ export interface Recording {
   lastError?: string;
   /** Id da entrada criada no servidor. */
   entryId?: string;
+  /** Transcricao vinda do servidor, quando pronta. */
+  transcript?: string;
+  transcriptLanguage?: string;
+  transcriptStatus?: TranscriptStatus;
   createdAt: string;
   updatedAt: string;
 }
+
+export type TranscriptStatus = 'pending' | 'ready' | 'failed';
 
 /** Configuracao do servidor (o token nunca e persistido fora do SecureStore). */
 export interface ServerConfig {
@@ -61,4 +67,9 @@ export function isUploadable(r: Recording): boolean {
     r.status === 'failed' ||
     r.status === 'recorded'
   );
+}
+
+/** Gravacao enviada que ainda nao tem transcricao pronta. */
+export function needsTranscript(r: Recording): boolean {
+  return Boolean(r.entryId) && r.status === 'completed' && r.transcriptStatus !== 'ready';
 }

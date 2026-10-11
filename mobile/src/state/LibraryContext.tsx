@@ -2,9 +2,10 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { AppState } from 'react-native';
 
 import { markQueued } from '@/core/queue';
-import { isUploadable, type Recording } from '@/core/types';
+import { isUploadable, needsTranscript, type Recording } from '@/core/types';
 import { deleteRecordingRow, listRecordings, upsertRecording } from '@/services/db';
 import { deleteSessionFiles } from '@/services/files';
+import { fetchTranscriptsOnce } from '@/services/transcripts';
 import { observeUploads, runUploadQueueOnce } from '@/services/uploaderLoop';
 
 import { useSettings } from './SettingsContext';
@@ -25,6 +26,9 @@ const LibraryContext = createContext<LibraryValue | null>(null);
 
 /** Enquanto houver itens na fila, tenta enviar neste intervalo. */
 const WORKER_INTERVAL_MS = 15_000;
+
+/** Intervalo de busca da transcricao enquanto houver alguma pendente. */
+const TRANSCRIPT_INTERVAL_MS = 8_000;
 
 export function LibraryProvider({ children }: { children: ReactNode }) {
   const { config } = useSettings();
@@ -66,14 +70,23 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   // Worker: tenta enviar assim que a fila carrega, quando o servidor e
   // configurado, periodicamente enquanto houver itens, e ao voltar ao app.
   const hasPending = recordings.some(isUploadable);
+  const hasPendingTranscripts = recordings.some(needsTranscript);
+
+  const pullTranscripts = useCallback(() => {
+    void fetchTranscriptsOnce().then(refresh).catch(() => undefined);
+  }, [refresh]);
 
   useEffect(() => {
-    if (ready) kick();
-  }, [ready, kick]);
+    if (!ready) return;
+    kick();
+    pullTranscripts();
+  }, [ready, kick, pullTranscripts]);
 
   useEffect(() => {
-    if (config) kick();
-  }, [config, kick]);
+    if (!config) return;
+    kick();
+    pullTranscripts();
+  }, [config, kick, pullTranscripts]);
 
   useEffect(() => {
     if (!hasPending) return undefined;
@@ -82,11 +95,20 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   }, [hasPending, kick]);
 
   useEffect(() => {
+    if (!hasPendingTranscripts) return undefined;
+    const id = setInterval(() => pullTranscripts(), TRANSCRIPT_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [hasPendingTranscripts, pullTranscripts]);
+
+  useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => {
-      if (state === 'active') kick();
+      if (state === 'active') {
+        kick();
+        pullTranscripts();
+      }
     });
     return () => subscription.remove();
-  }, [kick]);
+  }, [kick, pullTranscripts]);
 
   const enqueue = useCallback(
     async (recording: Recording) => {
