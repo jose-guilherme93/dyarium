@@ -95,6 +95,9 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("DELETE /api/v1/notes/{id}", s.handleDeleteNote)
 	protected.HandleFunc("GET /api/v1/notes/{id}/revisions", s.handleListRevisions)
 
+	protected.HandleFunc("GET /api/v1/entries/{id}/tags", s.handleListEntryTags)
+	protected.HandleFunc("PUT /api/v1/entries/{id}/tags", s.handleSetEntryTags)
+
 	protected.HandleFunc("GET /api/v1/tags", s.handleListTags)
 	protected.HandleFunc("POST /api/v1/tags", s.handleCreateTag)
 	protected.HandleFunc("DELETE /api/v1/tags/{id}", s.handleDeleteTag)

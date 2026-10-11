@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"net/http"
@@ -11,6 +12,19 @@ import (
 	"github.com/joseti/dyarium/internal/jobs"
 	"github.com/joseti/dyarium/internal/store"
 )
+
+// entryTagNames returns the tag names attached to an entry.
+func (s *Server) entryTagNames(ctx context.Context, entryID string) ([]string, error) {
+	tags, err := s.deps.Store.ListEntryTags(ctx, entryID)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		names = append(names, tag.Name)
+	}
+	return names, nil
+}
 
 func entryJSON(e store.Entry) map[string]any {
 	return map[string]any{
@@ -39,7 +53,11 @@ func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(entries))
 	for _, e := range entries {
-		out = append(out, entryJSON(e))
+		item := entryJSON(e)
+		if names, err := s.entryTagNames(r.Context(), e.ID); err == nil {
+			item["tags"] = names
+		}
+		out = append(out, item)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"entries": out})
 }
@@ -82,6 +100,9 @@ func (s *Server) handleGetEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body := entryJSON(entry)
+	if names, err := s.entryTagNames(ctx, entry.ID); err == nil {
+		body["tags"] = names
+	}
 	if m, ok, err := s.deps.Store.GetMetrics(ctx, entry.ID); err == nil && ok {
 		body["metrics"] = map[string]any{
 			"duration_ms":         m.DurationMS,
