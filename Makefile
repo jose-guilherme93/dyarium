@@ -3,6 +3,15 @@ SHELL := /bin/bash
 GO ?= go
 PNPM ?= pnpm
 COMPOSE ?= docker compose
+
+# Tetos de memoria para desenvolvimento (VPS pequena; ver AGENTS.md).
+# Velocidade importa menos que estabilidade: prefira testes lentos a OOM.
+GOMAXPROCS ?= 2
+GOGC ?= 50
+GOMEMLIMIT ?= 768MiB
+GOFLAGS ?= -p=1
+NODE_MAX_OLD_SPACE ?= 1024
+export GOMAXPROCS GOGC GOMEMLIMIT GOFLAGS
 DEV_FILE ?= deploy/compose.dev.yml
 IMAGE ?= diary:dev
 VERSION ?= dev
@@ -16,7 +25,7 @@ COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
 
-.PHONY: help dev down build test test-go test-web lint lint-go lint-web fmt bench-transcricao models tailscale tailscale-off clean
+.PHONY: help dev down build test test-go test-web lint lint-go lint-web fmt bench-transcricao models tailscale tailscale-off clean mobile-dev mobile-test mobile-lint
 
 help: ## Lista os alvos disponiveis
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -36,10 +45,10 @@ build: ## Gera a imagem de producao (tag local diary:dev)
 test: test-go test-web ## Roda os testes do Go e do frontend
 
 test-go:
-	$(GO) test ./...
+	$(GO) test -p 1 -parallel 2 ./...
 
 test-web:
-	$(PNPM) -C web test
+	NODE_OPTIONS="--max-old-space-size=$(NODE_MAX_OLD_SPACE)" $(PNPM) -C web test
 
 lint: lint-go lint-web ## Roda go vet, gofmt e o lint do frontend
 
@@ -48,10 +57,19 @@ lint-go:
 	@test -z "$$(gofmt -l .)" || { echo "gofmt encontrou arquivos nao formatados"; exit 1; }
 
 lint-web:
-	$(PNPM) -C web lint
+	NODE_OPTIONS="--max-old-space-size=$(NODE_MAX_OLD_SPACE)" $(PNPM) -C web lint
 
 fmt: ## Formata o codigo Go
 	gofmt -w .
+
+mobile-dev: ## Sobe o app Expo apontando para a tailnet (abre no celular)
+	bash scripts/mobile-dev.sh
+
+mobile-test: ## Roda os testes do app (Jest no nucleo; Maestro quando disponivel)
+	NODE_OPTIONS="--max-old-space-size=$(NODE_MAX_OLD_SPACE)" $(PNPM) -C mobile test
+
+mobile-lint: ## Roda o lint do app
+	NODE_OPTIONS="--max-old-space-size=$(NODE_MAX_OLD_SPACE)" $(PNPM) -C mobile lint
 
 bench-transcricao: ## Roda o benchmark de transcricao e imprime o pico de memoria
 	bash scripts/bench-transcricao.sh

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -21,9 +22,11 @@ func parseTS(s string) time.Time {
 func (s *Store) CreateUpload(ctx context.Context, u Upload) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO uploads (id, status, filename, content_type, size_bytes, sha256,
+			title, recorded_at, client_key,
 			received_bytes, storage_key, prefix, next_counter, created_at, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		u.ID, u.Status, u.Filename, u.ContentType, u.SizeBytes, u.SHA256,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		u.ID, u.Status, u.Filename, u.ContentType, u.SizeBytes, nullString(u.SHA256),
+		nullString(u.Title), nullTS(u.RecordedAt), nullString(u.ClientKey),
 		u.ReceivedBytes, u.StorageKey, u.Prefix, u.NextCounter, ts(u.CreatedAt), ts(u.ExpiresAt))
 	if err != nil {
 		return fmt.Errorf("store: create upload: %w", err)
@@ -33,17 +36,48 @@ func (s *Store) CreateUpload(ctx context.Context, u Upload) error {
 
 // GetUpload returns an upload by id.
 func (s *Store) GetUpload(ctx context.Context, id string) (Upload, error) {
+	return s.getUpload(ctx, `WHERE id = ?`, id)
+}
+
+// GetUploadByClientKey returns the upload previously created with the given
+// client key. The boolean is false when no such upload exists. Used for
+// idempotent upload creation.
+func (s *Store) GetUploadByClientKey(ctx context.Context, clientKey string) (Upload, bool, error) {
+	if clientKey == "" {
+		return Upload{}, false, nil
+	}
+	u, err := s.getUpload(ctx, `WHERE client_key = ?`, clientKey)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Upload{}, false, nil
+		}
+		return Upload{}, false, err
+	}
+	return u, true, nil
+}
+
+func (s *Store) getUpload(ctx context.Context, where string, arg any) (Upload, error) {
 	var u Upload
 	var createdAt, expiresAt string
+	var sha, title, recordedAt, clientKey sql.NullString
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, status, filename, content_type, size_bytes, sha256, received_bytes,
-			storage_key, prefix, next_counter, created_at, expires_at
-		FROM uploads WHERE id = ?`, id).Scan(
-		&u.ID, &u.Status, &u.Filename, &u.ContentType, &u.SizeBytes, &u.SHA256,
+		SELECT id, status, filename, content_type, size_bytes, sha256,
+			title, recorded_at, client_key,
+			received_bytes, storage_key, prefix, next_counter, created_at, expires_at
+		FROM uploads `+where, arg).Scan(
+		&u.ID, &u.Status, &u.Filename, &u.ContentType, &u.SizeBytes, &sha,
+		&title, &recordedAt, &clientKey,
 		&u.ReceivedBytes, &u.StorageKey, &u.Prefix, &u.NextCounter, &createdAt, &expiresAt)
 	if err != nil {
 		return Upload{}, err
 	}
+	u.SHA256 = sha.String
+	u.Title = title.String
+	if recordedAt.Valid {
+		t := parseTS(recordedAt.String)
+		u.RecordedAt = &t
+	}
+	u.ClientKey = clientKey.String
 	u.CreatedAt = parseTS(createdAt)
 	u.ExpiresAt = parseTS(expiresAt)
 	return u, nil
@@ -161,4 +195,11 @@ func nullTS(t *time.Time) any {
 		return nil
 	}
 	return ts(*t)
+}
+
+func nullString(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
