@@ -1,27 +1,28 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { LevelMeter } from '@/components/LevelMeter';
 import { RecordButton } from '@/components/RecordButton';
+import { RecordingCard } from '@/components/RecordingCard';
 import { Screen } from '@/components/Screen';
+import { Waveform } from '@/components/Waveform';
 import { formatDuration } from '@/core/format';
 import { useLibrary } from '@/state/LibraryContext';
 import { useRecording } from '@/state/RecordingContext';
 import { useSettings } from '@/state/SettingsContext';
-import { colors, fontSize, radius, spacing } from '@/theme/tokens';
+import { colors, fontSize, spacing } from '@/theme/tokens';
 
 const PENDING_STATUSES = ['recorded', 'queued', 'uploading', 'failed'];
 
 export default function RecordScreen() {
   const { config } = useSettings();
-  const { recordings } = useLibrary();
+  const { recordings, retry, remove } = useLibrary();
   const { active, elapsedMs, level, error, busy, start, stop } = useRecording();
 
+  const recording = Boolean(active);
   const pending = recordings.filter((r) => PENDING_STATUSES.includes(r.status)).length;
   const interrupted = recordings.filter((r) => r.status === 'interrupted').length;
-  const recording = Boolean(active);
 
   const handlePress = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
@@ -32,137 +33,159 @@ export default function RecordScreen() {
   return (
     <Screen style={styles.screen}>
       <View style={styles.header}>
-        <View>
-          <Text style={styles.brand}>dyarium</Text>
-          <Text style={styles.brandSub}>notas de voz</Text>
+        <View style={styles.headerText}>
+          <Text style={styles.largeTitle}>Gravacoes</Text>
+          <Text style={styles.headerSub}>
+            {recordings.length === 0
+              ? 'Nada por aqui ainda'
+              : `${recordings.length} nota${recordings.length === 1 ? '' : 's'}${
+                  pending > 0 ? ` · ${pending} na fila` : ''
+                }`}
+          </Text>
         </View>
-        <Pressable
-          style={styles.serverPill}
-          onPress={() => router.push('/server')}
-          accessibilityLabel="Configurar servidor"
-        >
+        <Pressable style={styles.serverPill} onPress={() => router.push('/server')}>
           <View
-            style={[
-              styles.dot,
-              { backgroundColor: config ? colors.success : colors.warning },
-            ]}
+            style={[styles.dot, { backgroundColor: config ? colors.success : colors.warning }]}
           />
           <Text style={styles.serverText}>{config ? 'Servidor' : 'Configurar'}</Text>
-          <Ionicons name="chevron-forward" size={14} color={colors.textTertiary} />
         </Pressable>
       </View>
 
-      <View style={styles.center}>
-        <Text style={[styles.timer, recording && styles.timerActive]}>
-          {formatDuration(elapsedMs)}
-        </Text>
-        <LevelMeter level={level} active={recording} />
-        <RecordButton recording={recording} busy={busy} level={level} onPress={handlePress} />
-        <Text style={styles.hint}>{recording ? 'Toque para parar' : 'Toque para gravar'}</Text>
-        {recording ? (
-          <Text style={styles.subHint}>Gravando em segundo plano com a tela bloqueada</Text>
-        ) : null}
-        {error ? <Text style={styles.error}>{error}</Text> : null}
-      </View>
+      {recording ? (
+        <View style={styles.recordingView}>
+          <Text style={styles.timer}>{formatDuration(elapsedMs)}</Text>
+          <Waveform active level={level} height={84} color={colors.textSecondary} />
+          <Text style={styles.recHint}>Gravando com a tela bloqueada</Text>
+          {error ? <Text style={styles.error}>{error}</Text> : null}
+        </View>
+      ) : (
+        <>
+          {interrupted > 0 ? (
+            <Pressable style={styles.alert} onPress={() => router.push('/recovery')}>
+              <Ionicons name="warning" size={18} color={colors.warning} />
+              <Text style={styles.alertText}>
+                {interrupted === 1
+                  ? 'Uma gravacao foi interrompida'
+                  : `${interrupted} gravacoes interrompidas`}
+              </Text>
+              <Ionicons name="chevron-forward" size={16} color={colors.warning} />
+            </Pressable>
+          ) : null}
 
-      <View style={styles.bottom}>
-        {interrupted > 0 ? (
-          <Pressable style={styles.alert} onPress={() => router.push('/recovery')}>
-            <Ionicons name="warning" size={20} color={colors.warning} />
-            <Text style={styles.alertText}>
-              {interrupted === 1
-                ? 'Uma gravacao foi interrompida'
-                : `${interrupted} gravacoes foram interrompidas`}
-            </Text>
-            <Ionicons name="chevron-forward" size={16} color={colors.warning} />
-          </Pressable>
-        ) : null}
+          <FlatList
+            data={recordings}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={styles.list}
+            ItemSeparatorComponent={() => <View style={styles.separator} />}
+            showsVerticalScrollIndicator={false}
+            renderItem={({ item }) => (
+              <RecordingCard
+                recording={item}
+                onRetry={() => void retry(item.id)}
+                onDelete={() => void remove(item.id)}
+              />
+            )}
+            ListEmptyComponent={
+              <View style={styles.empty}>
+                <View style={styles.emptyIcon}>
+                  <Ionicons name="mic-outline" size={30} color={colors.textTertiary} />
+                </View>
+                <Text style={styles.emptyTitle}>Nenhuma gravacao</Text>
+                <Text style={styles.emptyText}>
+                  Toque no botao vermelho para gravar sua primeira nota.
+                </Text>
+              </View>
+            }
+          />
+        </>
+      )}
 
-        <Pressable style={styles.queueCard} onPress={() => router.push('/library')}>
-          <View style={styles.queueIcon}>
-            <Ionicons name="albums-outline" size={22} color={colors.accent} />
-          </View>
-          <View style={styles.queueText}>
-            <Text style={styles.queueTitle}>Minhas gravacoes</Text>
-            <Text style={styles.queueSub}>
-              {recordings.length === 0
-                ? 'Nada por aqui ainda'
-                : `${recordings.length} no aparelho${pending > 0 ? ` - ${pending} na fila` : ''}`}
-            </Text>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
-        </Pressable>
+      <View style={styles.bottomBar}>
+        <RecordButton recording={recording} busy={busy} onPress={handlePress} />
+        <Text style={styles.bottomHint}>{recording ? 'Toque para parar' : 'Toque para gravar'}</Text>
       </View>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { paddingHorizontal: spacing.xl },
+  screen: { paddingHorizontal: 0 },
   header: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-end',
     justifyContent: 'space-between',
+    paddingHorizontal: spacing.xl,
     paddingTop: spacing.sm,
+    paddingBottom: spacing.lg,
   },
-  brand: { color: colors.text, fontSize: fontSize.xl, fontWeight: '700', letterSpacing: 0.2 },
-  brandSub: { color: colors.textTertiary, fontSize: fontSize.xs, marginTop: 2 },
+  headerText: { gap: 2 },
+  largeTitle: { color: colors.text, fontSize: 34, fontWeight: '700', letterSpacing: 0.3 },
+  headerSub: { color: colors.textSecondary, fontSize: fontSize.sm },
   serverPill: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
     backgroundColor: colors.surface,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    borderRadius: radius.pill,
+    borderRadius: 999,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
   dot: { width: 8, height: 8, borderRadius: 4 },
   serverText: { color: colors.textSecondary, fontSize: fontSize.sm, fontWeight: '600' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.md },
+  recordingView: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xl,
+    paddingHorizontal: spacing.xl,
+  },
   timer: {
-    color: colors.textSecondary,
-    fontSize: fontSize.xxl,
+    color: colors.text,
+    fontSize: fontSize.display,
     fontWeight: '300',
     fontVariant: ['tabular-nums'],
     letterSpacing: 1,
   },
-  timerActive: { color: colors.text },
-  hint: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
-  subHint: { color: colors.textTertiary, fontSize: fontSize.xs },
+  recHint: { color: colors.textSecondary, fontSize: fontSize.sm },
   error: { color: colors.danger, fontSize: fontSize.sm, textAlign: 'center' },
-  bottom: { gap: spacing.md, paddingBottom: spacing.sm },
+  list: { paddingHorizontal: spacing.xl, paddingBottom: spacing.lg },
+  separator: { height: spacing.sm },
   alert: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
+    marginHorizontal: spacing.xl,
+    marginBottom: spacing.md,
     backgroundColor: colors.warningSoft,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.warning,
-    borderRadius: radius.md,
-    padding: spacing.lg,
+    borderRadius: 14,
+    padding: spacing.md,
   },
   alertText: { flex: 1, color: colors.warning, fontSize: fontSize.sm, fontWeight: '600' },
-  queueCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.lg,
+  empty: { alignItems: 'center', gap: spacing.md, paddingTop: spacing.xxxl },
+  emptyIcon: {
+    width: 68,
+    height: 68,
+    borderRadius: 34,
     backgroundColor: colors.surface,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    borderRadius: radius.lg,
-    padding: spacing.lg,
-  },
-  queueIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: radius.md,
-    backgroundColor: colors.accentSoft,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  queueText: { flex: 1, gap: 2 },
-  queueTitle: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
-  queueSub: { color: colors.textTertiary, fontSize: fontSize.xs },
+  emptyTitle: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
+  emptyText: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
+    textAlign: 'center',
+    paddingHorizontal: spacing.xl,
+    lineHeight: 20,
+  },
+  bottomBar: {
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.lg,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+    backgroundColor: colors.bg,
+  },
+  bottomHint: { color: colors.textTertiary, fontSize: fontSize.xs },
 });

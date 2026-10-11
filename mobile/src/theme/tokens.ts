@@ -1,41 +1,41 @@
 /**
- * Tokens de design do app. Estetica escura, alto contraste, cantos generosos.
- * Mantenha os nomes estaveis: as telas importam daqui.
+ * Tokens de design do app. Estetica inspirada no Voice Memos do iOS: fundo
+ * preto, vermelho para gravacao, cinzas neutros, tipografia limpa.
  */
 
 export const colors = {
-  bg: '#0A0A0F',
-  bgElevated: '#0F0F16',
-  surface: '#14141C',
-  surfaceElevated: '#1B1B26',
-  border: 'rgba(255,255,255,0.08)',
-  borderStrong: 'rgba(255,255,255,0.16)',
+  bg: '#000000',
+  bgElevated: '#0A0A0A',
+  surface: '#1C1C1E',
+  surfaceElevated: '#2C2C2E',
+  border: 'rgba(255,255,255,0.09)',
+  borderStrong: 'rgba(255,255,255,0.18)',
 
-  text: '#F5F5F7',
-  textSecondary: '#9A9AA8',
-  textTertiary: '#63636F',
+  text: '#FFFFFF',
+  textSecondary: '#8E8E93',
+  textTertiary: '#5A5A5F',
 
-  accent: '#6E56CF',
-  accentStrong: '#8B73E8',
-  accentSoft: 'rgba(110,86,207,0.18)',
+  accent: '#0A84FF',
+  accentStrong: '#409CFF',
+  accentSoft: 'rgba(10,132,255,0.16)',
 
-  record: '#FF4D5E',
-  recordStrong: '#FF6B78',
-  recordSoft: 'rgba(255,77,94,0.18)',
+  record: '#FF3B30',
+  recordStrong: '#FF6961',
+  recordSoft: 'rgba(255,59,48,0.18)',
 
-  success: '#3DD68C',
-  successSoft: 'rgba(61,214,140,0.16)',
+  success: '#30D158',
+  successSoft: 'rgba(48,209,88,0.16)',
 
-  warning: '#F5A623',
-  warningSoft: 'rgba(245,166,35,0.16)',
+  warning: '#FF9F0A',
+  warningSoft: 'rgba(255,159,10,0.16)',
 
-  danger: '#FF5A5F',
-  dangerSoft: 'rgba(255,90,95,0.16)',
+  danger: '#FF453A',
+  dangerSoft: 'rgba(255,69,58,0.16)',
 
-  info: '#4CC2FF',
-  infoSoft: 'rgba(76,194,255,0.16)',
+  info: '#64D2FF',
+  infoSoft: 'rgba(100,210,255,0.16)',
 
-  overlay: 'rgba(5,5,8,0.72)',
+  overlay: 'rgba(0,0,0,0.6)',
 } as const;
 
 export const radius = {
@@ -67,8 +67,8 @@ export const fontSize = {
 } as const;
 
 export const gradients = {
-  app: ['#0A0A0F', '#0E0E18', '#0A0A0F'] as const,
-  accent: ['#8B73E8', '#6E56CF'] as const,
-  record: ['#FF6B78', '#FF4D5E'] as const,
-  surface: ['#1B1B26', '#14141C'] as const,
+  app: ['#000000', '#000000'] as const,
+  accent: ['#409CFF', '#0A84FF'] as const,
+  record: ['#FF6961', '#FF3B30'] as const,
+  surface: ['#2C2C2E', '#1C1C1E'] as const,
 } as const;
