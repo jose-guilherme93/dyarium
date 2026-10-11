@@ -1,98 +1,35 @@
 import { useCallback, useState } from "react";
-import { clearToken, getToken, setToken } from "./api";
+import { api, clearToken, getToken, setToken } from "./api";
 import { useEvents } from "./useEvents";
 import { TokenGate } from "./components/TokenGate";
 import { ErrorBoundary } from "./components/ErrorBoundary";
-import { EntriesView } from "./views/EntriesView";
-import { EntitiesView } from "./views/EntitiesView";
-import { EntryView } from "./views/EntryView";
-import { MoodView } from "./views/MoodView";
+import { NoteList } from "./components/NoteList";
+import { NoteEditor } from "./components/NoteEditor";
+import { InsightsIcon, NoteIcon, SearchIcon, SettingsIcon } from "./components/icons";
+import { InsightsView } from "./views/InsightsView";
 import { SearchView } from "./views/SearchView";
 import { SettingsView } from "./views/SettingsView";
-import type { EntityKind, EntryProgress, Segment, ServerEvent } from "./types";
+import type { EntityKind } from "./types";
 import "./App.css";
 
-type ViewId = "entries" | "people" | "places" | "themes" | "mood" | "search" | "settings";
+type ViewId = "notes" | "insights" | "search" | "settings";
 
-const navigation: { id: ViewId; label: string }[] = [
-  { id: "entries", label: "Entradas" },
-  { id: "people", label: "Pessoas" },
-  { id: "places", label: "Lugares" },
-  { id: "themes", label: "Temas" },
-  { id: "mood", label: "Humor" },
-  { id: "search", label: "Busca" },
-  { id: "settings", label: "Configuracao" },
-];
-
-const viewKind: Record<string, EntityKind> = {
-  people: "person",
-  places: "place",
-  themes: "theme",
-};
-
-const kindView: Record<EntityKind, ViewId> = {
-  person: "people",
-  place: "places",
-  theme: "themes",
-};
+const navigation = [
+  { id: "notes", label: "Notas", Icon: NoteIcon },
+  { id: "insights", label: "Insights", Icon: InsightsIcon },
+  { id: "search", label: "Busca", Icon: SearchIcon },
+  { id: "settings", label: "Configuracao", Icon: SettingsIcon },
+] as const;
 
 export function App() {
   const [token, setTokenState] = useState(getToken());
-  const [view, setView] = useState<ViewId>("entries");
-  const [openEntry, setOpenEntry] = useState<string | null>(null);
-  const [entitySelection, setEntitySelection] = useState<{ kind: EntityKind; name: string } | null>(null);
-  const [panelOpen, setPanelOpen] = useState(true);
+  const [view, setView] = useState<ViewId>("notes");
+  const [openEntryId, setOpenEntryId] = useState<string | null>(null);
+  const [entityFocus, setEntityFocus] = useState<{ kind: EntityKind; name: string } | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [progress, setProgress] = useState<Record<string, EntryProgress>>({});
-  const [partials, setPartials] = useState<Record<string, Segment[]>>({});
 
-  const handleEvent = useCallback((event: ServerEvent) => {
+  const handleEvent = useCallback(() => {
     setRefreshKey((key) => key + 1);
-    const id = typeof event.data.entry_id === "string" ? event.data.entry_id : "";
-    if (!id) {
-      return;
-    }
-    switch (event.name) {
-      case "transcript.partial": {
-        const segment: Segment = {
-          start_ms: Number(event.data.start_ms ?? 0),
-          end_ms: Number(event.data.end_ms ?? 0),
-          text: String(event.data.text ?? ""),
-        };
-        setPartials((p) => ({ ...p, [id]: [...(p[id] ?? []), segment] }));
-        setProgress((p) => ({ ...p, [id]: { ...p[id], status: "transcribing" } }));
-        break;
-      }
-      case "entry.status": {
-        const status = String(event.data.status ?? "");
-        if (status === "queued" || status === "transcribing") {
-          setPartials((p) => ({ ...p, [id]: [] }));
-        }
-        setProgress((p) => ({ ...p, [id]: { ...p[id], status, error: undefined } }));
-        break;
-      }
-      case "job.progress":
-        setProgress((p) => ({
-          ...p,
-          [id]: {
-            ...p[id],
-            stage: String(event.data.stage ?? ""),
-            done: Number(event.data.done ?? 0),
-            total: Number(event.data.total ?? 0),
-            error: undefined,
-          },
-        }));
-        break;
-      case "transcript.ready":
-        setProgress((p) => ({ ...p, [id]: { ...p[id], status: "transcribed" } }));
-        break;
-      case "analysis.ready":
-        setProgress((p) => ({ ...p, [id]: { ...p[id], status: "ready" } }));
-        break;
-      case "entry.failed":
-        setProgress((p) => ({ ...p, [id]: { ...p[id], status: "failed", error: String(event.data.reason ?? "falha") } }));
-        break;
-    }
   }, []);
   useEvents(handleEvent);
 
@@ -107,9 +44,23 @@ export function App() {
     );
   }
 
-  const activeLabel = openEntry
-    ? "Entrada"
-    : navigation.find((item) => item.id === view)?.label ?? "";
+  const refresh = () => setRefreshKey((key) => key + 1);
+
+  const createText = async () => {
+    try {
+      const entry = await api.createEntry("Nova nota");
+      setOpenEntryId(entry.id);
+      setView("notes");
+      refresh();
+    } catch {
+      refresh();
+    }
+  };
+
+  const openFromOtherView = (id: string) => {
+    setOpenEntryId(id);
+    setView("notes");
+  };
 
   return (
     <div className="app">
@@ -121,15 +72,15 @@ export function App() {
               <li key={item.id}>
                 <button
                   type="button"
-                  className={view === item.id && !openEntry ? "nav-item nav-item--active" : "nav-item"}
-                  aria-current={view === item.id && !openEntry ? "page" : undefined}
+                  className={view === item.id ? "nav-item nav-item--active" : "nav-item"}
+                  aria-current={view === item.id ? "page" : undefined}
                   onClick={() => {
-                    setOpenEntry(null);
-                    setEntitySelection(null);
                     setView(item.id);
+                    setEntityFocus(null);
                   }}
                 >
-                  {item.label}
+                  <item.Icon size={18} />
+                  <span>{item.label}</span>
                 </button>
               </li>
             ))}
@@ -137,7 +88,7 @@ export function App() {
         </nav>
         <button
           type="button"
-          className="link-button"
+          className="link-button sidebar-exit"
           onClick={() => {
             clearToken();
             setTokenState("");
@@ -147,65 +98,56 @@ export function App() {
         </button>
       </aside>
 
-      <div className="content">
-        <header className="topbar">
-          <h1>{activeLabel}</h1>
-          <button
-            type="button"
-            className="panel-toggle"
-            aria-expanded={panelOpen}
-            aria-controls="context-panel"
-            onClick={() => setPanelOpen((value) => !value)}
-          >
-            {panelOpen ? "Ocultar painel" : "Mostrar painel"}
-          </button>
-        </header>
-
-        <main className="main" aria-label="Conteudo">
-          <ErrorBoundary>
-            {openEntry ? (
-              <EntryView
-                id={openEntry}
+      <main className="workspace" aria-label="Conteudo">
+        <ErrorBoundary>
+          {view === "notes" ? (
+            <>
+              <NoteList
                 refreshKey={refreshKey}
-                progress={progress[openEntry]}
-                partials={partials[openEntry]}
-                onBack={() => setOpenEntry(null)}
-                onOpenEntity={(kind, name) => {
-                  setOpenEntry(null);
-                  setEntitySelection({ kind, name });
-                  setView(kindView[kind]);
-                }}
+                activeId={openEntryId}
+                onOpen={setOpenEntryId}
+                onChanged={refresh}
+                onCreateText={() => void createText()}
               />
-            ) : view === "entries" ? (
-              <EntriesView refreshKey={refreshKey} progress={progress} partials={partials} onOpen={setOpenEntry} />
-            ) : viewKind[view] ? (
-              <EntitiesView
-                kind={viewKind[view]}
-                title={navigation.find((item) => item.id === view)?.label ?? ""}
-                selected={entitySelection && entitySelection.kind === viewKind[view] ? entitySelection.name : null}
-                onSelect={(name) =>
-                  setEntitySelection(name ? { kind: viewKind[view], name } : null)
-                }
-                onOpen={setOpenEntry}
-                refreshKey={refreshKey}
-              />
-            ) : view === "mood" ? (
-              <MoodView refreshKey={refreshKey} />
-            ) : view === "search" ? (
-              <SearchView refreshKey={refreshKey} onOpen={setOpenEntry} />
-            ) : (
+              <div className="editor-pane">
+                {openEntryId ? (
+                  <NoteEditor
+                    key={openEntryId}
+                    entryId={openEntryId}
+                    refreshKey={refreshKey}
+                    onChanged={refresh}
+                    onDeleted={() => {
+                      setOpenEntryId(null);
+                      refresh();
+                    }}
+                    onOpenEntity={(kind, name) => {
+                      setEntityFocus({ kind, name });
+                      setView("insights");
+                    }}
+                  />
+                ) : (
+                  <div className="empty-editor">
+                    <h2>Suas notas</h2>
+                    <p className="muted">Selecione uma nota, grave um audio ou crie uma nota escrita.</p>
+                  </div>
+                )}
+              </div>
+            </>
+          ) : view === "insights" ? (
+            <div className="page">
+              <InsightsView refreshKey={refreshKey} onOpen={openFromOtherView} focus={entityFocus} />
+            </div>
+          ) : view === "search" ? (
+            <div className="page">
+              <SearchView refreshKey={refreshKey} onOpen={openFromOtherView} />
+            </div>
+          ) : (
+            <div className="page">
               <SettingsView />
-            )}
-          </ErrorBoundary>
-        </main>
-      </div>
-
-      {panelOpen && (
-        <aside id="context-panel" className="context-panel" aria-label="Painel de contexto">
-          <h2>Contexto</h2>
-          <p>Selecione uma entrada para ver analise, metadados e notas.</p>
-        </aside>
-      )}
+            </div>
+          )}
+        </ErrorBoundary>
+      </main>
     </div>
   );
 }

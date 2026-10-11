@@ -1,5 +1,6 @@
 import type {
   Analysis,
+  Attachment,
   EntityDetail,
   EntitySummary,
   Entry,
@@ -80,6 +81,8 @@ export const api = {
     const query = params.toString();
     return request<{ entries: Entry[] }>(`/entries${query ? `?${query}` : ""}`);
   },
+  createEntry: (title: string) =>
+    request<Entry>("/entries", { method: "POST", body: JSON.stringify({ title }) }),
   getEntry: (id: string) => request<Entry>(`/entries/${id}`),
   getTranscript: (id: string) => request<Transcript>(`/entries/${id}/transcript`),
   getAnalysis: (id: string) => request<Analysis>(`/entries/${id}/analysis`),
@@ -120,7 +123,38 @@ export const api = {
     const query = params.toString();
     return request<{ mood: MoodPoint[] }>(`/mood${query ? `?${query}` : ""}`);
   },
+  listAttachments: (entryId: string) =>
+    request<{ attachments: Attachment[] }>(`/entries/${entryId}/attachments`),
+  deleteAttachment: (id: string) => request<void>(`/attachments/${id}`, { method: "DELETE" }),
 };
+
+// audioUrl builds a playable URL for the decrypted original audio. The token
+// goes in the query because an <audio> element cannot set headers.
+export function audioUrl(entryId: string): string {
+  return `/api/v1/entries/${entryId}/audio?token=${encodeURIComponent(getToken())}`;
+}
+
+export function attachmentUrl(id: string): string {
+  return `/api/v1/attachments/${id}?token=${encodeURIComponent(getToken())}`;
+}
+
+// uploadAttachment stores an image attached to an entry.
+export async function uploadAttachment(entryId: string, file: File): Promise<Attachment> {
+  const res = await fetch(`/api/v1/entries/${entryId}/attachments`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${getToken()}`,
+      "Content-Type": file.type || "application/octet-stream",
+    },
+    body: file,
+  });
+  const text = await res.text();
+  const body = text ? JSON.parse(text) : {};
+  if (!res.ok) {
+    throw new ApiError(body?.error?.message ?? res.statusText, res.status, body?.error?.code);
+  }
+  return body as Attachment;
+}
 
 async function sha256Hex(data: ArrayBuffer): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", data);
