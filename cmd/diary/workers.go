@@ -93,8 +93,7 @@ func transcribeHandler(st *store.Store, cfg config.Config, pipeline *transcribe.
 			if _, err := queue.Enqueue(ctx, jobs.TypeAnalyze, "analyze:"+payload.EntryID, jobs.AnalyzePayload{EntryID: payload.EntryID}); err != nil {
 				logger.Error("worker: enfileirar analise", "erro", err)
 			}
-			_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryAnalyzing)
-			bus.Publish("entry.status", map[string]string{"entry_id": payload.EntryID, "status": store.EntryAnalyzing})
+			// Keep the entry as transcribed until the analyze job actually starts.
 			return nil
 		}
 		_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryReady)
@@ -114,6 +113,8 @@ func analyzeHandler(st *store.Store, cfg config.Config, bus *events.Bus, logger 
 		if !analysisCfg.Enabled {
 			return analyze.ErrDisabled
 		}
+		_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryAnalyzing)
+		bus.Publish("entry.status", map[string]string{"entry_id": payload.EntryID, "status": store.EntryAnalyzing})
 		client := analyze.New(analysisCfg)
 		transcript, _, err := st.GetTranscript(ctx, payload.EntryID)
 		if err != nil {

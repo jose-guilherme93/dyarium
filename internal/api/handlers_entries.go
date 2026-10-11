@@ -141,3 +141,27 @@ func (s *Server) handleRetranscribe(w http.ResponseWriter, r *http.Request) {
 	s.deps.Events.Publish("entry.status", map[string]string{"entry_id": id, "status": store.EntryQueued})
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": store.EntryQueued})
 }
+
+// handleCancelEntry stops any running or queued transcription/analysis of an
+// entry and resets its status.
+func (s *Server) handleCancelEntry(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := r.PathValue("id")
+	ids, err := s.deps.Queue.CancelEntry(ctx, id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	if s.deps.Canceller != nil {
+		for _, jobID := range ids {
+			s.deps.Canceller.Cancel(jobID)
+		}
+	}
+	status := store.EntryStored
+	if _, _, err := s.deps.Store.GetTranscript(ctx, id); err == nil {
+		status = store.EntryTranscribed
+	}
+	_ = s.deps.Store.UpdateEntryStatus(ctx, id, status)
+	s.deps.Events.Publish("entry.status", map[string]string{"entry_id": id, "status": status})
+	writeJSON(w, http.StatusOK, map[string]any{"status": status, "cancelled": ids})
+}

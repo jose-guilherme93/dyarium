@@ -22,15 +22,16 @@ import (
 
 // Deps groups the server dependencies.
 type Deps struct {
-	Config   config.Config
-	Store    *store.Store
-	Logger   *slog.Logger
-	Version  Version
-	Ingest   *ingest.Service
-	Queue    *jobs.Queue
-	Analyzer *analyze.Client
-	Events   *events.Bus
-	Models   *models.Manager
+	Config    config.Config
+	Store     *store.Store
+	Logger    *slog.Logger
+	Version   Version
+	Ingest    *ingest.Service
+	Queue     *jobs.Queue
+	Analyzer  *analyze.Client
+	Events    *events.Bus
+	Models    *models.Manager
+	Canceller *jobs.Canceller
 }
 
 // Server holds the HTTP handlers and their dependencies.
@@ -72,6 +73,7 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("DELETE /api/v1/entries/{id}", s.handleDeleteEntry)
 	protected.HandleFunc("GET /api/v1/entries/{id}/transcript", s.handleGetTranscript)
 	protected.HandleFunc("POST /api/v1/entries/{id}/retranscribe", s.handleRetranscribe)
+	protected.HandleFunc("POST /api/v1/entries/{id}/cancel", s.handleCancelEntry)
 	protected.HandleFunc("GET /api/v1/entries/{id}/analysis", s.handleGetAnalysis)
 	protected.HandleFunc("POST /api/v1/entries/{id}/analyze", s.handleAnalyze)
 

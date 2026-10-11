@@ -31,10 +31,11 @@ type Runner struct {
 	logger    *slog.Logger
 	handlers  map[string]Handler
 	poll      time.Duration
+	canceller *Canceller
 }
 
 // NewRunner builds a Runner.
-func NewRunner(q *Queue, workerID string, lease, baseDelay time.Duration, logger *slog.Logger) *Runner {
+func NewRunner(q *Queue, workerID string, lease, baseDelay time.Duration, logger *slog.Logger, canceller *Canceller) *Runner {
 	return &Runner{
 		queue:     q,
 		workerID:  workerID,
@@ -43,6 +44,7 @@ func NewRunner(q *Queue, workerID string, lease, baseDelay time.Duration, logger
 		logger:    logger,
 		handlers:  map[string]Handler{},
 		poll:      500 * time.Millisecond,
+		canceller: canceller,
 	}
 }
 
@@ -81,6 +83,10 @@ func (r *Runner) execute(ctx context.Context, job *Job) {
 
 	jobCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	if r.canceller != nil {
+		r.canceller.Register(job.ID, cancel)
+		defer r.canceller.Unregister(job.ID)
+	}
 
 	hbErr := make(chan error, 1)
 	go func() {
@@ -109,6 +115,11 @@ func (r *Runner) execute(ctx context.Context, job *Job) {
 	}
 
 	if err := handler(jobCtx, job, heartbeat); err != nil {
+		if jobCtx.Err() != nil {
+			// The job was cancelled; the cancel path already set its state.
+			r.logger.Info("fila: job cancelado", "id", job.ID, "tipo", job.Type)
+			return
+		}
 		r.logger.Error("fila: job falhou", "id", job.ID, "tipo", job.Type, "erro", err)
 		if ferr := r.queue.Fail(ctx, job.ID, err, r.baseDelay); ferr != nil {
 			r.logger.Error("fila: falha ao registrar erro", "id", job.ID, "erro", ferr)

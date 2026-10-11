@@ -118,3 +118,29 @@ type testError struct{}
 func (testError) Error() string { return "falha de teste" }
 
 var errTest = testError{}
+
+func TestCancelEntry(t *testing.T) {
+	q := newQueue(t)
+	ctx := context.Background()
+	if _, err := q.Enqueue(ctx, jobs.TypeTranscribe, "transcribe:en1", jobs.TranscribePayload{EntryID: "en1"}); err != nil {
+		t.Fatalf("enqueue transcribe: %v", err)
+	}
+	if _, err := q.Enqueue(ctx, jobs.TypeAnalyze, "analyze:en1", jobs.AnalyzePayload{EntryID: "en1"}); err != nil {
+		t.Fatalf("enqueue analyze: %v", err)
+	}
+	ids, err := q.CancelEntry(ctx, "en1")
+	if err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	if len(ids) != 2 {
+		t.Fatalf("cancelou %d jobs, esperava 2", len(ids))
+	}
+	dead, _ := q.CountByStatus(ctx, jobs.StatusDead)
+	if dead != 2 {
+		t.Fatalf("dead = %d, esperava 2", dead)
+	}
+	queued, _ := q.CountByStatus(ctx, jobs.StatusQueued)
+	if queued != 0 {
+		t.Fatalf("queued = %d, esperava 0", queued)
+	}
+}

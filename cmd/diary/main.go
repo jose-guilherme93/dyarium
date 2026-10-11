@@ -132,8 +132,9 @@ func serve() error {
 	pipeline := transcribe.NewPipeline(st, transcribe.RealDeps(ingestSvc, prober, whisper, runtime), checkpointDir, cfg.WhisperModel)
 
 	modelsMgr := models.NewManager(cfg.ModelsDir, cfg.ModelsBaseURL, bus)
+	canceller := jobs.NewCanceller()
 
-	startWorkers(ctx, cfg, st, queue, pipeline, bus, logger)
+	startWorkers(ctx, cfg, st, queue, pipeline, bus, logger, canceller)
 
 	if cfg.TelegramEnabled {
 		bot := telegram.New(telegram.Config{Enabled: true, BotToken: cfg.TelegramBotToken, APIBase: cfg.TelegramAPIBase})
@@ -147,15 +148,16 @@ func serve() error {
 	}
 
 	srv := api.New(api.Deps{
-		Config:   cfg,
-		Store:    st,
-		Logger:   logger,
-		Version:  api.Version{Version: version, Commit: commit, BuiltAt: date},
-		Ingest:   ingestSvc,
-		Queue:    queue,
-		Analyzer: analyzer,
-		Events:   bus,
-		Models:   modelsMgr,
+		Config:    cfg,
+		Store:     st,
+		Logger:    logger,
+		Version:   api.Version{Version: version, Commit: commit, BuiltAt: date},
+		Ingest:    ingestSvc,
+		Queue:     queue,
+		Analyzer:  analyzer,
+		Events:    bus,
+		Models:    modelsMgr,
+		Canceller: canceller,
 	})
 
 	httpServer := &http.Server{
@@ -186,12 +188,12 @@ func serve() error {
 	return httpServer.Shutdown(shutdownCtx)
 }
 
-func startWorkers(ctx context.Context, cfg config.Config, st *store.Store, queue *jobs.Queue, pipeline *transcribe.Pipeline, bus *events.Bus, logger *slog.Logger) {
+func startWorkers(ctx context.Context, cfg config.Config, st *store.Store, queue *jobs.Queue, pipeline *transcribe.Pipeline, bus *events.Bus, logger *slog.Logger, canceller *jobs.Canceller) {
 	lease := time.Duration(cfg.JobLeaseSeconds) * time.Second
 	transcribeH := transcribeHandler(st, cfg, pipeline, queue, bus, logger)
 	analyzeH := analyzeHandler(st, cfg, bus, logger)
 	for i := 0; i < cfg.WorkerConcurrency; i++ {
-		runner := jobs.NewRunner(queue, fmt.Sprintf("worker-%d", i+1), lease, 2*time.Second, logger)
+		runner := jobs.NewRunner(queue, fmt.Sprintf("worker-%d", i+1), lease, 2*time.Second, logger, canceller)
 		runner.Register(jobs.TypeTranscribe, transcribeH)
 		runner.Register(jobs.TypeAnalyze, analyzeH)
 		go runner.Run(ctx)

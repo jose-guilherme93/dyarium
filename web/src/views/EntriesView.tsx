@@ -29,8 +29,16 @@ export function EntriesView({ refreshKey, progress, onOpen }: EntriesViewProps) 
     void load();
   }, [load, refreshKey]);
 
-  const handleFile = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+  const stopEntry = async (id: string) => {
+    try {
+      await api.cancel(id);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "falha ao parar");
+    }
+  };
+
+  const handleFile = async (event: ChangeEvent<HTMLInputElement>) => {    const file = event.target.files?.[0];
     if (!file) {
       return;
     }
@@ -85,7 +93,7 @@ export function EntriesView({ refreshKey, progress, onOpen }: EntriesViewProps) 
             const status = p?.status ?? entry.status;
             const busy = isBusy(status);
             return (
-              <li key={entry.id}>
+              <li key={entry.id} className="entry-row">
                 <button type="button" className="entry-item" onClick={() => onOpen(entry.id)}>
                   <span className="entry-title">{entry.title || entry.original_filename || "Entrada"}</span>
                   <span className="entry-meta">
@@ -101,6 +109,11 @@ export function EntriesView({ refreshKey, progress, onOpen }: EntriesViewProps) 
                   )}
                   {p?.error && <span className="error">{p.error}</span>}
                 </button>
+                {busy && (
+                  <button type="button" className="danger entry-stop" onClick={() => void stopEntry(entry.id)}>
+                    Parar
+                  </button>
+                )}
               </li>
             );
           })}

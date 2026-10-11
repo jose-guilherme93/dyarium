@@ -98,8 +98,18 @@ export function EntryView({ id, refreshKey, progress, onBack }: EntryViewProps) 
     }
   };
 
-  const saveNote = async (document: unknown) => {
+  const stop = async () => {
+    setError("");
     try {
+      await api.cancel(id);
+      setBusy(null);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "falha ao parar");
+    }
+  };
+
+  const saveNote = async (document: unknown) => {    try {
       await api.createNote(id, "", document);
       setEditing(false);
       await load();
@@ -129,6 +139,11 @@ export function EntryView({ id, refreshKey, progress, onBack }: EntryViewProps) 
         </button>
         <h1>{entry.title || entry.original_filename || "Entrada"}</h1>
         <div className="actions">
+          {(running || busy) && (
+            <button type="button" className="danger" onClick={stop}>
+              Parar
+            </button>
+          )}
           <button type="button" onClick={retranscribe} disabled={busy === "retranscribe" || running}>
             {busy === "retranscribe" ? <Spinner /> : null} Retranscrever
           </button>

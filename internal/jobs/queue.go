@@ -226,6 +226,41 @@ func (q *Queue) CountByStatus(ctx context.Context, status Status) (int, error) {
 	return n, nil
 }
 
+// CancelEntry marks the active jobs of an entry as cancelled and returns their
+// ids so their running contexts can be cancelled.
+func (q *Queue) CancelEntry(ctx context.Context, entryID string) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, `
+		SELECT id FROM jobs
+		WHERE idempotency_key IN (?, ?)
+		  AND status IN (?, ?, ?, ?)`,
+		"transcribe:"+entryID, "analyze:"+entryID,
+		string(StatusQueued), string(StatusLeased), string(StatusRunning), string(StatusRetrying))
+	if err != nil {
+		return nil, fmt.Errorf("jobs: cancel select: %w", err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	now := ts(time.Now())
+	for _, id := range ids {
+		if _, err := q.db.ExecContext(ctx, `
+			UPDATE jobs SET status = ?, last_error = ?, worker_id = '', lease_expires_at = NULL, updated_at = ?
+			WHERE id = ?`, string(StatusDead), "cancelado", now, id); err != nil {
+			return ids, fmt.Errorf("jobs: cancel update: %w", err)
+		}
+	}
+	return ids, nil
+}
+
 func backoff(base time.Duration, attempt int) time.Duration {
 	if base <= 0 {
 		base = 2 * time.Second

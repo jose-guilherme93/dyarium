@@ -62,6 +62,8 @@ export const api = {
   getTranscript: (id: string) => request<Transcript>(`/entries/${id}/transcript`),
   getAnalysis: (id: string) => request<Analysis>(`/entries/${id}/analysis`),
   retranscribe: (id: string) => request<{ status: string }>(`/entries/${id}/retranscribe`, { method: "POST" }),
+  cancel: (id: string) =>
+    request<{ status: string; cancelled: string[] }>(`/entries/${id}/cancel`, { method: "POST" }),
   analyze: (id: string) => request<{ status: string }>(`/entries/${id}/analyze`, { method: "POST" }),
   deleteEntry: (id: string) => request<void>(`/entries/${id}`, { method: "DELETE" }),
   patchEntry: (id: string, patch: { title?: string }) =>
