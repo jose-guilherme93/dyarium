@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/joseti/dyarium/internal/store"
+	"github.com/jose-guilherme93/dyarium/internal/store"
 )
 
 func doJSON(t *testing.T, srv *Server, method, path string, body io.Reader) (*httptest.ResponseRecorder, map[string]any) {

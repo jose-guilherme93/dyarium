@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joseti/dyarium/internal/analyze"
+	"github.com/jose-guilherme93/dyarium/internal/analyze"
 )
 
 // analyzeClientConfig merges the environment defaults with the stored settings.

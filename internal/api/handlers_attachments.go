@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/joseti/dyarium/internal/ingest"
-	"github.com/joseti/dyarium/internal/store"
+	"github.com/jose-guilherme93/dyarium/internal/ingest"
+	"github.com/jose-guilherme93/dyarium/internal/store"
 )
 
 // maxImageBytes bounds an uploaded image attachment.
