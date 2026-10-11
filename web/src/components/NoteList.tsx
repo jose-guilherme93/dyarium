@@ -10,6 +10,7 @@ import { PlusIcon, SearchIcon } from "./icons";
 interface NoteListProps {
   refreshKey: number;
   activeId: string | null;
+  failures: Record<string, string>;
   onOpen: (id: string) => void;
   onChanged: () => void;
   onCreateText: () => void;
@@ -22,7 +23,7 @@ interface Group {
 }
 
 // NoteList is the notes column: search, capture and the grouped note list.
-export function NoteList({ refreshKey, activeId, onOpen, onChanged, onCreateText }: NoteListProps) {
+export function NoteList({ refreshKey, activeId, failures, onOpen, onChanged, onCreateText }: NoteListProps) {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [query, setQuery] = useState("");
   const [error, setError] = useState("");
@@ -129,6 +130,7 @@ export function NoteList({ refreshKey, activeId, onOpen, onChanged, onCreateText
                         {entry.duration_seconds > 0 ? `${formatDuration(entry.duration_seconds)} · ` : ""}
                         {statusLabel(entry.status)}
                       </span>
+                      {failures[entry.id] && <span className="note-item-error">{failures[entry.id]}</span>}
                     </button>
                   </li>
                 ))}

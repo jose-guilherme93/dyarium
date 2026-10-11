@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, getToken } from "../api";
+import { useToast } from "../components/Toasts";
 import type { ModelInfo, Settings } from "../types";
 
 interface DownloadProgress {
@@ -15,8 +16,6 @@ interface ProviderPreset {
   model: string;
 }
 
-// PROVIDER_PRESETS fills the base URL and a suggested model when the user picks
-// a known analysis provider. "custom" keeps whatever is typed.
 const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
   opencode: { label: "opencode go", baseUrl: "https://opencode.ai/zen/go/v1", model: "qwen3.8-flash" },
   deepseek: { label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat" },
@@ -24,7 +23,6 @@ const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
   custom: { label: "Personalizado", baseUrl: "", model: "" },
 };
 
-// OPENCODE_MODELS are suggested model ids for the opencode go provider.
 const OPENCODE_MODELS = [
   "qwen3.8-flash",
   "glm-5.3-flash",
@@ -34,8 +32,6 @@ const OPENCODE_MODELS = [
   "space-bunny",
 ];
 
-// FALLBACK_MODELS keep the model selector usable before (or when) the provider
-// model list is fetched.
 const FALLBACK_MODELS: Record<string, string[]> = {
   opencode: OPENCODE_MODELS,
   deepseek: ["deepseek-chat", "deepseek-reasoner"],
@@ -57,6 +53,7 @@ function providerFromBaseUrl(baseUrl: string): string {
 }
 
 export function SettingsView() {
+  const { notify } = useToast();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [progress, setProgress] = useState<Record<string, DownloadProgress>>({});
@@ -67,6 +64,7 @@ export function SettingsView() {
   const [provider, setProvider] = useState("custom");
   const [providerModels, setProviderModels] = useState<string[]>([]);
   const [modelsNote, setModelsNote] = useState("");
+  const [error, setError] = useState("");
 
   const modelOptions = useMemo(() => {
     const fallback = FALLBACK_MODELS[provider] ?? [];
@@ -74,8 +72,6 @@ export function SettingsView() {
     const current = settings?.analyze_model ?? "";
     return [...new Set([...list, current])].filter((model) => model !== "");
   }, [provider, providerModels, settings?.analyze_model]);
-  const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
 
   const loadSettings = useCallback(async () => {
     const value = await api.getSettings();
@@ -121,14 +117,14 @@ export function SettingsView() {
     return () => source.close();
   }, [loadModels]);
 
-  const save = async (patch: Record<string, unknown>) => {
+  const save = async (patch: Record<string, unknown>, message = "Configuracao salva") => {
     try {
       await api.putSettings(patch);
       await loadSettings();
       setError("");
-      setMessage("Configuracao salva.");
+      notify(message, "success");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "falha ao salvar");
+      notify(err instanceof Error ? err.message : "falha ao salvar", "error");
     }
   };
 
@@ -160,28 +156,28 @@ export function SettingsView() {
         ...current,
         [name]: { received: 0, total: 0, done: false, error: "" },
       }));
+      notify(`Download de ${name} iniciado`, "info");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "falha ao iniciar o download");
+      notify(err instanceof Error ? err.message : "falha ao iniciar o download", "error");
     }
   };
 
-  const downloaded = models.filter((model) => model.downloaded);
-
   return (
-    <section className="view">
+    <section className="settings-page">
       <div className="view-header">
         <h1>Configuracao</h1>
       </div>
       {error && <p className="error">{error}</p>}
-      {message && <p className="ok">{message}</p>}
+
+      {!settings && <p className="muted">Carregando...</p>}
 
       {settings && (
         <>
-          <div className="config-block">
-            <h2>Modelos locais</h2>
-            <p className="muted">
-              Baixe os modelos ggml do whisper. O modelo ativo e usado nas proximas transcricoes.
-            </p>
+          <div className="card">
+            <div className="card-head">
+              <h2>Modelos de transcricao</h2>
+              <p className="hint">Modelos ggml do whisper. O modelo ativo vale para as proximas transcricoes.</p>
+            </div>
             <ul className="model-list">
               {models.map((model) => {
                 const p = progress[model.name];
@@ -189,67 +185,67 @@ export function SettingsView() {
                   p && p.total > 0 ? Math.min(100, Math.round((p.received / p.total) * 100)) : 0;
                 return (
                   <li key={model.name} className="model-item">
-                    <div className="model-head">
-                      <label className="model-name">
-                        <input
-                          type="radio"
-                          name="active-model"
-                          checked={settings.whisper_model === model.path}
-                          disabled={!model.downloaded}
-                          onChange={() => void save({ whisper_model: model.path })}
-                        />
-                        {model.name}
-                      </label>
-                      <span className="muted">
-                        ~{model.size_mb} MB ·{" "}
-                        {model.downloaded ? `baixado (${Math.round(model.local_bytes / 1048576)} MB)` : "ausente"}
-                      </span>
-                      {!model.downloaded && (
-                        <button type="button" onClick={() => void download(model.name)} disabled={p && !p.done}>
-                          Baixar
-                        </button>
-                      )}
-                    </div>
-                    {p && !p.done && (
-                      <div className="ram-track" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}>
-                        <div className="ram-fill" style={{ width: `${percent}%` }} />
-                      </div>
+                    <label className="model-name">
+                      <input
+                        type="radio"
+                        name="active-model"
+                        checked={settings.whisper_model === model.path}
+                        disabled={!model.downloaded}
+                        onChange={() => void save({ whisper_model: model.path }, "Modelo ativo atualizado")}
+                      />
+                      <span>{model.name}</span>
+                    </label>
+                    <span className="muted">
+                      ~{model.size_mb} MB ·{" "}
+                      {model.downloaded ? `baixado (${Math.round(model.local_bytes / 1048576)} MB)` : "ausente"}
+                    </span>
+                    {!model.downloaded && (
+                      <button type="button" onClick={() => void download(model.name)} disabled={p && !p.done}>
+                        Baixar
+                      </button>
                     )}
-                    {p && p.error && <p className="error">Falha no download: {p.error}</p>}
+                    {p && !p.done && (
+                      <span className="ram-track" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}>
+                        <span className="ram-fill" style={{ width: `${percent}%` }} />
+                      </span>
+                    )}
+                    {p && p.error && <span className="error">Falha no download: {p.error}</span>}
                   </li>
                 );
               })}
             </ul>
-            <p className="muted">Modelo ativo: {settings.whisper_model}</p>
           </div>
 
-          <div className="config-block">
-            <h2>Transcricao</h2>
-            <dl className="settings">
-              <dt>Provedor</dt>
-              <dd>
-                <select
-                  aria-label="Provedor de transcricao"
-                  value={settings.transcribe_provider}
-                  onChange={(event) => void save({ transcribe_provider: event.target.value })}
-                >
-                  <option value="whisper">Whisper local</option>
-                  <option value="deepgram">Deepgram (API na nuvem)</option>
-                </select>
-              </dd>
-              {settings.transcribe_provider === "deepgram" && (
-                <>
-                  <dt>Modelo Deepgram</dt>
-                  <dd>
-                    <input
-                      type="text"
-                      aria-label="Modelo Deepgram"
-                      defaultValue={settings.deepgram_model}
-                      onBlur={(event) => void save({ deepgram_model: event.target.value })}
-                    />
-                  </dd>
-                  <dt>Chave da Deepgram</dt>
-                  <dd className="ceiling">
+          <div className="card">
+            <div className="card-head">
+              <h2>Transcricao</h2>
+              <p className="hint">Como o audio vira texto.</p>
+            </div>
+            <div className="field">
+              <span className="field-label">Provedor</span>
+              <select
+                aria-label="Provedor de transcricao"
+                value={settings.transcribe_provider}
+                onChange={(event) => void save({ transcribe_provider: event.target.value })}
+              >
+                <option value="whisper">Whisper local</option>
+                <option value="deepgram">Deepgram (API na nuvem)</option>
+              </select>
+            </div>
+            {settings.transcribe_provider === "deepgram" && (
+              <>
+                <div className="field">
+                  <span className="field-label">Modelo Deepgram</span>
+                  <input
+                    type="text"
+                    aria-label="Modelo Deepgram"
+                    defaultValue={settings.deepgram_model}
+                    onBlur={(event) => void save({ deepgram_model: event.target.value })}
+                  />
+                </div>
+                <div className="field">
+                  <span className="field-label">Chave da Deepgram</span>
+                  <div className="field-control">
                     <input
                       type="password"
                       aria-label="Chave da Deepgram"
@@ -260,49 +256,53 @@ export function SettingsView() {
                     <button
                       type="button"
                       onClick={() => {
-                        void save({ deepgram_api_key: deepgramKey });
-                        setDeepgramKey("");
+                        if (deepgramKey.trim() !== "") {
+                          void save({ deepgram_api_key: deepgramKey }, "Chave da Deepgram salva");
+                          setDeepgramKey("");
+                        }
                       }}
                     >
                       Salvar chave
                     </button>
-                  </dd>
-                </>
-              )}
-              <dt>Idioma da transcricao</dt>
-              <dd>
-                <select
-                  aria-label="Idioma da transcricao"
-                  value={settings.whisper_language}
-                  onChange={(event) => void save({ whisper_language: event.target.value })}
-                >
-                  <option value="">Detectar automaticamente</option>
-                  <option value="pt">Portugues</option>
-                  <option value="en">Ingles</option>
-                  <option value="es">Espanhol</option>
-                  <option value="fr">Frances</option>
-                  <option value="de">Alemao</option>
-                  <option value="it">Italiano</option>
-                  <option value="ja">Japones</option>
-                  <option value="zh">Chines</option>
-                  <option value="ru">Russo</option>
-                  <option value="ar">Arabe</option>
-                  <option value="hi">Hindi</option>
-                </select>
-              </dd>
-              <dt>Corte de silencio</dt>
-              <dd>
-                <label className="switch">
-                  <input
-                    type="checkbox"
-                    checked={settings.trim_silence}
-                    onChange={() => void save({ trim_silence: !settings.trim_silence })}
-                  />
-                  {settings.trim_silence ? "Ligado" : "Desligado"}
-                </label>
-              </dd>
-              <dt>Limite de RAM (MB)</dt>
-              <dd className="ceiling">
+                  </div>
+                </div>
+              </>
+            )}
+            <div className="field">
+              <span className="field-label">Idioma</span>
+              <select
+                aria-label="Idioma da transcricao"
+                value={settings.whisper_language}
+                onChange={(event) => void save({ whisper_language: event.target.value })}
+              >
+                <option value="">Detectar automaticamente</option>
+                <option value="pt">Portugues</option>
+                <option value="en">Ingles</option>
+                <option value="es">Espanhol</option>
+                <option value="fr">Frances</option>
+                <option value="de">Alemao</option>
+                <option value="it">Italiano</option>
+                <option value="ja">Japones</option>
+                <option value="zh">Chines</option>
+                <option value="ru">Russo</option>
+                <option value="ar">Arabe</option>
+                <option value="hi">Hindi</option>
+              </select>
+            </div>
+            <div className="field">
+              <span className="field-label">Corte de silencio</span>
+              <label className="switch">
+                <input
+                  type="checkbox"
+                  checked={settings.trim_silence}
+                  onChange={() => void save({ trim_silence: !settings.trim_silence })}
+                />
+                <span>{settings.trim_silence ? "Ligado" : "Desligado"}</span>
+              </label>
+            </div>
+            <div className="field">
+              <span className="field-label">Limite de RAM (MB)</span>
+              <div className="field-control">
                 <input
                   type="number"
                   min={0}
@@ -310,55 +310,60 @@ export function SettingsView() {
                   value={ceiling}
                   onChange={(event) => setCeiling(event.target.value)}
                 />
-                <button type="button" onClick={() => void save({ max_whisper_rss_mb: Math.max(0, Math.floor(Number(ceiling) || 0)) })}>
+                <button
+                  type="button"
+                  onClick={() => void save({ max_whisper_rss_mb: Math.max(0, Math.floor(Number(ceiling) || 0)) })}
+                >
                   Salvar
                 </button>
-                <span className="muted">0 significa sem limite</span>
-              </dd>
-            </dl>
+                <span className="hint">0 significa sem limite</span>
+              </div>
+            </div>
           </div>
 
-          <div className="config-block">
-            <h2>Analise por IA (API compativel com OpenAI)</h2>
-            <p className="muted">
-              Escolha o provedor, cole a chave e selecione o modelo. A lista de modelos e buscada do
-              provedor; use Personalizado para informar a base manualmente.
-            </p>
-            <dl className="settings">
-              <dt>Ativar analise</dt>
-              <dd>
-                <label className="switch">
-                  <input
-                    type="checkbox"
-                    checked={settings.analyze_enabled}
-                    onChange={() => void save({ analyze_enabled: !settings.analyze_enabled })}
-                  />
-                  {settings.analyze_enabled ? "Ligada" : "Desligada"}
-                </label>
-              </dd>
-              <dt>Provedor</dt>
-              <dd>
-                <select
-                  aria-label="Provedor da analise"
-                  value={provider}
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    setProvider(value);
-                    const preset = PROVIDER_PRESETS[value];
-                    if (preset && value !== "custom") {
-                      void save({ analyze_base_url: preset.baseUrl, analyze_model: preset.model });
-                    }
-                  }}
-                >
-                  {Object.entries(PROVIDER_PRESETS).map(([id, preset]) => (
-                    <option key={id} value={id}>
-                      {preset.label}
-                    </option>
-                  ))}
-                </select>
-              </dd>
-              <dt>Chave da API</dt>
-              <dd className="ceiling">
+          <div className="card">
+            <div className="card-head">
+              <h2>Analise por IA</h2>
+              <p className="hint">
+                Escolha o provedor, cole a chave e selecione o modelo. A lista de modelos e buscada do provedor;
+                use Personalizado para informar a base manualmente.
+              </p>
+            </div>
+            <div className="field">
+              <span className="field-label">Ativar analise</span>
+              <label className="switch">
+                <input
+                  type="checkbox"
+                  checked={settings.analyze_enabled}
+                  onChange={() => void save({ analyze_enabled: !settings.analyze_enabled })}
+                />
+                <span>{settings.analyze_enabled ? "Ligada" : "Desligada"}</span>
+              </label>
+            </div>
+            <div className="field">
+              <span className="field-label">Provedor</span>
+              <select
+                aria-label="Provedor da analise"
+                value={provider}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setProvider(value);
+                  const preset = PROVIDER_PRESETS[value];
+                  if (preset && value !== "custom") {
+                    void save({ analyze_base_url: preset.baseUrl, analyze_model: preset.model }, "Provedor atualizado");
+                  }
+                }}
+              >
+                {Object.entries(PROVIDER_PRESETS).map(([id, preset]) => (
+                  <option key={id} value={id}>
+                    {preset.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <span className="field-label">Chave da API</span>
+              <div className="field-control">
                 <input
                   type="password"
                   aria-label="Chave da API de analise"
@@ -373,7 +378,7 @@ export function SettingsView() {
                   onClick={() => {
                     void (async () => {
                       if (apiKey.trim() !== "") {
-                        await save({ analyze_api_key: apiKey });
+                        await save({ analyze_api_key: apiKey }, "Chave salva");
                         setApiKey("");
                       }
                       await fetchModels();
@@ -382,13 +387,15 @@ export function SettingsView() {
                 >
                   Salvar chave
                 </button>
-              </dd>
-              <dt>Modelo</dt>
-              <dd className="ceiling">
+              </div>
+            </div>
+            <div className="field">
+              <span className="field-label">Modelo</span>
+              <div className="field-control">
                 <select
                   aria-label="Modelo da analise"
                   value={settings.analyze_model}
-                  onChange={(event) => void save({ analyze_model: event.target.value })}
+                  onChange={(event) => void save({ analyze_model: event.target.value }, "Modelo atualizado")}
                 >
                   {settings.analyze_model === "" && <option value="">(nenhum)</option>}
                   {modelOptions.map((model) => (
@@ -400,44 +407,37 @@ export function SettingsView() {
                 <button type="button" onClick={() => void fetchModels()}>
                   Buscar modelos
                 </button>
-              </dd>
-              {modelsNote && (
-                <>
-                  <dt />
-                  <dd className="muted">{modelsNote}</dd>
-                </>
-              )}
-              <dt>Base URL</dt>
-              <dd>
-                <input
-                  key={settings.analyze_base_url}
-                  type="text"
-                  aria-label="Base URL da analise"
-                  defaultValue={settings.analyze_base_url}
-                  onBlur={(event) => void save({ analyze_base_url: event.target.value })}
-                />
-              </dd>
-              <dt>Temas</dt>
-              <dd className="ceiling">
+              </div>
+              {modelsNote && <span className="hint">{modelsNote}</span>}
+            </div>
+            <div className="field">
+              <span className="field-label">Base URL</span>
+              <input
+                key={settings.analyze_base_url}
+                type="text"
+                aria-label="Base URL da analise"
+                defaultValue={settings.analyze_base_url}
+                onBlur={(event) => void save({ analyze_base_url: event.target.value })}
+              />
+            </div>
+            <div className="field">
+              <span className="field-label">Temas</span>
+              <div className="field-control">
                 <input
                   type="text"
                   aria-label="Temas da analise"
                   value={themes}
                   onChange={(event) => setThemes(event.target.value)}
                 />
-                <button type="button" onClick={() => void save({ analysis_themes: themes })}>
+                <button type="button" onClick={() => void save({ analysis_themes: themes }, "Temas salvos")}>
                   Salvar
                 </button>
-              </dd>
-              <dt />
-              <dd className="muted">Temas preferidos na analise, separados por virgulas.</dd>
-            </dl>
+              </div>
+              <span className="hint">Temas preferidos na analise, separados por virgulas.</span>
+            </div>
           </div>
         </>
       )}
-
-      {!settings && <p className="muted">Carregando...</p>}
-      {settings && downloaded.length === 0 && <p className="muted">Nenhum modelo baixado ainda.</p>}
     </section>
   );
 }

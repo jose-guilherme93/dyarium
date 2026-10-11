@@ -111,6 +111,32 @@ export function ChevronIcon({ size = 18 }: IconProps) {
   );
 }
 
+export function MoreIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <circle cx="12" cy="5" r="1.4" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="19" r="1.4" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+export function CloseIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M6 6l12 12M18 6 6 18" />
+    </svg>
+  );
+}
+
+export function CheckIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="m5 12 5 5 9-11" />
+    </svg>
+  );
+}
+
 export function SparkIcon({ size = 18 }: IconProps) {
   return (
     <svg {...svgProps(size)}>
