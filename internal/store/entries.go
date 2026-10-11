@@ -145,6 +145,44 @@ func (s *Store) GetEntry(ctx context.Context, id string) (Entry, error) {
 	return e, nil
 }
 
+// GetActiveEntryBySHA256 returns a non-deleted entry with the given content
+// hash. The boolean is false when no active entry has that hash. Because the
+// audio is immutable, the sha256 is its identity: this is what makes uploads
+// deduplicate instead of creating repeated entries.
+func (s *Store) GetActiveEntryBySHA256(ctx context.Context, sha string) (Entry, bool, error) {
+	if sha == "" {
+		return Entry{}, false, nil
+	}
+	var e Entry
+	var recordedAt, deletedAt sql.NullString
+	var createdAt, updatedAt string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, COALESCE(title,''), status, source, COALESCE(original_filename,''),
+			COALESCE(content_type,''), size_bytes, duration_seconds, COALESCE(sha256,''),
+			recorded_at, created_at, updated_at, deleted_at
+		FROM entries WHERE sha256 = ? AND deleted_at IS NULL
+		ORDER BY created_at ASC LIMIT 1`, sha).Scan(
+		&e.ID, &e.Title, &e.Status, &e.Source, &e.OriginalFilename, &e.ContentType,
+		&e.SizeBytes, &e.DurationSeconds, &e.SHA256, &recordedAt, &createdAt, &updatedAt, &deletedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Entry{}, false, nil
+		}
+		return Entry{}, false, fmt.Errorf("store: get entry by sha256: %w", err)
+	}
+	if recordedAt.Valid {
+		t := parseTS(recordedAt.String)
+		e.RecordedAt = &t
+	}
+	if deletedAt.Valid {
+		t := parseTS(deletedAt.String)
+		e.DeletedAt = &t
+	}
+	e.CreatedAt = parseTS(createdAt)
+	e.UpdatedAt = parseTS(updatedAt)
+	return e, true, nil
+}
+
 // ListEntries returns recent entries, newest first.
 func (s *Store) ListEntries(ctx context.Context, limit int) ([]Entry, error) {
 	if limit <= 0 {

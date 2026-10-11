@@ -39,7 +39,9 @@ Cada pacote `internal` expoe interfaces pequenas e concretiza as dependencias ex
 3. O cliente retoma de onde parou: `GET /uploads/{id}` retorna o offset confirmado.
 4. O cliente finaliza: `POST /uploads/{id}/complete`. O servidor valida tamanho, formato,
    duracao (via ffprobe, sobre um derivado temporario) e o SHA-256 do conteudo recebido.
-   Em caso de sucesso, cria uma `Entry` e enfileira um job `transcribe`.
+   Em caso de sucesso, cria uma `Entry` e enfileira um job `transcribe`. Se o SHA-256 ja
+   corresponde a uma `Entry` ativa, o servidor nao duplica: descarta o objeto recem-recebido
+   e devolve a entrada existente (o audio e imutavel, entao o hash e a sua identidade).
 5. O worker pega o job, decifra para um diretorio temporario com permissao restrita, deriva
    a copia 16 kHz mono (e, opcionalmente, remove silencios), transcreve por trechos com
    checkpoint, grava `Transcript` e `Segment`, calcula metricas de audio e, se a analise
@@ -107,6 +109,13 @@ a gravacao dos resultados e feita em transacao, com upsert por chave natural.
   silencio, sem reimplementar decodificacao de audio.
 - Cifra em streaming no PUT: evita qualquer janela de audio em claro no disco persistente.
 - Derivados em diretorio temporario: mantem o original imutavel e simplifica a limpeza.
+- Dedupe por SHA-256 no `complete`: como o audio nunca muda, o hash e a identidade do
+  conteudo. Reimportar o mesmo arquivo (por exemplo, compartilhado duas vezes no app) nao
+  cria entrada nem transcricao duplicadas; entradas removidas nao contam para o dedupe.
+- Toda `Entry` tem titulo e dia: quando o cliente nao informa, o servidor deriva o titulo do
+  nome original do arquivo (ou da data/hora) e usa a hora de criacao como `recorded_at`.
+  Isso mantem a linha do tempo e o calendario do dashboard sempre preenchidos, inclusive
+  para fontes como o Telegram.
 - Chave mestra por variavel de ambiente: simples e suficiente para self-hosting. A chave
   nao entra no repositorio nem no banco.
 - Analise por HTTP compativel com OpenAI: funciona com Ollama local ou qualquer provedor,
@@ -118,6 +127,6 @@ a gravacao dos resultados e feita em transacao, com upsert por chave natural.
 
 - Duracao maxima de audio: 50 minutos (configuravel por ambiente).
 - Tamanho maximo de upload: configuravel por ambiente.
-- Formatos aceitos: wav, mp3, m4a, ogg, flac (configuravel).
+- Formatos aceitos: wav, mp3, m4a, ogg, flac, aac, adts (configuravel).
 - Concorrencia de workers: padrao 1, dado o pico de memoria do whisper.
 - Corte de silencio na transcricao: booleano em `Settings`, desligado por padrao.
