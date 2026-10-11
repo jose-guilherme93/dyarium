@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, getToken } from "../api";
+import { Toggle } from "../components/Toggle";
 import { useToast } from "../components/Toasts";
 import type { ModelInfo, Settings } from "../types";
 
@@ -297,14 +298,11 @@ export function SettingsView() {
             </div>
             <div className="field">
               <span className="field-label">Corte de silencio</span>
-              <label className="switch">
-                <input
-                  type="checkbox"
-                  checked={settings.trim_silence}
-                  onChange={() => void save({ trim_silence: !settings.trim_silence })}
-                />
-                <span>{settings.trim_silence ? "Ligado" : "Desligado"}</span>
-              </label>
+              <Toggle
+                checked={settings.trim_silence}
+                onChange={(value) => void save({ trim_silence: value })}
+                label={settings.trim_silence ? "Ligado" : "Desligado"}
+              />
             </div>
             <div className="field">
               <span className="field-label">Limite de RAM (MB)</span>
@@ -337,14 +335,11 @@ export function SettingsView() {
             </div>
             <div className="field">
               <span className="field-label">Ativar analise</span>
-              <label className="switch">
-                <input
-                  type="checkbox"
-                  checked={settings.analyze_enabled}
-                  onChange={() => void save({ analyze_enabled: !settings.analyze_enabled })}
-                />
-                <span>{settings.analyze_enabled ? "Ligada" : "Desligada"}</span>
-              </label>
+              <Toggle
+                checked={settings.analyze_enabled}
+                onChange={(value) => void save({ analyze_enabled: value })}
+                label={settings.analyze_enabled ? "Ligada" : "Desligada"}
+              />
             </div>
             <div className="field">
               <span className="field-label">Provedor</span>

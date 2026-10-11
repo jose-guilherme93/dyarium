@@ -11,6 +11,7 @@ export interface Entry {
   recorded_at: string | null;
   created_at: string;
   updated_at: string;
+  tags?: string[];
   metrics?: Metrics;
 }
 

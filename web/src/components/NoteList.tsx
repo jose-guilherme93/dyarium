@@ -130,6 +130,15 @@ export function NoteList({ refreshKey, activeId, failures, onOpen, onChanged, on
                         {entry.duration_seconds > 0 ? `${formatDuration(entry.duration_seconds)} · ` : ""}
                         {statusLabel(entry.status)}
                       </span>
+                      {entry.tags && entry.tags.length > 0 && (
+                        <span className="note-item-tags">
+                          {entry.tags.map((tag) => (
+                            <span key={tag} className="tag-chip tag-chip--small">
+                              {tag}
+                            </span>
+                          ))}
+                        </span>
+                      )}
                       {failures[entry.id] && <span className="note-item-error">{failures[entry.id]}</span>}
                     </button>
                   </li>

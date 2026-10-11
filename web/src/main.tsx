@@ -16,3 +16,10 @@ createRoot(rootElement).render(
     </ToastProvider>
   </StrictMode>,
 );
+
+// Register the shell service worker in production so the app opens offline.
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    void navigator.serviceWorker.register("/sw.js");
+  });
+}

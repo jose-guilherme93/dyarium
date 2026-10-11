@@ -15,6 +15,7 @@ const EMPTY_FILTERS = { person: "", place: "", theme: "" };
 export function SearchView({ refreshKey, onOpen }: SearchViewProps) {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [query, setQuery] = useState("");
+  const [tagQuery, setTagQuery] = useState("");
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [applied, setApplied] = useState(EMPTY_FILTERS);
   const [error, setError] = useState("");
@@ -40,11 +41,16 @@ export function SearchView({ refreshKey, onOpen }: SearchViewProps) {
   };
 
   const term = query.trim().toLowerCase();
-  const results = term
-    ? entries.filter((entry) =>
-        `${entry.title} ${entry.original_filename}`.toLowerCase().includes(term),
-      )
-    : entries;
+  const tag = tagQuery.trim().toLowerCase();
+  const results = entries.filter((entry) => {
+    if (term && !`${entry.title} ${entry.original_filename}`.toLowerCase().includes(term)) {
+      return false;
+    }
+    if (tag && !(entry.tags ?? []).some((value) => value.toLowerCase().includes(tag))) {
+      return false;
+    }
+    return true;
+  });
 
   const hasFilter = applied.person !== "" || applied.place !== "" || applied.theme !== "";
 
@@ -79,6 +85,15 @@ export function SearchView({ refreshKey, onOpen }: SearchViewProps) {
             aria-label="Filtrar por tema"
             value={filters.theme}
             onChange={(event) => setFilters({ ...filters, theme: event.target.value })}
+          />
+        </label>
+        <label>
+          Tags
+          <input
+            type="text"
+            aria-label="Filtrar por tag"
+            value={tagQuery}
+            onChange={(event) => setTagQuery(event.target.value)}
           />
         </label>
         <button type="submit" className="primary">

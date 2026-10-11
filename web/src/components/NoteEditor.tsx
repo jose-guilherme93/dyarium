@@ -7,8 +7,9 @@ import type { Analysis, EntityKind, Entry, Transcript } from "../types";
 import { AudioPlayer, type AudioPlayerHandle } from "./AudioPlayer";
 import { ImageGallery } from "./ImageGallery";
 import { Spinner, isBusy, statusLabel } from "./Status";
+import { TagEditor } from "./TagEditor";
 import { useToast } from "./Toasts";
-import { SparkIcon, TrashIcon } from "./icons";
+import { CheckIcon, CloseIcon, MoreIcon, SparkIcon, TrashIcon } from "./icons";
 
 interface NoteEditorProps {
   entryId: string;
@@ -18,6 +19,25 @@ interface NoteEditorProps {
   onChanged: () => void;
   onDeleted: () => void;
   onOpenEntity: (kind: EntityKind, name: string) => void;
+}
+
+const FONTS = [
+  { id: "default", label: "Padrao", preview: "inherit" },
+  { id: "serif", label: "Serifada", preview: "var(--font-serif)" },
+  { id: "mono", label: "Monoespacada", preview: "ui-monospace, monospace" },
+];
+
+function sentimentText(label?: string): string {
+  switch (label) {
+    case "positivo":
+      return "Positivo";
+    case "negativo":
+      return "Negativo";
+    case "neutro":
+      return "Neutro";
+    default:
+      return "Sem rotulo";
+  }
 }
 
 function processingText(
@@ -44,21 +64,9 @@ function processingText(
   }
 }
 
-function sentimentText(label?: string): string {
-  switch (label) {
-    case "positivo":
-      return "Positivo";
-    case "negativo":
-      return "Negativo";
-    case "neutro":
-      return "Neutro";
-    default:
-      return "Sem rotulo";
-  }
-}
-
-// NoteEditor is the note view: one continuous page with the written text, the
-// audio and its transcription, images and, on the right, the AI insights.
+// NoteEditor is the note view: one continuous page with the audio and its
+// transcription at the top, then the written text and images. The AI insights
+// live in a floating drawer.
 export function NoteEditor({
   entryId,
   refreshKey,
@@ -80,13 +88,21 @@ export function NoteEditor({
   const [error, setError] = useState("");
   const [currentTime, setCurrentTime] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [showInsights, setShowInsights] = useState(false);
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const [font, setFont] = useState<string>(() => {
+    try {
+      return localStorage.getItem("dyarium.noteFont") ?? "default";
+    } catch {
+      return "default";
+    }
+  });
   const noteIdRef = useRef<string | null>(null);
   const saveTimer = useRef<number | null>(null);
   const playerRef = useRef<AudioPlayerHandle | null>(null);
   const transcriptRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const mountedRefresh = useRef(refreshKey);
 
-  // Full load: everything the page needs, fetched in parallel.
   const loadFull = useCallback(async () => {
     setError("");
     setBodyLoaded(false);
@@ -115,7 +131,6 @@ export function NoteEditor({
     setBodyLoaded(true);
   }, [entryId]);
 
-  // Light reload after background events: never touches the body editor.
   const loadLight = useCallback(async () => {
     const [entryRes, transcriptRes, analysisRes] = await Promise.allSettled([
       api.getEntry(entryId),
@@ -226,6 +241,7 @@ export function NoteEditor({
   const analyze = async () => {
     setBusy("analyze");
     setError("");
+    setShowInsights(true);
     try {
       await api.analyze(entryId);
       notify("Analise iniciada", "info");
@@ -256,6 +272,16 @@ export function NoteEditor({
     }
   };
 
+  const chooseFont = (value: string) => {
+    setFont(value);
+    try {
+      localStorage.setItem("dyarium.noteFont", value);
+    } catch {
+      // ignore storage errors
+    }
+    setOptionsOpen(false);
+  };
+
   if (!entry) {
     return (
       <div className="editor-layout">
@@ -273,7 +299,6 @@ export function NoteEditor({
   const hasTranscript = !!transcript && (transcript.text.trim() !== "" || transcript.segments.length > 0);
   const processing = running || busy !== null;
 
-  // Highlight the transcription line that matches the current audio position.
   let activeSegment = -1;
   if (currentTime > 0 && transcript && transcript.segments.length > 0) {
     for (let i = 0; i < transcript.segments.length; i++) {
@@ -285,254 +310,308 @@ export function NoteEditor({
     }
   }
 
+  const insights = processing ? (
+    <div className="analysis-loading">
+      <div className="analysis-loading-head">
+        <Spinner />
+        <span>{processingText(progress, status)}</span>
+      </div>
+      {progress && progress.stage === "analyzing" && progress.total > 1 && (
+        <div
+          className="ram-track"
+          role="progressbar"
+          aria-valuenow={Math.round((progress.done / progress.total) * 100)}
+          aria-valuemin={0}
+          aria-valuemax={100}
+        >
+          <div className="ram-fill" style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }} />
+        </div>
+      )}
+      <div className="skeleton skeleton-line" />
+      <div className="skeleton skeleton-line" style={{ width: "85%" }} />
+      <div className="skeleton skeleton-line" style={{ width: "65%" }} />
+    </div>
+  ) : analysis ? (
+    <div className="insights">
+      <p>
+        Sentimento: <strong>{sentimentText(analysis.sentiment_label)}</strong>{" "}
+        <span className="muted">({Number(analysis.sentiment ?? 0).toFixed(2)})</span>
+      </p>
+      {analysis.summary && <p className="insight-summary">{analysis.summary}</p>}
+
+      {analysis.themes && analysis.themes.length > 0 && (
+        <div className="analysis-block">
+          <h4>Temas</h4>
+          <ul className="chips">
+            {analysis.themes.map((theme) => (
+              <li key={theme.name}>
+                <button type="button" className="chip-button" onClick={() => onOpenEntity("theme", theme.name)}>
+                  {theme.name} <span className="muted">{Math.round(theme.confidence * 100)}%</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {analysis.people_detail && analysis.people_detail.length > 0 && (
+        <div className="analysis-block">
+          <h4>Pessoas</h4>
+          <ul className="chips">
+            {analysis.people_detail.map((person) => (
+              <li key={person.name}>
+                <button type="button" className="chip-button" onClick={() => onOpenEntity("person", person.name)}>
+                  {person.name}
+                  {person.relation ? ` (${person.relation})` : ""} · {person.count}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {analysis.places_detail && analysis.places_detail.length > 0 && (
+        <div className="analysis-block">
+          <h4>Lugares</h4>
+          <ul className="chips">
+            {analysis.places_detail.map((place) => (
+              <li key={place.name}>
+                <button type="button" className="chip-button" onClick={() => onOpenEntity("place", place.name)}>
+                  {place.name} · {place.count}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {analysis.emotions_detail && analysis.emotions_detail.length > 0 && (
+        <div className="analysis-block">
+          <h4>Emocoes</h4>
+          <ul className="bars">
+            {analysis.emotions_detail.map((emotion) => (
+              <li key={emotion.name}>
+                <span className="bar-label">{emotion.name}</span>
+                <span className="bar-track">
+                  <span
+                    className="bar-fill"
+                    style={{ width: `${Math.round(Math.min(1, Math.max(0, emotion.intensity)) * 100)}%` }}
+                  />
+                </span>
+                <span className="muted">{emotion.intensity.toFixed(2)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {analysis.key_moments && analysis.key_moments.length > 0 && (
+        <div className="analysis-block">
+          <h4>Momentos-chave</h4>
+          <ul className="moments">
+            {analysis.key_moments.map((moment, index) => (
+              <li key={index}>
+                <button
+                  type="button"
+                  className="transcript-line"
+                  onClick={() => playerRef.current?.seek(moment.start_ms / 1000)}
+                >
+                  <span className="timestamp">{formatDuration(moment.start_ms / 1000)}</span>
+                  {moment.text}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {analysis.questions && analysis.questions.length > 0 && (
+        <div className="analysis-block">
+          <h4>Perguntas</h4>
+          <ul className="plain-list">
+            {analysis.questions.map((question, index) => (
+              <li key={index}>{question}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {analysis.decisions && analysis.decisions.length > 0 && (
+        <div className="analysis-block">
+          <h4>Decisoes</h4>
+          <ul className="plain-list">
+            {analysis.decisions.map((decision, index) => (
+              <li key={index}>{decision}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  ) : (
+    <p className="muted">Sem analise ainda. Clique em Analisar para extrair temas, pessoas, emocoes e mais.</p>
+  );
+
   return (
-    <div className="editor-layout">
-      <div className="editor">
-        <header className="editor-head">
-          <input
-            className="editor-title"
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-            onBlur={() => void saveTitle()}
-            placeholder="Titulo da nota"
-            aria-label="Titulo da nota"
-          />
-          <div className="editor-actions">
-            {saving !== "idle" && (
-              <span className="muted save-state">{saving === "saving" ? "salvando..." : "salvo"}</span>
-            )}
-            {(running || busy) && (
-              <button type="button" className="danger" onClick={() => void api.cancel(entryId).then(() => loadLight())}>
-                Parar
-              </button>
-            )}
-            {hasAudio && (
-              <button type="button" onClick={() => void retranscribe()} disabled={busy === "retranscribe" || running}>
-                {busy === "retranscribe" ? <Spinner /> : null} Retranscrever
-              </button>
-            )}
-            <button type="button" className="icon-button danger" onClick={() => void remove()} aria-label="Apagar nota">
-              <TrashIcon size={16} />
-            </button>
-          </div>
-        </header>
-
-        <p className="editor-meta">
-          {formatDateTime(entry.recorded_at ?? entry.created_at)} ·{" "}
-          {entry.duration_seconds > 0 ? `${formatDuration(entry.duration_seconds)} · ` : ""}
-          {statusLabel(status)}
-        </p>
-
-        {failureReason && <div className="banner banner--error">Falha: {failureReason}</div>}
-        {error && <p className="error">{error}</p>}
-
-        {/* Notion-like page: the audio (media) at the top, then the written text. */}
-        <div className="page-canvas">
-          {hasAudio && (
-            <div className="audio-block">
-              <AudioPlayer
-                ref={playerRef}
-                src={audioUrl(entry.id)}
-                onTime={setCurrentTime}
-                onPlaying={setPlaying}
-              />
-              {hasTranscript && (
-                <blockquote className="transcript">
-                  {transcript && transcript.segments.length > 0 ? (
-                    transcript.segments.map((segment, index) => (
-                      <p key={index}>
-                        <button
-                          ref={(el) => {
-                            transcriptRefs.current[index] = el;
-                          }}
-                          type="button"
-                          className={
-                            index === activeSegment ? "transcript-line transcript-line--active" : "transcript-line"
-                          }
-                          onClick={() => playerRef.current?.seek(segment.start_ms / 1000)}
-                          title="Ouvir a partir daqui"
-                        >
-                          <span className="timestamp">{formatDuration(segment.start_ms / 1000)}</span>
-                          {segment.text}
-                        </button>
-                      </p>
-                    ))
-                  ) : (
-                    <p>{transcript?.text}</p>
-                  )}
-                </blockquote>
+    <>
+      <div className={`editor-layout note-font--${font}`}>
+        <div className="editor">
+          <header className="editor-head">
+            <input
+              className="editor-title"
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              onBlur={() => void saveTitle()}
+              placeholder="Titulo da nota"
+              aria-label="Titulo da nota"
+            />
+            <div className="editor-actions">
+              {saving !== "idle" && (
+                <span className="muted save-state">{saving === "saving" ? "salvando..." : "salvo"}</span>
               )}
+              {(running || busy) && (
+                <button type="button" className="danger" onClick={() => void api.cancel(entryId).then(() => loadLight())}>
+                  Parar
+                </button>
+              )}
+              {hasAudio && (
+                <button type="button" onClick={() => void retranscribe()} disabled={busy === "retranscribe" || running}>
+                  {busy === "retranscribe" ? <Spinner /> : null} Retranscrever
+                </button>
+              )}
+              <div className="note-options">
+                <button
+                  type="button"
+                  className="icon-button"
+                  onClick={() => setOptionsOpen((value) => !value)}
+                  aria-label="Opcoes da nota"
+                  aria-expanded={optionsOpen}
+                >
+                  <MoreIcon size={16} />
+                </button>
+                {optionsOpen && (
+                  <>
+                    <div className="menu-backdrop" onClick={() => setOptionsOpen(false)} />
+                    <div className="menu" role="menu">
+                      <div className="menu-label">Fonte</div>
+                      {FONTS.map((option) => (
+                        <button
+                          key={option.id}
+                          type="button"
+                          role="menuitemradio"
+                          aria-checked={option.id === font}
+                          className={option.id === font ? "menu-item menu-item--active" : "menu-item"}
+                          onClick={() => chooseFont(option.id)}
+                        >
+                          <span style={{ fontFamily: option.preview }}>{option.label}</span>
+                          {option.id === font && <CheckIcon size={14} />}
+                        </button>
+                      ))}
+                      <div className="menu-label">Painel</div>
+                      <button type="button" className="menu-item" onClick={() => { setShowInsights(true); setOptionsOpen(false); }}>
+                        <span>Mostrar insights</span>
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+              <button type="button" className="icon-button danger" onClick={() => void remove()} aria-label="Apagar nota">
+                <TrashIcon size={16} />
+              </button>
             </div>
-          )}
+          </header>
 
-          <div className="page-text">
-            {bodyLoaded && <NotesEditor initialContent={initialBody} onChange={handleBodyChange} />}
-          </div>
+          <p className="editor-meta">
+            {formatDateTime(entry.recorded_at ?? entry.created_at)} ·{" "}
+            {entry.duration_seconds > 0 ? `${formatDuration(entry.duration_seconds)} · ` : ""}
+            {statusLabel(status)}
+          </p>
 
-          <div className="page-images">
-            <ImageGallery entryId={entry.id} />
+          <TagEditor entryId={entry.id} onChanged={onChanged} />
+
+          {failureReason && <div className="banner banner--error">Falha: {failureReason}</div>}
+          {error && <p className="error">{error}</p>}
+
+          <div className="page-canvas">
+            {hasAudio && (
+              <div className="audio-block">
+                <AudioPlayer
+                  ref={playerRef}
+                  src={audioUrl(entry.id)}
+                  onTime={setCurrentTime}
+                  onPlaying={setPlaying}
+                />
+                {hasTranscript && (
+                  <blockquote className="transcript">
+                    {transcript && transcript.segments.length > 0 ? (
+                      transcript.segments.map((segment, index) => (
+                        <p key={index}>
+                          <button
+                            ref={(el) => {
+                              transcriptRefs.current[index] = el;
+                            }}
+                            type="button"
+                            className={
+                              index === activeSegment ? "transcript-line transcript-line--active" : "transcript-line"
+                            }
+                            onClick={() => playerRef.current?.seek(segment.start_ms / 1000)}
+                            title="Ouvir a partir daqui"
+                          >
+                            <span className="timestamp">{formatDuration(segment.start_ms / 1000)}</span>
+                            {segment.text}
+                          </button>
+                        </p>
+                      ))
+                    ) : (
+                      <p>{transcript?.text}</p>
+                    )}
+                  </blockquote>
+                )}
+              </div>
+            )}
+
+            <div className="page-text">
+              {bodyLoaded && <NotesEditor initialContent={initialBody} onChange={handleBodyChange} />}
+            </div>
+
+            <div className="page-images">
+              <ImageGallery entryId={entry.id} />
+            </div>
           </div>
         </div>
       </div>
 
-      <aside className="insights-rail" aria-label="Insights da IA">
-        <div className="rail-head">
-          <h3>Insights da IA</h3>
-          <button
-            type="button"
-            className="primary small"
-            onClick={() => void analyze()}
-            disabled={busy === "analyze" || running}
-          >
-            {busy === "analyze" ? <Spinner /> : <SparkIcon size={15} />} Analisar
-          </button>
-        </div>
+      <button
+        type="button"
+        className={showInsights ? "fab fab--active" : "fab"}
+        onClick={() => setShowInsights((value) => !value)}
+        aria-label="Insights da IA"
+        aria-expanded={showInsights}
+      >
+        <SparkIcon size={20} />
+      </button>
 
-        {processing ? (
-          <div className="analysis-loading">
-            <div className="analysis-loading-head">
-              <Spinner />
-              <span>{processingText(progress, status)}</span>
-            </div>
-            {progress && progress.stage === "analyzing" && progress.total > 1 && (
-              <div
-                className="ram-track"
-                role="progressbar"
-                aria-valuenow={Math.round((progress.done / progress.total) * 100)}
-                aria-valuemin={0}
-                aria-valuemax={100}
+      {showInsights && (
+        <aside className="insights-drawer" aria-label="Insights da IA">
+          <div className="drawer-head">
+            <h3>Insights da IA</h3>
+            <div className="drawer-actions">
+              <button
+                type="button"
+                className="primary small"
+                onClick={() => void analyze()}
+                disabled={busy === "analyze" || running}
               >
-                <div
-                  className="ram-fill"
-                  style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }}
-                />
-              </div>
-            )}
-            <div className="skeleton skeleton-line" />
-            <div className="skeleton skeleton-line" style={{ width: "85%" }} />
-            <div className="skeleton skeleton-line" style={{ width: "65%" }} />
+                {busy === "analyze" ? <Spinner /> : <SparkIcon size={15} />} Analisar
+              </button>
+              <button type="button" className="icon-button" onClick={() => setShowInsights(false)} aria-label="Fechar">
+                <CloseIcon size={16} />
+              </button>
+            </div>
           </div>
-        ) : analysis ? (
-          <div className="insights">
-            <p>
-              Sentimento: <strong>{sentimentText(analysis.sentiment_label)}</strong>{" "}
-              <span className="muted">({Number(analysis.sentiment ?? 0).toFixed(2)})</span>
-            </p>
-            {analysis.summary && <p className="insight-summary">{analysis.summary}</p>}
-
-            {analysis.themes && analysis.themes.length > 0 && (
-              <div className="analysis-block">
-                <h4>Temas</h4>
-                <ul className="chips">
-                  {analysis.themes.map((theme) => (
-                    <li key={theme.name}>
-                      <button type="button" className="chip-button" onClick={() => onOpenEntity("theme", theme.name)}>
-                        {theme.name} <span className="muted">{Math.round(theme.confidence * 100)}%</span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {analysis.people_detail && analysis.people_detail.length > 0 && (
-              <div className="analysis-block">
-                <h4>Pessoas</h4>
-                <ul className="chips">
-                  {analysis.people_detail.map((person) => (
-                    <li key={person.name}>
-                      <button type="button" className="chip-button" onClick={() => onOpenEntity("person", person.name)}>
-                        {person.name}
-                        {person.relation ? ` (${person.relation})` : ""} · {person.count}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {analysis.places_detail && analysis.places_detail.length > 0 && (
-              <div className="analysis-block">
-                <h4>Lugares</h4>
-                <ul className="chips">
-                  {analysis.places_detail.map((place) => (
-                    <li key={place.name}>
-                      <button type="button" className="chip-button" onClick={() => onOpenEntity("place", place.name)}>
-                        {place.name} · {place.count}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {analysis.emotions_detail && analysis.emotions_detail.length > 0 && (
-              <div className="analysis-block">
-                <h4>Emocoes</h4>
-                <ul className="bars">
-                  {analysis.emotions_detail.map((emotion) => (
-                    <li key={emotion.name}>
-                      <span className="bar-label">{emotion.name}</span>
-                      <span className="bar-track">
-                        <span
-                          className="bar-fill"
-                          style={{ width: `${Math.round(Math.min(1, Math.max(0, emotion.intensity)) * 100)}%` }}
-                        />
-                      </span>
-                      <span className="muted">{emotion.intensity.toFixed(2)}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {analysis.key_moments && analysis.key_moments.length > 0 && (
-              <div className="analysis-block">
-                <h4>Momentos-chave</h4>
-                <ul className="moments">
-                  {analysis.key_moments.map((moment, index) => (
-                    <li key={index}>
-                      <button
-                        type="button"
-                        className="transcript-line"
-                        onClick={() => playerRef.current?.seek(moment.start_ms / 1000)}
-                      >
-                        <span className="timestamp">{formatDuration(moment.start_ms / 1000)}</span>
-                        {moment.text}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {analysis.questions && analysis.questions.length > 0 && (
-              <div className="analysis-block">
-                <h4>Perguntas</h4>
-                <ul className="plain-list">
-                  {analysis.questions.map((question, index) => (
-                    <li key={index}>{question}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {analysis.decisions && analysis.decisions.length > 0 && (
-              <div className="analysis-block">
-                <h4>Decisoes</h4>
-                <ul className="plain-list">
-                  {analysis.decisions.map((decision, index) => (
-                    <li key={index}>{decision}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
-        ) : (
-          <p className="muted">Sem analise ainda. Clique em Analisar para extrair temas, pessoas, emocoes e mais.</p>
-        )}
-      </aside>
-    </div>
+          {insights}
+        </aside>
+      )}
+    </>
   );
 }
 
