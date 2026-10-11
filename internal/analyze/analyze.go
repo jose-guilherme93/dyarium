@@ -41,7 +41,7 @@ type Client struct {
 
 // New builds a Client.
 func New(cfg Config) *Client {
-	return &Client{cfg: cfg, http: &http.Client{Timeout: 120 * time.Second}}
+	return &Client{cfg: cfg, http: &http.Client{Timeout: 300 * time.Second}}
 }
 
 // Enabled reports whether analysis is turned on.
@@ -50,18 +50,16 @@ func (c *Client) Enabled() bool { return c.cfg.Enabled }
 // ErrDisabled is returned when analysis is disabled.
 var ErrDisabled = errors.New("analyze: disabled")
 
-const systemPrompt = `Voce analisa transcricoes de um diario falado em portugues.
-Responda APENAS com um objeto JSON, sem texto adicional, com os campos:
-"sentiment": numero entre -1 e 1 (negativo a positivo),
-"emotions": objeto com rotulos e intensidades entre 0 e 1,
-"people": lista de nomes de pessoas mencionadas,
-"places": lista de lugares mencionados,
-"summary": resumo curto em uma ou duas frases.`
+const systemPrompt = `Responda SOMENTE com um JSON valido, sem texto antes ou depois e sem markdown.
+Use exatamente este formato:
+{"sentiment": <numero entre -1 e 1>, "emotions": {"<emocao>": <0 a 1>}, "people": ["<nome>"], "places": ["<lugar>"], "summary": "<resumo com no maximo 15 palavras>"}
+Seja breve. Nao invente pessoas ou lugares se nao houver.`
 
 type chatRequest struct {
 	Model          string        `json:"model"`
 	Messages       []chatMessage `json:"messages"`
 	Temperature    float64       `json:"temperature"`
+	MaxTokens      int           `json:"max_tokens,omitempty"`
 	ResponseFormat *respFormat   `json:"response_format,omitempty"`
 }
 
@@ -105,6 +103,7 @@ func (c *Client) Analyze(ctx context.Context, text string) (Result, error) {
 			{Role: "user", Content: text},
 		},
 		Temperature:    0,
+		MaxTokens:      400,
 		ResponseFormat: &respFormat{Type: "json_object"},
 	}
 	raw, err := json.Marshal(body)
@@ -152,12 +151,66 @@ func (c *Client) Analyze(ctx context.Context, text string) (Result, error) {
 	}, nil
 }
 
-// extractJSON tolerates models that wrap the JSON in prose or code fences.
+// extractJSON returns the JSON object found in s, repairing a truncated object
+// by closing unterminated strings, objects and arrays. Small local models
+// sometimes stop mid-JSON.
 func extractJSON(s string) string {
 	s = strings.TrimSpace(s)
-	if i := strings.Index(s, "{"); i >= 0 {
-		if j := strings.LastIndex(s, "}"); j > i {
-			return s[i : j+1]
+	i := strings.Index(s, "{")
+	if i < 0 {
+		return s
+	}
+	s = s[i:]
+
+	var stack []rune
+	inString := false
+	escaped := false
+	end := -1
+	for idx, r := range s {
+		if inString {
+			if escaped {
+				escaped = false
+			} else if r == '\\' {
+				escaped = true
+			} else if r == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch r {
+		case '"':
+			inString = true
+		case '{', '[':
+			stack = append(stack, r)
+		case '}':
+			if len(stack) > 0 && stack[len(stack)-1] == '{' {
+				stack = stack[:len(stack)-1]
+			}
+		case ']':
+			if len(stack) > 0 && stack[len(stack)-1] == '[' {
+				stack = stack[:len(stack)-1]
+			}
+		}
+		if len(stack) == 0 {
+			end = idx + 1
+			break
+		}
+	}
+	if end > 0 {
+		return s[:end]
+	}
+
+	// Truncated object: close a dangling string, drop a trailing comma and close
+	// whatever remains open.
+	s = strings.TrimRight(s, " \t\r\n,")
+	if inString {
+		s += `"`
+	}
+	for i := len(stack) - 1; i >= 0; i-- {
+		if stack[i] == '{' {
+			s += "}"
+		} else {
+			s += "]"
 		}
 	}
 	return s
