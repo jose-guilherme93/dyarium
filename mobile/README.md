@@ -23,10 +23,14 @@ texto, guarda local, enfileira e envia para o servidor self-hosted.
   foreground service do `expo-audio` (continua gravando com a tela bloqueada).
 - Concatena os segmentos e enfileira automaticamente ao parar.
 - Envia por upload resumivel e **idempotente** (`client_key` por gravacao).
-- **Importa audios compartilhados** por outros apps (share sheet do Android): ate 5 por
-  vez, com tela de revisao (titulo, data em DD/MM/AAAA em 24h ou AM/PM, formato, duracao e
-  playback) antes de enviar. O audio original e preservado; reimportar o mesmo conteudo nao
-  duplica a entrada (dedupe por SHA-256 no servidor).
+- **Importa audios compartilhados** por outros apps (share sheet do Android): ate 50 por
+  vez, com tela de revisao (titulo, **ano** e **ordem dia/mes** do lote, data em DD/MM/AAAA
+  em 24h ou AM/PM, formato, duracao e playback) antes de enviar. O ano do lote cobre nomes
+  sem ano; a ordem pode ser invertida. O audio original e preservado; reimportar o mesmo
+  conteudo nao duplica a entrada (dedupe por SHA-256 no servidor).
+- **Status de sincronizacao** no cabecalho (nuvem discreta): abre a tela de Sincronizacao com
+  o que esta na fila/falhou e "Enviar agora". O envio continua em segundo plano
+  (WorkManager) quando o app fica em segundo plano.
 - A biblioteca organiza as notas **por ano** (mais novo no topo), pela data do evento, para
   que notas antigas importadas apareçam no ano a que pertencem.
 - **Notas somente texto** entram na mesma fila e sao enviadas como conteudo textual (o texto

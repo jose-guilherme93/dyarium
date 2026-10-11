@@ -25,6 +25,9 @@ interface SettingsValue {
   /** O que o gesto de arrastar na lista faz. */
   swipeAction: SwipeAction;
   setSwipeAction(action: SwipeAction): Promise<void>;
+  /** Ultimo ano usado na importacao. */
+  importYear?: number;
+  setImportYear(year: number): Promise<void>;
   /** Testa alcance (healthz) e token (version) sem salvar. */
   test(baseUrl: string, token: string): Promise<ConnectionResult>;
   /** Testa e, se ok, persiste no SecureStore. */
@@ -44,6 +47,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [config, setConfig] = useState<ServerConfig | null>(null);
   const [ready, setReady] = useState(false);
   const [swipeAction, setSwipeActionState] = useState<SwipeAction>('delete');
+  const [importYear, setImportYearState] = useState<number | undefined>(undefined);
 
   useEffect(() => {
     let alive = true;
@@ -58,7 +62,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       });
     loadPrefs()
       .then((prefs) => {
-        if (alive) setSwipeActionState(prefs.swipeAction);
+        if (!alive) return;
+        setSwipeActionState(prefs.swipeAction);
+        setImportYearState(prefs.importYear);
       })
       .catch(() => undefined);
     return () => {
@@ -66,10 +72,21 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const setSwipeAction = useCallback(async (action: SwipeAction) => {
-    setSwipeActionState(action);
-    await savePrefs({ swipeAction: action });
-  }, []);
+  const setSwipeAction = useCallback(
+    async (action: SwipeAction) => {
+      setSwipeActionState(action);
+      await savePrefs({ swipeAction: action, importYear });
+    },
+    [importYear],
+  );
+
+  const setImportYear = useCallback(
+    async (year: number) => {
+      setImportYearState(year);
+      await savePrefs({ swipeAction, importYear: year });
+    },
+    [swipeAction],
+  );
 
   const test = useCallback(async (baseUrl: string, token: string): Promise<ConnectionResult> => {
     const url = normalizeUrl(baseUrl);
@@ -109,8 +126,18 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<SettingsValue>(
-    () => ({ config, ready, swipeAction, setSwipeAction, test, save, disconnect }),
-    [config, ready, swipeAction, setSwipeAction, test, save, disconnect],
+    () => ({
+      config,
+      ready,
+      swipeAction,
+      setSwipeAction,
+      importYear,
+      setImportYear,
+      test,
+      save,
+      disconnect,
+    }),
+    [config, ready, swipeAction, setSwipeAction, importYear, setImportYear, test, save, disconnect],
   );
 
   return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>;

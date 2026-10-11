@@ -15,11 +15,18 @@ import {
 import { Button } from '@/components/Button';
 import { Screen } from '@/components/Screen';
 import { formatBytes, formatDuration } from '@/core/format';
-import { draftToRecording, formatBrDateTime, parseBrDateTime, type ImportDraft } from '@/core/import';
+import {
+  draftToRecording,
+  formatBrDateTime,
+  parseBrDateTime,
+  resolveRecordedAt,
+  type ImportDraft,
+} from '@/core/import';
 import type { Recording } from '@/core/types';
 import { deleteSessionFiles } from '@/services/files';
 import { prepareSharedAudios } from '@/services/share';
 import { useLibrary } from '@/state/LibraryContext';
+import { useSettings } from '@/state/SettingsContext';
 import { colors, fontSize, radius, spacing } from '@/theme/tokens';
 
 interface ReviewItem {
@@ -28,6 +35,9 @@ interface ReviewItem {
   dateText: string;
   durationMs?: number;
 }
+
+const CURRENT_YEAR = new Date().getFullYear();
+const YEARS = Array.from({ length: 25 }, (_, index) => CURRENT_YEAR - index);
 
 interface ItemCardProps {
   item: ReviewItem;
@@ -63,8 +73,6 @@ function ItemCard({
   useEffect(() => {
     if (status.isLoaded && status.duration > 0) {
       const ms = Math.round(status.duration * 1000);
-      // So reporta quando muda: evita re-render em loop (a identidade do
-      // callback muda a cada render do pai).
       if (reportedDurationRef.current !== ms) {
         reportedDurationRef.current = ms;
         onDuration(ms);
@@ -110,11 +118,7 @@ function ItemCard({
           </Text>
           <Text style={styles.meta}>{meta}</Text>
         </View>
-        <Pressable
-          style={styles.remove}
-          onPress={onRemove}
-          accessibilityLabel="Remover"
-        >
+        <Pressable style={styles.remove} onPress={onRemove} accessibilityLabel="Remover">
           <Ionicons name="close" size={20} color={colors.textSecondary} />
         </Pressable>
       </View>
@@ -156,30 +160,52 @@ function ItemCard({
 
 export default function ImportReviewScreen() {
   const library = useLibrary();
+  const { importYear, setImportYear } = useSettings();
   const [items, setItems] = useState<ReviewItem[] | null>(null);
   const [ignored, setIgnored] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
-  // Padrao do Brasil: 24h. O toggle troca para AM/PM.
   const [use24h, setUse24h] = useState(true);
+  const [year, setYear] = useState(CURRENT_YEAR);
+  const [invert, setInvert] = useState(false);
 
   const itemsRef = useRef<ReviewItem[]>([]);
   const committedRef = useRef(false);
+  const importYearRef = useRef(importYear);
+  useEffect(() => {
+    importYearRef.current = importYear;
+  }, [importYear]);
 
   useEffect(() => {
     itemsRef.current = items ?? [];
   }, [items]);
+
+  const computeDateText = useCallback(
+    (draft: ImportDraft, selectedYear: number, inverted: boolean, h24: boolean) =>
+      formatBrDateTime(
+        resolveRecordedAt(draft.date ?? null, {
+          year: selectedYear,
+          invert: inverted,
+          fallback: new Date(draft.fallbackMs ?? Date.now()),
+        }),
+        h24,
+      ),
+    [],
+  );
 
   useEffect(() => {
     let alive = true;
     prepareSharedAudios()
       .then(({ drafts, ignored: extra }) => {
         if (!alive) return;
+        const named = drafts.find((draft) => draft.date?.year);
+        const initialYear = named?.date?.year ?? importYearRef.current ?? CURRENT_YEAR;
+        setYear(initialYear);
         setItems(
           drafts.map((draft) => ({
             draft,
             title: draft.title,
-            dateText: formatBrDateTime(new Date(draft.recordedAt)),
+            dateText: computeDateText(draft, initialYear, false, true),
           })),
         );
         setIgnored(extra);
@@ -196,22 +222,49 @@ export default function ImportReviewScreen() {
         }
       }
     };
-  }, []);
+  }, [computeDateText]);
 
   const updateItem = useCallback((key: string, patch: Partial<ReviewItem>) => {
     setItems((prev) => prev?.map((it) => (it.draft.key === key ? { ...it, ...patch } : it)) ?? prev);
   }, []);
 
-  const setTimeFormat = useCallback((value: boolean) => {
-    setUse24h(value);
-    setItems(
-      (prev) =>
-        prev?.map((it) => {
-          const parsed = parseBrDateTime(it.dateText);
-          return parsed ? { ...it, dateText: formatBrDateTime(parsed, value) } : it;
-        }) ?? prev,
-    );
-  }, []);
+  const applyBatch = useCallback(
+    (selectedYear: number, inverted: boolean, h24: boolean) => {
+      setItems(
+        (prev) =>
+          prev?.map((it) => ({
+            ...it,
+            dateText: computeDateText(it.draft, selectedYear, inverted, h24),
+          })) ?? prev,
+      );
+    },
+    [computeDateText],
+  );
+
+  const chooseYear = useCallback(
+    (value: number) => {
+      setYear(value);
+      void setImportYear(value);
+      applyBatch(value, invert, use24h);
+    },
+    [applyBatch, invert, setImportYear, use24h],
+  );
+
+  const chooseInvert = useCallback(
+    (value: boolean) => {
+      setInvert(value);
+      applyBatch(year, value, use24h);
+    },
+    [applyBatch, use24h, year],
+  );
+
+  const setTimeFormat = useCallback(
+    (value: boolean) => {
+      setUse24h(value);
+      applyBatch(year, invert, value);
+    },
+    [applyBatch, invert, year],
+  );
 
   const removeItem = useCallback((key: string) => {
     const removed = itemsRef.current.find((it) => it.draft.key === key);
@@ -280,8 +333,54 @@ export default function ImportReviewScreen() {
               podem mudar.
             </Text>
 
-            <View style={styles.formatRow}>
-              <Text style={styles.formatLabel}>Formato de hora</Text>
+            <View style={styles.control}>
+              <Text style={styles.controlLabel}>Ano das gravacoes</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.yearRow}
+              >
+                {YEARS.map((value) => (
+                  <Pressable
+                    key={value}
+                    onPress={() => chooseYear(value)}
+                    style={[styles.yearChip, year === value && styles.yearChipActive]}
+                    accessibilityRole="button"
+                  >
+                    <Text style={[styles.yearText, year === value && styles.yearTextActive]}>
+                      {value}
+                    </Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            </View>
+
+            <View style={styles.controlRow}>
+              <Text style={styles.controlLabel}>Ordem dia/mes</Text>
+              <View style={styles.segment}>
+                <Pressable
+                  onPress={() => chooseInvert(false)}
+                  style={[styles.segmentItem, !invert && styles.segmentItemActive]}
+                  accessibilityRole="button"
+                >
+                  <Text style={[styles.segmentText, !invert && styles.segmentTextActive]}>
+                    Dia/Mes
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => chooseInvert(true)}
+                  style={[styles.segmentItem, invert && styles.segmentItemActive]}
+                  accessibilityRole="button"
+                >
+                  <Text style={[styles.segmentText, invert && styles.segmentTextActive]}>
+                    Mes/Dia
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+
+            <View style={styles.controlRow}>
+              <Text style={styles.controlLabel}>Formato de hora</Text>
               <View style={styles.segment}>
                 <Pressable
                   onPress={() => setTimeFormat(true)}
@@ -306,7 +405,7 @@ export default function ImportReviewScreen() {
               <View style={styles.alert}>
                 <Ionicons name="information-circle-outline" size={18} color={colors.warning} />
                 <Text style={styles.alertText}>
-                  {ignored} audio(s) acima de 5 foram ignorados.
+                  {ignored} audio(s) acima de 50 foram ignorados.
                 </Text>
               </View>
             ) : null}
@@ -361,19 +460,30 @@ const styles = StyleSheet.create({
   hint: { color: colors.textSecondary, fontSize: fontSize.sm },
   list: { padding: spacing.xl, gap: spacing.lg },
   lead: { color: colors.textSecondary, fontSize: fontSize.md, lineHeight: 22 },
-  formatRow: {
+  control: { gap: spacing.sm },
+  controlRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: spacing.md,
   },
-  formatLabel: {
+  controlLabel: {
     color: colors.textSecondary,
     fontSize: fontSize.xs,
     fontWeight: '600',
     textTransform: 'uppercase',
     letterSpacing: 0.6,
   },
+  yearRow: { gap: spacing.sm, paddingRight: spacing.sm },
+  yearChip: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surface,
+  },
+  yearChipActive: { backgroundColor: colors.accent },
+  yearText: { color: colors.textSecondary, fontSize: fontSize.sm, fontWeight: '600' },
+  yearTextActive: { color: '#FFFFFF' },
   segment: {
     flexDirection: 'row',
     backgroundColor: colors.surface,
