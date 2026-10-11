@@ -1,32 +1,21 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
-import type { Entry } from "../types";
+import type { MoodPoint } from "../types";
 
 interface MoodViewProps {
   refreshKey: number;
-  onOpen: (id: string) => void;
 }
 
-// MoodView lists entries with their sentiment when an analysis is available.
-export function MoodView({ refreshKey, onOpen }: MoodViewProps) {
-  const [rows, setRows] = useState<{ entry: Entry; sentiment: number | null }[]>([]);
+// MoodView shows the daily sentiment timeline from GET /mood.
+export function MoodView({ refreshKey }: MoodViewProps) {
+  const [points, setPoints] = useState<MoodPoint[]>([]);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
     try {
-      const result = await api.listEntries();
-      const entries = (result.entries ?? []).slice(0, 30);
-      const withSentiment = await Promise.all(
-        entries.map(async (entry) => {
-          try {
-            const analysis = await api.getAnalysis(entry.id);
-            return { entry, sentiment: analysis.sentiment };
-          } catch {
-            return { entry, sentiment: null };
-          }
-        }),
-      );
-      setRows(withSentiment);
+      const result = await api.getMood();
+      setPoints(result.mood ?? []);
+      setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "falha ao carregar");
     }
@@ -36,11 +25,8 @@ export function MoodView({ refreshKey, onOpen }: MoodViewProps) {
     void load();
   }, [load, refreshKey]);
 
-  const withAnalysis = rows.filter((row) => row.sentiment !== null);
   const average =
-    withAnalysis.length > 0
-      ? withAnalysis.reduce((sum, row) => sum + (row.sentiment ?? 0), 0) / withAnalysis.length
-      : 0;
+    points.length > 0 ? points.reduce((sum, point) => sum + point.sentiment, 0) / points.length : 0;
 
   return (
     <section className="view">
@@ -48,18 +34,24 @@ export function MoodView({ refreshKey, onOpen }: MoodViewProps) {
         <h1>Humor</h1>
       </div>
       {error && <p className="error">{error}</p>}
-      {withAnalysis.length === 0 ? (
+      {points.length === 0 ? (
         <p className="muted">Sem analises de sentimento ainda.</p>
       ) : (
         <>
           <p className="muted">Sentimento medio: {average.toFixed(2)}</p>
-          <ul className="entry-list">
-            {withAnalysis.map((row) => (
-              <li key={row.entry.id}>
-                <button type="button" className="entry-item" onClick={() => onOpen(row.entry.id)}>
-                  <span className="entry-title">{row.entry.title || row.entry.original_filename}</span>
-                  <span className="entry-meta">Sentimento {(row.sentiment ?? 0).toFixed(2)}</span>
-                </button>
+          <ul className="mood-list">
+            {points.map((point) => (
+              <li key={point.date}>
+                <span className="mood-date">{new Date(`${point.date}T00:00:00`).toLocaleDateString("pt-BR")}</span>
+                <span className="mood-track">
+                  <span
+                    className={point.sentiment >= 0 ? "mood-fill mood-pos" : "mood-fill mood-neg"}
+                    style={{ width: `${Math.round(Math.min(1, Math.abs(point.sentiment)) * 100)}%` }}
+                  />
+                </span>
+                <span className="muted">
+                  {point.sentiment.toFixed(2)} · {point.entries} entrada(s)
+                </span>
               </li>
             ))}
           </ul>
