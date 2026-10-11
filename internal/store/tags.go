@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -60,6 +61,63 @@ func (s *Store) AttachTag(ctx context.Context, entryID, tagID string) error {
 		return fmt.Errorf("store: attach tag: %w", err)
 	}
 	return nil
+}
+
+// ListEntryTags returns the tags attached to an entry, ordered by name.
+func (s *Store) ListEntryTags(ctx context.Context, entryID string) ([]Tag, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT t.id, t.name, COALESCE(t.color,'')
+		FROM tags t JOIN entry_tags et ON et.tag_id = t.id
+		WHERE et.entry_id = ? ORDER BY t.name`, entryID)
+	if err != nil {
+		return nil, fmt.Errorf("store: list entry tags: %w", err)
+	}
+	defer rows.Close()
+	var out []Tag
+	for rows.Next() {
+		var t Tag
+		if err := rows.Scan(&t.ID, &t.Name, &t.Color); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// SetEntryTags replaces the tags of an entry, creating tags as needed.
+func (s *Store) SetEntryTags(ctx context.Context, entryID string, names []string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin tags tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM entry_tags WHERE entry_id = ?`, entryID); err != nil {
+		return fmt.Errorf("store: clear entry tags: %w", err)
+	}
+	seen := map[string]bool{}
+	for _, raw := range names {
+		name := strings.TrimSpace(raw)
+		if name == "" || seen[strings.ToLower(name)] {
+			continue
+		}
+		seen[strings.ToLower(name)] = true
+		if _, err := tx.ExecContext(ctx,
+			`INSERT OR IGNORE INTO tags (id, name, color, created_at) VALUES (?, ?, '', ?)`,
+			newID(), name, ts(time.Now())); err != nil {
+			return fmt.Errorf("store: upsert tag: %w", err)
+		}
+		var tagID string
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM tags WHERE name = ?`, name).Scan(&tagID); err != nil {
+			return fmt.Errorf("store: find tag: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT OR IGNORE INTO entry_tags (entry_id, tag_id, created_at) VALUES (?, ?, ?)`,
+			entryID, tagID, ts(time.Now())); err != nil {
+			return fmt.Errorf("store: attach tag: %w", err)
+		}
+	}
+	return tx.Commit()
 }
 
 // execer is implemented by *sql.DB and *sql.Tx, so statements can run inside or
