@@ -31,6 +31,10 @@ texto, guarda local, enfileira e envia para o servidor self-hosted.
 - **Status de sincronizacao** no cabecalho (nuvem discreta): abre a tela de Sincronizacao com
   o que esta na fila/falhou e "Enviar agora". O envio continua em segundo plano
   (WorkManager) quando o app fica em segundo plano.
+- **Painel** (nas Opcoes): resumo, humor (sentimento), emocoes, pessoas, lugares, tags e
+  status, puxados do servidor.
+- **Busca local** e **pull-to-refresh** na lista; **compartilhar** o texto da nota;
+  **notificacao** quando a transcricao fica pronta.
 - A biblioteca organiza as notas **por ano** (mais novo no topo), pela data do evento, para
   que notas antigas importadas apareçam no ano a que pertencem.
 - **Notas somente texto** entram na mesma fila e sao enviadas como conteudo textual (o texto
