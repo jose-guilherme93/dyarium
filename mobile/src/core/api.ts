@@ -113,6 +113,37 @@ export interface VersionResponse {
   built_at: string;
 }
 
+/** Entrada do servidor (resumo da lista). */
+export interface ServerEntry {
+  id: string;
+  title: string;
+  status: string;
+  source: string;
+  original_filename: string;
+  content_type: string;
+  size_bytes: number;
+  duration_seconds: number;
+  recorded_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ServerAnalysis {
+  model: string;
+  sentiment: number;
+  emotions: Record<string, number> | null;
+  people: string[] | null;
+  places: string[] | null;
+  summary: string;
+}
+
+export interface ServerTag {
+  id: string;
+  name: string;
+  color: string;
+  entry_count: number;
+}
+
 function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.trim().replace(/\/+$/, '');
 }
@@ -251,5 +282,37 @@ export class DyariumApi {
     });
     if (!res.ok) throw await this.parseError(res);
     return JSON.parse(await res.text());
+  }
+
+  /** Lista de entradas do servidor (resumo). */
+  async listEntries(): Promise<ServerEntry[]> {
+    const res = await this.fetchImpl(this.url('/api/v1/entries'), {
+      method: 'GET',
+      headers: this.authHeaders(),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    const body = JSON.parse(await res.text()) as { entries?: ServerEntry[] };
+    return body.entries ?? [];
+  }
+
+  /** Analise de uma entrada. Lanca ApiError 404 quando ainda nao existe. */
+  async getAnalysis(entryId: string): Promise<ServerAnalysis> {
+    const res = await this.fetchImpl(this.url(`/api/v1/entries/${entryId}/analysis`), {
+      method: 'GET',
+      headers: this.authHeaders(),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    return JSON.parse(await res.text());
+  }
+
+  /** Tags do servidor, com contagem de entradas. */
+  async listTags(): Promise<ServerTag[]> {
+    const res = await this.fetchImpl(this.url('/api/v1/tags'), {
+      method: 'GET',
+      headers: this.authHeaders(),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    const body = JSON.parse(await res.text()) as { tags?: ServerTag[] };
+    return body.tags ?? [];
   }
 }

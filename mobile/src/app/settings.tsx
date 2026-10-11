@@ -56,6 +56,18 @@ export default function SettingsScreen() {
           </View>
         </Card>
 
+        <Text style={styles.sectionLabel}>Metricas</Text>
+        <Pressable onPress={() => router.push('/dashboard')}>
+          <Card style={styles.row}>
+            <Ionicons name="stats-chart-outline" size={20} color={colors.info} />
+            <View style={styles.rowText}>
+              <Text style={styles.cardTitle}>Painel</Text>
+              <Text style={styles.cardHint}>Resumo, humor, tags e status do servidor.</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
+          </Card>
+        </Pressable>
+
         <Text style={styles.sectionLabel}>Servidor</Text>
         <Pressable onPress={() => router.push('/server')}>
           <Card style={styles.row}>
