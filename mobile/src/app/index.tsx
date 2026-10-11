@@ -1,8 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
-import { useRef } from 'react';
-import { Pressable, SectionList, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useRef, useState } from 'react';
+import { Pressable, RefreshControl, SectionList, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 
 import { RecordButton } from '@/components/RecordButton';
@@ -15,7 +15,7 @@ import type { Recording } from '@/core/types';
 import { useLibrary } from '@/state/LibraryContext';
 import { useRecording } from '@/state/RecordingContext';
 import { useSettings } from '@/state/SettingsContext';
-import { colors, fontSize, spacing } from '@/theme/tokens';
+import { colors, fontSize, radius, spacing } from '@/theme/tokens';
 
 const PENDING_STATUSES = ['recorded', 'queued', 'uploading', 'failed'];
 
@@ -53,10 +53,13 @@ function SwipeRow({ children, label, icon, color, onAction }: SwipeRowProps) {
 }
 
 export default function RecordScreen() {
-  const { recordings, retry, remove, kick, createDraftNote, archiveNote, unarchiveNote } =
+  const { recordings, retry, remove, kick, refresh, createDraftNote, archiveNote, unarchiveNote } =
     useLibrary();
   const { active, elapsedMs, level, error, busy, start, stop } = useRecording();
   const { swipeAction } = useSettings();
+
+  const [query, setQuery] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
 
   const recording = Boolean(active);
   const pending = recordings.filter((r) => PENDING_STATUSES.includes(r.status)).length;
@@ -80,12 +83,29 @@ export default function RecordScreen() {
         ? colors.textSecondary
         : colors.textTertiary;
 
-  const activeNotes = recordings.filter((r) => !r.archived);
-  const archivedNotes = recordings.filter((r) => r.archived);
+  const term = query.trim().toLowerCase();
+  const matches = (r: Recording) =>
+    !term ||
+    r.title.toLowerCase().includes(term) ||
+    (r.text ?? '').toLowerCase().includes(term) ||
+    (r.transcript ?? '').toLowerCase().includes(term);
+
+  const activeNotes = recordings.filter((r) => !r.archived && matches(r));
+  const archivedNotes = recordings.filter((r) => r.archived && matches(r));
   const sections: RecordingSection[] = groupRecordingsByYear(activeNotes);
   if (archivedNotes.length > 0) {
     sections.push({ year: 0, title: 'Arquivadas', data: archivedNotes });
   }
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await refresh();
+      kick();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refresh, kick]);
 
   const handlePress = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
@@ -167,6 +187,23 @@ export default function RecordScreen() {
         </View>
       ) : (
         <>
+          <View style={styles.searchWrap}>
+            <Ionicons name="search" size={16} color={colors.textTertiary} />
+            <TextInput
+              value={query}
+              onChangeText={setQuery}
+              placeholder="Buscar notas"
+              placeholderTextColor={colors.textTertiary}
+              selectionColor={colors.accent}
+              style={styles.searchInput}
+            />
+            {query ? (
+              <Pressable onPress={() => setQuery('')} accessibilityLabel="Limpar busca">
+                <Ionicons name="close-circle" size={16} color={colors.textTertiary} />
+              </Pressable>
+            ) : null}
+          </View>
+
           {interrupted > 0 ? (
             <Pressable style={styles.alert} onPress={() => router.push('/recovery')}>
               <Ionicons name="warning" size={18} color={colors.warning} />
@@ -194,6 +231,13 @@ export default function RecordScreen() {
             ItemSeparatorComponent={() => <View style={styles.separator} />}
             stickySectionHeadersEnabled={false}
             showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                tintColor={colors.textSecondary}
+              />
+            }
             renderSectionHeader={({ section }) => (
               <Text style={styles.sectionHeader}>{section.title}</Text>
             )}
@@ -236,6 +280,18 @@ const styles = StyleSheet.create({
   iconButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   largeTitle: { color: colors.text, fontSize: 34, fontWeight: '700', letterSpacing: 0.3 },
   headerSub: { color: colors.textSecondary, fontSize: fontSize.sm },
+  searchWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginHorizontal: spacing.xl,
+    marginBottom: spacing.md,
+    backgroundColor: colors.surface,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.lg,
+    height: 40,
+  },
+  searchInput: { flex: 1, color: colors.text, fontSize: fontSize.sm, paddingVertical: 0 },
   recordingView: {
     flex: 1,
     alignItems: 'center',
