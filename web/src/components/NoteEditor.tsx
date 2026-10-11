@@ -32,8 +32,8 @@ function sentimentText(label?: string): string {
   }
 }
 
-// NoteEditor is the note view: title, written body, audio, transcription,
-// images and, on the right, the AI insights.
+// NoteEditor is the note view: one continuous page with the written text, the
+// audio and its transcription, images and, on the right, the AI insights.
 export function NoteEditor({
   entryId,
   refreshKey,
@@ -55,47 +55,61 @@ export function NoteEditor({
   const noteIdRef = useRef<string | null>(null);
   const saveTimer = useRef<number | null>(null);
   const playerRef = useRef<AudioPlayerHandle | null>(null);
+  const mountedRefresh = useRef(refreshKey);
 
-  const load = useCallback(async () => {
+  // Full load: everything the page needs, fetched in parallel.
+  const loadFull = useCallback(async () => {
     setError("");
     setBodyLoaded(false);
     noteIdRef.current = null;
-    try {
-      const value = await api.getEntry(entryId);
-      setEntry(value);
-      setTitle(value.title || value.original_filename || "");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "falha ao carregar a nota");
+    const [entryRes, transcriptRes, analysisRes, notesRes] = await Promise.allSettled([
+      api.getEntry(entryId),
+      api.getTranscript(entryId),
+      api.getAnalysis(entryId),
+      api.listNotes(entryId),
+    ]);
+    if (entryRes.status !== "fulfilled") {
+      setError(entryRes.reason instanceof Error ? entryRes.reason.message : "falha ao carregar a nota");
       return;
     }
-    try {
-      setTranscript(await api.getTranscript(entryId));
-    } catch {
-      setTranscript(null);
-    }
-    try {
-      setAnalysis(await api.getAnalysis(entryId));
-    } catch {
-      setAnalysis(null);
-    }
-    try {
-      const result = await api.listNotes(entryId);
-      const note = result.notes?.[0];
-      if (note) {
-        noteIdRef.current = note.id;
-        setInitialBody((note.document as PartialBlock[]) ?? undefined);
-      } else {
-        setInitialBody(undefined);
-      }
-    } catch {
+    setEntry(entryRes.value);
+    setTitle(entryRes.value.title || entryRes.value.original_filename || "");
+    setTranscript(transcriptRes.status === "fulfilled" ? transcriptRes.value : null);
+    setAnalysis(analysisRes.status === "fulfilled" ? analysisRes.value : null);
+    const note = notesRes.status === "fulfilled" ? notesRes.value.notes?.[0] : undefined;
+    if (note) {
+      noteIdRef.current = note.id;
+      setInitialBody((note.document as PartialBlock[]) ?? undefined);
+    } else {
       setInitialBody(undefined);
     }
     setBodyLoaded(true);
   }, [entryId]);
 
+  // Light reload after background events: never touches the body editor.
+  const loadLight = useCallback(async () => {
+    const [entryRes, transcriptRes, analysisRes] = await Promise.allSettled([
+      api.getEntry(entryId),
+      api.getTranscript(entryId),
+      api.getAnalysis(entryId),
+    ]);
+    if (entryRes.status === "fulfilled") {
+      setEntry(entryRes.value);
+    }
+    setTranscript(transcriptRes.status === "fulfilled" ? transcriptRes.value : null);
+    setAnalysis(analysisRes.status === "fulfilled" ? analysisRes.value : null);
+  }, [entryId]);
+
   useEffect(() => {
-    void load();
-  }, [load, refreshKey]);
+    void loadFull();
+  }, [loadFull]);
+
+  useEffect(() => {
+    if (refreshKey === mountedRefresh.current) {
+      return;
+    }
+    void loadLight();
+  }, [refreshKey, loadLight]);
 
   const status = entry?.status;
   const running = isBusy(status);
@@ -200,7 +214,10 @@ export function NoteEditor({
     return (
       <div className="editor-layout">
         <div className="editor">
-          {error ? <p className="error">{error}</p> : <p className="muted">Carregando...</p>}
+          <div className="skeleton skeleton-title" />
+          <div className="skeleton skeleton-line" />
+          <div className="skeleton skeleton-block" />
+          {error && <p className="error">{error}</p>}
         </div>
       </div>
     );
@@ -226,7 +243,7 @@ export function NoteEditor({
               <span className="muted save-state">{saving === "saving" ? "salvando..." : "salvo"}</span>
             )}
             {(running || busy) && (
-              <button type="button" className="danger" onClick={() => void api.cancel(entryId).then(load)}>
+              <button type="button" className="danger" onClick={() => void api.cancel(entryId).then(() => loadLight())}>
                 Parar
               </button>
             )}
@@ -247,11 +264,7 @@ export function NoteEditor({
           {statusLabel(status)}
         </p>
 
-        {failureReason && (
-          <div className="banner banner--error">
-            Falha: {failureReason}
-          </div>
-        )}
+        {failureReason && <div className="banner banner--error">Falha: {failureReason}</div>}
         {error && <p className="error">{error}</p>}
         {running && (
           <p className="muted">
@@ -259,47 +272,54 @@ export function NoteEditor({
           </p>
         )}
 
-        <div className="editor-body">
-          {bodyLoaded && <NotesEditor initialContent={initialBody} onChange={handleBodyChange} />}
-        </div>
-
-        {hasAudio && (
-          <div className="block">
-            <AudioPlayer ref={playerRef} src={audioUrl(entry.id)} />
+        {/* The page is one continuous canvas: text, then the audio block. */}
+        <div className="page-canvas">
+          <div className="page-text">
+            {bodyLoaded && <NotesEditor initialContent={initialBody} onChange={handleBodyChange} />}
           </div>
-        )}
 
-        {hasTranscript && (
-          <blockquote className="transcript">
-            {transcript && transcript.segments.length > 0 ? (
-              transcript.segments.map((segment, index) => (
-                <p key={index}>
-                  <button
-                    type="button"
-                    className="transcript-line"
-                    onClick={() => playerRef.current?.seek(segment.start_ms / 1000)}
-                    title="Ouvir a partir daqui"
-                  >
-                    <span className="timestamp">{formatDuration(segment.start_ms / 1000)}</span>
-                    {segment.text}
-                  </button>
-                </p>
-              ))
-            ) : (
-              <p>{transcript?.text}</p>
-            )}
-          </blockquote>
-        )}
+          {hasAudio && (
+            <div className="audio-block">
+              <AudioPlayer ref={playerRef} src={audioUrl(entry.id)} />
+              {hasTranscript && (
+                <blockquote className="transcript">
+                  {transcript && transcript.segments.length > 0 ? (
+                    transcript.segments.map((segment, index) => (
+                      <p key={index}>
+                        <button
+                          type="button"
+                          className="transcript-line"
+                          onClick={() => playerRef.current?.seek(segment.start_ms / 1000)}
+                          title="Ouvir a partir daqui"
+                        >
+                          <span className="timestamp">{formatDuration(segment.start_ms / 1000)}</span>
+                          {segment.text}
+                        </button>
+                      </p>
+                    ))
+                  ) : (
+                    <p>{transcript?.text}</p>
+                  )}
+                </blockquote>
+              )}
+            </div>
+          )}
 
-        <div className="block">
-          <ImageGallery entryId={entry.id} refreshKey={refreshKey} />
+          <div className="page-images">
+            <ImageGallery entryId={entry.id} />
+          </div>
         </div>
       </div>
 
       <aside className="insights-rail" aria-label="Insights da IA">
         <div className="rail-head">
           <h3>Insights da IA</h3>
-          <button type="button" className="primary small" onClick={() => void analyze()} disabled={busy === "analyze" || running}>
+          <button
+            type="button"
+            className="primary small"
+            onClick={() => void analyze()}
+            disabled={busy === "analyze" || running}
+          >
             {busy === "analyze" ? <Spinner /> : <SparkIcon size={15} />} Analisar
           </button>
         </div>

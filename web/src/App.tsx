@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { api, clearToken, getToken, setToken } from "./api";
 import { useEvents } from "./useEvents";
 import { TokenGate } from "./components/TokenGate";
@@ -30,11 +30,33 @@ export function App() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [failures, setFailures] = useState<Record<string, string>>({});
   const { notify } = useToast();
+  const refreshTimer = useRef<number | null>(null);
+
+  // Coalesce bursts of events into a single refresh so the UI stays responsive.
+  const bumpRefresh = useCallback(() => {
+    if (refreshTimer.current !== null) {
+      return;
+    }
+    refreshTimer.current = window.setTimeout(() => {
+      refreshTimer.current = null;
+      setRefreshKey((key) => key + 1);
+    }, 350);
+  }, []);
 
   const handleEvent = useCallback(
     (event: ServerEvent) => {
-      setRefreshKey((key) => key + 1);
       const id = typeof event.data.entry_id === "string" ? event.data.entry_id : "";
+      switch (event.name) {
+        case "entry.status":
+        case "transcript.ready":
+        case "analysis.ready":
+        case "entry.failed":
+        case "model.download":
+          bumpRefresh();
+          break;
+        default:
+          break;
+      }
       if (!id) {
         return;
       }
@@ -53,7 +75,7 @@ export function App() {
         });
       }
     },
-    [notify],
+    [notify, bumpRefresh],
   );
   useEvents(handleEvent);
 

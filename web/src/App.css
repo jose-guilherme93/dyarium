@@ -393,12 +393,71 @@
   margin: calc(var(--space) * 2) 0 calc(var(--space) * 4);
 }
 
-.editor-body {
+.page-canvas {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space) * 4);
+  margin-top: calc(var(--space) * 2);
+}
+
+.page-text {
+  min-height: 120px;
+}
+
+/* The audio block groups the player and its transcription as one unit. */
+.audio-block {
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
+  background: var(--color-surface);
   padding: calc(var(--space) * 3);
-  background: var(--color-bg);
-  min-height: 160px;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space) * 3);
+}
+
+.audio-block .player {
+  border: none;
+  background: transparent;
+  padding: 0;
+}
+
+.audio-block .transcript {
+  margin: 0;
+}
+
+.skeleton {
+  border-radius: var(--radius-sm);
+  background: linear-gradient(90deg, var(--color-surface), var(--color-surface-2), var(--color-surface));
+  background-size: 200% 100%;
+  animation: shimmer 1.2s ease-in-out infinite;
+}
+
+.skeleton-title {
+  height: 34px;
+  width: 55%;
+  margin-bottom: calc(var(--space) * 3);
+}
+
+.skeleton-line {
+  height: 14px;
+  width: 40%;
+  margin-bottom: calc(var(--space) * 5);
+}
+
+.skeleton-block {
+  height: 180px;
+}
+
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+  }
 }
 
 .note-section {

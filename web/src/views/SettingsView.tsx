@@ -14,34 +14,40 @@ interface ProviderPreset {
   label: string;
   baseUrl: string;
   model: string;
+  /** analyze_provider value stored on the server. */
+  kind: string;
 }
 
 const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
-  opencode: { label: "opencode go", baseUrl: "https://opencode.ai/zen/go/v1", model: "qwen3.8-flash" },
-  deepseek: { label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat" },
-  ollama: { label: "Ollama local", baseUrl: "http://ollama:11434/v1", model: "qwen2.5:0.5b" },
-  custom: { label: "Personalizado", baseUrl: "", model: "" },
+  opencodeLocal: {
+    label: "opencode local (login)",
+    baseUrl: "http://127.0.0.1:49374",
+    model: "opencode-go/qwen3.8-flash",
+    kind: "opencode",
+  },
+  deepseek: { label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat", kind: "openai" },
+  ollama: { label: "Ollama local", baseUrl: "http://ollama:11434/v1", model: "qwen2.5:0.5b", kind: "openai" },
+  custom: { label: "Personalizado", baseUrl: "", model: "", kind: "openai" },
 };
 
 const OPENCODE_MODELS = [
-  "qwen3.8-flash",
-  "glm-5.3-flash",
-  "deepseek-v4.1-flash",
-  "gpt-6-luna",
-  "claude-haiku-5-5",
-  "space-bunny",
+  "opencode-go/qwen3.8-flash",
+  "opencode-go/glm-5.3-flash",
+  "opencode-go/claude-haiku-5-5",
+  "opencode-go/gpt-6-luna",
+  "deepseek/deepseek-chat",
 ];
 
 const FALLBACK_MODELS: Record<string, string[]> = {
-  opencode: OPENCODE_MODELS,
+  opencodeLocal: OPENCODE_MODELS,
   deepseek: ["deepseek-chat", "deepseek-reasoner"],
   ollama: [],
   custom: [],
 };
 
-function providerFromBaseUrl(baseUrl: string): string {
-  if (baseUrl.includes("opencode.ai")) {
-    return "opencode";
+function providerFromSettings(kind: string, baseUrl: string): string {
+  if (kind === "opencode") {
+    return "opencodeLocal";
   }
   if (baseUrl.includes("deepseek")) {
     return "deepseek";
@@ -78,7 +84,7 @@ export function SettingsView() {
     setSettings(value);
     setCeiling(String(value.max_whisper_rss_mb));
     setThemes(value.analysis_themes ?? "");
-    setProvider(providerFromBaseUrl(value.analyze_base_url));
+    setProvider(providerFromSettings(value.analyze_provider, value.analyze_base_url));
   }, []);
 
   const loadModels = useCallback(async () => {
@@ -350,7 +356,12 @@ export function SettingsView() {
                   setProvider(value);
                   const preset = PROVIDER_PRESETS[value];
                   if (preset && value !== "custom") {
-                    void save({ analyze_base_url: preset.baseUrl, analyze_model: preset.model }, "Provedor atualizado");
+                    void save(
+                      { analyze_provider: preset.kind, analyze_base_url: preset.baseUrl, analyze_model: preset.model },
+                      "Provedor atualizado",
+                    );
+                  } else if (value === "custom") {
+                    void save({ analyze_provider: "openai" }, "Provedor atualizado");
                   }
                 }}
               >
@@ -362,13 +373,17 @@ export function SettingsView() {
               </select>
             </div>
             <div className="field">
-              <span className="field-label">Chave da API</span>
+              <span className="field-label">{provider === "opencodeLocal" ? "Senha do opencode" : "Chave da API"}</span>
               <div className="field-control">
                 <input
                   type="password"
                   aria-label="Chave da API de analise"
                   placeholder={
-                    settings.analyze_api_key_set ? "definida (deixe vazio para manter)" : "cole a chave do provedor"
+                    settings.analyze_api_key_set
+                      ? "definida (deixe vazio para manter)"
+                      : provider === "opencodeLocal"
+                        ? "senha de ~/.config/opencode/service.json"
+                        : "cole a chave do provedor"
                   }
                   value={apiKey}
                   onChange={(event) => setApiKey(event.target.value)}
@@ -388,6 +403,12 @@ export function SettingsView() {
                   Salvar chave
                 </button>
               </div>
+              {provider === "opencodeLocal" && (
+                <span className="hint">
+                  Usa o opencode ja logado na sua maquina. Informe a URL do servidor do opencode e a senha de
+                  ~/.config/opencode/service.json. O modelo usa o formato provedor/modelo.
+                </span>
+              )}
             </div>
             <div className="field">
               <span className="field-label">Modelo</span>

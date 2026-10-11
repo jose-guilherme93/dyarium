@@ -146,6 +146,7 @@ export interface Settings {
   deepgram_model: string;
   deepgram_api_key_set: boolean;
   analyze_enabled: boolean;
+  analyze_provider: string;
   analyze_base_url: string;
   analyze_model: string;
   analyze_api_key_set: boolean;
