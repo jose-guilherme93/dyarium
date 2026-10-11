@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ApiError, api } from "../api";
 import { NotesEditor } from "../editor/NotesEditor";
 import { ProgressBar, Spinner, isBusy, stageText } from "../components/Status";
-import type { Analysis, Entry, EntryProgress, Note, Segment, Settings, Transcript } from "../types";
+import type { Analysis, EntityKind, Entry, EntryProgress, Note, Segment, Settings, Transcript } from "../types";
 
 interface EntryViewProps {
   id: string;
@@ -10,6 +10,7 @@ interface EntryViewProps {
   progress?: EntryProgress;
   partials?: Segment[];
   onBack: () => void;
+  onOpenEntity?: (kind: EntityKind, name: string) => void;
 }
 
 function formatTime(ms: number): string {
@@ -19,7 +20,20 @@ function formatTime(ms: number): string {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
-export function EntryView({ id, refreshKey, progress, partials, onBack }: EntryViewProps) {
+function sentimentText(label?: string): string {
+  switch (label) {
+    case "positivo":
+      return "Positivo";
+    case "negativo":
+      return "Negativo";
+    case "neutro":
+      return "Neutro";
+    default:
+      return "Sem rotulo";
+  }
+}
+
+export function EntryView({ id, refreshKey, progress, partials, onBack, onOpenEntity }: EntryViewProps) {
   const [entry, setEntry] = useState<Entry | null>(null);
   const [transcript, setTranscript] = useState<Transcript | null>(null);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
@@ -216,24 +230,148 @@ export function EntryView({ id, refreshKey, progress, partials, onBack }: EntryV
         <div className="panel">
           <h2>Analise</h2>
           {analysis ? (
-            <div>
-              <p>Sentimento: {Number(analysis.sentiment ?? 0).toFixed(2)}</p>
+            <div className="analysis">
+              <p>
+                Sentimento: {sentimentText(analysis.sentiment_label)}{" "}
+                <span className="muted">({Number(analysis.sentiment ?? 0).toFixed(2)})</span>
+              </p>
               {analysis.summary && <p>{analysis.summary}</p>}
-              {analysis.emotions && typeof analysis.emotions === "object" && !Array.isArray(analysis.emotions) && (
-                <ul className="chips">
-                  {Object.entries(analysis.emotions).map(([name, value]) => (
-                    <li key={name}>
-                      {name} ({typeof value === "number" ? value.toFixed(2) : String(value)})
-                    </li>
-                  ))}
-                </ul>
+
+              {analysis.themes && analysis.themes.length > 0 && (
+                <div className="analysis-block">
+                  <h3>Temas</h3>
+                  <ul className="chips">
+                    {analysis.themes.map((theme) => (
+                      <li key={theme.name}>
+                        <button
+                          type="button"
+                          className="chip-button"
+                          onClick={() => onOpenEntity?.("theme", theme.name)}
+                        >
+                          {theme.name} <span className="muted">{Math.round(theme.confidence * 100)}%</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               )}
-              {Array.isArray(analysis.people) && analysis.people.length > 0 && (
-                <p>Pessoas: {analysis.people.join(", ")}</p>
+
+              {analysis.people_detail && analysis.people_detail.length > 0 && (
+                <div className="analysis-block">
+                  <h3>Pessoas</h3>
+                  <ul className="chips">
+                    {analysis.people_detail.map((person) => (
+                      <li key={person.name}>
+                        <button
+                          type="button"
+                          className="chip-button"
+                          onClick={() => onOpenEntity?.("person", person.name)}
+                        >
+                          {person.name}
+                          {person.relation ? ` (${person.relation})` : ""} · {person.count}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               )}
-              {Array.isArray(analysis.places) && analysis.places.length > 0 && (
-                <p>Lugares: {analysis.places.join(", ")}</p>
+
+              {analysis.places_detail && analysis.places_detail.length > 0 && (
+                <div className="analysis-block">
+                  <h3>Lugares</h3>
+                  <ul className="chips">
+                    {analysis.places_detail.map((place) => (
+                      <li key={place.name}>
+                        <button
+                          type="button"
+                          className="chip-button"
+                          onClick={() => onOpenEntity?.("place", place.name)}
+                        >
+                          {place.name} · {place.count}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               )}
+
+              {analysis.emotions_detail && analysis.emotions_detail.length > 0 && (
+                <div className="analysis-block">
+                  <h3>Emocoes</h3>
+                  <ul className="bars">
+                    {analysis.emotions_detail.map((emotion) => (
+                      <li key={emotion.name}>
+                        <span className="bar-label">{emotion.name}</span>
+                        <span className="bar-track">
+                          <span
+                            className="bar-fill"
+                            style={{ width: `${Math.round(Math.min(1, Math.max(0, emotion.intensity)) * 100)}%` }}
+                          />
+                        </span>
+                        <span className="muted">{emotion.intensity.toFixed(2)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {analysis.key_moments && analysis.key_moments.length > 0 && (
+                <div className="analysis-block">
+                  <h3>Momentos-chave</h3>
+                  <ol className="segments">
+                    {analysis.key_moments.map((moment, index) => (
+                      <li key={index}>
+                        <span className="timestamp">{formatTime(moment.start_ms)}</span>
+                        <span>{moment.text}</span>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              )}
+
+              {analysis.questions && analysis.questions.length > 0 && (
+                <div className="analysis-block">
+                  <h3>Perguntas</h3>
+                  <ul className="plain-list">
+                    {analysis.questions.map((question, index) => (
+                      <li key={index}>{question}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {analysis.decisions && analysis.decisions.length > 0 && (
+                <div className="analysis-block">
+                  <h3>Decisoes</h3>
+                  <ul className="plain-list">
+                    {analysis.decisions.map((decision, index) => (
+                      <li key={index}>{decision}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {analysis.emotions && typeof analysis.emotions === "object" && !Array.isArray(analysis.emotions) &&
+                !(analysis.emotions_detail && analysis.emotions_detail.length > 0) && (
+                  <div className="analysis-block">
+                    <h3>Emocoes</h3>
+                    <ul className="chips">
+                      {Object.entries(analysis.emotions).map(([name, value]) => (
+                        <li key={name}>
+                          {name} ({typeof value === "number" ? value.toFixed(2) : String(value)})
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              {Array.isArray(analysis.people) && analysis.people.length > 0 &&
+                !(analysis.people_detail && analysis.people_detail.length > 0) && (
+                  <p className="muted">Pessoas: {analysis.people.join(", ")}</p>
+                )}
+              {Array.isArray(analysis.places) && analysis.places.length > 0 &&
+                !(analysis.places_detail && analysis.places_detail.length > 0) && (
+                  <p className="muted">Lugares: {analysis.places.join(", ")}</p>
+                )}
             </div>
           ) : (
             <p className="muted">

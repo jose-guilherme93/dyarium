@@ -43,10 +43,73 @@ export interface Transcript {
 export interface Analysis {
   model: string;
   sentiment: number;
+  sentiment_label: string;
   emotions: Record<string, number> | null;
   people: string[] | null;
   places: string[] | null;
   summary: string;
+  emotions_detail?: AnalysisEmotion[] | null;
+  people_detail?: AnalysisPerson[] | null;
+  places_detail?: AnalysisPlace[] | null;
+  themes?: AnalysisTheme[] | null;
+  key_moments?: KeyMoment[] | null;
+  questions?: string[] | null;
+  decisions?: string[] | null;
+}
+
+export interface AnalysisEmotion {
+  name: string;
+  intensity: number;
+}
+
+export interface AnalysisPerson {
+  name: string;
+  count: number;
+  relation: string;
+  sentiment: number;
+}
+
+export interface AnalysisPlace {
+  name: string;
+  count: number;
+}
+
+export interface AnalysisTheme {
+  name: string;
+  confidence: number;
+}
+
+export interface KeyMoment {
+  start_ms: number;
+  text: string;
+}
+
+export type EntityKind = "person" | "place" | "theme";
+
+export interface EntitySummary {
+  kind: EntityKind;
+  name: string;
+  entries: number;
+  mentions: number;
+  sentiment: number;
+  last_seen: string | null;
+}
+
+export interface EntityEntry {
+  id: string;
+  title: string;
+  date: string | null;
+  count: number;
+}
+
+export interface EntityDetail extends EntitySummary {
+  entry_list: EntityEntry[];
+}
+
+export interface MoodPoint {
+  date: string;
+  sentiment: number;
+  entries: number;
 }
 
 export interface Note {
@@ -77,6 +140,7 @@ export interface Settings {
   analyze_base_url: string;
   analyze_model: string;
   analyze_api_key_set: boolean;
+  analysis_themes: string;
 }
 
 export interface EntryProgress {
