@@ -71,6 +71,12 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("GET /api/v1/entries/{id}", s.handleGetEntry)
 	protected.HandleFunc("PATCH /api/v1/entries/{id}", s.handlePatchEntry)
 	protected.HandleFunc("DELETE /api/v1/entries/{id}", s.handleDeleteEntry)
+	protected.HandleFunc("GET /api/v1/entries/{id}/audio", s.handleGetEntryAudio)
+	protected.HandleFunc("GET /api/v1/entries/{id}/attachments", s.handleListAttachments)
+	protected.HandleFunc("POST /api/v1/entries/{id}/attachments", s.handleCreateAttachment)
+	protected.HandleFunc("GET /api/v1/attachments/{id}", s.handleGetAttachment)
+	protected.HandleFunc("DELETE /api/v1/attachments/{id}", s.handleDeleteAttachment)
+
 	protected.HandleFunc("GET /api/v1/entries/{id}/transcript", s.handleGetTranscript)
 	protected.HandleFunc("POST /api/v1/entries/{id}/retranscribe", s.handleRetranscribe)
 	protected.HandleFunc("POST /api/v1/entries/{id}/cancel", s.handleCancelEntry)

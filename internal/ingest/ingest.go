@@ -311,6 +311,86 @@ func (s *Service) DecryptToTemp(ctx context.Context, att store.Attachment) (stri
 	return tmp.Name(), nil
 }
 
+// PutAttachment encrypts data into a new attachment of the given kind and links
+// it to the entry. The plaintext is never written to disk.
+func (s *Service) PutAttachment(ctx context.Context, entryID, kind, contentType string, data io.Reader, maxBytes int64) (store.Attachment, error) {
+	if maxBytes <= 0 {
+		maxBytes = s.cfg.MaxUploadBytes
+	}
+	prefix, err := crypto.NewPrefix()
+	if err != nil {
+		return store.Attachment{}, fmt.Errorf("ingest: prefix: %w", err)
+	}
+	attID := id.New()
+	storageKey := filepath.Join("objects", attID+".enc")
+	path := filepath.Join(s.dataDir, storageKey)
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return store.Attachment{}, fmt.Errorf("ingest: mkdir: %w", err)
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return store.Attachment{}, fmt.Errorf("ingest: create object: %w", err)
+	}
+	if err := crypto.WriteHeader(f, prefix); err != nil {
+		f.Close()
+		os.Remove(path)
+		return store.Attachment{}, fmt.Errorf("ingest: write header: %w", err)
+	}
+	_, size, err := crypto.Append(f, s.key, prefix, 0, io.LimitReader(data, maxBytes+1))
+	closeErr := f.Close()
+	if err != nil {
+		os.Remove(path)
+		return store.Attachment{}, fmt.Errorf("ingest: encrypt attachment: %w", err)
+	}
+	if closeErr != nil {
+		os.Remove(path)
+		return store.Attachment{}, fmt.Errorf("ingest: close object: %w", closeErr)
+	}
+	if size > maxBytes {
+		os.Remove(path)
+		return store.Attachment{}, newError(413, "too_large", "anexo excede o tamanho maximo")
+	}
+	att := store.Attachment{
+		ID:          attID,
+		EntryID:     entryID,
+		Kind:        kind,
+		StorageKey:  storageKey,
+		ContentType: contentType,
+		SizeBytes:   size,
+		Cipher:      "aes-256-gcm",
+		CreatedAt:   time.Now().UTC(),
+	}
+	if err := s.store.CreateAttachment(ctx, att); err != nil {
+		os.Remove(path)
+		return store.Attachment{}, err
+	}
+	return att, nil
+}
+
+// DecryptAttachment decrypts an attachment into dst.
+func (s *Service) DecryptAttachment(ctx context.Context, att store.Attachment, dst io.Writer) (int64, error) {
+	path := filepath.Join(s.dataDir, att.StorageKey)
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, fmt.Errorf("ingest: open object: %w", err)
+	}
+	defer f.Close()
+	n, err := crypto.Decrypt(f, s.key, dst)
+	if err != nil {
+		return n, fmt.Errorf("ingest: decrypt: %w", err)
+	}
+	return n, nil
+}
+
+// DeleteAttachmentObject removes the ciphertext file of an attachment.
+func (s *Service) DeleteAttachmentObject(att store.Attachment) error {
+	path := filepath.Join(s.dataDir, att.StorageKey)
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("ingest: remove object: %w", err)
+	}
+	return nil
+}
+
 // IngestStream encrypts an audio stream directly into a new entry (used by the
 // Telegram module and other non-resumable sources).
 func (s *Service) IngestStream(ctx context.Context, source, filename, contentType string, data io.Reader) (store.Entry, error) {

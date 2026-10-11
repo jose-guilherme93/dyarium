@@ -58,6 +58,50 @@ func (s *Store) scanAttachment(row interface {
 	return a, nil
 }
 
+// ListAttachments returns the attachments of an entry, newest first.
+func (s *Store) ListAttachments(ctx context.Context, entryID string) ([]Attachment, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, entry_id, kind, storage_key, COALESCE(content_type,''), size_bytes,
+			COALESCE(sha256,''), cipher, COALESCE(cache_key,''), created_at
+		FROM attachments WHERE entry_id = ? ORDER BY created_at DESC`, entryID)
+	if err != nil {
+		return nil, fmt.Errorf("store: list attachments: %w", err)
+	}
+	defer rows.Close()
+	var out []Attachment
+	for rows.Next() {
+		var a Attachment
+		var createdAt string
+		if err := rows.Scan(&a.ID, &a.EntryID, &a.Kind, &a.StorageKey, &a.ContentType,
+			&a.SizeBytes, &a.SHA256, &a.Cipher, &a.CacheKey, &createdAt); err != nil {
+			return nil, fmt.Errorf("store: scan attachment: %w", err)
+		}
+		a.CreatedAt = parseTS(createdAt)
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// GetAttachment returns one attachment by id.
+func (s *Store) GetAttachment(ctx context.Context, id string) (Attachment, error) {
+	return s.scanAttachment(s.db.QueryRowContext(ctx, `
+		SELECT id, entry_id, kind, storage_key, COALESCE(content_type,''), size_bytes,
+			COALESCE(sha256,''), cipher, COALESCE(cache_key,''), created_at
+		FROM attachments WHERE id = ?`, id))
+}
+
+// DeleteAttachment removes an attachment row.
+func (s *Store) DeleteAttachment(ctx context.Context, id string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM attachments WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("store: delete attachment: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // UpsertMetrics stores or replaces the audio metrics for an entry.
 func (s *Store) UpsertMetrics(ctx context.Context, m AudioMetrics) error {
 	_, err := s.db.ExecContext(ctx, `

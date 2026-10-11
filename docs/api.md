@@ -109,6 +109,25 @@ Retorna a transcricao atual, com `segments` (inicio, fim, texto) e metadados do 
 ### GET /api/v1/entries/{id}/segments
 Lista os segmentos com paginacao, para leitura incremental.
 
+## Midia
+
+### GET /api/v1/entries/{id}/audio
+Transmite o audio original decifrado (para o player do dashboard). O plaintext nunca e
+gravado em disco. O `Content-Type` e o formato do arquivo enviado.
+
+### GET /api/v1/entries/{id}/attachments
+Lista os anexos de midia (imagens) da entrada.
+
+### POST /api/v1/entries/{id}/attachments
+Envia uma imagem. O corpo e os bytes da imagem e o `Content-Type` deve comecar com
+`image/`. Resposta 201 com `{ id, entry_id, kind, content_type, size_bytes, created_at }`.
+
+### GET /api/v1/attachments/{id}
+Transmite o anexo decifrado (usado para exibir imagens).
+
+### DELETE /api/v1/attachments/{id}
+Remove o anexo e o objeto cifrado. Resposta 204.
+
 ## Analise
 
 ### GET /api/v1/entries/{id}/analysis
