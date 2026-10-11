@@ -81,4 +81,19 @@ describe('DyariumApi', () => {
     expect((err as ApiError).status).toBe(409);
     expect((err as ApiError).offset).toBe(8);
   });
+
+  it('createTextEntry envia POST /entries com o texto', async () => {
+    const { api, calls } = makeApi(() => resp(201, { entry_id: 'en1', status: 'queued' }));
+    const out = await api.createTextEntry({
+      client_key: 'note_1',
+      title: 'Minha nota',
+      recorded_at: '2026-10-10T21:00:00.000Z',
+      text: 'texto da nota',
+    });
+    expect(calls[0].url).toBe('http://host:8080/api/v1/entries');
+    expect(calls[0].init?.method).toBe('POST');
+    expect(calls[0].init?.headers?.['Content-Type']).toBe('application/json');
+    expect(JSON.parse(String(calls[0].init?.body)).text).toBe('texto da nota');
+    expect(out.entry_id).toBe('en1');
+  });
 });

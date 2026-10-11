@@ -40,6 +40,29 @@ export interface CreateUploadBody {
   sha256?: string;
   title?: string;
   recorded_at?: string;
+  /** Texto da nota associado ao audio (o servidor passa a usar depois). */
+  text?: string;
+}
+
+export interface CreateTextEntryBody {
+  client_key: string;
+  title: string;
+  recorded_at?: string;
+  text: string;
+}
+
+export interface CreateTextEntryResponse {
+  entry_id: string;
+  status: string;
+  /** true quando o servidor encontrou um conteudo identico (dedupe). */
+  duplicate?: boolean;
+}
+
+export interface UpdateEntryBody {
+  title?: string;
+  recorded_at?: string;
+  /** Texto da nota (o servidor passa a usar depois). */
+  text?: string;
 }
 
 export interface CreateUploadResponse {
@@ -155,6 +178,34 @@ export class DyariumApi {
     });
     if (!res.ok) throw await this.parseError(res);
     return JSON.parse(await res.text());
+  }
+
+  /**
+   * Cria uma nota somente texto. O servidor ainda nao aceita este endpoint; a
+   * chamada fica pronta no app para quando ele existir. O texto e tratado como
+   * se fosse a transcricao da nota, mas marcado como nota de texto.
+   */
+  async createTextEntry(body: CreateTextEntryBody): Promise<CreateTextEntryResponse> {
+    const res = await this.fetchImpl(this.url('/api/v1/entries'), {
+      method: 'POST',
+      headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    return JSON.parse(await res.text());
+  }
+
+  /**
+   * Atualiza titulo/data/texto de uma entrada. O servidor ja aceita titulo e
+   * data; o campo `text` sera usado quando a nota de texto for suportada.
+   */
+  async updateEntry(id: string, body: UpdateEntryBody): Promise<void> {
+    const res = await this.fetchImpl(this.url(`/api/v1/entries/${id}`), {
+      method: 'PATCH',
+      headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw await this.parseError(res);
   }
 
   async putChunk(

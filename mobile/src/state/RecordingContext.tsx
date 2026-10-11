@@ -55,7 +55,11 @@ interface RecordingValue {
   error: string | null;
   busy: boolean;
   start(): Promise<void>;
-  stop(): Promise<void>;
+  /**
+   * Finaliza a gravacao. Por padrao enfileira; com `enqueue: false` devolve a
+   * nota pronta sem enviar (para anexar a uma nota em composicao).
+   */
+  stop(options?: { enqueue?: boolean }): Promise<Recording | null>;
   /** Continua uma gravacao interrompida, mantendo o horario de inicio original. */
   resume(id: string): Promise<void>;
   /** Finaliza (concatena) uma gravacao interrompida e a coloca na fila. */
@@ -222,9 +226,9 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
     }
   }, [beginSession]);
 
-  const stop = useCallback(async () => {
+  const stop = useCallback(async (options?: { enqueue?: boolean }): Promise<Recording | null> => {
     const session = activeRef.current;
-    if (!session) return;
+    if (!session) return null;
     clearTimers();
     setBusy(true);
     setError(null);
@@ -246,7 +250,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
         setActive(null);
         setElapsedMs(0);
         setError('Nenhum audio foi capturado. Verifique o microfone e tente de novo.');
-        return;
+        return null;
       }
 
       const finished = markRecorded(
@@ -263,10 +267,12 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
       activeRef.current = null;
       setActive(null);
       setElapsedMs(0);
-      await library.enqueue(finished);
+      if (options?.enqueue !== false) await library.enqueue(finished);
+      return finished;
     } catch (error) {
       console.warn('[dyarium] stop error', String(error));
       setError('Falha ao finalizar a gravacao.');
+      return null;
     } finally {
       setBusy(false);
     }

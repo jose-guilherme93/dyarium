@@ -29,9 +29,11 @@ interface Row {
   transcript_language: string | null;
   transcript_status: string | null;
   source: string | null;
+  text: string | null;
   content_type: string | null;
   file_name: string | null;
   duplicate: number | null;
+  archived: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -61,9 +63,11 @@ function getDb(): Promise<SQLite.SQLiteDatabase> {
           transcript_language TEXT,
           transcript_status TEXT,
           source TEXT,
+          text TEXT,
           content_type TEXT,
           file_name TEXT,
           duplicate INTEGER,
+          archived INTEGER,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
         );
@@ -75,9 +79,11 @@ function getDb(): Promise<SQLite.SQLiteDatabase> {
         'transcript_language',
         'transcript_status',
         'source',
+        'text',
         'content_type',
         'file_name',
         'duplicate',
+        'archived',
       ]) {
         await db
           .execAsync(`ALTER TABLE recordings ADD COLUMN ${column} TEXT`)
@@ -110,9 +116,11 @@ function rowToRecording(row: Row): Recording {
     transcriptLanguage: row.transcript_language ?? undefined,
     transcriptStatus: (row.transcript_status as TranscriptStatus | null) ?? undefined,
     source: (row.source as RecordingSource | null) ?? undefined,
+    text: row.text ?? undefined,
     contentType: row.content_type ?? undefined,
     fileName: row.file_name ?? undefined,
     duplicate: row.duplicate ? true : undefined,
+    archived: row.archived ? true : undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -125,9 +133,9 @@ export async function upsertRecording(r: Recording): Promise<void> {
       id, title, recorded_at, dir, file_path, segment_count, duration_ms, size_bytes,
       status, upload_id, offset, attempts, next_attempt_at, last_error, entry_id,
       transcript, transcript_language, transcript_status,
-      source, content_type, file_name, duplicate,
+      source, text, content_type, file_name, duplicate, archived,
       created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
       recorded_at = excluded.recorded_at,
@@ -147,9 +155,11 @@ export async function upsertRecording(r: Recording): Promise<void> {
       transcript_language = excluded.transcript_language,
       transcript_status = excluded.transcript_status,
       source = excluded.source,
+      text = excluded.text,
       content_type = excluded.content_type,
       file_name = excluded.file_name,
       duplicate = excluded.duplicate,
+      archived = excluded.archived,
       updated_at = excluded.updated_at`,
     [
       r.id,
@@ -171,9 +181,11 @@ export async function upsertRecording(r: Recording): Promise<void> {
       r.transcriptLanguage ?? null,
       r.transcriptStatus ?? null,
       r.source ?? null,
+      r.text ?? null,
       r.contentType ?? null,
       r.fileName ?? null,
       r.duplicate ? 1 : null,
+      r.archived ? 1 : null,
       r.createdAt,
       r.updatedAt,
     ],
