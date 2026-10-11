@@ -326,12 +326,8 @@ export function NoteEditor({
         {failureReason && <div className="banner banner--error">Falha: {failureReason}</div>}
         {error && <p className="error">{error}</p>}
 
-        {/* The page is one continuous canvas: text, then the audio block. */}
+        {/* Notion-like page: the audio (media) at the top, then the written text. */}
         <div className="page-canvas">
-          <div className="page-text">
-            {bodyLoaded && <NotesEditor initialContent={initialBody} onChange={handleBodyChange} />}
-          </div>
-
           {hasAudio && (
             <div className="audio-block">
               <AudioPlayer
@@ -368,6 +364,10 @@ export function NoteEditor({
               )}
             </div>
           )}
+
+          <div className="page-text">
+            {bodyLoaded && <NotesEditor initialContent={initialBody} onChange={handleBodyChange} />}
+          </div>
 
           <div className="page-images">
             <ImageGallery entryId={entry.id} />
