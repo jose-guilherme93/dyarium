@@ -40,7 +40,6 @@ metricas e dashboard funcionam offline. Somente a analise de texto por IA e opci
 ## Fora de escopo desta versao
 
 - Colaboracao multiusuario, contas e permissoes por usuario.
-- Aplicativos moveis nativos.
 - Transcricao em tempo real (streaming de audio).
 - Diarizacao de locutores (quem falou o que).
 - Busca semantica com embeddings vetoriais.

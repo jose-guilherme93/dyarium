@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/joseti/dyarium/internal/store"
 )
@@ -126,5 +127,87 @@ func TestStartRejectsUnsupportedFormat(t *testing.T) {
 	var apiErr *Error
 	if !errors.As(err, &apiErr) || apiErr.Code != "unsupported_format" {
 		t.Fatalf("expected unsupported_format, got %v", err)
+	}
+}
+
+func TestStartWithoutSHA256(t *testing.T) {
+	svc, _, _ := newService(t)
+	ctx := context.Background()
+
+	plain := []byte("sem hash informado")
+	up, err := svc.Start(ctx, Meta{Filename: "nota.wav", SizeBytes: int64(len(plain))})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if _, err := svc.Append(ctx, up.ID, 0, bytes.NewReader(plain)); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	entry, err := svc.Complete(ctx, up.ID)
+	if err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	// Sem sha informado, o servidor grava o hash recomputado.
+	if entry.SHA256 != sha256hex(plain) {
+		t.Fatalf("sha256 = %s, want %s", entry.SHA256, sha256hex(plain))
+	}
+}
+
+func TestStartIdempotentByClientKey(t *testing.T) {
+	svc, _, _ := newService(t)
+	ctx := context.Background()
+
+	meta := Meta{Filename: "a.wav", SizeBytes: 10, ClientKey: "ck_1"}
+	first, err := svc.Start(ctx, meta)
+	if err != nil {
+		t.Fatalf("start 1: %v", err)
+	}
+	second, err := svc.Start(ctx, meta)
+	if err != nil {
+		t.Fatalf("start 2: %v", err)
+	}
+	if first.ID != second.ID {
+		t.Fatalf("idempotencia falhou: %s != %s", first.ID, second.ID)
+	}
+}
+
+func TestCompleteAppliesClientMetadata(t *testing.T) {
+	svc, st, _ := newService(t)
+	ctx := context.Background()
+
+	plain := []byte("nota com metadados do cliente")
+	recorded := time.Date(2026, 10, 10, 21, 5, 0, 0, time.UTC)
+	up, err := svc.Start(ctx, Meta{
+		Filename:   "a.wav",
+		SizeBytes:  int64(len(plain)),
+		Title:      "10/10/2026 18:05",
+		RecordedAt: &recorded,
+		ClientKey:  "ck_2",
+	})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if _, err := svc.Append(ctx, up.ID, 0, bytes.NewReader(plain)); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	entry, err := svc.Complete(ctx, up.ID)
+	if err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	if entry.Title != "10/10/2026 18:05" {
+		t.Fatalf("title = %q", entry.Title)
+	}
+	if entry.RecordedAt == nil || !entry.RecordedAt.Equal(recorded) {
+		t.Fatalf("recorded_at = %v", entry.RecordedAt)
+	}
+	// Confirma a persistencia.
+	stored, err := st.GetEntry(ctx, entry.ID)
+	if err != nil {
+		t.Fatalf("get entry: %v", err)
+	}
+	if stored.Title != "10/10/2026 18:05" {
+		t.Fatalf("title persistido = %q", stored.Title)
+	}
+	if stored.RecordedAt == nil || !stored.RecordedAt.Equal(recorded) {
+		t.Fatalf("recorded_at persistido = %v", stored.RecordedAt)
 	}
 }

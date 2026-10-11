@@ -24,11 +24,13 @@ Retorna `{ "version": "<versao>", "commit": "<hash>", "built_at": "<RFC3339>" }`
 Cria um upload. Corpo:
 ```json
 {
-  "filename": "gravacao.m4a",
-  "content_type": "audio/mp4",
+  "filename": "gravacao.aac",
+  "content_type": "audio/aac",
   "size_bytes": 12345678,
-  "sha256": "<hex de 64 caracteres do arquivo completo>",
-  "duration_seconds": 1830
+  "sha256": "<hex de 64 caracteres do arquivo completo, opcional>",
+  "title": "10/10/2026 18:05",
+  "recorded_at": "2026-10-10T21:05:00Z",
+  "client_key": "ck_..."
 }
 ```
 Resposta 201:
@@ -36,12 +38,19 @@ Resposta 201:
 {
   "id": "up_...",
   "offset": 0,
-  "chunk_size_hint": 4194304,
   "expires_at": "2026-01-01T00:00:00Z"
 }
 ```
-O `sha256` e obrigatorio e usado na validacao final. `duration_seconds` e opcional (se
-ausente, o servidor mede com ffprobe no complete).
+- `sha256` e opcional. Quando informado, o servidor recomputa no complete e recusa com
+  422 se divergir. Quando ausente, o servidor apenas grava o hash recomputado.
+- `title` e `recorded_at` sao metadados opcionais do cliente, aplicados a `Entry` criada
+  no complete (`recorded_at` em RFC 3339).
+- `client_key` torna a criacao idempotente: repetir o POST com a mesma chave devolve o
+  upload existente (mesmo `id` e `offset`), evitando entradas duplicadas quando a resposta
+  se perde. E o que o app movel usa, uma chave por gravacao.
+- `duration_seconds` e aceito no corpo mas ignorado; o servidor mede a duracao com ffprobe
+  no complete.
+- `offset` na resposta e o offset ja confirmado (0 em uploads novos).
 
 ### PUT /api/v1/uploads/{id}
 Envia um pedaco do arquivo. Header obrigatorio: `Content-Range` ou `X-Upload-Offset` com o
