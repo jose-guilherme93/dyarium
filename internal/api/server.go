@@ -68,6 +68,7 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("POST /api/v1/uploads/{id}/complete", s.handleCompleteUpload)
 
 	protected.HandleFunc("GET /api/v1/entries", s.handleListEntries)
+	protected.HandleFunc("POST /api/v1/entries", s.handleCreateEntry)
 	protected.HandleFunc("GET /api/v1/entries/{id}", s.handleGetEntry)
 	protected.HandleFunc("PATCH /api/v1/entries/{id}", s.handlePatchEntry)
 	protected.HandleFunc("DELETE /api/v1/entries/{id}", s.handleDeleteEntry)

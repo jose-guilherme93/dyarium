@@ -87,6 +87,12 @@ Resposta 201:
 Lista entradas. Filtros: `person`, `place` e `theme` (entradas que mencionam a entidade,
 por nome, case-insensitive). Retorna resumos com id, titulo, status, duracao e data.
 
+### POST /api/v1/entries
+Cria uma nota escrita (sem audio). Corpo `{ "title": "..." }`. A entrada nasce com
+`source: "text"` e `status: "ready"`; o corpo e gravado como documento de nota (BlockNote),
+igual a parte escrita de uma nota de audio. Analises usam a transcricao quando existe e,
+caso contrario, o texto escrito da nota.
+
 ### GET /api/v1/entries/{id}
 Retorna a entrada completa: metadados, transcricao (com segmentos), analise, tags, notas e
 anexos.
