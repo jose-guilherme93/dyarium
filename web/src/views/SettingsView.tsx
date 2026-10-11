@@ -19,6 +19,7 @@ interface ProviderPreset {
 // a known analysis provider. "custom" keeps whatever is typed.
 const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
   opencode: { label: "opencode go", baseUrl: "https://opencode.ai/zen/go/v1", model: "qwen3.8-flash" },
+  deepseek: { label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat" },
   ollama: { label: "Ollama local", baseUrl: "http://ollama:11434/v1", model: "qwen2.5:0.5b" },
   custom: { label: "Personalizado", baseUrl: "", model: "" },
 };
@@ -37,6 +38,9 @@ function providerFromBaseUrl(baseUrl: string): string {
   if (baseUrl.includes("opencode.ai")) {
     return "opencode";
   }
+  if (baseUrl.includes("deepseek")) {
+    return "deepseek";
+  }
   if (baseUrl.includes("ollama") || baseUrl.includes("11434")) {
     return "ollama";
   }
@@ -52,6 +56,8 @@ export function SettingsView() {
   const [deepgramKey, setDeepgramKey] = useState("");
   const [themes, setThemes] = useState("");
   const [provider, setProvider] = useState("custom");
+  const [providerModels, setProviderModels] = useState<string[]>([]);
+  const [modelsNote, setModelsNote] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
@@ -109,6 +115,21 @@ export function SettingsView() {
       setError(err instanceof Error ? err.message : "falha ao salvar");
     }
   };
+
+  const fetchModels = useCallback(async () => {
+    setModelsNote("Buscando modelos...");
+    try {
+      const result = await api.listAnalyzeModels();
+      const list = result.models ?? [];
+      setProviderModels(list);
+      setModelsNote(
+        list.length > 0 ? `${list.length} modelos encontrados.` : "Nenhum modelo retornado pelo provedor.",
+      );
+    } catch (err) {
+      setProviderModels([]);
+      setModelsNote(err instanceof Error ? err.message : "falha ao buscar modelos");
+    }
+  }, []);
 
   const download = async (name: string) => {
     try {
@@ -303,7 +324,10 @@ export function SettingsView() {
                     setProvider(value);
                     const preset = PROVIDER_PRESETS[value];
                     if (preset && value !== "custom") {
-                      void save({ analyze_base_url: preset.baseUrl, analyze_model: preset.model });
+                      void (async () => {
+                        await save({ analyze_base_url: preset.baseUrl, analyze_model: preset.model });
+                        await fetchModels();
+                      })();
                     }
                   }}
                 >
@@ -325,7 +349,7 @@ export function SettingsView() {
                 />
               </dd>
               <dt>Modelo</dt>
-              <dd>
+              <dd className="ceiling">
                 <input
                   key={settings.analyze_model}
                   type="text"
@@ -334,12 +358,21 @@ export function SettingsView() {
                   defaultValue={settings.analyze_model}
                   onBlur={(event) => void save({ analyze_model: event.target.value })}
                 />
+                <button type="button" onClick={() => void fetchModels()}>
+                  Buscar modelos
+                </button>
                 <datalist id="analyze-models">
-                  {OPENCODE_MODELS.map((model) => (
+                  {[...new Set([...providerModels, ...OPENCODE_MODELS])].map((model) => (
                     <option key={model} value={model} />
                   ))}
                 </datalist>
               </dd>
+              {modelsNote && (
+                <>
+                  <dt />
+                  <dd className="muted">{modelsNote}</dd>
+                </>
+              )}
               <dt>Temas</dt>
               <dd className="ceiling">
                 <input
@@ -366,8 +399,13 @@ export function SettingsView() {
                 <button
                   type="button"
                   onClick={() => {
-                    void save({ analyze_api_key: apiKey });
-                    setApiKey("");
+                    void (async () => {
+                      if (apiKey.trim() !== "") {
+                        await save({ analyze_api_key: apiKey });
+                        setApiKey("");
+                      }
+                      await fetchModels();
+                    })();
                   }}
                 >
                   Salvar chave
