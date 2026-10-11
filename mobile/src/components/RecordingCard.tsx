@@ -63,9 +63,14 @@ export function RecordingCard({ recording, onRetry, onDelete }: RecordingCardPro
         </Pressable>
 
         <Pressable style={styles.info} onPress={() => setExpanded((v) => !v)}>
-          <Text style={styles.title} numberOfLines={1}>
-            {recording.title}
-          </Text>
+          <View style={styles.titleRow}>
+            {recording.source === 'share' ? (
+              <Ionicons name="download-outline" size={14} color={colors.info} />
+            ) : null}
+            <Text style={styles.title} numberOfLines={1}>
+              {recording.title}
+            </Text>
+          </View>
           <View style={styles.subRow}>
             <View style={[styles.dot, { backgroundColor: meta.color }]} />
             <Text style={styles.sub}>{meta.label}</Text>
@@ -75,6 +80,7 @@ export function RecordingCard({ recording, onRetry, onDelete }: RecordingCardPro
             {recording.sizeBytes ? (
               <Text style={styles.sub}>· {formatBytes(recording.sizeBytes)}</Text>
             ) : null}
+            {recording.duplicate ? <Text style={styles.duplicate}>· ja existia</Text> : null}
           </View>
           {recording.transcriptStatus === 'ready' && recording.transcript ? (
             <Text style={styles.preview} numberOfLines={1}>
@@ -181,10 +187,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   info: { flex: 1, paddingHorizontal: spacing.md, gap: 3 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   title: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
   subRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   dot: { width: 6, height: 6, borderRadius: 3 },
   sub: { color: colors.textSecondary, fontSize: fontSize.xs },
+  duplicate: { color: colors.info, fontSize: fontSize.xs, fontWeight: '600' },
   preview: { color: colors.textTertiary, fontSize: fontSize.sm, marginTop: 2 },
   trailing: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   ring: {

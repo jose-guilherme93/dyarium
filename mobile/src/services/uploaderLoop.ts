@@ -69,8 +69,8 @@ async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
     const result = await uploadRecording(
       {
         clientKey: current.id,
-        filename: `${current.id}${FILE_EXTENSION}`,
-        contentType: CONTENT_TYPE,
+        filename: current.fileName ?? `${current.id}${FILE_EXTENSION}`,
+        contentType: current.contentType ?? CONTENT_TYPE,
         title: current.title,
         recordedAt: current.recordedAt,
         localPath: current.filePath as string,
@@ -98,7 +98,11 @@ async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
         },
       },
     );
-    current = { ...markCompleted(current, result.entryId, new Date()), transcriptStatus: 'pending' };
+    current = {
+      ...markCompleted(current, result.entryId, new Date()),
+      transcriptStatus: 'pending',
+      duplicate: result.duplicate ? true : undefined,
+    };
     await upsertRecording(current);
     emitRecording(current);
   } catch (error) {

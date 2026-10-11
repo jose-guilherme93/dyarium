@@ -1,13 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
-import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, SectionList, StyleSheet, Text, View } from 'react-native';
 
 import { RecordButton } from '@/components/RecordButton';
 import { RecordingCard } from '@/components/RecordingCard';
 import { Screen } from '@/components/Screen';
 import { Waveform } from '@/components/Waveform';
 import { formatDuration } from '@/core/format';
+import { groupRecordingsByYear } from '@/core/group';
 import { useLibrary } from '@/state/LibraryContext';
 import { useRecording } from '@/state/RecordingContext';
 import { useSettings } from '@/state/SettingsContext';
@@ -23,6 +24,7 @@ export default function RecordScreen() {
   const recording = Boolean(active);
   const pending = recordings.filter((r) => PENDING_STATUSES.includes(r.status)).length;
   const interrupted = recordings.filter((r) => r.status === 'interrupted').length;
+  const sections = groupRecordingsByYear(recordings);
 
   const handlePress = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
@@ -80,12 +82,16 @@ export default function RecordScreen() {
             </Pressable>
           ) : null}
 
-          <FlatList
-            data={recordings}
+          <SectionList
+            sections={sections}
             keyExtractor={(item) => item.id}
             contentContainerStyle={styles.list}
             ItemSeparatorComponent={() => <View style={styles.separator} />}
+            stickySectionHeadersEnabled={false}
             showsVerticalScrollIndicator={false}
+            renderSectionHeader={({ section }) => (
+              <Text style={styles.sectionHeader}>{section.title}</Text>
+            )}
             renderItem={({ item }) => (
               <RecordingCard
                 recording={item}
@@ -158,6 +164,14 @@ const styles = StyleSheet.create({
   error: { color: colors.danger, fontSize: fontSize.sm, textAlign: 'center' },
   list: { paddingHorizontal: spacing.xl, paddingBottom: spacing.lg },
   separator: { height: spacing.sm },
+  sectionHeader: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
+    fontWeight: '700',
+    letterSpacing: 1,
+    marginTop: spacing.lg,
+    marginBottom: spacing.sm,
+  },
   alert: {
     flexDirection: 'row',
     alignItems: 'center',
