@@ -2,6 +2,7 @@ package analyze_test
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -142,6 +143,79 @@ func TestListModels(t *testing.T) {
 		t.Fatalf("list models: %v", err)
 	}
 	if len(models) != 2 || models[0] != "modelo-a" || models[1] != "modelo-b" {
+		t.Fatalf("models = %v", models)
+	}
+}
+
+func TestParseModelRef(t *testing.T) {
+	cases := map[string][2]string{
+		"opencode-go/qwen3.8-flash": {"opencode-go", "qwen3.8-flash"},
+		"deepseek-chat":             {"", "deepseek-chat"},
+		"":                          {"", ""},
+	}
+	for in, want := range cases {
+		providerID, modelID := analyze.ParseModelRef(in)
+		if providerID != want[0] || modelID != want[1] {
+			t.Fatalf("ParseModelRef(%q) = %q,%q; queria %q,%q", in, providerID, modelID, want[0], want[1])
+		}
+	}
+}
+
+func TestOpenCodeGenerate(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/experimental/generate" {
+			t.Errorf("path = %s", r.URL.Path)
+		}
+		wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte("opencode:segredo"))
+		if got := r.Header.Get("Authorization"); got != wantAuth {
+			t.Errorf("authorization = %q", got)
+		}
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if _, ok := body["prompt"].(string); !ok {
+			t.Errorf("prompt ausente: %v", body)
+		}
+		model, _ := body["model"].(map[string]any)
+		if model["providerID"] != "opencode-go" || model["id"] != "qwen3.8-flash" {
+			t.Errorf("model = %v", model)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"text": richResponse}})
+	}))
+	defer server.Close()
+
+	client := analyze.New(analyze.Config{
+		Enabled: true, Provider: analyze.ProviderOpenCode,
+		BaseURL: server.URL, APIKey: "segredo", Model: "opencode-go/qwen3.8-flash",
+	})
+	result, err := client.Analyze(context.Background(), "texto")
+	if err != nil {
+		t.Fatalf("analyze opencode: %v", err)
+	}
+	if result.Sentiment.Score != 0.6 || len(result.People) != 1 {
+		t.Fatalf("resultado = %+v", result)
+	}
+}
+
+func TestOpenCodeListModels(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/model" {
+			t.Errorf("path = %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{
+				{"id": "qwen3.8-flash", "providerID": "opencode-go"},
+				{"id": "deepseek-chat", "providerID": "deepseek"},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := analyze.New(analyze.Config{Provider: analyze.ProviderOpenCode, BaseURL: server.URL, APIKey: "segredo"})
+	models, err := client.ListModels(context.Background())
+	if err != nil {
+		t.Fatalf("list models: %v", err)
+	}
+	if len(models) != 2 || models[0] != "opencode-go/qwen3.8-flash" || models[1] != "deepseek/deepseek-chat" {
 		t.Fatalf("models = %v", models)
 	}
 }

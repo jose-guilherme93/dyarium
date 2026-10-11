@@ -25,6 +25,7 @@ type Config struct {
 	FFmpegBin          string
 	FFprobeBin         string
 	AnalyzeEnabled     bool
+	AnalyzeProvider    string
 	AnalyzeBaseURL     string
 	AnalyzeAPIKey      string
 	AnalyzeModel       string
@@ -64,6 +65,7 @@ func Load() (Config, error) {
 		FFmpegBin:          env("DIARY_FFMPEG_BIN", "ffmpeg"),
 		FFprobeBin:         env("DIARY_FFPROBE_BIN", "ffprobe"),
 		AnalyzeEnabled:     envBool("DIARY_ANALYZE_ENABLED", false),
+		AnalyzeProvider:    env("DIARY_ANALYZE_PROVIDER", "openai"),
 		AnalyzeBaseURL:     env("DIARY_ANALYZE_BASE_URL", "http://localhost:11434/v1"),
 		AnalyzeAPIKey:      env("DIARY_ANALYZE_API_KEY", ""),
 		AnalyzeModel:       env("DIARY_ANALYZE_MODEL", ""),

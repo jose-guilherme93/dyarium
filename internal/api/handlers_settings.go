@@ -38,6 +38,10 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(analysisThemes) == "" {
 		analysisThemes = strings.Join(analyze.DefaultThemes, ", ")
 	}
+	analyzeProvider := settings["analyze_provider"]
+	if analyzeProvider == "" {
+		analyzeProvider = defaultString(s.deps.Config.AnalyzeProvider, analyze.ProviderOpenAI)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"trim_silence":         settings["trim_silence"] == "true",
 		"max_whisper_rss_mb":   toInt(settings["max_whisper_rss_mb"]),
@@ -47,6 +51,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		"deepgram_model":       defaultString(settings["deepgram_model"], "nova-2"),
 		"deepgram_api_key_set": settings["deepgram_api_key"] != "",
 		"analyze_enabled":      analyzeEnabled == "true",
+		"analyze_provider":     analyzeProvider,
 		"analyze_base_url":     analyzeBaseURL,
 		"analyze_model":        analyzeModel,
 		"analyze_api_key_set":  settings["analyze_api_key"] != "",
@@ -95,8 +100,8 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 			if !set(key, strconv.Itoa(n)) {
 				return
 			}
-		case "whisper_model", "whisper_language", "analyze_base_url", "analyze_model", "analyze_api_key",
-			"transcribe_provider", "deepgram_api_key", "deepgram_model", "analysis_themes":
+		case "whisper_model", "whisper_language", "analyze_provider", "analyze_base_url", "analyze_model",
+			"analyze_api_key", "transcribe_provider", "deepgram_api_key", "deepgram_model", "analysis_themes":
 			str, ok := value.(string)
 			if !ok {
 				writeError(w, http.StatusBadRequest, "invalid_value", key+" deve ser texto")
