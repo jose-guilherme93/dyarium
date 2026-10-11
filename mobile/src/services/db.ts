@@ -38,11 +38,33 @@ interface Row {
   updated_at: string;
 }
 
-function getDb(): Promise<SQLite.SQLiteDatabase> {
-  if (!dbPromise) {
-    dbPromise = SQLite.openDatabaseAsync('dyarium.db').then(async (db) => {
+type MigrationDb = Pick<
+  SQLite.SQLiteDatabase,
+  'execAsync' | 'runAsync' | 'getFirstAsync' | 'getAllAsync'
+>;
+
+interface Migration {
+  version: number;
+  run: (db: MigrationDb) => Promise<void>;
+}
+
+async function columnExists(db: MigrationDb, table: string, column: string): Promise<boolean> {
+  const rows = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${table})`);
+  return rows.some((row) => row.name === column);
+}
+
+async function addColumn(db: MigrationDb, table: string, column: string): Promise<void> {
+  if (await columnExists(db, table, column)) return;
+  await db.execAsync(`ALTER TABLE ${table} ADD COLUMN ${column} TEXT`);
+}
+
+// Migracoes versionadas (PRAGMA user_version). Append-only: nunca edite uma
+// migracao ja publicada; adicione uma nova.
+const MIGRATIONS: Migration[] = [
+  {
+    version: 1,
+    run: async (db) => {
       await db.execAsync(`
-        PRAGMA journal_mode = WAL;
         CREATE TABLE IF NOT EXISTS recordings (
           id TEXT PRIMARY KEY NOT NULL,
           title TEXT NOT NULL,
@@ -59,40 +81,99 @@ function getDb(): Promise<SQLite.SQLiteDatabase> {
           next_attempt_at TEXT,
           last_error TEXT,
           entry_id TEXT,
-          transcript TEXT,
-          transcript_language TEXT,
-          transcript_status TEXT,
-          source TEXT,
-          text TEXT,
-          content_type TEXT,
-          file_name TEXT,
-          duplicate INTEGER,
-          archived INTEGER,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_recordings_status ON recordings(status);
       `);
-      // Migracao leve para bancos criados antes destas colunas.
-      for (const column of [
-        'transcript',
-        'transcript_language',
-        'transcript_status',
-        'source',
-        'text',
-        'content_type',
-        'file_name',
-        'duplicate',
-        'archived',
-      ]) {
-        await db
-          .execAsync(`ALTER TABLE recordings ADD COLUMN ${column} TEXT`)
-          .catch(() => undefined);
+    },
+  },
+  {
+    version: 2,
+    run: async (db) => {
+      for (const column of ['transcript', 'transcript_language', 'transcript_status']) {
+        await addColumn(db, 'recordings', column);
       }
+    },
+  },
+  {
+    version: 3,
+    run: async (db) => {
+      for (const column of ['source', 'text', 'content_type', 'file_name', 'duplicate', 'archived']) {
+        await addColumn(db, 'recordings', column);
+      }
+    },
+  },
+  {
+    version: 4,
+    run: async (db) => {
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS locks (
+          name TEXT PRIMARY KEY NOT NULL,
+          holder TEXT NOT NULL,
+          acquired_at INTEGER NOT NULL
+        );
+      `);
+    },
+  },
+];
+
+async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
+  const row = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
+  let version = row?.user_version ?? 0;
+  for (const migration of MIGRATIONS) {
+    if (migration.version <= version) continue;
+    await db.withExclusiveTransactionAsync(async (txn) => {
+      await migration.run(txn);
+      await txn.execAsync(`PRAGMA user_version = ${migration.version}`);
+    });
+    version = migration.version;
+  }
+}
+
+function getDb(): Promise<SQLite.SQLiteDatabase> {
+  if (!dbPromise) {
+    dbPromise = SQLite.openDatabaseAsync('dyarium.db').then(async (db) => {
+      await db.execAsync('PRAGMA journal_mode = WAL;');
+      await migrate(db);
       return db;
     });
   }
   return dbPromise;
+}
+
+/**
+ * Adquire uma trava nomeada no banco, para nunca haver dois workers (primeiro
+ * plano e background task) processando a fila ao mesmo tempo. Devolve um token
+ * quando adquirida, ou null quando outra instancia detem a trava (e ela nao
+ * expirou). A trava expira sozinha apos `ttlMs` (worker morto nao trava a fila).
+ */
+export async function acquireLock(name: string, ttlMs = 120_000): Promise<string | null> {
+  const db = await getDb();
+  const holder = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const now = Date.now();
+  let acquired = false;
+  await db.withExclusiveTransactionAsync(async (txn) => {
+    const existing = await txn.getFirstAsync<{ acquired_at: number }>(
+      'SELECT acquired_at FROM locks WHERE name = ?',
+      [name],
+    );
+    if (existing && now - existing.acquired_at < ttlMs) {
+      return;
+    }
+    await txn.runAsync(
+      `INSERT INTO locks (name, holder, acquired_at) VALUES (?, ?, ?)
+       ON CONFLICT(name) DO UPDATE SET holder = excluded.holder, acquired_at = excluded.acquired_at`,
+      [name, holder, now],
+    );
+    acquired = true;
+  });
+  return acquired ? holder : null;
+}
+
+export async function releaseLock(name: string, holder: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync('DELETE FROM locks WHERE name = ? AND holder = ?', [name, holder]);
 }
 
 function rowToRecording(row: Row): Recording {
