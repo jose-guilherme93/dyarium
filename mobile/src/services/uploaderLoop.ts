@@ -9,7 +9,7 @@ import { markCompleted, markFailed, pickNextToUpload } from '@/core/queue';
 import { isTextNote, type Recording } from '@/core/types';
 import { uploadRecording } from '@/core/uploader';
 
-import { listRecordings, upsertRecording } from './db';
+import { acquireLock, listRecordings, releaseLock, upsertRecording } from './db';
 import { CONTENT_TYPE, FILE_EXTENSION, uploadFileIO } from './files';
 import { loadServerConfig } from './secure';
 
@@ -33,7 +33,12 @@ let running = false;
 export async function runUploadQueueOnce(): Promise<void> {
   if (running) return;
   running = true;
+  let lock: string | null = null;
   try {
+    // Trava no banco: evita que o worker em primeiro plano e o background task
+    // processem a fila ao mesmo tempo.
+    lock = await acquireLock('upload-queue').catch(() => null);
+    if (!lock) return;
     const config = await loadServerConfig();
     if (!config) return;
     const api = new DyariumApi(config, doFetch);
@@ -56,6 +61,7 @@ export async function runUploadQueueOnce(): Promise<void> {
       await uploadOne(api, next);
     }
   } finally {
+    if (lock) await releaseLock('upload-queue', lock).catch(() => undefined);
     running = false;
   }
 }
