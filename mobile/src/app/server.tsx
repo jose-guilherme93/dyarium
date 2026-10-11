@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -16,6 +16,7 @@ import { Card } from '@/components/Card';
 import { Field } from '@/components/Field';
 import { Screen } from '@/components/Screen';
 import type { ServerConfig } from '@/core/types';
+import { discoverServer } from '@/services/discovery';
 import { useSettings, type ConnectionResult } from '@/state/SettingsContext';
 import { colors, fontSize, radius, spacing } from '@/theme/tokens';
 
@@ -49,6 +50,28 @@ function ServerForm({ config, save, disconnect }: ServerFormProps) {
   const [token, setToken] = useState(config?.token ?? '');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+  const [discovering, setDiscovering] = useState(false);
+  const [discovery, setDiscovery] = useState<string | null>(null);
+
+  const runDiscovery = useCallback(async () => {
+    setDiscovering(true);
+    setDiscovery(null);
+    const found = await discoverServer();
+    setDiscovering(false);
+    if (found) {
+      setBaseUrl(found);
+      setDiscovery(`Servidor encontrado em ${found}`);
+    } else {
+      setDiscovery('Nao encontrei o servidor automaticamente. Informe a URL abaixo.');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (baseUrl) return undefined;
+    const timer = setTimeout(() => void runDiscovery(), 0);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleSave = async () => {
     setBusy(true);
@@ -82,6 +105,14 @@ function ServerForm({ config, save, disconnect }: ServerFormProps) {
         <Text style={styles.lead}>
           Aponte para o seu servidor dyarium. O token fica guardado no cofre seguro do aparelho.
         </Text>
+
+        <Button
+          label="Procurar servidor automaticamente"
+          variant="secondary"
+          onPress={runDiscovery}
+          loading={discovering}
+        />
+        {discovery ? <Text style={styles.discovery}>{discovery}</Text> : null}
 
         <Card style={styles.form}>
           <Field
@@ -159,6 +190,7 @@ const styles = StyleSheet.create({
   title: { color: colors.text, fontSize: fontSize.lg, fontWeight: '700' },
   content: { padding: spacing.xl, gap: spacing.lg },
   lead: { color: colors.textSecondary, fontSize: fontSize.md, lineHeight: 22 },
+  discovery: { color: colors.textSecondary, fontSize: fontSize.sm },
   form: { gap: spacing.lg },
   message: {
     flexDirection: 'row',
