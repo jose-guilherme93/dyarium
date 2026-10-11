@@ -28,7 +28,7 @@ function StatusIndicator({
   onRetry: () => void;
 }) {
   if (recording.status === 'completed') {
-    return <Ionicons name="cloud-done" size={20} color={colors.success} />;
+    return null;
   }
   if (recording.status === 'uploading') {
     const progress =
