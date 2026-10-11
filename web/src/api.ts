@@ -1,7 +1,10 @@
 import type {
   Analysis,
+  EntityDetail,
+  EntitySummary,
   Entry,
   ModelInfo,
+  MoodPoint,
   Note,
   Settings,
   Tag,
@@ -56,8 +59,27 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
+export interface EntryFilters {
+  person?: string;
+  place?: string;
+  theme?: string;
+}
+
 export const api = {
-  listEntries: () => request<{ entries: Entry[] }>("/entries"),
+  listEntries: (filters?: EntryFilters) => {
+    const params = new URLSearchParams();
+    if (filters?.person) {
+      params.set("person", filters.person);
+    }
+    if (filters?.place) {
+      params.set("place", filters.place);
+    }
+    if (filters?.theme) {
+      params.set("theme", filters.theme);
+    }
+    const query = params.toString();
+    return request<{ entries: Entry[] }>(`/entries${query ? `?${query}` : ""}`);
+  },
   getEntry: (id: string) => request<Entry>(`/entries/${id}`),
   getTranscript: (id: string) => request<Transcript>(`/entries/${id}/transcript`),
   getAnalysis: (id: string) => request<Analysis>(`/entries/${id}/analysis`),
@@ -82,6 +104,21 @@ export const api = {
   listModels: () => request<{ models: ModelInfo[] }>("/models"),
   downloadModel: (name: string) =>
     request<{ status: string }>("/models/download", { method: "POST", body: JSON.stringify({ name }) }),
+  listEntities: (kind?: string) =>
+    request<{ entities: EntitySummary[] }>(`/entities${kind ? `?kind=${encodeURIComponent(kind)}` : ""}`),
+  getEntity: (kind: string, name: string) =>
+    request<EntityDetail>(`/entities/${kind}/${encodeURIComponent(name)}`),
+  getMood: (from?: string, to?: string) => {
+    const params = new URLSearchParams();
+    if (from) {
+      params.set("from", from);
+    }
+    if (to) {
+      params.set("to", to);
+    }
+    const query = params.toString();
+    return request<{ mood: MoodPoint[] }>(`/mood${query ? `?${query}` : ""}`);
+  },
 };
 
 async function sha256Hex(data: ArrayBuffer): Promise<string> {
