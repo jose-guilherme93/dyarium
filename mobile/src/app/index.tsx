@@ -62,6 +62,24 @@ export default function RecordScreen() {
   const pending = recordings.filter((r) => PENDING_STATUSES.includes(r.status)).length;
   const interrupted = recordings.filter((r) => r.status === 'interrupted').length;
 
+  const syncState: 'ok' | 'syncing' | 'error' = recordings.some((r) => r.status === 'failed')
+    ? 'error'
+    : pending > 0
+      ? 'syncing'
+      : 'ok';
+  const syncIcon =
+    syncState === 'error'
+      ? 'cloud-offline-outline'
+      : syncState === 'syncing'
+        ? 'cloud-upload-outline'
+        : 'cloud-done-outline';
+  const syncColor =
+    syncState === 'error'
+      ? colors.danger
+      : syncState === 'syncing'
+        ? colors.textSecondary
+        : colors.textTertiary;
+
   const activeNotes = recordings.filter((r) => !r.archived);
   const archivedNotes = recordings.filter((r) => r.archived);
   const sections: RecordingSection[] = groupRecordingsByYear(activeNotes);
@@ -116,6 +134,13 @@ export default function RecordScreen() {
           </Text>
         </View>
         <View style={styles.headerActions}>
+          <Pressable
+            style={styles.iconButton}
+            onPress={() => router.push('/sync')}
+            accessibilityLabel="Sincronizacao"
+          >
+            <Ionicons name={syncIcon} size={22} color={syncColor} />
+          </Pressable>
           <Pressable
             style={styles.iconButton}
             onPress={() => router.push('/settings')}
