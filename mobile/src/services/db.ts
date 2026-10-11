@@ -135,6 +135,10 @@ function getDb(): Promise<SQLite.SQLiteDatabase> {
   if (!dbPromise) {
     dbPromise = SQLite.openDatabaseAsync('dyarium.db').then(async (db) => {
       await db.execAsync('PRAGMA journal_mode = WAL;');
+      // Espera a trava liberar em vez de falhar na hora: em desenvolvimento um
+      // reload pode deixar a conexao anterior presa por um instante, o que
+      // antes virava "database is locked" ao iniciar a gravacao.
+      await db.execAsync('PRAGMA busy_timeout = 5000;');
       await migrate(db);
       return db;
     });
