@@ -31,9 +31,42 @@ type Config struct {
 	BaseURL  string
 	APIKey   string
 	Model    string
+	// Language is the transcript language code (e.g. "pt", "en"). The model is
+	// asked to answer in this language. Empty means "same as the transcript".
+	Language string
 	// Themes is the preferred theme list sent to the model. Empty means
 	// DefaultThemes.
 	Themes []string
+}
+
+// languageName maps a language code to a pt-BR name used in the prompt.
+func languageName(code string) string {
+	switch strings.ToLower(strings.TrimSpace(code)) {
+	case "pt", "pt-br", "pt_br":
+		return "portugues"
+	case "en", "en-us", "en-gb":
+		return "ingles"
+	case "es":
+		return "espanhol"
+	case "fr":
+		return "frances"
+	case "de":
+		return "alemao"
+	case "it":
+		return "italiano"
+	case "ja":
+		return "japones"
+	case "zh":
+		return "chines"
+	case "ru":
+		return "russo"
+	case "ar":
+		return "arabe"
+	case "hi":
+		return "hindi"
+	default:
+		return "o mesmo idioma da transcricao"
+	}
 }
 
 // ParseModelRef splits a "provider/model" reference. Without a slash the model
@@ -93,6 +126,10 @@ func FriendlyError(err error) string {
 		return "nao ha texto para analisar nesta nota"
 	case strings.Contains(message, "json invalido"):
 		return "a IA respondeu em um formato inesperado"
+	case strings.Contains(message, "connection refused"), strings.Contains(message, "dial tcp"),
+		strings.Contains(message, "no such host"), strings.Contains(message, "timeout"),
+		strings.Contains(message, "context deadline exceeded"):
+		return "nao foi possivel conectar ao provedor de IA (verifique a URL e a rede)"
 	default:
 		return "falha ao analisar com a IA"
 	}
@@ -238,7 +275,7 @@ func (c *Client) Summarize(ctx context.Context, summaries []string) (string, err
 	if joined == "" {
 		return "", nil
 	}
-	content, err := c.do(ctx, summarySystemPrompt, joined, 300)
+	content, err := c.do(ctx, summarySystemPrompt(languageName(c.cfg.Language)), joined, 300)
 	if err != nil {
 		return "", err
 	}
@@ -423,16 +460,18 @@ func (c *Client) listModelsOpenCode(ctx context.Context) ([]string, error) {
 	return ids, nil
 }
 
-// systemPrompt builds the pt-BR analyst prompt with the preferred theme list.
+// systemPrompt builds the analyst prompt with the preferred theme list and the
+// transcript language.
 func (c *Client) systemPrompt() string {
 	themes := c.cfg.Themes
 	if len(themes) == 0 {
 		themes = DefaultThemes
 	}
-	return strings.Replace(systemPromptTemplate, "{themes}", strings.Join(themes, ", "), 1)
+	prompt := strings.Replace(systemPromptTemplate, "{themes}", strings.Join(themes, ", "), 1)
+	return strings.Replace(prompt, "{language}", languageName(c.cfg.Language), 1)
 }
 
-const systemPromptTemplate = `Voce analisa a transcricao de um diario pessoal falado em portugues.
+const systemPromptTemplate = `Voce analisa a transcricao de um diario pessoal falado.
 Responda SOMENTE com um objeto JSON valido, sem texto antes ou depois e sem markdown.
 Use exatamente este formato:
 {"sentiment": {"score": <-1 a 1>, "label": "positivo|neutro|negativo"},
@@ -446,12 +485,15 @@ Use exatamente este formato:
  "decisions": ["<decisao que o autor tomou>"]}
 Regras: seja fiel ao texto e nao invente pessoas, lugares ou fatos; preencha "relation" e "sentiment" de pessoas
 somente quando for inferivel; use os tempos [mm:ss] presentes no texto para calcular "start_ms"; prefira os temas:
-{themes}; liste no maximo 5 momentos-chave; perguntas e decisoes devem ser curtas, no maximo 5 cada.`
+{themes}; liste no maximo 5 momentos-chave; perguntas e decisoes devem ser curtas, no maximo 5 cada.
+Escreva todo o conteudo textual (resumo, nomes de emocoes, relacoes, perguntas e decisoes) em {language}.`
 
-const summarySystemPrompt = `Voce resume analises parciais de um diario falado.
+func summarySystemPrompt(language string) string {
+	return fmt.Sprintf(`Voce resume analises parciais de um diario falado.
 Recebe, em ordem, os resumos dos trechos e devolve SOMENTE um JSON no formato
-{"summary": "<resumo unico, ate 60 palavras, em pt-BR>"}.
-Combine os resumos sem inventar fatos.`
+{"summary": "<resumo unico, ate 60 palavras, em %s>"}.
+Combine os resumos sem inventar fatos.`, language)
+}
 
 type summaryPayload struct {
 	Summary string `json:"summary"`

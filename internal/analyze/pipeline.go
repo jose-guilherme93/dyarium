@@ -40,10 +40,17 @@ type window struct {
 	size int
 }
 
-// Run analyzes the transcript segments and returns the merged rich result.
-func (p *Pipeline) Run(ctx context.Context, segments []Segment) (Result, error) {
+// Run analyzes the transcript segments and returns the merged rich result. The
+// optional progress callback reports the stage ("analyzing" per window,
+// "summarizing" for the meta-summary) so the UI can show real progress.
+func (p *Pipeline) Run(ctx context.Context, segments []Segment, progress func(stage string, done, total int)) (Result, error) {
 	if !p.client.Enabled() {
 		return Result{}, ErrDisabled
+	}
+	report := func(stage string, done, total int) {
+		if progress != nil {
+			progress(stage, done, total)
+		}
 	}
 	windows := buildWindows(segments)
 	if len(windows) == 0 {
@@ -51,16 +58,19 @@ func (p *Pipeline) Run(ctx context.Context, segments []Segment) (Result, error) 
 	}
 	results := make([]Result, 0, len(windows))
 	weights := make([]int, 0, len(windows))
-	for _, w := range windows {
+	report("analyzing", 0, len(windows))
+	for i, w := range windows {
 		result, err := p.client.Analyze(ctx, w.text)
 		if err != nil {
 			return Result{}, err
 		}
 		results = append(results, result)
 		weights = append(weights, w.size)
+		report("analyzing", i+1, len(windows))
 	}
 	merged := mergeResults(results, weights)
 	if len(windows) > 1 {
+		report("summarizing", 0, 1)
 		summary, err := p.client.Summarize(ctx, summaries(results))
 		if err != nil {
 			return Result{}, err
@@ -68,6 +78,7 @@ func (p *Pipeline) Run(ctx context.Context, segments []Segment) (Result, error) 
 		if s := strings.TrimSpace(summary); s != "" {
 			merged.Summary = s
 		}
+		report("summarizing", 1, 1)
 	}
 	return limitResult(merged), nil
 }

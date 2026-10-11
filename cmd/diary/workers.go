@@ -135,15 +135,25 @@ func analyzeHandler(st *store.Store, cfg config.Config, bus *events.Bus, logger 
 		}
 		_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryAnalyzing)
 		bus.Publish("entry.status", map[string]string{"entry_id": payload.EntryID, "status": store.EntryAnalyzing})
-		client := analyze.New(analysisCfg)
-		input, err := analysisInput(ctx, st, payload.EntryID)
+		input, language, err := analysisInput(ctx, st, payload.EntryID)
 		if err != nil {
 			_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryFailed)
 			bus.Publish("entry.failed", map[string]string{"entry_id": payload.EntryID, "reason": analyze.FriendlyError(err)})
 			logger.Error("worker: analise sem entrada", "entry_id", payload.EntryID, "erro", err)
 			return err
 		}
-		result, err := analyze.NewPipeline(client).Run(ctx, input)
+		if language != "" {
+			analysisCfg.Language = language
+		}
+		client := analyze.New(analysisCfg)
+		result, err := analyze.NewPipeline(client).Run(ctx, input, func(stage string, done, total int) {
+			bus.Publish("job.progress", map[string]any{
+				"entry_id": payload.EntryID,
+				"stage":    stage,
+				"done":     done,
+				"total":    total,
+			})
+		})
 		if err != nil {
 			_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryFailed)
 			bus.Publish("entry.failed", map[string]string{"entry_id": payload.EntryID, "reason": analyze.FriendlyError(err)})
@@ -181,19 +191,19 @@ func analyzeSegments(text string, segments []store.Segment) []analyze.Segment {
 
 // analysisInput prefers the audio transcript and falls back to the written note
 // body, so a text note can be analyzed too.
-func analysisInput(ctx context.Context, st *store.Store, entryID string) ([]analyze.Segment, error) {
+func analysisInput(ctx context.Context, st *store.Store, entryID string) ([]analyze.Segment, string, error) {
 	transcript, segments, err := st.GetTranscript(ctx, entryID)
 	if err == nil {
-		return analyzeSegments(transcript.Text, segments), nil
+		return analyzeSegments(transcript.Text, segments), transcript.Language, nil
 	}
 	text, noteErr := noteBodyText(ctx, st, entryID)
 	if noteErr != nil {
-		return nil, fmt.Errorf("worker: transcript: %w", err)
+		return nil, "", fmt.Errorf("worker: transcript: %w", err)
 	}
 	if strings.TrimSpace(text) == "" {
-		return nil, errors.New("transcricao indisponivel")
+		return nil, "", errors.New("transcricao indisponivel")
 	}
-	return []analyze.Segment{{Text: text}}, nil
+	return []analyze.Segment{{Text: text}}, "", nil
 }
 
 // noteBodyText extracts the plain text of the entry's first note document.

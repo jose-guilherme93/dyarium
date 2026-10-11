@@ -121,7 +121,7 @@ func TestPipelineRunMergesAndSummarizes(t *testing.T) {
 	for i := 0; i < 300; i++ {
 		segments = append(segments, Segment{StartMS: i * 1000, Text: strings.Repeat("conteudo ", 15)})
 	}
-	result, err := NewPipeline(client).Run(context.Background(), segments)
+	result, err := NewPipeline(client).Run(context.Background(), segments, nil)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestPipelineRunMergesAndSummarizes(t *testing.T) {
 
 func TestPipelineRunEmpty(t *testing.T) {
 	client := New(Config{Enabled: true, BaseURL: "http://127.0.0.1:0"})
-	if _, err := NewPipeline(client).Run(context.Background(), nil); err == nil {
+	if _, err := NewPipeline(client).Run(context.Background(), nil, nil); err == nil {
 		t.Fatal("esperava erro para transcricao vazia")
 	}
 }
