@@ -136,8 +136,8 @@ func (c *Client) Analyze(ctx context.Context, text string) (Result, error) {
 	}
 	content := out.Choices[0].Message.Content
 
-	var payload analysisPayload
-	if err := json.Unmarshal([]byte(extractJSON(content)), &payload); err != nil {
+	payload, err := decodeAnalysis(content)
+	if err != nil {
 		return Result{}, fmt.Errorf("analyze: decode content: %w", err)
 	}
 	return Result{
@@ -151,21 +151,46 @@ func (c *Client) Analyze(ctx context.Context, text string) (Result, error) {
 	}, nil
 }
 
-// extractJSON returns the JSON object found in s, repairing a truncated object
-// by closing unterminated strings, objects and arrays. Small local models
-// sometimes stop mid-JSON.
-func extractJSON(s string) string {
+// decodeAnalysis parses the model output, repairing truncated JSON by closing
+// dangling strings/objects and dropping incomplete trailing members.
+func decodeAnalysis(content string) (analysisPayload, error) {
+	candidate := extractObject(content)
+	for {
+		if payload, ok := tryParse(candidate); ok {
+			return payload, nil
+		}
+		if payload, ok := tryParse(closeJSON(candidate)); ok {
+			return payload, nil
+		}
+		cut := lastBoundary(candidate)
+		if cut <= 0 {
+			break
+		}
+		candidate = strings.TrimRight(candidate[:cut], " \t\r\n")
+	}
+	return analysisPayload{}, errors.New("json invalido")
+}
+
+func tryParse(s string) (analysisPayload, bool) {
+	var payload analysisPayload
+	if err := json.Unmarshal([]byte(s), &payload); err != nil {
+		return analysisPayload{}, false
+	}
+	return payload, true
+}
+
+// extractObject returns the substring starting at the first '{', up to the
+// matching '}' when the object is complete, or the rest of the string when the
+// object was truncated.
+func extractObject(s string) string {
 	s = strings.TrimSpace(s)
 	i := strings.Index(s, "{")
 	if i < 0 {
 		return s
 	}
 	s = s[i:]
-
 	var stack []rune
-	inString := false
-	escaped := false
-	end := -1
+	inString, escaped := false, false
 	for idx, r := range s {
 		if inString {
 			if escaped {
@@ -192,16 +217,42 @@ func extractJSON(s string) string {
 			}
 		}
 		if len(stack) == 0 {
-			end = idx + 1
-			break
+			return s[:idx+1]
 		}
 	}
-	if end > 0 {
-		return s[:end]
-	}
+	return s
+}
 
-	// Truncated object: close a dangling string, drop a trailing comma and close
-	// whatever remains open.
+// closeJSON closes an unterminated string and any open objects/arrays.
+func closeJSON(s string) string {
+	var stack []rune
+	inString, escaped := false, false
+	for _, r := range s {
+		if inString {
+			if escaped {
+				escaped = false
+			} else if r == '\\' {
+				escaped = true
+			} else if r == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch r {
+		case '"':
+			inString = true
+		case '{', '[':
+			stack = append(stack, r)
+		case '}':
+			if len(stack) > 0 && stack[len(stack)-1] == '{' {
+				stack = stack[:len(stack)-1]
+			}
+		case ']':
+			if len(stack) > 0 && stack[len(stack)-1] == '[' {
+				stack = stack[:len(stack)-1]
+			}
+		}
+	}
 	s = strings.TrimRight(s, " \t\r\n,")
 	if inString {
 		s += `"`
@@ -214,4 +265,14 @@ func extractJSON(s string) string {
 		}
 	}
 	return s
+}
+
+// lastBoundary returns the position of the last ',' (preferred) or '{', used to
+// drop an incomplete trailing member.
+func lastBoundary(s string) int {
+	comma := strings.LastIndex(s, ",")
+	if comma > 0 {
+		return comma
+	}
+	return strings.LastIndex(s, "{")
 }

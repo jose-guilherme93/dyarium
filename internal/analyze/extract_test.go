@@ -1,33 +1,31 @@
 package analyze
 
-import (
-	"encoding/json"
-	"testing"
-)
+import "testing"
 
-func TestExtractJSONRepairsTruncated(t *testing.T) {
+func TestDecodeAnalysisRepairsTruncated(t *testing.T) {
 	cases := []string{
 		`{"sentiment": 0.3, "emotions": {"calma": 0.6`,
-		`aqui vai: {"sentiment": 0.1, "people": ["Ana"`,
+		`{"sentiment": 0.3, "emotions":`,
+		`{"sentiment": 0.1, "people": ["Ana"`,
 		`{"sentiment": 0, "places": ["Recife"],`,
+		`{"a": 1, "b": {"c":`,
+		`{"summary": "texto sem fechar`,
+		`aqui vai: {"sentiment": 0.2, "emotions": {"x": 1}, "summary": "ok"`,
 	}
 	for _, c := range cases {
-		got := extractJSON(c)
-		var v map[string]any
-		if err := json.Unmarshal([]byte(got), &v); err != nil {
-			t.Fatalf("reparo falhou para %q -> %q: %v", c, got, err)
+		if _, err := decodeAnalysis(c); err != nil {
+			t.Fatalf("reparo falhou para %q: %v", c, err)
 		}
 	}
 }
 
-func TestExtractJSONKeepsValidObject(t *testing.T) {
-	in := "```json\n{\"sentiment\": 0.5}\n```"
-	got := extractJSON(in)
-	var v map[string]any
-	if err := json.Unmarshal([]byte(got), &v); err != nil {
-		t.Fatalf("falhou para objeto valido %q -> %q: %v", in, got, err)
+func TestDecodeAnalysisKeepsValidObject(t *testing.T) {
+	in := "```json\n{\"sentiment\": 0.5, \"summary\": \"ok\"}\n```"
+	payload, err := decodeAnalysis(in)
+	if err != nil {
+		t.Fatalf("falhou para objeto valido %q: %v", in, err)
 	}
-	if v["sentiment"].(float64) != 0.5 {
-		t.Fatalf("valor errado: %v", v["sentiment"])
+	if payload.Sentiment != 0.5 || payload.Summary != "ok" {
+		t.Fatalf("valores errados: %+v", payload)
 	}
 }

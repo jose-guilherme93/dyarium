@@ -47,8 +47,8 @@ services:
   ollama:
     image: ollama/ollama
     profiles: ["ai"]
-    cpus: "0.5"
-    mem_limit: 800m
+    cpus: "2"
+    mem_limit: 900m
     volumes:
       - ollama-models:/root/.ollama
 
