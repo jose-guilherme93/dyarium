@@ -3,8 +3,9 @@
 Convencoes gerais:
 
 - Base: `/api/v1` para os recursos; rotas de sistema em `/healthz` e `/api/v1/version`.
-- Autenticacao: header `Authorization: Bearer <token>` em todas as rotas sob `/api/v1`,
-  exceto `/healthz`.
+- Autenticacao: header `Authorization: Bearer <token>` em todas as rotas sob `/api/v1`.
+  As unicas rotas publicas sao `/healthz`, `GET /setup/state` e `POST /setup`; as duas
+  ultimas so respondem enquanto a instancia nao foi reivindicada.
 - Corpo e respostas em JSON, salvo o conteudo binario do upload.
 - Erros: `{ "error": { "code": "...", "message": "..." } }` com o codigo HTTP apropriado.
 - Ids sao opacos (ULID/UUID). Timestamps em RFC 3339 (UTC).
@@ -17,6 +18,24 @@ Responde 200 com `{ "status": "ok", "version": "<versao>" }`. Sem autenticacao.
 
 ### GET /api/v1/version
 Retorna `{ "version": "<versao>", "commit": "<hash>", "built_at": "<RFC3339>" }`.
+
+## Primeiro acesso (setup)
+
+Sem `DIARY_TOKEN` no ambiente e sem token persistido, a instancia nasce em modo setup. As
+duas rotas abaixo ficam abertas enquanto o setup esta pendente e sao fechadas assim que o
+token e definido.
+
+### GET /setup/state
+Publica. Responde 200 com `{ "required": true|false, "version": "<versao>" }`.
+
+### POST /setup
+Publica enquanto o setup esta pendente. Corpo:
+```json
+{ "token": "um-token-com-ao-menos-8-caracteres" }
+```
+Grava o token em `/data/token` (modo 0600), passa a usa-lo como Bearer e fecha o setup.
+Resposta 200 `{ "status": "ok" }`. Erros: 400 para token curto ou corpo invalido; 409 se a
+instancia ja foi configurada.
 
 ## Upload resumivel
 

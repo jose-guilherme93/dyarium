@@ -120,3 +120,15 @@ Superficie Android em Expo (development build). O nucleo puro fica em `mobile/sr
 - Armazenamento local em `recordings/<id>/` (diretorio de documentos, nao apagado pelo SO).
 - `android.allowBackup=false` (sem backup automatico do SO); o backup sera explicito
   (zip local primeiro; Drive depois).
+
+## Distribuicao e releases
+
+- Versao unica do produto (semver), comecando em 0.1.0 e calculada pelo release-please a
+  partir dos commits convencionais. Em 0.x, uma mudanca de quebra sobe a minor.
+- Imagem de producao multi-arch (`linux/amd64` e `linux/arm64`) publicada no GitHub
+  Container Registry (`ghcr.io/jose-guilherme93/dyarium`) com tags `vX.Y.Z` e `latest`,
+  com provenance e SBOM.
+- Deploy padrao por `docker-compose.yml` (usado tambem pelo Dokploy). Nenhuma variavel de
+  ambiente obrigatoria: o primeiro run funciona apenas com o volume de dados montado.
+- Primeiro acesso guiado por wizard (`/setup`) e modelo padrao do whisper baixado em
+  segundo plano (`DIARY_AUTO_DOWNLOAD_MODEL`).

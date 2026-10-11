@@ -1,19 +1,133 @@
 # dyarium
 
-Diario falado self-hosted e de codigo aberto (licenca MIT). Voce envia audios de
-ate 50 minutos; o dyarium guarda o original cifrado, transcreve localmente com
-whisper.cpp, enriquece com analises opcionais e apresenta tudo num dashboard
-privado.
+[![CI](https://github.com/jose-guilherme93/dyarium/actions/workflows/ci.yml/badge.svg)](https://github.com/jose-guilherme93/dyarium/actions/workflows/ci.yml)
+[![Release](https://github.com/jose-guilherme93/dyarium/actions/workflows/release.yml/badge.svg)](https://github.com/jose-guilherme93/dyarium/actions/workflows/release.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-O sistema e um unico binario Go com o dashboard embutido (`go:embed`). Nada de
-segredos, dominios ou IPs reais no codigo: tudo vem de variaveis de ambiente.
+Diario falado self-hosted e de codigo aberto. Voce grava notas de voz, o
+dyarium guarda o audio original cifrado, transcreve localmente com whisper.cpp,
+enriquece com analises opcionais e mostra tudo num dashboard privado.
 
-## Requisitos
+Um unico container. Um banco SQLite. Um diretorio de dados. Sem conta, sem
+nuvem de terceiros e sem variavel de ambiente obrigatoria para subir.
 
-- Docker e Docker Compose (desenvolvimento e imagem de producao).
-- Para rodar os alvos de teste e lint diretamente na maquina: Go 1.26 ou superior
-  e pnpm.
-- Opcional: Tailscale, para acompanhar o desenvolvimento pela tailnet.
+## Por que
+
+- **Privacidade por padrao**: transcricao local (whisper.cpp). Nada sai da sua
+  maquina, a nao ser que voce ligue a analise por IA apontando para onde quiser.
+- **Audio original imutavel**: o arquivo enviado nunca e alterado; derivados
+  (16 kHz mono, corte de silencio) sao artefatos separados.
+- **Cifrado em repouso**: AES-256-GCM em streaming, sem audio em claro no disco
+  persistente.
+- **Deploy trivial**: uma imagem multi-arch no GHCR, um `docker compose up -d`.
+
+## Primeiro deploy
+
+### Docker Compose
+
+```yaml
+services:
+  dyarium:
+    image: ghcr.io/jose-guilherme93/dyarium:latest
+    container_name: dyarium
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - dyarium-data:/data
+      - dyarium-models:/models
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  dyarium-data:
+  dyarium-models:
+```
+
+Salve como `docker-compose.yml` e rode:
+
+```
+docker compose up -d
+```
+
+### Dokploy
+
+1. Crie um novo projeto e adicione um servico do tipo **Compose**.
+2. Cole o compose acima.
+3. Em **Domains**, adicione um dominio apontando para a porta `8080` do
+   servico.
+4. Faca o deploy e abra o dominio.
+
+Nao ha nada para configurar antes: a imagem nao exige variavel de ambiente.
+
+## Primeiro acesso
+
+Na primeira subida o servidor nao tem token ainda, entao ele abre uma tela de
+primeiro acesso. Abra o endereco do servico, escolha um token e pronto. Esse
+token passa a proteger o dashboard, a API e o app mobile.
+
+Nesse mesmo primeiro boot o servidor gera e guarda a chave mestra em
+`/data/master.key` e baixa em segundo plano o modelo de transcricao padrao
+(`small-q5_1`, ~180 MB). Nada mais a fazer.
+
+> Guarde o volume `/data`. Ele contem a chave mestra; sem ela os audios cifrados
+> sao irrecuperaveis.
+
+## Usar
+
+- **Dashboard**: abra o endereco do servico e faca upload de um audio (wav, mp3,
+  m4a, ogg, flac, aac), acompanhe a transcricao e leia notas e analises.
+- **App Android**: o app de captura grava com a tela bloqueada, enfileira e
+  envia sozinho. Veja `mobile/README.md`.
+
+## Modelos de transcricao
+
+O modelo padrao (`small-q5_1`) e baixado automaticamente. Para escolher outro,
+use a tela de **Configuracao** do dashboard: `tiny`, `base`, `small-q5_1`,
+`medium-q5_0` e `large-v3-q5_0`. Modelos maiores transcrevem melhor e consomem
+mais memoria. Para nao baixar nada no primeiro boot, defina
+`DIARY_AUTO_DOWNLOAD_MODEL=false`.
+
+## Modulos opcionais
+
+- **Analise por IA**: desligada por padrao. Ativada, aponta para qualquer API
+  compativel com OpenAI (por exemplo, Ollama local) e produz sentimento,
+  emocoes, pessoas, lugares e resumo. Sem ela, transcricao e metricas continuam.
+- **Backup com Litestream**: replica o SQLite para um bucket S3.
+- **Telegram**: recebe audios pelo bot e cria entradas.
+
+Todos ficam desligados por padrao e nao iniciam nada quando desativados. As
+variaveis estao em `.env.example`.
+
+## Configuracao
+
+Nenhuma variavel e obrigatoria. As principais:
+
+| Variavel | Padrao | Descricao |
+|---|---|---|
+| `DIARY_HTTP_ADDR` | `:8080` | Endereco de escuta da API |
+| `DIARY_TOKEN` | gerado no primeiro acesso | Token Bearer; define para pular o wizard |
+| `DIARY_MASTER_KEY` | arquivo em `/data/master.key` | Chave AES-256 (hex ou base64) |
+| `DIARY_AUTO_DOWNLOAD_MODEL` | `true` | Baixa o modelo padrao no primeiro boot |
+| `DIARY_WHISPER_MODEL` | `models/ggml-small-q5_1.bin` | Modelo de transcricao |
+| `DIARY_WHISPER_LANGUAGE` | vazio | Idioma (ex.: `pt`); vazio detecta sozinho |
+| `DIARY_MAX_UPLOAD_BYTES` | 2147483648 | Tamanho maximo de upload |
+| `DIARY_MAX_DURATION_SECONDS` | 3000 | Duracao maxima (50 min) |
+| `DIARY_LOG_LEVEL` | `info` | `debug`, `info`, `warn` ou `error` |
+
+A lista completa esta em `.env.example`. O compose de desenvolvimento fica em
+`deploy/compose.dev.yml`.
+
+## Arquitetura
+
+Um binario Go (`cmd/`, `internal/`) com o dashboard React embutido via
+`go:embed`. Acesso a dados atras de uma interface de repositorio (SQLite em WAL,
+migrations versionadas). Operacoes pesadas (transcricao, ffmpeg, analise) rodam
+como subprocesso. O app de captura e Expo/React Native. Detalhes em `docs/`.
 
 ## Desenvolvimento
 
@@ -22,124 +136,23 @@ cp .env.example .env
 make dev
 ```
 
-- Frontend (Vite, com recarga automatica): http://localhost:5173
-- API (Go, com recarga automatica via air): http://localhost:8080
-- Verificacao rapida: `curl localhost:8080/healthz`
+- Dashboard: http://localhost:5173
+- API: http://localhost:8080
 
-Se as portas 8080 ou 5173 estiverem ocupadas, sobreponha-as:
-
-```
-make dev API_PORT=18080 WEB_PORT=15173
-```
-
-O Vite faz proxy de `/api` e `/healthz` para a API, entao basta abrir a porta
-5173 no navegador.
-
-### Acompanhar pela tailnet
+Para rodar os testes e o lint localmente:
 
 ```
-make tailscale
-tailscale serve status
+make test
+make lint
 ```
 
-O alvo usa o nome da maquina, sem hardcode. Para remover: `make tailscale-off`.
+Mais detalhes em `CONTRIBUTING.md` e `AGENTS.md`.
 
-## Build de producao
+## Versoes
 
-```
-make build
-docker run --rm -p 8080:8080 \
-  -e DIARY_TOKEN=seu-token \
-  -e DIARY_MASTER_KEY=$(openssl rand -hex 32) \
-  -v "$PWD/data:/data" -v "$PWD/models:/models" \
-  diary:dev
-```
-
-A imagem compila o frontend, o binario Go e o whisper.cpp, e empacota ffmpeg. Os
-modelos ggml ficam em um volume; baixe com `make models`.
-
-## Testes e lint
-
-```
-make test        # go test ./... e pnpm -C web test
-make lint        # go vet, gofmt e eslint
-make bench-transcricao   # benchmark de transcricao (pico de RSS)
-```
-
-## Variaveis de ambiente
-
-| Variavel | Padrao | Descricao |
-|---|---|---|
-| DIARY_HTTP_ADDR | :8080 | Endereco de escuta da API |
-| DIARY_TOKEN | (obrigatorio) | Token do header Authorization: Bearer |
-| DIARY_MASTER_KEY | (obrigatorio) | Chave AES-256 (32 bytes em hex ou base64) |
-| DIARY_LOG_LEVEL | info | debug, info, warn ou error |
-| DIARY_DB_PATH | data/diary.db | Caminho do banco SQLite |
-| DIARY_DATA_DIR | data | Diretorio dos audios cifrados |
-| DIARY_MODELS_DIR | models | Diretorio dos modelos ggml |
-| DIARY_MODELS_BASE_URL | (registro do whisper.cpp) | URL base para baixar modelos |
-| DIARY_WHISPER_BIN | whisper-cli | Binario do whisper.cpp |
-| DIARY_WHISPER_MODEL | models/ggml-small-q5_1.bin | Modelo padrao |
-| DIARY_WHISPER_LANGUAGE | (vazio) | Idioma da transcricao; vazio = auto (ex.: pt) |
-| DIARY_FFMPEG_BIN | ffmpeg | Binario do ffmpeg |
-| DIARY_FFPROBE_BIN | ffprobe | Binario do ffprobe |
-| DIARY_TRIM_SILENCE | false | Valor inicial do corte de silencio |
-| DIARY_WORKER_CONCURRENCY | 1 | Workers simultaneos |
-| DIARY_JOB_LEASE_SECONDS | 120 | Prazo do lease de job |
-| DIARY_MAX_UPLOAD_BYTES | 2147483648 | Tamanho maximo de upload |
-| DIARY_MAX_DURATION_SECONDS | 3000 | Duracao maxima (50 min) |
-| DIARY_ALLOWED_FORMATS | wav,mp3,m4a,ogg,flac,aac,adts | Formatos aceitos (inclui ADTS/AAC) |
-| DIARY_MAX_WHISPER_RSS_MB | 0 | Teto de RAM (MB) do whisper; 0 = sem limite |
-| DIARY_ANALYZE_ENABLED | false | Liga a analise por IA |
-| DIARY_ANALYZE_BASE_URL | http://localhost:11434/v1 | Base compativel com OpenAI (Ollama) |
-| DIARY_ANALYZE_API_KEY | (vazio) | Chave da API de analise |
-| DIARY_ANALYZE_MODEL | (vazio) | Modelo da analise |
-| DIARY_TELEGRAM_ENABLED | false | Liga o modulo Telegram |
-| DIARY_TELEGRAM_BOT_TOKEN | (vazio) | Token do bot |
-| DIARY_TELEGRAM_API_BASE | (vazio) | Base da API do Telegram (obrigatoria se habilitado) |
-| DIARY_LITESTREAM_ENABLED | false | Liga o backup com Litestream |
-| DIARY_LITESTREAM_BUCKET | (vazio) | Bucket S3 de destino |
-| DIARY_LITESTREAM_PATH | dyarium | Prefixo dentro do bucket |
-| DIARY_LITESTREAM_ENDPOINT | (vazio) | Endpoint S3 (para provedores compativeis) |
-| DIARY_LITESTREAM_ACCESS_KEY_ID | (vazio) | Chave de acesso S3 |
-| DIARY_LITESTREAM_SECRET_ACCESS_KEY | (vazio) | Segredo S3 |
-
-## Modulos opcionais
-
-- Analise por IA: desligada por padrao. Com `DIARY_ANALYZE_ENABLED=true` e um servidor
-  compativel com OpenAI (por exemplo, Ollama em `http://localhost:11434/v1`), as entradas
-  recebem sentimento, emocoes, pessoas, lugares e resumo. Sem a analise, transcricao e
-  metricas continuam funcionando.
-- Litestream: quando `DIARY_LITESTREAM_ENABLED=true` e um bucket S3 configurado, o
-  `entrypoint.sh` inicia a replicacao continua e executa o servidor sob o Litestream. Sem
-  essa configuracao, nada relacionado ao Litestream e executado.
-- Telegram: desligado por padrao. Com `DIARY_TELEGRAM_ENABLED=true`, o bot baixa audios
-  recebidos e os ingere como novas entradas. Desligado, nenhuma conexao e iniciada.
-
-## API
-
-A API fica sob `/api/v1` e exige `Authorization: Bearer <token>`. O upload e resumivel:
-`POST /uploads` (metadados e SHA-256), `PUT /uploads/{id}` (header `X-Upload-Offset`),
-`GET /uploads/{id}` (retomar) e `POST /uploads/{id}/complete`. Ha endpoints de entradas,
-transcricao, analise, notas, tags, configuracoes e um fluxo de eventos SSE em
-`/api/v1/events` (o token pode ir na query `?token=`, pois o EventSource nao envia headers).
-
-## Estrutura
-
-```
-cmd/diary            entrypoint (serve, version)
-internal/api         HTTP, auth Bearer, dashboard embutido
-internal/ingest      upload resumivel e integridade
-internal/jobs        fila de jobs (leases, backoff, idempotencia)
-internal/transcribe  whisper.cpp (chunking, checkpoints)
-internal/analyze     analise por IA (OpenAI/Ollama)
-internal/store       repositorio SQLite (WAL, migrations)
-internal/crypto      AES-256-GCM em streaming
-internal/telegram    modulo opcional (stub)
-web                  dashboard React + Vite + TypeScript (BlockNote)
-deploy               Dockerfile e compose de desenvolvimento
-docs                 plano, arquitetura, api, modelo de dados, transcricao, dashboard, roadmap
-```
+A versao segue semver e e calculada automaticamente a partir dos commits
+convencionais (release-please). Enquanto o projeto esta em `0.x`, uma mudanca de
+quebra sobe a minor, nao a major. Veja `CHANGELOG.md` e as releases.
 
 ## Licenca
 

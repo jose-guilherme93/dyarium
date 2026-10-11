@@ -116,8 +116,10 @@ a gravacao dos resultados e feita em transacao, com upsert por chave natural.
   nome original do arquivo (ou da data/hora) e usa a hora de criacao como `recorded_at`.
   Isso mantem a linha do tempo e o calendario do dashboard sempre preenchidos, inclusive
   para fontes como o Telegram.
-- Chave mestra por variavel de ambiente: simples e suficiente para self-hosting. A chave
-  nao entra no repositorio nem no banco.
+- Chave mestra e token sem configuracao manual: no primeiro boot, se nao vierem do
+  ambiente, a chave mestra e gerada e persistida em `/data/master.key` (0600) e a instancia
+  entra em modo setup ate o operador definir o token em `/setup` (persistido em
+  `/data/token`). Mantem o self-hosting simples sem abrir mao de override por ambiente.
 - Analise por HTTP compativel com OpenAI: funciona com Ollama local ou qualquer provedor,
   e pode ser desligada sem afetar transcricao e metricas.
 - Frontend embutido via `go:embed`: um unico artefato para distribuir.
