@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jose-guilherme93/dyarium/internal/analyze"
 	"github.com/jose-guilherme93/dyarium/internal/jobs"
 	"github.com/jose-guilherme93/dyarium/internal/store"
 )
@@ -33,6 +34,14 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	if analyzeModel == "" {
 		analyzeModel = s.deps.Config.AnalyzeModel
 	}
+	analysisThemes := settings["analysis_themes"]
+	if strings.TrimSpace(analysisThemes) == "" {
+		analysisThemes = strings.Join(analyze.DefaultThemes, ", ")
+	}
+	analyzeProvider := settings["analyze_provider"]
+	if analyzeProvider == "" {
+		analyzeProvider = defaultString(s.deps.Config.AnalyzeProvider, analyze.ProviderOpenAI)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"trim_silence":         settings["trim_silence"] == "true",
 		"max_whisper_rss_mb":   toInt(settings["max_whisper_rss_mb"]),
@@ -42,9 +51,11 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		"deepgram_model":       defaultString(settings["deepgram_model"], "nova-2"),
 		"deepgram_api_key_set": settings["deepgram_api_key"] != "",
 		"analyze_enabled":      analyzeEnabled == "true",
+		"analyze_provider":     analyzeProvider,
 		"analyze_base_url":     analyzeBaseURL,
 		"analyze_model":        analyzeModel,
 		"analyze_api_key_set":  settings["analyze_api_key"] != "",
+		"analysis_themes":      analysisThemes,
 	})
 }
 
@@ -89,8 +100,8 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 			if !set(key, strconv.Itoa(n)) {
 				return
 			}
-		case "whisper_model", "whisper_language", "analyze_base_url", "analyze_model", "analyze_api_key",
-			"transcribe_provider", "deepgram_api_key", "deepgram_model":
+		case "whisper_model", "whisper_language", "analyze_provider", "analyze_base_url", "analyze_model",
+			"analyze_api_key", "transcribe_provider", "deepgram_api_key", "deepgram_model", "analysis_themes":
 			str, ok := value.(string)
 			if !ok {
 				writeError(w, http.StatusBadRequest, "invalid_value", key+" deve ser texto")
@@ -158,14 +169,29 @@ func (s *Server) handleGetAnalysis(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "analise indisponivel")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"model":     a.Model,
-		"sentiment": a.Sentiment,
-		"emotions":  rawJSON(a.Emotions),
-		"people":    rawJSON(a.People),
-		"places":    rawJSON(a.Places),
-		"summary":   a.Summary,
-	})
+	body := map[string]any{
+		"model":           a.Model,
+		"sentiment":       a.Sentiment,
+		"sentiment_label": a.SentimentLabel,
+		"emotions":        rawJSON(a.Emotions),
+		"people":          rawJSON(a.People),
+		"places":          rawJSON(a.Places),
+		"summary":         a.Summary,
+	}
+	if data := strings.TrimSpace(a.Data); data != "" && json.Valid([]byte(data)) {
+		var rich analyze.Result
+		if err := json.Unmarshal([]byte(data), &rich); err == nil {
+			body["emotions_detail"] = rich.Emotions
+			body["people_detail"] = rich.People
+			body["places_detail"] = rich.Places
+			body["themes"] = rich.Themes
+			body["key_moments"] = rich.KeyMoments
+			body["questions"] = rich.Questions
+			body["decisions"] = rich.Decisions
+			body["data"] = json.RawMessage(data)
+		}
+	}
+	writeJSON(w, http.StatusOK, body)
 }
 
 // rawJSON embeds a stored JSON string as a real JSON value (object/array),

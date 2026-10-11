@@ -24,7 +24,7 @@ describe("App", () => {
       })),
     );
     render(<App />);
-    await waitFor(() => expect(screen.getByText("Nenhuma entrada ainda.")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Nenhuma nota ainda.")).toBeInTheDocument());
     expect(screen.getByRole("navigation")).toBeInTheDocument();
     vi.unstubAllGlobals();
   });

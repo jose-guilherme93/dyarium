@@ -101,14 +101,51 @@ Resultado do enriquecimento por IA, versionado por modelo.
 | entry_id | TEXT FK -> Entry.id | |
 | model | TEXT | modelo de analise |
 | sentiment | REAL | escala de -1 a 1 |
-| emotions | TEXT | JSON: rotulos e intensidades |
-| people | TEXT | JSON: pessoas mencionadas |
-| places | TEXT | JSON: lugares mencionados |
+| sentiment_label | TEXT | positivo, neutro ou negativo |
+| emotions | TEXT | JSON legado: rotulos e intensidades |
+| people | TEXT | JSON legado: pessoas mencionadas |
+| places | TEXT | JSON legado: lugares mencionados |
 | summary | TEXT | resumo curto |
 | raw | TEXT | resposta bruta do provedor |
+| data | TEXT | JSON completo da analise rica |
 | created_at | TEXT | |
 
 Indices: `entry_id`, (`entry_id`, `model`).
+
+`data` guarda o resultado rico (sentimento com rotulo, emocoes com intensidade, pessoas com
+contagem/relacao/sentimento, lugares, temas, momentos-chave com tempo, resumo, perguntas e
+decisoes). As colunas `emotions`, `people` e `places` mantem o formato legado (mapa e listas
+de nomes) para compatibilidade com entradas antigas e com o dashboard enquanto ele nao usa
+apenas `data`.
+
+## Entity
+
+Pessoa, lugar ou tema extraido das analises, normalizado por (`kind`, `name`).
+
+| Campo | Tipo | Notas |
+|---|---|---|
+| id | TEXT PK | |
+| kind | TEXT | person, place ou theme |
+| name | TEXT | nome como exibido |
+| created_at | TEXT | |
+
+Indices: unico (`kind`, `name`).
+
+## EntryEntity
+
+Relaciona uma entrada a uma entidade, com contagem de mencoes e metadados por entrada.
+
+| Campo | Tipo | Notas |
+|---|---|---|
+| entry_id | TEXT FK -> Entry.id | chave primaria composta com entity_id |
+| entity_id | TEXT FK -> Entity.id | |
+| count | INTEGER | numero de mencoes na entrada |
+| relation | TEXT | relacao com o autor (pessoas), opcional |
+| sentiment | REAL | sentimento associado (pessoas), opcional |
+| created_at | TEXT | |
+
+Indices: `entity_id`. Ao salvar uma nova analise, os vinculos anteriores da entrada sao
+substituidos.
 
 ## AudioMetrics
 

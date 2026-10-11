@@ -1,7 +1,13 @@
+import { cacheGet, cacheSet } from "./lib/idb";
+import { setOffline } from "./lib/offline";
 import type {
   Analysis,
+  Attachment,
+  EntityDetail,
+  EntitySummary,
   Entry,
   ModelInfo,
+  MoodPoint,
   Note,
   Settings,
   Tag,
@@ -69,6 +75,8 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const method = (init?.method ?? "GET").toUpperCase();
+  const isGet = method === "GET";
   const headers: Record<string, string> = {
     Authorization: `Bearer ${getToken()}`,
     ...(init?.headers as Record<string, string> | undefined),
@@ -76,20 +84,59 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (init?.body && !(init.body instanceof Blob)) {
     headers["Content-Type"] = "application/json";
   }
-  const res = await fetch(`/api/v1${path}`, { ...init, headers });
-  if (res.status === 204) {
-    return undefined as T;
+  const url = `/api/v1${path}`;
+  try {
+    const res = await fetch(url, { ...init, headers });
+    if (res.status === 204) {
+      setOffline(false);
+      return undefined as T;
+    }
+    const text = await res.text();
+    if (!res.ok) {
+      const body = text ? JSON.parse(text) : {};
+      throw new ApiError(body?.error?.message ?? res.statusText, res.status, body?.error?.code);
+    }
+    setOffline(false);
+    if (isGet) {
+      void cacheSet(url, text);
+    }
+    return (text ? JSON.parse(text) : {}) as T;
+  } catch (err) {
+    // Serve the last cached copy when the network is unavailable.
+    if (isGet && !(err instanceof ApiError)) {
+      const cached = await cacheGet(url);
+      if (cached !== undefined) {
+        setOffline(true);
+        return JSON.parse(cached) as T;
+      }
+    }
+    throw err;
   }
-  const text = await res.text();
-  const body = text ? JSON.parse(text) : {};
-  if (!res.ok) {
-    throw new ApiError(body?.error?.message ?? res.statusText, res.status, body?.error?.code);
-  }
-  return body as T;
+}
+
+export interface EntryFilters {
+  person?: string;
+  place?: string;
+  theme?: string;
 }
 
 export const api = {
-  listEntries: () => request<{ entries: Entry[] }>("/entries"),
+  listEntries: (filters?: EntryFilters) => {
+    const params = new URLSearchParams();
+    if (filters?.person) {
+      params.set("person", filters.person);
+    }
+    if (filters?.place) {
+      params.set("place", filters.place);
+    }
+    if (filters?.theme) {
+      params.set("theme", filters.theme);
+    }
+    const query = params.toString();
+    return request<{ entries: Entry[] }>(`/entries${query ? `?${query}` : ""}`);
+  },
+  createEntry: (title: string) =>
+    request<Entry>("/entries", { method: "POST", body: JSON.stringify({ title }) }),
   getEntry: (id: string) => request<Entry>(`/entries/${id}`),
   getTranscript: (id: string) => request<Transcript>(`/entries/${id}/transcript`),
   getAnalysis: (id: string) => request<Analysis>(`/entries/${id}/analysis`),
@@ -106,6 +153,12 @@ export const api = {
   updateNote: (id: string, title: string, document: unknown) =>
     request<{ status: string }>(`/notes/${id}`, { method: "PUT", body: JSON.stringify({ title, document }) }),
   listTags: () => request<{ tags: Tag[] }>("/tags"),
+  listEntryTags: (entryId: string) => request<{ tags: Tag[] }>(`/entries/${entryId}/tags`),
+  setEntryTags: (entryId: string, tags: string[]) =>
+    request<{ status: string }>(`/entries/${entryId}/tags`, {
+      method: "PUT",
+      body: JSON.stringify({ tags }),
+    }),
   createTag: (name: string, color: string) =>
     request<{ id: string }>("/tags", { method: "POST", body: JSON.stringify({ name, color }) }),
   getSettings: () => request<Settings>("/settings"),
@@ -114,7 +167,54 @@ export const api = {
   listModels: () => request<{ models: ModelInfo[] }>("/models"),
   downloadModel: (name: string) =>
     request<{ status: string }>("/models/download", { method: "POST", body: JSON.stringify({ name }) }),
+  listAnalyzeModels: () => request<{ models: string[] }>("/analyze/models"),
+  listEntities: (kind?: string) =>
+    request<{ entities: EntitySummary[] }>(`/entities${kind ? `?kind=${encodeURIComponent(kind)}` : ""}`),
+  getEntity: (kind: string, name: string) =>
+    request<EntityDetail>(`/entities/${kind}/${encodeURIComponent(name)}`),
+  getMood: (from?: string, to?: string) => {
+    const params = new URLSearchParams();
+    if (from) {
+      params.set("from", from);
+    }
+    if (to) {
+      params.set("to", to);
+    }
+    const query = params.toString();
+    return request<{ mood: MoodPoint[] }>(`/mood${query ? `?${query}` : ""}`);
+  },
+  listAttachments: (entryId: string) =>
+    request<{ attachments: Attachment[] }>(`/entries/${entryId}/attachments`),
+  deleteAttachment: (id: string) => request<void>(`/attachments/${id}`, { method: "DELETE" }),
 };
+
+// audioUrl builds a playable URL for the decrypted original audio. The token
+// goes in the query because an <audio> element cannot set headers.
+export function audioUrl(entryId: string): string {
+  return `/api/v1/entries/${entryId}/audio?token=${encodeURIComponent(getToken())}`;
+}
+
+export function attachmentUrl(id: string): string {
+  return `/api/v1/attachments/${id}?token=${encodeURIComponent(getToken())}`;
+}
+
+// uploadAttachment stores an image attached to an entry.
+export async function uploadAttachment(entryId: string, file: File): Promise<Attachment> {
+  const res = await fetch(`/api/v1/entries/${entryId}/attachments`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${getToken()}`,
+      "Content-Type": file.type || "application/octet-stream",
+    },
+    body: file,
+  });
+  const text = await res.text();
+  const body = text ? JSON.parse(text) : {};
+  if (!res.ok) {
+    throw new ApiError(body?.error?.message ?? res.statusText, res.status, body?.error?.code);
+  }
+  return body as Attachment;
+}
 
 async function sha256Hex(data: ArrayBuffer): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", data);

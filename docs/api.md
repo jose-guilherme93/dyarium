@@ -117,9 +117,14 @@ outras fontes (ex.: Telegram).
 ## Entries
 
 ### GET /api/v1/entries
-Lista entradas. Filtros: `status`, `tag`, `q` (busca textual na transcricao), `from`, `to`
-(intervalo de data), `mood`. Retorna resumos com id, titulo, status, duracao, data, tags e
-trecho inicial da transcricao.
+Lista entradas. Filtros: `person`, `place` e `theme` (entradas que mencionam a entidade,
+por nome, case-insensitive). Retorna resumos com id, titulo, status, duracao e data.
+
+### POST /api/v1/entries
+Cria uma nota escrita (sem audio). Corpo `{ "title": "..." }`. A entrada nasce com
+`source: "text"` e `status: "ready"`; o corpo e gravado como documento de nota (BlockNote),
+igual a parte escrita de uma nota de audio. Analises usam a transcricao quando existe e,
+caso contrario, o texto escrito da nota.
 
 ### GET /api/v1/entries/{id}
 Retorna a entrada completa: metadados, transcricao (com segmentos), analise, tags, notas e
@@ -143,13 +148,84 @@ Retorna a transcricao atual, com `segments` (inicio, fim, texto) e metadados do 
 ### GET /api/v1/entries/{id}/segments
 Lista os segmentos com paginacao, para leitura incremental.
 
+## Midia
+
+### GET /api/v1/entries/{id}/audio
+Transmite o audio original decifrado (para o player do dashboard). O plaintext nunca e
+gravado em disco. O `Content-Type` e o formato do arquivo enviado.
+
+### GET /api/v1/entries/{id}/attachments
+Lista os anexos de midia (imagens) da entrada.
+
+### POST /api/v1/entries/{id}/attachments
+Envia uma imagem. O corpo e os bytes da imagem e o `Content-Type` deve comecar com
+`image/`. Resposta 201 com `{ id, entry_id, kind, content_type, size_bytes, created_at }`.
+
+### GET /api/v1/attachments/{id}
+Transmite o anexo decifrado (usado para exibir imagens).
+
+### DELETE /api/v1/attachments/{id}
+Remove o anexo e o objeto cifrado. Resposta 204.
+
 ## Analise
 
 ### GET /api/v1/entries/{id}/analysis
-Retorna a analise: sentimento, emocoes, pessoas, lugares e resumo.
+Retorna a analise da entrada. Mantem os campos legados (`sentiment` numerico, `emotions`
+como mapa, `people`/`places` como lista de nomes, `summary`) e acrescenta `sentiment_label`
+e os campos ricos lidos de `data`:
+
+```json
+{
+  "model": "qwen3.8-flash",
+  "sentiment": 0.5,
+  "sentiment_label": "positivo",
+  "emotions": { "alegria": 0.8 },
+  "people": ["Maria"],
+  "places": ["Recife"],
+  "summary": "Falou da familia e da saudade de Recife.",
+  "emotions_detail": [{ "name": "alegria", "intensity": 0.8 }],
+  "people_detail": [{ "name": "Maria", "count": 3, "relation": "irma", "sentiment": 0.5 }],
+  "places_detail": [{ "name": "Recife", "count": 2 }],
+  "themes": [{ "name": "familia", "confidence": 0.9 }],
+  "key_moments": [{ "start_ms": 123000, "text": "..." }],
+  "questions": ["..."],
+  "decisions": ["..."],
+  "data": { "sentiment": { "score": 0.5, "label": "positivo" }, "...": "..." }
+}
+```
+- Entradas analisadas antes da analise rica nao tem `data`; nesse caso apenas os campos
+  legados sao retornados.
 
 ### POST /api/v1/entries/{id}/analyze
 Enfileira um job `analyze`. Retorna 409 se a analise estiver desligada na configuracao.
+O worker analisa a transcricao em janelas quando ela e longa, mescla os resultados e faz um
+meta-resumo quando ha mais de uma janela. Pessoas, lugares e temas viram entidades
+consultaveis.
+
+## Entidades e humor
+
+### GET /api/v1/entities
+Lista as entidades extraidas, ordenadas por mencoes. Filtro opcional `kind` (`person`,
+`place` ou `theme`; outro valor retorna 400).
+```json
+{ "entities": [ { "kind": "person", "name": "Maria", "entries": 2, "mentions": 5,
+  "sentiment": 0.4, "last_seen": "2026-10-10T21:05:00Z" } ] }
+```
+
+### GET /api/v1/entities/{kind}/{name}
+Retorna a entidade (mesmos campos) mais a lista de entradas que a mencionam. 404 se nao
+existir.
+```json
+{ "kind": "person", "name": "Maria", "entries": 2, "mentions": 5, "sentiment": 0.4,
+  "last_seen": "...", "entry_list": [ { "id": "en_...", "title": "...", "date": "...", "count": 3 } ] }
+```
+
+### GET /api/v1/mood
+Serie temporal do sentimento por dia. Filtros opcionais `from` e `to` (RFC 3339 ou
+`YYYY-MM-DD`; `to` inclui o dia inteiro).
+```json
+{ "mood": [ { "date": "2026-10-10", "sentiment": 0.4, "entries": 2 } ] }
+```
 
 ## Tags
 
@@ -185,7 +261,20 @@ Lista revisoes da nota.
 
 ### GET /api/v1/settings
 Retorna as configuracoes atuais (por exemplo, `trim_silence`, modelo de transcricao, modo
-de analise).
+de analise e `analysis_themes`). `analysis_themes` e a lista de temas preferidos separada
+por virgulas; quando vazia, o servidor devolve a lista padrao.
+
+`analyze_provider` escolhe o formato da API de analise:
+- `openai` (padrao): endpoint compativel com OpenAI (`/chat/completions`) autenticado por
+  chave (`analyze_api_key`).
+- `opencode`: conecta ao OpenCode local do usuario, reutilizando o login dele no OpenCode.
+  Nesse modo `analyze_base_url` e a URL do servidor do OpenCode, `analyze_api_key` e a senha
+  do servico (em `~/.config/opencode/service.json` ou a senha impressa por `opencode serve`)
+  e `analyze_model` usa o formato `provedor/modelo` (ex.: `opencode-go/qwen3.8-flash`). A
+  lista de modelos vem de `GET /analyze/models`.
+
+Nota de rede: quando o dyarium roda em container e o OpenCode roda no host, o container
+precisa alcancar a URL informada (o OpenCode escuta em `127.0.0.1` por padrao).
 
 ### PUT /api/v1/settings
 Atualiza configuracoes. Alterar `trim_silence` invalida o artefato derivado em cache

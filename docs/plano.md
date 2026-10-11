@@ -31,7 +31,10 @@ metricas e dashboard funcionam offline. Somente a analise de texto por IA e opci
 - Fila de jobs com leases, heartbeat, retries com backoff e idempotencia.
 - Transcricao local via `whisper-cli`, com chunking e checkpoints por trecho.
 - Metricas de audio via ffmpeg/ffprobe: duracao, loudness, silencios, normalizacao.
-- Analise de texto opcional: sentimento, emocoes, pessoas, lugares e resumo.
+- Analise de texto opcional: sentimento (com rotulo), emocoes, pessoas, lugares, temas,
+  momentos-chave, resumo, perguntas e decisoes. Transcricoes longas sao analisadas em
+  janelas com merge e meta-resumo. Pessoas, lugares e temas viram entidades consultaveis
+  e o sentimento alimenta uma linha do tempo de humor.
 - Dashboard SPA: lista, entrada aberta, painel de analise, humor, busca e configuracao.
 - Backup continuo opcional com Litestream para S3.
 - Modulo Telegram opcional, desligado por padrao, para envio de audio.

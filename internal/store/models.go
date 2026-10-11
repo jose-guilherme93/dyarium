@@ -137,15 +137,68 @@ type Tag struct {
 }
 
 // Analysis is the result of the optional text enrichment.
+// Emotions, People and Places keep the legacy JSON shape (map/array of names)
+// for backward compatibility; Data holds the full rich analysis.
 type Analysis struct {
+	ID             string
+	EntryID        string
+	Model          string
+	Sentiment      float64
+	SentimentLabel string
+	Emotions       string
+	People         string
+	Places         string
+	Summary        string
+	Raw            string
+	Data           string
+	CreatedAt      time.Time
+}
+
+// Entity kinds.
+const (
+	EntityPerson = "person"
+	EntityPlace  = "place"
+	EntityTheme  = "theme"
+)
+
+// Entity is a normalized person, place or theme extracted from analyses.
+type Entity struct {
 	ID        string
-	EntryID   string
-	Model     string
-	Sentiment float64
-	Emotions  string
-	People    string
-	Places    string
-	Summary   string
-	Raw       string
+	Kind      string
+	Name      string
 	CreatedAt time.Time
+}
+
+// EntityLink associates an entry with an entity and its per-entry metrics.
+type EntityLink struct {
+	Kind      string
+	Name      string
+	Count     int
+	Relation  string
+	Sentiment *float64
+}
+
+// EntitySummary aggregates one entity across entries.
+type EntitySummary struct {
+	Kind      string
+	Name      string
+	Entries   int
+	Mentions  int
+	Sentiment float64
+	LastSeen  time.Time
+}
+
+// EntityEntry is an entry that mentions an entity.
+type EntityEntry struct {
+	EntryID string
+	Title   string
+	Date    time.Time
+	Count   int
+}
+
+// MoodPoint is one day of the sentiment timeline.
+type MoodPoint struct {
+	Date      string
+	Sentiment float64
+	Entries   int
 }

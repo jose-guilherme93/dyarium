@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/jose-guilherme93/dyarium/internal/config"
+	"github.com/jose-guilherme93/dyarium/internal/crypto"
+	"github.com/jose-guilherme93/dyarium/internal/ingest"
 	"github.com/jose-guilherme93/dyarium/internal/store"
 )
 
@@ -32,7 +34,16 @@ func newTestServer(t *testing.T) *Server {
 		t.Fatalf("migrate: %v", err)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return New(Deps{Config: cfg, Store: st, Logger: logger, Version: Version{Version: "test"}})
+	key, err := crypto.ParseKey(cfg.MasterKey)
+	if err != nil {
+		t.Fatalf("parse key: %v", err)
+	}
+	ing := ingest.New(ingest.Config{
+		MaxUploadBytes:     cfg.MaxUploadBytes,
+		MaxDurationSeconds: cfg.MaxDurationSeconds,
+		AllowedFormats:     cfg.AllowedFormats,
+	}, st, key, t.TempDir(), nil)
+	return New(Deps{Config: cfg, Store: st, Logger: logger, Version: Version{Version: "test"}, Ingest: ing})
 }
 
 func TestHealthz(t *testing.T) {

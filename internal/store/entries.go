@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -185,15 +186,40 @@ func (s *Store) GetActiveEntryBySHA256(ctx context.Context, sha string) (Entry, 
 
 // ListEntries returns recent entries, newest first.
 func (s *Store) ListEntries(ctx context.Context, limit int) ([]Entry, error) {
+	return s.ListEntriesFiltered(ctx, limit, "", "", "")
+}
+
+// ListEntriesFiltered returns recent entries, newest first, optionally limited
+// to entries that mention the given person, place and/or theme (case
+// insensitive). Empty arguments mean no filter.
+func (s *Store) ListEntriesFiltered(ctx context.Context, limit int, person, place, theme string) ([]Entry, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, COALESCE(title,''), status, source, COALESCE(original_filename,''),
-			COALESCE(content_type,''), size_bytes, duration_seconds, COALESCE(sha256,''),
-			recorded_at, created_at, updated_at
-		FROM entries WHERE deleted_at IS NULL
-		ORDER BY created_at DESC LIMIT ?`, limit)
+	query := `
+		SELECT e.id, COALESCE(e.title,''), e.status, e.source, COALESCE(e.original_filename,''),
+			COALESCE(e.content_type,''), e.size_bytes, e.duration_seconds, COALESCE(e.sha256,''),
+			e.recorded_at, e.created_at, e.updated_at
+		FROM entries e WHERE e.deleted_at IS NULL`
+	var args []any
+	addFilter := func(kind, name string) {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return
+		}
+		query += ` AND e.id IN (
+			SELECT ee.entry_id FROM entry_entities ee
+			JOIN entities en ON en.id = ee.entity_id
+			WHERE en.kind = ? AND lower(en.name) = lower(?))`
+		args = append(args, kind, name)
+	}
+	addFilter(EntityPerson, person)
+	addFilter(EntityPlace, place)
+	addFilter(EntityTheme, theme)
+	query += ` ORDER BY e.created_at DESC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: list entries: %w", err)
 	}
