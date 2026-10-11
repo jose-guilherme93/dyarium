@@ -81,6 +81,20 @@ Resposta 201:
 - 422: integridade divergente (SHA-256), formato nao aceito ou duracao acima do limite.
 - 404: upload inexistente ou expirado.
 
+Dedupe por conteudo: como o audio e imutavel, o SHA-256 e a identidade da gravacao. Se ja
+existe uma `Entry` ativa (nao removida) com o mesmo hash, nenhuma entrada nova e criada: o
+objeto recem-recebido e descartado e a resposta devolve a entrada existente com
+`"duplicate": true`:
+```json
+{ "entry_id": "en_...", "status": "ready", "duplicate": true }
+```
+Nesse caso nao ha nova transcricao a enfileirar. Entradas removidas nao contam para o dedupe.
+
+Toda `Entry` criada tem titulo e dia no calendario: se `title` nao vier, o servidor usa o
+nome original do arquivo (sem diretorio e extensao) e, se ainda assim ficar vazio, a data e
+hora; se `recorded_at` nao vier, usa o instante da criacao. O mesmo vale para entradas de
+outras fontes (ex.: Telegram).
+
 ## Entries
 
 ### GET /api/v1/entries

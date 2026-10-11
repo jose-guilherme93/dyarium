@@ -40,6 +40,29 @@ export interface CreateUploadBody {
   sha256?: string;
   title?: string;
   recorded_at?: string;
+  /** Texto da nota associado ao audio (o servidor passa a usar depois). */
+  text?: string;
+}
+
+export interface CreateTextEntryBody {
+  client_key: string;
+  title: string;
+  recorded_at?: string;
+  text: string;
+}
+
+export interface CreateTextEntryResponse {
+  entry_id: string;
+  status: string;
+  /** true quando o servidor encontrou um conteudo identico (dedupe). */
+  duplicate?: boolean;
+}
+
+export interface UpdateEntryBody {
+  title?: string;
+  recorded_at?: string;
+  /** Texto da nota (o servidor passa a usar depois). */
+  text?: string;
 }
 
 export interface CreateUploadResponse {
@@ -65,6 +88,8 @@ export interface GetUploadResponse {
 export interface CompleteUploadResponse {
   entry_id: string;
   status: string;
+  /** true quando o servidor encontrou um audio identico (dedupe). */
+  duplicate?: boolean;
 }
 
 export interface TranscriptSegment {
@@ -86,6 +111,37 @@ export interface VersionResponse {
   version: string;
   commit: string;
   built_at: string;
+}
+
+/** Entrada do servidor (resumo da lista). */
+export interface ServerEntry {
+  id: string;
+  title: string;
+  status: string;
+  source: string;
+  original_filename: string;
+  content_type: string;
+  size_bytes: number;
+  duration_seconds: number;
+  recorded_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ServerAnalysis {
+  model: string;
+  sentiment: number;
+  emotions: Record<string, number> | null;
+  people: string[] | null;
+  places: string[] | null;
+  summary: string;
+}
+
+export interface ServerTag {
+  id: string;
+  name: string;
+  color: string;
+  entry_count: number;
 }
 
 function normalizeBaseUrl(baseUrl: string): string {
@@ -155,6 +211,34 @@ export class DyariumApi {
     return JSON.parse(await res.text());
   }
 
+  /**
+   * Cria uma nota somente texto. O servidor ainda nao aceita este endpoint; a
+   * chamada fica pronta no app para quando ele existir. O texto e tratado como
+   * se fosse a transcricao da nota, mas marcado como nota de texto.
+   */
+  async createTextEntry(body: CreateTextEntryBody): Promise<CreateTextEntryResponse> {
+    const res = await this.fetchImpl(this.url('/api/v1/entries'), {
+      method: 'POST',
+      headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    return JSON.parse(await res.text());
+  }
+
+  /**
+   * Atualiza titulo/data/texto de uma entrada. O servidor ja aceita titulo e
+   * data; o campo `text` sera usado quando a nota de texto for suportada.
+   */
+  async updateEntry(id: string, body: UpdateEntryBody): Promise<void> {
+    const res = await this.fetchImpl(this.url(`/api/v1/entries/${id}`), {
+      method: 'PATCH',
+      headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw await this.parseError(res);
+  }
+
   async putChunk(
     uploadId: string,
     offset: number,
@@ -198,5 +282,37 @@ export class DyariumApi {
     });
     if (!res.ok) throw await this.parseError(res);
     return JSON.parse(await res.text());
+  }
+
+  /** Lista de entradas do servidor (resumo). */
+  async listEntries(): Promise<ServerEntry[]> {
+    const res = await this.fetchImpl(this.url('/api/v1/entries'), {
+      method: 'GET',
+      headers: this.authHeaders(),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    const body = JSON.parse(await res.text()) as { entries?: ServerEntry[] };
+    return body.entries ?? [];
+  }
+
+  /** Analise de uma entrada. Lanca ApiError 404 quando ainda nao existe. */
+  async getAnalysis(entryId: string): Promise<ServerAnalysis> {
+    const res = await this.fetchImpl(this.url(`/api/v1/entries/${entryId}/analysis`), {
+      method: 'GET',
+      headers: this.authHeaders(),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    return JSON.parse(await res.text());
+  }
+
+  /** Tags do servidor, com contagem de entradas. */
+  async listTags(): Promise<ServerTag[]> {
+    const res = await this.fetchImpl(this.url('/api/v1/tags'), {
+      method: 'GET',
+      headers: this.authHeaders(),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    const body = JSON.parse(await res.text()) as { tags?: ServerTag[] };
+    return body.tags ?? [];
   }
 }

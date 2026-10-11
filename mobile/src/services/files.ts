@@ -49,6 +49,52 @@ export function outputFileUri(sessionId: string): string {
 }
 
 /**
+ * Copia o arquivo compartilhado para o diretorio da sessao, preservando os
+ * bytes (o audio original e imutavel). O `copy` nativo cobre o caso comum
+ * (uri file://); se falhar, cai para copia por bytes, que tambem funciona para
+ * uris content:// (SAF). Retorna o uri local e o tamanho em bytes.
+ */
+export async function copySharedAudio(
+  sourceUri: string,
+  sessionId: string,
+  extension: string,
+): Promise<{ uri: string; size: number }> {
+  const source = new File(sourceUri);
+  const suffix = extension.startsWith('.') ? extension : `.${extension}`;
+  const destination = new File(sessionDirectory(sessionId), `original${suffix}`);
+  if (destination.exists) destination.delete();
+  try {
+    await source.copy(destination);
+  } catch {
+    destination.create({ intermediates: true, overwrite: true });
+    const chunkSize = 1 << 20;
+    const input = source.open(FileMode.ReadOnly);
+    const output = destination.open(FileMode.Append);
+    try {
+      let chunk = input.readBytes(chunkSize);
+      while (chunk.length > 0) {
+        output.writeBytes(chunk);
+        chunk = input.readBytes(chunkSize);
+      }
+    } finally {
+      input.close();
+      output.close();
+    }
+  }
+  return { uri: destination.uri, size: destination.size };
+}
+
+/** Data de modificacao do arquivo em ms, quando disponivel. */
+export function fileModifiedMs(uri: string): number | undefined {
+  try {
+    const value = new File(uri).lastModified;
+    return typeof value === 'number' && value > 0 ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Le bytes nativamente via FileHandle, sem Blob. `File.slice()`/`File.write()`
  * criam Blobs, que o React Native rejeita ("Creating blobs from ArrayBuffer...").
  */
@@ -121,6 +167,7 @@ export async function storeSegment(
 }
 
 export function deleteSessionFiles(sessionId: string): void {
+  if (!sessionId) return;
   const dir = new Directory(root(), sessionId);
   if (dir.exists) dir.delete();
 }

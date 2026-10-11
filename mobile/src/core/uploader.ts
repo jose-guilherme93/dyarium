@@ -29,6 +29,8 @@ export interface UploadInput {
   localPath: string;
   sizeBytes: number;
   durationSeconds?: number;
+  /** Texto da nota associado ao audio (opcional). */
+  text?: string;
   /** Se ja existe um upload em andamento, informe id e offset para retomar. */
   uploadId?: string;
   offset?: number;
@@ -45,6 +47,8 @@ export interface UploadResult {
   uploadId: string;
   entryId: string;
   sizeBytes: number;
+  /** true quando o servidor encontraram um audio identico (dedupe). */
+  duplicate?: boolean;
 }
 
 export const DEFAULT_CHUNK_SIZE = 4 * 1024 * 1024;
@@ -69,6 +73,7 @@ export async function uploadRecording(
       duration_seconds: input.durationSeconds,
       title: input.title,
       recorded_at: input.recordedAt,
+      text: input.text,
     });
     uploadId = created.id;
     offset = created.offset ?? 0;
@@ -99,5 +104,5 @@ export async function uploadRecording(
   }
 
   const done = await deps.api.completeUpload(uploadId);
-  return { uploadId, entryId: done.entry_id, sizeBytes: total };
+  return { uploadId, entryId: done.entry_id, sizeBytes: total, duplicate: done.duplicate };
 }

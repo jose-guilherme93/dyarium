@@ -192,29 +192,41 @@ func (s *Service) Append(ctx context.Context, uploadID string, offset int64, bod
 	return offset + written, nil
 }
 
-// Complete validates size, format and SHA-256, then creates the entry.
-func (s *Service) Complete(ctx context.Context, uploadID string) (store.Entry, error) {
+// CompleteResult reports the outcome of Complete. Duplicate is true when an
+// active entry with the same sha256 already existed; Entry is then the
+// pre-existing entry and no new entry or object is kept.
+type CompleteResult struct {
+	Entry     store.Entry
+	Duplicate bool
+}
+
+// Complete validates size, format and SHA-256, then creates the entry. Because
+// the audio is immutable, its sha256 is its identity: when the hash matches an
+// existing active entry, no new entry is created. Instead the freshly received
+// ciphertext is discarded and the existing entry is returned as a duplicate, so
+// reimporting the same audio never duplicates it.
+func (s *Service) Complete(ctx context.Context, uploadID string) (CompleteResult, error) {
 	u, err := s.Get(ctx, uploadID)
 	if err != nil {
-		return store.Entry{}, err
+		return CompleteResult{}, err
 	}
 	if u.Status != "open" {
-		return store.Entry{}, newError(409, "not_open", "upload nao esta aberto")
+		return CompleteResult{}, newError(409, "not_open", "upload nao esta aberto")
 	}
 	if u.ReceivedBytes != u.SizeBytes {
-		return store.Entry{}, newError(422, "incomplete", "upload incompleto")
+		return CompleteResult{}, newError(422, "incomplete", "upload incompleto")
 	}
 
 	path := filepath.Join(s.dataDir, u.StorageKey)
 	f, err := os.Open(path)
 	if err != nil {
-		return store.Entry{}, fmt.Errorf("ingest: open object: %w", err)
+		return CompleteResult{}, fmt.Errorf("ingest: open object: %w", err)
 	}
 	defer f.Close()
 
 	tmp, err := os.CreateTemp("", "dyarium-verify-*.bin")
 	if err != nil {
-		return store.Entry{}, fmt.Errorf("ingest: temp: %w", err)
+		return CompleteResult{}, fmt.Errorf("ingest: temp: %w", err)
 	}
 	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath)
@@ -223,18 +235,35 @@ func (s *Service) Complete(ctx context.Context, uploadID string) (store.Entry, e
 	n, err := crypto.Decrypt(f, s.key, io.MultiWriter(tmp, hasher))
 	if err != nil {
 		tmp.Close()
-		return store.Entry{}, newError(422, "corrupt", "falha ao decifrar o upload")
+		return CompleteResult{}, newError(422, "corrupt", "falha ao decifrar o upload")
 	}
 	if err := tmp.Close(); err != nil {
-		return store.Entry{}, fmt.Errorf("ingest: close temp: %w", err)
+		return CompleteResult{}, fmt.Errorf("ingest: close temp: %w", err)
 	}
 
 	if n != u.SizeBytes {
-		return store.Entry{}, newError(422, "size_mismatch", "tamanho do conteudo diverge do esperado")
+		return CompleteResult{}, newError(422, "size_mismatch", "tamanho do conteudo diverge do esperado")
 	}
 	sum := hex.EncodeToString(hasher.Sum(nil))
 	if u.SHA256 != "" && sum != u.SHA256 {
-		return store.Entry{}, newError(422, "integrity", "sha256 do conteudo diverge do informado")
+		return CompleteResult{}, newError(422, "integrity", "sha256 do conteudo diverge do informado")
+	}
+
+	// Dedupe: se ja existe uma entrada ativa com o mesmo conteudo, nao cria
+	// outra; descarta o objeto recem-recebido e devolve a entrada existente.
+	if existing, ok, err := s.store.GetActiveEntryBySHA256(ctx, sum); err != nil {
+		return CompleteResult{}, err
+	} else if ok {
+		if err := f.Close(); err != nil {
+			return CompleteResult{}, fmt.Errorf("ingest: close object: %w", err)
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return CompleteResult{}, fmt.Errorf("ingest: remove duplicate object: %w", err)
+		}
+		if err := s.store.SetUploadStatus(ctx, uploadID, "duplicate"); err != nil {
+			return CompleteResult{}, err
+		}
+		return CompleteResult{Entry: existing, Duplicate: true}, nil
 	}
 
 	var durationSeconds float64
@@ -243,15 +272,23 @@ func (s *Service) Complete(ctx context.Context, uploadID string) (store.Entry, e
 		if err == nil {
 			durationSeconds = d
 			if s.cfg.MaxDurationSeconds > 0 && d > float64(s.cfg.MaxDurationSeconds) {
-				return store.Entry{}, newError(422, "too_long", "duracao excede o maximo permitido")
+				return CompleteResult{}, newError(422, "too_long", "duracao excede o maximo permitido")
 			}
 		}
 	}
 
 	now := time.Now().UTC()
+	title := strings.TrimSpace(u.Title)
+	if title == "" {
+		title = defaultTitle(u.Filename, now)
+	}
+	recordedAt := u.RecordedAt
+	if recordedAt == nil {
+		recordedAt = &now
+	}
 	entry := store.Entry{
 		ID:               id.New(),
-		Title:            u.Title,
+		Title:            title,
 		Status:           store.EntryStored,
 		Source:           "upload",
 		OriginalFilename: u.Filename,
@@ -259,12 +296,12 @@ func (s *Service) Complete(ctx context.Context, uploadID string) (store.Entry, e
 		SizeBytes:        u.SizeBytes,
 		DurationSeconds:  durationSeconds,
 		SHA256:           sum,
-		RecordedAt:       u.RecordedAt,
+		RecordedAt:       recordedAt,
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}
 	if err := s.store.CreateEntry(ctx, entry); err != nil {
-		return store.Entry{}, err
+		return CompleteResult{}, err
 	}
 	attachment := store.Attachment{
 		ID:          id.New(),
@@ -278,12 +315,12 @@ func (s *Service) Complete(ctx context.Context, uploadID string) (store.Entry, e
 		CreatedAt:   now,
 	}
 	if err := s.store.CreateAttachment(ctx, attachment); err != nil {
-		return store.Entry{}, err
+		return CompleteResult{}, err
 	}
 	if err := s.store.SetUploadStatus(ctx, uploadID, "completed"); err != nil {
-		return store.Entry{}, err
+		return CompleteResult{}, err
 	}
-	return entry, nil
+	return CompleteResult{Entry: entry}, nil
 }
 
 // DecryptToTemp decrypts the original audio of an entry into a restricted temp
@@ -347,12 +384,14 @@ func (s *Service) IngestStream(ctx context.Context, source, filename, contentTyp
 	now := time.Now().UTC()
 	entry := store.Entry{
 		ID:               entryID,
+		Title:            defaultTitle(filename, now),
 		Status:           store.EntryStored,
 		Source:           source,
 		OriginalFilename: filename,
 		ContentType:      contentType,
 		SizeBytes:        size,
 		SHA256:           sum,
+		RecordedAt:       &now,
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}
@@ -390,6 +429,17 @@ func (s *Service) allowsFormat(format string) bool {
 
 func formatOf(filename string) string {
 	return strings.ToLower(strings.TrimPrefix(filepath.Ext(filename), "."))
+}
+
+// defaultTitle derives a non-empty title for an entry: the original file name
+// (without directory and extension) when available, otherwise the recorded day
+// and time. Toda entrada precisa de um titulo e de um dia no calendario.
+func defaultTitle(filename string, at time.Time) string {
+	base := strings.TrimSpace(strings.TrimSuffix(filepath.Base(filename), filepath.Ext(filename)))
+	if base != "" {
+		return base
+	}
+	return at.Format("02/01/2006 15:04")
 }
 
 // Key exposes the master key for the transcription pipeline.

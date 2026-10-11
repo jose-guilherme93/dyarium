@@ -1,14 +1,48 @@
 # dyarium mobile
 
-App Android de captura do dyarium (React Native + Expo). Grava notas de voz com
-a tela bloqueada, guarda local, enfileira e envia para o servidor self-hosted.
+App Android de captura do dyarium (React Native + Expo). E um app de **notas de
+audio e de texto**: grava notas de voz com a tela bloqueada, escreve notas de
+texto, guarda local, enfileira e envia para o servidor self-hosted.
 
 ## O que ele faz
 
+- Tela inicial com as notas em **lista separada por ano** (mais novo no topo),
+  botao **+** para criar uma nota e **Opcoes** (engrenagem). Notas de texto nao
+  mostram player; as de audio mostram. Nota sincronizada aparece com um **icone de
+  nuvem**. Cada card tem um menu de **tres pontinhos** (arquivar/apagar) e da para
+  **arrastar para o lado** para apagar ou arquivar (configuravel nas Opcoes).
+- **Tela da nota** (`/note/[id]`): sempre editavel (titulo e texto), com
+  **autosave** (sem botao de salvar), **editor rico** (negrito, italico, lista
+  renderizados de verdade via WebView), **contador de palavras** e **gravacao de
+  audio** dentro da nota. Enter no titulo desce para o corpo. Nota so de texto e
+  enviada como conteudo textual; com audio, o audio sobe e o texto vai junto. Ao
+  sair, a nota e enviada (rascunho com conteudo) ou sincronizada (nota ja enviada).
+  O editor rico exige o `react-native-webview` (novo development build); ate o
+  rebuild, cai para um editor simples com marcadores.
 - Grava em **AAC ADTS** (48 kHz mono ~128 kbps), em **segmentos de 60 s**, com
   foreground service do `expo-audio` (continua gravando com a tela bloqueada).
 - Concatena os segmentos e enfileira automaticamente ao parar.
 - Envia por upload resumivel e **idempotente** (`client_key` por gravacao).
+- **Importa audios compartilhados** por outros apps (share sheet do Android): ate 50 por
+  vez, com tela de revisao (titulo, **ano** e **ordem dia/mes** do lote, data em DD/MM/AAAA
+  em 24h ou AM/PM, formato, duracao e playback) antes de enviar. O ano do lote cobre nomes
+  sem ano; a ordem pode ser invertida. O audio original e preservado; reimportar o mesmo
+  conteudo nao duplica a entrada (dedupe por SHA-256 no servidor).
+- **Status de sincronizacao** no cabecalho (nuvem discreta): abre a tela de Sincronizacao com
+  o que esta na fila/falhou e "Enviar agora". O envio continua em segundo plano
+  (WorkManager) quando o app fica em segundo plano.
+- **Painel** (nas Opcoes): resumo, humor (sentimento), emocoes, pessoas, lugares, tags e
+  status, puxados do servidor.
+- **Busca local** e **pull-to-refresh** na lista; **compartilhar** o texto da nota;
+  **notificacao** quando a transcricao fica pronta.
+- **Armazenamento** (nas Opcoes): uso no aparelho e liberar espaco (remove o audio local de
+  notas ja sincronizadas; o audio continua no servidor). Migracoes do banco versionadas e
+  trava de fila para nao ter dois workers ao mesmo tempo.
+- A biblioteca organiza as notas **por ano** (mais novo no topo), pela data do evento, para
+  que notas antigas importadas apareçam no ano a que pertencem.
+- **Notas somente texto** entram na mesma fila e sao enviadas como conteudo textual (o texto
+  e tratado como se fosse a transcricao, marcado como nota de texto). O endpoint do servidor
+  para isso ainda sera implementado; ate la a nota fica na fila e reenta com backoff.
 - Biblioteca local com estado, reproducao, retry e apagar.
 - Tela de recuperacao para gravacao interrompida (Enviar / Descartar / Continuar).
 

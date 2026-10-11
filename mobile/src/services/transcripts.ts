@@ -7,6 +7,7 @@
 import { ApiError, DyariumApi, type FetchLike } from '@/core/api';
 import { needsTranscript, type Recording } from '@/core/types';
 
+import { notify } from './notifications';
 import { listRecordings, upsertRecording } from './db';
 import { loadServerConfig } from './secure';
 import { emitRecording } from './uploaderLoop';
@@ -36,6 +37,8 @@ export async function fetchTranscriptsOnce(): Promise<void> {
         };
         await upsertRecording(updated);
         emitRecording(updated);
+        // Aviso generico (sem conteudo sensivel).
+        void notify('Transcricao pronta', 'Uma nota sua foi transcrita.');
       } catch (error) {
         if (error instanceof ApiError && error.status === 404) {
           // ainda transcrevendo no servidor; tenta de novo no proximo ciclo

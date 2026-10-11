@@ -104,9 +104,20 @@ func (s *Server) handlePutUpload(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCompleteUpload(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	entry, err := s.deps.Ingest.Complete(ctx, r.PathValue("id"))
+	res, err := s.deps.Ingest.Complete(ctx, r.PathValue("id"))
 	if err != nil {
 		s.writeIngestError(w, err)
+		return
+	}
+	entry := res.Entry
+	if res.Duplicate {
+		// Conteudo ja existia: nenhuma entrada nova foi criada. O app vincula o
+		// item local a entrada existente e nao ha transcricao nova a enfileirar.
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"entry_id":  entry.ID,
+			"status":    entry.Status,
+			"duplicate": true,
+		})
 		return
 	}
 	if _, err := s.deps.Queue.Enqueue(ctx, jobs.TypeTranscribe, "transcribe:"+entry.ID, jobs.TranscribePayload{EntryID: entry.ID}); err != nil {

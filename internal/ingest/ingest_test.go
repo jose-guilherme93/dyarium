@@ -84,14 +84,17 @@ func TestResumableUploadLifecycle(t *testing.T) {
 		t.Fatal("plaintext found in stored object")
 	}
 
-	entry, err := svc.Complete(ctx, up.ID)
+	res, err := svc.Complete(ctx, up.ID)
 	if err != nil {
 		t.Fatalf("complete: %v", err)
 	}
-	if entry.Status != store.EntryStored || entry.SHA256 != sha256hex(plain) {
-		t.Fatalf("unexpected entry: %+v", entry)
+	if res.Duplicate {
+		t.Fatalf("primeira submissao nao deveria ser duplicata")
 	}
-	att, err := st.GetAttachmentByKind(ctx, entry.ID, store.AttachmentOriginal)
+	if res.Entry.Status != store.EntryStored || res.Entry.SHA256 != sha256hex(plain) {
+		t.Fatalf("unexpected entry: %+v", res.Entry)
+	}
+	att, err := st.GetAttachmentByKind(ctx, res.Entry.ID, store.AttachmentOriginal)
 	if err != nil {
 		t.Fatalf("attachment: %v", err)
 	}
@@ -142,13 +145,13 @@ func TestStartWithoutSHA256(t *testing.T) {
 	if _, err := svc.Append(ctx, up.ID, 0, bytes.NewReader(plain)); err != nil {
 		t.Fatalf("append: %v", err)
 	}
-	entry, err := svc.Complete(ctx, up.ID)
+	res, err := svc.Complete(ctx, up.ID)
 	if err != nil {
 		t.Fatalf("complete: %v", err)
 	}
 	// Sem sha informado, o servidor grava o hash recomputado.
-	if entry.SHA256 != sha256hex(plain) {
-		t.Fatalf("sha256 = %s, want %s", entry.SHA256, sha256hex(plain))
+	if res.Entry.SHA256 != sha256hex(plain) {
+		t.Fatalf("sha256 = %s, want %s", res.Entry.SHA256, sha256hex(plain))
 	}
 }
 
@@ -189,18 +192,18 @@ func TestCompleteAppliesClientMetadata(t *testing.T) {
 	if _, err := svc.Append(ctx, up.ID, 0, bytes.NewReader(plain)); err != nil {
 		t.Fatalf("append: %v", err)
 	}
-	entry, err := svc.Complete(ctx, up.ID)
+	res, err := svc.Complete(ctx, up.ID)
 	if err != nil {
 		t.Fatalf("complete: %v", err)
 	}
-	if entry.Title != "10/10/2026 18:05" {
-		t.Fatalf("title = %q", entry.Title)
+	if res.Entry.Title != "10/10/2026 18:05" {
+		t.Fatalf("title = %q", res.Entry.Title)
 	}
-	if entry.RecordedAt == nil || !entry.RecordedAt.Equal(recorded) {
-		t.Fatalf("recorded_at = %v", entry.RecordedAt)
+	if res.Entry.RecordedAt == nil || !res.Entry.RecordedAt.Equal(recorded) {
+		t.Fatalf("recorded_at = %v", res.Entry.RecordedAt)
 	}
 	// Confirma a persistencia.
-	stored, err := st.GetEntry(ctx, entry.ID)
+	stored, err := st.GetEntry(ctx, res.Entry.ID)
 	if err != nil {
 		t.Fatalf("get entry: %v", err)
 	}
@@ -209,5 +212,154 @@ func TestCompleteAppliesClientMetadata(t *testing.T) {
 	}
 	if stored.RecordedAt == nil || !stored.RecordedAt.Equal(recorded) {
 		t.Fatalf("recorded_at persistido = %v", stored.RecordedAt)
+	}
+}
+
+func TestCompleteDeduplicatesBySHA256(t *testing.T) {
+	svc, st, dir := newService(t)
+	ctx := context.Background()
+
+	plain := bytes.Repeat([]byte("audio-imutavel-"), 2000)
+
+	upload := func() store.Upload {
+		up, err := svc.Start(ctx, Meta{Filename: "a.wav", SizeBytes: int64(len(plain))})
+		if err != nil {
+			t.Fatalf("start: %v", err)
+		}
+		if _, err := svc.Append(ctx, up.ID, 0, bytes.NewReader(plain)); err != nil {
+			t.Fatalf("append: %v", err)
+		}
+		return up
+	}
+
+	first := upload()
+	firstRes, err := svc.Complete(ctx, first.ID)
+	if err != nil {
+		t.Fatalf("complete 1: %v", err)
+	}
+	if firstRes.Duplicate {
+		t.Fatal("primeira submissao nao deveria ser duplicata")
+	}
+
+	// Reimportar o mesmo conteudo nao cria entrada nova: o sha256 e a identidade.
+	second := upload()
+	secondRes, err := svc.Complete(ctx, second.ID)
+	if err != nil {
+		t.Fatalf("complete 2: %v", err)
+	}
+	if !secondRes.Duplicate {
+		t.Fatal("segunda submissao deveria ser duplicata")
+	}
+	if secondRes.Entry.ID != firstRes.Entry.ID {
+		t.Fatalf("entrada = %s, want %s", secondRes.Entry.ID, firstRes.Entry.ID)
+	}
+
+	// O objeto cifrado recem-recebido foi descartado; o original permanece.
+	if _, err := os.Stat(filepath.Join(dir, second.StorageKey)); !os.IsNotExist(err) {
+		t.Fatalf("objeto duplicado deveria ter sido removido: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, first.StorageKey)); err != nil {
+		t.Fatalf("objeto original deveria permanecer: %v", err)
+	}
+
+	entries, err := st.ListEntries(ctx, 10)
+	if err != nil {
+		t.Fatalf("list entries: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(entries))
+	}
+}
+
+func TestCompleteDoesNotDeduplicateAgainstDeletedEntry(t *testing.T) {
+	svc, st, _ := newService(t)
+	ctx := context.Background()
+
+	plain := []byte("conteudo que sera reimportado depois de removido")
+
+	upload := func() store.Upload {
+		up, err := svc.Start(ctx, Meta{Filename: "a.wav", SizeBytes: int64(len(plain))})
+		if err != nil {
+			t.Fatalf("start: %v", err)
+		}
+		if _, err := svc.Append(ctx, up.ID, 0, bytes.NewReader(plain)); err != nil {
+			t.Fatalf("append: %v", err)
+		}
+		return up
+	}
+
+	first, err := svc.Complete(ctx, upload().ID)
+	if err != nil {
+		t.Fatalf("complete 1: %v", err)
+	}
+	if err := st.SoftDeleteEntry(ctx, first.Entry.ID); err != nil {
+		t.Fatalf("soft delete: %v", err)
+	}
+
+	second, err := svc.Complete(ctx, upload().ID)
+	if err != nil {
+		t.Fatalf("complete 2: %v", err)
+	}
+	if second.Duplicate {
+		t.Fatal("entrada removida nao deve contar como duplicata")
+	}
+	if second.Entry.ID == first.Entry.ID {
+		t.Fatal("deveria criar uma entrada nova")
+	}
+}
+
+func TestCompleteDefaultsTitleAndRecordedAt(t *testing.T) {
+	svc, st, _ := newService(t)
+	ctx := context.Background()
+
+	plain := []byte("audio sem titulo nem data do cliente")
+	up, err := svc.Start(ctx, Meta{Filename: "nota-de-voz.wav", SizeBytes: int64(len(plain))})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if _, err := svc.Append(ctx, up.ID, 0, bytes.NewReader(plain)); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	res, err := svc.Complete(ctx, up.ID)
+	if err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	if res.Entry.Title != "nota-de-voz" {
+		t.Fatalf("title = %q, want %q", res.Entry.Title, "nota-de-voz")
+	}
+	if res.Entry.RecordedAt == nil {
+		t.Fatal("recorded_at deveria ser preenchido por padrao")
+	}
+
+	stored, err := st.GetEntry(ctx, res.Entry.ID)
+	if err != nil {
+		t.Fatalf("get entry: %v", err)
+	}
+	if stored.Title != "nota-de-voz" || stored.RecordedAt == nil {
+		t.Fatalf("persistido: title=%q recorded_at=%v", stored.Title, stored.RecordedAt)
+	}
+}
+
+func TestIngestStreamDefaultsTitleAndRecordedAt(t *testing.T) {
+	svc, st, _ := newService(t)
+	ctx := context.Background()
+
+	entry, err := svc.IngestStream(ctx, "telegram", "voz.ogg", "audio/ogg", bytes.NewReader([]byte("voz do telegram")))
+	if err != nil {
+		t.Fatalf("ingest stream: %v", err)
+	}
+	if entry.Title != "voz" {
+		t.Fatalf("title = %q, want %q", entry.Title, "voz")
+	}
+	if entry.RecordedAt == nil {
+		t.Fatal("recorded_at deveria ser preenchido por padrao")
+	}
+
+	stored, err := st.GetEntry(ctx, entry.ID)
+	if err != nil {
+		t.Fatalf("get entry: %v", err)
+	}
+	if stored.Title != "voz" || stored.RecordedAt == nil {
+		t.Fatalf("persistido: title=%q recorded_at=%v", stored.Title, stored.RecordedAt)
 	}
 }

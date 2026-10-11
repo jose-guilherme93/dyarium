@@ -1,12 +1,15 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { AppState } from 'react-native';
 
+import { newId } from '@/core/id';
+import { buildDraftNote, buildTextNote, noteHasContent } from '@/core/note';
 import { markQueued } from '@/core/queue';
 import { isUploadable, needsTranscript, type Recording } from '@/core/types';
-import { deleteRecordingRow, listRecordings, upsertRecording } from '@/services/db';
+import { deleteRecordingRow, getRecording, listRecordings, upsertRecording } from '@/services/db';
 import { deleteSessionFiles } from '@/services/files';
+import { syncNote } from '@/services/noteSync';
 import { fetchTranscriptsOnce } from '@/services/transcripts';
-import { observeUploads, runUploadQueueOnce } from '@/services/uploaderLoop';
+import { emitRecording, observeUploads, runUploadQueueOnce } from '@/services/uploaderLoop';
 
 import { useSettings } from './SettingsContext';
 
@@ -16,6 +19,21 @@ interface LibraryValue {
   refresh(): Promise<void>;
   /** Coloca uma gravacao recem-finalizada na fila e dispara o envio. */
   enqueue(recording: Recording): Promise<void>;
+  /** Cria uma nota somente texto e a coloca na fila. */
+  createTextNote(input: { title: string; text: string; recordedAt?: string }): Promise<Recording>;
+  /** Cria um rascunho vazio de nota (nao entra na fila ainda). */
+  createDraftNote(): Promise<Recording>;
+  /** Salva titulo/texto da nota (autosave). */
+  updateNote(id: string, patch: { title?: string; text?: string }): Promise<void>;
+  /** Anexa um audio gravado a uma nota. */
+  attachAudio(id: string, audio: Recording): Promise<void>;
+  /** Ao sair da nota: envia rascunho com conteudo (ou descarta vazio) e sincroniza editados. */
+  submitNote(id: string): Promise<void>;
+  /** Arquiva/desarquiva a nota (sai da lista principal). */
+  archiveNote(id: string): Promise<void>;
+  unarchiveNote(id: string): Promise<void>;
+  /** Remove o audio local de notas ja sincronizadas (o audio continua no servidor). */
+  freeSyncedAudio(): Promise<number>;
   retry(id: string): Promise<void>;
   remove(id: string): Promise<void>;
   /** Dispara a fila agora (envio manual). */
@@ -123,6 +141,58 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     [kick],
   );
 
+  const createTextNote = useCallback(
+    async (input: { title: string; text: string; recordedAt?: string }) => {
+      const note = buildTextNote({
+        id: newId('note_'),
+        title: input.title,
+        text: input.text,
+        recordedAt: input.recordedAt,
+        now: new Date(),
+      });
+      await upsertRecording(note);
+      setRecordings((prev) => [note, ...prev]);
+      kick();
+      return note;
+    },
+    [kick],
+  );
+
+  const createDraftNote = useCallback(async () => {
+    const note = buildDraftNote({ id: newId('note_'), now: new Date() });
+    await upsertRecording(note);
+    setRecordings((prev) => [note, ...prev]);
+    return note;
+  }, []);
+
+  const updateNote = useCallback(
+    async (id: string, patch: { title?: string; text?: string }) => {
+      const current = await getRecording(id);
+      if (!current) return;
+      const updated: Recording = { ...current, ...patch, updatedAt: new Date().toISOString() };
+      await upsertRecording(updated);
+      setRecordings((prev) => prev.map((r) => (r.id === id ? updated : r)));
+    },
+    [],
+  );
+
+  const attachAudio = useCallback(async (id: string, audio: Recording) => {
+    const current = await getRecording(id);
+    if (!current) return;
+    const updated: Recording = {
+      ...current,
+      dir: audio.dir,
+      filePath: audio.filePath,
+      segmentCount: audio.segmentCount,
+      durationMs: audio.durationMs,
+      sizeBytes: audio.sizeBytes,
+      source: 'microphone',
+      updatedAt: new Date().toISOString(),
+    };
+    await upsertRecording(updated);
+    setRecordings((prev) => prev.map((r) => (r.id === id ? updated : r)));
+  }, []);
+
   const retry = useCallback(
     async (id: string) => {
       const current = recordings.find((r) => r.id === id);
@@ -148,9 +218,100 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     [recordings],
   );
 
+  const submitNote = useCallback(
+    async (id: string) => {
+      const current = (await getRecording(id)) ?? recordings.find((r) => r.id === id);
+      if (!current) return;
+      if (current.status === 'draft') {
+        if (!noteHasContent(current)) {
+          await remove(id);
+          return;
+        }
+        // Nota so de texto: o texto ja e o conteudo (nao ha transcricao a esperar).
+        const ready: Recording = current.filePath
+          ? current
+          : { ...current, transcript: current.text, transcriptStatus: 'ready' };
+        await enqueue(ready);
+        return;
+      }
+      if (current.status === 'completed') {
+        void syncNote(current).catch(() => undefined);
+      }
+    },
+    [recordings, enqueue, remove],
+  );
+
+  const setArchived = useCallback(async (id: string, archived: boolean) => {
+    const current = await getRecording(id);
+    if (!current) return;
+    const updated: Recording = {
+      ...current,
+      archived: archived || undefined,
+      updatedAt: new Date().toISOString(),
+    };
+    await upsertRecording(updated);
+    setRecordings((prev) => prev.map((r) => (r.id === id ? updated : r)));
+  }, []);
+
+  const archiveNote = useCallback((id: string) => setArchived(id, true), [setArchived]);
+  const unarchiveNote = useCallback((id: string) => setArchived(id, false), [setArchived]);
+
+  const freeSyncedAudio = useCallback(async () => {
+    const list = await listRecordings();
+    let freed = 0;
+    for (const recording of list) {
+      if (recording.status !== 'completed' || !recording.filePath) continue;
+      deleteSessionFiles(recording.id);
+      const updated: Recording = {
+        ...recording,
+        filePath: undefined,
+        dir: '',
+        sizeBytes: undefined,
+        updatedAt: new Date().toISOString(),
+      };
+      await upsertRecording(updated);
+      emitRecording(updated);
+      freed += 1;
+    }
+    await refresh();
+    return freed;
+  }, [refresh]);
+
   const value = useMemo<LibraryValue>(
-    () => ({ recordings, ready, refresh, enqueue, retry, remove, kick }),
-    [recordings, ready, refresh, enqueue, retry, remove, kick],
+    () => ({
+      recordings,
+      ready,
+      refresh,
+      enqueue,
+      createTextNote,
+      createDraftNote,
+      updateNote,
+      attachAudio,
+      submitNote,
+      archiveNote,
+      unarchiveNote,
+      freeSyncedAudio,
+      retry,
+      remove,
+      kick,
+    }),
+    [
+      recordings,
+      ready,
+      refresh,
+      enqueue,
+      createTextNote,
+      createDraftNote,
+      updateNote,
+      attachAudio,
+      submitNote,
+      archiveNote,
+      unarchiveNote,
+      freeSyncedAudio,
+      retry,
+      remove,
+      kick,
+    ],
   );
 
   return <LibraryContext.Provider value={value}>{children}</LibraryContext.Provider>;
