@@ -1,0 +1,29 @@
+# Override opcional para o dev: roda a API e o web na rede do host.
+#
+# Motivo: o firewall do Docker bloqueia o acesso do container ao host por padrao,
+# entao o dyarium (em container) nao alcanca o OpenCode local do usuario em
+# 127.0.0.1. Com network_mode: host, a API roda na rede do host e fala com o
+# OpenCode direto.
+#
+# Uso:
+#   docker compose -f deploy/compose.dev.yml -f deploy/compose.dev.hostnet.yml up --build
+# ou:
+#   make dev-opencode            # web na 5173
+#   make dev-opencode WEB_PORT=15173
+#
+# Observacoes:
+# - A API passa a escutar em :8080 do host (DIARY_HTTP_ADDR) e o web na porta
+#   informada (DIARY_WEB_PORT). As portas publicadas do arquivo base sao
+#   ignoradas sob network_mode: host.
+# - Configure a analise com o provedor "opencode local", URL
+#   http://127.0.0.1:49374 e a senha de ~/.config/opencode/service.json.
+
+services:
+  api:
+    network_mode: host
+
+  web:
+    network_mode: host
+    environment:
+      VITE_API_URL: "http://127.0.0.1:8080"
+    command: sh -c "npm install -g pnpm@12.6.0 && pnpm install && pnpm dev --host 0.0.0.0 --port ${DIARY_WEB_PORT:-5173}"

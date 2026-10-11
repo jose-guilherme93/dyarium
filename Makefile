@@ -25,13 +25,16 @@ COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
 
-.PHONY: help dev down build test test-go test-web lint lint-go lint-web fmt bench-transcricao models tailscale tailscale-off clean mobile-dev mobile-test mobile-lint
+.PHONY: help dev dev-opencode down build test test-go test-web lint lint-go lint-web fmt bench-transcricao models tailscale tailscale-off clean mobile-dev mobile-test mobile-lint
 
 help: ## Lista os alvos disponiveis
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
 
 dev: ## Sobe os containers de desenvolvimento com recarga automatica
 	DIARY_API_PORT=$(API_PORT) DIARY_WEB_PORT=$(WEB_PORT) $(COMPOSE) -f $(DEV_FILE) up --build
+
+dev-opencode: ## Dev na rede do host (permite usar o opencode local na analise)
+	DIARY_WEB_PORT=$(WEB_PORT) $(COMPOSE) -f $(DEV_FILE) -f deploy/compose.dev.hostnet.yml up --build
 
 down: ## Derruba os containers de desenvolvimento
 	DIARY_API_PORT=$(API_PORT) DIARY_WEB_PORT=$(WEB_PORT) $(COMPOSE) -f $(DEV_FILE) down
