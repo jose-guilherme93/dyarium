@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ---- Frontend: build the dashboard static assets -------------------------
-FROM node:22-bookworm AS web
+FROM node:25-bookworm AS web
 WORKDIR /web
 RUN npm install -g pnpm@12.6.0
 COPY web/package.json web/pnpm-lock.yaml ./
