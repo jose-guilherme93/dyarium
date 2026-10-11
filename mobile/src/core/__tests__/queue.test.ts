@@ -100,4 +100,8 @@ describe('pickNextToUpload', () => {
     const notDue = base({ id: 'x', status: 'failed', nextAttemptAt: '2026-10-11T00:00:00.000Z' });
     expect(pickNextToUpload([notDue], NOW)).toBeUndefined();
   });
+
+  it('ignora rascunhos', () => {
+    expect(pickNextToUpload([base({ id: 'd', status: 'draft' })], NOW)).toBeUndefined();
+  });
 });

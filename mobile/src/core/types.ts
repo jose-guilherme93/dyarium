@@ -4,6 +4,7 @@
  */
 
 export type RecordingStatus =
+  | 'draft' // nota nova, ainda sem conteudo; nao entra na fila
   | 'recording' // sessao ativa, gravando segmentos
   | 'interrupted' // processo morreu no meio; aguarda decisao do usuario
   | 'recorded' // segmentos concatenados, prontos para enfileirar
@@ -48,20 +49,24 @@ export interface Recording {
   transcriptStatus?: TranscriptStatus;
   /** Origem do audio (default: gravado no microfone). */
   source?: RecordingSource;
+  /** Texto da nota (nota de texto ou anotacao de uma nota de audio). */
+  text?: string;
   /** Content-Type usado no upload (default audio/aac para gravacoes). */
   contentType?: string;
   /** Nome enviado ao servidor; a extensao define o formato aceito. */
   fileName?: string;
   /** Marcado quando o servidor encontrou um audio identico (dedupe). */
   duplicate?: boolean;
+  /** Nota arquivada: sai da lista principal, mas nao e apagada. */
+  archived?: boolean;
   createdAt: string;
   updatedAt: string;
 }
 
 export type TranscriptStatus = 'pending' | 'ready' | 'failed';
 
-/** De onde veio o audio: gravado no app ou importado de outro app. */
-export type RecordingSource = 'microphone' | 'share';
+/** De onde veio a nota: gravada no app, importada de outro app ou escrita. */
+export type RecordingSource = 'microphone' | 'share' | 'text';
 
 /** Configuracao do servidor (o token nunca e persistido fora do SecureStore). */
 export interface ServerConfig {
@@ -83,4 +88,9 @@ export function isUploadable(r: Recording): boolean {
 /** Gravacao enviada que ainda nao tem transcricao pronta. */
 export function needsTranscript(r: Recording): boolean {
   return Boolean(r.entryId) && r.status === 'completed' && r.transcriptStatus !== 'ready';
+}
+
+/** Nota somente texto (sem audio): o texto e enviado como conteudo. */
+export function isTextNote(r: Recording): boolean {
+  return r.source === 'text' && !r.filePath;
 }

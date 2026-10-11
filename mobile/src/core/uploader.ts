@@ -29,6 +29,8 @@ export interface UploadInput {
   localPath: string;
   sizeBytes: number;
   durationSeconds?: number;
+  /** Texto da nota associado ao audio (opcional). */
+  text?: string;
   /** Se ja existe um upload em andamento, informe id e offset para retomar. */
   uploadId?: string;
   offset?: number;
@@ -71,6 +73,7 @@ export async function uploadRecording(
       duration_seconds: input.durationSeconds,
       title: input.title,
       recorded_at: input.recordedAt,
+      text: input.text,
     });
     uploadId = created.id;
     offset = created.offset ?? 0;

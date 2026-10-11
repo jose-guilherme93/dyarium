@@ -167,6 +167,7 @@ export async function storeSegment(
 }
 
 export function deleteSessionFiles(sessionId: string): void {
+  if (!sessionId) return;
   const dir = new Directory(root(), sessionId);
   if (dir.exists) dir.delete();
 }
