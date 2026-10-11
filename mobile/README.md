@@ -1,10 +1,22 @@
 # dyarium mobile
 
-App Android de captura do dyarium (React Native + Expo). Grava notas de voz com
-a tela bloqueada, guarda local, enfileira e envia para o servidor self-hosted.
+App Android de captura do dyarium (React Native + Expo). E um app de **notas de
+audio e de texto**: grava notas de voz com a tela bloqueada, escreve notas de
+texto, guarda local, enfileira e envia para o servidor self-hosted.
 
 ## O que ele faz
 
+- Tela inicial com as notas em **lista separada por ano** (mais novo no topo),
+  botao **+** para criar uma nota e **Opcoes** (engrenagem). Notas de texto nao
+  mostram player; as de audio mostram. Nota sincronizada aparece com um **icone de
+  nuvem**. Cada card tem um menu de **tres pontinhos** (arquivar/apagar) e da para
+  **arrastar para o lado** para apagar ou arquivar (configuravel nas Opcoes).
+- **Tela da nota** (`/note/[id]`): sempre editavel (titulo e texto), com
+  **autosave** (sem botao de salvar), **barra de formatacao** (negrito, italico,
+  lista), **contador de palavras** e **gravacao de audio** dentro da nota. Enter no
+  titulo desce para o corpo. Nota so de texto e enviada como conteudo textual; com
+  audio, o audio sobe e o texto vai junto. Ao sair, a nota e enviada (rascunho com
+  conteudo) ou sincronizada (nota ja enviada).
 - Grava em **AAC ADTS** (48 kHz mono ~128 kbps), em **segmentos de 60 s**, com
   foreground service do `expo-audio` (continua gravando com a tela bloqueada).
 - Concatena os segmentos e enfileira automaticamente ao parar.
@@ -15,6 +27,9 @@ a tela bloqueada, guarda local, enfileira e envia para o servidor self-hosted.
   duplica a entrada (dedupe por SHA-256 no servidor).
 - A biblioteca organiza as notas **por ano** (mais novo no topo), pela data do evento, para
   que notas antigas importadas apareçam no ano a que pertencem.
+- **Notas somente texto** entram na mesma fila e sao enviadas como conteudo textual (o texto
+  e tratado como se fosse a transcricao, marcado como nota de texto). O endpoint do servidor
+  para isso ainda sera implementado; ate la a nota fica na fila e reenta com backoff.
 - Biblioteca local com estado, reproducao, retry e apagar.
 - Tela de recuperacao para gravacao interrompida (Enviar / Descartar / Continuar).
 
