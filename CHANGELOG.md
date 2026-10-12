@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/jose-guilherme93/dyarium/compare/v0.2.0...v0.2.1) (2026-10-12)
+
+
+### Bug Fixes
+
+* **web:** menu recolhido nao escondia de fato ([e262f56](https://github.com/jose-guilherme93/dyarium/commit/e262f56bf1594022b3db52dd153f6aa4d891f2a7))
+
 ## [0.2.0](https://github.com/jose-guilherme93/dyarium/compare/v0.1.1...v0.2.0) (2026-10-11)
 
 
