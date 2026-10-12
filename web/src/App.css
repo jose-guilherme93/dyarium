@@ -19,6 +19,10 @@
   gap: calc(var(--space) * 4);
 }
 
+.sidebar[hidden] {
+  display: none;
+}
+
 .sidebar-head {
   display: flex;
   align-items: center;
