@@ -82,26 +82,31 @@ export function NoteList({ refreshKey, activeId, failures, onOpen, onChanged, on
 
   return (
     <div className="list">
-      <div className="list-head">
-        <label className="list-search">
-          <SearchIcon size={16} />
-          <input
-            type="search"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Buscar notas"
-            aria-label="Buscar notas"
-          />
-        </label>
-        <div className="list-actions">
-          <Recorder onUploaded={() => void load().then(onChanged)} />
-          <button type="button" className="icon-button" onClick={() => inputRef.current?.click()} aria-label="Enviar audio" disabled={uploading}>
-            <PlusIcon size={16} />
-          </button>
-          <button type="button" className="new-note" onClick={onCreateText}>
-            Nova nota
-          </button>
-        </div>
+      <label className="list-search">
+        <SearchIcon size={16} />
+        <input
+          type="search"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Buscar notas"
+          aria-label="Buscar notas"
+        />
+      </label>
+
+      <div className="list-actions">
+        <button type="button" className="new-note" onClick={onCreateText}>
+          Nova nota
+        </button>
+        <Recorder onUploaded={() => void load().then(onChanged)} />
+        <button
+          type="button"
+          className="icon-button"
+          onClick={() => inputRef.current?.click()}
+          aria-label="Enviar audio"
+          disabled={uploading}
+        >
+          <PlusIcon size={16} />
+        </button>
       </div>
 
       {error && <p className="error list-error">{error}</p>}

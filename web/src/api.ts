@@ -217,7 +217,7 @@ export async function uploadFile(
   file: File,
   onProgress?: (sent: number, total: number) => void,
   entryId?: string,
-): Promise<{ entry_id: string }> {
+): Promise<{ entry_id: string; attachment_id: string }> {
   const buffer = await file.arrayBuffer();
   const sha256 = await sha256Hex(buffer);
   const start = await request<{ id: string }>("/uploads", {
@@ -251,5 +251,5 @@ export async function uploadFile(
     onProgress?.(offset, file.size);
   }
 
-  return request<{ entry_id: string }>(`/uploads/${start.id}/complete`, { method: "POST" });
+  return request<{ entry_id: string; attachment_id: string }>(`/uploads/${start.id}/complete`, { method: "POST" });
 }

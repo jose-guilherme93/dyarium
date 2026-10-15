@@ -144,3 +144,13 @@ export function SparkIcon({ size = 18 }: IconProps) {
     </svg>
   );
 }
+
+export function ExitIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M14 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4" />
+      <path d="M10 8l-4 4 4 4" />
+      <path d="M6 12h9" />
+    </svg>
+  );
+}

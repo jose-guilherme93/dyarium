@@ -7,27 +7,20 @@ import { NoteList } from "./components/NoteList";
 import { NoteEditor } from "./components/NoteEditor";
 import { OfflineBanner } from "./components/OfflineBanner";
 import { useToast } from "./components/Toasts";
-import { InsightsIcon, NoteIcon, SearchIcon, SettingsIcon } from "./components/icons";
+import { ChevronIcon, ExitIcon, InsightsIcon, NoteIcon, SettingsIcon } from "./components/icons";
 import { InsightsView } from "./views/InsightsView";
-import { SearchView } from "./views/SearchView";
 import { SettingsView } from "./views/SettingsView";
 import type { EntityKind, ServerEvent } from "./types";
 import "./App.css";
 
-type ViewId = "notes" | "insights" | "search" | "settings";
-
-const navigation = [
-  { id: "notes", label: "Notas", Icon: NoteIcon },
-  { id: "insights", label: "Insights", Icon: InsightsIcon },
-  { id: "search", label: "Busca", Icon: SearchIcon },
-  { id: "settings", label: "Configuracao", Icon: SettingsIcon },
-] as const;
+type ViewId = "notes" | "insights" | "settings";
 
 export function App() {
   const [token, setTokenState] = useState(getToken());
   const [authError, setAuthError] = useState("");
   const [checkingToken, setCheckingToken] = useState(false);
   const [view, setView] = useState<ViewId>("notes");
+  const [navOpen, setNavOpen] = useState(true);
   const [openEntryId, setOpenEntryId] = useState<string | null>(null);
   const [entityFocus, setEntityFocus] = useState<{ kind: EntityKind; name: string } | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -191,88 +184,110 @@ export function App() {
   };
 
   return (
-    <div className="app">
+    <div className={navOpen ? "app" : "app app--collapsed"}>
       <OfflineBanner />
       <aside className="sidebar" aria-label="Navegacao principal">
-        <div className="brand">dyarium</div>
-        <nav>
-          <ul>
-            {navigation.map((item) => (
-              <li key={item.id}>
-                <button
-                  type="button"
-                  className={view === item.id ? "nav-item nav-item--active" : "nav-item"}
-                  aria-current={view === item.id ? "page" : undefined}
-                  onClick={() => {
-                    setView(item.id);
-                    setEntityFocus(null);
-                  }}
-                >
-                  <item.Icon size={18} />
-                  <span>{item.label}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
+        <div className="sidebar-top">
+          <div className="brand">dyarium</div>
+          <button
+            type="button"
+            className="sidebar-toggle"
+            onClick={() => setNavOpen((value) => !value)}
+            aria-label={navOpen ? "Recolher menu" : "Expandir menu"}
+            aria-expanded={navOpen}
+          >
+            <ChevronIcon size={16} />
+          </button>
+        </div>
+
+        {navOpen && (
+          <NoteList
+            refreshKey={refreshKey}
+            activeId={openEntryId}
+            failures={failures}
+            onOpen={(id) => {
+              setOpenEntryId(id);
+              setView("notes");
+            }}
+            onChanged={refresh}
+            onCreateText={() => void createText()}
+          />
+        )}
+
+        <nav className="sidebar-foot">
+          <button
+            type="button"
+            className={view === "notes" ? "foot-item foot-item--active" : "foot-item"}
+            onClick={() => setView("notes")}
+          >
+            <NoteIcon size={18} />
+            <span>Notas</span>
+          </button>
+          <button
+            type="button"
+            className={view === "insights" ? "foot-item foot-item--active" : "foot-item"}
+            onClick={() => {
+              setView("insights");
+              setEntityFocus(null);
+            }}
+          >
+            <InsightsIcon size={18} />
+            <span>Insights</span>
+          </button>
+          <button
+            type="button"
+            className={view === "settings" ? "foot-item foot-item--active" : "foot-item"}
+            onClick={() => setView("settings")}
+          >
+            <SettingsIcon size={18} />
+            <span>Configuracao</span>
+          </button>
+          <button
+            type="button"
+            className="foot-item"
+            onClick={() => {
+              clearToken();
+              setTokenState("");
+            }}
+          >
+            <ExitIcon size={18} />
+            <span>Sair</span>
+          </button>
         </nav>
-        <button
-          type="button"
-          className="link-button sidebar-exit"
-          onClick={() => {
-            clearToken();
-            setTokenState("");
-          }}
-        >
-          Sair
-        </button>
       </aside>
 
       <main className="workspace" aria-label="Conteudo">
         <ErrorBoundary>
           {view === "notes" ? (
-            <>
-              <NoteList
-                refreshKey={refreshKey}
-                activeId={openEntryId}
-                failures={failures}
-                onOpen={setOpenEntryId}
-                onChanged={refresh}
-                onCreateText={() => void createText()}
-              />
-              <div className="editor-pane">
-                {openEntryId ? (
-                  <NoteEditor
-                    key={openEntryId}
-                    entryId={openEntryId}
-                    refreshKey={refreshKey}
-                    failureReason={failures[openEntryId]}
-                    progress={entryProgress[openEntryId]}
-                    onChanged={refresh}
-                    onDeleted={() => {
-                      setOpenEntryId(null);
-                      refresh();
-                    }}
-                    onOpenEntity={(kind, name) => {
-                      setEntityFocus({ kind, name });
-                      setView("insights");
-                    }}
-                    onOpenEntry={(id) => setOpenEntryId(id)}
-                  />
-                ) : (
-                  <div className="empty-editor">
-                    <h2>Suas notas</h2>
-                    <p className="muted">Selecione uma nota, grave um audio ou crie uma nota escrita.</p>
-                  </div>
-                )}
-              </div>
-            </>
+            <div className="editor-pane">
+              {openEntryId ? (
+                <NoteEditor
+                  key={openEntryId}
+                  entryId={openEntryId}
+                  refreshKey={refreshKey}
+                  failureReason={failures[openEntryId]}
+                  progress={entryProgress[openEntryId]}
+                  onChanged={refresh}
+                  onDeleted={() => {
+                    setOpenEntryId(null);
+                    refresh();
+                  }}
+                  onOpenEntity={(kind, name) => {
+                    setEntityFocus({ kind, name });
+                    setView("insights");
+                  }}
+                  onOpenEntry={(id) => setOpenEntryId(id)}
+                />
+              ) : (
+                <div className="empty-editor">
+                  <h2>Suas notas</h2>
+                  <p className="muted">Escolha uma nota na esquerda, grave um audio ou crie uma nota escrita.</p>
+                </div>
+              )}
+            </div>
           ) : view === "insights" ? (
             <div className="page">
               <InsightsView refreshKey={refreshKey} onOpen={openFromOtherView} focus={entityFocus} />
-            </div>
-          ) : view === "search" ? (
-            <div className="page">
-              <SearchView refreshKey={refreshKey} onOpen={openFromOtherView} />
             </div>
           ) : (
             <div className="page">
