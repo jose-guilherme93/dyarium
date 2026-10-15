@@ -33,6 +33,22 @@ export function clearToken(): void {
   localStorage.removeItem(TOKEN_KEY);
 }
 
+// verifyToken checks a bearer token against the API before it is stored. It
+// returns true when the API accepts the token and false when it rejects it
+// (401/403). Network or server failures throw so the caller can decide.
+export async function verifyToken(token: string): Promise<boolean> {
+  const res = await fetch("/api/v1/version", {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (res.ok) {
+    return true;
+  }
+  if (res.status === 401 || res.status === 403) {
+    return false;
+  }
+  throw new ApiError(res.statusText || "falha ao validar o token", res.status);
+}
+
 export class ApiError extends Error {
   status: number;
   code?: string;

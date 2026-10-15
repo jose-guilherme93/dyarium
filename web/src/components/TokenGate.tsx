@@ -2,10 +2,13 @@ import { useState } from "react";
 
 interface TokenGateProps {
   onSubmit: (token: string) => void;
+  error?: string;
+  checking?: boolean;
 }
 
-// TokenGate asks for the bearer token once and stores it locally.
-export function TokenGate({ onSubmit }: TokenGateProps) {
+// TokenGate asks for the bearer token once. The parent validates it against the
+// API before letting the user in, so a wrong token keeps the gate open.
+export function TokenGate({ onSubmit, error, checking = false }: TokenGateProps) {
   const [value, setValue] = useState("");
   return (
     <div className="token-gate">
@@ -15,7 +18,7 @@ export function TokenGate({ onSubmit }: TokenGateProps) {
         <form
           onSubmit={(event) => {
             event.preventDefault();
-            if (value.trim()) {
+            if (value.trim() && !checking) {
               onSubmit(value.trim());
             }
           }}
@@ -25,10 +28,18 @@ export function TokenGate({ onSubmit }: TokenGateProps) {
             aria-label="Token de acesso"
             placeholder="Token"
             value={value}
+            disabled={checking}
             onChange={(event) => setValue(event.target.value)}
           />
-          <button type="submit">Entrar</button>
+          <button type="submit" disabled={checking}>
+            {checking ? "Verificando..." : "Entrar"}
+          </button>
         </form>
+        {error && (
+          <p className="error" role="alert">
+            {error}
+          </p>
+        )}
       </div>
     </div>
   );

@@ -1,5 +1,5 @@
-import { useCallback, useRef, useState } from "react";
-import { api, clearToken, getToken, setToken } from "./api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { api, ApiError, clearToken, getToken, setToken, verifyToken } from "./api";
 import { useEvents } from "./useEvents";
 import { TokenGate } from "./components/TokenGate";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -25,6 +25,8 @@ const navigation = [
 
 export function App() {
   const [token, setTokenState] = useState(getToken());
+  const [authError, setAuthError] = useState("");
+  const [checkingToken, setCheckingToken] = useState(false);
   const [view, setView] = useState<ViewId>("notes");
   const [openEntryId, setOpenEntryId] = useState<string | null>(null);
   const [entityFocus, setEntityFocus] = useState<{ kind: EntityKind; name: string } | null>(null);
@@ -109,13 +111,63 @@ export function App() {
   );
   useEvents(handleEvent);
 
+  // A token already stored may be stale (rotated on the server) or simply
+  // wrong; validate it on load and fall back to the gate. A network failure
+  // keeps the token so the app can still be used offline with cached data.
+  useEffect(() => {
+    const stored = getToken();
+    if (!stored) {
+      return;
+    }
+    let active = true;
+    verifyToken(stored)
+      .then((ok) => {
+        if (active && !ok) {
+          clearToken();
+          setTokenState("");
+          setAuthError("Token invalido. Informe o token novamente.");
+        }
+      })
+      .catch(() => {
+        // Offline: keep the stored token and serve cached data.
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Validate the token against the API before storing it, so a wrong token
+  // keeps the gate open instead of entering an empty (broken) session.
+  const handleLogin = async (value: string) => {
+    setCheckingToken(true);
+    setAuthError("");
+    try {
+      const ok = await verifyToken(value);
+      if (!ok) {
+        setAuthError("Token invalido. Confira o valor e tente de novo.");
+        return;
+      }
+      setToken(value);
+      setTokenState(value);
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setAuthError("Nao foi possivel validar o token. Tente de novo.");
+        return;
+      }
+      // Falha de rede: entra em modo offline com o token informado.
+      setToken(value);
+      setTokenState(value);
+    } finally {
+      setCheckingToken(false);
+    }
+  };
+
   if (!token) {
     return (
       <TokenGate
-        onSubmit={(value) => {
-          setToken(value);
-          setTokenState(value);
-        }}
+        onSubmit={(value) => void handleLogin(value)}
+        error={authError}
+        checking={checkingToken}
       />
     );
   }
