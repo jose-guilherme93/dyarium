@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -209,5 +210,26 @@ func TestCompleteAppliesClientMetadata(t *testing.T) {
 	}
 	if stored.RecordedAt == nil || !stored.RecordedAt.Equal(recorded) {
 		t.Fatalf("recorded_at persistido = %v", stored.RecordedAt)
+	}
+}
+
+func TestCompleteDefaultsAudioTitle(t *testing.T) {
+	svc, _, _ := newService(t)
+	ctx := context.Background()
+
+	plain := []byte("audio sem titulo")
+	up, err := svc.Start(ctx, Meta{Filename: "a.wav", SizeBytes: int64(len(plain))})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if _, err := svc.Append(ctx, up.ID, 0, bytes.NewReader(plain)); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	entry, err := svc.Complete(ctx, up.ID)
+	if err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	if !strings.HasPrefix(entry.Title, "audio · ") {
+		t.Fatalf("title = %q, want prefixo 'audio · '", entry.Title)
 	}
 }

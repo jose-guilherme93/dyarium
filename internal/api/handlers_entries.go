@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/joseti/dyarium/internal/entrytitle"
 	"github.com/joseti/dyarium/internal/id"
 	"github.com/joseti/dyarium/internal/jobs"
 	"github.com/joseti/dyarium/internal/store"
@@ -73,9 +74,13 @@ func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC()
+	title := strings.TrimSpace(req.Title)
+	if title == "" {
+		title = entrytitle.Default(entrytitle.Text, now)
+	}
 	entry := store.Entry{
 		ID:        id.New(),
-		Title:     strings.TrimSpace(req.Title),
+		Title:     title,
 		Status:    store.EntryReady,
 		Source:    "text",
 		CreatedAt: now,

@@ -176,7 +176,7 @@ export function App() {
 
   const createText = async () => {
     try {
-      const entry = await api.createEntry("Nova nota");
+      const entry = await api.createEntry("");
       setOpenEntryId(entry.id);
       setView("notes");
       refresh();

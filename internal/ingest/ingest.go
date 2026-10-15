@@ -16,6 +16,7 @@ import (
 
 	"github.com/joseti/dyarium/internal/audio"
 	"github.com/joseti/dyarium/internal/crypto"
+	"github.com/joseti/dyarium/internal/entrytitle"
 	"github.com/joseti/dyarium/internal/id"
 	"github.com/joseti/dyarium/internal/store"
 )
@@ -249,9 +250,17 @@ func (s *Service) Complete(ctx context.Context, uploadID string) (store.Entry, e
 	}
 
 	now := time.Now().UTC()
+	when := now
+	if u.RecordedAt != nil {
+		when = *u.RecordedAt
+	}
+	title := strings.TrimSpace(u.Title)
+	if title == "" {
+		title = entrytitle.Default(entrytitle.Audio, when)
+	}
 	entry := store.Entry{
 		ID:               id.New(),
-		Title:            u.Title,
+		Title:            title,
 		Status:           store.EntryStored,
 		Source:           "upload",
 		OriginalFilename: u.Filename,
@@ -427,6 +436,7 @@ func (s *Service) IngestStream(ctx context.Context, source, filename, contentTyp
 	now := time.Now().UTC()
 	entry := store.Entry{
 		ID:               entryID,
+		Title:            entrytitle.Default(entrytitle.Audio, now),
 		Status:           store.EntryStored,
 		Source:           source,
 		OriginalFilename: filename,
