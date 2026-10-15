@@ -5,10 +5,13 @@ import { MicIcon } from "./icons";
 
 interface RecorderProps {
   onUploaded: () => void;
+  // entryId, when set, adds the recording to an existing note.
+  entryId?: string;
 }
 
-// Recorder captures audio in the browser and uploads it as a new note.
-export function Recorder({ onUploaded }: RecorderProps) {
+// Recorder captures audio in the browser and uploads it as a new note (or adds
+// it to an existing note when entryId is given).
+export function Recorder({ onUploaded, entryId }: RecorderProps) {
   const [recording, setRecording] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -32,7 +35,7 @@ export function Recorder({ onUploaded }: RecorderProps) {
     setBusy(true);
     setError("");
     try {
-      await uploadFile(file);
+      await uploadFile(file, undefined, entryId);
       onUploaded();
     } catch (err) {
       setError(err instanceof Error ? err.message : "falha ao enviar a gravacao");

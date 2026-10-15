@@ -13,6 +13,16 @@ export interface Entry {
   updated_at: string;
   tags?: string[];
   metrics?: Metrics;
+  audios?: Audio[];
+}
+
+export interface Audio {
+  id: string;
+  content_type: string;
+  size_bytes: number;
+  duration_seconds: number;
+  created_at: string;
+  transcript?: Transcript | null;
 }
 
 export interface Metrics {

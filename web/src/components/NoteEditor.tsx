@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { ChangeEvent } from "react";
 import type { Block, PartialBlock } from "@blocknote/core";
-import { api, audioUrl } from "../api";
+import { api, uploadFile } from "../api";
 import { NotesEditor } from "../editor/NotesEditor";
 import { formatDateTime, formatDuration } from "../lib/format";
-import type { Analysis, EntityKind, Entry, Transcript } from "../types";
-import { AudioPlayer, type AudioPlayerHandle } from "./AudioPlayer";
+import type { Analysis, EntityKind, Entry } from "../types";
+import { type AudioPlayerHandle } from "./AudioPlayer";
+import { AudioTrack } from "./AudioTrack";
 import { ImageGallery } from "./ImageGallery";
+import { Recorder } from "./Recorder";
 import { Spinner, isBusy, statusLabel } from "./Status";
 import { TagEditor } from "./TagEditor";
 import { useToast } from "./Toasts";
@@ -65,9 +68,9 @@ function processingText(
   }
 }
 
-// NoteEditor is the note view: one continuous page with the audio and its
-// transcription at the top, then the written text and images. The AI insights
-// live in a floating drawer.
+// NoteEditor is the note view: one continuous page with the audios (each with
+// its transcription) at the top, then the written text and images. The AI
+// insights live in a floating drawer.
 export function NoteEditor({
   entryId,
   refreshKey,
@@ -80,16 +83,14 @@ export function NoteEditor({
 }: NoteEditorProps) {
   const { notify } = useToast();
   const [entry, setEntry] = useState<Entry | null>(null);
-  const [transcript, setTranscript] = useState<Transcript | null>(null);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [title, setTitle] = useState("");
   const [initialBody, setInitialBody] = useState<PartialBlock[] | undefined>(undefined);
   const [bodyLoaded, setBodyLoaded] = useState(false);
   const [busy, setBusy] = useState<"analyze" | "retranscribe" | null>(null);
   const [saving, setSaving] = useState<"idle" | "saving" | "saved">("idle");
+  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
-  const [currentTime, setCurrentTime] = useState(0);
-  const [playing, setPlaying] = useState(false);
   const [showInsights, setShowInsights] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [font, setFont] = useState<string>(() => {
@@ -102,16 +103,15 @@ export function NoteEditor({
   const noteIdRef = useRef<string | null>(null);
   const saveTimer = useRef<number | null>(null);
   const playerRef = useRef<AudioPlayerHandle | null>(null);
-  const transcriptRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const mountedRefresh = useRef(refreshKey);
 
   const loadFull = useCallback(async () => {
     setError("");
     setBodyLoaded(false);
     noteIdRef.current = null;
-    const [entryRes, transcriptRes, analysisRes, notesRes] = await Promise.allSettled([
+    const [entryRes, analysisRes, notesRes] = await Promise.allSettled([
       api.getEntry(entryId),
-      api.getTranscript(entryId),
       api.getAnalysis(entryId),
       api.listNotes(entryId),
     ]);
@@ -121,7 +121,6 @@ export function NoteEditor({
     }
     setEntry(entryRes.value);
     setTitle(entryRes.value.title || entryRes.value.original_filename || "");
-    setTranscript(transcriptRes.status === "fulfilled" ? transcriptRes.value : null);
     setAnalysis(analysisRes.status === "fulfilled" ? analysisRes.value : null);
     const note = notesRes.status === "fulfilled" ? notesRes.value.notes?.[0] : undefined;
     if (note) {
@@ -134,15 +133,10 @@ export function NoteEditor({
   }, [entryId]);
 
   const loadLight = useCallback(async () => {
-    const [entryRes, transcriptRes, analysisRes] = await Promise.allSettled([
-      api.getEntry(entryId),
-      api.getTranscript(entryId),
-      api.getAnalysis(entryId),
-    ]);
+    const [entryRes, analysisRes] = await Promise.allSettled([api.getEntry(entryId), api.getAnalysis(entryId)]);
     if (entryRes.status === "fulfilled") {
       setEntry(entryRes.value);
     }
-    setTranscript(transcriptRes.status === "fulfilled" ? transcriptRes.value : null);
     setAnalysis(analysisRes.status === "fulfilled" ? analysisRes.value : null);
   }, [entryId]);
 
@@ -165,23 +159,6 @@ export function NoteEditor({
       setBusy(null);
     }
   }, [status]);
-
-  // Keep the active transcription line visible while the audio plays.
-  useEffect(() => {
-    if (!playing || !transcript || transcript.segments.length === 0) {
-      return;
-    }
-    const ms = currentTime * 1000;
-    let index = -1;
-    for (let i = 0; i < transcript.segments.length; i++) {
-      if (transcript.segments[i].start_ms <= ms) {
-        index = i;
-      } else {
-        break;
-      }
-    }
-    transcriptRefs.current[index]?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  }, [playing, currentTime, transcript]);
 
   const saveBody = useCallback(
     async (document: unknown) => {
@@ -257,11 +234,32 @@ export function NoteEditor({
     }
   };
 
+  const addAudio = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+    setUploading(true);
+    setError("");
+    try {
+      await uploadFile(file, undefined, entryId);
+      await loadLight();
+      onChanged();
+      notify("Audio adicionado", "success");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "falha no envio do audio");
+      notify("Nao foi possivel enviar o audio", "error");
+    } finally {
+      setUploading(false);
+      event.target.value = "";
+    }
+  };
+
   const remove = async () => {
     if (!entry) {
       return;
     }
-    if (!window.confirm("Apagar esta nota e o audio? Esta acao nao pode ser desfeita.")) {
+    if (!window.confirm("Apagar esta nota e os audios? Esta acao nao pode ser desfeita.")) {
       return;
     }
     try {
@@ -297,20 +295,9 @@ export function NoteEditor({
     );
   }
 
-  const hasAudio = entry.content_type !== "";
-  const hasTranscript = !!transcript && (transcript.text.trim() !== "" || transcript.segments.length > 0);
+  const audios = entry.audios ?? [];
+  const hasAudio = audios.length > 0;
   const processing = running || busy !== null;
-
-  let activeSegment = -1;
-  if (currentTime > 0 && transcript && transcript.segments.length > 0) {
-    for (let i = 0; i < transcript.segments.length; i++) {
-      if (transcript.segments[i].start_ms <= currentTime * 1000) {
-        activeSegment = i;
-      } else {
-        break;
-      }
-    }
-  }
 
   const insights = processing ? (
     <div className="analysis-loading">
@@ -534,42 +521,29 @@ export function NoteEditor({
           {error && <p className="error">{error}</p>}
 
           <div className="page-canvas">
-            {hasAudio && (
-              <div className="audio-block">
-                <AudioPlayer
-                  ref={playerRef}
-                  src={audioUrl(entry.id)}
-                  onTime={setCurrentTime}
-                  onPlaying={setPlaying}
-                />
-                {hasTranscript && (
-                  <blockquote className="transcript">
-                    {transcript && transcript.segments.length > 0 ? (
-                      transcript.segments.map((segment, index) => (
-                        <p key={index}>
-                          <button
-                            ref={(el) => {
-                              transcriptRefs.current[index] = el;
-                            }}
-                            type="button"
-                            className={
-                              index === activeSegment ? "transcript-line transcript-line--active" : "transcript-line"
-                            }
-                            onClick={() => playerRef.current?.seek(segment.start_ms / 1000)}
-                            title="Ouvir a partir daqui"
-                          >
-                            <span className="timestamp">{formatDuration(segment.start_ms / 1000)}</span>
-                            {segment.text}
-                          </button>
-                        </p>
-                      ))
-                    ) : (
-                      <p>{transcript?.text}</p>
-                    )}
-                  </blockquote>
-                )}
-              </div>
-            )}
+            {audios.map((audio, index) => (
+              <AudioTrack key={audio.id} audio={audio} playerRef={index === 0 ? playerRef : undefined} />
+            ))}
+
+            <div className="audio-add">
+              <Recorder
+                entryId={entry.id}
+                onUploaded={() => {
+                  void loadLight();
+                  onChanged();
+                }}
+              />
+              <button type="button" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
+                {uploading ? "Enviando..." : "Enviar audio"}
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="audio/*,.wav,.mp3,.m4a,.aac,.adts,.ogg,.oga,.opus,.flac,.webm"
+                hidden
+                onChange={(event) => void addAudio(event)}
+              />
+            </div>
 
             <div className="page-text">
               {bodyLoaded && (

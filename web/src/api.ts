@@ -211,9 +211,12 @@ async function sha256Hex(data: ArrayBuffer): Promise<string> {
 }
 
 // uploadFile performs a resumable upload: create, PUT chunks by offset, complete.
+// When entryId is given the audio is added to that entry instead of creating a
+// new one.
 export async function uploadFile(
   file: File,
   onProgress?: (sent: number, total: number) => void,
+  entryId?: string,
 ): Promise<{ entry_id: string }> {
   const buffer = await file.arrayBuffer();
   const sha256 = await sha256Hex(buffer);
@@ -224,6 +227,7 @@ export async function uploadFile(
       content_type: file.type || "application/octet-stream",
       size_bytes: file.size,
       sha256,
+      ...(entryId ? { entry_id: entryId } : {}),
     }),
   });
 

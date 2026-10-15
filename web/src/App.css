@@ -1642,3 +1642,30 @@
   gap: calc(var(--space));
   margin-top: calc(var(--space));
 }
+
+/* ---------- audios ---------- */
+
+.audios {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space) * 8);
+}
+
+.audio-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--space) * 3);
+  margin: calc(var(--space) * 4) 0;
+}
+
+.audio-add > button {
+  padding: calc(var(--space) * 2) calc(var(--space) * 3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.audio-add > button:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
