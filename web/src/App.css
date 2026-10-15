@@ -771,82 +771,94 @@
   border-radius: var(--radius);
 }
 
-/* ---------- links ---------- */
+/* ---------- note mention / link picker ---------- */
 
-.links {
-  display: flex;
-  flex-direction: column;
-  gap: calc(var(--space) * 2);
-}
-
-.link-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: calc(var(--space));
-}
-
-.link-item {
-  display: flex;
-  align-items: center;
-  gap: calc(var(--space) * 2);
-}
-
-.link-target {
+.note-mention {
+  display: inline;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--color-accent-soft);
   color: var(--color-accent);
-  background: none;
-  border: none;
-  padding: 0;
   font: inherit;
-  text-align: left;
+  font-weight: 600;
   cursor: pointer;
-  overflow-wrap: anywhere;
 }
 
-.link-target:hover {
+.note-mention:hover {
   text-decoration: underline;
 }
 
-.link-remove {
-  display: inline-flex;
-  color: var(--color-muted);
-  background: none;
-  border: none;
-  cursor: pointer;
-}
-
-.link-remove:hover {
-  color: var(--color-danger);
-}
-
-.link-form {
+.note-picker {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
   display: flex;
-  flex-wrap: wrap;
-  gap: calc(var(--space) * 2);
-  align-items: center;
+  align-items: flex-start;
+  justify-content: center;
+  padding: calc(var(--space) * 16) calc(var(--space) * 6) calc(var(--space) * 6);
 }
 
-.link-form input,
-.link-form select {
-  padding: calc(var(--space) * 1.5) calc(var(--space) * 2);
+.note-picker-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.42);
+}
+
+.note-picker-card {
+  position: relative;
+  width: min(520px, 100%);
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space) * 2);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: calc(var(--space) * 4);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+}
+
+.note-picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--space) * 2);
+}
+
+.note-picker-head h3 {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 16px;
+}
+
+.note-picker-card input {
+  padding: calc(var(--space) * 2);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: var(--color-bg);
   color: var(--color-text);
+  font: inherit;
 }
 
-.link-select {
-  flex: 1 1 220px;
+.note-picker-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
 }
 
-.link-url {
-  flex: 1 1 220px;
+.note-picker-list li button {
+  width: 100%;
+  text-align: left;
+  padding: calc(var(--space) * 2) calc(var(--space) * 3);
+  border-radius: var(--radius-sm);
 }
 
-.link-label {
-  flex: 1 1 160px;
+.note-picker-list li button:hover {
+  background: var(--color-surface);
+  color: var(--color-accent);
 }
 
 /* ---------- insights ---------- */

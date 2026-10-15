@@ -6,7 +6,6 @@ import { formatDateTime, formatDuration } from "../lib/format";
 import type { Analysis, EntityKind, Entry, Transcript } from "../types";
 import { AudioPlayer, type AudioPlayerHandle } from "./AudioPlayer";
 import { ImageGallery } from "./ImageGallery";
-import { LinksPanel } from "./LinksPanel";
 import { Spinner, isBusy, statusLabel } from "./Status";
 import { TagEditor } from "./TagEditor";
 import { useToast } from "./Toasts";
@@ -573,15 +572,18 @@ export function NoteEditor({
             )}
 
             <div className="page-text">
-              {bodyLoaded && <NotesEditor initialContent={initialBody} onChange={handleBodyChange} />}
+              {bodyLoaded && (
+                <NotesEditor
+                  entryId={entry.id}
+                  initialContent={initialBody}
+                  onChange={handleBodyChange}
+                  onOpenEntry={onOpenEntry}
+                />
+              )}
             </div>
 
             <div className="page-images">
               <ImageGallery entryId={entry.id} />
-            </div>
-
-            <div className="page-links">
-              <LinksPanel entryId={entry.id} onOpenEntry={onOpenEntry} />
             </div>
           </div>
         </div>
