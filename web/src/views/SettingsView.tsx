@@ -203,8 +203,8 @@ export function SettingsView() {
                       <span>{model.name}</span>
                     </label>
                     <span className="muted">
-                      ~{model.size_mb} MB ·{" "}
-                      {model.downloaded ? `baixado (${Math.round(model.local_bytes / 1048576)} MB)` : "ausente"}
+                      ~{model.size_mb} MB{" "}
+                      {model.downloaded ? `(${Math.round(model.local_bytes / 1048576)} MB baixados)` : "(ausente)"}
                     </span>
                     {!model.downloaded && (
                       <button type="button" onClick={() => void download(model.name)} disabled={p && !p.done}>

@@ -154,3 +154,21 @@ export function ExitIcon({ size = 18 }: IconProps) {
     </svg>
   );
 }
+
+export function PinIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M9 3h6l-1 6 3 3H7l3-3-1-6Z" />
+      <path d="M12 12v8" />
+    </svg>
+  );
+}
+
+export function LinkIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1" />
+      <path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1" />
+    </svg>
+  );
+}

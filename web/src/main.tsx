@@ -1,4 +1,3 @@
-import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import { ToastProvider } from "./components/Toasts";
@@ -10,11 +9,9 @@ if (!rootElement) {
 }
 
 createRoot(rootElement).render(
-  <StrictMode>
-    <ToastProvider>
-      <App />
-    </ToastProvider>
-  </StrictMode>,
+  <ToastProvider>
+    <App />
+  </ToastProvider>,
 );
 
 // Register the shell service worker in production so the app opens offline.

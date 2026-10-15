@@ -167,9 +167,9 @@ export function App() {
 
   const refresh = () => setRefreshKey((key) => key + 1);
 
-  const createText = async () => {
+  const createNote = async (parentId: string | null) => {
     try {
-      const entry = await api.createEntry("");
+      const entry = await api.createEntry("", parentId);
       setOpenEntryId(entry.id);
       setView("notes");
       refresh();
@@ -209,8 +209,7 @@ export function App() {
               setOpenEntryId(id);
               setView("notes");
             }}
-            onChanged={refresh}
-            onCreateText={() => void createText()}
+            onCreate={(parentId) => void createNote(parentId)}
           />
         )}
 
@@ -277,6 +276,7 @@ export function App() {
                     setView("insights");
                   }}
                   onOpenEntry={(id) => setOpenEntryId(id)}
+                  onCreateChild={(id) => void createNote(id)}
                 />
               ) : (
                 <div className="empty-editor">

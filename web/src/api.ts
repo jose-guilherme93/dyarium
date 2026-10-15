@@ -10,6 +10,7 @@ import type {
   ModelInfo,
   MoodPoint,
   Note,
+  Revision,
   Settings,
   Tag,
   Transcript,
@@ -120,8 +121,11 @@ export const api = {
     const query = params.toString();
     return request<{ entries: Entry[] }>(`/entries${query ? `?${query}` : ""}`);
   },
-  createEntry: (title: string) =>
-    request<Entry>("/entries", { method: "POST", body: JSON.stringify({ title }) }),
+  createEntry: (title: string, parentId?: string | null) =>
+    request<Entry>("/entries", {
+      method: "POST",
+      body: JSON.stringify(parentId ? { title, parent_id: parentId } : { title }),
+    }),
   getEntry: (id: string) => request<Entry>(`/entries/${id}`),
   getTranscript: (id: string) => request<Transcript>(`/entries/${id}/transcript`),
   getAnalysis: (id: string) => request<Analysis>(`/entries/${id}/analysis`),
@@ -137,6 +141,7 @@ export const api = {
     request<Note>(`/entries/${id}/notes`, { method: "POST", body: JSON.stringify({ title, document }) }),
   updateNote: (id: string, title: string, document: unknown) =>
     request<{ status: string }>(`/notes/${id}`, { method: "PUT", body: JSON.stringify({ title, document }) }),
+  listRevisions: (noteId: string) => request<{ revisions: Revision[] }>(`/notes/${noteId}/revisions`),
   listTags: () => request<{ tags: Tag[] }>("/tags"),
   listEntryTags: (entryId: string) => request<{ tags: Tag[] }>(`/entries/${entryId}/tags`),
   setEntryTags: (entryId: string, tags: string[]) =>

@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 describe("NotesEditor module", () => {
   it("constroi o schema com os blocos de midia", async () => {
     const mod = await import("./NotesEditor");
-    expect(mod.NotesEditor).toBeTypeOf("function");
+    expect(mod.NotesEditor).toBeTruthy();
     expect(mod.mediaRefs).toBeTypeOf("function");
   });
 });

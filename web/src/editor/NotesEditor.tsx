@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, forwardRef, useContext, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
 import type { Block, PartialBlock } from "@blocknote/core";
 import { BlockNoteSchema, defaultBlockSpecs, defaultInlineContentSpecs } from "@blocknote/core";
@@ -13,7 +13,7 @@ import {
 } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/mantine/style.css";
-import { attachmentUrl, uploadAttachment, uploadFile } from "../api";
+import { attachmentUrl, api, uploadAttachment, uploadFile } from "../api";
 import type { Audio, Entry } from "../types";
 import { AudioTrack } from "../components/AudioTrack";
 
@@ -33,6 +33,14 @@ interface NotesEditorProps {
   onChange?: (blocks: Block[]) => void;
   onMediaAdded?: () => void;
   onOpenEntry?: (id: string) => void;
+}
+
+// NotesEditorHandle lets the note header trigger the media/link inserters that
+// live inside the editor (which owns the file inputs and the picker).
+export interface NotesEditorHandle {
+  addImage: () => void;
+  addAudio: () => void;
+  openLink: () => void;
 }
 
 // MediaContext gives the media blocks access to the audios (with transcript) and
@@ -137,15 +145,10 @@ function mediaBlock(ref: MediaRef): PartialBlock {
 
 // NotesEditor is the rich document of a note: text, audio and images interleaved
 // in one flow, plus the /link command.
-export function NotesEditor({
-  entryId,
-  initialContent,
-  media = [],
-  audios = new Map(),
-  onChange,
-  onMediaAdded,
-  onOpenEntry,
-}: NotesEditorProps) {
+export const NotesEditor = forwardRef<NotesEditorHandle, NotesEditorProps>(function NotesEditor(
+  { entryId, initialContent, media = [], audios = new Map(), onChange, onMediaAdded, onOpenEntry },
+  ref,
+) {
   const mediaMigrated =
     !hasMediaBlocks(initialContent) && media.length > 0;
   const seeded = mediaMigrated
@@ -159,6 +162,37 @@ export function NotesEditor({
   const audioInput = useRef<HTMLInputElement | null>(null);
   const imageInput = useRef<HTMLInputElement | null>(null);
   const migratedRef = useRef(mediaMigrated);
+  const [picker, setPicker] = useState(false);
+  const [pickerEntries, setPickerEntries] = useState<Entry[]>([]);
+  const [term, setTerm] = useState("");
+
+  useImperativeHandle(ref, () => ({
+    addImage: () => imageInput.current?.click(),
+    addAudio: () => audioInput.current?.click(),
+    openLink: () => setPicker(true),
+  }));
+
+  useEffect(() => {
+    if (!picker) {
+      return;
+    }
+    let active = true;
+    api
+      .listEntries()
+      .then((result) => {
+        if (active) {
+          setPickerEntries(result.entries ?? []);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setPickerEntries([]);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [picker]);
 
   useEffect(() => {
     const query = window.matchMedia("(prefers-color-scheme: dark)");
@@ -211,6 +245,25 @@ export function NotesEditor({
     }
   };
 
+  const insertMention = (entry: Entry) => {
+    const label = entry.title || entry.original_filename || "Nota";
+    type Content = Parameters<typeof editor.insertInlineContent>[0];
+    try {
+      editor.insertInlineContent([
+        { type: "noteMention", props: { entryId: entry.id, title: label } },
+        " ",
+      ] as unknown as Content);
+      void onChange?.(editor.document as unknown as Block[]);
+    } catch {
+      // Ignore; the mention simply is not inserted.
+    }
+    if (entryId) {
+      void api.createLink(entryId, { to_entry_id: entry.id, label }).catch(() => {});
+    }
+    setPicker(false);
+    setTerm("");
+  };
+
   const getItems = async (query: string): Promise<DefaultReactSuggestionItem[]> => {
     // Drop the built-in media items ("Midia"): we replace image/audio with our
     // upload-based blocks.
@@ -230,6 +283,13 @@ export function NotesEditor({
         group: "Midia",
         onItemClick: () => imageInput.current?.click(),
       },
+      {
+        title: "Link para nota",
+        subtext: "Referenciar outra nota do diario",
+        aliases: ["link", "nota", "referencia", "mencao"],
+        group: "Midia",
+        onItemClick: () => setPicker(true),
+      },
     ];
     const all = [...items, ...extra];
     const needle = query.trim().toLowerCase();
@@ -242,6 +302,10 @@ export function NotesEditor({
         (item.aliases ?? []).some((alias) => alias.toLowerCase().includes(needle)),
     );
   };
+
+  const filtered = pickerEntries.filter((entry) =>
+    (entry.title || entry.original_filename || "").toLowerCase().includes(term.trim().toLowerCase()),
+  );
 
   return (
     <MediaContext.Provider value={{ audios, onOpenEntry: onOpenEntry ?? (() => {}) }}>
@@ -261,9 +325,44 @@ export function NotesEditor({
         // Persist the migrated media blocks once, right after the document loads.
         <MigrateOnMount onReady={() => void onChange?.(editor.document as unknown as Block[])} />
       )}
+
+      {picker && (
+        <div className="note-picker" role="dialog" aria-modal="true" aria-label="Link para nota">
+          <div className="note-picker-backdrop" onClick={() => setPicker(false)} />
+          <div className="note-picker-card">
+            <div className="note-picker-head">
+              <h3>Link para nota</h3>
+              <button type="button" onClick={() => setPicker(false)}>
+                Fechar
+              </button>
+            </div>
+            <input
+              autoFocus
+              type="search"
+              value={term}
+              onChange={(event) => setTerm(event.target.value)}
+              placeholder="Buscar nota"
+              aria-label="Buscar nota para vincular"
+            />
+            <ul className="note-picker-list">
+              {filtered.length === 0 ? (
+                <li className="muted">Nenhuma nota encontrada.</li>
+              ) : (
+                filtered.map((entry) => (
+                  <li key={entry.id}>
+                    <button type="button" onClick={() => insertMention(entry)}>
+                      {entry.title || entry.original_filename || "Nota"}
+                    </button>
+                  </li>
+                ))
+              )}
+            </ul>
+          </div>
+        </div>
+      )}
     </MediaContext.Provider>
   );
-}
+});
 
 // MigrateOnMount fires a single onChange after the editor is created so the
 // migrated document is saved.

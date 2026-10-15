@@ -132,19 +132,17 @@
 .list-scroll {
   flex: 1;
   overflow: auto;
-  padding: calc(var(--space) * 2) calc(var(--space) * 2) calc(var(--space) * 6);
+  padding: 0 calc(var(--space)) calc(var(--space) * 4);
 }
 
 .list-group {
-  margin-top: calc(var(--space) * 3);
+  margin-top: calc(var(--space) * 2);
 }
 
 .list-group-label {
   font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
   color: var(--color-muted);
-  padding: 0 calc(var(--space) * 2) calc(var(--space));
+  padding: 0 calc(var(--space) * 2) calc(var(--space) * 0.5);
 }
 
 .list-group ul {
@@ -153,7 +151,7 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: calc(var(--space));
+  gap: 1px;
 }
 
 .note-item {
@@ -161,8 +159,8 @@
   text-align: left;
   display: flex;
   flex-direction: column;
-  gap: calc(var(--space));
-  padding: calc(var(--space) * 2) calc(var(--space) * 3);
+  gap: 1px;
+  padding: calc(var(--space) * 1.5) calc(var(--space) * 2);
   border-radius: var(--radius-sm);
 }
 
@@ -176,14 +174,21 @@
 
 .note-item-title {
   font-weight: 600;
+  font-size: 14px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .note-item-meta {
-  font-size: 12px;
+  display: flex;
+  gap: calc(var(--space) * 1.5);
+  font-size: 11px;
   color: var(--color-muted);
+}
+
+.note-item-state--failed {
+  color: var(--color-danger);
 }
 
 /* ---------- recorder ---------- */
@@ -1760,10 +1765,6 @@
   font-size: 15px;
 }
 
-.aside-actions .icon-button svg {
-  transform: rotate(-90deg);
-}
-
 .note-byline {
   display: flex;
   flex-wrap: wrap;
@@ -1983,11 +1984,11 @@
 }
 
 @media (max-width: 900px) {
-  .note {
+  .note--aside-open {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .note-aside {
+  .note--aside-open .note-aside {
     position: absolute;
     inset: 0 0 0 auto;
     width: min(320px, 86%);
@@ -2096,6 +2097,188 @@
   color: var(--color-accent);
 }
 
+/* ============ propriedades: fixar, historico e lista ============ */
+
+.note--aside-open {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 330px;
+}
+
+.note--aside-open .note-aside {
+  position: static;
+  width: auto;
+  box-shadow: none;
+}
+
+.aside-actions-buttons {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space));
+}
+
+.icon-button--active {
+  color: var(--color-accent);
+}
+
+.note-item-date {
+  color: var(--color-muted);
+}
+
+.history {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space) * 3);
+  font-size: 13px;
+}
+
+.history li {
+  border-left: 2px solid var(--color-border);
+  padding-left: calc(var(--space) * 2);
+}
+
+.history-when {
+  display: block;
+  color: var(--color-muted);
+  font-size: 12px;
+  margin-bottom: calc(var(--space) * 0.5);
+}
+
+.history-created {
+  margin: 0 0 calc(var(--space) * 3);
+}
+
+.history-added {
+  color: var(--ok);
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.history-removed {
+  color: var(--color-danger);
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ============ arvore de notas (Trilium-like) ============ */
+
+.list-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space));
+}
+
+.list-head .list-search {
+  flex: 1;
+}
+
+.list-head .icon-button {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-muted);
+}
+
+.list-head .icon-button:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.tree,
+.tree-children {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space));
+  padding-right: calc(var(--space));
+  border-radius: var(--radius-sm);
+}
+
+.tree-row:hover {
+  background: var(--color-surface);
+}
+
+.tree-row--active {
+  background: var(--color-accent-soft);
+}
+
+.tree-toggle {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-muted);
+}
+
+.tree-toggle svg {
+  transform: rotate(-90deg);
+  transition: transform 0.12s ease;
+}
+
+.tree-toggle[aria-expanded="true"] svg {
+  transform: rotate(0deg);
+}
+
+.tree-toggle--empty {
+  visibility: hidden;
+}
+
+.tree-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  padding: calc(var(--space) * 1.5) 0;
+}
+
+.tree-title {
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tree-date {
+  font-size: 11px;
+  color: var(--color-muted);
+}
+
+.tree-failed {
+  color: var(--color-danger);
+  margin-left: calc(var(--space) * 1.5);
+}
+
+.tree-add {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-muted);
+  opacity: 0;
+}
+
+.tree-row:hover .tree-add {
+  opacity: 1;
+}
+
+.tree-add:hover {
+  color: var(--color-accent);
+}
+
 /* ============ painel esquerdo unico (estilo Notion/Trilium) ============ */
 
 .app {
@@ -2185,8 +2368,8 @@
 .foot-item {
   display: flex;
   align-items: center;
-  gap: calc(var(--space) * 3);
-  padding: calc(var(--space) * 2) calc(var(--space) * 3);
+  gap: calc(var(--space) * 2.5);
+  padding: calc(var(--space) * 1.5) calc(var(--space) * 3);
   border-radius: var(--radius-sm);
   color: var(--color-muted);
   text-align: left;

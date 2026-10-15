@@ -30,6 +30,7 @@
   --accent: #2c4a63;
   --accent-soft: #e3e9ee;
   --danger: #9c3b2e;
+  --ok: #2f7d4f;
 
   /* Nomes usados nos estilos existentes. */
   --color-bg: var(--paper);
@@ -65,6 +66,7 @@
     --accent: #9cc0e8;
     --accent-soft: #2b3f55;
     --danger: #ee8a7c;
+    --ok: #7fc79a;
   }
 }
 

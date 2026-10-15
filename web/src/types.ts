@@ -3,6 +3,7 @@ export interface Entry {
   title: string;
   status: string;
   source: string;
+  parent_id?: string | null;
   original_filename: string;
   content_type: string;
   size_bytes: number;
@@ -130,6 +131,12 @@ export interface Note {
   document: unknown;
   created_at: string;
   updated_at: string;
+}
+
+export interface Revision {
+  id: string;
+  document: unknown;
+  created_at: string;
 }
 
 export interface Tag {
