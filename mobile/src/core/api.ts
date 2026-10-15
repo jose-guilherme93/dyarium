@@ -366,15 +366,24 @@ export class DyariumApi {
     return JSON.parse(await res.text());
   }
 
-  /** Lista de entradas do servidor (resumo). */
-  async listEntries(): Promise<ServerEntry[]> {
-    const res = await this.fetchImpl(this.url('/api/v1/entries'), {
+  /** Lista de entradas do servidor (resumo). `limit` alto para reconciliar. */
+  async listEntries(limit = 100): Promise<ServerEntry[]> {
+    const res = await this.fetchImpl(this.url(`/api/v1/entries?limit=${limit}`), {
       method: 'GET',
       headers: this.authHeaders(),
     });
     if (!res.ok) throw await this.parseError(res);
     const body = JSON.parse(await res.text()) as { entries?: ServerEntry[] };
     return body.entries ?? [];
+  }
+
+  /** Apaga a entrada no servidor (soft delete). */
+  async deleteEntry(id: string): Promise<void> {
+    const res = await this.fetchImpl(this.url(`/api/v1/entries/${id}`), {
+      method: 'DELETE',
+      headers: this.authHeaders(),
+    });
+    if (!res.ok) throw await this.parseError(res);
   }
 
   /** Analise de uma entrada. Lanca ApiError 404 quando ainda nao existe. */

@@ -46,9 +46,9 @@ describe('htmlToMarkdown', () => {
     );
   });
 
-  it('renderiza imagem e volta para markdown', () => {
+  it('renderiza imagem como bloco e volta para markdown', () => {
     expect(markdownToHtml('![foto](https://x.test/f.png)')).toBe(
-      '<div><img src="https://x.test/f.png" data-src="https://x.test/f.png" alt="foto" style="max-width:100%"></div>',
+      '<div class="img-block" contenteditable="false"><img src="https://x.test/f.png" data-src="https://x.test/f.png" alt="foto"></div><div><br></div>',
     );
     expect(htmlToMarkdown('<div><img src="https://x.test/f.png" alt="foto"></div>')).toBe(
       '![foto](https://x.test/f.png)',
@@ -56,13 +56,23 @@ describe('htmlToMarkdown', () => {
   });
 
   it('usa a fonte de exibicao (data URI) e preserva a URL original', () => {
-    const md = '![foto](att:f.png)';
-    const sources = { 'att:f.png': 'data:image/png;base64,AAA' };
+    const md = '![foto](attachment:abc)';
+    const sources = { 'attachment:abc': 'data:image/png;base64,AAA' };
     const html = markdownToHtml(md, sources);
     expect(html).toBe(
-      '<div><img src="data:image/png;base64,AAA" data-src="att:f.png" alt="foto" style="max-width:100%"></div>',
+      '<div class="img-block" contenteditable="false"><img src="data:image/png;base64,AAA" data-src="attachment:abc" alt="foto"></div><div><br></div>',
     );
     // Ao salvar, volta a referencia original (nao o data URI).
+    expect(htmlToMarkdown(html)).toBe(md);
+  });
+
+  it('preserva a largura e a ordem de varias imagens', () => {
+    const md = '![a](attachment:1){w=40}\n![b](attachment:2)';
+    const html = markdownToHtml(md);
+    // depois da ultima imagem sempre sobra um paragrafo
+    expect(html.endsWith('<div><br></div>')).toBe(true);
+    expect(html.indexOf('attachment:1')).toBeLessThan(html.indexOf('attachment:2'));
+    expect(html).toContain('data-width="40"');
     expect(htmlToMarkdown(html)).toBe(md);
   });
 });

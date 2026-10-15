@@ -168,11 +168,12 @@ export default function NoteScreen() {
       if (!picked) return;
       // Salva local primeiro: funciona offline.
       const name = await saveLocalImage(noteId, picked.bytes, picked.mimeType);
-      let persistSrc = `att:${name}`;
-      // Com servidor e entrada, sobe agora e passa a usar a URL do servidor.
+      let persistSrc = `local:${name}`;
+      // Com servidor e entrada, sobe agora e passa a referenciar o anexo.
       if (note?.entryId) {
         try {
-          persistSrc = await uploadLocalImage(note.entryId, noteId, name);
+          const id = await uploadLocalImage(note.entryId, noteId, name);
+          persistSrc = `attachment:${id}`;
         } catch {
           // offline: fica local e sobe no sync
         }

@@ -40,7 +40,27 @@ const CHECK = /^\s*[-*+]\s+\[( |x|X)\]\s+(.*)$/;
 const BULLET = /^\s*[-*+]\s+(.*)$/;
 const NUMBERED = /^\s*\d+\.\s+(.*)$/;
 const QUOTE = /^\s*>\s?(.*)$/;
-const IMAGE = /^!\[([^\]]*)\]\(([^)\s]+)\)\s*$/;
+const IMAGE = /^!\[([^\]]*)\]\(([^)\s]+)\)(?:\{w=(\d+)\})?\s*$/;
+
+// A develop guarda imagem como bloco proprio com `attachmentId` (nao `url`).
+// Referencia canonica no markdown do app: `attachment:<id>`. Largura opcional
+// em porcentagem: `![alt](src){w=NN}`.
+const ATTACHMENT_REF = /^attachment:([A-Za-z0-9_-]+)$/;
+const ATTACHMENT_URL = /\/api\/v1\/attachments\/([A-Za-z0-9_-]+)/;
+
+function imageProps(src: string, caption: string, width?: string): Record<string, unknown> {
+  const props: Record<string, unknown> = {};
+  const direct = ATTACHMENT_REF.exec(src);
+  if (direct) props.attachmentId = direct[1];
+  else {
+    const fromUrl = ATTACHMENT_URL.exec(src);
+    if (fromUrl) props.attachmentId = fromUrl[1];
+    else props.url = src;
+  }
+  props.caption = caption;
+  if (width) props.width = Number(width);
+  return props;
+}
 
 function text(value: string, styles: Record<string, boolean> = {}): StyledText {
   return { type: 'text', text: value, styles };
@@ -205,7 +225,7 @@ export function markdownToBlocks(markdown: string): Block[] {
 
     const image = IMAGE.exec(line);
     if (image) {
-      blocks.push({ type: 'image', props: { url: image[2], caption: image[1] } });
+      blocks.push({ type: 'image', props: imageProps(image[2], image[1], image[3]) });
       i += 1;
       continue;
     }
@@ -246,9 +266,12 @@ function blockToMarkdown(block: Block, depth: number): string {
       return `${indent(`\`\`\`${language}`, depth)}\n${block.content?.map((n) => (n.type === 'text' ? n.text : '')).join('')}\n${indent('```', depth)}`;
     }
     case 'image': {
-      const url = typeof props.url === 'string' ? props.url : '';
       const caption = typeof props.caption === 'string' ? props.caption : '';
-      return indent(`![${caption}](${url})`, depth);
+      const attachmentId = typeof props.attachmentId === 'string' ? props.attachmentId : '';
+      const url = typeof props.url === 'string' ? props.url : '';
+      const src = attachmentId ? `attachment:${attachmentId}` : url;
+      const width = typeof props.width === 'number' ? `{w=${props.width}}` : '';
+      return indent(`![${caption}](${src})${width}`, depth);
     }
     case 'paragraph':
     default:

@@ -91,3 +91,28 @@ describe('blocksToMarkdown', () => {
     ).toBe('oi');
   });
 });
+
+describe('imagem com anexo (schema do dashboard)', () => {
+  it('le o bloco com attachmentId como referencia attachment:', () => {
+    expect(
+      markdownToBlocks('![foto](attachment:abc123)'),
+    ).toEqual([{ type: 'image', props: { attachmentId: 'abc123', caption: 'foto' } }]);
+  });
+
+  it('aceita a URL de anexo do servidor', () => {
+    expect(
+      markdownToBlocks('![foto](/api/v1/attachments/abc123?token=x)'),
+    ).toEqual([{ type: 'image', props: { attachmentId: 'abc123', caption: 'foto' } }]);
+  });
+
+  it('escreve o bloco attachmentId de volta como referencia attachment:', () => {
+    expect(
+      blocksToMarkdown([{ type: 'image', props: { attachmentId: 'abc123', caption: 'foto' } }]),
+    ).toBe('![foto](attachment:abc123)');
+  });
+
+  it('faz ida e volta estavel', () => {
+    const md = '![foto](attachment:abc123)';
+    expect(blocksToMarkdown(markdownToBlocks(md))).toBe(md);
+  });
+});

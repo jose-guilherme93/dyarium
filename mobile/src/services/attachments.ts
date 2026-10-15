@@ -1,7 +1,13 @@
 /**
- * Anexos local-first: a imagem e salva na pasta da nota e referenciada no
- * markdown como `att:<arquivo>`. Quando houver servidor e a nota tiver entrada,
- * o upload acontece e a referencia vira a URL do servidor (no sync).
+ * Anexos (imagens) local-first.
+ *
+ * No markdown do app a imagem e referenciada de duas formas:
+ * - `local:<arquivo>`: ainda so existe no aparelho;
+ * - `attachment:<id>`: ja esta no servidor (bloco `image` com `attachmentId`,
+ *   que e como o dashboard guarda a imagem).
+ *
+ * A resolucao (`local:` -> `attachment:`) acontece no sync; a exibicao converte
+ * qualquer uma das referencias num data URI (arquivo local ou anexo baixado).
  */
 
 import { Directory, File, FileMode, Paths } from 'expo-file-system';
@@ -16,14 +22,19 @@ import { loadServerConfig } from './secure';
 
 const doFetch = globalThis.fetch as unknown as FetchLike;
 
-const LOCAL_PREFIX = 'att:';
+const LOCAL_PREFIX = 'local:';
+const ATTACHMENT_PREFIX = 'attachment:';
 
-export function isLocalAttachment(url: string): boolean {
-  return url.startsWith(LOCAL_PREFIX);
+export function isLocalAttachment(ref: string): boolean {
+  return ref.startsWith(LOCAL_PREFIX);
 }
 
-export function localAttachmentName(url: string): string {
-  return url.slice(LOCAL_PREFIX.length);
+export function localAttachmentName(ref: string): string {
+  return ref.slice(LOCAL_PREFIX.length);
+}
+
+export function attachmentRefId(ref: string): string {
+  return ref.slice(ATTACHMENT_PREFIX.length);
 }
 
 export function mimeFromName(name: string): string {
@@ -45,6 +56,19 @@ export function mimeFromName(name: string): string {
 function extensionOf(mime: string): string {
   const ext = mime.split('/')[1]?.split(';')[0]?.trim().toLowerCase();
   return ext || 'jpg';
+}
+
+function extFor(mime: string): string {
+  const ext = mime.split('/')[1]?.split(';')[0]?.trim().toLowerCase();
+  return ext === 'jpeg' ? 'jpg' : ext || 'jpg';
+}
+
+function mimeForExt(ext: string): string {
+  return ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : `image/${ext}`;
+}
+
+function toDataUri(mime: string, bytes: Uint8Array): string {
+  return `data:${mime};base64,${bytesToBase64(bytes)}`;
 }
 
 /** Salva a imagem na pasta da nota e devolve o nome do arquivo. */
@@ -71,22 +95,19 @@ export async function readLocalImage(noteId: string, name: string): Promise<Uint
   return new Uint8Array(buffer);
 }
 
-/**
- * Sobe a imagem local e devolve a URL do servidor. Requer a entrada ja existir.
- */
+/** Sobe a imagem local e devolve o id do anexo no servidor. */
 export async function uploadLocalImage(entryId: string, noteId: string, name: string): Promise<string> {
   const config = await loadServerConfig();
   if (!config) throw new Error('sem servidor configurado');
   const api = new DyariumApi(config, doFetch);
   const bytes = await readLocalImage(noteId, name);
   const attachment = await api.uploadAttachment(entryId, bytes, mimeFromName(name));
-  const base = config.baseUrl.replace(/\/+$/, '');
-  return `${base}/api/v1/attachments/${attachment.id}`;
+  return attachment.id;
 }
 
 /**
- * Substitui as referencias locais (`att:...`) pelas URLs do servidor, subindo o
- * que faltar. Referencias que falharem permanecem locais para tentar de novo.
+ * Troca as referencias locais (`local:...`) por `attachment:<id>`, subindo o que
+ * faltar. O que falhar permanece local para tentar no proximo sync.
  */
 export async function resolveLocalAttachments(
   entryId: string | undefined,
@@ -94,13 +115,13 @@ export async function resolveLocalAttachments(
   markdown: string,
 ): Promise<string> {
   if (!entryId || !markdown.includes(LOCAL_PREFIX)) return markdown;
-  const matches = [...markdown.matchAll(/!\[([^\]]*)\]\(att:([^)\s]+)\)/g)];
+  const matches = [...markdown.matchAll(/!\[([^\]]*)\]\(local:([^)\s]+)\)/g)];
   let out = markdown;
   for (const match of matches) {
     const [full, alt, name] = match;
     try {
-      const url = await uploadLocalImage(entryId, noteId, name);
-      out = out.replace(full, `![${alt}](${url})`);
+      const id = await uploadLocalImage(entryId, noteId, name);
+      out = out.replace(full, `![${alt}](${ATTACHMENT_PREFIX}${id})`);
     } catch {
       // sem rede: mantem local e tenta no proximo sync
     }
@@ -108,11 +129,11 @@ export async function resolveLocalAttachments(
   return out;
 }
 
-/** Le a imagem local como data URI (para exibir no editor). */
+/** Le a imagem local como data URI. */
 export async function localImageDataUri(noteId: string, name: string): Promise<string | null> {
   try {
     const bytes = await readLocalImage(noteId, name);
-    return `data:${mimeFromName(name)};base64,${bytesToBase64(bytes)}`;
+    return toDataUri(mimeFromName(name), bytes);
   } catch {
     return null;
   }
@@ -127,34 +148,12 @@ function cacheDir(): Directory {
   return dir;
 }
 
-function attachmentIdFromUrl(url: string): string | null {
-  const match = /\/api\/v1\/attachments\/([^/?#]+)/.exec(url);
-  return match ? match[1] : null;
-}
-
-function extFor(mime: string): string {
-  const ext = mime.split('/')[1]?.split(';')[0]?.trim().toLowerCase();
-  return ext === 'jpeg' ? 'jpg' : ext || 'jpg';
-}
-
-function mimeForExt(ext: string): string {
-  return ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : `image/${ext}`;
-}
-
-function toDataUri(mime: string, bytes: Uint8Array): string {
-  return `data:${mime};base64,${bytesToBase64(bytes)}`;
-}
-
-// Cache em memoria da sessao, alem do cache em disco.
 const memoryCache = new Map<string, string>();
 
-/** Anexo do servidor como data URI, usando cache em disco (baixa so uma vez). */
-export async function attachmentDataUri(url: string): Promise<string | null> {
-  const inMemory = memoryCache.get(url);
+/** Anexo do servidor (por id) como data URI, usando cache em disco. */
+export async function attachmentDataUri(id: string): Promise<string | null> {
+  const inMemory = memoryCache.get(id);
   if (inMemory) return inMemory;
-
-  const id = attachmentIdFromUrl(url);
-  if (!id) return null;
 
   const dir = cacheDir();
   const cached = dir.list().find((entry) => entry.name.startsWith(`${id}.`));
@@ -163,7 +162,7 @@ export async function attachmentDataUri(url: string): Promise<string | null> {
       const ext = cached.name.split('.').pop() ?? 'jpg';
       const buffer = await new File(cached.uri).arrayBuffer();
       const dataUri = toDataUri(mimeForExt(ext), new Uint8Array(buffer));
-      memoryCache.set(url, dataUri);
+      memoryCache.set(id, dataUri);
       return dataUri;
     } catch {
       // cache corrompido: cai para o download
@@ -173,6 +172,7 @@ export async function attachmentDataUri(url: string): Promise<string | null> {
   const config = await loadServerConfig();
   if (!config) return null;
   try {
+    const url = `${config.baseUrl.replace(/\/+$/, '')}/api/v1/attachments/${id}`;
     const res = await fetch(url, { headers: { Authorization: `Bearer ${config.token}` } });
     if (!res.ok) return null;
     const type = res.headers.get('Content-Type') ?? 'image/jpeg';
@@ -188,7 +188,7 @@ export async function attachmentDataUri(url: string): Promise<string | null> {
     }
 
     const dataUri = toDataUri(type, bytes);
-    memoryCache.set(url, dataUri);
+    memoryCache.set(id, dataUri);
     return dataUri;
   } catch {
     return null;
@@ -196,21 +196,28 @@ export async function attachmentDataUri(url: string): Promise<string | null> {
 }
 
 /**
- * Monta o mapa URL original -> fonte de exibicao para as imagens do markdown:
- * `att:` vira data URI do arquivo local; anexo do servidor e baixado com o token.
+ * Mapa referencia -> fonte de exibicao para as imagens do markdown:
+ * `local:` vira data URI do arquivo; `attachment:<id>` (ou URL de anexo) e
+ * baixado com o token.
  */
 export async function resolveImageSources(
   noteId: string,
   markdown: string,
 ): Promise<Record<string, string>> {
   const map: Record<string, string> = {};
-  for (const url of extractImageUrls(markdown)) {
-    if (isLocalAttachment(url)) {
-      const dataUri = await localImageDataUri(noteId, localAttachmentName(url));
-      if (dataUri) map[url] = dataUri;
-    } else if (/^https?:\/\//i.test(url) && url.includes('/attachments/')) {
-      const dataUri = await attachmentDataUri(url);
-      if (dataUri) map[url] = dataUri;
+  for (const ref of extractImageUrls(markdown)) {
+    if (isLocalAttachment(ref)) {
+      const dataUri = await localImageDataUri(noteId, localAttachmentName(ref));
+      if (dataUri) map[ref] = dataUri;
+    } else if (ref.startsWith(ATTACHMENT_PREFIX)) {
+      const dataUri = await attachmentDataUri(attachmentRefId(ref));
+      if (dataUri) map[ref] = dataUri;
+    } else {
+      const fromUrl = /\/api\/v1\/attachments\/([A-Za-z0-9_-]+)/.exec(ref);
+      if (fromUrl) {
+        const dataUri = await attachmentDataUri(fromUrl[1]);
+        if (dataUri) map[ref] = dataUri;
+      }
     }
   }
   return map;

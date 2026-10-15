@@ -50,7 +50,9 @@ function buildEditorHtml(placeholder: string, initialHtml: string): string {
   ul { padding-left: 22px; margin: 6px 0; }
   div { min-height: 1.5em; }
   a { color: #8B7BE8; text-decoration: underline; }
-  img { max-width: 100%; border-radius: 10px; }
+  .img-block { position: relative; display: block; margin: 6px 0; }
+  .img-block img { display: block; max-width: 100%; border-radius: 10px; }
+  .img-handle { position: absolute; top: 50%; right: -9px; width: 20px; height: 20px; margin-top: -10px; border-radius: 50%; background: #6E56CF; border: 2px solid #FFFFFF; touch-action: none; }
 </style></head><body>
 <div id="editor" contenteditable="true" data-placeholder="${safePlaceholder}">${initialHtml}</div>
 <script>
@@ -60,23 +62,85 @@ function buildEditorHtml(placeholder: string, initialHtml: string): string {
       var height = Math.max(160, document.body.scrollHeight);
       window.ReactNativeWebView.postMessage(JSON.stringify({ html: editor.innerHTML, height: height }));
     }
+    function attachHandle(block, img) {
+      if (block.querySelector('.img-handle')) return;
+      var handle = document.createElement('span');
+      handle.className = 'img-handle';
+      handle.setAttribute('contenteditable', 'false');
+      block.appendChild(handle);
+      var startX = 0, startW = 0, maxW = 1;
+      function onMove(e) {
+        e.preventDefault();
+        var t = e.touches[0];
+        var w = Math.max(60, Math.min(maxW, startW + (t.clientX - startX)));
+        img.style.width = Math.round((w / maxW) * 100) + '%';
+      }
+      function onEnd() {
+        document.removeEventListener('touchmove', onMove);
+        document.removeEventListener('touchend', onEnd);
+        var pct = Math.round((img.getBoundingClientRect().width / maxW) * 100);
+        img.setAttribute('data-width', String(pct));
+        img.style.width = pct + '%';
+        send();
+      }
+      handle.addEventListener('touchstart', function (e) {
+        e.preventDefault();
+        var t = e.touches[0];
+        startX = t.clientX;
+        startW = img.getBoundingClientRect().width;
+        maxW = editor.getBoundingClientRect().width || 1;
+        document.addEventListener('touchmove', onMove, { passive: false });
+        document.addEventListener('touchend', onEnd);
+      });
+    }
+    function wrapImages() {
+      var imgs = editor.querySelectorAll('img');
+      for (var i = 0; i < imgs.length; i++) {
+        var img = imgs[i];
+        var parent = img.parentNode;
+        if (parent && parent.classList && parent.classList.contains('img-block')) {
+          attachHandle(parent, img);
+          continue;
+        }
+        var block = document.createElement('div');
+        block.className = 'img-block';
+        block.setAttribute('contenteditable', 'false');
+        parent.insertBefore(block, img);
+        block.appendChild(img);
+        attachHandle(block, img);
+      }
+    }
+    function ensureParagraphAfter(block) {
+      var next = block.nextSibling;
+      if (!next || next.nodeType !== 1) {
+        var p = document.createElement('div');
+        p.innerHTML = '<br>';
+        editor.insertBefore(p, block.nextSibling);
+        return p;
+      }
+      return next;
+    }
+    function placeCaret(node) {
+      var range = document.createRange();
+      range.selectNodeContents(node);
+      range.collapse(true);
+      var sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
     editor.addEventListener('input', send);
     editor.addEventListener('click', function (e) {
       var node = e.target;
       while (node && node !== editor) {
         if (node.tagName === 'A' && node.getAttribute('href')) {
           e.preventDefault();
-          window.ReactNativeWebView.postMessage(
-            JSON.stringify({ open: node.getAttribute('href') })
-          );
+          window.ReactNativeWebView.postMessage(JSON.stringify({ open: node.getAttribute('href') }));
           return;
         }
         node = node.parentNode;
       }
     });
-    window.addEventListener('load', send);
-    // Recalcula a altura quando o conteudo muda de tamanho (ex.: imagem que
-    // carrega depois) — sem isto a imagem ficava cortada.
+    window.addEventListener('load', function () { wrapImages(); send(); });
     if (window.ResizeObserver) {
       try { new ResizeObserver(function () { send(); }).observe(editor); } catch (e) {}
     }
@@ -85,26 +149,32 @@ function buildEditorHtml(placeholder: string, initialHtml: string): string {
     }, true);
     window.__exec = function (cmd) { editor.focus(); document.execCommand(cmd, false, null); send(); };
     window.__focus = function () { editor.focus(); };
+    // Insere a imagem como bloco e deixa um paragrafo (com cursor) logo abaixo.
     window.__insertImage = function (src, persistSrc, alt) {
       editor.focus();
+      var block = document.createElement('div');
+      block.className = 'img-block';
+      block.setAttribute('contenteditable', 'false');
       var img = document.createElement('img');
       img.src = src;
       img.alt = alt || '';
-      img.style.maxWidth = '100%';
-      img.style.borderRadius = '10px';
       if (persistSrc) { img.setAttribute('data-src', persistSrc); }
+      block.appendChild(img);
+      var inserted = false;
       var sel = window.getSelection();
       if (sel && sel.rangeCount > 0) {
-        var range = sel.getRangeAt(0);
-        range.deleteContents();
-        range.insertNode(img);
-        range.setStartAfter(img);
-        range.collapse(true);
-        sel.removeAllRanges();
-        sel.addRange(range);
-      } else {
-        editor.appendChild(img);
+        var host = sel.getRangeAt(0).startContainer;
+        host = host.nodeType === 1 ? host : host.parentNode;
+        while (host && host.parentNode !== editor) { host = host.parentNode; }
+        if (host && host.parentNode === editor) {
+          editor.insertBefore(block, host.nextSibling);
+          inserted = true;
+        }
       }
+      if (!inserted) { editor.appendChild(block); }
+      var after = ensureParagraphAfter(block);
+      attachHandle(block, img);
+      placeCaret(after);
       send();
     };
   })();

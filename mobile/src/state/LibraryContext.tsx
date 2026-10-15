@@ -6,6 +6,7 @@ import { buildDraftNote, buildTextNote, noteHasContent } from '@/core/note';
 import { markQueued } from '@/core/queue';
 import { isUploadable, needsTranscript, type Recording } from '@/core/types';
 import { deleteRecordingRow, getRecording, listRecordings, upsertRecording } from '@/services/db';
+import { deleteServerEntry } from '@/services/entries';
 import { deleteSessionFiles } from '@/services/files';
 import { syncNote } from '@/services/noteSync';
 import { pullServerEntries } from '@/services/pull';
@@ -238,7 +239,13 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   const remove = useCallback(
     async (id: string) => {
       const current = recordingsRef.current.find((r) => r.id === id);
-      if (current) deleteSessionFiles(current.id);
+      if (current) {
+        deleteSessionFiles(current.id);
+        // Apaga tambem no servidor, para nao ressuscitar no proximo pull.
+        if (current.entryId) {
+          void deleteServerEntry(current.entryId).catch(() => undefined);
+        }
+      }
       await deleteRecordingRow(id);
       setRecordings((prev) => prev.filter((r) => r.id !== id));
     },
