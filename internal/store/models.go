@@ -25,15 +25,18 @@ const (
 
 // Upload is an in-progress resumable upload.
 type Upload struct {
-	ID            string
-	Status        string
-	Filename      string
-	ContentType   string
-	SizeBytes     int64
-	SHA256        string
-	Title         string
-	RecordedAt    *time.Time
-	ClientKey     string
+	ID          string
+	Status      string
+	Filename    string
+	ContentType string
+	SizeBytes   int64
+	SHA256      string
+	Title       string
+	RecordedAt  *time.Time
+	ClientKey   string
+	// EntryID, when set, attaches the finished audio to an existing entry
+	// instead of creating a new one.
+	EntryID       string
 	ReceivedBytes int64
 	StorageKey    string
 	Prefix        []byte
@@ -59,24 +62,28 @@ type Entry struct {
 	DeletedAt        *time.Time
 }
 
-// Attachment is an encrypted object linked to an entry.
+// Attachment is an encrypted object linked to an entry. Audio attachments use
+// kind "original"; images use "image"; the derived 16 kHz working copy uses
+// "derived_16k".
 type Attachment struct {
-	ID          string
-	EntryID     string
-	Kind        string
-	StorageKey  string
-	ContentType string
-	SizeBytes   int64
-	SHA256      string
-	Cipher      string
-	CacheKey    string
-	CreatedAt   time.Time
+	ID              string
+	EntryID         string
+	Kind            string
+	StorageKey      string
+	ContentType     string
+	SizeBytes       int64
+	SHA256          string
+	Cipher          string
+	CacheKey        string
+	DurationSeconds float64
+	CreatedAt       time.Time
 }
 
-// Transcript is a transcription of an entry.
+// Transcript is a transcription of one audio attachment of an entry.
 type Transcript struct {
 	ID              string
 	EntryID         string
+	AttachmentID    string
 	Model           string
 	Language        string
 	Text            string

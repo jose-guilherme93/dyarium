@@ -80,9 +80,9 @@ type chunkResult struct {
 	Segments []Segment `json:"segments"`
 }
 
-// Run transcribes an entry. The callbacks report progress and stream segments
-// for the dashboard.
-func (p *Pipeline) Run(ctx context.Context, entryID string, cb Callbacks) error {
+// Run transcribes one audio of an entry. The callbacks report progress and
+// stream segments for the dashboard.
+func (p *Pipeline) Run(ctx context.Context, entryID, attachmentID string, cb Callbacks) error {
 	report := func(stage string, done, total int) {
 		if cb.Progress != nil {
 			cb.Progress(stage, done, total)
@@ -93,9 +93,9 @@ func (p *Pipeline) Run(ctx context.Context, entryID string, cb Callbacks) error 
 	if err != nil {
 		return fmt.Errorf("transcribe: get entry: %w", err)
 	}
-	att, err := p.store.GetAttachmentByKind(ctx, entryID, store.AttachmentOriginal)
+	att, err := p.audioAttachment(ctx, entryID, attachmentID)
 	if err != nil {
-		return fmt.Errorf("transcribe: original attachment: %w", err)
+		return fmt.Errorf("transcribe: audio attachment: %w", err)
 	}
 	if err := p.store.UpdateEntryStatus(ctx, entryID, store.EntryTranscribing); err != nil {
 		return err
@@ -124,7 +124,7 @@ func (p *Pipeline) Run(ctx context.Context, entryID string, cb Callbacks) error 
 		return err
 	}
 
-	derived, err := p.derived(ctx, entryID, src)
+	derived, err := p.derived(ctx, entryID, att.ID, src)
 	if err != nil {
 		return err
 	}
@@ -139,7 +139,11 @@ func (p *Pipeline) Run(ctx context.Context, entryID string, cb Callbacks) error 
 
 	trim := p.trimSilence(ctx)
 
-	ckptPath := filepath.Join(p.checkpointDir, entryID+".json")
+	ckptName := att.ID
+	if ckptName == "" {
+		ckptName = entryID
+	}
+	ckptPath := filepath.Join(p.checkpointDir, ckptName+".json")
 	results := loadCheckpoint(ckptPath)
 
 	var peakMB int64
@@ -181,6 +185,7 @@ func (p *Pipeline) Run(ctx context.Context, entryID string, cb Callbacks) error 
 	}
 
 	transcript, segments := assemble(entryID, chunks, results, metrics.DurationMS, trim, p.modelName(), language)
+	transcript.AttachmentID = att.ID
 	if err := p.store.SaveTranscript(ctx, transcript, segments); err != nil {
 		return err
 	}
@@ -223,8 +228,21 @@ func (p *Pipeline) transcribeChunk(ctx context.Context, derived string, ch Chunk
 	return segs, peak, language, nil
 }
 
-func (p *Pipeline) derived(ctx context.Context, entryID, src string) (string, error) {
-	if path, ok, err := p.deps.GetDerived(ctx, entryID, cacheKeyVersion); err != nil {
+// audioAttachment returns the audio to transcribe: the given attachment, or the
+// entry's first audio when no id is provided.
+func (p *Pipeline) audioAttachment(ctx context.Context, entryID, attachmentID string) (store.Attachment, error) {
+	if attachmentID != "" {
+		return p.store.GetAttachment(ctx, attachmentID)
+	}
+	return p.store.GetAttachmentByKind(ctx, entryID, store.AttachmentOriginal)
+}
+
+func (p *Pipeline) derived(ctx context.Context, entryID, attachmentID, src string) (string, error) {
+	cacheKey := cacheKeyVersion
+	if attachmentID != "" {
+		cacheKey = "16k:" + attachmentID + ":v1"
+	}
+	if path, ok, err := p.deps.GetDerived(ctx, entryID, cacheKey); err != nil {
 		return "", err
 	} else if ok {
 		return path, nil
@@ -234,7 +252,7 @@ func (p *Pipeline) derived(ctx context.Context, entryID, src string) (string, er
 		return "", fmt.Errorf("transcribe: derive: %w", err)
 	}
 	// Caching is best effort; a failure to cache must not fail the job.
-	_ = p.deps.SaveDerived(ctx, entryID, cacheKeyVersion, "audio/wav", path)
+	_ = p.deps.SaveDerived(ctx, entryID, cacheKey, "audio/wav", path)
 	return path, nil
 }
 

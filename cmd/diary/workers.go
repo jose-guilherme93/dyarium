@@ -33,7 +33,11 @@ func (s telegramSink) IngestAudio(ctx context.Context, source, filename, content
 	if err != nil {
 		return "", err
 	}
-	if _, err := s.queue.Enqueue(ctx, jobs.TypeTranscribe, "transcribe:"+entry.ID, jobs.TranscribePayload{EntryID: entry.ID}); err != nil {
+	att, err := s.store.GetAttachmentByKind(ctx, entry.ID, store.AttachmentOriginal)
+	if err != nil {
+		return "", err
+	}
+	if _, err := s.queue.Enqueue(ctx, jobs.TypeTranscribe, "transcribe:"+att.ID, jobs.TranscribePayload{EntryID: entry.ID, AttachmentID: att.ID}); err != nil {
 		return "", err
 	}
 	_ = s.store.UpdateEntryStatus(ctx, entry.ID, store.EntryQueued)
@@ -103,7 +107,7 @@ func transcribeHandler(st *store.Store, cfg config.Config, pipeline *transcribe.
 				})
 			},
 		}
-		if err := pipeline.Run(ctx, payload.EntryID, cb); err != nil {
+		if err := pipeline.Run(ctx, payload.EntryID, payload.AttachmentID, cb); err != nil {
 			_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryFailed)
 			bus.Publish("entry.failed", map[string]string{"entry_id": payload.EntryID, "reason": err.Error()})
 			return err
@@ -189,16 +193,38 @@ func analyzeSegments(text string, segments []store.Segment) []analyze.Segment {
 	return out
 }
 
-// analysisInput prefers the audio transcript and falls back to the written note
-// body, so a text note can be analyzed too.
+// analysisInput prefers the audio transcripts and falls back to the written
+// note body, so a text note can be analyzed too. With several audios the
+// transcripts are concatenated (segment timestamps would collide, so a single
+// text segment is used).
 func analysisInput(ctx context.Context, st *store.Store, entryID string) ([]analyze.Segment, string, error) {
-	transcript, segments, err := st.GetTranscript(ctx, entryID)
-	if err == nil {
-		return analyzeSegments(transcript.Text, segments), transcript.Language, nil
+	transcripts, err := st.ListTranscripts(ctx, entryID)
+	if err == nil && len(transcripts) == 1 {
+		if _, segments, serr := st.GetTranscriptByAttachment(ctx, transcripts[0].AttachmentID); serr == nil {
+			return analyzeSegments(transcripts[0].Text, segments), transcripts[0].Language, nil
+		}
+	}
+	if err == nil && len(transcripts) > 1 {
+		var parts []string
+		language := ""
+		for _, t := range transcripts {
+			if text := strings.TrimSpace(t.Text); text != "" {
+				parts = append(parts, text)
+			}
+			if language == "" && t.Language != "" {
+				language = t.Language
+			}
+		}
+		if joined := strings.Join(parts, "\n\n"); joined != "" {
+			return []analyze.Segment{{Text: joined}}, language, nil
+		}
 	}
 	text, noteErr := noteBodyText(ctx, st, entryID)
 	if noteErr != nil {
-		return nil, "", fmt.Errorf("worker: transcript: %w", err)
+		if err != nil {
+			return nil, "", fmt.Errorf("worker: transcript: %w", err)
+		}
+		return nil, "", noteErr
 	}
 	if strings.TrimSpace(text) == "" {
 		return nil, "", errors.New("transcricao indisponivel")

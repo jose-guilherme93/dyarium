@@ -14,6 +14,7 @@ import (
 	"github.com/joseti/dyarium/internal/config"
 	"github.com/joseti/dyarium/internal/crypto"
 	"github.com/joseti/dyarium/internal/ingest"
+	"github.com/joseti/dyarium/internal/jobs"
 	"github.com/joseti/dyarium/internal/store"
 )
 
@@ -43,7 +44,7 @@ func newTestServer(t *testing.T) *Server {
 		MaxDurationSeconds: cfg.MaxDurationSeconds,
 		AllowedFormats:     cfg.AllowedFormats,
 	}, st, key, t.TempDir(), nil)
-	return New(Deps{Config: cfg, Store: st, Logger: logger, Version: Version{Version: "test"}, Ingest: ing})
+	return New(Deps{Config: cfg, Store: st, Logger: logger, Version: Version{Version: "test"}, Ingest: ing, Queue: jobs.NewQueue(st.DB())})
 }
 
 func TestHealthz(t *testing.T) {

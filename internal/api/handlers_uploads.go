@@ -21,6 +21,8 @@ type createUploadRequest struct {
 	Title       string `json:"title"`
 	RecordedAt  string `json:"recorded_at"`
 	ClientKey   string `json:"client_key"`
+	// EntryID, when set, adds the audio to an existing entry.
+	EntryID string `json:"entry_id"`
 }
 
 func (s *Server) handleCreateUpload(w http.ResponseWriter, r *http.Request) {
@@ -43,6 +45,7 @@ func (s *Server) handleCreateUpload(w http.ResponseWriter, r *http.Request) {
 		Title:       req.Title,
 		RecordedAt:  recordedAt,
 		ClientKey:   req.ClientKey,
+		EntryID:     req.EntryID,
 	})
 	if err != nil {
 		s.writeIngestError(w, err)
@@ -104,18 +107,19 @@ func (s *Server) handlePutUpload(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCompleteUpload(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	entry, err := s.deps.Ingest.Complete(ctx, r.PathValue("id"))
+	result, err := s.deps.Ingest.Complete(ctx, r.PathValue("id"))
 	if err != nil {
 		s.writeIngestError(w, err)
 		return
 	}
-	if _, err := s.deps.Queue.Enqueue(ctx, jobs.TypeTranscribe, "transcribe:"+entry.ID, jobs.TranscribePayload{EntryID: entry.ID}); err != nil {
+	if _, err := s.deps.Queue.Enqueue(ctx, jobs.TypeTranscribe, "transcribe:"+result.Attachment.ID,
+		jobs.TranscribePayload{EntryID: result.Entry.ID, AttachmentID: result.Attachment.ID}); err != nil {
 		s.deps.Logger.Error("filtrar: enfileirar transcricao", "erro", err)
 	}
-	_ = s.deps.Store.UpdateEntryStatus(ctx, entry.ID, store.EntryQueued)
-	s.deps.Events.Publish("entry.status", map[string]string{"entry_id": entry.ID, "status": store.EntryQueued})
+	_ = s.deps.Store.UpdateEntryStatus(ctx, result.Entry.ID, store.EntryQueued)
+	s.deps.Events.Publish("entry.status", map[string]string{"entry_id": result.Entry.ID, "status": store.EntryQueued})
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"entry_id": entry.ID,
+		"entry_id": result.Entry.ID,
 		"status":   store.EntryQueued,
 	})
 }

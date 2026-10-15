@@ -108,6 +108,9 @@ func (s *Server) handleGetEntry(w http.ResponseWriter, r *http.Request) {
 	if names, err := s.entryTagNames(ctx, entry.ID); err == nil {
 		body["tags"] = names
 	}
+	if audios, err := s.deps.Store.ListAudios(ctx, entry.ID); err == nil {
+		body["audios"] = s.audiosJSON(ctx, audios)
+	}
 	if m, ok, err := s.deps.Store.GetMetrics(ctx, entry.ID); err == nil && ok {
 		body["metrics"] = map[string]any{
 			"duration_ms":         m.DurationMS,
@@ -168,6 +171,11 @@ func (s *Server) handleGetTranscript(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
+	writeJSON(w, http.StatusOK, transcriptJSON(t, segs))
+}
+
+// transcriptJSON renders a transcript with its segments.
+func transcriptJSON(t store.Transcript, segs []store.Segment) map[string]any {
 	segments := make([]map[string]any, 0, len(segs))
 	for _, seg := range segs {
 		segments = append(segments, map[string]any{
@@ -176,22 +184,50 @@ func (s *Server) handleGetTranscript(w http.ResponseWriter, r *http.Request) {
 			"text":     seg.Text,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	return map[string]any{
 		"model":            t.Model,
 		"language":         t.Language,
 		"text":             t.Text,
 		"trim_silence":     t.TrimSilence,
 		"duration_seconds": t.DurationSeconds,
 		"segments":         segments,
-	})
+	}
+}
+
+// audiosJSON renders the audio attachments of an entry, each with its own
+// transcript when available.
+func (s *Server) audiosJSON(ctx context.Context, audios []store.Attachment) []map[string]any {
+	out := make([]map[string]any, 0, len(audios))
+	for _, a := range audios {
+		item := map[string]any{
+			"id":               a.ID,
+			"content_type":     a.ContentType,
+			"size_bytes":       a.SizeBytes,
+			"duration_seconds": a.DurationSeconds,
+			"created_at":       a.CreatedAt,
+		}
+		if t, segs, err := s.deps.Store.GetTranscriptByAttachment(ctx, a.ID); err == nil {
+			item["transcript"] = transcriptJSON(t, segs)
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func (s *Server) handleRetranscribe(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id := r.PathValue("id")
-	if _, err := s.deps.Queue.Enqueue(ctx, jobs.TypeTranscribe, "transcribe:"+id, jobs.TranscribePayload{EntryID: id}); err != nil {
+	audios, err := s.deps.Store.ListAudios(ctx, id)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
+	}
+	for _, audio := range audios {
+		if _, err := s.deps.Queue.Enqueue(ctx, jobs.TypeTranscribe, "transcribe:"+audio.ID,
+			jobs.TranscribePayload{EntryID: id, AttachmentID: audio.ID}); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			return
+		}
 	}
 	_ = s.deps.Store.UpdateEntryStatus(ctx, id, store.EntryQueued)
 	s.deps.Events.Publish("entry.status", map[string]string{"entry_id": id, "status": store.EntryQueued})

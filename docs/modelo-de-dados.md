@@ -32,36 +32,40 @@ Indices: `status`, `recorded_at`, `created_at`, `deleted_at`.
 
 ## Attachment
 
-Objetos binarios associados a uma entrada. Distingue o original dos derivados.
+Objetos binarios associados a uma entrada: os audios (kind `original`), as imagens
+(kind `image`) e os derivados (kind `derived_16k`). Uma nota pode ter varios audios, cada
+um um anexo `original`.
 
 | Campo | Tipo | Notas |
 |---|---|---|
 | id | TEXT PK | |
 | entry_id | TEXT FK -> Entry.id | |
-| kind | TEXT | `original` ou `derived_16k` |
+| kind | TEXT | `original` (audio), `derived_16k` ou `image` |
 | storage_key | TEXT | caminho relativo no diretorio de dados |
 | content_type | TEXT | |
 | size_bytes | INTEGER | tamanho do ciphertext |
 | sha256 | TEXT | hash do conteudo em claro |
 | cipher | TEXT | `aes-256-gcm` |
 | cipher_nonce | BLOB | nonce por objeto |
-| cache_key | TEXT | chave do derivado (por exemplo `16k:trim=off:v1`) |
+| cache_key | TEXT | chave do derivado (por exemplo `16k:<audio>:v1`) |
+| duration_seconds | REAL | duracao do audio (0 em imagens e derivados) |
 | created_at | TEXT | |
 
 Indices: `entry_id`, (`entry_id`, `kind`), (`entry_id`, `cache_key`).
 
-O derivado 16 kHz mono e cacheado cifrado. A `cache_key` incorpora a versao da configuracao
-de transcricao (por exemplo, se o corte de silencio esta ligado). Mudar `trim_silence` muda
-a `cache_key`, invalidando o cache de fato.
+O derivado 16 kHz mono e cacheado cifrado por audio; a `cache_key` inclui o id do audio
+(`16k:<audio>:v1`). Ligar ou desligar o corte de silencio nao muda a `cache_key`, pois o
+derivado nao depende disso (apenas muda quais trechos sao transcritos).
 
 ## Transcript
 
-Transcricao de uma entrada, versionada por modelo/parametros.
+Transcricao de um audio de uma entrada, versionada por modelo/parametros.
 
 | Campo | Tipo | Notas |
 |---|---|---|
 | id | TEXT PK | |
 | entry_id | TEXT FK -> Entry.id | |
+| attachment_id | TEXT FK -> Attachment.id | audio transcrito |
 | model | TEXT | modelo ggml usado |
 | language | TEXT | idioma detectado/forcado |
 | text | TEXT | texto integral concatenado |
@@ -266,6 +270,7 @@ Estado do upload resumivel.
 | content_type | TEXT | |
 | size_bytes | INTEGER | esperado |
 | sha256 | TEXT | esperado |
+| entry_id | TEXT FK -> Entry.id | quando o audio vai para uma nota existente |
 | received_bytes | INTEGER | confirmado |
 | storage_key | TEXT | ciphertext em construcao |
 | prefix | BLOB | prefixo de nonce da cifra em streaming |

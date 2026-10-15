@@ -23,11 +23,11 @@ func parseTS(s string) time.Time {
 func (s *Store) CreateUpload(ctx context.Context, u Upload) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO uploads (id, status, filename, content_type, size_bytes, sha256,
-			title, recorded_at, client_key,
+			title, recorded_at, client_key, entry_id,
 			received_bytes, storage_key, prefix, next_counter, created_at, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		u.ID, u.Status, u.Filename, u.ContentType, u.SizeBytes, nullString(u.SHA256),
-		nullString(u.Title), nullTS(u.RecordedAt), nullString(u.ClientKey),
+		nullString(u.Title), nullTS(u.RecordedAt), nullString(u.ClientKey), nullString(u.EntryID),
 		u.ReceivedBytes, u.StorageKey, u.Prefix, u.NextCounter, ts(u.CreatedAt), ts(u.ExpiresAt))
 	if err != nil {
 		return fmt.Errorf("store: create upload: %w", err)
@@ -60,14 +60,14 @@ func (s *Store) GetUploadByClientKey(ctx context.Context, clientKey string) (Upl
 func (s *Store) getUpload(ctx context.Context, where string, arg any) (Upload, error) {
 	var u Upload
 	var createdAt, expiresAt string
-	var sha, title, recordedAt, clientKey sql.NullString
+	var sha, title, recordedAt, clientKey, entryID sql.NullString
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, status, filename, content_type, size_bytes, sha256,
-			title, recorded_at, client_key,
+			title, recorded_at, client_key, entry_id,
 			received_bytes, storage_key, prefix, next_counter, created_at, expires_at
 		FROM uploads `+where, arg).Scan(
 		&u.ID, &u.Status, &u.Filename, &u.ContentType, &u.SizeBytes, &sha,
-		&title, &recordedAt, &clientKey,
+		&title, &recordedAt, &clientKey, &entryID,
 		&u.ReceivedBytes, &u.StorageKey, &u.Prefix, &u.NextCounter, &createdAt, &expiresAt)
 	if err != nil {
 		return Upload{}, err
@@ -79,6 +79,7 @@ func (s *Store) getUpload(ctx context.Context, where string, arg any) (Upload, e
 		u.RecordedAt = &t
 	}
 	u.ClientKey = clientKey.String
+	u.EntryID = entryID.String
 	u.CreatedAt = parseTS(createdAt)
 	u.ExpiresAt = parseTS(expiresAt)
 	return u, nil
@@ -204,6 +205,20 @@ func (s *Store) ListEntriesFiltered(ctx context.Context, limit int, person, plac
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// SetEntryPrimaryAudio fills the entry's content_type and original_filename
+// when it had no audio yet (for example, a written note that just received its
+// first audio).
+func (s *Store) SetEntryPrimaryAudio(ctx context.Context, id, contentType, filename string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE entries SET content_type = ?, original_filename = ?, updated_at = ?
+		WHERE id = ? AND (content_type IS NULL OR content_type = '')`,
+		contentType, filename, ts(time.Now()), id)
+	if err != nil {
+		return fmt.Errorf("store: set primary audio: %w", err)
+	}
+	return nil
 }
 
 // UpdateEntryStatus changes the status and bumps updated_at.

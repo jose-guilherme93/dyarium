@@ -30,7 +30,8 @@ Cria um upload. Corpo:
   "sha256": "<hex de 64 caracteres do arquivo completo, opcional>",
   "title": "10/10/2026 18:05",
   "recorded_at": "2026-10-10T21:05:00Z",
-  "client_key": "ck_..."
+  "client_key": "ck_...",
+  "entry_id": "en_..."
 }
 ```
 Resposta 201:
@@ -48,6 +49,8 @@ Resposta 201:
 - `client_key` torna a criacao idempotente: repetir o POST com a mesma chave devolve o
   upload existente (mesmo `id` e `offset`), evitando entradas duplicadas quando a resposta
   se perde. E o que o app movel usa, uma chave por gravacao.
+- `entry_id` e opcional: quando informado, o audio concluido e adicionado a essa entrada
+  em vez de criar uma nova (uma nota pode ter varios audios). 404 se a entrada nao existir.
 - `duration_seconds` e aceito no corpo mas ignorado; o servidor mede a duracao com ffprobe
   no complete.
 - `offset` na resposta e o offset ja confirmado (0 em uploads novos).
@@ -94,8 +97,10 @@ igual a parte escrita de uma nota de audio. Analises usam a transcricao quando e
 caso contrario, o texto escrito da nota.
 
 ### GET /api/v1/entries/{id}
-Retorna a entrada completa: metadados, transcricao (com segmentos), analise, tags, notas e
-anexos.
+Retorna a entrada completa: metadados, `audios` (cada audio com a sua transcricao),
+analise, tags, notas e anexos. O `audios` e uma lista; uma nota pode ter varios. Cada
+item traz `id`, `content_type`, `size_bytes`, `duration_seconds`, `created_at` e, quando
+transcrito, `transcript` (modelo, idioma, texto e `segments`).
 
 ### PATCH /api/v1/entries/{id}
 Atualiza campos editaveis (titulo, data do evento, tags por referencia). Nao altera o audio.
@@ -118,8 +123,10 @@ Lista os segmentos com paginacao, para leitura incremental.
 ## Midia
 
 ### GET /api/v1/entries/{id}/audio
-Transmite o audio original decifrado (para o player do dashboard). O plaintext nunca e
-gravado em disco. O `Content-Type` e o formato do arquivo enviado.
+Transmite o audio original decifrado (para o player do dashboard), com suporte a
+`Range`. O plaintext nunca e gravado em disco. O `Content-Type` e o formato do arquivo
+enviado. Em notas com varios audios, este endpoint devolve um deles; use
+`GET /api/v1/attachments/{id}` para um audio especifico.
 
 ### GET /api/v1/entries/{id}/attachments
 Lista os anexos de midia (imagens) da entrada.
@@ -129,7 +136,8 @@ Envia uma imagem. O corpo e os bytes da imagem e o `Content-Type` deve comecar c
 `image/`. Resposta 201 com `{ id, entry_id, kind, content_type, size_bytes, created_at }`.
 
 ### GET /api/v1/attachments/{id}
-Transmite o anexo decifrado (usado para exibir imagens).
+Transmite o anexo decifrado (imagens e audios), com suporte a `Range` para o audio.
+Resposta 200 (ou 206 em requisicoes parciais).
 
 ### DELETE /api/v1/attachments/{id}
 Remove o anexo e o objeto cifrado. Resposta 204.

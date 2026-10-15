@@ -34,11 +34,32 @@ func (s *Server) serveAttachment(w http.ResponseWriter, r *http.Request, att sto
 	}
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", "private, max-age=3600")
-	if att.SizeBytes > 0 {
-		w.Header().Set("Content-Length", strconv.FormatInt(att.SizeBytes, 10))
+	w.Header().Set("Accept-Ranges", "bytes")
+
+	size := att.SizeBytes
+	if size <= 0 {
+		w.WriteHeader(http.StatusOK)
+		if _, err := s.deps.Ingest.DecryptAttachment(r.Context(), att, w); err != nil && s.deps.Logger != nil {
+			s.deps.Logger.Error("api: transmitir anexo", "erro", err)
+		}
+		return
 	}
-	w.WriteHeader(http.StatusOK)
-	if _, err := s.deps.Ingest.DecryptAttachment(r.Context(), att, w); err != nil && s.deps.Logger != nil {
+
+	start, end, partial := parseRange(r.Header.Get("Range"), size)
+	if partial {
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, size))
+		w.Header().Set("Content-Length", strconv.FormatInt(end-start+1, 10))
+		w.WriteHeader(http.StatusPartialContent)
+	} else {
+		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+		w.WriteHeader(http.StatusOK)
+	}
+
+	var dst io.Writer = w
+	if partial {
+		dst = &windowWriter{dst: w, start: start, end: end}
+	}
+	if _, err := s.deps.Ingest.DecryptAttachment(r.Context(), att, dst); err != nil && s.deps.Logger != nil {
 		s.deps.Logger.Error("api: transmitir anexo", "erro", err)
 	}
 }
@@ -123,8 +144,9 @@ func parseRange(header string, size int64) (int64, int64, bool) {
 	return start, end, true
 }
 
-// handleGetEntryAudio streams the decrypted original audio so the dashboard can
-// play it, with byte-range support for seeking. Plaintext never touches disk.
+// handleGetEntryAudio streams the decrypted audio of an entry (its first audio)
+// so the dashboard can play it. Prefer GET /attachments/{id} for a specific
+// audio. Plaintext never touches disk.
 func (s *Server) handleGetEntryAudio(w http.ResponseWriter, r *http.Request) {
 	att, err := s.deps.Store.GetAttachmentByKind(r.Context(), r.PathValue("id"), store.AttachmentOriginal)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -135,41 +157,7 @@ func (s *Server) handleGetEntryAudio(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
-
-	contentType := att.ContentType
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Cache-Control", "private, max-age=3600")
-	w.Header().Set("Accept-Ranges", "bytes")
-
-	size := att.SizeBytes
-	if size <= 0 {
-		w.WriteHeader(http.StatusOK)
-		if _, err := s.deps.Ingest.DecryptAttachment(r.Context(), att, w); err != nil && s.deps.Logger != nil {
-			s.deps.Logger.Error("api: transmitir audio", "erro", err)
-		}
-		return
-	}
-
-	start, end, partial := parseRange(r.Header.Get("Range"), size)
-	if partial {
-		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, size))
-		w.Header().Set("Content-Length", strconv.FormatInt(end-start+1, 10))
-		w.WriteHeader(http.StatusPartialContent)
-	} else {
-		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
-		w.WriteHeader(http.StatusOK)
-	}
-
-	var dst io.Writer = w
-	if partial {
-		dst = &windowWriter{dst: w, start: start, end: end}
-	}
-	if _, err := s.deps.Ingest.DecryptAttachment(r.Context(), att, dst); err != nil && s.deps.Logger != nil {
-		s.deps.Logger.Error("api: transmitir audio", "erro", err)
-	}
+	s.serveAttachment(w, r, att)
 }
 
 // handleListAttachments returns the non-audio attachments (images) of an entry.

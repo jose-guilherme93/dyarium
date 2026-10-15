@@ -56,6 +56,9 @@ type Meta struct {
 	RecordedAt *time.Time
 	// ClientKey makes Start idempotent: repeating it returns the same upload.
 	ClientKey string
+	// EntryID, when set, adds this audio to an existing entry instead of
+	// creating a new one (used to give a note more than one audio).
+	EntryID string
 }
 
 // Error carries an HTTP status so handlers can map failures precisely.
@@ -102,6 +105,12 @@ func (s *Service) Start(ctx context.Context, meta Meta) (store.Upload, error) {
 	if !s.allowsFormat(format) {
 		return store.Upload{}, newError(422, "unsupported_format", "formato nao suportado: "+format)
 	}
+	entryID := strings.TrimSpace(meta.EntryID)
+	if entryID != "" {
+		if _, err := s.store.GetEntry(ctx, entryID); err != nil {
+			return store.Upload{}, newError(404, "not_found", "entrada inexistente")
+		}
+	}
 
 	prefix, err := crypto.NewPrefix()
 	if err != nil {
@@ -136,6 +145,7 @@ func (s *Service) Start(ctx context.Context, meta Meta) (store.Upload, error) {
 		Title:       strings.TrimSpace(meta.Title),
 		RecordedAt:  meta.RecordedAt,
 		ClientKey:   clientKey,
+		EntryID:     entryID,
 		StorageKey:  storageKey,
 		Prefix:      prefix[:],
 		NextCounter: 0,
@@ -193,29 +203,39 @@ func (s *Service) Append(ctx context.Context, uploadID string, offset int64, bod
 	return offset + written, nil
 }
 
-// Complete validates size, format and SHA-256, then creates the entry.
-func (s *Service) Complete(ctx context.Context, uploadID string) (store.Entry, error) {
+// CompleteResult is the outcome of finishing an upload.
+type CompleteResult struct {
+	Entry      store.Entry
+	Attachment store.Attachment
+	// Created reports whether a new entry was created, as opposed to an audio
+	// added to an existing entry.
+	Created bool
+}
+
+// Complete validates size, format and SHA-256, then creates the entry (or adds
+// the audio to an existing entry) and returns the result.
+func (s *Service) Complete(ctx context.Context, uploadID string) (CompleteResult, error) {
 	u, err := s.Get(ctx, uploadID)
 	if err != nil {
-		return store.Entry{}, err
+		return CompleteResult{}, err
 	}
 	if u.Status != "open" {
-		return store.Entry{}, newError(409, "not_open", "upload nao esta aberto")
+		return CompleteResult{}, newError(409, "not_open", "upload nao esta aberto")
 	}
 	if u.ReceivedBytes != u.SizeBytes {
-		return store.Entry{}, newError(422, "incomplete", "upload incompleto")
+		return CompleteResult{}, newError(422, "incomplete", "upload incompleto")
 	}
 
 	path := filepath.Join(s.dataDir, u.StorageKey)
 	f, err := os.Open(path)
 	if err != nil {
-		return store.Entry{}, fmt.Errorf("ingest: open object: %w", err)
+		return CompleteResult{}, fmt.Errorf("ingest: open object: %w", err)
 	}
 	defer f.Close()
 
 	tmp, err := os.CreateTemp("", "dyarium-verify-*.bin")
 	if err != nil {
-		return store.Entry{}, fmt.Errorf("ingest: temp: %w", err)
+		return CompleteResult{}, fmt.Errorf("ingest: temp: %w", err)
 	}
 	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath)
@@ -224,18 +244,18 @@ func (s *Service) Complete(ctx context.Context, uploadID string) (store.Entry, e
 	n, err := crypto.Decrypt(f, s.key, io.MultiWriter(tmp, hasher))
 	if err != nil {
 		tmp.Close()
-		return store.Entry{}, newError(422, "corrupt", "falha ao decifrar o upload")
+		return CompleteResult{}, newError(422, "corrupt", "falha ao decifrar o upload")
 	}
 	if err := tmp.Close(); err != nil {
-		return store.Entry{}, fmt.Errorf("ingest: close temp: %w", err)
+		return CompleteResult{}, fmt.Errorf("ingest: close temp: %w", err)
 	}
 
 	if n != u.SizeBytes {
-		return store.Entry{}, newError(422, "size_mismatch", "tamanho do conteudo diverge do esperado")
+		return CompleteResult{}, newError(422, "size_mismatch", "tamanho do conteudo diverge do esperado")
 	}
 	sum := hex.EncodeToString(hasher.Sum(nil))
 	if u.SHA256 != "" && sum != u.SHA256 {
-		return store.Entry{}, newError(422, "integrity", "sha256 do conteudo diverge do informado")
+		return CompleteResult{}, newError(422, "integrity", "sha256 do conteudo diverge do informado")
 	}
 
 	var durationSeconds float64
@@ -244,55 +264,76 @@ func (s *Service) Complete(ctx context.Context, uploadID string) (store.Entry, e
 		if err == nil {
 			durationSeconds = d
 			if s.cfg.MaxDurationSeconds > 0 && d > float64(s.cfg.MaxDurationSeconds) {
-				return store.Entry{}, newError(422, "too_long", "duracao excede o maximo permitido")
+				return CompleteResult{}, newError(422, "too_long", "duracao excede o maximo permitido")
 			}
 		}
 	}
 
 	now := time.Now().UTC()
-	when := now
-	if u.RecordedAt != nil {
-		when = *u.RecordedAt
+	var entry store.Entry
+	created := false
+	if u.EntryID != "" {
+		existing, err := s.store.GetEntry(ctx, u.EntryID)
+		if err != nil {
+			return CompleteResult{}, newError(404, "not_found", "entrada inexistente")
+		}
+		entry = existing
+	} else {
+		when := now
+		if u.RecordedAt != nil {
+			when = *u.RecordedAt
+		}
+		title := strings.TrimSpace(u.Title)
+		if title == "" {
+			title = entrytitle.Default(entrytitle.Audio, when)
+		}
+		entry = store.Entry{
+			ID:               id.New(),
+			Title:            title,
+			Status:           store.EntryStored,
+			Source:           "upload",
+			OriginalFilename: u.Filename,
+			ContentType:      u.ContentType,
+			SizeBytes:        u.SizeBytes,
+			DurationSeconds:  durationSeconds,
+			SHA256:           sum,
+			RecordedAt:       u.RecordedAt,
+			CreatedAt:        now,
+			UpdatedAt:        now,
+		}
+		if err := s.store.CreateEntry(ctx, entry); err != nil {
+			return CompleteResult{}, err
+		}
+		created = true
 	}
-	title := strings.TrimSpace(u.Title)
-	if title == "" {
-		title = entrytitle.Default(entrytitle.Audio, when)
-	}
-	entry := store.Entry{
-		ID:               id.New(),
-		Title:            title,
-		Status:           store.EntryStored,
-		Source:           "upload",
-		OriginalFilename: u.Filename,
-		ContentType:      u.ContentType,
-		SizeBytes:        u.SizeBytes,
-		DurationSeconds:  durationSeconds,
-		SHA256:           sum,
-		RecordedAt:       u.RecordedAt,
-		CreatedAt:        now,
-		UpdatedAt:        now,
-	}
-	if err := s.store.CreateEntry(ctx, entry); err != nil {
-		return store.Entry{}, err
-	}
+
 	attachment := store.Attachment{
-		ID:          id.New(),
-		EntryID:     entry.ID,
-		Kind:        store.AttachmentOriginal,
-		StorageKey:  u.StorageKey,
-		ContentType: u.ContentType,
-		SizeBytes:   u.SizeBytes,
-		SHA256:      u.SHA256,
-		Cipher:      "aes-256-gcm",
-		CreatedAt:   now,
+		ID:              id.New(),
+		EntryID:         entry.ID,
+		Kind:            store.AttachmentOriginal,
+		StorageKey:      u.StorageKey,
+		ContentType:     u.ContentType,
+		SizeBytes:       u.SizeBytes,
+		SHA256:          sum,
+		Cipher:          "aes-256-gcm",
+		DurationSeconds: durationSeconds,
+		CreatedAt:       now,
 	}
 	if err := s.store.CreateAttachment(ctx, attachment); err != nil {
-		return store.Entry{}, err
+		return CompleteResult{}, err
+	}
+	if !created {
+		if err := s.store.SetEntryPrimaryAudio(ctx, entry.ID, u.ContentType, u.Filename); err != nil {
+			return CompleteResult{}, err
+		}
+		if err := s.store.SyncEntryDuration(ctx, entry.ID); err != nil {
+			return CompleteResult{}, err
+		}
 	}
 	if err := s.store.SetUploadStatus(ctx, uploadID, "completed"); err != nil {
-		return store.Entry{}, err
+		return CompleteResult{}, err
 	}
-	return entry, nil
+	return CompleteResult{Entry: entry, Attachment: attachment, Created: created}, nil
 }
 
 // DecryptToTemp decrypts the original audio of an entry into a restricted temp

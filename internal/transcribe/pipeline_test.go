@@ -129,7 +129,7 @@ func TestPipelineResumesAfterFailure(t *testing.T) {
 
 	// First run fails on the second chunk.
 	p1 := transcribe.NewPipeline(st, fakeDeps(t, &sliced, secondStart), ckpt, "modelo-teste")
-	if err := p1.Run(ctx, "en1", transcribe.Callbacks{}); err == nil {
+	if err := p1.Run(ctx, "en1", "at1", transcribe.Callbacks{}); err == nil {
 		t.Fatal("esperava falha no primeiro run")
 	}
 	if len(sliced) != 2 {
@@ -139,7 +139,7 @@ func TestPipelineResumesAfterFailure(t *testing.T) {
 	// Second run must skip the already checkpointed first chunk.
 	sliced = nil
 	p2 := transcribe.NewPipeline(st, fakeDeps(t, &sliced, -1), ckpt, "modelo-teste")
-	if err := p2.Run(ctx, "en1", transcribe.Callbacks{}); err != nil {
+	if err := p2.Run(ctx, "en1", "at1", transcribe.Callbacks{}); err != nil {
 		t.Fatalf("segundo run: %v", err)
 	}
 	if len(sliced) != 2 {
@@ -183,7 +183,7 @@ func TestPipelineTrimSilenceSkipsChunks(t *testing.T) {
 	}
 
 	p := transcribe.NewPipeline(st, deps, filepath.Join(dir, "checkpoints"), "modelo-teste")
-	if err := p.Run(ctx, "en1", transcribe.Callbacks{}); err != nil {
+	if err := p.Run(ctx, "en1", "at1", transcribe.Callbacks{}); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	// Only the two non-silent chunks should have been transcribed.

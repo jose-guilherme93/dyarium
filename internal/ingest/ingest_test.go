@@ -85,10 +85,11 @@ func TestResumableUploadLifecycle(t *testing.T) {
 		t.Fatal("plaintext found in stored object")
 	}
 
-	entry, err := svc.Complete(ctx, up.ID)
+	result, err := svc.Complete(ctx, up.ID)
 	if err != nil {
 		t.Fatalf("complete: %v", err)
 	}
+	entry := result.Entry
 	if entry.Status != store.EntryStored || entry.SHA256 != sha256hex(plain) {
 		t.Fatalf("unexpected entry: %+v", entry)
 	}
@@ -143,10 +144,11 @@ func TestStartWithoutSHA256(t *testing.T) {
 	if _, err := svc.Append(ctx, up.ID, 0, bytes.NewReader(plain)); err != nil {
 		t.Fatalf("append: %v", err)
 	}
-	entry, err := svc.Complete(ctx, up.ID)
+	result, err := svc.Complete(ctx, up.ID)
 	if err != nil {
 		t.Fatalf("complete: %v", err)
 	}
+	entry := result.Entry
 	// Sem sha informado, o servidor grava o hash recomputado.
 	if entry.SHA256 != sha256hex(plain) {
 		t.Fatalf("sha256 = %s, want %s", entry.SHA256, sha256hex(plain))
@@ -190,10 +192,11 @@ func TestCompleteAppliesClientMetadata(t *testing.T) {
 	if _, err := svc.Append(ctx, up.ID, 0, bytes.NewReader(plain)); err != nil {
 		t.Fatalf("append: %v", err)
 	}
-	entry, err := svc.Complete(ctx, up.ID)
+	result, err := svc.Complete(ctx, up.ID)
 	if err != nil {
 		t.Fatalf("complete: %v", err)
 	}
+	entry := result.Entry
 	if entry.Title != "10/10/2026 18:05" {
 		t.Fatalf("title = %q", entry.Title)
 	}
@@ -225,11 +228,67 @@ func TestCompleteDefaultsAudioTitle(t *testing.T) {
 	if _, err := svc.Append(ctx, up.ID, 0, bytes.NewReader(plain)); err != nil {
 		t.Fatalf("append: %v", err)
 	}
-	entry, err := svc.Complete(ctx, up.ID)
+	result, err := svc.Complete(ctx, up.ID)
 	if err != nil {
 		t.Fatalf("complete: %v", err)
 	}
+	entry := result.Entry
 	if !strings.HasPrefix(entry.Title, "audio · ") {
 		t.Fatalf("title = %q, want prefixo 'audio · '", entry.Title)
+	}
+}
+
+func TestCompleteAddsAudioToExistingEntry(t *testing.T) {
+	svc, st, _ := newService(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	entry := store.Entry{ID: "en1", Title: "nota escrita", Status: store.EntryReady, Source: "text", CreatedAt: now, UpdatedAt: now}
+	if err := st.CreateEntry(ctx, entry); err != nil {
+		t.Fatalf("entry: %v", err)
+	}
+
+	plain := []byte("audio novo")
+	up, err := svc.Start(ctx, Meta{Filename: "a.wav", ContentType: "audio/wav", SizeBytes: int64(len(plain)), EntryID: "en1"})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if _, err := svc.Append(ctx, up.ID, 0, bytes.NewReader(plain)); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	result, err := svc.Complete(ctx, up.ID)
+	if err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	if result.Created {
+		t.Fatal("nao deveria criar entrada nova")
+	}
+	if result.Entry.ID != "en1" {
+		t.Fatalf("entry = %s, want en1", result.Entry.ID)
+	}
+	audios, err := st.ListAudios(ctx, "en1")
+	if err != nil || len(audios) != 1 {
+		t.Fatalf("audios = %d (%v)", len(audios), err)
+	}
+	if audios[0].ID != result.Attachment.ID {
+		t.Fatalf("audio = %s, want %s", audios[0].ID, result.Attachment.ID)
+	}
+	if audios[0].ContentType != "audio/wav" {
+		t.Fatalf("content_type do audio = %q", audios[0].ContentType)
+	}
+	got, err := st.GetEntry(ctx, "en1")
+	if err != nil {
+		t.Fatalf("get entry: %v", err)
+	}
+	if got.ContentType != "audio/wav" {
+		t.Fatalf("content_type da nota = %q, deveria ter sido preenchido", got.ContentType)
+	}
+}
+
+func TestStartRejectsUnknownEntry(t *testing.T) {
+	svc, _, _ := newService(t)
+	_, err := svc.Start(context.Background(), Meta{Filename: "a.wav", SizeBytes: 10, EntryID: "en_inexistente"})
+	var apiErr *Error
+	if !errors.As(err, &apiErr) || apiErr.Status != 404 {
+		t.Fatalf("expected 404 para entrada inexistente, got %v", err)
 	}
 }
