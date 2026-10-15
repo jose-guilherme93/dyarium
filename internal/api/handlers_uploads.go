@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jose-guilherme93/dyarium/internal/ingest"
-	"github.com/jose-guilherme93/dyarium/internal/jobs"
-	"github.com/jose-guilherme93/dyarium/internal/store"
+	"github.com/joseti/dyarium/internal/ingest"
+	"github.com/joseti/dyarium/internal/jobs"
+	"github.com/joseti/dyarium/internal/store"
 )
 
 type createUploadRequest struct {
@@ -21,6 +21,8 @@ type createUploadRequest struct {
 	Title       string `json:"title"`
 	RecordedAt  string `json:"recorded_at"`
 	ClientKey   string `json:"client_key"`
+	// EntryID, when set, adds the audio to an existing entry.
+	EntryID string `json:"entry_id"`
 }
 
 func (s *Server) handleCreateUpload(w http.ResponseWriter, r *http.Request) {
@@ -43,6 +45,7 @@ func (s *Server) handleCreateUpload(w http.ResponseWriter, r *http.Request) {
 		Title:       req.Title,
 		RecordedAt:  recordedAt,
 		ClientKey:   req.ClientKey,
+		EntryID:     req.EntryID,
 	})
 	if err != nil {
 		s.writeIngestError(w, err)
@@ -104,30 +107,21 @@ func (s *Server) handlePutUpload(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCompleteUpload(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	res, err := s.deps.Ingest.Complete(ctx, r.PathValue("id"))
+	result, err := s.deps.Ingest.Complete(ctx, r.PathValue("id"))
 	if err != nil {
 		s.writeIngestError(w, err)
 		return
 	}
-	entry := res.Entry
-	if res.Duplicate {
-		// Conteudo ja existia: nenhuma entrada nova foi criada. O app vincula o
-		// item local a entrada existente e nao ha transcricao nova a enfileirar.
-		writeJSON(w, http.StatusCreated, map[string]any{
-			"entry_id":  entry.ID,
-			"status":    entry.Status,
-			"duplicate": true,
-		})
-		return
-	}
-	if _, err := s.deps.Queue.Enqueue(ctx, jobs.TypeTranscribe, "transcribe:"+entry.ID, jobs.TranscribePayload{EntryID: entry.ID}); err != nil {
+	if _, err := s.deps.Queue.Enqueue(ctx, jobs.TypeTranscribe, "transcribe:"+result.Attachment.ID,
+		jobs.TranscribePayload{EntryID: result.Entry.ID, AttachmentID: result.Attachment.ID}); err != nil {
 		s.deps.Logger.Error("filtrar: enfileirar transcricao", "erro", err)
 	}
-	_ = s.deps.Store.UpdateEntryStatus(ctx, entry.ID, store.EntryQueued)
-	s.deps.Events.Publish("entry.status", map[string]string{"entry_id": entry.ID, "status": store.EntryQueued})
+	_ = s.deps.Store.UpdateEntryStatus(ctx, result.Entry.ID, store.EntryQueued)
+	s.deps.Events.Publish("entry.status", map[string]string{"entry_id": result.Entry.ID, "status": store.EntryQueued})
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"entry_id": entry.ID,
-		"status":   store.EntryQueued,
+		"entry_id":      result.Entry.ID,
+		"attachment_id": result.Attachment.ID,
+		"status":        store.EntryQueued,
 	})
 }
 

@@ -10,7 +10,7 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/jose-guilherme93/dyarium/internal/id"
+	"github.com/joseti/dyarium/internal/id"
 )
 
 // Status enumerates job states.

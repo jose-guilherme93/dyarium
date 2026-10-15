@@ -3,9 +3,8 @@
 Convencoes gerais:
 
 - Base: `/api/v1` para os recursos; rotas de sistema em `/healthz` e `/api/v1/version`.
-- Autenticacao: header `Authorization: Bearer <token>` em todas as rotas sob `/api/v1`.
-  As unicas rotas publicas sao `/healthz`, `GET /setup/state` e `POST /setup`; as duas
-  ultimas so respondem enquanto a instancia nao foi reivindicada.
+- Autenticacao: header `Authorization: Bearer <token>` em todas as rotas sob `/api/v1`,
+  exceto `/healthz`.
 - Corpo e respostas em JSON, salvo o conteudo binario do upload.
 - Erros: `{ "error": { "code": "...", "message": "..." } }` com o codigo HTTP apropriado.
 - Ids sao opacos (ULID/UUID). Timestamps em RFC 3339 (UTC).
@@ -19,24 +18,6 @@ Responde 200 com `{ "status": "ok", "version": "<versao>" }`. Sem autenticacao.
 ### GET /api/v1/version
 Retorna `{ "version": "<versao>", "commit": "<hash>", "built_at": "<RFC3339>" }`.
 
-## Primeiro acesso (setup)
-
-Sem `DIARY_TOKEN` no ambiente e sem token persistido, a instancia nasce em modo setup. As
-duas rotas abaixo ficam abertas enquanto o setup esta pendente e sao fechadas assim que o
-token e definido.
-
-### GET /setup/state
-Publica. Responde 200 com `{ "required": true|false, "version": "<versao>" }`.
-
-### POST /setup
-Publica enquanto o setup esta pendente. Corpo:
-```json
-{ "token": "um-token-com-ao-menos-8-caracteres" }
-```
-Grava o token em `/data/token` (modo 0600), passa a usa-lo como Bearer e fecha o setup.
-Resposta 200 `{ "status": "ok" }`. Erros: 400 para token curto ou corpo invalido; 409 se a
-instancia ja foi configurada.
-
 ## Upload resumivel
 
 ### POST /api/v1/uploads
@@ -49,7 +30,8 @@ Cria um upload. Corpo:
   "sha256": "<hex de 64 caracteres do arquivo completo, opcional>",
   "title": "10/10/2026 18:05",
   "recorded_at": "2026-10-10T21:05:00Z",
-  "client_key": "ck_..."
+  "client_key": "ck_...",
+  "entry_id": "en_..."
 }
 ```
 Resposta 201:
@@ -67,6 +49,8 @@ Resposta 201:
 - `client_key` torna a criacao idempotente: repetir o POST com a mesma chave devolve o
   upload existente (mesmo `id` e `offset`), evitando entradas duplicadas quando a resposta
   se perde. E o que o app movel usa, uma chave por gravacao.
+- `entry_id` e opcional: quando informado, o audio concluido e adicionado a essa entrada
+  em vez de criar uma nova (uma nota pode ter varios audios). 404 se a entrada nao existir.
 - `duration_seconds` e aceito no corpo mas ignorado; o servidor mede a duracao com ffprobe
   no complete.
 - `offset` na resposta e o offset ja confirmado (0 em uploads novos).
@@ -92,27 +76,15 @@ Retoma um upload interrompido:
 ### POST /api/v1/uploads/{id}/complete
 Finaliza. O servidor verifica tamanho, formato e duracao (ffprobe sobre um derivado
 temporario), recomputa o SHA-256 do conteudo recebido (decifrando em streaming) e compara
-com o informado. Em caso de sucesso, cria a `Entry` e enfileira `transcribe`.
+com o informado. Em caso de sucesso, cria a `Entry` (ou adiciona o audio a `entry_id`,
+quando informado no inicio) e enfileira `transcribe` para o audio.
 Resposta 201:
 ```json
-{ "entry_id": "en_...", "status": "queued" }
+{ "entry_id": "en_...", "attachment_id": "at_...", "status": "queued" }
 ```
+- `attachment_id` identifica o audio criado (o anexo `original` da entrada).
 - 422: integridade divergente (SHA-256), formato nao aceito ou duracao acima do limite.
 - 404: upload inexistente ou expirado.
-
-Dedupe por conteudo: como o audio e imutavel, o SHA-256 e a identidade da gravacao. Se ja
-existe uma `Entry` ativa (nao removida) com o mesmo hash, nenhuma entrada nova e criada: o
-objeto recem-recebido e descartado e a resposta devolve a entrada existente com
-`"duplicate": true`:
-```json
-{ "entry_id": "en_...", "status": "ready", "duplicate": true }
-```
-Nesse caso nao ha nova transcricao a enfileirar. Entradas removidas nao contam para o dedupe.
-
-Toda `Entry` criada tem titulo e dia no calendario: se `title` nao vier, o servidor usa o
-nome original do arquivo (sem diretorio e extensao) e, se ainda assim ficar vazio, a data e
-hora; se `recorded_at` nao vier, usa o instante da criacao. O mesmo vale para entradas de
-outras fontes (ex.: Telegram).
 
 ## Entries
 
@@ -127,8 +99,10 @@ igual a parte escrita de uma nota de audio. Analises usam a transcricao quando e
 caso contrario, o texto escrito da nota.
 
 ### GET /api/v1/entries/{id}
-Retorna a entrada completa: metadados, transcricao (com segmentos), analise, tags, notas e
-anexos.
+Retorna a entrada completa: metadados, `audios` (cada audio com a sua transcricao),
+analise, tags, notas e anexos. O `audios` e uma lista; uma nota pode ter varios. Cada
+item traz `id`, `content_type`, `size_bytes`, `duration_seconds`, `created_at` e, quando
+transcrito, `transcript` (modelo, idioma, texto e `segments`).
 
 ### PATCH /api/v1/entries/{id}
 Atualiza campos editaveis (titulo, data do evento, tags por referencia). Nao altera o audio.
@@ -151,8 +125,10 @@ Lista os segmentos com paginacao, para leitura incremental.
 ## Midia
 
 ### GET /api/v1/entries/{id}/audio
-Transmite o audio original decifrado (para o player do dashboard). O plaintext nunca e
-gravado em disco. O `Content-Type` e o formato do arquivo enviado.
+Transmite o audio original decifrado (para o player do dashboard), com suporte a
+`Range`. O plaintext nunca e gravado em disco. O `Content-Type` e o formato do arquivo
+enviado. Em notas com varios audios, este endpoint devolve um deles; use
+`GET /api/v1/attachments/{id}` para um audio especifico.
 
 ### GET /api/v1/entries/{id}/attachments
 Lista os anexos de midia (imagens) da entrada.
@@ -162,7 +138,8 @@ Envia uma imagem. O corpo e os bytes da imagem e o `Content-Type` deve comecar c
 `image/`. Resposta 201 com `{ id, entry_id, kind, content_type, size_bytes, created_at }`.
 
 ### GET /api/v1/attachments/{id}
-Transmite o anexo decifrado (usado para exibir imagens).
+Transmite o anexo decifrado (imagens e audios), com suporte a `Range` para o audio.
+Resposta 200 (ou 206 em requisicoes parciais).
 
 ### DELETE /api/v1/attachments/{id}
 Remove o anexo e o objeto cifrado. Resposta 204.
@@ -256,6 +233,34 @@ Atualiza a nota e cria uma `NoteRevision` com o estado anterior.
 
 ### GET /api/v1/notes/{id}/revisions
 Lista revisoes da nota.
+
+## Links
+
+Relacoes de uma entrada com outra entrada ou com uma URL externa.
+
+### GET /api/v1/entries/{id}/links
+Lista os links de uma entrada. Links internos trazem `title` com o titulo da
+entrada de destino; links para URLs trazem `url`.
+```json
+{ "links": [ { "id": "ln_...", "from_entry_id": "en_...", "to_entry_id": "en_...",
+  "url": "", "label": "continuacao", "title": "Conversa de domingo",
+  "created_at": "2026-10-10T21:05:00Z" } ] }
+```
+
+### POST /api/v1/entries/{id}/links
+Cria um link. O corpo deve informar exatamente um destino: `to_entry_id` (outra
+entrada) ou `url` (externa, `http` ou `https`). `label` e opcional.
+```json
+{ "to_entry_id": "en_...", "label": "continuacao" }
+```
+- 201: link criado.
+- 400: corpo invalido (nenhum destino, ambos os destinos, URL invalida ou
+  `to_entry_id` igual a propria entrada).
+- 404: entrada de origem inexistente.
+- 422: `to_entry_id` aponta para entrada inexistente.
+
+### DELETE /api/v1/links/{id}
+Remove o link. Resposta 204.
 
 ## Configuracoes
 

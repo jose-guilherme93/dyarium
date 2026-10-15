@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/jose-guilherme93/dyarium/internal/id"
+	"github.com/joseti/dyarium/internal/id"
 	_ "modernc.org/sqlite"
 )
 

@@ -23,11 +23,11 @@ func parseTS(s string) time.Time {
 func (s *Store) CreateUpload(ctx context.Context, u Upload) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO uploads (id, status, filename, content_type, size_bytes, sha256,
-			title, recorded_at, client_key,
+			title, recorded_at, client_key, entry_id,
 			received_bytes, storage_key, prefix, next_counter, created_at, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		u.ID, u.Status, u.Filename, u.ContentType, u.SizeBytes, nullString(u.SHA256),
-		nullString(u.Title), nullTS(u.RecordedAt), nullString(u.ClientKey),
+		nullString(u.Title), nullTS(u.RecordedAt), nullString(u.ClientKey), nullString(u.EntryID),
 		u.ReceivedBytes, u.StorageKey, u.Prefix, u.NextCounter, ts(u.CreatedAt), ts(u.ExpiresAt))
 	if err != nil {
 		return fmt.Errorf("store: create upload: %w", err)
@@ -60,14 +60,14 @@ func (s *Store) GetUploadByClientKey(ctx context.Context, clientKey string) (Upl
 func (s *Store) getUpload(ctx context.Context, where string, arg any) (Upload, error) {
 	var u Upload
 	var createdAt, expiresAt string
-	var sha, title, recordedAt, clientKey sql.NullString
+	var sha, title, recordedAt, clientKey, entryID sql.NullString
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, status, filename, content_type, size_bytes, sha256,
-			title, recorded_at, client_key,
+			title, recorded_at, client_key, entry_id,
 			received_bytes, storage_key, prefix, next_counter, created_at, expires_at
 		FROM uploads `+where, arg).Scan(
 		&u.ID, &u.Status, &u.Filename, &u.ContentType, &u.SizeBytes, &sha,
-		&title, &recordedAt, &clientKey,
+		&title, &recordedAt, &clientKey, &entryID,
 		&u.ReceivedBytes, &u.StorageKey, &u.Prefix, &u.NextCounter, &createdAt, &expiresAt)
 	if err != nil {
 		return Upload{}, err
@@ -79,6 +79,7 @@ func (s *Store) getUpload(ctx context.Context, where string, arg any) (Upload, e
 		u.RecordedAt = &t
 	}
 	u.ClientKey = clientKey.String
+	u.EntryID = entryID.String
 	u.CreatedAt = parseTS(createdAt)
 	u.ExpiresAt = parseTS(expiresAt)
 	return u, nil
@@ -107,10 +108,10 @@ func (s *Store) SetUploadStatus(ctx context.Context, id, status string) error {
 // CreateEntry inserts a new entry.
 func (s *Store) CreateEntry(ctx context.Context, e Entry) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO entries (id, title, status, source, original_filename, content_type,
+		INSERT INTO entries (id, title, status, source, parent_id, original_filename, content_type,
 			size_bytes, duration_seconds, sha256, recorded_at, created_at, updated_at, deleted_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.ID, e.Title, e.Status, e.Source, e.OriginalFilename, e.ContentType,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.ID, e.Title, e.Status, e.Source, nullString(e.ParentID), e.OriginalFilename, e.ContentType,
 		e.SizeBytes, e.DurationSeconds, e.SHA256, nullTS(e.RecordedAt), ts(e.CreatedAt), ts(e.UpdatedAt), nullTS(e.DeletedAt))
 	if err != nil {
 		return fmt.Errorf("store: create entry: %w", err)
@@ -124,11 +125,11 @@ func (s *Store) GetEntry(ctx context.Context, id string) (Entry, error) {
 	var recordedAt, deletedAt sql.NullString
 	var createdAt, updatedAt string
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, COALESCE(title,''), status, source, COALESCE(original_filename,''),
+		SELECT id, COALESCE(title,''), status, source, COALESCE(parent_id,''), COALESCE(original_filename,''),
 			COALESCE(content_type,''), size_bytes, duration_seconds, COALESCE(sha256,''),
 			recorded_at, created_at, updated_at, deleted_at
 		FROM entries WHERE id = ? AND deleted_at IS NULL`, id).Scan(
-		&e.ID, &e.Title, &e.Status, &e.Source, &e.OriginalFilename, &e.ContentType,
+		&e.ID, &e.Title, &e.Status, &e.Source, &e.ParentID, &e.OriginalFilename, &e.ContentType,
 		&e.SizeBytes, &e.DurationSeconds, &e.SHA256, &recordedAt, &createdAt, &updatedAt, &deletedAt)
 	if err != nil {
 		return Entry{}, err
@@ -146,42 +147,39 @@ func (s *Store) GetEntry(ctx context.Context, id string) (Entry, error) {
 	return e, nil
 }
 
-// GetActiveEntryBySHA256 returns a non-deleted entry with the given content
-// hash. The boolean is false when no active entry has that hash. Because the
-// audio is immutable, the sha256 is its identity: this is what makes uploads
-// deduplicate instead of creating repeated entries.
-func (s *Store) GetActiveEntryBySHA256(ctx context.Context, sha string) (Entry, bool, error) {
-	if sha == "" {
-		return Entry{}, false, nil
+// EntryIsDeleted reports whether an entry is soft-deleted. It returns
+// ErrNotFound when the entry does not exist. Used by the cleanup worker to
+// avoid purging an entry that is still live.
+func (s *Store) EntryIsDeleted(ctx context.Context, id string) (bool, error) {
+	var deletedAt sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT deleted_at FROM entries WHERE id = ?`, id).Scan(&deletedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, ErrNotFound
 	}
-	var e Entry
-	var recordedAt, deletedAt sql.NullString
-	var createdAt, updatedAt string
-	err := s.db.QueryRowContext(ctx, `
-		SELECT id, COALESCE(title,''), status, source, COALESCE(original_filename,''),
-			COALESCE(content_type,''), size_bytes, duration_seconds, COALESCE(sha256,''),
-			recorded_at, created_at, updated_at, deleted_at
-		FROM entries WHERE sha256 = ? AND deleted_at IS NULL
-		ORDER BY created_at ASC LIMIT 1`, sha).Scan(
-		&e.ID, &e.Title, &e.Status, &e.Source, &e.OriginalFilename, &e.ContentType,
-		&e.SizeBytes, &e.DurationSeconds, &e.SHA256, &recordedAt, &createdAt, &updatedAt, &deletedAt)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return Entry{}, false, nil
-		}
-		return Entry{}, false, fmt.Errorf("store: get entry by sha256: %w", err)
+		return false, fmt.Errorf("store: entry is deleted: %w", err)
 	}
-	if recordedAt.Valid {
-		t := parseTS(recordedAt.String)
-		e.RecordedAt = &t
+	return deletedAt.Valid, nil
+}
+
+// PurgeEntry hard-deletes an entry and, by cascade, its attachments,
+// transcripts, analysis, notes and links. Links that point to the entry are
+// removed explicitly, because the foreign key would only null the target. The
+// encrypted objects must be removed from disk separately, before calling this.
+// It is idempotent: purging an entry that no longer exists succeeds.
+func (s *Store) PurgeEntry(ctx context.Context, id string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: purge entry: %w", err)
 	}
-	if deletedAt.Valid {
-		t := parseTS(deletedAt.String)
-		e.DeletedAt = &t
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM links WHERE from_entry_id = ? OR to_entry_id = ?`, id, id); err != nil {
+		return fmt.Errorf("store: purge entry links: %w", err)
 	}
-	e.CreatedAt = parseTS(createdAt)
-	e.UpdatedAt = parseTS(updatedAt)
-	return e, true, nil
+	if _, err := tx.ExecContext(ctx, `DELETE FROM entries WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("store: purge entry: %w", err)
+	}
+	return tx.Commit()
 }
 
 // ListEntries returns recent entries, newest first.
@@ -197,7 +195,7 @@ func (s *Store) ListEntriesFiltered(ctx context.Context, limit int, person, plac
 		limit = 50
 	}
 	query := `
-		SELECT e.id, COALESCE(e.title,''), e.status, e.source, COALESCE(e.original_filename,''),
+		SELECT e.id, COALESCE(e.title,''), e.status, e.source, COALESCE(e.parent_id,''), COALESCE(e.original_filename,''),
 			COALESCE(e.content_type,''), e.size_bytes, e.duration_seconds, COALESCE(e.sha256,''),
 			e.recorded_at, e.created_at, e.updated_at
 		FROM entries e WHERE e.deleted_at IS NULL`
@@ -229,7 +227,7 @@ func (s *Store) ListEntriesFiltered(ctx context.Context, limit int, person, plac
 		var e Entry
 		var recordedAt sql.NullString
 		var createdAt, updatedAt string
-		if err := rows.Scan(&e.ID, &e.Title, &e.Status, &e.Source, &e.OriginalFilename,
+		if err := rows.Scan(&e.ID, &e.Title, &e.Status, &e.Source, &e.ParentID, &e.OriginalFilename,
 			&e.ContentType, &e.SizeBytes, &e.DurationSeconds, &e.SHA256, &recordedAt, &createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("store: scan entry: %w", err)
 		}
@@ -242,6 +240,20 @@ func (s *Store) ListEntriesFiltered(ctx context.Context, limit int, person, plac
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// SetEntryPrimaryAudio fills the entry's content_type and original_filename
+// when it had no audio yet (for example, a written note that just received its
+// first audio).
+func (s *Store) SetEntryPrimaryAudio(ctx context.Context, id, contentType, filename string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE entries SET content_type = ?, original_filename = ?, updated_at = ?
+		WHERE id = ? AND (content_type IS NULL OR content_type = '')`,
+		contentType, filename, ts(time.Now()), id)
+	if err != nil {
+		return fmt.Errorf("store: set primary audio: %w", err)
+	}
+	return nil
 }
 
 // UpdateEntryStatus changes the status and bumps updated_at.

@@ -50,7 +50,7 @@ export function MoodView({ refreshKey }: MoodViewProps) {
                   />
                 </span>
                 <span className="muted">
-                  {point.sentiment.toFixed(2)} · {point.entries} entrada(s)
+                  {point.sentiment.toFixed(2)}, {point.entries} entradas
                 </span>
               </li>
             ))}

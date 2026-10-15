@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/jose-guilherme93/dyarium/internal/analyze"
+	"github.com/joseti/dyarium/internal/analyze"
 )
 
 // TestOpenCodeIntegration exercises the local OpenCode provider against a real

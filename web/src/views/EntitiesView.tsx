@@ -86,8 +86,8 @@ export function EntitiesView({ kind, title, selected, onSelect, onOpen, refreshK
         {detail && (
           <>
             <p className="muted">
-              {detail.mentions} mencoes em {detail.entries} entrada(s) · sentimento{" "}
-              {Number(detail.sentiment ?? 0).toFixed(2)} · visto por ultimo em {formatDate(detail.last_seen)}
+              {detail.mentions} mencoes em {detail.entries} entradas, sentimento{" "}
+              {Number(detail.sentiment ?? 0).toFixed(2)}, visto por ultimo em {formatDate(detail.last_seen)}
             </p>
             {detail.entry_list.length === 0 ? (
               <p className="muted">Nenhuma entrada.</p>
@@ -98,7 +98,7 @@ export function EntitiesView({ kind, title, selected, onSelect, onOpen, refreshK
                     <button type="button" className="entry-item" onClick={() => onOpen(entry.id)}>
                       <span className="entry-title">{entry.title || "Entrada"}</span>
                       <span className="entry-meta">
-                        {formatDate(entry.date)} · {entry.count} mencao(oes)
+                        {formatDate(entry.date)}, {entry.count} mencoes
                       </span>
                     </button>
                   </li>
@@ -135,7 +135,7 @@ export function EntitiesView({ kind, title, selected, onSelect, onOpen, refreshK
               <button type="button" className="entry-item" onClick={() => onSelect(entity.name)}>
                 <span className="entry-title">{entity.name}</span>
                 <span className="entry-meta">
-                  {entity.mentions} mencao(oes) em {entity.entries} entrada(s) · sentimento{" "}
+                  {entity.mentions} mencoes em {entity.entries} entradas, sentimento{" "}
                   {Number(entity.sentiment ?? 0).toFixed(2)}
                 </span>
               </button>

@@ -145,19 +145,30 @@ export function SparkIcon({ size = 18 }: IconProps) {
   );
 }
 
-export function PanelIcon({ size = 18 }: IconProps) {
+export function ExitIcon({ size = 18 }: IconProps) {
   return (
     <svg {...svgProps(size)}>
-      <rect x="3" y="4" width="18" height="16" rx="2" />
-      <path d="M9 4v16" />
+      <path d="M14 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4" />
+      <path d="M10 8l-4 4 4 4" />
+      <path d="M6 12h9" />
     </svg>
   );
 }
 
-export function MenuIcon({ size = 18 }: IconProps) {
+export function PinIcon({ size = 18 }: IconProps) {
   return (
     <svg {...svgProps(size)}>
-      <path d="M4 6h16M4 12h16M4 18h16" />
+      <path d="M9 3h6l-1 6 3 3H7l3-3-1-6Z" />
+      <path d="M12 12v8" />
+    </svg>
+  );
+}
+
+export function LinkIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1" />
+      <path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1" />
     </svg>
   );
 }

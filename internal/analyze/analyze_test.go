@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jose-guilherme93/dyarium/internal/analyze"
+	"github.com/joseti/dyarium/internal/analyze"
 )
 
 const richResponse = `{"sentiment":{"score":0.6,"label":"positivo"},

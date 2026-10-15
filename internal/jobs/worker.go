@@ -14,11 +14,18 @@ type Handler func(ctx context.Context, job *Job, heartbeat func() error) error
 
 // TranscribePayload is the payload of a transcribe job.
 type TranscribePayload struct {
-	EntryID string `json:"entry_id"`
+	EntryID      string `json:"entry_id"`
+	AttachmentID string `json:"attachment_id"`
 }
 
 // AnalyzePayload is the payload of an analyze job.
 type AnalyzePayload struct {
+	EntryID string `json:"entry_id"`
+}
+
+// CleanupPayload is the payload of a cleanup job. It removes the encrypted
+// objects and the row of a soft-deleted entry.
+type CleanupPayload struct {
 	EntryID string `json:"entry_id"`
 }
 

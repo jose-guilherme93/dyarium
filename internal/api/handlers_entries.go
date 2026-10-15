@@ -8,9 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jose-guilherme93/dyarium/internal/id"
-	"github.com/jose-guilherme93/dyarium/internal/jobs"
-	"github.com/jose-guilherme93/dyarium/internal/store"
+	"github.com/joseti/dyarium/internal/entrytitle"
+	"github.com/joseti/dyarium/internal/id"
+	"github.com/joseti/dyarium/internal/jobs"
+	"github.com/joseti/dyarium/internal/store"
 )
 
 // entryTagNames returns the tag names attached to an entry.
@@ -32,6 +33,7 @@ func entryJSON(e store.Entry) map[string]any {
 		"title":             e.Title,
 		"status":            e.Status,
 		"source":            e.Source,
+		"parent_id":         e.ParentID,
 		"original_filename": e.OriginalFilename,
 		"content_type":      e.ContentType,
 		"size_bytes":        e.SizeBytes,
@@ -63,16 +65,25 @@ func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleCreateEntry creates a written note (no audio). The body is stored as a
-// note document, like the written part of an audio note.
+// note document, like the written part of an audio note. When parent_id is
+// given, the note is created as a child of that note (subnote).
 func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ID        string `json:"id"`
 		Title     string `json:"title"`
+		ParentID  string `json:"parent_id"`
 		CreatedAt string `json:"created_at"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_body", "corpo invalido")
 		return
+	}
+	parentID := strings.TrimSpace(req.ParentID)
+	if parentID != "" {
+		if _, err := s.deps.Store.GetEntry(r.Context(), parentID); err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "invalid_parent", "nota pai inexistente")
+			return
+		}
 	}
 	now := time.Now().UTC()
 	// O cliente pode informar quando a nota foi criada (offline); senao vale agora.
@@ -85,11 +96,16 @@ func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 		}
 		createdAt = parsed.UTC()
 	}
+	title := strings.TrimSpace(req.Title)
+	if title == "" {
+		title = entrytitle.Name(entrytitle.Text)
+	}
 	entry := store.Entry{
 		ID:        id.New(),
-		Title:     strings.TrimSpace(req.Title),
+		Title:     title,
 		Status:    store.EntryReady,
 		Source:    "text",
+		ParentID:  parentID,
 		CreatedAt: createdAt,
 		UpdatedAt: now,
 	}
@@ -98,8 +114,7 @@ func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_id", "id invalido")
 			return
 		}
-		// Idempotente: um cliente offline pode reenviar a mesma nota; devolve a
-		// que ja existe em vez de criar outra.
+		// Idempotente: um cliente offline pode reenviar a mesma nota.
 		existing, err := s.deps.Store.GetEntry(r.Context(), clientID)
 		if err == nil {
 			writeJSON(w, http.StatusOK, entryJSON(existing))
@@ -132,6 +147,9 @@ func (s *Server) handleGetEntry(w http.ResponseWriter, r *http.Request) {
 	body := entryJSON(entry)
 	if names, err := s.entryTagNames(ctx, entry.ID); err == nil {
 		body["tags"] = names
+	}
+	if audios, err := s.deps.Store.ListAudios(ctx, entry.ID); err == nil {
+		body["audios"] = s.audiosJSON(ctx, audios)
 	}
 	if m, ok, err := s.deps.Store.GetMetrics(ctx, entry.ID); err == nil && ok {
 		body["metrics"] = map[string]any{
@@ -175,9 +193,21 @@ func (s *Server) handlePatchEntry(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteEntry(w http.ResponseWriter, r *http.Request) {
-	if err := s.deps.Store.SoftDeleteEntry(r.Context(), r.PathValue("id")); err != nil {
+	ctx := r.Context()
+	id := r.PathValue("id")
+	if err := s.deps.Store.SoftDeleteEntry(ctx, id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "entrada inexistente")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
+	}
+	// The removal is logical; the cleanup job deletes the encrypted objects and
+	// the row afterwards. A failure here only delays the cleanup, so it is
+	// logged instead of failing the request.
+	if _, err := s.deps.Queue.Enqueue(ctx, jobs.TypeCleanup, "cleanup:"+id, jobs.CleanupPayload{EntryID: id}); err != nil {
+		s.deps.Logger.Error("api: enfileirar limpeza", "entry_id", id, "erro", err)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -193,6 +223,11 @@ func (s *Server) handleGetTranscript(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
+	writeJSON(w, http.StatusOK, transcriptJSON(t, segs))
+}
+
+// transcriptJSON renders a transcript with its segments.
+func transcriptJSON(t store.Transcript, segs []store.Segment) map[string]any {
 	segments := make([]map[string]any, 0, len(segs))
 	for _, seg := range segs {
 		segments = append(segments, map[string]any{
@@ -201,22 +236,50 @@ func (s *Server) handleGetTranscript(w http.ResponseWriter, r *http.Request) {
 			"text":     seg.Text,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	return map[string]any{
 		"model":            t.Model,
 		"language":         t.Language,
 		"text":             t.Text,
 		"trim_silence":     t.TrimSilence,
 		"duration_seconds": t.DurationSeconds,
 		"segments":         segments,
-	})
+	}
+}
+
+// audiosJSON renders the audio attachments of an entry, each with its own
+// transcript when available.
+func (s *Server) audiosJSON(ctx context.Context, audios []store.Attachment) []map[string]any {
+	out := make([]map[string]any, 0, len(audios))
+	for _, a := range audios {
+		item := map[string]any{
+			"id":               a.ID,
+			"content_type":     a.ContentType,
+			"size_bytes":       a.SizeBytes,
+			"duration_seconds": a.DurationSeconds,
+			"created_at":       a.CreatedAt,
+		}
+		if t, segs, err := s.deps.Store.GetTranscriptByAttachment(ctx, a.ID); err == nil {
+			item["transcript"] = transcriptJSON(t, segs)
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func (s *Server) handleRetranscribe(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id := r.PathValue("id")
-	if _, err := s.deps.Queue.Enqueue(ctx, jobs.TypeTranscribe, "transcribe:"+id, jobs.TranscribePayload{EntryID: id}); err != nil {
+	audios, err := s.deps.Store.ListAudios(ctx, id)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
+	}
+	for _, audio := range audios {
+		if _, err := s.deps.Queue.Enqueue(ctx, jobs.TypeTranscribe, "transcribe:"+audio.ID,
+			jobs.TranscribePayload{EntryID: id, AttachmentID: audio.ID}); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			return
+		}
 	}
 	_ = s.deps.Store.UpdateEntryStatus(ctx, id, store.EntryQueued)
 	s.deps.Events.Publish("entry.status", map[string]string{"entry_id": id, "status": store.EntryQueued})

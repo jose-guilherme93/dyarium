@@ -6,7 +6,7 @@ services:
       target: dev
     environment:
       DIARY_HTTP_ADDR: ":8080"
-      DIARY_TOKEN: "${DIARY_TOKEN:-}"
+      DIARY_TOKEN: "${DIARY_TOKEN:-dev-token}"
       DIARY_MASTER_KEY: "${DIARY_MASTER_KEY:-0000000000000000000000000000000000000000000000000000000000000000}"
       DIARY_DB_PATH: /data/diary.db
       DIARY_DATA_DIR: /data

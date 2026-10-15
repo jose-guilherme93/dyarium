@@ -6,8 +6,8 @@ import (
 	"fmt"
 )
 
-// SaveTranscript replaces any existing transcript for the entry and stores the
-// new transcript with its segments, all in a single transaction.
+// SaveTranscript replaces any existing transcript for the given audio and
+// stores the new transcript with its segments, all in a single transaction.
 func (s *Store) SaveTranscript(ctx context.Context, t Transcript, segs []Segment) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -15,13 +15,14 @@ func (s *Store) SaveTranscript(ctx context.Context, t Transcript, segs []Segment
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.ExecContext(ctx, `DELETE FROM transcripts WHERE entry_id = ?`, t.EntryID); err != nil {
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM transcripts WHERE entry_id = ? AND attachment_id IS ?`, t.EntryID, nullString(t.AttachmentID)); err != nil {
 		return fmt.Errorf("store: clear transcripts: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO transcripts (id, entry_id, model, language, text, trim_silence, duration_seconds, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.ID, t.EntryID, t.Model, t.Language, t.Text, boolInt(t.TrimSilence), t.DurationSeconds, ts(t.CreatedAt)); err != nil {
+		INSERT INTO transcripts (id, entry_id, attachment_id, model, language, text, trim_silence, duration_seconds, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.ID, t.EntryID, nullString(t.AttachmentID), t.Model, t.Language, t.Text, boolInt(t.TrimSilence), t.DurationSeconds, ts(t.CreatedAt)); err != nil {
 		return fmt.Errorf("store: insert transcript: %w", err)
 	}
 	for i, seg := range segs {
@@ -35,25 +36,73 @@ func (s *Store) SaveTranscript(ctx context.Context, t Transcript, segs []Segment
 	return tx.Commit()
 }
 
-// GetTranscript returns the transcript and segments for an entry.
-func (s *Store) GetTranscript(ctx context.Context, entryID string) (Transcript, []Segment, error) {
+const transcriptColumns = `id, entry_id, COALESCE(attachment_id,''), model, COALESCE(language,''),
+	text, trim_silence, duration_seconds, created_at`
+
+func scanTranscript(row interface {
+	Scan(dest ...any) error
+}) (Transcript, error) {
 	var t Transcript
 	var createdAt string
 	var trim int
-	err := s.db.QueryRowContext(ctx, `
-		SELECT id, entry_id, model, COALESCE(language,''), text, trim_silence, duration_seconds, created_at
-		FROM transcripts WHERE entry_id = ? ORDER BY created_at DESC LIMIT 1`, entryID).Scan(
-		&t.ID, &t.EntryID, &t.Model, &t.Language, &t.Text, &trim, &t.DurationSeconds, &createdAt)
-	if err != nil {
-		return Transcript{}, nil, err
+	if err := row.Scan(&t.ID, &t.EntryID, &t.AttachmentID, &t.Model, &t.Language,
+		&t.Text, &trim, &t.DurationSeconds, &createdAt); err != nil {
+		return Transcript{}, err
 	}
 	t.TrimSilence = trim == 1
 	t.CreatedAt = parseTS(createdAt)
+	return t, nil
+}
+
+// GetTranscript returns the most recent transcript of an entry (the first audio
+// when the entry has several). Kept for callers that still work per entry.
+func (s *Store) GetTranscript(ctx context.Context, entryID string) (Transcript, []Segment, error) {
+	t, err := scanTranscript(s.db.QueryRowContext(ctx, `
+		SELECT `+transcriptColumns+`
+		FROM transcripts WHERE entry_id = ? ORDER BY created_at DESC LIMIT 1`, entryID))
+	if err != nil {
+		return Transcript{}, nil, err
+	}
 	segs, err := s.ListSegments(ctx, t.ID)
 	if err != nil {
 		return Transcript{}, nil, err
 	}
 	return t, segs, nil
+}
+
+// GetTranscriptByAttachment returns the transcript and segments of one audio.
+func (s *Store) GetTranscriptByAttachment(ctx context.Context, attachmentID string) (Transcript, []Segment, error) {
+	t, err := scanTranscript(s.db.QueryRowContext(ctx, `
+		SELECT `+transcriptColumns+`
+		FROM transcripts WHERE attachment_id = ? ORDER BY created_at DESC LIMIT 1`, attachmentID))
+	if err != nil {
+		return Transcript{}, nil, err
+	}
+	segs, err := s.ListSegments(ctx, t.ID)
+	if err != nil {
+		return Transcript{}, nil, err
+	}
+	return t, segs, nil
+}
+
+// ListTranscripts returns the transcripts of an entry, oldest first.
+func (s *Store) ListTranscripts(ctx context.Context, entryID string) ([]Transcript, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT `+transcriptColumns+`
+		FROM transcripts WHERE entry_id = ? ORDER BY created_at ASC`, entryID)
+	if err != nil {
+		return nil, fmt.Errorf("store: list transcripts: %w", err)
+	}
+	defer rows.Close()
+	var out []Transcript
+	for rows.Next() {
+		t, err := scanTranscript(rows)
+		if err != nil {
+			return nil, fmt.Errorf("store: scan transcript: %w", err)
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
 }
 
 // ListSegments returns the segments of a transcript ordered by index.

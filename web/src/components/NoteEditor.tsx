@@ -1,15 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Block, PartialBlock } from "@blocknote/core";
-import { api, audioUrl } from "../api";
-import { NotesEditor, type NotesEditorHandle } from "../editor/NotesEditor";
+import { api } from "../api";
+import { NotesEditor, mediaRefs, type MediaRef, type NotesEditorHandle } from "../editor/NotesEditor";
 import { formatDateTime, formatDuration } from "../lib/format";
-import type { Analysis, EntityKind, Entry, Transcript } from "../types";
-import { AudioPlayer, type AudioPlayerHandle } from "./AudioPlayer";
-import { ImageGallery } from "./ImageGallery";
+import type { Analysis, Attachment, Audio, EntityKind, Entry, Revision } from "../types";
 import { Spinner, isBusy, statusLabel } from "./Status";
 import { TagEditor } from "./TagEditor";
 import { useToast } from "./Toasts";
-import { CheckIcon, CloseIcon, MoreIcon, SparkIcon, TrashIcon } from "./icons";
+import { CheckIcon, ChevronIcon, ImageIcon, LinkIcon, MicIcon, MoreIcon, PinIcon, PlusIcon, SparkIcon, TrashIcon } from "./icons";
 
 interface NoteEditorProps {
   entryId: string;
@@ -19,12 +17,14 @@ interface NoteEditorProps {
   onChanged: () => void;
   onDeleted: () => void;
   onOpenEntity: (kind: EntityKind, name: string) => void;
+  onOpenEntry: (id: string) => void;
+  onCreateChild: (parentId: string) => void;
 }
 
 const FONTS = [
   { id: "default", label: "Padrao", preview: "inherit" },
   { id: "serif", label: "Serifada", preview: "var(--font-serif)" },
-  { id: "mono", label: "Monoespacada", preview: "ui-monospace, monospace" },
+  { id: "mono", label: "Monoespacada", preview: "var(--font-mono)" },
 ];
 
 function sentimentText(label?: string): string {
@@ -46,8 +46,8 @@ function processingText(
 ): string {
   if (progress?.stage === "analyzing") {
     return progress.total > 1
-      ? `Analisando com a IA... trecho ${Math.min(progress.done + 1, progress.total)} de ${progress.total}`
-      : "Analisando com a IA...";
+      ? `Analisando... trecho ${Math.min(progress.done + 1, progress.total)} de ${progress.total}`
+      : "Analisando...";
   }
   if (progress?.stage === "summarizing") {
     return "Gerando o resumo final...";
@@ -58,15 +58,150 @@ function processingText(
     case "transcribing":
       return "Transcrevendo o audio...";
     case "analyzing":
-      return "Analisando com a IA...";
+      return "Analisando...";
     default:
       return "Processando...";
   }
 }
 
-// NoteEditor is the note view: one continuous page with the audio and its
-// transcription at the top, then the written text and images. The AI insights
-// live in a floating drawer.
+// blocksText concatenates every inline text of a BlockNote document.
+function blocksText(value: unknown): string {
+  let out = "";
+  const walk = (node: unknown) => {
+    if (Array.isArray(node)) {
+      node.forEach(walk);
+      return;
+    }
+    if (node && typeof node === "object") {
+      const record = node as Record<string, unknown>;
+      if (typeof record.text === "string") {
+        out += `${record.text} `;
+      }
+      for (const key of Object.keys(record)) {
+        walk(record[key]);
+      }
+    }
+  };
+  walk(value);
+  return out.replace(/\s+/g, " ").trim();
+}
+
+function wordsOf(document: unknown): string[] {
+  return blocksText(document).toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+// diffWords is a simple multiset diff: which words were added and removed
+// between two versions of the document.
+function diffWords(oldDoc: unknown, newDoc: unknown): { added: string[]; removed: string[] } {
+  const oldWords = wordsOf(oldDoc);
+  const newWords = wordsOf(newDoc);
+  const count = (arr: string[]) => {
+    const map = new Map<string, number>();
+    for (const word of arr) {
+      map.set(word, (map.get(word) ?? 0) + 1);
+    }
+    return map;
+  };
+  const oldCount = count(oldWords);
+  const newCount = count(newWords);
+
+  const added: string[] = [];
+  const usedInNew = new Map<string, number>();
+  for (const word of newWords) {
+    const used = usedInNew.get(word) ?? 0;
+    if (used < (oldCount.get(word) ?? 0)) {
+      usedInNew.set(word, used + 1);
+    } else {
+      added.push(word);
+    }
+  }
+
+  const removed: string[] = [];
+  const usedInOld = new Map<string, number>();
+  for (const word of oldWords) {
+    const used = usedInOld.get(word) ?? 0;
+    if (used < (newCount.get(word) ?? 0)) {
+      usedInOld.set(word, used + 1);
+    } else {
+      removed.push(word);
+    }
+  }
+  return { added: clean(added), removed: clean(removed) };
+}
+
+// clean keeps only meaningful tokens (letters/digits) and removes duplicates so
+// the history reads like a simple diff.
+function clean(words: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const word of words) {
+    const token = word.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+    if (!token || seen.has(token)) {
+      continue;
+    }
+    seen.add(token);
+    out.push(token);
+  }
+  return out;
+}
+
+interface HistoryDay {
+  day: string;
+  added: string[];
+  removed: string[];
+}
+
+function dayOf(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return iso.slice(0, 10);
+  }
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function formatDay(day: string): string {
+  const [year, month, dayNumber] = day.split("-");
+  if (!year || !month || !dayNumber) {
+    return day;
+  }
+  return `${dayNumber}/${month}/${year}`;
+}
+
+// buildHistory groups the note's revisions by day and returns one simple diff
+// per day, so the history is not flooded with every autosave.
+function buildHistory(revisions: Revision[], current: unknown): HistoryDay[] {
+  if (revisions.length === 0) {
+    return [];
+  }
+  // Chronological snapshots (oldest first): the state before each update, then
+  // the current state.
+  const states: Array<{ at: string; document: unknown }> = [];
+  for (let i = revisions.length - 1; i >= 0; i--) {
+    states.push({ at: revisions[i].created_at, document: revisions[i].document });
+  }
+  states.push({ at: new Date().toISOString(), document: current });
+
+  const ranges = new Map<string, { oldest: number; newest: number }>();
+  states.forEach((state, index) => {
+    const day = dayOf(state.at);
+    const range = ranges.get(day);
+    if (!range) {
+      ranges.set(day, { oldest: index, newest: index });
+    } else {
+      range.newest = index;
+    }
+  });
+
+  return [...ranges.entries()]
+    .sort((a, b) => (a[0] < b[0] ? 1 : -1))
+    .map(([day, range]) => {
+      const { added, removed } = diffWords(states[range.oldest].document, states[range.newest].document);
+      return { day, added, removed };
+    });
+}
+
+// NoteEditor is one note: a single document (text, audio, images interleaved)
+// with an on-demand right-hand panel for properties and AI insights.
 export function NoteEditor({
   entryId,
   refreshKey,
@@ -75,21 +210,32 @@ export function NoteEditor({
   onChanged,
   onDeleted,
   onOpenEntity,
+  onOpenEntry,
+  onCreateChild,
 }: NoteEditorProps) {
   const { notify } = useToast();
   const [entry, setEntry] = useState<Entry | null>(null);
-  const [transcript, setTranscript] = useState<Transcript | null>(null);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
+  const [media, setMedia] = useState<MediaRef[]>([]);
+  const [images, setImages] = useState<Attachment[]>([]);
+  const [revisions, setRevisions] = useState<Revision[]>([]);
+  const [noteId, setNoteId] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [initialBody, setInitialBody] = useState<PartialBlock[] | undefined>(undefined);
   const [bodyLoaded, setBodyLoaded] = useState(false);
   const [busy, setBusy] = useState<"analyze" | "retranscribe" | null>(null);
   const [saving, setSaving] = useState<"idle" | "saving" | "saved">("idle");
   const [error, setError] = useState("");
-  const [currentTime, setCurrentTime] = useState(0);
-  const [playing, setPlaying] = useState(false);
-  const [showInsights, setShowInsights] = useState(false);
+  const [asideOpen, setAsideOpen] = useState(false);
+  const [asidePinned, setAsidePinned] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
+  const [fullWidth, setFullWidth] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("dyarium.noteWidth") === "full";
+    } catch {
+      return false;
+    }
+  });
   const [font, setFont] = useState<string>(() => {
     try {
       return localStorage.getItem("dyarium.noteFont") ?? "default";
@@ -99,54 +245,67 @@ export function NoteEditor({
   });
   const noteIdRef = useRef<string | null>(null);
   const saveTimer = useRef<number | null>(null);
-  const playerRef = useRef<AudioPlayerHandle | null>(null);
-  const transcriptRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const titleRef = useRef<HTMLTextAreaElement | null>(null);
+  const notesRef = useRef<NotesEditorHandle | null>(null);
   const mountedRefresh = useRef(refreshKey);
-  const bodyRef = useRef<NotesEditorHandle | null>(null);
-  const titleRef = useRef<HTMLInputElement | null>(null);
-  const insightsHeadingRef = useRef<HTMLHeadingElement | null>(null);
-  const insightsToggleRef = useRef<HTMLButtonElement | null>(null);
-  const focusedEmptyTitle = useRef(false);
+
+  // Grow the title textarea to fit its content (the title wraps like Notion).
+  useEffect(() => {
+    const el = titleRef.current;
+    if (!el) {
+      return;
+    }
+    el.style.height = "auto";
+    el.style.height = `${Math.max(el.scrollHeight, 44)}px`;
+  }, [title, entry]);
 
   const loadFull = useCallback(async () => {
     setError("");
     setBodyLoaded(false);
     noteIdRef.current = null;
-    const [entryRes, transcriptRes, analysisRes, notesRes] = await Promise.allSettled([
+    const [entryRes, analysisRes, notesRes, imagesRes] = await Promise.allSettled([
       api.getEntry(entryId),
-      api.getTranscript(entryId),
       api.getAnalysis(entryId),
       api.listNotes(entryId),
+      api.listAttachments(entryId),
     ]);
     if (entryRes.status !== "fulfilled") {
       setError(entryRes.reason instanceof Error ? entryRes.reason.message : "falha ao carregar a nota");
       return;
     }
-    setEntry(entryRes.value);
-    setTitle(entryRes.value.title || entryRes.value.original_filename || "");
-    setTranscript(transcriptRes.status === "fulfilled" ? transcriptRes.value : null);
+    const loaded = entryRes.value;
+    setEntry(loaded);
+    setTitle(loaded.title || loaded.original_filename || "");
     setAnalysis(analysisRes.status === "fulfilled" ? analysisRes.value : null);
+    const images = imagesRes.status === "fulfilled" ? imagesRes.value.attachments ?? [] : [];
+    setImages(images);
+    setMedia(mediaRefs(loaded, images));
     const note = notesRes.status === "fulfilled" ? notesRes.value.notes?.[0] : undefined;
     if (note) {
       noteIdRef.current = note.id;
+      setNoteId(note.id);
       setInitialBody((note.document as PartialBlock[]) ?? undefined);
     } else {
+      noteIdRef.current = null;
+      setNoteId(null);
       setInitialBody(undefined);
     }
     setBodyLoaded(true);
   }, [entryId]);
 
   const loadLight = useCallback(async () => {
-    const [entryRes, transcriptRes, analysisRes] = await Promise.allSettled([
+    const [entryRes, analysisRes, imagesRes] = await Promise.allSettled([
       api.getEntry(entryId),
-      api.getTranscript(entryId),
       api.getAnalysis(entryId),
+      api.listAttachments(entryId),
     ]);
     if (entryRes.status === "fulfilled") {
       setEntry(entryRes.value);
     }
-    setTranscript(transcriptRes.status === "fulfilled" ? transcriptRes.value : null);
     setAnalysis(analysisRes.status === "fulfilled" ? analysisRes.value : null);
+    if (imagesRes.status === "fulfilled") {
+      setImages(imagesRes.value.attachments ?? []);
+    }
   }, [entryId]);
 
   useEffect(() => {
@@ -160,6 +319,30 @@ export function NoteEditor({
     void loadLight();
   }, [refreshKey, loadLight]);
 
+  // Load the note's revision history when the properties panel is open.
+  useEffect(() => {
+    if (!asideOpen || !noteId) {
+      setRevisions([]);
+      return;
+    }
+    let active = true;
+    api
+      .listRevisions(noteId)
+      .then((result) => {
+        if (active) {
+          setRevisions(result.revisions ?? []);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setRevisions([]);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [asideOpen, noteId]);
+
   const status = entry?.status;
   const running = isBusy(status);
 
@@ -168,51 +351,6 @@ export function NoteEditor({
       setBusy(null);
     }
   }, [status]);
-
-  // Focus the empty title of a fresh note so the user can just start typing.
-  useEffect(() => {
-    if (bodyLoaded && title === "" && !focusedEmptyTitle.current) {
-      focusedEmptyTitle.current = true;
-      titleRef.current?.focus();
-    }
-  }, [bodyLoaded, title]);
-
-  const closeInsights = useCallback(() => {
-    setShowInsights(false);
-    insightsToggleRef.current?.focus();
-  }, []);
-
-  // Move focus into the panel when it opens, and let Escape close it.
-  useEffect(() => {
-    if (!showInsights) {
-      return;
-    }
-    insightsHeadingRef.current?.focus();
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        closeInsights();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [showInsights, closeInsights]);
-
-  // Keep the active transcription line visible while the audio plays.
-  useEffect(() => {
-    if (!playing || !transcript || transcript.segments.length === 0) {
-      return;
-    }
-    const ms = currentTime * 1000;
-    let index = -1;
-    for (let i = 0; i < transcript.segments.length; i++) {
-      if (transcript.segments[i].start_ms <= ms) {
-        index = i;
-      } else {
-        break;
-      }
-    }
-    transcriptRefs.current[index]?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  }, [playing, currentTime, transcript]);
 
   const saveBody = useCallback(
     async (document: unknown) => {
@@ -274,7 +412,7 @@ export function NoteEditor({
   const analyze = async () => {
     setBusy("analyze");
     setError("");
-    setShowInsights(true);
+    setAsideOpen(true);
     try {
       await api.analyze(entryId);
       notify("Analise iniciada", "info");
@@ -292,7 +430,7 @@ export function NoteEditor({
     if (!entry) {
       return;
     }
-    if (!window.confirm("Apagar esta nota e o audio? Esta acao nao pode ser desfeita.")) {
+    if (!window.confirm("Apagar esta nota e os audios? Esta acao nao pode ser desfeita.")) {
       return;
     }
     try {
@@ -312,38 +450,46 @@ export function NoteEditor({
     } catch {
       // ignore storage errors
     }
-    setOptionsOpen(false);
+  };
+
+  const toggleFullWidth = () => {
+    setFullWidth((value) => {
+      const next = !value;
+      try {
+        localStorage.setItem("dyarium.noteWidth", next ? "full" : "default");
+      } catch {
+        // ignore storage errors
+      }
+      return next;
+    });
   };
 
   if (!entry) {
     return (
-      <div className="note-shell">
-        <div className="editor-layout">
-          <div className="editor">
-            <div className="skeleton skeleton-title" />
-            <div className="skeleton skeleton-line" />
-            <div className="skeleton skeleton-block" />
-            {error && <p className="error">{error}</p>}
-          </div>
+      <div className="note">
+        <div className="note-doc">
+          <div className="skeleton skeleton-title" />
+          <div className="skeleton skeleton-line" />
+          <div className="skeleton skeleton-block" />
+          {error && <p className="error">{error}</p>}
         </div>
       </div>
     );
   }
 
-  const hasAudio = entry.content_type !== "";
-  const hasTranscript = !!transcript && (transcript.text.trim() !== "" || transcript.segments.length > 0);
+  const audios = entry.audios ?? [];
+  const audioMap = new Map<string, Audio>(audios.map((audio) => [audio.id, audio]));
   const processing = running || busy !== null;
+  const spokenText = audios.map((audio) => audio.transcript?.text ?? "").join(" ");
+  const noteText = `${blocksText(initialBody)} ${spokenText}`.replace(/\s+/g, " ").trim();
+  const words = noteText ? noteText.split(/\s+/).length : 0;
+  const chars = noteText.length;
+  const mediaBytes =
+    audios.reduce((sum, audio) => sum + audio.size_bytes, 0) +
+    images.reduce((sum, image) => sum + image.size_bytes, 0);
+  const totalBytes = mediaBytes + new TextEncoder().encode(noteText).length;
 
-  let activeSegment = -1;
-  if (currentTime > 0 && transcript && transcript.segments.length > 0) {
-    for (let i = 0; i < transcript.segments.length; i++) {
-      if (transcript.segments[i].start_ms <= currentTime * 1000) {
-        activeSegment = i;
-      } else {
-        break;
-      }
-    }
-  }
+  const history = buildHistory(revisions, initialBody);
 
   const insights = processing ? (
     <div className="analysis-loading">
@@ -351,20 +497,8 @@ export function NoteEditor({
         <Spinner />
         <span>{processingText(progress, status)}</span>
       </div>
-      {progress && progress.stage === "analyzing" && progress.total > 1 && (
-        <div
-          className="ram-track"
-          role="progressbar"
-          aria-valuenow={Math.round((progress.done / progress.total) * 100)}
-          aria-valuemin={0}
-          aria-valuemax={100}
-        >
-          <div className="ram-fill" style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }} />
-        </div>
-      )}
       <div className="skeleton skeleton-line" />
       <div className="skeleton skeleton-line" style={{ width: "85%" }} />
-      <div className="skeleton skeleton-line" style={{ width: "65%" }} />
     </div>
   ) : analysis ? (
     <div className="insights">
@@ -381,7 +515,7 @@ export function NoteEditor({
             {analysis.themes.map((theme) => (
               <li key={theme.name}>
                 <button type="button" className="chip-button" onClick={() => onOpenEntity("theme", theme.name)}>
-                  {theme.name} <span className="muted">{Math.round(theme.confidence * 100)}%</span>
+                  {theme.name}
                 </button>
               </li>
             ))}
@@ -397,7 +531,6 @@ export function NoteEditor({
               <li key={person.name}>
                 <button type="button" className="chip-button" onClick={() => onOpenEntity("person", person.name)}>
                   {person.name}
-                  {person.relation ? ` (${person.relation})` : ""} · {person.count}
                 </button>
               </li>
             ))}
@@ -412,28 +545,8 @@ export function NoteEditor({
             {analysis.places_detail.map((place) => (
               <li key={place.name}>
                 <button type="button" className="chip-button" onClick={() => onOpenEntity("place", place.name)}>
-                  {place.name} · {place.count}
+                  {place.name}
                 </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {analysis.emotions_detail && analysis.emotions_detail.length > 0 && (
-        <div className="analysis-block">
-          <h4>Emocoes</h4>
-          <ul className="bars">
-            {analysis.emotions_detail.map((emotion) => (
-              <li key={emotion.name}>
-                <span className="bar-label">{emotion.name}</span>
-                <span className="bar-track">
-                  <span
-                    className="bar-fill"
-                    style={{ width: `${Math.round(Math.min(1, Math.max(0, emotion.intensity)) * 100)}%` }}
-                  />
-                </span>
-                <span className="muted">{emotion.intensity.toFixed(2)}</span>
               </li>
             ))}
           </ul>
@@ -442,225 +555,284 @@ export function NoteEditor({
 
       {analysis.key_moments && analysis.key_moments.length > 0 && (
         <div className="analysis-block">
-          <h4>Momentos-chave</h4>
+          <h4>Momentos</h4>
           <ul className="moments">
             {analysis.key_moments.map((moment, index) => (
               <li key={index}>
-                <button
-                  type="button"
-                  className="transcript-line"
-                  onClick={() => playerRef.current?.seek(moment.start_ms / 1000)}
-                >
-                  <span className="timestamp">{formatDuration(moment.start_ms / 1000)}</span>
-                  {moment.text}
-                </button>
+                <span className="timestamp">{formatDuration(moment.start_ms / 1000)}</span>
+                {moment.text}
               </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {analysis.questions && analysis.questions.length > 0 && (
-        <div className="analysis-block">
-          <h4>Perguntas</h4>
-          <ul className="plain-list">
-            {analysis.questions.map((question, index) => (
-              <li key={index}>{question}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {analysis.decisions && analysis.decisions.length > 0 && (
-        <div className="analysis-block">
-          <h4>Decisoes</h4>
-          <ul className="plain-list">
-            {analysis.decisions.map((decision, index) => (
-              <li key={index}>{decision}</li>
             ))}
           </ul>
         </div>
       )}
     </div>
   ) : (
-    <p className="muted">Sem analise ainda. Clique em Analisar para extrair temas, pessoas, emocoes e mais.</p>
+    <p className="muted">Sem analise ainda.</p>
   );
 
   return (
-    <div className={showInsights ? "note-shell note-shell--insights" : "note-shell"}>
-      <div className={`editor-layout note-font--${font}`}>
-        <div className="editor">
-          <header className="editor-head">
-            <input
-              ref={titleRef}
-              className="editor-title"
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              onBlur={() => void saveTitle()}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  void saveTitle();
-                  bodyRef.current?.focus();
-                }
-              }}
-              placeholder="Titulo da nota"
-              aria-label="Titulo da nota"
-            />
-            <div className="editor-actions">
+    <div
+      className={`note note-font--${font}${fullWidth ? " note--wide" : ""}${asideOpen ? " note--aside-open" : ""}${
+        asidePinned ? " note--aside-pinned" : ""
+      }`}
+    >
+      <div
+        className="note-doc"
+        onClick={() => {
+          if (asideOpen && !asidePinned) {
+            setAsideOpen(false);
+          }
+        }}
+      >
+        <div className="note-topbar">
+          <span className="save-state muted">
+            {saving === "saving" ? "salvando" : saving === "saved" ? "salvo" : ""}
+          </span>
+          <div className="note-head-actions">
+            <button
+              type="button"
+              className="icon-button"
+              onClick={() => notesRef.current?.addImage()}
+              aria-label="Anexar imagem"
+              title="Anexar imagem"
+            >
+              <ImageIcon size={16} />
+            </button>
+            <button
+              type="button"
+              className="icon-button"
+              onClick={() => notesRef.current?.addAudio()}
+              aria-label="Gravar ou enviar audio"
+              title="Audio"
+            >
+              <MicIcon size={16} />
+            </button>
+            <button
+              type="button"
+              className="icon-button"
+              onClick={() => notesRef.current?.openLink()}
+              aria-label="Link para nota"
+              title="Link para nota"
+            >
+              <LinkIcon size={16} />
+            </button>
+            <button
+              type="button"
+              className="icon-button"
+              onClick={() => onCreateChild(entry.id)}
+              aria-label="Nova subnota"
+              title="Nova subnota"
+            >
+              <PlusIcon size={16} />
+            </button>
+            {audios.length > 0 && (
+              <button type="button" onClick={() => void retranscribe()} disabled={busy === "retranscribe" || running}>
+                {busy === "retranscribe" ? <Spinner /> : null} Retranscrever
+              </button>
+            )}
+            <div className="note-options">
               <button
                 type="button"
                 className="icon-button"
-                ref={insightsToggleRef}
-                onClick={() => setShowInsights((value) => !value)}
-                aria-label="Insights da IA"
-                aria-expanded={showInsights}
-                aria-controls="insights-panel"
+                onClick={() => setOptionsOpen((value) => !value)}
+                aria-label="Opcoes da nota"
+                aria-expanded={optionsOpen}
               >
-                <SparkIcon size={16} />
+                <MoreIcon size={16} />
               </button>
-              {saving !== "idle" && (
-                <span className="muted save-state">{saving === "saving" ? "salvando..." : "salvo"}</span>
-              )}
-              {(running || busy) && (
-                <button type="button" className="danger" onClick={() => void api.cancel(entryId).then(() => loadLight())}>
-                  Parar
-                </button>
-              )}
-              {hasAudio && (
-                <button type="button" onClick={() => void retranscribe()} disabled={busy === "retranscribe" || running}>
-                  {busy === "retranscribe" ? <Spinner /> : null} Retranscrever
-                </button>
-              )}
-              <div className="note-options">
-                <button
-                  type="button"
-                  className="icon-button"
-                  onClick={() => setOptionsOpen((value) => !value)}
-                  aria-label="Opcoes da nota"
-                  aria-expanded={optionsOpen}
-                >
-                  <MoreIcon size={16} />
-                </button>
-                {optionsOpen && (
-                  <>
-                    <div className="menu-backdrop" onClick={() => setOptionsOpen(false)} />
-                    <div className="menu" role="menu">
-                      <div className="menu-label">Fonte</div>
-                      {FONTS.map((option) => (
-                        <button
-                          key={option.id}
-                          type="button"
-                          role="menuitemradio"
-                          aria-checked={option.id === font}
-                          className={option.id === font ? "menu-item menu-item--active" : "menu-item"}
-                          onClick={() => chooseFont(option.id)}
-                        >
-                          <span style={{ fontFamily: option.preview }}>{option.label}</span>
-                          {option.id === font && <CheckIcon size={14} />}
-                        </button>
-                      ))}
-                      <div className="menu-label">Painel</div>
-                      <button type="button" className="menu-item" onClick={() => { setShowInsights(true); setOptionsOpen(false); }}>
-                        <span>Mostrar insights</span>
+              {optionsOpen && (
+                <>
+                  <div className="menu-backdrop" onClick={() => setOptionsOpen(false)} />
+                  <div className="menu" role="menu">
+                    <button
+                      type="button"
+                      className="menu-item"
+                      role="menuitemcheckbox"
+                      aria-checked={fullWidth}
+                      onClick={toggleFullWidth}
+                    >
+                      <span>Largura total</span>
+                      {fullWidth && <CheckIcon size={14} />}
+                    </button>
+                    <button
+                      type="button"
+                      className="menu-item"
+                      role="menuitemcheckbox"
+                      aria-checked={asideOpen}
+                      onClick={() => {
+                        setAsideOpen((value) => !value);
+                        setOptionsOpen(false);
+                      }}
+                    >
+                      <span>Propriedades e insights</span>
+                      {asideOpen && <CheckIcon size={14} />}
+                    </button>
+                    <div className="menu-label">Fonte</div>
+                    {FONTS.map((option) => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={option.id === font}
+                        className={option.id === font ? "menu-item menu-item--active" : "menu-item"}
+                        onClick={() => {
+                          chooseFont(option.id);
+                          setOptionsOpen(false);
+                        }}
+                      >
+                        <span style={{ fontFamily: option.preview }}>{option.label}</span>
+                        {option.id === font && <CheckIcon size={14} />}
                       </button>
-                    </div>
-                  </>
-                )}
-              </div>
-              <button type="button" className="icon-button danger" onClick={() => void remove()} aria-label="Apagar nota">
-                <TrashIcon size={16} />
-              </button>
-            </div>
-          </header>
-
-          <p className="editor-meta">
-            {formatDateTime(entry.recorded_at ?? entry.created_at)} ·{" "}
-            {entry.duration_seconds > 0 ? `${formatDuration(entry.duration_seconds)} · ` : ""}
-            {statusLabel(status)}
-          </p>
-
-          <TagEditor entryId={entry.id} onChanged={onChanged} />
-
-          {failureReason && <div className="banner banner--error">Falha: {failureReason}</div>}
-          {error && <p className="error">{error}</p>}
-
-          <div className="page-canvas">
-            {hasAudio && (
-              <div className="audio-block">
-                <AudioPlayer
-                  ref={playerRef}
-                  src={audioUrl(entry.id)}
-                  onTime={setCurrentTime}
-                  onPlaying={setPlaying}
-                />
-                {hasTranscript && (
-                  <blockquote className="transcript">
-                    {transcript && transcript.segments.length > 0 ? (
-                      transcript.segments.map((segment, index) => (
-                        <p key={index}>
-                          <button
-                            ref={(el) => {
-                              transcriptRefs.current[index] = el;
-                            }}
-                            type="button"
-                            className={
-                              index === activeSegment ? "transcript-line transcript-line--active" : "transcript-line"
-                            }
-                            onClick={() => playerRef.current?.seek(segment.start_ms / 1000)}
-                            title="Ouvir a partir daqui"
-                          >
-                            <span className="timestamp">{formatDuration(segment.start_ms / 1000)}</span>
-                            {segment.text}
-                          </button>
-                        </p>
-                      ))
-                    ) : (
-                      <p>{transcript?.text}</p>
-                    )}
-                  </blockquote>
-                )}
-              </div>
-            )}
-
-            <div className="page-text">
-              {bodyLoaded && <NotesEditor ref={bodyRef} initialContent={initialBody} onChange={handleBodyChange} />}
-            </div>
-
-            <div className="page-images">
-              <ImageGallery entryId={entry.id} />
+                    ))}
+                    <div className="menu-label">Nota</div>
+                    <button
+                      type="button"
+                      className="menu-item menu-item--danger"
+                      onClick={() => {
+                        setOptionsOpen(false);
+                        void remove();
+                      }}
+                    >
+                      <span>Apagar nota</span>
+                      <TrashIcon size={14} />
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
+        </div>
+
+        <textarea
+          ref={titleRef}
+          className="note-title"
+          rows={1}
+          value={title}
+          onChange={(event) => setTitle(event.target.value)}
+          onBlur={() => void saveTitle()}
+          placeholder="Sem titulo"
+          aria-label="Titulo da nota"
+        />
+
+        <p className="note-byline">
+          <span>{formatDateTime(entry.recorded_at ?? entry.created_at)}</span>
+          <span className="note-status">{statusLabel(status)}</span>
+          {entry.duration_seconds > 0 && <span>{formatDuration(entry.duration_seconds)}</span>}
+        </p>
+
+        {failureReason && <div className="banner banner--error">Falha: {failureReason}</div>}
+        {error && <p className="error">{error}</p>}
+
+        <div className="note-body">
+          {bodyLoaded && (
+            <NotesEditor
+              ref={notesRef}
+              entryId={entry.id}
+              initialContent={initialBody}
+              media={media}
+              audios={audioMap}
+              onChange={handleBodyChange}
+              onMediaAdded={() => {
+                void loadLight();
+                onChanged();
+              }}
+              onOpenEntry={onOpenEntry}
+            />
+          )}
         </div>
       </div>
 
-      <aside
-        id="insights-panel"
-        className="insights-panel"
-        role="complementary"
-        aria-labelledby="insights-heading"
-        hidden={!showInsights}
-      >
-        <div className="panel-head">
-          <h3 id="insights-heading" ref={insightsHeadingRef} tabIndex={-1}>
-            Insights da IA
-          </h3>
-          <div className="panel-actions">
-            <button
-              type="button"
-              className="primary small"
-              onClick={() => void analyze()}
-              disabled={busy === "analyze" || running}
-            >
-              {busy === "analyze" ? <Spinner /> : <SparkIcon size={15} />} Analisar
-            </button>
-            <button type="button" className="icon-button" onClick={closeInsights} aria-label="Fechar insights">
-              <CloseIcon size={16} />
-            </button>
+      {asideOpen && (
+        <aside className="note-aside" aria-label="Propriedades e insights">
+          <div className="aside-actions">
+            <strong className="aside-title">Propriedades</strong>
+            <div className="aside-actions-buttons">
+              <button
+                type="button"
+                className={asidePinned ? "icon-button icon-button--active" : "icon-button"}
+                onClick={() => setAsidePinned((value) => !value)}
+                aria-label={asidePinned ? "Desafixar propriedades" : "Fixar propriedades"}
+                aria-pressed={asidePinned}
+              >
+                <PinIcon size={15} />
+              </button>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => setAsideOpen(false)}
+                aria-label="Fechar propriedades"
+              >
+                <ChevronIcon size={16} />
+              </button>
+            </div>
           </div>
-        </div>
-        <div className="panel-body">{insights}</div>
-      </aside>
+
+          <section className="aside-block">
+            <h3>Detalhes</h3>
+            <dl className="props">
+              <dt>Criada</dt>
+              <dd>{formatDateTime(entry.created_at)}</dd>
+              <dt>Origem</dt>
+              <dd>{entry.source === "text" ? "Texto" : "Audio"}</dd>
+              <dt>Audios</dt>
+              <dd>{audios.length}</dd>
+              <dt>Palavras</dt>
+              <dd>{words}</dd>
+              <dt>Caracteres</dt>
+              <dd>{chars}</dd>
+              <dt>Tamanho</dt>
+              <dd>
+                {totalBytes} bytes ({(totalBytes / 1048576).toFixed(2)} MB)
+              </dd>
+              <dt>Status</dt>
+              <dd>{statusLabel(status)}</dd>
+            </dl>
+            <div className="aside-tags">
+              <TagEditor entryId={entry.id} onChanged={onChanged} />
+            </div>
+          </section>
+
+          <section className="aside-block">
+            <h3>Historico</h3>
+            <p className="muted history-created">Criada em {formatDateTime(entry.created_at)}</p>
+            {history.length === 0 ? (
+              <p className="muted">Sem alteracoes registradas.</p>
+            ) : (
+              <ul className="history">
+                {history.map((item, index) => (
+                  <li key={index}>
+                    <span className="history-when">{formatDay(item.day)}</span>
+                    {item.added.length === 0 && item.removed.length === 0 ? (
+                      <span className="muted">reorganizado</span>
+                    ) : (
+                      <>
+                        {item.added.length > 0 && (
+                          <p className="history-added">+ {item.added.slice(0, 40).join(" ")}</p>
+                        )}
+                        {item.removed.length > 0 && (
+                          <p className="history-removed">- {item.removed.slice(0, 40).join(" ")}</p>
+                        )}
+                      </>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <section className="aside-block">
+            <div className="aside-block-head">
+              <h3>Insights</h3>
+              <button type="button" className="primary small" onClick={() => void analyze()} disabled={busy === "analyze" || running}>
+                {busy === "analyze" ? <Spinner /> : <SparkIcon size={14} />} Analisar
+              </button>
+            </div>
+            {insights}
+          </section>
+        </aside>
+      )}
+
     </div>
   );
 }

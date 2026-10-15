@@ -3,6 +3,7 @@ export interface Entry {
   title: string;
   status: string;
   source: string;
+  parent_id?: string | null;
   original_filename: string;
   content_type: string;
   size_bytes: number;
@@ -13,6 +14,16 @@ export interface Entry {
   updated_at: string;
   tags?: string[];
   metrics?: Metrics;
+  audios?: Audio[];
+}
+
+export interface Audio {
+  id: string;
+  content_type: string;
+  size_bytes: number;
+  duration_seconds: number;
+  created_at: string;
+  transcript?: Transcript | null;
 }
 
 export interface Metrics {
@@ -122,6 +133,12 @@ export interface Note {
   updated_at: string;
 }
 
+export interface Revision {
+  id: string;
+  document: unknown;
+  created_at: string;
+}
+
 export interface Tag {
   id: string;
   name: string;
@@ -135,6 +152,16 @@ export interface Attachment {
   kind: string;
   content_type: string;
   size_bytes: number;
+  created_at: string;
+}
+
+export interface Link {
+  id: string;
+  from_entry_id: string;
+  to_entry_id: string;
+  url: string;
+  label: string;
+  title: string;
   created_at: string;
 }
 

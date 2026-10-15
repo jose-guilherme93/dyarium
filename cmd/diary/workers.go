@@ -10,14 +10,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jose-guilherme93/dyarium/internal/analyze"
-	"github.com/jose-guilherme93/dyarium/internal/config"
-	"github.com/jose-guilherme93/dyarium/internal/events"
-	"github.com/jose-guilherme93/dyarium/internal/id"
-	"github.com/jose-guilherme93/dyarium/internal/ingest"
-	"github.com/jose-guilherme93/dyarium/internal/jobs"
-	"github.com/jose-guilherme93/dyarium/internal/store"
-	"github.com/jose-guilherme93/dyarium/internal/transcribe"
+	"github.com/joseti/dyarium/internal/analyze"
+	"github.com/joseti/dyarium/internal/config"
+	"github.com/joseti/dyarium/internal/events"
+	"github.com/joseti/dyarium/internal/id"
+	"github.com/joseti/dyarium/internal/ingest"
+	"github.com/joseti/dyarium/internal/jobs"
+	"github.com/joseti/dyarium/internal/store"
+	"github.com/joseti/dyarium/internal/transcribe"
 )
 
 // telegramSink ingests audio received through the Telegram module.
@@ -33,7 +33,11 @@ func (s telegramSink) IngestAudio(ctx context.Context, source, filename, content
 	if err != nil {
 		return "", err
 	}
-	if _, err := s.queue.Enqueue(ctx, jobs.TypeTranscribe, "transcribe:"+entry.ID, jobs.TranscribePayload{EntryID: entry.ID}); err != nil {
+	att, err := s.store.GetAttachmentByKind(ctx, entry.ID, store.AttachmentOriginal)
+	if err != nil {
+		return "", err
+	}
+	if _, err := s.queue.Enqueue(ctx, jobs.TypeTranscribe, "transcribe:"+att.ID, jobs.TranscribePayload{EntryID: entry.ID, AttachmentID: att.ID}); err != nil {
 		return "", err
 	}
 	_ = s.store.UpdateEntryStatus(ctx, entry.ID, store.EntryQueued)
@@ -103,7 +107,7 @@ func transcribeHandler(st *store.Store, cfg config.Config, pipeline *transcribe.
 				})
 			},
 		}
-		if err := pipeline.Run(ctx, payload.EntryID, cb); err != nil {
+		if err := pipeline.Run(ctx, payload.EntryID, payload.AttachmentID, cb); err != nil {
 			_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryFailed)
 			bus.Publish("entry.failed", map[string]string{"entry_id": payload.EntryID, "reason": err.Error()})
 			return err
@@ -172,6 +176,42 @@ func analyzeHandler(st *store.Store, cfg config.Config, bus *events.Bus, logger 
 	}
 }
 
+// cleanupHandler removes the encrypted objects and the row of an entry that was
+// soft-deleted. It is idempotent and a no-op when the entry is not deleted (for
+// example, a job left over from a deletion that never completed).
+func cleanupHandler(st *store.Store, ing *ingest.Service, logger *slog.Logger) jobs.Handler {
+	return func(ctx context.Context, job *jobs.Job, _ func() error) error {
+		var payload jobs.CleanupPayload
+		if err := jobs.DecodePayload(job, &payload); err != nil {
+			return err
+		}
+		deleted, err := st.EntryIsDeleted(ctx, payload.EntryID)
+		if errors.Is(err, store.ErrNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if !deleted {
+			return nil
+		}
+		attachments, err := st.ListAttachments(ctx, payload.EntryID)
+		if err != nil {
+			return err
+		}
+		for _, attachment := range attachments {
+			if err := ing.DeleteAttachmentObject(attachment); err != nil {
+				return err
+			}
+		}
+		if err := st.PurgeEntry(ctx, payload.EntryID); err != nil {
+			return err
+		}
+		logger.Info("worker: entrada removida", "entry_id", payload.EntryID, "objetos", len(attachments))
+		return nil
+	}
+}
+
 // analyzeSegments maps the stored transcript segments to the analysis package
 // and falls back to a single synthetic segment when none is available.
 func analyzeSegments(text string, segments []store.Segment) []analyze.Segment {
@@ -189,16 +229,38 @@ func analyzeSegments(text string, segments []store.Segment) []analyze.Segment {
 	return out
 }
 
-// analysisInput prefers the audio transcript and falls back to the written note
-// body, so a text note can be analyzed too.
+// analysisInput prefers the audio transcripts and falls back to the written
+// note body, so a text note can be analyzed too. With several audios the
+// transcripts are concatenated (segment timestamps would collide, so a single
+// text segment is used).
 func analysisInput(ctx context.Context, st *store.Store, entryID string) ([]analyze.Segment, string, error) {
-	transcript, segments, err := st.GetTranscript(ctx, entryID)
-	if err == nil {
-		return analyzeSegments(transcript.Text, segments), transcript.Language, nil
+	transcripts, err := st.ListTranscripts(ctx, entryID)
+	if err == nil && len(transcripts) == 1 {
+		if _, segments, serr := st.GetTranscriptByAttachment(ctx, transcripts[0].AttachmentID); serr == nil {
+			return analyzeSegments(transcripts[0].Text, segments), transcripts[0].Language, nil
+		}
+	}
+	if err == nil && len(transcripts) > 1 {
+		var parts []string
+		language := ""
+		for _, t := range transcripts {
+			if text := strings.TrimSpace(t.Text); text != "" {
+				parts = append(parts, text)
+			}
+			if language == "" && t.Language != "" {
+				language = t.Language
+			}
+		}
+		if joined := strings.Join(parts, "\n\n"); joined != "" {
+			return []analyze.Segment{{Text: joined}}, language, nil
+		}
 	}
 	text, noteErr := noteBodyText(ctx, st, entryID)
 	if noteErr != nil {
-		return nil, "", fmt.Errorf("worker: transcript: %w", err)
+		if err != nil {
+			return nil, "", fmt.Errorf("worker: transcript: %w", err)
+		}
+		return nil, "", noteErr
 	}
 	if strings.TrimSpace(text) == "" {
 		return nil, "", errors.New("transcricao indisponivel")

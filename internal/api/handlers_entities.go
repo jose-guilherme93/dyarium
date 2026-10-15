@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jose-guilherme93/dyarium/internal/store"
+	"github.com/joseti/dyarium/internal/store"
 )
 
 func entitySummaryJSON(s store.EntitySummary) map[string]any {

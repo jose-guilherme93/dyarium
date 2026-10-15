@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/jose-guilherme93/dyarium/internal/telegram"
+	"github.com/joseti/dyarium/internal/telegram"
 )
 
 func TestDisabledDoesNothing(t *testing.T) {

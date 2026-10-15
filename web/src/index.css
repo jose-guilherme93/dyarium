@@ -1,32 +1,72 @@
+/* dyarium - identidade "Tinta e papel".
+   Neutro quente de papel com um unico acento azul-tinta. Titulos em Newsreader,
+   interface e corpo em Public Sans. Sem gradientes, sem emoji. */
+
+@font-face {
+  font-family: "Newsreader";
+  src: url("/fonts/newsreader.woff2") format("woff2");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Public Sans";
+  src: url("/fonts/public-sans.woff2") format("woff2");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   color-scheme: light dark;
-  --color-bg: #ffffff;
-  --color-surface: #f5f5f3;
-  --color-surface-2: #ececea;
-  --color-border: #d9d9d5;
-  --color-text: #1c1c1a;
-  --color-muted: #6b6b66;
-  --color-accent: #3a5a40;
-  --color-accent-soft: #e4ece2;
-  --color-danger: #b3261e;
-  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-serif: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+
+  --paper: #f6f4ef;
+  --paper-2: #efece4;
+  --paper-3: #e7e2d7;
+  --ink: #211e1a;
+  --ink-soft: #6b655c;
+  --line: #ded8cc;
+  --accent: #2c4a63;
+  --accent-soft: #e3e9ee;
+  --danger: #9c3b2e;
+  --ok: #2f7d4f;
+
+  /* Nomes usados nos estilos existentes. */
+  --color-bg: var(--paper);
+  --color-surface: var(--paper-2);
+  --color-surface-2: var(--paper-3);
+  --color-border: var(--line);
+  --color-text: var(--ink);
+  --color-muted: var(--ink-soft);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-danger: var(--danger);
+
+  --font-serif: "Newsreader", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --font-sans: "Public Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
   --space: 4px;
-  --radius: 10px;
-  --radius-sm: 7px;
+  --radius: 8px;
+  --radius-sm: 5px;
+
+  /* Linha de leitura confortavel para a coluna do documento. */
+  --measure: 68ch;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --color-bg: #141417;
-    --color-surface: #1c1c21;
-    --color-surface-2: #232329;
-    --color-border: #303038;
-    --color-text: #ececea;
-    --color-muted: #9a9a92;
-    --color-accent: #8fae7f;
-    --color-accent-soft: #26302a;
-    --color-danger: #f0736a;
+    --paper: #14161a;
+    --paper-2: #1c1f24;
+    --paper-3: #272d36;
+    --ink: #eceae3;
+    --ink-soft: #b7bcc4;
+    --line: #363c45;
+    --accent: #9cc0e8;
+    --accent-soft: #2b3f55;
+    --danger: #ee8a7c;
+    --ok: #7fc79a;
   }
 }
 
@@ -46,7 +86,17 @@ body {
   color: var(--color-text);
   font-family: var(--font-sans);
   font-size: 15px;
-  line-height: 1.5;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  letter-spacing: -0.005em;
 }
 
 button {

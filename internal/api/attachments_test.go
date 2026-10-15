@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jose-guilherme93/dyarium/internal/store"
+	"github.com/joseti/dyarium/internal/store"
 )
 
 func seedPlainEntry(t *testing.T, srv *Server, id string) {

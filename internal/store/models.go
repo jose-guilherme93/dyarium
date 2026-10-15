@@ -25,15 +25,18 @@ const (
 
 // Upload is an in-progress resumable upload.
 type Upload struct {
-	ID            string
-	Status        string
-	Filename      string
-	ContentType   string
-	SizeBytes     int64
-	SHA256        string
-	Title         string
-	RecordedAt    *time.Time
-	ClientKey     string
+	ID          string
+	Status      string
+	Filename    string
+	ContentType string
+	SizeBytes   int64
+	SHA256      string
+	Title       string
+	RecordedAt  *time.Time
+	ClientKey   string
+	// EntryID, when set, attaches the finished audio to an existing entry
+	// instead of creating a new one.
+	EntryID       string
 	ReceivedBytes int64
 	StorageKey    string
 	Prefix        []byte
@@ -44,10 +47,12 @@ type Upload struct {
 
 // Entry is a stored audio and its lifecycle.
 type Entry struct {
-	ID               string
-	Title            string
-	Status           string
-	Source           string
+	ID     string
+	Title  string
+	Status string
+	Source string
+	// ParentID is the parent note in the tree; empty means it is at the root.
+	ParentID         string
 	OriginalFilename string
 	ContentType      string
 	SizeBytes        int64
@@ -59,24 +64,28 @@ type Entry struct {
 	DeletedAt        *time.Time
 }
 
-// Attachment is an encrypted object linked to an entry.
+// Attachment is an encrypted object linked to an entry. Audio attachments use
+// kind "original"; images use "image"; the derived 16 kHz working copy uses
+// "derived_16k".
 type Attachment struct {
-	ID          string
-	EntryID     string
-	Kind        string
-	StorageKey  string
-	ContentType string
-	SizeBytes   int64
-	SHA256      string
-	Cipher      string
-	CacheKey    string
-	CreatedAt   time.Time
+	ID              string
+	EntryID         string
+	Kind            string
+	StorageKey      string
+	ContentType     string
+	SizeBytes       int64
+	SHA256          string
+	Cipher          string
+	CacheKey        string
+	DurationSeconds float64
+	CreatedAt       time.Time
 }
 
-// Transcript is a transcription of an entry.
+// Transcript is a transcription of one audio attachment of an entry.
 type Transcript struct {
 	ID              string
 	EntryID         string
+	AttachmentID    string
 	Model           string
 	Language        string
 	Text            string
@@ -134,6 +143,19 @@ type Tag struct {
 	Color      string
 	EntryCount int
 	CreatedAt  time.Time
+}
+
+// Link relates an entry to another entry or to an external URL. Exactly one of
+// ToEntryID and URL is set. Title is the resolved title of the target entry
+// when the link is internal, filled in on reads.
+type Link struct {
+	ID          string
+	FromEntryID string
+	ToEntryID   string
+	URL         string
+	Label       string
+	Title       string
+	CreatedAt   time.Time
 }
 
 // Analysis is the result of the optional text enrichment.

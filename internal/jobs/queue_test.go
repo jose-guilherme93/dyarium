@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jose-guilherme93/dyarium/internal/jobs"
-	"github.com/jose-guilherme93/dyarium/internal/store"
+	"github.com/joseti/dyarium/internal/jobs"
+	"github.com/joseti/dyarium/internal/store"
 )
 
 func newQueue(t *testing.T) *jobs.Queue {
