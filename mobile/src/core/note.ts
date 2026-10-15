@@ -5,7 +5,6 @@
  * nota de texto. Puro e testavel.
  */
 
-import { formatTitle } from './title';
 import type { Recording } from './types';
 
 export interface TextNoteInput {
@@ -46,7 +45,7 @@ export function buildDraftNote(input: { id: string; now: Date }): Recording {
   const iso = input.now.toISOString();
   return {
     id: input.id,
-    title: formatTitle(input.now),
+    title: '',
     recordedAt: iso,
     dir: '',
     segmentCount: 0,
@@ -63,4 +62,17 @@ export function buildDraftNote(input: { id: string; now: Date }): Recording {
 /** Uma nota tem conteudo quando tem audio ou texto nao vazio. */
 export function noteHasContent(note: Recording): boolean {
   return Boolean(note.filePath) || Boolean(note.text && note.text.trim().length > 0);
+}
+
+/**
+ * Rascunho ainda em branco (sem audio, sem texto e sem titulo): existe no banco,
+ * mas nao aparece na lista — o usuario nao deve ver "nota vazia" antes de escrever.
+ */
+export function isBlankDraft(note: Recording): boolean {
+  return (
+    note.status === 'draft' &&
+    !note.filePath &&
+    !(note.title ?? '').trim() &&
+    !(note.text ?? '').trim()
+  );
 }

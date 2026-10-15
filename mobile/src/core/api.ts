@@ -3,7 +3,9 @@
  * com um transporte falso. Nao ha estado aqui: cada chamada e independente.
  */
 
-import type { ServerConfig } from './types';
+import type { ServerConfig, TranscriptSegment } from './types';
+
+export type { TranscriptSegment };
 
 export interface HttpResponse {
   ok: boolean;
@@ -45,9 +47,12 @@ export interface CreateUploadBody {
 }
 
 export interface CreateTextEntryBody {
+  /** Id temporal do app (ULID): o servidor usa-o para a nota manter a posicao. */
+  id?: string;
   client_key: string;
   title: string;
   recorded_at?: string;
+  created_at?: string;
   text: string;
 }
 
@@ -90,12 +95,6 @@ export interface CompleteUploadResponse {
   status: string;
   /** true quando o servidor encontrou um audio identico (dedupe). */
   duplicate?: boolean;
-}
-
-export interface TranscriptSegment {
-  start_ms: number;
-  end_ms: number;
-  text: string;
 }
 
 export interface TranscriptResponse {
@@ -142,6 +141,26 @@ export interface ServerTag {
   name: string;
   color: string;
   entry_count: number;
+}
+
+/** Nota (corpo rico) de uma entrada. `document` e o JSON de blocos do BlockNote. */
+export interface ServerNote {
+  id: string;
+  entry_id: string;
+  title: string;
+  document: unknown;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Anexo de uma entrada (imagem anexada a nota). */
+export interface ServerAttachment {
+  id: string;
+  entry_id: string;
+  kind: string;
+  content_type: string;
+  size_bytes: number;
+  created_at: string;
 }
 
 function normalizeBaseUrl(baseUrl: string): string {
@@ -227,6 +246,22 @@ export class DyariumApi {
   }
 
   /**
+   * Cria a entrada com o id temporal do app (offline-first) e a hora de criacao,
+   * para o servidor colocar a nota na posicao cronologica certa. O servidor e
+   * idempotente: reenviar o mesmo id devolve a entrada existente.
+   */
+  async createEntry(entry: { id: string; title: string; createdAt: string }): Promise<{ id: string }> {
+    const res = await this.fetchImpl(this.url('/api/v1/entries'), {
+      method: 'POST',
+      headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ id: entry.id, title: entry.title, created_at: entry.createdAt }),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    const body = JSON.parse(await res.text()) as { id?: string };
+    return { id: String(body.id ?? '') };
+  }
+
+  /**
    * Atualiza titulo/data/texto de uma entrada. O servidor ja aceita titulo e
    * data; o campo `text` sera usado quando a nota de texto for suportada.
    */
@@ -237,6 +272,53 @@ export class DyariumApi {
       body: JSON.stringify(body),
     });
     if (!res.ok) throw await this.parseError(res);
+  }
+
+  /** Notas (corpo rico) de uma entrada. */
+  async listNotes(entryId: string): Promise<ServerNote[]> {
+    const res = await this.fetchImpl(this.url(`/api/v1/entries/${entryId}/notes`), {
+      method: 'GET',
+      headers: this.authHeaders(),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    const body = JSON.parse(await res.text()) as { notes?: ServerNote[] };
+    return body.notes ?? [];
+  }
+
+  /** Cria a nota de uma entrada a partir do documento de blocos. */
+  async createNote(entryId: string, title: string, document: unknown): Promise<ServerNote> {
+    const res = await this.fetchImpl(this.url(`/api/v1/entries/${entryId}/notes`), {
+      method: 'POST',
+      headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ title, document }),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    return JSON.parse(await res.text());
+  }
+
+  /** Atualiza titulo e documento de uma nota existente. */
+  async updateNote(noteId: string, title: string, document: unknown): Promise<void> {
+    const res = await this.fetchImpl(this.url(`/api/v1/notes/${noteId}`), {
+      method: 'PUT',
+      headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ title, document }),
+    });
+    if (!res.ok) throw await this.parseError(res);
+  }
+
+  /** Sobe uma imagem como anexo da entrada (bytes crus, Content-Type image/*). */
+  async uploadAttachment(
+    entryId: string,
+    bytes: Uint8Array,
+    contentType: string,
+  ): Promise<ServerAttachment> {
+    const res = await this.fetchImpl(this.url(`/api/v1/entries/${entryId}/attachments`), {
+      method: 'POST',
+      headers: this.authHeaders({ 'Content-Type': contentType }),
+      body: bytes,
+    });
+    if (!res.ok) throw await this.parseError(res);
+    return JSON.parse(await res.text());
   }
 
   async putChunk(

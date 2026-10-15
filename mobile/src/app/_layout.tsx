@@ -33,9 +33,13 @@ export default function RootLayout() {
                 screenOptions={{
                   headerShown: false,
                   contentStyle: { backgroundColor: colors.bg },
-                  animation: 'fade',
+                  freezeOnBlur: true,
                 }}
-              />
+              >
+                <Stack.Screen name="note/[id]" options={{ animation: 'slide_from_right' }} />
+                <Stack.Screen name="transcript/[id]" options={{ animation: 'slide_from_right' }} />
+                <Stack.Screen name="record" options={{ animation: 'slide_from_bottom' }} />
+              </Stack>
             </RecordingProvider>
           </LibraryProvider>
         </SettingsProvider>

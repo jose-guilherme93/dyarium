@@ -1,19 +1,16 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
-import { useCallback, useRef, useState } from 'react';
+import { memo, useCallback, useRef, useState } from 'react';
 import { Pressable, RefreshControl, SectionList, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 
-import { RecordButton } from '@/components/RecordButton';
 import { RecordingCard } from '@/components/RecordingCard';
 import { Screen } from '@/components/Screen';
-import { Waveform } from '@/components/Waveform';
-import { formatDuration } from '@/core/format';
 import { groupRecordingsByYear, type RecordingSection } from '@/core/group';
+import { isBlankDraft } from '@/core/note';
 import type { Recording } from '@/core/types';
 import { useLibrary } from '@/state/LibraryContext';
-import { useRecording } from '@/state/RecordingContext';
 import { useSettings } from '@/state/SettingsContext';
 import { colors, fontSize, radius, spacing } from '@/theme/tokens';
 
@@ -52,16 +49,53 @@ function SwipeRow({ children, label, icon, color, onAction }: SwipeRowProps) {
   );
 }
 
+interface NoteRowProps {
+  item: Recording;
+  swipeDelete: boolean;
+  onOpen(id: string): void;
+  onRetry(id: string): void;
+  onRemove(id: string): void;
+  onArchive(id: string): void;
+  onUnarchive(id: string): void;
+}
+
+// Linha memoizada: a home re-renderiza quando a fila muda; sem isto, todas as
+// linhas (com Swipeable) eram recriadas a cada mudanca.
+const NoteRow = memo(function NoteRow({
+  item,
+  swipeDelete,
+  onOpen,
+  onRetry,
+  onRemove,
+  onArchive,
+  onUnarchive,
+}: NoteRowProps) {
+  return (
+    <SwipeRow
+      label={swipeDelete ? 'Apagar' : item.archived ? 'Desarquivar' : 'Arquivar'}
+      icon={swipeDelete ? 'trash-outline' : 'archive-outline'}
+      color={swipeDelete ? colors.danger : colors.warning}
+      onAction={() => (swipeDelete ? onRemove(item.id) : onArchive(item.id))}
+    >
+      <RecordingCard
+        recording={item}
+        onRetry={() => onRetry(item.id)}
+        onDelete={() => onRemove(item.id)}
+        onOpen={() => onOpen(item.id)}
+        onArchive={() => (item.archived ? onUnarchive(item.id) : onArchive(item.id))}
+      />
+    </SwipeRow>
+  );
+});
+
 export default function RecordScreen() {
-  const { recordings, retry, remove, kick, refresh, createDraftNote, archiveNote, unarchiveNote } =
+  const { recordings, retry, remove, kick, refresh, pull, createDraftNote, archiveNote, unarchiveNote } =
     useLibrary();
-  const { active, elapsedMs, level, error, busy, start, stop } = useRecording();
   const { swipeAction } = useSettings();
 
   const [query, setQuery] = useState('');
   const [refreshing, setRefreshing] = useState(false);
 
-  const recording = Boolean(active);
   const pending = recordings.filter((r) => PENDING_STATUSES.includes(r.status)).length;
   const interrupted = recordings.filter((r) => r.status === 'interrupted').length;
 
@@ -90,7 +124,7 @@ export default function RecordScreen() {
     (r.text ?? '').toLowerCase().includes(term) ||
     (r.transcript ?? '').toLowerCase().includes(term);
 
-  const activeNotes = recordings.filter((r) => !r.archived && matches(r));
+  const activeNotes = recordings.filter((r) => !r.archived && !isBlankDraft(r) && matches(r));
   const archivedNotes = recordings.filter((r) => r.archived && matches(r));
   const sections: RecordingSection[] = groupRecordingsByYear(activeNotes);
   if (archivedNotes.length > 0) {
@@ -102,15 +136,16 @@ export default function RecordScreen() {
     try {
       await refresh();
       kick();
+      pull();
     } finally {
       setRefreshing(false);
     }
-  }, [refresh, kick]);
+  }, [refresh, kick, pull]);
 
-  const handlePress = async () => {
+  const handleRecord = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
-    if (recording) await stop();
-    else await start();
+    const note = await createDraftNote();
+    router.push({ pathname: '/record', params: { noteId: note.id } });
   };
 
   const handleAdd = async () => {
@@ -118,27 +153,15 @@ export default function RecordScreen() {
     router.push({ pathname: '/note/[id]', params: { id: note.id } });
   };
 
-  const renderItem = (item: Recording) => {
-    const swipeDelete = swipeAction === 'delete';
-    return (
-      <SwipeRow
-        label={swipeDelete ? 'Apagar' : 'Arquivar'}
-        icon={swipeDelete ? 'trash-outline' : 'archive-outline'}
-        color={swipeDelete ? colors.danger : colors.warning}
-        onAction={() => (swipeDelete ? void remove(item.id) : void archiveNote(item.id))}
-      >
-        <RecordingCard
-          recording={item}
-          onRetry={() => void retry(item.id)}
-          onDelete={() => void remove(item.id)}
-          onOpen={() => router.push({ pathname: '/note/[id]', params: { id: item.id } })}
-          onArchive={() =>
-            item.archived ? void unarchiveNote(item.id) : void archiveNote(item.id)
-          }
-        />
-      </SwipeRow>
-    );
-  };
+  const openNote = useCallback(
+    (noteId: string) => router.push({ pathname: '/note/[id]', params: { id: noteId } }),
+    [],
+  );
+  const retryNote = useCallback((noteId: string) => void retry(noteId), [retry]);
+  const removeNote = useCallback((noteId: string) => void remove(noteId), [remove]);
+  const archive = useCallback((noteId: string) => void archiveNote(noteId), [archiveNote]);
+  const unarchive = useCallback((noteId: string) => void unarchiveNote(noteId), [unarchiveNote]);
+  const swipeDelete = swipeAction === 'delete';
 
   return (
     <Screen style={styles.screen}>
@@ -168,24 +191,10 @@ export default function RecordScreen() {
           >
             <Ionicons name="settings-outline" size={22} color={colors.text} />
           </Pressable>
-          <Pressable
-            style={styles.iconButton}
-            onPress={() => void handleAdd()}
-            accessibilityLabel="Nova nota"
-          >
-            <Ionicons name="add" size={26} color={colors.text} />
-          </Pressable>
         </View>
       </View>
 
-      {recording ? (
-        <View style={styles.recordingView}>
-          <Text style={styles.timer}>{formatDuration(elapsedMs)}</Text>
-          <Waveform active level={level} height={84} color={colors.textSecondary} />
-          <Text style={styles.recHint}>Gravando com a tela bloqueada</Text>
-          {error ? <Text style={styles.error}>{error}</Text> : null}
-        </View>
-      ) : (
+      {(
         <>
           <View style={styles.searchWrap}>
             <Ionicons name="search" size={16} color={colors.textTertiary} />
@@ -241,7 +250,17 @@ export default function RecordScreen() {
             renderSectionHeader={({ section }) => (
               <Text style={styles.sectionHeader}>{section.title}</Text>
             )}
-            renderItem={({ item }) => renderItem(item)}
+            renderItem={({ item }) => (
+              <NoteRow
+                item={item}
+                swipeDelete={swipeDelete}
+                onOpen={openNote}
+                onRetry={retryNote}
+                onRemove={removeNote}
+                onArchive={archive}
+                onUnarchive={unarchive}
+              />
+            )}
             ListEmptyComponent={
               <View style={styles.empty}>
                 <View style={styles.emptyIcon}>
@@ -258,8 +277,20 @@ export default function RecordScreen() {
       )}
 
       <View style={styles.bottomBar}>
-        <RecordButton recording={recording} busy={busy} onPress={handlePress} />
-        <Text style={styles.bottomHint}>{recording ? 'Toque para parar' : 'Toque para gravar'}</Text>
+        <Pressable
+          style={styles.audioButton}
+          onPress={() => void handleRecord()}
+          accessibilityLabel="Gravar audio"
+        >
+          <Ionicons name="mic" size={24} color="#FFFFFF" />
+        </Pressable>
+        <Pressable
+          style={styles.textButton}
+          onPress={() => void handleAdd()}
+          accessibilityLabel="Nova nota de texto"
+        >
+          <Ionicons name="add" size={26} color={colors.text} />
+        </Pressable>
       </View>
     </Screen>
   );
@@ -367,13 +398,31 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   bottomBar: {
+    flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.sm,
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.xl,
     paddingTop: spacing.lg,
     paddingBottom: spacing.lg,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.border,
     backgroundColor: colors.bg,
+  },
+  audioButton: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: colors.record,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  textButton: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   bottomHint: { color: colors.textTertiary, fontSize: fontSize.xs },
 });

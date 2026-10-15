@@ -1,17 +1,18 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
-import { Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { InteractionManager, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { RichEditor, type RichEditorHandle } from '@/components/RichEditor';
 import { Screen } from '@/components/Screen';
 import { STATUS_META } from '@/components/StatusChip';
-import { Waveform } from '@/components/Waveform';
+import { bytesToBase64 } from '@/core/base64';
 import { formatDuration } from '@/core/format';
 import { countWords, markdownToPlain } from '@/core/richText';
+import { saveLocalImage, resolveImageSources, uploadLocalImage } from '@/services/attachments';
+import { pickImage } from '@/services/image';
 import { useLibrary } from '@/state/LibraryContext';
-import { useRecording } from '@/state/RecordingContext';
 import { colors, fontSize, radius, spacing } from '@/theme/tokens';
 
 /**
@@ -56,15 +57,36 @@ function AudioPlayer({ uri }: { uri: string }) {
 export default function NoteScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const library = useLibrary();
-  const { active, elapsedMs, level, error, busy, start, stop } = useRecording();
-  const note = library.recordings.find((r) => r.id === id);
+  const note = useMemo(
+    () => library.recordings.find((r) => r.id === id),
+    [library.recordings, id],
+  );
   const noteId = note?.id;
 
   const [title, setTitle] = useState(() => note?.title ?? '');
   const [body, setBody] = useState(() => note?.text ?? '');
+  const [imageSources, setImageSources] = useState<Record<string, string> | null>(null);
   const initializedRef = useRef(false);
   const dirtyRef = useRef(false);
   const editorRef = useRef<RichEditorHandle>(null);
+
+  // Handlers estaveis: o editor (memoizado) nao pode re-renderizar a cada tecla.
+  const handleTitleChange = useCallback((value: string) => {
+    dirtyRef.current = true;
+    setTitle(value);
+  }, []);
+
+  const handleBodyChange = useCallback((markdown: string) => {
+    dirtyRef.current = true;
+    setBody(markdown);
+  }, []);
+
+  // Voltar de verdade (pop): usa a animacao inversa e reaproveita a home, em vez
+  // de substituir a tela (que remontava a home e animava errado).
+  const goBack = useCallback(() => {
+    if (router.canGoBack()) router.back();
+    else router.replace('/');
+  }, []);
 
   const titleRef = useRef(title);
   const bodyRef = useRef(body);
@@ -82,17 +104,23 @@ export default function NoteScreen() {
 
   const submitRef = useRef(library.submitNote);
   const updateRef = useRef(library.updateNote);
+  const refreshRef = useRef(library.refresh);
   useEffect(() => {
     submitRef.current = library.submitNote;
     updateRef.current = library.updateNote;
-  }, [library.submitNote, library.updateNote]);
+    refreshRef.current = library.refresh;
+  }, [library.submitNote, library.updateNote, library.refresh]);
 
-  // Carrega o conteudo da nota uma vez, quando ela aparece.
+  // Carrega o conteudo da nota uma vez, quando ela aparece, e resolve as fontes
+  // das imagens (local ou anexo do servidor) para exibir no editor.
   useEffect(() => {
     if (note && !initializedRef.current) {
       initializedRef.current = true;
       setTitle(note.title);
       setBody(note.text ?? '');
+      void resolveImageSources(note.id, note.text ?? '')
+        .then(setImageSources)
+        .catch(() => setImageSources({}));
     }
   }, [note]);
 
@@ -105,31 +133,55 @@ export default function NoteScreen() {
     return () => clearTimeout(timer);
   }, [title, body, noteId]);
 
-  // Ao sair: grava e envia rascunho (ou sincroniza, se editada).
+  // Ao sair: grava e envia. Roda so depois da transicao de volta, para o trabalho
+  // (DB, enqueue, rede) nao competir com a animacao.
   useEffect(() => {
     if (!noteId) return undefined;
+    const id = noteId;
     return () => {
-      void updateRef
-        .current(noteId, { title: titleRef.current, text: bodyRef.current })
-        .then(() => {
-          if (dirtyRef.current || statusRef.current === 'draft') {
-            return submitRef.current(noteId);
-          }
-          return undefined;
-        })
-        .catch(() => undefined);
+      const title = titleRef.current;
+      const text = bodyRef.current;
+      const dirty = dirtyRef.current;
+      const status = statusRef.current;
+      InteractionManager.runAfterInteractions(() => {
+        void updateRef
+          .current(id, { title, text })
+          .then(() => {
+            if (dirty || status === 'draft') return submitRef.current(id);
+            return undefined;
+          })
+          .then(() => refreshRef.current())
+          .catch(() => undefined);
+      });
     };
   }, [noteId]);
 
-  const recording = Boolean(active);
-
-  const handleRecord = async () => {
+  const handleRecord = () => {
     if (!noteId) return;
-    if (recording) {
-      const finished = await stop({ enqueue: false });
-      if (finished) await library.attachAudio(noteId, finished);
-    } else {
-      await start();
+    router.push({ pathname: '/record', params: { noteId } });
+  };
+
+  const handleAddImage = async () => {
+    if (!noteId) return;
+    try {
+      const picked = await pickImage();
+      if (!picked) return;
+      // Salva local primeiro: funciona offline.
+      const name = await saveLocalImage(noteId, picked.bytes, picked.mimeType);
+      let persistSrc = `att:${name}`;
+      // Com servidor e entrada, sobe agora e passa a usar a URL do servidor.
+      if (note?.entryId) {
+        try {
+          persistSrc = await uploadLocalImage(note.entryId, noteId, name);
+        } catch {
+          // offline: fica local e sobe no sync
+        }
+      }
+      const dataUri = `data:${picked.mimeType};base64,${bytesToBase64(picked.bytes)}`;
+      editorRef.current?.insertImage(dataUri, persistSrc, picked.name);
+      dirtyRef.current = true;
+    } catch {
+      // falha ao anexar imagem: segue sem anexar
     }
   };
 
@@ -138,7 +190,7 @@ export default function NoteScreen() {
       <Screen>
         <View style={styles.header}>
           <Pressable
-            onPress={() => router.replace('/')}
+            onPress={goBack}
             style={styles.iconButton}
             accessibilityLabel="Voltar"
           >
@@ -176,7 +228,7 @@ export default function NoteScreen() {
     <Screen>
       <View style={styles.header}>
         <Pressable
-          onPress={() => router.replace('/')}
+          onPress={goBack}
           style={styles.iconButton}
           accessibilityLabel="Voltar"
         >
@@ -199,10 +251,7 @@ export default function NoteScreen() {
       >
         <TextInput
           value={title}
-          onChangeText={(value) => {
-            dirtyRef.current = true;
-            setTitle(value);
-          }}
+          onChangeText={handleTitleChange}
           placeholder="titulo da nota"
           placeholderTextColor={colors.textTertiary}
           selectionColor={colors.accent}
@@ -211,6 +260,18 @@ export default function NoteScreen() {
           onSubmitEditing={() => editorRef.current?.focus()}
           style={styles.titleInput}
         />
+
+        <View style={styles.audioRow}>
+          {hasAudio ? null : (
+            <Pressable
+              style={styles.audioButton}
+              onPress={handleRecord}
+              accessibilityLabel="Gravar audio"
+            >
+              <Ionicons name="mic" size={22} color="#FFFFFF" />
+            </Pressable>
+          )}
+        </View>
 
         <View style={styles.toolbar}>
           <Pressable
@@ -234,6 +295,13 @@ export default function NoteScreen() {
           >
             <Ionicons name="list" size={18} color={colors.text} />
           </Pressable>
+          <Pressable
+            style={styles.tool}
+            onPress={() => void handleAddImage()}
+            accessibilityLabel="Imagem"
+          >
+            <Ionicons name="image-outline" size={18} color={colors.text} />
+          </Pressable>
         </View>
 
         <View style={styles.metaRow}>
@@ -256,38 +324,36 @@ export default function NoteScreen() {
 
         {hasAudio ? <AudioPlayer uri={note.filePath as string} /> : null}
 
-        {recording ? (
-          <View style={styles.recordingView}>
-            <Text style={styles.timer}>{formatDuration(elapsedMs)}</Text>
-            <Waveform active level={level} height={64} color={colors.textSecondary} />
-            <Text style={styles.recHint}>Gravando audio...</Text>
-          </View>
-        ) : null}
-
-        <RichEditor
-          ref={editorRef}
-          value={body}
-          onChangeMarkdown={(markdown) => {
-            dirtyRef.current = true;
-            setBody(markdown);
-          }}
-          placeholder={hasAudio ? 'Escreva sobre este audio...' : 'Comece a escrever...'}
-        />
+        {imageSources ? (
+          <RichEditor
+            ref={editorRef}
+            value={body}
+            onChangeMarkdown={handleBodyChange}
+            placeholder={hasAudio ? 'Escreva sobre este audio...' : 'Comece a escrever...'}
+            imageSources={imageSources}
+          />
+        ) : (
+          <View style={styles.editorPlaceholder} />
+        )}
 
         <Text style={styles.wordCount}>
           {words} {words === 1 ? 'palavra' : 'palavras'}
         </Text>
 
-        {hasAudio && note.transcript && note.transcript !== note.text ? (
-          <View style={styles.section}>
+        {hasAudio && note.transcript && note.transcript.trim() ? (
+          <Pressable
+            style={styles.section}
+            onPress={() => router.push({ pathname: '/transcript/[id]', params: { id: note.id } })}
+            accessibilityLabel="Abrir transcricao completa"
+          >
             <Text style={styles.sectionLabel}>Transcricao</Text>
-            <Text style={styles.transcript}>{note.transcript}</Text>
-          </View>
+            <Text style={styles.transcript} numberOfLines={4}>
+              {note.transcript}
+            </Text>
+          </Pressable>
         ) : hasAudio && note.transcriptStatus === 'pending' ? (
           <Text style={styles.meta}>Transcrevendo...</Text>
         ) : null}
-
-        {error ? <Text style={styles.error}>{error}</Text> : null}
 
         {note.status === 'failed' ? (
           <Pressable
@@ -301,20 +367,6 @@ export default function NoteScreen() {
         ) : null}
       </ScrollView>
 
-      <View style={styles.bottomBar}>
-        {hasAudio ? (
-          <Text style={styles.bottomHint}>Audio anexado</Text>
-        ) : (
-          <Pressable
-            style={[styles.recordButton, recording && styles.recordButtonActive]}
-            onPress={() => void handleRecord()}
-            disabled={busy}
-            accessibilityLabel={recording ? 'Parar gravacao' : 'Gravar audio'}
-          >
-            <Ionicons name={recording ? 'stop' : 'mic'} size={26} color="#FFFFFF" />
-          </Pressable>
-        )}
-      </View>
     </Screen>
   );
 }
@@ -332,11 +384,21 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   empty: { color: colors.textSecondary, fontSize: fontSize.md },
   content: { padding: spacing.xl, gap: spacing.lg, paddingBottom: spacing.xxxl },
+  editorPlaceholder: { minHeight: 160 },
   titleInput: {
     color: colors.text,
     fontSize: fontSize.xxl,
     fontWeight: '700',
     paddingVertical: spacing.sm,
+  },
+  audioRow: { flexDirection: 'row', justifyContent: 'flex-end' },
+  audioButton: {
+    width: 44,
+    height: 44,
+    borderRadius: radius.md,
+    backgroundColor: colors.record,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   toolbar: { flexDirection: 'row', gap: spacing.sm },
   tool: {

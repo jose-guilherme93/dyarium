@@ -5,7 +5,13 @@
 
 import * as SQLite from 'expo-sqlite';
 
-import type { Recording, RecordingSource, RecordingStatus, TranscriptStatus } from '@/core/types';
+import type {
+  Recording,
+  RecordingSource,
+  RecordingStatus,
+  TranscriptSegment,
+  TranscriptStatus,
+} from '@/core/types';
 
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
@@ -25,9 +31,11 @@ interface Row {
   next_attempt_at: string | null;
   last_error: string | null;
   entry_id: string | null;
+  note_id: string | null;
   transcript: string | null;
   transcript_language: string | null;
   transcript_status: string | null;
+  transcript_segments: string | null;
   source: string | null;
   text: string | null;
   content_type: string | null;
@@ -116,6 +124,20 @@ const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 5,
+    run: async (db) => {
+      // Id da nota (corpo rico) no servidor: permite atualizar em vez de recriar.
+      await addColumn(db, 'recordings', 'note_id');
+    },
+  },
+  {
+    version: 6,
+    run: async (db) => {
+      // Segmentos da transcricao em cache local (evita refazer fetch ao abrir).
+      await addColumn(db, 'recordings', 'transcript_segments');
+    },
+  },
 ];
 
 async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
@@ -180,6 +202,16 @@ export async function releaseLock(name: string, holder: string): Promise<void> {
   await db.runAsync('DELETE FROM locks WHERE name = ? AND holder = ?', [name, holder]);
 }
 
+function parseSegments(raw: string | null): TranscriptSegment[] | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as TranscriptSegment[]) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function rowToRecording(row: Row): Recording {
   return {
     id: row.id,
@@ -197,9 +229,11 @@ function rowToRecording(row: Row): Recording {
     nextAttemptAt: row.next_attempt_at ?? undefined,
     lastError: row.last_error ?? undefined,
     entryId: row.entry_id ?? undefined,
+    noteId: row.note_id ?? undefined,
     transcript: row.transcript ?? undefined,
     transcriptLanguage: row.transcript_language ?? undefined,
     transcriptStatus: (row.transcript_status as TranscriptStatus | null) ?? undefined,
+    transcriptSegments: parseSegments(row.transcript_segments),
     source: (row.source as RecordingSource | null) ?? undefined,
     text: row.text ?? undefined,
     contentType: row.content_type ?? undefined,
@@ -216,11 +250,11 @@ export async function upsertRecording(r: Recording): Promise<void> {
   await db.runAsync(
     `INSERT INTO recordings (
       id, title, recorded_at, dir, file_path, segment_count, duration_ms, size_bytes,
-      status, upload_id, offset, attempts, next_attempt_at, last_error, entry_id,
-      transcript, transcript_language, transcript_status,
+      status, upload_id, offset, attempts, next_attempt_at, last_error, entry_id, note_id,
+      transcript, transcript_language, transcript_status, transcript_segments,
       source, text, content_type, file_name, duplicate, archived,
       created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
       recorded_at = excluded.recorded_at,
@@ -236,9 +270,11 @@ export async function upsertRecording(r: Recording): Promise<void> {
       next_attempt_at = excluded.next_attempt_at,
       last_error = excluded.last_error,
       entry_id = excluded.entry_id,
+      note_id = excluded.note_id,
       transcript = excluded.transcript,
       transcript_language = excluded.transcript_language,
       transcript_status = excluded.transcript_status,
+      transcript_segments = excluded.transcript_segments,
       source = excluded.source,
       text = excluded.text,
       content_type = excluded.content_type,
@@ -262,9 +298,11 @@ export async function upsertRecording(r: Recording): Promise<void> {
       r.nextAttemptAt ?? null,
       r.lastError ?? null,
       r.entryId ?? null,
+      r.noteId ?? null,
       r.transcript ?? null,
       r.transcriptLanguage ?? null,
       r.transcriptStatus ?? null,
+      r.transcriptSegments ? JSON.stringify(r.transcriptSegments) : null,
       r.source ?? null,
       r.text ?? null,
       r.contentType ?? null,

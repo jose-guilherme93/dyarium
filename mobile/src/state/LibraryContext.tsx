@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AppState } from 'react-native';
 
 import { newId } from '@/core/id';
@@ -8,6 +8,7 @@ import { isUploadable, needsTranscript, type Recording } from '@/core/types';
 import { deleteRecordingRow, getRecording, listRecordings, upsertRecording } from '@/services/db';
 import { deleteSessionFiles } from '@/services/files';
 import { syncNote } from '@/services/noteSync';
+import { pullServerEntries } from '@/services/pull';
 import { fetchTranscriptsOnce } from '@/services/transcripts';
 import { emitRecording, observeUploads, runUploadQueueOnce } from '@/services/uploaderLoop';
 
@@ -38,6 +39,8 @@ interface LibraryValue {
   remove(id: string): Promise<void>;
   /** Dispara a fila agora (envio manual). */
   kick(): void;
+  /** Traz notas do servidor (pull) e atualiza a lista. */
+  pull(): void;
 }
 
 const LibraryContext = createContext<LibraryValue | null>(null);
@@ -52,6 +55,13 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   const { config } = useSettings();
   const [recordings, setRecordings] = useState<Recording[]>([]);
   const [ready, setReady] = useState(false);
+
+  // Espelho sempre atual das gravacoes, para callbacks estaveis (sem depender
+  // do array em si) — evita re-render das linhas da lista.
+  const recordingsRef = useRef<Recording[]>([]);
+  useEffect(() => {
+    recordingsRef.current = recordings;
+  }, [recordings]);
 
   const refresh = useCallback(async () => {
     const list = await listRecordings();
@@ -94,17 +104,30 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     void fetchTranscriptsOnce().then(refresh).catch(() => undefined);
   }, [refresh]);
 
+  // Traz notas do servidor para o app (best-effort). Se nada novo chegou, nao
+  // mexe na lista local.
+  const pullServer = useCallback(() => {
+    void pullServerEntries()
+      .then((added) => {
+        if (added > 0) return refresh();
+        return undefined;
+      })
+      .catch(() => undefined);
+  }, [refresh]);
+
   useEffect(() => {
     if (!ready) return;
     kick();
     pullTranscripts();
-  }, [ready, kick, pullTranscripts]);
+    pullServer();
+  }, [ready, kick, pullTranscripts, pullServer]);
 
   useEffect(() => {
     if (!config) return;
     kick();
     pullTranscripts();
-  }, [config, kick, pullTranscripts]);
+    pullServer();
+  }, [config, kick, pullTranscripts, pullServer]);
 
   useEffect(() => {
     if (!hasPending) return undefined;
@@ -123,10 +146,11 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       if (state === 'active') {
         kick();
         pullTranscripts();
+        pullServer();
       }
     });
     return () => subscription.remove();
-  }, [kick, pullTranscripts]);
+  }, [kick, pullTranscripts, pullServer]);
 
   const enqueue = useCallback(
     async (recording: Recording) => {
@@ -159,6 +183,8 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   );
 
   const createDraftNote = useCallback(async () => {
+    // A nota nasce 100% local. A entrada no servidor e criada no envio (sync),
+    // com o id temporal da nota — o app nao depende do servidor pra existir.
     const note = buildDraftNote({ id: newId('note_'), now: new Date() });
     await upsertRecording(note);
     setRecordings((prev) => [note, ...prev]);
@@ -170,8 +196,9 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       const current = await getRecording(id);
       if (!current) return;
       const updated: Recording = { ...current, ...patch, updatedAt: new Date().toISOString() };
+      // Persiste sem re-renderizar o app inteiro a cada autosave; a lista se
+      // atualiza no refresh ao sair da nota.
       await upsertRecording(updated);
-      setRecordings((prev) => prev.map((r) => (r.id === id ? updated : r)));
     },
     [],
   );
@@ -195,7 +222,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
 
   const retry = useCallback(
     async (id: string) => {
-      const current = recordings.find((r) => r.id === id);
+      const current = recordingsRef.current.find((r) => r.id === id);
       if (!current) return;
       const requeued = markQueued(
         { ...current, nextAttemptAt: undefined, lastError: undefined },
@@ -205,17 +232,17 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       setRecordings((prev) => prev.map((r) => (r.id === id ? requeued : r)));
       kick();
     },
-    [recordings, kick],
+    [kick],
   );
 
   const remove = useCallback(
     async (id: string) => {
-      const current = recordings.find((r) => r.id === id);
+      const current = recordingsRef.current.find((r) => r.id === id);
       if (current) deleteSessionFiles(current.id);
       await deleteRecordingRow(id);
       setRecordings((prev) => prev.filter((r) => r.id !== id));
     },
-    [recordings],
+    [],
   );
 
   const submitNote = useCallback(
@@ -235,7 +262,20 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
         return;
       }
       if (current.status === 'completed') {
-        void syncNote(current).catch(() => undefined);
+        try {
+          const noteId = await syncNote(current);
+          if (noteId && noteId !== current.noteId) {
+            const updated: Recording = {
+              ...current,
+              noteId,
+              updatedAt: new Date().toISOString(),
+            };
+            await upsertRecording(updated);
+            setRecordings((prev) => prev.map((r) => (r.id === id ? updated : r)));
+          }
+        } catch {
+          // best-effort: a nota ja esta no servidor; tenta de novo depois
+        }
       }
     },
     [recordings, enqueue, remove],
@@ -294,6 +334,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       retry,
       remove,
       kick,
+      pull: pullServer,
     }),
     [
       recordings,
@@ -311,6 +352,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       retry,
       remove,
       kick,
+      pullServer,
     ],
   );
 

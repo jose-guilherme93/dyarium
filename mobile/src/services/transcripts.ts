@@ -33,6 +33,7 @@ export async function fetchTranscriptsOnce(): Promise<void> {
           transcript: transcript.text,
           transcriptLanguage: transcript.language,
           transcriptStatus: 'ready',
+          transcriptSegments: transcript.segments,
           updatedAt: new Date().toISOString(),
         };
         await upsertRecording(updated);

@@ -1,12 +1,14 @@
 /**
- * Geracao de ids locais. Nao precisa ser criptograficamente forte; precisa ser
- * unico o suficiente dentro do aparelho e estavel como chave.
+ * Geracao de ids locais. Ordenavel por tempo (ULID) para que a posicao de uma
+ * nota dependa do horario em que foi criada, e nao da ordem de sincronizacao.
+ * Nao precisa ser criptograficamente forte; precisa ser unico e estavel.
  */
 
+import { newUlid } from './ulid';
+
+/** Id local ordenavel por tempo, com prefixo opcional (ex.: "note_"). */
 export function newId(prefix = ''): string {
-  const time = Date.now().toString(36);
-  const rand = Math.random().toString(36).slice(2, 10);
-  return `${prefix}${time}${rand}`;
+  return `${prefix}${newUlid()}`;
 }
 
 /** Chave de idempotencia enviada ao servidor em cada gravacao. */

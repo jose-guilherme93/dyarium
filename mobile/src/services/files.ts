@@ -172,6 +172,22 @@ export function deleteSessionFiles(sessionId: string): void {
   if (dir.exists) dir.delete();
 }
 
+/**
+ * Move o audio concatenado da sessao de origem para o diretorio da nota destino,
+ * removendo os arquivos temporarios da origem. Usado quando uma gravacao avulsa
+ * e anexada a uma nota existente. Devolve o novo uri, ou null.
+ */
+export async function moveAudio(fromSessionId: string, toSessionId: string): Promise<string | null> {
+  if (!fromSessionId || !toSessionId || fromSessionId === toSessionId) return null;
+  const source = new File(sessionDirectory(fromSessionId), outputFileName());
+  if (!source.exists) return null;
+  const destination = new File(sessionDirectory(toSessionId), outputFileName());
+  if (destination.exists) destination.delete();
+  await source.move(destination);
+  deleteSessionFiles(fromSessionId);
+  return destination.uri;
+}
+
 /** IO injetavel para a concatenacao (ver core/concat.ts). */
 export const concatIO: ConcatIO = {
   async listSegments(dirUri: string): Promise<string[]> {

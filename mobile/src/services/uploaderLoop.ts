@@ -11,6 +11,7 @@ import { uploadRecording } from '@/core/uploader';
 
 import { acquireLock, listRecordings, releaseLock, upsertRecording } from './db';
 import { CONTENT_TYPE, FILE_EXTENSION, uploadFileIO } from './files';
+import { syncNote } from './noteSync';
 import { loadServerConfig } from './secure';
 
 const doFetch = globalThis.fetch as unknown as FetchLike;
@@ -66,6 +67,19 @@ export async function runUploadQueueOnce(): Promise<void> {
   }
 }
 
+/**
+ * Depois de enviar o conteudo (entrada criada), envia o corpo da nota como
+ * documento e guarda o noteId. Assim o corpo sobe junto, sem esperar um re-edit.
+ */
+async function pushNoteDocument(recording: Recording): Promise<Recording> {
+  const noteId = await syncNote(recording).catch(() => undefined);
+  if (!noteId || noteId === recording.noteId) return recording;
+  const updated: Recording = { ...recording, noteId, updatedAt: new Date().toISOString() };
+  await upsertRecording(updated);
+  emitRecording(updated);
+  return updated;
+}
+
 async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
   let current: Recording = {
     ...recording,
@@ -116,6 +130,7 @@ async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
     };
     await upsertRecording(current);
     emitRecording(current);
+    current = await pushNoteDocument(current);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'falha no envio';
     current = markFailed(current, message, new Date());
@@ -140,9 +155,11 @@ async function uploadTextOne(api: DyariumApi, recording: Recording): Promise<voi
 
   try {
     const result = await api.createTextEntry({
+      id: current.id,
       client_key: current.id,
       title: current.title,
       recorded_at: current.recordedAt,
+      created_at: current.createdAt,
       text: current.text ?? '',
     });
     current = {
@@ -152,6 +169,7 @@ async function uploadTextOne(api: DyariumApi, recording: Recording): Promise<voi
     };
     await upsertRecording(current);
     emitRecording(current);
+    current = await pushNoteDocument(current);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'falha no envio';
     current = markFailed(current, message, new Date());

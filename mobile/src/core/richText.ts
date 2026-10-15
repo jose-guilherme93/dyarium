@@ -29,14 +29,28 @@ function unescapeHtml(value: string): string {
     .replace(/&amp;/g, '&');
 }
 
-function inlineToHtml(value: string): string {
+function inlineToHtml(value: string, imageSources?: Record<string, string>): string {
   return escapeHtml(value)
+    .replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (_match, alt: string, url: string) => {
+      const display = imageSources?.[url] ?? url;
+      return `<img src="${display}" data-src="${url}" alt="${alt}" style="max-width:100%">`;
+    })
+    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2">$1</a>')
     .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
     .replace(/_([^_]+)_/g, '<i>$1</i>');
 }
 
+/** URLs das imagens referenciadas no markdown, na ordem em que aparecem. */
+export function extractImageUrls(markdown: string): string[] {
+  const out: string[] = [];
+  const re = /!\[[^\]]*\]\(([^)\s]+)\)/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(markdown)) !== null) out.push(match[1]);
+  return out;
+}
+
 /** Converte markdown (negrito, italico, lista) em HTML para o editor. */
-export function markdownToHtml(markdown: string): string {
+export function markdownToHtml(markdown: string, imageSources?: Record<string, string>): string {
   const lines = markdown.split('\n');
   const out: string[] = [];
   let inList = false;
@@ -52,11 +66,13 @@ export function markdownToHtml(markdown: string): string {
         out.push('<ul>');
         inList = true;
       }
-      out.push(`<li>${inlineToHtml(line.slice(2))}</li>`);
+      out.push(`<li>${inlineToHtml(line.slice(2), imageSources)}</li>`);
       continue;
     }
     closeList();
-    out.push(line.trim() === '' ? '<div><br></div>' : `<div>${inlineToHtml(line)}</div>`);
+    out.push(
+      line.trim() === '' ? '<div><br></div>' : `<div>${inlineToHtml(line, imageSources)}</div>`,
+    );
   }
   closeList();
   return out.join('');
@@ -68,8 +84,17 @@ export function htmlToMarkdown(html: string): string {
   value = value.replace(/<br\s*\/?>/gi, '\n');
   value = value.replace(/<li[^>]*>/gi, '- ');
   value = value.replace(/<\/(div|p|li|ul)>/gi, '\n');
-  value = value.replace(/<(b|strong)[^>]*>/gi, '**').replace(/<\/(b|strong)>/gi, '**');
-  value = value.replace(/<(i|em)[^>]*>/gi, '_').replace(/<\/(i|em)>/gi, '_');
+  value = value.replace(/<(b|strong)\b[^>]*>/gi, '**').replace(/<\/(b|strong)>/gi, '**');
+  value = value.replace(/<(i|em)\b[^>]*>/gi, '_').replace(/<\/(i|em)>/gi, '_');
+  // Imagem: prefere `data-src` (URL do servidor) ao `src` (previa local/data uri).
+  value = value.replace(/<img\b[^>]*>/gi, (tag) => {
+    const persist = /data-src="([^"]*)"/i.exec(tag)?.[1];
+    const src = persist ?? /src="([^"]*)"/i.exec(tag)?.[1] ?? '';
+    const alt = /alt="([^"]*)"/i.exec(tag)?.[1] ?? '';
+    return `![${alt}](${src})`;
+  });
+  // Link: <a href="url">texto</a> -> [texto](url).
+  value = value.replace(/<a\b[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, '[$2]($1)');
   value = value.replace(/<[^>]+>/g, '');
   value = unescapeHtml(value);
   value = value.replace(/[ \t]+\n/g, '\n');

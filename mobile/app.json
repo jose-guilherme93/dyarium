@@ -92,6 +92,12 @@
           "imageWidth": 120
         }
       ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "O dyarium precisa das suas fotos para anexar imagens as notas."
+        }
+      ],
       "expo-asset"
     ],
     "experiments": {

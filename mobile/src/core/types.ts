@@ -43,10 +43,14 @@ export interface Recording {
   lastError?: string;
   /** Id da entrada criada no servidor. */
   entryId?: string;
+  /** Id da nota (corpo rico) no servidor, quando criada. */
+  noteId?: string;
   /** Transcricao vinda do servidor, quando pronta. */
   transcript?: string;
   transcriptLanguage?: string;
   transcriptStatus?: TranscriptStatus;
+  /** Segmentos da transcricao (cache local, para nao refazer fetch ao abrir). */
+  transcriptSegments?: TranscriptSegment[];
   /** Origem do audio (default: gravado no microfone). */
   source?: RecordingSource;
   /** Texto da nota (nota de texto ou anotacao de uma nota de audio). */
@@ -64,6 +68,13 @@ export interface Recording {
 }
 
 export type TranscriptStatus = 'pending' | 'ready' | 'failed';
+
+/** Trecho da transcricao com a marcacao de tempo no audio original. */
+export interface TranscriptSegment {
+  start_ms: number;
+  end_ms: number;
+  text: string;
+}
 
 /** De onde veio a nota: gravada no app, importada de outro app ou escrita. */
 export type RecordingSource = 'microphone' | 'share' | 'text';

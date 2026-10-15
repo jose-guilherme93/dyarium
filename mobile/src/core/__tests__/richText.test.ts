@@ -1,6 +1,7 @@
 import {
   applyMarkdownFormat,
   countWords,
+  extractImageUrls,
   htmlToMarkdown,
   markdownToHtml,
   markdownToPlain,
@@ -31,6 +32,48 @@ describe('htmlToMarkdown', () => {
     for (const md of ['**negrito**', '_italico_', 'linha um\nlinha dois', '- a\n- b']) {
       expect(htmlToMarkdown(markdownToHtml(md))).toBe(md);
     }
+  });
+
+  it('renderiza links como ancora e volta para markdown', () => {
+    expect(markdownToHtml('veja [aqui](https://exemplo.test)')).toBe(
+      '<div>veja <a href="https://exemplo.test">aqui</a></div>',
+    );
+    expect(htmlToMarkdown('<div><a href="https://exemplo.test">aqui</a></div>')).toBe(
+      '[aqui](https://exemplo.test)',
+    );
+    expect(htmlToMarkdown(markdownToHtml('[a](https://x.test) [b](https://y.test)'))).toBe(
+      '[a](https://x.test) [b](https://y.test)',
+    );
+  });
+
+  it('renderiza imagem e volta para markdown', () => {
+    expect(markdownToHtml('![foto](https://x.test/f.png)')).toBe(
+      '<div><img src="https://x.test/f.png" data-src="https://x.test/f.png" alt="foto" style="max-width:100%"></div>',
+    );
+    expect(htmlToMarkdown('<div><img src="https://x.test/f.png" alt="foto"></div>')).toBe(
+      '![foto](https://x.test/f.png)',
+    );
+  });
+
+  it('usa a fonte de exibicao (data URI) e preserva a URL original', () => {
+    const md = '![foto](att:f.png)';
+    const sources = { 'att:f.png': 'data:image/png;base64,AAA' };
+    const html = markdownToHtml(md, sources);
+    expect(html).toBe(
+      '<div><img src="data:image/png;base64,AAA" data-src="att:f.png" alt="foto" style="max-width:100%"></div>',
+    );
+    // Ao salvar, volta a referencia original (nao o data URI).
+    expect(htmlToMarkdown(html)).toBe(md);
+  });
+});
+
+describe('extractImageUrls', () => {
+  it('extrai as URLs das imagens na ordem', () => {
+    expect(extractImageUrls('a ![x](u1) b ![y](u2)')).toEqual(['u1', 'u2']);
+  });
+
+  it('devolve vazio quando nao ha imagem', () => {
+    expect(extractImageUrls('so texto e [link](u)')).toEqual([]);
   });
 });
 

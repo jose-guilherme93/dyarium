@@ -1,4 +1,4 @@
-import { buildDraftNote, buildTextNote, noteHasContent } from '../note';
+import { buildDraftNote, buildTextNote, isBlankDraft, noteHasContent } from '../note';
 
 const NOW = new Date('2026-10-10T22:00:00.000Z');
 
@@ -46,7 +46,26 @@ describe('buildDraftNote', () => {
     expect(note.source).toBe('text');
     expect(note.text).toBe('');
     expect(note.filePath).toBeUndefined();
-    expect(note.title).toBeTruthy();
+    // Nota nova abre com o titulo vazio, esperando o usuario escrever.
+    expect(note.title).toBe('');
+  });
+});
+
+describe('isBlankDraft', () => {
+  it('esconde um rascunho sem titulo, texto e audio', () => {
+    expect(isBlankDraft(buildDraftNote({ id: 'note_v', now: NOW }))).toBe(true);
+  });
+
+  it('mostra o rascunho assim que ganha titulo, texto ou audio', () => {
+    const draft = buildDraftNote({ id: 'note_v', now: NOW });
+    expect(isBlankDraft({ ...draft, title: 'Oi' })).toBe(false);
+    expect(isBlankDraft({ ...draft, text: 'corpo' })).toBe(false);
+    expect(isBlankDraft({ ...draft, filePath: '/audio.aac' })).toBe(false);
+  });
+
+  it('nunca esconde notas ja enviadas', () => {
+    const draft = buildDraftNote({ id: 'note_v', now: NOW });
+    expect(isBlankDraft({ ...draft, status: 'completed' })).toBe(false);
   });
 });
 
