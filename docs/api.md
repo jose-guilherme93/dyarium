@@ -76,11 +76,13 @@ Retoma um upload interrompido:
 ### POST /api/v1/uploads/{id}/complete
 Finaliza. O servidor verifica tamanho, formato e duracao (ffprobe sobre um derivado
 temporario), recomputa o SHA-256 do conteudo recebido (decifrando em streaming) e compara
-com o informado. Em caso de sucesso, cria a `Entry` e enfileira `transcribe`.
+com o informado. Em caso de sucesso, cria a `Entry` (ou adiciona o audio a `entry_id`,
+quando informado no inicio) e enfileira `transcribe` para o audio.
 Resposta 201:
 ```json
-{ "entry_id": "en_...", "status": "queued" }
+{ "entry_id": "en_...", "attachment_id": "at_...", "status": "queued" }
 ```
+- `attachment_id` identifica o audio criado (o anexo `original` da entrada).
 - 422: integridade divergente (SHA-256), formato nao aceito ou duracao acima do limite.
 - 404: upload inexistente ou expirado.
 

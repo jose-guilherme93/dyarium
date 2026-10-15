@@ -119,8 +119,9 @@ func (s *Server) handleCompleteUpload(w http.ResponseWriter, r *http.Request) {
 	_ = s.deps.Store.UpdateEntryStatus(ctx, result.Entry.ID, store.EntryQueued)
 	s.deps.Events.Publish("entry.status", map[string]string{"entry_id": result.Entry.ID, "status": store.EntryQueued})
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"entry_id": result.Entry.ID,
-		"status":   store.EntryQueued,
+		"entry_id":      result.Entry.ID,
+		"attachment_id": result.Attachment.ID,
+		"status":        store.EntryQueued,
 	})
 }
 
