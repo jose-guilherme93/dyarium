@@ -66,20 +66,50 @@ func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 // note document, like the written part of an audio note.
 func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Title string `json:"title"`
+		ID        string `json:"id"`
+		Title     string `json:"title"`
+		CreatedAt string `json:"created_at"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_body", "corpo invalido")
 		return
 	}
 	now := time.Now().UTC()
+	// O cliente pode informar quando a nota foi criada (offline); senao vale agora.
+	createdAt := now
+	if raw := strings.TrimSpace(req.CreatedAt); raw != "" {
+		parsed, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_created_at", "created_at invalido")
+			return
+		}
+		createdAt = parsed.UTC()
+	}
 	entry := store.Entry{
 		ID:        id.New(),
 		Title:     strings.TrimSpace(req.Title),
 		Status:    store.EntryReady,
 		Source:    "text",
-		CreatedAt: now,
+		CreatedAt: createdAt,
 		UpdatedAt: now,
+	}
+	if clientID := strings.TrimSpace(req.ID); clientID != "" {
+		if !id.Valid(clientID) {
+			writeError(w, http.StatusBadRequest, "invalid_id", "id invalido")
+			return
+		}
+		// Idempotente: um cliente offline pode reenviar a mesma nota; devolve a
+		// que ja existe em vez de criar outra.
+		existing, err := s.deps.Store.GetEntry(r.Context(), clientID)
+		if err == nil {
+			writeJSON(w, http.StatusOK, entryJSON(existing))
+			return
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			return
+		}
+		entry.ID = clientID
 	}
 	if err := s.deps.Store.CreateEntry(r.Context(), entry); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
