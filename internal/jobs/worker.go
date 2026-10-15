@@ -23,6 +23,12 @@ type AnalyzePayload struct {
 	EntryID string `json:"entry_id"`
 }
 
+// CleanupPayload is the payload of a cleanup job. It removes the encrypted
+// objects and the row of a soft-deleted entry.
+type CleanupPayload struct {
+	EntryID string `json:"entry_id"`
+}
+
 // Runner claims and executes jobs for a single worker.
 type Runner struct {
 	queue     *Queue

@@ -164,9 +164,21 @@ func (s *Server) handlePatchEntry(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteEntry(w http.ResponseWriter, r *http.Request) {
-	if err := s.deps.Store.SoftDeleteEntry(r.Context(), r.PathValue("id")); err != nil {
+	ctx := r.Context()
+	id := r.PathValue("id")
+	if err := s.deps.Store.SoftDeleteEntry(ctx, id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "entrada inexistente")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
+	}
+	// The removal is logical; the cleanup job deletes the encrypted objects and
+	// the row afterwards. A failure here only delays the cleanup, so it is
+	// logged instead of failing the request.
+	if _, err := s.deps.Queue.Enqueue(ctx, jobs.TypeCleanup, "cleanup:"+id, jobs.CleanupPayload{EntryID: id}); err != nil {
+		s.deps.Logger.Error("api: enfileirar limpeza", "entry_id", id, "erro", err)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

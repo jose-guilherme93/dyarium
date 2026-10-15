@@ -176,6 +176,42 @@ func analyzeHandler(st *store.Store, cfg config.Config, bus *events.Bus, logger 
 	}
 }
 
+// cleanupHandler removes the encrypted objects and the row of an entry that was
+// soft-deleted. It is idempotent and a no-op when the entry is not deleted (for
+// example, a job left over from a deletion that never completed).
+func cleanupHandler(st *store.Store, ing *ingest.Service, logger *slog.Logger) jobs.Handler {
+	return func(ctx context.Context, job *jobs.Job, _ func() error) error {
+		var payload jobs.CleanupPayload
+		if err := jobs.DecodePayload(job, &payload); err != nil {
+			return err
+		}
+		deleted, err := st.EntryIsDeleted(ctx, payload.EntryID)
+		if errors.Is(err, store.ErrNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if !deleted {
+			return nil
+		}
+		attachments, err := st.ListAttachments(ctx, payload.EntryID)
+		if err != nil {
+			return err
+		}
+		for _, attachment := range attachments {
+			if err := ing.DeleteAttachmentObject(attachment); err != nil {
+				return err
+			}
+		}
+		if err := st.PurgeEntry(ctx, payload.EntryID); err != nil {
+			return err
+		}
+		logger.Info("worker: entrada removida", "entry_id", payload.EntryID, "objetos", len(attachments))
+		return nil
+	}
+}
+
 // analyzeSegments maps the stored transcript segments to the analysis package
 // and falls back to a single synthetic segment when none is available.
 func analyzeSegments(text string, segments []store.Segment) []analyze.Segment {

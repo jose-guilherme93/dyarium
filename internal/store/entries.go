@@ -147,6 +147,41 @@ func (s *Store) GetEntry(ctx context.Context, id string) (Entry, error) {
 	return e, nil
 }
 
+// EntryIsDeleted reports whether an entry is soft-deleted. It returns
+// ErrNotFound when the entry does not exist. Used by the cleanup worker to
+// avoid purging an entry that is still live.
+func (s *Store) EntryIsDeleted(ctx context.Context, id string) (bool, error) {
+	var deletedAt sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT deleted_at FROM entries WHERE id = ?`, id).Scan(&deletedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	if err != nil {
+		return false, fmt.Errorf("store: entry is deleted: %w", err)
+	}
+	return deletedAt.Valid, nil
+}
+
+// PurgeEntry hard-deletes an entry and, by cascade, its attachments,
+// transcripts, analysis, notes and links. Links that point to the entry are
+// removed explicitly, because the foreign key would only null the target. The
+// encrypted objects must be removed from disk separately, before calling this.
+// It is idempotent: purging an entry that no longer exists succeeds.
+func (s *Store) PurgeEntry(ctx context.Context, id string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: purge entry: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM links WHERE from_entry_id = ? OR to_entry_id = ?`, id, id); err != nil {
+		return fmt.Errorf("store: purge entry links: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM entries WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("store: purge entry: %w", err)
+	}
+	return tx.Commit()
+}
+
 // ListEntries returns recent entries, newest first.
 func (s *Store) ListEntries(ctx context.Context, limit int) ([]Entry, error) {
 	return s.ListEntriesFiltered(ctx, limit, "", "", "")
