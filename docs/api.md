@@ -224,6 +224,34 @@ Atualiza a nota e cria uma `NoteRevision` com o estado anterior.
 ### GET /api/v1/notes/{id}/revisions
 Lista revisoes da nota.
 
+## Links
+
+Relacoes de uma entrada com outra entrada ou com uma URL externa.
+
+### GET /api/v1/entries/{id}/links
+Lista os links de uma entrada. Links internos trazem `title` com o titulo da
+entrada de destino; links para URLs trazem `url`.
+```json
+{ "links": [ { "id": "ln_...", "from_entry_id": "en_...", "to_entry_id": "en_...",
+  "url": "", "label": "continuacao", "title": "Conversa de domingo",
+  "created_at": "2026-10-10T21:05:00Z" } ] }
+```
+
+### POST /api/v1/entries/{id}/links
+Cria um link. O corpo deve informar exatamente um destino: `to_entry_id` (outra
+entrada) ou `url` (externa, `http` ou `https`). `label` e opcional.
+```json
+{ "to_entry_id": "en_...", "label": "continuacao" }
+```
+- 201: link criado.
+- 400: corpo invalido (nenhum destino, ambos os destinos, URL invalida ou
+  `to_entry_id` igual a propria entrada).
+- 404: entrada de origem inexistente.
+- 422: `to_entry_id` aponta para entrada inexistente.
+
+### DELETE /api/v1/links/{id}
+Remove o link. Resposta 204.
+
 ## Configuracoes
 
 ### GET /api/v1/settings

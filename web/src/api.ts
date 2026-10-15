@@ -6,6 +6,7 @@ import type {
   EntityDetail,
   EntitySummary,
   Entry,
+  Link,
   ModelInfo,
   MoodPoint,
   Note,
@@ -154,6 +155,10 @@ export const api = {
   listAttachments: (entryId: string) =>
     request<{ attachments: Attachment[] }>(`/entries/${entryId}/attachments`),
   deleteAttachment: (id: string) => request<void>(`/attachments/${id}`, { method: "DELETE" }),
+  listLinks: (entryId: string) => request<{ links: Link[] }>(`/entries/${entryId}/links`),
+  createLink: (entryId: string, body: { to_entry_id?: string; url?: string; label?: string }) =>
+    request<Link>(`/entries/${entryId}/links`, { method: "POST", body: JSON.stringify(body) }),
+  deleteLink: (id: string) => request<void>(`/links/${id}`, { method: "DELETE" }),
 };
 
 // audioUrl builds a playable URL for the decrypted original audio. The token

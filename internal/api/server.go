@@ -98,6 +98,10 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("GET /api/v1/entries/{id}/tags", s.handleListEntryTags)
 	protected.HandleFunc("PUT /api/v1/entries/{id}/tags", s.handleSetEntryTags)
 
+	protected.HandleFunc("GET /api/v1/entries/{id}/links", s.handleListLinks)
+	protected.HandleFunc("POST /api/v1/entries/{id}/links", s.handleCreateLink)
+	protected.HandleFunc("DELETE /api/v1/links/{id}", s.handleDeleteLink)
+
 	protected.HandleFunc("GET /api/v1/tags", s.handleListTags)
 	protected.HandleFunc("POST /api/v1/tags", s.handleCreateTag)
 	protected.HandleFunc("DELETE /api/v1/tags/{id}", s.handleDeleteTag)

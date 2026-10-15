@@ -138,6 +138,16 @@ export interface Attachment {
   created_at: string;
 }
 
+export interface Link {
+  id: string;
+  from_entry_id: string;
+  to_entry_id: string;
+  url: string;
+  label: string;
+  title: string;
+  created_at: string;
+}
+
 export interface Settings {
   trim_silence: boolean;
   max_whisper_rss_mb: number;

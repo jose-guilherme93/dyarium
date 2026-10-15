@@ -136,6 +136,19 @@ type Tag struct {
 	CreatedAt  time.Time
 }
 
+// Link relates an entry to another entry or to an external URL. Exactly one of
+// ToEntryID and URL is set. Title is the resolved title of the target entry
+// when the link is internal, filled in on reads.
+type Link struct {
+	ID          string
+	FromEntryID string
+	ToEntryID   string
+	URL         string
+	Label       string
+	Title       string
+	CreatedAt   time.Time
+}
+
 // Analysis is the result of the optional text enrichment.
 // Emotions, People and Places keep the legacy JSON shape (map/array of names)
 // for backward compatibility; Data holds the full rich analysis.

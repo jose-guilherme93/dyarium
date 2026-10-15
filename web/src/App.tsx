@@ -204,6 +204,7 @@ export function App() {
                       setEntityFocus({ kind, name });
                       setView("insights");
                     }}
+                    onOpenEntry={(id) => setOpenEntryId(id)}
                   />
                 ) : (
                   <div className="empty-editor">

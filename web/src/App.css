@@ -771,6 +771,84 @@
   border-radius: var(--radius);
 }
 
+/* ---------- links ---------- */
+
+.links {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space) * 2);
+}
+
+.link-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space));
+}
+
+.link-item {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 2);
+}
+
+.link-target {
+  color: var(--color-accent);
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.link-target:hover {
+  text-decoration: underline;
+}
+
+.link-remove {
+  display: inline-flex;
+  color: var(--color-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.link-remove:hover {
+  color: var(--color-danger);
+}
+
+.link-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--space) * 2);
+  align-items: center;
+}
+
+.link-form input,
+.link-form select {
+  padding: calc(var(--space) * 1.5) calc(var(--space) * 2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.link-select {
+  flex: 1 1 220px;
+}
+
+.link-url {
+  flex: 1 1 220px;
+}
+
+.link-label {
+  flex: 1 1 160px;
+}
+
 /* ---------- insights ---------- */
 
 .insights-view {
