@@ -108,10 +108,10 @@ func (s *Store) SetUploadStatus(ctx context.Context, id, status string) error {
 // CreateEntry inserts a new entry.
 func (s *Store) CreateEntry(ctx context.Context, e Entry) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO entries (id, title, status, source, original_filename, content_type,
+		INSERT INTO entries (id, title, status, source, parent_id, original_filename, content_type,
 			size_bytes, duration_seconds, sha256, recorded_at, created_at, updated_at, deleted_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.ID, e.Title, e.Status, e.Source, e.OriginalFilename, e.ContentType,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.ID, e.Title, e.Status, e.Source, nullString(e.ParentID), e.OriginalFilename, e.ContentType,
 		e.SizeBytes, e.DurationSeconds, e.SHA256, nullTS(e.RecordedAt), ts(e.CreatedAt), ts(e.UpdatedAt), nullTS(e.DeletedAt))
 	if err != nil {
 		return fmt.Errorf("store: create entry: %w", err)
@@ -125,11 +125,11 @@ func (s *Store) GetEntry(ctx context.Context, id string) (Entry, error) {
 	var recordedAt, deletedAt sql.NullString
 	var createdAt, updatedAt string
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, COALESCE(title,''), status, source, COALESCE(original_filename,''),
+		SELECT id, COALESCE(title,''), status, source, COALESCE(parent_id,''), COALESCE(original_filename,''),
 			COALESCE(content_type,''), size_bytes, duration_seconds, COALESCE(sha256,''),
 			recorded_at, created_at, updated_at, deleted_at
 		FROM entries WHERE id = ? AND deleted_at IS NULL`, id).Scan(
-		&e.ID, &e.Title, &e.Status, &e.Source, &e.OriginalFilename, &e.ContentType,
+		&e.ID, &e.Title, &e.Status, &e.Source, &e.ParentID, &e.OriginalFilename, &e.ContentType,
 		&e.SizeBytes, &e.DurationSeconds, &e.SHA256, &recordedAt, &createdAt, &updatedAt, &deletedAt)
 	if err != nil {
 		return Entry{}, err
@@ -160,7 +160,7 @@ func (s *Store) ListEntriesFiltered(ctx context.Context, limit int, person, plac
 		limit = 50
 	}
 	query := `
-		SELECT e.id, COALESCE(e.title,''), e.status, e.source, COALESCE(e.original_filename,''),
+		SELECT e.id, COALESCE(e.title,''), e.status, e.source, COALESCE(e.parent_id,''), COALESCE(e.original_filename,''),
 			COALESCE(e.content_type,''), e.size_bytes, e.duration_seconds, COALESCE(e.sha256,''),
 			e.recorded_at, e.created_at, e.updated_at
 		FROM entries e WHERE e.deleted_at IS NULL`
@@ -192,7 +192,7 @@ func (s *Store) ListEntriesFiltered(ctx context.Context, limit int, person, plac
 		var e Entry
 		var recordedAt sql.NullString
 		var createdAt, updatedAt string
-		if err := rows.Scan(&e.ID, &e.Title, &e.Status, &e.Source, &e.OriginalFilename,
+		if err := rows.Scan(&e.ID, &e.Title, &e.Status, &e.Source, &e.ParentID, &e.OriginalFilename,
 			&e.ContentType, &e.SizeBytes, &e.DurationSeconds, &e.SHA256, &recordedAt, &createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("store: scan entry: %w", err)
 		}

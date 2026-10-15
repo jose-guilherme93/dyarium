@@ -279,13 +279,9 @@ func (s *Service) Complete(ctx context.Context, uploadID string) (CompleteResult
 		}
 		entry = existing
 	} else {
-		when := now
-		if u.RecordedAt != nil {
-			when = *u.RecordedAt
-		}
 		title := strings.TrimSpace(u.Title)
 		if title == "" {
-			title = entrytitle.Default(entrytitle.Audio, when)
+			title = entrytitle.Name(entrytitle.Audio)
 		}
 		entry = store.Entry{
 			ID:               id.New(),
@@ -477,7 +473,7 @@ func (s *Service) IngestStream(ctx context.Context, source, filename, contentTyp
 	now := time.Now().UTC()
 	entry := store.Entry{
 		ID:               entryID,
-		Title:            entrytitle.Default(entrytitle.Audio, now),
+		Title:            entrytitle.Name(entrytitle.Audio),
 		Status:           store.EntryStored,
 		Source:           source,
 		OriginalFilename: filename,

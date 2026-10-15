@@ -33,6 +33,7 @@ func entryJSON(e store.Entry) map[string]any {
 		"title":             e.Title,
 		"status":            e.Status,
 		"source":            e.Source,
+		"parent_id":         e.ParentID,
 		"original_filename": e.OriginalFilename,
 		"content_type":      e.ContentType,
 		"size_bytes":        e.SizeBytes,
@@ -64,25 +65,35 @@ func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleCreateEntry creates a written note (no audio). The body is stored as a
-// note document, like the written part of an audio note.
+// note document, like the written part of an audio note. When parent_id is
+// given, the note is created as a child of that note (subnote).
 func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Title string `json:"title"`
+		Title    string `json:"title"`
+		ParentID string `json:"parent_id"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_body", "corpo invalido")
 		return
 	}
+	parentID := strings.TrimSpace(req.ParentID)
+	if parentID != "" {
+		if _, err := s.deps.Store.GetEntry(r.Context(), parentID); err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "invalid_parent", "nota pai inexistente")
+			return
+		}
+	}
 	now := time.Now().UTC()
 	title := strings.TrimSpace(req.Title)
 	if title == "" {
-		title = entrytitle.Default(entrytitle.Text, now)
+		title = entrytitle.Name(entrytitle.Text)
 	}
 	entry := store.Entry{
 		ID:        id.New(),
 		Title:     title,
 		Status:    store.EntryReady,
 		Source:    "text",
+		ParentID:  parentID,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}

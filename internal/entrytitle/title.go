@@ -1,12 +1,9 @@
-// Package entrytitle builds the automatic, semantic title of a note. It is used
-// when the user does not name the note: the title combines how the note started
-// (recorded audio or written text) with its date and time.
+// Package entrytitle builds the automatic title of a note. It is used when the
+// user does not name the note: the title is just the label for how it started
+// (recorded audio or written text); the date is shown separately in the list.
 package entrytitle
 
-import (
-	"fmt"
-	"time"
-)
+import "strings"
 
 // Labels used in automatic titles.
 const (
@@ -14,7 +11,10 @@ const (
 	Text  = "texto"
 )
 
-// Default builds "<label> · DD/MM/YYYY HH:MM" in the local time zone.
-func Default(label string, when time.Time) string {
-	return fmt.Sprintf("%s · %s", label, when.In(time.Local).Format("02/01/2006 15:04"))
+// Name is the automatic title of a note created without a name.
+func Name(label string) string {
+	if label == "" {
+		return ""
+	}
+	return strings.ToUpper(label[:1]) + label[1:]
 }

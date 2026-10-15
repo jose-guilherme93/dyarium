@@ -47,10 +47,12 @@ type Upload struct {
 
 // Entry is a stored audio and its lifecycle.
 type Entry struct {
-	ID               string
-	Title            string
-	Status           string
-	Source           string
+	ID     string
+	Title  string
+	Status string
+	Source string
+	// ParentID is the parent note in the tree; empty means it is at the root.
+	ParentID         string
 	OriginalFilename string
 	ContentType      string
 	SizeBytes        int64

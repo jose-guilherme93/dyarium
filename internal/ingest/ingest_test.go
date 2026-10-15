@@ -8,7 +8,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -233,8 +232,8 @@ func TestCompleteDefaultsAudioTitle(t *testing.T) {
 		t.Fatalf("complete: %v", err)
 	}
 	entry := result.Entry
-	if !strings.HasPrefix(entry.Title, "audio · ") {
-		t.Fatalf("title = %q, want prefixo 'audio · '", entry.Title)
+	if entry.Title != "Audio" {
+		t.Fatalf("title = %q, want \"Audio\"", entry.Title)
 	}
 }
 

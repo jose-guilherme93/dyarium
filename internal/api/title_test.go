@@ -14,8 +14,8 @@ func TestCreateTextEntryGetsAutomaticTitle(t *testing.T) {
 		t.Fatalf("status = %d, body %v", rec.Code, body)
 	}
 	title, _ := body["title"].(string)
-	if !strings.HasPrefix(title, "texto · ") {
-		t.Fatalf("title = %q, want prefixo 'texto · '", title)
+	if title != "Texto" {
+		t.Fatalf("title = %q, want \"Texto\"", title)
 	}
 }
 
