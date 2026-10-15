@@ -90,10 +90,14 @@ export function markdownToHtml(markdown: string, imageSources?: Record<string, s
     );
   }
   closeList();
-  // Sempre sobra um paragrafo depois da ultima imagem: da pra digitar embaixo.
+  // Sempre sobra um paragrafo antes e depois de imagem: da pra digitar em
+  // qualquer lugar (acima e abaixo), como no Notion.
   const last = out[out.length - 1];
   if (last && last.startsWith('<div class="img-block"')) {
     out.push('<div><br></div>');
+  }
+  if (out[0] && out[0].startsWith('<div class="img-block"')) {
+    out.unshift('<div><br></div>');
   }
   return out.join('');
 }
@@ -130,7 +134,7 @@ export function htmlToMarkdown(html: string): string {
   value = unescapeHtml(value);
   value = value.replace(/[ \t]+\n/g, '\n');
   value = value.replace(/\n{3,}/g, '\n\n');
-  return value.replace(/\n+$/, '');
+  return value.replace(/^\n+/, '').replace(/\n+$/, '');
 }
 
 /** Texto puro (sem marcadores) para contagem e previa. */

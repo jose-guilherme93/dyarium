@@ -31,6 +31,8 @@ interface RichEditorProps {
   placeholder?: string;
   /** Mapa URL original -> fonte de exibicao (ex.: data URI) para imagens. */
   imageSources?: Record<string, string>;
+  /** Altura minima: o editor preenche o espaco restante da nota (digitar em qualquer lugar). */
+  minHeight?: number;
 }
 
 // O modulo nativo do WebView so existe depois de um novo build. Enquanto nao
@@ -44,8 +46,8 @@ function buildEditorHtml(placeholder: string, initialHtml: string): string {
   const safePlaceholder = placeholder.replace(/"/g, '&quot;');
   return `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
 <style>
-  html, body { margin: 0; padding: 0; background: #0A0A0F; color: #FFFFFF; font-family: -apple-system, system-ui, sans-serif; font-size: 17px; line-height: 1.5; word-wrap: break-word; }
-  #editor { min-height: 160px; padding: 4px 0; outline: none; }
+  html, body { margin: 0; padding: 0; height: 100%; background: #0A0A0F; color: #FFFFFF; font-family: -apple-system, system-ui, sans-serif; font-size: 17px; line-height: 1.5; word-wrap: break-word; }
+  #editor { min-height: 100%; padding: 4px 0; outline: none; }
   #editor:empty:before { content: attr(data-placeholder); color: #5A5A5F; }
   ul { padding-left: 22px; margin: 6px 0; }
   div { min-height: 1.5em; }
@@ -109,6 +111,7 @@ function buildEditorHtml(placeholder: string, initialHtml: string): string {
         block.appendChild(img);
         attachHandle(block, img);
       }
+      ensureLeading();
       ensureTrailing();
     }
     function ensureParagraphAfter(block) {
@@ -128,6 +131,15 @@ function buildEditorHtml(placeholder: string, initialHtml: string): string {
         var p = document.createElement('div');
         p.innerHTML = '<br>';
         editor.appendChild(p);
+      }
+    }
+    // E um paragrafo antes da primeira imagem (digitar acima).
+    function ensureLeading() {
+      var first = editor.firstElementChild;
+      if (first && first.classList && first.classList.contains('img-block')) {
+        var p = document.createElement('div');
+        p.innerHTML = '<br>';
+        editor.insertBefore(p, first);
       }
     }
     function placeCaret(node) {
@@ -208,6 +220,7 @@ function buildEditorHtml(placeholder: string, initialHtml: string): string {
         }
       }
       if (!inserted) { editor.appendChild(block); }
+      ensureLeading();
       var after = ensureParagraphAfter(block);
       attachHandle(block, img);
       placeCaret(after);
@@ -218,7 +231,7 @@ function buildEditorHtml(placeholder: string, initialHtml: string): string {
 }
 
 const RichEditorInner = forwardRef<RichEditorHandle, RichEditorProps>(function RichEditor(
-  { value, onChangeMarkdown, placeholder = '', imageSources },
+  { value, onChangeMarkdown, placeholder = '', imageSources, minHeight = 160 },
   ref,
 ) {
   const webRef = useRef<{ injectJavaScript: (code: string) => void } | null>(null);
@@ -236,7 +249,7 @@ const RichEditorInner = forwardRef<RichEditorHandle, RichEditorProps>(function R
     htmlSourceRef.current = buildEditorHtml(placeholder, markdownToHtml(value, imageSources));
   }
   const source = useMemo(() => ({ html: htmlSourceRef.current as string }), []);
-  const sizeStyle = useMemo(() => ({ height }), [height]);
+  const sizeStyle = useMemo(() => ({ height: Math.max(height, minHeight) }), [height, minHeight]);
 
   // Mantem o callback atual sem recriar o handler do WebView a cada render.
   const onChangeRef = useRef(onChangeMarkdown);

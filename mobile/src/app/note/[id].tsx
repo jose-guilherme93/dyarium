@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { InteractionManager, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
+import { InteractionManager, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 
 import { RichEditor, type RichEditorHandle } from '@/components/RichEditor';
 import { Screen } from '@/components/Screen';
@@ -57,6 +57,8 @@ function AudioPlayer({ uri }: { uri: string }) {
 export default function NoteScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const library = useLibrary();
+  const { height: windowHeight } = useWindowDimensions();
+  const editorMinHeight = Math.max(240, windowHeight - 360);
   const note = useMemo(
     () => library.recordings.find((r) => r.id === id),
     [library.recordings, id],
@@ -332,6 +334,7 @@ export default function NoteScreen() {
             onChangeMarkdown={handleBodyChange}
             placeholder={hasAudio ? 'Escreva sobre este audio...' : 'Comece a escrever...'}
             imageSources={imageSources}
+            minHeight={editorMinHeight}
           />
         ) : (
           <View style={styles.editorPlaceholder} />
