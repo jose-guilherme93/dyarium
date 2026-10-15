@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -47,7 +48,18 @@ func entryJSON(e store.Entry) map[string]any {
 
 func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
-	entries, err := s.deps.Store.ListEntriesFiltered(r.Context(), 100,
+	// O app usa um `limit` alto para reconciliar exclusoes (saber o conjunto
+	// completo de ids vivos). Teto para nao virar um dump.
+	limit := 100
+	if raw := strings.TrimSpace(query.Get("limit")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	if limit > 5000 {
+		limit = 5000
+	}
+	entries, err := s.deps.Store.ListEntriesFiltered(r.Context(), limit,
 		query.Get("person"), query.Get("place"), query.Get("theme"))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
