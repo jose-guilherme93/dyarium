@@ -52,7 +52,7 @@ function buildEditorHtml(placeholder: string, initialHtml: string): string {
   a { color: #8B7BE8; text-decoration: underline; }
   .img-block { position: relative; display: block; margin: 6px 0; }
   .img-block img { display: block; max-width: 100%; border-radius: 10px; }
-  .img-handle { position: absolute; top: 50%; right: -9px; width: 20px; height: 20px; margin-top: -10px; border-radius: 50%; background: #6E56CF; border: 2px solid #FFFFFF; touch-action: none; }
+  .img-handle { position: absolute; top: 50%; right: -13px; width: 26px; height: 26px; margin-top: -13px; border-radius: 50%; background: #6E56CF; border: 2px solid #FFFFFF; touch-action: none; }
 </style></head><body>
 <div id="editor" contenteditable="true" data-placeholder="${safePlaceholder}">${initialHtml}</div>
 <script>
@@ -109,6 +109,7 @@ function buildEditorHtml(placeholder: string, initialHtml: string): string {
         block.appendChild(img);
         attachHandle(block, img);
       }
+      ensureTrailing();
     }
     function ensureParagraphAfter(block) {
       var next = block.nextSibling;
@@ -119,6 +120,15 @@ function buildEditorHtml(placeholder: string, initialHtml: string): string {
         return p;
       }
       return next;
+    }
+    // Sempre existe um paragrafo editavel depois da ultima imagem: da pra digitar.
+    function ensureTrailing() {
+      var last = editor.lastElementChild;
+      if (last && last.classList && last.classList.contains('img-block')) {
+        var p = document.createElement('div');
+        p.innerHTML = '<br>';
+        editor.appendChild(p);
+      }
     }
     function placeCaret(node) {
       var range = document.createRange();
@@ -139,8 +149,34 @@ function buildEditorHtml(placeholder: string, initialHtml: string): string {
         }
         node = node.parentNode;
       }
+      // Tocar num bloco de imagem leva o cursor pro paragrafo logo abaixo.
+      var block = e.target;
+      while (block && block !== editor) {
+        if (block.classList && block.classList.contains('img-block')) {
+          e.preventDefault();
+          var after = ensureParagraphAfter(block);
+          placeCaret(after);
+          editor.focus();
+          return;
+        }
+        block = block.parentNode;
+      }
+      // Tocar na area vazia do editor tambem abre o cursor.
+      if (e.target === editor) {
+        var last = editor.lastElementChild;
+        if (last && last.classList && last.classList.contains('img-block')) {
+          last = ensureTrailing();
+        }
+        if (!last) {
+          last = document.createElement('div');
+          last.innerHTML = '<br>';
+          editor.appendChild(last);
+        }
+        placeCaret(last);
+        editor.focus();
+      }
     });
-    window.addEventListener('load', function () { wrapImages(); send(); });
+    window.addEventListener('load', function () { wrapImages(); ensureTrailing(); send(); });
     if (window.ResizeObserver) {
       try { new ResizeObserver(function () { send(); }).observe(editor); } catch (e) {}
     }
