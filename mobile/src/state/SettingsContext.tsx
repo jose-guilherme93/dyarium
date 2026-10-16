@@ -60,6 +60,9 @@ interface SettingsValue {
   /** Idioma da transcricao. */
   transcriptionLanguage: TranscriptionLanguage;
   setTranscriptionLanguage(value: TranscriptionLanguage): Promise<void>;
+  /** Pasta escolhida para o backup local (uri). */
+  backupFolder?: string;
+  setBackupFolder(uri: string): Promise<void>;
   /** Testa alcance (healthz) e token (version) sem salvar. */
   test(baseUrl: string, token: string): Promise<ConnectionResult>;
   /** Testa e, se ok, persiste no SecureStore. */
@@ -88,6 +91,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   );
   const [transcriptionLanguage, setTranscriptionLanguageState] =
     useState<TranscriptionLanguage>('pt');
+  const [backupFolder, setBackupFolderState] = useState<string | undefined>(undefined);
   // Espelho das preferencias atuais, para gravar sempre o conjunto completo.
   const prefsRef = useRef<Prefs>({ swipeAction: 'delete', typography: DEFAULT_TYPOGRAPHY });
 
@@ -112,6 +116,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         setLocalTranscriptionState(prefs.localTranscription !== false);
         setTranscriptionModelState(prefs.transcriptionModel ?? DEFAULT_TRANSCRIPTION_MODEL);
         setTranscriptionLanguageState(prefs.transcriptionLanguage === 'auto' ? 'auto' : 'pt');
+        setBackupFolderState(prefs.backupFolder);
       })
       .catch(() => undefined);
     return () => {
@@ -173,6 +178,14 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     [persistPrefs],
   );
 
+  const setBackupFolder = useCallback(
+    async (uri: string) => {
+      setBackupFolderState(uri);
+      await persistPrefs({ backupFolder: uri });
+    },
+    [persistPrefs],
+  );
+
   const test = useCallback(async (baseUrl: string, token: string): Promise<ConnectionResult> => {
     const url = normalizeUrl(baseUrl);
     if (!url || !token.trim()) {
@@ -226,6 +239,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setTranscriptionModel,
       transcriptionLanguage,
       setTranscriptionLanguage,
+      backupFolder,
+      setBackupFolder,
       test,
       save,
       disconnect,
@@ -245,6 +260,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setTranscriptionModel,
       transcriptionLanguage,
       setTranscriptionLanguage,
+      backupFolder,
+      setBackupFolder,
       test,
       save,
       disconnect,

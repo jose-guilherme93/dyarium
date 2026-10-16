@@ -79,6 +79,17 @@ export default function SettingsScreen() {
           </Card>
         </Pressable>
 
+        <Pressable onPress={() => router.push('/backup')}>
+          <Card style={styles.row}>
+            <Ionicons name="cloud-download-outline" size={20} color={colors.info} />
+            <View style={styles.rowText}>
+              <Text style={styles.cardTitle}>Backup local</Text>
+              <Text style={styles.cardHint}>Salvar e restaurar tudo numa pasta.</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
+          </Card>
+        </Pressable>
+
         <Pressable onPress={() => router.push('/transcription')}>
           <Card style={styles.row}>
             <Ionicons name="mic-circle-outline" size={20} color={colors.info} />

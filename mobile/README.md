@@ -72,6 +72,10 @@ texto, guarda local, enfileira e envia para o servidor self-hosted.
 - **Armazenamento** (nas Opcoes): uso no aparelho e liberar espaco (remove o audio local de
   notas ja sincronizadas; o audio continua no servidor). Migracoes do banco versionadas e
   trava de fila para nao ter dois workers ao mesmo tempo.
+- **Backup local** (nas Opcoes): escolhe uma pasta do aparelho e copia tudo para la — notas,
+  audio, imagens e links — num manifesto em ordem (um arquivo por midia, com o id da nota no
+  nome). "Restaurar backup" traz tudo de volta para o aparelho; notas com o mesmo id sao
+  atualizadas e as demais ficam. Nao depende do servidor nem de nuvem.
 - A biblioteca organiza as notas **por ano** (mais novo no topo), pela data do evento, para
   que notas antigas importadas apareçam no ano a que pertencem.
 - **Notas somente texto** entram na mesma fila e sao enviadas como conteudo textual (o texto

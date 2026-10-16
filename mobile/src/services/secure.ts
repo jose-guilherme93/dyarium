@@ -53,6 +53,8 @@ export interface Prefs {
   transcriptionModel?: string;
   /** Idioma da transcricao (pt fixo ou detectar). */
   transcriptionLanguage?: TranscriptionLanguage;
+  /** Pasta escolhida para o backup local (uri). */
+  backupFolder?: string;
 }
 
 const PREFS_KEY = 'dyarium.prefs';
@@ -74,6 +76,7 @@ export async function loadPrefs(): Promise<Prefs> {
           ? parsed.transcriptionModel
           : DEFAULT_TRANSCRIPTION_MODEL,
       transcriptionLanguage: parsed.transcriptionLanguage === 'auto' ? 'auto' : 'pt',
+      backupFolder: typeof parsed.backupFolder === 'string' ? parsed.backupFolder : undefined,
     };
   } catch {
     return DEFAULT_PREFS;
