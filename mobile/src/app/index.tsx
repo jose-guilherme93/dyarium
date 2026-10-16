@@ -97,11 +97,7 @@ const NoteRow = memo(function NoteRow({
         swipeDelete ? onRemove(item.id) : item.archived ? onUnarchive(item.id) : onArchive(item.id)
       }
     >
-      <RecordingCard
-        recording={item}
-        onOpen={() => onOpen(item.id)}
-        onLongPress={(anchor) => onLongPress(item, anchor)}
-      />
+      <RecordingCard recording={item} onOpen={onOpen} onLongPress={onLongPress} />
     </SwipeRow>
   );
 });

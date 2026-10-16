@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import { memo } from 'react';
 import { Pressable, StyleSheet, Text, View, type GestureResponderEvent } from 'react-native';
 
 import { formatDuration, formatStamp } from '@/core/format';
@@ -11,16 +12,22 @@ import { colors, fontSize, radius, spacing } from '@/theme/tokens';
 interface RecordingCardProps {
   recording: Recording;
   /** Abre a tela da nota. */
-  onOpen?: () => void;
+  onOpen?: (noteId: string) => void;
   /** Toque longo: abre as opcoes perto do dedo (arquivar, apagar, propriedades). */
-  onLongPress?: (anchor: { x: number; y: number }) => void;
+  onLongPress?: (item: Recording, anchor: { x: number; y: number }) => void;
 }
 
 /**
  * Card da lista. Sem botao de play nem tres pontinhos: o audio so toca dentro da
  * nota, e as opcoes abrem com um toque longo (menu bonito, igual ao da nota).
+ * Memoizado e com callbacks estaveis (recebe o item/ancora) para nao re-renderizar
+ * junto com a lista.
  */
-export function RecordingCard({ recording, onOpen, onLongPress }: RecordingCardProps) {
+export const RecordingCard = memo(function RecordingCard({
+  recording,
+  onOpen,
+  onLongPress,
+}: RecordingCardProps) {
   useRenderCount('RecordingCard');
   const hasAudio = Boolean(recording.filePath);
   const rawPreview = hasAudio ? recording.transcript : recording.text;
@@ -30,9 +37,9 @@ export function RecordingCard({ recording, onOpen, onLongPress }: RecordingCardP
     <View style={styles.wrap}>
       <Pressable
         style={styles.content}
-        onPress={onOpen}
+        onPress={() => onOpen?.(recording.id)}
         onLongPress={(event: GestureResponderEvent) =>
-          onLongPress?.({ x: event.nativeEvent.pageX, y: event.nativeEvent.pageY })
+          onLongPress?.(recording, { x: event.nativeEvent.pageX, y: event.nativeEvent.pageY })
         }
         delayLongPress={350}
       >
@@ -68,7 +75,7 @@ export function RecordingCard({ recording, onOpen, onLongPress }: RecordingCardP
       </Pressable>
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   wrap: {

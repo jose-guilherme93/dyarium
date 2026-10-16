@@ -38,7 +38,7 @@ export default function LibraryScreen() {
         renderItem={({ item }) => (
           <RecordingCard
             recording={item}
-            onOpen={() => router.push({ pathname: '/note/[id]', params: { id: item.id } })}
+            onOpen={(id) => router.push({ pathname: '/note/[id]', params: { id } })}
           />
         )}
         ListEmptyComponent={
