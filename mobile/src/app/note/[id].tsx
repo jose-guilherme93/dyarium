@@ -276,6 +276,44 @@ export default function NoteScreen() {
           )}
         </View>
 
+        <View style={styles.metaRow}>
+          {note.status === 'completed' ? (
+            <>
+              <Ionicons name="cloud-done" size={14} color={colors.success} />
+              <Text style={styles.meta}>Sincronizada</Text>
+            </>
+          ) : (
+            <>
+              <View style={[styles.dot, { backgroundColor: meta.color }]} />
+              <Text style={styles.meta}>{meta.label}</Text>
+            </>
+          )}
+          {note.duplicate ? <Text style={styles.meta}>· ja existia</Text> : null}
+          {note.status === 'failed' && note.lastError ? (
+            <Text style={styles.meta}>· {note.lastError}</Text>
+          ) : null}
+          {note.terminal ? (
+            <Text style={styles.meta}>· nao sera reenviado automaticamente</Text>
+          ) : null}
+        </View>
+
+        {hasAudio ? <AudioPlayer uri={note.filePath as string} /> : null}
+
+        {hasAudio && note.transcript && note.transcript.trim() ? (
+          <Pressable
+            style={styles.section}
+            onPress={() => router.push({ pathname: '/transcript/[id]', params: { id: note.id } })}
+            accessibilityLabel="Abrir transcricao completa"
+          >
+            <Text style={styles.sectionLabel}>Transcricao</Text>
+            <Text style={styles.transcript} numberOfLines={4}>
+              {note.transcript}
+            </Text>
+          </Pressable>
+        ) : hasAudio && note.transcriptStatus === 'pending' ? (
+          <Text style={styles.meta}>Transcrevendo...</Text>
+        ) : null}
+
         <View style={styles.toolbar}>
           <Pressable
             style={styles.tool}
@@ -307,29 +345,6 @@ export default function NoteScreen() {
           </Pressable>
         </View>
 
-        <View style={styles.metaRow}>
-          {note.status === 'completed' ? (
-            <>
-              <Ionicons name="cloud-done" size={14} color={colors.success} />
-              <Text style={styles.meta}>Sincronizada</Text>
-            </>
-          ) : (
-            <>
-              <View style={[styles.dot, { backgroundColor: meta.color }]} />
-              <Text style={styles.meta}>{meta.label}</Text>
-            </>
-          )}
-          {note.duplicate ? <Text style={styles.meta}>· ja existia</Text> : null}
-          {note.status === 'failed' && note.lastError ? (
-            <Text style={styles.meta}>· {note.lastError}</Text>
-          ) : null}
-          {note.terminal ? (
-            <Text style={styles.meta}>· nao sera reenviado automaticamente</Text>
-          ) : null}
-        </View>
-
-        {hasAudio ? <AudioPlayer uri={note.filePath as string} /> : null}
-
         {imageSources ? (
           <RichEditor
             ref={editorRef}
@@ -346,21 +361,6 @@ export default function NoteScreen() {
         <Text style={styles.wordCount}>
           {words} {words === 1 ? 'palavra' : 'palavras'}
         </Text>
-
-        {hasAudio && note.transcript && note.transcript.trim() ? (
-          <Pressable
-            style={styles.section}
-            onPress={() => router.push({ pathname: '/transcript/[id]', params: { id: note.id } })}
-            accessibilityLabel="Abrir transcricao completa"
-          >
-            <Text style={styles.sectionLabel}>Transcricao</Text>
-            <Text style={styles.transcript} numberOfLines={4}>
-              {note.transcript}
-            </Text>
-          </Pressable>
-        ) : hasAudio && note.transcriptStatus === 'pending' ? (
-          <Text style={styles.meta}>Transcrevendo...</Text>
-        ) : null}
 
         {note.status === 'failed' ? (
           <Pressable
