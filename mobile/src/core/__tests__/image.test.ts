@@ -1,4 +1,4 @@
-import { MAX_IMAGE_DIMENSION, resizeTarget } from '../image';
+import { clampImageWidth, IMAGE_WIDTH_OPTIONS, MAX_IMAGE_DIMENSION, resizeTarget } from '../image';
 
 describe('resizeTarget', () => {
   it('nao mexe em imagem que ja cabe no limite', () => {
@@ -21,5 +21,19 @@ describe('resizeTarget', () => {
   it('nao quebra com dimensao invalida', () => {
     expect(resizeTarget(0, 100)).toBeNull();
     expect(resizeTarget(100, -1)).toBeNull();
+  });
+});
+
+describe('largura da imagem na nota', () => {
+  it('oferece largura total, metade e miniatura', () => {
+    expect(IMAGE_WIDTH_OPTIONS.map((option) => option.percent)).toEqual([100, 50, 30]);
+  });
+
+  it('prende a largura na faixa segura', () => {
+    expect(clampImageWidth(100)).toBe(100);
+    expect(clampImageWidth(50)).toBe(50);
+    expect(clampImageWidth(5)).toBe(15);
+    expect(clampImageWidth(180)).toBe(100);
+    expect(clampImageWidth(NaN)).toBe(100);
   });
 });

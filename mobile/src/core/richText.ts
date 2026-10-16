@@ -5,6 +5,8 @@
  * testar de verdade.
  */
 
+import { clampImageWidth } from './image';
+
 export type FormatType = 'bold' | 'italic' | 'list';
 
 export interface Selection {
@@ -27,6 +29,10 @@ function unescapeHtml(value: string): string {
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&amp;/g, '&');
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function inlineToHtml(value: string, imageSources?: Record<string, string>): string {
@@ -53,6 +59,26 @@ export function extractImageUrls(markdown: string): string[] {
   let match: RegExpExecArray | null;
   while ((match = re.exec(markdown)) !== null) out.push(match[1]);
   return out;
+}
+
+/**
+ * Ajusta a largura de uma imagem no markdown. A largura e percentual da nota;
+ * 100 remove o marcador `{w=}` (largura total).
+ */
+export function setImageWidthInMarkdown(markdown: string, ref: string, percent: number): string {
+  const pct = clampImageWidth(percent);
+  const suffix = pct >= 100 ? '' : `{w=${pct}}`;
+  const re = new RegExp(`(!\\[[^\\]]*\\]\\()${escapeRegExp(ref)}(\\))(?:\\{w=\\d+\\})?`, 'g');
+  return markdown.replace(re, (_match, pre: string, post: string) => `${pre}${ref}${post}${suffix}`);
+}
+
+/** Remove a imagem (a linha inteira, com o marcador) do markdown. */
+export function removeImageFromMarkdown(markdown: string, ref: string): string {
+  const re = new RegExp(
+    `^!\\[[^\\]]*\\]\\(${escapeRegExp(ref)}\\)(?:\\{w=\\d+\\})?\\n?`,
+    'gm',
+  );
+  return markdown.replace(re, '');
 }
 
 /** Converte markdown (negrito, italico, lista) em HTML para o editor. */
@@ -151,6 +177,15 @@ export function countWords(markdown: string): number {
 /** Numero de caracteres do texto puro (com espacos), como no dashboard. */
 export function countChars(markdown: string): number {
   return markdownToPlain(markdown).length;
+}
+
+/**
+ * Quebra o texto em linhas a cada fim de frase (`.`, `!`, `?`, `…`), para a
+ * transcricao ficar como legenda. So quebra quando ha espaco depois do sinal,
+ * entao numeros como "3.5" e URLs nao sao afetados.
+ */
+export function breakSentences(text: string): string {
+  return text.replace(/([.!?…]+)\s+/g, '$1\n').trim();
 }
 
 /**

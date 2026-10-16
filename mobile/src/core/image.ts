@@ -26,3 +26,27 @@ export function resizeTarget(
   }
   return { width: Math.max(1, Math.round((width * max) / height)), height: max };
 }
+
+/** Opcao de largura oferecida ao inserir uma foto na nota. */
+export interface ImageWidthOption {
+  /** Rotulo em pt-BR, exibido no seletor de tamanho. */
+  label: string;
+  /** Percentual da largura da nota (100 = largura total). */
+  percent: number;
+}
+
+/** Tamanhos predefinidos da foto dentro da nota, do maior ao menor. */
+export const IMAGE_WIDTH_OPTIONS: ImageWidthOption[] = [
+  { label: 'Largura total', percent: 100 },
+  { label: 'Metade da largura', percent: 50 },
+  { label: 'Miniatura', percent: 30 },
+];
+
+/** Maior largura que a foto pode ocupar (percentual da nota). */
+export const IMAGE_WIDTH_MIN = 15;
+
+/** Mantem a largura da foto dentro da faixa segura (miniatura ate total). */
+export function clampImageWidth(percent: number): number {
+  if (!Number.isFinite(percent)) return 100;
+  return Math.min(100, Math.max(IMAGE_WIDTH_MIN, Math.round(percent)));
+}

@@ -17,4 +17,22 @@ describe('buildEditorHtml', () => {
     const html = buildEditorHtml('', '');
     expect(html).toMatch(/#editor\s*\{[^}]*min-height:\s*100%/);
   });
+
+  it('abre a foto no toque e o menu no toque longo, sem alca de redimensionar', () => {
+    const html = buildEditorHtml('', '');
+    expect(html).toContain('imageOpen:');
+    expect(html).toContain('imageMenu:');
+    expect(html).not.toContain('img-handle');
+  });
+
+  it('muda a largura e apaga a imagem por comando do app', () => {
+    const html = buildEditorHtml('', '');
+    expect(html).toContain('window.__setImageWidth');
+    expect(html).toContain('window.__deleteImage');
+  });
+
+  it('reporta a posicao do cursor para a tela rolar a nota', () => {
+    const html = buildEditorHtml('', '');
+    expect(html).toContain('caret: caretBottom()');
+  });
 });

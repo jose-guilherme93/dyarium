@@ -1,11 +1,14 @@
 import {
   applyMarkdownFormat,
+  breakSentences,
   countChars,
   countWords,
   extractImageUrls,
   htmlToMarkdown,
   markdownToHtml,
   markdownToPlain,
+  removeImageFromMarkdown,
+  setImageWidthInMarkdown,
 } from '../richText';
 
 describe('markdownToHtml', () => {
@@ -89,6 +92,35 @@ describe('extractImageUrls', () => {
   });
 });
 
+describe('largura e remocao de imagem no markdown', () => {
+  it('aplica e troca a largura de uma imagem', () => {
+    expect(setImageWidthInMarkdown('![a](attachment:1)', 'attachment:1', 50)).toBe(
+      '![a](attachment:1){w=50}',
+    );
+    expect(setImageWidthInMarkdown('![a](attachment:1){w=50}', 'attachment:1', 30)).toBe(
+      '![a](attachment:1){w=30}',
+    );
+  });
+
+  it('largura total remove o marcador', () => {
+    expect(setImageWidthInMarkdown('![a](attachment:1){w=30}', 'attachment:1', 100)).toBe(
+      '![a](attachment:1)',
+    );
+  });
+
+  it('so mexe na imagem indicada', () => {
+    const md = '![a](attachment:1)\n![b](attachment:2)';
+    expect(setImageWidthInMarkdown(md, 'attachment:2', 30)).toBe(
+      '![a](attachment:1)\n![b](attachment:2){w=30}',
+    );
+  });
+
+  it('remove a imagem inteira, mantendo o resto', () => {
+    const md = 'antes\n![a](attachment:1){w=50}\ndepois';
+    expect(removeImageFromMarkdown(md, 'attachment:1')).toBe('antes\ndepois');
+  });
+});
+
 describe('applyMarkdownFormat', () => {
   it('envolve a selecao em negrito e mantem a selecao', () => {
     const result = applyMarkdownFormat('texto aqui', { start: 0, end: 5 }, 'bold');
@@ -130,5 +162,16 @@ describe('countWords / countChars / markdownToPlain', () => {
   it('conta caracteres do texto puro (com espacos)', () => {
     expect(countChars('**ola** mundo')).toBe(9);
     expect(countChars('')).toBe(0);
+  });
+});
+
+describe('breakSentences', () => {
+  it('quebra a linha a cada fim de frase', () => {
+    expect(breakSentences('eu fiz. entao vamos la')).toBe('eu fiz.\nentao vamos la');
+    expect(breakSentences('certo! vamos? sim.')).toBe('certo!\nvamos?\nsim.');
+  });
+
+  it('nao quebra numeros decimais', () => {
+    expect(breakSentences('custa 3.5 reais')).toBe('custa 3.5 reais');
   });
 });

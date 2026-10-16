@@ -8,14 +8,22 @@ import {
   useRef,
   useState,
 } from 'react';
-import { InteractionManager, Linking, StyleSheet, TextInput, TurboModuleRegistry, View } from 'react-native';
+import { Linking, StyleSheet, TextInput, TurboModuleRegistry, View } from 'react-native';
 
 import {
   applyMarkdownFormat,
   htmlToMarkdown,
   markdownToHtml,
+  removeImageFromMarkdown,
+  setImageWidthInMarkdown,
   type FormatType,
 } from '@/core/richText';
+import {
+  DEFAULT_TYPOGRAPHY,
+  fontFamilyCss,
+  fontWeightCss,
+  type NoteTypography,
+} from '@/core/typography';
 import { colors, fontSize, spacing } from '@/theme/tokens';
 
 export interface RichEditorHandle {
@@ -23,16 +31,37 @@ export interface RichEditorHandle {
   focus(): void;
   /** Insere imagem no cursor: `displaySrc` e a previa; `persistSrc` e a URL salva. */
   insertImage(displaySrc: string, persistSrc: string, alt: string): void;
+  /** Insere um link no cursor (rotulo = texto; sem rotulo, usa a URL). */
+  insertLink(url: string, label?: string): void;
+  /** Muda a largura de uma imagem existente (percentual da largura da nota). */
+  setImageWidth(key: string, widthPercent: number): void;
+  /** Apaga uma imagem existente. */
+  deleteImage(key: string): void;
 }
 
 interface RichEditorProps {
   value: string;
   onChangeMarkdown: (markdown: string) => void;
+  /** Avisa quando o editor ganha foco (o usuario tocou para escrever). */
+  onEditingChange?: (editing: boolean) => void;
+  /** Avisa quando o HTML terminou de carregar (editor pronto para comandos). */
+  onReady?: () => void;
+  /**
+   * Posicao do cursor (limite inferior, em px) dentro do editor. A tela usa
+   * para rolar a nota e nao deixar o teclado cobrir o que esta sendo escrito.
+   */
+  onCaret?: (y: number) => void;
+  /** Toque curto numa imagem: abre a foto em tela cheia. */
+  onImageOpen?: (src: string) => void;
+  /** Toque longo numa imagem: menu com largura e apagar. */
+  onImageMenu?: (src: string, width: number) => void;
   placeholder?: string;
   /** Mapa URL original -> fonte de exibicao (ex.: `file://` local) para imagens. */
   imageSources?: Record<string, string>;
   /** Base `file://` (pasta da nota) para o WebView carregar as imagens locais. */
   baseUrl?: string;
+  /** Tipografia do editor (familia, tamanho e peso). */
+  typography?: NoteTypography;
   /** Altura minima: o editor preenche o espaco restante da nota (digitar em qualquer lugar). */
   minHeight?: number;
 }
@@ -44,11 +73,17 @@ const hasWebView = Boolean(TurboModuleRegistry.get('RNCWebViewModule'));
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const WebViewModule = hasWebView ? require('react-native-webview') : null;
 
-export function buildEditorHtml(placeholder: string, initialHtml: string): string {
+export function buildEditorHtml(
+  placeholder: string,
+  initialHtml: string,
+  typography: NoteTypography = DEFAULT_TYPOGRAPHY,
+): string {
   const safePlaceholder = placeholder.replace(/"/g, '&quot;');
+  const fontFamily = fontFamilyCss(typography.family);
+  const fontWeight = fontWeightCss(typography.weight);
   return `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
 <style>
-  html, body { margin: 0; padding: 0; height: 100%; background: #0A0A0F; color: #FFFFFF; font-family: -apple-system, system-ui, sans-serif; font-size: 17px; line-height: 1.5; word-wrap: break-word; }
+  html, body { margin: 0; padding: 0; height: 100%; background: #0A0A0F; color: #FFFFFF; font-family: ${fontFamily}; font-size: ${typography.size}px; font-weight: ${fontWeight}; line-height: 1.5; word-wrap: break-word; }
   /* box-sizing: sem ele o padding de #editor (8px) soma ao min-height: 100% e o
      editor cresce a cada ciclo do ResizeObserver (a nota crescia sem parar). */
   #editor { box-sizing: border-box; min-height: 100%; padding: 4px 0; outline: none; }
@@ -57,63 +92,49 @@ export function buildEditorHtml(placeholder: string, initialHtml: string): strin
   div { min-height: 1.5em; }
   a { color: #8B7BE8; text-decoration: underline; }
   .img-block { position: relative; display: block; margin: 6px 0; }
-  .img-block img { display: block; max-width: 100%; border-radius: 10px; }
-  .img-handle { position: absolute; top: 50%; right: -13px; width: 26px; height: 26px; margin-top: -13px; border-radius: 50%; background: #6E56CF; border: 2px solid #FFFFFF; touch-action: none; }
+  .img-block img { display: block; max-width: 100%; border-radius: 10px; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  /* Sem largura definida = largura total da nota (o padrao da foto e preencher). */
+  .img-block img:not([data-width]) { width: 100%; }
 </style></head><body>
 <div id="editor" contenteditable="true" data-placeholder="${safePlaceholder}">${initialHtml}</div>
 <script>
   (function () {
     var editor = document.getElementById('editor');
+    // Posicao do cursor (limite inferior) dentro do editor. O WebView nao rola
+    // sozinho (a altura acompanha o conteudo), entao a tela do app usa isto para
+    // rolar a nota e manter a linha sendo escrita acima do teclado.
+    function caretBottom() {
+      try {
+        var sel = window.getSelection();
+        if (!sel || sel.rangeCount === 0) return null;
+        var range = sel.getRangeAt(0).cloneRange();
+        range.collapse(false);
+        var node = range.startContainer;
+        var el = node && node.nodeType === 1 ? node : node && node.parentNode;
+        if (!el || !editor.contains(el)) return null;
+        var rect = range.getBoundingClientRect();
+        if (rect && rect.height) return Math.round(rect.bottom);
+        var prect = el.getBoundingClientRect();
+        return Math.round(prect.top + prect.height);
+      } catch (e) {
+        return null;
+      }
+    }
     function send() {
       var height = Math.max(160, document.body.scrollHeight);
-      window.ReactNativeWebView.postMessage(JSON.stringify({ html: editor.innerHTML, height: height }));
-    }
-    function attachHandle(block, img) {
-      if (block.querySelector('.img-handle')) return;
-      var handle = document.createElement('span');
-      handle.className = 'img-handle';
-      handle.setAttribute('contenteditable', 'false');
-      block.appendChild(handle);
-      var startX = 0, startW = 0, maxW = 1;
-      function onMove(e) {
-        e.preventDefault();
-        var t = e.touches[0];
-        var w = Math.max(60, Math.min(maxW, startW + (t.clientX - startX)));
-        img.style.width = Math.round((w / maxW) * 100) + '%';
-      }
-      function onEnd() {
-        document.removeEventListener('touchmove', onMove);
-        document.removeEventListener('touchend', onEnd);
-        var pct = Math.round((img.getBoundingClientRect().width / maxW) * 100);
-        img.setAttribute('data-width', String(pct));
-        img.style.width = pct + '%';
-        send();
-      }
-      handle.addEventListener('touchstart', function (e) {
-        e.preventDefault();
-        var t = e.touches[0];
-        startX = t.clientX;
-        startW = img.getBoundingClientRect().width;
-        maxW = editor.getBoundingClientRect().width || 1;
-        document.addEventListener('touchmove', onMove, { passive: false });
-        document.addEventListener('touchend', onEnd);
-      });
+      window.ReactNativeWebView.postMessage(JSON.stringify({ html: editor.innerHTML, height: height, caret: caretBottom() }));
     }
     function wrapImages() {
       var imgs = editor.querySelectorAll('img');
       for (var i = 0; i < imgs.length; i++) {
         var img = imgs[i];
         var parent = img.parentNode;
-        if (parent && parent.classList && parent.classList.contains('img-block')) {
-          attachHandle(parent, img);
-          continue;
-        }
+        if (parent && parent.classList && parent.classList.contains('img-block')) continue;
         var block = document.createElement('div');
         block.className = 'img-block';
         block.setAttribute('contenteditable', 'false');
         parent.insertBefore(block, img);
         block.appendChild(img);
-        attachHandle(block, img);
       }
       ensureLeading();
       ensureTrailing();
@@ -155,6 +176,43 @@ export function buildEditorHtml(placeholder: string, initialHtml: string): strin
       sel.addRange(range);
     }
     editor.addEventListener('input', send);
+    editor.addEventListener('focus', function () {
+      window.ReactNativeWebView.postMessage(JSON.stringify({ editing: true }));
+      send();
+    });
+    // Toque longo numa imagem abre o menu dela (largura/apagar). O toque curto
+    // abre a foto maior. O flag e zerado a cada novo toque e consumido no click.
+    var longPressTimer = null;
+    var longPressFired = false;
+    function cancelLongPress() {
+      if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+    }
+    function imageFromNode(node) {
+      while (node && node !== editor) {
+        if (node.tagName === 'IMG') return node;
+        node = node.parentNode;
+      }
+      return null;
+    }
+    editor.addEventListener('touchstart', function (e) {
+      longPressFired = false;
+      var img = imageFromNode(e.target);
+      if (!img) { cancelLongPress(); return; }
+      cancelLongPress();
+      longPressTimer = setTimeout(function () {
+        longPressTimer = null;
+        longPressFired = true;
+        var width = parseInt(img.getAttribute('data-width') || '', 10);
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          imageMenu: { src: img.getAttribute('src') || '', width: isNaN(width) ? 100 : width }
+        }));
+      }, 450);
+    }, { passive: true });
+    editor.addEventListener('touchmove', cancelLongPress, { passive: true });
+    editor.addEventListener('touchend', cancelLongPress);
+    editor.addEventListener('touchcancel', cancelLongPress);
+    // Sem o menu nativo do navegador ao segurar a imagem.
+    document.addEventListener('contextmenu', function (e) { e.preventDefault(); });
     editor.addEventListener('click', function (e) {
       var node = e.target;
       while (node && node !== editor) {
@@ -165,18 +223,22 @@ export function buildEditorHtml(placeholder: string, initialHtml: string): strin
         }
         node = node.parentNode;
       }
-      // Tocar num bloco de imagem leva o cursor pro paragrafo logo abaixo.
+      // Tocar numa imagem abre a foto maior; o toque longo ja abriu o menu.
       var block = e.target;
       while (block && block !== editor) {
         if (block.classList && block.classList.contains('img-block')) {
           e.preventDefault();
-          var after = ensureParagraphAfter(block);
-          placeCaret(after);
-          editor.focus();
+          if (longPressFired) { longPressFired = false; return; }
+          var img = block.querySelector('img');
+          if (img) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({ imageOpen: img.getAttribute('src') || '' }));
+          }
           return;
         }
         block = block.parentNode;
       }
+      // Tocar na nota abre o menu de acoes (formatar, foto, audio).
+      window.ReactNativeWebView.postMessage(JSON.stringify({ editing: true }));
       // Tocar na area vazia do editor tambem abre o cursor.
       if (e.target === editor) {
         var last = editor.lastElementChild;
@@ -226,8 +288,71 @@ export function buildEditorHtml(placeholder: string, initialHtml: string): strin
       if (!inserted) { editor.appendChild(block); }
       ensureLeading();
       var after = ensureParagraphAfter(block);
-      attachHandle(block, img);
       placeCaret(after);
+      send();
+    };
+    // Acha a imagem pela referencia salva (data-src) ou pela fonte exibida.
+    function findImage(key) {
+      var imgs = editor.querySelectorAll('img');
+      for (var i = 0; i < imgs.length; i++) {
+        var img = imgs[i];
+        if ((img.getAttribute('data-src') || '') === key || (img.getAttribute('src') || '') === key) {
+          return img;
+        }
+      }
+      return null;
+    }
+    // Muda a largura de uma imagem existente (percentual da largura da nota).
+    window.__setImageWidth = function (key, width) {
+      var img = findImage(key);
+      if (!img) return;
+      var pct = Math.max(15, Math.min(100, Math.round(width)));
+      if (pct >= 100) {
+        // Limpa todas as larguras (o atributo "width" do round-trip ficava preso
+        // e a imagem nao voltava para a largura total).
+        img.removeAttribute('data-width');
+        img.removeAttribute('width');
+        img.style.width = '';
+      } else {
+        img.setAttribute('data-width', String(pct));
+        img.setAttribute('width', pct + '%');
+        img.style.width = pct + '%';
+      }
+      send();
+    };
+    // Apaga a imagem (o bloco todo), mantendo um paragrafo util depois.
+    window.__deleteImage = function (key) {
+      var img = findImage(key);
+      if (!img) return;
+      var block = img.parentNode;
+      if (block && block.classList && block.classList.contains('img-block')) {
+        block.parentNode.removeChild(block);
+      } else {
+        img.parentNode.removeChild(img);
+      }
+      ensureTrailing();
+      send();
+    };
+    // Insere um link no cursor (rotulo = texto; sem rotulo, usa a propria URL).
+    window.__insertLink = function (url, label) {
+      editor.focus();
+      var a = document.createElement('a');
+      a.setAttribute('href', url);
+      a.textContent = (label && label !== '') ? label : url;
+      var sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0) {
+        var p = document.createElement('div');
+        p.appendChild(a);
+        editor.appendChild(p);
+      } else {
+        var range = sel.getRangeAt(0);
+        range.deleteContents();
+        range.insertNode(a);
+        range.setStartAfter(a);
+        range.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
       send();
     };
   })();
@@ -235,7 +360,20 @@ export function buildEditorHtml(placeholder: string, initialHtml: string): strin
 }
 
 const RichEditorInner = forwardRef<RichEditorHandle, RichEditorProps>(function RichEditor(
-  { value, onChangeMarkdown, placeholder = '', imageSources, baseUrl, minHeight = 160 },
+  {
+    value,
+    onChangeMarkdown,
+    onEditingChange,
+    onReady,
+    onCaret,
+    onImageOpen,
+    onImageMenu,
+    placeholder = '',
+    imageSources,
+    baseUrl,
+    typography = DEFAULT_TYPOGRAPHY,
+    minHeight = 160,
+  },
   ref,
 ) {
   const webRef = useRef<{ injectJavaScript: (code: string) => void } | null>(null);
@@ -244,13 +382,16 @@ const RichEditorInner = forwardRef<RichEditorHandle, RichEditorProps>(function R
   const [height, setHeight] = useState(200);
   const [plain, setPlain] = useState(value);
   const plainSelection = useRef({ start: 0, end: 0 });
-  const [ready, setReady] = useState(!WebViewModule);
 
   // O HTML inicial e construido uma unica vez; reconstrui-lo a cada render
   // pesava e ainda recarregava o WebView (source com objeto novo).
   const htmlSourceRef = useRef<string | null>(null);
   if (htmlSourceRef.current === null) {
-    htmlSourceRef.current = buildEditorHtml(placeholder, markdownToHtml(value, imageSources));
+    htmlSourceRef.current = buildEditorHtml(
+      placeholder,
+      markdownToHtml(value, imageSources),
+      typography,
+    );
   }
   const source = useMemo(
     () => ({ html: htmlSourceRef.current as string, baseUrl }),
@@ -264,27 +405,73 @@ const RichEditorInner = forwardRef<RichEditorHandle, RichEditorProps>(function R
     onChangeRef.current = onChangeMarkdown;
   }, [onChangeMarkdown]);
 
-  // Monta o WebView so depois da transicao de tela: criar o WebView durante a
-  // animacao derruba os frames.
+  const onEditingRef = useRef(onEditingChange);
   useEffect(() => {
-    if (!WebViewModule || ready) return undefined;
-    const task = InteractionManager.runAfterInteractions(() => setReady(true));
-    return () => task.cancel();
-  }, [ready]);
+    onEditingRef.current = onEditingChange;
+  }, [onEditingChange]);
+
+  const onReadyRef = useRef(onReady);
+  useEffect(() => {
+    onReadyRef.current = onReady;
+  }, [onReady]);
+
+  const onCaretRef = useRef(onCaret);
+  useEffect(() => {
+    onCaretRef.current = onCaret;
+  }, [onCaret]);
+
+  const onImageOpenRef = useRef(onImageOpen);
+  useEffect(() => {
+    onImageOpenRef.current = onImageOpen;
+  }, [onImageOpen]);
+
+  const onImageMenuRef = useRef(onImageMenu);
+  useEffect(() => {
+    onImageMenuRef.current = onImageMenu;
+  }, [onImageMenu]);
+
+  // Aplica mudancas de tipografia sem recarregar o WebView.
+  useEffect(() => {
+    if (!WebViewModule || !webRef.current) return;
+    const css =
+      `document.body.style.fontFamily=${JSON.stringify(fontFamilyCss(typography.family))};` +
+      `document.body.style.fontSize=${JSON.stringify(`${typography.size}px`)};` +
+      `document.body.style.fontWeight=${JSON.stringify(String(fontWeightCss(typography.weight)))};true;`;
+    webRef.current.injectJavaScript(css);
+  }, [typography]);
 
   const handleMessage = useCallback((event: { nativeEvent: { data: string } }) => {
     try {
       const data = JSON.parse(event.nativeEvent.data) as {
         html?: string;
         height?: number;
+        caret?: number;
         open?: string;
+        editing?: boolean;
+        imageOpen?: string;
+        imageMenu?: { src?: string; width?: number };
       };
+      if (data.editing === true) {
+        onEditingRef.current?.(true);
+        return;
+      }
       if (typeof data.open === 'string') {
         void Linking.openURL(data.open).catch(() => undefined);
         return;
       }
+      if (typeof data.imageOpen === 'string') {
+        onImageOpenRef.current?.(data.imageOpen);
+        return;
+      }
+      if (data.imageMenu && typeof data.imageMenu.src === 'string') {
+        onImageMenuRef.current?.(data.imageMenu.src, data.imageMenu.width ?? 100);
+        return;
+      }
       if (typeof data.height === 'number') {
         setHeight(Math.min(Math.max(data.height, 160), 4000));
+      }
+      if (typeof data.caret === 'number') {
+        onCaretRef.current?.(data.caret);
       }
       const markdown = htmlToMarkdown(String(data.html ?? ''));
       if (markdown !== lastValue.current) {
@@ -331,6 +518,40 @@ const RichEditorInner = forwardRef<RichEditorHandle, RichEditorProps>(function R
         lastValue.current = next;
         onChangeMarkdown(next);
       },
+      setImageWidth(key, widthPercent) {
+        if (WebViewModule && webRef.current) {
+          webRef.current.injectJavaScript(
+            `window.__setImageWidth(${JSON.stringify(key)}, ${JSON.stringify(widthPercent)}); true;`,
+          );
+          return;
+        }
+        const next = setImageWidthInMarkdown(plain, key, widthPercent);
+        setPlain(next);
+        lastValue.current = next;
+        onChangeMarkdown(next);
+      },
+      deleteImage(key) {
+        if (WebViewModule && webRef.current) {
+          webRef.current.injectJavaScript(`window.__deleteImage(${JSON.stringify(key)}); true;`);
+          return;
+        }
+        const next = removeImageFromMarkdown(plain, key);
+        setPlain(next);
+        lastValue.current = next;
+        onChangeMarkdown(next);
+      },
+      insertLink(url, label) {
+        if (WebViewModule && webRef.current) {
+          webRef.current.injectJavaScript(
+            `window.__insertLink(${JSON.stringify(url)}, ${JSON.stringify(label ?? '')}); true;`,
+          );
+          return;
+        }
+        const next = `${plain}${plain ? '\n' : ''}[${label ?? url}](${url})`;
+        setPlain(next);
+        lastValue.current = next;
+        onChangeMarkdown(next);
+      },
     }),
     [plain, onChangeMarkdown],
   );
@@ -360,26 +581,23 @@ const RichEditorInner = forwardRef<RichEditorHandle, RichEditorProps>(function R
 
   return (
     <View style={sizeStyle}>
-      {ready ? (
-        <WebViewModule.WebView
-          ref={webRef}
-          originWhitelist={['*']}
-          source={source}
-          onMessage={handleMessage}
-          style={styles.web}
-          scrollEnabled={false}
-          showsVerticalScrollIndicator={false}
-          hideKeyboardAccessoryView
-          keyboardDisplayRequiresUserAction={false}
-          // Imagem local (`file://`) sem passar por base64. O acesso a arquivos e
-          // desligado por padrao no Android 11+; aqui so carregamos o HTML e o
-          // markdown que nos mesmos geramos, entao o acesso fica no sandbox do app.
-          allowFileAccess
-          allowFileAccessFromFileURLs
-        />
-      ) : (
-        <View style={styles.web} />
-      )}
+      <WebViewModule.WebView
+        ref={webRef}
+        originWhitelist={['*']}
+        source={source}
+        onMessage={handleMessage}
+        onLoadEnd={() => onReadyRef.current?.()}
+        style={styles.web}
+        scrollEnabled={false}
+        showsVerticalScrollIndicator={false}
+        hideKeyboardAccessoryView
+        keyboardDisplayRequiresUserAction={false}
+        // Imagem local (`file://`) sem passar por base64. O acesso a arquivos e
+        // desligado por padrao no Android 11+; aqui so carregamos o HTML e o
+        // markdown que nos mesmos geramos, entao o acesso fica no sandbox do app.
+        allowFileAccess
+        allowFileAccessFromFileURLs
+      />
     </View>
   );
 });
