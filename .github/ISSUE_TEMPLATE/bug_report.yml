@@ -1,0 +1,50 @@
+name: Reportar um bug
+description: Algo nao funciona como deveria
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Obrigado por reportar. Nao inclua tokens, dominios, IPs, nomes de tailnet
+        ou trechos de audio/transcricao reais.
+  - type: textarea
+    id: descricao
+    attributes:
+      label: Descricao
+      description: O que aconteceu e o que voce esperava.
+    validations:
+      required: true
+  - type: textarea
+    id: passos
+    attributes:
+      label: Como reproduzir
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: versao
+    attributes:
+      label: Versao
+      description: Saida de `diary version` ou o tag da imagem.
+    validations:
+      required: true
+  - type: dropdown
+    id: forma
+    attributes:
+      label: Como voce roda
+      options:
+        - Docker Compose (docker-compose.yml)
+        - Dokploy
+        - Imagem direta (docker run)
+        - Binario local
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs relevantes
+      description: Sem segredos. So as linhas que importam.
+    validations:
+      required: false

@@ -10,7 +10,7 @@ import Constants from 'expo-constants';
 
 const PORTS = [8080, 18080, 8000];
 
-/** Host do dev server (ex.: "100.115.101.127:8081" -> "100.115.101.127"). */
+/** Host do dev server (ex.: "192.0.2.10:8081" -> "192.0.2.10"). */
 function devHost(): string | null {
   const hostUri =
     Constants.expoConfig?.hostUri ??

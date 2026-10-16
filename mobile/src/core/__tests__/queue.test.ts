@@ -1,7 +1,6 @@
 import {
   isDue,
   markCompleted,
-  markDead,
   markFailed,
   markProgress,
   markQueued,
@@ -9,7 +8,7 @@ import {
   markUploading,
   pickNextToUpload,
 } from '../queue';
-import { canRetry, type Recording } from '../types';
+import type { Recording } from '../types';
 
 function base(overrides: Partial<Recording> = {}): Recording {
   return {
@@ -65,14 +64,6 @@ describe('transicoes da fila', () => {
     expect(failed.lastError).toBe('rede');
     expect(failed.nextAttemptAt).toBe('2026-10-10T22:00:02.000Z'); // base 2s
   });
-
-  it('markDead nao agenda nova tentativa automatica', () => {
-    const dead = markDead(base(), 'formato nao suportado', NOW);
-    expect(dead.status).toBe('dead');
-    expect(dead.attempts).toBe(1);
-    expect(dead.lastError).toBe('formato nao suportado');
-    expect(dead.nextAttemptAt).toBeUndefined();
-  });
 });
 
 describe('isDue', () => {
@@ -89,9 +80,6 @@ describe('isDue', () => {
   });
   it('completed nunca esta devido', () => {
     expect(isDue(base({ status: 'completed' }), NOW)).toBe(false);
-  });
-  it('dead nunca esta devido (falha permanente)', () => {
-    expect(isDue(base({ status: 'dead' }), NOW)).toBe(false);
   });
 });
 
@@ -113,21 +101,7 @@ describe('pickNextToUpload', () => {
     expect(pickNextToUpload([notDue], NOW)).toBeUndefined();
   });
 
-  it('ignora as mortas (falha permanente)', () => {
-    expect(pickNextToUpload([base({ id: 'd', status: 'dead' })], NOW)).toBeUndefined();
-  });
-});
-
-describe('canRetry', () => {
-  it('permite reenviar estados com envio pendente', () => {
-    for (const status of ['recorded', 'queued', 'uploading', 'failed', 'dead'] as const) {
-      expect(canRetry(base({ status }))).toBe(true);
-    }
-  });
-
-  it('nao reenvia o que ja foi enviado nem gravacao ativa', () => {
-    expect(canRetry(base({ status: 'completed' }))).toBe(false);
-    expect(canRetry(base({ status: 'recording' }))).toBe(false);
-    expect(canRetry(base({ status: 'interrupted' }))).toBe(false);
+  it('ignora rascunhos', () => {
+    expect(pickNextToUpload([base({ id: 'd', status: 'draft' })], NOW)).toBeUndefined();
   });
 });

@@ -9,6 +9,7 @@
 import { ApiError, DyariumApi, type FetchLike } from '@/core/api';
 import { needsTranscript, type Recording } from '@/core/types';
 
+import { notify } from './notifications';
 import { listRecordings, upsertRecording } from './db';
 import { loadServerConfig } from './secure';
 import { emitRecording } from './uploaderLoop';
@@ -35,10 +36,13 @@ export async function fetchTranscriptsOnce(): Promise<void> {
           transcript: transcript.text,
           transcriptLanguage: transcript.language,
           transcriptStatus: 'ready',
+          transcriptSegments: transcript.segments,
           updatedAt: new Date().toISOString(),
         };
         await upsertRecording(updated);
         emitRecording(updated);
+        // Aviso generico (sem conteudo sensivel).
+        void notify('Transcricao pronta', 'Uma nota sua foi transcrita.');
       } catch (error) {
         if (error instanceof ApiError && error.status === 404) {
           // Sem transcricao ainda. O status da entrada diz se ela vai chegar.

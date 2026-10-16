@@ -1,9 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
-import { useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { createAudioPlayer, type AudioPlayer } from 'expo-audio';
+import { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { formatBytes, formatDuration } from '@/core/format';
+import { formatDuration } from '@/core/format';
 import type { Recording } from '@/core/types';
 import { colors, fontSize, radius, spacing } from '@/theme/tokens';
 
@@ -14,25 +14,94 @@ interface RecordingCardProps {
   recording: Recording;
   onRetry: () => void;
   onDelete: () => void;
+  /** Abre a tela da nota. Quando ausente, o card expande em linha (so audio). */
+  onOpen?: () => void;
+  /** Arquivar (opcional; aparece no menu de tres pontinhos). */
+  onArchive?: () => void;
 }
 
-export function RecordingCard({ recording, onRetry, onDelete }: RecordingCardProps) {
+function StatusIndicator({
+  recording,
+  onRetry,
+}: {
+  recording: Recording;
+  onRetry: () => void;
+}) {
+  if (recording.status === 'completed') {
+    return null;
+  }
+  if (recording.status === 'uploading') {
+    const progress =
+      recording.sizeBytes && recording.sizeBytes > 0
+        ? Math.min(1, recording.offset / recording.sizeBytes)
+        : 0;
+    return (
+      <View style={styles.ring}>
+        <Text style={styles.ringText}>{Math.round(progress * 100)}</Text>
+      </View>
+    );
+  }
+  if (recording.status === 'failed') {
+    return (
+      <Pressable onPress={onRetry} accessibilityLabel="Reenviar" hitSlop={8}>
+        <Ionicons name="refresh" size={20} color={colors.warning} />
+      </Pressable>
+    );
+  }
+  if (recording.status === 'queued' || recording.status === 'recorded') {
+    return <Ionicons name="cloud-upload-outline" size={20} color={colors.accent} />;
+  }
+  return null;
+}
+
+export function RecordingCard({
+  recording,
+  onRetry,
+  onDelete,
+  onOpen,
+  onArchive,
+}: RecordingCardProps) {
   const [expanded, setExpanded] = useState(false);
-  const player = useAudioPlayer(recording.filePath ?? null);
-  const status = useAudioPlayerStatus(player);
+  const hasAudio = Boolean(recording.filePath);
   const meta = STATUS_META[recording.status];
 
-  const duration = status.duration || (recording.durationMs ?? 0) / 1000;
-  const current = status.currentTime || 0;
+  // O player e criado sob demanda (so quando o usuario toca), para nao criar um
+  // AudioPlayer por item da lista (isso quebra o expo-audio no Android).
+  const playerRef = useRef<AudioPlayer | null>(null);
+  const subRef = useRef<{ remove: () => void } | null>(null);
+  const [playState, setPlayState] = useState({ playing: false, currentTime: 0, duration: 0 });
+
+  useEffect(
+    () => () => {
+      subRef.current?.remove();
+      playerRef.current?.remove();
+      playerRef.current = null;
+    },
+    [],
+  );
+
+  const ensurePlayer = (): AudioPlayer | null => {
+    if (playerRef.current || !recording.filePath) return playerRef.current;
+    const player = createAudioPlayer(recording.filePath);
+    subRef.current = player.addListener('playbackStatusUpdate', (status) => {
+      setPlayState({
+        playing: status.playing,
+        currentTime: status.currentTime,
+        duration: status.duration,
+      });
+    });
+    playerRef.current = player;
+    return player;
+  };
+
+  const duration = playState.duration || (recording.durationMs ?? 0) / 1000;
+  const current = playState.currentTime;
   const progress = duration > 0 ? Math.min(1, current / duration) : 0;
-  const uploading = recording.status === 'uploading';
-  const uploadProgress =
-    recording.sizeBytes && recording.sizeBytes > 0
-      ? Math.min(1, recording.offset / recording.sizeBytes)
-      : 0;
 
   const togglePlay = () => {
-    if (status.playing) {
+    const player = ensurePlayer();
+    if (!player) return;
+    if (playState.playing) {
       player.pause();
     } else {
       if (duration > 0 && current >= duration - 0.1) player.seekTo(0);
@@ -41,80 +110,104 @@ export function RecordingCard({ recording, onRetry, onDelete }: RecordingCardPro
   };
 
   const skip = (seconds: number) => {
+    const player = playerRef.current;
+    if (!player) return;
     const target = Math.max(0, Math.min(duration, current + seconds));
     player.seekTo(target);
+  };
+
+  const openMenu = () => {
+    const buttons: Parameters<typeof Alert.alert>[2] = [];
+    if (onArchive) {
+      buttons.push({
+        text: recording.archived ? 'Desarquivar' : 'Arquivar',
+        onPress: onArchive,
+      });
+    }
+    buttons.push({ text: 'Apagar', style: 'destructive', onPress: onDelete });
+    buttons.push({ text: 'Cancelar', style: 'cancel' });
+    Alert.alert(recording.title, undefined, buttons);
   };
 
   return (
     <View style={styles.wrap}>
       <View style={styles.row}>
-        <Pressable
-          style={styles.play}
-          onPress={togglePlay}
-          disabled={!recording.filePath}
-          accessibilityLabel={status.playing ? 'Pausar' : 'Tocar'}
-        >
-          <Ionicons
-            name={status.playing ? 'pause' : 'play'}
-            size={20}
-            color={recording.filePath ? colors.text : colors.textTertiary}
-            style={status.playing ? undefined : { marginLeft: 2 }}
-          />
-        </Pressable>
+        {hasAudio ? (
+          <Pressable
+            style={styles.leading}
+            onPress={togglePlay}
+            accessibilityLabel={playState.playing ? 'Pausar' : 'Tocar'}
+          >
+            <Ionicons
+              name={playState.playing ? 'pause' : 'play'}
+              size={20}
+              color={colors.text}
+              style={playState.playing ? undefined : { marginLeft: 2 }}
+            />
+          </Pressable>
+        ) : (
+          <View style={styles.leading}>
+            <Ionicons name="document-text-outline" size={20} color={colors.textSecondary} />
+          </View>
+        )}
 
-        <Pressable style={styles.info} onPress={() => setExpanded((v) => !v)}>
+        <Pressable
+          style={styles.info}
+          onPress={onOpen ?? (hasAudio ? () => setExpanded((v) => !v) : undefined)}
+        >
           <Text style={styles.title} numberOfLines={1}>
             {recording.title}
           </Text>
           <View style={styles.subRow}>
-            <View style={[styles.dot, { backgroundColor: meta.color }]} />
-            <Text style={styles.sub}>{meta.label}</Text>
+            {recording.source === 'share' ? (
+              <Ionicons name="download-outline" size={12} color={colors.info} />
+            ) : null}
+            {recording.status !== 'completed' ? (
+              <>
+                <View style={[styles.dot, { backgroundColor: meta.color }]} />
+                <Text style={styles.sub}>{meta.label}</Text>
+              </>
+            ) : null}
             {recording.durationMs ? (
               <Text style={styles.sub}>· {formatDuration(recording.durationMs)}</Text>
             ) : null}
-            {recording.sizeBytes ? (
-              <Text style={styles.sub}>· {formatBytes(recording.sizeBytes)}</Text>
-            ) : null}
+            {recording.archived ? <Text style={styles.sub}>· arquivada</Text> : null}
           </View>
-          {recording.transcriptStatus === 'ready' && recording.transcript ? (
+          {!hasAudio && recording.text ? (
+            <Text style={styles.preview} numberOfLines={1}>
+              {recording.text}
+            </Text>
+          ) : recording.transcriptStatus === 'ready' && recording.transcript ? (
             <Text style={styles.preview} numberOfLines={1}>
               {recording.transcript}
             </Text>
           ) : null}
         </Pressable>
 
-        {uploading ? (
-          <View style={styles.trailing}>
-            <View style={styles.ring}>
-              <Text style={styles.ringText}>{Math.round(uploadProgress * 100)}</Text>
-            </View>
-          </View>
-        ) : recording.status === 'failed' || recording.status === 'dead' ? (
-          <Pressable style={styles.trailing} onPress={onRetry} accessibilityLabel="Reenviar">
-            <Ionicons name="refresh" size={20} color={colors.warning} />
+        <View style={styles.trailing}>
+          <StatusIndicator recording={recording} onRetry={onRetry} />
+          <Pressable style={styles.more} onPress={openMenu} accessibilityLabel="Mais opcoes">
+            <Ionicons name="ellipsis-horizontal" size={18} color={colors.textSecondary} />
           </Pressable>
-        ) : recording.status === 'queued' || recording.status === 'recorded' ? (
-          <Pressable style={styles.trailing} onPress={onRetry} accessibilityLabel="Enviar agora">
-            <Ionicons name="cloud-upload-outline" size={20} color={colors.accent} />
-          </Pressable>
-        ) : (
-          <Pressable
-            style={styles.trailing}
-            onPress={() => setExpanded((v) => !v)}
-            accessibilityLabel="Detalhes"
-          >
-            <Ionicons name="chevron-down" size={18} color={colors.textTertiary} />
-          </Pressable>
-        )}
+        </View>
       </View>
 
-      {uploading ? (
+      {recording.status === 'uploading' && recording.sizeBytes ? (
         <View style={styles.progressTrack}>
-          <View style={[styles.progressFill, { width: `${Math.round(uploadProgress * 100)}%` }]} />
+          <View
+            style={[
+              styles.progressFill,
+              {
+                width: `${Math.round(
+                  Math.min(1, recording.offset / recording.sizeBytes) * 100,
+                )}%`,
+              },
+            ]}
+          />
         </View>
       ) : null}
 
-      {expanded ? (
+      {expanded && hasAudio ? (
         <View style={styles.expanded}>
           <Waveform
             seed={recording.id}
@@ -128,33 +221,21 @@ export function RecordingCard({ recording, onRetry, onDelete }: RecordingCardPro
               <Ionicons name="play-back" size={22} color={colors.text} />
             </Pressable>
             <Pressable style={styles.control} onPress={togglePlay}>
-              <Ionicons name={status.playing ? 'pause' : 'play'} size={26} color={colors.text} />
+              <Ionicons name={playState.playing ? 'pause' : 'play'} size={26} color={colors.text} />
             </Pressable>
             <Pressable style={styles.control} onPress={() => skip(15)}>
               <Ionicons name="play-forward" size={22} color={colors.text} />
             </Pressable>
             <View style={styles.spacer} />
-            {recording.status === 'failed' || recording.status === 'dead' ? (
-              <Pressable style={styles.control} onPress={onRetry} accessibilityLabel="Reenviar">
-                <Ionicons name="refresh" size={20} color={colors.textSecondary} />
-              </Pressable>
+            {recording.transcriptStatus === 'pending' ? (
+              <ActivityIndicator size="small" color={colors.textSecondary} />
             ) : null}
-            <Pressable style={styles.control} onPress={onDelete} accessibilityLabel="Apagar">
-              <Ionicons name="trash-outline" size={20} color={colors.danger} />
-            </Pressable>
           </View>
           {recording.transcriptStatus === 'ready' && recording.transcript ? (
             <View style={styles.transcriptBox}>
               <Text style={styles.transcriptLabel}>Transcricao</Text>
               <Text style={styles.transcriptText}>{recording.transcript}</Text>
             </View>
-          ) : recording.transcriptStatus === 'pending' ? (
-            <View style={styles.transcriptRow}>
-              <ActivityIndicator size="small" color={colors.textSecondary} />
-              <Text style={styles.transcriptHint}>Transcrevendo...</Text>
-            </View>
-          ) : recording.transcriptStatus === 'failed' ? (
-            <Text style={styles.error}>Transcricao indisponivel no servidor.</Text>
           ) : null}
           {recording.status === 'failed' && recording.lastError ? (
             <Text style={styles.error} numberOfLines={2}>
@@ -173,8 +254,13 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     overflow: 'hidden',
   },
-  row: { flexDirection: 'row', alignItems: 'center', paddingVertical: spacing.sm, paddingHorizontal: spacing.sm },
-  play: {
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+  },
+  leading: {
     width: 40,
     height: 40,
     borderRadius: 20,
@@ -188,7 +274,8 @@ const styles = StyleSheet.create({
   dot: { width: 6, height: 6, borderRadius: 3 },
   sub: { color: colors.textSecondary, fontSize: fontSize.xs },
   preview: { color: colors.textTertiary, fontSize: fontSize.sm, marginTop: 2 },
-  trailing: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  trailing: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  more: { width: 32, height: 40, alignItems: 'center', justifyContent: 'center' },
   ring: {
     width: 34,
     height: 34,
@@ -220,6 +307,4 @@ const styles = StyleSheet.create({
     letterSpacing: 0.6,
   },
   transcriptText: { color: colors.text, fontSize: fontSize.sm, lineHeight: 20 },
-  transcriptRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  transcriptHint: { color: colors.textSecondary, fontSize: fontSize.sm },
 });

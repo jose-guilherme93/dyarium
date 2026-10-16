@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -47,7 +48,18 @@ func entryJSON(e store.Entry) map[string]any {
 
 func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
-	entries, err := s.deps.Store.ListEntriesFiltered(r.Context(), 100,
+	// O app usa um `limit` alto para reconciliar exclusoes (saber o conjunto
+	// completo de ids vivos). Teto para nao virar um dump.
+	limit := 100
+	if raw := strings.TrimSpace(query.Get("limit")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	if limit > 5000 {
+		limit = 5000
+	}
+	entries, err := s.deps.Store.ListEntriesFiltered(r.Context(), limit,
 		query.Get("person"), query.Get("place"), query.Get("theme"))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
@@ -69,8 +81,10 @@ func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 // given, the note is created as a child of that note (subnote).
 func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Title    string `json:"title"`
-		ParentID string `json:"parent_id"`
+		ID        string `json:"id"`
+		Title     string `json:"title"`
+		ParentID  string `json:"parent_id"`
+		CreatedAt string `json:"created_at"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_body", "corpo invalido")
@@ -84,6 +98,16 @@ func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	now := time.Now().UTC()
+	// O cliente pode informar quando a nota foi criada (offline); senao vale agora.
+	createdAt := now
+	if raw := strings.TrimSpace(req.CreatedAt); raw != "" {
+		parsed, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_created_at", "created_at invalido")
+			return
+		}
+		createdAt = parsed.UTC()
+	}
 	title := strings.TrimSpace(req.Title)
 	if title == "" {
 		title = entrytitle.Name(entrytitle.Text)
@@ -94,8 +118,25 @@ func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 		Status:    store.EntryReady,
 		Source:    "text",
 		ParentID:  parentID,
-		CreatedAt: now,
+		CreatedAt: createdAt,
 		UpdatedAt: now,
+	}
+	if clientID := strings.TrimSpace(req.ID); clientID != "" {
+		if !id.Valid(clientID) {
+			writeError(w, http.StatusBadRequest, "invalid_id", "id invalido")
+			return
+		}
+		// Idempotente: um cliente offline pode reenviar a mesma nota.
+		existing, err := s.deps.Store.GetEntry(r.Context(), clientID)
+		if err == nil {
+			writeJSON(w, http.StatusOK, entryJSON(existing))
+			return
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			return
+		}
+		entry.ID = clientID
 	}
 	if err := s.deps.Store.CreateEntry(r.Context(), entry); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())

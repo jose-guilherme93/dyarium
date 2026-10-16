@@ -86,6 +86,29 @@ func (m *Manager) Path(name string) (string, bool) {
 	return "", false
 }
 
+// Downloaded reports whether the catalog model is present on disk.
+func (m *Manager) Downloaded(name string) bool {
+	c, ok := find(name)
+	if !ok {
+		return false
+	}
+	st, err := os.Stat(filepath.Join(m.dir, c.Filename))
+	return err == nil && st.Size() > 0
+}
+
+// NameForFile maps a model file path to its catalog name, so a configured
+// whisper model (for example /models/ggml-small-q5_1.bin) can be matched
+// against the catalog.
+func NameForFile(path string) (string, bool) {
+	base := filepath.Base(path)
+	for _, c := range Catalog {
+		if c.Filename == base {
+			return c.Name, true
+		}
+	}
+	return "", false
+}
+
 // Active reports whether a download is in progress for the model.
 func (m *Manager) Active(name string) bool {
 	m.mu.Lock()

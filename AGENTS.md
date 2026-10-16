@@ -24,16 +24,47 @@ O projeto tem tres superficies: o binario Go (`cmd/`, `internal/`), o dashboard
 - Nao edite codigo gerado (`web/dist/`, `web/node_modules/`, migrations ja
   aplicadas, `models/`). Migrations sao append-only.
 
+## Versoes e releases
+
+- A versao do produto e unica e segue semver, comecando em `0.1.0`. So chega a
+  `1.0.0` quando o mantenedor decidir; ate la, uma mudanca de quebra sobe a
+  minor, nao a major.
+- A versao e calculada automaticamente pelo release-please a partir dos commits
+  convencionais. **Nao edite a mao** `version.txt`, `web/package.json`,
+  `mobile/package.json` nem `mobile/app.json`: o bot atualiza todos de uma vez.
+- Efeito dos tipos: `fix` sobe patch; `feat` sobe minor;
+  `feat!`/`BREAKING CHANGE` sobe minor enquanto estivermos em `0.x`;
+  `chore`, `docs`, `test`, `ci`, `refactor` e `perf` nao mudam a versao.
+- Ao mesclar na `main`, o release-please abre um PR de release; ao mesclar esse
+  PR, cria o tag `vX.Y.Z` e o `CHANGELOG.md`, e a imagem e publicada no GHCR
+  (`ghcr.io/jose-guilherme93/dyarium`) com as tags `vX.Y.Z` e `latest`.
+- O binario recebe a versao do tag por `-ldflags`; nao existe versao embutida a
+  atualizar no Go.
+
+## Empacotamento e deploy
+
+- `deploy/Dockerfile` produz a imagem de producao; o `docker-compose.yml` da
+  raiz e o deploy padrao (tambem usado pelo Dokploy).
+- Toda configuracao nova precisa de um padrao seguro e **nao** pode exigir
+  variavel de ambiente obrigatoria. O primeiro run tem que funcionar apenas com
+  o volume de dados montado.
+
 ## Regras de seguranca (duras)
 
 - **Segredo nenhum no repositorio.** Token, chave mestra, chaves S3, tokens de
   bot, dominios, IPs e nomes de tailnet reais ficam fora do codigo e dos testes.
   Tudo por variavel de ambiente; `.env.example` sem valores reais.
+- **Segredos de runtime:** quando `DIARY_MASTER_KEY` e `DIARY_TOKEN` nao vem do
+  ambiente, a chave mestra e o token sao gerados no primeiro boot e persistidos
+  em `/data` (`master.key` e `token`, modo 0600). Nunca logue o valor; no maximo
+  registre que o setup esta pendente.
 - **Nunca logar segredo nem conteudo sensivel.** Nada de `Authorization`, token,
   corpos de requisicao, audio ou transcricao em log, mensagens de erro ou
   telemetria. Erro para o usuario e generico; detalhe so no log do servidor.
 - **Autenticacao:** toda rota sob `/api/v1` passa por `requireAuth` (Bearer).
-  `/healthz` e a unica rota publica. Nao crie atalhos nem excecoes.
+  As unicas rotas publicas sao `/healthz`, `GET /setup/state` e `POST /setup`.
+  As duas de setup so respondem enquanto a instancia nao foi reivindicada e sao
+  a unica excecao deliberada a esta regra. Nao crie outras.
 - **Audio original e imutavel.** Nunca sobrescreva o objeto cifrado. Qualquer
   derivado (16 kHz mono, corte de silencio) e um artefato separado com cache key.
 - **Nada de audio em claro no disco do servidor.** A cifra (AES-256-GCM) e em

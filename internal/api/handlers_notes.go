@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/joseti/dyarium/internal/id"
@@ -12,6 +13,7 @@ import (
 )
 
 type noteRequest struct {
+	ID       string          `json:"id"`
 	Title    string          `json:"title"`
 	Document json.RawMessage `json:"document"`
 }
@@ -63,6 +65,23 @@ func (s *Server) handleCreateNote(w http.ResponseWriter, r *http.Request) {
 		Document:  string(doc),
 		CreatedAt: now,
 		UpdatedAt: now,
+	}
+	if clientID := strings.TrimSpace(req.ID); clientID != "" {
+		if !id.Valid(clientID) {
+			writeError(w, http.StatusBadRequest, "invalid_id", "id invalido")
+			return
+		}
+		// Idempotente: reenvio offline da mesma nota.
+		existing, err := s.deps.Store.GetNote(r.Context(), clientID)
+		if err == nil {
+			writeJSON(w, http.StatusOK, noteJSON(existing))
+			return
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			return
+		}
+		n.ID = clientID
 	}
 	if err := s.deps.Store.CreateNote(r.Context(), n); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())

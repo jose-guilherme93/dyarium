@@ -5,13 +5,13 @@
  */
 
 import { DyariumApi, type FetchLike } from '@/core/api';
-import { isPermanentUploadError } from '@/core/errors';
-import { markCompleted, markDead, markFailed, pickNextToUpload } from '@/core/queue';
-import type { Recording } from '@/core/types';
+import { markCompleted, markFailed, pickNextToUpload } from '@/core/queue';
+import { isTextNote, type Recording } from '@/core/types';
 import { uploadRecording } from '@/core/uploader';
 
-import { listRecordings, upsertRecording } from './db';
+import { acquireLock, listRecordings, releaseLock, upsertRecording } from './db';
 import { CONTENT_TYPE, FILE_EXTENSION, uploadFileIO } from './files';
+import { syncNote } from './noteSync';
 import { loadServerConfig } from './secure';
 
 const doFetch = globalThis.fetch as unknown as FetchLike;
@@ -34,7 +34,12 @@ let running = false;
 export async function runUploadQueueOnce(): Promise<void> {
   if (running) return;
   running = true;
+  let lock: string | null = null;
   try {
+    // Trava no banco: evita que o worker em primeiro plano e o background task
+    // processem a fila ao mesmo tempo.
+    lock = await acquireLock('upload-queue').catch(() => null);
+    if (!lock) return;
     const config = await loadServerConfig();
     if (!config) return;
     const api = new DyariumApi(config, doFetch);
@@ -42,18 +47,37 @@ export async function runUploadQueueOnce(): Promise<void> {
       const recordings = await listRecordings();
       const next = pickNextToUpload(recordings, new Date());
       if (!next) break;
+      if (isTextNote(next)) {
+        await uploadTextOne(api, next);
+        continue;
+      }
       if (!next.filePath || !next.sizeBytes) {
-        // Sem arquivo local o reenvio nunca vai funcionar: falha permanente.
-        const dead = markDead(next, 'gravacao sem arquivo local', new Date());
-        await upsertRecording(dead);
-        emitRecording(dead);
+        // Sem arquivo local nao ha o que enviar: marca falha e segue para o
+        // proximo (nao trava a fila inteira).
+        const failed = markFailed(next, 'gravacao sem arquivo local', new Date());
+        await upsertRecording(failed);
+        emitRecording(failed);
         continue;
       }
       await uploadOne(api, next);
     }
   } finally {
+    if (lock) await releaseLock('upload-queue', lock).catch(() => undefined);
     running = false;
   }
+}
+
+/**
+ * Depois de enviar o conteudo (entrada criada), envia o corpo da nota como
+ * documento e guarda o noteId. Assim o corpo sobe junto, sem esperar um re-edit.
+ */
+async function pushNoteDocument(recording: Recording): Promise<Recording> {
+  const noteId = await syncNote(recording).catch(() => undefined);
+  if (!noteId || noteId === recording.noteId) return recording;
+  const updated: Recording = { ...recording, noteId, updatedAt: new Date().toISOString() };
+  await upsertRecording(updated);
+  emitRecording(updated);
+  return updated;
 }
 
 async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
@@ -69,12 +93,13 @@ async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
     const result = await uploadRecording(
       {
         clientKey: current.id,
-        filename: `${current.id}${FILE_EXTENSION}`,
-        contentType: CONTENT_TYPE,
+        filename: current.fileName ?? `${current.id}${FILE_EXTENSION}`,
+        contentType: current.contentType ?? CONTENT_TYPE,
         title: current.title,
         recordedAt: current.recordedAt,
         localPath: current.filePath as string,
         sizeBytes: current.sizeBytes as number,
+        text: current.text,
         durationSeconds: current.durationMs
           ? Math.max(1, Math.round(current.durationMs / 1000))
           : undefined,
@@ -101,16 +126,53 @@ async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
     current = {
       ...markCompleted(current, result.entryId, new Date()),
       transcriptStatus: 'pending',
-      originKey: result.originKey,
+      duplicate: result.duplicate ? true : undefined,
     };
     await upsertRecording(current);
     emitRecording(current);
+    current = await pushNoteDocument(current);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'falha no envio';
-    // Erro permanente (4xx) sai da fila; rede/5xx continuam no backoff.
-    current = isPermanentUploadError(error)
-      ? markDead(current, message, new Date())
-      : markFailed(current, message, new Date());
+    current = markFailed(current, message, new Date());
+    await upsertRecording(current);
+    emitRecording(current);
+  }
+}
+
+/**
+ * Envia uma nota somente texto. O texto e tratado pelo servidor como se fosse a
+ * transcricao, mas marcado como nota de texto. O endpoint ainda nao existe no
+ * servidor; ate la a nota fica na fila e reenta com backoff.
+ */
+async function uploadTextOne(api: DyariumApi, recording: Recording): Promise<void> {
+  let current: Recording = {
+    ...recording,
+    status: 'uploading',
+    updatedAt: new Date().toISOString(),
+  };
+  await upsertRecording(current);
+  emitRecording(current);
+
+  try {
+    const result = await api.createTextEntry({
+      id: current.id,
+      client_key: current.id,
+      title: current.title,
+      recorded_at: current.recordedAt,
+      created_at: current.createdAt,
+      text: current.text ?? '',
+    });
+    current = {
+      ...markCompleted(current, result.entry_id, new Date()),
+      transcriptStatus: 'ready',
+      duplicate: result.duplicate ? true : undefined,
+    };
+    await upsertRecording(current);
+    emitRecording(current);
+    current = await pushNoteDocument(current);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'falha no envio';
+    current = markFailed(current, message, new Date());
     await upsertRecording(current);
     emitRecording(current);
   }

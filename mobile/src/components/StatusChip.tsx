@@ -10,6 +10,7 @@ interface StatusMeta {
 }
 
 export const STATUS_META: Record<RecordingStatus, StatusMeta> = {
+  draft: { label: 'Rascunho', color: colors.textSecondary, soft: 'rgba(255,255,255,0.06)' },
   recording: { label: 'Gravando', color: colors.record, soft: colors.recordSoft },
   interrupted: { label: 'Interrompida', color: colors.warning, soft: colors.warningSoft },
   recorded: { label: 'Pronta', color: colors.info, soft: colors.infoSoft },

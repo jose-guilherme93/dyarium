@@ -3,7 +3,9 @@
  * com um transporte falso. Nao ha estado aqui: cada chamada e independente.
  */
 
-import type { ServerConfig } from './types';
+import type { ServerConfig, TranscriptSegment } from './types';
+
+export type { TranscriptSegment };
 
 export interface HttpResponse {
   ok: boolean;
@@ -40,6 +42,32 @@ export interface CreateUploadBody {
   sha256?: string;
   title?: string;
   recorded_at?: string;
+  /** Texto da nota associado ao audio (o servidor passa a usar depois). */
+  text?: string;
+}
+
+export interface CreateTextEntryBody {
+  /** Id temporal do app (ULID): o servidor usa-o para a nota manter a posicao. */
+  id?: string;
+  client_key: string;
+  title: string;
+  recorded_at?: string;
+  created_at?: string;
+  text: string;
+}
+
+export interface CreateTextEntryResponse {
+  entry_id: string;
+  status: string;
+  /** true quando o servidor encontrou um conteudo identico (dedupe). */
+  duplicate?: boolean;
+}
+
+export interface UpdateEntryBody {
+  title?: string;
+  recorded_at?: string;
+  /** Texto da nota (o servidor passa a usar depois). */
+  text?: string;
 }
 
 export interface CreateUploadResponse {
@@ -65,13 +93,8 @@ export interface GetUploadResponse {
 export interface CompleteUploadResponse {
   entry_id: string;
   status: string;
-  origin_key?: string;
-}
-
-export interface TranscriptSegment {
-  start_ms: number;
-  end_ms: number;
-  text: string;
+  /** true quando o servidor encontrou um audio identico (dedupe). */
+  duplicate?: boolean;
 }
 
 export interface TranscriptResponse {
@@ -89,13 +112,55 @@ export interface VersionResponse {
   built_at: string;
 }
 
-export interface EntrySummary {
+/** Entrada do servidor (resumo da lista). */
+export interface ServerEntry {
   id: string;
+  title: string;
   status: string;
-  title?: string;
-  origin_key?: string;
-  recorded_at?: string | null;
-  duration_seconds?: number;
+  source: string;
+  original_filename: string;
+  content_type: string;
+  size_bytes: number;
+  duration_seconds: number;
+  recorded_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ServerAnalysis {
+  model: string;
+  sentiment: number;
+  emotions: Record<string, number> | null;
+  people: string[] | null;
+  places: string[] | null;
+  summary: string;
+}
+
+export interface ServerTag {
+  id: string;
+  name: string;
+  color: string;
+  entry_count: number;
+}
+
+/** Nota (corpo rico) de uma entrada. `document` e o JSON de blocos do BlockNote. */
+export interface ServerNote {
+  id: string;
+  entry_id: string;
+  title: string;
+  document: unknown;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Anexo de uma entrada (imagem anexada a nota). */
+export interface ServerAttachment {
+  id: string;
+  entry_id: string;
+  kind: string;
+  content_type: string;
+  size_bytes: number;
+  created_at: string;
 }
 
 function normalizeBaseUrl(baseUrl: string): string {
@@ -165,6 +230,97 @@ export class DyariumApi {
     return JSON.parse(await res.text());
   }
 
+  /**
+   * Cria uma nota somente texto. O servidor ainda nao aceita este endpoint; a
+   * chamada fica pronta no app para quando ele existir. O texto e tratado como
+   * se fosse a transcricao da nota, mas marcado como nota de texto.
+   */
+  async createTextEntry(body: CreateTextEntryBody): Promise<CreateTextEntryResponse> {
+    const res = await this.fetchImpl(this.url('/api/v1/entries'), {
+      method: 'POST',
+      headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    return JSON.parse(await res.text());
+  }
+
+  /**
+   * Cria a entrada com o id temporal do app (offline-first) e a hora de criacao,
+   * para o servidor colocar a nota na posicao cronologica certa. O servidor e
+   * idempotente: reenviar o mesmo id devolve a entrada existente.
+   */
+  async createEntry(entry: { id: string; title: string; createdAt: string }): Promise<{ id: string }> {
+    const res = await this.fetchImpl(this.url('/api/v1/entries'), {
+      method: 'POST',
+      headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ id: entry.id, title: entry.title, created_at: entry.createdAt }),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    const body = JSON.parse(await res.text()) as { id?: string };
+    return { id: String(body.id ?? '') };
+  }
+
+  /**
+   * Atualiza titulo/data/texto de uma entrada. O servidor ja aceita titulo e
+   * data; o campo `text` sera usado quando a nota de texto for suportada.
+   */
+  async updateEntry(id: string, body: UpdateEntryBody): Promise<void> {
+    const res = await this.fetchImpl(this.url(`/api/v1/entries/${id}`), {
+      method: 'PATCH',
+      headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw await this.parseError(res);
+  }
+
+  /** Notas (corpo rico) de uma entrada. */
+  async listNotes(entryId: string): Promise<ServerNote[]> {
+    const res = await this.fetchImpl(this.url(`/api/v1/entries/${entryId}/notes`), {
+      method: 'GET',
+      headers: this.authHeaders(),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    const body = JSON.parse(await res.text()) as { notes?: ServerNote[] };
+    return body.notes ?? [];
+  }
+
+  /** Cria a nota de uma entrada a partir do documento de blocos. */
+  async createNote(entryId: string, title: string, document: unknown): Promise<ServerNote> {
+    const res = await this.fetchImpl(this.url(`/api/v1/entries/${entryId}/notes`), {
+      method: 'POST',
+      headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ title, document }),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    return JSON.parse(await res.text());
+  }
+
+  /** Atualiza titulo e documento de uma nota existente. */
+  async updateNote(noteId: string, title: string, document: unknown): Promise<void> {
+    const res = await this.fetchImpl(this.url(`/api/v1/notes/${noteId}`), {
+      method: 'PUT',
+      headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ title, document }),
+    });
+    if (!res.ok) throw await this.parseError(res);
+  }
+
+  /** Sobe uma imagem como anexo da entrada (bytes crus, Content-Type image/*). */
+  async uploadAttachment(
+    entryId: string,
+    bytes: Uint8Array,
+    contentType: string,
+  ): Promise<ServerAttachment> {
+    const res = await this.fetchImpl(this.url(`/api/v1/entries/${entryId}/attachments`), {
+      method: 'POST',
+      headers: this.authHeaders({ 'Content-Type': contentType }),
+      body: bytes,
+    });
+    if (!res.ok) throw await this.parseError(res);
+    return JSON.parse(await res.text());
+  }
+
   async putChunk(
     uploadId: string,
     offset: number,
@@ -210,32 +366,44 @@ export class DyariumApi {
     return JSON.parse(await res.text());
   }
 
-  /** Resumo da entrada. O `status` revela falha permanente da transcricao. */
-  async getEntry(entryId: string): Promise<EntrySummary> {
-    const res = await this.fetchImpl(this.url(`/api/v1/entries/${entryId}`), {
-      method: 'GET',
-      headers: this.authHeaders(),
-    });
-    if (!res.ok) throw await this.parseError(res);
-    return JSON.parse(await res.text());
-  }
-
-  /** Lista as notas do servidor, para reconciliar com as do aparelho. */
-  async listEntries(limit = 500): Promise<{ entries: EntrySummary[] }> {
+  /** Lista de entradas do servidor (resumo). `limit` alto para reconciliar. */
+  async listEntries(limit = 100): Promise<ServerEntry[]> {
     const res = await this.fetchImpl(this.url(`/api/v1/entries?limit=${limit}`), {
       method: 'GET',
       headers: this.authHeaders(),
     });
     if (!res.ok) throw await this.parseError(res);
-    return JSON.parse(await res.text());
+    const body = JSON.parse(await res.text()) as { entries?: ServerEntry[] };
+    return body.entries ?? [];
   }
 
-  /** Remove a entrada no servidor (para a exclusao convergir). */
-  async deleteEntry(entryId: string): Promise<void> {
-    const res = await this.fetchImpl(this.url(`/api/v1/entries/${entryId}`), {
+  /** Apaga a entrada no servidor (soft delete). */
+  async deleteEntry(id: string): Promise<void> {
+    const res = await this.fetchImpl(this.url(`/api/v1/entries/${id}`), {
       method: 'DELETE',
       headers: this.authHeaders(),
     });
     if (!res.ok) throw await this.parseError(res);
+  }
+
+  /** Analise de uma entrada. Lanca ApiError 404 quando ainda nao existe. */
+  async getAnalysis(entryId: string): Promise<ServerAnalysis> {
+    const res = await this.fetchImpl(this.url(`/api/v1/entries/${entryId}/analysis`), {
+      method: 'GET',
+      headers: this.authHeaders(),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    return JSON.parse(await res.text());
+  }
+
+  /** Tags do servidor, com contagem de entradas. */
+  async listTags(): Promise<ServerTag[]> {
+    const res = await this.fetchImpl(this.url('/api/v1/tags'), {
+      method: 'GET',
+      headers: this.authHeaders(),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    const body = JSON.parse(await res.text()) as { tags?: ServerTag[] };
+    return body.tags ?? [];
   }
 }

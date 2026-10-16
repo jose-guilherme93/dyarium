@@ -82,27 +82,18 @@ describe('DyariumApi', () => {
     expect((err as ApiError).offset).toBe(8);
   });
 
-  it('getEntry busca o resumo autenticado da entrada', async () => {
-    const { api, calls } = makeApi(() => resp(200, { id: 'en1', status: 'failed', title: 'x' }));
-    const out = await api.getEntry('en1');
-    expect(calls[0].url).toBe('http://host:8080/api/v1/entries/en1');
-    expect(calls[0].init?.headers?.Authorization).toBe('Bearer tok');
-    expect(out.status).toBe('failed');
-  });
-
-  it('listEntries pede a lista com limite e identidade', async () => {
-    const { api, calls } = makeApi(() =>
-      resp(200, { entries: [{ id: 'en1', status: 'ready', origin_key: 'sha256:abc' }] }),
-    );
-    const out = await api.listEntries(500);
-    expect(calls[0].url).toBe('http://host:8080/api/v1/entries?limit=500');
-    expect(out.entries[0].origin_key).toBe('sha256:abc');
-  });
-
-  it('deleteEntry usa DELETE autenticado', async () => {
-    const { api, calls } = makeApi(() => ({ ok: true, status: 204, text: async () => '' }));
-    await api.deleteEntry('en1');
-    expect(calls[0].url).toBe('http://host:8080/api/v1/entries/en1');
-    expect(calls[0].init?.method).toBe('DELETE');
+  it('createTextEntry envia POST /entries com o texto', async () => {
+    const { api, calls } = makeApi(() => resp(201, { entry_id: 'en1', status: 'queued' }));
+    const out = await api.createTextEntry({
+      client_key: 'note_1',
+      title: 'Minha nota',
+      recorded_at: '2026-10-10T21:00:00.000Z',
+      text: 'texto da nota',
+    });
+    expect(calls[0].url).toBe('http://host:8080/api/v1/entries');
+    expect(calls[0].init?.method).toBe('POST');
+    expect(calls[0].init?.headers?.['Content-Type']).toBe('application/json');
+    expect(JSON.parse(String(calls[0].init?.body)).text).toBe('texto da nota');
+    expect(out.entry_id).toBe('en1');
   });
 });
