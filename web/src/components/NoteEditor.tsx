@@ -2,12 +2,23 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Block, PartialBlock } from "@blocknote/core";
 import { api } from "../api";
 import { NotesEditor, mediaRefs, type MediaRef, type NotesEditorHandle } from "../editor/NotesEditor";
+import { createAutosave, type Autosave } from "../lib/autosave";
 import { formatDateTime, formatDuration } from "../lib/format";
 import type { Analysis, Attachment, Audio, EntityKind, Entry, Revision } from "../types";
 import { Spinner, isBusy, statusLabel } from "./Status";
 import { TagEditor } from "./TagEditor";
 import { useToast } from "./Toasts";
 import { CheckIcon, ChevronIcon, ImageIcon, LinkIcon, MicIcon, MoreIcon, PinIcon, PlusIcon, SparkIcon, TrashIcon } from "./icons";
+
+// serializeDocument detects whether the body actually changed, so a mount event
+// or an unchanged document never triggers a redundant save.
+function serializeDocument(document: unknown): string {
+  try {
+    return JSON.stringify(document ?? null);
+  } catch {
+    return "";
+  }
+}
 
 interface NoteEditorProps {
   entryId: string;
@@ -244,7 +255,14 @@ export function NoteEditor({
     }
   });
   const noteIdRef = useRef<string | null>(null);
-  const saveTimer = useRef<number | null>(null);
+  const noteTitleRef = useRef("");
+  const lastQueuedRef = useRef<string>(serializeDocument(undefined));
+  const saveBodyRef = useRef<(document: unknown) => Promise<void>>(async () => {});
+  const saveTitleRef = useRef<() => Promise<void>>(async () => {});
+  const autosaveRef = useRef<Autosave | null>(null);
+  if (!autosaveRef.current) {
+    autosaveRef.current = createAutosave((document) => saveBodyRef.current(document));
+  }
   const titleRef = useRef<HTMLTextAreaElement | null>(null);
   const notesRef = useRef<NotesEditorHandle | null>(null);
   const mountedRefresh = useRef(refreshKey);
@@ -281,15 +299,19 @@ export function NoteEditor({
     setImages(images);
     setMedia(mediaRefs(loaded, images));
     const note = notesRes.status === "fulfilled" ? notesRes.value.notes?.[0] : undefined;
+    const doc = note ? (note.document as PartialBlock[] | undefined) : undefined;
+    const filled = Array.isArray(doc) && doc.length > 0 ? doc : undefined;
     if (note) {
       noteIdRef.current = note.id;
       setNoteId(note.id);
-      setInitialBody((note.document as PartialBlock[]) ?? undefined);
+      noteTitleRef.current = note.title ?? "";
     } else {
       noteIdRef.current = null;
       setNoteId(null);
-      setInitialBody(undefined);
+      noteTitleRef.current = "";
     }
+    setInitialBody(filled);
+    lastQueuedRef.current = serializeDocument(filled);
     setBodyLoaded(true);
   }, [entryId]);
 
@@ -356,11 +378,13 @@ export function NoteEditor({
     async (document: unknown) => {
       setSaving("saving");
       try {
+        const noteTitle = noteTitleRef.current;
         if (noteIdRef.current) {
-          await api.updateNote(noteIdRef.current, "", document);
+          await api.updateNote(noteIdRef.current, noteTitle, document);
         } else {
-          const created = await api.createNote(entryId, "", document);
+          const created = await api.createNote(entryId, noteTitle, document);
           noteIdRef.current = created.id;
+          setNoteId(created.id);
         }
         setSaving("saved");
         window.setTimeout(() => setSaving((value) => (value === "saved" ? "idle" : value)), 1500);
@@ -373,28 +397,58 @@ export function NoteEditor({
     [entryId, notify],
   );
 
-  const handleBodyChange = useCallback(
-    (blocks: Block[]) => {
-      if (saveTimer.current) {
-        window.clearTimeout(saveTimer.current);
-      }
-      saveTimer.current = window.setTimeout(() => void saveBody(blocks), 800);
-    },
-    [saveBody],
-  );
+  useEffect(() => {
+    saveBodyRef.current = saveBody;
+  }, [saveBody]);
 
-  const saveTitle = async () => {
+  const handleBodyChange = useCallback((blocks: Block[]) => {
+    const serialized = serializeDocument(blocks);
+    // Ignora o evento de montagem e edicoes que nao mudaram nada.
+    if (serialized === lastQueuedRef.current) {
+      return;
+    }
+    lastQueuedRef.current = serialized;
+    autosaveRef.current?.schedule(blocks);
+  }, []);
+
+  const saveTitle = useCallback(async () => {
     if (!entry || title === entry.title) {
       return;
     }
     try {
       await api.patchEntry(entry.id, { title });
+      setEntry((current) => (current ? { ...current, title } : current));
       onChanged();
     } catch (err) {
       setError(err instanceof Error ? err.message : "falha ao salvar o titulo");
       notify("Nao foi possivel salvar o titulo", "error");
     }
-  };
+  }, [entry, title, onChanged, notify]);
+
+  useEffect(() => {
+    saveTitleRef.current = saveTitle;
+  }, [saveTitle]);
+
+  // Nao perde a ultima digitacao (corpo e titulo) ao sair da nota, esconder a
+  // aba ou fechar a pagina.
+  useEffect(() => {
+    const flushAll = () => {
+      void autosaveRef.current?.flush();
+      void saveTitleRef.current();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        flushAll();
+      }
+    };
+    window.addEventListener("pagehide", flushAll);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("pagehide", flushAll);
+      document.removeEventListener("visibilitychange", onVisibility);
+      flushAll();
+    };
+  }, []);
 
   const retranscribe = async () => {
     setBusy("retranscribe");
