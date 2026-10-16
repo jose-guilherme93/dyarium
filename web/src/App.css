@@ -523,6 +523,32 @@
   margin: 0;
 }
 
+.audio-transcript {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space);
+}
+
+/* Preview compacto: cerca de quatro linhas, para o audio nao esticar a nota. */
+.transcript--clamped p {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin: 0;
+}
+
+.transcript-toggle {
+  font-size: 13px;
+  color: var(--color-accent);
+  padding: 0;
+}
+
+.transcript-toggle:hover {
+  text-decoration: underline;
+}
+
 .skeleton {
   border-radius: var(--radius-sm);
   background: linear-gradient(90deg, var(--color-surface), var(--color-surface-2), var(--color-surface));

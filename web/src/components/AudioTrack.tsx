@@ -12,16 +12,22 @@ interface AudioTrackProps {
   playerRef?: RefObject<AudioPlayerHandle | null>;
 }
 
-// AudioTrack renders one audio of a note with its own player and transcript.
+// AudioTrack renders one audio of a note with its own player and a compact
+// transcript preview (about four lines) that can be expanded on demand, so a
+// long transcription does not stretch the note.
 export function AudioTrack({ audio, playerRef }: AudioTrackProps) {
   const localRef = useRef<AudioPlayerHandle | null>(null);
   const ref = playerRef ?? localRef;
   const [currentTime, setCurrentTime] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [showFull, setShowFull] = useState(false);
   const lineRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
   const transcript = audio.transcript ?? null;
   const hasTranscript = !!transcript && (transcript.text.trim() !== "" || transcript.segments.length > 0);
+  const previewText = transcript
+    ? transcript.text.trim() || transcript.segments.map((segment) => segment.text).join(" ")
+    : "";
 
   let activeSegment = -1;
   if (currentTime > 0 && transcript && transcript.segments.length > 0) {
@@ -36,38 +42,51 @@ export function AudioTrack({ audio, playerRef }: AudioTrackProps) {
 
   // Keep the active transcription line visible while the audio plays.
   useEffect(() => {
-    if (!playing || !transcript || transcript.segments.length === 0 || activeSegment < 0) {
+    if (!showFull || !playing || !transcript || transcript.segments.length === 0 || activeSegment < 0) {
       return;
     }
     lineRefs.current[activeSegment]?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  }, [playing, activeSegment, transcript]);
+  }, [showFull, playing, activeSegment, transcript]);
 
   return (
     <div className="audio-block">
       <AudioPlayer ref={ref} src={attachmentUrl(audio.id)} onTime={setCurrentTime} onPlaying={setPlaying} />
       {hasTranscript && transcript && (
-        <blockquote className="transcript">
-          {transcript.segments.length > 0 ? (
-            transcript.segments.map((segment, index) => (
-              <p key={index}>
-                <button
-                  ref={(el) => {
-                    lineRefs.current[index] = el;
-                  }}
-                  type="button"
-                  className={index === activeSegment ? "transcript-line transcript-line--active" : "transcript-line"}
-                  onClick={() => ref.current?.seek(segment.start_ms / 1000)}
-                  title="Ouvir a partir daqui"
-                >
-                  <span className="timestamp">{formatDuration(segment.start_ms / 1000)}</span>
-                  {segment.text}
-                </button>
-              </p>
-            ))
+        <div className="audio-transcript">
+          {showFull || transcript.segments.length === 0 ? (
+            <blockquote className="transcript">
+              {transcript.segments.length > 0 ? (
+                transcript.segments.map((segment, index) => (
+                  <p key={index}>
+                    <button
+                      ref={(el) => {
+                        lineRefs.current[index] = el;
+                      }}
+                      type="button"
+                      className={index === activeSegment ? "transcript-line transcript-line--active" : "transcript-line"}
+                      onClick={() => ref.current?.seek(segment.start_ms / 1000)}
+                      title="Ouvir a partir daqui"
+                    >
+                      <span className="timestamp">{formatDuration(segment.start_ms / 1000)}</span>
+                      {segment.text}
+                    </button>
+                  </p>
+                ))
+              ) : (
+                <p>{transcript.text}</p>
+              )}
+            </blockquote>
           ) : (
-            <p>{transcript.text}</p>
+            <blockquote className="transcript transcript--clamped">
+              <p>{previewText}</p>
+            </blockquote>
           )}
-        </blockquote>
+          {transcript.segments.length > 0 && (
+            <button type="button" className="transcript-toggle" onClick={() => setShowFull((value) => !value)}>
+              {showFull ? "Ocultar transcricao" : "Mostrar transcricao"}
+            </button>
+          )}
+        </div>
       )}
     </div>
   );
