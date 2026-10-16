@@ -108,8 +108,14 @@ func transcribeHandler(st *store.Store, cfg config.Config, pipeline *transcribe.
 			},
 		}
 		if err := pipeline.Run(ctx, payload.EntryID, payload.AttachmentID, cb); err != nil {
-			_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryFailed)
-			bus.Publish("entry.failed", map[string]string{"entry_id": payload.EntryID, "reason": err.Error()})
+			// A fila ainda retenta ate max_attempts. So marca a entrada como
+			// definitivamente falha na ultima tentativa; antes disso o app veria
+			// "falhou" enquanto o worker ainda ia tentar de novo. Um cancelamento
+			// tem caminho proprio e nao deve virar falha.
+			if ctx.Err() == nil && job.Attempts+1 >= job.MaxAttempts {
+				_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryFailed)
+				bus.Publish("entry.failed", map[string]string{"entry_id": payload.EntryID, "reason": err.Error()})
+			}
 			return err
 		}
 		bus.Publish("transcript.ready", map[string]string{"entry_id": payload.EntryID})
