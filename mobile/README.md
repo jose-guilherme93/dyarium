@@ -6,8 +6,13 @@ texto, guarda local, enfileira e envia para o servidor self-hosted.
 
 ## O que ele faz
 
-- Tela inicial com as notas em **lista separada por ano** (mais novo no topo),
-  botao **+** para criar uma nota e **Opcoes** (engrenagem). Notas de texto nao
+- Tela inicial com as notas em **lista separada por ano** (mais novo no topo) e
+  um **botao flutuante unico** no canto inferior direito. Ao toque, ele abre para
+  cima as opcoes **Texto**, **Audio**, **Imagem** e **Link** (Texto e a mais perto
+  do dedo): cada uma ja cria a nota e abre direto no modo certo (corpo pronto para
+  escrever, gravacao, seletor de imagem ou campo de link). O campo de link ja vem
+  preenchido com o link do clipboard, quando houver. Tambem ha as **Opcoes**
+  (engrenagem) no topo. Notas de texto nao
   mostram player; as de audio mostram. Nota sincronizada aparece com um **icone de
   nuvem**. Cada card tem um menu de **tres pontinhos** (arquivar/apagar) e da para
   **arrastar para o lado** para apagar ou arquivar (configuravel nas Opcoes).
@@ -15,14 +20,21 @@ texto, guarda local, enfileira e envia para o servidor self-hosted.
   **autosave** (sem botao de salvar) e **editor rico** (negrito, italico, lista
   renderizados de verdade via WebView). A nota nasce limpa: a barra com negrito,
   italico, lista, foto e audio so aparece enquanto o teclado esta aberto; o
-  titulo encolhe a fonte quando fica longo. No topo, o botao de microfone
+  titulo quebra linha (ate duas linhas) e encolhe um pouco a fonte quando fica
+  longo, sem sumir. No topo, o botao de microfone
   (discreto) e os **tres pontinhos** abrem as configuracoes da nota:
   **compartilhar** e a ficha de propriedades (criada em, origem, palavras,
   caracteres, tamanho e status), como no dashboard. Enter no titulo desce para o
   corpo. Nota so de texto e enviada como conteudo textual; com audio, o audio sobe
-  e o texto vai junto. Ao sair, a nota e enviada (rascunho com conteudo) ou entra
+  e o texto vai junto. Com audio transcrito, a tela mostra o **player** e uma
+  **previa da transcricao sincronizada** (5 linhas, sem cortar palavra): a fala
+  atual fica no meio e o texto sobe suavemente conforme o audio avanca; tocar abre
+  a transcricao completa, que **ja continua no mesmo ponto do audio**.
+  Ao sair, a nota e enviada (rascunho com conteudo) ou entra
   na fila de sync (edicao de nota ja enviada), sem depender de rede na hora.
-- **Imagens**: ao escolher uma foto, ela e reduzida (maior lado ate 2048 px) e
+- **Imagens**: a foto entra na nota em largura total; **um toque** abre ela em tela
+  cheia e o **toque longo** abre o menu da imagem (largura total, metade da largura
+  ou miniatura, e apagar). A foto e reduzida (maior lado ate 2048 px) e
   recomprimida em JPEG de alta qualidade antes de entrar na nota. Fica salva no
   aparelho e e exibida pelo proprio arquivo (`file://`) no editor, nunca por
   base64; sobe no sync e continua abrindo do aparelho depois, sem baixar de novo.
@@ -31,7 +43,9 @@ texto, guarda local, enfileira e envia para o servidor self-hosted.
   O editor rico exige o `react-native-webview` (novo development build); ate o
   rebuild, cai para um editor simples com marcadores.
 - Grava em **AAC ADTS** (48 kHz mono ~128 kbps), em **segmentos de 60 s**, com
-  foreground service do `expo-audio` (continua gravando com a tela bloqueada).
+  foreground service do `expo-audio` (continua gravando com a tela bloqueada). A tela de
+  gravacao tem **pausar/retomar** e uma waveform **ao vivo a 60 fps** (desenhada na thread
+  de UI, sem travar o JS).
 - Concatena os segmentos e enfileira automaticamente ao parar.
 - Envia por upload resumivel e **idempotente** (`client_key` por gravacao).
 - **Importa audios compartilhados** por outros apps (share sheet do Android): ate 50 por
@@ -39,6 +53,15 @@ texto, guarda local, enfileira e envia para o servidor self-hosted.
   em 24h ou AM/PM, formato, duracao e playback) antes de enviar. O ano do lote cobre nomes
   sem ano; a ordem pode ser invertida. O audio original e preservado; reimportar o mesmo
   conteudo nao duplica a entrada (dedupe por SHA-256 no servidor).
+- **Transcricao no aparelho** (nas Opcoes): lista de modelos do whisper.cpp (Tiny, Base, Small,
+  Medium, Large v3 Turbo) do mais leve ao mais preciso, com o **recomendado para a RAM do
+  aparelho** e download sob demanda (nunca entram no build). Com um modelo baixado e o toggle
+  ligado, a nota de audio e transcrita **offline**, com o texto aparecendo por trecho
+  ("Transcrevendo..." com a **porcentagem** e loading). Quem transcreve primeiro informa o
+  outro: ao subir o audio o app avisa o servidor (`local_transcribe`) e, ao terminar,
+  **empurra o texto** (`PUT /entries/{id}/transcript`), entao o servidor nao transcreve de
+  novo e o dashboard mostra o texto. Precisa de development build (`whisper.rn` + um modulo
+  nativo local que decodifica o AAC para WAV 16 kHz).
 - **Status de sincronizacao** no cabecalho (nuvem discreta): abre a tela de Sincronizacao com
   o que esta na fila/falhou e "Enviar agora". O envio continua em segundo plano
   (WorkManager) quando o app fica em segundo plano.
