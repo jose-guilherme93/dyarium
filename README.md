@@ -66,6 +66,17 @@ make lint        # go vet, gofmt e eslint
 make bench-transcricao   # benchmark de transcricao (pico de RSS)
 ```
 
+## Manutencao
+
+Notas que sao duplicatas do mesmo audio (de versoes anteriores) podem ser
+mescladas por um comando. Ele mantem a nota mais completa (transcricao, nota,
+analise) e move os dados das outras para ela:
+
+```
+make dedupe DRY=1   # simulacao: mostra o que seria feito
+make dedupe         # aplica
+```
+
 ## Variaveis de ambiente
 
 | Variavel | Padrao | Descricao |
@@ -127,7 +138,7 @@ transcricao, analise, notas, tags, configuracoes e um fluxo de eventos SSE em
 ## Estrutura
 
 ```
-cmd/diary            entrypoint (serve, version)
+cmd/diary            entrypoint (serve, dedupe, version)
 internal/api         HTTP, auth Bearer, dashboard embutido
 internal/ingest      upload resumivel e integridade
 internal/jobs        fila de jobs (leases, backoff, idempotencia)

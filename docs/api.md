@@ -83,6 +83,10 @@ Resposta 201:
 { "entry_id": "en_...", "attachment_id": "at_...", "status": "queued" }
 ```
 - `attachment_id` identifica o audio criado (o anexo `original` da entrada).
+- Idempotente: repetir o complete depois de perder a resposta devolve o mesmo
+  `entry_id`/`attachment_id` (201), sem criar outro audio nem reenfileirar a transcricao.
+- O mesmo conteudo de audio nunca vira dois audios da mesma nota: se o `sha256` ja existe
+  (novo upload da mesma gravacao), devolve o audio existente em vez de duplicar.
 - 422: integridade divergente (SHA-256), formato nao aceito ou duracao acima do limite.
 - 404: upload inexistente ou expirado.
 

@@ -47,6 +47,11 @@ func main() {
 			fmt.Fprintln(os.Stderr, "erro:", err)
 			os.Exit(1)
 		}
+	case "dedupe":
+		if err := dedupe(len(os.Args) > 2 && os.Args[2] == "--dry-run"); err != nil {
+			fmt.Fprintln(os.Stderr, "erro:", err)
+			os.Exit(1)
+		}
 	case "version":
 		fmt.Printf("dyarium %s (commit %s, built %s)\n", version, commit, date)
 	case "help", "-h", "--help":
@@ -63,6 +68,7 @@ func usage() {
 
 subcomandos:
   serve     inicia a API HTTP, os workers e o dashboard
+  dedupe    mescla as notas duplicadas do mesmo audio (--dry-run)
   version   imprime a versao e sai
 `)
 }

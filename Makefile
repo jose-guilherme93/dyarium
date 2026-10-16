@@ -25,7 +25,7 @@ COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
 
-.PHONY: help dev dev-opencode down build test test-go test-web lint lint-go lint-web fmt bench-transcricao models tailscale tailscale-off clean mobile-dev mobile-test mobile-lint
+.PHONY: help dev dev-opencode down build test test-go test-web lint lint-go lint-web fmt dedupe bench-transcricao models tailscale tailscale-off clean mobile-dev mobile-test mobile-lint
 
 help: ## Lista os alvos disponiveis
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -64,6 +64,9 @@ lint-web:
 
 fmt: ## Formata o codigo Go
 	gofmt -w .
+
+dedupe: ## Mescla as notas duplicadas do mesmo audio (DRY=1 simula)
+	$(GO) run ./cmd/diary dedupe $(if $(DRY),--dry-run,)
 
 mobile-dev: ## Sobe o app Expo apontando para a tailnet (abre no celular)
 	bash scripts/mobile-dev.sh
