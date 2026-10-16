@@ -12,6 +12,25 @@ export interface WordCount {
   value: number;
 }
 
+export interface MonthlyPoint {
+  /** Rotulo curto do mes (ex.: "out 26"). */
+  label: string;
+  words: number;
+  notes: number;
+}
+
+export interface SentimentMetrics {
+  /** Notas com texto analisadas. */
+  analyzed: number;
+  /** -1..1 (media dos textos; 0 = sem sinal). */
+  average: number;
+  positive: number;
+  neutral: number;
+  negative: number;
+  topPositive: { title: string; score: number } | null;
+  topNegative: { title: string; score: number } | null;
+}
+
 export interface WritingMetrics {
   /** Notas no total (locais). */
   notes: number;
@@ -62,6 +81,20 @@ export interface WritingMetrics {
   /** Destaques. */
   longestNote: { title: string; words: number } | null;
 
+  /** Escreveu hoje (para avisar que a sequencia esta em risco). */
+  wroteToday: boolean;
+
+  /** Palavras por mes (mais antigo primeiro). */
+  monthly: MonthlyPoint[];
+  /** Variacao do mes atual vs o anterior (%, quando da pra comparar). */
+  monthComparisonPct: number | null;
+
+  /** Humor dos textos (lexico local). */
+  sentiment: SentimentMetrics;
+
+  /** Grade 7 (domingo..sabado) x 8 faixas de 3h: quantas notas por faixa. */
+  weekdayHour: number[][];
+
   /** Frases prontas, derivadas dos numeros. */
   insights: string[];
 }
@@ -84,6 +117,97 @@ const STOPWORDS = new Set([
 ]);
 
 const WEEKDAYS = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+const MONTHS = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+/** Faixas de 3 horas (8 por dia) para a grade dia x hora. */
+const HOUR_STEP = 3;
+
+/** Lexico simples de sentimento (pt-BR). Heuristica: nao entende negacao. */
+const POSITIVE_WORDS = new Set([
+  'bom', 'boa', 'otimo', 'otima', 'excelente', 'feliz', 'felicidade', 'alegre', 'alegria',
+  'amor', 'amei', 'amo', 'adoro', 'adorei', 'gosto', 'gostei', 'legal', 'incrivel',
+  'maravilhoso', 'maravilhosa', 'perfeito', 'perfeita', 'sucesso', 'conquista', 'conquistei',
+  'vitoria', 'orgulho', 'orgulhoso', 'grato', 'grata', 'gratidao', 'obrigado', 'obrigada',
+  'esperanca', 'animado', 'animada', 'empolgado', 'contente', 'satisfeito', 'tranquilo',
+  'calmo', 'paz', 'saude', 'melhor', 'melhorei', 'evolui', 'evoluir', 'aprendi', 'aprendizado',
+  'progresso', 'felizmente', 'recomendo', 'util', 'facil', 'divertido', 'engracado', 'bonito',
+  'bonita', 'lindo', 'linda', 'forte', 'coragem', 'venci', 'consegui', 'parabens', 'top',
+  'adoravel', 'confiante', 'motivado', 'agradecido', 'valeu', 'show', 'otimas', 'bons',
+]);
+
+const NEGATIVE_WORDS = new Set([
+  'ruim', 'pessimo', 'pessima', 'horrivel', 'triste', 'tristeza', 'raiva', 'bravo', 'brava',
+  'irritado', 'ansioso', 'ansiosa', 'ansiedade', 'medo', 'preocupado', 'preocupada',
+  'preocupacao', 'problema', 'problemas', 'dificil', 'falhei', 'falha', 'fracasso', 'errado',
+  'errada', 'erro', 'erros', 'perdi', 'perda', 'dor', 'doente', 'doenca', 'cansado', 'cansada',
+  'exausto', 'estresse', 'estressado', 'chateado', 'chateada', 'decepcao', 'decepcionado',
+  'sozinho', 'sozinha', 'solidao', 'odio', 'detesto', 'detestei', 'pior', 'piorou', 'arrependido',
+  'culpa', 'inseguro', 'inseguranca', 'nervoso', 'nervosa', 'frustrado', 'frustracao', 'chorar',
+  'chorei', 'sofri', 'sofrimento', 'morrer', 'morte', 'perdido', 'perdida', 'confuso', 'confusa',
+  'demais', 'infeliz', 'pena', 'odeio', 'terrivel',
+]);
+
+/** Media 7 x 8 (faixas de 3h) de contagem de notas. */
+function emptyGrid(): number[][] {
+  return Array.from({ length: 7 }, () => Array.from({ length: 24 / HOUR_STEP }, () => 0));
+}
+
+/** Grade dia-da-semana x faixa de 3h (quantas notas por celula). */
+export function weekdayHourGrid(recordings: Recording[]): number[][] {
+  const grid = emptyGrid();
+  for (const recording of recordings) {
+    const date = new Date(recording.recordedAt);
+    if (Number.isNaN(date.getTime())) continue;
+    const bucket = Math.min(grid[0].length - 1, Math.floor(date.getHours() / HOUR_STEP));
+    grid[date.getDay()][bucket] += 1;
+  }
+  return grid;
+}
+
+/** Palavras por mes (mais antigo primeiro), contando o corpo das notas. */
+export function monthlySeries(
+  recordings: Recording[],
+  now: Date = new Date(),
+  months = 6,
+): MonthlyPoint[] {
+  const totals = new Map<string, { words: number; notes: number; date: Date }>();
+  for (const recording of recordings) {
+    const date = new Date(recording.recordedAt);
+    if (Number.isNaN(date.getTime())) continue;
+    const key = `${date.getFullYear()}-${date.getMonth()}`;
+    const entry = totals.get(key) ?? {
+      words: 0,
+      notes: 0,
+      date: new Date(date.getFullYear(), date.getMonth(), 1),
+    };
+    entry.notes += 1;
+    entry.words += wordsOf(plainText(recording.text ?? '')).length;
+    totals.set(key, entry);
+  }
+
+  const out: MonthlyPoint[] = [];
+  const total = Math.max(1, months);
+  for (let i = total - 1; i >= 0; i -= 1) {
+    const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const entry = totals.get(`${date.getFullYear()}-${date.getMonth()}`);
+    out.push({
+      label: `${MONTHS[date.getMonth()]} ${String(date.getFullYear()).slice(2)}`,
+      words: entry?.words ?? 0,
+      notes: entry?.notes ?? 0,
+    });
+  }
+  return out;
+}
+
+function sentimentScore(words: string[]): number {
+  let positive = 0;
+  let negative = 0;
+  for (const word of words) {
+    if (POSITIVE_WORDS.has(word)) positive += 1;
+    else if (NEGATIVE_WORDS.has(word)) negative += 1;
+  }
+  const total = positive + negative;
+  return total === 0 ? 0 : (positive - negative) / total;
+}
 const HOUR_BUCKETS: { label: string; from: number; to: number }[] = [
   { label: 'madrugada', from: 0, to: 5 },
   { label: 'manhã', from: 6, to: 11 },
@@ -151,6 +275,17 @@ export function analyzeWriting(recordings: Recording[], now: Date = new Date()):
   let longestNote: { title: string; words: number } | null = null;
   let firstAt: string | null = null;
   let lastAt: string | null = null;
+  let wroteToday = false;
+
+  let sentimentSum = 0;
+  let sentimentCount = 0;
+  let positive = 0;
+  let neutral = 0;
+  let negative = 0;
+  let topPositive: { title: string; score: number } | null = null;
+  let topNegative: { title: string; score: number } | null = null;
+
+  const todayKey = dayKey(now);
 
   for (const recording of recordings) {
     if (recording.filePath) withAudio += 1;
@@ -159,6 +294,7 @@ export function analyzeWriting(recordings: Recording[], now: Date = new Date()):
     if (!Number.isNaN(date.getTime())) {
       const key = dayKey(date);
       dayCounts.set(key, (dayCounts.get(key) ?? 0) + 1);
+      if (key === todayKey) wroteToday = true;
       if (!firstAt || recording.recordedAt < firstAt) firstAt = recording.recordedAt;
       if (!lastAt || recording.recordedAt > lastAt) lastAt = recording.recordedAt;
     }
@@ -184,8 +320,24 @@ export function analyzeWriting(recordings: Recording[], now: Date = new Date()):
         images: marks.images + noteMarks.images,
         listItems: marks.listItems + noteMarks.listItems,
       };
+      const title = displayTitle(recording);
       if (!longestNote || list.length > longestNote.words) {
-        longestNote = { title: displayTitle(recording), words: list.length };
+        longestNote = { title, words: list.length };
+      }
+      // Humor (lexico local): so conta nota com texto.
+      if (list.length > 0) {
+        const score = sentimentScore(list);
+        sentimentCount += 1;
+        sentimentSum += score;
+        if (score > 0.15) positive += 1;
+        else if (score < -0.15) negative += 1;
+        else neutral += 1;
+        if (score > 0 && (!topPositive || score > topPositive.score)) {
+          topPositive = { title, score };
+        }
+        if (score < 0 && (!topNegative || score < topNegative.score)) {
+          topNegative = { title, score };
+        }
       }
     }
 
@@ -261,6 +413,14 @@ export function analyzeWriting(recordings: Recording[], now: Date = new Date()):
     0,
   );
 
+  const monthly = monthlySeries(recordings, now, 6);
+  const previousMonth = monthly[monthly.length - 2];
+  const currentMonth = monthly[monthly.length - 1];
+  const monthComparisonPct =
+    previousMonth && previousMonth.words > 0 && currentMonth
+      ? Math.round(((currentMonth.words - previousMonth.words) / previousMonth.words) * 100)
+      : null;
+
   const metrics: WritingMetrics = {
     notes: recordings.length,
     withText,
@@ -293,6 +453,19 @@ export function analyzeWriting(recordings: Recording[], now: Date = new Date()):
     firstAt,
     lastAt,
     longestNote,
+    wroteToday,
+    monthly,
+    monthComparisonPct,
+    sentiment: {
+      analyzed: sentimentCount,
+      average: sentimentCount > 0 ? sentimentSum / sentimentCount : 0,
+      positive,
+      neutral,
+      negative,
+      topPositive,
+      topNegative,
+    },
+    weekdayHour: weekdayHourGrid(recordings),
     insights: [],
   };
 
@@ -344,6 +517,24 @@ function buildInsights(metrics: WritingMetrics): string[] {
   if (metrics.transcriptWords > 0) {
     out.push(
       `Suas gravações transcritas somam ${metrics.transcriptWords.toLocaleString('pt-BR')} palavras faladas (${metrics.averageTranscriptWords} por gravação).`,
+    );
+  }
+  if (metrics.monthComparisonPct !== null) {
+    const pct = metrics.monthComparisonPct;
+    if (pct > 5) out.push(`Você escreveu ${pct}% mais que no mês passado.`);
+    else if (pct < -5) out.push(`Você escreveu ${Math.abs(pct)}% menos que no mês passado.`);
+    else out.push('Seu ritmo está parecido com o do mês passado.');
+  }
+  if (metrics.sentiment.analyzed > 0) {
+    const { average, positive, negative, analyzed } = metrics.sentiment;
+    const tone = average > 0.15 ? 'positivo' : average < -0.15 ? 'negativo' : 'neutro';
+    out.push(
+      `O tom dos seus textos tende a ${tone} (${Math.round((positive / analyzed) * 100)}% positivos, ${Math.round((negative / analyzed) * 100)}% negativos).`,
+    );
+  }
+  if (metrics.currentStreak > 0 && !metrics.wroteToday) {
+    out.push(
+      `Sua sequência de ${metrics.currentStreak} dia${metrics.currentStreak === 1 ? '' : 's'} está em risco: ainda não escreveu hoje.`,
     );
   }
   return out;

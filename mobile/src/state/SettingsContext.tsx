@@ -63,6 +63,9 @@ interface SettingsValue {
   /** Pasta escolhida para o backup local (uri). */
   backupFolder?: string;
   setBackupFolder(uri: string): Promise<void>;
+  /** Meta de palavras por semana (Painel). */
+  weeklyWordGoal: number;
+  setWeeklyWordGoal(value: number): Promise<void>;
   /** Testa alcance (healthz) e token (version) sem salvar. */
   test(baseUrl: string, token: string): Promise<ConnectionResult>;
   /** Testa e, se ok, persiste no SecureStore. */
@@ -92,6 +95,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [transcriptionLanguage, setTranscriptionLanguageState] =
     useState<TranscriptionLanguage>('pt');
   const [backupFolder, setBackupFolderState] = useState<string | undefined>(undefined);
+  const [weeklyWordGoal, setWeeklyWordGoalState] = useState(1000);
   // Espelho das preferencias atuais, para gravar sempre o conjunto completo.
   const prefsRef = useRef<Prefs>({ swipeAction: 'delete', typography: DEFAULT_TYPOGRAPHY });
 
@@ -117,6 +121,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         setTranscriptionModelState(prefs.transcriptionModel ?? DEFAULT_TRANSCRIPTION_MODEL);
         setTranscriptionLanguageState(prefs.transcriptionLanguage === 'auto' ? 'auto' : 'pt');
         setBackupFolderState(prefs.backupFolder);
+        setWeeklyWordGoalState(prefs.weeklyWordGoal ?? 1000);
       })
       .catch(() => undefined);
     return () => {
@@ -186,6 +191,15 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     [persistPrefs],
   );
 
+  const setWeeklyWordGoal = useCallback(
+    async (value: number) => {
+      const next = Math.max(0, Math.round(value));
+      setWeeklyWordGoalState(next);
+      await persistPrefs({ weeklyWordGoal: next });
+    },
+    [persistPrefs],
+  );
+
   const test = useCallback(async (baseUrl: string, token: string): Promise<ConnectionResult> => {
     const url = normalizeUrl(baseUrl);
     if (!url || !token.trim()) {
@@ -241,6 +255,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setTranscriptionLanguage,
       backupFolder,
       setBackupFolder,
+      weeklyWordGoal,
+      setWeeklyWordGoal,
       test,
       save,
       disconnect,
@@ -262,6 +278,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setTranscriptionLanguage,
       backupFolder,
       setBackupFolder,
+      weeklyWordGoal,
+      setWeeklyWordGoal,
       test,
       save,
       disconnect,

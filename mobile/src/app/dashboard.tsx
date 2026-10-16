@@ -7,7 +7,7 @@ import { Button } from '@/components/Button';
 import { Screen } from '@/components/Screen';
 import { summarize, type RankedItem } from '@/core/dashboard';
 import { formatBytes, formatDateTime, formatDuration } from '@/core/format';
-import { analyzeWriting, writingHistory, type DayCell, type WritingHistory, type WritingMetrics } from '@/core/writing';
+import { analyzeWriting, writingHistory, type DayCell, type MonthlyPoint, type SentimentMetrics, type WritingHistory, type WritingMetrics } from '@/core/writing';
 import { loadDashboard, type DashboardData } from '@/services/dashboard';
 import { useLibrary } from '@/state/LibraryContext';
 import { useSettings } from '@/state/SettingsContext';
@@ -49,6 +49,11 @@ function RankedList({ title, items }: { title: string; items: RankedItem[] }) {
 /** Cores do mapa de calor (0 = sem escrita, 4 = muito). */
 const HEAT = ['#2C2C2E', 'rgba(10,132,255,0.28)', 'rgba(10,132,255,0.5)', 'rgba(10,132,255,0.75)', '#0A84FF'];
 
+/** Grafico de linha com react-native-svg. Desligado ate o build com o modulo. */
+const SVG_ENABLED = false;
+const HOUR_LABELS = ['0h', '3h', '6h', '9h', '12h', '15h', '18h', '21h'];
+const WEEKDAY_INITIALS = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
+
 function heatColor(cell: DayCell, max: number): string {
   if (cell.key === null) return 'transparent';
   if (cell.words === 0) return HEAT[cell.notes > 0 ? 1 : 0];
@@ -56,7 +61,20 @@ function heatColor(cell: DayCell, max: number): string {
   return HEAT[level];
 }
 
-function BarChart({ title, points }: { title: string; points: { label: string; value: number }[] }) {
+function levelColor(value: number, max: number): string {
+  if (value <= 0) return HEAT[0];
+  return HEAT[Math.min(4, Math.max(1, Math.ceil((value / Math.max(1, max)) * 4)))];
+}
+
+function BarChart({
+  title,
+  points,
+  labelEvery = 3,
+}: {
+  title: string;
+  points: { label: string; value: number }[];
+  labelEvery?: number;
+}) {
   const max = Math.max(1, ...points.map((point) => point.value));
   return (
     <View style={styles.chartCard}>
@@ -76,11 +94,53 @@ function BarChart({ title, points }: { title: string; points: { label: string; v
       <View style={styles.barLabels}>
         {points.map((point, index) => (
           <Text key={index} style={styles.barLabel}>
+            {index % labelEvery === 0 ? point.label : ''}
+          </Text>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+/**
+ * Grafico de linha (SVG). O `require` fica tardio de proposito: enquanto
+ * `SVG_ENABLED` for false, o modulo nativo nem e carregado (o dev build atual
+ * nao tem react-native-svg). Vira true depois do build.
+ */
+function LineChart({ title, points }: { title: string; points: { label: string; value: number }[] }) {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { default: Svg, Polyline, Circle } = require('react-native-svg') as typeof import('react-native-svg');
+  const width = 300;
+  const height = 88;
+  const max = Math.max(1, ...points.map((point) => point.value));
+  const step = points.length > 1 ? width / (points.length - 1) : width;
+  const y = (value: number) => Math.round(height - (value / max) * height);
+  const line = points.map((point, index) => `${Math.round(index * step)},${y(point.value)}`).join(' ');
+  return (
+    <View style={styles.chartCard}>
+      <Text style={styles.sectionLabel}>{title}</Text>
+      <Svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`}>
+        <Polyline points={line} fill="none" stroke={colors.accent} strokeWidth={2} />
+        {points.map((point, index) => (
+          <Circle key={index} cx={index * step} cy={y(point.value)} r={2.5} fill={colors.accent} />
+        ))}
+      </Svg>
+      <View style={styles.barLabels}>
+        {points.map((point, index) => (
+          <Text key={index} style={styles.barLabel}>
             {index % 3 === 0 ? point.label : ''}
           </Text>
         ))}
       </View>
     </View>
+  );
+}
+
+function WeeklyChart({ points }: { points: { label: string; value: number }[] }) {
+  return SVG_ENABLED ? (
+    <LineChart title="Palavras por semana" points={points} />
+  ) : (
+    <BarChart title="Palavras por semana" points={points} />
   );
 }
 
@@ -111,6 +171,153 @@ function Heatmap({ history }: { history: WritingHistory }) {
   );
 }
 
+function MonthlyChart({ points, comparisonPct }: { points: MonthlyPoint[]; comparisonPct: number | null }) {
+  const comparison =
+    comparisonPct === null
+      ? null
+      : comparisonPct > 5
+        ? `Você escreveu ${comparisonPct}% mais que no mês passado.`
+        : comparisonPct < -5
+          ? `Você escreveu ${Math.abs(comparisonPct)}% menos que no mês passado.`
+          : 'Seu ritmo está parecido com o do mês passado.';
+  return (
+    <>
+      <BarChart
+        title="Palavras por mês"
+        points={points.map((month) => ({ label: month.label, value: month.words }))}
+        labelEvery={1}
+      />
+      {comparison ? <Text style={styles.muted}>{comparison}</Text> : null}
+    </>
+  );
+}
+
+function HourHeatmap({ grid }: { grid: number[][] }) {
+  const max = Math.max(1, ...grid.flat());
+  return (
+    <View style={styles.chartCard}>
+      <Text style={styles.sectionLabel}>Quando você escreve (dia × hora)</Text>
+      <View style={styles.hourGrid}>
+        <View style={styles.hourLabelsColumn}>
+          {WEEKDAY_INITIALS.map((initial, index) => (
+            <Text key={index} style={styles.hourRowLabel}>
+              {initial}
+            </Text>
+          ))}
+        </View>
+        <View style={styles.hourRows}>
+          {grid.map((row, rowIndex) => (
+            <View key={rowIndex} style={styles.hourRow}>
+              {row.map((value, columnIndex) => (
+                <View
+                  key={columnIndex}
+                  style={[styles.hourCell, { backgroundColor: levelColor(value, max) }]}
+                />
+              ))}
+            </View>
+          ))}
+        </View>
+      </View>
+      <View style={styles.hourTicks}>
+        {HOUR_LABELS.map((label) => (
+          <Text key={label} style={styles.hourLabel}>
+            {label}
+          </Text>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function Humor({ sentiment }: { sentiment: SentimentMetrics }) {
+  if (sentiment.analyzed === 0) return null;
+  const tone = sentiment.average > 0.15 ? 'positivo' : sentiment.average < -0.15 ? 'negativo' : 'neutro';
+  const percent = (value: number) => `${Math.round((value / sentiment.analyzed) * 100)}%`;
+  return (
+    <View style={styles.chartCard}>
+      <Text style={styles.sectionLabel}>Humor dos textos</Text>
+      <Text style={styles.sentiment}>
+        Tom {tone} ({sentiment.average.toFixed(2)})
+      </Text>
+      <View style={styles.chips}>
+        <View style={styles.chip}>
+          <Text style={styles.chipText}>Positivos · {percent(sentiment.positive)}</Text>
+        </View>
+        <View style={styles.chip}>
+          <Text style={styles.chipText}>Neutros · {percent(sentiment.neutral)}</Text>
+        </View>
+        <View style={styles.chip}>
+          <Text style={styles.chipText}>Negativos · {percent(sentiment.negative)}</Text>
+        </View>
+      </View>
+      {sentiment.topPositive ? (
+        <View style={styles.row}>
+          <Text style={styles.rowTitle} numberOfLines={1}>
+            {sentiment.topPositive.title}
+          </Text>
+          <Text style={styles.rowValue}>+{sentiment.topPositive.score.toFixed(2)}</Text>
+        </View>
+      ) : null}
+      {sentiment.topNegative ? (
+        <View style={styles.row}>
+          <Text style={styles.rowTitle} numberOfLines={1}>
+            {sentiment.topNegative.title}
+          </Text>
+          <Text style={styles.rowValue}>{sentiment.topNegative.score.toFixed(2)}</Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function Goals({
+  history,
+  metrics,
+  goal,
+  onChange,
+}: {
+  history: WritingHistory;
+  metrics: WritingMetrics;
+  goal: number;
+  onChange: (value: number) => void;
+}) {
+  const weekWords = history.weekly[history.weekly.length - 1]?.words ?? 0;
+  const progress = goal > 0 ? Math.min(1, weekWords / goal) : 0;
+  return (
+    <View style={styles.chartCard}>
+      <Text style={styles.sectionLabel}>Meta da semana</Text>
+      <View style={styles.goalRow}>
+        <Text style={styles.goalValue}>
+          {weekWords.toLocaleString('pt-BR')} / {goal.toLocaleString('pt-BR')} palavras
+        </Text>
+        <View style={styles.stepper}>
+          <Pressable
+            onPress={() => onChange(Math.max(0, goal - 250))}
+            accessibilityLabel="Diminuir meta"
+            hitSlop={6}
+          >
+            <Text style={styles.step}>−</Text>
+          </Pressable>
+          <Pressable onPress={() => onChange(goal + 250)} accessibilityLabel="Aumentar meta" hitSlop={6}>
+            <Text style={styles.step}>+</Text>
+          </Pressable>
+        </View>
+      </View>
+      <View style={styles.progressTrack}>
+        <View style={[styles.progressFill, { width: `${Math.round(progress * 100)}%` }]} />
+      </View>
+      {metrics.currentStreak > 0 && !metrics.wroteToday ? (
+        <Text style={styles.warn}>
+          Sequência de {metrics.currentStreak} dia{metrics.currentStreak === 1 ? '' : 's'} em risco:
+          ainda não escreveu hoje.
+        </Text>
+      ) : metrics.wroteToday ? (
+        <Text style={styles.ok}>Você escreveu hoje. Sequência: {metrics.currentStreak}.</Text>
+      ) : null}
+    </View>
+  );
+}
+
 function Insights({ metrics }: { metrics: WritingMetrics }) {
   if (metrics.insights.length === 0) return null;
   return (
@@ -128,17 +335,30 @@ function Insights({ metrics }: { metrics: WritingMetrics }) {
   );
 }
 
-function WritingSection({ metrics, history }: { metrics: WritingMetrics; history: WritingHistory }) {
+function WritingSection({
+  metrics,
+  history,
+  goal,
+  onGoal,
+}: {
+  metrics: WritingMetrics;
+  history: WritingHistory;
+  goal: number;
+  onGoal: (value: number) => void;
+}) {
   const number = (value: number) => value.toLocaleString('pt-BR');
   return (
     <>
       <Text style={styles.blockTitle}>Escrita</Text>
       <Insights metrics={metrics} />
-      <BarChart
-        title="Palavras por semana"
+      <WeeklyChart
         points={history.weekly.map((week) => ({ label: week.label, value: week.words }))}
       />
       <Heatmap history={history} />
+      <MonthlyChart points={metrics.monthly} comparisonPct={metrics.monthComparisonPct} />
+      <HourHeatmap grid={metrics.weekdayHour} />
+      <Humor sentiment={metrics.sentiment} />
+      <Goals history={history} metrics={metrics} goal={goal} onChange={onGoal} />
 
       <View style={styles.metricsRow}>
         <Metric label="Palavras" value={number(metrics.words)} />
@@ -222,7 +442,7 @@ function WritingSection({ metrics, history }: { metrics: WritingMetrics; history
 }
 
 export default function DashboardScreen() {
-  const { config } = useSettings();
+  const { config, weeklyWordGoal, setWeeklyWordGoal } = useSettings();
   const { recordings } = useLibrary();
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -276,7 +496,12 @@ export default function DashboardScreen() {
             Escreva sua primeira nota e o painel mostra as métricas da sua escrita.
           </Text>
         ) : (
-          <WritingSection metrics={writing} history={history} />
+          <WritingSection
+            metrics={writing}
+            history={history}
+            goal={weeklyWordGoal}
+            onGoal={(value) => void setWeeklyWordGoal(value)}
+          />
         )}
 
         <Text style={styles.blockTitle}>Servidor</Text>
@@ -377,6 +602,27 @@ const styles = StyleSheet.create({
   heatCell: { width: 12, height: 12, borderRadius: 3 },
   legend: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   legendText: { color: colors.textTertiary, fontSize: fontSize.xs, marginHorizontal: 2 },
+  hourGrid: { flexDirection: 'row', gap: spacing.sm },
+  hourLabelsColumn: { gap: 3, paddingTop: 0 },
+  hourRowLabel: { height: 12, color: colors.textTertiary, fontSize: 9, lineHeight: 12, width: 10 },
+  hourRows: { gap: 3 },
+  hourRow: { flexDirection: 'row', gap: 3 },
+  hourCell: { width: 12, height: 12, borderRadius: 3 },
+  hourTicks: { flexDirection: 'row', gap: 3, marginLeft: 18 },
+  hourLabel: { width: 12, textAlign: 'center', color: colors.textTertiary, fontSize: 8 },
+  goalRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  goalValue: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
+  stepper: { flexDirection: 'row', gap: spacing.lg },
+  step: { color: colors.accent, fontSize: fontSize.xl, fontWeight: '700' },
+  progressTrack: {
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.surfaceElevated,
+    overflow: 'hidden',
+  },
+  progressFill: { height: 8, borderRadius: 4, backgroundColor: colors.accent },
+  warn: { color: colors.warning, fontSize: fontSize.sm },
+  ok: { color: colors.success, fontSize: fontSize.sm },
   metricsRow: { flexDirection: 'row', gap: spacing.md },
   metric: {
     flex: 1,

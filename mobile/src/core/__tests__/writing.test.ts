@@ -1,5 +1,5 @@
 import type { Recording } from '../types';
-import { analyzeWriting, plainText, writingHistory } from '../writing';
+import { analyzeWriting, monthlySeries, plainText, weekdayHourGrid, writingHistory } from '../writing';
 
 function base(overrides: Partial<Recording> = {}): Recording {
   return {
@@ -132,5 +132,63 @@ describe('writingHistory', () => {
     expect(history.maxWeekly).toBe(0);
     expect(history.maxDaily).toBe(0);
     expect(history.weekly[0].words).toBe(0);
+  });
+});
+
+describe('analyzeWriting: humor, meta e mes', () => {
+  const now = new Date('2026-10-14T12:00:00.000Z');
+
+  it('detecta humor positivo e negativo', () => {
+    const good = analyzeWriting([base({ text: 'que dia maravilhoso, muito bom, adorei' })], now);
+    const bad = analyzeWriting([base({ text: 'dia horrivel, muito triste, pessimo' })], now);
+    expect(good.sentiment.average).toBeGreaterThan(0);
+    expect(good.sentiment.positive).toBe(1);
+    expect(bad.sentiment.average).toBeLessThan(0);
+    expect(bad.sentiment.negative).toBe(1);
+  });
+
+  it('sabe se escreveu hoje', () => {
+    expect(analyzeWriting([base({ text: 'oi' })], new Date('2026-10-10T12:00:00.000Z')).wroteToday).toBe(true);
+    expect(analyzeWriting([base({ text: 'oi' })], new Date('2026-10-11T12:00:00.000Z')).wroteToday).toBe(false);
+  });
+
+  it('compara o mes atual com o anterior', () => {
+    const metrics = analyzeWriting(
+      [
+        base({ id: 'a', recordedAt: '2026-09-10T12:00:00.000Z', text: 'duas palavras' }),
+        base({ id: 'b', recordedAt: '2026-10-05T12:00:00.000Z', text: 'quatro palavras aqui agora' }),
+      ],
+      now,
+    );
+    expect(metrics.monthly).toHaveLength(6);
+    expect(metrics.monthly[metrics.monthly.length - 2].words).toBe(2);
+    expect(metrics.monthly[metrics.monthly.length - 1].words).toBe(4);
+    expect(metrics.monthComparisonPct).toBe(100);
+  });
+});
+
+describe('weekdayHourGrid', () => {
+  it('soma as notas na grade 7x8', () => {
+    const grid = weekdayHourGrid([
+      base({ id: 'a' }),
+      base({ id: 'b' }),
+      base({ id: 'c' }),
+    ]);
+    expect(grid).toHaveLength(7);
+    expect(grid[0]).toHaveLength(8);
+    expect(grid.flat().reduce((sum, value) => sum + value, 0)).toBe(3);
+  });
+});
+
+describe('monthlySeries', () => {
+  it('devolve os meses do mais antigo ao atual', () => {
+    const series = monthlySeries(
+      [base({ recordedAt: '2026-10-05T12:00:00.000Z', text: 'duas palavras' })],
+      new Date('2026-10-14T12:00:00.000Z'),
+      3,
+    );
+    expect(series).toHaveLength(3);
+    expect(series[2].words).toBe(2);
+    expect(series[0].words).toBe(0);
   });
 });

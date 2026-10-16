@@ -55,6 +55,8 @@ export interface Prefs {
   transcriptionLanguage?: TranscriptionLanguage;
   /** Pasta escolhida para o backup local (uri). */
   backupFolder?: string;
+  /** Meta de palavras por semana (Painel). */
+  weeklyWordGoal?: number;
 }
 
 const PREFS_KEY = 'dyarium.prefs';
@@ -77,6 +79,10 @@ export async function loadPrefs(): Promise<Prefs> {
           : DEFAULT_TRANSCRIPTION_MODEL,
       transcriptionLanguage: parsed.transcriptionLanguage === 'auto' ? 'auto' : 'pt',
       backupFolder: typeof parsed.backupFolder === 'string' ? parsed.backupFolder : undefined,
+      weeklyWordGoal:
+        typeof parsed.weeklyWordGoal === 'number' && parsed.weeklyWordGoal >= 0
+          ? parsed.weeklyWordGoal
+          : undefined,
     };
   } catch {
     return DEFAULT_PREFS;

@@ -66,12 +66,16 @@ texto, guarda local, enfileira e envia para o servidor self-hosted.
   o que esta na fila/falhou e "Enviar agora". O envio continua em segundo plano
   (WorkManager) quando o app fica em segundo plano.
 - **Painel** (nas Opcoes): duas partes. **Escrita** (local, sempre disponivel): **graficos** de
-  palavras por semana e um **historico de escrita** (mapa de dias que escreveu e os que nao),
-  alem de palavras, caracteres, frases, paragrafos, vocabulario (palavras unicas e riqueza),
-  palavras por nota, palavras mais usadas e mais longas, perguntas/exclamacoes, links, imagens,
-  listas, dias com nota, sequencia (streak), dia da semana e periodo em que mais escreve,
-  palavras faladas nas transcricoes, e **insights** em frases. **Servidor** (quando configurado):
-  resumo, humor (sentimento), emocoes, pessoas, lugares, tags e status, puxados do servidor.
+  palavras por semana (barras; o de linha com SVG ja esta pronto, desligado ate o build),
+  **historico de escrita** (mapa de dias que escreveu e os que nao), **palavras por mes** com a
+  **comparacao com o mes passado**, mapa **dia x hora** (quando escreve), **humor** dos textos
+  (lexico local: tom, distribuicao e destaques), e **meta semanal** de palavras com aviso de
+  "sequencia em risco". Alem de palavras, caracteres, frases, paragrafos, vocabulario (palavras
+  unicas e riqueza), palavras por nota, palavras mais usadas e mais longas,
+  perguntas/exclamacoes, links, imagens, listas, dias com nota, sequencia (streak), dia da semana
+  e periodo em que mais escreve, palavras faladas nas transcricoes, e **insights** em frases.
+  **Servidor** (quando configurado): resumo, humor (sentimento), emocoes, pessoas, lugares, tags e
+  status, puxados do servidor.
 - **Busca local** e **pull-to-refresh** na lista; **compartilhar** o texto da nota;
   **notificacao** quando a transcricao fica pronta.
 - **Armazenamento** (nas Opcoes): uso no aparelho e liberar espaco (remove o audio local de
