@@ -23,11 +23,12 @@ func parseTS(s string) time.Time {
 func (s *Store) CreateUpload(ctx context.Context, u Upload) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO uploads (id, status, filename, content_type, size_bytes, sha256,
-			title, recorded_at, client_key, entry_id,
+			title, recorded_at, client_key, entry_id, result_attachment_id,
 			received_bytes, storage_key, prefix, next_counter, created_at, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		u.ID, u.Status, u.Filename, u.ContentType, u.SizeBytes, nullString(u.SHA256),
 		nullString(u.Title), nullTS(u.RecordedAt), nullString(u.ClientKey), nullString(u.EntryID),
+		nullString(u.ResultAttachmentID),
 		u.ReceivedBytes, u.StorageKey, u.Prefix, u.NextCounter, ts(u.CreatedAt), ts(u.ExpiresAt))
 	if err != nil {
 		return fmt.Errorf("store: create upload: %w", err)
@@ -60,14 +61,14 @@ func (s *Store) GetUploadByClientKey(ctx context.Context, clientKey string) (Upl
 func (s *Store) getUpload(ctx context.Context, where string, arg any) (Upload, error) {
 	var u Upload
 	var createdAt, expiresAt string
-	var sha, title, recordedAt, clientKey, entryID sql.NullString
+	var sha, title, recordedAt, clientKey, entryID, resultAttachmentID sql.NullString
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, status, filename, content_type, size_bytes, sha256,
-			title, recorded_at, client_key, entry_id,
+			title, recorded_at, client_key, entry_id, result_attachment_id,
 			received_bytes, storage_key, prefix, next_counter, created_at, expires_at
 		FROM uploads `+where, arg).Scan(
 		&u.ID, &u.Status, &u.Filename, &u.ContentType, &u.SizeBytes, &sha,
-		&title, &recordedAt, &clientKey, &entryID,
+		&title, &recordedAt, &clientKey, &entryID, &resultAttachmentID,
 		&u.ReceivedBytes, &u.StorageKey, &u.Prefix, &u.NextCounter, &createdAt, &expiresAt)
 	if err != nil {
 		return Upload{}, err
@@ -80,6 +81,7 @@ func (s *Store) getUpload(ctx context.Context, where string, arg any) (Upload, e
 	}
 	u.ClientKey = clientKey.String
 	u.EntryID = entryID.String
+	u.ResultAttachmentID = resultAttachmentID.String
 	u.CreatedAt = parseTS(createdAt)
 	u.ExpiresAt = parseTS(expiresAt)
 	return u, nil
@@ -96,11 +98,14 @@ func (s *Store) UpdateUploadProgress(ctx context.Context, id string, received in
 	return nil
 }
 
-// SetUploadStatus changes an upload status.
-func (s *Store) SetUploadStatus(ctx context.Context, id, status string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE uploads SET status = ? WHERE id = ?`, status, id)
+// SetUploadCompleted marks an upload as completed and records the audio
+// attachment produced, so repeating Complete returns the same result.
+func (s *Store) SetUploadCompleted(ctx context.Context, id, attachmentID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE uploads SET status = ?, result_attachment_id = ? WHERE id = ?`,
+		"completed", nullString(attachmentID), id)
 	if err != nil {
-		return fmt.Errorf("store: set upload status: %w", err)
+		return fmt.Errorf("store: complete upload: %w", err)
 	}
 	return nil
 }

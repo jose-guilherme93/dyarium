@@ -25,6 +25,32 @@ func (s *Store) CreateAttachment(ctx context.Context, a Attachment) error {
 const attachmentColumns = `id, entry_id, kind, storage_key, COALESCE(content_type,''), size_bytes,
 	COALESCE(sha256,''), cipher, COALESCE(cache_key,''), duration_seconds, created_at`
 
+// prefixedAttachmentColumns is attachmentColumns qualified for a JOIN on entries.
+const prefixedAttachmentColumns = `a.id, a.entry_id, a.kind, a.storage_key, COALESCE(a.content_type,''),
+	a.size_bytes, COALESCE(a.sha256,''), a.cipher, COALESCE(a.cache_key,''), a.duration_seconds, a.created_at`
+
+// FindOriginalAudio returns the oldest original audio attachment with the given
+// content hash, ignoring audios of deleted entries. The boolean is false when
+// none exists. It gives the audio its identity: the same content never becomes
+// two audios of the same note.
+func (s *Store) FindOriginalAudio(ctx context.Context, sha256 string) (Attachment, bool, error) {
+	if sha256 == "" {
+		return Attachment{}, false, nil
+	}
+	a, err := s.scanAttachment(s.db.QueryRowContext(ctx, `
+		SELECT `+prefixedAttachmentColumns+`
+		FROM attachments a JOIN entries e ON e.id = a.entry_id
+		WHERE a.kind = ? AND a.sha256 = ? AND e.deleted_at IS NULL
+		ORDER BY a.created_at ASC LIMIT 1`, AttachmentOriginal, sha256))
+	if err == sql.ErrNoRows {
+		return Attachment{}, false, nil
+	}
+	if err != nil {
+		return Attachment{}, false, err
+	}
+	return a, true, nil
+}
+
 // ListAudios returns the audio attachments of an entry, oldest first.
 func (s *Store) ListAudios(ctx context.Context, entryID string) ([]Attachment, error) {
 	rows, err := s.db.QueryContext(ctx, `

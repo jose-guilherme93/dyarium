@@ -36,13 +36,16 @@ type Upload struct {
 	ClientKey   string
 	// EntryID, when set, attaches the finished audio to an existing entry
 	// instead of creating a new one.
-	EntryID       string
-	ReceivedBytes int64
-	StorageKey    string
-	Prefix        []byte
-	NextCounter   uint32
-	CreatedAt     time.Time
-	ExpiresAt     time.Time
+	EntryID string
+	// ResultAttachmentID is the audio attachment produced by Complete. Set on
+	// completion so repeating Complete returns the same result (idempotent).
+	ResultAttachmentID string
+	ReceivedBytes      int64
+	StorageKey         string
+	Prefix             []byte
+	NextCounter        uint32
+	CreatedAt          time.Time
+	ExpiresAt          time.Time
 }
 
 // Entry is a stored audio and its lifecycle.

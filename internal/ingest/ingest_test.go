@@ -291,3 +291,94 @@ func TestStartRejectsUnknownEntry(t *testing.T) {
 		t.Fatalf("expected 404 para entrada inexistente, got %v", err)
 	}
 }
+
+func uploadAudio(t *testing.T, svc *Service, plain []byte, clientKey, entryID string) CompleteResult {
+	t.Helper()
+	ctx := context.Background()
+	up, err := svc.Start(ctx, Meta{
+		Filename:    "a.wav",
+		ContentType: "audio/wav",
+		SizeBytes:   int64(len(plain)),
+		ClientKey:   clientKey,
+		EntryID:     entryID,
+	})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if _, err := svc.Append(ctx, up.ID, 0, bytes.NewReader(plain)); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	result, err := svc.Complete(ctx, up.ID)
+	if err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	return result
+}
+
+// Repetir o complete (resposta 201 perdida) devolve o mesmo audio e a mesma
+// nota, sem refazer o trabalho. Era o bug que deixava o audio orfao no app.
+func TestCompleteIsIdempotent(t *testing.T) {
+	svc, _, _ := newService(t)
+	ctx := context.Background()
+
+	plain := []byte("audio reenviado apos perder a resposta")
+	up, err := svc.Start(ctx, Meta{Filename: "a.wav", ContentType: "audio/wav", SizeBytes: int64(len(plain)), ClientKey: "ck_retry"})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if _, err := svc.Append(ctx, up.ID, 0, bytes.NewReader(plain)); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+
+	first, err := svc.Complete(ctx, up.ID)
+	if err != nil {
+		t.Fatalf("complete 1: %v", err)
+	}
+	if first.Repeated || !first.Created {
+		t.Fatalf("primeiro complete: %+v", first)
+	}
+
+	second, err := svc.Complete(ctx, up.ID)
+	if err != nil {
+		t.Fatalf("complete 2: %v", err)
+	}
+	if !second.Repeated {
+		t.Fatal("segundo complete deveria ser repeticao")
+	}
+	if second.Entry.ID != first.Entry.ID || second.Attachment.ID != first.Attachment.ID {
+		t.Fatalf("resultado divergente: %+v != %+v", second, first)
+	}
+}
+
+// O mesmo audio enviado por uploads diferentes vira o MESMO audio (mesma nota),
+// gracas a identidade por conteudo.
+func TestCompleteDeduplicatesSameAudioContent(t *testing.T) {
+	svc, st, _ := newService(t)
+	plain := []byte("a mesma gravacao enviada duas vezes")
+
+	first := uploadAudio(t, svc, plain, "ck_a", "")
+	if first.Repeated || !first.Created {
+		t.Fatalf("primeiro upload: %+v", first)
+	}
+
+	second := uploadAudio(t, svc, plain, "ck_b", "")
+	if !second.Repeated {
+		t.Fatal("segundo upload do mesmo audio deveria ser repeticao")
+	}
+	if second.Entry.ID != first.Entry.ID || second.Attachment.ID != first.Attachment.ID {
+		t.Fatal("mesmo audio virou notas diferentes")
+	}
+	audios, err := st.ListAudios(context.Background(), first.Entry.ID)
+	if err != nil || len(audios) != 1 {
+		t.Fatalf("audios = %d (%v), want 1", len(audios), err)
+	}
+}
+
+func TestCompleteKeepsDifferentAudioSeparate(t *testing.T) {
+	svc, _, _ := newService(t)
+	first := uploadAudio(t, svc, []byte("primeira gravacao"), "ck_1", "")
+	second := uploadAudio(t, svc, []byte("segunda gravacao"), "ck_2", "")
+	if first.Entry.ID == second.Entry.ID {
+		t.Fatal("audios diferentes viraram a mesma nota")
+	}
+}

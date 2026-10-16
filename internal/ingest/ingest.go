@@ -210,14 +210,22 @@ type CompleteResult struct {
 	// Created reports whether a new entry was created, as opposed to an audio
 	// added to an existing entry.
 	Created bool
+	// Repeated reports whether the upload was already completed (same content
+	// already imported, or a previous complete whose response was lost). When
+	// true, no new work happened and the caller must not re-enqueue anything.
+	Repeated bool
 }
 
 // Complete validates size, format and SHA-256, then creates the entry (or adds
-// the audio to an existing entry) and returns the result.
+// the audio to an existing entry) and returns the result. It is idempotent: a
+// repeat after a lost response returns the same attachment and entry.
 func (s *Service) Complete(ctx context.Context, uploadID string) (CompleteResult, error) {
 	u, err := s.Get(ctx, uploadID)
 	if err != nil {
 		return CompleteResult{}, err
+	}
+	if u.Status == "completed" {
+		return s.completedResult(ctx, u)
 	}
 	if u.Status != "open" {
 		return CompleteResult{}, newError(409, "not_open", "upload nao esta aberto")
@@ -267,6 +275,23 @@ func (s *Service) Complete(ctx context.Context, uploadID string) (CompleteResult
 				return CompleteResult{}, newError(422, "too_long", "duracao excede o maximo permitido")
 			}
 		}
+	}
+
+	// Identidade do audio pelo conteudo: a mesma gravacao nunca vira dois audios
+	// da mesma nota. Ao criar uma nota nova (sem EntryID), reaproveita a nota que
+	// ja contem esse audio em vez de duplicar.
+	if existing, ok, err := s.store.FindOriginalAudio(ctx, sum); err != nil {
+		return CompleteResult{}, fmt.Errorf("ingest: identidade do audio: %w", err)
+	} else if ok && (u.EntryID == "" || existing.EntryID == u.EntryID) {
+		entry, err := s.store.GetEntry(ctx, existing.EntryID)
+		if err != nil {
+			return CompleteResult{}, newError(404, "not_found", "entrada inexistente")
+		}
+		if err := s.store.SetUploadCompleted(ctx, uploadID, existing.ID); err != nil {
+			return CompleteResult{}, err
+		}
+		os.Remove(path) // o conteudo ja existe; descarta o objeto redundante
+		return CompleteResult{Entry: entry, Attachment: existing, Repeated: true}, nil
 	}
 
 	now := time.Now().UTC()
@@ -326,10 +351,27 @@ func (s *Service) Complete(ctx context.Context, uploadID string) (CompleteResult
 			return CompleteResult{}, err
 		}
 	}
-	if err := s.store.SetUploadStatus(ctx, uploadID, "completed"); err != nil {
+	if err := s.store.SetUploadCompleted(ctx, uploadID, attachment.ID); err != nil {
 		return CompleteResult{}, err
 	}
 	return CompleteResult{Entry: entry, Attachment: attachment, Created: created}, nil
+}
+
+// completedResult returns the outcome stored by a previous Complete, so a repeat
+// after a lost response is idempotent.
+func (s *Service) completedResult(ctx context.Context, u store.Upload) (CompleteResult, error) {
+	if u.ResultAttachmentID == "" {
+		return CompleteResult{}, newError(409, "not_open", "upload nao esta aberto")
+	}
+	att, err := s.store.GetAttachment(ctx, u.ResultAttachmentID)
+	if err != nil {
+		return CompleteResult{}, fmt.Errorf("ingest: anexo do upload concluido: %w", err)
+	}
+	entry, err := s.store.GetEntry(ctx, att.EntryID)
+	if err != nil {
+		return CompleteResult{}, newError(404, "not_found", "entrada inexistente")
+	}
+	return CompleteResult{Entry: entry, Attachment: att, Repeated: true}, nil
 }
 
 // DecryptToTemp decrypts the original audio of an entry into a restricted temp

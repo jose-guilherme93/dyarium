@@ -112,16 +112,22 @@ func (s *Server) handleCompleteUpload(w http.ResponseWriter, r *http.Request) {
 		s.writeIngestError(w, err)
 		return
 	}
-	if _, err := s.deps.Queue.Enqueue(ctx, jobs.TypeTranscribe, "transcribe:"+result.Attachment.ID,
-		jobs.TranscribePayload{EntryID: result.Entry.ID, AttachmentID: result.Attachment.ID}); err != nil {
-		s.deps.Logger.Error("filtrar: enfileirar transcricao", "erro", err)
+	// Um complete repetido (resposta perdida) nao refaz o trabalho nem
+	// reenfileira a transcricao; devolve o estado atual.
+	status := result.Entry.Status
+	if !result.Repeated {
+		if _, err := s.deps.Queue.Enqueue(ctx, jobs.TypeTranscribe, "transcribe:"+result.Attachment.ID,
+			jobs.TranscribePayload{EntryID: result.Entry.ID, AttachmentID: result.Attachment.ID}); err != nil {
+			s.deps.Logger.Error("falha: enfileirar transcricao", "erro", err)
+		}
+		_ = s.deps.Store.UpdateEntryStatus(ctx, result.Entry.ID, store.EntryQueued)
+		s.deps.Events.Publish("entry.status", map[string]string{"entry_id": result.Entry.ID, "status": store.EntryQueued})
+		status = store.EntryQueued
 	}
-	_ = s.deps.Store.UpdateEntryStatus(ctx, result.Entry.ID, store.EntryQueued)
-	s.deps.Events.Publish("entry.status", map[string]string{"entry_id": result.Entry.ID, "status": store.EntryQueued})
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"entry_id":      result.Entry.ID,
 		"attachment_id": result.Attachment.ID,
-		"status":        store.EntryQueued,
+		"status":        status,
 	})
 }
 
