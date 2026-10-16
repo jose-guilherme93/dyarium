@@ -2,6 +2,7 @@ import {
   formatBytes,
   formatDateTime,
   formatDuration,
+  formatStamp,
   titleFontSize,
   utf8ByteLength,
 } from '../format';
@@ -48,9 +49,10 @@ describe('titleFontSize', () => {
     expect(titleFontSize('Curto')).toBe(34);
   });
 
-  it('diminui em titulo longo e nao passa do minimo', () => {
+  it('diminui em titulo longo e respeita o piso legivel', () => {
     expect(titleFontSize('x'.repeat(80))).toBeLessThan(34);
-    expect(titleFontSize('x'.repeat(500))).toBe(18);
+    expect(titleFontSize('x'.repeat(80))).toBeGreaterThanOrEqual(24);
+    expect(titleFontSize('x'.repeat(500))).toBe(24);
   });
 });
 
@@ -61,5 +63,18 @@ describe('formatDateTime', () => {
 
   it('devolve vazio para data invalida', () => {
     expect(formatDateTime('nao-e-data')).toBe('');
+  });
+});
+
+describe('formatStamp', () => {
+  const now = new Date(2026, 9, 16, 12, 0);
+  it('hoje mostra so a hora', () => {
+    expect(formatStamp(new Date(2026, 9, 16, 9, 5).toISOString(), now)).toBe('09:05');
+  });
+  it('mesmo ano mostra dia/mes e hora', () => {
+    expect(formatStamp(new Date(2026, 9, 10, 22, 5).toISOString(), now)).toBe('10/10 22:05');
+  });
+  it('outro ano mostra a data completa', () => {
+    expect(formatStamp(new Date(2025, 0, 3, 9, 7).toISOString(), now)).toBe('03/01/2025');
   });
 });

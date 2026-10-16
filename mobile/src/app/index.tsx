@@ -2,15 +2,32 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
 import { memo, useCallback, useRef, useState } from 'react';
-import { Pressable, RefreshControl, SectionList, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  Pressable,
+  RefreshControl,
+  SectionList,
+  Share,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 
+import { NoteActionsSheet } from '@/components/NoteActionsSheet';
+import type { NoteProperty } from '@/components/NoteMenu';
 import { RecordingCard } from '@/components/RecordingCard';
 import { Screen } from '@/components/Screen';
+import { STATUS_META } from '@/components/StatusChip';
+import { formatBytes, formatDateTime, utf8ByteLength } from '@/core/format';
 import { groupRecordingsByYear, type RecordingSection } from '@/core/group';
 import { isBlankDraft } from '@/core/note';
+import { countChars, countWords, markdownToPlain } from '@/core/richText';
+import { displayTitle } from '@/core/title';
 import { needsNoteSync, type Recording } from '@/core/types';
+import { directoryBytes, sessionDirectory } from '@/services/files';
 import { useLibrary } from '@/state/LibraryContext';
+import { useRecording } from '@/state/RecordingContext';
 import { useSettings } from '@/state/SettingsContext';
 import { colors, fontSize, radius, spacing } from '@/theme/tokens';
 
@@ -53,7 +70,7 @@ interface NoteRowProps {
   item: Recording;
   swipeDelete: boolean;
   onOpen(id: string): void;
-  onRetry(id: string): void;
+  onLongPress(item: Recording, anchor: { x: number; y: number }): void;
   onRemove(id: string): void;
   onArchive(id: string): void;
   onUnarchive(id: string): void;
@@ -65,7 +82,7 @@ const NoteRow = memo(function NoteRow({
   item,
   swipeDelete,
   onOpen,
-  onRetry,
+  onLongPress,
   onRemove,
   onArchive,
   onUnarchive,
@@ -75,26 +92,31 @@ const NoteRow = memo(function NoteRow({
       label={swipeDelete ? 'Apagar' : item.archived ? 'Desarquivar' : 'Arquivar'}
       icon={swipeDelete ? 'trash-outline' : 'archive-outline'}
       color={swipeDelete ? colors.danger : colors.warning}
-      onAction={() => (swipeDelete ? onRemove(item.id) : onArchive(item.id))}
+      onAction={() =>
+        swipeDelete ? onRemove(item.id) : item.archived ? onUnarchive(item.id) : onArchive(item.id)
+      }
     >
       <RecordingCard
         recording={item}
-        onRetry={() => onRetry(item.id)}
-        onDelete={() => onRemove(item.id)}
         onOpen={() => onOpen(item.id)}
-        onArchive={() => (item.archived ? onUnarchive(item.id) : onArchive(item.id))}
+        onLongPress={(anchor) => onLongPress(item, anchor)}
       />
     </SwipeRow>
   );
 });
 
 export default function RecordScreen() {
-  const { recordings, retry, remove, kick, refresh, pull, createDraftNote, archiveNote, unarchiveNote } =
+  const { recordings, remove, kick, refresh, pull, createDraftNote, archiveNote, unarchiveNote } =
     useLibrary();
+  const { start: startRecording } = useRecording();
   const { swipeAction } = useSettings();
 
   const [query, setQuery] = useState('');
   const [refreshing, setRefreshing] = useState(false);
+  const [newMenuOpen, setNewMenuOpen] = useState(false);
+  const [actionsNote, setActionsNote] = useState<Recording | null>(null);
+  const [actionsProps, setActionsProps] = useState<NoteProperty[]>([]);
+  const [actionsAnchor, setActionsAnchor] = useState<{ x: number; y: number } | null>(null);
 
   const pending = recordings.filter(
     (r) => PENDING_STATUSES.includes(r.status) || needsNoteSync(r),
@@ -106,18 +128,14 @@ export default function RecordScreen() {
     : pending > 0
       ? 'syncing'
       : 'ok';
+  // Nuvem discreta: o proprio icone diz o estado geral e um pequeno ponto ao
+  // lado sinaliza envio em andamento (azul) ou falha (vermelho).
   const syncIcon =
     syncState === 'error'
       ? 'cloud-offline-outline'
       : syncState === 'syncing'
         ? 'cloud-upload-outline'
         : 'cloud-done-outline';
-  const syncColor =
-    syncState === 'error'
-      ? colors.danger
-      : syncState === 'syncing'
-        ? colors.textSecondary
-        : colors.textTertiary;
 
   const term = query.trim().toLowerCase();
   const matches = (r: Recording) =>
@@ -144,23 +162,76 @@ export default function RecordScreen() {
     }
   }, [refresh, kick, pull]);
 
-  const handleRecord = async () => {
-    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
-    const note = await createDraftNote();
-    router.push({ pathname: '/record', params: { noteId: note.id } });
-  };
+  // Cada opcao do menu cria a nota e ja abre no modo certo, para o usuario
+  // escrever/gravar/anexar sem passos extras dentro da nota.
+  const startNote = useCallback(
+    async (action: 'text' | 'image' | 'link') => {
+      setNewMenuOpen(false);
+      const note = await createDraftNote();
+      router.push({ pathname: '/note/[id]', params: { id: note.id, action } });
+    },
+    [createDraftNote],
+  );
 
-  const handleAdd = async () => {
+  const startAudio = useCallback(async () => {
+    setNewMenuOpen(false);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
     const note = await createDraftNote();
-    router.push({ pathname: '/note/[id]', params: { id: note.id } });
-  };
+    // Dispara a gravacao enquanto navega: quando a tela abre, ja esta gravando.
+    void startRecording();
+    router.push({ pathname: '/record', params: { noteId: note.id } });
+  }, [createDraftNote, startRecording]);
 
   const openNote = useCallback(
     (noteId: string) => router.push({ pathname: '/note/[id]', params: { id: noteId } }),
     [],
   );
-  const retryNote = useCallback((noteId: string) => void retry(noteId), [retry]);
   const removeNote = useCallback((noteId: string) => void remove(noteId), [remove]);
+
+  // Toque longo no card: abre as opcoes (compartilhar, arquivar, apagar, ficha).
+  const openActions = useCallback((item: Recording, anchor: { x: number; y: number }) => {
+    const plain = markdownToPlain(item.text ?? '');
+    const bytes = directoryBytes(sessionDirectory(item.id)) + utf8ByteLength(plain);
+    setActionsAnchor(anchor);
+    setActionsNote(item);
+    setActionsProps([
+      { label: 'Criada', value: formatDateTime(item.createdAt) },
+      { label: 'Origem', value: item.filePath ? 'Áudio' : 'Texto' },
+      { label: 'Palavras', value: String(countWords(item.text ?? '')) },
+      { label: 'Caracteres', value: String(countChars(item.text ?? '')) },
+      { label: 'Tamanho', value: formatBytes(bytes) },
+      { label: 'Status', value: STATUS_META[item.status].label },
+    ]);
+  }, []);
+
+  const closeActions = useCallback(() => setActionsNote(null), []);
+
+  const shareActions = useCallback(() => {
+    const item = actionsNote;
+    setActionsNote(null);
+    if (!item) return;
+    const parts = [displayTitle(item)];
+    const plain = markdownToPlain(item.text ?? '').trim();
+    if (plain) parts.push('', plain);
+    if (item.transcript && item.transcript.trim() && item.transcript !== item.text) {
+      parts.push('', item.transcript.trim());
+    }
+    void Share.share({ message: parts.join('\n') }).catch(() => undefined);
+  }, [actionsNote]);
+
+  const archiveActions = useCallback(() => {
+    const item = actionsNote;
+    setActionsNote(null);
+    if (!item) return;
+    void (item.archived ? unarchiveNote(item.id) : archiveNote(item.id));
+  }, [actionsNote, archiveNote, unarchiveNote]);
+
+  const deleteActions = useCallback(() => {
+    const item = actionsNote;
+    setActionsNote(null);
+    if (!item) return;
+    void remove(item.id);
+  }, [actionsNote, remove]);
   const archive = useCallback((noteId: string) => void archiveNote(noteId), [archiveNote]);
   const unarchive = useCallback((noteId: string) => void unarchiveNote(noteId), [unarchiveNote]);
   const swipeDelete = swipeAction === 'delete';
@@ -173,23 +244,29 @@ export default function RecordScreen() {
           <Text style={styles.headerSub}>
             {recordings.length === 0
               ? 'Nada por aqui ainda'
-              : `${activeNotes.length} nota${activeNotes.length === 1 ? '' : 's'}${
-                  pending > 0 ? ` · ${pending} na fila` : ''
-                }`}
+              : `${activeNotes.length} nota${activeNotes.length === 1 ? '' : 's'}`}
           </Text>
         </View>
         <View style={styles.headerActions}>
           <Pressable
             style={styles.iconButton}
             onPress={() => router.push('/sync')}
-            accessibilityLabel="Sincronizacao"
+            accessibilityLabel="Sincronização"
           >
-            <Ionicons name={syncIcon} size={22} color={syncColor} />
+            <Ionicons name={syncIcon} size={22} color={colors.textTertiary} />
+            {syncState !== 'ok' ? (
+              <View
+                style={[
+                  styles.syncDot,
+                  { backgroundColor: syncState === 'error' ? colors.danger : colors.accent },
+                ]}
+              />
+            ) : null}
           </Pressable>
           <Pressable
             style={styles.iconButton}
             onPress={() => router.push('/settings')}
-            accessibilityLabel="Opcoes"
+            accessibilityLabel="Opções"
           >
             <Ionicons name="settings-outline" size={22} color={colors.text} />
           </Pressable>
@@ -220,18 +297,10 @@ export default function RecordScreen() {
               <Ionicons name="warning" size={18} color={colors.warning} />
               <Text style={styles.alertText}>
                 {interrupted === 1
-                  ? 'Uma gravacao foi interrompida'
-                  : `${interrupted} gravacoes interrompidas`}
+                  ? 'Uma gravação foi interrompida'
+                  : `${interrupted} gravações interrompidas`}
               </Text>
               <Ionicons name="chevron-forward" size={16} color={colors.warning} />
-            </Pressable>
-          ) : null}
-
-          {pending > 0 ? (
-            <Pressable style={styles.queueBar} onPress={kick}>
-              <Ionicons name="cloud-upload-outline" size={16} color={colors.accent} />
-              <Text style={styles.queueText}>{pending} na fila · Enviar agora</Text>
-              <Ionicons name="chevron-forward" size={14} color={colors.accent} />
             </Pressable>
           ) : null}
 
@@ -257,7 +326,7 @@ export default function RecordScreen() {
                 item={item}
                 swipeDelete={swipeDelete}
                 onOpen={openNote}
-                onRetry={retryNote}
+                onLongPress={openActions}
                 onRemove={removeNote}
                 onArchive={archive}
                 onUnarchive={unarchive}
@@ -270,7 +339,7 @@ export default function RecordScreen() {
                 </View>
                 <Text style={styles.emptyTitle}>Nenhuma nota</Text>
                 <Text style={styles.emptyText}>
-                  Toque em + para escrever uma nota ou no botao vermelho para gravar audio.
+                  Toque em + para criar uma nota de texto, imagem, áudio ou link.
                 </Text>
               </View>
             }
@@ -278,23 +347,69 @@ export default function RecordScreen() {
         </>
       )}
 
-      <View style={styles.bottomBar}>
+      {newMenuOpen ? (
         <Pressable
-          style={styles.audioButton}
-          onPress={() => void handleRecord()}
-          accessibilityLabel="Gravar audio"
-        >
-          <Ionicons name="mic" size={24} color="#FFFFFF" />
-        </Pressable>
+          style={styles.fabBackdrop}
+          onPress={() => setNewMenuOpen(false)}
+          accessibilityLabel="Fechar menu"
+        />
+      ) : null}
+
+      <View style={styles.fabWrap} pointerEvents="box-none">
+        {newMenuOpen ? (
+          <View style={styles.fabMenu}>
+            <NewMenuItem icon="link-outline" label="Link" onPress={() => void startNote('link')} />
+            <NewMenuItem
+              icon="image-outline"
+              label="Imagem"
+              onPress={() => void startNote('image')}
+            />
+            <NewMenuItem icon="mic-outline" label="Áudio" onPress={() => void startAudio()} />
+            <NewMenuItem
+              icon="document-text-outline"
+              label="Texto"
+              onPress={() => void startNote('text')}
+            />
+          </View>
+        ) : null}
         <Pressable
-          style={styles.textButton}
-          onPress={() => void handleAdd()}
-          accessibilityLabel="Nova nota de texto"
+          style={styles.fab}
+          onPress={() => setNewMenuOpen((value) => !value)}
+          accessibilityLabel={newMenuOpen ? 'Fechar menu' : 'Nova nota'}
         >
-          <Ionicons name="add" size={26} color={colors.text} />
+          <Ionicons name={newMenuOpen ? 'close' : 'add'} size={28} color="#FFFFFF" />
         </Pressable>
       </View>
+
+      <NoteActionsSheet
+        recording={actionsNote}
+        properties={actionsProps}
+        anchor={actionsAnchor}
+        onClose={closeActions}
+        onShare={shareActions}
+        onArchive={archiveActions}
+        onDelete={deleteActions}
+      />
     </Screen>
+  );
+}
+
+function NewMenuItem({
+  icon,
+  label,
+  onPress,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable style={styles.fabItem} onPress={onPress} accessibilityLabel={label}>
+      <Text style={styles.fabItemLabel}>{label}</Text>
+      <View style={styles.fabItemIcon}>
+        <Ionicons name={icon} size={18} color={colors.text} />
+      </View>
+    </Pressable>
   );
 }
 
@@ -311,6 +426,16 @@ const styles = StyleSheet.create({
   headerText: { gap: 2 },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   iconButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  syncDot: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    borderColor: colors.bg,
+  },
   largeTitle: { color: colors.text, fontSize: 34, fontWeight: '700', letterSpacing: 0.3 },
   headerSub: { color: colors.textSecondary, fontSize: fontSize.sm },
   searchWrap: {
@@ -341,7 +466,7 @@ const styles = StyleSheet.create({
   },
   recHint: { color: colors.textSecondary, fontSize: fontSize.sm },
   error: { color: colors.danger, fontSize: fontSize.sm, textAlign: 'center' },
-  list: { paddingHorizontal: spacing.xl, paddingBottom: spacing.lg },
+  list: { paddingHorizontal: spacing.xl, paddingBottom: 96 },
   separator: { height: spacing.sm },
   sectionHeader: {
     color: colors.textSecondary,
@@ -371,17 +496,6 @@ const styles = StyleSheet.create({
     padding: spacing.md,
   },
   alertText: { flex: 1, color: colors.warning, fontSize: fontSize.sm, fontWeight: '600' },
-  queueBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    marginHorizontal: spacing.xl,
-    marginBottom: spacing.md,
-    backgroundColor: colors.accentSoft,
-    borderRadius: 14,
-    padding: spacing.md,
-  },
-  queueText: { flex: 1, color: colors.accent, fontSize: fontSize.sm, fontWeight: '600' },
   empty: { alignItems: 'center', gap: spacing.md, paddingTop: spacing.xxxl },
   emptyIcon: {
     width: 68,
@@ -399,32 +513,49 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xl,
     lineHeight: 20,
   },
-  bottomBar: {
+  fabBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+  },
+  fabWrap: {
+    position: 'absolute',
+    right: spacing.xl,
+    bottom: spacing.xl,
+    alignItems: 'flex-end',
+    gap: spacing.md,
+  },
+  fabMenu: { alignItems: 'flex-end', gap: spacing.sm },
+  fabItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.xl,
-    paddingTop: spacing.lg,
-    paddingBottom: spacing.lg,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
-    backgroundColor: colors.bg,
-  },
-  audioButton: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: colors.record,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  textButton: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    gap: spacing.sm,
     backgroundColor: colors.surface,
+    borderRadius: radius.pill,
+    paddingLeft: spacing.lg,
+    paddingRight: spacing.sm,
+    paddingVertical: spacing.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.borderStrong,
+  },
+  fabItemLabel: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
+  fabItemIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: colors.surfaceElevated,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  bottomHint: { color: colors.textTertiary, fontSize: fontSize.xs },
+  fab: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: colors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 });

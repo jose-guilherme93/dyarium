@@ -9,7 +9,7 @@ import { useLibrary } from '@/state/LibraryContext';
 import { colors, fontSize, spacing } from '@/theme/tokens';
 
 export default function LibraryScreen() {
-  const { recordings, retry, remove } = useLibrary();
+  const { recordings } = useLibrary();
   const total = recordings.reduce((sum, r) => sum + (r.sizeBytes ?? 0), 0);
 
   return (
@@ -19,7 +19,7 @@ export default function LibraryScreen() {
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
         <View style={styles.headerText}>
-          <Text style={styles.title}>Minhas gravacoes</Text>
+          <Text style={styles.title}>Minhas gravações</Text>
           <Text style={styles.subtitle}>
             {recordings.length === 0
               ? 'Nada por aqui ainda'
@@ -38,8 +38,7 @@ export default function LibraryScreen() {
         renderItem={({ item }) => (
           <RecordingCard
             recording={item}
-            onRetry={() => void retry(item.id)}
-            onDelete={() => void remove(item.id)}
+            onOpen={() => router.push({ pathname: '/note/[id]', params: { id: item.id } })}
           />
         )}
         ListEmptyComponent={
@@ -47,9 +46,9 @@ export default function LibraryScreen() {
             <View style={styles.emptyIcon}>
               <Ionicons name="mic-outline" size={32} color={colors.textTertiary} />
             </View>
-            <Text style={styles.emptyTitle}>Sem gravacoes</Text>
+            <Text style={styles.emptyTitle}>Sem gravações</Text>
             <Text style={styles.emptyText}>
-              Toque no botao na tela inicial para gravar sua primeira nota.
+              Toque no botão na tela inicial para gravar sua primeira nota.
             </Text>
           </View>
         }

@@ -19,6 +19,25 @@ export function formatDateTime(iso: string): string {
   )}:${pad(date.getMinutes())}`;
 }
 
+/**
+ * Data curta para o canto do card (estilo mensagem): hoje mostra so a hora,
+ * no mesmo ano mostra dia/mes e hora, senao a data completa.
+ */
+export function formatStamp(iso: string, now: Date = new Date()): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  const pad = (n: number) => (n < 10 ? `0${n}` : String(n));
+  const time = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  const sameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  if (sameDay) return time;
+  const day = `${pad(date.getDate())}/${pad(date.getMonth() + 1)}`;
+  if (date.getFullYear() === now.getFullYear()) return `${day} ${time}`;
+  return `${day}/${date.getFullYear()}`;
+}
+
 /** Tamanho em bytes de um texto UTF-8 (para a ficha da nota). */
 export function utf8ByteLength(text: string): number {
   let bytes = 0;
@@ -33,12 +52,13 @@ export function utf8ByteLength(text: string): number {
 }
 
 /**
- * Fonte do titulo conforme o comprimento: titulo longo diminui para caber na
- * largura do aparelho, sem quebrar linha. Nunca abaixo do minimo.
+ * Fonte do titulo conforme o comprimento: titulo longo diminui um pouco para
+ * caber melhor, mas o campo quebra linha (nao some). O piso fica alto o
+ * bastante para o titulo continuar legivel mesmo quando ocupa duas linhas.
  */
-export function titleFontSize(title: string, base = 34, min = 18): number {
-  const extra = Math.max(0, title.trim().length - 24);
-  return Math.max(min, base - Math.floor(extra / 8));
+export function titleFontSize(title: string, base = 34, min = 24): number {
+  const extra = Math.max(0, title.trim().length - 20);
+  return Math.max(min, base - Math.floor(extra / 10));
 }
 
 /** Duracao em mm:ss (ou h:mm:ss). */

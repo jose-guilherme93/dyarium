@@ -54,6 +54,10 @@ interface RecordingValue {
   level: number;
   error: string | null;
   busy: boolean;
+  /** Gravacao pausada (o tempo da pausa nao conta). */
+  paused: boolean;
+  pause(): void;
+  unpause(): void;
   start(): Promise<void>;
   /**
    * Finaliza a gravacao. Por padrao enfileira; com `enqueue: false` devolve a
@@ -84,12 +88,16 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
   const [elapsedMs, setElapsedMs] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [paused, setPaused] = useState(false);
 
   const activeRef = useRef<Recording | null>(null);
   const startedAtRef = useRef<number>(0);
   const segmentIndexRef = useRef<number>(0);
   const rotatingRef = useRef(false);
   const startingRef = useRef(false);
+  const pausedRef = useRef(false);
+  const pausedAtRef = useRef(0);
+  const accumulatedPauseRef = useRef(0);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const rotateRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -126,8 +134,13 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
     rotateRef.current = null;
   }, []);
 
+  const elapsed = useCallback(() => {
+    const reference = pausedRef.current ? pausedAtRef.current : Date.now();
+    return Math.max(0, reference - startedAtRef.current - accumulatedPauseRef.current);
+  }, []);
+
   const rotate = useCallback(async () => {
-    if (rotatingRef.current || !activeRef.current) return;
+    if (rotatingRef.current || !activeRef.current || pausedRef.current) return;
     rotatingRef.current = true;
     try {
       await recorder.stop();
@@ -156,7 +169,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
       }
     } catch (error) {
       console.warn('[dyarium] rotate error', String(error));
-      setError('Falha ao rotacionar o segmento de gravacao.');
+      setError('Falha ao rotacionar o segmento de gravação.');
     } finally {
       rotatingRef.current = false;
     }
@@ -165,12 +178,12 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
   const startTimers = useCallback(() => {
     clearTimers();
     tickRef.current = setInterval(() => {
-      setElapsedMs(Date.now() - startedAtRef.current);
-    }, 500);
+      setElapsedMs(elapsed());
+    }, 250);
     rotateRef.current = setInterval(() => {
       void rotate();
     }, SEGMENT_MS);
-  }, [clearTimers, rotate]);
+  }, [clearTimers, elapsed, rotate]);
 
   const beginSession = useCallback(
     async (session: Recording, startIndex: number) => {
@@ -183,6 +196,10 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
       setActive(session);
       segmentIndexRef.current = startIndex;
       startedAtRef.current = Date.now();
+      pausedRef.current = false;
+      pausedAtRef.current = 0;
+      accumulatedPauseRef.current = 0;
+      setPaused(false);
       setElapsedMs(0);
       await upsertRecording(session);
       await recorder.prepareToRecordAsync(RECORDING_OPTIONS);
@@ -199,10 +216,11 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
     try {
       const permission = await requestRecordingPermissionsAsync();
       if (!permission.granted) {
-        setError('Permissao de microfone negada.');
+        setError('Permissão de microfone negada.');
         return;
       }
-      await ensureNotificationPermission();
+      // Nao bloquear o inicio da gravacao na permissao de notificacao.
+      void ensureNotificationPermission();
       const now = new Date();
       const id = newId('rec_');
       const session: Recording = {
@@ -220,7 +238,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
       await beginSession(session, 0);
     } catch (error) {
       console.warn('[dyarium] start error', String(error));
-      setError('Nao foi possivel iniciar a gravacao.');
+      setError('Não foi possível iniciar a gravação.');
     } finally {
       startingRef.current = false;
     }
@@ -241,7 +259,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
       );
       if (stored) segmentIndexRef.current += 1;
 
-      const durationMs = Date.now() - startedAtRef.current;
+      const durationMs = elapsed();
       const outUri = outputFileUri(session.id);
       const size = await concatenateSegments(sessionDirUri(session.id), outUri, concatIO);
 
@@ -249,7 +267,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
         activeRef.current = null;
         setActive(null);
         setElapsedMs(0);
-        setError('Nenhum audio foi capturado. Verifique o microfone e tente de novo.');
+        setError('Nenhum áudio foi capturado. Verifique o microfone e tente de novo.');
         return null;
       }
 
@@ -271,12 +289,38 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
       return finished;
     } catch (error) {
       console.warn('[dyarium] stop error', String(error));
-      setError('Falha ao finalizar a gravacao.');
+      setError('Falha ao finalizar a gravação.');
       return null;
     } finally {
       setBusy(false);
     }
-  }, [recorder, library, clearTimers]);
+  }, [recorder, library, clearTimers, elapsed]);
+
+  const pause = useCallback(() => {
+    if (!activeRef.current || pausedRef.current) return;
+    try {
+      recorder.pause();
+      pausedAtRef.current = Date.now();
+      pausedRef.current = true;
+      setPaused(true);
+      setElapsedMs(elapsed());
+    } catch {
+      setError('Não foi possível pausar a gravação.');
+    }
+  }, [recorder, elapsed]);
+
+  const unpause = useCallback(() => {
+    if (!activeRef.current || !pausedRef.current) return;
+    try {
+      accumulatedPauseRef.current += Date.now() - pausedAtRef.current;
+      pausedAtRef.current = 0;
+      pausedRef.current = false;
+      setPaused(false);
+      recorder.record();
+    } catch {
+      setError('Não foi possível retomar a gravação.');
+    }
+  }, [recorder]);
 
   const resume = useCallback(
     async (id: string) => {
@@ -286,7 +330,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
       try {
         const permission = await requestRecordingPermissionsAsync();
         if (!permission.granted) {
-          setError('Permissao de microfone negada.');
+          setError('Permissão de microfone negada.');
           return;
         }
         await ensureNotificationPermission();
@@ -301,7 +345,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
         await beginSession(session, found.segmentCount);
       } catch (error) {
         console.warn('[dyarium] resume error', String(error));
-        setError('Nao foi possivel retomar a gravacao.');
+        setError('Não foi possível retomar a gravação.');
       } finally {
         startingRef.current = false;
       }
@@ -326,7 +370,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
         await upsertRecording(finished);
         await library.enqueue(finished);
       } catch {
-        setError('Falha ao finalizar a gravacao interrompida.');
+        setError('Falha ao finalizar a gravação interrompida.');
       }
     },
     [library],
@@ -341,6 +385,9 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
       level: normalizeLevel(recorderState.metering),
       error,
       busy,
+      paused,
+      pause,
+      unpause,
       start,
       stop,
       resume,
@@ -352,6 +399,9 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
       recorderState.metering,
       error,
       busy,
+      paused,
+      pause,
+      unpause,
       start,
       stop,
       resume,
