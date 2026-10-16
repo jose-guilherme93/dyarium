@@ -163,7 +163,7 @@ async function uploadTextOne(api: DyariumApi, recording: Recording): Promise<voi
       text: current.text ?? '',
     });
     current = {
-      ...markCompleted(current, result.entry_id, new Date()),
+      ...markCompleted(current, result.id, new Date()),
       transcriptStatus: 'ready',
       duplicate: result.duplicate ? true : undefined,
     };

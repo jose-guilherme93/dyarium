@@ -57,8 +57,9 @@ export interface CreateTextEntryBody {
 }
 
 export interface CreateTextEntryResponse {
-  entry_id: string;
-  status: string;
+  /** Id da entrada no servidor (o mesmo id temporal enviado pelo app). */
+  id: string;
+  status?: string;
   /** true quando o servidor encontrou um conteudo identico (dedupe). */
   duplicate?: boolean;
 }
@@ -231,9 +232,9 @@ export class DyariumApi {
   }
 
   /**
-   * Cria uma nota somente texto. O servidor ainda nao aceita este endpoint; a
-   * chamada fica pronta no app para quando ele existir. O texto e tratado como
-   * se fosse a transcricao da nota, mas marcado como nota de texto.
+   * Cria uma nota somente texto. O servidor aceita o id temporal do app (ULID)
+   * e a hora de criacao, e e idempotente por esse id. O texto do corpo vai no
+   * documento da nota (via `createNote`/`updateNote`), nao aqui.
    */
   async createTextEntry(body: CreateTextEntryBody): Promise<CreateTextEntryResponse> {
     const res = await this.fetchImpl(this.url('/api/v1/entries'), {
