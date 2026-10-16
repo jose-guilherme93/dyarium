@@ -37,7 +37,7 @@ export default function BackupScreen() {
     setMessage(null);
     try {
       const uri = await pickBackupFolder(backupFolder);
-      await setBackupFolder(uri);
+      if (uri) await setBackupFolder(uri);
     } catch {
       setError('Não foi possível abrir a pasta.');
     }

@@ -2,7 +2,9 @@ import {
   backupFileName,
   baseName,
   buildManifest,
+  bytesToBase64,
   joinUri,
+  nameFromDocumentUri,
   orderForBackup,
   originalFileName,
   parseManifest,
@@ -58,6 +60,25 @@ describe('baseName e joinUri', () => {
   it('junta evitando barra dupla', () => {
     expect(joinUri('file:///doc/r1/', 'a.aac')).toBe('file:///doc/r1/a.aac');
     expect(joinUri('file:///doc/r1', 'a.aac')).toBe('file:///doc/r1/a.aac');
+  });
+});
+
+describe('nameFromDocumentUri', () => {
+  it('decodifica e pega o ultimo segmento', () => {
+    expect(
+      nameFromDocumentUri(
+        'content://com.android.externalstorage.documents/tree/primary%3ADownload/document/primary%3ADownload%2Fr1__recording.aac',
+      ),
+    ).toBe('r1__recording.aac');
+  });
+});
+
+describe('bytesToBase64', () => {
+  it('codifica como o base64 padrao', () => {
+    expect(bytesToBase64(new Uint8Array([77, 97, 110]))).toBe('TWFu');
+    expect(bytesToBase64(new Uint8Array([77, 97]))).toBe('TWE=');
+    expect(bytesToBase64(new Uint8Array([77]))).toBe('TQ==');
+    expect(bytesToBase64(new Uint8Array([]))).toBe('');
   });
 });
 
