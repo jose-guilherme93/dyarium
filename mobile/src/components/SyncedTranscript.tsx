@@ -1,4 +1,4 @@
-import { useAudioPlayerStatus, type AudioPlayer } from 'expo-audio';
+import { type AudioPlayer } from 'expo-audio';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
@@ -37,15 +37,22 @@ interface SyncedTranscriptProps {
  * abre a transcricao completa.
  */
 export function SyncedTranscript({ player, segments, onPress }: SyncedTranscriptProps) {
-  const status = useAudioPlayerStatus(player);
-  const currentMs = (status.currentTime || 0) * 1000;
   useRenderCount('SyncedTranscript');
-
-  const activeIndex = useMemo(
-    () => activeSegmentIndex(segments, currentMs),
-    [segments, currentMs],
-  );
-  const active = activeIndex < 0 ? 0 : activeIndex;
+  // So re-renderiza quando o trecho ativo muda: assina o player e compara o
+  // indice, em vez de acompanhar cada tick (que roda varias vezes por segundo).
+  const [active, setActive] = useState(0);
+  useEffect(() => {
+    const apply = (currentMs: number) => {
+      const index = activeSegmentIndex(segments, currentMs);
+      const next = index < 0 ? 0 : index;
+      setActive((prev) => (prev === next ? prev : next));
+    };
+    apply((player.currentTime || 0) * 1000);
+    const subscription = player.addListener('playbackStatusUpdate', (status) => {
+      apply((status.currentTime || 0) * 1000);
+    });
+    return () => subscription.remove();
+  }, [player, segments]);
 
   const translateY = useSharedValue(0);
   // Posicao/altura reais de cada trecho, medidas pelo layout (texto quebra linha).

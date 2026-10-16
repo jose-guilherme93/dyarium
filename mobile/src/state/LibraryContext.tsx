@@ -47,18 +47,24 @@ interface LibraryValue {
 const LibraryContext = createContext<LibraryValue | null>(null);
 
 /**
- * Lista igual a anterior (mesmos ids e mesma versao): evita re-render quando o
- * sync periodico rele o banco sem mudanca. `updatedAt` muda a cada escrita.
+ * Mescla a lista lida do banco com a atual, reutilizando os objetos que nao
+ * mudaram (mesmo id/updatedAt/status). Assim um refresh que encontra uma unica
+ * nota alterada re-renderiza so o card dela, nao os 46. `updatedAt` muda a cada
+ * escrita.
  */
-function sameRecordings(a: Recording[], b: Recording[]): boolean {
-  if (a === b) return true;
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i += 1) {
-    if (a[i].id !== b[i].id || a[i].updatedAt !== b[i].updatedAt || a[i].status !== b[i].status) {
-      return false;
+function mergeRecordings(prev: Recording[], next: Recording[]): Recording[] {
+  const byId = new Map(prev.map((r) => [r.id, r]));
+  let identical = prev.length === next.length;
+  const merged = next.map((item, index) => {
+    const old = byId.get(item.id);
+    if (old && old.updatedAt === item.updatedAt && old.status === item.status) {
+      if (prev[index] !== old) identical = false;
+      return old;
     }
-  }
-  return true;
+    identical = false;
+    return item;
+  });
+  return identical ? prev : merged;
 }
 
 /** Enquanto houver itens na fila, tenta enviar neste intervalo. */
@@ -73,6 +79,10 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   const [recordings, setRecordings] = useState<Recording[]>([]);
   const [ready, setReady] = useState(false);
 
+  useEffect(() => {
+    bumpRender('recordings.changed');
+  }, [recordings]);
+
   // Espelho sempre atual das gravacoes, para callbacks estaveis (sem depender
   // do array em si) — evita re-render das linhas da lista.
   const recordingsRef = useRef<Recording[]>([]);
@@ -81,13 +91,14 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   }, [recordings]);
 
   const refresh = useCallback(async () => {
+    bumpRender('refresh.called');
     const list = await listRecordings();
-    // Nao recria a lista (nem re-renderiza os cards) quando nada mudou: o sync
-    // periodico trocava a identidade de todas as notas a toa.
-    setRecordings((prev) => (sameRecordings(prev, list) ? prev : list));
+    // Reutiliza os itens inalterados: so o card que mudou re-renderiza.
+    setRecordings((prev) => mergeRecordings(prev, list));
   }, []);
 
   const kick = useCallback(() => {
+    bumpRender('kick.called');
     void runUploadQueueOnce().then(refresh).catch(() => undefined);
   }, [refresh]);
 
@@ -120,12 +131,14 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   const hasPendingTranscripts = recordings.some(needsTranscript);
 
   const pullTranscripts = useCallback(() => {
+    bumpRender('transcripts.called');
     void fetchTranscriptsOnce().then(refresh).catch(() => undefined);
   }, [refresh]);
 
   // Traz notas do servidor para o app (best-effort). Se nada novo chegou, nao
   // mexe na lista local.
   const pullServer = useCallback(() => {
+    bumpRender('pullserver.called');
     void pullServerEntries()
       .then((added) => {
         if (added > 0) return refresh();
