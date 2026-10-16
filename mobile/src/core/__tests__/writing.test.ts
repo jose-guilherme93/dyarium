@@ -1,5 +1,13 @@
 import type { Recording } from '../types';
-import { analyzeWriting, monthlySeries, plainText, weekdayHourGrid, writingHistory } from '../writing';
+import {
+  analyzeWriting,
+  monthlySeries,
+  plainText,
+  weekdayHourGrid,
+  wordMilestone,
+  writingHistory,
+  writingReminder,
+} from '../writing';
 
 function base(overrides: Partial<Recording> = {}): Recording {
   return {
@@ -190,5 +198,51 @@ describe('monthlySeries', () => {
     expect(series).toHaveLength(3);
     expect(series[2].words).toBe(2);
     expect(series[0].words).toBe(0);
+  });
+});
+
+describe('wordMilestone', () => {
+  it('devolve o maior marco ainda nao comemorado', () => {
+    expect(wordMilestone(800, 0)).toBeNull();
+    expect(wordMilestone(1200, 0)).toBe(1000);
+    expect(wordMilestone(6000, 1000)).toBe(5000);
+    expect(wordMilestone(6000, 5000)).toBeNull();
+  });
+});
+
+describe('writingReminder', () => {
+  const now = new Date('2026-10-15T18:00:00.000Z'); // quinta
+
+  it('avisa quando a sequencia esta em risco', () => {
+    const metrics = analyzeWriting(
+      [
+        base({ id: 'a', recordedAt: '2026-10-13T12:00:00.000Z', text: 'oi' }),
+        base({ id: 'b', recordedAt: '2026-10-14T12:00:00.000Z', text: 'oi' }),
+      ],
+      now,
+    );
+    const reminder = writingReminder({ metrics, weeklyWords: 2, goal: 1000, now });
+    expect(reminder?.kind).toBe('streak');
+  });
+
+  it('cobra a meta no fim da semana', () => {
+    const metrics = analyzeWriting(
+      [base({ id: 'a', recordedAt: '2026-10-15T12:00:00.000Z', text: 'oi' })],
+      now,
+    );
+    const reminder = writingReminder({ metrics, weeklyWords: 10, goal: 1000, now });
+    expect(reminder?.kind).toBe('goal');
+  });
+
+  it('nao lembra quando escreveu hoje e bateu a meta', () => {
+    const metrics = analyzeWriting(
+      [base({ id: 'a', recordedAt: '2026-10-15T12:00:00.000Z', text: 'oi' })],
+      now,
+    );
+    expect(writingReminder({ metrics, weeklyWords: 1000, goal: 1000, now })).toBeNull();
+  });
+
+  it('nao lembra sem notas', () => {
+    expect(writingReminder({ metrics: analyzeWriting([], now), weeklyWords: 0, goal: 1000, now })).toBeNull();
   });
 });

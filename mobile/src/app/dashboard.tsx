@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 
 import { Button } from '@/components/Button';
 import { Screen } from '@/components/Screen';
@@ -274,12 +274,20 @@ function Goals({
   history,
   metrics,
   goal,
-  onChange,
+  onGoal,
+  reminders,
+  onReminders,
+  hour,
+  onHour,
 }: {
   history: WritingHistory;
   metrics: WritingMetrics;
   goal: number;
-  onChange: (value: number) => void;
+  onGoal: (value: number) => void;
+  reminders: boolean;
+  onReminders: (value: boolean) => void;
+  hour: number;
+  onHour: (value: number) => void;
 }) {
   const weekWords = history.weekly[history.weekly.length - 1]?.words ?? 0;
   const progress = goal > 0 ? Math.min(1, weekWords / goal) : 0;
@@ -292,13 +300,13 @@ function Goals({
         </Text>
         <View style={styles.stepper}>
           <Pressable
-            onPress={() => onChange(Math.max(0, goal - 250))}
+            onPress={() => onGoal(Math.max(0, goal - 250))}
             accessibilityLabel="Diminuir meta"
             hitSlop={6}
           >
             <Text style={styles.step}>−</Text>
           </Pressable>
-          <Pressable onPress={() => onChange(goal + 250)} accessibilityLabel="Aumentar meta" hitSlop={6}>
+          <Pressable onPress={() => onGoal(goal + 250)} accessibilityLabel="Aumentar meta" hitSlop={6}>
             <Text style={styles.step}>+</Text>
           </Pressable>
         </View>
@@ -313,6 +321,38 @@ function Goals({
         </Text>
       ) : metrics.wroteToday ? (
         <Text style={styles.ok}>Você escreveu hoje. Sequência: {metrics.currentStreak}.</Text>
+      ) : null}
+
+      <View style={styles.goalRow}>
+        <Text style={styles.goalLabel}>Lembretes de escrita</Text>
+        <Switch
+          value={reminders}
+          onValueChange={onReminders}
+          trackColor={{ false: colors.surfaceElevated, true: colors.accent }}
+          thumbColor="#FFFFFF"
+        />
+      </View>
+      {reminders ? (
+        <View style={styles.goalRow}>
+          <Text style={styles.goalLabel}>Horário do lembrete</Text>
+          <View style={styles.stepper}>
+            <Pressable
+              onPress={() => onHour(Math.max(6, hour - 1))}
+              accessibilityLabel="Mais cedo"
+              hitSlop={6}
+            >
+              <Text style={styles.step}>−</Text>
+            </Pressable>
+            <Text style={styles.goalValue}>{hour}h</Text>
+            <Pressable
+              onPress={() => onHour(Math.min(23, hour + 1))}
+              accessibilityLabel="Mais tarde"
+              hitSlop={6}
+            >
+              <Text style={styles.step}>+</Text>
+            </Pressable>
+          </View>
+        </View>
       ) : null}
     </View>
   );
@@ -340,11 +380,19 @@ function WritingSection({
   history,
   goal,
   onGoal,
+  reminders,
+  onReminders,
+  hour,
+  onHour,
 }: {
   metrics: WritingMetrics;
   history: WritingHistory;
   goal: number;
   onGoal: (value: number) => void;
+  reminders: boolean;
+  onReminders: (value: boolean) => void;
+  hour: number;
+  onHour: (value: number) => void;
 }) {
   const number = (value: number) => value.toLocaleString('pt-BR');
   return (
@@ -358,7 +406,16 @@ function WritingSection({
       <MonthlyChart points={metrics.monthly} comparisonPct={metrics.monthComparisonPct} />
       <HourHeatmap grid={metrics.weekdayHour} />
       <Humor sentiment={metrics.sentiment} />
-      <Goals history={history} metrics={metrics} goal={goal} onChange={onGoal} />
+      <Goals
+        history={history}
+        metrics={metrics}
+        goal={goal}
+        onGoal={onGoal}
+        reminders={reminders}
+        onReminders={onReminders}
+        hour={hour}
+        onHour={onHour}
+      />
 
       <View style={styles.metricsRow}>
         <Metric label="Palavras" value={number(metrics.words)} />
@@ -442,7 +499,8 @@ function WritingSection({
 }
 
 export default function DashboardScreen() {
-  const { config, weeklyWordGoal, setWeeklyWordGoal } = useSettings();
+  const { config, weeklyWordGoal, setWeeklyWordGoal, writingReminders, setWritingReminders, reminderHour, setReminderHour } =
+    useSettings();
   const { recordings } = useLibrary();
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -501,6 +559,10 @@ export default function DashboardScreen() {
             history={history}
             goal={weeklyWordGoal}
             onGoal={(value) => void setWeeklyWordGoal(value)}
+            reminders={writingReminders}
+            onReminders={(value) => void setWritingReminders(value)}
+            hour={reminderHour}
+            onHour={(value) => void setReminderHour(value)}
           />
         )}
 
@@ -612,6 +674,7 @@ const styles = StyleSheet.create({
   hourLabel: { width: 12, textAlign: 'center', color: colors.textTertiary, fontSize: 8 },
   goalRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   goalValue: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
+  goalLabel: { color: colors.text, fontSize: fontSize.md },
   stepper: { flexDirection: 'row', gap: spacing.lg },
   step: { color: colors.accent, fontSize: fontSize.xl, fontWeight: '700' },
   progressTrack: {

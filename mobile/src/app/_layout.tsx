@@ -13,9 +13,16 @@ import { LibraryProvider } from '@/state/LibraryContext';
 import { PlaybackProvider } from '@/state/PlaybackContext';
 import { RecordingProvider } from '@/state/RecordingContext';
 import { SettingsProvider } from '@/state/SettingsContext';
+import { useWritingReminders } from '@/state/useWritingReminders';
 import { colors } from '@/theme/tokens';
 
 SplashScreen.preventAutoHideAsync().catch(() => undefined);
+
+/** Agenda os lembretes de escrita (precisa dos providers de biblioteca/config). */
+function Reminders() {
+  useWritingReminders();
+  return null;
+}
 
 export default function RootLayout() {
   useRenderCount('RootLayout');
@@ -35,6 +42,7 @@ export default function RootLayout() {
           <LibraryProvider>
             <PlaybackProvider>
               <RecordingProvider>
+                <Reminders />
                 <StatusBar style="light" />
                 <Stack
                   screenOptions={{

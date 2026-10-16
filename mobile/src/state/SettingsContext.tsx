@@ -66,6 +66,18 @@ interface SettingsValue {
   /** Meta de palavras por semana (Painel). */
   weeklyWordGoal: number;
   setWeeklyWordGoal(value: number): Promise<void>;
+  /** Lembretes de escrita (meta/sequencia). */
+  writingReminders: boolean;
+  setWritingReminders(value: boolean): Promise<void>;
+  /** Hora do lembrete (0..23). */
+  reminderHour: number;
+  setReminderHour(value: number): Promise<void>;
+  /** Ultimo marco de palavras comemorado (evita repetir). */
+  celebratedWords: number;
+  setCelebratedWords(value: number): Promise<void>;
+  /** Ultima sequencia (dias) comemorada. */
+  celebratedStreak: number;
+  setCelebratedStreak(value: number): Promise<void>;
   /** Testa alcance (healthz) e token (version) sem salvar. */
   test(baseUrl: string, token: string): Promise<ConnectionResult>;
   /** Testa e, se ok, persiste no SecureStore. */
@@ -96,6 +108,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     useState<TranscriptionLanguage>('pt');
   const [backupFolder, setBackupFolderState] = useState<string | undefined>(undefined);
   const [weeklyWordGoal, setWeeklyWordGoalState] = useState(1000);
+  const [writingReminders, setWritingRemindersState] = useState(true);
+  const [reminderHour, setReminderHourState] = useState(20);
+  const [celebratedWords, setCelebratedWordsState] = useState(0);
+  const [celebratedStreak, setCelebratedStreakState] = useState(0);
   // Espelho das preferencias atuais, para gravar sempre o conjunto completo.
   const prefsRef = useRef<Prefs>({ swipeAction: 'delete', typography: DEFAULT_TYPOGRAPHY });
 
@@ -122,6 +138,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         setTranscriptionLanguageState(prefs.transcriptionLanguage === 'auto' ? 'auto' : 'pt');
         setBackupFolderState(prefs.backupFolder);
         setWeeklyWordGoalState(prefs.weeklyWordGoal ?? 1000);
+        setWritingRemindersState(prefs.writingReminders !== false);
+        setReminderHourState(prefs.reminderHour ?? 20);
+        setCelebratedWordsState(prefs.celebratedWords ?? 0);
+        setCelebratedStreakState(prefs.celebratedStreak ?? 0);
       })
       .catch(() => undefined);
     return () => {
@@ -200,6 +220,39 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     [persistPrefs],
   );
 
+  const setWritingReminders = useCallback(
+    async (value: boolean) => {
+      setWritingRemindersState(value);
+      await persistPrefs({ writingReminders: value });
+    },
+    [persistPrefs],
+  );
+
+  const setReminderHour = useCallback(
+    async (value: number) => {
+      const next = Math.min(23, Math.max(0, Math.round(value)));
+      setReminderHourState(next);
+      await persistPrefs({ reminderHour: next });
+    },
+    [persistPrefs],
+  );
+
+  const setCelebratedWords = useCallback(
+    async (value: number) => {
+      setCelebratedWordsState(value);
+      await persistPrefs({ celebratedWords: value });
+    },
+    [persistPrefs],
+  );
+
+  const setCelebratedStreak = useCallback(
+    async (value: number) => {
+      setCelebratedStreakState(value);
+      await persistPrefs({ celebratedStreak: value });
+    },
+    [persistPrefs],
+  );
+
   const test = useCallback(async (baseUrl: string, token: string): Promise<ConnectionResult> => {
     const url = normalizeUrl(baseUrl);
     if (!url || !token.trim()) {
@@ -257,6 +310,14 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setBackupFolder,
       weeklyWordGoal,
       setWeeklyWordGoal,
+      writingReminders,
+      setWritingReminders,
+      reminderHour,
+      setReminderHour,
+      celebratedWords,
+      setCelebratedWords,
+      celebratedStreak,
+      setCelebratedStreak,
       test,
       save,
       disconnect,
@@ -280,6 +341,14 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setBackupFolder,
       weeklyWordGoal,
       setWeeklyWordGoal,
+      writingReminders,
+      setWritingReminders,
+      reminderHour,
+      setReminderHour,
+      celebratedWords,
+      setCelebratedWords,
+      celebratedStreak,
+      setCelebratedStreak,
       test,
       save,
       disconnect,

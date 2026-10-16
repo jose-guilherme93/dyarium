@@ -76,6 +76,10 @@ texto, guarda local, enfileira e envia para o servidor self-hosted.
   e periodo em que mais escreve, palavras faladas nas transcricoes, e **insights** em frases.
   **Servidor** (quando configurado): resumo, humor (sentimento), emocoes, pessoas, lugares, tags e
   status, puxados do servidor.
+- **Lembretes de escrita** (notificacoes locais): avisam quando a **sequencia esta em risco**
+  (nao escreveu hoje) ou quando a **meta semanal esta atrasada** no fim da semana (quinta em
+  diante). Tambem comemoram **marcos** (palavras e novo recorde de sequencia), uma vez cada. Hora
+  configuravel (padrao 20h) e um liga/desliga no Painel; a notificacao nao leva conteudo sensivel.
 - **Busca local** e **pull-to-refresh** na lista; **compartilhar** o texto da nota;
   **notificacao** quando a transcricao fica pronta.
 - **Armazenamento** (nas Opcoes): uso no aparelho e liberar espaco (remove o audio local de

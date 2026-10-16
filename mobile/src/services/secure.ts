@@ -57,6 +57,14 @@ export interface Prefs {
   backupFolder?: string;
   /** Meta de palavras por semana (Painel). */
   weeklyWordGoal?: number;
+  /** Lembretes de escrita (meta/sequencia). */
+  writingReminders?: boolean;
+  /** Hora do lembrete (0..23). */
+  reminderHour?: number;
+  /** Ultimo marco de palavras ja comemorado. */
+  celebratedWords?: number;
+  /** Ultima sequencia (dias) ja comemorada. */
+  celebratedStreak?: number;
 }
 
 const PREFS_KEY = 'dyarium.prefs';
@@ -82,6 +90,20 @@ export async function loadPrefs(): Promise<Prefs> {
       weeklyWordGoal:
         typeof parsed.weeklyWordGoal === 'number' && parsed.weeklyWordGoal >= 0
           ? parsed.weeklyWordGoal
+          : undefined,
+      writingReminders:
+        typeof parsed.writingReminders === 'boolean' ? parsed.writingReminders : undefined,
+      reminderHour:
+        typeof parsed.reminderHour === 'number' && parsed.reminderHour >= 0 && parsed.reminderHour <= 23
+          ? parsed.reminderHour
+          : undefined,
+      celebratedWords:
+        typeof parsed.celebratedWords === 'number' && parsed.celebratedWords >= 0
+          ? parsed.celebratedWords
+          : undefined,
+      celebratedStreak:
+        typeof parsed.celebratedStreak === 'number' && parsed.celebratedStreak >= 0
+          ? parsed.celebratedStreak
           : undefined,
     };
   } catch {

@@ -642,3 +642,58 @@ export function writingHistory(
   return { weekly, calendar, maxWeekly, maxDaily };
 }
 
+// --- Lembretes (notificacoes) -----------------------------------------------
+
+export interface WritingReminder {
+  kind: 'streak' | 'goal';
+  title: string;
+  body: string;
+}
+
+/** Marco de palavras comemorado (cresce em degraus). */
+const WORD_MILESTONES = [1000, 5000, 10000, 25000, 50000, 100000, 250000, 500000, 1000000];
+
+/** Maior marco de palavras ja alcancado e ainda nao comemorado, ou null. */
+export function wordMilestone(words: number, celebrated: number): number | null {
+  let reached: number | null = null;
+  for (const mark of WORD_MILESTONES) {
+    if (words >= mark && mark > celebrated) reached = mark;
+  }
+  return reached;
+}
+
+/**
+ * Decide o lembrete de escrita (ou null). Prioriza a sequencia em risco; senao,
+ * cobra a meta semanal so no fim da semana (quinta em diante, semana domingo-sabado).
+ */
+export function writingReminder(input: {
+  metrics: WritingMetrics;
+  weeklyWords: number;
+  goal: number;
+  now: Date;
+}): WritingReminder | null {
+  const { metrics, weeklyWords, goal, now } = input;
+  if (metrics.notes === 0) return null;
+
+  if (!metrics.wroteToday && metrics.currentStreak > 0) {
+    const days = metrics.currentStreak;
+    return {
+      kind: 'streak',
+      title: 'Sua sequência está em risco',
+      body: `Você está há ${days} dia${days === 1 ? '' : 's'} seguidos escrevendo. Escreva um pouco hoje para não perder.`,
+    };
+  }
+
+  const lateWeek = now.getDay() >= 4; // quinta em diante
+  if (goal > 0 && weeklyWords < goal && lateWeek) {
+    const missing = goal - weeklyWords;
+    return {
+      kind: 'goal',
+      title: 'Meta da semana',
+      body: `Faltam ${missing.toLocaleString('pt-BR')} palavras para a sua meta desta semana.`,
+    };
+  }
+
+  return null;
+}
+
