@@ -31,6 +31,8 @@ export interface UploadInput {
   durationSeconds?: number;
   /** Texto da nota associado ao audio (opcional). */
   text?: string;
+  /** O cliente transcreve no aparelho; o servidor nao enfileira transcricao. */
+  localTranscribe?: boolean;
   /** Se ja existe um upload em andamento, informe id e offset para retomar. */
   uploadId?: string;
   offset?: number;
@@ -74,6 +76,7 @@ export async function uploadRecording(
       title: input.title,
       recorded_at: input.recordedAt,
       text: input.text,
+      local_transcribe: input.localTranscribe,
     });
     uploadId = created.id;
     offset = created.offset ?? 0;

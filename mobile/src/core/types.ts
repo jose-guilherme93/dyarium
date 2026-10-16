@@ -47,10 +47,14 @@ export interface Recording {
   entryId?: string;
   /** Id da nota (corpo rico) no servidor, quando criada. */
   noteId?: string;
-  /** Transcricao vinda do servidor, quando pronta. */
+  /** Transcricao (local ou do servidor), quando pronta. */
   transcript?: string;
   transcriptLanguage?: string;
   transcriptStatus?: TranscriptStatus;
+  /** Ha transcricao pronta (local ou do servidor). */
+  hasTranscript?: boolean;
+  /** Quem produziu a transcricao. */
+  transcriptOrigin?: TranscriptOrigin;
   /** Segmentos da transcricao (cache local, para nao refazer fetch ao abrir). */
   transcriptSegments?: TranscriptSegment[];
   /** Origem do audio (default: gravado no microfone). */
@@ -74,6 +78,9 @@ export interface Recording {
 }
 
 export type TranscriptStatus = 'pending' | 'ready' | 'failed';
+
+/** Origem da transcricao: feita no aparelho ou recebida do servidor. */
+export type TranscriptOrigin = 'local' | 'server';
 
 /** Trecho da transcricao com a marcacao de tempo no audio original. */
 export interface TranscriptSegment {
@@ -103,9 +110,17 @@ export function isUploadable(r: Recording): boolean {
   );
 }
 
-/** Gravacao enviada que ainda nao tem transcricao pronta. */
+/**
+ * Gravacao enviada que ainda nao tem transcricao pronta. Notas transcritas no
+ * aparelho (origem local) nao pedem transcricao ao servidor.
+ */
 export function needsTranscript(r: Recording): boolean {
-  return Boolean(r.entryId) && r.status === 'completed' && r.transcriptStatus !== 'ready';
+  return (
+    Boolean(r.entryId) &&
+    r.status === 'completed' &&
+    r.transcriptOrigin !== 'local' &&
+    r.transcriptStatus !== 'ready'
+  );
 }
 
 /**

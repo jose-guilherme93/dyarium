@@ -9,6 +9,7 @@ import type {
   Recording,
   RecordingSource,
   RecordingStatus,
+  TranscriptOrigin,
   TranscriptSegment,
   TranscriptStatus,
 } from '@/core/types';
@@ -37,6 +38,8 @@ interface Row {
   transcript_language: string | null;
   transcript_status: string | null;
   transcript_segments: string | null;
+  has_transcript: string | null;
+  transcript_origin: string | null;
   source: string | null;
   text: string | null;
   content_type: string | null;
@@ -157,6 +160,15 @@ const MIGRATIONS: Migration[] = [
       await addColumn(db, 'recordings', 'attachments');
     },
   },
+  {
+    version: 9,
+    run: async (db) => {
+      // Transcricao: flag "ha transcricao" e a origem (local no aparelho ou
+      // recebida do servidor). Quem transcreve primeiro informa o outro.
+      await addColumn(db, 'recordings', 'has_transcript');
+      await addColumn(db, 'recordings', 'transcript_origin');
+    },
+  },
 ];
 
 async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
@@ -267,6 +279,8 @@ function rowToRecording(row: Row): Recording {
     transcriptLanguage: row.transcript_language ?? undefined,
     transcriptStatus: (row.transcript_status as TranscriptStatus | null) ?? undefined,
     transcriptSegments: parseSegments(row.transcript_segments),
+    hasTranscript: row.has_transcript ? true : undefined,
+    transcriptOrigin: (row.transcript_origin as TranscriptOrigin | null) ?? undefined,
     source: (row.source as RecordingSource | null) ?? undefined,
     text: row.text ?? undefined,
     contentType: row.content_type ?? undefined,
@@ -287,9 +301,10 @@ export async function upsertRecording(r: Recording): Promise<void> {
       id, title, recorded_at, dir, file_path, segment_count, duration_ms, size_bytes,
       status, upload_id, offset, attempts, next_attempt_at, last_error, terminal, entry_id, note_id,
       transcript, transcript_language, transcript_status, transcript_segments,
+      has_transcript, transcript_origin,
       source, text, content_type, file_name, duplicate, archived, note_dirty, attachments,
       created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
       recorded_at = excluded.recorded_at,
@@ -311,6 +326,8 @@ export async function upsertRecording(r: Recording): Promise<void> {
       transcript_language = excluded.transcript_language,
       transcript_status = excluded.transcript_status,
       transcript_segments = excluded.transcript_segments,
+      has_transcript = excluded.has_transcript,
+      transcript_origin = excluded.transcript_origin,
       source = excluded.source,
       text = excluded.text,
       content_type = excluded.content_type,
@@ -342,6 +359,8 @@ export async function upsertRecording(r: Recording): Promise<void> {
       r.transcriptLanguage ?? null,
       r.transcriptStatus ?? null,
       r.transcriptSegments ? JSON.stringify(r.transcriptSegments) : null,
+      r.hasTranscript ? 1 : null,
+      r.transcriptOrigin ?? null,
       r.source ?? null,
       r.text ?? null,
       r.contentType ?? null,

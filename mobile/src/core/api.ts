@@ -44,6 +44,15 @@ export interface CreateUploadBody {
   recorded_at?: string;
   /** Texto da nota associado ao audio (o servidor passa a usar depois). */
   text?: string;
+  /** O cliente transcreve no aparelho; o servidor nao enfileira transcricao. */
+  local_transcribe?: boolean;
+}
+
+export interface PutTranscriptBody {
+  attachment_id?: string;
+  language?: string;
+  text: string;
+  segments: TranscriptSegment[];
 }
 
 export interface CreateTextEntryBody {
@@ -365,6 +374,19 @@ export class DyariumApi {
     });
     if (!res.ok) throw await this.parseError(res);
     return JSON.parse(await res.text());
+  }
+
+  /**
+   * Envia a transcricao feita no aparelho. O servidor guarda como origem local
+   * (nao transcreve de novo) e o dashboard passa a mostrar o texto.
+   */
+  async putTranscript(entryId: string, body: PutTranscriptBody): Promise<void> {
+    const res = await this.fetchImpl(this.url(`/api/v1/entries/${entryId}/transcript`), {
+      method: 'PUT',
+      headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw await this.parseError(res);
   }
 
   /** Lista de entradas do servidor (resumo). `limit` alto para reconciliar. */

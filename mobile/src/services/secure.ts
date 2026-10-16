@@ -5,6 +5,11 @@
 
 import * as SecureStore from 'expo-secure-store';
 
+import {
+  DEFAULT_TRANSCRIPTION_MODEL,
+  type TranscriptionLanguage,
+} from '@/core/transcription';
+import { normalizeTypography, type NoteTypography } from '@/core/typography';
 import type { ServerConfig } from '@/core/types';
 
 const KEY = 'dyarium.server.config';
@@ -40,6 +45,14 @@ export interface Prefs {
   swipeAction: SwipeAction;
   /** Ultimo ano usado na importacao (agiliza remessas do mesmo ano). */
   importYear?: number;
+  /** Tipografia do editor de notas. */
+  typography?: NoteTypography;
+  /** Transcrever no aparelho (desligado volta a usar o servidor). */
+  localTranscription?: boolean;
+  /** Id do modelo de transcricao escolhido. */
+  transcriptionModel?: string;
+  /** Idioma da transcricao (pt fixo ou detectar). */
+  transcriptionLanguage?: TranscriptionLanguage;
 }
 
 const PREFS_KEY = 'dyarium.prefs';
@@ -53,6 +66,14 @@ export async function loadPrefs(): Promise<Prefs> {
     return {
       swipeAction: parsed.swipeAction === 'archive' ? 'archive' : 'delete',
       importYear: typeof parsed.importYear === 'number' ? parsed.importYear : undefined,
+      typography: parsed.typography ? normalizeTypography(parsed.typography) : undefined,
+      localTranscription:
+        typeof parsed.localTranscription === 'boolean' ? parsed.localTranscription : undefined,
+      transcriptionModel:
+        typeof parsed.transcriptionModel === 'string'
+          ? parsed.transcriptionModel
+          : DEFAULT_TRANSCRIPTION_MODEL,
+      transcriptionLanguage: parsed.transcriptionLanguage === 'auto' ? 'auto' : 'pt',
     };
   } catch {
     return DEFAULT_PREFS;

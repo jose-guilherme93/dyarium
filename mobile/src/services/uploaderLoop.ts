@@ -7,6 +7,7 @@
 import { DyariumApi, type FetchLike } from '@/core/api';
 import { isPermanentUploadError } from '@/core/errors';
 import { markCompleted, markFailed, markFailedTerminal, pickNextToUpload } from '@/core/queue';
+import { mergeTranscript } from '@/core/transcript';
 import { isTextNote, needsNoteSync, type Recording } from '@/core/types';
 import { uploadRecording } from '@/core/uploader';
 
@@ -14,6 +15,8 @@ import { acquireLock, getRecording, listRecordings, releaseLock, upsertRecording
 import { CONTENT_TYPE, FILE_EXTENSION, uploadFileIO } from './files';
 import { syncNote } from './noteSync';
 import { loadServerConfig } from './secure';
+import { pushTranscript } from './transcriptSync';
+import { willTranscribeLocally } from './whisper';
 
 const doFetch = globalThis.fetch as unknown as FetchLike;
 
@@ -57,7 +60,7 @@ export async function runUploadQueueOnce(): Promise<void> {
         }
         if (!next.filePath || !next.sizeBytes) {
           // Sem arquivo local o reenvio nunca vai funcionar: falha permanente.
-          const failed = markFailedTerminal(next, 'gravacao sem arquivo local', new Date());
+          const failed = markFailedTerminal(next, 'gravação sem arquivo local', new Date());
           await upsertRecording(failed);
           emitRecording(failed);
           continue;
@@ -95,6 +98,8 @@ async function pushNoteDocument(recording: Recording): Promise<Recording> {
   };
   await upsertRecording(updated);
   emitRecording(updated);
+  // Se a nota ja tinha transcricao antes do upload, envia o texto.
+  void pushTranscript(recording.id);
   return updated;
 }
 
@@ -108,6 +113,8 @@ async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
   emitRecording(current);
 
   try {
+    // Se o app vai transcrever no aparelho, avisa o servidor para nao enfileirar.
+    const localTranscribe = await willTranscribeLocally();
     const result = await uploadRecording(
       {
         clientKey: current.id,
@@ -118,6 +125,7 @@ async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
         localPath: current.filePath as string,
         sizeBytes: current.sizeBytes as number,
         text: current.text,
+        localTranscribe,
         durationSeconds: current.durationMs
           ? Math.max(1, Math.round(current.durationMs / 1000))
           : undefined,
@@ -141,9 +149,12 @@ async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
         },
       },
     );
+    // Relê o registro antes de gravar: a transcricao local pode ter ficado pronta
+    // durante o upload. Preserva o texto/segmentos e nunca rebaixa para "pending"
+    // (senao a nota ficava "Transcrevendo" para sempre).
+    const fresh = (await getRecording(current.id)) ?? current;
     current = {
-      ...markCompleted(current, result.entryId, new Date()),
-      transcriptStatus: 'pending',
+      ...mergeTranscript(markCompleted(current, result.entryId, new Date()), fresh),
       duplicate: result.duplicate ? true : undefined,
     };
     await upsertRecording(current);

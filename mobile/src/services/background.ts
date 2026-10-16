@@ -16,6 +16,9 @@ TaskManager.defineTask(UPLOAD_TASK, async () => {
   try {
     const { runUploadQueueOnce } = await import('./uploaderLoop');
     await runUploadQueueOnce();
+    // Retoma transcricoes locais pendentes (audio ainda sem transcricao).
+    const { transcribePendingLocally } = await import('./localTranscription');
+    await transcribePendingLocally();
     return BackgroundTask.BackgroundTaskResult.Success;
   } catch {
     return BackgroundTask.BackgroundTaskResult.Failed;
