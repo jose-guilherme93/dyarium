@@ -5,7 +5,8 @@
  */
 
 import { DyariumApi, type FetchLike } from '@/core/api';
-import { markCompleted, markFailed, pickNextToUpload } from '@/core/queue';
+import { isPermanentUploadError } from '@/core/errors';
+import { markCompleted, markFailed, markFailedTerminal, pickNextToUpload } from '@/core/queue';
 import { isTextNote, type Recording } from '@/core/types';
 import { uploadRecording } from '@/core/uploader';
 
@@ -52,9 +53,8 @@ export async function runUploadQueueOnce(): Promise<void> {
         continue;
       }
       if (!next.filePath || !next.sizeBytes) {
-        // Sem arquivo local nao ha o que enviar: marca falha e segue para o
-        // proximo (nao trava a fila inteira).
-        const failed = markFailed(next, 'gravacao sem arquivo local', new Date());
+        // Sem arquivo local o reenvio nunca vai funcionar: falha permanente.
+        const failed = markFailedTerminal(next, 'gravacao sem arquivo local', new Date());
         await upsertRecording(failed);
         emitRecording(failed);
         continue;
@@ -133,7 +133,9 @@ async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
     current = await pushNoteDocument(current);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'falha no envio';
-    current = markFailed(current, message, new Date());
+    current = isPermanentUploadError(error)
+      ? markFailedTerminal(current, message, new Date())
+      : markFailed(current, message, new Date());
     await upsertRecording(current);
     emitRecording(current);
   }
@@ -172,7 +174,9 @@ async function uploadTextOne(api: DyariumApi, recording: Recording): Promise<voi
     current = await pushNoteDocument(current);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'falha no envio';
-    current = markFailed(current, message, new Date());
+    current = isPermanentUploadError(error)
+      ? markFailedTerminal(current, message, new Date())
+      : markFailed(current, message, new Date());
     await upsertRecording(current);
     emitRecording(current);
   }

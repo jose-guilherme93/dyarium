@@ -30,6 +30,7 @@ interface Row {
   attempts: number;
   next_attempt_at: string | null;
   last_error: string | null;
+  terminal: string | null;
   entry_id: string | null;
   note_id: string | null;
   transcript: string | null;
@@ -138,6 +139,13 @@ const MIGRATIONS: Migration[] = [
       await addColumn(db, 'recordings', 'transcript_segments');
     },
   },
+  {
+    version: 7,
+    run: async (db) => {
+      // Falha permanente (4xx): nao retenta sozinha, so com reenvio manual.
+      await addColumn(db, 'recordings', 'terminal');
+    },
+  },
 ];
 
 async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
@@ -228,6 +236,7 @@ function rowToRecording(row: Row): Recording {
     attempts: row.attempts,
     nextAttemptAt: row.next_attempt_at ?? undefined,
     lastError: row.last_error ?? undefined,
+    terminal: row.terminal ? true : undefined,
     entryId: row.entry_id ?? undefined,
     noteId: row.note_id ?? undefined,
     transcript: row.transcript ?? undefined,
@@ -250,11 +259,11 @@ export async function upsertRecording(r: Recording): Promise<void> {
   await db.runAsync(
     `INSERT INTO recordings (
       id, title, recorded_at, dir, file_path, segment_count, duration_ms, size_bytes,
-      status, upload_id, offset, attempts, next_attempt_at, last_error, entry_id, note_id,
+      status, upload_id, offset, attempts, next_attempt_at, last_error, terminal, entry_id, note_id,
       transcript, transcript_language, transcript_status, transcript_segments,
       source, text, content_type, file_name, duplicate, archived,
       created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
       recorded_at = excluded.recorded_at,
@@ -269,6 +278,7 @@ export async function upsertRecording(r: Recording): Promise<void> {
       attempts = excluded.attempts,
       next_attempt_at = excluded.next_attempt_at,
       last_error = excluded.last_error,
+      terminal = excluded.terminal,
       entry_id = excluded.entry_id,
       note_id = excluded.note_id,
       transcript = excluded.transcript,
@@ -297,6 +307,7 @@ export async function upsertRecording(r: Recording): Promise<void> {
       r.attempts,
       r.nextAttemptAt ?? null,
       r.lastError ?? null,
+      r.terminal ? 1 : null,
       r.entryId ?? null,
       r.noteId ?? null,
       r.transcript ?? null,

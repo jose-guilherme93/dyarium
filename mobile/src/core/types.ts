@@ -41,6 +41,8 @@ export interface Recording {
   nextAttemptAt?: string;
   /** Ultima mensagem de erro (generica, sem segredo). */
   lastError?: string;
+  /** Falha permanente: nao retenta sozinha (erro 4xx); so com retry manual. */
+  terminal?: boolean;
   /** Id da entrada criada no servidor. */
   entryId?: string;
   /** Id da nota (corpo rico) no servidor, quando criada. */
@@ -88,6 +90,7 @@ export interface ServerConfig {
 export const ACTIVE_STATUSES: RecordingStatus[] = ['recording', 'interrupted'];
 
 export function isUploadable(r: Recording): boolean {
+  if (r.terminal) return false;
   return (
     r.status === 'queued' ||
     r.status === 'uploading' ||

@@ -323,6 +323,9 @@ export default function NoteScreen() {
           {note.status === 'failed' && note.lastError ? (
             <Text style={styles.meta}>· {note.lastError}</Text>
           ) : null}
+          {note.terminal ? (
+            <Text style={styles.meta}>· nao sera reenviado automaticamente</Text>
+          ) : null}
         </View>
 
         {hasAudio ? <AudioPlayer uri={note.filePath as string} /> : null}
