@@ -91,8 +91,18 @@ Superficie Android em Expo (development build). O nucleo puro fica em `mobile/sr
   revisao (titulo, ano do lote, ordem dia/mes, 24h/AM-PM, duracao e playback). O audio
   original e preservado; dedupe por SHA-256 no servidor.
 - App de notas (texto e audio): tela da nota sempre editavel, autosave, editor rico
-  (negrito/italico/lista via WebView), contador de palavras e gravar audio embutido.
-  Nota so de texto entra na fila e e enviada como conteudo (endpoint do servidor pendente).
+  (negrito/italico/lista via WebView) e gravar audio embutido. A barra de acoes so aparece
+  com o teclado aberto e o titulo encolhe a fonte quando fica longo; os tres pontinhos
+  abrem compartilhar e a ficha de propriedades (criada em, origem, palavras, caracteres,
+  tamanho, status), como no dashboard. Nota so de texto entra na fila e e enviada como
+  conteudo (endpoint do servidor pendente).
+- Nota local-first de verdade: a edicao e sempre persistida no SQLite antes de qualquer
+  rede; edicao de nota ja enviada (texto ou imagem) marca um flag e entra na fila de sync,
+  que reenvia ao voltar a conexao. Imagens sao salvas no aparelho e exibidas no editor pelo
+  proprio arquivo (`file://`), sem base64 nem download a cada abertura; um mapa de anexos
+  evita reenviar a mesma imagem. Na importacao a foto e reduzida (maior lado ate 2048 px) e
+  recomprimida em JPEG de alta qualidade (`expo-image-manipulator`), o que remove o atraso
+  de abrir a nota (o editor nao decodifica mais a foto em resolucao cheia).
 - Biblioteca por ano, busca local, pull-to-refresh, swipe para apagar/arquivar e opcoes.
 - Status de sincronizacao no cabecalho e tela de fila; notificacao quando a transcricao
   fica pronta; compartilhar o texto da nota.

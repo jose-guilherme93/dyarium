@@ -12,11 +12,22 @@ texto, guarda local, enfileira e envia para o servidor self-hosted.
   nuvem**. Cada card tem um menu de **tres pontinhos** (arquivar/apagar) e da para
   **arrastar para o lado** para apagar ou arquivar (configuravel nas Opcoes).
 - **Tela da nota** (`/note/[id]`): sempre editavel (titulo e texto), com
-  **autosave** (sem botao de salvar), **editor rico** (negrito, italico, lista
-  renderizados de verdade via WebView), **contador de palavras** e **gravacao de
-  audio** dentro da nota. Enter no titulo desce para o corpo. Nota so de texto e
-  enviada como conteudo textual; com audio, o audio sobe e o texto vai junto. Ao
-  sair, a nota e enviada (rascunho com conteudo) ou sincronizada (nota ja enviada).
+  **autosave** (sem botao de salvar) e **editor rico** (negrito, italico, lista
+  renderizados de verdade via WebView). A nota nasce limpa: a barra com negrito,
+  italico, lista, foto e audio so aparece enquanto o teclado esta aberto; o
+  titulo encolhe a fonte quando fica longo. No topo, o botao de microfone
+  (discreto) e os **tres pontinhos** abrem as configuracoes da nota:
+  **compartilhar** e a ficha de propriedades (criada em, origem, palavras,
+  caracteres, tamanho e status), como no dashboard. Enter no titulo desce para o
+  corpo. Nota so de texto e enviada como conteudo textual; com audio, o audio sobe
+  e o texto vai junto. Ao sair, a nota e enviada (rascunho com conteudo) ou entra
+  na fila de sync (edicao de nota ja enviada), sem depender de rede na hora.
+- **Imagens**: ao escolher uma foto, ela e reduzida (maior lado ate 2048 px) e
+  recomprimida em JPEG de alta qualidade antes de entrar na nota. Fica salva no
+  aparelho e e exibida pelo proprio arquivo (`file://`) no editor, nunca por
+  base64; sobe no sync e continua abrindo do aparelho depois, sem baixar de novo.
+  Assim o editor abre rapido, sem o atraso de decodificar a foto em resolucao
+  cheia.
   O editor rico exige o `react-native-webview` (novo development build); ate o
   rebuild, cai para um editor simples com marcadores.
 - Grava em **AAC ADTS** (48 kHz mono ~128 kbps), em **segmentos de 60 s**, com
@@ -72,6 +83,10 @@ npx eas-cli@latest build --profile development --platform android
 ```
 
 Instale o APK gerado no aparelho. O `eas.json` ja traz o perfil `development`.
+
+A compressao de imagem usa `expo-image-manipulator` (modulo nativo), entao um
+**novo development build** e necessario para o app mais recente. Sem ele, o app
+continua abrindo, mas anexa a foto original (sem reduzir).
 
 ## Servidor
 
