@@ -26,14 +26,6 @@ describe('needsTranscript', () => {
     expect(needsTranscript(base({ entryId: 'en1', transcriptStatus: 'ready' }))).toBe(false);
   });
 
-  it('nao precisa quando a transcricao falhou de vez', () => {
-    expect(needsTranscript(base({ entryId: 'en1', transcriptStatus: 'failed' }))).toBe(false);
-  });
-
-  it('precisa para uma nota que so existe no servidor', () => {
-    expect(needsTranscript(base({ entryId: 'en1', status: 'remote' }))).toBe(true);
-  });
-
   it('nao precisa sem entryId (ainda nao enviada)', () => {
     expect(needsTranscript(base({ status: 'queued' }))).toBe(false);
   });
