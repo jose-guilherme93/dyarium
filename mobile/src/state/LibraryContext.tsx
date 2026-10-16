@@ -5,6 +5,7 @@ import { newId } from '@/core/id';
 import { buildDraftNote, buildTextNote, noteHasContent } from '@/core/note';
 import { markQueued } from '@/core/queue';
 import { isUploadable, needsNoteSync, needsTranscript, type Recording } from '@/core/types';
+import { bumpRender } from '@/dev/perf';
 import { deleteRecordingRow, getRecording, listRecordings, upsertRecording } from '@/services/db';
 import { deleteServerEntry } from '@/services/entries';
 import { deleteSessionFiles } from '@/services/files';
@@ -45,6 +46,21 @@ interface LibraryValue {
 
 const LibraryContext = createContext<LibraryValue | null>(null);
 
+/**
+ * Lista igual a anterior (mesmos ids e mesma versao): evita re-render quando o
+ * sync periodico rele o banco sem mudanca. `updatedAt` muda a cada escrita.
+ */
+function sameRecordings(a: Recording[], b: Recording[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i].id !== b[i].id || a[i].updatedAt !== b[i].updatedAt || a[i].status !== b[i].status) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /** Enquanto houver itens na fila, tenta enviar neste intervalo. */
 const WORKER_INTERVAL_MS = 15_000;
 
@@ -53,6 +69,7 @@ const TRANSCRIPT_INTERVAL_MS = 8_000;
 
 export function LibraryProvider({ children }: { children: ReactNode }) {
   const { config } = useSettings();
+  bumpRender('LibraryProvider');
   const [recordings, setRecordings] = useState<Recording[]>([]);
   const [ready, setReady] = useState(false);
 
@@ -65,7 +82,9 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
 
   const refresh = useCallback(async () => {
     const list = await listRecordings();
-    setRecordings(list);
+    // Nao recria a lista (nem re-renderiza os cards) quando nada mudou: o sync
+    // periodico trocava a identidade de todas as notas a toa.
+    setRecordings((prev) => (sameRecordings(prev, list) ? prev : list));
   }, []);
 
   const kick = useCallback(() => {

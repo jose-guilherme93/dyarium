@@ -22,6 +22,7 @@ import { newId } from '@/core/id';
 import { markRecorded } from '@/core/queue';
 import { formatTitle, toRecordedAt } from '@/core/title';
 import type { Recording } from '@/core/types';
+import { bumpRender } from '@/dev/perf';
 import { listRecordings, upsertRecording } from '@/services/db';
 import { concatIO, outputFileUri, sessionDirUri, storeSegment } from '@/services/files';
 import { ensureNotificationPermission } from '@/services/notifications';
@@ -81,6 +82,7 @@ function normalizeLevel(metering?: number): number {
 
 export function RecordingProvider({ children }: { children: ReactNode }) {
   const library = useLibrary();
+  bumpRender('RecordingProvider');
   const recorder = useAudioRecorder(RECORDING_OPTIONS);
   const recorderState = useAudioRecorderState(recorder, 200);
 

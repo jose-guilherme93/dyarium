@@ -20,6 +20,7 @@ import {
   type NoteTypography,
 } from '@/core/typography';
 import type { ServerConfig } from '@/core/types';
+import { bumpRender } from '@/dev/perf';
 import {
   clearServerConfig,
   loadPrefs,
@@ -75,6 +76,7 @@ function normalizeUrl(baseUrl: string): string {
 }
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
+  bumpRender('SettingsProvider');
   const [config, setConfig] = useState<ServerConfig | null>(null);
   const [ready, setReady] = useState(false);
   const [swipeAction, setSwipeActionState] = useState<SwipeAction>('delete');

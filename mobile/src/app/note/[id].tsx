@@ -166,6 +166,8 @@ export default function NoteScreen() {
   const localTranscribeRef = useRef(false);
   const dirtyRef = useRef(false);
   const editorRef = useRef<RichEditorHandle>(null);
+  // Quando as imagens ficam resolvidas (o editor comeca a montar).
+  const editorMountRef = useRef(0);
 
   // Altura da janela sem teclado (capturada no mount). Serve para saber se o
   // Android redimensionou a janela com o teclado (adjustResize) ou nao (edge-to-edge).
@@ -277,7 +279,10 @@ export default function NoteScreen() {
       setTitle(note.title);
       setBody(note.text ?? '');
       void resolveImageSources(note.id, note.text ?? '', note.attachments ?? {})
-        .then(setImageSources)
+        .then((sources) => {
+          editorMountRef.current = Date.now();
+          setImageSources(sources);
+        })
         .catch(() => setImageSources({}));
     }
   }, [note]);
@@ -436,7 +441,8 @@ export default function NoteScreen() {
   const handleEditorReady = useCallback(() => {
     if (actionDoneRef.current || !noteId) return;
     actionDoneRef.current = true;
-    mark('note.editor_ms', Date.now() - openedAt);
+    mark('note.ready_ms', Date.now() - openedAt);
+    if (editorMountRef.current) mark('note.webview_ms', Date.now() - editorMountRef.current);
     if (action === 'text') editorRef.current?.focus();
     else if (action === 'image') void handleAddImage();
     else if (action === 'link') void openLinkModal();

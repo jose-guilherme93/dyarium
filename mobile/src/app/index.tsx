@@ -106,6 +106,15 @@ const NoteRow = memo(function NoteRow({
   );
 });
 
+// Identidade estavel: evita re-render dos cards a cada atualizacao da lista.
+function ItemSeparator() {
+  return <View style={styles.separator} />;
+}
+
+function keyExtractor(item: Recording) {
+  return item.id;
+}
+
 export default function RecordScreen() {
   const { recordings, remove, kick, refresh, pull, createDraftNote, archiveNote, unarchiveNote } =
     useLibrary();
@@ -238,6 +247,28 @@ export default function RecordScreen() {
   const unarchive = useCallback((noteId: string) => void unarchiveNote(noteId), [unarchiveNote]);
   const swipeDelete = swipeAction === 'delete';
 
+  const renderItem = useCallback(
+    ({ item }: { item: Recording }) => (
+      <NoteRow
+        item={item}
+        swipeDelete={swipeDelete}
+        onOpen={openNote}
+        onLongPress={openActions}
+        onRemove={removeNote}
+        onArchive={archive}
+        onUnarchive={unarchive}
+      />
+    ),
+    [swipeDelete, openNote, openActions, removeNote, archive, unarchive],
+  );
+
+  const renderSectionHeader = useCallback(
+    ({ section }: { section: RecordingSection }) => (
+      <Text style={styles.sectionHeader}>{section.title}</Text>
+    ),
+    [],
+  );
+
   return (
     <Screen style={styles.screen}>
       <View style={styles.header}>
@@ -308,9 +339,9 @@ export default function RecordScreen() {
 
           <SectionList
             sections={sections}
-            keyExtractor={(item) => item.id}
+            keyExtractor={keyExtractor}
             contentContainerStyle={styles.list}
-            ItemSeparatorComponent={() => <View style={styles.separator} />}
+            ItemSeparatorComponent={ItemSeparator}
             stickySectionHeadersEnabled={false}
             showsVerticalScrollIndicator={false}
             refreshControl={
@@ -320,20 +351,8 @@ export default function RecordScreen() {
                 tintColor={colors.textSecondary}
               />
             }
-            renderSectionHeader={({ section }) => (
-              <Text style={styles.sectionHeader}>{section.title}</Text>
-            )}
-            renderItem={({ item }) => (
-              <NoteRow
-                item={item}
-                swipeDelete={swipeDelete}
-                onOpen={openNote}
-                onLongPress={openActions}
-                onRemove={removeNote}
-                onArchive={archive}
-                onUnarchive={unarchive}
-              />
-            )}
+            renderSectionHeader={renderSectionHeader}
+            renderItem={renderItem}
             ListEmptyComponent={
               <View style={styles.empty}>
                 <View style={styles.emptyIcon}>
