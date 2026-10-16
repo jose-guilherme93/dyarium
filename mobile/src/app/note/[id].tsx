@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { useAudioPlayerStatus, type AudioPlayer as AudioPlayerHandle } from 'expo-audio';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams, useNavigation } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
@@ -139,6 +139,22 @@ export default function NoteScreen() {
   useRenderCount('NoteScreen');
   // Marco de tempo: da abertura da nota ate o editor ficar pronto (WebView).
   const [openedAt] = useState(() => Date.now());
+  // O editor (WebView) so monta depois da transicao de entrada: durante o
+  // deslize a tela fica leve e a animacao nao engasga. Fallback para o caso de
+  // nao haver transicao (abertura direta).
+  const navigation = useNavigation();
+  const [contentReady, setContentReady] = useState(false);
+  useEffect(() => {
+    const nav = navigation as unknown as {
+      addListener(event: 'transitionEnd', callback: () => void): () => void;
+    };
+    const unsubscribe = nav.addListener('transitionEnd', () => setContentReady(true));
+    const fallback = setTimeout(() => setContentReady(true), 400);
+    return () => {
+      unsubscribe();
+      clearTimeout(fallback);
+    };
+  }, [navigation]);
 
   const [title, setTitle] = useState(() => note?.title ?? '');
   const [body, setBody] = useState(() => note?.text ?? '');
@@ -578,7 +594,7 @@ export default function NoteScreen() {
           </View>
         ) : null}
 
-        {imageSources ? (
+        {imageSources && contentReady ? (
           <View
             onLayout={(event) => {
               editorTopRef.current = event.nativeEvent.layout.y;
