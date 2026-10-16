@@ -23,6 +23,9 @@ type createUploadRequest struct {
 	ClientKey   string `json:"client_key"`
 	// EntryID, when set, adds the audio to an existing entry.
 	EntryID string `json:"entry_id"`
+	// LocalTranscribe means the client will transcribe on the device, so the
+	// server must not enqueue its own transcription.
+	LocalTranscribe bool `json:"local_transcribe"`
 }
 
 func (s *Server) handleCreateUpload(w http.ResponseWriter, r *http.Request) {
@@ -38,14 +41,15 @@ func (s *Server) handleCreateUpload(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	up, err := s.deps.Ingest.Start(r.Context(), ingest.Meta{
-		Filename:    req.Filename,
-		ContentType: req.ContentType,
-		SizeBytes:   req.SizeBytes,
-		SHA256:      req.SHA256,
-		Title:       req.Title,
-		RecordedAt:  recordedAt,
-		ClientKey:   req.ClientKey,
-		EntryID:     req.EntryID,
+		Filename:        req.Filename,
+		ContentType:     req.ContentType,
+		SizeBytes:       req.SizeBytes,
+		SHA256:          req.SHA256,
+		Title:           req.Title,
+		RecordedAt:      recordedAt,
+		ClientKey:       req.ClientKey,
+		EntryID:         req.EntryID,
+		LocalTranscribe: req.LocalTranscribe,
 	})
 	if err != nil {
 		s.writeIngestError(w, err)
@@ -113,9 +117,11 @@ func (s *Server) handleCompleteUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Um complete repetido (resposta perdida) nao refaz o trabalho nem
-	// reenfileira a transcricao; devolve o estado atual.
+	// reenfileira a transcricao; devolve o estado atual. Quando o cliente
+	// transcreve no aparelho (`local_transcribe`), o servidor nao enfileira:
+	// espera o texto chegar por PUT /entries/{id}/transcript.
 	status := result.Entry.Status
-	if !result.Repeated {
+	if !result.Repeated && !result.LocalTranscribe {
 		if _, err := s.deps.Queue.Enqueue(ctx, jobs.TypeTranscribe, "transcribe:"+result.Attachment.ID,
 			jobs.TranscribePayload{EntryID: result.Entry.ID, AttachmentID: result.Attachment.ID}); err != nil {
 			s.deps.Logger.Error("falha: enfileirar transcricao", "erro", err)

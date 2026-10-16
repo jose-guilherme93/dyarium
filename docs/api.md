@@ -31,7 +31,8 @@ Cria um upload. Corpo:
   "title": "10/10/2026 18:05",
   "recorded_at": "2026-10-10T21:05:00Z",
   "client_key": "ck_...",
-  "entry_id": "en_..."
+  "entry_id": "en_...",
+  "local_transcribe": false
 }
 ```
 Resposta 201:
@@ -53,6 +54,9 @@ Resposta 201:
   em vez de criar uma nova (uma nota pode ter varios audios). 404 se a entrada nao existir.
 - `duration_seconds` e aceito no corpo mas ignorado; o servidor mede a duracao com ffprobe
   no complete.
+- `local_transcribe` (bool, opcional): quando `true`, o cliente transcreve o audio no
+  aparelho e o servidor **nao** enfileira a transcricao no complete; o texto chega depois
+  via `PUT /api/v1/entries/{id}/transcript`. Quem transcreve primeiro informa o outro.
 - `offset` na resposta e o offset ja confirmado (0 em uploads novos).
 
 ### PUT /api/v1/uploads/{id}
@@ -122,6 +126,21 @@ silencio). O audio original permanece intacto.
 
 ### GET /api/v1/entries/{id}/transcript
 Retorna a transcricao atual, com `segments` (inicio, fim, texto) e metadados do modelo.
+
+### PUT /api/v1/entries/{id}/transcript
+Guarda a transcricao feita no aparelho (transcricao local). O servidor passa a usa-la em
+vez de transcrever, e o dashboard mostra o texto. Corpo:
+```json
+{
+  "attachment_id": "at_...",
+  "language": "pt",
+  "text": "texto completo",
+  "segments": [{ "start_ms": 0, "end_ms": 1000, "text": "trecho" }]
+}
+```
+- Regexp de id: `attachment_id` e opcional; quando informado precisa pertencer a entrada.
+- A transcricao e gravada com `model` = `local`; uma transcricao anterior daquele audio e
+  substituida. Emite `transcript.ready`.
 
 ### GET /api/v1/entries/{id}/segments
 Lista os segmentos com paginacao, para leitura incremental.

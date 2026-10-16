@@ -238,6 +238,75 @@ func (s *Server) handleGetTranscript(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, transcriptJSON(t, segs))
 }
 
+type putTranscriptRequest struct {
+	AttachmentID string `json:"attachment_id"`
+	Language     string `json:"language"`
+	Text         string `json:"text"`
+	Segments     []struct {
+		StartMS int64  `json:"start_ms"`
+		EndMS   int64  `json:"end_ms"`
+		Text    string `json:"text"`
+	} `json:"segments"`
+}
+
+// handlePutTranscript stores a transcript produced on the device (transcricao
+// local). Assim o servidor nao transcreve de novo e o dashboard mostra o texto.
+func (s *Server) handlePutTranscript(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	entryID := r.PathValue("id")
+	if _, err := s.deps.Store.GetEntry(ctx, entryID); err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "entrada inexistente")
+		return
+	}
+	var req putTranscriptRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_body", "corpo invalido")
+		return
+	}
+	text := strings.TrimSpace(req.Text)
+	if text == "" {
+		writeError(w, http.StatusBadRequest, "invalid_body", "texto vazio")
+		return
+	}
+	attachmentID := strings.TrimSpace(req.AttachmentID)
+	if attachmentID != "" {
+		att, err := s.deps.Store.GetAttachment(ctx, attachmentID)
+		if err != nil || att.EntryID != entryID {
+			writeError(w, http.StatusBadRequest, "invalid_attachment", "anexo invalido")
+			return
+		}
+	}
+
+	now := time.Now().UTC()
+	segments := make([]store.Segment, 0, len(req.Segments))
+	for _, seg := range req.Segments {
+		segments = append(segments, store.Segment{
+			ID:        id.New(),
+			StartMS:   seg.StartMS,
+			EndMS:     seg.EndMS,
+			Text:      seg.Text,
+			CreatedAt: now,
+		})
+	}
+	transcript := store.Transcript{
+		ID:           id.New(),
+		EntryID:      entryID,
+		AttachmentID: attachmentID,
+		Model:        "local",
+		Language:     strings.TrimSpace(req.Language),
+		Text:         text,
+		CreatedAt:    now,
+	}
+	if err := s.deps.Store.SaveTranscript(ctx, transcript, segments); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	_ = s.deps.Store.UpdateEntryStatus(ctx, entryID, store.EntryTranscribed)
+	s.deps.Events.Publish("entry.status", map[string]string{"entry_id": entryID, "status": store.EntryTranscribed})
+	s.deps.Events.Publish("transcript.ready", map[string]string{"entry_id": entryID})
+	writeJSON(w, http.StatusOK, map[string]string{"model": "local"})
+}
+
 // transcriptJSON renders a transcript with its segments.
 func transcriptJSON(t store.Transcript, segs []store.Segment) map[string]any {
 	segments := make([]map[string]any, 0, len(segs))

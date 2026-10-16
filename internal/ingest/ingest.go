@@ -59,6 +59,9 @@ type Meta struct {
 	// EntryID, when set, adds this audio to an existing entry instead of
 	// creating a new one (used to give a note more than one audio).
 	EntryID string
+	// LocalTranscribe means the client will transcribe this audio on the device;
+	// the server must not enqueue its own transcription.
+	LocalTranscribe bool
 }
 
 // Error carries an HTTP status so handlers can map failures precisely.
@@ -136,21 +139,22 @@ func (s *Service) Start(ctx context.Context, meta Meta) (store.Upload, error) {
 
 	now := time.Now().UTC()
 	u := store.Upload{
-		ID:          uploadID,
-		Status:      "open",
-		Filename:    meta.Filename,
-		ContentType: meta.ContentType,
-		SizeBytes:   meta.SizeBytes,
-		SHA256:      sha,
-		Title:       strings.TrimSpace(meta.Title),
-		RecordedAt:  meta.RecordedAt,
-		ClientKey:   clientKey,
-		EntryID:     entryID,
-		StorageKey:  storageKey,
-		Prefix:      prefix[:],
-		NextCounter: 0,
-		CreatedAt:   now,
-		ExpiresAt:   now.Add(24 * time.Hour),
+		ID:              uploadID,
+		Status:          "open",
+		Filename:        meta.Filename,
+		ContentType:     meta.ContentType,
+		SizeBytes:       meta.SizeBytes,
+		SHA256:          sha,
+		Title:           strings.TrimSpace(meta.Title),
+		RecordedAt:      meta.RecordedAt,
+		ClientKey:       clientKey,
+		EntryID:         entryID,
+		LocalTranscribe: meta.LocalTranscribe,
+		StorageKey:      storageKey,
+		Prefix:          prefix[:],
+		NextCounter:     0,
+		CreatedAt:       now,
+		ExpiresAt:       now.Add(24 * time.Hour),
 	}
 	if err := s.store.CreateUpload(ctx, u); err != nil {
 		return store.Upload{}, err
@@ -214,6 +218,9 @@ type CompleteResult struct {
 	// already imported, or a previous complete whose response was lost). When
 	// true, no new work happened and the caller must not re-enqueue anything.
 	Repeated bool
+	// LocalTranscribe means the client transcribes this audio on the device, so
+	// the server must not enqueue the transcribe job.
+	LocalTranscribe bool
 }
 
 // Complete validates size, format and SHA-256, then creates the entry (or adds
@@ -354,7 +361,12 @@ func (s *Service) Complete(ctx context.Context, uploadID string) (CompleteResult
 	if err := s.store.SetUploadCompleted(ctx, uploadID, attachment.ID); err != nil {
 		return CompleteResult{}, err
 	}
-	return CompleteResult{Entry: entry, Attachment: attachment, Created: created}, nil
+	return CompleteResult{
+		Entry:           entry,
+		Attachment:      attachment,
+		Created:         created,
+		LocalTranscribe: u.LocalTranscribe,
+	}, nil
 }
 
 // completedResult returns the outcome stored by a previous Complete, so a repeat
@@ -371,7 +383,12 @@ func (s *Service) completedResult(ctx context.Context, u store.Upload) (Complete
 	if err != nil {
 		return CompleteResult{}, newError(404, "not_found", "entrada inexistente")
 	}
-	return CompleteResult{Entry: entry, Attachment: att, Repeated: true}, nil
+	return CompleteResult{
+		Entry:           entry,
+		Attachment:      att,
+		Repeated:        true,
+		LocalTranscribe: u.LocalTranscribe,
+	}, nil
 }
 
 // DecryptToTemp decrypts the original audio of an entry into a restricted temp

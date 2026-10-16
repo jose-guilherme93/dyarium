@@ -23,12 +23,12 @@ func parseTS(s string) time.Time {
 func (s *Store) CreateUpload(ctx context.Context, u Upload) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO uploads (id, status, filename, content_type, size_bytes, sha256,
-			title, recorded_at, client_key, entry_id, result_attachment_id,
+			title, recorded_at, client_key, entry_id, result_attachment_id, local_transcribe,
 			received_bytes, storage_key, prefix, next_counter, created_at, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		u.ID, u.Status, u.Filename, u.ContentType, u.SizeBytes, nullString(u.SHA256),
 		nullString(u.Title), nullTS(u.RecordedAt), nullString(u.ClientKey), nullString(u.EntryID),
-		nullString(u.ResultAttachmentID),
+		nullString(u.ResultAttachmentID), boolInt(u.LocalTranscribe),
 		u.ReceivedBytes, u.StorageKey, u.Prefix, u.NextCounter, ts(u.CreatedAt), ts(u.ExpiresAt))
 	if err != nil {
 		return fmt.Errorf("store: create upload: %w", err)
@@ -62,13 +62,14 @@ func (s *Store) getUpload(ctx context.Context, where string, arg any) (Upload, e
 	var u Upload
 	var createdAt, expiresAt string
 	var sha, title, recordedAt, clientKey, entryID, resultAttachmentID sql.NullString
+	var localTranscribe int
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, status, filename, content_type, size_bytes, sha256,
-			title, recorded_at, client_key, entry_id, result_attachment_id,
+			title, recorded_at, client_key, entry_id, result_attachment_id, local_transcribe,
 			received_bytes, storage_key, prefix, next_counter, created_at, expires_at
 		FROM uploads `+where, arg).Scan(
 		&u.ID, &u.Status, &u.Filename, &u.ContentType, &u.SizeBytes, &sha,
-		&title, &recordedAt, &clientKey, &entryID, &resultAttachmentID,
+		&title, &recordedAt, &clientKey, &entryID, &resultAttachmentID, &localTranscribe,
 		&u.ReceivedBytes, &u.StorageKey, &u.Prefix, &u.NextCounter, &createdAt, &expiresAt)
 	if err != nil {
 		return Upload{}, err
@@ -82,6 +83,7 @@ func (s *Store) getUpload(ctx context.Context, where string, arg any) (Upload, e
 	u.ClientKey = clientKey.String
 	u.EntryID = entryID.String
 	u.ResultAttachmentID = resultAttachmentID.String
+	u.LocalTranscribe = localTranscribe != 0
 	u.CreatedAt = parseTS(createdAt)
 	u.ExpiresAt = parseTS(expiresAt)
 	return u, nil

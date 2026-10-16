@@ -96,6 +96,11 @@ Superficie Android em Expo (development build). O nucleo puro fica em `mobile/sr
   abrem compartilhar e a ficha de propriedades (criada em, origem, palavras, caracteres,
   tamanho, status), como no dashboard. Nota so de texto entra na fila e e enviada como
   conteudo (endpoint do servidor pendente).
+- Transcricao no aparelho (opcional, nas Opcoes): usa `whisper.rn` (whisper.cpp) com modelos
+  ggml baixados em runtime (Tiny..Large v3 Turbo), recomendado pela RAM; o audio AAC e
+  decodificado para 16 kHz por um modulo nativo local (sem ffmpeg) e transcrito offline, com o texto
+  aparecendo por trecho. Cada nota tem um flag de transcricao e a origem (`local`/`server`);
+  quem transcreve primeiro informa o outro e nao ha retranscricao. Exige novo development build.
 - Nota local-first de verdade: a edicao e sempre persistida no SQLite antes de qualquer
   rede; edicao de nota ja enviada (texto ou imagem) marca um flag e entra na fila de sync,
   que reenvia ao voltar a conexao. Imagens sao salvas no aparelho e exibidas no editor pelo

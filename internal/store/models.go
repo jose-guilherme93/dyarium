@@ -40,12 +40,15 @@ type Upload struct {
 	// ResultAttachmentID is the audio attachment produced by Complete. Set on
 	// completion so repeating Complete returns the same result (idempotent).
 	ResultAttachmentID string
-	ReceivedBytes      int64
-	StorageKey         string
-	Prefix             []byte
-	NextCounter        uint32
-	CreatedAt          time.Time
-	ExpiresAt          time.Time
+	// LocalTranscribe means the client will transcribe this audio on the device;
+	// the server must not enqueue its own transcription.
+	LocalTranscribe bool
+	ReceivedBytes   int64
+	StorageKey      string
+	Prefix          []byte
+	NextCounter     uint32
+	CreatedAt       time.Time
+	ExpiresAt       time.Time
 }
 
 // Entry is a stored audio and its lifecycle.
