@@ -65,8 +65,12 @@ texto, guarda local, enfileira e envia para o servidor self-hosted.
 - **Status de sincronizacao** no cabecalho (nuvem discreta): abre a tela de Sincronizacao com
   o que esta na fila/falhou e "Enviar agora". O envio continua em segundo plano
   (WorkManager) quando o app fica em segundo plano.
-- **Painel** (nas Opcoes): resumo, humor (sentimento), emocoes, pessoas, lugares, tags e
-  status, puxados do servidor.
+- **Painel** (nas Opcoes): duas partes. **Escrita** (local, sempre disponivel): palavras,
+  caracteres, frases, paragrafos, vocabulario (palavras unicas e riqueza), palavras por nota,
+  palavras mais usadas e mais longas, perguntas/exclamacoes, links, imagens, listas, dias com
+  nota, sequencia (streak), dia da semana e periodo em que mais escreve, palavras faladas nas
+  transcricoes, e **insights** em frases. **Servidor** (quando configurado): resumo, humor
+  (sentimento), emocoes, pessoas, lugares, tags e status, puxados do servidor.
 - **Busca local** e **pull-to-refresh** na lista; **compartilhar** o texto da nota;
   **notificacao** quando a transcricao fica pronta.
 - **Armazenamento** (nas Opcoes): uso no aparelho e liberar espaco (remove o audio local de
