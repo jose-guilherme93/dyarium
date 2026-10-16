@@ -148,6 +148,17 @@ make lint
 
 Mais detalhes em `CONTRIBUTING.md` e `AGENTS.md`.
 
+## Manutencao
+
+Notas que sao duplicatas do mesmo audio (de versoes anteriores) podem ser
+mescladas por um comando: ele mantem a nota mais completa (transcricao, nota,
+analise) e move os dados das outras para ela.
+
+```
+make dedupe DRY=1   # simulacao
+make dedupe         # aplica
+```
+
 ## Versoes
 
 A versao segue semver e e calculada automaticamente a partir dos commits
