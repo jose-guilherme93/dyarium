@@ -33,6 +33,7 @@ import {
 } from '@/core/format';
 import { IMAGE_WIDTH_OPTIONS } from '@/core/image';
 import { breakSentences, countChars, countWords, markdownToPlain } from '@/core/richText';
+import { mark, useRenderCount } from '@/dev/perf';
 import {
   localImageUri,
   resolveImageSources,
@@ -45,7 +46,7 @@ import { pickImage } from '@/services/image';
 import { maybeTranscribeLocally } from '@/services/localTranscription';
 import { playPlayer } from '@/services/playback';
 import { useLibrary } from '@/state/LibraryContext';
-import { usePauseOnUnmount, usePlaybackSource } from '@/state/PlaybackContext';
+import { useLoadPlayback, usePauseOnUnmount, usePlaybackSource } from '@/state/PlaybackContext';
 import { useSettings } from '@/state/SettingsContext';
 import { useTranscriptionProgress } from '@/state/useTranscriptionProgress';
 import { colors, fontSize, radius, spacing } from '@/theme/tokens';
@@ -60,9 +61,11 @@ import { colors, fontSize, radius, spacing } from '@/theme/tokens';
 
 type PlayerHandle = AudioPlayerHandle;
 
-function NoteAudioPlayer({ player }: { player: PlayerHandle }) {
+function NoteAudioPlayer({ player, durationMs }: { player: PlayerHandle; durationMs?: number }) {
   const status = useAudioPlayerStatus(player);
-  const duration = status.duration || 0;
+  const load = useLoadPlayback();
+  // Antes de carregar, `duration` e 0: usa a duracao conhecida da nota.
+  const duration = status.duration > 0 ? status.duration : (durationMs ?? 0) / 1000;
   const current = status.currentTime || 0;
 
   const toggle = () => {
@@ -70,6 +73,7 @@ function NoteAudioPlayer({ player }: { player: PlayerHandle }) {
       player.pause();
       return;
     }
+    load();
     playPlayer(player);
   };
 
@@ -132,6 +136,9 @@ export default function NoteScreen() {
   const player = usePlaybackSource(filePath);
   usePauseOnUnmount();
   const segments = note?.transcriptSegments;
+  useRenderCount('NoteScreen');
+  // Marco de tempo: da abertura da nota ate o editor ficar pronto (WebView).
+  const [openedAt] = useState(() => Date.now());
 
   const [title, setTitle] = useState(() => note?.title ?? '');
   const [body, setBody] = useState(() => note?.text ?? '');
@@ -429,10 +436,11 @@ export default function NoteScreen() {
   const handleEditorReady = useCallback(() => {
     if (actionDoneRef.current || !noteId) return;
     actionDoneRef.current = true;
+    mark('note.editor_ms', Date.now() - openedAt);
     if (action === 'text') editorRef.current?.focus();
     else if (action === 'image') void handleAddImage();
     else if (action === 'link') void openLinkModal();
-  }, [action, noteId, handleAddImage, openLinkModal]);
+  }, [action, noteId, handleAddImage, openLinkModal, openedAt]);
 
   // Contagens varrem o texto inteiro: so recalcula quando o corpo ou a ficha
   // mudam (antes rodava a cada tecla e a cada re-render da nota).
@@ -540,7 +548,7 @@ export default function NoteScreen() {
           ]}
         />
 
-        {hasAudio ? <NoteAudioPlayer player={player} /> : null}
+        {hasAudio ? <NoteAudioPlayer player={player} durationMs={note.durationMs} /> : null}
 
         {hasAudio && segments && segments.length > 0 ? (
           <SyncedTranscript player={player} segments={segments} onPress={openTranscript} />

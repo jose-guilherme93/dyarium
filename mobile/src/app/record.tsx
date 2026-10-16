@@ -7,6 +7,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { LiveWaveform } from '@/components/LiveWaveform';
 import { formatDuration } from '@/core/format';
 import type { Recording } from '@/core/types';
+import { useRenderCount } from '@/dev/perf';
 import { deleteRecordingRow } from '@/services/db';
 import { deleteSessionFiles, moveAudio, sessionDirUri } from '@/services/files';
 import { useLibrary } from '@/state/LibraryContext';
@@ -25,6 +26,7 @@ export default function RecordScreen() {
     useRecording();
   const [finishing, setFinishing] = useState(false);
   const startedRef = useRef(false);
+  useRenderCount('Record');
 
   useEffect(() => {
     if (startedRef.current) return;

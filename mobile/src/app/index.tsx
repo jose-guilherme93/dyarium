@@ -25,6 +25,7 @@ import { isBlankDraft } from '@/core/note';
 import { countChars, countWords, markdownToPlain } from '@/core/richText';
 import { displayTitle } from '@/core/title';
 import { needsNoteSync, type Recording } from '@/core/types';
+import { useRenderCount } from '@/dev/perf';
 import { directoryBytes, sessionDirectory } from '@/services/files';
 import { useLibrary } from '@/state/LibraryContext';
 import { useRecording } from '@/state/RecordingContext';
@@ -110,6 +111,7 @@ export default function RecordScreen() {
     useLibrary();
   const { start: startRecording } = useRecording();
   const { swipeAction } = useSettings();
+  useRenderCount('Home');
 
   const [query, setQuery] = useState('');
   const [refreshing, setRefreshing] = useState(false);

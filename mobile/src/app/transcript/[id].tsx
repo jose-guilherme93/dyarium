@@ -1,13 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useAudioPlayerStatus } from 'expo-audio';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { DyariumApi, type FetchLike, type TranscriptSegment } from '@/core/api';
 import { formatDuration } from '@/core/format';
 import { breakSentences } from '@/core/richText';
 import { activeSegmentIndex } from '@/core/transcript';
+import { useRenderCount } from '@/dev/perf';
 import { releaseAudioFocus } from '@/services/audioFocus';
 import { getRecording, upsertRecording } from '@/services/db';
 import { playPlayer } from '@/services/playback';
@@ -15,11 +16,81 @@ import { loadServerConfig } from '@/services/secure';
 import { pushTranscript } from '@/services/transcriptSync';
 import { emitRecording } from '@/services/uploaderLoop';
 import { useLibrary } from '@/state/LibraryContext';
-import { usePlaybackSource } from '@/state/PlaybackContext';
+import { useLoadPlayback, usePlaybackSource } from '@/state/PlaybackContext';
 import { useTranscriptionProgress } from '@/state/useTranscriptionProgress';
 import { colors, fontSize, radius, spacing } from '@/theme/tokens';
 
 const doFetch = globalThis.fetch as unknown as FetchLike;
+
+interface SegmentRowProps {
+  segment: TranscriptSegment;
+  index: number;
+  active: boolean;
+  editing: boolean;
+  draft: string;
+  onSeek(index: number): void;
+  onStartEdit(index: number): void;
+  onChangeDraft(text: string): void;
+  onCancelEdit(): void;
+  onSubmitEdit(index: number): void;
+}
+
+/**
+ * Uma linha da transcricao. Memoizada: a tela re-renderiza ao ritmo do player
+ * (~4x/s) e so a linha ativa (ou a que esta sendo editada) deve re-renderizar.
+ */
+const SegmentRow = memo(function SegmentRow({
+  segment,
+  index,
+  active,
+  editing,
+  draft,
+  onSeek,
+  onStartEdit,
+  onChangeDraft,
+  onCancelEdit,
+  onSubmitEdit,
+}: SegmentRowProps) {
+  const text = useMemo(() => breakSentences(segment.text), [segment.text]);
+  return (
+    <View style={[styles.segment, active && styles.segmentActive]}>
+      <Text style={styles.timestamp}>{formatDuration(segment.start_ms)}</Text>
+      {editing ? (
+        <View style={styles.editWrap}>
+          <TextInput
+            value={draft}
+            onChangeText={onChangeDraft}
+            multiline
+            autoFocus
+            selectionColor={colors.accent}
+            style={styles.editInput}
+          />
+          <View style={styles.editActions}>
+            <Pressable onPress={onCancelEdit} accessibilityLabel="Cancelar">
+              <Text style={styles.editCancel}>Cancelar</Text>
+            </Pressable>
+            <Pressable onPress={() => onSubmitEdit(index)} accessibilityLabel="Salvar trecho">
+              <Text style={styles.editSave}>Salvar</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : (
+        <>
+          <Pressable style={styles.segmentBody} onPress={() => onSeek(index)}>
+            <Text style={[styles.segmentText, active && styles.segmentTextActive]}>{text}</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => onStartEdit(index)}
+            accessibilityLabel="Editar trecho"
+            hitSlop={8}
+          >
+            <Ionicons name="create-outline" size={16} color={colors.textTertiary} />
+          </Pressable>
+        </>
+      )}
+    </View>
+  );
+});
 
 /**
  * Transcricao completa do audio, em segmentos com minutagem. O trecho ativo
@@ -38,8 +109,13 @@ export default function TranscriptScreen() {
   const [error, setError] = useState<string | null>(null);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [draft, setDraft] = useState('');
-  const scrollRef = useRef<ScrollView>(null);
+  const draftRef = useRef('');
+  const listRef = useRef<FlatList<TranscriptSegment>>(null);
   const activeIndexRef = useRef(-1);
+
+  useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
 
   // Editar um trecho (palavra/frase): grava local e envia ao servidor.
   const saveEdit = useCallback(
@@ -73,9 +149,11 @@ export default function TranscriptScreen() {
 
   // Mesmo player unico da nota: ao abrir a transcricao o audio continua
   // exatamente de onde estava (sem criar outro player e sem reiniciar).
-  const player = usePlaybackSource(note?.filePath);
+  const player = usePlaybackSource(note?.filePath, { immediate: true });
+  const load = useLoadPlayback();
   const status = useAudioPlayerStatus(player);
   const currentMs = (status.currentTime || 0) * 1000;
+  useRenderCount('Transcript');
 
   useEffect(() => {
     // Segmentos em cache local: nao refaz o fetch ao abrir.
@@ -118,7 +196,7 @@ export default function TranscriptScreen() {
     if (activeIndex === activeIndexRef.current) return;
     activeIndexRef.current = activeIndex;
     if (activeIndex >= 0) {
-      scrollRef.current?.scrollTo({ y: Math.max(0, activeIndex * 44 - 120), animated: true });
+      listRef.current?.scrollToIndex({ index: activeIndex, viewPosition: 0.3, animated: true });
     }
   }, [activeIndex]);
 
@@ -127,74 +205,60 @@ export default function TranscriptScreen() {
       player.pause();
       return;
     }
+    load();
     playPlayer(player);
   };
 
   useEffect(() => () => releaseAudioFocus(player), [player]);
 
-  // So remonta as linhas quando muda o trecho ativo, a edicao ou a lista — nao a
-  // cada atualizacao de tempo (~4x/s durante o play). Evita refazer
-  // `breakSentences` e recriar centenas de nos por segundo.
-  const rows = useMemo(
-    () =>
-      segments.map((segment, index) => {
-        const editing = editingIndex === index;
-        return (
-          <View
-            key={`${segment.start_ms}-${index}`}
-            style={[styles.segment, index === activeIndex && styles.segmentActive]}
-          >
-            <Text style={styles.timestamp}>{formatDuration(segment.start_ms)}</Text>
-            {editing ? (
-              <View style={styles.editWrap}>
-                <TextInput
-                  value={draft}
-                  onChangeText={setDraft}
-                  multiline
-                  autoFocus
-                  selectionColor={colors.accent}
-                  style={styles.editInput}
-                />
-                <View style={styles.editActions}>
-                  <Pressable onPress={() => setEditingIndex(null)} accessibilityLabel="Cancelar">
-                    <Text style={styles.editCancel}>Cancelar</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => void saveEdit(index, draft)}
-                    accessibilityLabel="Salvar trecho"
-                  >
-                    <Text style={styles.editSave}>Salvar</Text>
-                  </Pressable>
-                </View>
-              </View>
-            ) : (
-              <>
-                <Pressable
-                  style={styles.segmentBody}
-                  onPress={() => player.seekTo(segment.start_ms / 1000)}
-                >
-                  <Text
-                    style={[styles.segmentText, index === activeIndex && styles.segmentTextActive]}
-                  >
-                    {breakSentences(segment.text)}
-                  </Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => {
-                    setDraft(segment.text);
-                    setEditingIndex(index);
-                  }}
-                  accessibilityLabel="Editar trecho"
-                  hitSlop={8}
-                >
-                  <Ionicons name="create-outline" size={16} color={colors.textTertiary} />
-                </Pressable>
-              </>
-            )}
-          </View>
-        );
-      }),
-    [segments, editingIndex, activeIndex, draft, saveEdit, player],
+  // Callbacks estaveis: as linhas memoizadas so re-renderizam quando o proprio
+  // trecho muda (ativo/edicao), nao a cada atualizacao de tempo do player.
+  const handleSeek = useCallback(
+    (index: number) => {
+      load();
+      const seg = segments[index];
+      if (seg) void player.seekTo(seg.start_ms / 1000);
+    },
+    [load, player, segments],
+  );
+  const handleStartEdit = useCallback(
+    (index: number) => {
+      const seg = segments[index];
+      if (seg) setDraft(seg.text);
+      setEditingIndex(index);
+    },
+    [segments],
+  );
+  const handleSubmitEdit = useCallback(
+    (index: number) => void saveEdit(index, draftRef.current),
+    [saveEdit],
+  );
+  const handleCancelEdit = useCallback(() => setEditingIndex(null), []);
+
+  const renderItem = useCallback(
+    ({ item, index }: { item: TranscriptSegment; index: number }) => (
+      <SegmentRow
+        segment={item}
+        index={index}
+        active={index === activeIndex}
+        editing={index === editingIndex}
+        draft={index === editingIndex ? draft : ''}
+        onSeek={handleSeek}
+        onStartEdit={handleStartEdit}
+        onChangeDraft={setDraft}
+        onCancelEdit={handleCancelEdit}
+        onSubmitEdit={handleSubmitEdit}
+      />
+    ),
+    [
+      activeIndex,
+      editingIndex,
+      draft,
+      handleSeek,
+      handleStartEdit,
+      handleCancelEdit,
+      handleSubmitEdit,
+    ],
   );
 
   return (
@@ -234,9 +298,24 @@ export default function TranscriptScreen() {
           </Text>
         </View>
       ) : (
-        <ScrollView ref={scrollRef} contentContainerStyle={styles.list} showsVerticalScrollIndicator={false}>
-          {rows}
-        </ScrollView>
+        <FlatList
+          ref={listRef}
+          data={segments}
+          renderItem={renderItem}
+          keyExtractor={(item, index) => `${item.start_ms}-${index}`}
+          contentContainerStyle={styles.list}
+          showsVerticalScrollIndicator={false}
+          initialNumToRender={12}
+          maxToRenderPerBatch={12}
+          windowSize={7}
+          removeClippedSubviews
+          onScrollToIndexFailed={(info) => {
+            listRef.current?.scrollToOffset({
+              offset: info.averageItemLength * info.index,
+              animated: true,
+            });
+          }}
+        />
       )}
     </View>
   );

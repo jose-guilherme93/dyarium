@@ -5,6 +5,7 @@ import { formatDuration, formatStamp } from '@/core/format';
 import { markdownToPlain } from '@/core/richText';
 import { displayTitle } from '@/core/title';
 import type { Recording } from '@/core/types';
+import { useRenderCount } from '@/dev/perf';
 import { colors, fontSize, radius, spacing } from '@/theme/tokens';
 
 interface RecordingCardProps {
@@ -20,6 +21,7 @@ interface RecordingCardProps {
  * nota, e as opcoes abrem com um toque longo (menu bonito, igual ao da nota).
  */
 export function RecordingCard({ recording, onOpen, onLongPress }: RecordingCardProps) {
+  useRenderCount('RecordingCard');
   const hasAudio = Boolean(recording.filePath);
   const rawPreview = hasAudio ? recording.transcript : recording.text;
   const preview = rawPreview ? markdownToPlain(rawPreview) : '';

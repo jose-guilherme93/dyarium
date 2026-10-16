@@ -24,6 +24,7 @@ import {
   fontWeightCss,
   type NoteTypography,
 } from '@/core/typography';
+import { useRenderCount } from '@/dev/perf';
 import { colors, fontSize, spacing } from '@/theme/tokens';
 
 export interface RichEditorHandle {
@@ -377,6 +378,7 @@ const RichEditorInner = forwardRef<RichEditorHandle, RichEditorProps>(function R
   ref,
 ) {
   const webRef = useRef<{ injectJavaScript: (code: string) => void } | null>(null);
+  useRenderCount('RichEditor');
   const plainRef = useRef<TextInput>(null);
   const lastValue = useRef(value);
   const [height, setHeight] = useState(200);

@@ -6,6 +6,7 @@ import { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
+import { startPerfReport } from '@/dev/perf';
 import { registerUploadTask } from '@/services/background';
 import { configureNotifications } from '@/services/notifications';
 import { LibraryProvider } from '@/state/LibraryContext';
@@ -21,6 +22,7 @@ export default function RootLayout() {
     // Configura a sessao de audio cedo para o player nao falhar no Android.
     void setAudioModeAsync({ playsInSilentMode: true }).catch(() => undefined);
     configureNotifications();
+    startPerfReport();
     void registerUploadTask();
     SplashScreen.hideAsync().catch(() => undefined);
   }, []);

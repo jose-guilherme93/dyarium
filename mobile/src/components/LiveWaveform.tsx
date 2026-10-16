@@ -6,6 +6,7 @@ import Animated, {
   useSharedValue,
 } from 'react-native-reanimated';
 
+import { useRenderCount } from '@/dev/perf';
 import { colors } from '@/theme/tokens';
 
 const DEFAULT_BARS = 48;
@@ -65,6 +66,7 @@ export function LiveWaveform({
   const levels = useSharedValue<number[]>(new Array(bars).fill(0.06));
   const target = useSharedValue(0);
   const smoothed = useSharedValue(0);
+  useRenderCount('LiveWaveform');
 
   useEffect(() => {
     target.value = Math.max(0.05, Math.min(1, level));

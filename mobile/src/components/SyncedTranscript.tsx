@@ -11,6 +11,7 @@ import Animated, {
 
 import { activeSegmentIndex } from '@/core/transcript';
 import type { TranscriptSegment } from '@/core/types';
+import { useRenderCount } from '@/dev/perf';
 import { motionDuration } from '@/theme/motion';
 import { colors, fontSize, spacing } from '@/theme/tokens';
 
@@ -38,6 +39,7 @@ interface SyncedTranscriptProps {
 export function SyncedTranscript({ player, segments, onPress }: SyncedTranscriptProps) {
   const status = useAudioPlayerStatus(player);
   const currentMs = (status.currentTime || 0) * 1000;
+  useRenderCount('SyncedTranscript');
 
   const activeIndex = useMemo(
     () => activeSegmentIndex(segments, currentMs),
