@@ -1,6 +1,24 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 
 import { DyariumApi, type FetchLike } from '@/core/api';
+import {
+  DEFAULT_TRANSCRIPTION_MODEL,
+  type TranscriptionLanguage,
+} from '@/core/transcription';
+import {
+  DEFAULT_TYPOGRAPHY,
+  normalizeTypography,
+  type NoteTypography,
+} from '@/core/typography';
 import type { ServerConfig } from '@/core/types';
 import {
   clearServerConfig,
@@ -8,6 +26,7 @@ import {
   loadServerConfig,
   savePrefs,
   saveServerConfig,
+  type Prefs,
   type SwipeAction,
 } from '@/services/secure';
 
@@ -28,6 +47,18 @@ interface SettingsValue {
   /** Ultimo ano usado na importacao. */
   importYear?: number;
   setImportYear(year: number): Promise<void>;
+  /** Tipografia do editor de notas. */
+  typography: NoteTypography;
+  setTypography(next: NoteTypography): Promise<void>;
+  /** Transcrever no aparelho (quando ha modelo baixado). */
+  localTranscription: boolean;
+  setLocalTranscription(value: boolean): Promise<void>;
+  /** Modelo de transcricao escolhido. */
+  transcriptionModel: string;
+  setTranscriptionModel(id: string): Promise<void>;
+  /** Idioma da transcricao. */
+  transcriptionLanguage: TranscriptionLanguage;
+  setTranscriptionLanguage(value: TranscriptionLanguage): Promise<void>;
   /** Testa alcance (healthz) e token (version) sem salvar. */
   test(baseUrl: string, token: string): Promise<ConnectionResult>;
   /** Testa e, se ok, persiste no SecureStore. */
@@ -48,6 +79,15 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const [swipeAction, setSwipeActionState] = useState<SwipeAction>('delete');
   const [importYear, setImportYearState] = useState<number | undefined>(undefined);
+  const [typography, setTypographyState] = useState<NoteTypography>(DEFAULT_TYPOGRAPHY);
+  const [localTranscription, setLocalTranscriptionState] = useState(true);
+  const [transcriptionModel, setTranscriptionModelState] = useState(
+    DEFAULT_TRANSCRIPTION_MODEL,
+  );
+  const [transcriptionLanguage, setTranscriptionLanguageState] =
+    useState<TranscriptionLanguage>('pt');
+  // Espelho das preferencias atuais, para gravar sempre o conjunto completo.
+  const prefsRef = useRef<Prefs>({ swipeAction: 'delete', typography: DEFAULT_TYPOGRAPHY });
 
   useEffect(() => {
     let alive = true;
@@ -63,8 +103,13 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     loadPrefs()
       .then((prefs) => {
         if (!alive) return;
+        prefsRef.current = prefs;
         setSwipeActionState(prefs.swipeAction);
         setImportYearState(prefs.importYear);
+        setTypographyState(normalizeTypography(prefs.typography));
+        setLocalTranscriptionState(prefs.localTranscription !== false);
+        setTranscriptionModelState(prefs.transcriptionModel ?? DEFAULT_TRANSCRIPTION_MODEL);
+        setTranscriptionLanguageState(prefs.transcriptionLanguage === 'auto' ? 'auto' : 'pt');
       })
       .catch(() => undefined);
     return () => {
@@ -72,20 +117,58 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  const persistPrefs = useCallback(async (patch: Partial<Prefs>) => {
+    const next = { ...prefsRef.current, ...patch };
+    prefsRef.current = next;
+    await savePrefs(next);
+  }, []);
+
   const setSwipeAction = useCallback(
     async (action: SwipeAction) => {
       setSwipeActionState(action);
-      await savePrefs({ swipeAction: action, importYear });
+      await persistPrefs({ swipeAction: action });
     },
-    [importYear],
+    [persistPrefs],
   );
 
   const setImportYear = useCallback(
     async (year: number) => {
       setImportYearState(year);
-      await savePrefs({ swipeAction, importYear: year });
+      await persistPrefs({ importYear: year });
     },
-    [swipeAction],
+    [persistPrefs],
+  );
+
+  const setTypography = useCallback(
+    async (next: NoteTypography) => {
+      setTypographyState(next);
+      await persistPrefs({ typography: next });
+    },
+    [persistPrefs],
+  );
+
+  const setLocalTranscription = useCallback(
+    async (value: boolean) => {
+      setLocalTranscriptionState(value);
+      await persistPrefs({ localTranscription: value });
+    },
+    [persistPrefs],
+  );
+
+  const setTranscriptionModel = useCallback(
+    async (id: string) => {
+      setTranscriptionModelState(id);
+      await persistPrefs({ transcriptionModel: id });
+    },
+    [persistPrefs],
+  );
+
+  const setTranscriptionLanguage = useCallback(
+    async (value: TranscriptionLanguage) => {
+      setTranscriptionLanguageState(value);
+      await persistPrefs({ transcriptionLanguage: value });
+    },
+    [persistPrefs],
   );
 
   const test = useCallback(async (baseUrl: string, token: string): Promise<ConnectionResult> => {
@@ -97,7 +180,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     try {
       await api.healthz();
     } catch {
-      return { ok: false, error: 'Nao foi possivel alcancar o servidor. Verifique a URL e a rede.' };
+      return { ok: false, error: 'Não foi possível alcançar o servidor. Verifique a URL e a rede.' };
     }
     try {
       const version = await api.version();
@@ -133,11 +216,37 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setSwipeAction,
       importYear,
       setImportYear,
+      typography,
+      setTypography,
+      localTranscription,
+      setLocalTranscription,
+      transcriptionModel,
+      setTranscriptionModel,
+      transcriptionLanguage,
+      setTranscriptionLanguage,
       test,
       save,
       disconnect,
     }),
-    [config, ready, swipeAction, setSwipeAction, importYear, setImportYear, test, save, disconnect],
+    [
+      config,
+      ready,
+      swipeAction,
+      setSwipeAction,
+      importYear,
+      setImportYear,
+      typography,
+      setTypography,
+      localTranscription,
+      setLocalTranscription,
+      transcriptionModel,
+      setTranscriptionModel,
+      transcriptionLanguage,
+      setTranscriptionLanguage,
+      test,
+      save,
+      disconnect,
+    ],
   );
 
   return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>;
