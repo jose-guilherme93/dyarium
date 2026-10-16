@@ -1,12 +1,20 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { Button } from '@/components/Button';
 import { Screen } from '@/components/Screen';
-import { formatBytes } from '@/core/format';
-import { pickBackupFolder, runBackup, runRestore, type BackupSummary } from '@/services/backup';
+import { formatBytes, formatDateTime } from '@/core/format';
+import {
+  BackupError,
+  pickBackupFolder,
+  readManifestSummary,
+  runBackup,
+  runRestore,
+  type BackupInfo,
+  type BackupSummary,
+} from '@/services/backup';
 import { useLibrary } from '@/state/LibraryContext';
 import { useSettings } from '@/state/SettingsContext';
 import { colors, fontSize, radius, spacing } from '@/theme/tokens';
@@ -24,6 +32,22 @@ function summaryLine(summary: BackupSummary): string {
   return `${notes}, ${files} (${formatBytes(summary.bytes)})`;
 }
 
+function messageFor(error: unknown): string {
+  const code = error instanceof BackupError ? error.code : undefined;
+  switch (code) {
+    case 'manifest_missing':
+      return 'Não encontrei um backup nessa pasta.';
+    case 'manifest_invalid':
+      return 'O backup nessa pasta é inválido ou de outra versão.';
+    case 'corrupt':
+      return 'O backup está corrompido ou incompleto; a restauração foi interrompida.';
+    case 'hash_failed':
+      return 'Não foi possível conferir um arquivo do backup.';
+    default:
+      return 'Não foi possível concluir. Confira se a pasta ainda está acessível.';
+  }
+}
+
 export default function BackupScreen() {
   const { backupFolder, setBackupFolder } = useSettings();
   const { refresh } = useLibrary();
@@ -31,6 +55,26 @@ export default function BackupScreen() {
   const [progress, setProgress] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState<{ folder: string; info: BackupInfo | null } | null>(null);
+  const [reload, setReload] = useState(0);
+
+  useEffect(() => {
+    if (!backupFolder) return undefined;
+    let alive = true;
+    readManifestSummary(backupFolder)
+      .then((value) => {
+        if (alive) setLoaded({ folder: backupFolder, info: value });
+      })
+      .catch(() => {
+        if (alive) setLoaded({ folder: backupFolder, info: null });
+      });
+    return () => {
+      alive = false;
+    };
+  }, [backupFolder, reload]);
+
+  // So vale para a pasta atual (evita mostrar o resumo de uma pasta antiga).
+  const info = loaded && loaded.folder === backupFolder ? loaded.info : null;
 
   const handlePick = async () => {
     setError(null);
@@ -54,8 +98,9 @@ export default function BackupScreen() {
         setProgress(`${done}/${total}`),
       );
       setMessage(`Backup concluído: ${summaryLine(summary)}.`);
-    } catch {
-      setError('Não foi possível fazer o backup. Confira se a pasta ainda está acessível.');
+      setReload((n) => n + 1);
+    } catch (err) {
+      setError(messageFor(err));
     } finally {
       setBusy(null);
       setProgress(null);
@@ -66,7 +111,7 @@ export default function BackupScreen() {
     if (!backupFolder || busy) return;
     Alert.alert(
       'Restaurar backup',
-      'Traz as notas da pasta escolhida para este aparelho, com áudio, imagens e transcrição. Notas com o mesmo identificador são atualizadas; as demais são mantidas.',
+      'Traz as notas da pasta escolhida para este aparelho, com áudio, imagens e transcrição. Cada arquivo é conferido antes de entrar. Notas com o mesmo identificador são atualizadas; as demais são mantidas.',
       [
         { text: 'Cancelar', style: 'cancel' },
         {
@@ -82,7 +127,7 @@ export default function BackupScreen() {
                 await refresh();
                 setMessage(`Restaurado: ${summaryLine(summary)}.`);
               })
-              .catch(() => setError('Não foi possível restaurar. Confira se a pasta tem um backup.'))
+              .catch((err) => setError(messageFor(err)))
               .finally(() => {
                 setBusy(null);
                 setProgress(null);
@@ -111,10 +156,25 @@ export default function BackupScreen() {
           </Text>
         </View>
 
+        <View style={styles.card}>
+          <Text style={styles.cardLabel}>Backup nessa pasta</Text>
+          {info ? (
+            <>
+              <Text style={styles.infoStrong}>{summaryLine(info)}</Text>
+              <Text style={styles.infoFaint}>
+                Criado em {formatDateTime(info.createdAt)}
+                {info.appVersion ? ` · app ${info.appVersion}` : ''}
+              </Text>
+            </>
+          ) : (
+            <Text style={styles.infoFaint}>Nenhum backup encontrado.</Text>
+          )}
+        </View>
+
         <Text style={styles.hint}>
           O backup copia tudo o que você tem para uma pasta do aparelho: notas, áudio, imagens e
-          links, em ordem. Escolha uma pasta (ex.: Downloads) — o ideal é que ela permaneça acessível
-          e, de preferência, seja sincronizada por outro app (Drive, etc.).
+          links, em ordem. Cada arquivo leva um código de verificação, conferido ao restaurar. Use
+          uma pasta dedicada (de preferência vazia) e que fique acessível.
         </Text>
 
         <Button
@@ -135,7 +195,7 @@ export default function BackupScreen() {
           label={busy === 'restore' ? 'Restaurando...' : 'Restaurar backup'}
           variant="secondary"
           onPress={handleRestore}
-          disabled={!backupFolder || busy !== null}
+          disabled={!backupFolder || !info || busy !== null}
           loading={busy === 'restore'}
         />
 
@@ -172,6 +232,8 @@ const styles = StyleSheet.create({
     letterSpacing: 0.6,
   },
   folder: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
+  infoStrong: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
+  infoFaint: { color: colors.textSecondary, fontSize: fontSize.sm },
   hint: { color: colors.textSecondary, fontSize: fontSize.sm, lineHeight: 20 },
   status: { color: colors.textSecondary, fontSize: fontSize.sm },
   success: { color: colors.success, fontSize: fontSize.sm },

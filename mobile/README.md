@@ -73,9 +73,11 @@ texto, guarda local, enfileira e envia para o servidor self-hosted.
   notas ja sincronizadas; o audio continua no servidor). Migracoes do banco versionadas e
   trava de fila para nao ter dois workers ao mesmo tempo.
 - **Backup local** (nas Opcoes): escolhe uma pasta do aparelho e copia tudo para la — notas,
-  audio, imagens e links — num manifesto em ordem (um arquivo por midia, com o id da nota no
-  nome). "Restaurar backup" traz tudo de volta para o aparelho; notas com o mesmo id sao
-  atualizadas e as demais ficam. Nao depende do servidor nem de nuvem.
+  audio, imagens e links — num manifesto em ordem. Cada midia leva o **md5 do conteudo** no
+  nome, entao reexecutar nao reescreve o que ja existe e nada e perdido; o manifesto e escrito
+  por ultimo (um backup interrompido nao invalida o anterior). "Restaurar backup" **confere o
+  md5 de cada arquivo** antes de entrar na nota e aborta se algo nao bate; notas com o mesmo id
+  sao atualizadas e as demais ficam. Nao depende do servidor nem de nuvem (sem cifra).
 - A biblioteca organiza as notas **por ano** (mais novo no topo), pela data do evento, para
   que notas antigas importadas apareçam no ano a que pertencem.
 - **Notas somente texto** entram na mesma fila e sao enviadas como conteudo textual (o texto

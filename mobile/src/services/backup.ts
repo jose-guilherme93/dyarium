@@ -1,30 +1,37 @@
 /**
  * Backup local: copia todas as notas (texto, transcricao, audio e imagens) para
- * uma pasta escolhida pelo usuario, e restaura de la.
+ * uma pasta escolhida pelo usuario, e restaura de la — com verificacao.
  *
- * A pasta vem do seletor do Android (SAF), entao o IO usa a API legacy do
- * expo-file-system: a API nova (File/Directory) resolve mal os filhos de uma
- * arvore SAF (apontam para a raiz, o que chega a apagar a pasta escolhida). A
- * legacy tem funcoes dedicadas (`StorageAccessFramework`) que resolvem certo.
+ * Como e confiavel:
+ * - Cada midia leva o md5 do conteudo no nome (`<id>__<md5>__<nome>`), entao
+ *   reexecutar nao reescreve o que ja existe (dedup) e arquivos antigos podem
+ *   ser apagados sem risco.
+ * - O manifesto e escrito por ultimo: um backup interrompido nao invalida o
+ *   anterior (o manifesto anterior continua valido).
+ * - Ao restaurar, cada arquivo e copiado para uma area temporaria e o md5 e
+ *   conferido ANTES de entrar na nota; qualquer divergencia aborta.
  *
- * Escrita binaria no SAF nao tem copia direta: escrevemos em chunks base64
- * (memoria limitada). A leitura de volta usa `copyAsync` (SAF -> arquivo local).
+ * IO via API legacy (StorageAccessFramework): a API nova resolve mal os filhos
+ * de uma arvore SAF (apontam para a raiz). Escrita binaria em chunks base64.
  */
 
-import { File, FileMode } from 'expo-file-system';
+import { Directory, File, FileMode, Paths } from 'expo-file-system';
 import * as Legacy from 'expo-file-system/legacy';
+import Constants from 'expo-constants';
 
 import {
   BACKUP_MANIFEST,
-  backupFileName,
+  backupMediaName,
   baseName,
   buildManifest,
   bytesToBase64,
+  isBackupMediaName,
   nameFromDocumentUri,
   orderForBackup,
+  orderNotesForRestore,
   parseManifest,
   toRestoredRecording,
-  type BackupManifest,
+  type BackupFile,
   type BackupNote,
 } from '@/core/backup';
 import type { Recording } from '@/core/types';
@@ -38,10 +45,37 @@ export interface BackupSummary {
   bytes: number;
 }
 
+export interface BackupInfo extends BackupSummary {
+  createdAt: string;
+  appVersion?: string;
+}
+
 export type BackupProgress = (done: number, total: number) => void;
+
+export type BackupErrorCode =
+  | 'folder_denied'
+  | 'manifest_missing'
+  | 'manifest_invalid'
+  | 'corrupt'
+  | 'hash_failed';
+
+/** Erro com codigo, para a tela mostrar uma mensagem clara. */
+export class BackupError extends Error {
+  readonly code: BackupErrorCode;
+  constructor(code: BackupErrorCode) {
+    super(code);
+    this.name = 'BackupError';
+    this.code = code;
+  }
+}
 
 /** Tamanho de cada chunk escrito no SAF (mantem a memoria baixa). */
 const WRITE_CHUNK = 256 * 1024;
+const STAGE_DIR = 'dyarium-restore';
+
+function appVersion(): string | undefined {
+  return Constants.expoConfig?.version ?? undefined;
+}
 
 function mimeOf(name: string): string {
   const ext = name.split('.').pop()?.toLowerCase() ?? '';
@@ -98,6 +132,12 @@ async function removeChild(existing: Map<string, string>, name: string): Promise
   existing.delete(name);
 }
 
+function md5Of(uri: string): string {
+  const hash = new File(uri).md5;
+  if (!hash) throw new BackupError('hash_failed');
+  return hash;
+}
+
 /** Escreve um arquivo local no SAF, em chunks base64 (sem carregar tudo na RAM). */
 async function writeLocalToSaf(localUri: string, safUri: string): Promise<void> {
   const handle = new File(localUri).open(FileMode.ReadOnly);
@@ -121,12 +161,26 @@ async function writeLocalToSaf(localUri: string, safUri: string): Promise<void> 
   }
 }
 
-/** Le o manifesto da pasta (para mostrar o que tem antes de restaurar). */
-export async function readManifest(folderUri: string): Promise<BackupManifest | null> {
+/** Le a pasta e resume o backup que esta nela (ou null se nao houver). */
+export async function readManifestSummary(folderUri: string): Promise<BackupInfo | null> {
   const existing = await listFolder(folderUri);
   const uri = existing.get(BACKUP_MANIFEST);
   if (!uri) return null;
-  return parseManifest(await Legacy.readAsStringAsync(uri));
+  const manifest = parseManifest(await Legacy.readAsStringAsync(uri));
+  if (!manifest) return null;
+  let files = 0;
+  let bytes = 0;
+  for (const note of manifest.notes) {
+    files += note.files.length;
+    for (const file of note.files) bytes += file.size;
+  }
+  return {
+    notes: manifest.notes.length,
+    files,
+    bytes,
+    createdAt: manifest.createdAt,
+    appVersion: manifest.appVersion,
+  };
 }
 
 /** Copia tudo para a pasta escolhida (audio, imagens, texto no manifesto). */
@@ -136,23 +190,29 @@ export async function runBackup(
 ): Promise<BackupSummary> {
   const recordings = orderForBackup(await listRecordings());
   const existing = await listFolder(folderUri);
+  const referenced = new Set<string>();
   const notes: BackupNote[] = [];
   let files = 0;
   let bytes = 0;
 
   for (let i = 0; i < recordings.length; i += 1) {
     const recording = recordings[i];
-    const names: string[] = [];
+    const backed: BackupFile[] = [];
     for (const file of noteFiles(recording)) {
-      const name = backupFileName(recording.id, file.name);
-      await removeChild(existing, name);
-      const safUri = await Legacy.StorageAccessFramework.createFileAsync(
-        folderUri,
-        name,
-        mimeOf(file.name),
-      );
-      await writeLocalToSaf(file.uri, safUri);
-      names.push(file.name);
+      const md5 = md5Of(file.uri);
+      const name = backupMediaName(recording.id, md5, file.name);
+      referenced.add(name);
+      // Ja existe com o mesmo conteudo (mesmo md5)? Nao reescreve.
+      if (!existing.has(name)) {
+        const safUri = await Legacy.StorageAccessFramework.createFileAsync(
+          folderUri,
+          name,
+          mimeOf(file.name),
+        );
+        await writeLocalToSaf(file.uri, safUri);
+        existing.set(name, safUri);
+      }
+      backed.push({ name, originalName: file.name, md5, size: file.size });
       files += 1;
       bytes += file.size;
     }
@@ -160,55 +220,87 @@ export async function runBackup(
       // Sem os caminhos absolutos: serao refeitos no restore.
       recording: { ...recording, dir: '', filePath: undefined },
       audioFile: baseName(recording.filePath),
-      files: names,
+      files: backed,
     });
     onProgress?.(i + 1, recordings.length);
   }
 
+  // Manifesto por ultimo: so fica valido quando tudo ja foi escrito.
   await removeChild(existing, BACKUP_MANIFEST);
   const manifestUri = await Legacy.StorageAccessFramework.createFileAsync(
     folderUri,
     BACKUP_MANIFEST,
     'application/json',
   );
-  await Legacy.writeAsStringAsync(manifestUri, JSON.stringify(buildManifest(notes, new Date())));
+  await Legacy.writeAsStringAsync(
+    manifestUri,
+    JSON.stringify(buildManifest(notes, new Date(), appVersion())),
+  );
+  existing.set(BACKUP_MANIFEST, manifestUri);
+
+  // Limpa midias antigas que o manifesto novo nao referencia.
+  for (const [name, uri] of [...existing]) {
+    if (name === BACKUP_MANIFEST) continue;
+    if (isBackupMediaName(name) && !referenced.has(name)) {
+      await Legacy.deleteAsync(uri, { idempotent: true });
+    }
+  }
 
   return { notes: notes.length, files, bytes };
 }
 
-/** Restaura as notas da pasta para o aparelho, na ordem do manifesto. */
+/** Restaura as notas da pasta para o aparelho, na ordem, conferindo cada arquivo. */
 export async function runRestore(
   folderUri: string,
   onProgress?: BackupProgress,
 ): Promise<BackupSummary> {
   const existing = await listFolder(folderUri);
   const manifestUri = existing.get(BACKUP_MANIFEST);
-  if (!manifestUri) throw new Error('backup_manifest_missing');
+  if (!manifestUri) throw new BackupError('manifest_missing');
   const manifest = parseManifest(await Legacy.readAsStringAsync(manifestUri));
-  if (!manifest) throw new Error('backup_manifest_invalid');
+  if (!manifest) throw new BackupError('manifest_invalid');
 
-  const total = manifest.notes.length;
+  const notes = orderNotesForRestore(manifest.notes);
+  const stageRoot = new Directory(Paths.cache, STAGE_DIR);
+  if (stageRoot.exists) stageRoot.delete();
+
+  const total = notes.length;
   let files = 0;
   let bytes = 0;
 
   for (let i = 0; i < total; i += 1) {
-    const entry = manifest.notes[i];
+    const entry = notes[i];
     const recording = entry.recording;
-    const destination = sessionDirectory(recording.id);
-    for (const name of entry.files) {
-      const source = existing.get(backupFileName(recording.id, name));
-      if (!source) continue;
-      const target = new File(destination, name);
-      if (target.exists) target.delete();
-      await Legacy.copyAsync({ from: source, to: target.uri });
-      files += 1;
-      bytes += new File(target.uri).size;
+    const stage = new Directory(stageRoot, recording.id);
+    stage.create({ intermediates: true, idempotent: true });
+
+    // 1) Copia para a area temporaria e confere o md5 de cada arquivo.
+    for (const file of entry.files) {
+      const source = existing.get(file.name);
+      if (!source) throw new BackupError('corrupt');
+      const staged = new File(stage, file.originalName);
+      if (staged.exists) staged.delete();
+      await Legacy.copyAsync({ from: source, to: staged.uri });
+      if (md5Of(staged.uri) !== file.md5) throw new BackupError('corrupt');
     }
+
+    // 2) So depois de conferir tudo, poe na pasta da nota e grava no banco.
+    const destination = sessionDirectory(recording.id);
+    for (const file of entry.files) {
+      const staged = new File(stage, file.originalName);
+      const target = new File(destination, file.originalName);
+      if (target.exists) target.delete();
+      await staged.move(target);
+    }
+    stage.delete();
     await upsertRecording(
       toRestoredRecording(recording, sessionDirUri(recording.id), entry.audioFile),
     );
+    files += entry.files.length;
+    bytes += entry.files.reduce((sum, file) => sum + file.size, 0);
     onProgress?.(i + 1, total);
   }
 
+  if (stageRoot.exists) stageRoot.delete();
   return { notes: total, files, bytes };
 }
