@@ -81,4 +81,28 @@ describe('DyariumApi', () => {
     expect((err as ApiError).status).toBe(409);
     expect((err as ApiError).offset).toBe(8);
   });
+
+  it('getEntry busca o resumo autenticado da entrada', async () => {
+    const { api, calls } = makeApi(() => resp(200, { id: 'en1', status: 'failed', title: 'x' }));
+    const out = await api.getEntry('en1');
+    expect(calls[0].url).toBe('http://host:8080/api/v1/entries/en1');
+    expect(calls[0].init?.headers?.Authorization).toBe('Bearer tok');
+    expect(out.status).toBe('failed');
+  });
+
+  it('listEntries pede a lista com limite e identidade', async () => {
+    const { api, calls } = makeApi(() =>
+      resp(200, { entries: [{ id: 'en1', status: 'ready', origin_key: 'sha256:abc' }] }),
+    );
+    const out = await api.listEntries(500);
+    expect(calls[0].url).toBe('http://host:8080/api/v1/entries?limit=500');
+    expect(out.entries[0].origin_key).toBe('sha256:abc');
+  });
+
+  it('deleteEntry usa DELETE autenticado', async () => {
+    const { api, calls } = makeApi(() => ({ ok: true, status: 204, text: async () => '' }));
+    await api.deleteEntry('en1');
+    expect(calls[0].url).toBe('http://host:8080/api/v1/entries/en1');
+    expect(calls[0].init?.method).toBe('DELETE');
+  });
 });

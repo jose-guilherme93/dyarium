@@ -25,6 +25,7 @@ interface Row {
   next_attempt_at: string | null;
   last_error: string | null;
   entry_id: string | null;
+  origin_key: string | null;
   transcript: string | null;
   transcript_language: string | null;
   transcript_status: string | null;
@@ -53,6 +54,7 @@ function getDb(): Promise<SQLite.SQLiteDatabase> {
           next_attempt_at TEXT,
           last_error TEXT,
           entry_id TEXT,
+          origin_key TEXT,
           transcript TEXT,
           transcript_language TEXT,
           transcript_status TEXT,
@@ -62,7 +64,7 @@ function getDb(): Promise<SQLite.SQLiteDatabase> {
         CREATE INDEX IF NOT EXISTS idx_recordings_status ON recordings(status);
       `);
       // Migracao leve para bancos criados antes destas colunas.
-      for (const column of ['transcript', 'transcript_language', 'transcript_status']) {
+      for (const column of ['transcript', 'transcript_language', 'transcript_status', 'origin_key']) {
         await db
           .execAsync(`ALTER TABLE recordings ADD COLUMN ${column} TEXT`)
           .catch(() => undefined);
@@ -90,6 +92,7 @@ function rowToRecording(row: Row): Recording {
     nextAttemptAt: row.next_attempt_at ?? undefined,
     lastError: row.last_error ?? undefined,
     entryId: row.entry_id ?? undefined,
+    originKey: row.origin_key ?? undefined,
     transcript: row.transcript ?? undefined,
     transcriptLanguage: row.transcript_language ?? undefined,
     transcriptStatus: (row.transcript_status as TranscriptStatus | null) ?? undefined,
@@ -104,9 +107,9 @@ export async function upsertRecording(r: Recording): Promise<void> {
     `INSERT INTO recordings (
       id, title, recorded_at, dir, file_path, segment_count, duration_ms, size_bytes,
       status, upload_id, offset, attempts, next_attempt_at, last_error, entry_id,
-      transcript, transcript_language, transcript_status,
+      origin_key, transcript, transcript_language, transcript_status,
       created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
       recorded_at = excluded.recorded_at,
@@ -122,6 +125,7 @@ export async function upsertRecording(r: Recording): Promise<void> {
       next_attempt_at = excluded.next_attempt_at,
       last_error = excluded.last_error,
       entry_id = excluded.entry_id,
+      origin_key = excluded.origin_key,
       transcript = excluded.transcript,
       transcript_language = excluded.transcript_language,
       transcript_status = excluded.transcript_status,
@@ -142,6 +146,7 @@ export async function upsertRecording(r: Recording): Promise<void> {
       r.nextAttemptAt ?? null,
       r.lastError ?? null,
       r.entryId ?? null,
+      r.originKey ?? null,
       r.transcript ?? null,
       r.transcriptLanguage ?? null,
       r.transcriptStatus ?? null,

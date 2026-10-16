@@ -10,7 +10,9 @@ export type RecordingStatus =
   | 'queued' // na fila, aguardando envio
   | 'uploading' // enviando chunks
   | 'completed' // entrada criada no servidor
-  | 'failed'; // ultima tentativa falhou; ainda retentavel
+  | 'failed' // ultima tentativa falhou; ainda retentavel
+  | 'dead' // falha permanente; nao retenta sozinha
+  | 'remote'; // existe no servidor; o aparelho so mostra (sem arquivo local)
 
 export interface Recording {
   /** Identificador local da gravacao (sessionId). */
@@ -42,6 +44,8 @@ export interface Recording {
   lastError?: string;
   /** Id da entrada criada no servidor. */
   entryId?: string;
+  /** Identidade unica e verificavel da nota (ex.: "sha256:<...>"). */
+  originKey?: string;
   /** Transcricao vinda do servidor, quando pronta. */
   transcript?: string;
   transcriptLanguage?: string;
@@ -69,7 +73,23 @@ export function isUploadable(r: Recording): boolean {
   );
 }
 
-/** Gravacao enviada que ainda nao tem transcricao pronta. */
+/** Gravacao enviada que ainda nao tem transcricao pronta nem falhou. */
 export function needsTranscript(r: Recording): boolean {
-  return Boolean(r.entryId) && r.status === 'completed' && r.transcriptStatus !== 'ready';
+  return (
+    Boolean(r.entryId) &&
+    (r.status === 'completed' || r.status === 'remote') &&
+    r.transcriptStatus !== 'ready' &&
+    r.transcriptStatus !== 'failed'
+  );
+}
+
+/** Estados em que o usuario pode forcar uma nova tentativa de envio. */
+export function canRetry(r: Recording): boolean {
+  return (
+    r.status === 'recorded' ||
+    r.status === 'queued' ||
+    r.status === 'uploading' ||
+    r.status === 'failed' ||
+    r.status === 'dead'
+  );
 }

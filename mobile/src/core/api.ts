@@ -65,6 +65,7 @@ export interface GetUploadResponse {
 export interface CompleteUploadResponse {
   entry_id: string;
   status: string;
+  origin_key?: string;
 }
 
 export interface TranscriptSegment {
@@ -86,6 +87,15 @@ export interface VersionResponse {
   version: string;
   commit: string;
   built_at: string;
+}
+
+export interface EntrySummary {
+  id: string;
+  status: string;
+  title?: string;
+  origin_key?: string;
+  recorded_at?: string | null;
+  duration_seconds?: number;
 }
 
 function normalizeBaseUrl(baseUrl: string): string {
@@ -198,5 +208,34 @@ export class DyariumApi {
     });
     if (!res.ok) throw await this.parseError(res);
     return JSON.parse(await res.text());
+  }
+
+  /** Resumo da entrada. O `status` revela falha permanente da transcricao. */
+  async getEntry(entryId: string): Promise<EntrySummary> {
+    const res = await this.fetchImpl(this.url(`/api/v1/entries/${entryId}`), {
+      method: 'GET',
+      headers: this.authHeaders(),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    return JSON.parse(await res.text());
+  }
+
+  /** Lista as notas do servidor, para reconciliar com as do aparelho. */
+  async listEntries(limit = 500): Promise<{ entries: EntrySummary[] }> {
+    const res = await this.fetchImpl(this.url(`/api/v1/entries?limit=${limit}`), {
+      method: 'GET',
+      headers: this.authHeaders(),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    return JSON.parse(await res.text());
+  }
+
+  /** Remove a entrada no servidor (para a exclusao convergir). */
+  async deleteEntry(entryId: string): Promise<void> {
+    const res = await this.fetchImpl(this.url(`/api/v1/entries/${entryId}`), {
+      method: 'DELETE',
+      headers: this.authHeaders(),
+    });
+    if (!res.ok) throw await this.parseError(res);
   }
 }

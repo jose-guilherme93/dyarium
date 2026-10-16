@@ -17,6 +17,8 @@ export const STATUS_META: Record<RecordingStatus, StatusMeta> = {
   uploading: { label: 'Enviando', color: colors.accent, soft: colors.accentSoft },
   completed: { label: 'Enviada', color: colors.success, soft: colors.successSoft },
   failed: { label: 'Falhou', color: colors.danger, soft: colors.dangerSoft },
+  dead: { label: 'Falha permanente', color: colors.danger, soft: colors.dangerSoft },
+  remote: { label: 'No servidor', color: colors.info, soft: colors.infoSoft },
 };
 
 export function StatusChip({ status, label }: { status: RecordingStatus; label?: string }) {

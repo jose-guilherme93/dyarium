@@ -89,7 +89,7 @@ export function RecordingCard({ recording, onRetry, onDelete }: RecordingCardPro
               <Text style={styles.ringText}>{Math.round(uploadProgress * 100)}</Text>
             </View>
           </View>
-        ) : recording.status === 'failed' ? (
+        ) : recording.status === 'failed' || recording.status === 'dead' ? (
           <Pressable style={styles.trailing} onPress={onRetry} accessibilityLabel="Reenviar">
             <Ionicons name="refresh" size={20} color={colors.warning} />
           </Pressable>
@@ -134,7 +134,7 @@ export function RecordingCard({ recording, onRetry, onDelete }: RecordingCardPro
               <Ionicons name="play-forward" size={22} color={colors.text} />
             </Pressable>
             <View style={styles.spacer} />
-            {recording.status === 'failed' || recording.status === 'completed' ? (
+            {recording.status === 'failed' || recording.status === 'dead' ? (
               <Pressable style={styles.control} onPress={onRetry} accessibilityLabel="Reenviar">
                 <Ionicons name="refresh" size={20} color={colors.textSecondary} />
               </Pressable>
@@ -153,6 +153,8 @@ export function RecordingCard({ recording, onRetry, onDelete }: RecordingCardPro
               <ActivityIndicator size="small" color={colors.textSecondary} />
               <Text style={styles.transcriptHint}>Transcrevendo...</Text>
             </View>
+          ) : recording.transcriptStatus === 'failed' ? (
+            <Text style={styles.error}>Transcricao indisponivel no servidor.</Text>
           ) : null}
           {recording.status === 'failed' && recording.lastError ? (
             <Text style={styles.error} numberOfLines={2}>

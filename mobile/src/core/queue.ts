@@ -75,6 +75,21 @@ export function markFailed(r: Recording, error: string, now = new Date()): Recor
   };
 }
 
+/**
+ * Falha permanente: nao agenda nova tentativa automatica. O item sai da fila
+ * ate o usuario pedir reenvio explicitamente (`canRetry` continua verdadeiro).
+ */
+export function markDead(r: Recording, error: string, now = new Date()): Recording {
+  return {
+    ...r,
+    status: 'dead',
+    attempts: r.attempts + 1,
+    lastError: error,
+    nextAttemptAt: undefined,
+    updatedAt: nowIso(now),
+  };
+}
+
 /** Uma gravacao esta pronta para (re)tentar agora? */
 export function isDue(r: Recording, now = new Date()): boolean {
   if (r.status === 'uploading') return true; // retomar

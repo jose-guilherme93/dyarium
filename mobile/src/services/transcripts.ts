@@ -1,7 +1,9 @@
 /**
  * Busca a transcricao das gravacoes ja enviadas. Enquanto o servidor ainda
  * estiver transcrevendo, `GET /entries/{id}/transcript` responde 404; nesse caso
- * mantemos pendente e tentamos de novo depois.
+ * mantemos pendente e tentamos de novo depois. Quando a transcricao falhou de
+ * vez (a entrada ficou `failed`), paramos de consultar: era o que fazia o app
+ * consultar para sempre um resultado que nunca chegaria.
  */
 
 import { ApiError, DyariumApi, type FetchLike } from '@/core/api';
@@ -25,8 +27,9 @@ export async function fetchTranscriptsOnce(): Promise<void> {
     const recordings = await listRecordings();
     for (const recording of recordings) {
       if (!needsTranscript(recording)) continue;
+      const entryId = recording.entryId as string;
       try {
-        const transcript = await api.getTranscript(recording.entryId as string);
+        const transcript = await api.getTranscript(entryId);
         const updated: Recording = {
           ...recording,
           transcript: transcript.text,
@@ -38,7 +41,10 @@ export async function fetchTranscriptsOnce(): Promise<void> {
         emitRecording(updated);
       } catch (error) {
         if (error instanceof ApiError && error.status === 404) {
-          // ainda transcrevendo no servidor; tenta de novo no proximo ciclo
+          // Sem transcricao ainda. O status da entrada diz se ela vai chegar.
+          if (await isTranscriptGone(api, entryId)) {
+            await markTranscriptFailed(recording);
+          }
           continue;
         }
         // outros erros (rede, etc.): mantem pendente e tenta de novo depois
@@ -47,4 +53,25 @@ export async function fetchTranscriptsOnce(): Promise<void> {
   } finally {
     running = false;
   }
+}
+
+/** true quando a transcricao nao vira mais: entrada falha ou removida. */
+async function isTranscriptGone(api: DyariumApi, entryId: string): Promise<boolean> {
+  try {
+    const entry = await api.getEntry(entryId);
+    return entry.status === 'failed' || entry.status === 'deleted';
+  } catch (error) {
+    // 404: a entrada nao existe mais no servidor.
+    return error instanceof ApiError && error.status === 404;
+  }
+}
+
+async function markTranscriptFailed(recording: Recording): Promise<void> {
+  const updated: Recording = {
+    ...recording,
+    transcriptStatus: 'failed',
+    updatedAt: new Date().toISOString(),
+  };
+  await upsertRecording(updated);
+  emitRecording(updated);
 }

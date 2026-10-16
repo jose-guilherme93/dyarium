@@ -2,9 +2,10 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { AppState } from 'react-native';
 
 import { markQueued } from '@/core/queue';
-import { isUploadable, needsTranscript, type Recording } from '@/core/types';
+import { canRetry, isUploadable, needsTranscript, type Recording } from '@/core/types';
 import { deleteRecordingRow, listRecordings, upsertRecording } from '@/services/db';
 import { deleteSessionFiles } from '@/services/files';
+import { deleteRemoteEntry, reconcileOnce } from '@/services/reconcile';
 import { fetchTranscriptsOnce } from '@/services/transcripts';
 import { observeUploads, runUploadQueueOnce } from '@/services/uploaderLoop';
 
@@ -29,6 +30,9 @@ const WORKER_INTERVAL_MS = 15_000;
 
 /** Intervalo de busca da transcricao enquanto houver alguma pendente. */
 const TRANSCRIPT_INTERVAL_MS = 8_000;
+
+/** Intervalo da reconciliacao com o servidor (notas dos dois lados). */
+const RECONCILE_INTERVAL_MS = 60_000;
 
 export function LibraryProvider({ children }: { children: ReactNode }) {
   const { config } = useSettings();
@@ -76,17 +80,31 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     void fetchTranscriptsOnce().then(refresh).catch(() => undefined);
   }, [refresh]);
 
+  const reconcile = useCallback(() => {
+    void reconcileOnce()
+      .then((changed) => (changed ? refresh() : undefined))
+      .catch(() => undefined);
+  }, [refresh]);
+
   useEffect(() => {
     if (!ready) return;
     kick();
     pullTranscripts();
-  }, [ready, kick, pullTranscripts]);
+    reconcile();
+  }, [ready, kick, pullTranscripts, reconcile]);
 
   useEffect(() => {
     if (!config) return;
     kick();
     pullTranscripts();
-  }, [config, kick, pullTranscripts]);
+    reconcile();
+  }, [config, kick, pullTranscripts, reconcile]);
+
+  useEffect(() => {
+    if (!config) return undefined;
+    const id = setInterval(() => reconcile(), RECONCILE_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [config, reconcile]);
 
   useEffect(() => {
     if (!hasPending) return undefined;
@@ -105,10 +123,11 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       if (state === 'active') {
         kick();
         pullTranscripts();
+        reconcile();
       }
     });
     return () => subscription.remove();
-  }, [kick, pullTranscripts]);
+  }, [kick, pullTranscripts, reconcile]);
 
   const enqueue = useCallback(
     async (recording: Recording) => {
@@ -126,7 +145,9 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   const retry = useCallback(
     async (id: string) => {
       const current = recordings.find((r) => r.id === id);
-      if (!current) return;
+      // Nunca reenvia uma gravacao ja enviada: o upload no servidor esta
+      // concluido e o complete devolveria 409, derrubando a entrada para falha.
+      if (!current || !canRetry(current)) return;
       const requeued = markQueued(
         { ...current, nextAttemptAt: undefined, lastError: undefined },
         new Date(),
@@ -141,7 +162,17 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   const remove = useCallback(
     async (id: string) => {
       const current = recordings.find((r) => r.id === id);
-      if (current) deleteSessionFiles(current.id);
+      if (!current) return;
+      if (current.entryId) {
+        try {
+          await deleteRemoteEntry(current.entryId);
+        } catch {
+          // Sem servidor: uma nota que so existe la nao pode sumir apenas daqui,
+          // senao reapareceria na proxima reconciliacao.
+          if (current.status === 'remote') return;
+        }
+      }
+      if (current.status !== 'remote') deleteSessionFiles(current.id);
       await deleteRecordingRow(id);
       setRecordings((prev) => prev.filter((r) => r.id !== id));
     },

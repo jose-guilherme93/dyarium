@@ -45,6 +45,8 @@ export interface UploadResult {
   uploadId: string;
   entryId: string;
   sizeBytes: number;
+  /** Identidade verificavel da nota no servidor (ex.: "sha256:<...>"). */
+  originKey?: string;
 }
 
 export const DEFAULT_CHUNK_SIZE = 4 * 1024 * 1024;
@@ -75,7 +77,9 @@ export async function uploadRecording(
     await deps.callbacks?.onUploadCreated?.(uploadId, offset);
   } else {
     const state = await deps.api.getUpload(uploadId);
-    offset = state.offset ?? offset;
+    // Um upload ja concluido no servidor (resposta do complete perdida) nao
+    // aceita mais bytes: finalize direto, que o complete e idempotente.
+    offset = state.status === 'completed' ? total : state.offset ?? offset;
   }
 
   await deps.callbacks?.onProgress?.(offset, total);
@@ -99,5 +103,5 @@ export async function uploadRecording(
   }
 
   const done = await deps.api.completeUpload(uploadId);
-  return { uploadId, entryId: done.entry_id, sizeBytes: total };
+  return { uploadId, entryId: done.entry_id, sizeBytes: total, originKey: done.origin_key };
 }

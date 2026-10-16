@@ -5,7 +5,8 @@
  */
 
 import { DyariumApi, type FetchLike } from '@/core/api';
-import { markCompleted, markFailed, pickNextToUpload } from '@/core/queue';
+import { isPermanentUploadError } from '@/core/errors';
+import { markCompleted, markDead, markFailed, pickNextToUpload } from '@/core/queue';
 import type { Recording } from '@/core/types';
 import { uploadRecording } from '@/core/uploader';
 
@@ -42,11 +43,10 @@ export async function runUploadQueueOnce(): Promise<void> {
       const next = pickNextToUpload(recordings, new Date());
       if (!next) break;
       if (!next.filePath || !next.sizeBytes) {
-        // Sem arquivo local nao ha o que enviar: marca falha e segue para o
-        // proximo (nao trava a fila inteira).
-        const failed = markFailed(next, 'gravacao sem arquivo local', new Date());
-        await upsertRecording(failed);
-        emitRecording(failed);
+        // Sem arquivo local o reenvio nunca vai funcionar: falha permanente.
+        const dead = markDead(next, 'gravacao sem arquivo local', new Date());
+        await upsertRecording(dead);
+        emitRecording(dead);
         continue;
       }
       await uploadOne(api, next);
@@ -98,12 +98,19 @@ async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
         },
       },
     );
-    current = { ...markCompleted(current, result.entryId, new Date()), transcriptStatus: 'pending' };
+    current = {
+      ...markCompleted(current, result.entryId, new Date()),
+      transcriptStatus: 'pending',
+      originKey: result.originKey,
+    };
     await upsertRecording(current);
     emitRecording(current);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'falha no envio';
-    current = markFailed(current, message, new Date());
+    // Erro permanente (4xx) sai da fila; rede/5xx continuam no backoff.
+    current = isPermanentUploadError(error)
+      ? markDead(current, message, new Date())
+      : markFailed(current, message, new Date());
     await upsertRecording(current);
     emitRecording(current);
   }
