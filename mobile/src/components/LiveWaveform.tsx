@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { memo, useEffect } from 'react';
 import { StyleSheet, View } from 'react-native';
 import Animated, {
   useAnimatedStyle,
@@ -31,7 +31,12 @@ interface BarProps {
   color: string;
 }
 
-function Bar({ levels, index, total, width, height, color }: BarProps) {
+/**
+ * Uma barra. Memoizada: a tela de gravacao re-renderiza algumas vezes por segundo
+ * (tempo + nivel) e as 48 barras nao devem re-renderizar junto — os valores ao
+ * vivo vem do shared value `levels`, na thread de UI.
+ */
+const Bar = memo(function Bar({ levels, index, total, width, height, color }: BarProps) {
   const animated = useAnimatedStyle(() => {
     const amp = levels.value[index] ?? 0.06;
     return { height: Math.max(3, amp * height) };
@@ -43,7 +48,7 @@ function Bar({ levels, index, total, width, height, color }: BarProps) {
       style={[styles.bar, { width, borderRadius: width / 2, backgroundColor: color, opacity }, animated]}
     />
   );
-}
+});
 
 /**
  * Waveform ao vivo a 60 fps. As barras e o nivel suavizado vivem em shared values

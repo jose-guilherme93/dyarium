@@ -73,6 +73,22 @@ export function SyncedTranscript({ player, segments, onPress }: SyncedTranscript
     transform: [{ translateY: translateY.value }],
   }));
 
+  // So remonta as linhas quando o trecho ativo muda (nao a cada atualizacao de
+  // tempo, que roda ~4x/s durante o play).
+  const lines = useMemo(
+    () =>
+      segments.map((segment, index) => (
+        <Text
+          key={`${segment.start_ms}-${index}`}
+          onLayout={(event) => handleLayout(index, event)}
+          style={[styles.line, index === active && styles.lineActive]}
+        >
+          {segment.text}
+        </Text>
+      )),
+    [segments, active, handleLayout],
+  );
+
   return (
     <Pressable
       style={styles.section}
@@ -81,17 +97,7 @@ export function SyncedTranscript({ player, segments, onPress }: SyncedTranscript
     >
       <Text style={styles.label}>Transcrição</Text>
       <View style={styles.viewport}>
-        <Animated.View style={[styles.track, trackStyle]}>
-          {segments.map((segment, index) => (
-            <Text
-              key={`${segment.start_ms}-${index}`}
-              onLayout={(event) => handleLayout(index, event)}
-              style={[styles.line, index === active && styles.lineActive]}
-            >
-              {segment.text}
-            </Text>
-          ))}
-        </Animated.View>
+        <Animated.View style={[styles.track, trackStyle]}>{lines}</Animated.View>
         <LinearGradient
           colors={['rgba(0,0,0,1)', 'rgba(0,0,0,0)']}
           style={styles.fadeTop}

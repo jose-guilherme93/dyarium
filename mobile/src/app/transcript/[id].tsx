@@ -132,6 +132,71 @@ export default function TranscriptScreen() {
 
   useEffect(() => () => releaseAudioFocus(player), [player]);
 
+  // So remonta as linhas quando muda o trecho ativo, a edicao ou a lista — nao a
+  // cada atualizacao de tempo (~4x/s durante o play). Evita refazer
+  // `breakSentences` e recriar centenas de nos por segundo.
+  const rows = useMemo(
+    () =>
+      segments.map((segment, index) => {
+        const editing = editingIndex === index;
+        return (
+          <View
+            key={`${segment.start_ms}-${index}`}
+            style={[styles.segment, index === activeIndex && styles.segmentActive]}
+          >
+            <Text style={styles.timestamp}>{formatDuration(segment.start_ms)}</Text>
+            {editing ? (
+              <View style={styles.editWrap}>
+                <TextInput
+                  value={draft}
+                  onChangeText={setDraft}
+                  multiline
+                  autoFocus
+                  selectionColor={colors.accent}
+                  style={styles.editInput}
+                />
+                <View style={styles.editActions}>
+                  <Pressable onPress={() => setEditingIndex(null)} accessibilityLabel="Cancelar">
+                    <Text style={styles.editCancel}>Cancelar</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => void saveEdit(index, draft)}
+                    accessibilityLabel="Salvar trecho"
+                  >
+                    <Text style={styles.editSave}>Salvar</Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : (
+              <>
+                <Pressable
+                  style={styles.segmentBody}
+                  onPress={() => player.seekTo(segment.start_ms / 1000)}
+                >
+                  <Text
+                    style={[styles.segmentText, index === activeIndex && styles.segmentTextActive]}
+                  >
+                    {breakSentences(segment.text)}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => {
+                    setDraft(segment.text);
+                    setEditingIndex(index);
+                  }}
+                  accessibilityLabel="Editar trecho"
+                  hitSlop={8}
+                >
+                  <Ionicons name="create-outline" size={16} color={colors.textTertiary} />
+                </Pressable>
+              </>
+            )}
+          </View>
+        );
+      }),
+    [segments, editingIndex, activeIndex, draft, saveEdit, player],
+  );
+
   return (
     <View style={styles.screen}>
       <View style={styles.header}>
@@ -170,63 +235,7 @@ export default function TranscriptScreen() {
         </View>
       ) : (
         <ScrollView ref={scrollRef} contentContainerStyle={styles.list} showsVerticalScrollIndicator={false}>
-          {segments.map((segment, index) => {
-            const editing = editingIndex === index;
-            return (
-              <View
-                key={`${segment.start_ms}-${index}`}
-                style={[styles.segment, index === activeIndex && styles.segmentActive]}
-              >
-                <Text style={styles.timestamp}>{formatDuration(segment.start_ms)}</Text>
-                {editing ? (
-                  <View style={styles.editWrap}>
-                    <TextInput
-                      value={draft}
-                      onChangeText={setDraft}
-                      multiline
-                      autoFocus
-                      selectionColor={colors.accent}
-                      style={styles.editInput}
-                    />
-                    <View style={styles.editActions}>
-                      <Pressable onPress={() => setEditingIndex(null)} accessibilityLabel="Cancelar">
-                        <Text style={styles.editCancel}>Cancelar</Text>
-                      </Pressable>
-                      <Pressable
-                        onPress={() => void saveEdit(index, draft)}
-                        accessibilityLabel="Salvar trecho"
-                      >
-                        <Text style={styles.editSave}>Salvar</Text>
-                      </Pressable>
-                    </View>
-                  </View>
-                ) : (
-                  <>
-                    <Pressable
-                      style={styles.segmentBody}
-                      onPress={() => player.seekTo(segment.start_ms / 1000)}
-                    >
-                      <Text
-                        style={[styles.segmentText, index === activeIndex && styles.segmentTextActive]}
-                      >
-                        {breakSentences(segment.text)}
-                      </Text>
-                    </Pressable>
-                    <Pressable
-                      onPress={() => {
-                        setDraft(segment.text);
-                        setEditingIndex(index);
-                      }}
-                      accessibilityLabel="Editar trecho"
-                      hitSlop={8}
-                    >
-                      <Ionicons name="create-outline" size={16} color={colors.textTertiary} />
-                    </Pressable>
-                  </>
-                )}
-              </View>
-            );
-          })}
+          {rows}
         </ScrollView>
       )}
     </View>

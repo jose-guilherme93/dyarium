@@ -434,6 +434,17 @@ export default function NoteScreen() {
     else if (action === 'link') void openLinkModal();
   }, [action, noteId, handleAddImage, openLinkModal]);
 
+  // Contagens varrem o texto inteiro: so recalcula quando o corpo ou a ficha
+  // mudam (antes rodava a cada tecla e a cada re-render da nota).
+  const { words, chars, totalBytes } = useMemo(
+    () => ({
+      words: countWords(body),
+      chars: countChars(body),
+      totalBytes: menuBytes + utf8ByteLength(markdownToPlain(body)),
+    }),
+    [body, menuBytes],
+  );
+
   if (!note) {
     return (
       <Screen>
@@ -453,9 +464,6 @@ export default function NoteScreen() {
   const hasAudio = Boolean(note.filePath);
   // Em tela estreita o titulo comeca menor; em ambas quebra linha em vez de sumir.
   const titleSize = titleFontSize(title, windowWidth < 380 ? 30 : 34, 24);
-  const words = countWords(body);
-  const chars = countChars(body);
-  const totalBytes = menuBytes + utf8ByteLength(markdownToPlain(body));
   const properties: NoteProperty[] = [
     { label: 'Criada', value: formatDateTime(note.createdAt) },
     { label: 'Origem', value: hasAudio ? 'Audio' : 'Texto' },
