@@ -1,5 +1,6 @@
 import {
   applyMarkdownFormat,
+  countChars,
   countWords,
   extractImageUrls,
   htmlToMarkdown,
@@ -55,14 +56,14 @@ describe('htmlToMarkdown', () => {
     );
   });
 
-  it('usa a fonte de exibicao (data URI) e preserva a URL original', () => {
+  it('usa a fonte de exibicao (file:// local) e preserva a URL original', () => {
     const md = '![foto](attachment:abc)';
-    const sources = { 'attachment:abc': 'data:image/png;base64,AAA' };
+    const sources = { 'attachment:abc': 'file:///data/attachments/abc.png' };
     const html = markdownToHtml(md, sources);
     expect(html).toBe(
-      '<div><br></div><div class="img-block" contenteditable="false"><img src="data:image/png;base64,AAA" data-src="attachment:abc" alt="foto"></div><div><br></div>',
+      '<div><br></div><div class="img-block" contenteditable="false"><img src="file:///data/attachments/abc.png" data-src="attachment:abc" alt="foto"></div><div><br></div>',
     );
-    // Ao salvar, volta a referencia original (nao o data URI).
+    // Ao salvar, volta a referencia original (nao a fonte de exibicao).
     expect(htmlToMarkdown(html)).toBe(md);
   });
 
@@ -118,11 +119,16 @@ describe('applyMarkdownFormat', () => {
   });
 });
 
-describe('countWords / markdownToPlain', () => {
+describe('countWords / countChars / markdownToPlain', () => {
   it('conta palavras ignorando marcadores', () => {
     expect(markdownToPlain('**ola** mundo _tudo_')).toBe('ola mundo tudo');
     expect(countWords('**ola** mundo _tudo_')).toBe(3);
     expect(countWords('   ')).toBe(0);
     expect(countWords('- a\n- b')).toBe(2);
+  });
+
+  it('conta caracteres do texto puro (com espacos)', () => {
+    expect(countChars('**ola** mundo')).toBe(9);
+    expect(countChars('')).toBe(0);
   });
 });

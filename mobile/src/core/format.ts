@@ -9,6 +9,38 @@ export function formatBytes(bytes: number): string {
   return `${value.toFixed(decimals)} ${units[i]}`;
 }
 
+/** Data e hora em DD/MM/AAAA HH:mm (24h). Vazio quando a data e invalida. */
+export function formatDateTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  const pad = (n: number) => (n < 10 ? `0${n}` : String(n));
+  return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} ${pad(
+    date.getHours(),
+  )}:${pad(date.getMinutes())}`;
+}
+
+/** Tamanho em bytes de um texto UTF-8 (para a ficha da nota). */
+export function utf8ByteLength(text: string): number {
+  let bytes = 0;
+  for (const char of text) {
+    const code = char.codePointAt(0) ?? 0;
+    if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (code < 0x10000) bytes += 3;
+    else bytes += 4;
+  }
+  return bytes;
+}
+
+/**
+ * Fonte do titulo conforme o comprimento: titulo longo diminui para caber na
+ * largura do aparelho, sem quebrar linha. Nunca abaixo do minimo.
+ */
+export function titleFontSize(title: string, base = 34, min = 18): number {
+  const extra = Math.max(0, title.trim().length - 24);
+  return Math.max(min, base - Math.floor(extra / 8));
+}
+
 /** Duracao em mm:ss (ou h:mm:ss). */
 export function formatDuration(ms: number): string {
   if (!Number.isFinite(ms) || ms < 0) ms = 0;

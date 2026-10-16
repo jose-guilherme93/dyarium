@@ -1,4 +1,5 @@
 import { buildDraftNote, buildTextNote, isBlankDraft, noteHasContent } from '../note';
+import { needsNoteSync } from '../types';
 
 const NOW = new Date('2026-10-10T22:00:00.000Z');
 
@@ -75,6 +76,26 @@ describe('noteHasContent', () => {
     expect(noteHasContent({ ...buildDraftNote({ id: 'b', now: NOW }), text: 'oi' })).toBe(true);
     expect(noteHasContent({ ...buildDraftNote({ id: 'c', now: NOW }), filePath: 'x.aac' })).toBe(
       true,
+    );
+  });
+});
+
+describe('needsNoteSync', () => {
+  const sent = {
+    ...buildTextNote({ id: 'n', title: 't', text: 'x', now: NOW }),
+    status: 'completed' as const,
+    entryId: 'en_1',
+  };
+
+  it('pede sync quando a nota enviada foi editada', () => {
+    expect(needsNoteSync({ ...sent, noteDirty: true })).toBe(true);
+  });
+
+  it('nao pede sync sem edicao, sem entrada ou fora de completed', () => {
+    expect(needsNoteSync(sent)).toBe(false);
+    expect(needsNoteSync({ ...sent, noteDirty: true, entryId: undefined })).toBe(false);
+    expect(needsNoteSync({ ...buildDraftNote({ id: 'd', now: NOW }), noteDirty: true })).toBe(
+      false,
     );
   });
 });

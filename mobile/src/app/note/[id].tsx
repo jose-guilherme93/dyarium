@@ -1,25 +1,50 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { InteractionManager, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  InteractionManager,
+  Keyboard,
+  Pressable,
+  ScrollView,
+  Share,
+  StyleSheet,
+  Text,
+  TextInput,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 
+import { NoteMenu, type NoteProperty } from '@/components/NoteMenu';
 import { RichEditor, type RichEditorHandle } from '@/components/RichEditor';
 import { Screen } from '@/components/Screen';
 import { STATUS_META } from '@/components/StatusChip';
-import { bytesToBase64 } from '@/core/base64';
-import { formatDuration } from '@/core/format';
-import { countWords, markdownToPlain } from '@/core/richText';
-import { saveLocalImage, resolveImageSources, uploadLocalImage } from '@/services/attachments';
+import {
+  formatBytes,
+  formatDateTime,
+  formatDuration,
+  titleFontSize,
+  utf8ByteLength,
+} from '@/core/format';
+import { countChars, countWords, markdownToPlain } from '@/core/richText';
+import { needsNoteSync } from '@/core/types';
+import {
+  localImageUri,
+  resolveImageSources,
+  saveLocalImage,
+  uploadLocalImage,
+} from '@/services/attachments';
+import { directoryBytes, sessionDirectory, sessionDirUri } from '@/services/files';
 import { pickImage } from '@/services/image';
 import { useLibrary } from '@/state/LibraryContext';
 import { colors, fontSize, radius, spacing } from '@/theme/tokens';
 
 /**
  * Tela da nota: sempre editavel (titulo e texto), com gravacao de audio embutida
- * e autosave. O corpo usa um editor rico (negrito/italico/lista renderizados de
- * verdade); se o modulo nativo ainda nao estiver no build, cai para um editor
- * simples. Nao ha botao de salvar; ao sair, a nota e enviada ou sincronizada.
+ * e autosave. A nota nasce limpa: as acoes de formatacao so aparecem quando o
+ * teclado esta aberto (editando). O menu da nota (tres pontinhos) reune
+ * compartilhar e a ficha de propriedades. Ao sair, a nota e enviada ou entra na
+ * fila de sync.
  */
 
 function AudioPlayer({ uri }: { uri: string }) {
@@ -54,6 +79,22 @@ function AudioPlayer({ uri }: { uri: string }) {
   );
 }
 
+function ToolButton({
+  label,
+  onPress,
+  children,
+}: {
+  label: string;
+  onPress: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <Pressable style={styles.tool} onPress={onPress} accessibilityLabel={label} hitSlop={6}>
+      {children}
+    </Pressable>
+  );
+}
+
 export default function NoteScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const library = useLibrary();
@@ -64,13 +105,28 @@ export default function NoteScreen() {
     [library.recordings, id],
   );
   const noteId = note?.id;
+  // Base `file://` do WebView: permite carregar as imagens locais da nota.
+  const editorBaseUrl = useMemo(() => (noteId ? sessionDirUri(noteId) : undefined), [noteId]);
 
   const [title, setTitle] = useState(() => note?.title ?? '');
   const [body, setBody] = useState(() => note?.text ?? '');
   const [imageSources, setImageSources] = useState<Record<string, string> | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuBytes, setMenuBytes] = useState(0);
+  // Barra de acoes visivel so enquanto o teclado esta aberto (editando).
+  const [editing, setEditing] = useState(false);
   const initializedRef = useRef(false);
   const dirtyRef = useRef(false);
   const editorRef = useRef<RichEditorHandle>(null);
+
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', () => setEditing(true));
+    const hide = Keyboard.addListener('keyboardDidHide', () => setEditing(false));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
 
   // Handlers estaveis: o editor (memoizado) nao pode re-renderizar a cada tecla.
   const handleTitleChange = useCallback((value: string) => {
@@ -83,8 +139,6 @@ export default function NoteScreen() {
     setBody(markdown);
   }, []);
 
-  // Voltar de verdade (pop): usa a animacao inversa e reaproveita a home, em vez
-  // de substituir a tela (que remontava a home e animava errado).
   const goBack = useCallback(() => {
     if (router.canGoBack()) router.back();
     else router.replace('/');
@@ -114,13 +168,13 @@ export default function NoteScreen() {
   }, [library.submitNote, library.updateNote, library.refresh]);
 
   // Carrega o conteudo da nota uma vez, quando ela aparece, e resolve as fontes
-  // das imagens (local ou anexo do servidor) para exibir no editor.
+  // das imagens (arquivo local ou anexo) para exibir no editor.
   useEffect(() => {
     if (note && !initializedRef.current) {
       initializedRef.current = true;
       setTitle(note.title);
       setBody(note.text ?? '');
-      void resolveImageSources(note.id, note.text ?? '')
+      void resolveImageSources(note.id, note.text ?? '', note.attachments ?? {})
         .then(setImageSources)
         .catch(() => setImageSources({}));
     }
@@ -158,18 +212,25 @@ export default function NoteScreen() {
     };
   }, [noteId]);
 
-  const handleRecord = () => {
+  // Ficha da nota: soma os arquivos locais (audio/imagens) ao abrir o menu.
+  const openMenu = useCallback(() => {
+    if (noteId) setMenuBytes(directoryBytes(sessionDirectory(noteId)));
+    setMenuOpen(true);
+  }, [noteId]);
+
+  const handleRecord = useCallback(() => {
     if (!noteId) return;
     router.push({ pathname: '/record', params: { noteId } });
-  };
+  }, [noteId]);
 
-  const handleAddImage = async () => {
+  const handleAddImage = useCallback(async () => {
     if (!noteId) return;
     try {
       const picked = await pickImage();
       if (!picked) return;
-      // Salva local primeiro: funciona offline.
+      // Salva local primeiro: funciona offline e exibe sem recomprimir bytes.
       const name = await saveLocalImage(noteId, picked.bytes, picked.mimeType);
+      const displaySrc = localImageUri(noteId, name) ?? `local:${name}`;
       let persistSrc = `local:${name}`;
       // Com servidor e entrada, sobe agora e passa a referenciar o anexo.
       if (note?.entryId) {
@@ -180,27 +241,21 @@ export default function NoteScreen() {
           // offline: fica local e sobe no sync
         }
       }
-      const dataUri = `data:${picked.mimeType};base64,${bytesToBase64(picked.bytes)}`;
-      editorRef.current?.insertImage(dataUri, persistSrc, picked.name);
+      editorRef.current?.insertImage(displaySrc, persistSrc, picked.name);
       dirtyRef.current = true;
     } catch {
       // falha ao anexar imagem: segue sem anexar
     }
-  };
+  }, [noteId, note]);
 
   if (!note) {
     return (
       <Screen>
         <View style={styles.header}>
-          <Pressable
-            onPress={goBack}
-            style={styles.iconButton}
-            accessibilityLabel="Voltar"
-          >
+          <Pressable onPress={goBack} style={styles.iconButton} accessibilityLabel="Voltar">
             <Ionicons name="chevron-back" size={24} color={colors.text} />
           </Pressable>
-          <Text style={styles.headerTitle}>Nota</Text>
-          <View style={styles.iconButton} />
+          <View style={styles.headerActions} />
         </View>
         <View style={styles.center}>
           <Text style={styles.empty}>Nota nao encontrada.</Text>
@@ -212,6 +267,18 @@ export default function NoteScreen() {
   const meta = STATUS_META[note.status];
   const hasAudio = Boolean(note.filePath);
   const words = countWords(body);
+  const chars = countChars(body);
+  const dirty = needsNoteSync(note);
+  const statusLabel = dirty ? 'Alteracoes pendentes' : meta.label;
+  const totalBytes = menuBytes + utf8ByteLength(markdownToPlain(body));
+  const properties: NoteProperty[] = [
+    { label: 'Criada', value: formatDateTime(note.recordedAt) },
+    { label: 'Origem', value: hasAudio ? 'Audio' : 'Texto' },
+    { label: 'Palavras', value: String(words) },
+    { label: 'Caracteres', value: String(chars) },
+    { label: 'Tamanho', value: formatBytes(totalBytes) },
+    { label: 'Status', value: statusLabel },
+  ];
 
   const handleShare = async () => {
     const parts: string[] = [title.trim() || note.title];
@@ -230,24 +297,29 @@ export default function NoteScreen() {
   return (
     <Screen>
       <View style={styles.header}>
-        <Pressable
-          onPress={goBack}
-          style={styles.iconButton}
-          accessibilityLabel="Voltar"
-        >
+        <Pressable onPress={goBack} style={styles.iconButton} accessibilityLabel="Voltar">
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
-        <Text style={styles.headerTitle}>Nota</Text>
-        <Pressable
-          onPress={() => void handleShare()}
-          style={styles.iconButton}
-          accessibilityLabel="Compartilhar"
-        >
-          <Ionicons name="share-outline" size={22} color={colors.text} />
-        </Pressable>
+        <View style={styles.headerActions}>
+          <Pressable
+            style={styles.iconButton}
+            onPress={handleRecord}
+            accessibilityLabel="Gravar audio"
+          >
+            <Ionicons name="mic-outline" size={22} color={colors.text} />
+          </Pressable>
+          <Pressable
+            style={styles.circleButton}
+            onPress={openMenu}
+            accessibilityLabel="Configuracoes da nota"
+          >
+            <Ionicons name="ellipsis-horizontal" size={18} color={colors.text} />
+          </Pressable>
+        </View>
       </View>
 
       <ScrollView
+        style={styles.scroll}
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
@@ -261,41 +333,22 @@ export default function NoteScreen() {
           returnKeyType="next"
           blurOnSubmit={false}
           onSubmitEditing={() => editorRef.current?.focus()}
-          style={styles.titleInput}
+          style={[styles.titleInput, { fontSize: titleFontSize(title) }]}
         />
 
-        <View style={styles.audioRow}>
-          {hasAudio ? null : (
-            <Pressable
-              style={styles.audioButton}
-              onPress={handleRecord}
-              accessibilityLabel="Gravar audio"
-            >
-              <Ionicons name="mic" size={22} color="#FFFFFF" />
-            </Pressable>
-          )}
-        </View>
-
-        <View style={styles.metaRow}>
-          {note.status === 'completed' ? (
-            <>
-              <Ionicons name="cloud-done" size={14} color={colors.success} />
-              <Text style={styles.meta}>Sincronizada</Text>
-            </>
-          ) : (
-            <>
-              <View style={[styles.dot, { backgroundColor: meta.color }]} />
-              <Text style={styles.meta}>{meta.label}</Text>
-            </>
-          )}
-          {note.duplicate ? <Text style={styles.meta}>· ja existia</Text> : null}
-          {note.status === 'failed' && note.lastError ? (
-            <Text style={styles.meta}>· {note.lastError}</Text>
-          ) : null}
-          {note.terminal ? (
-            <Text style={styles.meta}>· nao sera reenviado automaticamente</Text>
-          ) : null}
-        </View>
+        {dirty || note.status !== 'completed' ? (
+          <View style={styles.metaRow}>
+            <View style={[styles.dot, { backgroundColor: dirty ? colors.accent : meta.color }]} />
+            <Text style={styles.meta}>{statusLabel}</Text>
+            {note.duplicate ? <Text style={styles.meta}>· ja existia</Text> : null}
+            {note.status === 'failed' && note.lastError ? (
+              <Text style={styles.meta}>· {note.lastError}</Text>
+            ) : null}
+            {note.terminal ? (
+              <Text style={styles.meta}>· nao sera reenviado automaticamente</Text>
+            ) : null}
+          </View>
+        ) : null}
 
         {hasAudio ? <AudioPlayer uri={note.filePath as string} /> : null}
 
@@ -314,37 +367,6 @@ export default function NoteScreen() {
           <Text style={styles.meta}>Transcrevendo...</Text>
         ) : null}
 
-        <View style={styles.toolbar}>
-          <Pressable
-            style={styles.tool}
-            onPress={() => editorRef.current?.format('bold')}
-            accessibilityLabel="Negrito"
-          >
-            <Text style={styles.toolBold}>B</Text>
-          </Pressable>
-          <Pressable
-            style={styles.tool}
-            onPress={() => editorRef.current?.format('italic')}
-            accessibilityLabel="Italico"
-          >
-            <Text style={styles.toolItalic}>I</Text>
-          </Pressable>
-          <Pressable
-            style={styles.tool}
-            onPress={() => editorRef.current?.format('list')}
-            accessibilityLabel="Lista"
-          >
-            <Ionicons name="list" size={18} color={colors.text} />
-          </Pressable>
-          <Pressable
-            style={styles.tool}
-            onPress={() => void handleAddImage()}
-            accessibilityLabel="Imagem"
-          >
-            <Ionicons name="image-outline" size={18} color={colors.text} />
-          </Pressable>
-        </View>
-
         {imageSources ? (
           <RichEditor
             ref={editorRef}
@@ -352,15 +374,12 @@ export default function NoteScreen() {
             onChangeMarkdown={handleBodyChange}
             placeholder={hasAudio ? 'Escreva sobre este audio...' : 'Comece a escrever...'}
             imageSources={imageSources}
+            baseUrl={editorBaseUrl}
             minHeight={editorMinHeight}
           />
         ) : (
           <View style={styles.editorPlaceholder} />
         )}
-
-        <Text style={styles.wordCount}>
-          {words} {words === 1 ? 'palavra' : 'palavras'}
-        </Text>
 
         {note.status === 'failed' ? (
           <Pressable
@@ -374,6 +393,37 @@ export default function NoteScreen() {
         ) : null}
       </ScrollView>
 
+      {editing ? (
+        <View style={styles.toolbar}>
+          <ToolButton label="Negrito" onPress={() => editorRef.current?.format('bold')}>
+            <Text style={styles.toolBold}>B</Text>
+          </ToolButton>
+          <ToolButton label="Italico" onPress={() => editorRef.current?.format('italic')}>
+            <Text style={styles.toolItalic}>I</Text>
+          </ToolButton>
+          <ToolButton label="Lista" onPress={() => editorRef.current?.format('list')}>
+            <Ionicons name="list-outline" size={20} color={colors.text} />
+          </ToolButton>
+          <View style={styles.toolDivider} />
+          <ToolButton label="Adicionar foto" onPress={() => void handleAddImage()}>
+            <Ionicons name="image-outline" size={20} color={colors.text} />
+          </ToolButton>
+          <ToolButton label="Gravar audio" onPress={handleRecord}>
+            <Ionicons name="mic-outline" size={20} color={colors.text} />
+          </ToolButton>
+        </View>
+      ) : null}
+
+      <NoteMenu
+        visible={menuOpen}
+        title={title}
+        properties={properties}
+        onClose={() => setMenuOpen(false)}
+        onShare={() => {
+          setMenuOpen(false);
+          void handleShare();
+        }}
+      />
     </Screen>
   );
 }
@@ -386,38 +436,27 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
   },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
   iconButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { color: colors.text, fontSize: fontSize.lg, fontWeight: '700' },
+  circleButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.borderStrong,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   empty: { color: colors.textSecondary, fontSize: fontSize.md },
+  scroll: { flex: 1 },
   content: { padding: spacing.xl, gap: spacing.lg, paddingBottom: spacing.xxxl },
   editorPlaceholder: { minHeight: 160 },
   titleInput: {
     color: colors.text,
-    fontSize: fontSize.xxl,
     fontWeight: '700',
     paddingVertical: spacing.sm,
   },
-  audioRow: { flexDirection: 'row', justifyContent: 'flex-end' },
-  audioButton: {
-    width: 44,
-    height: 44,
-    borderRadius: radius.md,
-    backgroundColor: colors.record,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  toolbar: { flexDirection: 'row', gap: spacing.sm },
-  tool: {
-    width: 40,
-    height: 40,
-    borderRadius: radius.sm,
-    backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  toolBold: { color: colors.text, fontSize: fontSize.md, fontWeight: '800' },
-  toolItalic: { color: colors.text, fontSize: fontSize.md, fontWeight: '600', fontStyle: 'italic' },
   metaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
   dot: { width: 7, height: 7, borderRadius: 4 },
   meta: { color: colors.textSecondary, fontSize: fontSize.sm },
@@ -438,15 +477,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   playerTime: { color: colors.text, fontSize: fontSize.md, fontVariant: ['tabular-nums'] },
-  recordingView: { alignItems: 'center', gap: spacing.md, paddingVertical: spacing.lg },
-  timer: {
-    color: colors.text,
-    fontSize: fontSize.xxl,
-    fontWeight: '300',
-    fontVariant: ['tabular-nums'],
-  },
-  recHint: { color: colors.textSecondary, fontSize: fontSize.sm },
-  wordCount: { color: colors.textTertiary, fontSize: fontSize.xs, textAlign: 'right' },
   section: { gap: spacing.sm },
   sectionLabel: {
     color: colors.textTertiary,
@@ -456,7 +486,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.6,
   },
   transcript: { color: colors.textSecondary, fontSize: fontSize.md, lineHeight: 22 },
-  error: { color: colors.danger, fontSize: fontSize.sm },
   retry: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -468,22 +497,18 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   retryText: { color: colors.warning, fontSize: fontSize.sm, fontWeight: '600' },
-  bottomBar: {
+  toolbar: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: spacing.lg,
+    justifyContent: 'space-around',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.border,
-    backgroundColor: colors.bg,
+    backgroundColor: colors.bgElevated,
   },
-  bottomHint: { color: colors.textTertiary, fontSize: fontSize.sm },
-  recordButton: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: colors.record,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  recordButtonActive: { backgroundColor: colors.recordStrong },
+  tool: { width: 44, height: 40, alignItems: 'center', justifyContent: 'center' },
+  toolDivider: { width: StyleSheet.hairlineWidth, height: 22, backgroundColor: colors.border },
+  toolBold: { color: colors.text, fontSize: fontSize.lg, fontWeight: '800' },
+  toolItalic: { color: colors.text, fontSize: fontSize.lg, fontWeight: '600', fontStyle: 'italic' },
 });

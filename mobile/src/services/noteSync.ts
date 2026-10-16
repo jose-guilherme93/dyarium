@@ -16,11 +16,19 @@ import { loadServerConfig } from './secure';
 
 const doFetch = globalThis.fetch as unknown as FetchLike;
 
+export interface SyncNoteResult {
+  /** Id da nota (corpo rico) no servidor. */
+  noteId: string;
+  /** Mapa nome local da imagem -> id do anexo (inclui o que ja subiu antes). */
+  attachments: Record<string, string>;
+}
+
 /**
- * Envia titulo/data (entrada) e o documento da nota. Devolve o id da nota
- * (existente ou recem-criada) para o chamador persistir localmente.
+ * Envia titulo/data (entrada) e o documento da nota. Devolve o id da nota e o
+ * mapa de anexos, para o chamador persistir localmente. `undefined` quando a
+ * nota ainda nao tem entrada ou nao ha servidor configurado.
  */
-export async function syncNote(note: Recording): Promise<string | undefined> {
+export async function syncNote(note: Recording): Promise<SyncNoteResult | undefined> {
   if (!note.entryId) return undefined;
   const config = await loadServerConfig();
   if (!config) return undefined;
@@ -31,21 +39,25 @@ export async function syncNote(note: Recording): Promise<string | undefined> {
     recorded_at: note.recordedAt,
   });
 
-  const document = markdownToBlocks(
-    await resolveLocalAttachments(note.entryId, note.id, note.text ?? ''),
+  const resolved = await resolveLocalAttachments(
+    note.entryId,
+    note.id,
+    note.text ?? '',
+    note.attachments ?? {},
   );
+  const document = markdownToBlocks(resolved.markdown);
 
   if (note.noteId) {
     await api.updateNote(note.noteId, note.title, document);
-    return note.noteId;
+    return { noteId: note.noteId, attachments: resolved.attachments };
   }
 
   const existing = await api.listNotes(note.entryId);
   if (existing.length > 0) {
     await api.updateNote(existing[0].id, note.title, document);
-    return existing[0].id;
+    return { noteId: existing[0].id, attachments: resolved.attachments };
   }
 
   const created = await api.createNote(note.entryId, note.title, document);
-  return created.id;
+  return { noteId: created.id, attachments: resolved.attachments };
 }

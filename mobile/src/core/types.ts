@@ -65,6 +65,10 @@ export interface Recording {
   duplicate?: boolean;
   /** Nota arquivada: sai da lista principal, mas nao e apagada. */
   archived?: boolean;
+  /** Edicao local (titulo/texto/imagem) numa nota ja enviada, pendente de sync. */
+  noteDirty?: boolean;
+  /** Mapa nome local da imagem -> id do anexo no servidor (evita reenviar). */
+  attachments?: Record<string, string>;
   createdAt: string;
   updatedAt: string;
 }
@@ -102,6 +106,14 @@ export function isUploadable(r: Recording): boolean {
 /** Gravacao enviada que ainda nao tem transcricao pronta. */
 export function needsTranscript(r: Recording): boolean {
   return Boolean(r.entryId) && r.status === 'completed' && r.transcriptStatus !== 'ready';
+}
+
+/**
+ * Nota ja enviada com edicao local pendente: entra na fila para levar o corpo
+ * (titulo/texto/imagens) ao servidor. Nao reenvia audio nem cria outra entrada.
+ */
+export function needsNoteSync(r: Recording): boolean {
+  return Boolean(r.entryId) && r.status === 'completed' && Boolean(r.noteDirty);
 }
 
 /** Nota somente texto (sem audio): o texto e enviado como conteudo. */

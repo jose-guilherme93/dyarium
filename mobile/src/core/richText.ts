@@ -148,6 +148,11 @@ export function countWords(markdown: string): number {
   return plain ? plain.split(/\s+/).length : 0;
 }
 
+/** Numero de caracteres do texto puro (com espacos), como no dashboard. */
+export function countChars(markdown: string): number {
+  return markdownToPlain(markdown).length;
+}
+
 /**
  * Aplica formatacao a uma selecao. Negrito/italico envolvem a selecao com
  * marcadores; lista prefixa a linha. Devolve o novo texto e a nova selecao.

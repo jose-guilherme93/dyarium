@@ -4,11 +4,10 @@ import { AppState } from 'react-native';
 import { newId } from '@/core/id';
 import { buildDraftNote, buildTextNote, noteHasContent } from '@/core/note';
 import { markQueued } from '@/core/queue';
-import { isUploadable, needsTranscript, type Recording } from '@/core/types';
+import { isUploadable, needsNoteSync, needsTranscript, type Recording } from '@/core/types';
 import { deleteRecordingRow, getRecording, listRecordings, upsertRecording } from '@/services/db';
 import { deleteServerEntry } from '@/services/entries';
 import { deleteSessionFiles } from '@/services/files';
-import { syncNote } from '@/services/noteSync';
 import { pullServerEntries } from '@/services/pull';
 import { fetchTranscriptsOnce } from '@/services/transcripts';
 import { emitRecording, observeUploads, runUploadQueueOnce } from '@/services/uploaderLoop';
@@ -98,7 +97,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
 
   // Worker: tenta enviar assim que a fila carrega, quando o servidor e
   // configurado, periodicamente enquanto houver itens, e ao voltar ao app.
-  const hasPending = recordings.some(isUploadable);
+  const hasPending = recordings.some((r) => isUploadable(r) || needsNoteSync(r));
   const hasPendingTranscripts = recordings.some(needsTranscript);
 
   const pullTranscripts = useCallback(() => {
@@ -196,7 +195,17 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     async (id: string, patch: { title?: string; text?: string }) => {
       const current = await getRecording(id);
       if (!current) return;
-      const updated: Recording = { ...current, ...patch, updatedAt: new Date().toISOString() };
+      const changed =
+        (patch.title !== undefined && patch.title !== current.title) ||
+        (patch.text !== undefined && patch.text !== current.text);
+      const updated: Recording = {
+        ...current,
+        ...patch,
+        // Numa nota ja enviada, so marca o que mudou: o autosave tambem roda no
+        // mount e nao pode enfileirar um reenvio a toa.
+        noteDirty: current.status === 'completed' && changed ? true : current.noteDirty,
+        updatedAt: new Date().toISOString(),
+      };
       // Persiste sem re-renderizar o app inteiro a cada autosave; a lista se
       // atualiza no refresh ao sair da nota.
       await upsertRecording(updated);
@@ -269,23 +278,19 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
         return;
       }
       if (current.status === 'completed') {
-        try {
-          const noteId = await syncNote(current);
-          if (noteId && noteId !== current.noteId) {
-            const updated: Recording = {
-              ...current,
-              noteId,
-              updatedAt: new Date().toISOString(),
-            };
-            await upsertRecording(updated);
-            setRecordings((prev) => prev.map((r) => (r.id === id ? updated : r)));
-          }
-        } catch {
-          // best-effort: a nota ja esta no servidor; tenta de novo depois
-        }
+        // Edicao local numa nota ja enviada: persiste o flag e deixa o worker da
+        // fila enviar. Sobrevive a fechar o app e reenvia quando houver rede.
+        const updated: Recording = {
+          ...current,
+          noteDirty: true,
+          updatedAt: new Date().toISOString(),
+        };
+        await upsertRecording(updated);
+        setRecordings((prev) => prev.map((r) => (r.id === id ? updated : r)));
+        kick();
       }
     },
-    [recordings, enqueue, remove],
+    [recordings, enqueue, remove, kick],
   );
 
   const setArchived = useCallback(async (id: string, archived: boolean) => {

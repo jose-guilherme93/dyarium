@@ -29,8 +29,10 @@ interface RichEditorProps {
   value: string;
   onChangeMarkdown: (markdown: string) => void;
   placeholder?: string;
-  /** Mapa URL original -> fonte de exibicao (ex.: data URI) para imagens. */
+  /** Mapa URL original -> fonte de exibicao (ex.: `file://` local) para imagens. */
   imageSources?: Record<string, string>;
+  /** Base `file://` (pasta da nota) para o WebView carregar as imagens locais. */
+  baseUrl?: string;
   /** Altura minima: o editor preenche o espaco restante da nota (digitar em qualquer lugar). */
   minHeight?: number;
 }
@@ -233,7 +235,7 @@ export function buildEditorHtml(placeholder: string, initialHtml: string): strin
 }
 
 const RichEditorInner = forwardRef<RichEditorHandle, RichEditorProps>(function RichEditor(
-  { value, onChangeMarkdown, placeholder = '', imageSources, minHeight = 160 },
+  { value, onChangeMarkdown, placeholder = '', imageSources, baseUrl, minHeight = 160 },
   ref,
 ) {
   const webRef = useRef<{ injectJavaScript: (code: string) => void } | null>(null);
@@ -250,7 +252,10 @@ const RichEditorInner = forwardRef<RichEditorHandle, RichEditorProps>(function R
   if (htmlSourceRef.current === null) {
     htmlSourceRef.current = buildEditorHtml(placeholder, markdownToHtml(value, imageSources));
   }
-  const source = useMemo(() => ({ html: htmlSourceRef.current as string }), []);
+  const source = useMemo(
+    () => ({ html: htmlSourceRef.current as string, baseUrl }),
+    [baseUrl],
+  );
   const sizeStyle = useMemo(() => ({ height: Math.max(height, minHeight) }), [height, minHeight]);
 
   // Mantem o callback atual sem recriar o handler do WebView a cada render.
@@ -366,6 +371,11 @@ const RichEditorInner = forwardRef<RichEditorHandle, RichEditorProps>(function R
           showsVerticalScrollIndicator={false}
           hideKeyboardAccessoryView
           keyboardDisplayRequiresUserAction={false}
+          // Imagem local (`file://`) sem passar por base64. O acesso a arquivos e
+          // desligado por padrao no Android 11+; aqui so carregamos o HTML e o
+          // markdown que nos mesmos geramos, entao o acesso fica no sandbox do app.
+          allowFileAccess
+          allowFileAccessFromFileURLs
         />
       ) : (
         <View style={styles.web} />

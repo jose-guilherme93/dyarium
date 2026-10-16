@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { formatDuration } from '@/core/format';
-import type { Recording } from '@/core/types';
+import { needsNoteSync, type Recording } from '@/core/types';
 import { colors, fontSize, radius, spacing } from '@/theme/tokens';
 
 import { STATUS_META } from './StatusChip';
@@ -28,6 +28,10 @@ function StatusIndicator({
   onRetry: () => void;
 }) {
   if (recording.status === 'completed') {
+    // Nota enviada mas com edicao local na fila: ainda falta subir o corpo.
+    if (needsNoteSync(recording)) {
+      return <Ionicons name="cloud-upload-outline" size={20} color={colors.accent} />;
+    }
     return null;
   }
   if (recording.status === 'uploading') {
@@ -166,6 +170,11 @@ export function RecordingCard({
               <>
                 <View style={[styles.dot, { backgroundColor: meta.color }]} />
                 <Text style={styles.sub}>{meta.label}</Text>
+              </>
+            ) : needsNoteSync(recording) ? (
+              <>
+                <View style={[styles.dot, { backgroundColor: colors.accent }]} />
+                <Text style={styles.sub}>Alteracoes pendentes</Text>
               </>
             ) : null}
             {recording.durationMs ? (

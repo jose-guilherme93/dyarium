@@ -43,6 +43,8 @@ interface Row {
   file_name: string | null;
   duplicate: number | null;
   archived: number | null;
+  note_dirty: string | null;
+  attachments: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -146,6 +148,15 @@ const MIGRATIONS: Migration[] = [
       await addColumn(db, 'recordings', 'terminal');
     },
   },
+  {
+    version: 8,
+    run: async (db) => {
+      // Edicao local pendente numa nota ja enviada e mapa de anexos ja subidos
+      // (o mapa evita reenviar a mesma imagem a cada edicao da nota).
+      await addColumn(db, 'recordings', 'note_dirty');
+      await addColumn(db, 'recordings', 'attachments');
+    },
+  },
 ];
 
 async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
@@ -220,6 +231,19 @@ function parseSegments(raw: string | null): TranscriptSegment[] | undefined {
   }
 }
 
+function parseAttachments(raw: string | null): Record<string, string> | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, string>;
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function rowToRecording(row: Row): Recording {
   return {
     id: row.id,
@@ -249,6 +273,8 @@ function rowToRecording(row: Row): Recording {
     fileName: row.file_name ?? undefined,
     duplicate: row.duplicate ? true : undefined,
     archived: row.archived ? true : undefined,
+    noteDirty: row.note_dirty ? true : undefined,
+    attachments: parseAttachments(row.attachments),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -261,9 +287,9 @@ export async function upsertRecording(r: Recording): Promise<void> {
       id, title, recorded_at, dir, file_path, segment_count, duration_ms, size_bytes,
       status, upload_id, offset, attempts, next_attempt_at, last_error, terminal, entry_id, note_id,
       transcript, transcript_language, transcript_status, transcript_segments,
-      source, text, content_type, file_name, duplicate, archived,
+      source, text, content_type, file_name, duplicate, archived, note_dirty, attachments,
       created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
       recorded_at = excluded.recorded_at,
@@ -291,6 +317,8 @@ export async function upsertRecording(r: Recording): Promise<void> {
       file_name = excluded.file_name,
       duplicate = excluded.duplicate,
       archived = excluded.archived,
+      note_dirty = excluded.note_dirty,
+      attachments = excluded.attachments,
       updated_at = excluded.updated_at`,
     [
       r.id,
@@ -320,6 +348,8 @@ export async function upsertRecording(r: Recording): Promise<void> {
       r.fileName ?? null,
       r.duplicate ? 1 : null,
       r.archived ? 1 : null,
+      r.noteDirty ? 1 : null,
+      r.attachments ? JSON.stringify(r.attachments) : null,
       r.createdAt,
       r.updatedAt,
     ],

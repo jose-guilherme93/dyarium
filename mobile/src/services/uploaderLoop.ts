@@ -7,10 +7,10 @@
 import { DyariumApi, type FetchLike } from '@/core/api';
 import { isPermanentUploadError } from '@/core/errors';
 import { markCompleted, markFailed, markFailedTerminal, pickNextToUpload } from '@/core/queue';
-import { isTextNote, type Recording } from '@/core/types';
+import { isTextNote, needsNoteSync, type Recording } from '@/core/types';
 import { uploadRecording } from '@/core/uploader';
 
-import { acquireLock, listRecordings, releaseLock, upsertRecording } from './db';
+import { acquireLock, getRecording, listRecordings, releaseLock, upsertRecording } from './db';
 import { CONTENT_TYPE, FILE_EXTENSION, uploadFileIO } from './files';
 import { syncNote } from './noteSync';
 import { loadServerConfig } from './secure';
@@ -44,22 +44,31 @@ export async function runUploadQueueOnce(): Promise<void> {
     const config = await loadServerConfig();
     if (!config) return;
     const api = new DyariumApi(config, doFetch);
+    // Notas ja enviadas cujo corpo mudou. Cada uma e tentada uma vez por rodada:
+    // se falhar (sem rede), o flag continua e a proxima rodada tenta de novo.
+    const attemptedNotes = new Set<string>();
     for (;;) {
       const recordings = await listRecordings();
       const next = pickNextToUpload(recordings, new Date());
-      if (!next) break;
-      if (isTextNote(next)) {
-        await uploadTextOne(api, next);
+      if (next) {
+        if (isTextNote(next)) {
+          await uploadTextOne(api, next);
+          continue;
+        }
+        if (!next.filePath || !next.sizeBytes) {
+          // Sem arquivo local o reenvio nunca vai funcionar: falha permanente.
+          const failed = markFailedTerminal(next, 'gravacao sem arquivo local', new Date());
+          await upsertRecording(failed);
+          emitRecording(failed);
+          continue;
+        }
+        await uploadOne(api, next);
         continue;
       }
-      if (!next.filePath || !next.sizeBytes) {
-        // Sem arquivo local o reenvio nunca vai funcionar: falha permanente.
-        const failed = markFailedTerminal(next, 'gravacao sem arquivo local', new Date());
-        await upsertRecording(failed);
-        emitRecording(failed);
-        continue;
-      }
-      await uploadOne(api, next);
+      const dirtyNote = recordings.find((r) => needsNoteSync(r) && !attemptedNotes.has(r.id));
+      if (!dirtyNote) break;
+      attemptedNotes.add(dirtyNote.id);
+      await pushNoteDocument(dirtyNote);
     }
   } finally {
     if (lock) await releaseLock('upload-queue', lock).catch(() => undefined);
@@ -72,9 +81,18 @@ export async function runUploadQueueOnce(): Promise<void> {
  * documento e guarda o noteId. Assim o corpo sobe junto, sem esperar um re-edit.
  */
 async function pushNoteDocument(recording: Recording): Promise<Recording> {
-  const noteId = await syncNote(recording).catch(() => undefined);
-  if (!noteId || noteId === recording.noteId) return recording;
-  const updated: Recording = { ...recording, noteId, updatedAt: new Date().toISOString() };
+  const result = await syncNote(recording).catch(() => undefined);
+  if (!result) return recording;
+  // Relê o registro: se o usuario editou a nota durante o envio, nao sobrescreve
+  // nem limpa o flag (o proximo sync leva a edicao mais nova).
+  const fresh = (await getRecording(recording.id)) ?? recording;
+  const editedDuringSync = fresh.updatedAt !== recording.updatedAt;
+  const updated: Recording = {
+    ...fresh,
+    noteId: result.noteId,
+    attachments: { ...(fresh.attachments ?? {}), ...result.attachments },
+    noteDirty: editedDuringSync ? true : undefined,
+  };
   await upsertRecording(updated);
   emitRecording(updated);
   return updated;

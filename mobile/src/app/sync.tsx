@@ -5,14 +5,14 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Button } from '@/components/Button';
 import { Screen } from '@/components/Screen';
 import { STATUS_META } from '@/components/StatusChip';
-import { isUploadable, type Recording } from '@/core/types';
+import { isUploadable, needsNoteSync, type Recording } from '@/core/types';
 import { useLibrary } from '@/state/LibraryContext';
 import { colors, fontSize, radius, spacing } from '@/theme/tokens';
 
 export default function SyncScreen() {
   const { recordings, retry, kick } = useLibrary();
 
-  const pending = recordings.filter((r) => isUploadable(r));
+  const pending = recordings.filter((r) => isUploadable(r) || needsNoteSync(r));
   const failed = recordings.filter((r) => r.status === 'failed').length;
   const completed = recordings.filter((r) => r.status === 'completed').length;
 
@@ -80,7 +80,7 @@ function SyncRow({ recording, onRetry }: { recording: Recording; onRetry: () => 
         <Text style={styles.rowTitle} numberOfLines={1}>
           {recording.title}
         </Text>
-        <Text style={styles.rowSub}>{meta.label}</Text>
+        <Text style={styles.rowSub}>{needsNoteSync(recording) ? 'Aguardando envio' : meta.label}</Text>
       </View>
       {recording.status === 'failed' ? (
         <Pressable onPress={onRetry} accessibilityLabel="Reenviar" hitSlop={8}>

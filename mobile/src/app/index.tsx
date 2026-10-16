@@ -9,7 +9,7 @@ import { RecordingCard } from '@/components/RecordingCard';
 import { Screen } from '@/components/Screen';
 import { groupRecordingsByYear, type RecordingSection } from '@/core/group';
 import { isBlankDraft } from '@/core/note';
-import type { Recording } from '@/core/types';
+import { needsNoteSync, type Recording } from '@/core/types';
 import { useLibrary } from '@/state/LibraryContext';
 import { useSettings } from '@/state/SettingsContext';
 import { colors, fontSize, radius, spacing } from '@/theme/tokens';
@@ -96,7 +96,9 @@ export default function RecordScreen() {
   const [query, setQuery] = useState('');
   const [refreshing, setRefreshing] = useState(false);
 
-  const pending = recordings.filter((r) => PENDING_STATUSES.includes(r.status)).length;
+  const pending = recordings.filter(
+    (r) => PENDING_STATUSES.includes(r.status) || needsNoteSync(r),
+  ).length;
   const interrupted = recordings.filter((r) => r.status === 'interrupted').length;
 
   const syncState: 'ok' | 'syncing' | 'error' = recordings.some((r) => r.status === 'failed')

@@ -166,6 +166,20 @@ export async function storeSegment(
   return destination.uri;
 }
 
+/** Tamanho somado dos arquivos de uma pasta (bytes). Entradas ilegiveis sao ignoradas. */
+export function directoryBytes(dir: Directory): number {
+  if (!dir.exists) return 0;
+  let total = 0;
+  for (const entry of dir.list()) {
+    try {
+      total += new File(entry.uri).size;
+    } catch {
+      // entrada ilegivel: ignora
+    }
+  }
+  return total;
+}
+
 export function deleteSessionFiles(sessionId: string): void {
   if (!sessionId) return;
   const dir = new Directory(root(), sessionId);
