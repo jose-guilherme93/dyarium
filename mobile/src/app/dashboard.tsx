@@ -85,7 +85,7 @@ export default function DashboardScreen() {
       {!config ? (
         <View style={styles.center}>
           <Ionicons name="cloud-offline-outline" size={32} color={colors.textTertiary} />
-          <Text style={styles.emptyText}>Configure o servidor para ver as metricas.</Text>
+          <Text style={styles.emptyText}>Configure o servidor para ver as métricas.</Text>
           <Button label="Configurar servidor" variant="secondary" onPress={() => router.push('/server')} />
         </View>
       ) : loading && !data ? (
@@ -108,7 +108,7 @@ export default function DashboardScreen() {
                 <Metric label="Analisadas" value={String(summary.analyzed)} />
               </View>
               <View style={styles.metricsRow}>
-                <Metric label="Duracao total" value={formatDuration(summary.totalDurationSeconds * 1000)} />
+                <Metric label="Duração total" value={formatDuration(summary.totalDurationSeconds * 1000)} />
                 <Metric label="Tamanho" value={formatBytes(summary.totalSizeBytes)} />
                 <Metric label="Falharam" value={String(summary.failed)} />
               </View>
@@ -130,10 +130,10 @@ export default function DashboardScreen() {
                   ))}
                 </View>
               ) : (
-                <Text style={styles.muted}>Sem analises de sentimento ainda.</Text>
+                <Text style={styles.muted}>Sem análises de sentimento ainda.</Text>
               )}
 
-              <RankedList title="Emocoes" items={summary.emotions} />
+              <RankedList title="Emoções" items={summary.emotions} />
               <RankedList title="Pessoas" items={summary.people} />
               <RankedList title="Lugares" items={summary.places} />
 

@@ -45,13 +45,13 @@ export default function RecoveryScreen() {
         <Pressable onPress={() => router.back()} style={styles.back} accessibilityLabel="Voltar">
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
-        <Text style={styles.title}>Gravacao interrompida</Text>
+        <Text style={styles.title}>Gravação interrompida</Text>
         <View style={styles.back} />
       </View>
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <Text style={styles.lead}>
-          O app foi encerrado no meio de uma gravacao. O audio ja gravado esta guardado no aparelho.
+          O app foi encerrado no meio de uma gravação. O áudio já gravado está guardado no aparelho.
         </Text>
 
         {interrupted.map((recording) => (
@@ -94,7 +94,7 @@ export default function RecoveryScreen() {
         {interrupted.length === 0 ? (
           <View style={styles.empty}>
             <Ionicons name="checkmark-circle" size={32} color={colors.success} />
-            <Text style={styles.emptyText}>Nenhuma gravacao pendente.</Text>
+            <Text style={styles.emptyText}>Nenhuma gravação pendente.</Text>
           </View>
         ) : null}
       </ScrollView>

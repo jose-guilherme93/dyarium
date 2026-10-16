@@ -27,8 +27,8 @@ export default function StorageScreen() {
   const handleFree = () => {
     if (usage.syncedWithAudio === 0) return;
     Alert.alert(
-      'Liberar espaco',
-      'Remove o audio local das notas ja sincronizadas. O audio continua guardado no servidor; so deixa de tocar offline no aparelho.',
+      'Liberar espaço',
+      'Remove o áudio local das notas já sincronizadas. O áudio continua guardado no servidor; só deixa de tocar offline no aparelho.',
       [
         { text: 'Cancelar', style: 'cancel' },
         {
@@ -58,20 +58,20 @@ export default function StorageScreen() {
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.card}>
           <Row label="Notas" value={String(usage.noteCount)} />
-          <Row label="Com audio local" value={String(usage.withAudio)} />
-          <Row label="Sincronizadas com audio local" value={String(usage.syncedWithAudio)} />
-          <Row label="Espaco de audio" value={formatBytes(usage.audioBytes)} />
+          <Row label="Com áudio local" value={String(usage.withAudio)} />
+          <Row label="Sincronizadas com áudio local" value={String(usage.syncedWithAudio)} />
+          <Row label="Espaço de áudio" value={formatBytes(usage.audioBytes)} />
         </View>
 
         <Text style={styles.hint}>
-          Todo o audio e as notas ficam guardados no aparelho (nada e apagado sozinho). Se
-          precisar de espaco, da para remover o audio local das notas ja sincronizadas.
+          Todo o áudio e as notas ficam guardados no aparelho (nada é apagado sozinho). Se
+          precisar de espaço, dá para remover o áudio local das notas já sincronizadas.
         </Text>
 
         <Button
           label={
             usage.syncedWithAudio > 0
-              ? `Liberar espaco (${usage.syncedWithAudio})`
+              ? `Liberar espaço (${usage.syncedWithAudio})`
               : 'Nada a liberar'
           }
           variant="secondary"

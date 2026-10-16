@@ -100,7 +100,7 @@ function ItemCard({
       {draft.supported ? (
         <View style={styles.fields}>
           <View style={styles.field}>
-            <Text style={styles.fieldLabel}>Titulo</Text>
+            <Text style={styles.fieldLabel}>Título</Text>
             <TextInput
               value={item.title}
               onChangeText={onTitleChange}
@@ -272,7 +272,7 @@ export default function ImportReviewScreen() {
         void probeDurations(drafts);
       })
       .catch(() => {
-        if (alive) setError('Nao foi possivel ler o audio compartilhado.');
+        if (alive) setError('Não foi possível ler o áudio compartilhado.');
       });
     return () => {
       alive = false;
@@ -371,7 +371,7 @@ export default function ImportReviewScreen() {
       }
       router.replace('/');
     } catch {
-      setError('Nao foi possivel enfileirar os audios.');
+      setError('Não foi possível enfileirar os áudios.');
       setSending(false);
     }
   }, [library, sending]);
@@ -385,25 +385,25 @@ export default function ImportReviewScreen() {
         <Pressable onPress={() => router.replace('/')} style={styles.back} accessibilityLabel="Voltar">
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
-        <Text style={styles.headerTitle}>Revisar importacao</Text>
+        <Text style={styles.headerTitle}>Revisar importação</Text>
         <View style={styles.back} />
       </View>
 
       {loading ? (
         <View style={styles.center}>
           <ActivityIndicator size="large" color={colors.textSecondary} />
-          <Text style={styles.hint}>Lendo o audio...</Text>
+          <Text style={styles.hint}>Lendo o áudio...</Text>
         </View>
       ) : (
         <>
           <ScrollView contentContainerStyle={styles.list} showsVerticalScrollIndicator={false}>
             <Text style={styles.lead}>
-              Confira o que vai ser enviado. O audio original e preservado; so o titulo e a data
+              Confira o que vai ser enviado. O áudio original é preservado; só o título e a data
               podem mudar.
             </Text>
 
             <View style={styles.control}>
-              <Text style={styles.controlLabel}>Ano das gravacoes</Text>
+              <Text style={styles.controlLabel}>Ano das gravações</Text>
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
@@ -425,7 +425,7 @@ export default function ImportReviewScreen() {
             </View>
 
             <View style={styles.controlRow}>
-              <Text style={styles.controlLabel}>Ordem dia/mes</Text>
+              <Text style={styles.controlLabel}>Ordem dia/mês</Text>
               <View style={styles.segment}>
                 <Pressable
                   onPress={() => chooseInvert(false)}
@@ -433,7 +433,7 @@ export default function ImportReviewScreen() {
                   accessibilityRole="button"
                 >
                   <Text style={[styles.segmentText, !invert && styles.segmentTextActive]}>
-                    Dia/Mes
+                    Dia/Mês
                   </Text>
                 </Pressable>
                 <Pressable
@@ -442,7 +442,7 @@ export default function ImportReviewScreen() {
                   accessibilityRole="button"
                 >
                   <Text style={[styles.segmentText, invert && styles.segmentTextActive]}>
-                    Mes/Dia
+                    Mês/Dia
                   </Text>
                 </Pressable>
               </View>
@@ -474,7 +474,7 @@ export default function ImportReviewScreen() {
               <View style={styles.alert}>
                 <Ionicons name="information-circle-outline" size={18} color={colors.warning} />
                 <Text style={styles.alertText}>
-                  {ignored} audio(s) acima de 50 foram ignorados.
+                  {ignored} áudio(s) acima de 50 foram ignorados.
                 </Text>
               </View>
             ) : null}
@@ -495,7 +495,7 @@ export default function ImportReviewScreen() {
             ) : (
               <View style={styles.center}>
                 <Ionicons name="musical-notes-outline" size={30} color={colors.textTertiary} />
-                <Text style={styles.emptyText}>Nenhum audio para importar.</Text>
+                <Text style={styles.emptyText}>Nenhum áudio para importar.</Text>
               </View>
             )}
 

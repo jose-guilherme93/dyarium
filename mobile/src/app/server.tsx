@@ -62,7 +62,7 @@ function ServerForm({ config, save, disconnect }: ServerFormProps) {
       setBaseUrl(found);
       setDiscovery(`Servidor encontrado em ${found}`);
     } else {
-      setDiscovery('Nao encontrei o servidor automaticamente. Informe a URL abaixo.');
+      setDiscovery('Não encontrei o servidor automaticamente. Informe a URL abaixo.');
     }
   }, []);
 

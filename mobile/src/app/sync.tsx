@@ -22,7 +22,7 @@ export default function SyncScreen() {
         <Pressable onPress={() => router.back()} style={styles.iconButton} accessibilityLabel="Voltar">
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
-        <Text style={styles.headerTitle}>Sincronizacao</Text>
+        <Text style={styles.headerTitle}>Sincronização</Text>
         <View style={styles.iconButton} />
       </View>
 
@@ -46,8 +46,8 @@ export default function SyncScreen() {
         </View>
 
         <Text style={styles.hint}>
-          O envio continua em segundo plano quando o app fica em segundo plano ou e fechado. Toque
-          em Enviar agora para forcar.
+          O envio continua em segundo plano quando o app fica em segundo plano ou é fechado. Toque
+          em Enviar agora para forçar.
         </Text>
 
         {pending.length > 0 ? (

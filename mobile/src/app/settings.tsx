@@ -23,7 +23,7 @@ export default function SettingsScreen() {
         >
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
-        <Text style={styles.headerTitle}>Opcoes</Text>
+        <Text style={styles.headerTitle}>Opções</Text>
         <View style={styles.iconButton} />
       </View>
 
@@ -56,7 +56,7 @@ export default function SettingsScreen() {
           </View>
         </Card>
 
-        <Text style={styles.sectionLabel}>Metricas</Text>
+        <Text style={styles.sectionLabel}>Métricas</Text>
         <Pressable onPress={() => router.push('/dashboard')}>
           <Card style={styles.row}>
             <Ionicons name="stats-chart-outline" size={20} color={colors.info} />
@@ -73,7 +73,18 @@ export default function SettingsScreen() {
             <Ionicons name="save-outline" size={20} color={colors.info} />
             <View style={styles.rowText}>
               <Text style={styles.cardTitle}>Armazenamento</Text>
-              <Text style={styles.cardHint}>Uso no aparelho e liberar espaco.</Text>
+              <Text style={styles.cardHint}>Uso no aparelho e liberar espaço.</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
+          </Card>
+        </Pressable>
+
+        <Pressable onPress={() => router.push('/transcription')}>
+          <Card style={styles.row}>
+            <Ionicons name="mic-circle-outline" size={20} color={colors.info} />
+            <View style={styles.rowText}>
+              <Text style={styles.cardTitle}>Transcrição</Text>
+              <Text style={styles.cardHint}>Modelos e transcrição no aparelho.</Text>
             </View>
             <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
           </Card>
@@ -88,7 +99,7 @@ export default function SettingsScreen() {
               color={config ? colors.success : colors.warning}
             />
             <View style={styles.rowText}>
-              <Text style={styles.cardTitle}>{config ? 'Conectado' : 'Nao configurado'}</Text>
+              <Text style={styles.cardTitle}>{config ? 'Conectado' : 'Não configurado'}</Text>
               <Text style={styles.cardHint} numberOfLines={1}>
                 {config ? config.baseUrl : 'Toque para configurar o servidor.'}
               </Text>
