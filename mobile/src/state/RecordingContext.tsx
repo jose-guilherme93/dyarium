@@ -411,6 +411,10 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
     ],
   );
 
+  useEffect(() => {
+    bumpRender('recording.value');
+  }, [value]);
+
   return <RecordingContext.Provider value={value}>{children}</RecordingContext.Provider>;
 }
 

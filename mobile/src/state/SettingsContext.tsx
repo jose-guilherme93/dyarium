@@ -251,9 +251,12 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     ],
   );
 
+  useEffect(() => {
+    bumpRender('settings.value');
+  }, [value]);
+
   return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>;
 }
-
 export function useSettings(): SettingsValue {
   const value = useContext(SettingsContext);
   if (!value) throw new Error('useSettings deve ser usado dentro de SettingsProvider');

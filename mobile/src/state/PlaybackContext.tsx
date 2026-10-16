@@ -10,6 +10,8 @@ import {
   type ReactNode,
 } from 'react';
 
+import { bumpRender } from '@/dev/perf';
+
 interface PlaybackValue {
   /** Player unico do app (nota e transcricao usam o mesmo audio). */
   player: AudioPlayer;
@@ -51,6 +53,10 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
     () => ({ player, desiredRef, loadedRef, load }),
     [player, load],
   );
+
+  useEffect(() => {
+    bumpRender('playback.value');
+  }, [value]);
 
   return <PlaybackContext.Provider value={value}>{children}</PlaybackContext.Provider>;
 }
