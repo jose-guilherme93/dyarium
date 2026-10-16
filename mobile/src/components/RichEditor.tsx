@@ -42,12 +42,14 @@ const hasWebView = Boolean(TurboModuleRegistry.get('RNCWebViewModule'));
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const WebViewModule = hasWebView ? require('react-native-webview') : null;
 
-function buildEditorHtml(placeholder: string, initialHtml: string): string {
+export function buildEditorHtml(placeholder: string, initialHtml: string): string {
   const safePlaceholder = placeholder.replace(/"/g, '&quot;');
   return `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
 <style>
   html, body { margin: 0; padding: 0; height: 100%; background: #0A0A0F; color: #FFFFFF; font-family: -apple-system, system-ui, sans-serif; font-size: 17px; line-height: 1.5; word-wrap: break-word; }
-  #editor { min-height: 100%; padding: 4px 0; outline: none; }
+  /* box-sizing: sem ele o padding de #editor (8px) soma ao min-height: 100% e o
+     editor cresce a cada ciclo do ResizeObserver (a nota crescia sem parar). */
+  #editor { box-sizing: border-box; min-height: 100%; padding: 4px 0; outline: none; }
   #editor:empty:before { content: attr(data-placeholder); color: #5A5A5F; }
   ul { padding-left: 22px; margin: 6px 0; }
   div { min-height: 1.5em; }
