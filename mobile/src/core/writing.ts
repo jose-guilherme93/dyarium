@@ -348,3 +348,106 @@ function buildInsights(metrics: WritingMetrics): string[] {
   }
   return out;
 }
+
+// --- Historico (para os graficos) -------------------------------------------
+
+export interface WeeklyPoint {
+  /** Rotulo curto (DD/MM) do inicio da semana. */
+  label: string;
+  words: number;
+  notes: number;
+}
+
+export interface DayCell {
+  /** Chave da data (YYYY-MM-DD); null quando o dia ainda nao chegou. */
+  key: string | null;
+  words: number;
+  notes: number;
+}
+
+export interface WritingHistory {
+  /** Palavras por semana (mais antiga primeiro). */
+  weekly: WeeklyPoint[];
+  /** Colunas (semanas) de 7 dias, de domingo a sabado. */
+  calendar: DayCell[][];
+  /** Maior volume semanal (para escalar as barras). */
+  maxWeekly: number;
+  /** Maior volume diario (para escalar o mapa). */
+  maxDaily: number;
+}
+
+function startOfDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function addDays(date: Date, days: number): Date {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+/** Domingo da semana da data. */
+function startOfWeek(date: Date): Date {
+  const day = startOfDay(date);
+  return addDays(day, -day.getDay());
+}
+
+function pad2(value: number): string {
+  return value < 10 ? `0${value}` : String(value);
+}
+
+/**
+ * Serie semanal + calendario (para os graficos do Painel). Semana comeca no
+ * domingo; o calendario vai da semana mais antiga ate a atual.
+ */
+export function writingHistory(
+  recordings: Recording[],
+  now: Date = new Date(),
+  weeks = 12,
+): WritingHistory {
+  const counts = new Map<string, { words: number; notes: number }>();
+  for (const recording of recordings) {
+    const date = new Date(recording.recordedAt);
+    if (Number.isNaN(date.getTime())) continue;
+    const key = dayKey(date);
+    const entry = counts.get(key) ?? { words: 0, notes: 0 };
+    entry.notes += 1;
+    entry.words += wordsOf(plainText(recording.text ?? '')).length;
+    counts.set(key, entry);
+  }
+
+  const today = startOfDay(now);
+  const currentWeekStart = startOfWeek(now);
+  const weekly: WeeklyPoint[] = [];
+  const calendar: DayCell[][] = [];
+  let maxWeekly = 0;
+  let maxDaily = 0;
+
+  const total = Math.max(1, weeks);
+  for (let i = total - 1; i >= 0; i -= 1) {
+    const weekStart = addDays(currentWeekStart, -i * 7);
+    let words = 0;
+    let notes = 0;
+    const column: DayCell[] = [];
+    for (let d = 0; d < 7; d += 1) {
+      const day = addDays(weekStart, d);
+      const future = day.getTime() > today.getTime();
+      const key = future ? null : dayKey(day);
+      const cell = (key ? counts.get(key) : undefined) ?? { words: 0, notes: 0 };
+      column.push({ key, words: cell.words, notes: cell.notes });
+      words += cell.words;
+      notes += cell.notes;
+      if (!future) maxDaily = Math.max(maxDaily, cell.words);
+    }
+    weekly.push({
+      label: `${pad2(weekStart.getDate())}/${pad2(weekStart.getMonth() + 1)}`,
+      words,
+      notes,
+    });
+    maxWeekly = Math.max(maxWeekly, words);
+    calendar.push(column);
+  }
+
+  return { weekly, calendar, maxWeekly, maxDaily };
+}
+

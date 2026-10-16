@@ -1,5 +1,5 @@
 import type { Recording } from '../types';
-import { analyzeWriting, plainText } from '../writing';
+import { analyzeWriting, plainText, writingHistory } from '../writing';
 
 function base(overrides: Partial<Recording> = {}): Recording {
   return {
@@ -102,5 +102,35 @@ describe('analyzeWriting', () => {
     );
     expect(metrics.insights.length).toBeGreaterThan(0);
     expect(metrics.insights[0]).toContain('palavras');
+  });
+});
+
+describe('writingHistory', () => {
+  const now = new Date('2026-10-14T12:00:00.000Z');
+
+  it('monta a serie semanal e o calendario', () => {
+    const history = writingHistory(
+      [
+        base({ id: 'a', recordedAt: '2026-10-06T12:00:00.000Z', text: 'duas palavras' }),
+        base({ id: 'b', recordedAt: '2026-10-12T12:00:00.000Z', text: 'mais duas' }),
+      ],
+      now,
+      2,
+    );
+    expect(history.weekly).toHaveLength(2);
+    expect(history.calendar).toHaveLength(2);
+    expect(history.calendar.every((column) => column.length === 7)).toBe(true);
+    expect(history.weekly.reduce((sum, week) => sum + week.words, 0)).toBe(4);
+    expect(history.maxDaily).toBe(2);
+    expect(history.maxWeekly).toBe(2);
+    // a semana atual tem dias futuros (sem chave)
+    expect(history.calendar[1].some((cell) => cell.key === null)).toBe(true);
+  });
+
+  it('sem notas, tudo zerado e com dias futuros', () => {
+    const history = writingHistory([], now, 1);
+    expect(history.maxWeekly).toBe(0);
+    expect(history.maxDaily).toBe(0);
+    expect(history.weekly[0].words).toBe(0);
   });
 });

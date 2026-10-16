@@ -7,7 +7,7 @@ import { Button } from '@/components/Button';
 import { Screen } from '@/components/Screen';
 import { summarize, type RankedItem } from '@/core/dashboard';
 import { formatBytes, formatDateTime, formatDuration } from '@/core/format';
-import { analyzeWriting, type WritingMetrics } from '@/core/writing';
+import { analyzeWriting, writingHistory, type DayCell, type WritingHistory, type WritingMetrics } from '@/core/writing';
 import { loadDashboard, type DashboardData } from '@/services/dashboard';
 import { useLibrary } from '@/state/LibraryContext';
 import { useSettings } from '@/state/SettingsContext';
@@ -46,6 +46,71 @@ function RankedList({ title, items }: { title: string; items: RankedItem[] }) {
   );
 }
 
+/** Cores do mapa de calor (0 = sem escrita, 4 = muito). */
+const HEAT = ['#2C2C2E', 'rgba(10,132,255,0.28)', 'rgba(10,132,255,0.5)', 'rgba(10,132,255,0.75)', '#0A84FF'];
+
+function heatColor(cell: DayCell, max: number): string {
+  if (cell.key === null) return 'transparent';
+  if (cell.words === 0) return HEAT[cell.notes > 0 ? 1 : 0];
+  const level = Math.min(4, Math.max(1, Math.ceil((cell.words / Math.max(1, max)) * 4)));
+  return HEAT[level];
+}
+
+function BarChart({ title, points }: { title: string; points: { label: string; value: number }[] }) {
+  const max = Math.max(1, ...points.map((point) => point.value));
+  return (
+    <View style={styles.chartCard}>
+      <Text style={styles.sectionLabel}>{title}</Text>
+      <View style={styles.bars}>
+        {points.map((point, index) => (
+          <View key={index} style={styles.barSlot}>
+            <View
+              style={[
+                styles.bar,
+                { height: point.value > 0 ? Math.max(3, Math.round((point.value / max) * 84)) : 2 },
+              ]}
+            />
+          </View>
+        ))}
+      </View>
+      <View style={styles.barLabels}>
+        {points.map((point, index) => (
+          <Text key={index} style={styles.barLabel}>
+            {index % 3 === 0 ? point.label : ''}
+          </Text>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function Heatmap({ history }: { history: WritingHistory }) {
+  return (
+    <View style={styles.chartCard}>
+      <Text style={styles.sectionLabel}>Histórico de escrita</Text>
+      <View style={styles.heatmap}>
+        {history.calendar.map((column, columnIndex) => (
+          <View key={columnIndex} style={styles.heatColumn}>
+            {column.map((cell, dayIndex) => (
+              <View
+                key={dayIndex}
+                style={[styles.heatCell, { backgroundColor: heatColor(cell, history.maxDaily) }]}
+              />
+            ))}
+          </View>
+        ))}
+      </View>
+      <View style={styles.legend}>
+        <Text style={styles.legendText}>menos</Text>
+        {HEAT.map((color, level) => (
+          <View key={level} style={[styles.heatCell, { backgroundColor: color }]} />
+        ))}
+        <Text style={styles.legendText}>mais</Text>
+      </View>
+    </View>
+  );
+}
+
 function Insights({ metrics }: { metrics: WritingMetrics }) {
   if (metrics.insights.length === 0) return null;
   return (
@@ -63,12 +128,17 @@ function Insights({ metrics }: { metrics: WritingMetrics }) {
   );
 }
 
-function WritingSection({ metrics }: { metrics: WritingMetrics }) {
+function WritingSection({ metrics, history }: { metrics: WritingMetrics; history: WritingHistory }) {
   const number = (value: number) => value.toLocaleString('pt-BR');
   return (
     <>
       <Text style={styles.blockTitle}>Escrita</Text>
       <Insights metrics={metrics} />
+      <BarChart
+        title="Palavras por semana"
+        points={history.weekly.map((week) => ({ label: week.label, value: week.words }))}
+      />
+      <Heatmap history={history} />
 
       <View style={styles.metricsRow}>
         <Metric label="Palavras" value={number(metrics.words)} />
@@ -159,6 +229,7 @@ export default function DashboardScreen() {
   const [error, setError] = useState<string | null>(null);
 
   const writing = useMemo(() => analyzeWriting(recordings, new Date()), [recordings]);
+  const history = useMemo(() => writingHistory(recordings, new Date()), [recordings]);
 
   const load = useCallback(async () => {
     if (!config) return;
@@ -205,7 +276,7 @@ export default function DashboardScreen() {
             Escreva sua primeira nota e o painel mostra as métricas da sua escrita.
           </Text>
         ) : (
-          <WritingSection metrics={writing} />
+          <WritingSection metrics={writing} history={history} />
         )}
 
         <Text style={styles.blockTitle}>Servidor</Text>
@@ -290,6 +361,22 @@ const styles = StyleSheet.create({
   },
   error: { color: colors.danger, fontSize: fontSize.sm },
   muted: { color: colors.textSecondary, fontSize: fontSize.sm, lineHeight: 20 },
+  chartCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    padding: spacing.lg,
+    gap: spacing.md,
+  },
+  bars: { flexDirection: 'row', alignItems: 'flex-end', height: 88, gap: 4 },
+  barSlot: { flex: 1, justifyContent: 'flex-end' },
+  bar: { backgroundColor: colors.accent, borderRadius: 3 },
+  barLabels: { flexDirection: 'row', gap: 4 },
+  barLabel: { flex: 1, color: colors.textTertiary, fontSize: 9, textAlign: 'center' },
+  heatmap: { flexDirection: 'row', gap: 3 },
+  heatColumn: { gap: 3 },
+  heatCell: { width: 12, height: 12, borderRadius: 3 },
+  legend: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  legendText: { color: colors.textTertiary, fontSize: fontSize.xs, marginHorizontal: 2 },
   metricsRow: { flexDirection: 'row', gap: spacing.md },
   metric: {
     flex: 1,
