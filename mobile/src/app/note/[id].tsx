@@ -1,8 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
+import * as Clipboard from 'expo-clipboard';
+import { useAudioPlayerStatus, type AudioPlayer as AudioPlayerHandle } from 'expo-audio';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
+  ActivityIndicator,
+  Image,
   InteractionManager,
   Keyboard,
   Pressable,
@@ -15,10 +18,12 @@ import {
   View,
 } from 'react-native';
 
-import { NoteMenu, type NoteProperty } from '@/components/NoteMenu';
+import { FastModal } from '@/components/FastModal';
+import { NoteMenu, type NoteMenuAnchor, type NoteProperty } from '@/components/NoteMenu';
 import { RichEditor, type RichEditorHandle } from '@/components/RichEditor';
 import { Screen } from '@/components/Screen';
 import { STATUS_META } from '@/components/StatusChip';
+import { SyncedTranscript } from '@/components/SyncedTranscript';
 import {
   formatBytes,
   formatDateTime,
@@ -26,17 +31,23 @@ import {
   titleFontSize,
   utf8ByteLength,
 } from '@/core/format';
-import { countChars, countWords, markdownToPlain } from '@/core/richText';
-import { needsNoteSync } from '@/core/types';
+import { IMAGE_WIDTH_OPTIONS } from '@/core/image';
+import { breakSentences, countChars, countWords, markdownToPlain } from '@/core/richText';
 import {
   localImageUri,
   resolveImageSources,
   saveLocalImage,
   uploadLocalImage,
 } from '@/services/attachments';
+import { releaseAudioFocus } from '@/services/audioFocus';
 import { directoryBytes, sessionDirectory, sessionDirUri } from '@/services/files';
 import { pickImage } from '@/services/image';
+import { maybeTranscribeLocally } from '@/services/localTranscription';
+import { playPlayer } from '@/services/playback';
 import { useLibrary } from '@/state/LibraryContext';
+import { usePauseOnUnmount, usePlaybackSource } from '@/state/PlaybackContext';
+import { useSettings } from '@/state/SettingsContext';
+import { useTranscriptionProgress } from '@/state/useTranscriptionProgress';
 import { colors, fontSize, radius, spacing } from '@/theme/tokens';
 
 /**
@@ -47,16 +58,22 @@ import { colors, fontSize, radius, spacing } from '@/theme/tokens';
  * fila de sync.
  */
 
-function AudioPlayer({ uri }: { uri: string }) {
-  const player = useAudioPlayer(uri);
+type PlayerHandle = AudioPlayerHandle;
+
+function NoteAudioPlayer({ player }: { player: PlayerHandle }) {
   const status = useAudioPlayerStatus(player);
   const duration = status.duration || 0;
   const current = status.currentTime || 0;
 
   const toggle = () => {
-    if (status.playing) player.pause();
-    else player.play();
+    if (status.playing) {
+      player.pause();
+      return;
+    }
+    playPlayer(player);
   };
+
+  useEffect(() => () => releaseAudioFocus(player), [player]);
 
   return (
     <View style={styles.player}>
@@ -96,48 +113,126 @@ function ToolButton({
 }
 
 export default function NoteScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, action } = useLocalSearchParams<{ id: string; action?: string }>();
   const library = useLibrary();
-  const { height: windowHeight } = useWindowDimensions();
+  const { typography, setTypography } = useSettings();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const editorMinHeight = Math.max(240, windowHeight - 360);
   const note = useMemo(
     () => library.recordings.find((r) => r.id === id),
     [library.recordings, id],
   );
   const noteId = note?.id;
+  const transcriptionPercent = useTranscriptionProgress(noteId);
   // Base `file://` do WebView: permite carregar as imagens locais da nota.
   const editorBaseUrl = useMemo(() => (noteId ? sessionDirUri(noteId) : undefined), [noteId]);
+  // Player unico do app: o controle de play e a previa de transcricao usam o
+  // mesmo audio da nota (sem dois players em conflito).
+  const filePath = note?.filePath;
+  const player = usePlaybackSource(filePath);
+  usePauseOnUnmount();
+  const segments = note?.transcriptSegments;
 
   const [title, setTitle] = useState(() => note?.title ?? '');
   const [body, setBody] = useState(() => note?.text ?? '');
   const [imageSources, setImageSources] = useState<Record<string, string> | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [menuAnchor, setMenuAnchor] = useState<NoteMenuAnchor | null>(null);
   const [menuBytes, setMenuBytes] = useState(0);
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkValue, setLinkValue] = useState('');
+  const [viewerSrc, setViewerSrc] = useState<string | null>(null);
+  const [imageMenu, setImageMenu] = useState<{ src: string; width: number } | null>(null);
+  const configButtonRef = useRef<View>(null);
+  const scrollRef = useRef<ScrollView>(null);
+  // Rolagem atual da nota e posicao do editor: usados para revelar o cursor
+  // (o teclado nao deve cobrir a linha que esta sendo escrita).
+  const scrollYRef = useRef(0);
+  const editorTopRef = useRef(0);
+  const caretRef = useRef<number | null>(null);
+  const caretScrollAtRef = useRef(0);
   // Barra de acoes visivel so enquanto o teclado esta aberto (editando).
   const [editing, setEditing] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const initializedRef = useRef(false);
+  const actionDoneRef = useRef(false);
+  const localTranscribeRef = useRef(false);
   const dirtyRef = useRef(false);
   const editorRef = useRef<RichEditorHandle>(null);
 
+  // Altura da janela sem teclado (capturada no mount). Serve para saber se o
+  // Android redimensionou a janela com o teclado (adjustResize) ou nao (edge-to-edge).
+  const [baseHeight] = useState(windowHeight);
+
+  // Area visivel da nota (descontando o teclado) e a margem inferior reservada
+  // (barra de acoes, quando editando). Fica em ref para o callback do editor
+  // ler o valor atual sem recriar o handler do WebView.
+  const metricsRef = useRef({ viewport: baseHeight, bottomInset: 96 });
   useEffect(() => {
-    const show = Keyboard.addListener('keyboardDidShow', () => setEditing(true));
-    const hide = Keyboard.addListener('keyboardDidHide', () => setEditing(false));
+    metricsRef.current = {
+      viewport: Math.min(windowHeight, baseHeight - keyboardHeight),
+      bottomInset: editing ? 96 : 24,
+    };
+  }, [windowHeight, baseHeight, keyboardHeight, editing]);
+
+  // Rola a nota para o cursor ficar acima do teclado. `force` fura o intervalo
+  // minimo (usado quando o teclado termina de abrir).
+  const scrollCaretIntoView = useCallback((force: boolean) => {
+    const caret = caretRef.current;
+    if (caret == null) return;
+    const now = Date.now();
+    if (!force && now - caretScrollAtRef.current < 250) return;
+    const { viewport, bottomInset } = metricsRef.current;
+    const bottom = editorTopRef.current + caret;
+    const limit = viewport - bottomInset;
+    if (bottom > scrollYRef.current + limit) {
+      caretScrollAtRef.current = now;
+      scrollRef.current?.scrollTo({ y: Math.max(0, bottom - limit), animated: true });
+    }
+  }, []);
+
+  const handleCaret = useCallback(
+    (y: number) => {
+      caretRef.current = y;
+      scrollCaretIntoView(false);
+    },
+    [scrollCaretIntoView],
+  );
+
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', (event) => {
+      setKeyboardHeight(event.endCoordinates?.height ?? 0);
+      setEditing(true);
+      // Depois que a janela encolher, revela o cursor que estava por baixo.
+      setTimeout(() => scrollCaretIntoView(true), 60);
+    });
+    const hide = Keyboard.addListener('keyboardDidHide', () => {
+      setKeyboardHeight(0);
+      setEditing(false);
+    });
     return () => {
       show.remove();
       hide.remove();
     };
-  }, []);
+  }, [scrollCaretIntoView]);
+
+  // Levanta a barra so pela parte do teclado que a janela nao absorveu.
+  const toolbarLift = Math.max(0, keyboardHeight - Math.max(0, baseHeight - windowHeight));
 
   // Handlers estaveis: o editor (memoizado) nao pode re-renderizar a cada tecla.
   const handleTitleChange = useCallback((value: string) => {
     dirtyRef.current = true;
-    setTitle(value);
+    // O titulo quebra linha visualmente, mas continua sendo uma linha logica.
+    setTitle(value.replace(/\n/g, ' '));
   }, []);
 
   const handleBodyChange = useCallback((markdown: string) => {
     dirtyRef.current = true;
     setBody(markdown);
   }, []);
+
+  // Tocou na nota (o editor avisa pelo WebView): mostra o menu de acoes.
+  const handleEditingChange = useCallback(() => setEditing(true), []);
 
   const goBack = useCallback(() => {
     if (router.canGoBack()) router.back();
@@ -180,6 +275,19 @@ export default function NoteScreen() {
     }
   }, [note]);
 
+  // Transcricao local: so depois da nota estar na tela (nunca atrasa a
+  // abertura). Se ligada nas configuracoes e com modelo baixado, transcreve.
+  useEffect(() => {
+    if (localTranscribeRef.current || !note) return undefined;
+    if (!note.filePath || note.hasTranscript) return undefined;
+    const timer = setTimeout(() => {
+      if (localTranscribeRef.current) return;
+      localTranscribeRef.current = true;
+      void maybeTranscribeLocally(note.id).catch(() => undefined);
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [note]);
+
   // Autosave local (debounced).
   useEffect(() => {
     if (!noteId) return undefined;
@@ -212,15 +320,31 @@ export default function NoteScreen() {
     };
   }, [noteId]);
 
-  // Ficha da nota: soma os arquivos locais (audio/imagens) ao abrir o menu.
+  // Ficha da nota: soma os arquivos locais ao abrir o menu e mede o botao para
+  // ancorar o popover logo abaixo dele.
   const openMenu = useCallback(() => {
     if (noteId) setMenuBytes(directoryBytes(sessionDirectory(noteId)));
-    setMenuOpen(true);
-  }, [noteId]);
+    const button = configButtonRef.current;
+    if (!button) {
+      setMenuOpen(true);
+      return;
+    }
+    button.measureInWindow((x, y, width, height) => {
+      setMenuAnchor({ top: y + height + 6, right: Math.max(spacing.lg, windowWidth - (x + width)) });
+      setMenuOpen(true);
+    });
+  }, [noteId, windowWidth]);
 
   const handleRecord = useCallback(() => {
     if (!noteId) return;
     router.push({ pathname: '/record', params: { noteId } });
+  }, [noteId]);
+
+  // Abre a transcricao completa. O player e o mesmo, entao o audio continua
+  // exatamente do ponto em que esta (sem parar nem recomecar).
+  const openTranscript = useCallback(() => {
+    if (!noteId) return;
+    router.push({ pathname: '/transcript/[id]', params: { id: noteId } });
   }, [noteId]);
 
   const handleAddImage = useCallback(async () => {
@@ -248,6 +372,68 @@ export default function NoteScreen() {
     }
   }, [noteId, note]);
 
+  // Toque na imagem: abre maior, para conferir. Fecha ao tocar em qualquer lugar.
+  const handleImageOpen = useCallback((src: string) => {
+    if (src) setViewerSrc(src);
+  }, []);
+  const closeViewer = useCallback(() => setViewerSrc(null), []);
+
+  // Toque longo: menu da imagem (largura e apagar).
+  const handleImageMenu = useCallback((src: string, width: number) => {
+    if (src) setImageMenu({ src, width });
+  }, []);
+  const closeImageMenu = useCallback(() => setImageMenu(null), []);
+
+  const applyImageWidth = useCallback(
+    (percent: number) => {
+      const target = imageMenu;
+      setImageMenu(null);
+      if (!target) return;
+      editorRef.current?.setImageWidth(target.src, percent);
+      dirtyRef.current = true;
+    },
+    [imageMenu],
+  );
+
+  const deleteImage = useCallback(() => {
+    const target = imageMenu;
+    setImageMenu(null);
+    if (!target) return;
+    editorRef.current?.deleteImage(target.src);
+    dirtyRef.current = true;
+  }, [imageMenu]);
+
+  // Abre o campo de link ja com o link do clipboard, quando houver.
+  const openLinkModal = useCallback(async () => {
+    try {
+      const text = (await Clipboard.getStringAsync()).trim();
+      if (/^(https?:\/\/|www\.)\S+$/i.test(text)) setLinkValue(text);
+    } catch {
+      // clipboard indisponivel
+    }
+    setLinkOpen(true);
+  }, []);
+
+  const submitLink = useCallback(() => {
+    const value = linkValue.trim();
+    setLinkOpen(false);
+    setLinkValue('');
+    if (!value || !noteId) return;
+    const url = /^https?:\/\//i.test(value) ? value : `https://${value}`;
+    editorRef.current?.insertLink(url);
+    dirtyRef.current = true;
+  }, [linkValue, noteId]);
+
+  // Acao pedida pela tela inicial (texto/imagem/link): roda uma vez, quando o
+  // editor termina de carregar, para reduzir passos dentro da nota.
+  const handleEditorReady = useCallback(() => {
+    if (actionDoneRef.current || !noteId) return;
+    actionDoneRef.current = true;
+    if (action === 'text') editorRef.current?.focus();
+    else if (action === 'image') void handleAddImage();
+    else if (action === 'link') void openLinkModal();
+  }, [action, noteId, handleAddImage, openLinkModal]);
+
   if (!note) {
     return (
       <Screen>
@@ -258,26 +444,25 @@ export default function NoteScreen() {
           <View style={styles.headerActions} />
         </View>
         <View style={styles.center}>
-          <Text style={styles.empty}>Nota nao encontrada.</Text>
+          <Text style={styles.empty}>Nota não encontrada.</Text>
         </View>
       </Screen>
     );
   }
 
-  const meta = STATUS_META[note.status];
   const hasAudio = Boolean(note.filePath);
+  // Em tela estreita o titulo comeca menor; em ambas quebra linha em vez de sumir.
+  const titleSize = titleFontSize(title, windowWidth < 380 ? 30 : 34, 24);
   const words = countWords(body);
   const chars = countChars(body);
-  const dirty = needsNoteSync(note);
-  const statusLabel = dirty ? 'Alteracoes pendentes' : meta.label;
   const totalBytes = menuBytes + utf8ByteLength(markdownToPlain(body));
   const properties: NoteProperty[] = [
-    { label: 'Criada', value: formatDateTime(note.recordedAt) },
+    { label: 'Criada', value: formatDateTime(note.createdAt) },
     { label: 'Origem', value: hasAudio ? 'Audio' : 'Texto' },
     { label: 'Palavras', value: String(words) },
     { label: 'Caracteres', value: String(chars) },
     { label: 'Tamanho', value: formatBytes(totalBytes) },
-    { label: 'Status', value: statusLabel },
+    { label: 'Status', value: STATUS_META[note.status].label },
   ];
 
   const handleShare = async () => {
@@ -304,14 +489,15 @@ export default function NoteScreen() {
           <Pressable
             style={styles.iconButton}
             onPress={handleRecord}
-            accessibilityLabel="Gravar audio"
+            accessibilityLabel="Gravar áudio"
           >
             <Ionicons name="mic-outline" size={22} color={colors.text} />
           </Pressable>
           <Pressable
+            ref={configButtonRef}
             style={styles.circleButton}
             onPress={openMenu}
-            accessibilityLabel="Configuracoes da nota"
+            accessibilityLabel="Configurações da nota"
           >
             <Ionicons name="ellipsis-horizontal" size={18} color={colors.text} />
           </Pressable>
@@ -319,64 +505,79 @@ export default function NoteScreen() {
       </View>
 
       <ScrollView
+        ref={scrollRef}
         style={styles.scroll}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, editing ? styles.contentEditing : null]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
+        scrollEventThrottle={16}
+        onScroll={(event) => {
+          scrollYRef.current = event.nativeEvent.contentOffset.y;
+        }}
       >
         <TextInput
           value={title}
           onChangeText={handleTitleChange}
-          placeholder="titulo da nota"
+          placeholder="título da nota"
           placeholderTextColor={colors.textTertiary}
           selectionColor={colors.accent}
+          multiline
+          scrollEnabled={false}
+          submitBehavior="blurAndSubmit"
           returnKeyType="next"
-          blurOnSubmit={false}
           onSubmitEditing={() => editorRef.current?.focus()}
-          style={[styles.titleInput, { fontSize: titleFontSize(title) }]}
+          style={[
+            styles.titleInput,
+            { fontSize: titleSize, lineHeight: Math.round(titleSize * 1.25) },
+          ]}
         />
 
-        {dirty || note.status !== 'completed' ? (
-          <View style={styles.metaRow}>
-            <View style={[styles.dot, { backgroundColor: dirty ? colors.accent : meta.color }]} />
-            <Text style={styles.meta}>{statusLabel}</Text>
-            {note.duplicate ? <Text style={styles.meta}>· ja existia</Text> : null}
-            {note.status === 'failed' && note.lastError ? (
-              <Text style={styles.meta}>· {note.lastError}</Text>
-            ) : null}
-            {note.terminal ? (
-              <Text style={styles.meta}>· nao sera reenviado automaticamente</Text>
-            ) : null}
+        {hasAudio ? <NoteAudioPlayer player={player} /> : null}
+
+        {hasAudio && segments && segments.length > 0 ? (
+          <SyncedTranscript player={player} segments={segments} onPress={openTranscript} />
+        ) : hasAudio && note.transcript && note.transcript.trim() ? (
+          <Pressable
+            style={styles.section}
+            onPress={openTranscript}
+            accessibilityLabel="Abrir transcrição completa"
+          >
+            <Text style={styles.sectionLabel}>Transcrição</Text>
+            <Text style={styles.transcript} numberOfLines={6}>
+              {breakSentences(note.transcript)}
+            </Text>
+          </Pressable>
+        ) : hasAudio && !note.hasTranscript && note.transcriptStatus === 'pending' ? (
+          <View style={styles.transcribing}>
+            <ActivityIndicator size="small" color={colors.textSecondary} />
+            <Text style={styles.meta}>
+              Transcrevendo{transcriptionPercent > 0 ? ` ${Math.round(transcriptionPercent)}%` : '...'}
+            </Text>
           </View>
         ) : null}
 
-        {hasAudio ? <AudioPlayer uri={note.filePath as string} /> : null}
-
-        {hasAudio && note.transcript && note.transcript.trim() ? (
-          <Pressable
-            style={styles.section}
-            onPress={() => router.push({ pathname: '/transcript/[id]', params: { id: note.id } })}
-            accessibilityLabel="Abrir transcricao completa"
-          >
-            <Text style={styles.sectionLabel}>Transcricao</Text>
-            <Text style={styles.transcript} numberOfLines={4}>
-              {note.transcript}
-            </Text>
-          </Pressable>
-        ) : hasAudio && note.transcriptStatus === 'pending' ? (
-          <Text style={styles.meta}>Transcrevendo...</Text>
-        ) : null}
-
         {imageSources ? (
-          <RichEditor
-            ref={editorRef}
-            value={body}
-            onChangeMarkdown={handleBodyChange}
-            placeholder={hasAudio ? 'Escreva sobre este audio...' : 'Comece a escrever...'}
-            imageSources={imageSources}
-            baseUrl={editorBaseUrl}
-            minHeight={editorMinHeight}
-          />
+          <View
+            onLayout={(event) => {
+              editorTopRef.current = event.nativeEvent.layout.y;
+            }}
+          >
+            <RichEditor
+              ref={editorRef}
+              value={body}
+              onChangeMarkdown={handleBodyChange}
+              onEditingChange={handleEditingChange}
+              onReady={handleEditorReady}
+              onCaret={handleCaret}
+              onImageOpen={handleImageOpen}
+              onImageMenu={handleImageMenu}
+              placeholder={hasAudio ? 'Escreva sobre este áudio...' : 'Comece a escrever...'}
+              imageSources={imageSources}
+              baseUrl={editorBaseUrl}
+              typography={typography}
+              minHeight={editorMinHeight}
+            />
+          </View>
         ) : (
           <View style={styles.editorPlaceholder} />
         )}
@@ -394,11 +595,11 @@ export default function NoteScreen() {
       </ScrollView>
 
       {editing ? (
-        <View style={styles.toolbar}>
+        <View style={[styles.toolbar, { bottom: toolbarLift }]}>
           <ToolButton label="Negrito" onPress={() => editorRef.current?.format('bold')}>
             <Text style={styles.toolBold}>B</Text>
           </ToolButton>
-          <ToolButton label="Italico" onPress={() => editorRef.current?.format('italic')}>
+          <ToolButton label="Itálico" onPress={() => editorRef.current?.format('italic')}>
             <Text style={styles.toolItalic}>I</Text>
           </ToolButton>
           <ToolButton label="Lista" onPress={() => editorRef.current?.format('list')}>
@@ -408,7 +609,7 @@ export default function NoteScreen() {
           <ToolButton label="Adicionar foto" onPress={() => void handleAddImage()}>
             <Ionicons name="image-outline" size={20} color={colors.text} />
           </ToolButton>
-          <ToolButton label="Gravar audio" onPress={handleRecord}>
+          <ToolButton label="Gravar áudio" onPress={handleRecord}>
             <Ionicons name="mic-outline" size={20} color={colors.text} />
           </ToolButton>
         </View>
@@ -418,12 +619,96 @@ export default function NoteScreen() {
         visible={menuOpen}
         title={title}
         properties={properties}
+        anchor={menuAnchor}
+        typography={typography}
+        onChangeTypography={(next) => void setTypography(next)}
         onClose={() => setMenuOpen(false)}
         onShare={() => {
           setMenuOpen(false);
           void handleShare();
         }}
       />
+
+      <FastModal visible={linkOpen} onRequestClose={() => setLinkOpen(false)}>
+        <Pressable style={styles.linkBackdrop} onPress={() => setLinkOpen(false)}>
+          <Pressable style={styles.linkCard} onPress={() => undefined}>
+            <Text style={styles.linkTitle}>Adicionar link</Text>
+            <TextInput
+              value={linkValue}
+              onChangeText={setLinkValue}
+              placeholder="https://..."
+              placeholderTextColor={colors.textTertiary}
+              selectionColor={colors.accent}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="url"
+              autoFocus
+              onSubmitEditing={submitLink}
+              style={styles.linkInput}
+            />
+            <View style={styles.linkActions}>
+              <Pressable onPress={() => setLinkOpen(false)} accessibilityLabel="Cancelar">
+                <Text style={styles.linkCancel}>Cancelar</Text>
+              </Pressable>
+              <Pressable onPress={submitLink} accessibilityLabel="Inserir link">
+                <Text style={styles.linkConfirm}>Inserir</Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </FastModal>
+
+      <FastModal visible={viewerSrc != null} onRequestClose={closeViewer}>
+        <Pressable style={styles.viewerBackdrop} onPress={closeViewer} accessibilityLabel="Fechar">
+          {viewerSrc ? (
+            <Image
+              source={{ uri: viewerSrc }}
+              style={styles.viewerImage}
+              resizeMode="contain"
+            />
+          ) : null}
+          <Pressable
+            style={styles.viewerClose}
+            onPress={closeViewer}
+            accessibilityLabel="Fechar"
+            hitSlop={10}
+          >
+            <Ionicons name="close" size={24} color={colors.text} />
+          </Pressable>
+        </Pressable>
+      </FastModal>
+
+      <FastModal visible={imageMenu != null} onRequestClose={closeImageMenu}>
+        <Pressable style={styles.linkBackdrop} onPress={closeImageMenu}>
+          <Pressable style={styles.linkCard} onPress={() => undefined}>
+            <Text style={styles.linkTitle}>Imagem</Text>
+            <Text style={styles.sectionLabel}>Tamanho</Text>
+            {IMAGE_WIDTH_OPTIONS.map((option) => {
+              const active = imageMenu?.width === option.percent;
+              return (
+                <Pressable
+                  key={option.percent}
+                  style={styles.sizeOption}
+                  onPress={() => applyImageWidth(option.percent)}
+                  accessibilityLabel={option.label}
+                >
+                  <View style={styles.sizePreviewTrack}>
+                    <View style={[styles.sizePreviewFill, { width: `${option.percent}%` }]} />
+                  </View>
+                  <Text style={styles.sizeLabel}>{option.label}</Text>
+                  {active ? (
+                    <Ionicons name="checkmark" size={18} color={colors.accent} />
+                  ) : null}
+                </Pressable>
+              );
+            })}
+            <Pressable style={styles.imageDelete} onPress={deleteImage} accessibilityLabel="Apagar">
+              <Ionicons name="trash-outline" size={18} color={colors.danger} />
+              <Text style={styles.imageDeleteText}>Apagar</Text>
+            </Pressable>
+          </Pressable>
+        </Pressable>
+      </FastModal>
     </Screen>
   );
 }
@@ -451,15 +736,16 @@ const styles = StyleSheet.create({
   empty: { color: colors.textSecondary, fontSize: fontSize.md },
   scroll: { flex: 1 },
   content: { padding: spacing.xl, gap: spacing.lg, paddingBottom: spacing.xxxl },
+  contentEditing: { paddingBottom: 96 },
   editorPlaceholder: { minHeight: 160 },
   titleInput: {
     color: colors.text,
     fontWeight: '700',
     paddingVertical: spacing.sm,
+    textAlignVertical: 'top',
   },
-  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
-  dot: { width: 7, height: 7, borderRadius: 4 },
   meta: { color: colors.textSecondary, fontSize: fontSize.sm },
+  transcribing: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   player: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -497,7 +783,89 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   retryText: { color: colors.warning, fontSize: fontSize.sm, fontWeight: '600' },
+  linkBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.xl,
+  },
+  linkCard: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    gap: spacing.md,
+  },
+  linkTitle: { color: colors.text, fontSize: fontSize.lg, fontWeight: '700' },
+  linkInput: {
+    backgroundColor: colors.bgElevated,
+    borderRadius: radius.sm,
+    color: colors.text,
+    fontSize: fontSize.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  linkActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: spacing.xl },
+  linkCancel: { color: colors.textSecondary, fontSize: fontSize.md },
+  linkConfirm: { color: colors.accent, fontSize: fontSize.md, fontWeight: '700' },
+  sizeOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingVertical: spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+  },
+  sizePreviewTrack: {
+    width: 48,
+    height: 34,
+    borderRadius: radius.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.borderStrong,
+    backgroundColor: colors.bgElevated,
+    justifyContent: 'center',
+    paddingHorizontal: 2,
+  },
+  sizePreviewFill: {
+    height: 22,
+    borderRadius: radius.sm - 4,
+    backgroundColor: colors.surfaceElevated,
+  },
+  sizeLabel: { color: colors.text, fontSize: fontSize.md, flex: 1 },
+  imageDelete: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingVertical: spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+  },
+  imageDeleteText: { color: colors.danger, fontSize: fontSize.md },
+  viewerBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.94)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  viewerImage: { width: '100%', height: '100%' },
+  viewerClose: {
+    position: 'absolute',
+    top: 56,
+    right: spacing.lg,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
   toolbar: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-around',
@@ -505,7 +873,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.border,
-    backgroundColor: colors.bgElevated,
+    backgroundColor: colors.surface,
   },
   tool: { width: 44, height: 40, alignItems: 'center', justifyContent: 'center' },
   toolDivider: { width: StyleSheet.hairlineWidth, height: 22, backgroundColor: colors.border },

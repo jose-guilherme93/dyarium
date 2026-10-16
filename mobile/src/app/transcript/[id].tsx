@@ -1,15 +1,23 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
+import { useAudioPlayerStatus } from 'expo-audio';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { DyariumApi, type FetchLike, type TranscriptSegment } from '@/core/api';
 import { formatDuration } from '@/core/format';
+import { breakSentences } from '@/core/richText';
+import { activeSegmentIndex } from '@/core/transcript';
+import { releaseAudioFocus } from '@/services/audioFocus';
 import { getRecording, upsertRecording } from '@/services/db';
+import { playPlayer } from '@/services/playback';
 import { loadServerConfig } from '@/services/secure';
+import { pushTranscript } from '@/services/transcriptSync';
+import { emitRecording } from '@/services/uploaderLoop';
 import { useLibrary } from '@/state/LibraryContext';
-import { colors, fontSize, spacing } from '@/theme/tokens';
+import { usePlaybackSource } from '@/state/PlaybackContext';
+import { useTranscriptionProgress } from '@/state/useTranscriptionProgress';
+import { colors, fontSize, radius, spacing } from '@/theme/tokens';
 
 const doFetch = globalThis.fetch as unknown as FetchLike;
 
@@ -28,12 +36,44 @@ export default function TranscriptScreen() {
 
   const [fetched, setFetched] = useState<TranscriptSegment[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [draft, setDraft] = useState('');
   const scrollRef = useRef<ScrollView>(null);
   const activeIndexRef = useRef(-1);
 
-  const segments = hasCache && cachedSegments ? cachedSegments : fetched;
+  // Editar um trecho (palavra/frase): grava local e envia ao servidor.
+  const saveEdit = useCallback(
+    async (index: number, value: string) => {
+      if (!noteId) return;
+      const current = await getRecording(noteId);
+      if (!current) return;
+      const list = [...(current.transcriptSegments ?? [])];
+      if (!list[index]) return;
+      list[index] = { ...list[index], text: value.trim() };
+      const updated = {
+        ...current,
+        transcriptSegments: list,
+        transcript: list
+          .map((segment) => segment.text)
+          .join(' ')
+          .trim(),
+        updatedAt: new Date().toISOString(),
+      };
+      await upsertRecording(updated);
+      emitRecording(updated);
+      setEditingIndex(null);
+      void pushTranscript(noteId);
+    },
+    [noteId],
+  );
 
-  const player = useAudioPlayer(note?.filePath ? { uri: note.filePath } : undefined);
+  const segments = hasCache && cachedSegments ? cachedSegments : fetched;
+  const transcriptionPercent = useTranscriptionProgress(noteId);
+  const transcribing = note?.transcriptStatus === 'pending';
+
+  // Mesmo player unico da nota: ao abrir a transcricao o audio continua
+  // exatamente de onde estava (sem criar outro player e sem reiniciar).
+  const player = usePlaybackSource(note?.filePath);
   const status = useAudioPlayerStatus(player);
   const currentMs = (status.currentTime || 0) * 1000;
 
@@ -61,7 +101,7 @@ export default function TranscriptScreen() {
           }
         }
       } catch {
-        if (alive) setError('Nao foi possivel carregar a transcricao agora.');
+        if (alive) setError('Não foi possível carregar a transcrição agora.');
       }
     })();
     return () => {
@@ -69,14 +109,10 @@ export default function TranscriptScreen() {
     };
   }, [entryId, hasCache, noteId]);
 
-  const activeIndex = useMemo(() => {
-    let index = -1;
-    for (let i = 0; i < segments.length; i += 1) {
-      if (segments[i].start_ms <= currentMs) index = i;
-      else break;
-    }
-    return index;
-  }, [segments, currentMs]);
+  const activeIndex = useMemo(
+    () => activeSegmentIndex(segments, currentMs),
+    [segments, currentMs],
+  );
 
   useEffect(() => {
     if (activeIndex === activeIndexRef.current) return;
@@ -87,9 +123,14 @@ export default function TranscriptScreen() {
   }, [activeIndex]);
 
   const toggle = () => {
-    if (status.playing) player.pause();
-    else player.play();
+    if (status.playing) {
+      player.pause();
+      return;
+    }
+    playPlayer(player);
   };
+
+  useEffect(() => () => releaseAudioFocus(player), [player]);
 
   return (
     <View style={styles.screen}>
@@ -97,7 +138,7 @@ export default function TranscriptScreen() {
         <Pressable onPress={() => router.back()} accessibilityLabel="Voltar" hitSlop={12}>
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
-        <Text style={styles.title}>Transcricao</Text>
+        <Text style={styles.title}>Transcrição</Text>
         <View style={styles.spacer} />
       </View>
 
@@ -109,29 +150,83 @@ export default function TranscriptScreen() {
           <Text style={styles.playerTime}>
             {formatDuration(currentMs)} / {formatDuration((status.duration || 0) * 1000)}
           </Text>
+          <View style={styles.playerSpacer} />
+          {transcribing ? (
+            <Text style={styles.progress}>
+              Transcrevendo{transcriptionPercent > 0 ? ` ${Math.round(transcriptionPercent)}%` : '...'}
+            </Text>
+          ) : null}
         </View>
       ) : null}
 
       {segments.length === 0 ? (
         <View style={styles.empty}>
           <Text style={styles.emptyText}>
-            {error ?? (note?.transcriptStatus === 'ready' ? 'Sem segmentos.' : 'Transcrevendo...')}
+            {error ??
+              (note?.transcriptStatus === 'ready'
+                ? 'Sem segmentos.'
+                : `Transcrevendo${transcriptionPercent > 0 ? ` ${Math.round(transcriptionPercent)}%` : '...'}`)}
           </Text>
         </View>
       ) : (
         <ScrollView ref={scrollRef} contentContainerStyle={styles.list} showsVerticalScrollIndicator={false}>
-          {segments.map((segment, index) => (
-            <Pressable
-              key={`${segment.start_ms}-${index}`}
-              onPress={() => player.seekTo(segment.start_ms / 1000)}
-              style={[styles.segment, index === activeIndex && styles.segmentActive]}
-            >
-              <Text style={styles.timestamp}>{formatDuration(segment.start_ms)}</Text>
-              <Text style={[styles.segmentText, index === activeIndex && styles.segmentTextActive]}>
-                {segment.text}
-              </Text>
-            </Pressable>
-          ))}
+          {segments.map((segment, index) => {
+            const editing = editingIndex === index;
+            return (
+              <View
+                key={`${segment.start_ms}-${index}`}
+                style={[styles.segment, index === activeIndex && styles.segmentActive]}
+              >
+                <Text style={styles.timestamp}>{formatDuration(segment.start_ms)}</Text>
+                {editing ? (
+                  <View style={styles.editWrap}>
+                    <TextInput
+                      value={draft}
+                      onChangeText={setDraft}
+                      multiline
+                      autoFocus
+                      selectionColor={colors.accent}
+                      style={styles.editInput}
+                    />
+                    <View style={styles.editActions}>
+                      <Pressable onPress={() => setEditingIndex(null)} accessibilityLabel="Cancelar">
+                        <Text style={styles.editCancel}>Cancelar</Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={() => void saveEdit(index, draft)}
+                        accessibilityLabel="Salvar trecho"
+                      >
+                        <Text style={styles.editSave}>Salvar</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                ) : (
+                  <>
+                    <Pressable
+                      style={styles.segmentBody}
+                      onPress={() => player.seekTo(segment.start_ms / 1000)}
+                    >
+                      <Text
+                        style={[styles.segmentText, index === activeIndex && styles.segmentTextActive]}
+                      >
+                        {breakSentences(segment.text)}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => {
+                        setDraft(segment.text);
+                        setEditingIndex(index);
+                      }}
+                      accessibilityLabel="Editar trecho"
+                      hitSlop={8}
+                    >
+                      <Ionicons name="create-outline" size={16} color={colors.textTertiary} />
+                    </Pressable>
+                  </>
+                )}
+              </View>
+            );
+          })}
         </ScrollView>
       )}
     </View>
@@ -166,6 +261,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   playerTime: { color: colors.textSecondary, fontSize: fontSize.sm, fontVariant: ['tabular-nums'] },
+  playerSpacer: { flex: 1 },
+  progress: { color: colors.accent, fontSize: fontSize.sm, fontWeight: '600' },
   list: { paddingHorizontal: spacing.xl, paddingBottom: spacing.xxxl },
   segment: {
     flexDirection: 'row',
@@ -176,8 +273,21 @@ const styles = StyleSheet.create({
   },
   segmentActive: { backgroundColor: colors.accentSoft },
   timestamp: { color: colors.textTertiary, fontSize: fontSize.xs, width: 44, paddingTop: 3, fontVariant: ['tabular-nums'] },
-  segmentText: { flex: 1, color: colors.textSecondary, fontSize: fontSize.md, lineHeight: 22 },
+  segmentBody: { flex: 1 },
+  segmentText: { color: colors.textSecondary, fontSize: fontSize.md, lineHeight: 22 },
   segmentTextActive: { color: colors.text },
+  editWrap: { flex: 1, gap: spacing.sm },
+  editInput: {
+    color: colors.text,
+    fontSize: fontSize.md,
+    lineHeight: 22,
+    backgroundColor: colors.bgElevated,
+    borderRadius: radius.sm,
+    padding: spacing.sm,
+  },
+  editActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: spacing.lg },
+  editCancel: { color: colors.textSecondary, fontSize: fontSize.sm },
+  editSave: { color: colors.accent, fontSize: fontSize.sm, fontWeight: '700' },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl },
   emptyText: { color: colors.textSecondary, fontSize: fontSize.sm, textAlign: 'center' },
 });

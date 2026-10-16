@@ -1,3 +1,4 @@
+import { activeSegmentIndex, mergeTranscript } from '../transcript';
 import { needsTranscript, type Recording } from '../types';
 
 function base(overrides: Partial<Recording> = {}): Recording {
@@ -32,5 +33,52 @@ describe('needsTranscript', () => {
 
   it('nao precisa enquanto nao concluiu o envio', () => {
     expect(needsTranscript(base({ entryId: 'en1', status: 'uploading' }))).toBe(false);
+  });
+});
+
+describe('activeSegmentIndex', () => {
+  const segments = [
+    { start_ms: 0, end_ms: 1000, text: 'a' },
+    { start_ms: 1000, end_ms: 2500, text: 'b' },
+    { start_ms: 2500, end_ms: 4000, text: 'c' },
+  ];
+
+  it('devolve o segmento que ja comecou', () => {
+    expect(activeSegmentIndex(segments, 0)).toBe(0);
+    expect(activeSegmentIndex(segments, 1200)).toBe(1);
+    expect(activeSegmentIndex(segments, 9999)).toBe(2);
+  });
+
+  it('devolve -1 antes do primeiro segmento ou sem segmentos', () => {
+    expect(activeSegmentIndex([{ start_ms: 800, end_ms: 900, text: 'x' }], 200)).toBe(-1);
+    expect(activeSegmentIndex([], 500)).toBe(-1);
+  });
+});
+
+describe('mergeTranscript', () => {
+  it('preserva a transcricao local pronta durante o upload (nao volta para pending)', () => {
+    const target = base({ status: 'completed', entryId: 'en1' });
+    const fresh = base({
+      transcript: 'texto pronto',
+      transcriptSegments: [{ start_ms: 0, end_ms: 1000, text: 'texto pronto' }],
+      transcriptStatus: 'ready',
+      transcriptOrigin: 'local',
+      hasTranscript: true,
+    });
+    const merged = mergeTranscript(target, fresh);
+    expect(merged.transcriptStatus).toBe('ready');
+    expect(merged.transcript).toBe('texto pronto');
+    expect(merged.hasTranscript).toBe(true);
+    expect(merged.transcriptOrigin).toBe('local');
+  });
+
+  it('marca pending quando ainda nao ha transcricao', () => {
+    const merged = mergeTranscript(base({ status: 'completed' }), base({}));
+    expect(merged.transcriptStatus).toBe('pending');
+  });
+
+  it('trata texto sem status como pronto', () => {
+    const merged = mergeTranscript(base({}), base({ transcript: 'oi' }));
+    expect(merged.transcriptStatus).toBe('ready');
   });
 });
