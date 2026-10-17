@@ -7,6 +7,8 @@ import type {
   EntitySummary,
   Entry,
   Link,
+  LocalAnalysis,
+  LocalAnalysisSetup,
   MetricsResponse,
   ModelInfo,
   MoodPoint,
@@ -219,6 +221,11 @@ export const api = {
   downloadModel: (name: string) =>
     request<{ status: string }>("/models/download", { method: "POST", body: JSON.stringify({ name }) }),
   listAnalyzeModels: () => request<{ models: string[] }>("/analyze/models"),
+  /** Estado do Ollama local: no ar, modelos instalados e download em curso. */
+  getLocalAnalysis: () => request<LocalAnalysis>("/analyze/local"),
+  /** Um clique: configura o Ollama local e baixa o modelo se faltar. */
+  setupLocalAnalysis: (model: string) =>
+    request<LocalAnalysisSetup>("/analyze/local", { method: "POST", body: JSON.stringify({ model }) }),
   listEntities: (kind?: string) =>
     request<{ entities: EntitySummary[] }>(`/entities${kind ? `?kind=${encodeURIComponent(kind)}` : ""}`),
   getEntity: (kind: string, name: string) =>

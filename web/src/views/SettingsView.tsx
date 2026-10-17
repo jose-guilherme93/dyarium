@@ -3,7 +3,7 @@ import { api, getToken } from "../api";
 import { Toggle } from "../components/Toggle";
 import { TrashSection } from "../components/TrashSection";
 import { useToast } from "../components/Toasts";
-import type { ModelInfo, Settings } from "../types";
+import type { LocalAnalysis, ModelInfo, Settings } from "../types";
 
 interface DownloadProgress {
   received: number;
@@ -21,6 +21,18 @@ interface ProviderPreset {
 }
 
 const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
+  opencodeZen: {
+    label: "OpenCode Zen (chave)",
+    baseUrl: "https://opencode.ai/inference/openai/v1",
+    model: "deepseek-v4.1-flash-free",
+    kind: "openai",
+  },
+  opencodeGo: {
+    label: "OpenCode Go (assinatura)",
+    baseUrl: "https://opencode.ai/inference/go/openai/v1",
+    model: "deepseek-v4.1-flash",
+    kind: "openai",
+  },
   opencodeLocal: {
     label: "opencode local (login)",
     baseUrl: "http://127.0.0.1:49374",
@@ -32,6 +44,31 @@ const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
   custom: { label: "Personalizado", baseUrl: "", model: "", kind: "openai" },
 };
 
+// A analise fala o formato /chat/completions. No OpenCode, Claude, GPT, Gemini
+// e Grok usam outros formatos (Anthropic, Responses, Google), entao so entram
+// na lista os modelos que o cliente sabe chamar.
+const ZEN_MODELS = [
+  "deepseek-v4.1-flash-free",
+  "glm-5.3-flash-free",
+  "space-bunny-free",
+  "glm-5.3-flash",
+  "deepseek-v4.1-flash",
+  "qwen3.8-max",
+  "kimi-k2.7-code",
+  "minimax-m3",
+];
+
+const GO_MODELS = [
+  "deepseek-v4.1-flash",
+  "deepseek-v4-pro",
+  "glm-5.3-flash",
+  "glm-5.3",
+  "kimi-k2.7-code",
+  "longcat-2.0",
+  "space-bunny",
+  "hy3",
+];
+
 const OPENCODE_MODELS = [
   "opencode-go/qwen3.8-flash",
   "opencode-go/glm-5.3-flash",
@@ -41,6 +78,8 @@ const OPENCODE_MODELS = [
 ];
 
 const FALLBACK_MODELS: Record<string, string[]> = {
+  opencodeZen: ZEN_MODELS,
+  opencodeGo: GO_MODELS,
   opencodeLocal: OPENCODE_MODELS,
   deepseek: ["deepseek-chat", "deepseek-reasoner"],
   ollama: [],
@@ -51,6 +90,12 @@ function providerFromSettings(kind: string, baseUrl: string): string {
   if (kind === "opencode") {
     return "opencodeLocal";
   }
+  if (baseUrl.includes("opencode.ai/inference/go/")) {
+    return "opencodeGo";
+  }
+  if (baseUrl.includes("opencode.ai/inference/")) {
+    return "opencodeZen";
+  }
   if (baseUrl.includes("deepseek")) {
     return "deepseek";
   }
@@ -58,6 +103,11 @@ function providerFromSettings(kind: string, baseUrl: string): string {
     return "ollama";
   }
   return "custom";
+}
+
+/** Modelos do OpenCode vem de uma lista curada: o /models deles nao diz o formato de cada um. */
+function canSearchModels(provider: string): boolean {
+  return provider !== "opencodeZen" && provider !== "opencodeGo";
 }
 
 export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
@@ -72,14 +122,20 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
   const [provider, setProvider] = useState("custom");
   const [providerModels, setProviderModels] = useState<string[]>([]);
   const [modelsNote, setModelsNote] = useState("");
+  const [local, setLocal] = useState<LocalAnalysis | null>(null);
+  const [localBusy, setLocalBusy] = useState(false);
   const [error, setError] = useState("");
 
+  const searchable = canSearchModels(provider);
   const modelOptions = useMemo(() => {
-    const fallback = FALLBACK_MODELS[provider] ?? [];
-    const list = providerModels.length > 0 ? providerModels : fallback;
+    const fallback = provider === "ollama"
+      ? (local?.models?.length ? local.models : local?.model ? [local.model] : [])
+      : FALLBACK_MODELS[provider] ?? [];
+    const remote = provider !== "ollama" && searchable ? providerModels : [];
+    const list = remote.length > 0 ? remote : fallback;
     const current = settings?.analyze_model ?? "";
     return [...new Set([...list, current])].filter((model) => model !== "");
-  }, [provider, providerModels, settings?.analyze_model]);
+  }, [provider, providerModels, settings?.analyze_model, local, searchable]);
 
   const loadSettings = useCallback(async () => {
     const value = await api.getSettings();
@@ -94,10 +150,25 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
     setModels(result.models ?? []);
   }, []);
 
+  const loadLocal = useCallback(async () => {
+    try {
+      setLocal(await api.getLocalAnalysis());
+    } catch {
+      setLocal(null);
+    }
+  }, []);
+
   useEffect(() => {
     loadSettings().catch((err: unknown) => setError(err instanceof Error ? err.message : "falha ao carregar"));
     loadModels().catch((err: unknown) => setError(err instanceof Error ? err.message : "falha ao carregar"));
-  }, [loadSettings, loadModels]);
+    void loadLocal();
+  }, [loadSettings, loadModels, loadLocal]);
+
+  useEffect(() => {
+    if (provider === "ollama") {
+      void loadLocal();
+    }
+  }, [provider, loadLocal]);
 
   useEffect(() => {
     const token = getToken();
@@ -152,10 +223,51 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
   }, []);
 
   useEffect(() => {
-    if (settings?.analyze_base_url) {
+    if (settings?.analyze_base_url && searchable) {
       void fetchModels();
     }
-  }, [settings?.analyze_base_url, fetchModels]);
+  }, [settings?.analyze_base_url, searchable, fetchModels]);
+
+  // Enquanto o modelo baixa, o painel acompanha pelo mesmo endpoint que iniciou
+  // o download; quando termina, recarrega as configuracoes para refletir o modelo.
+  const pulling = Boolean(local?.pull && !local.pull.done && !local.pull.error);
+  useEffect(() => {
+    if (!pulling) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      void loadLocal();
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [pulling, loadLocal]);
+
+  const pullDone = Boolean(local?.pull?.done && !local.pull?.error);
+  useEffect(() => {
+    if (pullDone) {
+      void loadSettings();
+    }
+  }, [pullDone, loadSettings]);
+
+  /** Um clique: configura o Ollama local e baixa o modelo se ainda faltar. */
+  const installLocal = async () => {
+    const model = settings?.analyze_model?.trim() || local?.model || "";
+    setLocalBusy(true);
+    try {
+      const result = await api.setupLocalAnalysis(model);
+      setProvider("ollama");
+      await Promise.all([loadSettings(), loadLocal()]);
+      notify(
+        result.status === "ready"
+          ? "Ollama configurado"
+          : `Baixando ${result.model} em segundo plano`,
+        result.status === "ready" ? "success" : "info",
+      );
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "nao foi possivel configurar o Ollama", "error");
+    } finally {
+      setLocalBusy(false);
+    }
+  };
 
   const download = async (name: string) => {
     try {
@@ -350,10 +462,18 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
                 onChange={(event) => {
                   const value = event.target.value;
                   setProvider(value);
+                  setProviderModels([]);
+                  setModelsNote("");
                   const preset = PROVIDER_PRESETS[value];
                   if (preset && value !== "custom") {
                     void save(
-                      { analyze_provider: preset.kind, analyze_base_url: preset.baseUrl, analyze_model: preset.model },
+                      {
+                        analyze_provider: preset.kind,
+                        analyze_base_url: preset.baseUrl,
+                        analyze_model: preset.model,
+                        // Escolher o provedor ja e a decisao de ligar a analise.
+                        analyze_enabled: true,
+                      },
                       "Provedor atualizado",
                     );
                   } else if (value === "custom") {
@@ -368,44 +488,94 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
                 ))}
               </select>
             </div>
-            <div className="field">
-              <span className="field-label">{provider === "opencodeLocal" ? "Senha do opencode" : "Chave da API"}</span>
-              <div className="field-control">
-                <input
-                  type="password"
-                  aria-label="Chave da API de analise"
-                  placeholder={
-                    settings.analyze_api_key_set
-                      ? "definida (deixe vazio para manter)"
-                      : provider === "opencodeLocal"
-                        ? "senha de ~/.config/opencode/service.json"
-                        : "cole a chave do provedor"
-                  }
-                  value={apiKey}
-                  onChange={(event) => setApiKey(event.target.value)}
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    void (async () => {
-                      if (apiKey.trim() !== "") {
-                        await save({ analyze_api_key: apiKey }, "Chave salva");
-                        setApiKey("");
-                      }
-                      await fetchModels();
-                    })();
-                  }}
-                >
-                  Salvar chave
-                </button>
-              </div>
-              {provider === "opencodeLocal" && (
+            {provider === "ollama" && (
+              <div className="field">
+                <span className="field-label">Ollama local</span>
+                <div className="field-control">
+                  <button
+                    type="button"
+                    className="primary"
+                    onClick={() => void installLocal()}
+                    disabled={localBusy}
+                  >
+                    {localBusy ? "Configurando..." : "Instalar e usar o Ollama local"}
+                  </button>
+                  {local?.pull && !local.pull.done && !local.pull.error && (
+                    <span
+                      className="ram-track"
+                      role="progressbar"
+                      aria-valuenow={local.pull.percent}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                    >
+                      <span className="ram-fill" style={{ width: `${local.pull.percent}%` }} />
+                    </span>
+                  )}
+                </div>
                 <span className="hint">
-                  Usa o opencode ja logado na sua maquina. Informe a URL do servidor do opencode e a senha de
-                  ~/.config/opencode/service.json. O modelo usa o formato provedor/modelo.
+                  {local
+                    ? local.available
+                      ? local.pull && !local.pull.done && !local.pull.error
+                        ? `Baixando ${local.pull.model} (${local.pull.percent}%)...`
+                        : `Ollama no ar em ${local.base_url}, com ${local.models.length} modelo(s) instalado(s).`
+                      : `Ollama nao encontrado em ${local.base_url}. Suba o servico local (make ai) e tente de novo.`
+                    : "Verificando o Ollama local..."}
                 </span>
-              )}
-            </div>
+                {local?.pull?.error && <span className="error">{local.pull.error}</span>}
+              </div>
+            )}
+            {provider !== "ollama" && (
+              <div className="field">
+                <span className="field-label">
+                  {provider === "opencodeLocal" ? "Senha do opencode" : "Chave da API"}
+                </span>
+                <div className="field-control">
+                  <input
+                    type="password"
+                    aria-label="Chave da API de analise"
+                    placeholder={
+                      settings.analyze_api_key_set
+                        ? "definida (deixe vazio para manter)"
+                        : provider === "opencodeLocal"
+                          ? "senha de ~/.config/opencode/service.json"
+                          : "cole a chave do provedor"
+                    }
+                    value={apiKey}
+                    onChange={(event) => setApiKey(event.target.value)}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void (async () => {
+                        if (apiKey.trim() !== "") {
+                          await save({ analyze_api_key: apiKey }, "Chave salva");
+                          setApiKey("");
+                        }
+                        if (searchable) {
+                          await fetchModels();
+                        }
+                      })();
+                    }}
+                  >
+                    Salvar chave
+                  </button>
+                </div>
+                {provider === "opencodeLocal" && (
+                  <span className="hint">
+                    Usa o opencode ja logado na sua maquina. Informe a URL do servidor do opencode e a senha de
+                    ~/.config/opencode/service.json. O modelo usa o formato provedor/modelo.
+                  </span>
+                )}
+                {(provider === "opencodeZen" || provider === "opencodeGo") && (
+                  <span className="hint">
+                    Chave do OpenCode Console (opencode.ai/console).{" "}
+                    {provider === "opencodeZen"
+                      ? "Ha modelos gratuitos na lista."
+                      : "A assinatura Go inclui os modelos listados."}
+                  </span>
+                )}
+              </div>
+            )}
             <div className="field">
               <span className="field-label">Modelo</span>
               <div className="field-control">
@@ -421,11 +591,16 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
                     </option>
                   ))}
                 </select>
-                <button type="button" onClick={() => void fetchModels()}>
-                  Buscar modelos
-                </button>
+                {searchable && (
+                  <button type="button" onClick={() => void fetchModels()}>
+                    Buscar modelos
+                  </button>
+                )}
               </div>
               {modelsNote && <span className="hint">{modelsNote}</span>}
+              {!searchable && (
+                <span className="hint">Lista curada de modelos compativeis; a lista completa esta no console.</span>
+              )}
             </div>
             <div className="field">
               <span className="field-label">Base URL</span>

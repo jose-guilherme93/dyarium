@@ -207,8 +207,32 @@ export interface EntryProgress {
   error?: string;
 }
 
-export interface ModelInfo {
-  name: string;
+/** Download de modelo do Ollama em andamento (ou o ultimo), para o painel acompanhar. */
+export interface LocalAnalysisPull {
+  model: string;
+  percent: number;
+  done: boolean;
+  error?: string;
+}
+
+/** Estado do Ollama local: no ar, modelos instalados e o download em curso. */
+export interface LocalAnalysis {
+  available: boolean;
+  base_url: string;
+  models: string[];
+  model: string;
+  pull?: LocalAnalysisPull;
+}
+
+/** Resultado do "usar Ollama local" em um clique. */
+export interface LocalAnalysisSetup {
+  status: "ready" | "downloading";
+  model: string;
+  base_url: string;
+  installed: boolean;
+}
+
+export interface ModelInfo {  name: string;
   filename: string;
   size_mb: number;
   path: string;
