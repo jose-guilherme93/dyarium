@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, getToken } from "../api";
 import { Toggle } from "../components/Toggle";
+import { TrashSection } from "../components/TrashSection";
 import { useToast } from "../components/Toasts";
 import type { ModelInfo, Settings } from "../types";
 
@@ -59,7 +60,7 @@ function providerFromSettings(kind: string, baseUrl: string): string {
   return "custom";
 }
 
-export function SettingsView() {
+export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
   const { notify } = useToast();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [models, setModels] = useState<ModelInfo[]>([]);
@@ -452,6 +453,8 @@ export function SettingsView() {
               <span className="hint">Temas preferidos na analise, separados por virgulas.</span>
             </div>
           </div>
+
+          <TrashSection refreshKey={refreshKey} />
         </>
       )}
     </section>

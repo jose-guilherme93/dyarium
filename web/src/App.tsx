@@ -7,7 +7,7 @@ import { NoteList } from "./components/NoteList";
 import { NoteEditor } from "./components/NoteEditor";
 import { OfflineBanner } from "./components/OfflineBanner";
 import { useToast } from "./components/Toasts";
-import { ChevronIcon, ExitIcon, InsightsIcon, NoteIcon, SettingsIcon, WritingIcon } from "./components/icons";
+import { ChevronIcon, ExitIcon, InsightsIcon, SettingsIcon, WritingIcon } from "./components/icons";
 import { InsightsView } from "./views/InsightsView";
 import { SettingsView } from "./views/SettingsView";
 import { WritingView } from "./views/WritingView";
@@ -201,6 +201,8 @@ export function App() {
           </button>
         </div>
 
+        {/* O menu e a lista de notas: nao ha "Notas" aqui, porque a lista e as
+            notas. As demais telas viram icones pequenos no rodape. */}
         {navOpen && (
           <NoteList
             refreshKey={refreshKey}
@@ -217,49 +219,49 @@ export function App() {
         <nav className="sidebar-foot">
           <button
             type="button"
-            className={view === "notes" ? "foot-item foot-item--active" : "foot-item"}
-            onClick={() => setView("notes")}
-          >
-            <NoteIcon size={18} />
-            <span>Notas</span>
-          </button>
-          <button
-            type="button"
-            className={view === "insights" ? "foot-item foot-item--active" : "foot-item"}
+            className={view === "insights" ? "foot-icon foot-icon--active" : "foot-icon"}
             onClick={() => {
               setView("insights");
               setEntityFocus(null);
             }}
+            aria-label="Insights"
+            aria-pressed={view === "insights"}
+            title="Insights"
           >
-            <InsightsIcon size={18} />
-            <span>Insights</span>
+            <InsightsIcon size={17} />
           </button>
           <button
             type="button"
-            className={view === "writing" ? "foot-item foot-item--active" : "foot-item"}
+            className={view === "writing" ? "foot-icon foot-icon--active" : "foot-icon"}
             onClick={() => setView("writing")}
+            aria-label="Escrita"
+            aria-pressed={view === "writing"}
+            title="Escrita"
           >
-            <WritingIcon size={18} />
-            <span>Escrita</span>
+            <WritingIcon size={17} />
           </button>
+          <span className="foot-sep" />
           <button
             type="button"
-            className={view === "settings" ? "foot-item foot-item--active" : "foot-item"}
+            className={view === "settings" ? "foot-icon foot-icon--active" : "foot-icon"}
             onClick={() => setView("settings")}
+            aria-label="Configuracao"
+            aria-pressed={view === "settings"}
+            title="Configuracao"
           >
-            <SettingsIcon size={18} />
-            <span>Configuracao</span>
+            <SettingsIcon size={17} />
           </button>
           <button
             type="button"
-            className="foot-item"
+            className="foot-icon"
             onClick={() => {
               clearToken();
               setTokenState("");
             }}
+            aria-label="Sair"
+            title="Sair"
           >
-            <ExitIcon size={18} />
-            <span>Sair</span>
+            <ExitIcon size={17} />
           </button>
         </nav>
       </aside>
@@ -304,7 +306,7 @@ export function App() {
             </div>
           ) : (
             <div className="page">
-              <SettingsView />
+              <SettingsView refreshKey={refreshKey} />
             </div>
           )}
         </ErrorBoundary>

@@ -16,15 +16,6 @@ function svgProps(size: number) {
   };
 }
 
-export function NoteIcon({ size = 18 }: IconProps) {
-  return (
-    <svg {...svgProps(size)}>
-      <path d="M4 4h16v13l-3 3H4z" />
-      <path d="M8 8h8M8 12h8" />
-    </svg>
-  );
-}
-
 export function InsightsIcon({ size = 18 }: IconProps) {
   return (
     <svg {...svgProps(size)}>

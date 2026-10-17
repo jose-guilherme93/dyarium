@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { api } from "../api";
 import { formatDateTime } from "../lib/format";
 import type { Entry } from "../types";
-import { ArchiveIcon, ChevronIcon, PlusIcon, SearchIcon } from "./icons";
+import { ArchiveIcon, ChevronIcon, CloseIcon, PlusIcon, SearchIcon } from "./icons";
 
 interface NoteListProps {
   refreshKey: number;
@@ -72,6 +72,8 @@ export function NoteList({ refreshKey, activeId, failures, onOpen, onCreate }: N
   // Arquivadas tem lista propria: sao as notas que o celular tirou da lista de
   // trabalho. Sem isso, arquivar no celular sumiria com a nota daqui.
   const [archived, setArchived] = useState(false);
+  // A busca so ocupa espaco enquanto esta em uso.
+  const [searchingOpen, setSearchingOpen] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -101,6 +103,14 @@ export function NoteList({ refreshKey, activeId, failures, onOpen, onCreate }: N
 
   const term = query.trim().toLowerCase();
   const tree = term ? prune(buildTree(entries), term) : buildTree(entries);
+
+  // A busca e so um icone de lupa: o campo aparece quando ela e acionada e some
+  // quando nao ha nada digitado, para o menu ficar so com a lista de notas.
+  const searching = searchingOpen || term !== "";
+  const closeSearch = () => {
+    setSearchingOpen(false);
+    setQuery("");
+  };
 
   const renderNodes = (nodes: TreeNode[], depth: number): ReactNode =>
     nodes.map((node) => {
@@ -151,16 +161,43 @@ export function NoteList({ refreshKey, activeId, failures, onOpen, onCreate }: N
   return (
     <div className="list">
       <div className="list-head">
-        <label className="list-search">
-          <SearchIcon size={16} />
-          <input
-            type="search"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Buscar notas"
+        {searching ? (
+          <label className="list-search">
+            <SearchIcon size={16} />
+            <input
+              type="search"
+              value={query}
+              autoFocus
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  closeSearch();
+                }
+              }}
+              placeholder="Buscar notas"
+              aria-label="Buscar notas"
+            />
+            <button
+              type="button"
+              className="search-close"
+              onClick={closeSearch}
+              aria-label="Fechar busca"
+              title="Fechar busca"
+            >
+              <CloseIcon size={14} />
+            </button>
+          </label>
+        ) : (
+          <button
+            type="button"
+            className="icon-button"
+            onClick={() => setSearchingOpen(true)}
             aria-label="Buscar notas"
-          />
-        </label>
+            title="Buscar notas"
+          >
+            <SearchIcon size={16} />
+          </button>
+        )}
         <button
           type="button"
           className={archived ? "icon-button icon-button--active" : "icon-button"}
@@ -171,7 +208,13 @@ export function NoteList({ refreshKey, activeId, failures, onOpen, onCreate }: N
         >
           <ArchiveIcon size={16} />
         </button>
-        <button type="button" className="icon-button" onClick={() => onCreate(null)} aria-label="Nova nota" title="Nova nota">
+        <button
+          type="button"
+          className="icon-button"
+          onClick={() => onCreate(null)}
+          aria-label="Nova nota"
+          title="Nova nota"
+        >
           <PlusIcon size={16} />
         </button>
       </div>

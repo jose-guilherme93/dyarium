@@ -166,6 +166,10 @@ export const api = {
     request<{ status: string; cancelled: string[] }>(`/entries/${id}/cancel`, { method: "POST" }),
   analyze: (id: string) => request<{ status: string }>(`/entries/${id}/analyze`, { method: "POST" }),
   deleteEntry: (id: string) => request<void>(`/entries/${id}`, { method: "DELETE" }),
+  /** Lixeira: entradas apagadas, com `deleted_at`, da mais recente para a mais antiga. */
+  listDeletedEntries: () => request<{ entries: Entry[] }>("/entries?deleted=1&limit=200"),
+  /** Desfaz a remocao logica. Idempotente. */
+  restoreEntry: (id: string) => request<Entry>(`/entries/${id}/restore`, { method: "POST" }),
   /**
    * Atualiza titulo/data/arquivamento com a versao lida de cada campo: o
    * servidor recusa (409) o campo que ja mudou no celular.

@@ -19,6 +19,8 @@ export interface Entry {
   versions?: EntryVersions;
   /** Nota arquivada: sai da lista de trabalho sem ser apagada. */
   archived?: boolean;
+  /** Quando a nota foi apagada (so na listagem da lixeira, `?deleted=1`). */
+  deleted_at?: string | null;
 }
 
 export interface Audio {

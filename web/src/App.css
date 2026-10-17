@@ -2,26 +2,35 @@
 
 .app {
   display: grid;
-  grid-template-columns: 224px 1fr;
+  /* A largura do menu e a da coluna; a sidebar nao define a propria largura (com
+     `width` proprio ela ignorava a coluna recolhida). */
+  grid-template-columns: 280px 1fr;
   grid-template-rows: minmax(0, 1fr);
   height: 100%;
   overflow: hidden;
 }
 
+/* A sidebar e o menu do Notion: uma coluna so, com a lista de notas ocupando o
+   meio e as acoes em linhas de icones. Antes a lista vivia dentro da sidebar com
+   uma borda propria, e o rodape levava um item de texto por tela. */
+
 .sidebar {
+  min-width: 0;
   border-right: 1px solid var(--color-border);
   background: var(--color-surface);
-  padding: calc(var(--space) * 4);
+  padding: calc(var(--space) * 1.5);
   display: flex;
   flex-direction: column;
-  gap: calc(var(--space) * 4);
+  gap: calc(var(--space));
+  min-height: 0;
+  overflow: hidden;
 }
 
 .brand {
   font-family: var(--font-serif);
-  font-size: 20px;
+  font-size: 17px;
   letter-spacing: 0.02em;
-  padding: calc(var(--space) * 2) calc(var(--space) * 3);
+  padding: calc(var(--space) * 1) calc(var(--space) * 2);
 }
 
 .sidebar nav ul {
@@ -49,35 +58,67 @@
 /* ---------- notes list ---------- */
 
 .list {
-  width: 320px;
-  min-width: 280px;
-  border-right: 1px solid var(--color-border);
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  height: 100%;
 }
 
+/* Linha de acoes: lupa, arquivadas e nova nota, lado a lado. */
 .list-head {
-  padding: calc(var(--space) * 3);
-  border-bottom: 1px solid var(--color-border);
   display: flex;
-  flex-direction: column;
-  gap: calc(var(--space) * 2);
+  flex-direction: row;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
 }
 
-.list-search {
-  display: flex;
-  align-items: center;
-  gap: calc(var(--space) * 2);
-  padding: calc(var(--space) * 2) calc(var(--space) * 3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-bg);
+.list-head .icon-button {
+  flex: 0 0 auto;
   color: var(--color-muted);
 }
 
+.list-head .icon-button:hover {
+  background: var(--color-surface-2);
+  color: var(--color-text);
+}
+
+/* A busca aparece so quando acionada e ocupa o espaco que sobrar na linha, sem
+   empurrar os outros botoes para fora (o `flex-basis: 0` e o que garante isso:
+   com o valor padrao, o `<input>` pede a propria largura e o "+" sai da tela). */
+.list-search {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 1.5);
+  padding: calc(var(--space) * 1.25) calc(var(--space) * 2);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  color: var(--color-muted);
+}
+
+/* O "x" fecha a busca: quem usa o mouse nao precisa saber do Esc. */
+.search-close {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-sm);
+  color: var(--color-muted);
+}
+
+.search-close:hover {
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
 .list-search input {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
+  width: 100%;
   border: none;
   background: none;
   color: var(--color-text);
@@ -89,9 +130,10 @@
 }
 
 .list-scroll {
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
-  padding: 0 calc(var(--space)) calc(var(--space) * 4);
+  padding-bottom: calc(var(--space) * 2);
 }
 
 /* ---------- recorder ---------- */
@@ -243,17 +285,6 @@
 
 .save-state {
   font-size: 12px;
-}
-
-.page-text .bn-container {
-  height: 100%;
-  --bn-colors-editor-background: transparent;
-  --bn-colors-editor-text: var(--color-text);
-}
-
-.page-text .bn-editor {
-  min-height: 100%;
-  background: transparent;
 }
 
 /* The audio and its transcription flow inside the same text area, no card. */
@@ -784,7 +815,6 @@
   padding: 0;
 }
 
-.search-filters input,
 .view input[type="search"] {
   padding: calc(var(--space)) calc(var(--space) * 2);
   border: 1px solid var(--color-border);
@@ -980,13 +1010,8 @@
     grid-template-columns: 64px 1fr;
   }
 
-  .brand,
-  .nav-item span {
+  .brand {
     display: none;
-  }
-
-  .nav-item {
-    justify-content: center;
   }
 }
 
@@ -1671,14 +1696,8 @@
   justify-content: center;
 }
 
-.app--collapsed .brand,
-.app--collapsed .nav-item span,
-.app--collapsed .sidebar-exit span {
+.app--collapsed .brand {
   display: none;
-}
-
-.app--collapsed .nav-item {
-  justify-content: center;
 }
 
 .app--collapsed .sidebar-toggle svg {
@@ -1932,14 +1951,18 @@
   height: 100%;
 }
 
+/* A busca aparece so quando acionada e ocupa o espaco que sobrar na linha, sem
+   empurrar os outros botoes para fora (o `flex-basis: 0` e o que garante isso:
+   com o valor padrao, o `<input>` pede a propria largura e o "+" sai da tela). */
 .list-search {
+  flex: 1 1 0;
+  min-width: 0;
   display: flex;
   align-items: center;
-  gap: calc(var(--space) * 2);
-  padding: calc(var(--space) * 2) calc(var(--space) * 3);
-  border: 1px solid var(--color-border);
+  gap: calc(var(--space) * 1.5);
+  padding: calc(var(--space) * 1.25) calc(var(--space) * 2);
   border-radius: var(--radius-sm);
-  background: var(--color-bg);
+  background: var(--color-surface-2);
   color: var(--color-muted);
 }
 
@@ -1959,33 +1982,43 @@
   overflow: auto;
 }
 
+/* Rodape: so icones, alinhados a esquerda, com um separador antes das
+   configuracoes. Configuracao nao ocupa mais uma linha inteira do menu. */
+
 .sidebar-foot {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: center;
   gap: 2px;
   border-top: 1px solid var(--color-border);
-  padding-top: calc(var(--space) * 2);
+  padding-top: calc(var(--space) * 1.5);
 }
 
-.foot-item {
-  display: flex;
+.foot-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 calc(var(--space) * 1.5);
+  background: var(--color-border);
+}
+
+.foot-icon {
+  display: inline-flex;
   align-items: center;
-  gap: calc(var(--space) * 2.5);
-  padding: calc(var(--space) * 1.5) calc(var(--space) * 3);
+  justify-content: center;
+  width: 30px;
+  height: 30px;
   border-radius: var(--radius-sm);
   color: var(--color-muted);
-  text-align: left;
 }
 
-.foot-item:hover {
+.foot-icon:hover {
   background: var(--color-surface-2);
   color: var(--color-text);
 }
 
-.foot-item--active {
+.foot-icon--active {
   background: var(--color-accent-soft);
   color: var(--color-accent);
-  font-weight: 600;
 }
 
 .app--collapsed .sidebar {
@@ -2000,13 +2033,26 @@
   display: none;
 }
 
-.app--collapsed .foot-item {
-  justify-content: center;
-  padding: calc(var(--space) * 2);
+.app--collapsed .sidebar {
+  align-items: center;
+  padding-inline: calc(var(--space));
 }
 
-.app--collapsed .foot-item span {
-  display: none;
+.app--collapsed .sidebar-foot,
+.app--collapsed .list-head {
+  flex-direction: column;
+}
+
+/* Recolhido nao ha lista: o rodape desce para o lugar de sempre, em vez de
+   encostar no topo e virar uma linha solta embaixo do nome. */
+.app--collapsed .sidebar-foot {
+  margin-top: auto;
+}
+
+.app--collapsed .foot-sep {
+  width: 18px;
+  height: 1px;
+  margin: calc(var(--space)) 0;
 }
 
 /* ---------- escrita (metricas do app) ---------- */
@@ -2326,4 +2372,40 @@
   gap: calc(var(--space) * 3);
   margin-top: calc(var(--space) * 2);
   margin-bottom: calc(var(--space) * 2);
+}
+
+/* ---------- lixeira (dentro das configuracoes) ---------- */
+
+.trash-list {
+  list-style: none;
+  margin: calc(var(--space) * 3) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space) * 2);
+}
+
+.trash-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--space) * 3);
+  padding: calc(var(--space) * 2) calc(var(--space) * 3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+}
+
+.trash-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.trash-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
