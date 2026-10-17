@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,13 +28,13 @@ func TestExtractText(t *testing.T) {
 
 func TestMarkdownToPlain(t *testing.T) {
 	markdown := "# Titulo\n\n" +
-		"Um **dia** bom, com [link](attachment:x) e uma imagem ![foto](attachment:y).\n\n" +
+		"Um **dia** bom, com [link](https://exemplo.com/x) e ![foto](attachment:y).\n\n" +
 		"- item um\n- item dois\n\n" +
 		"> citacao\n\n" +
 		"```go\nfunc main() {}\n```\n\n" +
 		"| a | b |\n| - | - |\n\n" +
 		"Veja [outra nota](note:abc).\n"
-	want := "Titulo Um dia bom, com link e uma imagem foto. item um item dois citacao Veja ."
+	want := "Titulo Um dia bom, com link (https://exemplo.com/x) e imagem: foto. item um item dois citacao Veja outra nota."
 	if got := markdownToPlain(markdown); got != want {
 		t.Fatalf("markdownToPlain =\n%q\nwant\n%q", got, want)
 	}
@@ -65,7 +66,7 @@ func TestAnalysisInputReadsWrittenMarkdown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("analysisInput: %v", err)
 	}
-	if len(segments) != 1 || segments[0].Text != "Primeiro O texto escrito." {
+	if len(segments) != 1 || !strings.Contains(segments[0].Text, "Primeiro O texto escrito.") {
 		t.Fatalf("segments = %v", segments)
 	}
 	if language != "" {
@@ -98,7 +99,7 @@ func TestAnalysisInputFallsBackToLegacyDocument(t *testing.T) {
 	if err != nil {
 		t.Fatalf("analysisInput: %v", err)
 	}
-	if len(segments) != 1 || segments[0].Text != "texto antigo" {
+	if len(segments) != 1 || !strings.Contains(segments[0].Text, "texto antigo") {
 		t.Fatalf("segments = %v", segments)
 	}
 }
@@ -116,6 +117,98 @@ func TestShouldGiveUpAnalysis(t *testing.T) {
 	}
 	if !shouldGiveUpAnalysis(4, 5, transient) {
 		t.Fatal("ultima tentativa deveria marcar falha")
+	}
+}
+
+// A analise recebe tudo o que a nota tem: texto escrito, transcricao de audio,
+// imagem (legenda/arquivo) e links.
+func TestAnalysisInputCombinesEveryKindOfContent(t *testing.T) {
+	ctx := context.Background()
+	st := openWriterStore(t)
+	now := time.Now().UTC()
+	entryID := id.New()
+	otherID := id.New()
+	for _, entry := range []store.Entry{
+		{ID: entryID, Title: "nota", Status: store.EntryReady, Source: "text", CreatedAt: now, UpdatedAt: now},
+		{ID: otherID, Title: "outra nota", Status: store.EntryReady, Source: "text", CreatedAt: now, UpdatedAt: now},
+	} {
+		if err := st.CreateEntry(ctx, entry); err != nil {
+			t.Fatalf("create entry: %v", err)
+		}
+	}
+	if err := st.CreateNote(ctx, store.Note{
+		ID: id.New(), EntryID: entryID,
+		ContentMarkdown: "texto escrito\n\n![foto](attachment:abc)\n\n[site](https://exemplo.com)",
+		CreatedAt:       now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("create note: %v", err)
+	}
+	attachment := store.Attachment{
+		ID: id.New(), EntryID: entryID, Kind: store.AttachmentOriginal,
+		StorageKey: "key", Cipher: "aes-256-gcm", CreatedAt: now,
+	}
+	if err := st.CreateAttachment(ctx, attachment); err != nil {
+		t.Fatalf("create attachment: %v", err)
+	}
+	if err := st.SaveTranscript(ctx, store.Transcript{
+		ID: id.New(), EntryID: entryID, AttachmentID: attachment.ID,
+		Model: "teste", Language: "pt", Text: "fala do audio", CreatedAt: now,
+	}, nil); err != nil {
+		t.Fatalf("save transcript: %v", err)
+	}
+	if err := st.CreateLink(ctx, store.Link{
+		ID: id.New(), FromEntryID: entryID, ToEntryID: otherID, CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("create link: %v", err)
+	}
+
+	segments, language, err := analysisInput(ctx, st, entryID)
+	if err != nil {
+		t.Fatalf("analysisInput: %v", err)
+	}
+	if len(segments) != 1 {
+		t.Fatalf("segments = %d, want 1", len(segments))
+	}
+	text := segments[0].Text
+	for _, want := range []string{
+		"Texto escrito:", "texto escrito", "imagem: foto", "https://exemplo.com",
+		"Transcricao do audio:", "fala do audio", "Links da nota:", "outra nota",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("faltou %q em:\n%s", want, text)
+		}
+	}
+	if language != "pt" {
+		t.Fatalf("language = %q, want pt", language)
+	}
+}
+
+// Nota so com imagem: a legenda/arquivo entra na analise (o conteudo visual
+// exigiria um modelo com visao).
+func TestAnalysisInputWithOnlyAnImage(t *testing.T) {
+	ctx := context.Background()
+	st := openWriterStore(t)
+	now := time.Now().UTC()
+	entryID := id.New()
+	if err := st.CreateEntry(ctx, store.Entry{
+		ID: entryID, Title: "foto", Status: store.EntryReady, Source: "text",
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("create entry: %v", err)
+	}
+	if err := st.CreateNote(ctx, store.Note{
+		ID: id.New(), EntryID: entryID, ContentMarkdown: "![1000315674.jpg](attachment:abc)",
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("create note: %v", err)
+	}
+
+	segments, _, err := analysisInput(ctx, st, entryID)
+	if err != nil {
+		t.Fatalf("analysisInput: %v", err)
+	}
+	if len(segments) != 1 || !strings.Contains(segments[0].Text, "imagem: 1000315674.jpg") {
+		t.Fatalf("segments = %v", segments)
 	}
 }
 

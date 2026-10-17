@@ -253,43 +253,94 @@ func analyzeSegments(text string, segments []store.Segment) []analyze.Segment {
 	return out
 }
 
-// analysisInput prefers the audio transcripts and falls back to the written
-// note body, so a text note can be analyzed too. With several audios the
-// transcripts are concatenated (segment timestamps would collide, so a single
-// text segment is used).
+// analysisInput builds the analysis input from every kind of content the entry
+// has: written text, audio transcripts, images (their captions/filenames) and
+// links. The pipeline receives an array of segments; when there is only one
+// audio and nothing else, the original segments are kept so key moments keep
+// their timestamps. With mixed content, one text segment carries everything.
 func analysisInput(ctx context.Context, st *store.Store, entryID string) ([]analyze.Segment, string, error) {
-	transcripts, err := st.ListTranscripts(ctx, entryID)
-	if err == nil && len(transcripts) == 1 {
-		if _, segments, serr := st.GetTranscriptByAttachment(ctx, transcripts[0].AttachmentID); serr == nil {
-			return analyzeSegments(transcripts[0].Text, segments), transcripts[0].Language, nil
-		}
-	}
-	if err == nil && len(transcripts) > 1 {
-		var parts []string
-		language := ""
+	transcripts, transcriptErr := st.ListTranscripts(ctx, entryID)
+	language := ""
+	if transcriptErr == nil {
 		for _, t := range transcripts {
-			if text := strings.TrimSpace(t.Text); text != "" {
-				parts = append(parts, text)
-			}
-			if language == "" && t.Language != "" {
+			if t.Language != "" {
 				language = t.Language
+				break
 			}
 		}
-		if joined := strings.Join(parts, "\n\n"); joined != "" {
-			return []analyze.Segment{{Text: joined}}, language, nil
+	}
+	audioText := transcriptText(transcripts)
+	bodyText, noteErr := noteBodyText(ctx, st, entryID)
+	linksText := entryLinksText(ctx, st, entryID)
+
+	// Somente um audio, sem texto escrito nem links: mantem os segmentos.
+	if transcriptErr == nil && len(transcripts) == 1 &&
+		strings.TrimSpace(bodyText) == "" && strings.TrimSpace(linksText) == "" {
+		if _, segments, err := st.GetTranscriptByAttachment(ctx, transcripts[0].AttachmentID); err == nil {
+			return analyzeSegments(transcripts[0].Text, segments), language, nil
 		}
 	}
-	text, noteErr := noteBodyText(ctx, st, entryID)
-	if noteErr != nil {
-		if err != nil {
-			return nil, "", fmt.Errorf("worker: transcript: %w", err)
-		}
-		return nil, "", noteErr
+
+	parts := make([]string, 0, 3)
+	if text := strings.TrimSpace(bodyText); text != "" {
+		parts = append(parts, "Texto escrito:\n"+text)
 	}
-	if strings.TrimSpace(text) == "" {
+	if text := strings.TrimSpace(audioText); text != "" {
+		parts = append(parts, "Transcricao do audio:\n"+text)
+	}
+	if text := strings.TrimSpace(linksText); text != "" {
+		parts = append(parts, "Links da nota:\n"+text)
+	}
+	if len(parts) == 0 {
+		if transcriptErr != nil {
+			return nil, "", fmt.Errorf("worker: transcript: %w", transcriptErr)
+		}
+		if noteErr != nil {
+			return nil, "", noteErr
+		}
 		return nil, "", errors.New("transcricao indisponivel")
 	}
-	return []analyze.Segment{{Text: text}}, "", nil
+	return []analyze.Segment{{Text: strings.Join(parts, "\n\n")}}, language, nil
+}
+
+// transcriptText joins every audio transcript of the entry.
+func transcriptText(transcripts []store.Transcript) string {
+	parts := make([]string, 0, len(transcripts))
+	for _, t := range transcripts {
+		if text := strings.TrimSpace(t.Text); text != "" {
+			parts = append(parts, text)
+		}
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// entryLinksText lists the entry's links: external URLs and the titles of the
+// notes it points to.
+func entryLinksText(ctx context.Context, st *store.Store, entryID string) string {
+	links, err := st.ListLinks(ctx, entryID)
+	if err != nil {
+		return ""
+	}
+	parts := make([]string, 0, len(links))
+	for _, link := range links {
+		switch {
+		case strings.TrimSpace(link.URL) != "":
+			url := strings.TrimSpace(link.URL)
+			label := strings.TrimSpace(link.Label)
+			if label != "" && label != url {
+				parts = append(parts, label+" ("+url+")")
+			} else {
+				parts = append(parts, url)
+			}
+		case link.ToEntryID != "":
+			title := strings.TrimSpace(link.Title)
+			if title == "" {
+				title = link.ToEntryID
+			}
+			parts = append(parts, "nota: "+title)
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 // noteBodyText extracts the plain text of the entry's newest note. The body is
@@ -328,8 +379,13 @@ var markdownToPlainRules = []struct {
 }{
 	{regexp.MustCompile("(?ms)^```.*?^```[^\\n]*$"), ""},
 	{regexp.MustCompile(`(?m)^\|.*\|$`), ""},
-	{regexp.MustCompile(`\[[^\]]*\]\(note:[^)\s]+\)`), ""},
-	{regexp.MustCompile(`!?\[([^\]]*)\]\([^)\s]*\)`), "${1}"},
+	// Imagem entra pela legenda/arquivo: e o que um modelo de texto consegue ler
+	// do anexo (o conteudo visual exigiria um modelo com visao).
+	{regexp.MustCompile(`!\[([^\]]*)\]\([^)\s]*\)`), "imagem: ${1}"},
+	// Mencao a outra nota: fica o rotulo (a secao de links traz o titulo).
+	{regexp.MustCompile(`\[([^\]]*)\]\(note:[^)\s]+\)`), "${1}"},
+	// Link externo: rotulo e URL, para a analise saber para onde aponta.
+	{regexp.MustCompile(`\[([^\]]*)\]\(([^)\s]+)\)`), "${1} (${2})"},
 	{regexp.MustCompile(`(?m)^#{1,6}\s+`), ""},
 	{regexp.MustCompile(`(?m)^>\s?`), ""},
 	{regexp.MustCompile(`(?m)^\s*[-*+]\s+`), ""},
