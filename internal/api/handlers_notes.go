@@ -15,7 +15,9 @@ type noteRequest struct {
 	ID    string `json:"id"`
 	Title string `json:"title"`
 	// ContentMarkdown is the note body in markdown (the canonical format).
-	ContentMarkdown string `json:"content_markdown"`
+	// Ponteiro para separar "nao veio no corpo" (400) de "veio vazio" (limpar a
+	// nota e uma gravacao legitima).
+	ContentMarkdown *string `json:"content_markdown"`
 	// BaseVersion is the body version the client last read. Empty means the
 	// client has no version yet and the write is applied as-is.
 	BaseVersion string `json:"base_version"`
@@ -61,11 +63,15 @@ func (s *Server) handleCreateNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC()
+	contentMarkdown := ""
+	if req.ContentMarkdown != nil {
+		contentMarkdown = *req.ContentMarkdown
+	}
 	n := store.Note{
 		ID:              id.New(),
 		EntryID:         entryID,
 		Title:           req.Title,
-		ContentMarkdown: req.ContentMarkdown,
+		ContentMarkdown: contentMarkdown,
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
@@ -121,9 +127,10 @@ func (s *Server) handleUpdateNote(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 
-	// Caminho novo: corpo em markdown, com a versao que o cliente leu.
-	if req.ContentMarkdown != "" {
-		version, conflict, err := s.deps.Store.UpdateNoteBody(r.Context(), id, req.ContentMarkdown, req.BaseVersion)
+	// Caminho novo: corpo em markdown, com a versao que o cliente leu. O campo
+	// pode vir vazio: limpar a nota e uma gravacao como outra qualquer.
+	if req.ContentMarkdown != nil {
+		version, conflict, err := s.deps.Store.UpdateNoteBody(r.Context(), id, *req.ContentMarkdown, req.BaseVersion)
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", "nota inexistente")
 			return

@@ -150,7 +150,8 @@ Resposta 200: `{ "status": "ok", "versions": { "body": "<nova versao>" } }`.
 - 409 com `{ "conflict": ["body"], "versions": {...} }` quando o corpo mudou
   depois da leitura: **nada e gravado**.
 - Gravar o mesmo texto nao cria revisao nova (o historico so muda quando muda).
-- `content_markdown` e obrigatorio: sem ele a resposta e `400
+- `content_markdown` e obrigatorio, mas pode vir **vazio** (limpar o corpo e uma
+  gravacao como outra qualquer): sem o campo a resposta e `400
   missing_markdown`. Nao ha mais caminho de escrita em JSON — era ele que deixava o
   app sobrescrever o markdown sem querer.
 

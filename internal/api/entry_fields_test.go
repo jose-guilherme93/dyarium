@@ -280,6 +280,50 @@ func countEntries(body map[string]any) int {
 	return len(entries)
 }
 
+// Limpar o corpo e uma gravacao como outra qualquer: `content_markdown` vazio
+// nao pode virar 400, senao a nota nunca pode ser esvaziada.
+func TestUpdateNoteCanClearTheBody(t *testing.T) {
+	srv := newTestServer(t)
+	const entryID = "note_01J8Z0000000000000000000L"
+	seedTextEntry(t, srv, entryID, "para limpar")
+
+	_, created := doJSON(t, srv, http.MethodPost, "/api/v1/entries/"+entryID+"/notes",
+		strings.NewReader(`{"content_markdown":"original"}`))
+	noteID, _ := created["id"].(string)
+
+	rec, first := doJSON(t, srv, http.MethodPut, "/api/v1/notes/"+noteID,
+		strings.NewReader(`{"content_markdown":""}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("limpar: status = %d (%s)", rec.Code, rec.Body.String())
+	}
+	_, got := doJSON(t, srv, http.MethodGet, "/api/v1/notes/"+noteID, nil)
+	if got["content_markdown"] != "" {
+		t.Fatalf("content_markdown = %v, want vazio", got["content_markdown"])
+	}
+
+	_, list := doJSON(t, srv, http.MethodGet, "/api/v1/notes/"+noteID+"/revisions", nil)
+	revisions, _ := list["revisions"].([]any)
+	if len(revisions) != 1 {
+		t.Fatalf("revisoes = %d, want 1", len(revisions))
+	}
+	if revision, _ := revisions[0].(map[string]any); revision["content_markdown"] != "original" {
+		t.Fatalf("revisao = %v, want o texto anterior", revision)
+	}
+
+	// Repetir a limpeza nao cria revisao nem move a versao.
+	before := first["versions"].(map[string]any)["body"].(string)
+	_, second := doJSON(t, srv, http.MethodPut, "/api/v1/notes/"+noteID,
+		strings.NewReader(`{"content_markdown":""}`))
+	after := second["versions"].(map[string]any)["body"].(string)
+	if after != before {
+		t.Fatalf("versao mudou numa gravacao sem mudanca: %q -> %q", before, after)
+	}
+	_, list = doJSON(t, srv, http.MethodGet, "/api/v1/notes/"+noteID+"/revisions", nil)
+	if revisions, _ = list["revisions"].([]any); len(revisions) != 1 {
+		t.Fatalf("revisoes = %d depois da limpeza repetida, want 1", len(revisions))
+	}
+}
+
 func TestPatchEntryValidates(t *testing.T) {
 	srv := newTestServer(t)
 
