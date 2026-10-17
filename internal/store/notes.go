@@ -29,26 +29,6 @@ func (s *Store) ListSettings(ctx context.Context) (map[string]string, error) {
 	return out, rows.Err()
 }
 
-// UpdateEntryTitle updates the editable title of an entry.
-func (s *Store) UpdateEntryTitle(ctx context.Context, id, title string) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE entries SET title = ?, updated_at = ? WHERE id = ?`, title, ts(time.Now()), id)
-	if err != nil {
-		return fmt.Errorf("store: update title: %w", err)
-	}
-	return nil
-}
-
-// UpdateEntryRecordedAt updates the event date of an entry.
-func (s *Store) UpdateEntryRecordedAt(ctx context.Context, id string, recorded time.Time) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE entries SET recorded_at = ?, updated_at = ? WHERE id = ?`, ts(recorded), ts(time.Now()), id)
-	if err != nil {
-		return fmt.Errorf("store: update recorded_at: %w", err)
-	}
-	return nil
-}
-
 // SoftDeleteEntry marks an entry as deleted.
 func (s *Store) SoftDeleteEntry(ctx context.Context, id string) error {
 	res, err := s.db.ExecContext(ctx,
@@ -166,7 +146,6 @@ func (s *Store) UpdateNoteBody(ctx context.Context, id, markdown, readVersion st
 	if err != nil {
 		return "", false, err
 	}
-	versions := map[string]string{FieldBody: stored}
 	if versionAfter(stored, readVersion) {
 		return stored, true, nil
 	}
@@ -208,7 +187,6 @@ func (s *Store) UpdateNoteBody(ctx context.Context, id, markdown, readVersion st
 	if err := tx.Commit(); err != nil {
 		return "", false, fmt.Errorf("store: update note body: %w", err)
 	}
-	versions[FieldBody] = stamp
 	return stamp, false, nil
 }
 

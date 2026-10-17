@@ -33,6 +33,18 @@ func seedTextEntry(t *testing.T, srv *Server, entryID, title string) {
 	}
 }
 
+// versionOf devolve uma versao presente na resposta. Comparar com "" nao
+// funciona: quando a chave falta o valor e nil, e nil != "". Era assim que um
+// teste passava sem as versoes existirem.
+func versionOf(t *testing.T, versions map[string]any, field string) string {
+	t.Helper()
+	value, ok := versions[field].(string)
+	if !ok || value == "" {
+		t.Fatalf("versao %q ausente em %v", field, versions)
+	}
+	return value
+}
+
 // Titulo e data do evento teem versao propria: renomear no desktop nao briga com
 // mexer na data no celular.
 func TestPatchEntryFieldsAreIndependent(t *testing.T) {
@@ -43,13 +55,12 @@ func TestPatchEntryFieldsAreIndependent(t *testing.T) {
 	_, first := doJSON(t, srv, http.MethodPatch, "/api/v1/entries/"+entryID,
 		strings.NewReader(`{"title":"nome novo","recorded_at":"2026-10-16T12:00:00Z"}`))
 	versions, _ := first["versions"].(map[string]any)
-	if versions["title"] == "" || versions["recorded_at"] == "" {
-		t.Fatalf("versoes ausentes: %v", versions)
-	}
+	titleVersion := versionOf(t, versions, "title")
+	versionOf(t, versions, "recorded_at")
 
 	// O celular leu as duas versoes e so mexe no titulo.
 	rec, _ := doJSON(t, srv, http.MethodPatch, "/api/v1/entries/"+entryID,
-		strings.NewReader(`{"title":"outro nome","versions":{"title":`+strconvQuote(versions["title"].(string))+`}}`))
+		strings.NewReader(`{"title":"outro nome","versions":{"title":`+strconvQuote(titleVersion)+`}}`))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
@@ -146,8 +157,43 @@ func TestListEntriesCarriesFieldVersions(t *testing.T) {
 		t.Fatalf("entrada %s ausente da listagem", entryID)
 	}
 	versions, _ := found["versions"].(map[string]any)
-	if versions["title"] == "" || versions["recorded_at"] == "" || versions["body"] == "" {
-		t.Fatalf("a listagem deveria trazer as tres versoes: %v", versions)
+	versionOf(t, versions, "title")
+	versionOf(t, versions, "recorded_at")
+	versionOf(t, versions, "body")
+}
+
+// A nota recem-criada ja nasce com versao: a primeira renomeacao nao pode ser um
+// ultimo-a-escrever-vence silencioso.
+func TestFreshEntryProtectsTheFirstTitleEdit(t *testing.T) {
+	srv := newTestServer(t)
+	entryID := id.New()
+	seedTextEntry(t, srv, entryID, "inicial")
+
+	_, detail := doJSON(t, srv, http.MethodGet, "/api/v1/entries/"+entryID, nil)
+	readVersion := versionOf(t, detail["versions"].(map[string]any), "title")
+
+	// O desktop grava primeiro, com a versao que leu.
+	if rec, _ := doJSON(t, srv, http.MethodPatch, "/api/v1/entries/"+entryID,
+		strings.NewReader(`{"title":"nome do desktop","versions":{"title":`+strconvQuote(readVersion)+`}}`)); rec.Code != http.StatusOK {
+		t.Fatalf("primeira gravacao: status = %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	// O celular tinha lido a mesma versao antes disso: agora e conflito.
+	rec, conflict := doJSON(t, srv, http.MethodPatch, "/api/v1/entries/"+entryID,
+		strings.NewReader(`{"title":"nome do celular","versions":{"title":`+strconvQuote(readVersion)+`}}`))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (%s)", rec.Code, rec.Body.String())
+	}
+	fields, _ := conflict["conflict"].([]any)
+	if len(fields) != 1 || fields[0] != store.FieldTitle {
+		t.Fatalf("conflict = %v, want [title]", fields)
+	}
+	entry, err := srv.deps.Store.GetEntry(context.Background(), entryID)
+	if err != nil {
+		t.Fatalf("get entry: %v", err)
+	}
+	if entry.Title != "nome do desktop" {
+		t.Fatalf("title = %q, o conflito nao deveria ter escrito", entry.Title)
 	}
 }
 

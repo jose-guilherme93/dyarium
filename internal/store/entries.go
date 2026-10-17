@@ -112,14 +112,19 @@ func (s *Store) SetUploadCompleted(ctx context.Context, id, attachmentID string)
 	return nil
 }
 
-// CreateEntry inserts a new entry.
+// CreateEntry inserts a new entry. The editable fields start with a version so
+// the very first write is already protected: without it the client reads an
+// empty version and the server cannot tell a first write from a stale one.
 func (s *Store) CreateEntry(ctx context.Context, e Entry) error {
+	stamp := ts(e.UpdatedAt)
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO entries (id, title, status, source, parent_id, original_filename, content_type,
-			size_bytes, duration_seconds, sha256, recorded_at, created_at, updated_at, deleted_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			size_bytes, duration_seconds, sha256, recorded_at, created_at, updated_at, deleted_at,
+			title_updated_at, recorded_at_updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.ID, e.Title, e.Status, e.Source, nullString(e.ParentID), e.OriginalFilename, e.ContentType,
-		e.SizeBytes, e.DurationSeconds, e.SHA256, nullTS(e.RecordedAt), ts(e.CreatedAt), ts(e.UpdatedAt), nullTS(e.DeletedAt))
+		e.SizeBytes, e.DurationSeconds, e.SHA256, nullTS(e.RecordedAt), ts(e.CreatedAt), ts(e.UpdatedAt),
+		nullTS(e.DeletedAt), stamp, stamp)
 	if err != nil {
 		return fmt.Errorf("store: create entry: %w", err)
 	}
