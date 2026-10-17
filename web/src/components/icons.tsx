@@ -155,11 +155,23 @@ export function ExitIcon({ size = 18 }: IconProps) {
   );
 }
 
-export function PinIcon({ size = 18 }: IconProps) {
+/** Arquivo com tampa: alterna entre a lista de trabalho e as arquivadas. */
+export function ArchiveIcon({ size = 18 }: IconProps) {
   return (
     <svg {...svgProps(size)}>
-      <path d="M9 3h6l-1 6 3 3H7l3-3-1-6Z" />
-      <path d="M12 12v8" />
+      <rect x="3" y="4" width="14" height="3" rx="1" />
+      <path d="M5 7v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V7" />
+      <path d="M10 11h0" />
+    </svg>
+  );
+}
+
+/** Markdown: "<>" com barra. Abre a visao de texto cru da nota. */
+export function CodeIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M9 7l-5 5 5 5" />
+      <path d="M15 7l5 5-5 5" />
     </svg>
   );
 }

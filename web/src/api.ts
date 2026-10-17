@@ -81,6 +81,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const text = await res.text();
     if (!res.ok) {
       const body = text ? JSON.parse(text) : {};
+      // 409 e conflito de edicao, nao erro: o chamador precisa saber qual campo
+      // brigou para oferecer a escolha ao usuario.
+      if (res.status === 409) {
+        throw new ConflictError(body?.error?.message ?? "a nota mudou no outro lugar", body?.conflict ?? []);
+      }
       throw new ApiError(body?.error?.message ?? res.statusText, res.status, body?.error?.code);
     }
     setOffline(false);
@@ -105,6 +110,27 @@ export interface EntryFilters {
   person?: string;
   place?: string;
   theme?: string;
+  /** `true` so as arquivadas, `false` so as da lista de trabalho. */
+  archived?: boolean;
+}
+
+/** Campo que briguou quando o servidor recusou a gravacao. */
+export type ConflictField = "title" | "recorded_at" | "body";
+
+/** O servidor recusou a gravacao porque o campo ja mudou (409). Nada foi gravado. */
+export class ConflictError extends Error {
+  readonly fields: ConflictField[];
+
+  constructor(message: string, fields: ConflictField[]) {
+    super(message);
+    this.name = "ConflictError";
+    this.fields = fields;
+  }
+}
+
+/** `true` quando o erro e um conflito de edicao (409). */
+export function isConflict(error: unknown): error is ConflictError {
+  return error instanceof ConflictError;
 }
 
 export const api = {
@@ -118,6 +144,11 @@ export const api = {
     }
     if (filters?.theme) {
       params.set("theme", filters.theme);
+    }
+    // Sem filtro o servidor traz as duas listas. O dashboard abre na lista de
+    // trabalho; as arquivadas ficam na aba delas.
+    if (filters?.archived !== undefined) {
+      params.set("archived", filters.archived ? "1" : "0");
     }
     const query = params.toString();
     return request<{ entries: Entry[] }>(`/entries${query ? `?${query}` : ""}`);
@@ -135,13 +166,38 @@ export const api = {
     request<{ status: string; cancelled: string[] }>(`/entries/${id}/cancel`, { method: "POST" }),
   analyze: (id: string) => request<{ status: string }>(`/entries/${id}/analyze`, { method: "POST" }),
   deleteEntry: (id: string) => request<void>(`/entries/${id}`, { method: "DELETE" }),
-  patchEntry: (id: string, patch: { title?: string }) =>
-    request<{ status: string }>(`/entries/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  /**
+   * Atualiza titulo/data/arquivamento com a versao lida de cada campo: o
+   * servidor recusa (409) o campo que ja mudou no celular.
+   */
+  patchEntry: (
+    id: string,
+    patch: {
+      title?: string;
+      recorded_at?: string;
+      archived?: boolean;
+      versions?: { title?: string; recorded_at?: string };
+    },
+  ) => request<{ status: string; versions: { title?: string; recorded_at?: string } }>(
+    `/entries/${id}`,
+    { method: "PATCH", body: JSON.stringify(patch) },
+  ),
   listNotes: (id: string) => request<{ notes: Note[] }>(`/entries/${id}/notes`),
-  createNote: (id: string, title: string, document: unknown) =>
-    request<Note>(`/entries/${id}/notes`, { method: "POST", body: JSON.stringify({ title, document }) }),
-  updateNote: (id: string, title: string, document: unknown) =>
-    request<{ status: string }>(`/notes/${id}`, { method: "PUT", body: JSON.stringify({ title, document }) }),
+  /** Cria a nota a partir do markdown do corpo. */
+  createNote: (id: string, title: string, markdown: string) =>
+    request<Note>(`/entries/${id}/notes`, {
+      method: "POST",
+      body: JSON.stringify({ title, content_markdown: markdown }),
+    }),
+  /**
+   * Grava o corpo em markdown. `baseVersion` e a versao lida: se o corpo ja
+   * mudou no celular, o servidor responde 409 sem gravar nada.
+   */
+  updateNote: (id: string, markdown: string, baseVersion?: string) =>
+    request<{ status: string; versions: { body?: string } }>(`/notes/${id}`, {
+      method: "PUT",
+      body: JSON.stringify({ content_markdown: markdown, base_version: baseVersion ?? "" }),
+    }),
   listRevisions: (noteId: string) => request<{ revisions: Revision[] }>(`/notes/${noteId}/revisions`),
   listTags: () => request<{ tags: Tag[] }>("/tags"),
   listEntryTags: (entryId: string) => request<{ tags: Tag[] }>(`/entries/${entryId}/tags`),

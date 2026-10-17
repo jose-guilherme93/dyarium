@@ -1,6 +1,6 @@
 import { createContext, forwardRef, useContext, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
-import type { Block, PartialBlock } from "@blocknote/core";
+import type { PartialBlock } from "@blocknote/core";
 import { BlockNoteSchema, defaultBlockSpecs, defaultInlineContentSpecs } from "@blocknote/core";
 import { pt } from "@blocknote/core/locales";
 import {
@@ -14,23 +14,19 @@ import {
 import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/mantine/style.css";
 import { attachmentUrl, api, uploadAttachment, uploadFile } from "../api";
+import { blocksToNoteMarkdown } from "./blocknoteMarkdown";
 import type { Audio, Entry } from "../types";
 import { AudioTrack } from "../components/AudioTrack";
-
-// MediaRef is one medium to place in the document (used to migrate notes whose
-// media lived outside the document, before inline blocks existed).
-export interface MediaRef {
-  kind: "audio" | "image";
-  id: string;
-  createdAt: string;
-}
 
 interface NotesEditorProps {
   entryId: string;
   initialContent?: PartialBlock[];
-  media?: MediaRef[];
   audios?: Map<string, Audio>;
-  onChange?: (blocks: Block[]) => void;
+  /**
+   * Mudanca no corpo. Entrega o **markdown** (o formato canonico dos dois
+   * lados), nao os blocos: quem salva nao precisa conhecer o BlockNote.
+   */
+  onChange?: (markdown: string) => void;
   onMediaAdded?: () => void;
   onOpenEntry?: (id: string) => void;
 }
@@ -137,46 +133,19 @@ const schema = BlockNoteSchema.create({
   inlineContentSpecs: { ...defaultInlineContentSpecs, noteMention },
 });
 
-// ---- helpers ----
-
-function hasMediaBlocks(blocks: PartialBlock[] | undefined): boolean {
-  if (!blocks) {
-    return false;
-  }
-  return blocks.some(
-    (block) =>
-      block.type === "audio" ||
-      block.type === "image" ||
-      hasMediaBlocks((block as { children?: PartialBlock[] }).children),
-  );
-}
-
-function mediaBlock(ref: MediaRef): PartialBlock {
-  if (ref.kind === "audio") {
-    return { type: "audio", props: { attachmentId: ref.id } } as unknown as PartialBlock;
-  }
-  return { type: "image", props: { attachmentId: ref.id } } as unknown as PartialBlock;
-}
-
-// NotesEditor is the rich document of a note: text, audio and images interleaved
-// in one flow, plus the /link command.
+// NotesEditor is the written body of a note (markdown): text and images, plus the
+// /link command. Audio is not part of the body anymore: the stack of audios sits
+// at the top of the note, outside the document.
 export const NotesEditor = forwardRef<NotesEditorHandle, NotesEditorProps>(function NotesEditor(
-  { entryId, initialContent, media = [], audios = new Map(), onChange, onMediaAdded, onOpenEntry },
+  { entryId, initialContent, audios = new Map(), onChange, onMediaAdded, onOpenEntry },
   ref,
 ) {
-  const mediaMigrated =
-    !hasMediaBlocks(initialContent) && media.length > 0;
-  const seeded = mediaMigrated
-    ? [...media.map(mediaBlock), ...(initialContent ?? [])]
-    : initialContent;
-
-  const editor = useCreateBlockNote({ schema, initialContent: seeded, dictionary: pt });
+  const editor = useCreateBlockNote({ schema, initialContent, dictionary: pt });
   const [dark, setDark] = useState(
     typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches,
   );
   const audioInput = useRef<HTMLInputElement | null>(null);
   const imageInput = useRef<HTMLInputElement | null>(null);
-  const migratedRef = useRef(mediaMigrated);
   const [picker, setPicker] = useState(false);
   const [pickerEntries, setPickerEntries] = useState<Entry[]>([]);
   const [term, setTerm] = useState("");
@@ -216,6 +185,9 @@ export const NotesEditor = forwardRef<NotesEditorHandle, NotesEditorProps>(funct
     return () => query.removeEventListener("change", listener);
   }, []);
 
+  /** Markdown do documento atual, como o app e o servidor falam. */
+  const emit = () => onChange?.(blocksToNoteMarkdown(editor, editor.document as never[]));
+
   const addMedia = () => {
     try {
       return editor.getTextCursorPosition()?.block ?? editor.document[editor.document.length - 1];
@@ -224,11 +196,16 @@ export const NotesEditor = forwardRef<NotesEditorHandle, NotesEditorProps>(funct
     }
   };
 
-  const insert = (ref: { kind: "audio" | "image"; id: string }) => {
+  /** Insere a imagem no corpo, como bloco (o audio nao entra no corpo). */
+  const insertImage = (id: string) => {
     const block = addMedia();
     type InsertedBlock = Parameters<typeof editor.insertBlocks>[0][number];
-    editor.insertBlocks([mediaBlock({ ...ref, createdAt: "" }) as unknown as InsertedBlock], block, "after");
-    void onChange?.(editor.document as unknown as Block[]);
+    editor.insertBlocks(
+      [{ type: "image", props: { attachmentId: id } } as unknown as InsertedBlock],
+      block,
+      "after",
+    );
+    emit();
     onMediaAdded?.();
   };
 
@@ -239,8 +216,10 @@ export const NotesEditor = forwardRef<NotesEditorHandle, NotesEditorProps>(funct
       return;
     }
     try {
-      const result = await uploadFile(file, undefined, entryId);
-      insert({ kind: "audio", id: result.attachment_id });
+      // O audio entra na pilha da nota, no servidor: nao ha bloco de audio no
+      // corpo, e a pilha aparece no topo assim que a nota recarrega.
+      await uploadFile(file, undefined, entryId);
+      onMediaAdded?.();
     } catch {
       // The pending block already communicates failure; keep the editor calm.
     }
@@ -254,7 +233,7 @@ export const NotesEditor = forwardRef<NotesEditorHandle, NotesEditorProps>(funct
     }
     try {
       const attachment = await uploadAttachment(entryId, file);
-      insert({ kind: "image", id: attachment.id });
+      insertImage(attachment.id);
     } catch {
       // Ignore; the image simply is not added.
     }
@@ -268,7 +247,7 @@ export const NotesEditor = forwardRef<NotesEditorHandle, NotesEditorProps>(funct
         { type: "noteMention", props: { entryId: entry.id, title: label } },
         " ",
       ] as unknown as Content);
-      void onChange?.(editor.document as unknown as Block[]);
+      emit();
     } catch {
       // Ignore; the mention simply is not inserted.
     }
@@ -328,18 +307,13 @@ export const NotesEditor = forwardRef<NotesEditorHandle, NotesEditorProps>(funct
         editor={editor}
         theme={dark ? "dark" : "light"}
         slashMenu={false}
-        onChange={() => onChange?.(editor.document as unknown as Block[])}
+        onChange={() => emit()}
       >
         <SuggestionMenuController triggerCharacter="/" getItems={getItems} />
       </BlockNoteView>
 
       <input ref={audioInput} type="file" accept="audio/*" hidden onChange={(event) => void onAudioFile(event)} />
       <input ref={imageInput} type="file" accept="image/*" hidden onChange={(event) => void onImageFile(event)} />
-
-      {migratedRef.current && (
-        // Persist the migrated media blocks once, right after the document loads.
-        <MigrateOnMount onReady={() => void onChange?.(editor.document as unknown as Block[])} />
-      )}
 
       {picker && (
         <div className="note-picker" role="dialog" aria-modal="true" aria-label="Link para nota">
@@ -378,29 +352,5 @@ export const NotesEditor = forwardRef<NotesEditorHandle, NotesEditorProps>(funct
     </MediaContext.Provider>
   );
 });
-
-// MigrateOnMount fires a single onChange after the editor is created so the
-// migrated document is saved.
-function MigrateOnMount({ onReady }: { onReady: () => void }) {
-  const done = useRef(false);
-  useEffect(() => {
-    if (done.current) {
-      return;
-    }
-    done.current = true;
-    onReady();
-  }, [onReady]);
-  return null;
-}
-
-// mediaRefs builds the ordered media list (audios and images by creation time)
-// used to migrate a note whose media lived outside the document.
-export function mediaRefs(entry: Entry, images: { id: string; created_at: string }[]): MediaRef[] {
-  const refs: MediaRef[] = [
-    ...(entry.audios ?? []).map((audio) => ({ kind: "audio" as const, id: audio.id, createdAt: audio.created_at })),
-    ...images.map((image) => ({ kind: "image" as const, id: image.id, createdAt: image.created_at })),
-  ];
-  return refs.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-}
 
 export default NotesEditor;

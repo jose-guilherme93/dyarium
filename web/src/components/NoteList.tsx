@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { api } from "../api";
 import { formatDateTime } from "../lib/format";
 import type { Entry } from "../types";
-import { ChevronIcon, PlusIcon, SearchIcon } from "./icons";
+import { ArchiveIcon, ChevronIcon, PlusIcon, SearchIcon } from "./icons";
 
 interface NoteListProps {
   refreshKey: number;
@@ -69,16 +69,19 @@ export function NoteList({ refreshKey, activeId, failures, onOpen, onCreate }: N
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [error, setError] = useState("");
+  // Arquivadas tem lista propria: sao as notas que o celular tirou da lista de
+  // trabalho. Sem isso, arquivar no celular sumiria com a nota daqui.
+  const [archived, setArchived] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const result = await api.listEntries();
+      const result = await api.listEntries({ archived });
       setEntries(result.entries ?? []);
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "falha ao carregar");
     }
-  }, []);
+  }, [archived]);
 
   useEffect(() => {
     void load();
@@ -158,6 +161,16 @@ export function NoteList({ refreshKey, activeId, failures, onOpen, onCreate }: N
             aria-label="Buscar notas"
           />
         </label>
+        <button
+          type="button"
+          className={archived ? "icon-button icon-button--active" : "icon-button"}
+          onClick={() => setArchived((value) => !value)}
+          aria-pressed={archived}
+          aria-label={archived ? "Ver notas da lista de trabalho" : "Ver notas arquivadas"}
+          title={archived ? "Lista de trabalho" : "Arquivadas"}
+        >
+          <ArchiveIcon size={16} />
+        </button>
         <button type="button" className="icon-button" onClick={() => onCreate(null)} aria-label="Nova nota" title="Nova nota">
           <PlusIcon size={16} />
         </button>
@@ -168,8 +181,17 @@ export function NoteList({ refreshKey, activeId, failures, onOpen, onCreate }: N
       <div className="list-scroll">
         {tree.length === 0 ? (
           <div className="empty-state">
-            <p>Nenhuma nota ainda.</p>
-            <p>Use o "+" para criar a primeira.</p>
+            {archived ? (
+              <>
+                <p>Nenhuma nota arquivada.</p>
+                <p>Arquivar no celular tira a nota da lista, sem apagar.</p>
+              </>
+            ) : (
+              <>
+                <p>Nenhuma nota ainda.</p>
+                <p>Use o "+" para criar a primeira.</p>
+              </>
+            )}
           </div>
         ) : (
           <ul className="tree">{renderNodes(tree, 0)}</ul>

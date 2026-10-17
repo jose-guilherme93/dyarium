@@ -15,6 +15,10 @@ export interface Entry {
   tags?: string[];
   metrics?: Metrics;
   audios?: Audio[];
+  /** Versao de cada campo editavel (so no detalhe da entrada). */
+  versions?: EntryVersions;
+  /** Nota arquivada: sai da lista de trabalho sem ser apagada. */
+  archived?: boolean;
 }
 
 export interface Audio {
@@ -122,6 +126,12 @@ export interface MoodPoint {
   date: string;
   sentiment: number;
   entries: number;
+}
+
+export interface EntryVersions {
+  title?: string;
+  recorded_at?: string;
+  body?: string;
 }
 
 export interface Note {

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Block, PartialBlock } from "@blocknote/core";
-import { api } from "../api";
-import { NotesEditor, mediaRefs, type MediaRef, type NotesEditorHandle } from "../editor/NotesEditor";
+import type { PartialBlock } from "@blocknote/core";
+import { api, isConflict, type ConflictField } from "../api";
+import { AudioTrack } from "./AudioTrack";
+import { NotesEditor, type NotesEditorHandle } from "../editor/NotesEditor";
 import { markdownToNoteBlocks } from "../editor/markdownBlocks";
 import { createAutosave, type Autosave } from "../lib/autosave";
 import { formatDateTime, formatDuration } from "../lib/format";
@@ -9,17 +10,7 @@ import type { Analysis, Attachment, Audio, EntityKind, Entry, Note, Revision } f
 import { Spinner, isBusy, statusLabel } from "./Status";
 import { TagEditor } from "./TagEditor";
 import { useToast } from "./Toasts";
-import { CheckIcon, ChevronIcon, ImageIcon, LinkIcon, MicIcon, MoreIcon, PinIcon, PlusIcon, SparkIcon, TrashIcon } from "./icons";
-
-// serializeDocument detects whether the body actually changed, so a mount event
-// or an unchanged document never triggers a redundant save.
-function serializeDocument(document: unknown): string {
-  try {
-    return JSON.stringify(document ?? null);
-  } catch {
-    return "";
-  }
-}
+import { CheckIcon, ChevronIcon, CodeIcon, ImageIcon, LinkIcon, MicIcon, MoreIcon, PlusIcon, SparkIcon, TrashIcon } from "./icons";
 
 interface NoteEditorProps {
   entryId: string;
@@ -242,7 +233,6 @@ export function NoteEditor({
   const { notify } = useToast();
   const [entry, setEntry] = useState<Entry | null>(null);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
-  const [media, setMedia] = useState<MediaRef[]>([]);
   const [images, setImages] = useState<Attachment[]>([]);
   const [revisions, setRevisions] = useState<Revision[]>([]);
   const [noteId, setNoteId] = useState<string | null>(null);
@@ -253,7 +243,6 @@ export function NoteEditor({
   const [saving, setSaving] = useState<"idle" | "saving" | "saved">("idle");
   const [error, setError] = useState("");
   const [asideOpen, setAsideOpen] = useState(false);
-  const [asidePinned, setAsidePinned] = useState(false);
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [fullWidth, setFullWidth] = useState<boolean>(() => {
     try {
@@ -271,7 +260,16 @@ export function NoteEditor({
   });
   const noteIdRef = useRef<string | null>(null);
   const noteTitleRef = useRef("");
-  const lastQueuedRef = useRef<string>(serializeDocument(undefined));
+  // Versoes lidas do servidor (ver docs/api.md): a gravacao so passa se a
+  // versao do campo continuar igual.
+  const bodyVersionRef = useRef("");
+  const titleVersionRef = useRef("");
+  // Markdown cru: fonte da verdade e a segunda visualizacao da nota.
+  const [rawMarkdown, setRawMarkdown] = useState("");
+  const [rawOpen, setRawOpen] = useState(false);
+  // Conflito em aberto: o servidor recusou e o usuario escolhe.
+  const [conflict, setConflict] = useState<{ fields: ConflictField[]; mine: string } | null>(null);
+  const lastQueuedRef = useRef<string>("");
   const saveBodyRef = useRef<(document: unknown) => Promise<void>>(async () => {});
   const saveTitleRef = useRef<() => Promise<void>>(async () => {});
   const autosaveRef = useRef<Autosave | null>(null);
@@ -312,7 +310,6 @@ export function NoteEditor({
     setAnalysis(analysisRes.status === "fulfilled" ? analysisRes.value : null);
     const images = imagesRes.status === "fulfilled" ? imagesRes.value.attachments ?? [] : [];
     setImages(images);
-    setMedia(mediaRefs(loaded, images));
     const note = notesRes.status === "fulfilled" ? notesRes.value.notes?.[0] : undefined;
     const filled = note ? noteBodyToBlocks(note) : undefined;
     if (note) {
@@ -324,8 +321,14 @@ export function NoteEditor({
       setNoteId(null);
       noteTitleRef.current = "";
     }
+    // A versao do corpo lida agora: e o que o servidor compara na proxima
+    // gravacao, para recusar o que mudou no celular em vez de sobrescrever.
+    bodyVersionRef.current = note?.body_version ?? "";
+    titleVersionRef.current = loaded.versions?.title ?? "";
+    const markdown = note?.content_markdown ?? "";
+    setRawMarkdown(markdown);
     setInitialBody(filled);
-    lastQueuedRef.current = serializeDocument(filled);
+    lastQueuedRef.current = markdown;
     setBodyLoaded(true);
   }, [entryId]);
 
@@ -389,21 +392,29 @@ export function NoteEditor({
   }, [status]);
 
   const saveBody = useCallback(
-    async (document: unknown) => {
+    async (markdown: unknown) => {
+      const text = String(markdown ?? "");
       setSaving("saving");
       try {
         const noteTitle = noteTitleRef.current;
         if (noteIdRef.current) {
-          await api.updateNote(noteIdRef.current, noteTitle, document);
+          const saved = await api.updateNote(noteIdRef.current, text, bodyVersionRef.current);
+          bodyVersionRef.current = saved.versions?.body ?? bodyVersionRef.current;
         } else {
-          const created = await api.createNote(entryId, noteTitle, document);
+          const created = await api.createNote(entryId, noteTitle, text);
           noteIdRef.current = created.id;
           setNoteId(created.id);
+          bodyVersionRef.current = created.body_version ?? "";
         }
         setSaving("saved");
         window.setTimeout(() => setSaving((value) => (value === "saved" ? "idle" : value)), 1500);
       } catch (err) {
         setSaving("idle");
+        if (isConflict(err)) {
+          // O corpo mudou no celular: nada foi gravado. A escolha e do usuario.
+          setConflict({ fields: err.fields, mine: text });
+          return;
+        }
         setError(err instanceof Error ? err.message : "falha ao salvar a nota");
         notify("Nao foi possivel salvar a nota", "error");
       }
@@ -415,14 +426,36 @@ export function NoteEditor({
     saveBodyRef.current = saveBody;
   }, [saveBody]);
 
-  const handleBodyChange = useCallback((blocks: Block[]) => {
-    const serialized = serializeDocument(blocks);
+  /** "Manter o meu": reenvia por cima, sem versao (a decisao ja foi do usuario). */
+  const keepMine = useCallback(async () => {
+    const pending = conflict;
+    setConflict(null);
+    if (!pending) return;
+    if (pending.fields.includes("title")) {
+      await api.patchEntry(entryId, { title: pending.mine }).catch(() => undefined);
+    }
+    if (pending.fields.includes("body")) {
+      await api.updateNote(noteIdRef.current ?? "", pending.mine).catch(() => undefined);
+    }
+    await loadFull();
+    onChanged();
+  }, [conflict, entryId, loadFull, onChanged]);
+
+  /** "Ficar com o de la": recarrega a nota do servidor, descartando o local. */
+  const takeTheirs = useCallback(async () => {
+    setConflict(null);
+    await loadFull();
+    onChanged();
+  }, [loadFull, onChanged]);
+
+  const handleBodyChange = useCallback((markdown: string) => {
+    setRawMarkdown(markdown);
     // Ignora o evento de montagem e edicoes que nao mudaram nada.
-    if (serialized === lastQueuedRef.current) {
+    if (markdown === lastQueuedRef.current) {
       return;
     }
-    lastQueuedRef.current = serialized;
-    autosaveRef.current?.schedule(blocks);
+    lastQueuedRef.current = markdown;
+    autosaveRef.current?.schedule(markdown);
   }, []);
 
   const saveTitle = useCallback(async () => {
@@ -430,10 +463,18 @@ export function NoteEditor({
       return;
     }
     try {
-      await api.patchEntry(entry.id, { title });
+      const saved = await api.patchEntry(entry.id, {
+        title,
+        versions: { title: titleVersionRef.current },
+      });
+      titleVersionRef.current = saved.versions?.title ?? titleVersionRef.current;
       setEntry((current) => (current ? { ...current, title } : current));
       onChanged();
     } catch (err) {
+      if (isConflict(err)) {
+        setConflict({ fields: err.fields, mine: title });
+        return;
+      }
       setError(err instanceof Error ? err.message : "falha ao salvar o titulo");
       notify("Nao foi possivel salvar o titulo", "error");
     }
@@ -641,18 +682,9 @@ export function NoteEditor({
 
   return (
     <div
-      className={`note note-font--${font}${fullWidth ? " note--wide" : ""}${asideOpen ? " note--aside-open" : ""}${
-        asidePinned ? " note--aside-pinned" : ""
-      }`}
+      className={`note note-font--${font}${fullWidth ? " note--wide" : ""}${asideOpen ? " note--aside-open" : ""}`}
     >
-      <div
-        className="note-doc"
-        onClick={() => {
-          if (asideOpen && !asidePinned) {
-            setAsideOpen(false);
-          }
-        }}
-      >
+      <div className="note-doc">
         <div className="note-topbar">
           <span className="save-state muted">
             {saving === "saving" ? "salvando" : saving === "saved" ? "salvo" : ""}
@@ -666,6 +698,16 @@ export function NoteEditor({
               title="Anexar imagem"
             >
               <ImageIcon size={16} />
+            </button>
+            <button
+              type="button"
+              className={rawOpen ? "icon-button icon-button--active" : "icon-button"}
+              onClick={() => setRawOpen((value) => !value)}
+              aria-pressed={rawOpen}
+              aria-label={rawOpen ? "Ver nota formatada" : "Ver markdown"}
+              title={rawOpen ? "Ver nota formatada" : "Ver markdown"}
+            >
+              <CodeIcon size={16} />
             </button>
             <button
               type="button"
@@ -792,39 +834,80 @@ export function NoteEditor({
         {failureReason && <div className="banner banner--error">Falha: {failureReason}</div>}
         {error && <p className="error">{error}</p>}
 
+        {/* A pilha de audios fica no topo da nota, fora do corpo: o corpo e
+            texto (markdown) e nao carrega mais player. */}
+        {audios.length > 0 ? (
+          <div className="audio-stack">
+            {audios.map((audio) => (
+              <AudioTrack key={audio.id} audio={audio} />
+            ))}
+          </div>
+        ) : null}
+
         <div className="note-body">
-          {bodyLoaded && (
-            <NotesEditor
-              ref={notesRef}
-              entryId={entry.id}
-              initialContent={initialBody}
-              media={media}
-              audios={audioMap}
-              onChange={handleBodyChange}
-              onMediaAdded={() => {
-                void loadLight();
-                onChanged();
-              }}
-              onOpenEntry={onOpenEntry}
-            />
-          )}
+          {bodyLoaded &&
+            (rawOpen ? (
+              <div className="note-raw">
+                <p className="note-raw-hint">
+                  Markdown da nota: e o mesmo texto que o app le. O que for alterado aqui substitui o corpo.
+                </p>
+                <textarea
+                  className="note-raw-area"
+                  value={rawMarkdown}
+                  spellCheck={false}
+                  onChange={(event) => handleBodyChange(event.target.value)}
+                  aria-label="Markdown da nota"
+                />
+              </div>
+            ) : (
+              <NotesEditor
+                ref={notesRef}
+                entryId={entry.id}
+                initialContent={initialBody}
+                audios={audioMap}
+                onChange={handleBodyChange}
+                onMediaAdded={() => {
+                  void loadLight();
+                  onChanged();
+                }}
+                onOpenEntry={onOpenEntry}
+              />
+            ))}
         </div>
       </div>
+
+      {conflict ? (
+        <div className="conflict-backdrop" role="dialog" aria-modal="true" aria-label="Nota mudou no celular">
+          <div className="conflict-card">
+            <h3>A nota mudou no celular</h3>
+            <p>
+              {conflict.fields.includes("body")
+                ? "O texto desta nota mudou no celular depois que voce abriu aqui."
+                : "O titulo desta nota mudou no celular depois que voce abriu aqui."}
+            </p>
+            <p className="conflict-hint">O que voce digitou aqui nao foi enviado. O que decide?</p>
+            <div className="conflict-actions">
+              <button type="button" className="button" onClick={() => void keepMine()}>
+                <span>Manter o meu</span>
+                <small>Substitui o que esta no celular</small>
+              </button>
+              <button type="button" className="button" onClick={() => void takeTheirs()}>
+                <span>Ficar com o de la</span>
+                <small>Troca pelo que esta no celular</small>
+              </button>
+              <button type="button" className="button button--ghost" onClick={() => setConflict(null)}>
+                Decidir depois
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {asideOpen && (
         <aside className="note-aside" aria-label="Propriedades e insights">
           <div className="aside-actions">
             <strong className="aside-title">Propriedades</strong>
             <div className="aside-actions-buttons">
-              <button
-                type="button"
-                className={asidePinned ? "icon-button icon-button--active" : "icon-button"}
-                onClick={() => setAsidePinned((value) => !value)}
-                aria-label={asidePinned ? "Desafixar propriedades" : "Fixar propriedades"}
-                aria-pressed={asidePinned}
-              >
-                <PinIcon size={15} />
-              </button>
               <button
                 type="button"
                 className="icon-button"
