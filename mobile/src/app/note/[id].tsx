@@ -23,6 +23,7 @@ import { ConflictDialog } from '@/components/ConflictDialog';
 import { FastModal } from '@/components/FastModal';
 import { NoteMenu, type NoteMenuAnchor, type NoteProperty } from '@/components/NoteMenu';
 import { DEFAULT_MEASURE, RichEditor, type RichEditorHandle } from '@/components/RichEditor';
+import { caretScrollTarget, keyboardOverlap } from '@/core/keyboard';
 import { Screen } from '@/components/Screen';
 import { STATUS_META } from '@/components/StatusChip';
 import { SyncedTranscript } from '@/components/SyncedTranscript';
@@ -282,12 +283,16 @@ export default function NoteScreen() {
     const now = Date.now();
     if (!force && now - caretScrollAtRef.current < 250) return;
     const { viewport, bottomInset } = metricsRef.current;
-    const bottom = editorTopRef.current + caret;
-    const limit = viewport - bottomInset;
-    if (bottom > scrollYRef.current + limit) {
-      caretScrollAtRef.current = now;
-      scrollRef.current?.scrollTo({ y: Math.max(0, bottom - limit), animated: true });
-    }
+    const target = caretScrollTarget({
+      caret,
+      editorTop: editorTopRef.current,
+      scrollY: scrollYRef.current,
+      viewport,
+      bottomInset,
+    });
+    if (target === null) return;
+    caretScrollAtRef.current = now;
+    scrollRef.current?.scrollTo({ y: target, animated: true });
   }, []);
 
   const handleCaret = useCallback(
@@ -302,8 +307,6 @@ export default function NoteScreen() {
     const show = Keyboard.addListener('keyboardDidShow', (event) => {
       setKeyboardHeight(event.endCoordinates?.height ?? 0);
       setEditing(true);
-      // Depois que a janela encolher, revela o cursor que estava por baixo.
-      setTimeout(() => scrollCaretIntoView(true), 60);
     });
     const hide = Keyboard.addListener('keyboardDidHide', () => {
       setKeyboardHeight(0);
@@ -313,10 +316,20 @@ export default function NoteScreen() {
       show.remove();
       hide.remove();
     };
-  }, [scrollCaretIntoView]);
+  }, []);
 
-  // Levanta a barra so pela parte do teclado que a janela nao absorveu.
-  const toolbarLift = Math.max(0, keyboardHeight - Math.max(0, baseHeight - windowHeight));
+  // Parte da altura do teclado que a janela nao absorveu (edge-to-edge). A barra
+  // de acoes e o fim da nota precisam reservar esse espaco; sem isso o cursor
+  // fica embaixo do teclado e nao da para ver o que se escreve.
+  const keyboardLift = keyboardOverlap(keyboardHeight, baseHeight, windowHeight);
+  const toolbarLift = keyboardLift;
+
+  // Depois que o teclado abre e o padding da nota e aplicado, revela o cursor.
+  useEffect(() => {
+    if (!editing) return undefined;
+    const timer = setTimeout(() => scrollCaretIntoView(true), 120);
+    return () => clearTimeout(timer);
+  }, [editing, keyboardHeight, scrollCaretIntoView]);
 
   // Handlers estaveis: o editor (memoizado) nao pode re-renderizar a cada tecla.
   const handleTitleChange = useCallback((value: string) => {
@@ -704,7 +717,13 @@ export default function NoteScreen() {
       <ScrollView
         ref={scrollRef}
         style={styles.scroll}
-        contentContainerStyle={[styles.content, editing ? styles.contentEditing : null]}
+        contentContainerStyle={[
+          styles.content,
+          editing ? styles.contentEditing : null,
+          // Reserva a parte do teclado que a janela nao absorveu, para a ultima
+          // linha conseguir subir acima dele.
+          editing ? { paddingBottom: 96 + keyboardLift } : null,
+        ]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
         scrollEventThrottle={16}
