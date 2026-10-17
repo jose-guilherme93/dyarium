@@ -541,27 +541,47 @@ export async function saveCachedAnalyses(items: CachedAnalysis[]): Promise<void>
   });
 }
 
+interface CachedAnalysisRow {
+  entry_id: string;
+  title: string;
+  recorded_at: string;
+  payload: string;
+}
+
+function toCachedAnalysis(row: CachedAnalysisRow): CachedAnalysis | null {
+  try {
+    return {
+      entryId: row.entry_id,
+      title: row.title,
+      recordedAt: row.recorded_at,
+      analysis: JSON.parse(row.payload) as ServerAnalysis,
+    };
+  } catch {
+    // Payload invalido (versao antiga/corrompido): ignora a linha.
+    return null;
+  }
+}
+
 /** Analises guardadas no aparelho, da nota mais recente para a mais antiga. */
 export async function listCachedAnalyses(): Promise<CachedAnalysis[]> {
   const db = await getDb();
-  const rows = await db.getAllAsync<{
-    entry_id: string;
-    title: string;
-    recorded_at: string;
-    payload: string;
-  }>('SELECT entry_id, title, recorded_at, payload FROM analyses ORDER BY recorded_at DESC');
+  const rows = await db.getAllAsync<CachedAnalysisRow>(
+    'SELECT entry_id, title, recorded_at, payload FROM analyses ORDER BY recorded_at DESC',
+  );
   const out: CachedAnalysis[] = [];
   for (const row of rows) {
-    try {
-      out.push({
-        entryId: row.entry_id,
-        title: row.title,
-        recordedAt: row.recorded_at,
-        analysis: JSON.parse(row.payload) as ServerAnalysis,
-      });
-    } catch {
-      // Payload invalido (versao antiga/corrompido): ignora a linha.
-    }
+    const item = toCachedAnalysis(row);
+    if (item) out.push(item);
   }
   return out;
+}
+
+/** Analise guardada de uma nota, quando o servidor ja a produziu. */
+export async function getCachedAnalysis(entryId: string): Promise<CachedAnalysis | null> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<CachedAnalysisRow>(
+    'SELECT entry_id, title, recorded_at, payload FROM analyses WHERE entry_id = ?',
+    [entryId],
+  );
+  return row ? toCachedAnalysis(row) : null;
 }

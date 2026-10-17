@@ -1,8 +1,17 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 
 import { FastModal } from '@/components/FastModal';
-import { titleFontSize } from '@/core/format';
+import type { NoteAnalysisView } from '@/core/analysis';
+import { formatDuration, titleFontSize } from '@/core/format';
 import {
   clampFontSize,
   type NoteFontFamily,
@@ -25,6 +34,12 @@ interface NoteMenuProps {
   visible: boolean;
   title: string;
   properties: NoteProperty[];
+  /**
+   * Analise ja produzida pelo servidor. `undefined` esconde a secao (nota sem
+   * entrada no servidor); `null` mostra que ainda nao ha analise.
+   */
+  analysis?: NoteAnalysisView | null;
+  analysisLoading?: boolean;
   /** Posicao do popover (abaixo do botao de configuracoes). */
   anchor?: NoteMenuAnchor | null;
   typography: NoteTypography;
@@ -76,6 +91,95 @@ function Segment<T extends string>({
 }
 
 /**
+ * Conteudo completo da analise do servidor: o que o servidor ja extraiu da
+ * nota, sem cortar campos. Fica no topo do menu para nao sumir na rolagem.
+ */
+function AnalysisContent({ analysis }: { analysis: NoteAnalysisView }) {
+  return (
+    <View style={styles.analysis}>
+      {analysis.sentimentLabel ? (
+        <View style={styles.analysisSentiment}>
+          <Text style={styles.analysisSentimentLabel}>{analysis.sentimentLabel}</Text>
+          {analysis.sentiment !== null ? (
+            <Text style={styles.analysisScore}>{analysis.sentiment.toFixed(2)}</Text>
+          ) : null}
+        </View>
+      ) : null}
+
+      {analysis.summary ? <Text style={styles.analysisSummary}>{analysis.summary}</Text> : null}
+
+      {analysis.emotions.length > 0 ? (
+        <View style={styles.analysisBlock}>
+          <Text style={styles.analysisBlockTitle}>Emoções</Text>
+          <View style={styles.chips}>
+            {analysis.emotions.map((emotion) => (
+              <Text key={emotion.name} style={styles.chip}>
+                {emotion.name} {emotion.intensity.toFixed(2)}
+              </Text>
+            ))}
+          </View>
+        </View>
+      ) : null}
+
+      {analysis.themes.length > 0 ? (
+        <View style={styles.analysisBlock}>
+          <Text style={styles.analysisBlockTitle}>Temas</Text>
+          <View style={styles.chips}>
+            {analysis.themes.map((theme, index) => (
+              <Text key={`${theme}-${index}`} style={styles.chip}>
+                {theme}
+              </Text>
+            ))}
+          </View>
+        </View>
+      ) : null}
+
+      {analysis.people.length > 0 ? (
+        <Text style={styles.analysisMeta}>Pessoas: {analysis.people.join(', ')}</Text>
+      ) : null}
+
+      {analysis.places.length > 0 ? (
+        <Text style={styles.analysisMeta}>Lugares: {analysis.places.join(', ')}</Text>
+      ) : null}
+
+      {analysis.moments.length > 0 ? (
+        <View style={styles.analysisBlock}>
+          <Text style={styles.analysisBlockTitle}>Momentos</Text>
+          {analysis.moments.map((moment, index) => (
+            <Text key={`${moment.startMs}-${index}`} style={styles.analysisMoment}>
+              <Text style={styles.analysisTime}>{formatDuration(moment.startMs)}</Text>{' '}
+              {moment.text}
+            </Text>
+          ))}
+        </View>
+      ) : null}
+
+      {analysis.questions.length > 0 ? (
+        <View style={styles.analysisBlock}>
+          <Text style={styles.analysisBlockTitle}>Perguntas</Text>
+          {analysis.questions.map((question, index) => (
+            <Text key={`${question}-${index}`} style={styles.analysisMoment}>
+              - {question}
+            </Text>
+          ))}
+        </View>
+      ) : null}
+
+      {analysis.decisions.length > 0 ? (
+        <View style={styles.analysisBlock}>
+          <Text style={styles.analysisBlockTitle}>Decisões</Text>
+          {analysis.decisions.map((decision, index) => (
+            <Text key={`${decision}-${index}`} style={styles.analysisMoment}>
+              - {decision}
+            </Text>
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+/**
  * Configuracoes da nota: um popover que abre logo abaixo do botao (tres
  * pontinhos), sem subir de baixo. Reune compartilhar, tipografia do editor e a
  * ficha de propriedades.
@@ -84,6 +188,8 @@ export function NoteMenu({
   visible,
   title,
   properties,
+  analysis,
+  analysisLoading = false,
   anchor,
   typography,
   onChangeTypography,
@@ -91,14 +197,16 @@ export function NoteMenu({
   onShare,
 }: NoteMenuProps) {
   const shown = title.trim() || 'Nota sem título';
+  const { height } = useWindowDimensions();
   const placement = anchor
     ? { top: anchor.top, right: anchor.right }
     : { top: 80, right: spacing.lg };
+  const maxHeight = Math.min(600, Math.max(320, height - 120));
 
   return (
     <FastModal visible={visible} onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Fechar menu">
-        <Pressable style={[styles.card, placement]} onPress={() => undefined}>
+        <Pressable style={[styles.card, placement, { maxHeight }]} onPress={() => undefined}>
           <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
             <Text style={[styles.title, { fontSize: titleFontSize(shown, 20, 14) }]} numberOfLines={2}>
               {shown}
@@ -108,6 +216,22 @@ export function NoteMenu({
               <Ionicons name="share-outline" size={19} color={colors.text} />
               <Text style={styles.actionText}>Compartilhar nota</Text>
             </Pressable>
+
+            {analysis !== undefined || analysisLoading ? (
+              <>
+                <Text style={styles.sectionLabel}>Análise</Text>
+                {analysisLoading && !analysis ? (
+                  <View style={styles.analysisLoading}>
+                    <ActivityIndicator size="small" color={colors.textSecondary} />
+                    <Text style={styles.muted}>Buscando análise...</Text>
+                  </View>
+                ) : analysis ? (
+                  <AnalysisContent analysis={analysis} />
+                ) : (
+                  <Text style={styles.muted}>Sem análise do servidor para esta nota.</Text>
+                )}
+              </>
+            ) : null}
 
             <Text style={styles.sectionLabel}>Fonte</Text>
             <Segment
@@ -153,6 +277,7 @@ export function NoteMenu({
                 </View>
               ))}
             </View>
+
           </ScrollView>
         </Pressable>
       </Pressable>
@@ -240,4 +365,39 @@ const styles = StyleSheet.create({
   },
   propLabel: { color: colors.textSecondary, fontSize: fontSize.sm },
   propValue: { color: colors.text, fontSize: fontSize.sm, flexShrink: 1, textAlign: 'right' },
+  muted: { color: colors.textSecondary, fontSize: fontSize.sm, lineHeight: 19 },
+  analysisLoading: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  analysis: { gap: spacing.sm },
+  analysisSentiment: { flexDirection: 'row', alignItems: 'baseline', gap: spacing.sm },
+  analysisSentimentLabel: { color: colors.accentStrong, fontSize: fontSize.sm, fontWeight: '700' },
+  analysisScore: {
+    color: colors.textTertiary,
+    fontSize: fontSize.xs,
+    fontVariant: ['tabular-nums'],
+  },
+  analysisSummary: { color: colors.text, fontSize: fontSize.sm, lineHeight: 20 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
+  chip: {
+    color: colors.textSecondary,
+    fontSize: fontSize.xs,
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 3,
+    overflow: 'hidden',
+  },
+  analysisMeta: { color: colors.textSecondary, fontSize: fontSize.xs, lineHeight: 18 },
+  analysisBlock: { gap: 3 },
+  analysisBlockTitle: {
+    color: colors.textTertiary,
+    fontSize: fontSize.xs,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  analysisMoment: { color: colors.textSecondary, fontSize: fontSize.xs, lineHeight: 18 },
+  analysisTime: {
+    color: colors.textTertiary,
+    fontVariant: ['tabular-nums'],
+  },
 });

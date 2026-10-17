@@ -27,6 +27,7 @@ import { caretScrollTarget, keyboardOverlap } from '@/core/keyboard';
 import { Screen } from '@/components/Screen';
 import { STATUS_META } from '@/components/StatusChip';
 import { SyncedTranscript } from '@/components/SyncedTranscript';
+import { toNoteAnalysis } from '@/core/analysis';
 import {
   formatBytes,
   formatDateTime,
@@ -51,8 +52,9 @@ import {
   saveLocalImage,
   uploadLocalImage,
 } from '@/services/attachments';
+import { fetchNoteAnalysis } from '@/services/analysis';
 import { releaseAudioFocus } from '@/services/audioFocus';
-import { getRecording, upsertRecording } from '@/services/db';
+import { getCachedAnalysis, getRecording, upsertRecording, type CachedAnalysis } from '@/services/db';
 import { directoryBytes, sessionDirectory, sessionDirUri } from '@/services/files';
 import { pickImage } from '@/services/image';
 import { maybeTranscribeLocally } from '@/services/localTranscription';
@@ -246,6 +248,16 @@ export default function NoteScreen() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<NoteMenuAnchor | null>(null);
   const [menuBytes, setMenuBytes] = useState(0);
+  // Analise ja feita no servidor: o cache aparece na hora e a rede so atualiza.
+  const [cachedAnalysis, setCachedAnalysis] = useState<CachedAnalysis | null>(null);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const analysisView = useMemo(
+    () =>
+      cachedAnalysis && cachedAnalysis.entryId === note?.entryId
+        ? toNoteAnalysis(cachedAnalysis.analysis)
+        : null,
+    [cachedAnalysis, note?.entryId],
+  );
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkValue, setLinkValue] = useState('');
   const [viewerSrc, setViewerSrc] = useState<string | null>(null);
@@ -532,10 +544,55 @@ export default function NoteScreen() {
     };
   }, [noteId]);
 
+  // Analise do servidor: le o cache assim que a nota abre (funciona offline) e
+  // busca a versao atual no servidor quando o menu abre, sem gerar analise.
+  const analysisEntryId = note?.entryId;
+  useEffect(() => {
+    if (!analysisEntryId) return;
+    let alive = true;
+    void getCachedAnalysis(analysisEntryId)
+      .then((item) => {
+        if (alive) setCachedAnalysis(item);
+      })
+      .catch(() => {
+        // Cache local e best-effort: sem ele a ficha fica sem analise.
+      });
+    return () => {
+      alive = false;
+    };
+  }, [analysisEntryId]);
+
+  const refreshAnalysis = useCallback(async () => {
+    const target = note;
+    if (!target?.entryId) return;
+    const entryTitle = title.trim() || target.title;
+    setAnalysisLoading(true);
+    try {
+      const analysis = await fetchNoteAnalysis({
+        entryId: target.entryId,
+        title: entryTitle,
+        recordedAt: target.recordedAt,
+      });
+      if (analysis) {
+        setCachedAnalysis({
+          entryId: target.entryId,
+          title: entryTitle,
+          recordedAt: target.recordedAt,
+          analysis,
+        });
+      }
+    } catch {
+      // Sem rede o cache que ja estiver carregado continua valendo.
+    } finally {
+      setAnalysisLoading(false);
+    }
+  }, [note, title]);
+
   // Ficha da nota: soma os arquivos locais ao abrir o menu e mede o botao para
   // ancorar o popover logo abaixo dele.
   const openMenu = useCallback(() => {
     if (noteId) setMenuBytes(directoryBytes(sessionDirectory(noteId)));
+    void refreshAnalysis();
     const button = configButtonRef.current;
     if (!button) {
       setMenuOpen(true);
@@ -545,7 +602,7 @@ export default function NoteScreen() {
       setMenuAnchor({ top: y + height + 6, right: Math.max(spacing.lg, windowWidth - (x + width)) });
       setMenuOpen(true);
     });
-  }, [noteId, windowWidth]);
+  }, [noteId, refreshAnalysis, windowWidth]);
 
   const handleRecord = useCallback(() => {
     if (!noteId) return;
@@ -907,6 +964,8 @@ export default function NoteScreen() {
         visible={menuOpen}
         title={title}
         properties={properties}
+        analysis={note.entryId ? analysisView : undefined}
+        analysisLoading={analysisLoading}
         anchor={menuAnchor}
         typography={typography}
         onChangeTypography={(next) => void setTypography(next)}
