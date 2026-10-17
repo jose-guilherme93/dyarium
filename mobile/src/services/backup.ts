@@ -293,9 +293,13 @@ export async function runRestore(
       await staged.move(target);
     }
     stage.delete();
-    await upsertRecording(
-      toRestoredRecording(recording, sessionDirUri(recording.id), entry.audioFile),
-    );
+    // `updatedAt` = agora: a restauracao e uma mudanca local. Marca tambem que
+    // esta nota e mais nova que qualquer exclusao antiga do servidor (uma nota
+    // apagada e trazida de volta nao pode ser apagada de novo por causa disso).
+    await upsertRecording({
+      ...toRestoredRecording(recording, sessionDirUri(recording.id), entry.audioFile),
+      updatedAt: new Date().toISOString(),
+    });
     files += entry.files.length;
     bytes += entry.files.reduce((sum, file) => sum + file.size, 0);
     onProgress?.(i + 1, total);

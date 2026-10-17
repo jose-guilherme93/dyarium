@@ -29,6 +29,33 @@ export function isBlankServerEntry(entry: ServerEntry, note?: ServerNote): boole
   );
 }
 
+/**
+ * Notas locais que o servidor confirmou como apagadas (estao na lixeira dele).
+ *
+ * Duas travas contra perder dado:
+ * - A ausencia na lista de entradas NAO basta: se o servidor for reinstalado, ou
+ *   o banco voltar de um backup antigo, tudo pareceria apagado e o app limparia o
+ *   aparelho inteiro. So apagamos o que o servidor diz que apagou.
+ * - A exclusao precisa ser mais nova que a ultima mudanca local. Uma nota
+ *   restaurada de um backup (`updatedAt` = agora) sobrevive a uma exclusao
+ *   anterior a ela, mesmo que o app esteja offline e ainda nao tenha reafirmado a
+ *   nota no servidor.
+ */
+export function recordingsDeletedOnServer(
+  local: Recording[],
+  deletedAt: Map<string, string>,
+): Recording[] {
+  return local.filter((recording) => {
+    if (recording.status !== 'completed' || !recording.entryId) return false;
+    const deleted = deletedAt.get(recording.entryId);
+    if (!deleted) return false;
+    const deletedTime = Date.parse(deleted);
+    const localTime = Date.parse(recording.updatedAt);
+    if (Number.isNaN(deletedTime) || Number.isNaN(localTime)) return false;
+    return deletedTime > localTime;
+  });
+}
+
 export function entryToRecording(entry: ServerEntry, note?: ServerNote): Recording {
   return {
     id: entry.id,

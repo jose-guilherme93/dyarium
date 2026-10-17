@@ -173,7 +173,9 @@ func (s *Store) EntryIsDeleted(ctx context.Context, id string) (bool, error) {
 // transcripts, analysis, notes and links. Links that point to the entry are
 // removed explicitly, because the foreign key would only null the target. The
 // encrypted objects must be removed from disk separately, before calling this.
-// It is idempotent: purging an entry that no longer exists succeeds.
+// It only purges entries still marked as deleted, which closes the window with a
+// restore that arrives while the cleanup job is running. It is idempotent:
+// purging an entry that no longer exists succeeds.
 func (s *Store) PurgeEntry(ctx context.Context, id string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -183,7 +185,7 @@ func (s *Store) PurgeEntry(ctx context.Context, id string) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM links WHERE from_entry_id = ? OR to_entry_id = ?`, id, id); err != nil {
 		return fmt.Errorf("store: purge entry links: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM entries WHERE id = ?`, id); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM entries WHERE id = ? AND deleted_at IS NOT NULL`, id); err != nil {
 		return fmt.Errorf("store: purge entry: %w", err)
 	}
 	return tx.Commit()
@@ -244,6 +246,40 @@ func (s *Store) ListEntriesFiltered(ctx context.Context, limit int, person, plac
 		}
 		e.CreatedAt = parseTS(createdAt)
 		e.UpdatedAt = parseTS(updatedAt)
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// ListDeletedEntries returns soft-deleted entries, most recently deleted first.
+// They are the "tombstones" the app uses to reconcile: a local note is only
+// removed when the server confirms the deletion (never because the entry is
+// merely absent, which would wipe the phone on a fresh or reset server).
+func (s *Store) ListDeletedEntries(ctx context.Context, limit int) ([]Entry, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, COALESCE(title,''), created_at, updated_at, deleted_at
+		FROM entries WHERE deleted_at IS NOT NULL
+		ORDER BY deleted_at DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("store: list deleted entries: %w", err)
+	}
+	defer rows.Close()
+	var out []Entry
+	for rows.Next() {
+		var e Entry
+		var createdAt, updatedAt, deletedAt string
+		if err := rows.Scan(&e.ID, &e.Title, &createdAt, &updatedAt, &deletedAt); err != nil {
+			return nil, fmt.Errorf("store: scan deleted entry: %w", err)
+		}
+		e.Status = EntryDeleted
+		e.CreatedAt = parseTS(createdAt)
+		e.UpdatedAt = parseTS(updatedAt)
+		if t := parseTS(deletedAt); !t.IsZero() {
+			e.DeletedAt = &t
+		}
 		out = append(out, e)
 	}
 	return out, rows.Err()

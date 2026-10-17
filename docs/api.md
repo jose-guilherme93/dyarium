@@ -99,12 +99,23 @@ Resposta 201:
 ### GET /api/v1/entries
 Lista entradas. Filtros: `person`, `place` e `theme` (entradas que mencionam a entidade,
 por nome, case-insensitive). Retorna resumos com id, titulo, status, duracao e data.
+Com `deleted=1` lista a **lixeira**: as entradas apagadas (remocao logica) com
+`deleted_at`, da mais recente para a mais antiga.
+- O app reconcilia exclusoes por esta lista, e nao por ausencia: uma entrada que
+  simplesmente sumiu (servidor novo, banco restaurado) nunca apaga a nota local.
+- Entradas apagadas aparecem em `entries` com `status: "deleted"` e o campo
+  `deleted_at` preenchido.
 
 ### POST /api/v1/entries
-Cria uma nota escrita (sem audio). Corpo `{ "title": "..." }`. A entrada nasce com
-`source: "text"` e `status: "ready"`; o corpo e gravado como documento de nota (BlockNote),
+Cria uma nota escrita (sem audio). Corpo `{ "title": "...", "id": "note_...", "created_at": "..." }`.
+A entrada nasce com `source: "text"` e `status: "ready"`; o corpo e gravado como documento de nota (BlockNote),
 igual a parte escrita de uma nota de audio. Analises usam a transcricao quando existe e,
 caso contrario, o texto escrito da nota.
+- `id` e opcional (o cliente pode informar o id da nota criada offline) e o caminho e
+  idempotente: se a id ja existir **viva**, devolve 200 com a entrada existente; se existir
+  **na lixeira**, desfaz a remocao e devolve 200 (trazer a nota de volta sem duplicar); senao cria
+  com 201.
+- `created_at` (RFC 3339) posiciona a nota na linha do tempo quando ela nasceu offline.
 
 ### GET /api/v1/entries/{id}
 Retorna a entrada completa: metadados, `audios` (cada audio com a sua transcricao),
@@ -116,7 +127,21 @@ transcrito, `transcript` (modelo, idioma, texto e `segments`).
 Atualiza campos editaveis (titulo, data do evento, tags por referencia). Nao altera o audio.
 
 ### DELETE /api/v1/entries/{id}
-Remocao logica da entrada; o job de limpeza remove os objetos cifrados depois.
+Remocao logica da entrada. A entrada fica na lixeira por uma janela de retencao
+(7 dias por padrao, `DIARY_DELETED_RETENTION_HOURS`) e so depois o job de limpeza
+remove os objetos cifrados e a linha. E o que permite desfazer a remocao sem
+perder a midia.
+
+### POST /api/v1/entries/{id}/restore
+Desfaz a remocao logica: a entrada volta a aparecer nas listagens e em
+`GET /api/v1/entries/{id}`, com audio, transcricao, notas e anexos intactos.
+Resposta 200 com a entrada. Idempotente (restaurar uma entrada ja viva tambem
+responde 200).
+- 404: a entrada nao existe no servidor (ainda nao subiu, ou a limpeza ja a
+  removeu de vez). Nesse caso o cliente recria a entrada com o mesmo id via
+  `POST /api/v1/entries`.
+- Uso no app: ao restaurar um backup local, antes de qualquer sincronizacao — senao
+  o proximo pull veria a nota na lixeira e a apagaria de novo.
 
 ### POST /api/v1/entries/{id}/retranscribe
 Enfileira um novo job de transcricao (por exemplo, apos mudar o modelo ou o corte de

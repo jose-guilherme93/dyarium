@@ -135,6 +135,8 @@ export interface ServerEntry {
   recorded_at: string | null;
   created_at: string;
   updated_at: string;
+  /** Presente apenas na listagem da lixeira (`?deleted=1`). */
+  deleted_at?: string | null;
 }
 
 export interface ServerAnalysis {
@@ -398,6 +400,31 @@ export class DyariumApi {
     if (!res.ok) throw await this.parseError(res);
     const body = JSON.parse(await res.text()) as { entries?: ServerEntry[] };
     return body.entries ?? [];
+  }
+
+  /**
+   * Entradas que o servidor confirma como apagadas (a lixeira). O app so remove
+   * uma nota local por causa desta lista, nunca por ausencia: um servidor novo
+   * (ou restaurado de um backup antigo) nao apaga o aparelho inteiro.
+   */
+  async listDeletedEntries(limit = 100): Promise<ServerEntry[]> {
+    const res = await this.fetchImpl(this.url(`/api/v1/entries?deleted=1&limit=${limit}`), {
+      method: 'GET',
+      headers: this.authHeaders(),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    const body = JSON.parse(await res.text()) as { entries?: ServerEntry[] };
+    return body.entries ?? [];
+  }
+
+  /** Desfaz a exclusao logica de uma entrada (traz de volta da lixeira). */
+  async restoreEntry(id: string): Promise<ServerEntry> {
+    const res = await this.fetchImpl(this.url(`/api/v1/entries/${id}/restore`), {
+      method: 'POST',
+      headers: this.authHeaders(),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    return JSON.parse(await res.text());
   }
 
   /** Apaga a entrada no servidor (soft delete). */

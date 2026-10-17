@@ -97,6 +97,14 @@ texto, guarda local, enfileira e envia para o servidor self-hosted.
   por ultimo (um backup interrompido nao invalida o anterior). "Restaurar backup" **confere o
   md5 de cada arquivo** antes de entrar na nota e aborta se algo nao bate; notas com o mesmo id
   sao atualizadas e as demais ficam. Nao depende do servidor nem de nuvem (sem cifra).
+  Ao restaurar, cada nota volta **tambem no servidor**, antes de qualquer sincronizacao: o app
+  desfaz a exclusao logica da entrada (`POST /entries/{id}/restore`) e, se o servidor ja nao a
+  conhece mais, recria com o mesmo id e reenvia titulo/corpo. E o que impede a nota restaurada
+  de ser apagada de novo pelo servidor.
+- **Sincronizacao de exclusoes por lixeira**: o app so apaga uma nota local quando o servidor
+  **confirma** que ela foi apagada (`GET /entries?deleted=1`) e a exclusao e mais nova que a
+  ultima mudanca local. Uma entrada que simplesmente sumiu (servidor novo, banco restaurado)
+  nunca apaga o aparelho.
 - A biblioteca organiza as notas **por ano** (mais novo no topo), pela data do evento, para
   que notas antigas importadas apareçam no ano a que pertencem.
 - **Notas somente texto** entram na mesma fila e sao enviadas como conteudo textual (o texto

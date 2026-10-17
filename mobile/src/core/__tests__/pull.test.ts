@@ -1,5 +1,23 @@
-import { entryToRecording, isBlankServerEntry } from '../pull';
+import { entryToRecording, isBlankServerEntry, recordingsDeletedOnServer } from '../pull';
 import type { ServerEntry, ServerNote } from '../api';
+import type { Recording } from '../types';
+
+function recording(overrides: Partial<Recording> = {}): Recording {
+  return {
+    id: 'r1',
+    title: 'Nota',
+    recordedAt: '2026-10-11T14:00:00Z',
+    dir: '',
+    segmentCount: 0,
+    status: 'completed',
+    offset: 0,
+    attempts: 0,
+    entryId: 'note_01J8Z',
+    createdAt: '2026-10-11T14:00:00Z',
+    updatedAt: '2026-10-11T14:00:00Z',
+    ...overrides,
+  };
+}
 
 const ENTRY: ServerEntry = {
   id: 'note_01J8Z',
@@ -69,5 +87,51 @@ describe('isBlankServerEntry', () => {
       updated_at: blank.updated_at,
     };
     expect(isBlankServerEntry(blank, note)).toBe(false);
+  });
+});
+
+describe('recordingsDeletedOnServer', () => {
+  const deletedAfter = new Map([['en_b', '2026-10-12T10:00:00Z']]);
+
+  it('devolve so as notas que o servidor confirma como apagadas', () => {
+    const local = [
+      recording({ id: 'a', entryId: 'en_a' }),
+      recording({ id: 'b', entryId: 'en_b' }),
+      recording({ id: 'c', entryId: 'en_c' }),
+    ];
+    expect(recordingsDeletedOnServer(local, deletedAfter).map((r) => r.id)).toEqual(['b']);
+  });
+
+  it('nao apaga por ausencia: a lista da lixeira manda', () => {
+    const local = [recording({ id: 'a', entryId: 'en_a' })];
+    // Servidor novo (ou banco restaurado): nada apagado conhecido, nada removido.
+    expect(recordingsDeletedOnServer(local, new Map())).toEqual([]);
+  });
+
+  it('ignora notas que ainda nao subiram', () => {
+    const local = [
+      recording({ id: 'a', entryId: undefined, status: 'queued' }),
+      recording({ id: 'b', entryId: undefined }),
+    ];
+    expect(recordingsDeletedOnServer(local, deletedAfter)).toEqual([]);
+  });
+
+  it('protege a nota restaurada de um backup de uma exclusao anterior', () => {
+    // Restaurada agora; a exclusao no servidor e de ontem.
+    const restored = recording({
+      id: 'b',
+      entryId: 'en_b',
+      updatedAt: '2026-10-16T12:00:00Z',
+    });
+    expect(recordingsDeletedOnServer([restored], deletedAfter)).toEqual([]);
+  });
+
+  it('aceita a exclusao feita depois da restauracao', () => {
+    const restored = recording({
+      id: 'b',
+      entryId: 'en_b',
+      updatedAt: '2026-10-11T12:00:00Z',
+    });
+    expect(recordingsDeletedOnServer([restored], deletedAfter).map((r) => r.id)).toEqual(['b']);
   });
 });

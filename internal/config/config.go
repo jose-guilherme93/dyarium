@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Config holds all runtime configuration. Values come exclusively from the
@@ -37,6 +38,10 @@ type Config struct {
 	TrimSilence        bool
 	WorkerConcurrency  int
 	JobLeaseSeconds    int
+	// DeletedRetention é por quanto tempo uma entrada apagada (exclusão lógica)
+	// continua recuperável antes de o job de limpeza destruir os objetos. É a
+	// janela em que "restaurar backup" traz a nota de volta sem perder mídia.
+	DeletedRetention   time.Duration
 	LogLevel           string
 	TelegramEnabled    bool
 	TelegramBotToken   string
@@ -78,6 +83,7 @@ func Load() (Config, error) {
 		TrimSilence:        envBool("DIARY_TRIM_SILENCE", false),
 		WorkerConcurrency:  envInt("DIARY_WORKER_CONCURRENCY", 1),
 		JobLeaseSeconds:    envInt("DIARY_JOB_LEASE_SECONDS", 120),
+		DeletedRetention:   time.Duration(envInt("DIARY_DELETED_RETENTION_HOURS", 168)) * time.Hour,
 		LogLevel:           env("DIARY_LOG_LEVEL", "info"),
 		TelegramEnabled:    envBool("DIARY_TELEGRAM_ENABLED", false),
 		TelegramBotToken:   env("DIARY_TELEGRAM_BOT_TOKEN", ""),

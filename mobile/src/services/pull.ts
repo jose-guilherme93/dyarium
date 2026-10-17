@@ -3,14 +3,15 @@
  *
  * - Adiciona entradas que ainda nao existem localmente (casadas por id local e
  *   por entryId), com o corpo da nota convertido em markdown.
- * - Remove do app as notas sincronizadas cuja entrada sumiu do servidor (foi
- *   apagada la).
+ * - Remove do app as notas que o servidor confirma como apagadas (a lixeira dele).
+ *   Uma entrada ausente da lista NAO apaga nada: e o que protege o aparelho de um
+ *   servidor novo, reinstalado ou restaurado.
  *
  * Best-effort e idempotente. Devolve quantas mudancas houve.
  */
 
 import { DyariumApi, type FetchLike } from '@/core/api';
-import { entryToRecording, isBlankServerEntry } from '@/core/pull';
+import { entryToRecording, isBlankServerEntry, recordingsDeletedOnServer } from '@/core/pull';
 
 import { deleteRecordingRow, listRecordings, upsertRecording } from './db';
 import { deleteSessionFiles } from './files';
@@ -26,19 +27,22 @@ export async function pullServerEntries(): Promise<number> {
   if (!config) return 0;
   const api = new DyariumApi(config, doFetch);
   const entries = await api.listEntries(PULL_LIMIT);
-  const serverIds = new Set(entries.map((e) => e.id).filter(Boolean));
   const local = await listRecordings();
 
   let changed = 0;
 
-  // Exclusoes: so quando a lista veio completa (nao truncada) — evita apagar
-  // por engano ao bater o limite.
-  if (entries.length < PULL_LIMIT) {
-    for (const r of local) {
-      if (r.status !== 'completed' || !r.entryId) continue;
-      if (serverIds.has(r.entryId)) continue;
-      deleteSessionFiles(r.id);
-      await deleteRecordingRow(r.id);
+  // Exclusoes: so o que o servidor confirma como apagado, e so quando a lista
+  // veio completa (nao truncada). Se a lixeira nao puder ser lida, nao apagamos
+  // nada: na duvida, o dado fica.
+  const deleted = await api.listDeletedEntries(PULL_LIMIT).catch(() => null);
+  if (deleted && deleted.length < PULL_LIMIT) {
+    const deletedAt = new Map<string, string>();
+    for (const entry of deleted) {
+      if (entry.id) deletedAt.set(entry.id, entry.deleted_at ?? entry.updated_at);
+    }
+    for (const recording of recordingsDeletedOnServer(local, deletedAt)) {
+      deleteSessionFiles(recording.id);
+      await deleteRecordingRow(recording.id);
       changed += 1;
     }
   }

@@ -63,6 +63,31 @@ func (s *Store) SoftDeleteEntry(ctx context.Context, id string) error {
 	return nil
 }
 
+// RestoreEntry undoes a soft delete, so the entry becomes visible again. It is
+// idempotent: restoring an entry that is already live succeeds. It returns
+// ErrNotFound only when the entry does not exist at all (never existed, or was
+// already purged by the cleanup job).
+func (s *Store) RestoreEntry(ctx context.Context, id string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE entries SET deleted_at = NULL, status = ?, updated_at = ? WHERE id = ? AND deleted_at IS NOT NULL`,
+		EntryReady, ts(time.Now()), id)
+	if err != nil {
+		return fmt.Errorf("store: restore entry: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return nil
+	}
+	var one int
+	err = s.db.QueryRowContext(ctx, `SELECT 1 FROM entries WHERE id = ?`, id).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("store: restore entry: %w", err)
+	}
+	return nil
+}
+
 // CreateNote inserts a note.
 func (s *Store) CreateNote(ctx context.Context, n Note) error {
 	_, err := s.db.ExecContext(ctx, `

@@ -59,9 +59,18 @@ type Queue struct {
 // NewQueue builds a Queue over the given database handle.
 func NewQueue(db *sql.DB) *Queue { return &Queue{db: db} }
 
-// Enqueue inserts a job. If a job with the same idempotency key already exists,
-// it is left untouched and its id is returned.
+// Enqueue inserts a job available immediately. If a job with the same
+// idempotency key already exists, it is left untouched and its id is returned.
 func (q *Queue) Enqueue(ctx context.Context, jobType, idempotencyKey string, payload any) (string, error) {
+	return q.EnqueueAfter(ctx, jobType, idempotencyKey, payload, 0)
+}
+
+// EnqueueAfter schedules a job to become available after `delay`. It differs
+// from Enqueue in one point: when a job with the same key already exists, its
+// availability is moved to the new time (the delay is part of the request), so
+// a repeated call postpones the work instead of running it right away. A job
+// that is already running or leased is never touched.
+func (q *Queue) EnqueueAfter(ctx context.Context, jobType, idempotencyKey string, payload any, delay time.Duration) (string, error) {
 	var raw []byte
 	if payload != nil {
 		b, err := json.Marshal(payload)
@@ -70,6 +79,12 @@ func (q *Queue) Enqueue(ctx context.Context, jobType, idempotencyKey string, pay
 		}
 		raw = b
 	}
+	if delay < 0 {
+		delay = 0
+	}
+	now := time.Now().UTC()
+	availableAt := ts(now.Add(delay))
+
 	var existing string
 	var existingStatus string
 	err := q.db.QueryRowContext(ctx,
@@ -78,11 +93,10 @@ func (q *Queue) Enqueue(ctx context.Context, jobType, idempotencyKey string, pay
 		// If the job is not currently running, (re)queue it so a manual trigger
 		// takes effect immediately, even after a failure/backoff.
 		if existingStatus != string(StatusRunning) && existingStatus != string(StatusLeased) {
-			now := ts(time.Now())
 			if _, uerr := q.db.ExecContext(ctx, `
 				UPDATE jobs SET status = ?, attempts = 0, available_at = ?, last_error = '',
 					worker_id = '', lease_expires_at = NULL, updated_at = ?
-				WHERE id = ?`, string(StatusQueued), now, now, existing); uerr != nil {
+				WHERE id = ?`, string(StatusQueued), availableAt, ts(now), existing); uerr != nil {
 				return "", fmt.Errorf("jobs: requeue: %w", uerr)
 			}
 		}
@@ -92,14 +106,13 @@ func (q *Queue) Enqueue(ctx context.Context, jobType, idempotencyKey string, pay
 		return "", fmt.Errorf("jobs: lookup: %w", err)
 	}
 
-	now := time.Now().UTC()
 	jobID := id.New()
 	_, err = q.db.ExecContext(ctx, `
 		INSERT INTO jobs (id, type, idempotency_key, payload, status, attempts, max_attempts,
 			available_at, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`,
 		jobID, jobType, idempotencyKey, raw, string(StatusQueued), 5,
-		ts(now), ts(now), ts(now))
+		availableAt, ts(now), ts(now))
 	if err != nil {
 		return "", fmt.Errorf("jobs: insert: %w", err)
 	}

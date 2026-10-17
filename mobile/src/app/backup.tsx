@@ -15,6 +15,8 @@ import {
   type BackupInfo,
   type BackupSummary,
 } from '@/services/backup';
+import { listRecordings } from '@/services/db';
+import { reassertNotesOnServer, type ReassertResult } from '@/services/reassert';
 import { useLibrary } from '@/state/LibraryContext';
 import { useSettings } from '@/state/SettingsContext';
 import { colors, fontSize, radius, spacing } from '@/theme/tokens';
@@ -46,6 +48,20 @@ function messageFor(error: unknown): string {
     default:
       return 'Não foi possível concluir. Confira se a pasta ainda está acessível.';
   }
+}
+
+/**
+ * Frase do que aconteceu no servidor depois da restauração. Uma falha de rede
+ * aqui nunca apaga nada: a nota fica no aparelho e volta na próxima sincronização.
+ */
+function serverLine(result: ReassertResult): string | null {
+  const { restored, recreated, failed } = result;
+  if (restored === 0 && recreated === 0 && failed === 0) return null;
+  const parts: string[] = [];
+  if (restored > 0) parts.push(`${restored} de volta no servidor`);
+  if (recreated > 0) parts.push(`${recreated} recriada${recreated === 1 ? '' : 's'} no servidor`);
+  if (failed > 0) parts.push(`${failed} aguardando conexão`);
+  return `Sincronização: ${parts.join(', ')}.`;
 }
 
 export default function BackupScreen() {
@@ -111,7 +127,7 @@ export default function BackupScreen() {
     if (!backupFolder || busy) return;
     Alert.alert(
       'Restaurar backup',
-      'Traz as notas da pasta escolhida para este aparelho, com áudio, imagens e transcrição. Cada arquivo é conferido antes de entrar. Notas com o mesmo identificador são atualizadas; as demais são mantidas.',
+      'Traz as notas da pasta escolhida para este aparelho, com áudio, imagens e transcrição. Cada arquivo é conferido antes de entrar. Notas com o mesmo identificador são atualizadas; as demais são mantidas. Se uma nota tinha sido apagada, ela volta também no servidor.',
       [
         { text: 'Cancelar', style: 'cancel' },
         {
@@ -124,8 +140,17 @@ export default function BackupScreen() {
             setProgress(null);
             void runRestore(backupFolder, (done, total) => setProgress(`${done}/${total}`))
               .then(async (summary) => {
+                // Reafirma as notas no servidor ANTES de sincronizar: uma nota
+                // apagada e trazida de volta pelo backup nao pode ser apagada de
+                // novo pelo servidor.
+                setProgress(null);
+                const restoredNotes = await listRecordings();
+                const server = await reassertNotesOnServer(restoredNotes).catch(() => null);
                 await refresh();
-                setMessage(`Restaurado: ${summaryLine(summary)}.`);
+                const line = server ? serverLine(server) : null;
+                setMessage(
+                  `Restaurado: ${summaryLine(summary)}.${line ? ` ${line}` : ''}`,
+                );
               })
               .catch((err) => setError(messageFor(err)))
               .finally(() => {

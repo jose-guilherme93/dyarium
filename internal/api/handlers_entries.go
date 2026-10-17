@@ -29,7 +29,7 @@ func (s *Server) entryTagNames(ctx context.Context, entryID string) ([]string, e
 }
 
 func entryJSON(e store.Entry) map[string]any {
-	return map[string]any{
+	body := map[string]any{
 		"id":                e.ID,
 		"title":             e.Title,
 		"status":            e.Status,
@@ -44,6 +44,10 @@ func entryJSON(e store.Entry) map[string]any {
 		"created_at":        e.CreatedAt,
 		"updated_at":        e.UpdatedAt,
 	}
+	if e.DeletedAt != nil {
+		body["deleted_at"] = e.DeletedAt
+	}
+	return body
 }
 
 func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
@@ -58,6 +62,21 @@ func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 	}
 	if limit > 5000 {
 		limit = 5000
+	}
+	// `deleted=1` lista as lixeiras (tombstones): o app so apaga uma nota local
+	// quando o servidor confirma que ela foi apagada.
+	if truthy(query.Get("deleted")) {
+		entries, err := s.deps.Store.ListDeletedEntries(r.Context(), limit)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			return
+		}
+		out := make([]map[string]any, 0, len(entries))
+		for _, e := range entries {
+			out = append(out, entryJSON(e))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"entries": out})
+		return
 	}
 	entries, err := s.deps.Store.ListEntriesFiltered(r.Context(), limit,
 		query.Get("person"), query.Get("place"), query.Get("theme"))
@@ -74,6 +93,16 @@ func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 		out = append(out, item)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"entries": out})
+}
+
+// truthy accepts the query-param spellings a client may use for a boolean.
+func truthy(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 // handleCreateEntry creates a written note (no audio). The body is stored as a
@@ -133,6 +162,19 @@ func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			return
+		}
+		// A nota pode existir apagada (lixeira) — por exemplo, o app restaurou um
+		// backup depois de apagar a nota. Nesse caso ela volta a viver, em vez de
+		// falhar com conflito de id.
+		if err := s.deps.Store.RestoreEntry(r.Context(), clientID); err == nil {
+			current, getErr := s.deps.Store.GetEntry(r.Context(), clientID)
+			if getErr == nil {
+				writeJSON(w, http.StatusOK, entryJSON(current))
+				return
+			}
+		} else if !errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusInternalServerError, "internal", err.Error())
 			return
 		}
@@ -216,12 +258,39 @@ func (s *Server) handleDeleteEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The removal is logical; the cleanup job deletes the encrypted objects and
-	// the row afterwards. A failure here only delays the cleanup, so it is
-	// logged instead of failing the request.
-	if _, err := s.deps.Queue.Enqueue(ctx, jobs.TypeCleanup, "cleanup:"+id, jobs.CleanupPayload{EntryID: id}); err != nil {
+	// the row afterwards. It is scheduled after the retention window, so a note
+	// deleted by mistake (or restored from a local backup) can still be brought
+	// back with its audio intact. A failure here only delays the cleanup, so it
+	// is logged instead of failing the request.
+	retention := s.deps.Config.DeletedRetention
+	if _, err := s.deps.Queue.EnqueueAfter(ctx, jobs.TypeCleanup, "cleanup:"+id,
+		jobs.CleanupPayload{EntryID: id}, retention); err != nil {
 		s.deps.Logger.Error("api: enfileirar limpeza", "entry_id", id, "erro", err)
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleRestoreEntry brings a soft-deleted entry back. The app calls it when a
+// restored backup contains notes the server still has in the trash, so the next
+// pull does not delete them again.
+func (s *Server) handleRestoreEntry(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := r.PathValue("id")
+	if err := s.deps.Store.RestoreEntry(ctx, id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not_found", "entrada inexistente")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	entry, err := s.deps.Store.GetEntry(ctx, id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	s.deps.Events.Publish("entry.status", map[string]string{"entry_id": id, "status": entry.Status})
+	writeJSON(w, http.StatusOK, entryJSON(entry))
 }
 
 func (s *Server) handleGetTranscript(w http.ResponseWriter, r *http.Request) {
