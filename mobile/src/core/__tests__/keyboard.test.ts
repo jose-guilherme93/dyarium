@@ -19,7 +19,7 @@ describe('keyboardOverlap', () => {
 });
 
 describe('caretScrollTarget', () => {
-  const base = { editorTop: 200, scrollY: 0, viewport: 800, bottomInset: 96 };
+  const base = { editorTop: 200, scrollY: 0, viewport: 800, bottomInset: 96, lineHeight: 28, topInset: 16 };
 
   it('cursor ja visivel nao rola', () => {
     expect(caretScrollTarget({ ...base, caret: 400 })).toBeNull();
@@ -28,6 +28,15 @@ describe('caretScrollTarget', () => {
   it('cursor embaixo do teclado rola para ficar acima do limite', () => {
     // bottom = 200 + 600 = 800; limit = 800 - 96 = 704 -> rola 96.
     expect(caretScrollTarget({ ...base, caret: 600 })).toBe(96);
+  });
+
+  it('cursor acima da area visivel rola para cima ate a linha atual', () => {
+    // scrollY 400; bottom = 200+100 = 300; topo da linha = 272; alvo = 256.
+    expect(caretScrollTarget({ ...base, scrollY: 400, caret: 100 })).toBe(256);
+  });
+
+  it('no topo da nota nao rola para lugar nenhum', () => {
+    expect(caretScrollTarget({ ...base, editorTop: 0, caret: 10, topInset: 16 })).toBeNull();
   });
 
   it('considera a rolagem atual (nao rola duas vezes)', () => {

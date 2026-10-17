@@ -281,7 +281,9 @@ export default function NoteScreen() {
     const caret = caretRef.current;
     if (caret == null) return;
     const now = Date.now();
-    if (!force && now - caretScrollAtRef.current < 250) return;
+    // Curto o bastante para acompanhar a digitacao; o `force` fura o intervalo
+    // quando o teclado termina de abrir.
+    if (!force && now - caretScrollAtRef.current < 120) return;
     const { viewport, bottomInset } = metricsRef.current;
     const target = caretScrollTarget({
       caret,
@@ -289,11 +291,13 @@ export default function NoteScreen() {
       scrollY: scrollYRef.current,
       viewport,
       bottomInset,
+      lineHeight: Math.round(typography.size * 1.5),
+      topInset: 24,
     });
     if (target === null) return;
     caretScrollAtRef.current = now;
     scrollRef.current?.scrollTo({ y: target, animated: true });
-  }, []);
+  }, [typography.size]);
 
   const handleCaret = useCallback(
     (y: number) => {

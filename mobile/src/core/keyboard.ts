@@ -32,17 +32,34 @@ export interface CaretScrollInput {
   viewport: number;
   /** Espaco reservado no rodape (barra de acoes e margem). */
   bottomInset: number;
+  /** Altura aproximada da linha do cursor. */
+  lineHeight?: number;
+  /** Margem no topo para a linha nao encostar na borda. */
+  topInset?: number;
 }
 
 /**
- * Rolagem necessaria para o cursor ficar acima do teclado, ou `null` quando ja
- * esta visivel. O alvo nunca e negativo.
+ * Rolagem necessaria para a linha do cursor ficar visivel, ou `null` quando ela
+ * ja esta (ou quando o alvo e a rolagem atual). Cobre os dois sentidos: descer
+ * quando o cursor passa do limite do teclado e subir quando a linha ficou acima
+ * da area visivel (o usuario rolou a nota e continuou digitando).
  */
 export function caretScrollTarget(input: CaretScrollInput): number | null {
+  const lineHeight = input.lineHeight ?? 28;
+  const topInset = input.topInset ?? 16;
   const caretBottom = input.editorTop + input.caret;
   const limit = input.viewport - input.bottomInset;
-  if (caretBottom <= input.scrollY + limit) {
-    return null;
+
+  if (caretBottom > input.scrollY + limit) {
+    const target = Math.max(0, caretBottom - limit);
+    return target === input.scrollY ? null : target;
   }
-  return Math.max(0, caretBottom - limit);
+
+  const caretTop = caretBottom - lineHeight;
+  const visibleTop = input.scrollY + topInset;
+  if (caretTop < visibleTop) {
+    const target = Math.max(0, caretTop - topInset);
+    return target === input.scrollY ? null : target;
+  }
+  return null;
 }
