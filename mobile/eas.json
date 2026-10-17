@@ -12,7 +12,7 @@
         "buildType": "apk"
       },
       "env": {
-        "ORG_GRADLE_PROJECT_rnllamaVariants": "rnllama_v8_2,rnllama_v8_2_dotprod_i8mm"
+        "ORG_GRADLE_PROJECT_rnllamaVariants": "rnllama_v8,rnllama_v8_2,rnllama_v8_2_dotprod_i8mm"
       }
     },
     "preview": {
@@ -23,7 +23,7 @@
       },
       "env": {
         "EXPO_PUBLIC_ANALYSIS_BENCHMARK": "1",
-        "ORG_GRADLE_PROJECT_rnllamaVariants": "rnllama_v8_2,rnllama_v8_2_dotprod_i8mm"
+        "ORG_GRADLE_PROJECT_rnllamaVariants": "rnllama_v8,rnllama_v8_2,rnllama_v8_2_dotprod_i8mm"
       }
     },
     "production": {

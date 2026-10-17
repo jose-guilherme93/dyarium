@@ -44,7 +44,11 @@ export function installedAnalysisModels(): InstalledAnalysisModel[] {
     const entry = entries.find((item) => item.name === info.fileName);
     if (!entry) continue;
     try {
-      out.push({ id: info.id, bytes: new File(entry.uri).size });
+      const size = new File(entry.uri).size;
+      // Um download interrompido pode deixar arquivo parcial: so conta como
+      // instalado quando o tamanho bate com o catalogo.
+      if (size !== info.sizeBytes) continue;
+      out.push({ id: info.id, bytes: size });
     } catch {
       // arquivo ilegivel: ignora
     }

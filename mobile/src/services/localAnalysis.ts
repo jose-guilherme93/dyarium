@@ -6,6 +6,8 @@
  * local so fica disponivel depois do proximo build.
  */
 
+import { File } from 'expo-file-system';
+
 import { analysisNoteContent, buildAnalysisMessages, parseAnalysisJson, ANALYSIS_SCHEMA } from '@/core/analysisPrompt';
 import type { AnalysisModelInfo } from '@/core/analysisModels';
 import type { Recording } from '@/core/types';
@@ -109,6 +111,10 @@ export async function loadAnalysisContext(
   const filePath = analysisModelFilePath(model.id);
   if (!llama || !filePath) throw new Error('engine indisponivel');
 
+  const file = new File(filePath);
+  if (!file.exists) throw new Error('modelo nao baixado');
+  if (file.size !== model.sizeBytes) throw new Error('modelo incompleto');
+
   const context = await llama.initLlama({
     model: filePath,
     n_ctx: options.contextSize ?? DEFAULT_CONTEXT,
@@ -117,6 +123,9 @@ export async function loadAnalysisContext(
     n_gpu_layers: 0,
     use_mmap: true,
     use_mlock: false,
+  }).catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`carregar modelo: ${message}`);
   });
   loaded = { modelId: model.id, context };
 }

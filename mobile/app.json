@@ -106,6 +106,7 @@
           "forceCxx20": true
         }
       ],
+      "./plugins/withLlamaBaseLib",
       "expo-asset"
     ],
     "experiments": {
