@@ -29,6 +29,30 @@ deploy               Dockerfile e compose de desenvolvimento.
 Cada pacote `internal` expoe interfaces pequenas e concretiza as dependencias externas
 (SQLite, ffmpeg, HTTP) na borda, para permitir testes com dublês.
 
+## Formato do corpo da nota
+
+O corpo da nota e **markdown** (`notes.content_markdown`), o mesmo texto nos tres
+lugares: app, dashboard e servidor. O JSON de blocos do BlockNote foi removido do
+contrato: cada editor falava um formato e a traducao entre eles era onde as coisas
+se perdiam (linha em branco entre paragrafos, numeracao, aninhamento, imagem com
+referencia local).
+
+Consequencias que valem registrar:
+
+- **Conflito por campo.** Titulo, data do evento e corpo tem versao propria. O
+  cliente manda a versao que leu e o servidor so grava se ela continuar a atual;
+  se nao, responde `409` **sem escrever** e diz qual campo brigou. A escolha (manter
+  o meu / ficar com o de la) e do usuario. Sem isso, o ultimo a salvar apagava o
+  trabalho do outro sem avisar.
+- **O que o markdown nao sabe, o editor nao oferece.** Cor de texto, cor de fundo e
+  sublinhado sairam do schema do editor: dariam para formatar algo que nao sobrevive
+  a gravacao.
+- **O que o app nao edita, ele mostra.** Tabela, divisoria e mencao a outra nota
+  viram bloco opaco no editor do celular: somente leitura, carregando o markdown
+  original, que volta intacto ao salvar.
+- **Largura da imagem** viaja em `{w=50}` (percentual da largura da nota), que o
+  markdown nao tem padrao para isso.
+
 ## Fluxo de dados
 
 1. Cliente inicia um upload: `POST /uploads` com metadados e o SHA-256 esperado do arquivo.

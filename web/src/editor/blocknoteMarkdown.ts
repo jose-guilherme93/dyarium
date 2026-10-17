@@ -111,6 +111,30 @@ export function blocknoteMarkdownToBlocks(markdown: string): PartialBlock[] {
   return noteMarkdownToBlocks(scratch(), markdown);
 }
 
+/** Blocos -> markdown, criando um editor descartavel (para quem so le). */
+export function noteBlocksToMarkdown(blocks: Record<string, unknown>[]): string {
+  return blocksToNoteMarkdown(scratch(), blocks);
+}
+
+/**
+ * Texto puro de um markdown: sem marcador, sem codigo e sem tabela. E o que a
+ * contagem de palavras e o diff do historico comparam.
+ */
+export function markdownToPlain(markdown: string): string {
+  return markdown
+    .replace(/^```[\s\S]*?^```[^\n]*$/gm, "")
+    .replace(/^\|.*\|$/gm, "")
+    .replace(/\[([^\]]*)\]\(note:[^)\s]+\)/g, "")
+    .replace(/!?\[([^\]]*)\]\([^)\s]*\)/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^>\s?/gm, "")
+    .replace(/^\s*[-*+]\s+/gm, "")
+    .replace(/^\s*\d+\.\s+/gm, "")
+    .replace(/[*_`~]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 type Part =
   | { kind: "text"; text: string }
   | { kind: "image"; alt: string; src: string; width: number };

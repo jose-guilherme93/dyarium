@@ -207,42 +207,6 @@ func (s *Store) UpdateNoteBody(ctx context.Context, id, markdown, readVersion st
 	return stamp, false, nil
 }
 
-// UpdateNote replaces the document (if non-empty) and records a revision.
-func (s *Store) UpdateNote(ctx context.Context, id, title, document string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	var current string
-	if err := tx.QueryRowContext(ctx, `SELECT document FROM notes WHERE id = ?`, id).Scan(&current); err != nil {
-		if err == sql.ErrNoRows {
-			return ErrNotFound
-		}
-		return err
-	}
-	now := ts(time.Now())
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO note_revisions (id, note_id, document, created_at) VALUES (?, ?, ?, ?)`,
-		newID(), id, current, now); err != nil {
-		return fmt.Errorf("store: insert revision: %w", err)
-	}
-	if document != "" {
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE notes SET title = ?, document = ?, updated_at = ? WHERE id = ?`,
-			title, document, now, id); err != nil {
-			return fmt.Errorf("store: update note: %w", err)
-		}
-	} else {
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE notes SET title = ?, updated_at = ? WHERE id = ?`, title, now, id); err != nil {
-			return fmt.Errorf("store: update note title: %w", err)
-		}
-	}
-	return tx.Commit()
-}
-
 // DeleteNote removes a note and its revisions.
 func (s *Store) DeleteNote(ctx context.Context, id string) error {
 	res, err := s.db.ExecContext(ctx, `DELETE FROM notes WHERE id = ?`, id)

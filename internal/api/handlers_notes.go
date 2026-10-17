@@ -2,7 +2,6 @@ package api
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -15,9 +14,6 @@ import (
 type noteRequest struct {
 	ID    string `json:"id"`
 	Title string `json:"title"`
-	// Document is the legacy BlockNote JSON body, accepted only while old notes
-	// are being converted.
-	Document json.RawMessage `json:"document"`
 	// ContentMarkdown is the note body in markdown (the canonical format).
 	ContentMarkdown string `json:"content_markdown"`
 	// BaseVersion is the body version the client last read. Empty means the
@@ -27,17 +23,12 @@ type noteRequest struct {
 
 func noteJSON(n store.Note) map[string]any {
 	body := map[string]any{
-		"id":         n.ID,
-		"entry_id":   n.EntryID,
-		"title":      n.Title,
-		"created_at": n.CreatedAt,
-		"updated_at": n.UpdatedAt,
-	}
-	if n.ContentMarkdown != "" || n.Document == "" {
-		body["content_markdown"] = n.ContentMarkdown
-	} else {
-		// Nota ainda nao convertida: o cliente ainda precisa do documento antigo.
-		body["document"] = json.RawMessage(n.Document)
+		"id":               n.ID,
+		"entry_id":         n.EntryID,
+		"title":            n.Title,
+		"content_markdown": n.ContentMarkdown,
+		"created_at":       n.CreatedAt,
+		"updated_at":       n.UpdatedAt,
 	}
 	if n.BodyUpdatedAt != nil {
 		body["body_version"] = *n.BodyUpdatedAt
@@ -77,9 +68,6 @@ func (s *Server) handleCreateNote(w http.ResponseWriter, r *http.Request) {
 		ContentMarkdown: req.ContentMarkdown,
 		CreatedAt:       now,
 		UpdatedAt:       now,
-	}
-	if len(req.Document) > 0 {
-		n.Document = string(req.Document)
 	}
 	if clientID := strings.TrimSpace(req.ID); clientID != "" {
 		if !id.Valid(clientID) {
@@ -161,21 +149,10 @@ func (s *Server) handleUpdateNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Caminho legado: documento JSON (so enquanto as notas antigas nao virarem
-	// markdown).
-	doc := string(req.Document)
-	if len(req.Document) == 0 {
-		doc = ""
-	}
-	if err := s.deps.Store.UpdateNote(r.Context(), id, req.Title, doc); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "not_found", "nota inexistente")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	// Sem `content_markdown` nao ha o que gravar: o corpo da nota e markdown
+	// (ver docs/api.md). Aceitar documento JSON aqui era o caminho que fazia o
+	// app sobrescrever o markdown sem querer.
+	writeError(w, http.StatusBadRequest, "missing_markdown", "content_markdown obrigatorio")
 }
 
 func (s *Server) handleDeleteNote(w http.ResponseWriter, r *http.Request) {
@@ -194,10 +171,13 @@ func (s *Server) handleListRevisions(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(revs))
 	for _, rev := range revs {
+		// O corpo anterior em markdown. A coluna se chama `document` por heranca
+		// dos tempos do JSON do BlockNote, mas o conteudo gravado e markdown: a
+		// revisao e escrita antes de cada troca de corpo.
 		out = append(out, map[string]any{
-			"id":         rev.ID,
-			"document":   json.RawMessage(rev.Document),
-			"created_at": rev.CreatedAt,
+			"id":               rev.ID,
+			"content_markdown": rev.Document,
+			"created_at":       rev.CreatedAt,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"revisions": out})

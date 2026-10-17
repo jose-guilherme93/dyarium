@@ -3,6 +3,7 @@ import type { PartialBlock } from "@blocknote/core";
 import { api, isConflict, type ConflictField } from "../api";
 import { AudioTrack } from "./AudioTrack";
 import { NotesEditor, type NotesEditorHandle } from "../editor/NotesEditor";
+import { markdownToPlain, noteBlocksToMarkdown } from "../editor/blocknoteMarkdown";
 import { markdownToNoteBlocks } from "../editor/markdownBlocks";
 import { createAutosave, type Autosave } from "../lib/autosave";
 import { formatDateTime, formatDuration } from "../lib/format";
@@ -67,6 +68,22 @@ function processingText(
   }
 }
 
+/** Revisao guardada no formato antigo (JSON de blocos), e nao markdown. */
+function isLegacyBlockJson(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed.startsWith("[") && trimmed.endsWith("]");
+}
+
+// blocksToMarkdownText is the body as plain text, for counting and diffing. The
+// blocks come from the markdown, so the round-trip goes through the same
+// conversion the editor shows (and never through BlockNote JSON).
+function blocksToMarkdownText(value: unknown): string {
+  if (!Array.isArray(value)) {
+    return "";
+  }
+  return markdownToPlain(noteBlocksToMarkdown(value as Record<string, unknown>[]));
+}
+
 // blocksText concatenates every inline text of a BlockNote document.
 function blocksText(value: unknown): string {
   let out = "";
@@ -89,15 +106,12 @@ function blocksText(value: unknown): string {
   return out.replace(/\s+/g, " ").trim();
 }
 
-function wordsOf(document: unknown): string[] {
-  return blocksText(document).toLowerCase().split(/\s+/).filter(Boolean);
-}
-
 // diffWords is a simple multiset diff: which words were added and removed
-// between two versions of the document.
-function diffWords(oldDoc: unknown, newDoc: unknown): { added: string[]; removed: string[] } {
-  const oldWords = wordsOf(oldDoc);
-  const newWords = wordsOf(newDoc);
+// between two versions of the body.
+function diffWords(oldText: string, newText: string): { added: string[]; removed: string[] } {
+  const wordsOf = (text: string) => text.toLowerCase().split(/\s+/).filter(Boolean);
+  const oldWords = wordsOf(oldText);
+  const newWords = wordsOf(newText);
   const count = (arr: string[]) => {
     const map = new Map<string, number>();
     for (const word of arr) {
@@ -176,13 +190,19 @@ function buildHistory(revisions: Revision[], current: unknown): HistoryDay[] {
   if (revisions.length === 0) {
     return [];
   }
-  // Chronological snapshots (oldest first): the state before each update, then
-  // the current state.
-  const states: Array<{ at: string; document: unknown }> = [];
+  // Instantaneos do corpo em markdown, do mais antigo para o mais novo: o estado
+  // antes de cada gravacao e, por ultimo, o estado atual.
+  const states: Array<{ at: string; markdown: string }> = [];
   for (let i = revisions.length - 1; i >= 0; i--) {
-    states.push({ at: revisions[i].created_at, document: revisions[i].document });
+    // Revisao em JSON do BlockNote (notas anteriores a conversao): nao da para
+    // comparar palavras com markdown, e poluir o historico com `type: paragraph`
+    // ajuda ninguem.
+    if (isLegacyBlockJson(revisions[i].content_markdown)) {
+      continue;
+    }
+    states.push({ at: revisions[i].created_at, markdown: revisions[i].content_markdown });
   }
-  states.push({ at: new Date().toISOString(), document: current });
+  states.push({ at: new Date().toISOString(), markdown: blocksToMarkdownText(current) });
 
   const ranges = new Map<string, { oldest: number; newest: number }>();
   states.forEach((state, index) => {
@@ -198,7 +218,7 @@ function buildHistory(revisions: Revision[], current: unknown): HistoryDay[] {
   return [...ranges.entries()]
     .sort((a, b) => (a[0] < b[0] ? 1 : -1))
     .map(([day, range]) => {
-      const { added, removed } = diffWords(states[range.oldest].document, states[range.newest].document);
+      const { added, removed } = diffWords(states[range.oldest].markdown, states[range.newest].markdown);
       return { day, added, removed };
     });
 }

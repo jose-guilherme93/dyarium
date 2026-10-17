@@ -150,7 +150,8 @@ export interface Note {
 
 export interface Revision {
   id: string;
-  document: unknown;
+  /** Corpo anterior em markdown (a coluna no servidor se chama `document` por heranca). */
+  content_markdown: string;
   created_at: string;
 }
 

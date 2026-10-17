@@ -138,7 +138,8 @@ Cria a nota da entrada. Corpo:
 ```json
 { "id": "note_...", "content_markdown": "## Titulo\n\nTexto.", "base_version": "" }
 ```
-Resposta 201 com a nota, `content_markdown` e `body_version`.
+Resposta 201 com a nota, `content_markdown` e `body_version`. `document` (JSON do
+BlockNote) nao e mais aceito nem devolvido.
 
 ### PUT /api/v1/notes/{id}
 Grava o corpo. Corpo:
@@ -149,8 +150,9 @@ Resposta 200: `{ "status": "ok", "versions": { "body": "<nova versao>" } }`.
 - 409 com `{ "conflict": ["body"], "versions": {...} }` quando o corpo mudou
   depois da leitura: **nada e gravado**.
 - Gravar o mesmo texto nao cria revisao nova (o historico so muda quando muda).
-- Aceita ainda `{"document": <BlockNote JSON>}` (legado) enquanto as notas antigas
-  nao virarem markdown.
+- `content_markdown` e obrigatorio: sem ele a resposta e `400
+  missing_markdown`. Nao ha mais caminho de escrita em JSON — era ele que deixava o
+  app sobrescrever o markdown sem querer.
 
 ### PATCH /api/v1/entries/{id}
 Atualiza campos editaveis com versao por campo.
@@ -402,8 +404,9 @@ O corpo da nota e markdown, escrito e lido pelas rotas da secao
 "Markdown como formato da nota" (mais acima). Aqui fica o resto.
 
 ### GET /api/v1/entries/{id}/notes
-Lista notas da entrada, com `content_markdown` e `body_version`. Notas ainda nao
-convertidas vem com o `document` legado (BlockNote JSON) em vez do markdown.
+Lista notas da entrada, com `content_markdown` e `body_version`. O corpo e sempre
+markdown: as notas antigas foram convertidas e o JSON do BlockNote saiu do
+contrato.
 
 ### GET /api/v1/notes/{id}
 Retorna uma nota (markdown + `body_version`).
@@ -411,8 +414,9 @@ Retorna uma nota (markdown + `body_version`).
 ### DELETE /api/v1/notes/{id}
 
 ### GET /api/v1/notes/{id}/revisions
-Lista revisoes da nota, com o corpo anterior em markdown. Uma revisao so e criada
-quando o texto realmente mudou.
+Lista revisoes da nota, com o corpo anterior em `content_markdown`. Uma revisao so
+e criada quando o texto realmente mudou. (A coluna no banco se chama `document`
+por heranca do JSON antigo; o conteudo gravado e markdown.)
 
 ## Links
 

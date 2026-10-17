@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { blocksToNoteMarkdown, noteMarkdownToBlocks } from "./blocknoteMarkdown";
+import { createNoteStyleSchema } from "./schema";
 
 /**
  * O editor do BlockNote precisa de DOM. Aqui usamos o editor real: o que importa
@@ -111,5 +112,14 @@ describe("markdown da nota", () => {
     const blocks = noteMarkdownToBlocks(editor, markdown);
     expect(blocks.map((block) => block.type)).toContain("table");
     expect(blocksToNoteMarkdown(editor, blocks)).toContain("| a");
+  });
+
+  it("o schema nao tem cor nem sublinhado: o markdown nao sabe representar", () => {
+    const styles = Object.keys(createNoteStyleSchema());
+    expect(styles).toContain("bold");
+    expect(styles).toContain("italic");
+    expect(styles).not.toContain("underline");
+    expect(styles).not.toContain("textColor");
+    expect(styles).not.toContain("backgroundColor");
   });
 });

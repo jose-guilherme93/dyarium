@@ -221,6 +221,60 @@ func TestArchiveIsNotDeletion(t *testing.T) {
 	}
 }
 
+// O corpo da nota e markdown e nada mais: uma gravacao sem `content_markdown`
+// nao entra (era o que fazia o app sobrescrever o markdown com o JSON antigo).
+func TestUpdateNoteRejectsBodyWithoutMarkdown(t *testing.T) {
+	srv := newTestServer(t)
+	const entryID = "note_01J8Z0000000000000000000I"
+	seedTextEntry(t, srv, entryID, "sem markdown")
+
+	_, created := doJSON(t, srv, http.MethodPost, "/api/v1/entries/"+entryID+"/notes",
+		strings.NewReader(`{"content_markdown":"original"}`))
+	noteID, _ := created["id"].(string)
+
+	rec, body := doJSON(t, srv, http.MethodPut, "/api/v1/notes/"+noteID,
+		strings.NewReader(`{"title":"velho","document":[{"type":"paragraph"}]}`))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (%s)", rec.Code, rec.Body.String())
+	}
+	errObj, _ := body["error"].(map[string]any)
+	if errObj["code"] != "missing_markdown" {
+		t.Fatalf("erro = %v", errObj)
+	}
+
+	// O corpo anterior continua intacto.
+	_, got := doJSON(t, srv, http.MethodGet, "/api/v1/notes/"+noteID, nil)
+	if got["content_markdown"] != "original" {
+		t.Fatalf("o corpo mudou: %v", got["content_markdown"])
+	}
+}
+
+// As revisoes voltam em markdown: a coluna se chama `document` por heranca, mas
+// o conteudo gravado e markdown, e devolver como JSON quebrava a resposta.
+func TestRevisionsCarryMarkdown(t *testing.T) {
+	srv := newTestServer(t)
+	const entryID = "note_01J8Z0000000000000000000J"
+	seedTextEntry(t, srv, entryID, "com revisao")
+
+	_, created := doJSON(t, srv, http.MethodPost, "/api/v1/entries/"+entryID+"/notes",
+		strings.NewReader(`{"content_markdown":"primeiro"}`))
+	noteID, _ := created["id"].(string)
+	if rec, _ := doJSON(t, srv, http.MethodPut, "/api/v1/notes/"+noteID,
+		strings.NewReader(`{"content_markdown":"segundo"}`)); rec.Code != http.StatusOK {
+		t.Fatalf("segunda gravacao: status = %d", rec.Code)
+	}
+
+	_, list := doJSON(t, srv, http.MethodGet, "/api/v1/notes/"+noteID+"/revisions", nil)
+	revisions, _ := list["revisions"].([]any)
+	if len(revisions) != 1 {
+		t.Fatalf("revisoes = %d, want 1", len(revisions))
+	}
+	revision, _ := revisions[0].(map[string]any)
+	if revision["content_markdown"] != "primeiro" {
+		t.Fatalf("revisao = %v, want o markdown anterior", revision["content_markdown"])
+	}
+}
+
 func countEntries(body map[string]any) int {
 	entries, _ := body["entries"].([]any)
 	return len(entries)

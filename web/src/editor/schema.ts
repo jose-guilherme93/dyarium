@@ -10,6 +10,7 @@ import {
   createInlineContentSpec,
   defaultBlockSpecs,
   defaultInlineContentSpecs,
+  defaultStyleSpecs,
 } from "@blocknote/core";
 
 /** Audio dentro do documento (o audio da pilha do topo nao usa isto). */
@@ -74,6 +75,22 @@ export const noteMentionSpec = () =>
   );
 
 /**
+ * Estilos que a nota aceita.
+ *
+ * Saiam fora cor de texto, cor de fundo e sublinhado: o markdown nao sabe
+ * representar nenhum dos tres, e o editor do celular nao sabe mostrar. So que
+ * eles existissem aqui, o usuario marcava um texto em amarelo, salvava, e a cor
+ * sumia (no celular e no markdown) sem aviso.
+ */
+export function createNoteStyleSchema() {
+  const { underline, textColor, backgroundColor, ...portable } = defaultStyleSpecs;
+  void underline;
+  void textColor;
+  void backgroundColor;
+  return portable;
+}
+
+/**
  * Schema compartilhado entre o editor do dashboard e o script de conversao, para
  * os dois nunca discordarem sobre o que e markdown.
  */
@@ -81,6 +98,7 @@ export function createNoteSchema() {
   return BlockNoteSchema.create({
     blockSpecs: { ...defaultBlockSpecs, audio: audioBlockSpec(), image: imageBlockSpec() },
     inlineContentSpecs: { ...defaultInlineContentSpecs, noteMention: noteMentionSpec() },
+    styleSpecs: createNoteStyleSchema(),
   });
 }
 
