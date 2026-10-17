@@ -128,7 +128,12 @@ export interface Note {
   id: string;
   entry_id: string;
   title: string;
-  document: unknown;
+  /** Corpo em markdown (formato canonico). */
+  content_markdown?: string;
+  /** Versao do corpo: o cliente manda a que leu e o servidor recusa se mudou. */
+  body_version?: string;
+  /** Corpo em JSON do BlockNote: so em nota ainda nao convertida. */
+  document?: unknown;
   created_at: string;
   updated_at: string;
 }

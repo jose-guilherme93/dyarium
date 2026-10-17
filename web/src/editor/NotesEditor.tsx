@@ -101,7 +101,11 @@ function AudioBlockView({ attachmentId }: { attachmentId: string }) {
 }
 
 const imageBlock = createReactBlockSpec(
-  { type: "image", propSchema: { attachmentId: { default: "" }, caption: { default: "" } }, content: "none" },
+  {
+    type: "image",
+    propSchema: { attachmentId: { default: "" }, caption: { default: "" }, width: { default: "" } },
+    content: "none",
+  },
   {
     render: (props) => (
       <figure className="doc-figure">
@@ -109,6 +113,8 @@ const imageBlock = createReactBlockSpec(
           className="doc-image"
           src={attachmentUrl(props.block.props.attachmentId)}
           alt={props.block.props.caption || "Imagem da nota"}
+          // `width` e a largura escolhida no app (50 = metade da largura da nota).
+          style={imageWidth(props.block.props.width)}
           loading="lazy"
         />
         {props.block.props.caption && <figcaption>{props.block.props.caption}</figcaption>}
@@ -116,6 +122,15 @@ const imageBlock = createReactBlockSpec(
     ),
   },
 );
+
+/** Largura da imagem em porcentagem da coluna (vazio = largura total). */
+function imageWidth(width: string): { width: string } | undefined {
+  const pct = Number(width);
+  if (!Number.isFinite(pct) || pct <= 0 || pct >= 100) {
+    return undefined;
+  }
+  return { width: `${pct}%` };
+}
 
 const schema = BlockNoteSchema.create({
   blockSpecs: { ...defaultBlockSpecs, audio: audioBlock(), image: imageBlock() },

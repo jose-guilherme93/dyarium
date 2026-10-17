@@ -2,9 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Block, PartialBlock } from "@blocknote/core";
 import { api } from "../api";
 import { NotesEditor, mediaRefs, type MediaRef, type NotesEditorHandle } from "../editor/NotesEditor";
+import { markdownToNoteBlocks } from "../editor/markdownBlocks";
 import { createAutosave, type Autosave } from "../lib/autosave";
 import { formatDateTime, formatDuration } from "../lib/format";
-import type { Analysis, Attachment, Audio, EntityKind, Entry, Revision } from "../types";
+import type { Analysis, Attachment, Audio, EntityKind, Entry, Note, Revision } from "../types";
 import { Spinner, isBusy, statusLabel } from "./Status";
 import { TagEditor } from "./TagEditor";
 import { useToast } from "./Toasts";
@@ -211,6 +212,20 @@ function buildHistory(revisions: Revision[], current: unknown): HistoryDay[] {
     });
 }
 
+/**
+ * Corpo da nota como blocos do editor. O markdown e o formato canonico; o
+ * `document` em JSON so aparece em nota ainda nao convertida.
+ */
+function noteBodyToBlocks(note: Note): PartialBlock[] | undefined {
+  const markdown = note.content_markdown;
+  if (typeof markdown === "string" && markdown.trim() !== "") {
+    const blocks = markdownToNoteBlocks(markdown);
+    return blocks.length > 0 ? blocks : undefined;
+  }
+  const legacy = note.document as PartialBlock[] | undefined;
+  return Array.isArray(legacy) && legacy.length > 0 ? legacy : undefined;
+}
+
 // NoteEditor is one note: a single document (text, audio, images interleaved)
 // with an on-demand right-hand panel for properties and AI insights.
 export function NoteEditor({
@@ -299,8 +314,7 @@ export function NoteEditor({
     setImages(images);
     setMedia(mediaRefs(loaded, images));
     const note = notesRes.status === "fulfilled" ? notesRes.value.notes?.[0] : undefined;
-    const doc = note ? (note.document as PartialBlock[] | undefined) : undefined;
-    const filled = Array.isArray(doc) && doc.length > 0 ? doc : undefined;
+    const filled = note ? noteBodyToBlocks(note) : undefined;
     if (note) {
       noteIdRef.current = note.id;
       setNoteId(note.id);
