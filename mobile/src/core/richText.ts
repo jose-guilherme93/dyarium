@@ -227,10 +227,11 @@ export function markdownToHtml(markdown: string, imageSources?: Record<string, s
   }
   parts.push(markdownToHtmlFragment(markdown.slice(cursor), imageSources));
   const html = parts.join('');
-  // Sempre sobra um paragrafo antes e depois de bloco atomico (imagem ou bloco
-  // opaco): da pra digitar em qualquer lugar, acima e abaixo, como no Notion.
+  // Sempre sobra um paragrafo depois de bloco atomico (imagem, bloco opaco,
+  // codigo), para digitar abaixo. Antes nao: a nota comecava com uma linha vazia
+  // (que aparecia como uma tarja do fundo) quando o primeiro bloco era imagem.
   const atomic = /^<(div class="img-block"|div class="opaque-block"|pre class="code-block")/;
-  if (atomic.test(html)) return `<div><br></div>${html}<div><br></div>`;
+  if (atomic.test(html)) return `${html}<div><br></div>`;
   return html;
 }
 

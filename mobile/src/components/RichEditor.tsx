@@ -171,7 +171,6 @@ export function buildEditorHtml(
         parent.insertBefore(block, img);
         block.appendChild(img);
       }
-      ensureLeading();
       ensureTrailing();
     }
     function ensureParagraphAfter(block) {
@@ -191,15 +190,6 @@ export function buildEditorHtml(
         var p = document.createElement('div');
         p.innerHTML = '<br>';
         editor.appendChild(p);
-      }
-    }
-    // E um paragrafo antes da primeira imagem (digitar acima).
-    function ensureLeading() {
-      var first = editor.firstElementChild;
-      if (first && first.classList && first.classList.contains('img-block')) {
-        var p = document.createElement('div');
-        p.innerHTML = '<br>';
-        editor.insertBefore(p, first);
       }
     }
     function placeCaret(node) {
@@ -337,7 +327,6 @@ export function buildEditorHtml(
         }
       }
       if (!inserted) { editor.appendChild(block); }
-      ensureLeading();
       var after = ensureParagraphAfter(block);
       placeCaret(after);
       send();

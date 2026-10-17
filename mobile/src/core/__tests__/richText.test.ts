@@ -56,9 +56,9 @@ describe('htmlToMarkdown', () => {
     );
   });
 
-  it('renderiza imagem como bloco (paragrafo antes e depois) e volta para markdown', () => {
+  it('renderiza imagem como bloco (paragrafo depois) e volta para markdown', () => {
     expect(markdownToHtml('![foto](https://x.test/f.png)')).toBe(
-      '<div><br></div><div class="img-block" contenteditable="false"><img src="https://x.test/f.png" data-src="https://x.test/f.png" alt="foto"></div><div><br></div>',
+      '<div class="img-block" contenteditable="false"><img src="https://x.test/f.png" data-src="https://x.test/f.png" alt="foto"></div><div><br></div>',
     );
     expect(htmlToMarkdown('<div><img src="https://x.test/f.png" alt="foto"></div>')).toBe(
       '![foto](https://x.test/f.png)',
@@ -70,7 +70,7 @@ describe('htmlToMarkdown', () => {
     const sources = { 'attachment:abc': 'file:///data/attachments/abc.png' };
     const html = markdownToHtml(md, sources);
     expect(html).toBe(
-      '<div><br></div><div class="img-block" contenteditable="false"><img src="file:///data/attachments/abc.png" data-src="attachment:abc" alt="foto"></div><div><br></div>',
+      '<div class="img-block" contenteditable="false"><img src="file:///data/attachments/abc.png" data-src="attachment:abc" alt="foto"></div><div><br></div>',
     );
     // Ao salvar, volta a referencia original (nao a fonte de exibicao).
     expect(htmlToMarkdown(html)).toBe(md);
@@ -79,8 +79,8 @@ describe('htmlToMarkdown', () => {
   it('preserva a largura e a ordem de varias imagens', () => {
     const md = '![a](attachment:1){w=40}\n![b](attachment:2)';
     const html = markdownToHtml(md);
-    // sempre sobra paragrafo antes da primeira e depois da ultima imagem
-    expect(html.startsWith('<div><br></div>')).toBe(true);
+    // A nota nao comeca com linha vazia; so sobra paragrafo depois da ultima.
+    expect(html.startsWith('<div class="img-block"')).toBe(true);
     expect(html.endsWith('<div><br></div>')).toBe(true);
     expect(html.indexOf('attachment:1')).toBeLessThan(html.indexOf('attachment:2'));
     expect(html).toContain('data-width="40"');

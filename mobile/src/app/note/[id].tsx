@@ -192,10 +192,12 @@ export default function NoteScreen() {
   const [downloadedUri, setDownloadedUri] = useState<string | null>(null);
   const playerUri = playingAudioId ? (downloadedUri ?? undefined) : filePath;
   const player = usePlaybackSource(playerUri);
+  const loadPlayback = useLoadPlayback();
 
   const playStackAudio = useCallback(
     async (audioId: string) => {
       if (playingAudioId === audioId) {
+        player.pause();
         setPlayingAudioId(null);
         setDownloadedUri(null);
         return;
@@ -204,8 +206,15 @@ export default function NoteScreen() {
       const uri = await attachmentUri(audioId);
       setDownloadedUri(uri);
     },
-    [playingAudioId],
+    [playingAudioId, player],
   );
+
+  // A pilha troca a fonte do player unico: carrega a fonte apontada e toca.
+  useEffect(() => {
+    if (!playingAudioId || !downloadedUri) return;
+    loadPlayback();
+    playPlayer(player);
+  }, [playingAudioId, downloadedUri, loadPlayback, player]);
   usePauseOnUnmount();
   const segments = note?.transcriptSegments;
   useRenderCount('NoteScreen');
@@ -667,6 +676,10 @@ export default function NoteScreen() {
   }
 
   const hasAudio = Boolean(note.filePath);
+  // O primeiro audio da pilha e o proprio audio desta nota (o app que gravou e
+  // subiu): o player local ja o mostra. Os demais vieram do dashboard e ganham
+  // a sua linha. Sem audio local (nota criada no servidor), a pilha e inteira.
+  const stackAudios = hasAudio ? stack.audios.slice(1) : stack.audios;
   const editorPlaceholder = hasAudio ? 'Escreva sobre este áudio...' : 'Comece a escrever...';
   // Em tela estreita o titulo comeca menor; em ambas quebra linha em vez de sumir.
   const titleSize = titleFontSize(title, windowWidth < 380 ? 30 : 34, 24);
@@ -754,18 +767,18 @@ export default function NoteScreen() {
 
         {hasAudio ? <NoteAudioPlayer player={player} durationMs={note.durationMs} /> : null}
 
-        {stack.audios.length > 0 ? (
+        {stackAudios.length > 0 ? (
           <View style={styles.stack}>
             <Text style={styles.sectionLabel}>
-              {stack.audios.length === 1 ? 'Áudio' : `${stack.audios.length} áudios`}
+              {stackAudios.length === 1 ? 'Áudio' : `${stackAudios.length} áudios`}
             </Text>
-            {stack.audios.map((audio, index) => (
+            {stackAudios.map((audio, index) => (
               <Pressable
                 key={audio.id}
                 style={[styles.stackRow, playingAudioId === audio.id ? styles.stackRowOn : null]}
                 onPress={() => void playStackAudio(audio.id)}
                 accessibilityRole="button"
-                accessibilityLabel={`Ouvir áudio ${index + 1} de ${stack.audios.length}`}
+                accessibilityLabel={`Ouvir áudio ${index + 1} de ${stackAudios.length}`}
               >
                 <Ionicons
                   name={playingAudioId === audio.id ? 'pause' : 'play'}
@@ -1020,6 +1033,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     paddingVertical: spacing.sm,
     textAlignVertical: 'top',
+    backgroundColor: 'transparent',
   },
   meta: { color: colors.textSecondary, fontSize: fontSize.sm },
   transcribing: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
