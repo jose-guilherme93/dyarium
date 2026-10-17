@@ -195,8 +195,13 @@ func (s *Store) UpdateNoteBody(ctx context.Context, id, markdown, readVersion st
 		newID(), id, current, ts(time.Now())); err != nil {
 		return "", false, fmt.Errorf("store: insert revision: %w", err)
 	}
+	// Zap the legacy BlockNote document on the first markdown write: it was only
+	// a fallback for notes not converted yet, and keeping it would resurrect the
+	// old text when the body is emptied (the analysis and the dashboard both fall
+	// back to it when content_markdown is empty). The previous body is already
+	// safe in note_revisions.
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE notes SET content_markdown = ?, body_updated_at = ?, updated_at = ? WHERE id = ?`,
+		`UPDATE notes SET content_markdown = ?, document = '', body_updated_at = ?, updated_at = ? WHERE id = ?`,
 		markdown, stamp, ts(time.Now()), id); err != nil {
 		return "", false, fmt.Errorf("store: update note body: %w", err)
 	}

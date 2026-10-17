@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"regexp"
 	"strings"
 	"time"
 
@@ -274,7 +275,9 @@ func analysisInput(ctx context.Context, st *store.Store, entryID string) ([]anal
 	return []analyze.Segment{{Text: text}}, "", nil
 }
 
-// noteBodyText extracts the plain text of the entry's first note document.
+// noteBodyText extracts the plain text of the entry's newest note. The body is
+// markdown; only a note that was never written after the markdown migration
+// still lives in the legacy BlockNote document.
 func noteBodyText(ctx context.Context, st *store.Store, entryID string) (string, error) {
 	notes, err := st.ListNotes(ctx, entryID)
 	if err != nil {
@@ -283,7 +286,38 @@ func noteBodyText(ctx context.Context, st *store.Store, entryID string) (string,
 	if len(notes) == 0 {
 		return "", nil
 	}
-	return extractText(notes[0].Document), nil
+	note := notes[0]
+	if strings.TrimSpace(note.ContentMarkdown) != "" {
+		return markdownToPlain(note.ContentMarkdown), nil
+	}
+	return extractText(note.Document), nil
+}
+
+// markdownToPlain is the plain text of a markdown body: the same view the
+// dashboard counts words from (web/src/editor/blocknoteMarkdown.ts), so the
+// analysis reads the same text the user sees. Markdown that carries no prose
+// (fenced code, table rows, a mention to another note) is dropped.
+func markdownToPlain(markdown string) string {
+	plain := markdown
+	for _, rule := range markdownToPlainRules {
+		plain = rule.re.ReplaceAllString(plain, rule.replacement)
+	}
+	return strings.Join(strings.Fields(plain), " ")
+}
+
+var markdownToPlainRules = []struct {
+	re          *regexp.Regexp
+	replacement string
+}{
+	{regexp.MustCompile("(?ms)^```.*?^```[^\\n]*$"), ""},
+	{regexp.MustCompile(`(?m)^\|.*\|$`), ""},
+	{regexp.MustCompile(`\[[^\]]*\]\(note:[^)\s]+\)`), ""},
+	{regexp.MustCompile(`!?\[([^\]]*)\]\([^)\s]*\)`), "${1}"},
+	{regexp.MustCompile(`(?m)^#{1,6}\s+`), ""},
+	{regexp.MustCompile(`(?m)^>\s?`), ""},
+	{regexp.MustCompile(`(?m)^\s*[-*+]\s+`), ""},
+	{regexp.MustCompile(`(?m)^\s*\d+\.\s+`), ""},
+	{regexp.MustCompile("[*_~`]"), ""},
 }
 
 // extractText walks a BlockNote document and concatenates every inline "text".
