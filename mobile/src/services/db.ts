@@ -4,6 +4,7 @@
  */
 
 import * as SQLite from 'expo-sqlite';
+import { Directory, File, Paths } from 'expo-file-system';
 
 import type { ServerAnalysis } from '@/core/api';
 import type {
@@ -584,4 +585,29 @@ export async function getCachedAnalysis(entryId: string): Promise<CachedAnalysis
     [entryId],
   );
   return row ? toCachedAnalysis(row) : null;
+}
+
+/**
+ * Tamanho do banco local (arquivo principal + WAL/SHM, quando existirem).
+ * Cai para as paginas do SQLite se o caminho do arquivo nao for encontrado.
+ */
+export async function databaseBytes(): Promise<number> {
+  try {
+    const dir = new Directory(Paths.document, 'SQLite');
+    if (dir.exists) {
+      let total = 0;
+      for (const name of ['dyarium.db', 'dyarium.db-wal', 'dyarium.db-shm']) {
+        const file = new File(dir, name);
+        if (file.exists) total += file.size;
+      }
+      if (total > 0) return total;
+    }
+  } catch {
+    // cai para a leitura pelas paginas do SQLite
+  }
+
+  const db = await getDb();
+  const pageCount = await db.getFirstAsync<{ page_count: number }>('PRAGMA page_count');
+  const pageSize = await db.getFirstAsync<{ page_size: number }>('PRAGMA page_size');
+  return (pageCount?.page_count ?? 0) * (pageSize?.page_size ?? 0);
 }

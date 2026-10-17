@@ -8,7 +8,7 @@ import { isUploadable, needsNoteSync, needsTranscript, type Recording } from '@/
 import { bumpRender } from '@/dev/perf';
 import { deleteRecordingRow, getRecording, listRecordings, upsertRecording } from '@/services/db';
 import { deleteServerEntry } from '@/services/entries';
-import { deleteSessionFiles } from '@/services/files';
+import { deleteSessionAudioFiles, deleteSessionFiles } from '@/services/files';
 import { pullServerEntries } from '@/services/pull';
 import { fetchTranscriptsOnce } from '@/services/transcripts';
 import { emitRecording, observeUploads, runUploadQueueOnce } from '@/services/uploaderLoop';
@@ -35,7 +35,9 @@ interface LibraryValue {
   archiveNote(id: string): Promise<void>;
   unarchiveNote(id: string): Promise<void>;
   /** Remove o audio local de notas ja sincronizadas (o audio continua no servidor). */
-  freeSyncedAudio(): Promise<number>;
+  freeSyncedAudio(): Promise<{ notes: number; bytes: number }>;
+  /** Remove o audio local de uma nota sincronizada; devolve os bytes liberados. */
+  freeAudioForNote(id: string): Promise<number>;
   retry(id: string): Promise<void>;
   remove(id: string): Promise<void>;
   /** Dispara a fila agora (envio manual). */
@@ -359,25 +361,51 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   const archiveNote = useCallback((id: string) => setArchived(id, true), [setArchived]);
   const unarchiveNote = useCallback((id: string) => setArchived(id, false), [setArchived]);
 
-  const freeSyncedAudio = useCallback(async () => {
-    const list = await listRecordings();
-    let freed = 0;
-    for (const recording of list) {
-      if (recording.status !== 'completed' || !recording.filePath) continue;
-      deleteSessionFiles(recording.id);
+  const freeAudioForNote = useCallback(
+    async (id: string) => {
+      const current =
+        (await getRecording(id)) ?? recordingsRef.current.find((item) => item.id === id);
+      if (!current) return 0;
+      if (current.status !== 'completed' || !current.entryId) return 0;
+
+      const freed = deleteSessionAudioFiles(id);
+      if (freed.files === 0) return 0;
+
       const updated: Recording = {
-        ...recording,
+        ...current,
         filePath: undefined,
-        dir: '',
         sizeBytes: undefined,
         updatedAt: new Date().toISOString(),
       };
       await upsertRecording(updated);
       emitRecording(updated);
-      freed += 1;
+      await refresh();
+      return freed.bytes;
+    },
+    [refresh],
+  );
+
+  const freeSyncedAudio = useCallback(async () => {
+    const list = await listRecordings();
+    let notes = 0;
+    let bytes = 0;
+    for (const recording of list) {
+      if (recording.status !== 'completed' || !recording.entryId) continue;
+      const freed = deleteSessionAudioFiles(recording.id);
+      if (freed.files === 0) continue;
+      const updated: Recording = {
+        ...recording,
+        filePath: undefined,
+        sizeBytes: undefined,
+        updatedAt: new Date().toISOString(),
+      };
+      await upsertRecording(updated);
+      emitRecording(updated);
+      notes += 1;
+      bytes += freed.bytes;
     }
     await refresh();
-    return freed;
+    return { notes, bytes };
   }, [refresh]);
 
   const value = useMemo<LibraryValue>(
@@ -394,6 +422,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       archiveNote,
       unarchiveNote,
       freeSyncedAudio,
+      freeAudioForNote,
       retry,
       remove,
       kick,
@@ -412,6 +441,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       archiveNote,
       unarchiveNote,
       freeSyncedAudio,
+      freeAudioForNote,
       retry,
       remove,
       kick,
