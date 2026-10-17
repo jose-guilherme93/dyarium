@@ -410,6 +410,20 @@ export default function NoteScreen() {
     bodyRef.current = body;
   }, [body]);
 
+  // Edicao vinda do servidor (dashboard) com a nota aberta: o pull atualiza o
+  // banco e aqui o editor e reidratado. Nao toca em quem esta editando
+  // (`noteDirty`) nem em conflito em aberto, e ignora quando o texto e o mesmo
+  // (o sync do proprio app tambem muda a versao).
+  const shownBodyVersion = useRef<string | undefined>(note?.bodyVersion);
+  useEffect(() => {
+    if (!note || note.noteDirty || (note.syncConflict?.length ?? 0) > 0) return;
+    if (note.bodyVersion === shownBodyVersion.current) return;
+    shownBodyVersion.current = note.bodyVersion;
+    if ((note.text ?? '') === bodyRef.current) return;
+    setBody(note.text ?? '');
+    setEditorKey((value) => value + 1);
+  }, [note]);
+
   const statusRef = useRef(note?.status);
   useEffect(() => {
     statusRef.current = note?.status;

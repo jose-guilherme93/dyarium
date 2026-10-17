@@ -88,3 +88,48 @@ export function entryToRecording(entry: ServerEntry, note?: ServerNote): Recordi
     updatedAt: entry.updated_at,
   };
 }
+
+/**
+ * Aplica na nota local o que mudou no servidor (edicao feita no dashboard).
+ *
+ * So vale para nota limpa: com edicao pendente (`noteDirty`) ou conflito em
+ * aberto, o celular manda e o fluxo de sync decide quem ganha. Quando o corpo
+ * mudou, `note` e obrigatoria: a listagem traz a versao, nao o texto.
+ */
+export function mergeServerNote(
+  local: Recording,
+  entry: ServerEntry,
+  note?: ServerNote,
+): Recording | null {
+  if (local.status !== 'completed' || !local.entryId || entry.id !== local.entryId) return null;
+  if (local.noteDirty || (local.syncConflict?.length ?? 0) > 0) return null;
+
+  const serverBodyVersion = note?.body_version ?? entry.versions?.body;
+  const bodyMoved = Boolean(serverBodyVersion) && serverBodyVersion !== local.bodyVersion;
+  const titleVersion = entry.versions?.title;
+  const titleMoved = Boolean(titleVersion) && titleVersion !== local.titleVersion;
+  const recordedVersion = entry.versions?.recorded_at;
+  const recordedMoved = Boolean(recordedVersion) && recordedVersion !== local.recordedAtVersion;
+  const archivedMoved = typeof entry.archived === 'boolean' && entry.archived !== Boolean(local.archived);
+
+  // Sem o texto nao da para aplicar a versao nova do corpo: espera o proximo
+  // pull em vez de gravar uma versao sem o texto correspondente.
+  if (bodyMoved && !note) return null;
+  if (!bodyMoved && !titleMoved && !recordedMoved && !archivedMoved) return null;
+
+  return {
+    ...local,
+    ...(bodyMoved
+      ? {
+          text: note?.content_markdown ?? '',
+          noteId: note?.id ?? local.noteId,
+          bodyVersion: serverBodyVersion,
+        }
+      : {}),
+    ...(titleMoved ? { title: entry.title, titleVersion } : {}),
+    ...(recordedMoved
+      ? { recordedAt: entry.recorded_at ?? entry.created_at, recordedAtVersion: recordedVersion }
+      : {}),
+    ...(archivedMoved ? { archived: entry.archived } : {}),
+  };
+}

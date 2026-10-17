@@ -3,6 +3,10 @@
  *
  * - Adiciona entradas que ainda nao existem localmente (casadas por id local e
  *   por entryId), com o corpo da nota convertido em markdown.
+ * - Atualiza as que ja existem quando o servidor mudou o texto, o titulo, a data
+ *   ou o arquivamento (edicao feita no dashboard). Nota com edicao pendente
+ *   (`noteDirty`) ou conflito em aberto nao e tocada: o celular manda e o sync
+ *   decide.
  * - Remove do app as notas que o servidor confirma como apagadas (a lixeira dele).
  *   Uma entrada ausente da lista NAO apaga nada: e o que protege o aparelho de um
  *   servidor novo, reinstalado ou restaurado.
@@ -11,7 +15,8 @@
  */
 
 import { DyariumApi, type FetchLike } from '@/core/api';
-import { entryToRecording, isBlankServerEntry, recordingsDeletedOnServer } from '@/core/pull';
+import { entryToRecording, isBlankServerEntry, mergeServerNote, recordingsDeletedOnServer } from '@/core/pull';
+import type { Recording } from '@/core/types';
 
 import { deleteRecordingRow, listRecordings, upsertRecording } from './db';
 import { deleteSessionFiles } from './files';
@@ -30,6 +35,7 @@ export async function pullServerEntries(): Promise<number> {
   const local = await listRecordings();
 
   let changed = 0;
+  const removed = new Set<string>();
 
   // Exclusoes: so o que o servidor confirma como apagado, e so quando a lista
   // veio completa (nao truncada). Se a lixeira nao puder ser lida, nao apagamos
@@ -43,18 +49,46 @@ export async function pullServerEntries(): Promise<number> {
     for (const recording of recordingsDeletedOnServer(local, deletedAt)) {
       deleteSessionFiles(recording.id);
       await deleteRecordingRow(recording.id);
+      removed.add(recording.id);
       changed += 1;
     }
   }
 
-  // Adicoes: entradas que ainda nao existem localmente.
   const known = new Set<string>();
-  for (const r of local) {
-    known.add(r.id);
-    if (r.entryId) known.add(r.entryId);
+  const localByEntry = new Map<string, Recording>();
+  for (const recording of local) {
+    if (removed.has(recording.id)) continue;
+    known.add(recording.id);
+    if (recording.entryId) {
+      known.add(recording.entryId);
+      localByEntry.set(recording.entryId, recording);
+    }
   }
+
   for (const entry of entries) {
-    if (!entry.id || known.has(entry.id)) continue;
+    if (!entry.id) continue;
+
+    const existing = localByEntry.get(entry.id);
+    if (existing) {
+      if (existing.noteDirty || (existing.syncConflict?.length ?? 0) > 0) continue;
+      let note;
+      // A listagem traz a versao do corpo; so busca o texto quando ela mudou.
+      if (entry.versions?.body && entry.versions.body !== existing.bodyVersion) {
+        try {
+          note = (await api.listNotes(entry.id))[0];
+        } catch {
+          continue;
+        }
+      }
+      const merged = mergeServerNote(existing, entry, note);
+      if (merged) {
+        await upsertRecording(merged);
+        changed += 1;
+      }
+      continue;
+    }
+
+    if (known.has(entry.id)) continue;
     let note;
     try {
       const notes = await api.listNotes(entry.id);

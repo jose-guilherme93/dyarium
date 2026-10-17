@@ -181,8 +181,8 @@ export interface ServerEntry {
   archived?: boolean;
   /** Pilha de audios (so no detalhe da entrada), cada um com sua transcricao. */
   audios?: ServerAudio[];
-  /** Versao de cada campo (so no detalhe da entrada). */
-  versions?: { title?: string; recorded_at?: string };
+  /** Versao de cada campo (o servidor devolve tambem a do corpo). */
+  versions?: { title?: string; recorded_at?: string; body?: string };
   /** Presente apenas na listagem da lixeira (`?deleted=1`). */
   deleted_at?: string | null;
 }

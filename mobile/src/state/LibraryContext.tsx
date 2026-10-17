@@ -140,8 +140,8 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   const pullServer = useCallback(() => {
     bumpRender('pullserver.called');
     void pullServerEntries()
-      .then((added) => {
-        if (added > 0) return refresh();
+      .then((changed) => {
+        if (changed > 0) return refresh();
         return undefined;
       })
       .catch(() => undefined);

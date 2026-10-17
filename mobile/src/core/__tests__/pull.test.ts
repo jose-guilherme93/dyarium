@@ -1,4 +1,4 @@
-import { entryToRecording, isBlankServerEntry, recordingsDeletedOnServer } from '../pull';
+import { entryToRecording, isBlankServerEntry, mergeServerNote, recordingsDeletedOnServer } from '../pull';
 import type { ServerEntry, ServerNote } from '../api';
 import type { Recording } from '../types';
 
@@ -188,5 +188,82 @@ describe('recordingsDeletedOnServer', () => {
       updatedAt: '2026-10-11T12:00:00Z',
     });
     expect(recordingsDeletedOnServer([restored], deletedAfter).map((r) => r.id)).toEqual(['b']);
+  });
+});
+
+describe('mergeServerNote', () => {
+  const serverEntry = (over: Partial<ServerEntry> = {}): ServerEntry => ({
+    ...ENTRY,
+    archived: false,
+    versions: { title: 't1', recorded_at: 'r1', body: 'b1' },
+    ...over,
+  });
+
+  const serverNote = (over: Partial<ServerNote> = {}): ServerNote => ({
+    id: 'n1',
+    entry_id: ENTRY.id,
+    title: '',
+    content_markdown: 'texto do servidor',
+    body_version: 'b1',
+    created_at: '2026-10-11T14:00:00Z',
+    updated_at: '2026-10-11T14:05:00Z',
+    ...over,
+  });
+
+  const clean = (over: Partial<Recording> = {}): Recording =>
+    recording({
+      title: 'titulo local',
+      text: 'texto local',
+      titleVersion: 't1',
+      recordedAtVersion: 'r1',
+      bodyVersion: 'b1',
+      ...over,
+    });
+
+  it('aplica a edicao do dashboard no corpo', () => {
+    const local = clean();
+    const merged = mergeServerNote(
+      local,
+      serverEntry({ versions: { title: 't1', recorded_at: 'r1', body: 'b2' } }),
+      serverNote({ body_version: 'b2', content_markdown: 'texto novo' }),
+    );
+    expect(merged?.text).toBe('texto novo');
+    expect(merged?.bodyVersion).toBe('b2');
+    expect(merged?.title).toBe('titulo local');
+  });
+
+  it('aplica titulo, data e arquivamento sem tocar no corpo', () => {
+    const local = clean();
+    const merged = mergeServerNote(
+      local,
+      serverEntry({
+        title: 'titulo do dashboard',
+        recorded_at: '2026-10-12T10:00:00Z',
+        archived: true,
+        versions: { title: 't2', recorded_at: 'r2', body: 'b1' },
+      }),
+      undefined,
+    );
+    expect(merged?.title).toBe('titulo do dashboard');
+    expect(merged?.recordedAt).toBe('2026-10-12T10:00:00Z');
+    expect(merged?.archived).toBe(true);
+    expect(merged?.text).toBe('texto local');
+  });
+
+  it('nao mexe na nota com edicao pendente nem em conflito', () => {
+    const dirty = clean({ noteDirty: true });
+    expect(mergeServerNote(dirty, serverEntry({ versions: { body: 'b2' } }), serverNote({ body_version: 'b2' }))).toBeNull();
+
+    const conflicted = clean({ syncConflict: ['body'] });
+    expect(mergeServerNote(conflicted, serverEntry({ versions: { body: 'b2' } }), serverNote({ body_version: 'b2' }))).toBeNull();
+  });
+
+  it('nao aplica versao de corpo sem o texto (espera o proximo pull)', () => {
+    const merged = mergeServerNote(clean(), serverEntry({ versions: { body: 'b2' } }), undefined);
+    expect(merged).toBeNull();
+  });
+
+  it('sem nada novo, nao devolve mudanca', () => {
+    expect(mergeServerNote(clean(), serverEntry(), serverNote())).toBeNull();
   });
 });
