@@ -25,14 +25,14 @@ describe('caretScrollTarget', () => {
     expect(caretScrollTarget({ ...base, caret: 400 })).toBeNull();
   });
 
-  it('cursor embaixo do teclado rola para ficar acima do limite', () => {
-    // bottom = 200 + 600 = 800; limit = 800 - 96 = 704 -> rola 96.
-    expect(caretScrollTarget({ ...base, caret: 600 })).toBe(96);
+  it('cursor embaixo do teclado rola para o meio da area visivel', () => {
+    // centro = 16 + (800-96-16)/2 = 360; bottom = 200+600 = 800 -> 440.
+    expect(caretScrollTarget({ ...base, caret: 600 })).toBe(440);
   });
 
-  it('cursor acima da area visivel rola para cima ate a linha atual', () => {
-    // scrollY 400; bottom = 200+100 = 300; topo da linha = 272; alvo = 256.
-    expect(caretScrollTarget({ ...base, scrollY: 400, caret: 100 })).toBe(256);
+  it('cursor acima da area visivel volta para a linha atual', () => {
+    // bottom = 300; centro 360 -> alvo 0 (nao da para rolar negativo).
+    expect(caretScrollTarget({ ...base, scrollY: 400, caret: 100 })).toBe(0);
   });
 
   it('no topo da nota nao rola para lugar nenhum', () => {

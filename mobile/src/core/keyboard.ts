@@ -40,26 +40,23 @@ export interface CaretScrollInput {
 
 /**
  * Rolagem necessaria para a linha do cursor ficar visivel, ou `null` quando ela
- * ja esta (ou quando o alvo e a rolagem atual). Cobre os dois sentidos: descer
- * quando o cursor passa do limite do teclado e subir quando a linha ficou acima
- * da area visivel (o usuario rolou a nota e continuou digitando).
+ * ja esta (ou quando o alvo e a rolagem atual). Cobre os dois sentidos e, quando
+ * precisa corrigir, coloca a linha no meio da area visivel: assim o cabecalho e
+ * a barra/teclado nao cobrem o que esta sendo escrito.
  */
 export function caretScrollTarget(input: CaretScrollInput): number | null {
   const lineHeight = input.lineHeight ?? 28;
   const topInset = input.topInset ?? 16;
   const caretBottom = input.editorTop + input.caret;
-  const limit = input.viewport - input.bottomInset;
-
-  if (caretBottom > input.scrollY + limit) {
-    const target = Math.max(0, caretBottom - limit);
-    return target === input.scrollY ? null : target;
-  }
-
   const caretTop = caretBottom - lineHeight;
   const visibleTop = input.scrollY + topInset;
-  if (caretTop < visibleTop) {
-    const target = Math.max(0, caretTop - topInset);
-    return target === input.scrollY ? null : target;
-  }
-  return null;
+  const visibleBottom = input.scrollY + input.viewport - input.bottomInset;
+
+  const outOfView = caretTop < visibleTop || caretBottom > visibleBottom;
+  if (!outOfView) return null;
+
+  // Centro da area entre o topo reservado e a barra de acoes/teclado.
+  const center = topInset + (input.viewport - input.bottomInset - topInset) / 2;
+  const target = Math.max(0, caretBottom - center);
+  return target === input.scrollY ? null : target;
 }
