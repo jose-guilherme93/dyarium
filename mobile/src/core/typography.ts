@@ -48,6 +48,25 @@ export function fontWeightCss(weight: NoteFontWeight): number {
   return WEIGHTS[weight] ?? WEIGHTS.regular;
 }
 
+/**
+ * Familia equivalente no React Native. As do CSS valem so dentro do WebView;
+ * aqui ficam as pilhas que o sistema entende.
+ */
+const NATIVE_FAMILIES: Record<NoteFontFamily, string | undefined> = {
+  system: undefined,
+  serif: 'serif',
+  mono: 'monospace',
+};
+
+export function fontFamilyNative(family: NoteFontFamily): string | undefined {
+  return NATIVE_FAMILIES[family] ?? undefined;
+}
+
+/** Peso equivalente no TextStyle do React Native (string, como a plataforma espera). */
+export function fontWeightNative(weight: NoteFontWeight): '300' | '400' | '700' {
+  return String(WEIGHTS[weight] ?? WEIGHTS.regular) as '300' | '400' | '700';
+}
+
 /** Normaliza uma tipografia vinda de fora (preferencia antiga ou corrompida). */
 export function normalizeTypography(input: Partial<NoteTypography> | undefined): NoteTypography {
   const family = input?.family === 'serif' || input?.family === 'mono' ? input.family : 'system';

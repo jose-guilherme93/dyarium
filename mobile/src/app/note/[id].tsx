@@ -33,6 +33,11 @@ import {
 } from '@/core/format';
 import { IMAGE_WIDTH_OPTIONS } from '@/core/image';
 import { breakSentences, countChars, countWords, markdownToPlain } from '@/core/richText';
+import {
+  fontFamilyNative,
+  fontWeightNative,
+  type NoteTypography,
+} from '@/core/typography';
 import { mark, useRenderCount } from '@/dev/perf';
 import {
   localImageUri,
@@ -95,6 +100,43 @@ function NoteAudioPlayer({ player, durationMs }: { player: PlayerHandle; duratio
       </Pressable>
       <Text style={styles.playerTime}>
         {formatDuration(current * 1000)} / {formatDuration(duration * 1000)}
+      </Text>
+    </View>
+  );
+}
+
+/**
+ * Previa do texto enquanto o editor (WebView) carrega. O corpo da nota aparece
+ * junto com a tela, no mesmo lugar e com a mesma tipografia; quando o editor
+ * fica pronto ele toma o lugar, sem a nota abrir "vazia" por um instante.
+ */
+function NotePreview({
+  text,
+  placeholder,
+  typography,
+  minHeight,
+}: {
+  text: string;
+  placeholder: string;
+  typography: NoteTypography;
+  minHeight: number;
+}) {
+  const plain = markdownToPlain(text).trim();
+  return (
+    <View style={[styles.previewBox, { minHeight }]}>
+      <Text
+        style={[
+          styles.preview,
+          plain ? null : styles.previewPlaceholder,
+          {
+            fontFamily: fontFamilyNative(typography.family),
+            fontSize: typography.size,
+            fontWeight: fontWeightNative(typography.weight),
+            lineHeight: Math.round(typography.size * 1.5),
+          },
+        ]}
+      >
+        {plain || placeholder}
       </Text>
     </View>
   );
@@ -297,11 +339,12 @@ export default function NoteScreen() {
       void resolveImageSources(note.id, note.text ?? '', note.attachments ?? {})
         .then((sources) => {
           editorMountRef.current = Date.now();
+          mark('note.images_ms', Date.now() - openedAt);
           setImageSources(sources);
         })
         .catch(() => setImageSources({}));
     }
-  }, [note]);
+  }, [note, openedAt]);
 
   // Transcricao local: so depois da nota estar na tela (nunca atrasa a
   // abertura). Se ligada nas configuracoes e com modelo baixado, transcreve.
@@ -492,6 +535,7 @@ export default function NoteScreen() {
   }
 
   const hasAudio = Boolean(note.filePath);
+  const editorPlaceholder = hasAudio ? 'Escreva sobre este áudio...' : 'Comece a escrever...';
   // Em tela estreita o titulo comeca menor; em ambas quebra linha em vez de sumir.
   const titleSize = titleFontSize(title, windowWidth < 380 ? 30 : 34, 24);
   const properties: NoteProperty[] = [
@@ -609,7 +653,7 @@ export default function NoteScreen() {
               onCaret={handleCaret}
               onImageOpen={handleImageOpen}
               onImageMenu={handleImageMenu}
-              placeholder={hasAudio ? 'Escreva sobre este áudio...' : 'Comece a escrever...'}
+              placeholder={editorPlaceholder}
               imageSources={imageSources}
               baseUrl={editorBaseUrl}
               typography={typography}
@@ -617,7 +661,12 @@ export default function NoteScreen() {
             />
           </View>
         ) : (
-          <View style={styles.editorPlaceholder} />
+          <NotePreview
+            text={body}
+            placeholder={editorPlaceholder}
+            typography={typography}
+            minHeight={editorMinHeight}
+          />
         )}
 
         {note.status === 'failed' ? (
@@ -775,7 +824,9 @@ const styles = StyleSheet.create({
   scroll: { flex: 1 },
   content: { padding: spacing.xl, gap: spacing.lg, paddingBottom: spacing.xxxl },
   contentEditing: { paddingBottom: 96 },
-  editorPlaceholder: { minHeight: 160 },
+  previewBox: { paddingVertical: 4 },
+  preview: { color: colors.text },
+  previewPlaceholder: { color: colors.textTertiary },
   titleInput: {
     color: colors.text,
     fontWeight: '700',

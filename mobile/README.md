@@ -30,6 +30,9 @@ texto, guarda local, enfileira e envia para o servidor self-hosted.
   **previa da transcricao sincronizada** (5 linhas, sem cortar palavra): a fala
   atual fica no meio e o texto sobe suavemente conforme o audio avanca; tocar abre
   a transcricao completa, que **ja continua no mesmo ponto do audio**.
+  O texto aparece na hora, numa **previa nativa** com a mesma tipografia, e o editor
+  rico entra por cima quando o WebView termina de carregar: abrir a nota nunca fica
+  numa tela vazia esperando o editor.
   Ao sair, a nota e enviada (rascunho com conteudo) ou entra
   na fila de sync (edicao de nota ja enviada), sem depender de rede na hora.
 - **Imagens**: a foto entra na nota em largura total; **um toque** abre ela em tela

@@ -4,7 +4,9 @@ import {
   MIN_FONT_SIZE,
   clampFontSize,
   fontFamilyCss,
+  fontFamilyNative,
   fontWeightCss,
+  fontWeightNative,
   normalizeTypography,
 } from '../typography';
 
@@ -50,5 +52,19 @@ describe('css', () => {
     expect(fontFamilyCss('system')).toContain('sans-serif');
     expect(fontWeightCss('light')).toBe(300);
     expect(fontWeightCss('bold')).toBe(700);
+  });
+});
+
+describe('nativo', () => {
+  it('mapeia a familia para o React Native', () => {
+    expect(fontFamilyNative('system')).toBeUndefined();
+    expect(fontFamilyNative('serif')).toBe('serif');
+    expect(fontFamilyNative('mono')).toBe('monospace');
+  });
+
+  it('mapeia o peso para o React Native', () => {
+    expect(fontWeightNative('light')).toBe('300');
+    expect(fontWeightNative('regular')).toBe('400');
+    expect(fontWeightNative('bold')).toBe('700');
   });
 });
