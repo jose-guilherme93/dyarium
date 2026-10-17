@@ -5,6 +5,7 @@ import {
   plainText,
   weekdayHourGrid,
   wordMilestone,
+  writingConsistency,
   writingHistory,
   writingReminder,
 } from '../writing';
@@ -110,6 +111,73 @@ describe('analyzeWriting', () => {
     );
     expect(metrics.insights.length).toBeGreaterThan(0);
     expect(metrics.insights[0]).toContain('palavras');
+  });
+
+  it('menciona a constancia nos insights', () => {
+    const metrics = analyzeWriting(
+      [
+        base({ id: 'a', recordedAt: '2026-10-08T12:00:00.000Z', text: 'oi' }),
+        base({ id: 'b', recordedAt: '2026-10-09T12:00:00.000Z', text: 'oi' }),
+        base({ id: 'c', recordedAt: '2026-10-10T12:00:00.000Z', text: 'oi' }),
+      ],
+      now,
+    );
+    expect(metrics.consistency.trackedDays).toBe(3);
+    expect(metrics.insights.some((text) => text.includes('constância'))).toBe(true);
+  });
+});
+
+describe('writingConsistency', () => {
+  const now = new Date('2026-10-14T12:00:00.000Z');
+
+  it('marca os dias escritos e nao escritos da janela', () => {
+    const consistency = writingConsistency(
+      [
+        base({ id: 'a', recordedAt: '2026-10-10T12:00:00.000Z' }),
+        base({ id: 'b', recordedAt: '2026-10-13T12:00:00.000Z' }),
+        base({ id: 'c', recordedAt: '2026-10-14T12:00:00.000Z' }),
+        base({ id: 'd', recordedAt: '2026-10-14T18:00:00.000Z' }),
+      ],
+      now,
+      5,
+    );
+    expect(consistency.trackedDays).toBe(5);
+    expect(consistency.writtenDays).toBe(3);
+    expect(consistency.rate).toBeCloseTo(0.6);
+    expect(consistency.longestRun).toBe(2);
+    const last = consistency.days[consistency.days.length - 1];
+    expect(last.key).toBe('2026-10-14');
+    expect(last.wrote).toBe(true);
+    expect(last.notes).toBe(2);
+    expect(consistency.days[0].key).toBe('2026-10-10');
+  });
+
+  it('comeca na primeira nota em vez da janela cheia', () => {
+    const consistency = writingConsistency(
+      [base({ recordedAt: '2026-10-13T12:00:00.000Z' })],
+      now,
+      30,
+    );
+    expect(consistency.trackedDays).toBe(2);
+    expect(consistency.writtenDays).toBe(1);
+    expect(consistency.rate).toBeCloseTo(0.5);
+  });
+
+  it('limita a janela quando o historico e maior', () => {
+    const consistency = writingConsistency(
+      [base({ recordedAt: '2026-09-01T12:00:00.000Z' })],
+      now,
+      7,
+    );
+    expect(consistency.trackedDays).toBe(7);
+  });
+
+  it('sem notas, janela vazia', () => {
+    const consistency = writingConsistency([], now, 7);
+    expect(consistency.days).toEqual([]);
+    expect(consistency.trackedDays).toBe(0);
+    expect(consistency.rate).toBe(0);
+    expect(consistency.longestRun).toBe(0);
   });
 });
 

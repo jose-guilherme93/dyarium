@@ -7,7 +7,7 @@ import { Button } from '@/components/Button';
 import { Screen } from '@/components/Screen';
 import { summarize, type RankedItem } from '@/core/dashboard';
 import { formatBytes, formatDateTime, formatDuration } from '@/core/format';
-import { analyzeWriting, writingHistory, type DayCell, type MonthlyPoint, type SentimentMetrics, type WritingHistory, type WritingMetrics } from '@/core/writing';
+import { analyzeWriting, writingHistory, CONSISTENCY_WINDOW_DAYS, type ConsistencyMetrics, type DayCell, type MonthlyPoint, type SentimentMetrics, type WritingHistory, type WritingMetrics } from '@/core/writing';
 import { loadDashboard, type DashboardData } from '@/services/dashboard';
 import { useLibrary } from '@/state/LibraryContext';
 import { useSettings } from '@/state/SettingsContext';
@@ -70,15 +70,18 @@ function BarChart({
   title,
   points,
   labelEvery = 3,
+  caption,
 }: {
   title: string;
   points: { label: string; value: number }[];
   labelEvery?: number;
+  caption?: string;
 }) {
   const max = Math.max(1, ...points.map((point) => point.value));
   return (
     <View style={styles.chartCard}>
       <Text style={styles.sectionLabel}>{title}</Text>
+      {caption ? <Text style={styles.muted}>{caption}</Text> : null}
       <View style={styles.bars}>
         {points.map((point, index) => (
           <View key={index} style={styles.barSlot}>
@@ -91,13 +94,15 @@ function BarChart({
           </View>
         ))}
       </View>
-      <View style={styles.barLabels}>
-        {points.map((point, index) => (
-          <Text key={index} style={styles.barLabel}>
-            {index % labelEvery === 0 ? point.label : ''}
-          </Text>
-        ))}
-      </View>
+      {labelEvery > 0 ? (
+        <View style={styles.barLabels}>
+          {points.map((point, index) => (
+            <Text key={index} style={styles.barLabel}>
+              {index % labelEvery === 0 ? point.label : ''}
+            </Text>
+          ))}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -107,7 +112,17 @@ function BarChart({
  * `SVG_ENABLED` for false, o modulo nativo nem e carregado (o dev build atual
  * nao tem react-native-svg). Vira true depois do build.
  */
-function LineChart({ title, points }: { title: string; points: { label: string; value: number }[] }) {
+function LineChart({
+  title,
+  points,
+  caption,
+  labelEvery = 3,
+}: {
+  title: string;
+  points: { label: string; value: number }[];
+  caption?: string;
+  labelEvery?: number;
+}) {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { default: Svg, Polyline, Circle } = require('react-native-svg') as typeof import('react-native-svg');
   const width = 300;
@@ -119,29 +134,70 @@ function LineChart({ title, points }: { title: string; points: { label: string; 
   return (
     <View style={styles.chartCard}>
       <Text style={styles.sectionLabel}>{title}</Text>
+      {caption ? <Text style={styles.muted}>{caption}</Text> : null}
       <Svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`}>
         <Polyline points={line} fill="none" stroke={colors.accent} strokeWidth={2} />
         {points.map((point, index) => (
           <Circle key={index} cx={index * step} cy={y(point.value)} r={2.5} fill={colors.accent} />
         ))}
       </Svg>
-      <View style={styles.barLabels}>
-        {points.map((point, index) => (
-          <Text key={index} style={styles.barLabel}>
-            {index % 3 === 0 ? point.label : ''}
-          </Text>
-        ))}
-      </View>
+      {labelEvery > 0 ? (
+        <View style={styles.barLabels}>
+          {points.map((point, index) => (
+            <Text key={index} style={styles.barLabel}>
+              {index % labelEvery === 0 ? point.label : ''}
+            </Text>
+          ))}
+        </View>
+      ) : null}
     </View>
   );
 }
 
+/**
+ * Uma serie no formato que o build suportar: linha (react-native-svg) quando o
+ * modulo nativo existe, senao barras. Enquanto `SVG_ENABLED` for false, tudo sai
+ * em barras; virar true e so trocar a constante depois do build.
+ */
+function SeriesChart({
+  title,
+  points,
+  caption,
+  labelEvery,
+}: {
+  title: string;
+  points: { label: string; value: number }[];
+  caption?: string;
+  labelEvery?: number;
+}) {
+  if (SVG_ENABLED) {
+    return <LineChart title={title} points={points} caption={caption} labelEvery={labelEvery} />;
+  }
+  return <BarChart title={title} points={points} caption={caption} labelEvery={labelEvery} />;
+}
+
+/** Palavras por dia (janela recente): mostra tambem os dias sem escrita. */
+function DailyChart({ consistency }: { consistency: ConsistencyMetrics }) {
+  const points = consistency.days.map((day) => ({
+    label: shortDay(day.key),
+    value: day.words,
+  }));
+  const percent = Math.round(consistency.rate * 100);
+  const first = points[0]?.label;
+  const last = points[points.length - 1]?.label;
+  const range = first && last ? `${first} a ${last} · ` : '';
+  const caption = `${range}escrita em ${consistency.writtenDays} de ${consistency.trackedDays} dias (${percent}%)`;
+  // Sem rotulo por barra: sao muitos dias e o texto nao cabe embaixo de cada um.
+  return <SeriesChart title="Palavras por dia" points={points} caption={caption} labelEvery={0} />;
+}
+
+/** dd/mm a partir da chave do dia (YYYY-MM-DD). */
+function shortDay(key: string): string {
+  return `${key.slice(8, 10)}/${key.slice(5, 7)}`;
+}
+
 function WeeklyChart({ points }: { points: { label: string; value: number }[] }) {
-  return SVG_ENABLED ? (
-    <LineChart title="Palavras por semana" points={points} />
-  ) : (
-    <BarChart title="Palavras por semana" points={points} />
-  );
+  return <SeriesChart title="Palavras por semana" points={points} />;
 }
 
 function Heatmap({ history }: { history: WritingHistory }) {
@@ -182,7 +238,7 @@ function MonthlyChart({ points, comparisonPct }: { points: MonthlyPoint[]; compa
           : 'Seu ritmo está parecido com o do mês passado.';
   return (
     <>
-      <BarChart
+      <SeriesChart
         title="Palavras por mês"
         points={points.map((month) => ({ label: month.label, value: month.words }))}
         labelEvery={1}
@@ -402,6 +458,11 @@ function WritingSection({
       <WeeklyChart
         points={history.weekly.map((week) => ({ label: week.label, value: week.words }))}
       />
+      <DailyChart consistency={metrics.consistency} />
+      <BarChart
+        title="Notas por semana"
+        points={history.weekly.map((week) => ({ label: week.label, value: week.notes }))}
+      />
       <Heatmap history={history} />
       <MonthlyChart points={metrics.monthly} comparisonPct={metrics.monthComparisonPct} />
       <HourHeatmap grid={metrics.weekdayHour} />
@@ -468,6 +529,17 @@ function WritingSection({
         <Metric
           label="Notas/dia"
           value={String(metrics.averageNotesPerActiveDay)}
+        />
+      </View>
+      <View style={styles.metricsRow}>
+        <Metric label="Constância" value={`${Math.round(metrics.consistency.rate * 100)}%`} />
+        <Metric
+          label="Dias escritos"
+          value={`${metrics.consistency.writtenDays}/${metrics.consistency.trackedDays}`}
+        />
+        <Metric
+          label={`Melhor em ${CONSISTENCY_WINDOW_DAYS} dias`}
+          value={`${metrics.consistency.longestRun} dia${metrics.consistency.longestRun === 1 ? '' : 's'}`}
         />
       </View>
       {metrics.topWeekday && metrics.topHour ? (

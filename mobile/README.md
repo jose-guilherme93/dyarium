@@ -69,13 +69,16 @@ texto, guarda local, enfileira e envia para o servidor self-hosted.
   o que esta na fila/falhou e "Enviar agora". O envio continua em segundo plano
   (WorkManager) quando o app fica em segundo plano.
 - **Painel** (nas Opcoes): duas partes. **Escrita** (local, sempre disponivel): **graficos** de
-  palavras por semana (barras; o de linha com SVG ja esta pronto, desligado ate o build),
+  palavras por semana, **palavras por dia (30 dias)** e **notas por semana** (barras; o de linha
+  com SVG ja esta pronto, desligado ate o build — quando liga, toda serie vira linha),
+  **constancia** (dias escritos vs nao escritos, com o percentual),
   **historico de escrita** (mapa de dias que escreveu e os que nao), **palavras por mes** com a
   **comparacao com o mes passado**, mapa **dia x hora** (quando escreve), **humor** dos textos
   (lexico local: tom, distribuicao e destaques), e **meta semanal** de palavras com aviso de
   "sequencia em risco". Alem de palavras, caracteres, frases, paragrafos, vocabulario (palavras
   unicas e riqueza), palavras por nota, palavras mais usadas e mais longas,
-  perguntas/exclamacoes, links, imagens, listas, dias com nota, sequencia (streak), dia da semana
+  perguntas/exclamacoes, links, imagens, listas, dias com nota, sequencia (streak), constancia
+  (percentual, dias escritos e melhor sequencia em 30 dias), dia da semana
   e periodo em que mais escreve, palavras faladas nas transcricoes, e **insights** em frases.
   **Servidor** (quando configurado): resumo, humor (sentimento), emocoes, pessoas, lugares, tags e
   status, puxados do servidor.

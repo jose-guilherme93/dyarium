@@ -31,6 +31,29 @@ export interface SentimentMetrics {
   topNegative: { title: string; score: number } | null;
 }
 
+export interface ConsistencyDay {
+  /** Chave do dia (YYYY-MM-DD). */
+  key: string;
+  /** Teve pelo menos uma nota nesse dia. */
+  wrote: boolean;
+  notes: number;
+  /** Palavras escritas no dia (corpo das notas). */
+  words: number;
+}
+
+export interface ConsistencyMetrics {
+  /** Um item por dia coberto, do mais antigo ao mais recente (nunca futuro). */
+  days: ConsistencyDay[];
+  /** Dias com pelo menos uma nota. */
+  writtenDays: number;
+  /** Dias cobertos: da primeira nota ate hoje, no maximo a janela. */
+  trackedDays: number;
+  /** writtenDays / trackedDays (0..1). */
+  rate: number;
+  /** Maior sequencia de dias seguidos dentro da janela. */
+  longestRun: number;
+}
+
 export interface WritingMetrics {
   /** Notas no total (locais). */
   notes: number;
@@ -70,6 +93,8 @@ export interface WritingMetrics {
 
   /** Habito (notas, pela data do evento). */
   activeDays: number;
+  /** Dias escritos vs nao escritos na janela recente. */
+  consistency: ConsistencyMetrics;
   averageNotesPerActiveDay: number;
   currentStreak: number;
   longestStreak: number;
@@ -445,6 +470,7 @@ export function analyzeWriting(recordings: Recording[], now: Date = new Date()):
     transcriptWords,
     averageTranscriptWords: round1(average(transcriptWords, withTranscript)),
     activeDays: days.length,
+    consistency: writingConsistency(recordings, now),
     averageNotesPerActiveDay: round1(average(recordings.length, days.length)),
     currentStreak,
     longestStreak,
@@ -492,6 +518,12 @@ function buildInsights(metrics: WritingMetrics): string[] {
   if (metrics.activeDays > 0) {
     out.push(
       `Você registrou em ${metrics.activeDays} dia${metrics.activeDays === 1 ? '' : 's'}; a maior sequência foi de ${metrics.longestStreak} dia${metrics.longestStreak === 1 ? '' : 's'}${metrics.currentStreak > 0 ? ` (atual: ${metrics.currentStreak})` : ''}.`,
+    );
+  }
+  const { consistency } = metrics;
+  if (consistency.trackedDays >= 3) {
+    out.push(
+      `Você escreveu em ${consistency.writtenDays} dos últimos ${consistency.trackedDays} dias (${Math.round(consistency.rate * 100)}% de constância).`,
     );
   }
   if (metrics.topWeekday && metrics.topHour) {
@@ -640,6 +672,76 @@ export function writingHistory(
   }
 
   return { weekly, calendar, maxWeekly, maxDaily };
+}
+
+// --- Constancia (dias escritos vs nao escritos) -----------------------------
+
+/** Janela (em dias) da constancia mostrada no Painel. */
+export const CONSISTENCY_WINDOW_DAYS = 30;
+
+/**
+ * Dias escritos vs nao escritos na janela (padrao: 30 dias). A contagem comeca
+ * na primeira nota do usuario: quem comecou hoje nao aparece com 3% de
+ * constancia. Um dia conta como escrito com pelo menos uma nota (mesma regra da
+ * sequencia).
+ */
+export function writingConsistency(
+  recordings: Recording[],
+  now: Date = new Date(),
+  windowDays = CONSISTENCY_WINDOW_DAYS,
+): ConsistencyMetrics {
+  const counts = new Map<string, { notes: number; words: number }>();
+  let firstDay: Date | null = null;
+  for (const recording of recordings) {
+    const date = new Date(recording.recordedAt);
+    if (Number.isNaN(date.getTime())) continue;
+    const key = dayKey(date);
+    const entry = counts.get(key) ?? { notes: 0, words: 0 };
+    entry.notes += 1;
+    entry.words += wordsOf(plainText(recording.text ?? '')).length;
+    counts.set(key, entry);
+    const day = startOfDay(date);
+    if (!firstDay || day.getTime() < firstDay.getTime()) firstDay = day;
+  }
+
+  const today = startOfDay(now);
+  const windowStart = addDays(today, -(Math.max(1, windowDays) - 1));
+  const days: ConsistencyDay[] = [];
+  // Sem nenhuma nota nao existe janela: nao faz sentido mostrar 30 dias vazios.
+  if (firstDay) {
+    const start = firstDay.getTime() > windowStart.getTime() ? firstDay : windowStart;
+    for (let cursor = start; cursor.getTime() <= today.getTime(); cursor = addDays(cursor, 1)) {
+      const key = dayKey(cursor);
+      const entry = counts.get(key);
+      days.push({
+        key,
+        wrote: (entry?.notes ?? 0) > 0,
+        notes: entry?.notes ?? 0,
+        words: entry?.words ?? 0,
+      });
+    }
+  }
+
+  let writtenDays = 0;
+  let longestRun = 0;
+  let run = 0;
+  for (const day of days) {
+    if (day.wrote) {
+      writtenDays += 1;
+      run += 1;
+      if (run > longestRun) longestRun = run;
+    } else {
+      run = 0;
+    }
+  }
+
+  return {
+    days,
+    writtenDays,
+    trackedDays: days.length,
+    rate: days.length > 0 ? writtenDays / days.length : 0,
+    longestRun,
+  };
 }
 
 // --- Lembretes (notificacoes) -----------------------------------------------
