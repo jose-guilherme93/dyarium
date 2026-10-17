@@ -50,8 +50,12 @@ Resposta 201:
 - `client_key` torna a criacao idempotente: repetir o POST com a mesma chave devolve o
   upload existente (mesmo `id` e `offset`), evitando entradas duplicadas quando a resposta
   se perde. E o que o app movel usa, uma chave por gravacao.
-- `entry_id` e opcional: quando informado, o audio concluido e adicionado a essa entrada
-  em vez de criar uma nova (uma nota pode ter varios audios). 404 se a entrada nao existir.
+- `entry_id` e opcional: quando informado, o audio concluido entra nessa entrada. Se a
+  entrada **ainda nao existir**, ela e criada no complete com esse mesmo id — e assim
+  que o app cria uma nota offline com o id dele e o id vale igual nos dois ambientes,
+  sem nenhuma requisicao extra. Se ja existir, o audio entra na pilha dela (uma nota
+  pode ter varios audios, um embaixo do outro, cada um com sua transcricao).
+  400 se o `entry_id` nao for um id valido.
 - `duration_seconds` e aceito no corpo mas ignorado; o servidor mede a duracao com ffprobe
   no complete.
 - `local_transcribe` (bool, opcional): quando `true`, o cliente transcreve o audio no
@@ -106,6 +110,51 @@ Com `deleted=1` lista a **lixeira**: as entradas apagadas (remocao logica) com
 - Entradas apagadas aparecem em `entries` com `status: "deleted"` e o campo
   `deleted_at` preenchido.
 
+## Markdown como formato da nota
+
+O corpo da nota (`notes`) e **markdown**, o mesmo texto que o app e o dashboard
+falam. Cada campo editavel tem **versao propria** (`title`, `recorded_at`,
+`body`): o cliente manda a versao que leu e o servidor so grava se ela ainda for a
+atual. Se nao for, responde `409` **sem escrever** e diz qual campo brigou — o
+cliente pergunta ao usuario em vez de sobrescrever em silencio.
+
+- Versoes sao RFC 3339 (UTC, com nanossegundos) devolvidas em `versions`.
+- Cliente que **nao manda versao** (app antigo) continua funcionando: ultimo a
+  escrever vence.
+- O titulo vive na **entrada**, nao na nota. A nota nao tem mais `title` no
+  caminho de escrita: era a origem de "renomear no desktop e o titulo voltar".
+
+### POST /api/v1/entries/{id}/notes
+Cria a nota da entrada. Corpo:
+```json
+{ "id": "note_...", "content_markdown": "## Titulo\n\nTexto.", "base_version": "" }
+```
+Resposta 201 com a nota, `content_markdown` e `body_version`.
+
+### PUT /api/v1/notes/{id}
+Grava o corpo. Corpo:
+```json
+{ "content_markdown": "...", "base_version": "<body_version lido>" }
+```
+Resposta 200: `{ "status": "ok", "versions": { "body": "<nova versao>" } }`.
+- 409 com `{ "conflict": ["body"], "versions": {...} }` quando o corpo mudou
+  depois da leitura: **nada e gravado**.
+- Gravar o mesmo texto nao cria revisao nova (o historico so muda quando muda).
+- Aceita ainda `{"document": <BlockNote JSON>}` (legado) enquanto as notas antigas
+  nao virarem markdown.
+
+### PATCH /api/v1/entries/{id}
+Atualiza campos editaveis com versao por campo.
+```json
+{ "title": "...", "recorded_at": "...", "versions": { "title": "...", "recorded_at": "..." } }
+```
+Resposta 200: `{ "status": "ok", "versions": { "title": "...", "recorded_at": "..." } }`.
+- 409 com `{ "conflict": ["title"], "versions": {...} }` se aquele campo mudou
+  depois da leitura; **os campos sem conflito nao sao gravados** — o cliente
+  reenvia so o que o usuario escolher.
+- 400 quando o corpo nao traz nenhum campo.
+- Nao altera o audio.
+
 ### POST /api/v1/entries
 Cria uma nota escrita (sem audio). Corpo `{ "title": "...", "id": "note_...", "created_at": "..." }`.
 A entrada nasce com `source: "text"` e `status: "ready"`; o corpo e gravado como documento de nota (BlockNote),
@@ -122,9 +171,6 @@ Retorna a entrada completa: metadados, `audios` (cada audio com a sua transcrica
 analise, tags, notas e anexos. O `audios` e uma lista; uma nota pode ter varios. Cada
 item traz `id`, `content_type`, `size_bytes`, `duration_seconds`, `created_at` e, quando
 transcrito, `transcript` (modelo, idioma, texto e `segments`).
-
-### PATCH /api/v1/entries/{id}
-Atualiza campos editaveis (titulo, data do evento, tags por referencia). Nao altera o audio.
 
 ### DELETE /api/v1/entries/{id}
 Remocao logica da entrada. A entrada fica na lixeira por uma janela de retencao
@@ -163,7 +209,9 @@ vez de transcrever, e o dashboard mostra o texto. Corpo:
   "segments": [{ "start_ms": 0, "end_ms": 1000, "text": "trecho" }]
 }
 ```
-- Regexp de id: `attachment_id` e opcional; quando informado precisa pertencer a entrada.
+- `attachment_id` e opcional, mas o app **precisa** mandar: e ele que liga a transcricao
+  ao audio certo quando a nota tem varios. Sem ele, a transcricao fica solta e some da
+  lista de audios do dashboard.
 - A transcricao e gravada com `model` = `local`; uma transcricao anterior daquele audio e
   substituida. Emite `transcript.ready`.
 
@@ -333,22 +381,21 @@ Atualizam e removem tags. Remover uma tag remove as associacoes (`EntryTag`).
 
 ## Notas
 
-### GET /api/v1/entries/{id}/notes
-Lista notas da entrada (conteudo do editor BlockNote em JSON).
+O corpo da nota e markdown, escrito e lido pelas rotas da secao
+"Markdown como formato da nota" (mais acima). Aqui fica o resto.
 
-### POST /api/v1/entries/{id}/notes
-Cria uma nota (`{ "document": <json do BlockNote> }`).
+### GET /api/v1/entries/{id}/notes
+Lista notas da entrada, com `content_markdown` e `body_version`. Notas ainda nao
+convertidas vem com o `document` legado (BlockNote JSON) em vez do markdown.
 
 ### GET /api/v1/notes/{id}
-Retorna uma nota.
-
-### PUT /api/v1/notes/{id}
-Atualiza a nota e cria uma `NoteRevision` com o estado anterior.
+Retorna uma nota (markdown + `body_version`).
 
 ### DELETE /api/v1/notes/{id}
 
 ### GET /api/v1/notes/{id}/revisions
-Lista revisoes da nota.
+Lista revisoes da nota, com o corpo anterior em markdown. Uma revisao so e criada
+quando o texto realmente mudou.
 
 ## Links
 

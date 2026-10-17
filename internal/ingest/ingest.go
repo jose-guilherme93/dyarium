@@ -6,7 +6,9 @@ package ingest
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -109,10 +111,8 @@ func (s *Service) Start(ctx context.Context, meta Meta) (store.Upload, error) {
 		return store.Upload{}, newError(422, "unsupported_format", "formato nao suportado: "+format)
 	}
 	entryID := strings.TrimSpace(meta.EntryID)
-	if entryID != "" {
-		if _, err := s.store.GetEntry(ctx, entryID); err != nil {
-			return store.Upload{}, newError(404, "not_found", "entrada inexistente")
-		}
+	if entryID != "" && !id.Valid(entryID) {
+		return store.Upload{}, newError(400, "invalid_id", "entry_id invalido")
 	}
 
 	prefix, err := crypto.NewPrefix()
@@ -304,13 +304,9 @@ func (s *Service) Complete(ctx context.Context, uploadID string) (CompleteResult
 	now := time.Now().UTC()
 	var entry store.Entry
 	created := false
-	if u.EntryID != "" {
-		existing, err := s.store.GetEntry(ctx, u.EntryID)
-		if err != nil {
-			return CompleteResult{}, newError(404, "not_found", "entrada inexistente")
-		}
-		entry = existing
-	} else {
+	switch existing, err := s.store.GetEntry(ctx, u.EntryID); {
+	case u.EntryID == "":
+		// Sem id do cliente: o servidor cria a entrada.
 		title := strings.TrimSpace(u.Title)
 		if title == "" {
 			title = entrytitle.Name(entrytitle.Audio)
@@ -333,6 +329,36 @@ func (s *Service) Complete(ctx context.Context, uploadID string) (CompleteResult
 			return CompleteResult{}, err
 		}
 		created = true
+	case errors.Is(err, sql.ErrNoRows):
+		// O cliente gerou o id da nota (o app cria offline): cria a entrada com
+		// esse mesmo id, para o id valer igual nos dois ambientes.
+		title := strings.TrimSpace(u.Title)
+		if title == "" {
+			title = entrytitle.Name(entrytitle.Audio)
+		}
+		entry = store.Entry{
+			ID:               u.EntryID,
+			Title:            title,
+			Status:           store.EntryStored,
+			Source:           "upload",
+			OriginalFilename: u.Filename,
+			ContentType:      u.ContentType,
+			SizeBytes:        u.SizeBytes,
+			DurationSeconds:  durationSeconds,
+			SHA256:           sum,
+			RecordedAt:       u.RecordedAt,
+			CreatedAt:        now,
+			UpdatedAt:        now,
+		}
+		if err := s.store.CreateEntry(ctx, entry); err != nil {
+			return CompleteResult{}, err
+		}
+		created = true
+	case err != nil:
+		return CompleteResult{}, err
+	default:
+		// A entrada ja existe: este audio entra na pilha dela.
+		entry = existing
 	}
 
 	attachment := store.Attachment{

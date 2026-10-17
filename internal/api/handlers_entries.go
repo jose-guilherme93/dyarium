@@ -199,6 +199,12 @@ func (s *Server) handleGetEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body := entryJSON(entry)
+	if titleVersion, recordedVersion, verr := s.deps.Store.EntryFieldVersions(ctx, entry.ID); verr == nil {
+		body["versions"] = map[string]string{
+			store.FieldTitle:      titleVersion,
+			store.FieldRecordedAt: recordedVersion,
+		}
+	}
 	if names, err := s.entryTagNames(ctx, entry.ID); err == nil {
 		body["tags"] = names
 	}
@@ -223,6 +229,13 @@ func (s *Server) handleGetEntry(w http.ResponseWriter, r *http.Request) {
 type patchEntryRequest struct {
 	Title      *string `json:"title"`
 	RecordedAt *string `json:"recorded_at"`
+	// Versions are the versions of title/recorded_at the client last read.
+	// Fields whose version moved on are not written; they come back as a
+	// conflict so the user decides instead of the last write winning blindly.
+	Versions struct {
+		Title      string `json:"title"`
+		RecordedAt string `json:"recorded_at"`
+	} `json:"versions"`
 }
 
 func (s *Server) handlePatchEntry(w http.ResponseWriter, r *http.Request) {
@@ -232,18 +245,37 @@ func (s *Server) handlePatchEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	if req.Title != nil {
-		if err := s.deps.Store.UpdateEntryTitle(r.Context(), id, *req.Title); err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", err.Error())
-			return
-		}
-	}
+
+	var recordedAt *time.Time
 	if req.RecordedAt != nil {
-		if t, err := time.Parse(time.RFC3339, *req.RecordedAt); err == nil {
-			_ = s.deps.Store.UpdateEntryRecordedAt(r.Context(), id, t)
+		if parsed, err := time.Parse(time.RFC3339, *req.RecordedAt); err == nil {
+			t := parsed.UTC()
+			recordedAt = &t
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	if req.Title == nil && recordedAt == nil {
+		writeError(w, http.StatusBadRequest, "empty_patch", "nada para atualizar")
+		return
+	}
+	versions, conflict, err := s.deps.Store.UpdateEntryFields(r.Context(), id, req.Title, recordedAt,
+		req.Versions.Title, req.Versions.RecordedAt)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "entrada inexistente")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	if len(conflict) > 0 {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":    map[string]string{"code": "conflict", "message": "a nota mudou no outro lugar"},
+			"conflict": conflict,
+			"versions": versions,
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "versions": versions})
 }
 
 func (s *Server) handleDeleteEntry(w http.ResponseWriter, r *http.Request) {

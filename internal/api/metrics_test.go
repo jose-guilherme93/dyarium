@@ -1,10 +1,15 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/joseti/dyarium/internal/store"
 )
 
 func TestPutMetricsStoresSnapshotPerDevice(t *testing.T) {
@@ -90,6 +95,131 @@ func TestPutMetricsValidatesInput(t *testing.T) {
 				t.Fatalf("status = %d, want %d (%s)", rec.Code, tc.want, rec.Body.String())
 			}
 		})
+	}
+}
+
+// --- corpo da nota em markdown e conflito por campo ---
+
+func seedEntryWithNote(t *testing.T, srv *Server, entryID string) {
+	t.Helper()
+	now := time.Now().UTC()
+	if err := srv.deps.Store.CreateEntry(context.Background(), store.Entry{
+		ID: entryID, Title: "nota", Status: store.EntryReady, Source: "text", CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("create entry: %v", err)
+	}
+}
+
+// O corpo vai e volta byte a byte: markdown e o formato dos dois lados.
+func TestNoteBodyRoundTripsMarkdown(t *testing.T) {
+	srv := newTestServer(t)
+	const entryID = "note_01J8Z0000000000000000000E"
+	seedEntryWithNote(t, srv, entryID)
+
+	const markdown = "## Título\n\nUm **parágrafo** com [link](https://exemplo).\n\n- item\n- outro\n\n| a | b |\n| - | - |\n"
+
+	rec, created := doJSON(t, srv, http.MethodPost, "/api/v1/entries/"+entryID+"/notes",
+		strings.NewReader(`{"content_markdown":`+strconv.Quote(markdown)+`}`))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want 201 (%s)", rec.Code, rec.Body.String())
+	}
+	noteID, _ := created["id"].(string)
+	if noteID == "" {
+		t.Fatalf("create sem id: %v", created)
+	}
+
+	if rec, _ := doJSON(t, srv, http.MethodPut, "/api/v1/notes/"+noteID,
+		strings.NewReader(`{"content_markdown":`+strconv.Quote(markdown)+`}`)); rec.Code != http.StatusOK {
+		t.Fatalf("update status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+
+	_, got := doJSON(t, srv, http.MethodGet, "/api/v1/notes/"+noteID, nil)
+	if got["content_markdown"] != markdown {
+		t.Fatalf("content_markdown =\n%v\nwant\n%v", got["content_markdown"], markdown)
+	}
+}
+
+// Ler, editar e gravar de novo sem divergencia: passa, e o corpo segue igual.
+func TestNoteBodyAcceptsEditWithCurrentVersion(t *testing.T) {
+	srv := newTestServer(t)
+	const entryID = "note_01J8Z0000000000000000000F"
+	seedEntryWithNote(t, srv, entryID)
+
+	_, created := doJSON(t, srv, http.MethodPost, "/api/v1/entries/"+entryID+"/notes",
+		strings.NewReader(`{"content_markdown":"primeiro"}`))
+	noteID, _ := created["id"].(string)
+	version, _ := created["body_version"].(string)
+	if version == "" {
+		t.Fatalf("create sem body_version: %v", created)
+	}
+
+	body := `{"content_markdown":"segundo","base_version":` + strconv.Quote(version) + `}`
+	rec, saved := doJSON(t, srv, http.MethodPut, "/api/v1/notes/"+noteID, strings.NewReader(body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	versions, _ := saved["versions"].(map[string]any)
+	if versions["body"] == nil || versions["body"] == version {
+		t.Fatalf("a versao do corpo deveria ter mudado: %v", versions)
+	}
+}
+
+// O corpo mudou no outro lugar depois que o cliente leu: 409, e nada e escrito.
+func TestNoteBodyConflictDoesNotOverwrite(t *testing.T) {
+	srv := newTestServer(t)
+	const entryID = "note_01J8Z0000000000000000000G"
+	seedEntryWithNote(t, srv, entryID)
+
+	_, created := doJSON(t, srv, http.MethodPost, "/api/v1/entries/"+entryID+"/notes",
+		strings.NewReader(`{"content_markdown":"original"}`))
+	noteID, _ := created["id"].(string)
+	readVersion, _ := created["body_version"].(string)
+
+	// O desktop grava depois que o celular leu.
+	rec, _ := doJSON(t, srv, http.MethodPut, "/api/v1/notes/"+noteID,
+		strings.NewReader(`{"content_markdown":"versao do desktop"}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("gravacao do desktop: status = %d", rec.Code)
+	}
+
+	// O celular tenta gravar sobre a versao antiga.
+	rec, conflict := doJSON(t, srv, http.MethodPut, "/api/v1/notes/"+noteID,
+		strings.NewReader(`{"content_markdown":"meu texto","base_version":`+strconv.Quote(readVersion)+`}`))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (%s)", rec.Code, rec.Body.String())
+	}
+	fields, _ := conflict["conflict"].([]any)
+	if len(fields) != 1 || fields[0] != "body" {
+		t.Fatalf("conflict = %v, want [body]", fields)
+	}
+
+	_, got := doJSON(t, srv, http.MethodGet, "/api/v1/notes/"+noteID, nil)
+	if got["content_markdown"] != "versao do desktop" {
+		t.Fatalf("o conflito nao deveria ter escrito: %v", got["content_markdown"])
+	}
+}
+
+// Salvar o mesmo texto nao gera revisao nova (o historico so muda quando muda).
+func TestNoteBodyUnchangedWritesNoRevision(t *testing.T) {
+	srv := newTestServer(t)
+	const entryID = "note_01J8Z0000000000000000000H"
+	seedEntryWithNote(t, srv, entryID)
+
+	_, created := doJSON(t, srv, http.MethodPost, "/api/v1/entries/"+entryID+"/notes",
+		strings.NewReader(`{"content_markdown":"igual"}`))
+	noteID, _ := created["id"].(string)
+
+	for i := 0; i < 3; i++ {
+		if rec, _ := doJSON(t, srv, http.MethodPut, "/api/v1/notes/"+noteID,
+			strings.NewReader(`{"content_markdown":"igual"}`)); rec.Code != http.StatusOK {
+			t.Fatalf("gravacao %d: status = %d", i, rec.Code)
+		}
+	}
+
+	_, list := doJSON(t, srv, http.MethodGet, "/api/v1/notes/"+noteID+"/revisions", nil)
+	revisions, _ := list["revisions"].([]any)
+	if len(revisions) != 0 {
+		t.Fatalf("revisoes = %d, want 0 (texto nao mudou)", len(revisions))
 	}
 }
 

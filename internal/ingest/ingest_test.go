@@ -283,12 +283,31 @@ func TestCompleteAddsAudioToExistingEntry(t *testing.T) {
 	}
 }
 
-func TestStartRejectsUnknownEntry(t *testing.T) {
+func TestStartRejectsInvalidEntryID(t *testing.T) {
 	svc, _, _ := newService(t)
-	_, err := svc.Start(context.Background(), Meta{Filename: "a.wav", SizeBytes: 10, EntryID: "en_inexistente"})
+	_, err := svc.Start(context.Background(), Meta{Filename: "a.wav", SizeBytes: 10, EntryID: "id invalido"})
 	var apiErr *Error
-	if !errors.As(err, &apiErr) || apiErr.Status != 404 {
-		t.Fatalf("expected 404 para entrada inexistente, got %v", err)
+	if !errors.As(err, &apiErr) || apiErr.Status != 400 {
+		t.Fatalf("expected 400 para entry_id invalido, got %v", err)
+	}
+}
+
+// O app cria a nota offline com o id dele e manda esse id no proprio upload: a
+// entrada nasce com esse mesmo id, sem nenhuma requisicao a mais.
+func TestCompleteCreatesEntryWithClientID(t *testing.T) {
+	svc, st, _ := newService(t)
+	ctx := context.Background()
+	const clientID = "note_01J8Z0000000000000000000D"
+
+	result := uploadAudio(t, svc, []byte("conteudo de audio"), "ck-novo", clientID)
+	if result.Entry.ID != clientID {
+		t.Fatalf("entry_id = %q, want %s", result.Entry.ID, clientID)
+	}
+	if !result.Created {
+		t.Fatal("a entrada deveria ter sido criada no complete")
+	}
+	if _, err := st.GetEntry(ctx, clientID); err != nil {
+		t.Fatalf("a entrada com o id do cliente nao existe: %v", err)
 	}
 }
 

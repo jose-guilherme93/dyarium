@@ -90,10 +90,12 @@ func (s *Store) RestoreEntry(ctx context.Context, id string) error {
 
 // CreateNote inserts a note.
 func (s *Store) CreateNote(ctx context.Context, n Note) error {
+	bodyVersion := versionNow()
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO notes (id, entry_id, title, document, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		n.ID, n.EntryID, n.Title, n.Document, ts(n.CreatedAt), ts(n.UpdatedAt))
+		INSERT INTO notes (id, entry_id, title, document, content_markdown, body_updated_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		n.ID, n.EntryID, n.Title, n.Document, n.ContentMarkdown, bodyVersion,
+		ts(n.CreatedAt), ts(n.UpdatedAt))
 	if err != nil {
 		return fmt.Errorf("store: create note: %w", err)
 	}
@@ -103,7 +105,8 @@ func (s *Store) CreateNote(ctx context.Context, n Note) error {
 // ListNotes returns the notes of an entry.
 func (s *Store) ListNotes(ctx context.Context, entryID string) ([]Note, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, entry_id, COALESCE(title,''), document, created_at, updated_at
+		SELECT id, entry_id, COALESCE(title,''), document, COALESCE(content_markdown,''),
+			body_updated_at, created_at, updated_at
 		FROM notes WHERE entry_id = ? ORDER BY created_at DESC`, entryID)
 	if err != nil {
 		return nil, fmt.Errorf("store: list notes: %w", err)
@@ -111,13 +114,10 @@ func (s *Store) ListNotes(ctx context.Context, entryID string) ([]Note, error) {
 	defer rows.Close()
 	var out []Note
 	for rows.Next() {
-		var n Note
-		var createdAt, updatedAt string
-		if err := rows.Scan(&n.ID, &n.EntryID, &n.Title, &n.Document, &createdAt, &updatedAt); err != nil {
+		n, err := scanNote(rows)
+		if err != nil {
 			return nil, err
 		}
-		n.CreatedAt = parseTS(createdAt)
-		n.UpdatedAt = parseTS(updatedAt)
 		out = append(out, n)
 	}
 	return out, rows.Err()
@@ -125,17 +125,86 @@ func (s *Store) ListNotes(ctx context.Context, entryID string) ([]Note, error) {
 
 // GetNote returns a note by id.
 func (s *Store) GetNote(ctx context.Context, id string) (Note, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, entry_id, COALESCE(title,''), document, COALESCE(content_markdown,''),
+			body_updated_at, created_at, updated_at
+		FROM notes WHERE id = ?`, id)
+	n, err := scanNote(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Note{}, sql.ErrNoRows
+	}
+	return n, err
+}
+
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanNote(row rowScanner) (Note, error) {
 	var n Note
+	var bodyVersion sql.NullString
 	var createdAt, updatedAt string
-	err := s.db.QueryRowContext(ctx, `
-		SELECT id, entry_id, COALESCE(title,''), document, created_at, updated_at
-		FROM notes WHERE id = ?`, id).Scan(&n.ID, &n.EntryID, &n.Title, &n.Document, &createdAt, &updatedAt)
-	if err != nil {
+	if err := row.Scan(&n.ID, &n.EntryID, &n.Title, &n.Document, &n.ContentMarkdown,
+		&bodyVersion, &createdAt, &updatedAt); err != nil {
 		return Note{}, err
+	}
+	if bodyVersion.Valid {
+		if t := parseTS(bodyVersion.String); !t.IsZero() {
+			n.BodyUpdatedAt = &t
+		}
 	}
 	n.CreatedAt = parseTS(createdAt)
 	n.UpdatedAt = parseTS(updatedAt)
 	return n, nil
+}
+
+// UpdateNoteBody writes the markdown body and records a revision of the previous
+// text. It is a no-op (no revision, new version) when nothing changed. It reports
+// a conflict instead of writing when the body moved on since the client read it.
+func (s *Store) UpdateNoteBody(ctx context.Context, id, markdown, readVersion string) (version string, conflict bool, err error) {
+	stored, err := s.NoteFieldVersion(ctx, id)
+	if err != nil {
+		return "", false, err
+	}
+	versions := map[string]string{FieldBody: stored}
+	if versionAfter(stored, readVersion) {
+		return stored, true, nil
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", false, fmt.Errorf("store: update note body: %w", err)
+	}
+	defer tx.Rollback()
+
+	var current string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COALESCE(content_markdown, document) FROM notes WHERE id = ?`, id).Scan(&current); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", false, ErrNotFound
+		}
+		return "", false, err
+	}
+	stamp := versionNow()
+	if current == markdown {
+		// Nada mudou: nao grava revisao nem mexe na versao.
+		return stored, false, tx.Commit()
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO note_revisions (id, note_id, document, created_at) VALUES (?, ?, ?, ?)`,
+		newID(), id, current, ts(time.Now())); err != nil {
+		return "", false, fmt.Errorf("store: insert revision: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE notes SET content_markdown = ?, body_updated_at = ?, updated_at = ? WHERE id = ?`,
+		markdown, stamp, ts(time.Now()), id); err != nil {
+		return "", false, fmt.Errorf("store: update note body: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return "", false, fmt.Errorf("store: update note body: %w", err)
+	}
+	versions[FieldBody] = stamp
+	return stamp, false, nil
 }
 
 // UpdateNote replaces the document (if non-empty) and records a revision.

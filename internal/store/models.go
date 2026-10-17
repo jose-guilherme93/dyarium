@@ -124,14 +124,21 @@ type AudioMetrics struct {
 	WhisperPeakRSSMB int64
 }
 
-// Note is a free-form note attached to an entry (BlockNote JSON document).
+// Note is a free-form note attached to an entry. Content is markdown (the format
+// the app and the dashboard both speak); Document is the legacy BlockNote JSON,
+// kept only while old notes are being converted.
 type Note struct {
-	ID        string
-	EntryID   string
-	Title     string
-	Document  string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID       string
+	EntryID  string
+	Title    string
+	Document string
+	// ContentMarkdown is the note body in markdown.
+	ContentMarkdown string
+	// BodyUpdatedAt is the version of the body: it changes on every accepted
+	// write and is what a client compares against to detect a real conflict.
+	BodyUpdatedAt *time.Time
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 // NoteRevision is a historical version of a note.
