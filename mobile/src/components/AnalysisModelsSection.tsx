@@ -11,6 +11,7 @@ import {
   recommendAnalysisModel,
 } from '@/core/analysisModels';
 import { analysisNoteContent } from '@/core/analysisPrompt';
+import { localAnalysisEnabled } from '@/core/features';
 import { formatBytes } from '@/core/format';
 import type { Recording } from '@/core/types';
 import {
@@ -66,7 +67,28 @@ function useBatteryLabel(): string {
  * Modelos de analise local e um benchmark de desenvolvimento. O download e
  * "baixar e usar": ao terminar, o modelo fica selecionado. Nada roda sozinho.
  */
+/**
+ * A analise local ainda esta em desenvolvimento. O recurso fica desligado por
+ * padrao e so aparece com EXPO_PUBLIC_LOCAL_ANALYSIS=1 (ver docs/analise-local).
+ */
 export function AnalysisModelsSection() {
+  if (!localAnalysisEnabled()) {
+    return (
+      <>
+        <Text style={styles.sectionLabel}>Análise de sentimentos</Text>
+        <Card style={styles.notice}>
+          <Ionicons name="flask-outline" size={18} color={colors.textSecondary} />
+          <Text style={styles.noticeText}>
+            Análise local em desenvolvimento. Recurso desligado nesta versão.
+          </Text>
+        </Card>
+      </>
+    );
+  }
+  return <EnabledAnalysisModelsSection />;
+}
+
+function EnabledAnalysisModelsSection() {
   const { analysisModel, setAnalysisModel } = useSettings();
   const {
     recordings,
@@ -290,8 +312,12 @@ function BenchmarkPanel({
         setRows([...out]);
       }
       setProgress('concluído');
-    } catch {
-      setError('A análise falhou. Veja o build nativo e o modelo instalado.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn('[analysis] benchmark failed', message);
+      setError(
+        `A análise falhou (${model?.id ?? 'sem modelo'}): ${message || 'erro desconhecido'}.`,
+      );
       setProgress('');
     } finally {
       setRunning(false);

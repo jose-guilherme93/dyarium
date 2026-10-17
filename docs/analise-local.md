@@ -43,17 +43,41 @@ demais para um aparelho de 8 GB com o app e o Android disputando memoria.
 ## Build
 
 - Android arm64-v8a apenas (`expo-build-properties` > `android.buildArchs`).
-- `llama.rn` limitado a duas variantes de CPU no EAS:
-  `rnllama_v8_2,rnllama_v8_2_dotprod_i8mm` via
+- `llama.rn` limitado a tres variantes de CPU no EAS:
+  `rnllama_v8,rnllama_v8_2,rnllama_v8_2_dotprod_i8mm` via
   `ORG_GRADLE_PROJECT_rnllamaVariants`.
+- O plugin `plugins/withLlamaBaseLib` copia o `librnllama.so` base para o
+  jniLibs do app. O Java do `llama.rn` carrega esse arquivo explicitamente; sem
+  ele o `install()` falha com "JSI bindings not installed".
 - O benchmark aparece no `preview` por `EXPO_PUBLIC_ANALYSIS_BENCHMARK=1`.
 - O perfil `production` nao recebe essa flag.
+
+## Feature flag
+
+A analise local esta **desligada por padrao**. Para ver a tela de modelos e o
+benchmark no Metro:
+
+```
+EXPO_PUBLIC_LOCAL_ANALYSIS=1 npx expo start
+```
+
+Em build EAS, defina a mesma variavel no perfil. O benchmark continua exigindo
+`EXPO_PUBLIC_ANALYSIS_BENCHMARK=1` no `preview`.
+
+## Pendencia conhecida
+
+O development build v8 ficou sem o `librnllama.so` base porque as variantes do
+`llama.rn` foram restringidas. O Java do pacote carrega esse arquivo
+explicitamente, entao a analise falha com "JSI bindings not installed". O plugin
+`plugins/withLlamaBaseLib` e a variante `rnllama_v8` preparam a correcao, mas
+ainda falta um build novo. Ate la, a feature fica desligada pela flag.
 
 ## Benchmark (fase 0)
 
 A tela de modelos (`/transcription`) tem uma secao de benchmark visivel em
-desenvolvimento ou quando `EXPO_PUBLIC_ANALYSIS_BENCHMARK=1` (perfil `preview`).
-Ela usa as notas reais do aparelho e mede:
+desenvolvimento ou quando `EXPO_PUBLIC_ANALYSIS_BENCHMARK=1` (perfil `preview`),
+sempre com `EXPO_PUBLIC_LOCAL_ANALYSIS=1`. Ela usa as notas reais do aparelho e
+mede:
 
 - tempo de carga do modelo
 - tempo por nota

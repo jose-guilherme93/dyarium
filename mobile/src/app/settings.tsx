@@ -95,7 +95,7 @@ export default function SettingsScreen() {
             <Ionicons name="mic-circle-outline" size={20} color={colors.info} />
             <View style={styles.rowText}>
               <Text style={styles.cardTitle}>Modelos no aparelho</Text>
-              <Text style={styles.cardHint}>Transcrição e análise de sentimentos offline.</Text>
+              <Text style={styles.cardHint}>Transcrição offline e modelos do aparelho.</Text>
             </View>
             <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
           </Card>
