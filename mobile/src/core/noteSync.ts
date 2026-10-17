@@ -154,16 +154,27 @@ export async function fetchServerNote(
       title: string;
       recorded_at: string | null;
       created_at: string;
+      versions?: { title?: string; recorded_at?: string; body?: string };
     }>;
   },
   entryId: string,
-): Promise<{ title?: string; recordedAt?: string; markdown: string }> {
+): Promise<{
+  title?: string;
+  recordedAt?: string;
+  markdown: string;
+  titleVersion?: string;
+  recordedAtVersion?: string;
+  bodyVersion?: string;
+}> {
   const entry = await api.getEntry(entryId);
   const notes = await api.listNotes(entryId);
   return {
     title: entry.title,
     recordedAt: entry.recorded_at ?? entry.created_at,
     markdown: notes[0]?.content_markdown ?? "",
+    titleVersion: entry.versions?.title,
+    recordedAtVersion: entry.versions?.recorded_at,
+    bodyVersion: notes[0]?.body_version ?? entry.versions?.body,
   };
 }
 

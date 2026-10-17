@@ -179,6 +179,8 @@ export interface ServerEntry {
   updated_at: string;
   /** Nota arquivada: sai da lista de trabalho sem ser apagada. */
   archived?: boolean;
+  /** Pilha de audios (so no detalhe da entrada), cada um com sua transcricao. */
+  audios?: ServerAudio[];
   /** Versao de cada campo (so no detalhe da entrada). */
   versions?: { title?: string; recorded_at?: string };
   /** Presente apenas na listagem da lixeira (`?deleted=1`). */
@@ -215,6 +217,20 @@ export interface ServerNote {
 }
 
 /** Anexo de uma entrada (imagem anexada a nota). */
+/** Um audio da nota, como o servidor guarda: uma nota pode ter varios. */
+export interface ServerAudio {
+  id: string;
+  content_type: string;
+  size_bytes: number;
+  duration_seconds: number;
+  created_at: string;
+  transcript?: {
+    text?: string;
+    language?: string;
+    segments?: TranscriptSegment[];
+  };
+}
+
 export interface ServerAttachment {
   id: string;
   entry_id: string;
@@ -352,7 +368,7 @@ export class DyariumApi {
     return body.notes ?? [];
   }
 
-  /** Entrada completa: titulo, data e versoes dos campos. */
+  /** Entrada completa: titulo, data, versoes dos campos e a pilha de audios. */
   async getEntry(entryId: string): Promise<ServerEntry> {
     const res = await this.fetchImpl(this.url(`/api/v1/entries/${entryId}`), {
       method: 'GET',
@@ -360,6 +376,16 @@ export class DyariumApi {
     });
     if (!res.ok) throw await this.parseError(res);
     return JSON.parse(await res.text());
+  }
+
+  /**
+   * A pilha de audios da nota, do mais antigo para o mais novo. O app nao grava
+   * varios audios numa nota (isso e do dashboard), mas **le** a pilha: e assim que
+   * os audios do desktop aparecem aqui, cada um com a sua transcricao.
+   */
+  async listAudios(entryId: string): Promise<ServerAudio[]> {
+    const entry = await this.getEntry(entryId);
+    return (entry.audios ?? []) as ServerAudio[];
   }
 
   /** Cria a nota de uma entrada a partir do markdown do corpo. */

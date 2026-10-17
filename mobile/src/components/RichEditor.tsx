@@ -38,6 +38,8 @@ export interface RichEditorHandle {
   setImageWidth(key: string, widthPercent: number): void;
   /** Apaga uma imagem existente. */
   deleteImage(key: string): void;
+  /** Apaga o bloco somente leitura (tabela, divisoria) pelo markdown que ele carrega. */
+  deleteOpaque(markdown: string): void;
 }
 
 interface RichEditorProps {
@@ -65,11 +67,25 @@ interface RichEditorProps {
   typography?: NoteTypography;
   /** Altura minima: o editor preenche o espaco restante da nota (digitar em qualquer lugar). */
   minHeight?: number;
+  /**
+   * Largura maxima da linha de texto, em px. A coluna fica centralizada, com o
+   * mesmo espaco dos dois lados (como um documento de texto).
+   */
+  measure?: number;
+  /** Toque num bloco que o app nao edita (tabela, divisoria): abre a acao de apagar. */
+  onOpaqueMenu?: (opaque: { label: string; markdown: string }) => void;
 }
 
 // O modulo nativo do WebView so existe depois de um novo build. Enquanto nao
 // existir, cai para um editor simples (com marcadores) para nao quebrar o app.
 const hasWebView = Boolean(TurboModuleRegistry.get('RNCWebViewModule'));
+
+/**
+ * Largura maxima da linha de texto, em px. Acima disso a linha fica longa demais
+ * de ler; abaixo, sobra espaco de sobra. O editor aplica isso como CSS
+ * (max-width), entao o WebView responsivo faz o resto.
+ */
+export const DEFAULT_MEASURE = 680;
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const WebViewModule = hasWebView ? require('react-native-webview') : null;
@@ -78,20 +94,38 @@ export function buildEditorHtml(
   placeholder: string,
   initialHtml: string,
   typography: NoteTypography = DEFAULT_TYPOGRAPHY,
+  measure = 720,
 ): string {
   const safePlaceholder = placeholder.replace(/"/g, '&quot;');
   const fontFamily = fontFamilyCss(typography.family);
   const fontWeight = fontWeightCss(typography.weight);
   return `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
 <style>
-  html, body { margin: 0; padding: 0; height: 100%; background: #0A0A0F; color: #FFFFFF; font-family: ${fontFamily}; font-size: ${typography.size}px; font-weight: ${fontWeight}; line-height: 1.5; word-wrap: break-word; }
+  /* Fundo transparente: a cor vem da tela da nota. Com fundo proprio aqui, a
+     nota aparecia com duas cores (o painel do editor sobre o fundo do app). */
+  html, body { margin: 0; padding: 0; height: 100%; background: transparent; color: #FFFFFF; font-family: ${fontFamily}; font-size: ${typography.size}px; font-weight: ${fontWeight}; line-height: 1.5; word-wrap: break-word; -webkit-text-size-adjust: none; }
   /* box-sizing: sem ele o padding de #editor (8px) soma ao min-height: 100% e o
      editor cresce a cada ciclo do ResizeObserver (a nota crescia sem parar). */
   #editor { box-sizing: border-box; min-height: 100%; padding: 4px 0; outline: none; }
+  /* Coluna com medida e centralizada, como um documento: a linha para em ~${measure}px
+     e sobra espaco igual dos dois lados, em vez de texto colado na borda. */
+  #editor > * { max-width: ${measure}px; margin-left: auto; margin-right: auto; }
   #editor:empty:before { content: attr(data-placeholder); color: #5A5A5F; }
   ul { padding-left: 22px; margin: 6px 0; }
   div { min-height: 1.5em; }
   a { color: #8B7BE8; text-decoration: underline; }
+  h1, h2, h3, h4, h5, h6 { line-height: 1.3; margin: 18px 0 6px; font-weight: 700; }
+  h1 { font-size: 1.6em; }
+  h2 { font-size: 1.35em; }
+  h3 { font-size: 1.15em; }
+  blockquote { margin: 10px 0; padding: 2px 0 2px 12px; border-left: 3px solid #3A3A45; color: #C9C9D2; }
+  pre.code-block { margin: 10px 0; padding: 10px 12px; border-radius: 10px; background: #15151B; border: 1px solid #2A2A33; overflow-x: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.88em; line-height: 1.45; white-space: pre-wrap; }
+  /* Bloco opaco: o que o app nao edita (tabela, divisoria). Fica visivel, nunca
+     some, e carrega o markdown original em data-md. */
+  .opaque-block { display: block; margin: 10px 0; padding: 8px 10px; border: 1px dashed #3A3A45; border-radius: 10px; background: rgba(255,255,255,0.03); }
+  .opaque-kind { display: block; font-size: 0.7em; letter-spacing: 0.08em; text-transform: uppercase; color: #6E6E7A; margin-bottom: 4px; }
+  .opaque-preview { display: block; font-size: 0.9em; color: #A9A9B5; }
+  .opaque-inline { padding: 1px 6px; border-radius: 6px; background: rgba(139,123,232,0.16); color: #B9AEF5; }
   .img-block { position: relative; display: block; margin: 6px 0; }
   .img-block img { display: block; max-width: 100%; border-radius: 10px; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
   /* Sem largura definida = largura total da nota (o padrao da foto e preencher). */
@@ -214,6 +248,22 @@ export function buildEditorHtml(
     editor.addEventListener('touchcancel', cancelLongPress);
     // Sem o menu nativo do navegador ao segurar a imagem.
     document.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+    // Bloco opaco (tabela, divisoria): somente leitura. Toque pede para apagar
+    // (o app confirma); nao entra para o cursor e nao sai do lugar.
+    editor.addEventListener('click', function (e) {
+      var node = e.target;
+      while (node && node !== editor) {
+        if (node.classList && node.classList.contains('opaque-block')) {
+          e.preventDefault();
+          var label = node.getAttribute('data-label') || 'bloco';
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            opaqueMenu: { label: label, markdown: node.getAttribute('data-md') || '' }
+          }));
+          return;
+        }
+        node = node.parentNode;
+      }
+    }, true);
     editor.addEventListener('click', function (e) {
       var node = e.target;
       while (node && node !== editor) {
@@ -334,6 +384,20 @@ export function buildEditorHtml(
       ensureTrailing();
       send();
     };
+    // Apaga o bloco opaco pelo markdown que ele carrega (so depois da
+    // confirmacao do usuario, do lado do app).
+    window.__deleteOpaque = function (markdown) {
+      var blocks = editor.querySelectorAll('.opaque-block');
+      for (var i = 0; i < blocks.length; i++) {
+        if ((blocks[i].getAttribute('data-md') || '') === markdown) {
+          blocks[i].parentNode.removeChild(blocks[i]);
+          ensureTrailing();
+          send();
+          return true;
+        }
+      }
+      return false;
+    };
     // Insere um link no cursor (rotulo = texto; sem rotulo, usa a propria URL).
     window.__insertLink = function (url, label) {
       editor.focus();
@@ -374,6 +438,8 @@ const RichEditorInner = forwardRef<RichEditorHandle, RichEditorProps>(function R
     baseUrl,
     typography = DEFAULT_TYPOGRAPHY,
     minHeight = 160,
+    measure = DEFAULT_MEASURE,
+    onOpaqueMenu,
   },
   ref,
 ) {
@@ -393,6 +459,7 @@ const RichEditorInner = forwardRef<RichEditorHandle, RichEditorProps>(function R
       placeholder,
       markdownToHtml(value, imageSources),
       typography,
+      measure,
     );
   }
   const source = useMemo(
@@ -432,6 +499,11 @@ const RichEditorInner = forwardRef<RichEditorHandle, RichEditorProps>(function R
     onImageMenuRef.current = onImageMenu;
   }, [onImageMenu]);
 
+  const onOpaqueMenuRef = useRef(onOpaqueMenu);
+  useEffect(() => {
+    onOpaqueMenuRef.current = onOpaqueMenu;
+  }, [onOpaqueMenu]);
+
   // Aplica mudancas de tipografia sem recarregar o WebView.
   useEffect(() => {
     if (!WebViewModule || !webRef.current) return;
@@ -452,6 +524,7 @@ const RichEditorInner = forwardRef<RichEditorHandle, RichEditorProps>(function R
         editing?: boolean;
         imageOpen?: string;
         imageMenu?: { src?: string; width?: number };
+        opaqueMenu?: { label?: string; markdown?: string };
       };
       if (data.editing === true) {
         onEditingRef.current?.(true);
@@ -467,6 +540,13 @@ const RichEditorInner = forwardRef<RichEditorHandle, RichEditorProps>(function R
       }
       if (data.imageMenu && typeof data.imageMenu.src === 'string') {
         onImageMenuRef.current?.(data.imageMenu.src, data.imageMenu.width ?? 100);
+        return;
+      }
+      if (data.opaqueMenu && typeof data.opaqueMenu.markdown === 'string') {
+        onOpaqueMenuRef.current?.({
+          label: data.opaqueMenu.label ?? 'bloco',
+          markdown: data.opaqueMenu.markdown,
+        });
         return;
       }
       if (typeof data.height === 'number') {
@@ -538,6 +618,19 @@ const RichEditorInner = forwardRef<RichEditorHandle, RichEditorProps>(function R
           return;
         }
         const next = removeImageFromMarkdown(plain, key);
+        setPlain(next);
+        lastValue.current = next;
+        onChangeMarkdown(next);
+      },
+      deleteOpaque(markdown) {
+        if (WebViewModule && webRef.current) {
+          webRef.current.injectJavaScript(
+            `window.__deleteOpaque(${JSON.stringify(markdown)}); true;`,
+          );
+          return;
+        }
+        // Sem WebView nao ha bloco opaco na tela: remove do markdown.
+        const next = plain.replace(`${markdown}\n`, '').replace(markdown, '');
         setPlain(next);
         lastValue.current = next;
         onChangeMarkdown(next);
@@ -616,5 +709,7 @@ const styles = StyleSheet.create({
     minHeight: 160,
     paddingVertical: spacing.sm,
   },
-  web: { flex: 1, backgroundColor: '#0A0A0F' },
+  // Transparente: a cor da nota vem da tela, nao do WebView (com fundo proprio
+  // aqui, a nota aparecia com duas cores).
+web: { flex: 1, backgroundColor: 'transparent' },
 });

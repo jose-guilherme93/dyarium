@@ -5,6 +5,7 @@ import { router, useLocalSearchParams, useNavigation } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Image,
   InteractionManager,
   Keyboard,
@@ -18,9 +19,10 @@ import {
   View,
 } from 'react-native';
 
+import { ConflictDialog } from '@/components/ConflictDialog';
 import { FastModal } from '@/components/FastModal';
 import { NoteMenu, type NoteMenuAnchor, type NoteProperty } from '@/components/NoteMenu';
-import { RichEditor, type RichEditorHandle } from '@/components/RichEditor';
+import { DEFAULT_MEASURE, RichEditor, type RichEditorHandle } from '@/components/RichEditor';
 import { Screen } from '@/components/Screen';
 import { STATUS_META } from '@/components/StatusChip';
 import { SyncedTranscript } from '@/components/SyncedTranscript';
@@ -33,24 +35,30 @@ import {
 } from '@/core/format';
 import { IMAGE_WIDTH_OPTIONS } from '@/core/image';
 import { breakSentences, countChars, countWords, markdownToPlain } from '@/core/richText';
+import { clearNoteConflict } from '@/core/noteSync';
 import {
   fontFamilyNative,
   fontWeightNative,
   type NoteTypography,
 } from '@/core/typography';
 import { mark, useRenderCount } from '@/dev/perf';
+
 import {
+  attachmentUri,
   localImageUri,
   resolveImageSources,
   saveLocalImage,
   uploadLocalImage,
 } from '@/services/attachments';
 import { releaseAudioFocus } from '@/services/audioFocus';
+import { getRecording, upsertRecording } from '@/services/db';
 import { directoryBytes, sessionDirectory, sessionDirUri } from '@/services/files';
 import { pickImage } from '@/services/image';
 import { maybeTranscribeLocally } from '@/services/localTranscription';
+import { fetchTheirs, syncNoteForcing } from '@/services/noteSync';
 import { playPlayer } from '@/services/playback';
 import { useLibrary } from '@/state/LibraryContext';
+import { useAudioStack } from '@/state/useAudioStack';
 import { useLoadPlayback, usePauseOnUnmount, usePlaybackSource } from '@/state/PlaybackContext';
 import { useSettings } from '@/state/SettingsContext';
 import { useTranscriptionProgress } from '@/state/useTranscriptionProgress';
@@ -175,7 +183,28 @@ export default function NoteScreen() {
   // Player unico do app: o controle de play e a previa de transcricao usam o
   // mesmo audio da nota (sem dois players em conflito).
   const filePath = note?.filePath;
-  const player = usePlaybackSource(filePath);
+  // Pilha de audios do servidor. O app nao grava varios audios numa nota, mas
+  // le a pilha: os audios do dashboard aparecem aqui, cada um com a sua
+  // transcricao. Tocar em um deles troca a fonte do mesmo player.
+  const stack = useAudioStack(note?.entryId);
+  const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
+  const [downloadedUri, setDownloadedUri] = useState<string | null>(null);
+  const playerUri = playingAudioId ? (downloadedUri ?? undefined) : filePath;
+  const player = usePlaybackSource(playerUri);
+
+  const playStackAudio = useCallback(
+    async (audioId: string) => {
+      if (playingAudioId === audioId) {
+        setPlayingAudioId(null);
+        setDownloadedUri(null);
+        return;
+      }
+      setPlayingAudioId(audioId);
+      const uri = await attachmentUri(audioId);
+      setDownloadedUri(uri);
+    },
+    [playingAudioId],
+  );
   usePauseOnUnmount();
   const segments = note?.transcriptSegments;
   useRenderCount('NoteScreen');
@@ -300,6 +329,67 @@ export default function NoteScreen() {
 
   // Tocou na nota (o editor avisa pelo WebView): mostra o menu de acoes.
   const handleEditingChange = useCallback(() => setEditing(true), []);
+
+  // Bloco que o app nao edita (tabela, divisoria): aparece sempre, e so sai com
+  // confirmacao — perder a tabela de uma nota sem querer seria pior.
+  const handleOpaqueMenu = useCallback((opaque: { label: string; markdown: string }) => {
+    Alert.alert(
+      `Apagar ${opaque.label}?`,
+      'O bloco não é editável aqui e será removido da nota também no dashboard.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Apagar',
+          style: 'destructive',
+          onPress: () => {
+            dirtyRef.current = true;
+            editorRef.current?.deleteOpaque(opaque.markdown);
+          },
+        },
+      ],
+    );
+  }, []);
+
+  // Conflito: o servidor recusou a gravacao porque o campo ja mudou no
+  // dashboard. Nada foi sobrescrito; aqui o usuario decide.
+  // O dialogo aparece enquanto houver conflito; "decidir depois" esconde sem
+  // resolver, e volta a aparecer se o conflito continuar la.
+  const conflictFields = note?.syncConflict ?? [];
+  const [conflictSnoozed, setConflictSnoozed] = useState<string | null>(null);
+  const conflictKey = `${note?.id ?? ''}:${conflictFields.join(',')}`;
+  const conflictOpen = conflictFields.length > 0 && conflictSnoozed !== conflictKey;
+
+  const handleKeepMine = useCallback(async () => {
+    if (!noteId || !note) return;
+    const result = await syncNoteForcing(note).catch(() => undefined);
+    if (!result) return;
+    const fresh = (await getRecording(noteId)) ?? note;
+    await upsertRecording(clearNoteConflict({ ...fresh, noteDirty: true }));
+    await library.refresh();
+  }, [library, note, noteId]);
+
+  const handleTakeTheirs = useCallback(async () => {
+    if (!noteId || !note) return;
+    const theirs = await fetchTheirs(note).catch(() => undefined);
+    if (!theirs) return;
+    const fresh = (await getRecording(noteId)) ?? note;
+    await upsertRecording(
+      clearNoteConflict({
+        ...fresh,
+        title: theirs.title ?? fresh.title,
+        recordedAt: theirs.recordedAt ?? fresh.recordedAt,
+        text: theirs.markdown,
+        titleVersion: theirs.titleVersion,
+        recordedAtVersion: theirs.recordedAtVersion,
+        bodyVersion: theirs.bodyVersion,
+        // O que veio de la ja esta no servidor: nada a reenviar.
+        noteDirty: undefined,
+      }),
+    );
+    setTitle(theirs.title ?? fresh.title);
+    setBody(theirs.markdown);
+    await library.refresh();
+  }, [library, note, noteId]);
 
   const goBack = useCallback(() => {
     if (router.canGoBack()) router.back();
@@ -616,6 +706,44 @@ export default function NoteScreen() {
 
         {hasAudio ? <NoteAudioPlayer player={player} durationMs={note.durationMs} /> : null}
 
+        {stack.audios.length > 0 ? (
+          <View style={styles.stack}>
+            <Text style={styles.sectionLabel}>
+              {stack.audios.length === 1 ? 'Áudio' : `${stack.audios.length} áudios`}
+            </Text>
+            {stack.audios.map((audio, index) => (
+              <Pressable
+                key={audio.id}
+                style={[styles.stackRow, playingAudioId === audio.id ? styles.stackRowOn : null]}
+                onPress={() => void playStackAudio(audio.id)}
+                accessibilityRole="button"
+                accessibilityLabel={`Ouvir áudio ${index + 1} de ${stack.audios.length}`}
+              >
+                <Ionicons
+                  name={playingAudioId === audio.id ? 'pause' : 'play'}
+                  size={16}
+                  color={colors.textSecondary}
+                />
+                <View style={styles.stackInfo}>
+                  <Text style={styles.stackTitle}>
+                    {formatDateTime(audio.created_at)}
+                    {audio.duration_seconds > 0
+                      ? ` · ${formatDuration(Math.round(audio.duration_seconds))}`
+                      : ''}
+                  </Text>
+                  {audio.transcript?.text ? (
+                    <Text style={styles.stackText} numberOfLines={2}>
+                      {audio.transcript.text}
+                    </Text>
+                  ) : (
+                    <Text style={styles.stackText}>Sem transcrição</Text>
+                  )}
+                </View>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+
         {hasAudio && segments && segments.length > 0 ? (
           <SyncedTranscript player={player} segments={segments} onPress={openTranscript} />
         ) : hasAudio && note.transcript && note.transcript.trim() ? (
@@ -653,11 +781,14 @@ export default function NoteScreen() {
               onCaret={handleCaret}
               onImageOpen={handleImageOpen}
               onImageMenu={handleImageMenu}
+              onOpaqueMenu={handleOpaqueMenu}
               placeholder={editorPlaceholder}
               imageSources={imageSources}
               baseUrl={editorBaseUrl}
               typography={typography}
               minHeight={editorMinHeight}
+              // Coluna de texto com medida e centralizada, como um documento.
+              measure={Math.min(DEFAULT_MEASURE, Math.max(320, windowWidth - 2 * spacing.lg))}
             />
           </View>
         ) : (
@@ -680,6 +811,14 @@ export default function NoteScreen() {
           </Pressable>
         ) : null}
       </ScrollView>
+
+      <ConflictDialog
+        note={note}
+        visible={conflictOpen}
+        onKeepMine={handleKeepMine}
+        onTakeTheirs={handleTakeTheirs}
+        onDismiss={() => setConflictSnoozed(conflictKey)}
+      />
 
       {editing ? (
         <View style={[styles.toolbar, { bottom: toolbarLift }]}>
@@ -966,6 +1105,20 @@ const styles = StyleSheet.create({
   },
   tool: { width: 44, height: 40, alignItems: 'center', justifyContent: 'center' },
   toolDivider: { width: StyleSheet.hairlineWidth, height: 22, backgroundColor: colors.border },
+  stack: { paddingHorizontal: spacing.lg, paddingBottom: spacing.sm, gap: spacing.xs },
+  stackRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+  },
+  stackRowOn: { backgroundColor: colors.surfaceElevated },
+  stackInfo: { flex: 1, gap: 2 },
+  stackTitle: { color: colors.text, fontSize: fontSize.sm },
+  stackText: { color: colors.textTertiary, fontSize: fontSize.sm },
   toolBold: { color: colors.text, fontSize: fontSize.lg, fontWeight: '800' },
   toolItalic: { color: colors.text, fontSize: fontSize.lg, fontWeight: '600', fontStyle: 'italic' },
 });

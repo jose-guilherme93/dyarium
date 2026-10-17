@@ -49,9 +49,7 @@ export function syncNoteForcing(note: Recording): Promise<SyncNoteResult | undef
 }
 
 /** "Ficar com o de la": o que o servidor tem agora, para mostrar antes de trocar. */
-export async function fetchTheirs(
-  note: Recording,
-): Promise<{ title?: string; recordedAt?: string; markdown: string }> {
+export async function fetchTheirs(note: Recording): Promise<Awaited<ReturnType<typeof fetchServerNote>>> {
   if (!note.entryId) return { markdown: '' };
   const config = await loadServerConfig();
   if (!config) return { markdown: '' };

@@ -35,8 +35,24 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/** Marcador que segura a mencao a outra nota enquanto as outras regras rodam. */
+const MENTION_SLOT = '\u0000';
+
 function inlineToHtml(value: string, imageSources?: Record<string, string>): string {
-  return escapeHtml(value)
+  // A mencao a outra nota vira um marcador antes das outras regras: o markdown
+  // que ela carrega em `data-md` tem os mesmos caracteres das regras de link, e
+  // sem o marcador elas reescreveriam o proprio atributo (virando `<a href=`
+  // dentro do `data-md`, que quebrava a volta).
+  const mentions: { label: string; id: string }[] = [];
+  let html = escapeHtml(value).replace(
+    /\[([^\]]*)\]\(note:([^)\s]+)\)/g,
+    (_match, label: string, id: string) => {
+      mentions.push({ label, id });
+      return `${MENTION_SLOT}${mentions.length - 1}${MENTION_SLOT}`;
+    },
+  );
+
+  html = html
     .replace(
       /!\[([^\]]*)\]\(([^)\s]+)\)(?:\{w=(\d+)\})?/g,
       (_match, alt: string, url: string, width?: string) => {
@@ -48,6 +64,18 @@ function inlineToHtml(value: string, imageSources?: Record<string, string>): str
     .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2">$1</a>')
     .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
     .replace(/_([^_]+)_/g, '<i>$1</i>');
+
+  // Inline e somente leitura: como link normal, o toque tentaria abrir
+  // `note:<id>` no sistema e nao daria em nada.
+  const slot = new RegExp(`${MENTION_SLOT}(\\d+)${MENTION_SLOT}`, "g");
+  return html.replace(slot, (_match, index: string) => {
+    const mention = mentions[Number(index)];
+    if (!mention) return '';
+    return (
+      `<span class="opaque-inline" contenteditable="false" ` +
+      `data-md="[${mention.label}](note:${mention.id})">${mention.label || 'nota'}</span>`
+    );
+  });
 }
 
 const IMAGE_LINE = /^!\[([^\]]*)\]\(([^)\s]+)\)(?:\{w=(\d+)\})?$/;
@@ -81,8 +109,133 @@ export function removeImageFromMarkdown(markdown: string, ref: string): string {
   return markdown.replace(re, '');
 }
 
-/** Converte markdown (negrito, italico, lista) em HTML para o editor. */
+// --- Construcoes que o app nao edita -------------------------------------
+//
+// Tabela, linha divisoria e mencao a outra nota existem no markdown do
+// dashboard, mas o editor do celular nao sabe edita-las. Em vez de fingir que
+// nao existem (e perder o conteudo ao salvar), elas viram um **bloco opaco**:
+// somente leitura, carregando o markdown original em `data-md`, que volta
+// intacto na gravacao. O usuario pode apagar (com confirmacao), nunca mover.
+
+/** Tipos de bloco que o app mostra opacos. */
+export const OPAQUE_BLOCK_KINDS = ['table', 'divider'] as const;
+
+const TABLE_ROW = /^\s*\|.*\|\s*$/;
+const TABLE_DIVIDER = /^\s*\|[\s:|-]+\|\s*$/;
+const DIVIDER = /^\s*(-{3,}|\*{3,}|_{3,})\s*$/;
+const HEADING = /^(#{1,6})\s+(.*)$/;
+const QUOTE = /^>\s?(.*)$/;
+const CODE_FENCE = /^```\s*(\S*)\s*$/;
+
+/** Uma construcao que o app nao edita, com o markdown exato que a representa. */
+export interface OpaqueBlock {
+  kind: (typeof OPAQUE_BLOCK_KINDS)[number];
+  /** Markdown original: volta intacto quando a nota e salva. */
+  markdown: string;
+  /** Texto curto para o bloco mostrar na tela. */
+  label: string;
+}
+
+/**
+ * Encontra, no markdown, as linhas que formam um bloco opaco. Devolve os
+ * intervalos (inicio e fim, exclusivo) e o bloco correspondente, na ordem do
+ * texto: e o que permite trocar cada trecho pelo HTML somente leitura.
+ */
+export function findOpaqueBlocks(markdown: string): {
+  start: number;
+  end: number;
+  block: OpaqueBlock;
+}[] {
+  const lines = markdown.split('\n');
+  const out: { start: number; end: number; block: OpaqueBlock }[] = [];
+  let offset = 0;
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const start = offset;
+    offset += line.length + 1; // +1 do \n
+
+    if (DIVIDER.test(line)) {
+      out.push({
+        start,
+        end: offset,
+        block: { kind: 'divider', markdown: line.trim(), label: 'divisoria' },
+      });
+      continue;
+    }
+
+    if (TABLE_ROW.test(line)) {
+      const rows: string[] = [line];
+      let j = i + 1;
+      // A tabela vai ate a primeira linha que nao e linha de tabela. O
+      // cabecalho (linha de `---`) e as separadoras entram no markdown junto.
+      while (j < lines.length && TABLE_ROW.test(lines[j])) {
+        rows.push(lines[j]);
+        j += 1;
+      }
+      const text = rows.join('\n');
+      const columns = countColumns(rows[0]);
+      out.push({
+        start,
+        end: offset + rows.slice(1).reduce((sum, row) => sum + row.length + 1, 0),
+        block: {
+          kind: 'table',
+          markdown: text,
+          label: `tabela ${columns}x${rows.filter((row) => !TABLE_DIVIDER.test(row)).length}`,
+        },
+      });
+      i = j - 1;
+      offset = start + text.length + 1;
+    }
+  }
+  return out;
+}
+
+function countColumns(row: string): number {
+  return row.split('|').filter((cell) => cell.trim() !== '').length;
+}
+
+/** HTML do bloco opaco: somente leitura, com o markdown original carregado. */
+export function opaqueBlockHtml(block: OpaqueBlock): string {
+  const payload = escapeHtml(block.markdown);
+  const label = escapeHtml(block.label);
+  return (
+    `<div class="opaque-block opaque-${block.kind}" contenteditable="false" ` +
+    `data-md="${payload}" data-label="${label}">` +
+    `<span class="opaque-kind">${label}</span>` +
+    `<span class="opaque-preview">${previewOf(block)}</span>` +
+    '</div>'
+  );
+}
+
+/** Previa curta do bloco opaco (o markdown, em uma linha, cortada). */
+function previewOf(block: OpaqueBlock): string {
+  const flat = block.markdown.replace(/\|/g, ' ').replace(/\s+/g, ' ').trim();
+  return flat.length > 120 ? `${flat.slice(0, 120)}…` : flat;
+}
+
+/** Converte markdown em HTML para o editor, com blocos opacos no lugar certo. */
 export function markdownToHtml(markdown: string, imageSources?: Record<string, string>): string {
+  const parts: string[] = [];
+  let cursor = 0;
+  for (const found of findOpaqueBlocks(markdown)) {
+    if (found.start > cursor) {
+      parts.push(markdownToHtmlFragment(markdown.slice(cursor, found.start), imageSources));
+    }
+    parts.push(opaqueBlockHtml(found.block));
+    cursor = found.end;
+  }
+  parts.push(markdownToHtmlFragment(markdown.slice(cursor), imageSources));
+  const html = parts.join('');
+  // Sempre sobra um paragrafo antes e depois de bloco atomico (imagem ou bloco
+  // opaco): da pra digitar em qualquer lugar, acima e abaixo, como no Notion.
+  const atomic = /^<(div class="img-block"|div class="opaque-block"|pre class="code-block")/;
+  if (atomic.test(html)) return `<div><br></div>${html}<div><br></div>`;
+  return html;
+}
+
+/** Markdown -> HTML, linha a linha (sem blocks opacos: so texto e imagem). */
+function markdownToHtmlFragment(markdown: string, imageSources?: Record<string, string>): string {
   const lines = markdown.split('\n');
   const out: string[] = [];
   let inList = false;
@@ -92,7 +245,39 @@ export function markdownToHtml(markdown: string, imageSources?: Record<string, s
       inList = false;
     }
   };
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+
+    // Bloco de codigo: fences de tres crases. Fica somente leitura (o editor
+    // nao formata dentro de codigo) e volta identico.
+    const fence = CODE_FENCE.exec(line.trim());
+    if (fence) {
+      const body: string[] = [];
+      i += 1;
+      while (i < lines.length && !CODE_FENCE.test(lines[i].trim())) {
+        body.push(lines[i]);
+        i += 1;
+      }
+      const lang = fence[1] ? ` data-lang="${escapeHtml(fence[1])}"` : '';
+      out.push(
+        `<pre class="code-block" contenteditable="false"${lang}><code>${escapeHtml(body.join('\n'))}</code></pre>`,
+      );
+      continue;
+    }
+
+    const heading = HEADING.exec(line);
+    if (heading) {
+      const level = heading[1].length;
+      out.push(`<h${level}>${inlineToHtml(heading[2], imageSources)}</h${level}>`);
+      continue;
+    }
+
+    const quote = QUOTE.exec(line);
+    if (quote) {
+      out.push(`<blockquote><div>${inlineToHtml(quote[1], imageSources)}</div></blockquote>`);
+      continue;
+    }
+
     if (/^- /.test(line)) {
       if (!inList) {
         out.push('<ul>');
@@ -116,21 +301,38 @@ export function markdownToHtml(markdown: string, imageSources?: Record<string, s
     );
   }
   closeList();
-  // Sempre sobra um paragrafo antes e depois de imagem: da pra digitar em
-  // qualquer lugar (acima e abaixo), como no Notion.
-  const last = out[out.length - 1];
-  if (last && last.startsWith('<div class="img-block"')) {
-    out.push('<div><br></div>');
-  }
-  if (out[0] && out[0].startsWith('<div class="img-block"')) {
-    out.unshift('<div><br></div>');
-  }
   return out.join('');
 }
 
 /** Converte o HTML produzido pelo editor de volta para markdown. */
 export function htmlToMarkdown(html: string): string {
   let value = html;
+
+  // Bloco opaco: volta o markdown original, byte a byte. E o que garante que
+  // tabela e divisoria continuem iguais depois de salvar no celular.
+  value = value.replace(
+    /<div class="opaque-block[\s\S]*?<\/div>/gi,
+    (block) => {
+      const markdown = /data-md="([^"]*)"/i.exec(block)?.[1] ?? '';
+      return `\n${unescapeHtml(markdown)}\n`;
+    },
+  );
+
+  // Mencao a outra nota, no meio da frase: mesma ideia, inline.
+  value = value.replace(
+    /<span class="opaque-inline"[^>]*data-md="([^"]*)"[^>]*>[\s\S]*?<\/span>/gi,
+    (_all, markdown: string) => unescapeHtml(markdown),
+  );
+
+  // Bloco de codigo: fences, com o texto intacto (inclusive a indentacao).
+  value = value.replace(
+    /<pre[^>]*class="code-block"[^>]*>\s*<code>([\s\S]*?)<\/code>\s*<\/pre>/gi,
+    (block, code: string) => {
+      const lang = /data-lang="([^"]*)"/i.exec(block)?.[1] ?? '';
+      return `\n\`\`\`${lang}\n${unescapeHtml(code)}\n\`\`\`\n`;
+    },
+  );
+
   // Bloco de imagem vira uma linha propria: preserva a ordem e a largura, e
   // evita que a alca de redimensionar vire sujeira no markdown.
   value = value.replace(/<div class="img-block"[\s\S]*?<\/div>/gi, (block) => {
@@ -141,8 +343,16 @@ export function htmlToMarkdown(html: string): string {
     const width = /data-width="(\d+)"/i.exec(tag)?.[1];
     return `![${alt}](${src})${width ? `{w=${width}}` : ''}\n`;
   });
+
   value = value.replace(/<br\s*\/?>/gi, '\n');
   value = value.replace(/<li[^>]*>/gi, '- ');
+  // Citacao: o prefixo vai no conteudo interno, que ainda pode ter <b>/<a>.
+  value = value.replace(/<blockquote\b[^>]*>([\s\S]*?)<\/blockquote>/gi, (_all, inner: string) => {
+    return `\n> ${inner.trim()}\n`;
+  });
+  value = value.replace(/<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1>/gi, (_all, level: string, inner: string) => {
+    return `\n${'#'.repeat(Number(level))} ${inner}\n`;
+  });
   value = value.replace(/<\/(div|p|li|ul)>/gi, '\n');
   value = value.replace(/<(b|strong)\b[^>]*>/gi, '**').replace(/<\/(b|strong)>/gi, '**');
   value = value.replace(/<(i|em)\b[^>]*>/gi, '_').replace(/<\/(i|em)>/gi, '_');
@@ -165,7 +375,20 @@ export function htmlToMarkdown(html: string): string {
 
 /** Texto puro (sem marcadores) para contagem e previa. */
 export function markdownToPlain(markdown: string): string {
-  return markdown.replace(/\*\*/g, '').replace(/_/g, '').replace(/^-\s+/gm, '');
+  return (
+    markdown
+      // Codigo, tabela e mencao a outra nota nao sao texto do usuario: nao contam
+      // como palavras da nota. Antes de tirar os marcadores, senao o fence some
+      // e o codigo volta a contar.
+      .replace(/^```[\s\S]*?^```[^\n]*$/gm, '')
+      .replace(/^\|.*\|$/gm, '')
+      .replace(/\[([^\]]*)\]\(note:[^)\s]+\)/g, '')
+      .replace(/\*\*/g, '')
+      .replace(/[`_]/g, '')
+      .replace(/^#{1,6}\s+/gm, '')
+      .replace(/^>\s?/gm, '')
+      .replace(/^-\s+/gm, '')
+  );
 }
 
 /** Numero de palavras do texto puro. */

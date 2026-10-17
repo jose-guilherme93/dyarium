@@ -4,12 +4,18 @@ import {
   countChars,
   countWords,
   extractImageUrls,
+  findOpaqueBlocks,
   htmlToMarkdown,
   markdownToHtml,
   markdownToPlain,
   removeImageFromMarkdown,
   setImageWidthInMarkdown,
 } from '../richText';
+
+/** Ida e volta: markdown -> HTML do editor -> markdown. */
+function roundTrip(markdown: string): string {
+  return htmlToMarkdown(markdownToHtml(markdown));
+}
 
 describe('markdownToHtml', () => {
   it('converte negrito, italico e lista', () => {
@@ -173,5 +179,122 @@ describe('breakSentences', () => {
 
   it('nao quebra numeros decimais', () => {
     expect(breakSentences('custa 3.5 reais')).toBe('custa 3.5 reais');
+  });
+});
+
+describe('titulo, citacao e codigo', () => {
+  it('titulo volta com os niveis', () => {
+    expect(roundTrip('## Secao')).toBe('## Secao');
+    expect(roundTrip('# Topo\n\ntexto')).toBe('# Topo\n\ntexto');
+    expect(roundTrip('### Detalhe')).toBe('### Detalhe');
+  });
+
+  it('citacao volta com o prefixo', () => {
+    expect(roundTrip('> uma citacao')).toBe('> uma citacao');
+    expect(roundTrip('antes\n\n> cita\n\ndepois')).toBe('antes\n\n> cita\n\ndepois');
+  });
+
+  it('codigo volta com o fence e a indentacao', () => {
+    expect(roundTrip('```\nlinha\n  indentada\n```')).toBe('```\nlinha\n  indentada\n```');
+  });
+
+  it('codigo com linguagem volta com a linguagem', () => {
+    const html = markdownToHtml('```js\nconst a = 1;\n```');
+    expect(html).toContain('data-lang="js"');
+    expect(roundTrip('```js\nconst a = 1;\n```')).toBe('```js\nconst a = 1;\n```');
+  });
+
+  it('marcadores dentro de titulo e citacao sobrevivem', () => {
+    expect(roundTrip('## **forte** e _suave_')).toBe('## **forte** e _suave_');
+    expect(roundTrip('> **forte**')).toBe('> **forte**');
+  });
+
+  it('mistura o dia a dia continua igual depois da ida e volta', () => {
+    const markdown = [
+      '## Dia',
+      '',
+      'Texto com **negrito** e _italico_.',
+      '',
+      '- primeiro',
+      '- segundo',
+      '',
+      '> uma citacao',
+      '',
+      '```',
+      'codigo aqui',
+      '```',
+      '',
+      '![foto](attachment:at_1){w=50}',
+      '',
+      'fim.',
+      '',
+    ].join('\n');
+    // A linha em branco do fim e descartada ao salvar (o editor normaliza as
+    // pontas); o resto volta identico.
+    expect(roundTrip(markdown)).toBe(markdown.replace(/\n+$/, ''));
+  });
+});
+
+describe('blocos opacos', () => {
+  it('tabela e reconhecida e devolvida intacta', () => {
+    const markdown = 'antes\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\ndepois';
+    expect(findOpaqueBlocks(markdown).map((found) => found.block.kind)).toEqual(['table']);
+    expect(roundTrip(markdown)).toBe(markdown);
+  });
+
+  it('tabela nao se mistura com o texto em volta', () => {
+    const markdown = 'texto antes\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\ntexto depois';
+    expect(roundTrip(markdown)).toBe(markdown);
+  });
+
+  it('divisoria e devolvida intacta', () => {
+    expect(roundTrip('antes\n\n---\n\ndepois')).toBe('antes\n\n---\n\ndepois');
+  });
+
+  it('mencao a outra nota e devolvida intacta, no meio da frase', () => {
+    const markdown = 'olha [gravacao.webm](note:a6aaf781) e o resto';
+    expect(roundTrip(markdown)).toBe(markdown);
+  });
+
+  it('mencao a outra nota fica somente leitura e nao vira link', () => {
+    const html = markdownToHtml('olha [gravacao.webm](note:abc) e o resto');
+    expect(html).toContain('class="opaque-inline"');
+    expect(html).toContain('contenteditable="false"');
+    expect(html).toContain('data-md="[gravacao.webm](note:abc)"');
+    // Nao pode virar <a href="note:...">, que o toque tentaria abrir no sistema.
+    expect(html).not.toContain('href="note:');
+  });
+
+  it('bloco opaco aparece somente leitura e carrega o markdown', () => {
+    const html = markdownToHtml('| a | b |\n| - | - |\n| 1 | 2 |');
+    expect(html).toContain('class="opaque-block opaque-table"');
+    expect(html).toContain('contenteditable="false"');
+    expect(html).toContain('data-md="');
+  });
+
+  it('salvar sem mexer no bloco devolve o markdown original', () => {
+    const markdown = 'texto\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\nmais texto';
+    const html = markdownToHtml(markdown);
+    // O editor reescreve o HTML como veio, sem tocar no bloco.
+    expect(htmlToMarkdown(html)).toBe(markdown);
+  });
+
+  it('tabela com texto dentro das celulas continua legivel na previa', () => {
+    const html = markdownToHtml('| nome | valor |\n| - | - |\n| cafe | 5,00 |');
+    expect(html).toContain('tabela 2x2');
+  });
+
+  it('tabelas em bloco nao sao confundidas com texto', () => {
+    // Linha com pipe no meio do texto nao e tabela.
+    const markdown = 'use a | b para dividir';
+    expect(findOpaqueBlocks(markdown)).toEqual([]);
+    expect(roundTrip(markdown)).toBe(markdown);
+  });
+
+  it('texto do bloco opaco nao entra na contagem de palavras', () => {
+    expect(countWords('| nome | valor |\n| - | - |\n| cafe | 5,00 |')).toBe(0);
+    expect(countWords('```\nvariavel = 1\n```')).toBe(0);
+    expect(countWords('## Secao\n\nduas palavras')).toBe(3);
+    expect(countWords('olha [nota](note:abc) e o resto')).toBe(4);
   });
 });

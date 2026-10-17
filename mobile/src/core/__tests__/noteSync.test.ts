@@ -29,7 +29,12 @@ class FakeApi implements NoteSyncApi {
   notes: { id: string; body_version?: string; content_markdown?: string }[] = [
     { id: 'n1', body_version: 'v1-corpo', content_markdown: 'antigo' },
   ];
-  entry: { title: string; recorded_at: string | null; created_at: string } = {
+  entry: {
+    title: string;
+    recorded_at: string | null;
+    created_at: string;
+    versions?: { title?: string; recorded_at?: string; body?: string };
+  } = {
     title: 'titulo do servidor',
     recorded_at: '2026-10-10T09:00:00Z',
     created_at: 'x',
@@ -245,14 +250,31 @@ describe('o que a nota guarda depois do envio', () => {
 });
 
 describe('fetchServerNote', () => {
-  it('traz titulo, data e corpo que estao no servidor', async () => {
+  it('traz titulo, data, corpo e as versoes que estao no servidor', async () => {
     const api = new FakeApi();
     const theirs = await fetchServerNote(api, 'en1');
-    expect(theirs).toEqual({
+    expect(theirs).toMatchObject({
       title: 'titulo do servidor',
       recordedAt: '2026-10-10T09:00:00Z',
       markdown: 'antigo',
+      // As versoes vem junto: sem elas, o "ficar com o de la" deixaria a nota com
+      // a versao velha e a proxima gravacao brigaria de novo.
+      bodyVersion: 'v1-corpo',
     });
+  });
+
+  it('as versoes do detalhe da entrada entram quando a nota nao devolve a sua', async () => {
+    const api = new FakeApi();
+    api.notes = [{ id: 'n1', content_markdown: 'antigo' }];
+    api.entry = {
+      title: 't',
+      recorded_at: null,
+      created_at: '2026-01-01T00:00:00Z',
+      versions: { title: 'v1', recorded_at: 'v2', body: 'v3' },
+    };
+    const theirs = await fetchServerNote(api, 'en1');
+    expect(theirs.titleVersion).toBe('v1');
+    expect(theirs.bodyVersion).toBe('v3');
   });
 
   it('usa created_at quando a entrada nao tem data de evento', async () => {
