@@ -76,6 +76,23 @@ describe("markdown da nota", () => {
     expect(again).toContain("1. um");
   });
 
+  it("mencao a outra nota vira link para note:<id> e nao some", () => {
+    // Sem o toExternalHTML do bloco, o conversor do BlockNote descartava a mencao
+    // ao gerar o markdown: a nota ficava vazia depois da conversao.
+    const markdown = blocksToNoteMarkdown(editor, [
+      {
+        type: "paragraph",
+        content: [
+          { type: "noteMention", props: { entryId: "note_abc", title: "gravacao.webm" } },
+          { type: "text", text: " foi aqui", styles: {} },
+        ],
+      },
+    ] as never);
+
+    expect(markdown).toContain("[gravacao.webm](note:note_abc)");
+    expect(markdown).toContain("foi aqui");
+  });
+
   it("titulo, citacao e codigo voltam com o markdown que o app le", () => {
     const markdown = "## Secao\n\n> uma citacao\n\n```\nlinha de codigo\n```\n";
     const blocks = noteMarkdownToBlocks(editor, markdown) as never as { type: string }[];
@@ -87,5 +104,12 @@ describe("markdown da nota", () => {
     const again = blocksToNoteMarkdown(editor, blocks);
     expect(again).toContain("## Secao");
     expect(again).toContain("> uma citacao");
+  });
+
+  it("tabela sobrevive a ida e a volta em markdown", () => {
+    const markdown = "| a | b |\n| - | - |\n| 1 | 2 |\n";
+    const blocks = noteMarkdownToBlocks(editor, markdown);
+    expect(blocks.map((block) => block.type)).toContain("table");
+    expect(blocksToNoteMarkdown(editor, blocks)).toContain("| a");
   });
 });

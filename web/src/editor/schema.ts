@@ -48,7 +48,13 @@ export const imageBlockSpec = () =>
     },
   )();
 
-/** Referencia a outra nota (/link). */
+/**
+ * Referencia a outra nota (/link).
+ *
+ * Sem `toExternalHTML` o conversor do BlockNote descarta a mencao ao gerar o
+ * markdown (foi assim que uma notaMention sumiu na conversao). Como link para
+ * `note:<id>`, ela sobrevive: o app mostra como bloco opaco, somente leitura.
+ */
 export const noteMentionSpec = () =>
   createInlineContentSpec(
     {
@@ -56,7 +62,15 @@ export const noteMentionSpec = () =>
       propSchema: { entryId: { default: "" }, title: { default: "" } },
       content: "none",
     },
-    { render: () => ({ dom: document.createElement("span") }) },
+    {
+      render: () => ({ dom: document.createElement("span") }),
+      toExternalHTML: (inline: { props: Record<string, string> }) => {
+        const link = document.createElement("a");
+        link.setAttribute("href", `note:${inline.props.entryId}`);
+        link.textContent = inline.props.title || "nota";
+        return { dom: link };
+      },
+    },
   );
 
 /**

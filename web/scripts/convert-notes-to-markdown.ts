@@ -2,15 +2,19 @@
  * Converte o corpo das notas que ainda estao em JSON do BlockNote para markdown
  * (formato canonico do app e do dashboard). Roda uma vez, no ambiente de dev.
  *
- * O conversor e o proprio do BlockNote (`tryParseMarkdownToBlocks` /
- * `blocksToMarkdownLossy`), o mesmo que o dashboard usa: nao ha duas implementacoes
- * discordando do que e markdown.
+ * O conversor e o proprio do BlockNote (`blocksToMarkdownLossy`), o mesmo que o
+ * dashboard usa: nao ha duas implementacoes discordando do que e markdown.
  *
  * Uso (no diretorio web/):
- *   BASE_URL=http://127.0.0.1:8080 TOKEN=... npx tsx scripts/convert-notes-to-markdown.ts [--dry-run]
+ *   BASE_URL=http://127.0.0.1:8080 TOKEN=... node --experimental-strip-types \
+ *     scripts/convert-notes-to-markdown.ts [--dry-run] [--recover]
  *
  * Sem `--dry-run` grava. O corpo antigo vira revisao da nota (o servidor guarda a
  * revision de toda escrita), entao da para voltar.
+ *
+ * `--recover` refaz notas cuja conversao ficou vazia: em vez do corpo atual, usa a
+ * **ultima revisao** (o JSON antigo que o servidor guardou) como fonte. Serve
+ * para recuperar conteudo que a primeira conversao perdeu.
  */
 
 import { JSDOM } from "jsdom";
@@ -22,6 +26,7 @@ import { createNoteSchema } from "../src/editor/schema.ts";
 const BASE_URL = (process.env.BASE_URL ?? "http://127.0.0.1:8080").replace(/\/+$/, "");
 const TOKEN = process.env.TOKEN ?? "";
 const DRY_RUN = process.argv.includes("--dry-run");
+const RECOVER = process.argv.includes("--recover");
 
 interface StoredNote {
   id: string;
@@ -29,6 +34,13 @@ interface StoredNote {
   document?: unknown;
   content_markdown?: string;
   body_version?: string;
+}
+
+interface Revision {
+  id: string;
+  note_id: string;
+  document: string;
+  created_at: string;
 }
 
 interface Entry {
@@ -99,6 +111,40 @@ function countBlocks(blocks: unknown, counts: Map<string, number>): void {
 /** Tipos que o markdown do BlockNote nao representa como estrutura. */
 const LOSSY_TYPES = new Set(["audio", "file", "video", "table"]);
 
+/** JSON de blocos -> markdown. */
+function toMarkdown(
+  editor: ReturnType<typeof BlockNoteEditor.create>,
+  source: unknown,
+  lossy: Record<string, number>,
+): string {
+  const blocks = Array.isArray(source) ? source : [];
+  const types = new Map<string, number>();
+  countBlocks(blocks, types);
+  for (const [type, count] of types) {
+    if (LOSSY_TYPES.has(type)) lossy[type] = (lossy[type] ?? 0) + count;
+  }
+  const normalized = blocks.map((block) => {
+    const value = block as { type?: string };
+    // Bloco de audio da nota vira audio da propria entrada (a pilha fica no
+    // topo), nao texto solto no corpo.
+    if (value.type === "audio") return { type: "paragraph", content: [] };
+    return block;
+  });
+  return blocksToNoteMarkdown(editor, normalized);
+}
+
+/** Ultima revisao da nota (o corpo JSON que o servidor guardou a cada escrita). */
+async function latestRevision(noteId: string): Promise<unknown | undefined> {
+  try {
+    const revisions = (await api<{ revisions: Revision[] }>(`/notes/${noteId}/revisions`)).revisions;
+    if (!revisions || revisions.length === 0) return undefined;
+    const newest = [...revisions].sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+    return JSON.parse(newest.document);
+  } catch {
+    return undefined;
+  }
+}
+
 async function main(): Promise<void> {
   if (!TOKEN) {
     fail("Falta TOKEN (o token da API do servidor).");
@@ -125,28 +171,25 @@ async function main(): Promise<void> {
     }
     for (const note of notes) {
       summary.notes += 1;
-      if (!note.document) {
+
+      // Fonte do corpo: o `document` legado, ou a ultima revisao quando a nota
+      // ja foi convertida mas ficou vazia (conversao que perdeu conteudo).
+      let source: unknown = note.document;
+      if (RECOVER && !note.document && (note.content_markdown ?? "").trim() === "") {
+        source = await latestRevision(note.id);
+        if (!source) {
+          summary.skipped += 1;
+          continue;
+        }
+        process.stdout.write(`recuperando ${entry.title}\n`);
+      } else if (!note.document) {
         summary.skipped += 1; // ja em markdown
         continue;
       }
+
       let markdown: string;
       try {
-        const blocks = Array.isArray(note.document) ? note.document : [];
-        const types = new Map<string, number>();
-        countBlocks(blocks, types);
-        for (const [type, count] of types) {
-          if (LOSSY_TYPES.has(type)) {
-            summary.lossyBlocks[type] = (summary.lossyBlocks[type] ?? 0) + count;
-          }
-        }
-        const normalized = blocks.map((block) => {
-          const value = block as { type?: string };
-          // Bloco de audio da nota vira audio da propria entrada (a pilha fica no
-          // topo), nao texto solto no corpo.
-          if (value.type === "audio") return { type: "paragraph", content: [] };
-          return block;
-        });
-        markdown = blocksToNoteMarkdown(editor, normalized);
+        markdown = toMarkdown(editor, source, summary.lossyBlocks);
       } catch (error) {
         summary.failed += 1;
         process.stderr.write(`  ${entry.id}/${note.id}: ${(error as Error).message}\n`);
