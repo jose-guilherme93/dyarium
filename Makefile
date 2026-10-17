@@ -18,6 +18,7 @@ VERSION ?= dev
 MODELS_DIR ?= models
 MODELS ?= small-q5_1 medium-q5_0
 MODELS_BASE_URL ?= https://huggingface.co/ggerganov/whisper.cpp/resolve/main
+OLLAMA_MODEL ?= qwen2.5:0.5b
 WEB_PORT ?= 5173
 API_PORT ?= 8080
 # Portas HTTPS do tailscale serve para o dyarium. NUNCA use a 443: ela e do
@@ -29,7 +30,7 @@ COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
 
-.PHONY: help dev dev-opencode down build test test-go test-web lint lint-go lint-web fmt dedupe bench-transcricao models tailscale tailscale-off clean mobile-dev mobile-test mobile-lint
+.PHONY: help dev dev-opencode down build test test-go test-web lint lint-go lint-web fmt dedupe bench-transcricao models tailscale tailscale-off clean mobile-dev mobile-test mobile-lint ai
 
 help: ## Lista os alvos disponiveis
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -101,6 +102,10 @@ tailscale: ## Expoe dashboard e API na tailnet via HTTPS (portas proprias; nunca
 tailscale-off: ## Remove so a exposicao do dyarium na tailnet (preserva os outros servicos)
 	tailscale serve --https=$(TAILSCALE_WEB_PORT) off || true
 	tailscale serve --https=$(TAILSCALE_API_PORT) off || true
+
+ai: ## Sobe o Ollama local e baixa o modelo padrao da analise
+	DIARY_API_PORT=$(API_PORT) DIARY_WEB_PORT=$(WEB_PORT) $(COMPOSE) -f $(DEV_FILE) --profile ai up -d ollama
+	$(COMPOSE) -f $(DEV_FILE) --profile ai exec -T ollama ollama pull $(OLLAMA_MODEL)
 
 clean: ## Remove artefatos locais
 	rm -rf web/dist bin tmp

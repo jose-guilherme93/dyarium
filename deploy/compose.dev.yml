@@ -39,11 +39,11 @@ services:
       - api
 
   # Servico opcional de IA local (Ollama), com limite de recursos.
-  # Suba com:
-  #   docker compose -f deploy/compose.dev.yml --profile ai up -d
-  #   docker exec deploy-ollama-1 ollama pull qwen2.5:0.5b
-  # E configure em Configuracao: Base URL http://ollama:11434/v1 e o modelo.
-  # Observacao: um modelo grande nao cabe no limite de 800 MB; use um modelo pequeno.
+  # Suba com `make ai` (sobe o servico e baixa o modelo padrao) ou:
+  #   docker compose -f deploy/compose.dev.yml --profile ai up -d ollama
+  # Depois use Configuracao > Analise por IA > Ollama local, que configura e
+  # baixa o modelo em um clique.
+  # Observacao: um modelo grande nao cabe no limite de 900 MB; use um modelo pequeno.
   ollama:
     image: ollama/ollama
     profiles: ["ai"]
