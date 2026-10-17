@@ -166,8 +166,14 @@ func analyzeHandler(st *store.Store, cfg config.Config, bus *events.Bus, logger 
 			})
 		})
 		if err != nil {
-			_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryFailed)
-			bus.Publish("entry.failed", map[string]string{"entry_id": payload.EntryID, "reason": analyze.FriendlyError(err)})
+			// Erro transitorio (rede, 429, 5xx) ainda tem tentativas: manter a
+			// nota como "analisando" evita anunciar falha cedo demais, quando a
+			// retentativa ainda pode dar certo. Chave/modelo/endpoint errados sao
+			// finais e falham na hora, com a mensagem certa.
+			if shouldGiveUpAnalysis(job.Attempts, job.MaxAttempts, err) {
+				_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryFailed)
+				bus.Publish("entry.failed", map[string]string{"entry_id": payload.EntryID, "reason": analyze.FriendlyError(err)})
+			}
 			logger.Error("worker: analise falhou", "entry_id", payload.EntryID, "erro", err)
 			return err
 		}
@@ -217,6 +223,17 @@ func cleanupHandler(st *store.Store, ing *ingest.Service, logger *slog.Logger) j
 		logger.Info("worker: entrada removida", "entry_id", payload.EntryID, "objetos", len(attachments))
 		return nil
 	}
+}
+
+// shouldGiveUpAnalysis decides when a failed analysis is final. Permanent
+// provider errors (wrong key, model or endpoint) stop at once; transient ones
+// (rate limit, timeout, 5xx) use every attempt before the entry is marked as
+// failed.
+func shouldGiveUpAnalysis(attempts, maxAttempts int, err error) bool {
+	if !analyze.Retryable(err) {
+		return true
+	}
+	return attempts+1 >= maxAttempts
 }
 
 // analyzeSegments maps the stored transcript segments to the analysis package

@@ -6,7 +6,9 @@ package analyze
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -84,13 +86,33 @@ func ParseModelRef(ref string) (providerID, modelID string) {
 
 // Client talks to an OpenAI-compatible endpoint.
 type Client struct {
-	cfg  Config
-	http *http.Client
+	cfg       Config
+	http      *http.Client
+	sessionID string
 }
 
-// New builds a Client.
+// New builds a Client. The session id is what the OpenCode gateway uses to
+// route and cache a conversation; it stays stable for the whole analysis run.
 func New(cfg Config) *Client {
-	return &Client{cfg: cfg, http: &http.Client{Timeout: 300 * time.Second}}
+	return &Client{cfg: cfg, http: &http.Client{Timeout: 300 * time.Second}, sessionID: newSessionID()}
+}
+
+func newSessionID() string {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return fmt.Sprintf("dyarium-%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(raw[:])
+}
+
+// gatewayHeaders identifies the client and, on the OpenCode gateway, sends the
+// session id the service requires (without it every request is rejected with
+// 400 MissingSessionID, even with a valid key).
+func (c *Client) gatewayHeaders(req *http.Request) {
+	req.Header.Set("User-Agent", "dyarium/1.0")
+	if strings.Contains(c.cfg.BaseURL, "opencode.ai") && c.sessionID != "" {
+		req.Header.Set("x-opencode-session", c.sessionID)
+	}
 }
 
 // Enabled reports whether analysis is turned on.
@@ -111,6 +133,8 @@ func FriendlyError(err error) string {
 	}
 	message := err.Error()
 	switch {
+	case strings.Contains(message, "status 400"):
+		return "o provedor recusou a requisicao (confira modelo, endpoint e chave)"
 	case strings.Contains(message, "status 401"), strings.Contains(message, "status 403"):
 		return "chave da API invalida ou sem permissao no provedor"
 	case strings.Contains(message, "status 402"):
@@ -133,6 +157,22 @@ func FriendlyError(err error) string {
 	default:
 		return "falha ao analisar com a IA"
 	}
+}
+
+// Retryable reports whether a failed analysis may succeed on a new attempt. A
+// wrong key, model or endpoint will not fix itself, so it is final; rate limits,
+// timeouts and provider outages are worth retrying.
+func Retryable(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := err.Error()
+	for _, code := range []int{400, 401, 402, 403, 404, 422} {
+		if strings.Contains(message, fmt.Sprintf("status %d", code)) {
+			return false
+		}
+	}
+	return true
 }
 
 type chatRequest struct {
@@ -225,6 +265,7 @@ func (c *Client) ListModels(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	c.gatewayHeaders(req)
 	if c.cfg.APIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
 	}
@@ -331,6 +372,7 @@ func (c *Client) call(ctx context.Context, system, user string, maxTokens int, u
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	c.gatewayHeaders(req)
 	if c.cfg.APIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
 	}
@@ -389,6 +431,7 @@ func (c *Client) callOpenCode(ctx context.Context, system, user string) (string,
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", c.authBasic())
+	c.gatewayHeaders(req)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("analyze: opencode: %w", err)
@@ -420,6 +463,7 @@ func (c *Client) listModelsOpenCode(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	req.Header.Set("Authorization", c.authBasic())
+	c.gatewayHeaders(req)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("analyze: opencode models: %w", err)

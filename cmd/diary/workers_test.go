@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -99,6 +100,22 @@ func TestAnalysisInputFallsBackToLegacyDocument(t *testing.T) {
 	}
 	if len(segments) != 1 || segments[0].Text != "texto antigo" {
 		t.Fatalf("segments = %v", segments)
+	}
+}
+
+// Erro transitorio ainda tem tentativa; chave/modelo errados falham na hora.
+func TestShouldGiveUpAnalysis(t *testing.T) {
+	permanent := errors.New("analyze: status 400: modelo invalido")
+	transient := errors.New("analyze: request: dial tcp: connection refused")
+
+	if !shouldGiveUpAnalysis(0, 5, permanent) {
+		t.Fatal("erro permanente deveria falhar na primeira tentativa")
+	}
+	if shouldGiveUpAnalysis(0, 5, transient) {
+		t.Fatal("erro transitorio com tentativas restantes nao deveria falhar")
+	}
+	if !shouldGiveUpAnalysis(4, 5, transient) {
+		t.Fatal("ultima tentativa deveria marcar falha")
 	}
 }
 
