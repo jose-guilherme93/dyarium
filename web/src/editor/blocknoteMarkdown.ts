@@ -90,7 +90,7 @@ export function noteMarkdownToBlocks(
   markdown: string,
 ): PartialBlock[] {
   const out: AnyBlock[] = [];
-  for (const part of splitImageLines(markdown)) {
+  for (const part of splitImageLines(normalizeLegacyAttachmentImages(markdown))) {
     if (part.kind === "image") {
       const props: Record<string, string> = {
         attachmentId: part.src.replace(/^attachment:/, ""),
@@ -138,6 +138,30 @@ export function markdownToPlain(markdown: string): string {
 type Part =
   | { kind: "text"; text: string }
   | { kind: "image"; alt: string; src: string; width: number };
+
+/**
+ * Conserta imagens que versoes antigas do dashboard gravaram como HTML.
+ *
+ * Sem `toExternalHTML`, o conversor despejava o bloco renderizado no corpo:
+ * `<figure><img src="/api/v1/attachments/<id>?token=...">`. Isso perdia a
+ * referencia `attachment:<id>` (a imagem sumia na abertura seguinte) e deixava
+ * o token da API dentro da nota. Volta para o markdown canonico, sem token.
+ */
+export function normalizeLegacyAttachmentImages(markdown: string): string {
+  return markdown
+    .replace(
+      /<figure>\s*<img\b[^>]*\bsrc="[^"]*\/attachments\/([A-Za-z0-9]+)[^"]*"[^>]*>(?:\s*<figcaption>([^<]*)<\/figcaption>)?\s*<\/figure>/gi,
+      (_match, id: string, caption?: string) => `![${caption ?? ""}](attachment:${id})`,
+    )
+    .replace(
+      /<img\b[^>]*\bsrc="[^"]*\/attachments\/([A-Za-z0-9]+)[^"]*"[^>]*>/gi,
+      (_match, id: string) => `![](attachment:${id})`,
+    )
+    .replace(
+      /!\[([^\]]*)\]\(\/api\/v1\/attachments\/([A-Za-z0-9]+)[^)\s]*\)/g,
+      (_match, alt: string, id: string) => `![${alt}](attachment:${id})`,
+    );
+}
 
 /** Quebra o markdown nas linhas de imagem, preservando a ordem. */
 function splitImageLines(markdown: string): Part[] {

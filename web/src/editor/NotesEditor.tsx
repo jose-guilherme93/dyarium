@@ -1,11 +1,8 @@
-import { createContext, forwardRef, useContext, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
 import type { PartialBlock } from "@blocknote/core";
-import { BlockNoteSchema, defaultBlockSpecs, defaultInlineContentSpecs } from "@blocknote/core";
 import { pt } from "@blocknote/core/locales";
 import {
-  createReactBlockSpec,
-  createReactInlineContentSpec,
   SuggestionMenuController,
   getDefaultReactSlashMenuItems,
   useCreateBlockNote,
@@ -13,10 +10,10 @@ import {
 } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/mantine/style.css";
-import { attachmentUrl, api, uploadAttachment, uploadFile } from "../api";
+import { api, uploadAttachment, uploadFile } from "../api";
 import { blocksToNoteMarkdown } from "./blocknoteMarkdown";
+import { createEditorSchema, MediaContext } from "./editorSchema";
 import type { Audio, Entry } from "../types";
-import { AudioTrack } from "../components/AudioTrack";
 
 interface NotesEditorProps {
   entryId: string;
@@ -39,99 +36,7 @@ export interface NotesEditorHandle {
   openLink: () => void;
 }
 
-// MediaContext gives the media blocks access to the audios (with transcript) and
-// to navigation, without going through BlockNote internals.
-const MediaContext = createContext<{
-  audios: Map<string, Audio>;
-  onOpenEntry: (id: string) => void;
-}>({ audios: new Map(), onOpenEntry: () => {} });
-
-// ---- inline content: a reference to another note (/link) ----
-
-const noteMention = createReactInlineContentSpec(
-  {
-    type: "noteMention",
-    propSchema: { entryId: { default: "" }, title: { default: "" } },
-    content: "none",
-  },
-  {
-    render: (props) => (
-      <NoteMention entryId={props.inlineContent.props.entryId} title={props.inlineContent.props.title} />
-    ),
-  },
-);
-
-function NoteMention({ entryId, title }: { entryId: string; title: string }) {
-  const { onOpenEntry } = useContext(MediaContext);
-  return (
-    <button
-      type="button"
-      className="note-mention"
-      onClick={() => {
-        if (entryId) {
-          onOpenEntry(entryId);
-        }
-      }}
-    >
-      {title || "nota"}
-    </button>
-  );
-}
-
-// ---- blocks: audio and image ----
-
-const audioBlock = createReactBlockSpec(
-  { type: "audio", propSchema: { attachmentId: { default: "" } }, content: "none" },
-  {
-    render: (props) => <AudioBlockView attachmentId={props.block.props.attachmentId} />,
-  },
-);
-
-function AudioBlockView({ attachmentId }: { attachmentId: string }) {
-  const { audios } = useContext(MediaContext);
-  const audio = audios.get(attachmentId);
-  if (!audio) {
-    return <div className="doc-audio doc-audio--pending">Audio sendo processado...</div>;
-  }
-  return <AudioTrack audio={audio} />;
-}
-
-const imageBlock = createReactBlockSpec(
-  {
-    type: "image",
-    propSchema: { attachmentId: { default: "" }, caption: { default: "" }, width: { default: "" } },
-    content: "none",
-  },
-  {
-    render: (props) => (
-      <figure className="doc-figure">
-        <img
-          className="doc-image"
-          src={attachmentUrl(props.block.props.attachmentId)}
-          alt={props.block.props.caption || "Imagem da nota"}
-          // `width` e a largura escolhida no app (50 = metade da largura da nota).
-          style={imageWidth(props.block.props.width)}
-          loading="lazy"
-        />
-        {props.block.props.caption && <figcaption>{props.block.props.caption}</figcaption>}
-      </figure>
-    ),
-  },
-);
-
-/** Largura da imagem em porcentagem da coluna (vazio = largura total). */
-function imageWidth(width: string): { width: string } | undefined {
-  const pct = Number(width);
-  if (!Number.isFinite(pct) || pct <= 0 || pct >= 100) {
-    return undefined;
-  }
-  return { width: `${pct}%` };
-}
-
-const schema = BlockNoteSchema.create({
-  blockSpecs: { ...defaultBlockSpecs, audio: audioBlock(), image: imageBlock() },
-  inlineContentSpecs: { ...defaultInlineContentSpecs, noteMention },
-});
+const schema = createEditorSchema();
 
 // NotesEditor is the written body of a note (markdown): text and images, plus the
 // /link command. Audio is not part of the body anymore: the stack of audios sits

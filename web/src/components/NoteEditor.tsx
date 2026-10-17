@@ -3,7 +3,7 @@ import type { PartialBlock } from "@blocknote/core";
 import { api, isConflict, type ConflictField } from "../api";
 import { AudioTrack } from "./AudioTrack";
 import { NotesEditor, type NotesEditorHandle } from "../editor/NotesEditor";
-import { markdownToPlain, noteBlocksToMarkdown } from "../editor/blocknoteMarkdown";
+import { markdownToPlain, noteBlocksToMarkdown, normalizeLegacyAttachmentImages } from "../editor/blocknoteMarkdown";
 import { markdownToNoteBlocks } from "../editor/markdownBlocks";
 import { createAutosave, type Autosave } from "../lib/autosave";
 import { formatDateTime, formatDuration } from "../lib/format";
@@ -345,11 +345,18 @@ export function NoteEditor({
     // gravacao, para recusar o que mudou no celular em vez de sobrescrever.
     bodyVersionRef.current = note?.body_version ?? "";
     titleVersionRef.current = loaded.versions?.title ?? "";
-    const markdown = note?.content_markdown ?? "";
+    const stored = note?.content_markdown ?? "";
+    // Corpo antigo pode ter a imagem como HTML (com o token do anexo na URL).
+    // A visao crua mostra o markdown canonico e, se houve conversao, a nota e
+    // regravada uma vez para o servidor voltar a ter a referencia `attachment:`.
+    const markdown = normalizeLegacyAttachmentImages(stored);
     setRawMarkdown(markdown);
     setInitialBody(filled);
     lastQueuedRef.current = markdown;
     setBodyLoaded(true);
+    if (markdown !== stored) {
+      autosaveRef.current?.schedule(markdown);
+    }
   }, [entryId]);
 
   const loadLight = useCallback(async () => {
@@ -770,6 +777,16 @@ export function NoteEditor({
             >
               <PlusIcon size={16} />
             </button>
+            <button
+              type="button"
+              className={asideOpen ? "icon-button icon-button--active" : "icon-button"}
+              onClick={() => setAsideOpen((value) => !value)}
+              aria-pressed={asideOpen}
+              aria-label={asideOpen ? "Fechar insights" : "Abrir insights"}
+              title="Insights"
+            >
+              <SparkIcon size={16} />
+            </button>
             {audios.length > 0 && (
               <button type="button" onClick={() => void retranscribe()} disabled={busy === "retranscribe" || running}>
                 {busy === "retranscribe" ? <Spinner /> : null} Retranscrever
@@ -1013,7 +1030,16 @@ export function NoteEditor({
                 {busy === "analyze" ? <Spinner /> : <SparkIcon size={14} />} Analisar
               </button>
             </div>
-            {insights}
+            {failureReason && !processing && !analysis ? (
+              <div className="analysis-failure">
+                <p className="error">{failureReason}</p>
+                <button type="button" className="primary small" onClick={() => void analyze()} disabled={busy === "analyze"}>
+                  Tentar de novo
+                </button>
+              </div>
+            ) : (
+              insights
+            )}
           </section>
         </aside>
       )}
