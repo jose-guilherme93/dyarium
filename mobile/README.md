@@ -82,6 +82,12 @@ texto, guarda local, enfileira e envia para o servidor self-hosted.
   e periodo em que mais escreve, palavras faladas nas transcricoes, e **insights** em frases.
   **Servidor** (quando configurado): resumo, humor (sentimento), emocoes, pessoas, lugares, tags e
   status, puxados do servidor.
+- **Metricas no servidor** (`PUT /api/v1/metrics`): o app calcula o snapshot das metricas de
+  escrita **offline** (o mesmo que o Painel mostra) e guarda esse documento **no aparelho**,
+  sempre — fica pronto para enviar mesmo sem servidor. Havendo servidor configurado, ele envia
+  ao abrir/voltar ao app, quando a lista de notas muda e de 15 em 15 minutos. O servidor guarda o
+  ultimo snapshot de cada aparelho e o painel web desenha exatamente o que o celular calculou
+  (contrato versionado em `docs/api.md`).
 - **Lembretes de escrita** (notificacoes locais): avisam quando a **sequencia esta em risco**
   (nao escreveu hoje) ou quando a **meta semanal esta atrasada** no fim da semana (quinta em
   diante). Tambem comemoram **marcos** (palavras e novo recorde de sequencia), uma vez cada. Hora

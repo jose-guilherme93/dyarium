@@ -7,13 +7,14 @@ import { NoteList } from "./components/NoteList";
 import { NoteEditor } from "./components/NoteEditor";
 import { OfflineBanner } from "./components/OfflineBanner";
 import { useToast } from "./components/Toasts";
-import { ChevronIcon, ExitIcon, InsightsIcon, NoteIcon, SettingsIcon } from "./components/icons";
+import { ChevronIcon, ExitIcon, InsightsIcon, NoteIcon, SettingsIcon, WritingIcon } from "./components/icons";
 import { InsightsView } from "./views/InsightsView";
 import { SettingsView } from "./views/SettingsView";
+import { WritingView } from "./views/WritingView";
 import type { EntityKind, ServerEvent } from "./types";
 import "./App.css";
 
-type ViewId = "notes" | "insights" | "settings";
+type ViewId = "notes" | "insights" | "writing" | "settings";
 
 export function App() {
   const [token, setTokenState] = useState(getToken());
@@ -235,6 +236,14 @@ export function App() {
           </button>
           <button
             type="button"
+            className={view === "writing" ? "foot-item foot-item--active" : "foot-item"}
+            onClick={() => setView("writing")}
+          >
+            <WritingIcon size={18} />
+            <span>Escrita</span>
+          </button>
+          <button
+            type="button"
             className={view === "settings" ? "foot-item foot-item--active" : "foot-item"}
             onClick={() => setView("settings")}
           >
@@ -288,6 +297,10 @@ export function App() {
           ) : view === "insights" ? (
             <div className="page">
               <InsightsView refreshKey={refreshKey} onOpen={openFromOtherView} focus={entityFocus} />
+            </div>
+          ) : view === "writing" ? (
+            <div className="page">
+              <WritingView refreshKey={refreshKey} />
             </div>
           ) : (
             <div className="page">

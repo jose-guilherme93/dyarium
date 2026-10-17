@@ -37,6 +37,32 @@ export async function clearServerConfig(): Promise<void> {
   await SecureStore.deleteItemAsync(KEY);
 }
 
+const DEVICE_KEY = 'dyarium.device';
+
+/** Identidade do aparelho para as metricas (id opaco + rotulo legivel). */
+export interface DeviceIdentity {
+  id: string;
+  name: string;
+}
+
+export async function loadDeviceIdentity(): Promise<DeviceIdentity | null> {
+  try {
+    const raw = await SecureStore.getItemAsync(DEVICE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<DeviceIdentity>;
+    if (typeof parsed.id === 'string' && parsed.id) {
+      return { id: parsed.id, name: typeof parsed.name === 'string' ? parsed.name : '' };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveDeviceIdentity(identity: DeviceIdentity): Promise<void> {
+  await SecureStore.setItemAsync(DEVICE_KEY, JSON.stringify(identity));
+}
+
 /** Preferencias locais do app (nao sao segredo, mas ficam no mesmo cofre). */
 export type SwipeAction = 'delete' | 'archive';
 

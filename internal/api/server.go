@@ -90,6 +90,10 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("GET /api/v1/entities/{kind}/{name}", s.handleGetEntity)
 	protected.HandleFunc("GET /api/v1/mood", s.handleMood)
 
+	protected.HandleFunc("PUT /api/v1/metrics", s.handlePutMetrics)
+	protected.HandleFunc("GET /api/v1/metrics", s.handleListMetrics)
+	protected.HandleFunc("DELETE /api/v1/metrics/{device_id}", s.handleDeleteMetrics)
+
 	protected.HandleFunc("GET /api/v1/entries/{id}/notes", s.handleListNotes)
 	protected.HandleFunc("POST /api/v1/entries/{id}/notes", s.handleCreateNote)
 	protected.HandleFunc("GET /api/v1/notes/{id}", s.handleGetNote)

@@ -122,6 +122,18 @@ export interface VersionResponse {
   built_at: string;
 }
 
+/** Envelope do snapshot de metricas enviado ao servidor. */
+export interface MetricsUpload {
+  device_id: string;
+  device_name: string;
+  schema: number;
+  generated_at: string;
+  /** Metricas de escrita (ver core/metricsSnapshot.ts e docs/api.md). */
+  writing: unknown;
+  /** Series do historico para os graficos do painel. */
+  history: unknown;
+}
+
 /** Entrada do servidor (resumo da lista). */
 export interface ServerEntry {
   id: string;
@@ -444,6 +456,20 @@ export class DyariumApi {
     });
     if (!res.ok) throw await this.parseError(res);
     return JSON.parse(await res.text());
+  }
+
+  /**
+   * Envia o snapshot das metricas de escrita. O aparelho calcula tudo offline e
+   * manda o documento pronto; o servidor guarda o ultimo de cada aparelho e o
+   * painel web mostra os mesmos numeros.
+   */
+  async putMetrics(body: MetricsUpload): Promise<void> {
+    const res = await this.fetchImpl(this.url('/api/v1/metrics'), {
+      method: 'PUT',
+      headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw await this.parseError(res);
   }
 
   /** Tags do servidor, com contagem de entradas. */

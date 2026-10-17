@@ -203,3 +203,110 @@ export interface ServerEvent {
   name: string;
   data: Record<string, unknown>;
 }
+
+/**
+ * Metricas de escrita: o app calcula tudo offline e envia o documento pronto
+ * (contrato versionado em docs/api.md). O painel so desenha o que recebe.
+ */
+export interface MetricsWordCount {
+  label: string;
+  value: number;
+}
+
+export interface MetricsSeriesPoint {
+  label: string;
+  words: number;
+  notes: number;
+}
+
+export interface MetricsDayCell {
+  key: string | null;
+  words: number;
+  notes: number;
+}
+
+export interface MetricsConsistencyDay {
+  key: string;
+  wrote: boolean;
+  notes: number;
+  words: number;
+}
+
+export interface MetricsSentiment {
+  analyzed: number;
+  average: number;
+  positive: number;
+  neutral: number;
+  negative: number;
+  top_positive: { title: string; score: number } | null;
+  top_negative: { title: string; score: number } | null;
+}
+
+export interface MetricsWriting {
+  notes: number;
+  with_text: number;
+  with_audio: number;
+  with_transcript: number;
+  words: number;
+  chars: number;
+  sentences: number;
+  paragraphs: number;
+  unique_words: number;
+  lexical_richness: number;
+  average_words_per_note: number;
+  average_sentence_words: number;
+  average_word_length: number;
+  top_words: MetricsWordCount[];
+  longest_words: MetricsWordCount[];
+  questions: number;
+  exclamations: number;
+  links: number;
+  images: number;
+  list_items: number;
+  transcript_words: number;
+  average_transcript_words: number;
+  active_days: number;
+  average_notes_per_active_day: number;
+  current_streak: number;
+  longest_streak: number;
+  wrote_today: boolean;
+  top_weekday: MetricsWordCount | null;
+  top_hour: MetricsWordCount | null;
+  first_at: string | null;
+  last_at: string | null;
+  longest_note: { title: string; words: number } | null;
+  monthly: MetricsSeriesPoint[];
+  month_comparison_pct: number | null;
+  sentiment: MetricsSentiment;
+  weekday_hour: number[][];
+  consistency: {
+    days: MetricsConsistencyDay[];
+    written_days: number;
+    tracked_days: number;
+    rate: number;
+    longest_run: number;
+  };
+  insights: string[];
+}
+
+export interface MetricsHistory {
+  weekly: MetricsSeriesPoint[];
+  calendar: MetricsDayCell[][];
+  max_weekly: number;
+  max_daily: number;
+}
+
+export interface MetricsSnapshot {
+  device_id: string;
+  device_name: string;
+  schema: number;
+  generated_at: string;
+  received_at: string;
+  writing: MetricsWriting;
+  history?: MetricsHistory;
+}
+
+export interface MetricsResponse {
+  snapshots: MetricsSnapshot[];
+  schema: number;
+}

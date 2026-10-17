@@ -7,6 +7,7 @@ import type {
   EntitySummary,
   Entry,
   Link,
+  MetricsResponse,
   ModelInfo,
   MoodPoint,
   Note,
@@ -173,6 +174,7 @@ export const api = {
     const query = params.toString();
     return request<{ mood: MoodPoint[] }>(`/mood${query ? `?${query}` : ""}`);
   },
+  getMetrics: () => request<MetricsResponse>("/metrics"),
   listAttachments: (entryId: string) =>
     request<{ attachments: Attachment[] }>(`/entries/${entryId}/attachments`),
   deleteAttachment: (id: string) => request<void>(`/attachments/${id}`, { method: "DELETE" }),

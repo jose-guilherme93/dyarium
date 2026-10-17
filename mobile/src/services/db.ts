@@ -169,6 +169,21 @@ const MIGRATIONS: Migration[] = [
       await addColumn(db, 'recordings', 'transcript_origin');
     },
   },
+  {
+    version: 10,
+    run: async (db) => {
+      // Ultimo snapshot das metricas de escrita: fica sempre pronto no aparelho
+      // (o painel le daqui) e sincroniza com o servidor quando existe.
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS metrics_snapshot (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          payload TEXT NOT NULL,
+          generated_at TEXT NOT NULL,
+          synced_at TEXT
+        );
+      `);
+    },
+  },
 ];
 
 async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
@@ -390,4 +405,43 @@ export async function getRecording(id: string): Promise<Recording | null> {
 export async function deleteRecordingRow(id: string): Promise<void> {
   const db = await getDb();
   await db.runAsync('DELETE FROM recordings WHERE id = ?', [id]);
+}
+
+export interface StoredMetricsSnapshot {
+  payload: string;
+  generatedAt: string;
+  syncedAt: string | null;
+}
+
+/**
+ * Guarda o ultimo snapshot das metricas de escrita. Fica no aparelho mesmo sem
+ * servidor: o painel le daqui e, quando houver servidor, e isto que sobe.
+ */
+export async function saveMetricsSnapshot(
+  payload: string,
+  generatedAt: string,
+): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `INSERT INTO metrics_snapshot (id, payload, generated_at, synced_at) VALUES (1, ?, ?, NULL)
+     ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, generated_at = excluded.generated_at`,
+    [payload, generatedAt],
+  );
+}
+
+export async function loadMetricsSnapshot(): Promise<StoredMetricsSnapshot | null> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<{
+    payload: string;
+    generated_at: string;
+    synced_at: string | null;
+  }>('SELECT payload, generated_at, synced_at FROM metrics_snapshot WHERE id = 1');
+  if (!row) return null;
+  return { payload: row.payload, generatedAt: row.generated_at, syncedAt: row.synced_at };
+}
+
+/** Marca o snapshot como enviado (o valor local continua valendo para o painel). */
+export async function markMetricsSynced(syncedAt: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync('UPDATE metrics_snapshot SET synced_at = ? WHERE id = 1', [syncedAt]);
 }

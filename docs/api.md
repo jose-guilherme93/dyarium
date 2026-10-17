@@ -252,6 +252,74 @@ Serie temporal do sentimento por dia. Filtros opcionais `from` e `to` (RFC 3339 
 { "mood": [ { "date": "2026-10-10", "sentiment": 0.4, "entries": 2 } ] }
 ```
 
+## Metricas de escrita
+
+O app calcula as metricas da escrita **offline** (as mesmas do Painel no celular) e
+envia o documento pronto. O servidor guarda o ultimo snapshot de cada aparelho e o
+painel web desenha exatamente o que o aparelho calculou — sem recalcular nada.
+
+### PUT /api/v1/metrics
+Envia (ou substitui) o snapshot de um aparelho. Corpo:
+```json
+{
+  "device_id": "dev_01J8Z...",
+  "device_name": "android 15",
+  "schema": 1,
+  "generated_at": "2026-10-16T12:00:00Z",
+  "writing": { "...": "metricas" },
+  "history": { "...": "series para os graficos" }
+}
+```
+Resposta 200: `{ "status": "ok", "received_at": "...", "schema": 1 }`.
+- `device_id` e opaco, gerado pelo app na primeira vez e guardado no aparelho; o
+  servidor guarda um snapshot por aparelho (o ultimo enviado vence).
+- `schema` e a versao do contrato. O servidor so aceita a versao atual
+  (`400 unsupported_schema`): assim um app mais novo nunca deixa um documento que o
+  painel nao sabe ler.
+- `writing` e `history` sao objetos JSON livres dentro do contrato (abaixo). O
+  servidor valida que sao objetos, que o total cabe em 256 KiB e que `generated_at` e
+  RFC 3339; o resto ele guarda como veio, para o app poder evoluir as metricas sem
+  migracao no servidor.
+- O app guarda o mesmo documento localmente mesmo sem servidor, entao um aparelho
+  offline perde nada: o snapshot sobe depois.
+
+Contrato de `writing` (versao 1), espelhado em `mobile/src/core/metricsSnapshot.ts`
+e em `web/src/types.ts`:
+- Volume: `notes`, `with_text`, `with_audio`, `with_transcript`, `words`, `chars`,
+  `sentences`, `paragraphs`, `unique_words`, `lexical_richness` (0..1),
+  `average_words_per_note`, `average_sentence_words`, `average_word_length`,
+  `transcript_words`, `average_transcript_words`.
+- Ranking: `top_words[]` e `longest_words[]` (`{ "label": ..., "value": ... }`).
+- Marcadores: `questions`, `exclamations`, `links`, `images`, `list_items`.
+- Habito: `active_days`, `average_notes_per_active_day`, `current_streak`,
+  `longest_streak`, `wrote_today`, `top_weekday`, `top_hour`, `first_at`, `last_at`,
+  `longest_note`, `monthly[]`, `month_comparison_pct`.
+- Humor (lexico local do app): `sentiment` (`analyzed`, `average`, `positive`,
+  `neutral`, `negative`, `top_positive`, `top_negative`).
+- Constancia (dias escritos vs nao escritos): `consistency` (`days[]` com `key`,
+  `wrote`, `notes`, `words`; `written_days`, `tracked_days`, `rate`, `longest_run`).
+- Ritmo: `weekday_hour` (grade 7 x 8 faixas de 3 horas, quantas notas por celula).
+- `insights[]`: frases prontas derivadas dos numeros.
+
+Contrato de `history` (versao 1): `weekly[]` (`label`, `words`, `notes`),
+`calendar[][]` (colunas de 7 dias com `key`, `words`, `notes`; `key` nulo em dia que
+ainda nao aconteceu), `max_weekly` e `max_daily`.
+
+### GET /api/v1/metrics
+Ultimo snapshot de cada aparelho, do mais recente para o mais antigo.
+```json
+{
+  "schema": 1,
+  "snapshots": [ { "device_id": "...", "device_name": "android 15", "schema": 1,
+    "generated_at": "...", "received_at": "...", "writing": { }, "history": { } } ]
+}
+```
+Filtro opcional `limit` (padrao 50, teto 200).
+
+### DELETE /api/v1/metrics/{device_id}
+Remove o snapshot de um aparelho. Resposta 204, ou 404 se aquele aparelho nunca
+enviou metricas.
+
 ## Tags
 
 ### GET /api/v1/tags

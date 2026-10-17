@@ -172,3 +172,12 @@ export function LinkIcon({ size = 18 }: IconProps) {
     </svg>
   );
 }
+
+export function WritingIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M4 19V6a1 1 0 0 1 1-1h9l4 4v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1Z" />
+      <path d="M8 12h7M8 16h5" />
+    </svg>
+  );
+}

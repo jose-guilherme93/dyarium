@@ -13,6 +13,7 @@ import { LibraryProvider } from '@/state/LibraryContext';
 import { PlaybackProvider } from '@/state/PlaybackContext';
 import { RecordingProvider } from '@/state/RecordingContext';
 import { SettingsProvider } from '@/state/SettingsContext';
+import { useMetricsSync } from '@/state/useMetricsSync';
 import { useWritingReminders } from '@/state/useWritingReminders';
 import { colors } from '@/theme/tokens';
 
@@ -21,6 +22,12 @@ SplashScreen.preventAutoHideAsync().catch(() => undefined);
 /** Agenda os lembretes de escrita (precisa dos providers de biblioteca/config). */
 function Reminders() {
   useWritingReminders();
+  return null;
+}
+
+/** Mantem as metricas de escrita prontas e sincronizadas com o servidor. */
+function Metrics() {
+  useMetricsSync();
   return null;
 }
 
@@ -43,6 +50,7 @@ export default function RootLayout() {
             <PlaybackProvider>
               <RecordingProvider>
                 <Reminders />
+                <Metrics />
                 <StatusBar style="light" />
                 <Stack
                   screenOptions={{
