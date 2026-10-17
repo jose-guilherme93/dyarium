@@ -98,6 +98,14 @@ func serve() error {
 	if err := st.Migrate(ctx); err != nil {
 		return err
 	}
+	// Reparo de dados da rodada anterior: o dashboard antigo gravou a URL do
+	// anexo (com o token) como HTML no corpo. Converte para `attachment:<id>` e
+	// remove o token de corpos e revisoes. Idempotente.
+	if notes, revs, err := st.ScrubAttachmentTokens(ctx); err != nil {
+		logger.Error("store: limpar tokens de anexos", "erro", err)
+	} else if notes+revs > 0 {
+		logger.Info("store: tokens de anexos removidos", "notas", notes, "revisoes", revs)
+	}
 	if err := seedSettings(ctx, st, cfg); err != nil {
 		return err
 	}
