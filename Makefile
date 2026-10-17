@@ -21,10 +21,10 @@ MODELS_BASE_URL ?= https://huggingface.co/ggerganov/whisper.cpp/resolve/main
 OLLAMA_MODEL ?= qwen2.5:0.5b
 WEB_PORT ?= 5173
 API_PORT ?= 8080
-# Portas HTTPS do tailscale serve para o dyarium. NUNCA use a 443: ela e do
-# Traefik. Cada servico tem a sua porta propria.
+# Porta HTTPS do tailscale serve para o dyarium. NUNCA use a 443: ela e do
+# Traefik. O dashboard e a API ficam no mesmo endereco; o proxy do dashboard
+# encaminha /api/v1 para o servidor.
 TAILSCALE_WEB_PORT ?= 8445
-TAILSCALE_API_PORT ?= 8446
 
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -94,14 +94,12 @@ models: ## Baixa os modelos ggml para MODELS_DIR
 		curl -fL --retry 3 -o "$$file" "$(MODELS_BASE_URL)/ggml-$$m.bin"; \
 	done
 
-tailscale: ## Expoe dashboard e API na tailnet via HTTPS (portas proprias; nunca a 443 do Traefik)
+tailscale: ## Expoe dashboard e API no mesmo endereco da tailnet via HTTPS
 	tailscale serve --bg --https=$(TAILSCALE_WEB_PORT) http://127.0.0.1:$(WEB_PORT)
-	tailscale serve --bg --https=$(TAILSCALE_API_PORT) http://127.0.0.1:$(API_PORT)
 	@tailscale serve status || true
 
 tailscale-off: ## Remove so a exposicao do dyarium na tailnet (preserva os outros servicos)
 	tailscale serve --https=$(TAILSCALE_WEB_PORT) off || true
-	tailscale serve --https=$(TAILSCALE_API_PORT) off || true
 
 ai: ## Sobe o Ollama local e baixa o modelo padrao da analise
 	DIARY_API_PORT=$(API_PORT) DIARY_WEB_PORT=$(WEB_PORT) $(COMPOSE) -f $(DEV_FILE) --profile ai up -d ollama
