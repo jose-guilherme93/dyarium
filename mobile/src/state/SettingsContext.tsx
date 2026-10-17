@@ -10,6 +10,7 @@ import {
 } from 'react';
 
 import { DyariumApi, type FetchLike } from '@/core/api';
+import { DEFAULT_ANALYSIS_MODEL } from '@/core/analysisModels';
 import {
   DEFAULT_TRANSCRIPTION_MODEL,
   type TranscriptionLanguage,
@@ -60,6 +61,9 @@ interface SettingsValue {
   /** Idioma da transcricao. */
   transcriptionLanguage: TranscriptionLanguage;
   setTranscriptionLanguage(value: TranscriptionLanguage): Promise<void>;
+  /** Modelo de analise local escolhido. */
+  analysisModel: string;
+  setAnalysisModel(id: string): Promise<void>;
   /** Pasta escolhida para o backup local (uri). */
   backupFolder?: string;
   setBackupFolder(uri: string): Promise<void>;
@@ -106,6 +110,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   );
   const [transcriptionLanguage, setTranscriptionLanguageState] =
     useState<TranscriptionLanguage>('pt');
+  const [analysisModel, setAnalysisModelState] = useState(DEFAULT_ANALYSIS_MODEL);
   const [backupFolder, setBackupFolderState] = useState<string | undefined>(undefined);
   const [weeklyWordGoal, setWeeklyWordGoalState] = useState(1000);
   const [writingReminders, setWritingRemindersState] = useState(true);
@@ -136,6 +141,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         setLocalTranscriptionState(prefs.localTranscription !== false);
         setTranscriptionModelState(prefs.transcriptionModel ?? DEFAULT_TRANSCRIPTION_MODEL);
         setTranscriptionLanguageState(prefs.transcriptionLanguage === 'auto' ? 'auto' : 'pt');
+        setAnalysisModelState(prefs.analysisModel ?? DEFAULT_ANALYSIS_MODEL);
         setBackupFolderState(prefs.backupFolder);
         setWeeklyWordGoalState(prefs.weeklyWordGoal ?? 1000);
         setWritingRemindersState(prefs.writingReminders !== false);
@@ -199,6 +205,14 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     async (value: TranscriptionLanguage) => {
       setTranscriptionLanguageState(value);
       await persistPrefs({ transcriptionLanguage: value });
+    },
+    [persistPrefs],
+  );
+
+  const setAnalysisModel = useCallback(
+    async (id: string) => {
+      setAnalysisModelState(id);
+      await persistPrefs({ analysisModel: id });
     },
     [persistPrefs],
   );
@@ -306,6 +320,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setTranscriptionModel,
       transcriptionLanguage,
       setTranscriptionLanguage,
+      analysisModel,
+      setAnalysisModel,
       backupFolder,
       setBackupFolder,
       weeklyWordGoal,
@@ -337,6 +353,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setTranscriptionModel,
       transcriptionLanguage,
       setTranscriptionLanguage,
+      analysisModel,
+      setAnalysisModel,
       backupFolder,
       setBackupFolder,
       weeklyWordGoal,

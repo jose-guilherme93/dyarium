@@ -79,6 +79,8 @@ export interface Prefs {
   transcriptionModel?: string;
   /** Idioma da transcricao (pt fixo ou detectar). */
   transcriptionLanguage?: TranscriptionLanguage;
+  /** Id do modelo de analise local escolhido. */
+  analysisModel?: string;
   /** Pasta escolhida para o backup local (uri). */
   backupFolder?: string;
   /** Meta de palavras por semana (Painel). */
@@ -112,6 +114,8 @@ export async function loadPrefs(): Promise<Prefs> {
           ? parsed.transcriptionModel
           : DEFAULT_TRANSCRIPTION_MODEL,
       transcriptionLanguage: parsed.transcriptionLanguage === 'auto' ? 'auto' : 'pt',
+      analysisModel:
+        typeof parsed.analysisModel === 'string' ? parsed.analysisModel : undefined,
       backupFolder: typeof parsed.backupFolder === 'string' ? parsed.backupFolder : undefined,
       weeklyWordGoal:
         typeof parsed.weeklyWordGoal === 'number' && parsed.weeklyWordGoal >= 0

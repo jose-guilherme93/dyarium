@@ -1,4 +1,5 @@
 # Configuracao do pnpm para este pacote.
 # unrs-resolver (usado pelo eslint) compila um binario nativo; permitimos o build.
 allowBuilds:
+  llama.rn: true
   unrs-resolver: true

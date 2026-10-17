@@ -65,7 +65,8 @@
         "expo-build-properties",
         {
           "android": {
-            "usesCleartextTraffic": true
+            "usesCleartextTraffic": true,
+            "buildArchs": ["arm64-v8a"]
           }
         }
       ],
@@ -96,6 +97,13 @@
         "expo-image-picker",
         {
           "photosPermission": "O dyarium precisa das suas fotos para anexar imagens as notas."
+        }
+      ],
+      [
+        "llama.rn",
+        {
+          "enableOpenCLAndHexagon": false,
+          "forceCxx20": true
         }
       ],
       "expo-asset"

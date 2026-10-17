@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 
 import { Card } from '@/components/Card';
+import { AnalysisModelsSection } from '@/components/AnalysisModelsSection';
 import { Screen } from '@/components/Screen';
 import { formatBytes } from '@/core/format';
 import {
@@ -78,7 +79,7 @@ export default function TranscriptionScreen() {
         >
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
-        <Text style={styles.headerTitle}>Transcrição</Text>
+        <Text style={styles.headerTitle}>Modelos no aparelho</Text>
         <View style={styles.iconButton} />
       </View>
 
@@ -93,6 +94,7 @@ export default function TranscriptionScreen() {
           </Card>
         ) : null}
 
+        <Text style={styles.sectionLabel}>Transcrição</Text>
         <Card style={styles.card}>
           <View style={styles.toggleRow}>
             <View style={styles.rowText}>
@@ -130,7 +132,7 @@ export default function TranscriptionScreen() {
           </View>
         </Card>
 
-        <Text style={styles.sectionLabel}>Modelos</Text>
+        <Text style={styles.sectionLabel}>Modelos de transcrição</Text>
         <Text style={styles.cardHint}>
           Recomendado para este aparelho: {recommended.label}. Do mais leve ao mais preciso.
         </Text>
@@ -201,6 +203,8 @@ export default function TranscriptionScreen() {
         <Text style={styles.cardHint}>
           {bytes > 0 ? `Usando ${formatBytes(bytes)} no aparelho.` : 'Nenhum modelo baixado.'}
         </Text>
+
+        <AnalysisModelsSection />
       </ScrollView>
     </Screen>
   );
