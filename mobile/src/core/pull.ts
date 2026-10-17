@@ -124,6 +124,19 @@ export function mergeServerNote(
   const recordedMoved = Boolean(recordedVersion) && recordedVersion !== local.recordedAtVersion;
   const archivedMoved = typeof entry.archived === 'boolean' && entry.archived !== Boolean(local.archived);
 
+  // Nota marcada como suja, mas com o mesmo texto do servidor (o editor
+  // normaliza espacos ao abrir): nao ha edicao para enviar. Adota a versao do
+  // servidor e limpa a pendencia, para nao sobrescrever uma edicao do dashboard.
+  if (dirty && note && bodyMoved && (note.content_markdown ?? '').trimEnd() === (local.text ?? '').trimEnd()) {
+    return {
+      ...local,
+      text: note.content_markdown ?? '',
+      bodyVersion: serverBodyVersion,
+      noteDirty: undefined,
+      syncConflict: undefined,
+    };
+  }
+
   // A ultima edicao vence: com a nota suja, so o que o servidor gravou depois da
   // ultima edicao local entra. Nota limpa aceita qualquer versao nova.
   const applyBody = bodyMoved && (!dirty || serverIsNewer(serverBodyVersion, local.updatedAt));

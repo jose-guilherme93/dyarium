@@ -326,9 +326,15 @@ export default function NoteScreen() {
   }, []);
 
   const handleBodyChange = useCallback((markdown: string) => {
+    // O WebView reemite o conteudo ao montar, normalizado (sem espacos no fim).
+    // Isso nao e edicao: sem o guarda, abrir a nota a marcava como suja e o sync
+    // reenviava o texto local por cima do que foi editado no dashboard.
+    if (markdown.trimEnd() === body.trimEnd()) {
+      return;
+    }
     dirtyRef.current = true;
     setBody(markdown);
-  }, []);
+  }, [body]);
 
   // Tocou na nota (o editor avisa pelo WebView): mostra o menu de acoes.
   const handleEditingChange = useCallback(() => setEditing(true), []);

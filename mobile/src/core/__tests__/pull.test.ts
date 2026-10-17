@@ -271,6 +271,21 @@ describe('mergeServerNote', () => {
     expect(newer?.noteDirty).toBeUndefined();
   });
 
+  it('nota suja com o mesmo texto do servidor limpa a pendencia sem enviar nada', () => {
+    const local = clean({
+      noteDirty: true,
+      text: 'mesmo texto',
+      updatedAt: '2026-10-11T16:20:00Z',
+    });
+    const merged = mergeServerNote(
+      local,
+      serverEntry({ versions: { title: 't1', recorded_at: 'r1', body: '2026-10-11T16:10:00Z' } }),
+      serverNote({ body_version: '2026-10-11T16:10:00Z', content_markdown: 'mesmo texto\n' }),
+    );
+    expect(merged?.noteDirty).toBeUndefined();
+    expect(merged?.bodyVersion).toBe('2026-10-11T16:10:00Z');
+  });
+
   it('conflito aberto e resolvido pelo servidor quando ele gravou depois', () => {
     const local = clean({
       syncConflict: ['body'],
