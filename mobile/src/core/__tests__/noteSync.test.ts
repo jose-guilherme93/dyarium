@@ -6,6 +6,7 @@ import {
   conflictFields,
   fetchServerNote,
   isNoteConflict,
+  keepMine,
   syncNoteWith,
 } from '../noteSync';
 import type { NoteSyncApi } from '../noteSync';
@@ -246,6 +247,31 @@ describe('o que a nota guarda depois do envio', () => {
   it('conflito resolvido devolve a nota para a fila', () => {
     const resolved = clearNoteConflict(applySyncConflict(nota(), ['title']));
     expect(resolved.syncConflict).toBeUndefined();
+  });
+});
+
+describe('manter o meu', () => {
+  it('guarda as versoes que o servidor devolveu, para o conflito nao voltar', async () => {
+    const sent = nota({ syncConflict: ['body'], noteDirty: true, updatedAt: '2026-10-16T12:00:00Z' });
+    const forced = jest.fn(async () => ({
+      noteId: 'n1',
+      attachments: {},
+      versions: { title: 'v2-titulo', recordedAt: 'v2-data', body: 'v2-corpo' },
+    }));
+
+    const saved = await keepMine(sent, async () => sent, forced);
+
+    expect(forced).toHaveBeenCalledWith(sent);
+    expect(saved?.titleVersion).toBe('v2-titulo');
+    expect(saved?.recordedAtVersion).toBe('v2-data');
+    expect(saved?.bodyVersion).toBe('v2-corpo');
+    expect(saved?.syncConflict).toBeUndefined();
+    expect(saved?.noteDirty).toBeUndefined();
+  });
+
+  it('sem servidor configurado nao inventa estado: devolve undefined', async () => {
+    const saved = await keepMine(nota(), async () => nota(), async () => undefined);
+    expect(saved).toBeUndefined();
   });
 });
 

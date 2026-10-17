@@ -227,3 +227,20 @@ export function applySyncConflict(fresh: Recording, fields: ConflictField[]): Re
 export function clearNoteConflict(fresh: Recording): Recording {
   return { ...fresh, syncConflict: undefined };
 }
+
+/**
+ * "Manter o meu": reenvia a nota sem versao (a decisao ja foi do usuario) e
+ * devolve o que persistir. A gravacao forcada sobe as versoes no servidor;
+ * guardar as antigas faria o proximo sync mandar versao vencida, tomar 409 de
+ * novo e o dialogo voltar para sempre.
+ */
+export async function keepMine(
+  note: Recording,
+  reread: () => Promise<Recording | null | undefined>,
+  forceSync: (note: Recording) => Promise<SyncNoteResult | undefined>,
+): Promise<Recording | undefined> {
+  const result = await forceSync(note);
+  if (!result) return undefined;
+  const fresh = (await reread()) ?? note;
+  return applySyncResult(fresh, note, result);
+}

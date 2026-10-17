@@ -35,7 +35,7 @@ import {
 } from '@/core/format';
 import { IMAGE_WIDTH_OPTIONS } from '@/core/image';
 import { breakSentences, countChars, countWords, markdownToPlain } from '@/core/richText';
-import { clearNoteConflict } from '@/core/noteSync';
+import { clearNoteConflict, keepMine } from '@/core/noteSync';
 import {
   fontFamilyNative,
   fontWeightNative,
@@ -361,10 +361,11 @@ export default function NoteScreen() {
 
   const handleKeepMine = useCallback(async () => {
     if (!noteId || !note) return;
-    const result = await syncNoteForcing(note).catch(() => undefined);
-    if (!result) return;
-    const fresh = (await getRecording(noteId)) ?? note;
-    await upsertRecording(clearNoteConflict({ ...fresh, noteDirty: true }));
+    // O nucleo guarda as versoes que o servidor devolveu: com as antigas o
+    // proximo sync tomaria 409 de novo e o dialogo voltaria.
+    const saved = await keepMine(note, () => getRecording(noteId), syncNoteForcing).catch(() => undefined);
+    if (!saved) return;
+    await upsertRecording(saved);
     await library.refresh();
   }, [library, note, noteId]);
 
