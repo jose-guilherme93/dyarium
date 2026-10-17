@@ -187,13 +187,29 @@ export interface ServerEntry {
   deleted_at?: string | null;
 }
 
+export interface AnalysisTheme {
+  name: string;
+  confidence: number;
+}
+
+export interface AnalysisMoment {
+  start_ms: number;
+  text: string;
+}
+
 export interface ServerAnalysis {
   model: string;
   sentiment: number;
+  sentiment_label?: string;
   emotions: Record<string, number> | null;
   people: string[] | null;
   places: string[] | null;
   summary: string;
+  /** Campos ricos, quando a analise foi feita com o pipeline novo. */
+  themes?: AnalysisTheme[] | null;
+  key_moments?: AnalysisMoment[] | null;
+  questions?: string[] | null;
+  decisions?: string[] | null;
 }
 
 export interface ServerTag {

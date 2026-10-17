@@ -5,10 +5,11 @@ import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, S
 
 import { Button } from '@/components/Button';
 import { Screen } from '@/components/Screen';
-import { summarize, type RankedItem } from '@/core/dashboard';
+import { summarize, toAnalysisInsights, type AnalysisInsight, type RankedItem } from '@/core/dashboard';
 import { formatBytes, formatDateTime, formatDuration } from '@/core/format';
 import { analyzeWriting, writingHistory, CONSISTENCY_WINDOW_DAYS, type ConsistencyMetrics, type DayCell, type MonthlyPoint, type SentimentMetrics, type WritingHistory, type WritingMetrics } from '@/core/writing';
 import { loadDashboard, type DashboardData } from '@/services/dashboard';
+import { listCachedAnalyses, type CachedAnalysis } from '@/services/db';
 import { useLibrary } from '@/state/LibraryContext';
 import { useSettings } from '@/state/SettingsContext';
 import { colors, fontSize, radius, spacing } from '@/theme/tokens';
@@ -431,9 +432,32 @@ function Insights({ metrics }: { metrics: WritingMetrics }) {
   );
 }
 
+function AnalysisInsights({ items }: { items: AnalysisInsight[] }) {
+  if (items.length === 0) return null;
+  return (
+    <View style={styles.section}>
+      <Text style={styles.sectionLabel}>Insights das notas</Text>
+      <View style={styles.analysisList}>
+        {items.map((item) => (
+          <View key={item.entryId} style={styles.analysisCard}>
+            <Text style={styles.analysisMeta} numberOfLines={1}>
+              {formatDateTime(item.recordedAt)} · {item.title}
+            </Text>
+            {item.summary ? <Text style={styles.analysisText}>{item.summary}</Text> : null}
+            {item.themes.length > 0 ? (
+              <Text style={styles.analysisThemes}>{item.themes.join(' · ')}</Text>
+            ) : null}
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 function WritingSection({
   metrics,
   history,
+  analysisInsights,
   goal,
   onGoal,
   reminders,
@@ -443,6 +467,7 @@ function WritingSection({
 }: {
   metrics: WritingMetrics;
   history: WritingHistory;
+  analysisInsights: AnalysisInsight[];
   goal: number;
   onGoal: (value: number) => void;
   reminders: boolean;
@@ -455,6 +480,7 @@ function WritingSection({
     <>
       <Text style={styles.blockTitle}>Escrita</Text>
       <Insights metrics={metrics} />
+      <AnalysisInsights items={analysisInsights} />
       <WeeklyChart
         points={history.weekly.map((week) => ({ label: week.label, value: week.words }))}
       />
@@ -575,6 +601,7 @@ export default function DashboardScreen() {
     useSettings();
   const { recordings } = useLibrary();
   const [data, setData] = useState<DashboardData | null>(null);
+  const [cachedAnalyses, setCachedAnalyses] = useState<CachedAnalysis[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -582,6 +609,10 @@ export default function DashboardScreen() {
   const history = useMemo(() => writingHistory(recordings, new Date()), [recordings]);
 
   const load = useCallback(async () => {
+    // Analises ja feitas no servidor ficam guardadas no aparelho: mostra antes
+    // da rede (ou sem ela) e sem refazer a analise.
+    const cached = await listCachedAnalyses().catch(() => []);
+    setCachedAnalyses(cached);
     if (!config) return;
     setLoading(true);
     setError(null);
@@ -601,6 +632,17 @@ export default function DashboardScreen() {
   }, [load]);
 
   const summary = data ? summarize(data.entries, data.analyses.map((item) => item.analysis)) : null;
+
+  const analysisInsights = useMemo(() => {
+    const live =
+      data?.analyses.map(({ entry, analysis }) => ({
+        entryId: entry.id,
+        title: entry.title || entry.original_filename,
+        recordedAt: entry.recorded_at ?? entry.created_at,
+        analysis,
+      })) ?? [];
+    return toAnalysisInsights(live.length > 0 ? live : cachedAnalyses);
+  }, [data, cachedAnalyses]);
 
   return (
     <Screen>
@@ -629,6 +671,7 @@ export default function DashboardScreen() {
           <WritingSection
             metrics={writing}
             history={history}
+            analysisInsights={analysisInsights}
             goal={weeklyWordGoal}
             onGoal={(value) => void setWeeklyWordGoal(value)}
             reminders={writingReminders}
@@ -785,6 +828,16 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     padding: spacing.md,
   },
+  analysisList: { gap: spacing.sm },
+  analysisCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    gap: 4,
+  },
+  analysisMeta: { color: colors.textSecondary, fontSize: fontSize.sm },
+  analysisText: { color: colors.text, fontSize: fontSize.sm, lineHeight: 20 },
+  analysisThemes: { color: colors.accent, fontSize: fontSize.sm },
   insightText: { flex: 1, color: colors.text, fontSize: fontSize.sm, lineHeight: 20 },
   sentiment: { color: colors.text, fontSize: fontSize.md },
   row: {

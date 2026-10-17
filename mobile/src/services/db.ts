@@ -5,6 +5,7 @@
 
 import * as SQLite from 'expo-sqlite';
 
+import type { ServerAnalysis } from '@/core/api';
 import type {
   ConflictField,
   Recording,
@@ -200,6 +201,22 @@ const MIGRATIONS: Migration[] = [
       await addColumn(db, 'recordings', 'body_version');
       // Campos que o servidor recusou (409), esperando a escolha do usuario.
       await addColumn(db, 'recordings', 'sync_conflict');
+    },
+  },
+  {
+    version: 12,
+    run: async (db) => {
+      // Analises (insights) ja feitas no servidor: guardadas no aparelho para o
+      // painel mostrar sem refazer a analise e sem depender da rede.
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS analyses (
+          entry_id TEXT PRIMARY KEY,
+          title TEXT NOT NULL DEFAULT '',
+          recorded_at TEXT NOT NULL DEFAULT '',
+          payload TEXT NOT NULL,
+          fetched_at TEXT NOT NULL
+        );
+      `);
     },
   },
 ];
@@ -490,4 +507,61 @@ export async function loadMetricsSnapshot(): Promise<StoredMetricsSnapshot | nul
 export async function markMetricsSynced(syncedAt: string): Promise<void> {
   const db = await getDb();
   await db.runAsync('UPDATE metrics_snapshot SET synced_at = ? WHERE id = 1', [syncedAt]);
+}
+
+/** Analise ja feita no servidor, guardada no aparelho para o painel. */
+export interface CachedAnalysis {
+  entryId: string;
+  title: string;
+  recordedAt: string;
+  analysis: ServerAnalysis;
+}
+
+/**
+ * Salva as analises que o servidor devolveu. Upsert por entrada: a mais nova
+ * substitui a anterior, sem apagar o que ja estava guardado de outras notas.
+ */
+export async function saveCachedAnalyses(items: CachedAnalysis[]): Promise<void> {
+  if (items.length === 0) return;
+  const db = await getDb();
+  const fetchedAt = new Date().toISOString();
+  await db.withExclusiveTransactionAsync(async (txn) => {
+    for (const item of items) {
+      await txn.runAsync(
+        `INSERT INTO analyses (entry_id, title, recorded_at, payload, fetched_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(entry_id) DO UPDATE SET
+           title = excluded.title,
+           recorded_at = excluded.recorded_at,
+           payload = excluded.payload,
+           fetched_at = excluded.fetched_at`,
+        [item.entryId, item.title, item.recordedAt, JSON.stringify(item.analysis), fetchedAt],
+      );
+    }
+  });
+}
+
+/** Analises guardadas no aparelho, da nota mais recente para a mais antiga. */
+export async function listCachedAnalyses(): Promise<CachedAnalysis[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<{
+    entry_id: string;
+    title: string;
+    recorded_at: string;
+    payload: string;
+  }>('SELECT entry_id, title, recorded_at, payload FROM analyses ORDER BY recorded_at DESC');
+  const out: CachedAnalysis[] = [];
+  for (const row of rows) {
+    try {
+      out.push({
+        entryId: row.entry_id,
+        title: row.title,
+        recordedAt: row.recorded_at,
+        analysis: JSON.parse(row.payload) as ServerAnalysis,
+      });
+    } catch {
+      // Payload invalido (versao antiga/corrompido): ignora a linha.
+    }
+  }
+  return out;
 }
