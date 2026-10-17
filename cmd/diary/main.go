@@ -110,6 +110,11 @@ func serve() error {
 	}, st, key, cfg.DataDir, prober)
 
 	queue := jobs.NewQueue(st.DB())
+	if expired, err := queue.ExpireStaleRetries(ctx, 24*time.Hour); err != nil {
+		logger.Error("fila: expirar retries antigos", "erro", err)
+	} else if expired > 0 {
+		logger.Info("fila: retries antigos expirados", "quantidade", expired)
+	}
 	analyzer := analyze.New(analyze.Config{
 		Enabled: cfg.AnalyzeEnabled,
 		BaseURL: cfg.AnalyzeBaseURL,

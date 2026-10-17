@@ -135,9 +135,9 @@ func (q *Queue) Claim(ctx context.Context, workerID string, lease time.Duration)
 			available_at, lease_expires_at, COALESCE(worker_id,''), COALESCE(last_error,''),
 			created_at, updated_at
 		FROM jobs
-		WHERE status = ? AND available_at <= ?
+		WHERE status IN (?, ?) AND available_at <= ?
 		ORDER BY available_at ASC LIMIT 1`,
-		string(StatusQueued), ts(now)).Scan(
+		string(StatusQueued), string(StatusRetrying), ts(now)).Scan(
 		&j.ID, &j.Type, &j.IdempotencyKey, &payload, &j.Status, &j.Attempts, &j.MaxAttempts,
 		&availableAt, &leaseExpires, &j.WorkerID, &j.LastError, &createdAt, &updatedAt)
 	if err == sql.ErrNoRows {
@@ -150,8 +150,9 @@ func (q *Queue) Claim(ctx context.Context, workerID string, lease time.Duration)
 	expires := now.Add(lease)
 	res, err := q.db.ExecContext(ctx, `
 		UPDATE jobs SET status = ?, worker_id = ?, lease_expires_at = ?, updated_at = ?
-		WHERE id = ? AND status = ?`,
-		string(StatusRunning), workerID, ts(expires), ts(now), j.ID, string(StatusQueued))
+		WHERE id = ? AND status IN (?, ?)`,
+		string(StatusRunning), workerID, ts(expires), ts(now), j.ID,
+		string(StatusQueued), string(StatusRetrying))
 	if err != nil {
 		return nil, fmt.Errorf("jobs: claim update: %w", err)
 	}
@@ -225,6 +226,25 @@ func (q *Queue) Fail(ctx context.Context, jobID string, cause error, baseDelay t
 		return fmt.Errorf("jobs: fail update: %w", err)
 	}
 	return nil
+}
+
+// ExpireStaleRetries marks retries that have been waiting longer than maxAge as
+// dead. Before the claim fix, a job that failed once stayed "retrying" forever;
+// replaying every old failure right after an update would flood the worker (and
+// any paid provider). Recent retries are left alone.
+func (q *Queue) ExpireStaleRetries(ctx context.Context, maxAge time.Duration) (int, error) {
+	cutoff := time.Now().UTC().Add(-maxAge)
+	res, err := q.db.ExecContext(ctx, `
+		UPDATE jobs SET status = ?, updated_at = ?,
+			last_error = CASE WHEN COALESCE(last_error,'') = '' THEN 'retry expirado'
+				ELSE last_error || ' (retry expirado)' END
+		WHERE status = ? AND updated_at < ?`,
+		string(StatusDead), ts(time.Now().UTC()), string(StatusRetrying), ts(cutoff))
+	if err != nil {
+		return 0, fmt.Errorf("jobs: expire stale retries: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
 }
 
 // RequeueExpired returns jobs whose lease expired to the queue.

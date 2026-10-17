@@ -150,6 +150,8 @@ func FriendlyError(err error) string {
 		return "nao ha texto para analisar nesta nota"
 	case strings.Contains(message, "json invalido"):
 		return "a IA respondeu em um formato inesperado"
+	case strings.Contains(message, "resposta sem conteudo"):
+		return "a IA nao devolveu texto; tente analisar de novo"
 	case strings.Contains(message, "connection refused"), strings.Contains(message, "dial tcp"),
 		strings.Contains(message, "no such host"), strings.Contains(message, "timeout"),
 		strings.Contains(message, "context deadline exceeded"):
