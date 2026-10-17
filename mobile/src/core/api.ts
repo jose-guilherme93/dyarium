@@ -3,9 +3,9 @@
  * com um transporte falso. Nao ha estado aqui: cada chamada e independente.
  */
 
-import type { ServerConfig, TranscriptSegment } from './types';
+import type { ConflictField, ServerConfig, TranscriptSegment } from './types';
 
-export type { TranscriptSegment };
+export type { ConflictField, TranscriptSegment };
 
 export interface HttpResponse {
   ok: boolean;
@@ -76,8 +76,38 @@ export interface CreateTextEntryResponse {
 export interface UpdateEntryBody {
   title?: string;
   recorded_at?: string;
-  /** Texto da nota (o servidor passa a usar depois). */
-  text?: string;
+  /** Arquivada: sai da lista de trabalho sem apagar. */
+  archived?: boolean;
+  /** Versoes lidas pelo cliente: o servidor recusa o campo que ja mudou. */
+  versions?: {
+    title?: string;
+    recorded_at?: string;
+  };
+}
+
+/** Versoes devolvidas pelo servidor depois de gravar um campo. */
+export interface FieldVersions {
+  title: string;
+  recorded_at: string;
+}
+
+/**
+ * O servidor recusou a gravacao porque o campo ja mudou depois que o app leu
+ * (409). Traz quais campos brigaram; **nada foi gravado**.
+ */
+export class ConflictError extends ApiError {
+  readonly fields: ConflictField[];
+  constructor(status: number, code: string, message: string, fields: ConflictField[]) {
+    super(status, code, message);
+    this.name = 'ConflictError';
+    this.fields = fields;
+  }
+}
+
+/** Campos em conflito e versoes atuais do servidor, na resposta de um 409. */
+interface ConflictBody {
+  conflict?: ConflictField[];
+  versions?: Record<string, string>;
 }
 
 export interface CreateUploadResponse {
@@ -147,6 +177,10 @@ export interface ServerEntry {
   recorded_at: string | null;
   created_at: string;
   updated_at: string;
+  /** Nota arquivada: sai da lista de trabalho sem ser apagada. */
+  archived?: boolean;
+  /** Versao de cada campo (so no detalhe da entrada). */
+  versions?: { title?: string; recorded_at?: string };
   /** Presente apenas na listagem da lixeira (`?deleted=1`). */
   deleted_at?: string | null;
 }
@@ -172,7 +206,10 @@ export interface ServerNote {
   id: string;
   entry_id: string;
   title: string;
-  document: unknown;
+  /** Corpo em markdown (formato canonico dos dois lados). */
+  content_markdown?: string;
+  /** Versao do corpo (para o conflito ser detectado). */
+  body_version?: string;
   created_at: string;
   updated_at: string;
 }
@@ -286,16 +323,22 @@ export class DyariumApi {
   }
 
   /**
-   * Atualiza titulo/data/texto de uma entrada. O servidor ja aceita titulo e
-   * data; o campo `text` sera usado quando a nota de texto for suportada.
+   * Atualiza titulo e data de uma entrada, com a versao lida de cada campo: o
+   * servidor recusa (409) o campo que ja mudou em outro lugar. Devolve as
+   * versoes gravadas, para a proxima gravacao comecar de la.
    */
-  async updateEntry(id: string, body: UpdateEntryBody): Promise<void> {
+  async updateEntry(id: string, body: UpdateEntryBody): Promise<FieldVersions> {
     const res = await this.fetchImpl(this.url(`/api/v1/entries/${id}`), {
       method: 'PATCH',
       headers: this.authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(body),
     });
-    if (!res.ok) throw await this.parseError(res);
+    if (!res.ok) throw await this.parseErrorWithConflict(res);
+    const parsed = JSON.parse(await res.text()) as { versions?: Partial<FieldVersions> };
+    return {
+      title: parsed.versions?.title ?? '',
+      recorded_at: parsed.versions?.recorded_at ?? '',
+    };
   }
 
   /** Notas (corpo rico) de uma entrada. */
@@ -309,25 +352,58 @@ export class DyariumApi {
     return body.notes ?? [];
   }
 
-  /** Cria a nota de uma entrada a partir do documento de blocos. */
-  async createNote(entryId: string, title: string, document: unknown): Promise<ServerNote> {
-    const res = await this.fetchImpl(this.url(`/api/v1/entries/${entryId}/notes`), {
-      method: 'POST',
-      headers: this.authHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ title, document }),
+  /** Entrada completa: titulo, data e versoes dos campos. */
+  async getEntry(entryId: string): Promise<ServerEntry> {
+    const res = await this.fetchImpl(this.url(`/api/v1/entries/${entryId}`), {
+      method: 'GET',
+      headers: this.authHeaders(),
     });
     if (!res.ok) throw await this.parseError(res);
     return JSON.parse(await res.text());
   }
 
-  /** Atualiza titulo e documento de uma nota existente. */
-  async updateNote(noteId: string, title: string, document: unknown): Promise<void> {
+  /** Cria a nota de uma entrada a partir do markdown do corpo. */
+  async createNote(entryId: string, title: string, markdown: string): Promise<ServerNote> {
+    const res = await this.fetchImpl(this.url(`/api/v1/entries/${entryId}/notes`), {
+      method: 'POST',
+      headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ title, content_markdown: markdown }),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    return JSON.parse(await res.text());
+  }
+
+  /**
+   * Grava o corpo em markdown e devolve a versao nova. `baseVersion` e a versao
+   * lida: se o servidor ja tiver mudado, ele responde 409 e o `ConflictError`
+   * diz qual campo brigou (e nada e gravado).
+   */
+  async updateNote(noteId: string, markdown: string, baseVersion?: string): Promise<string> {
     const res = await this.fetchImpl(this.url(`/api/v1/notes/${noteId}`), {
       method: 'PUT',
       headers: this.authHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ title, document }),
+      body: JSON.stringify({
+        content_markdown: markdown,
+        base_version: baseVersion ?? '',
+      }),
     });
-    if (!res.ok) throw await this.parseError(res);
+    if (!res.ok) throw await this.parseErrorWithConflict(res);
+    const parsed = JSON.parse(await res.text()) as { versions?: { body?: string } };
+    return parsed.versions?.body ?? '';
+  }
+
+  /** Converte um 409 em ConflictError, dizendo os campos em conflito. */
+  private async parseErrorWithConflict(res: HttpResponse): Promise<ApiError> {
+    const error = await this.parseError(res);
+    if (res.status !== 409) return error;
+    let fields: ConflictField[] = [];
+    try {
+      const body = (await res.text()) as unknown as ConflictBody;
+      if (Array.isArray(body.conflict)) fields = body.conflict;
+    } catch {
+      // corpo nao-JSON: fica sem lista de campos
+    }
+    return new ConflictError(res.status, error.code, error.message, fields);
   }
 
   /** Sobe uma imagem como anexo da entrada (bytes crus, Content-Type image/*). */

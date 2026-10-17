@@ -59,7 +59,7 @@ func (s *Store) EntryFieldVersions(ctx context.Context, id string) (title, recor
 // version. It returns the versions after the write and the names of the fields
 // that had already changed since the client read them: those are NOT applied, so
 // the caller can ask the user whose version wins instead of silently losing one.
-func (s *Store) UpdateEntryFields(ctx context.Context, id string, title *string, recordedAt *time.Time, readTitle, readRecorded string) (map[string]string, []string, error) {
+func (s *Store) UpdateEntryFields(ctx context.Context, id string, title *string, recordedAt *time.Time, archived *bool, readTitle, readRecorded string) (map[string]string, []string, error) {
 	storedTitle, storedRecorded, err := s.EntryFieldVersions(ctx, id)
 	if err != nil {
 		return nil, nil, err
@@ -99,6 +99,15 @@ func (s *Store) UpdateEntryFields(ctx context.Context, id string, title *string,
 			return nil, nil, fmt.Errorf("store: update recorded_at: %w", err)
 		}
 		versions[FieldRecordedAt] = stamp
+	}
+	// Arquivar e um interruptor, nao texto: nao tem versao nem conflito. Quem
+	// arrived depois manda, e o estado e o mesmo nos dois lugares.
+	if archived != nil {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE entries SET archived = ?, updated_at = ? WHERE id = ?`,
+			boolInt(*archived), ts(time.Now()), id); err != nil {
+			return nil, nil, fmt.Errorf("store: update archived: %w", err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, nil, fmt.Errorf("store: update entry fields: %w", err)

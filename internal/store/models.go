@@ -1,6 +1,9 @@
 package store
 
-import "time"
+import (
+	"database/sql"
+	"time"
+)
 
 // Entry statuses.
 const (
@@ -68,6 +71,27 @@ type Entry struct {
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 	DeletedAt        *time.Time
+	// Archived: a nota saiu da lista de trabalho, mas nao foi apagada.
+	Archived bool
+
+	// Versoes dos campos editaveis, como o cliente leu (so preenchidas nas
+	// leituras que as trazem). Sao os valores **exatos** gravados no banco: o
+	// cliente manda a mesma string de volta, e o servidor compara. Reformatar
+	// aqui (por exemplo, perdendo nanossegundos) faria toda gravacao following
+	// parecer conflito com ela mesma.
+	TitleUpdatedAt    string
+	RecordedAtVersion string
+	BodyVersion       string
+}
+
+// setVersions preenche as versoes dos campos editaveis de uma entrada escaneada.
+// As colunas vao no fim da lista: `title_updated_at`, `recorded_at_updated_at` e
+// a versao do corpo (que vem de uma subconsulta em `notes`, porque nem toda
+// entrada tem nota).
+func setVersions(e *Entry, titleVersion, recordedVersion, bodyVersion sql.NullString) {
+	e.TitleUpdatedAt = titleVersion.String
+	e.RecordedAtVersion = recordedVersion.String
+	e.BodyVersion = bodyVersion.String
 }
 
 // Attachment is an encrypted object linked to an entry. Audio attachments use

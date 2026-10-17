@@ -109,6 +109,15 @@ Com `deleted=1` lista a **lixeira**: as entradas apagadas (remocao logica) com
   simplesmente sumiu (servidor novo, banco restaurado) nunca apaga a nota local.
 - Entradas apagadas aparecem em `entries` com `status: "deleted"` e o campo
   `deleted_at` preenchido.
+- `archived=0` (padrao explicito do app e do dashboard) traz so as notas da lista
+  de trabalho; `archived=1` traz so as arquivadas; **sem o filtro traz as duas**,
+  para nenhum cliente perder nota por omissao.
+- Cada entrada traz `archived` e `versions` com a versao atual de `title`, `recorded_at` e
+  `body`. E o que o cliente guarda para mandar de volta na gravacao: assim o
+  servidor consegue recusar (409) o que ja foi editado em outro lugar, e o app
+  pergunta ao usuario em vez de sobrescrever. As versoes sao devolvidas
+  **exatamente** como estao gravadas: reformatar aqui faria a gravacao seguinte
+  do proprio cliente parecer conflito consigo mesma.
 
 ## Markdown como formato da nota
 
@@ -146,12 +155,20 @@ Resposta 200: `{ "status": "ok", "versions": { "body": "<nova versao>" } }`.
 ### PATCH /api/v1/entries/{id}
 Atualiza campos editaveis com versao por campo.
 ```json
-{ "title": "...", "recorded_at": "...", "versions": { "title": "...", "recorded_at": "..." } }
+{
+  "title": "...",
+  "recorded_at": "...",
+  "archived": true,
+  "versions": { "title": "...", "recorded_at": "..." }
+}
 ```
 Resposta 200: `{ "status": "ok", "versions": { "title": "...", "recorded_at": "..." } }`.
 - 409 com `{ "conflict": ["title"], "versions": {...} }` se aquele campo mudou
   depois da leitura; **os campos sem conflito nao sao gravados** — o cliente
   reenvia so o que o usuario escolher.
+- `archived` tira a nota da lista de trabalho sem apagar: ela continua existindo
+  (e no aparelho), so sai da lista do dia. E um interruptor, entao nao tem versao
+  nem conflito.
 - 400 quando o corpo nao traz nenhum campo.
 - Nao altera o audio.
 

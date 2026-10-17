@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -43,11 +44,54 @@ func entryJSON(e store.Entry) map[string]any {
 		"recorded_at":       e.RecordedAt,
 		"created_at":        e.CreatedAt,
 		"updated_at":        e.UpdatedAt,
+		"archived":          e.Archived,
+		// Versao de cada campo editavel, para o cliente mandar de volta na
+		// gravacao e o servidor recusar o que ja mudou em outro lugar.
+		"versions": entryVersions(e),
 	}
 	if e.DeletedAt != nil {
 		body["deleted_at"] = e.DeletedAt
 	}
 	return body
+}
+
+// entryVersions sao as versoes dos campos editaveis, no formato exato que o
+// cliente manda de volta. Vazio quando a leitura nao as trouxe.
+func entryVersions(e store.Entry) map[string]string {
+	out := map[string]string{}
+	if e.TitleUpdatedAt != "" {
+		out[store.FieldTitle] = e.TitleUpdatedAt
+	}
+	if e.RecordedAtVersion != "" {
+		out[store.FieldRecordedAt] = e.RecordedAtVersion
+	}
+	if e.BodyVersion != "" {
+		out[store.FieldBody] = e.BodyVersion
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+/**
+ * Filtro de arquivadas: `archived=1` so as arquivadas, `archived=0` (padrao) so
+ * as que estao na lista de trabalho. Ausente traz as duas, para nenhum cliente
+ * perder nota por omissao.
+ */
+func archiveFilter(query url.Values) *bool {
+	switch strings.TrimSpace(query.Get("archived")) {
+	case "1", "true":
+		return boolPtr(true)
+	case "0", "false":
+		return boolPtr(false)
+	default:
+		return nil
+	}
+}
+
+func boolPtr(value bool) *bool {
+	return &value
 }
 
 func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
@@ -79,7 +123,7 @@ func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	entries, err := s.deps.Store.ListEntriesFiltered(r.Context(), limit,
-		query.Get("person"), query.Get("place"), query.Get("theme"))
+		query.Get("person"), query.Get("place"), query.Get("theme"), archiveFilter(query))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
@@ -199,12 +243,6 @@ func (s *Server) handleGetEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body := entryJSON(entry)
-	if titleVersion, recordedVersion, verr := s.deps.Store.EntryFieldVersions(ctx, entry.ID); verr == nil {
-		body["versions"] = map[string]string{
-			store.FieldTitle:      titleVersion,
-			store.FieldRecordedAt: recordedVersion,
-		}
-	}
 	if names, err := s.entryTagNames(ctx, entry.ID); err == nil {
 		body["tags"] = names
 	}
@@ -229,6 +267,9 @@ func (s *Server) handleGetEntry(w http.ResponseWriter, r *http.Request) {
 type patchEntryRequest struct {
 	Title      *string `json:"title"`
 	RecordedAt *string `json:"recorded_at"`
+	// Archived tira a nota da lista de trabalho sem apagar. E um interruptor, nao
+	// texto: nao tem versao nem conflito.
+	Archived *bool `json:"archived"`
 	// Versions are the versions of title/recorded_at the client last read.
 	// Fields whose version moved on are not written; they come back as a
 	// conflict so the user decides instead of the last write winning blindly.
@@ -253,12 +294,12 @@ func (s *Server) handlePatchEntry(w http.ResponseWriter, r *http.Request) {
 			recordedAt = &t
 		}
 	}
-	if req.Title == nil && recordedAt == nil {
+	if req.Title == nil && recordedAt == nil && req.Archived == nil {
 		writeError(w, http.StatusBadRequest, "empty_patch", "nada para atualizar")
 		return
 	}
 	versions, conflict, err := s.deps.Store.UpdateEntryFields(r.Context(), id, req.Title, recordedAt,
-		req.Versions.Title, req.Versions.RecordedAt)
+		req.Archived, req.Versions.Title, req.Versions.RecordedAt)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", "entrada inexistente")
 		return

@@ -39,7 +39,7 @@ describe('entryToRecording', () => {
       id: 'n1',
       entry_id: ENTRY.id,
       title: 'Minha nota',
-      document: [{ type: 'paragraph', content: [{ type: 'text', text: 'oi', styles: {} }] }],
+      content_markdown: 'oi',
       created_at: ENTRY.created_at,
       updated_at: ENTRY.updated_at,
     };
@@ -62,9 +62,64 @@ describe('entryToRecording', () => {
     expect(rec.text).toBe('');
   });
 
+  it('traz duracao e tamanho do servidor, para a nota nao abrir como 0:00', () => {
+    const rec = entryToRecording({
+      ...ENTRY,
+      content_type: 'audio/aac',
+      duration_seconds: 12.5,
+      size_bytes: 20480,
+    });
+    expect(rec.durationMs).toBe(12500);
+    expect(rec.sizeBytes).toBe(20480);
+  });
+
+  it('nota de texto nao ganha duracao nem tamanho inventados', () => {
+    const rec = entryToRecording({ ...ENTRY, duration_seconds: 0, size_bytes: 0 });
+    expect(rec.durationMs).toBeUndefined();
+    expect(rec.sizeBytes).toBeUndefined();
+  });
+
+  it('traz o arquivamento do servidor', () => {
+    expect(entryToRecording({ ...ENTRY, archived: true }).archived).toBe(true);
+    expect(entryToRecording({ ...ENTRY, archived: false }).archived).toBe(false);
+  });
+
   it('usa recorded_at quando presente', () => {
     const rec = entryToRecording({ ...ENTRY, recorded_at: '2026-10-10T09:00:00Z' });
     expect(rec.recordedAt).toBe('2026-10-10T09:00:00Z');
+  });
+
+  it('traz o markdown do servidor sem converter nada', () => {
+    const markdown = '## Secao\n\nparagrafo\n\n- item\n\n![foto](attachment:at_1){w=50}\n';
+    const note: ServerNote = {
+      id: 'n1',
+      entry_id: ENTRY.id,
+      title: '',
+      content_markdown: markdown,
+      created_at: ENTRY.created_at,
+      updated_at: ENTRY.updated_at,
+    };
+    expect(entryToRecording(ENTRY, note).text).toBe(markdown);
+  });
+
+  it('guarda a versao de cada campo, para o servidor detectar conflito', () => {
+    const note: ServerNote = {
+      id: 'n1',
+      entry_id: ENTRY.id,
+      title: '',
+      content_markdown: 'oi',
+      body_version: '2026-10-16T10:00:00.5Z',
+      created_at: ENTRY.created_at,
+      updated_at: ENTRY.updated_at,
+    };
+    const entry: ServerEntry = {
+      ...ENTRY,
+      versions: { title: 'v-titulo', recorded_at: 'v-data' },
+    };
+    const rec = entryToRecording(entry, note);
+    expect(rec.titleVersion).toBe('v-titulo');
+    expect(rec.recordedAtVersion).toBe('v-data');
+    expect(rec.bodyVersion).toBe('2026-10-16T10:00:00.5Z');
   });
 });
 
@@ -82,7 +137,7 @@ describe('isBlankServerEntry', () => {
       id: 'n1',
       entry_id: blank.id,
       title: '',
-      document: [{ type: 'paragraph', content: [{ type: 'text', text: 'corpo', styles: {} }] }],
+      content_markdown: 'corpo',
       created_at: blank.created_at,
       updated_at: blank.updated_at,
     };

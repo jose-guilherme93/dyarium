@@ -13,7 +13,9 @@ import { uploadRecording } from '@/core/uploader';
 
 import { acquireLock, getRecording, listRecordings, releaseLock, upsertRecording } from './db';
 import { CONTENT_TYPE, FILE_EXTENSION, uploadFileIO } from './files';
-import { syncNote } from './noteSync';
+import { applySyncConflict, applySyncResult } from '@/core/noteSync';
+
+import { conflictFields, syncNote, type SyncNoteResult } from './noteSync';
 import { loadServerConfig } from './secure';
 import { pushTranscript } from './transcriptSync';
 import { willTranscribeLocally } from './whisper';
@@ -80,22 +82,31 @@ export async function runUploadQueueOnce(): Promise<void> {
 }
 
 /**
- * Depois de enviar o conteudo (entrada criada), envia o corpo da nota como
- * documento e guarda o noteId. Assim o corpo sobe junto, sem esperar um re-edit.
+ * Depois de enviar o conteudo (entrada criada), envia o corpo da nota em markdown
+ * e guarda o noteId. Assim o corpo sobe junto, sem esperar um re-edit.
+ *
+ * Conflito (409): o servidor recusou porque o campo ja mudou no desktop. Nao
+ * sobrescreve nada e nao devolve a nota para a fila — registra o conflito para a
+ * tela da nota perguntar ao usuario.
  */
 async function pushNoteDocument(recording: Recording): Promise<Recording> {
-  const result = await syncNote(recording).catch(() => undefined);
+  let result: SyncNoteResult | undefined;
+  try {
+    result = await syncNote(recording);
+  } catch (error) {
+    const fields = conflictFields(error);
+    if (fields.length === 0) return recording;
+    const current = (await getRecording(recording.id)) ?? recording;
+    const conflicted = applySyncConflict(current, fields);
+    await upsertRecording(conflicted);
+    emitRecording(conflicted);
+    return conflicted;
+  }
   if (!result) return recording;
   // Relê o registro: se o usuario editou a nota durante o envio, nao sobrescreve
   // nem limpa o flag (o proximo sync leva a edicao mais nova).
   const fresh = (await getRecording(recording.id)) ?? recording;
-  const editedDuringSync = fresh.updatedAt !== recording.updatedAt;
-  const updated: Recording = {
-    ...fresh,
-    noteId: result.noteId,
-    attachments: { ...(fresh.attachments ?? {}), ...result.attachments },
-    noteDirty: editedDuringSync ? true : undefined,
-  };
+  const updated = applySyncResult(fresh, recording, result);
   await upsertRecording(updated);
   emitRecording(updated);
   // Se a nota ja tinha transcricao antes do upload, envia o texto.

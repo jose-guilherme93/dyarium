@@ -1,14 +1,19 @@
 /**
- * Sincroniza o titulo, a data e o corpo da nota com o servidor.
- *
- * O corpo vive na nota (recurso filho da entrada), no campo `document` — o
- * mesmo JSON de blocos do BlockNote que o dashboard usa. Aqui o markdown do
- * editor e convertido para blocos na hora de enviar. Best-effort: uma falha
- * nao muda o estado local.
+ * Sincroniza a nota com o servidor: liga o nucleo puro (`core/noteSync`) ao
+ * cliente HTTP, a configuracao guardada no secure-store e ao envio das imagens
+ * locais. Este e o unico lugar que sabe de secure-store.
  */
 
-import { DyariumApi, type FetchLike } from '@/core/api';
-import { markdownToBlocks } from '@/core/blocks';
+import { ApiError, DyariumApi, type FetchLike } from '@/core/api';
+import {
+  conflictFields,
+  fetchServerNote,
+  isNoteConflict,
+  syncNoteWith,
+  type ImageResolver,
+  type NoteSyncApi,
+  type SyncNoteResult,
+} from '@/core/noteSync';
 import type { Recording } from '@/core/types';
 
 import { resolveLocalAttachments } from './attachments';
@@ -16,48 +21,51 @@ import { loadServerConfig } from './secure';
 
 const doFetch = globalThis.fetch as unknown as FetchLike;
 
-export interface SyncNoteResult {
-  /** Id da nota (corpo rico) no servidor. */
-  noteId: string;
-  /** Mapa nome local da imagem -> id do anexo (inclui o que ja subiu antes). */
-  attachments: Record<string, string>;
-}
+/** Resolver de imagens: sobe o que ainda esta `local:` e devolve o markdown. */
+const resolveImages: ImageResolver = (note) =>
+  resolveLocalAttachments(note.entryId, note.id, note.text ?? '', note.attachments ?? {});
 
-/**
- * Envia titulo/data (entrada) e o documento da nota. Devolve o id da nota e o
- * mapa de anexos, para o chamador persistir localmente. `undefined` quando a
- * nota ainda nao tem entrada ou nao ha servidor configurado.
- */
-export async function syncNote(note: Recording): Promise<SyncNoteResult | undefined> {
+async function withServer<T>(
+  note: Recording,
+  run: (api: DyariumApi & NoteSyncApi) => Promise<T>,
+): Promise<T | undefined> {
   if (!note.entryId) return undefined;
   const config = await loadServerConfig();
   if (!config) return undefined;
-  const api = new DyariumApi(config, doFetch);
+  return run(new DyariumApi(config, doFetch) as DyariumApi & NoteSyncApi);
+}
 
-  await api.updateEntry(note.entryId, {
-    title: note.title,
-    recorded_at: note.recordedAt,
-  });
+/**
+ * Envia titulo/data e corpo em markdown. `undefined` quando a nota ainda nao tem
+ * entrada no servidor. Conflito sobe como `ConflictError` (409), sem nada gravado.
+ */
+export function syncNote(note: Recording): Promise<SyncNoteResult | undefined> {
+  return withServer(note, (api) => syncNoteWith(api, note, resolveImages));
+}
 
-  const resolved = await resolveLocalAttachments(
-    note.entryId,
-    note.id,
-    note.text ?? '',
-    note.attachments ?? {},
-  );
-  const document = markdownToBlocks(resolved.markdown);
+/** "Manter o meu": reenvia sem versao, porque a escolha ja foi do usuario. */
+export function syncNoteForcing(note: Recording): Promise<SyncNoteResult | undefined> {
+  return withServer(note, (api) => syncNoteWith(api, note, resolveImages, { force: true }));
+}
 
-  if (note.noteId) {
-    await api.updateNote(note.noteId, note.title, document);
-    return { noteId: note.noteId, attachments: resolved.attachments };
-  }
+/** "Ficar com o de la": o que o servidor tem agora, para mostrar antes de trocar. */
+export async function fetchTheirs(
+  note: Recording,
+): Promise<{ title?: string; recordedAt?: string; markdown: string }> {
+  if (!note.entryId) return { markdown: '' };
+  const config = await loadServerConfig();
+  if (!config) return { markdown: '' };
+  const api = new DyariumApi(config, doFetch) as DyariumApi & NoteSyncApi;
+  return fetchServerNote(api, note.entryId);
+}
 
-  const existing = await api.listNotes(note.entryId);
-  if (existing.length > 0) {
-    await api.updateNote(existing[0].id, note.title, document);
-    return { noteId: existing[0].id, attachments: resolved.attachments };
-  }
+export { conflictFields, isNoteConflict };
+export type { SyncNoteResult };
 
-  const created = await api.createNote(note.entryId, note.title, document);
-  return { noteId: created.id, attachments: resolved.attachments };
+/**
+ * Erro de rede/API que nao e conflito: o app tenta de novo mais tarde. Conflito
+ * nao entra aqui — repetir a gravacao nao resolveria nada.
+ */
+export function isTransientNoteError(error: unknown): boolean {
+  return error instanceof ApiError && (error.status === 0 || error.status >= 500);
 }

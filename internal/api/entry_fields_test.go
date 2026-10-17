@@ -123,6 +123,109 @@ func TestPatchEntryWithoutVersionStillWorks(t *testing.T) {
 	}
 }
 
+// A listagem traz a versao dos campos, para o app nao precisar de uma requisicao
+// extra so para descobrir o que ja mudou.
+func TestListEntriesCarriesFieldVersions(t *testing.T) {
+	srv := newTestServer(t)
+	entryID := id.New()
+	seedTextEntry(t, srv, entryID, "com nota")
+
+	doJSON(t, srv, http.MethodPost, "/api/v1/entries/"+entryID+"/notes",
+		strings.NewReader(`{"content_markdown":"corpo"}`))
+
+	_, list := doJSON(t, srv, http.MethodGet, "/api/v1/entries", nil)
+	entries, _ := list["entries"].([]any)
+	var found map[string]any
+	for _, item := range entries {
+		entry := item.(map[string]any)
+		if entry["id"] == entryID {
+			found = entry
+		}
+	}
+	if found == nil {
+		t.Fatalf("entrada %s ausente da listagem", entryID)
+	}
+	versions, _ := found["versions"].(map[string]any)
+	if versions["title"] == "" || versions["recorded_at"] == "" || versions["body"] == "" {
+		t.Fatalf("a listagem deveria trazer as tres versoes: %v", versions)
+	}
+}
+
+// A versao devolvida volta na gravacao seguinte sem virar conflito com ela mesma:
+// a string e a mesma, byte a byte (sem reformatar, senao o cliente brigaria
+// consigo mesmo na segunda digitacao).
+func TestVersionRoundTripDoesNotConflictWithItself(t *testing.T) {
+	srv := newTestServer(t)
+	entryID := id.New()
+	seedTextEntry(t, srv, entryID, "inicial")
+
+	_, patched := doJSON(t, srv, http.MethodPatch, "/api/v1/entries/"+entryID,
+		strings.NewReader(`{"title":"primeiro"}`))
+	titleVersion := patched["versions"].(map[string]any)["title"].(string)
+
+	_, detail := doJSON(t, srv, http.MethodGet, "/api/v1/entries/"+entryID, nil)
+	readBack := detail["versions"].(map[string]any)["title"].(string)
+	if readBack != titleVersion {
+		t.Fatalf("a leitura devolveu %q, a gravacao %q: mesma versao, string diferente", readBack, titleVersion)
+	}
+
+	rec, _ := doJSON(t, srv, http.MethodPatch, "/api/v1/entries/"+entryID,
+		strings.NewReader(`{"title":"segundo","versions":{"title":`+strconvQuote(readBack)+`}}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: a versao lida nao pode brigar consigo mesma", rec.Code)
+	}
+}
+
+// Arquivar sai da lista de trabalho e volta, sem virar exclusao: e um
+// interruptor, entao nao tem versao nem conflito.
+func TestArchiveIsNotDeletion(t *testing.T) {
+	srv := newTestServer(t)
+	entryID := id.New()
+	seedTextEntry(t, srv, entryID, "para arquivar")
+
+	if rec, _ := doJSON(t, srv, http.MethodPatch, "/api/v1/entries/"+entryID,
+		strings.NewReader(`{"archived":true}`)); rec.Code != http.StatusOK {
+		t.Fatalf("arquivar: status = %d", rec.Code)
+	}
+
+	_, work := doJSON(t, srv, http.MethodGet, "/api/v1/entries?archived=0", nil)
+	if countEntries(work) != 0 {
+		t.Fatalf("a nota arquivada nao deveria aparecer na lista de trabalho")
+	}
+	_, shelf := doJSON(t, srv, http.MethodGet, "/api/v1/entries?archived=1", nil)
+	if countEntries(shelf) != 1 {
+		t.Fatalf("a nota arquivada deveria aparecer na prateleira")
+	}
+	_, deleted := doJSON(t, srv, http.MethodGet, "/api/v1/entries?deleted=1", nil)
+	if countEntries(deleted) != 0 {
+		t.Fatalf("arquivar nao pode colocar a nota na lixeira")
+	}
+	_, detail := doJSON(t, srv, http.MethodGet, "/api/v1/entries/"+entryID, nil)
+	if detail["archived"] != true {
+		t.Fatalf("archived = %v", detail["archived"])
+	}
+
+	// Sem filtro traz as duas: nenhum cliente perde nota por omissao.
+	_, all := doJSON(t, srv, http.MethodGet, "/api/v1/entries", nil)
+	if countEntries(all) != 1 {
+		t.Fatalf("sem filtro a nota deveria continuar aparecendo")
+	}
+
+	if rec, _ := doJSON(t, srv, http.MethodPatch, "/api/v1/entries/"+entryID,
+		strings.NewReader(`{"archived":false}`)); rec.Code != http.StatusOK {
+		t.Fatalf("desarquivar: status = %d", rec.Code)
+	}
+	_, work = doJSON(t, srv, http.MethodGet, "/api/v1/entries?archived=0", nil)
+	if countEntries(work) != 1 {
+		t.Fatalf("desarquivar deveria trazer a nota de volta para a lista")
+	}
+}
+
+func countEntries(body map[string]any) int {
+	entries, _ := body["entries"].([]any)
+	return len(entries)
+}
+
 func TestPatchEntryValidates(t *testing.T) {
 	srv := newTestServer(t)
 

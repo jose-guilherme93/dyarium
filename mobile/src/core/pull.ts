@@ -1,20 +1,17 @@
 /**
  * Monta a nota local a partir de uma entrada (e da sua nota) vindas do servidor.
  * Puro: concentra o mapeamento para testar sem rede nem banco.
+ *
+ * O corpo ja vem em markdown (formato canonico dos dois lados): nao ha conversao
+ * nenhuma aqui. `versions` e a versao de cada campo, guardada para o servidor
+ * conseguir recusar uma gravacao que sobrescreveria trabalho de outro lugar.
  */
 
-import { blocksToMarkdown, type Block } from './blocks';
 import type { ServerEntry, ServerNote } from './api';
 import type { Recording, RecordingSource } from './types';
 
 function toSource(contentType: string): RecordingSource {
   return contentType ? 'microphone' : 'text';
-}
-
-/** Converte o documento de blocos da nota em markdown do app. */
-export function documentToMarkdown(document: unknown): string {
-  if (!Array.isArray(document)) return '';
-  return blocksToMarkdown(document as Block[]);
 }
 
 /**
@@ -25,7 +22,7 @@ export function isBlankServerEntry(entry: ServerEntry, note?: ServerNote): boole
   return (
     entry.title.trim() === '' &&
     entry.content_type === '' &&
-    documentToMarkdown(note?.document).trim() === ''
+    (note?.content_markdown ?? '').trim() === ''
   );
 }
 
@@ -56,6 +53,13 @@ export function recordingsDeletedOnServer(
   });
 }
 
+/**
+ * Entrada do servidor (com a nota) virada em gravacao local. O corpo vem em
+ * markdown: o app guarda exatamente o texto que o dashboard mostra.
+ *
+ * Duracao e tamanho tambem vem do servidor: sem isso, uma nota criada no desktop
+ * aparecia no celular com 0:00 e sem peso, porque o audio mora so aqui.
+ */
 export function entryToRecording(entry: ServerEntry, note?: ServerNote): Recording {
   return {
     id: entry.id,
@@ -70,8 +74,16 @@ export function entryToRecording(entry: ServerEntry, note?: ServerNote): Recordi
     noteId: note?.id,
     source: toSource(entry.content_type),
     contentType: entry.content_type || undefined,
+    durationMs: entry.duration_seconds > 0 ? Math.round(entry.duration_seconds * 1000) : undefined,
+    sizeBytes: entry.size_bytes > 0 ? entry.size_bytes : undefined,
+    // O servidor ainda pode estar transcrevendo; `services/transcripts` busca o
+    // texto quando ele estiver pronto.
     transcriptStatus: entry.content_type ? 'pending' : undefined,
-    text: note ? documentToMarkdown(note.document) : '',
+    text: note?.content_markdown ?? '',
+    archived: entry.archived,
+    titleVersion: entry.versions?.title,
+    recordedAtVersion: entry.versions?.recorded_at,
+    bodyVersion: note?.body_version,
     createdAt: entry.created_at,
     updatedAt: entry.updated_at,
   };

@@ -3,6 +3,12 @@
  * testado com fakes (ver AGENTS.md, secao de testes).
  */
 
+/**
+ * Campo editavel que pode brigar entre o app e o dashboard. Vive aqui (e nao em
+ * `api.ts`) porque e propriedade da nota, nao do transporte.
+ */
+export type ConflictField = 'title' | 'recorded_at' | 'body';
+
 export type RecordingStatus =
   | 'draft' // nota nova, ainda sem conteudo; nao entra na fila
   | 'recording' // sessao ativa, gravando segmentos
@@ -73,6 +79,20 @@ export interface Recording {
   noteDirty?: boolean;
   /** Mapa nome local da imagem -> id do anexo no servidor (evita reenviar). */
   attachments?: Record<string, string>;
+  /**
+   * Versao de cada campo tal como lida do servidor. E o que permite o servidor
+   * recusar (409) uma gravacao que sobrescreveria trabalho feito em outro lugar,
+   * em vez de aceitar em silencio.
+   */
+  titleVersion?: string;
+  recordedAtVersion?: string;
+  bodyVersion?: string;
+  /**
+   * Campos que o servidor recusou por conflito (409), esperando o usuario
+   * escolher qual versao fica. Enquanto isto estiver aqui, a nota nao volta para
+   * a fila: repetir a gravacao nao resolveria nada.
+   */
+  syncConflict?: ConflictField[];
   createdAt: string;
   updatedAt: string;
 }
@@ -126,9 +146,22 @@ export function needsTranscript(r: Recording): boolean {
 /**
  * Nota ja enviada com edicao local pendente: entra na fila para levar o corpo
  * (titulo/texto/imagens) ao servidor. Nao reenvia audio nem cria outra entrada.
+ *
+ * Uma nota com conflito aberto **nao** entra na fila: reenviar daria 409 de novo,
+ * e o que resolve e o usuario escolher (na tela da nota).
  */
 export function needsNoteSync(r: Recording): boolean {
-  return Boolean(r.entryId) && r.status === 'completed' && Boolean(r.noteDirty);
+  return (
+    Boolean(r.entryId) &&
+    r.status === 'completed' &&
+    Boolean(r.noteDirty) &&
+    !hasNoteConflict(r)
+  );
+}
+
+/** `true` quando o servidor recusou a gravacao e o usuario ainda nao escolheu. */
+export function hasNoteConflict(r: Recording): boolean {
+  return Boolean(r.syncConflict && r.syncConflict.length > 0);
 }
 
 /** Nota somente texto (sem audio): o texto e enviado como conteudo. */

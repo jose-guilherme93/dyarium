@@ -6,6 +6,7 @@
 import * as SQLite from 'expo-sqlite';
 
 import type {
+  ConflictField,
   Recording,
   RecordingSource,
   RecordingStatus,
@@ -48,6 +49,10 @@ interface Row {
   archived: number | null;
   note_dirty: string | null;
   attachments: string | null;
+  title_version: string | null;
+  recorded_at_version: string | null;
+  body_version: string | null;
+  sync_conflict: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -184,6 +189,19 @@ const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 11,
+    run: async (db) => {
+      // Versao lida de cada campo da nota no servidor. Sem isso o app so sabe
+      // escrever por cima; com isso, o servidor avisa quando o texto mudou no
+      // desktop e o usuario escolhe em vez de perder trabalho.
+      await addColumn(db, 'recordings', 'title_version');
+      await addColumn(db, 'recordings', 'recorded_at_version');
+      await addColumn(db, 'recordings', 'body_version');
+      // Campos que o servidor recusou (409), esperando a escolha do usuario.
+      await addColumn(db, 'recordings', 'sync_conflict');
+    },
+  },
 ];
 
 async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
@@ -271,6 +289,22 @@ function parseAttachments(raw: string | null): Record<string, string> | undefine
   }
 }
 
+/** Campos em conflito gravados como JSON; lista vazia quando nao ha conflito. */
+function parseConflict(raw: string | null): ConflictField[] | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return undefined;
+    const fields = parsed.filter(
+      (value): value is ConflictField =>
+        value === 'title' || value === 'recorded_at' || value === 'body',
+    );
+    return fields.length > 0 ? fields : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function rowToRecording(row: Row): Recording {
   return {
     id: row.id,
@@ -304,6 +338,10 @@ function rowToRecording(row: Row): Recording {
     archived: row.archived ? true : undefined,
     noteDirty: row.note_dirty ? true : undefined,
     attachments: parseAttachments(row.attachments),
+    titleVersion: row.title_version ?? undefined,
+    recordedAtVersion: row.recorded_at_version ?? undefined,
+    bodyVersion: row.body_version ?? undefined,
+    syncConflict: parseConflict(row.sync_conflict),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -318,8 +356,8 @@ export async function upsertRecording(r: Recording): Promise<void> {
       transcript, transcript_language, transcript_status, transcript_segments,
       has_transcript, transcript_origin,
       source, text, content_type, file_name, duplicate, archived, note_dirty, attachments,
-      created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      title_version, recorded_at_version, body_version, sync_conflict, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
       recorded_at = excluded.recorded_at,
@@ -351,6 +389,10 @@ export async function upsertRecording(r: Recording): Promise<void> {
       archived = excluded.archived,
       note_dirty = excluded.note_dirty,
       attachments = excluded.attachments,
+      title_version = excluded.title_version,
+      recorded_at_version = excluded.recorded_at_version,
+      body_version = excluded.body_version,
+      sync_conflict = excluded.sync_conflict,
       updated_at = excluded.updated_at`,
     [
       r.id,
@@ -384,6 +426,10 @@ export async function upsertRecording(r: Recording): Promise<void> {
       r.archived ? 1 : null,
       r.noteDirty ? 1 : null,
       r.attachments ? JSON.stringify(r.attachments) : null,
+      r.titleVersion ?? null,
+      r.recordedAtVersion ?? null,
+      r.bodyVersion ?? null,
+      r.syncConflict && r.syncConflict.length > 0 ? JSON.stringify(r.syncConflict) : null,
       r.createdAt,
       r.updatedAt,
     ],

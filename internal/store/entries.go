@@ -129,15 +129,19 @@ func (s *Store) CreateEntry(ctx context.Context, e Entry) error {
 // GetEntry returns an entry by id.
 func (s *Store) GetEntry(ctx context.Context, id string) (Entry, error) {
 	var e Entry
-	var recordedAt, deletedAt sql.NullString
+	var recordedAt, deletedAt, titleVersion, recordedVersion, bodyVersion sql.NullString
+	var archived int
 	var createdAt, updatedAt string
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, COALESCE(title,''), status, source, COALESCE(parent_id,''), COALESCE(original_filename,''),
 			COALESCE(content_type,''), size_bytes, duration_seconds, COALESCE(sha256,''),
-			recorded_at, created_at, updated_at, deleted_at
+			recorded_at, created_at, updated_at, deleted_at, archived,
+			title_updated_at, recorded_at_updated_at,
+			COALESCE((SELECT body_updated_at FROM notes n WHERE n.entry_id = entries.id ORDER BY n.created_at DESC LIMIT 1), '')
 		FROM entries WHERE id = ? AND deleted_at IS NULL`, id).Scan(
 		&e.ID, &e.Title, &e.Status, &e.Source, &e.ParentID, &e.OriginalFilename, &e.ContentType,
-		&e.SizeBytes, &e.DurationSeconds, &e.SHA256, &recordedAt, &createdAt, &updatedAt, &deletedAt)
+		&e.SizeBytes, &e.DurationSeconds, &e.SHA256, &recordedAt, &createdAt, &updatedAt, &deletedAt, &archived,
+		&titleVersion, &recordedVersion, &bodyVersion)
 	if err != nil {
 		return Entry{}, err
 	}
@@ -149,6 +153,8 @@ func (s *Store) GetEntry(ctx context.Context, id string) (Entry, error) {
 		t := parseTS(deletedAt.String)
 		e.DeletedAt = &t
 	}
+	e.Archived = archived != 0
+	setVersions(&e, titleVersion, recordedVersion, bodyVersion)
 	e.CreatedAt = parseTS(createdAt)
 	e.UpdatedAt = parseTS(updatedAt)
 	return e, nil
@@ -193,22 +199,28 @@ func (s *Store) PurgeEntry(ctx context.Context, id string) error {
 
 // ListEntries returns recent entries, newest first.
 func (s *Store) ListEntries(ctx context.Context, limit int) ([]Entry, error) {
-	return s.ListEntriesFiltered(ctx, limit, "", "", "")
+	return s.ListEntriesFiltered(ctx, limit, "", "", "", nil)
 }
 
 // ListEntriesFiltered returns recent entries, newest first, optionally limited
 // to entries that mention the given person, place and/or theme (case
 // insensitive). Empty arguments mean no filter.
-func (s *Store) ListEntriesFiltered(ctx context.Context, limit int, person, place, theme string) ([]Entry, error) {
+func (s *Store) ListEntriesFiltered(ctx context.Context, limit int, person, place, theme string, archived *bool) ([]Entry, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	query := `
 		SELECT e.id, COALESCE(e.title,''), e.status, e.source, COALESCE(e.parent_id,''), COALESCE(e.original_filename,''),
 			COALESCE(e.content_type,''), e.size_bytes, e.duration_seconds, COALESCE(e.sha256,''),
-			e.recorded_at, e.created_at, e.updated_at
+			e.recorded_at, e.created_at, e.updated_at, e.archived,
+			e.title_updated_at, e.recorded_at_updated_at,
+			COALESCE((SELECT body_updated_at FROM notes n WHERE n.entry_id = e.id ORDER BY n.created_at DESC LIMIT 1), '')
 		FROM entries e WHERE e.deleted_at IS NULL`
 	var args []any
+	if archived != nil {
+		query += ` AND e.archived = ?`
+		args = append(args, boolInt(*archived))
+	}
 	addFilter := func(kind, name string) {
 		name = strings.TrimSpace(name)
 		if name == "" {
@@ -234,16 +246,20 @@ func (s *Store) ListEntriesFiltered(ctx context.Context, limit int, person, plac
 	var out []Entry
 	for rows.Next() {
 		var e Entry
-		var recordedAt sql.NullString
+		var recordedAt, titleVersion, recordedVersion, bodyVersion sql.NullString
+		var archived int
 		var createdAt, updatedAt string
 		if err := rows.Scan(&e.ID, &e.Title, &e.Status, &e.Source, &e.ParentID, &e.OriginalFilename,
-			&e.ContentType, &e.SizeBytes, &e.DurationSeconds, &e.SHA256, &recordedAt, &createdAt, &updatedAt); err != nil {
+			&e.ContentType, &e.SizeBytes, &e.DurationSeconds, &e.SHA256, &recordedAt, &createdAt, &updatedAt,
+			&archived, &titleVersion, &recordedVersion, &bodyVersion); err != nil {
 			return nil, fmt.Errorf("store: scan entry: %w", err)
 		}
 		if recordedAt.Valid {
 			t := parseTS(recordedAt.String)
 			e.RecordedAt = &t
 		}
+		e.Archived = archived != 0
+		setVersions(&e, titleVersion, recordedVersion, bodyVersion)
 		e.CreatedAt = parseTS(createdAt)
 		e.UpdatedAt = parseTS(updatedAt)
 		out = append(out, e)

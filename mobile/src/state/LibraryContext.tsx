@@ -331,6 +331,9 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     const updated: Recording = {
       ...current,
       archived: archived || undefined,
+      // Arquivar e uma propriedade da nota, entao vai para o servidor como o
+      // resto: a nota fica suja para o sync levar.
+      noteDirty: current.entryId ? true : current.noteDirty,
       updatedAt: new Date().toISOString(),
     };
     await upsertRecording(updated);
