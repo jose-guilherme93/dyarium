@@ -73,6 +73,9 @@ const WORKER_INTERVAL_MS = 15_000;
 /** Intervalo de busca da transcricao enquanto houver alguma pendente. */
 const TRANSCRIPT_INTERVAL_MS = 8_000;
 
+/** Com o app aberto, busca edicoes feitas no servidor (dashboard). */
+const SERVER_PULL_INTERVAL_MS = 20_000;
+
 export function LibraryProvider({ children }: { children: ReactNode }) {
   const { config } = useSettings();
   bumpRender('LibraryProvider');
@@ -183,6 +186,19 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     });
     return () => subscription.remove();
   }, [kick, pullTranscripts, pullServer]);
+
+  // Nota editada no dashboard aparece no app sem precisar reabrir: com o app em
+  // primeiro plano, busca as versoes novas a cada intervalo. Fora de foco, o
+  // listener acima ja puxa ao voltar.
+  useEffect(() => {
+    if (!config) return undefined;
+    const id = setInterval(() => {
+      if (AppState.currentState === 'active') {
+        pullServer();
+      }
+    }, SERVER_PULL_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [config, pullServer]);
 
   const enqueue = useCallback(
     async (recording: Recording) => {

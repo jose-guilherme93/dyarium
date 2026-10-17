@@ -39,11 +39,15 @@ referencia local).
 
 Consequencias que valem registrar:
 
-- **Conflito por campo.** Titulo, data do evento e corpo tem versao propria. O
-  cliente manda a versao que leu e o servidor so grava se ela continuar a atual;
-  se nao, responde `409` **sem escrever** e diz qual campo brigou. A escolha (manter
-  o meu / ficar com o de la) e do usuario. Sem isso, o ultimo a salvar apagava o
-  trabalho do outro sem avisar.
+- **Ultima edicao vence.** Titulo, data do evento e corpo tem versao propria no
+  servidor, mas os clientes oficiais usam last-write-wins para o texto: o app grava
+  o corpo sem versao de base e o dashboard reenvia sem versao quando recebe `409`.
+  O pull do app sempre aplica a versao do servidor quando ela e mais nova que a
+  ultima edicao local; nota com edicao pendente so perde o campo que o servidor
+  gravou depois (compara a versao do campo com o horario da edicao local). O
+  endpoint continua devolvendo `409` com o campo que brigou para clientes que
+  queiram oferecer a escolha, mas o produto nao interrompe mais o usuario com um
+  dialogo: a ultima gravacao vale.
 - **O que o markdown nao sabe, o editor nao oferece.** Cor de texto, cor de fundo e
   sublinhado sairam do schema do editor: dariam para formatar algo que nao sobrevive
   a gravacao.

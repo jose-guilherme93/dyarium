@@ -250,12 +250,40 @@ describe('mergeServerNote', () => {
     expect(merged?.text).toBe('texto local');
   });
 
-  it('nao mexe na nota com edicao pendente nem em conflito', () => {
-    const dirty = clean({ noteDirty: true });
-    expect(mergeServerNote(dirty, serverEntry({ versions: { body: 'b2' } }), serverNote({ body_version: 'b2' }))).toBeNull();
+  it('nota com edicao pendente so perde para o servidor se ele gravou depois', () => {
+    const local = clean({ noteDirty: true, updatedAt: '2026-10-11T14:00:00Z' });
 
-    const conflicted = clean({ syncConflict: ['body'] });
-    expect(mergeServerNote(conflicted, serverEntry({ versions: { body: 'b2' } }), serverNote({ body_version: 'b2' }))).toBeNull();
+    // Servidor gravou antes da edicao local: o celular manda.
+    const older = mergeServerNote(
+      local,
+      serverEntry({ versions: { title: 't1', recorded_at: 'r1', body: '2026-10-11T13:00:00Z' } }),
+      serverNote({ body_version: '2026-10-11T13:00:00Z', content_markdown: 'servidor antigo' }),
+    );
+    expect(older).toBeNull();
+
+    // Servidor gravou depois: a ultima edicao vence e a pendencia local acaba.
+    const newer = mergeServerNote(
+      local,
+      serverEntry({ versions: { title: 't1', recorded_at: 'r1', body: '2026-10-11T15:00:00Z' } }),
+      serverNote({ body_version: '2026-10-11T15:00:00Z', content_markdown: 'servidor novo' }),
+    );
+    expect(newer?.text).toBe('servidor novo');
+    expect(newer?.noteDirty).toBeUndefined();
+  });
+
+  it('conflito aberto e resolvido pelo servidor quando ele gravou depois', () => {
+    const local = clean({
+      syncConflict: ['body'],
+      noteDirty: true,
+      updatedAt: '2026-10-11T14:00:00Z',
+    });
+    const merged = mergeServerNote(
+      local,
+      serverEntry({ versions: { title: 't1', recorded_at: 'r1', body: '2026-10-11T15:00:00Z' } }),
+      serverNote({ body_version: '2026-10-11T15:00:00Z', content_markdown: 'servidor novo' }),
+    );
+    expect(merged?.text).toBe('servidor novo');
+    expect(merged?.syncConflict).toBeUndefined();
   });
 
   it('nao aplica versao de corpo sem o texto (espera o proximo pull)', () => {

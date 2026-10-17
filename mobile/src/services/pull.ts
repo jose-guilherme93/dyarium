@@ -4,9 +4,9 @@
  * - Adiciona entradas que ainda nao existem localmente (casadas por id local e
  *   por entryId), com o corpo da nota convertido em markdown.
  * - Atualiza as que ja existem quando o servidor mudou o texto, o titulo, a data
- *   ou o arquivamento (edicao feita no dashboard). Nota com edicao pendente
- *   (`noteDirty`) ou conflito em aberto nao e tocada: o celular manda e o sync
- *   decide.
+ *   ou o arquivamento (edicao feita no dashboard). A ultima edicao vence: nota
+ *   limpa aceita a versao nova; nota com edicao pendente so perde o campo que o
+ *   servidor gravou depois da ultima edicao local.
  * - Remove do app as notas que o servidor confirma como apagadas (a lixeira dele).
  *   Uma entrada ausente da lista NAO apaga nada: e o que protege o aparelho de um
  *   servidor novo, reinstalado ou restaurado.
@@ -27,7 +27,20 @@ const doFetch = globalThis.fetch as unknown as FetchLike;
 /** Alto o bastante para reconciliar exclusoes; o servidor tem teto proprio. */
 const PULL_LIMIT = 2000;
 
+/** Evita dois pulls ao mesmo tempo (o periodico e o de foco podem se cruzar). */
+let pulling = false;
+
 export async function pullServerEntries(): Promise<number> {
+  if (pulling) return 0;
+  pulling = true;
+  try {
+    return await pullOnce();
+  } finally {
+    pulling = false;
+  }
+}
+
+async function pullOnce(): Promise<number> {
   const config = await loadServerConfig();
   if (!config) return 0;
   const api = new DyariumApi(config, doFetch);
@@ -70,7 +83,6 @@ export async function pullServerEntries(): Promise<number> {
 
     const existing = localByEntry.get(entry.id);
     if (existing) {
-      if (existing.noteDirty || (existing.syncConflict?.length ?? 0) > 0) continue;
       let note;
       // A listagem traz a versao do corpo; so busca o texto quando ela mudou.
       if (entry.versions?.body && entry.versions.body !== existing.bodyVersion) {

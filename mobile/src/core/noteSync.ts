@@ -87,17 +87,25 @@ export async function syncNoteWith(
 
   // Titulo e data: campos da entrada, com versao propria cada um. Arquivar vem
   // junto: e interruptor, entao nao entra em versao nem em conflito.
-  const entryVersions = await api.updateEntry(note.entryId, {
-    title: note.title,
-    recorded_at: note.recordedAt,
-    archived: note.archived ?? false,
-    versions: {
-      title: known.titleVersion ?? "",
-      recorded_at: known.recordedAtVersion ?? "",
-    },
-  });
-  versions.title = entryVersions.title;
-  versions.recordedAt = entryVersions.recorded_at;
+  //
+  // Conflito aqui nao aborta o sync: o servidor gravou esses campos depois, e
+  // eles ficam com ele (o pull atualiza o app). O corpo segue por ultimo-que-
+  // escreve-vence, que e o que o usuario espera do texto.
+  try {
+    const entryVersions = await api.updateEntry(note.entryId, {
+      title: note.title,
+      recorded_at: note.recordedAt,
+      archived: note.archived ?? false,
+      versions: {
+        title: known.titleVersion ?? "",
+        recorded_at: known.recordedAtVersion ?? "",
+      },
+    });
+    versions.title = entryVersions.title;
+    versions.recordedAt = entryVersions.recorded_at;
+  } catch (error) {
+    if (!isNoteConflict(error)) throw error;
+  }
 
   // O corpo mora na nota (recurso filho da entrada).
   const notes =
@@ -110,9 +118,9 @@ export async function syncNoteWith(
   }
 
   try {
-    versions.body = options.force
-      ? await api.updateNote(target.id, markdown)
-      : await api.updateNote(target.id, markdown, target.body_version);
+    // Sem versao de base: a ultima gravacao vence. O texto que o usuario acabou
+    // de ver/editado substitui o do servidor, sem dialogo de conflito.
+    versions.body = await api.updateNote(target.id, markdown);
   } catch (error) {
     // A nota nao existe mais no servidor (id local velho, nota apagada de la,
     // banco do servidor reiniciado): cria de novo em vez de reprovar para

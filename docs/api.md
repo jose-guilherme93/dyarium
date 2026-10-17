@@ -130,6 +130,10 @@ cliente pergunta ao usuario em vez de sobrescrever em silencio.
 - Versoes sao RFC 3339 (UTC, com nanossegundos) devolvidas em `versions`.
 - Cliente que **nao manda versao** (app antigo) continua funcionando: ultimo a
   escrever vence.
+- Os clientes oficiais usam essa politica: o app grava o corpo sem `base_version` e
+  o dashboard reenvia sem versao quando recebe `409`. O pull do app aplica a versao
+  do servidor quando ela e mais nova que a ultima edicao local; o `409` fica
+  disponivel para clientes que queiram oferecer a escolha ao usuario.
 - O titulo vive na **entrada**, nao na nota. A nota nao tem mais `title` no
   caminho de escrita: era a origem de "renomear no desktop e o titulo voltar".
 

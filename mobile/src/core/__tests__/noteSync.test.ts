@@ -101,12 +101,30 @@ describe('syncNoteWith', () => {
     expect(api.bodies[0].markdown).toBe(markdown);
   });
 
-  it('manda a versao lida de cada campo, para o servidor poder recusar', async () => {
+  it('manda a versao lida de titulo e data, para o servidor poder recusar', async () => {
     const api = new FakeApi();
     await syncNoteWith(api, nota(), semImagens);
 
     expect(api.patched[0].versions).toEqual({ title: 'v1-titulo', recorded_at: 'v1-data' });
-    expect(api.bodies[0].baseVersion).toBe('v1-corpo');
+  });
+
+  it('o corpo grava sempre por ultimo-que-escreve-vence (sem versao de base)', async () => {
+    const api = new FakeApi();
+    await syncNoteWith(api, nota({ text: 'texto novo' }), semImagens);
+
+    expect(api.bodies[0]).toEqual({ markdown: 'texto novo', baseVersion: undefined });
+  });
+
+  it('conflito no titulo nao impede o corpo de subir', async () => {
+    const api = new FakeApi();
+    api.conflictOn = 'title';
+
+    const result = await syncNoteWith(api, nota({ text: 'corpo atual' }), semImagens);
+
+    expect(api.bodies).toHaveLength(1);
+    expect(api.bodies[0].markdown).toBe('corpo atual');
+    expect(result?.versions.body).toBe('v2-corpo');
+    expect(result?.versions.title).toBeUndefined();
   });
 
   it('devolve as versoes gravadas, para a proxima gravacao comecar de la', async () => {
@@ -176,16 +194,6 @@ describe('conflito', () => {
     expect(conflictFields(await syncNoteWith(api, nota(), semImagens).catch((e) => e))).toEqual([
       'body',
     ]);
-  });
-
-  it('propaga o 409 do titulo', async () => {
-    const api = new FakeApi();
-    api.conflictOn = 'title';
-    const error = await syncNoteWith(api, nota(), semImagens).catch((e) => e);
-    expect(isNoteConflict(error)).toBe(true);
-    expect(conflictFields(error)).toEqual(['title']);
-    // O corpo nem foi tentado: o servidor recusou antes.
-    expect(api.bodies).toHaveLength(0);
   });
 
   it('reenviar sem versao mantem o texto do app (a escolha do usuario)', async () => {

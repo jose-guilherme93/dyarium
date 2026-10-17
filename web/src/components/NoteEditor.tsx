@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PartialBlock } from "@blocknote/core";
-import { api, isConflict, type ConflictField } from "../api";
+import { api, isConflict } from "../api";
 import { AudioTrack } from "./AudioTrack";
 import { NotesEditor, type NotesEditorHandle } from "../editor/NotesEditor";
 import { markdownToPlain, noteBlocksToMarkdown, normalizeLegacyAttachmentImages } from "../editor/blocknoteMarkdown";
@@ -287,8 +287,6 @@ export function NoteEditor({
   // Markdown cru: fonte da verdade e a segunda visualizacao da nota.
   const [rawMarkdown, setRawMarkdown] = useState("");
   const [rawOpen, setRawOpen] = useState(false);
-  // Conflito em aberto: o servidor recusou e o usuario escolhe.
-  const [conflict, setConflict] = useState<{ fields: ConflictField[]; mine: string } | null>(null);
   const lastQueuedRef = useRef<string>("");
   const saveBodyRef = useRef<(document: unknown) => Promise<void>>(async () => {});
   const saveTitleRef = useRef<() => Promise<void>>(async () => {});
@@ -437,10 +435,19 @@ export function NoteEditor({
         window.setTimeout(() => setSaving((value) => (value === "saved" ? "idle" : value)), 1500);
       } catch (err) {
         setSaving("idle");
-        if (isConflict(err)) {
-          // O corpo mudou no celular: nada foi gravado. A escolha e do usuario.
-          setConflict({ fields: err.fields, mine: text });
-          return;
+        if (isConflict(err) && noteIdRef.current) {
+          // Outro aparelho gravou depois que esta aba abriu. Ultimo a escrever
+          // vence: o texto que o usuario acabou de digitar entra por cima, sem
+          // dialogo. O corpo e reenviado sem versao de base.
+          try {
+            const saved = await api.updateNote(noteIdRef.current, text);
+            bodyVersionRef.current = saved.versions?.body ?? bodyVersionRef.current;
+            setSaving("saved");
+            window.setTimeout(() => setSaving((value) => (value === "saved" ? "idle" : value)), 1500);
+            return;
+          } catch {
+            // sem sorte no reenvio: mostra o erro generico abaixo
+          }
         }
         setError(err instanceof Error ? err.message : "falha ao salvar a nota");
         notify("Nao foi possivel salvar a nota", "error");
@@ -453,28 +460,7 @@ export function NoteEditor({
     saveBodyRef.current = saveBody;
   }, [saveBody]);
 
-  /** "Manter o meu": reenvia por cima, sem versao (a decisao ja foi do usuario). */
-  const keepMine = useCallback(async () => {
-    const pending = conflict;
-    setConflict(null);
-    if (!pending) return;
-    if (pending.fields.includes("title")) {
-      await api.patchEntry(entryId, { title: pending.mine }).catch(() => undefined);
-    }
-    if (pending.fields.includes("body")) {
-      await api.updateNote(noteIdRef.current ?? "", pending.mine).catch(() => undefined);
-    }
-    await loadFull();
-    onChanged();
-  }, [conflict, entryId, loadFull, onChanged]);
-
-  /** "Ficar com o de la": recarrega a nota do servidor, descartando o local. */
-  const takeTheirs = useCallback(async () => {
-    setConflict(null);
-    await loadFull();
-    onChanged();
-  }, [loadFull, onChanged]);
-
+  /** "Manter o meu" nao existe mais: a ultima gravacao vence, sem dialogo. */
   const handleBodyChange = useCallback((markdown: string) => {
     setRawMarkdown(markdown);
     // Ignora o evento de montagem e edicoes que nao mudaram nada.
@@ -513,8 +499,17 @@ export function NoteEditor({
       onChanged();
     } catch (err) {
       if (isConflict(err)) {
-        setConflict({ fields: err.fields, mine: title });
-        return;
+        // Titulo mudou em outro lugar: a ultima gravacao vence, entao reenvia
+        // sem versao em vez de interromper o usuario com um dialogo.
+        try {
+          const saved = await api.patchEntry(entry.id, { title });
+          titleVersionRef.current = saved.versions?.title ?? titleVersionRef.current;
+          setEntry((current) => (current ? { ...current, title } : current));
+          onChanged();
+          return;
+        } catch {
+          // sem sorte no reenvio: mostra o erro generico abaixo
+        }
       }
       setError(err instanceof Error ? err.message : "falha ao salvar o titulo");
       notify("Nao foi possivel salvar o titulo", "error");
@@ -926,33 +921,6 @@ export function NoteEditor({
             ))}
         </div>
       </div>
-
-      {conflict ? (
-        <div className="conflict-backdrop" role="dialog" aria-modal="true" aria-label="Nota mudou no celular">
-          <div className="conflict-card">
-            <h3>A nota mudou no celular</h3>
-            <p>
-              {conflict.fields.includes("body")
-                ? "O texto desta nota mudou no celular depois que voce abriu aqui."
-                : "O titulo desta nota mudou no celular depois que voce abriu aqui."}
-            </p>
-            <p className="conflict-hint">O que voce digitou aqui nao foi enviado. O que decide?</p>
-            <div className="conflict-actions">
-              <button type="button" className="button" onClick={() => void keepMine()}>
-                <span>Manter o meu</span>
-                <small>Substitui o que esta no celular</small>
-              </button>
-              <button type="button" className="button" onClick={() => void takeTheirs()}>
-                <span>Ficar com o de la</span>
-                <small>Troca pelo que esta no celular</small>
-              </button>
-              <button type="button" className="button button--ghost" onClick={() => setConflict(null)}>
-                Decidir depois
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
 
       {asideOpen && (
         <aside className="note-aside" aria-label="Propriedades e insights">

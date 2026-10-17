@@ -89,12 +89,24 @@ export function entryToRecording(entry: ServerEntry, note?: ServerNote): Recordi
   };
 }
 
+/** O servidor gravou depois da ultima edicao local? */
+function serverIsNewer(version: string | undefined, localUpdatedAt: string): boolean {
+  if (!version) return false;
+  const server = Date.parse(version);
+  const local = Date.parse(localUpdatedAt);
+  if (Number.isNaN(server) || Number.isNaN(local)) return false;
+  return server > local;
+}
+
 /**
  * Aplica na nota local o que mudou no servidor (edicao feita no dashboard).
  *
- * So vale para nota limpa: com edicao pendente (`noteDirty`) ou conflito em
- * aberto, o celular manda e o fluxo de sync decide quem ganha. Quando o corpo
- * mudou, `note` e obrigatoria: a listagem traz a versao, nao o texto.
+ * Nota limpa: qualquer versao diferente e do servidor e entra. Nota suja (edicao
+ * pendente ou conflito): so entra o campo que o servidor gravou **depois** da
+ * ultima edicao local — a ultima edicao vence. Se a edicao local for mais nova,
+ * ela fica e o sync reenvia (o corpo vai sem versao, entao sempre grava).
+ *
+ * Quando o corpo muda, `note` e obrigatoria: a listagem traz a versao, nao o texto.
  */
 export function mergeServerNote(
   local: Recording,
@@ -102,8 +114,8 @@ export function mergeServerNote(
   note?: ServerNote,
 ): Recording | null {
   if (local.status !== 'completed' || !local.entryId || entry.id !== local.entryId) return null;
-  if (local.noteDirty || (local.syncConflict?.length ?? 0) > 0) return null;
 
+  const dirty = Boolean(local.noteDirty) || (local.syncConflict?.length ?? 0) > 0;
   const serverBodyVersion = note?.body_version ?? entry.versions?.body;
   const bodyMoved = Boolean(serverBodyVersion) && serverBodyVersion !== local.bodyVersion;
   const titleVersion = entry.versions?.title;
@@ -112,24 +124,34 @@ export function mergeServerNote(
   const recordedMoved = Boolean(recordedVersion) && recordedVersion !== local.recordedAtVersion;
   const archivedMoved = typeof entry.archived === 'boolean' && entry.archived !== Boolean(local.archived);
 
+  // A ultima edicao vence: com a nota suja, so o que o servidor gravou depois da
+  // ultima edicao local entra. Nota limpa aceita qualquer versao nova.
+  const applyBody = bodyMoved && (!dirty || serverIsNewer(serverBodyVersion, local.updatedAt));
+  const applyTitle = titleMoved && (!dirty || serverIsNewer(titleVersion, local.updatedAt));
+  const applyRecorded = recordedMoved && (!dirty || serverIsNewer(recordedVersion, local.updatedAt));
+
   // Sem o texto nao da para aplicar a versao nova do corpo: espera o proximo
   // pull em vez de gravar uma versao sem o texto correspondente.
-  if (bodyMoved && !note) return null;
-  if (!bodyMoved && !titleMoved && !recordedMoved && !archivedMoved) return null;
+  if (applyBody && !note) return null;
+  if (!applyBody && !applyTitle && !applyRecorded && !archivedMoved) return null;
 
   return {
     ...local,
-    ...(bodyMoved
+    ...(applyBody
       ? {
           text: note?.content_markdown ?? '',
           noteId: note?.id ?? local.noteId,
           bodyVersion: serverBodyVersion,
         }
       : {}),
-    ...(titleMoved ? { title: entry.title, titleVersion } : {}),
-    ...(recordedMoved
+    ...(applyTitle ? { title: entry.title, titleVersion } : {}),
+    ...(applyRecorded
       ? { recordedAt: entry.recorded_at ?? entry.created_at, recordedAtVersion: recordedVersion }
       : {}),
     ...(archivedMoved ? { archived: entry.archived } : {}),
+    // Se o corpo veio do servidor, a pendencia local (texto e conflito) acabou.
+    // Se so titulo/data vieram, o corpo sujo continua e vai no proximo sync.
+    ...(applyBody ? { noteDirty: undefined, syncConflict: undefined } : {}),
+    ...(!applyBody && (applyTitle || applyRecorded) ? { syncConflict: undefined } : {}),
   };
 }
