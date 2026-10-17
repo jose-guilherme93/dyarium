@@ -229,6 +229,9 @@ export default function NoteScreen() {
 
   const [title, setTitle] = useState(() => note?.title ?? '');
   const [body, setBody] = useState(() => note?.text ?? '');
+  // Corpo trocado por fora ("ficar com o de la"): o WebView monta uma vez com o
+  // markdown que recebe, entao remontar e o que aplica o texto novo.
+  const [editorKey, setEditorKey] = useState(0);
   const [imageSources, setImageSources] = useState<Record<string, string> | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<NoteMenuAnchor | null>(null);
@@ -389,6 +392,7 @@ export default function NoteScreen() {
     );
     setTitle(theirs.title ?? fresh.title);
     setBody(theirs.markdown);
+    setEditorKey((value) => value + 1);
     await library.refresh();
   }, [library, note, noteId]);
 
@@ -774,6 +778,7 @@ export default function NoteScreen() {
             }}
           >
             <RichEditor
+              key={editorKey}
               ref={editorRef}
               value={body}
               onChangeMarkdown={handleBodyChange}

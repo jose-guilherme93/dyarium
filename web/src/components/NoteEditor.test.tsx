@@ -3,15 +3,35 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { NoteEditor } from "./NoteEditor";
 import { api } from "../api";
 
-// The rich editor is replaced by a button that reports a body change, so the
-// test exercises the note's save orchestration without rendering BlockNote.
+// The rich editor is replaced by a button that reports a body change in
+// markdown (the format the note speaks), so the test exercises the note's save
+// orchestration without rendering BlockNote.
 vi.mock("../editor/NotesEditor", () => ({
-  NotesEditor: ({ onChange }: { onChange?: (blocks: unknown[]) => void }) => (
-    <button type="button" onClick={() => onChange?.([{ type: "paragraph", content: "novo" }])}>
+  NotesEditor: ({
+    initialContent,
+    onChange,
+  }: {
+    initialContent?: { content?: string }[];
+    onChange?: (markdown: string) => void;
+  }) => (
+    <button
+      type="button"
+      onClick={() => {
+        const current = (initialContent ?? []).map((block) => block.content ?? "").join(" ");
+        onChange?.(`${current} editado`.trim());
+      }}
+    >
       editar corpo
     </button>
   ),
   mediaRefs: () => [],
+}));
+
+// Markdown <-> blocks without BlockNote: one block per body, enough to see which
+// text the editor was mounted with.
+vi.mock("../editor/markdownBlocks", () => ({
+  markdownToNoteBlocks: (markdown: string) => [{ type: "paragraph", content: markdown }],
+  resetMarkdownCache: () => {},
 }));
 
 vi.mock("./TagEditor", () => ({ TagEditor: () => null }));
@@ -82,5 +102,48 @@ describe("NoteEditor autosave", () => {
 
     expect(api.createNote).toHaveBeenCalledTimes(1);
     expect(vi.mocked(api.createNote).mock.calls[0][0]).toBe("e1");
+  });
+
+  it("editar no markdown cru e voltar nao descarta a edicao crua", async () => {
+    vi.mocked(api.listNotes).mockResolvedValueOnce({
+      notes: [
+        {
+          id: "n1",
+          entry_id: "e1",
+          title: "",
+          content_markdown: "antigo",
+          body_version: "v1",
+          created_at: "2026-10-15T12:00:00Z",
+          updated_at: "2026-10-15T12:00:00Z",
+        },
+      ],
+    });
+
+    render(
+      <NoteEditor
+        entryId="e1"
+        refreshKey={0}
+        onChanged={noop}
+        onDeleted={noop}
+        onOpenEntity={noop}
+        onOpenEntry={noop}
+        onCreateChild={noop}
+      />,
+    );
+    await screen.findByRole("button", { name: "editar corpo" });
+
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole("button", { name: "Ver markdown" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Markdown da nota" }), {
+      target: { value: "novo texto" },
+    });
+    // Voltando ao formatado, o editor remonta: ele precisa receber "novo texto",
+    // nao o corpo que a nota tinha quando foi aberta.
+    fireEvent.click(screen.getByRole("button", { name: "Ver nota formatada" }));
+    fireEvent.click(screen.getByRole("button", { name: "editar corpo" }));
+    await vi.advanceTimersByTimeAsync(900);
+
+    expect(vi.mocked(api.updateNote).mock.calls.at(-1)?.[0]).toBe("n1");
+    expect(vi.mocked(api.updateNote).mock.calls.at(-1)?.[1]).toBe("novo texto editado");
   });
 });

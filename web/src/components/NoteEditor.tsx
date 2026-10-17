@@ -478,6 +478,20 @@ export function NoteEditor({
     autosaveRef.current?.schedule(markdown);
   }, []);
 
+  /**
+   * Alterna entre o editor formatado e o markdown cru. Ao voltar, o editor
+   * remonta com o conteudo inicial: ele precisa ser o markdown editado aqui,
+   * senao a proxima tecla gravaria o corpo antigo por cima da edicao.
+   */
+  const toggleRaw = useCallback(() => {
+    if (rawOpen) {
+      const blocks = markdownToNoteBlocks(rawMarkdown);
+      setInitialBody(blocks.length > 0 ? blocks : undefined);
+      lastQueuedRef.current = rawMarkdown;
+    }
+    setRawOpen(!rawOpen);
+  }, [rawMarkdown, rawOpen]);
+
   const saveTitle = useCallback(async () => {
     if (!entry || title === entry.title) {
       return;
@@ -722,7 +736,7 @@ export function NoteEditor({
             <button
               type="button"
               className={rawOpen ? "icon-button icon-button--active" : "icon-button"}
-              onClick={() => setRawOpen((value) => !value)}
+              onClick={toggleRaw}
               aria-pressed={rawOpen}
               aria-label={rawOpen ? "Ver nota formatada" : "Ver markdown"}
               title={rawOpen ? "Ver nota formatada" : "Ver markdown"}
