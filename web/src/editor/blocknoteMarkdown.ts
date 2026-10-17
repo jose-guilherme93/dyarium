@@ -12,7 +12,7 @@
  */
 
 import { BlockNoteEditor } from "@blocknote/core";
-import { createNoteSchema } from "./schema.ts";
+import { createNoteSchema } from "./schema";
 
 /** Editor sem tipo de schema: aqui so interessa ler e escrever markdown. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -1,7 +1,8 @@
 /**
  * Schema do editor de notas, sem React: o mesmo conjunto de blocos e o mesmo
- * conversor markdown servem para o editor do dashboard e para o script de
- * conversao, entao os dois nunca discordam sobre o que e markdown.
+ * conversor markdown servem para o editor do dashboard e para as leituras do
+ * corpo (contagem de palavras, historico e a visao crua), entao nunca discordam
+ * sobre o que e markdown.
  */
 
 import {
@@ -91,8 +92,8 @@ export function createNoteStyleSchema() {
 }
 
 /**
- * Schema compartilhado entre o editor do dashboard e o script de conversao, para
- * os dois nunca discordarem sobre o que e markdown.
+ * Schema do conversor sem React, usado nas leituras do corpo (o editor do
+ * dashboard tem o seu, com os componentes React).
  */
 export function createNoteSchema() {
   return BlockNoteSchema.create({
@@ -100,15 +101,4 @@ export function createNoteSchema() {
     inlineContentSpecs: { ...defaultInlineContentSpecs, noteMention: noteMentionSpec() },
     styleSpecs: createNoteStyleSchema(),
   });
-}
-
-/** Tipos de bloco que o markdown do BlockNote nao representa como estrutura. */
-export const LOSSY_BLOCK_TYPES = new Set(["file", "video"]);
-
-/**
- * Blocos que o app nao edita: continuam no corpo como texto do proprio bloco,
- * preservados na ida e na volta. O app mostra em somente leitura.
- */
-export function isReadOnlyBlockType(type: string): boolean {
-  return LOSSY_BLOCK_TYPES.has(type) || type === "table" || type === "divider" || type === "audio";
 }
