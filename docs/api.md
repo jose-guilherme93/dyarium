@@ -295,6 +295,35 @@ O worker analisa a transcricao em janelas quando ela e longa, mescla os resultad
 meta-resumo quando ha mais de uma janela. Pessoas, lugares e temas viram entidades
 consultaveis.
 
+### GET /api/v1/analyze/local
+Estado do Ollama local (o provedor sem chave, configurado em um clique). Faz uma consulta
+curta ao servidor `DIARY_OLLAMA_URL` (padrao `http://ollama:11434`):
+```json
+{
+  "available": true,
+  "base_url": "http://ollama:11434/v1",
+  "models": ["qwen2.5:0.5b"],
+  "model": "qwen2.5:0.5b",
+  "pull": { "model": "qwen2.5:0.5b", "percent": 42, "done": false }
+}
+```
+- `available` falso quando o Ollama nao responde (o painel mostra como subir o servico).
+- `pull` so aparece quando ha (ou houve) um download iniciado por este endpoint.
+
+### POST /api/v1/analyze/local
+Configura a analise para usar o Ollama local em uma requisicao. Corpo:
+```json
+{ "model": "qwen2.5:0.5b" }
+```
+- Salva `analyze_enabled=true`, `analyze_provider=openai`, `analyze_base_url=<ollama>/v1`
+  e `analyze_model` **juntos** (transacao), para a analise nunca ficar apontando para um
+  provedor pela metade.
+- Se o modelo ainda nao estiver instalado, dispara o download em segundo plano (o `GET`
+  acima informa o progresso) e responde `{"status":"downloading", ...}`; modelo instalado
+  responde `{"status":"ready", ...}`.
+- `503 local_unavailable` quando o Ollama nao responde; nesse caso nada e salvo.
+- Nao aceita chave: o Ollama local nao tem uma.
+
 ## Entidades e humor
 
 ### GET /api/v1/entities
@@ -462,6 +491,16 @@ por virgulas; quando vazia, o servidor devolve a lista padrao.
   do servico (em `~/.config/opencode/service.json` ou a senha impressa por `opencode serve`)
   e `analyze_model` usa o formato `provedor/modelo` (ex.: `opencode-go/qwen3.8-flash`). A
   lista de modelos vem de `GET /analyze/models`.
+
+Provedores hospedados do OpenCode usam `analyze_provider=openai` com a chave do Console
+(`opencode.ai/console`), porque a analise fala `/chat/completions`:
+- OpenCode Zen (paga por uso, com modelos gratuitos): `analyze_base_url` =
+  `https://opencode.ai/inference/openai/v1`.
+- OpenCode Go (assinatura): `analyze_base_url` = `https://opencode.ai/inference/go/openai/v1`.
+- Modelos Claude, GPT, Gemini e Grok do OpenCode usam outros formatos de API e nao entram
+  nessa lista.
+- O Ollama local nao usa chave: `POST /api/v1/analyze/local` configura URL e modelo e baixa
+  o modelo quando falta.
 
 Nota de rede: quando o dyarium roda em container e o OpenCode roda no host, o container
 precisa alcancar a URL informada (o OpenCode escuta em `127.0.0.1` por padrao).

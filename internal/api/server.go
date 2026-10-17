@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/joseti/dyarium/internal/analyze"
 	"github.com/joseti/dyarium/internal/config"
@@ -36,7 +37,9 @@ type Deps struct {
 
 // Server holds the HTTP handlers and their dependencies.
 type Server struct {
-	deps Deps
+	deps    Deps
+	pullsMu sync.Mutex
+	pull    *localPullState
 }
 
 // Version describes the build metadata reported by the API.
@@ -115,6 +118,8 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("GET /api/v1/settings", s.handleGetSettings)
 	protected.HandleFunc("PUT /api/v1/settings", s.handlePutSettings)
 	protected.HandleFunc("GET /api/v1/analyze/models", s.handleListAnalyzeModels)
+	protected.HandleFunc("GET /api/v1/analyze/local", s.handleLocalAnalysis)
+	protected.HandleFunc("POST /api/v1/analyze/local", s.handleSetupLocalAnalysis)
 
 	protected.HandleFunc("GET /api/v1/models", s.handleListModels)
 	protected.HandleFunc("POST /api/v1/models/download", s.handleDownloadModel)

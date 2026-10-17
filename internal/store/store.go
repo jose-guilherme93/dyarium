@@ -72,6 +72,27 @@ func (s *Store) SetSetting(ctx context.Context, key, value string) error {
 	return nil
 }
 
+// SetSettings writes several settings in one transaction. A preset (analysis
+// provider, base URL, model) has to land all at once: half of it would leave
+// the analysis pointing at the wrong provider.
+func (s *Store) SetSettings(ctx context.Context, values map[string]string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: set settings: %w", err)
+	}
+	defer tx.Rollback()
+	now := time.Now().UTC().Format(time.RFC3339)
+	for key, value := range values {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+			 ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+			key, value, now); err != nil {
+			return fmt.Errorf("store: set setting %q: %w", key, err)
+		}
+	}
+	return tx.Commit()
+}
+
 // GetSetting returns a setting value; ok is false when the key is absent.
 func (s *Store) GetSetting(ctx context.Context, key string) (string, bool, error) {
 	var value string
