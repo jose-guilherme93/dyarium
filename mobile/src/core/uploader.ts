@@ -48,6 +48,8 @@ export interface UploadDeps {
 export interface UploadResult {
   uploadId: string;
   entryId: string;
+  /** Id do anexo de audio original no servidor. */
+  attachmentId?: string;
   sizeBytes: number;
   /** true quando o servidor encontraram um audio identico (dedupe). */
   duplicate?: boolean;
@@ -107,5 +109,11 @@ export async function uploadRecording(
   }
 
   const done = await deps.api.completeUpload(uploadId);
-  return { uploadId, entryId: done.entry_id, sizeBytes: total, duplicate: done.duplicate };
+  return {
+    uploadId,
+    entryId: done.entry_id,
+    attachmentId: done.attachment_id,
+    sizeBytes: total,
+    duplicate: done.duplicate,
+  };
 }

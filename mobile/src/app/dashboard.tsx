@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 
 import { Button } from '@/components/Button';
 import { Screen } from '@/components/Screen';
@@ -79,6 +79,14 @@ function BarChart({
   caption?: string;
 }) {
   const max = Math.max(1, ...points.map((point) => point.value));
+  // Rotulos por posicao absoluta: com `flex: 1` cada rotulo tinha a largura de
+  // UMA barra e "DD/MM" era cortado. Aqui o rotulo pode ser mais largo que a
+  // barra e continua centralizado nela.
+  const [labelRowWidth, setLabelRowWidth] = useState(0);
+  const gap = 4;
+  const slot = labelRowWidth > 0 && points.length > 0 ? (labelRowWidth - gap * (points.length - 1)) / points.length : 0;
+  const every = Math.max(1, labelEvery);
+  const labelWidth = slot > 0 ? Math.min(72, Math.max(40, slot * every)) : 0;
   return (
     <View style={styles.chartCard}>
       <Text style={styles.sectionLabel}>{title}</Text>
@@ -96,12 +104,27 @@ function BarChart({
         ))}
       </View>
       {labelEvery > 0 ? (
-        <View style={styles.barLabels}>
-          {points.map((point, index) => (
-            <Text key={index} style={styles.barLabel}>
-              {index % labelEvery === 0 ? point.label : ''}
-            </Text>
-          ))}
+        <View
+          style={styles.barLabels}
+          onLayout={(event) => setLabelRowWidth(event.nativeEvent.layout.width)}
+        >
+          {slot > 0
+            ? points.map((point, index) => {
+                if (index % every !== 0) {
+                  return null;
+                }
+                const center = index * (slot + gap) + slot / 2;
+                return (
+                  <Text
+                    key={index}
+                    style={[styles.barLabel, { position: 'absolute', left: center - labelWidth / 2, width: labelWidth }]}
+                    numberOfLines={1}
+                  >
+                    {point.label}
+                  </Text>
+                );
+              })
+            : null}
         </View>
       ) : null}
     </View>
@@ -143,9 +166,9 @@ function LineChart({
         ))}
       </Svg>
       {labelEvery > 0 ? (
-        <View style={styles.barLabels}>
+        <View style={styles.lineLabels}>
           {points.map((point, index) => (
-            <Text key={index} style={styles.barLabel}>
+            <Text key={index} style={styles.lineLabel}>
               {index % labelEvery === 0 ? point.label : ''}
             </Text>
           ))}
@@ -202,16 +225,28 @@ function WeeklyChart({ points }: { points: { label: string; value: number }[] })
 }
 
 function Heatmap({ history }: { history: WritingHistory }) {
+  const [width, setWidth] = useState(0);
+  const gap = 3;
+  const columns = history.calendar.length;
+  const cellSize =
+    width > 0 && columns > 0 ? Math.max(6, Math.floor((width - gap * (columns - 1)) / columns)) : 12;
   return (
     <View style={styles.chartCard}>
       <Text style={styles.sectionLabel}>Histórico de escrita</Text>
-      <View style={styles.heatmap}>
+      <View style={styles.heatmap} onLayout={(event) => setWidth(event.nativeEvent.layout.width)}>
         {history.calendar.map((column, columnIndex) => (
           <View key={columnIndex} style={styles.heatColumn}>
             {column.map((cell, dayIndex) => (
               <View
                 key={dayIndex}
-                style={[styles.heatCell, { backgroundColor: heatColor(cell, history.maxDaily) }]}
+                style={[
+                  styles.heatCellFill,
+                  {
+                    width: cellSize,
+                    height: cellSize,
+                    backgroundColor: heatColor(cell, history.maxDaily),
+                  },
+                ]}
               />
             ))}
           </View>
@@ -242,7 +277,7 @@ function MonthlyChart({ points, comparisonPct }: { points: MonthlyPoint[]; compa
       <SeriesChart
         title="Palavras por mês"
         points={points.map((month) => ({ label: month.label, value: month.words }))}
-        labelEvery={1}
+        labelEvery={points.length > 8 ? 2 : 1}
       />
       {comparison ? <Text style={styles.muted}>{comparison}</Text> : null}
     </>
@@ -251,24 +286,39 @@ function MonthlyChart({ points, comparisonPct }: { points: MonthlyPoint[]; compa
 
 function HourHeatmap({ grid }: { grid: number[][] }) {
   const max = Math.max(1, ...grid.flat());
+  const [width, setWidth] = useState(0);
+  const gap = 3;
+  const columns = HOUR_LABELS.length;
+  const cellSize =
+    width > 0 && columns > 0 ? Math.max(6, Math.floor((width - gap * (columns - 1)) / columns)) : 12;
   return (
     <View style={styles.chartCard}>
       <Text style={styles.sectionLabel}>Quando você escreve (dia × hora)</Text>
       <View style={styles.hourGrid}>
         <View style={styles.hourLabelsColumn}>
           {WEEKDAY_INITIALS.map((initial, index) => (
-            <Text key={index} style={styles.hourRowLabel}>
+            <Text
+              key={index}
+              style={[styles.hourRowLabel, { height: cellSize, lineHeight: cellSize }]}
+            >
               {initial}
             </Text>
           ))}
         </View>
-        <View style={styles.hourRows}>
+        <View style={styles.hourRows} onLayout={(event) => setWidth(event.nativeEvent.layout.width)}>
           {grid.map((row, rowIndex) => (
             <View key={rowIndex} style={styles.hourRow}>
               {row.map((value, columnIndex) => (
                 <View
                   key={columnIndex}
-                  style={[styles.hourCell, { backgroundColor: levelColor(value, max) }]}
+                  style={[
+                    styles.hourCellFill,
+                    {
+                      width: cellSize,
+                      height: cellSize,
+                      backgroundColor: levelColor(value, max),
+                    },
+                  ]}
                 />
               ))}
             </View>
@@ -277,7 +327,7 @@ function HourHeatmap({ grid }: { grid: number[][] }) {
       </View>
       <View style={styles.hourTicks}>
         {HOUR_LABELS.map((label) => (
-          <Text key={label} style={styles.hourLabel}>
+          <Text key={label} style={[styles.hourLabel, { width: cellSize }]}>
             {label}
           </Text>
         ))}
@@ -660,7 +710,11 @@ export default function DashboardScreen() {
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl refreshing={loading} onRefresh={load} tintColor={colors.textSecondary} />
+          <RefreshControl
+            refreshing={loading && data !== null}
+            onRefresh={load}
+            tintColor={colors.textSecondary}
+          />
         }
       >
         {writing.notes === 0 ? (
@@ -689,9 +743,7 @@ export default function DashboardScreen() {
             </Text>
             <Button label="Configurar servidor" variant="secondary" onPress={() => router.push('/server')} />
           </View>
-        ) : loading && !data ? (
-          <ActivityIndicator size="large" color={colors.textSecondary} />
-        ) : (
+        ) : loading && !data ? null : (
           <>
             {error ? <Text style={styles.error}>{error}</Text> : null}
             {summary ? (
@@ -772,21 +824,24 @@ const styles = StyleSheet.create({
   bars: { flexDirection: 'row', alignItems: 'flex-end', height: 88, gap: 4 },
   barSlot: { flex: 1, justifyContent: 'flex-end' },
   bar: { backgroundColor: colors.accent, borderRadius: 3 },
-  barLabels: { flexDirection: 'row', gap: 4 },
-  barLabel: { flex: 1, color: colors.textTertiary, fontSize: 9, textAlign: 'center' },
+  barLabels: { height: 14, position: 'relative' },
+  barLabel: { color: colors.textTertiary, fontSize: 9, textAlign: 'center' },
+  lineLabels: { flexDirection: 'row', gap: 4 },
+  lineLabel: { flex: 1, color: colors.textTertiary, fontSize: 9, textAlign: 'center' },
   heatmap: { flexDirection: 'row', gap: 3 },
   heatColumn: { gap: 3 },
   heatCell: { width: 12, height: 12, borderRadius: 3 },
+  heatCellFill: { borderRadius: 3 },
   legend: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   legendText: { color: colors.textTertiary, fontSize: fontSize.xs, marginHorizontal: 2 },
   hourGrid: { flexDirection: 'row', gap: spacing.sm },
   hourLabelsColumn: { gap: 3, paddingTop: 0 },
-  hourRowLabel: { height: 12, color: colors.textTertiary, fontSize: 9, lineHeight: 12, width: 10 },
-  hourRows: { gap: 3 },
+  hourRowLabel: { color: colors.textTertiary, fontSize: 9, width: 10 },
+  hourRows: { flex: 1, gap: 3 },
   hourRow: { flexDirection: 'row', gap: 3 },
-  hourCell: { width: 12, height: 12, borderRadius: 3 },
+  hourCellFill: { borderRadius: 3 },
   hourTicks: { flexDirection: 'row', gap: 3, marginLeft: 18 },
-  hourLabel: { width: 12, textAlign: 'center', color: colors.textTertiary, fontSize: 8 },
+  hourLabel: { textAlign: 'center', color: colors.textTertiary, fontSize: 8 },
   goalRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   goalValue: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
   goalLabel: { color: colors.text, fontSize: fontSize.md },

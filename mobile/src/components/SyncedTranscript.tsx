@@ -10,6 +10,7 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { activeSegmentIndex } from '@/core/transcript';
+import { formatDuration } from '@/core/format';
 import type { TranscriptSegment } from '@/core/types';
 import { useRenderCount } from '@/dev/perf';
 import { motionDuration } from '@/theme/motion';
@@ -27,16 +28,19 @@ const CENTER = VIEWPORT / 2;
 interface SyncedTranscriptProps {
   player: PlayerHandle;
   segments: TranscriptSegment[];
-  onPress?: () => void;
+  /** Abre a tela de transcricao completa. */
+  onOpen?: () => void;
+  /** Toca o audio a partir do trecho (ms). */
+  onSeek?: (startMs: number) => void;
 }
 
 /**
  * Previa da transcricao que acompanha o audio: a fala atual fica no meio e o
  * texto sobe suavemente conforme o play avanca. Nenhum trecho e cortado (quebra
  * linha se precisar); a posicao usa a altura real medida de cada trecho. Toque
- * abre a transcricao completa.
+ * num trecho toca o audio dali; "Ver tudo" abre a transcricao completa.
  */
-export function SyncedTranscript({ player, segments, onPress }: SyncedTranscriptProps) {
+export function SyncedTranscript({ player, segments, onOpen, onSeek }: SyncedTranscriptProps) {
   useRenderCount('SyncedTranscript');
   // So re-renderiza quando o trecho ativo muda: assina o player e compara o
   // indice, em vez de acompanhar cada tick (que roda varias vezes por segundo).
@@ -95,25 +99,33 @@ export function SyncedTranscript({ player, segments, onPress }: SyncedTranscript
       segments.slice(start, end).map((segment, offset) => {
         const index = start + offset;
         return (
-          <Text
+          <Pressable
             key={`${segment.start_ms}-${index}`}
             onLayout={(event) => handleLayout(index, event)}
-            style={[styles.line, index === active && styles.lineActive]}
+            onPress={() => onSeek?.(segment.start_ms)}
+            accessibilityLabel={`Ouvir a partir de ${formatDuration(segment.start_ms)}`}
           >
-            {segment.text}
-          </Text>
+            <Text style={[styles.line, index === active && styles.lineActive]}>
+              {segment.text}
+            </Text>
+          </Pressable>
         );
       }),
-    [segments, start, end, active, handleLayout],
+    [segments, start, end, active, handleLayout, onSeek],
   );
 
   return (
-    <Pressable
-      style={styles.section}
-      onPress={onPress}
-      accessibilityLabel="Abrir transcrição completa"
-    >
-      <Text style={styles.label}>Transcrição</Text>
+    <View style={styles.section}>
+      <View style={styles.header}>
+        <Text style={styles.label}>Transcrição</Text>
+        <Pressable
+          onPress={onOpen}
+          accessibilityLabel="Abrir transcrição completa"
+          hitSlop={8}
+        >
+          <Text style={styles.open}>Ver tudo</Text>
+        </Pressable>
+      </View>
       <View style={styles.viewport}>
         <Animated.View style={[styles.track, trackStyle]}>{lines}</Animated.View>
         <LinearGradient
@@ -127,12 +139,14 @@ export function SyncedTranscript({ player, segments, onPress }: SyncedTranscript
           pointerEvents="none"
         />
       </View>
-    </Pressable>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   section: { gap: spacing.sm },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  open: { color: colors.accentStrong, fontSize: fontSize.xs, fontWeight: '600' },
   label: {
     color: colors.textTertiary,
     fontSize: fontSize.xs,

@@ -1,6 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
 import {
-  ActivityIndicator,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -39,7 +38,6 @@ interface NoteMenuProps {
    * entrada no servidor); `null` mostra que ainda nao ha analise.
    */
   analysis?: NoteAnalysisView | null;
-  analysisLoading?: boolean;
   /** Posicao do popover (abaixo do botao de configuracoes). */
   anchor?: NoteMenuAnchor | null;
   typography: NoteTypography;
@@ -189,7 +187,6 @@ export function NoteMenu({
   title,
   properties,
   analysis,
-  analysisLoading = false,
   anchor,
   typography,
   onChangeTypography,
@@ -201,13 +198,25 @@ export function NoteMenu({
   const placement = anchor
     ? { top: anchor.top, right: anchor.right }
     : { top: 80, right: spacing.lg };
-  const maxHeight = Math.min(600, Math.max(320, height - 120));
+  // O card nunca pode passar do rodape da tela; o que nao couber rola dentro.
+  const available = anchor ? height - anchor.top - spacing.lg : height - 120;
+  const maxHeight = Math.max(240, Math.min(600, available));
+  // ScrollView so rola no Android quando tem altura maxima explicita.
+  const scrollMaxHeight = Math.max(160, maxHeight - spacing.lg * 2);
 
   return (
     <FastModal visible={visible} onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Fechar menu">
-        <Pressable style={[styles.card, placement, { maxHeight }]} onPress={() => undefined}>
-          <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
+      <View style={styles.root}>
+        <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Fechar menu" />
+        <View style={[styles.card, placement, { maxHeight }]}>
+          <ScrollView
+            style={[styles.scroll, { maxHeight: scrollMaxHeight }]}
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+            bounces={false}
+            nestedScrollEnabled
+            keyboardShouldPersistTaps="handled"
+          >
             <Text style={[styles.title, { fontSize: titleFontSize(shown, 20, 14) }]} numberOfLines={2}>
               {shown}
             </Text>
@@ -217,15 +226,10 @@ export function NoteMenu({
               <Text style={styles.actionText}>Compartilhar nota</Text>
             </Pressable>
 
-            {analysis !== undefined || analysisLoading ? (
+            {analysis !== undefined ? (
               <>
                 <Text style={styles.sectionLabel}>Análise</Text>
-                {analysisLoading && !analysis ? (
-                  <View style={styles.analysisLoading}>
-                    <ActivityIndicator size="small" color={colors.textSecondary} />
-                    <Text style={styles.muted}>Buscando análise...</Text>
-                  </View>
-                ) : analysis ? (
+                {analysis ? (
                   <AnalysisContent analysis={analysis} />
                 ) : (
                   <Text style={styles.muted}>Sem análise do servidor para esta nota.</Text>
@@ -279,14 +283,22 @@ export function NoteMenu({
             </View>
 
           </ScrollView>
-        </Pressable>
-      </Pressable>
+        </View>
+      </View>
     </FastModal>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)' },
+  root: { flex: 1 },
+  backdrop: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+  },
   card: {
     position: 'absolute',
     width: 300,
@@ -297,7 +309,12 @@ const styles = StyleSheet.create({
     borderColor: colors.borderStrong,
     padding: spacing.lg,
     gap: spacing.md,
+    overflow: 'hidden',
+    zIndex: 1,
+    elevation: 8,
   },
+  scroll: { flexShrink: 1 },
+  scrollContent: { gap: spacing.md },
   title: { color: colors.text, fontWeight: '700' },
   action: {
     flexDirection: 'row',
@@ -366,7 +383,6 @@ const styles = StyleSheet.create({
   propLabel: { color: colors.textSecondary, fontSize: fontSize.sm },
   propValue: { color: colors.text, fontSize: fontSize.sm, flexShrink: 1, textAlign: 'right' },
   muted: { color: colors.textSecondary, fontSize: fontSize.sm, lineHeight: 19 },
-  analysisLoading: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   analysis: { gap: spacing.sm },
   analysisSentiment: { flexDirection: 'row', alignItems: 'baseline', gap: spacing.sm },
   analysisSentimentLabel: { color: colors.accentStrong, fontSize: fontSize.sm, fontWeight: '700' },

@@ -20,6 +20,7 @@ import {
 } from 'react-native';
 
 import { ConflictDialog } from '@/components/ConflictDialog';
+import { AudioSeekBar } from '@/components/AudioSeekBar';
 import { FastModal } from '@/components/FastModal';
 import { NoteMenu, type NoteMenuAnchor, type NoteProperty } from '@/components/NoteMenu';
 import { NoteReader } from '@/components/NoteReader';
@@ -29,6 +30,7 @@ import { Screen } from '@/components/Screen';
 import { STATUS_META } from '@/components/StatusChip';
 import { SyncedTranscript } from '@/components/SyncedTranscript';
 import { toNoteAnalysis } from '@/core/analysis';
+import { checkpointPercent } from '@/core/transcription';
 import {
   formatBytes,
   formatDateTime,
@@ -57,6 +59,7 @@ import { pickImage } from '@/services/image';
 import { maybeTranscribeLocally } from '@/services/localTranscription';
 import { enterNote, leaveNote } from '@/services/noteVisibility';
 import { fetchTheirs, syncNoteForcing } from '@/services/noteSync';
+import { pushTranscript } from '@/services/transcriptSync';
 import { playPlayer } from '@/services/playback';
 import { useLibrary } from '@/state/LibraryContext';
 import { useAudioStack } from '@/state/useAudioStack';
@@ -81,6 +84,17 @@ function NoteAudioPlayer({ player, durationMs }: { player: PlayerHandle; duratio
   // Antes de carregar, `duration` e 0: usa a duracao conhecida da nota.
   const duration = status.duration > 0 ? status.duration : (durationMs ?? 0) / 1000;
   const current = status.currentTime || 0;
+  // Seek pedido antes de a fonte terminar de carregar: aplica quando o player
+  // informa a duracao real (antes disso o seek seria ignorado).
+  const [pendingSeek, setPendingSeek] = useState<number | null>(null);
+
+  const appliedSeekRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (pendingSeek === null || status.duration <= 0) return;
+    if (appliedSeekRef.current === pendingSeek) return;
+    appliedSeekRef.current = pendingSeek;
+    void player.seekTo(pendingSeek).catch(() => undefined);
+  }, [pendingSeek, player, status.duration]);
 
   const toggle = () => {
     if (status.playing) {
@@ -91,25 +105,37 @@ function NoteAudioPlayer({ player, durationMs }: { player: PlayerHandle; duratio
     playPlayer(player);
   };
 
+  const seek = (seconds: number) => {
+    load();
+    if (status.duration > 0) {
+      void player.seekTo(seconds).catch(() => undefined);
+    } else {
+      setPendingSeek(seconds);
+    }
+  };
+
   useEffect(() => () => releaseAudioFocus(player), [player]);
 
   return (
     <View style={styles.player}>
-      <Pressable
-        style={styles.play}
-        onPress={toggle}
-        accessibilityLabel={status.playing ? 'Pausar' : 'Tocar'}
-      >
-        <Ionicons
-          name={status.playing ? 'pause' : 'play'}
-          size={22}
-          color={colors.text}
-          style={status.playing ? undefined : { marginLeft: 2 }}
-        />
-      </Pressable>
-      <Text style={styles.playerTime}>
-        {formatDuration(current * 1000)} / {formatDuration(duration * 1000)}
-      </Text>
+      <View style={styles.playerRow}>
+        <Pressable
+          style={styles.play}
+          onPress={toggle}
+          accessibilityLabel={status.playing ? 'Pausar' : 'Tocar'}
+        >
+          <Ionicons
+            name={status.playing ? 'pause' : 'play'}
+            size={22}
+            color={colors.text}
+            style={status.playing ? undefined : { marginLeft: 2 }}
+          />
+        </Pressable>
+        <Text style={styles.playerTime}>
+          {formatDuration(current * 1000)} / {formatDuration(duration * 1000)}
+        </Text>
+      </View>
+      <AudioSeekBar current={current} duration={duration} onSeek={seek} />
     </View>
   );
 }
@@ -152,7 +178,11 @@ export default function NoteScreen() {
     [library.recordings, id],
   );
   const noteId = note?.id;
-  const transcriptionPercent = useTranscriptionProgress(noteId);
+  const liveTranscriptionPercent = useTranscriptionProgress(noteId);
+  const transcriptionPercent =
+    liveTranscriptionPercent > 0
+      ? liveTranscriptionPercent
+      : checkpointPercent(note ?? {});
   // Base `file://` do WebView: permite carregar as imagens locais da nota.
   const editorBaseUrl = useMemo(() => (noteId ? sessionDirUri(noteId) : undefined), [noteId]);
   // Player unico do app: o controle de play e a previa de transcricao usam o
@@ -208,7 +238,9 @@ export default function NoteScreen() {
   const [menuBytes, setMenuBytes] = useState(0);
   // Analise ja feita no servidor: o cache aparece na hora e a rede so atualiza.
   const [cachedAnalysis, setCachedAnalysis] = useState<CachedAnalysis | null>(null);
-  const [analysisLoading, setAnalysisLoading] = useState(false);
+  // Diferencia "ainda nao verifiquei" de "verifiquei e nao ha analise": a
+  // secao nao pisca "sem analise" enquanto o refresh silencioso acontece.
+  const [analysisChecked, setAnalysisChecked] = useState(false);
   const analysisView = useMemo(
     () =>
       cachedAnalysis && cachedAnalysis.entryId === note?.entryId
@@ -548,17 +580,29 @@ export default function NoteScreen() {
       })
       .catch(() => {
         // Cache local e best-effort: sem ele a ficha fica sem analise.
+      })
+      .finally(() => {
+        if (alive) setAnalysisChecked(true);
       });
     return () => {
       alive = false;
     };
   }, [analysisEntryId]);
 
+  // Transcricao feita no aparelho antes do audio subir (ou antes desta versao
+  // existir): garante que o servidor receba o texto ligado ao audio certo.
+  // `pushTranscript` compara o texto e nao reenvia quando ja esta igual.
+  useEffect(() => {
+    if (!noteId || !note?.entryId || !note.hasTranscript || note.transcriptOrigin !== 'local') {
+      return;
+    }
+    void pushTranscript(noteId);
+  }, [noteId, note?.entryId, note?.hasTranscript, note?.transcriptOrigin]);
+
   const refreshAnalysis = useCallback(async () => {
     const target = note;
     if (!target?.entryId) return;
     const entryTitle = title.trim() || target.title;
-    setAnalysisLoading(true);
     try {
       const analysis = await fetchNoteAnalysis({
         entryId: target.entryId,
@@ -576,7 +620,7 @@ export default function NoteScreen() {
     } catch {
       // Sem rede o cache que ja estiver carregado continua valendo.
     } finally {
-      setAnalysisLoading(false);
+      setAnalysisChecked(true);
     }
   }, [note, title]);
 
@@ -584,6 +628,9 @@ export default function NoteScreen() {
   // ancorar o popover logo abaixo dele.
   const openMenu = useCallback(() => {
     if (noteId) setMenuBytes(directoryBytes(sessionDirectory(noteId)));
+    // Sem cache, esconde a secao durante o refresh silencioso: nada de
+    // "sem analise" piscando antes da resposta.
+    if (!cachedAnalysis) setAnalysisChecked(false);
     void refreshAnalysis();
     const button = configButtonRef.current;
     if (!button) {
@@ -594,7 +641,7 @@ export default function NoteScreen() {
       setMenuAnchor({ top: y + height + 6, right: Math.max(spacing.lg, windowWidth - (x + width)) });
       setMenuOpen(true);
     });
-  }, [noteId, refreshAnalysis, windowWidth]);
+  }, [cachedAnalysis, noteId, refreshAnalysis, windowWidth]);
 
   const handleRecord = useCallback(() => {
     if (!noteId) return;
@@ -607,6 +654,21 @@ export default function NoteScreen() {
     if (!noteId) return;
     router.push({ pathname: '/transcript/[id]', params: { id: noteId } });
   }, [noteId]);
+
+  // Tocar num trecho da previa leva o audio para aquele instante. Espera o
+  // `replace` terminar quando a fonte ainda nao estava carregada.
+  const seekTranscript = useCallback(
+    (startMs: number) => {
+      loadPlayback();
+      setTimeout(() => {
+        void player
+          .seekTo(Math.max(0, startMs) / 1000)
+          .then(() => player.play())
+          .catch(() => undefined);
+      }, 80);
+    },
+    [loadPlayback, player],
+  );
 
   const handleAddImage = useCallback(async () => {
     if (!noteId) return;
@@ -876,7 +938,12 @@ export default function NoteScreen() {
         ) : null}
 
         {hasAudio && segments && segments.length > 0 ? (
-          <SyncedTranscript player={player} segments={segments} onPress={openTranscript} />
+          <SyncedTranscript
+            player={player}
+            segments={segments}
+            onOpen={openTranscript}
+            onSeek={seekTranscript}
+          />
         ) : hasAudio && note.transcript && note.transcript.trim() ? (
           <Pressable
             style={styles.section}
@@ -988,8 +1055,9 @@ export default function NoteScreen() {
         visible={menuOpen}
         title={title}
         properties={properties}
-        analysis={note.entryId ? analysisView : undefined}
-        analysisLoading={analysisLoading}
+        analysis={
+          note.entryId ? (analysisView ?? (analysisChecked ? null : undefined)) : undefined
+        }
         anchor={menuAnchor}
         typography={typography}
         onChangeTypography={(next) => void setTypography(next)}
@@ -1118,12 +1186,15 @@ const styles = StyleSheet.create({
   meta: { color: colors.textSecondary, fontSize: fontSize.sm },
   transcribing: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   player: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.lg,
+    gap: spacing.xs,
     backgroundColor: colors.surface,
     borderRadius: radius.md,
     padding: spacing.md,
+  },
+  playerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.lg,
   },
   play: {
     width: 44,

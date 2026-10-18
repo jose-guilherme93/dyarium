@@ -166,6 +166,7 @@ async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
     const fresh = (await getRecording(current.id)) ?? current;
     current = {
       ...mergeTranscript(markCompleted(current, result.entryId, new Date()), fresh),
+      serverAttachmentId: result.attachmentId ?? fresh.serverAttachmentId ?? current.serverAttachmentId,
       duplicate: result.duplicate ? true : undefined,
     };
     await upsertRecording(current);

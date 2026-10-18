@@ -65,6 +65,8 @@ export interface Recording {
   terminal?: boolean;
   /** Id da entrada criada no servidor. */
   entryId?: string;
+  /** Id do anexo de audio original no servidor (liga a transcricao ao audio). */
+  serverAttachmentId?: string;
   /** Id da nota (corpo rico) no servidor, quando criada. */
   noteId?: string;
   /** Transcricao (local ou do servidor), quando pronta. */
@@ -77,6 +79,8 @@ export interface Recording {
   transcriptOrigin?: TranscriptOrigin;
   /** Segmentos da transcricao (cache local, para nao refazer fetch ao abrir). */
   transcriptSegments?: TranscriptSegment[];
+  /** Ate onde a transcricao local ja chegou, em ms do audio original. */
+  transcriptCheckpointMs?: number;
   /** Ultima pilha de audios lida do servidor (cache local para abrir sem esperar). */
   serverAudios?: ServerAudio[];
   /** Origem do audio (default: gravado no microfone). */

@@ -39,6 +39,21 @@ export const TRANSCRIPTION_MODELS: TranscriptionModelInfo[] = [
 
 export const DEFAULT_TRANSCRIPTION_MODEL = 'base';
 
+/**
+ * Porcentagem ja transcrita, a partir do checkpoint salvo. Serve para a lista e
+ * para a nota continuarem mostrando o progresso real depois de reabrir o app
+ * (o progresso ao vivo so existe enquanto o whisper esta rodando).
+ */
+export function checkpointPercent(recording: {
+  durationMs?: number;
+  transcriptCheckpointMs?: number;
+}): number {
+  const total = recording.durationMs ?? 0;
+  const done = recording.transcriptCheckpointMs ?? 0;
+  if (total <= 0 || done <= 0) return 0;
+  return Math.min(100, Math.round((done / total) * 100));
+}
+
 export function modelById(id: string | undefined): TranscriptionModelInfo | undefined {
   return TRANSCRIPTION_MODELS.find((model) => model.id === id);
 }

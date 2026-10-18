@@ -6,13 +6,13 @@ import {
 } from '@/services/localTranscription';
 
 /** Progresso (0..100) da transcricao local de uma gravacao. */
-export function useTranscriptionProgress(id: string | undefined): number {
-  const [percent, setPercent] = useState(() => (id ? transcriptionProgress(id) : 0));
+export function useTranscriptionProgress(id: string | undefined, enabled = true): number {
+  const [percent, setPercent] = useState(() => (id && enabled ? transcriptionProgress(id) : 0));
 
   useEffect(() => {
-    if (!id) return undefined;
+    if (!id || !enabled) return undefined;
     return subscribeTranscriptionProgress(id, setPercent);
-  }, [id]);
+  }, [id, enabled]);
 
-  return percent;
+  return enabled ? percent : 0;
 }

@@ -21,7 +21,43 @@ export async function pushTranscript(id: string): Promise<void> {
   if (!config) return;
   try {
     const api = new DyariumApi(config, doFetch);
+    // O servidor liga a transcricao ao audio por `attachment_id`. Sem ele, o
+    // texto ficava solto na entrada e o dashboard mostrava audio sem texto.
+    let attachmentId = recording.serverAttachmentId;
+    let serverText: string | undefined;
+    try {
+      const entry = await api.getEntry(recording.entryId);
+      const audios = entry.audios ?? [];
+      if (!attachmentId) {
+        if (audios.length === 1) {
+          attachmentId = audios[0].id;
+        } else if (audios.length > 1) {
+          const durationMs = recording.durationMs ?? 0;
+          const target =
+            durationMs > 0
+              ? audios.reduce((best, audio) =>
+                  Math.abs(audio.duration_seconds * 1000 - durationMs) <
+                  Math.abs(best.duration_seconds * 1000 - durationMs)
+                    ? audio
+                    : best,
+                )
+              : audios[audios.length - 1];
+          attachmentId = target.id;
+        }
+      }
+      if (attachmentId) {
+        serverText = audios.find((audio) => audio.id === attachmentId)?.transcript?.text?.trim();
+      }
+    } catch {
+      // Sem leitura da entrada seguimos com o id conhecido (ou deixamos o
+      // servidor associar quando houver um unico audio).
+    }
+    // Ja esta no servidor com o mesmo texto: nada a fazer (evita reenvio e SSE
+    // a cada abertura da nota).
+    if (serverText === text) return;
+
     await api.putTranscript(recording.entryId, {
+      attachment_id: attachmentId,
       language: recording.transcriptLanguage,
       text,
       segments: (recording.transcriptSegments ?? []).map((segment) => ({

@@ -10,7 +10,7 @@
  * aparece progressivamente na nota e sobrevive a fechar o app.
  */
 
-import { Directory, File, Paths } from 'expo-file-system';
+import { Directory, File, FileMode, Paths } from 'expo-file-system';
 
 import { whisperLanguage } from '@/core/transcription';
 import type { Recording, TranscriptSegment } from '@/core/types';
@@ -106,11 +106,11 @@ async function persist(base: Recording, patch: Partial<Recording>): Promise<void
   emitRecording(updated);
 }
 
-function toSegments(segments: WhisperSegment[]): TranscriptSegment[] {
+function toSegments(segments: WhisperSegment[], offsetMs = 0): TranscriptSegment[] {
   return segments.map((segment) => ({
     // whisper.cpp mede os tempos em centesimos de segundo.
-    start_ms: segment.t0 * 10,
-    end_ms: segment.t1 * 10,
+    start_ms: offsetMs + segment.t0 * 10,
+    end_ms: offsetMs + segment.t1 * 10,
     text: segment.text.trim(),
   }));
 }
@@ -121,6 +121,103 @@ function wavPathFor(id: string): string {
   if (!dir.exists) dir.create({ intermediates: true, idempotent: true });
   return new File(dir, `${id}.wav`).uri;
 }
+
+/** Janela de cada chamada do whisper. O checkpoint fica no fim da janela. */
+const CHUNK_MS = 60_000;
+/** WAV do decoder: PCM 16-bit mono a 16 kHz = 32 bytes por ms. */
+const WAV_HEADER_BYTES = 44;
+const WAV_BYTES_PER_MS = (16_000 * 2) / 1000;
+
+function readBytesAt(path: string, offset: number, length: number): Uint8Array {
+  const handle = new File(path).open(FileMode.ReadOnly);
+  try {
+    if (offset > 0) handle.offset = offset;
+    return handle.readBytes(length);
+  } finally {
+    handle.close();
+  }
+}
+
+/** Duracao do WAV decodificado, pelo tamanho do chunk de dados. */
+function wavDurationMs(path: string): number {
+  try {
+    const size = new File(path).size ?? 0;
+    return Math.max(0, (size - WAV_HEADER_BYTES) / WAV_BYTES_PER_MS);
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Copia um trecho do WAV para outro arquivo, com header ajustado. E o que
+ * permite transcrever em janelas e retomar de um checkpoint sem decodificar o
+ * audio original de novo.
+ */
+async function writeWavRange(
+  sourcePath: string,
+  targetPath: string,
+  fromMs: number,
+  toMs: number,
+): Promise<{ startMs: number; endMs: number }> {
+  const source = new File(sourcePath);
+  const dataBytes = Math.max(0, (source.size ?? 0) - WAV_HEADER_BYTES);
+  const startByte = Math.min(
+    dataBytes,
+    Math.max(0, Math.floor((fromMs * WAV_BYTES_PER_MS) / 2) * 2),
+  );
+  const endByte = Math.min(
+    dataBytes,
+    Math.max(startByte, Math.ceil((toMs * WAV_BYTES_PER_MS) / 2) * 2),
+  );
+
+  const header = readBytesAt(sourcePath, 0, WAV_HEADER_BYTES);
+  const view = new DataView(header.buffer, header.byteOffset, header.byteLength);
+  view.setUint32(4, 36 + (endByte - startByte), true);
+  view.setUint32(40, endByte - startByte, true);
+
+  const target = new File(targetPath);
+  if (target.exists) target.delete();
+  target.create({ intermediates: true, overwrite: true });
+  const output = target.open(FileMode.Append);
+  try {
+    output.writeBytes(header);
+    const input = source.open(FileMode.ReadOnly);
+    try {
+      input.offset = WAV_HEADER_BYTES + startByte;
+      let remaining = endByte - startByte;
+      while (remaining > 0) {
+        const chunk = input.readBytes(Math.min(1 << 20, remaining));
+        if (chunk.length === 0) break;
+        output.writeBytes(chunk);
+        remaining -= chunk.length;
+      }
+    } finally {
+      input.close();
+    }
+  } finally {
+    output.close();
+  }
+  return {
+    startMs: startByte / WAV_BYTES_PER_MS,
+    endMs: endByte / WAV_BYTES_PER_MS,
+  };
+}
+
+function chunkPathFor(id: string): string {
+  const dir = new Directory(Paths.cache, 'whisper');
+  if (!dir.exists) dir.create({ intermediates: true, idempotent: true });
+  return new File(dir, `${id}.chunk.wav`).uri;
+}
+
+/** Maior fim de segmento (checkpoint de uma transcricao antiga sem campo). */
+function lastSegmentEnd(segments: TranscriptSegment[]): number {
+  let end = 0;
+  for (const segment of segments) {
+    if (segment.end_ms > end) end = segment.end_ms;
+  }
+  return end;
+}
+
 
 /**
  * Transcreve a gravacao no aparelho. Idempotente por gravacao: grava o texto a
@@ -143,12 +240,29 @@ export async function transcribeLocally(id: string): Promise<void> {
 
   running.add(id);
   attempted.add(id);
-  setProgress(id, 0);
+
+  const priorSegments = recording.transcriptSegments ?? [];
+  const priorCheckpoint =
+    recording.transcriptCheckpointMs ?? (priorSegments.length > 0 ? lastSegmentEnd(priorSegments) : 0);
+  let checkpoint = Math.max(0, priorCheckpoint);
+  // Segmentos de uma janela interrompida ficam de fora: ela sera transcrita de
+  // novo a partir do checkpoint (no maximo 60 s repetidos, nunca a nota inteira).
+  let committed = priorSegments.filter((segment) => segment.start_ms < checkpoint);
+  const knownDuration = recording.durationMs ?? 0;
+  setProgress(id, knownDuration > 0 ? Math.min(100, (checkpoint / knownDuration) * 100) : 0);
+
   void ensureNotificationPermission();
-  await persist(recording, { transcriptStatus: 'pending', transcriptOrigin: 'local' });
+  await persist(recording, {
+    transcriptStatus: 'pending',
+    transcriptOrigin: 'local',
+    transcriptCheckpointMs: checkpoint,
+    transcriptSegments: committed,
+    transcript: committed.map((segment) => segment.text).join(' ').trim() || undefined,
+  });
   // Mantem o processo vivo (e o usuario informado) se ele sair do app.
   startForegroundTask('Transcrevendo nota', 'A transcrição continua em segundo plano.');
   const wavPath = wavPathFor(id);
+  const chunkPath = chunkPathFor(id);
 
   // Fila de gravacoes parciais: garante que o estado final (ready) seja sempre o
   // ultimo gravado. Sem isso, um persist parcial atrasado sobrescrevia para
@@ -157,44 +271,75 @@ export async function transcribeLocally(id: string): Promise<void> {
   const queuePersist = (patch: Partial<Recording>) => {
     chain = chain.then(() => persist(recording, patch));
   };
+  const textOf = (segments: TranscriptSegment[]) =>
+    segments.map((segment) => segment.text).join(' ').trim();
 
   try {
     await decodeToWav(recording.filePath, wavPath);
+    const durationMs = wavDurationMs(wavPath);
+    if (durationMs <= 0) {
+      throw new Error('wav sem dados');
+    }
     const context = await getContext(whisper, modelId, modelPath);
+    setProgress(id, Math.min(100, (checkpoint / durationMs) * 100));
 
-    const collected: TranscriptSegment[] = [];
+    let language = recording.transcriptLanguage ?? '';
     let lastPersist = 0;
-    const { promise } = context.transcribe(wavPath, {
-      language: whisperLanguage(prefs.transcriptionLanguage),
-      maxThreads: MAX_THREADS,
-      onProgress: (percent) => setProgress(id, Math.max(0, Math.min(100, percent))),
-      onNewSegments: (event) => {
-        collected.push(...toSegments(event.segments));
-        // Grava no maximo a cada PERSIST_THROTTLE_MS: evita re-render da nota a
-        // cada trecho (o texto aparece progressivo, mas sem travar a abertura).
-        const now = Date.now();
-        if (now - lastPersist < PERSIST_THROTTLE_MS) return;
-        lastPersist = now;
-        queuePersist({
-          transcript: collected
-            .map((segment) => segment.text)
-            .join(' ')
-            .trim(),
-          transcriptSegments: [...collected],
-          transcriptStatus: 'pending',
-          transcriptOrigin: 'local',
-        });
-      },
-    });
+    while (checkpoint < durationMs - 5) {
+      const slice = await writeWavRange(wavPath, chunkPath, checkpoint, checkpoint + CHUNK_MS);
+      if (slice.endMs <= slice.startMs) break;
+      const chunkStart = slice.startMs;
+      const chunkEnd = slice.endMs;
+      const partial: TranscriptSegment[] = [];
 
-    const result = await promise;
-    // Espera os parciais pendentes antes de gravar o estado final.
+      const { promise } = context.transcribe(chunkPath, {
+        language: whisperLanguage(prefs.transcriptionLanguage),
+        maxThreads: MAX_THREADS,
+        onProgress: (percent) => {
+          const done = chunkStart + (Math.max(0, Math.min(100, percent)) / 100) * (chunkEnd - chunkStart);
+          setProgress(id, Math.min(100, (done / durationMs) * 100));
+        },
+        onNewSegments: (event) => {
+          partial.push(...toSegments(event.segments, chunkStart));
+          // Grava no maximo a cada PERSIST_THROTTLE_MS: evita re-render da nota
+          // a cada trecho, mas o texto aparece progressivo.
+          const now = Date.now();
+          if (now - lastPersist < PERSIST_THROTTLE_MS) return;
+          lastPersist = now;
+          queuePersist({
+            transcript: textOf([...committed, ...partial]),
+            transcriptSegments: [...committed, ...partial],
+            transcriptStatus: 'pending',
+            transcriptOrigin: 'local',
+            // A janela atual ainda nao terminou: retomar daqui re-transcreve
+            // este trecho, nunca o anterior.
+            transcriptCheckpointMs: checkpoint,
+          });
+        },
+      });
+
+      const result = await promise;
+      language = result.language || language;
+      committed = [...committed, ...toSegments(result.segments, chunkStart)];
+      checkpoint = chunkEnd;
+      queuePersist({
+        transcript: textOf(committed),
+        transcriptSegments: committed,
+        transcriptStatus: 'pending',
+        transcriptOrigin: 'local',
+        transcriptCheckpointMs: checkpoint,
+      });
+      // Durable antes da proxima janela: se o app morrer agora, retoma daqui.
+      await chain.catch(() => undefined);
+    }
+
     await chain.catch(() => undefined);
     setProgress(id, 100);
     await persist(recording, {
-      transcript: result.result.trim(),
-      transcriptLanguage: result.language,
-      transcriptSegments: toSegments(result.segments),
+      transcript: textOf(committed),
+      transcriptLanguage: language || recording.transcriptLanguage,
+      transcriptSegments: committed,
+      transcriptCheckpointMs: durationMs,
       transcriptStatus: 'ready',
       transcriptOrigin: 'local',
       hasTranscript: true,
@@ -204,13 +349,22 @@ export async function transcribeLocally(id: string): Promise<void> {
     await pushTranscript(id);
     await notifyTranscriptionDone();
   } catch {
+    // Falhou no meio: guarda o que ja foi transcrito e o ponto de retomada.
+    // A proxima abertura do app continua daqui em vez de recomecar do zero.
     await chain.catch(() => undefined);
-    await persist(recording, { transcriptStatus: 'failed', transcriptOrigin: 'local' });
+    await persist(recording, {
+      transcript: textOf(committed),
+      transcriptSegments: committed,
+      transcriptCheckpointMs: checkpoint,
+      transcriptStatus: 'pending',
+      transcriptOrigin: 'local',
+    });
   } finally {
     const wav = new File(wavPath);
     if (wav.exists) wav.delete();
+    const chunk = new File(chunkPath);
+    if (chunk.exists) chunk.delete();
     running.delete(id);
-    setProgress(id, 0);
     stopForegroundTask();
   }
 }

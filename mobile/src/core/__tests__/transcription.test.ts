@@ -1,4 +1,5 @@
 import {
+  checkpointPercent,
   DEFAULT_TRANSCRIPTION_MODEL,
   TRANSCRIPTION_MODELS,
   modelById,
@@ -44,5 +45,13 @@ describe('whisperLanguage', () => {
     expect(whisperLanguage('pt')).toBe('pt');
     expect(whisperLanguage(undefined)).toBe('pt');
     expect(whisperLanguage('auto')).toBe('auto');
+  });
+});
+
+describe('checkpointPercent', () => {
+  it('converte o ponto de retomada em porcentagem', () => {
+    expect(checkpointPercent({ durationMs: 600_000, transcriptCheckpointMs: 210_000 })).toBe(35);
+    expect(checkpointPercent({ durationMs: 600_000, transcriptCheckpointMs: 0 })).toBe(0);
+    expect(checkpointPercent({ durationMs: 0, transcriptCheckpointMs: 1000 })).toBe(0);
   });
 });

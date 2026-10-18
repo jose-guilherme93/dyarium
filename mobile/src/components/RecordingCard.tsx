@@ -5,8 +5,10 @@ import { Pressable, StyleSheet, Text, View, type GestureResponderEvent } from 'r
 import { formatDuration, formatStamp } from '@/core/format';
 import { markdownToPlain } from '@/core/richText';
 import { displayTitle } from '@/core/title';
+import { checkpointPercent } from '@/core/transcription';
 import type { Recording } from '@/core/types';
 import { useRenderCount } from '@/dev/perf';
+import { useTranscriptionProgress } from '@/state/useTranscriptionProgress';
 import { colors, fontSize, radius, spacing } from '@/theme/tokens';
 
 interface RecordingCardProps {
@@ -32,6 +34,11 @@ export const RecordingCard = memo(function RecordingCard({
   const hasAudio = Boolean(recording.filePath);
   const rawPreview = hasAudio ? recording.transcript : recording.text;
   const preview = rawPreview ? markdownToPlain(rawPreview) : '';
+  // Transcricao em andamento: mostra um icone discreto + porcentagem no canto.
+  const transcribing =
+    hasAudio && recording.transcriptStatus === 'pending' && !recording.hasTranscript;
+  const livePercent = useTranscriptionProgress(recording.id, transcribing);
+  const percent = livePercent > 0 ? Math.round(livePercent) : checkpointPercent(recording);
 
   return (
     <View style={styles.wrap}>
@@ -43,9 +50,17 @@ export const RecordingCard = memo(function RecordingCard({
         }
         delayLongPress={350}
       >
-        <Text style={styles.title} numberOfLines={1}>
-          {displayTitle(recording)}
-        </Text>
+        <View style={styles.titleRow}>
+          <Text style={styles.title} numberOfLines={1}>
+            {displayTitle(recording)}
+          </Text>
+          {transcribing ? (
+            <View style={styles.transcribing} accessibilityLabel={`Transcrevendo ${percent}%`}>
+              <Ionicons name="sync-outline" size={11} color={colors.accentStrong} />
+              <Text style={styles.transcribingText}>{percent}%</Text>
+            </View>
+          ) : null}
+        </View>
 
         <View style={styles.subRow}>
           <Ionicons
@@ -84,7 +99,22 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   content: { padding: spacing.md, gap: 3 },
-  title: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  title: { flex: 1, color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
+  transcribing: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: colors.accentSoft,
+    borderRadius: radius.pill,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  transcribingText: {
+    color: colors.accentStrong,
+    fontSize: fontSize.xs,
+    fontVariant: ['tabular-nums'],
+  },
   subRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   sub: { color: colors.textSecondary, fontSize: fontSize.xs },
   footer: { flexDirection: 'row', alignItems: 'flex-end', gap: spacing.sm, marginTop: 2 },
