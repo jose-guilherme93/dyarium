@@ -202,6 +202,40 @@ func (s *Store) DeleteNote(ctx context.Context, id string) error {
 	return nil
 }
 
+// ListRevisionsPage returns one page of a note's revisions, newest first. It
+// reads one extra row to report whether another page exists.
+func (s *Store) ListRevisionsPage(ctx context.Context, noteID string, offset, limit int) ([]NoteRevision, bool, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, note_id, document, created_at FROM note_revisions
+		WHERE note_id = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
+		noteID, limit+1, offset)
+	if err != nil {
+		return nil, false, fmt.Errorf("store: list revision page: %w", err)
+	}
+	defer rows.Close()
+	var out []NoteRevision
+	for rows.Next() {
+		var rev NoteRevision
+		var createdAt string
+		if err := rows.Scan(&rev.ID, &rev.NoteID, &rev.Document, &createdAt); err != nil {
+			return nil, false, err
+		}
+		rev.CreatedAt = parseTS(createdAt)
+		out = append(out, rev)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	more := len(out) > limit
+	if more {
+		out = out[:limit]
+	}
+	return out, more, nil
+}
+
 // ListRevisions returns the revisions of a note, newest first.
 func (s *Store) ListRevisions(ctx context.Context, noteID string) ([]NoteRevision, error) {
 	rows, err := s.db.QueryContext(ctx, `

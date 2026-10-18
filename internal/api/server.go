@@ -3,11 +3,15 @@
 package api
 
 import (
+	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -83,6 +87,7 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("DELETE /api/v1/attachments/{id}", s.handleDeleteAttachment)
 
 	protected.HandleFunc("GET /api/v1/entries/{id}/transcript", s.handleGetTranscript)
+	protected.HandleFunc("GET /api/v1/entries/{id}/segments", s.handleListSegments)
 	protected.HandleFunc("PUT /api/v1/entries/{id}/transcript", s.handlePutTranscript)
 	protected.HandleFunc("POST /api/v1/entries/{id}/retranscribe", s.handleRetranscribe)
 	protected.HandleFunc("POST /api/v1/entries/{id}/cancel", s.handleCancelEntry)
@@ -128,7 +133,7 @@ func (s *Server) Handler() http.Handler {
 
 	mux.Handle("/api/v1/", s.requireAuth(protected))
 	mux.Handle("/", s.spaHandler())
-	return s.withLogging(mux)
+	return s.withLogging(s.withResponseCache(mux))
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
@@ -164,9 +169,130 @@ func (s *Server) spaHandler() http.Handler {
 		if _, err := fs.Stat(dist, path); err != nil {
 			r = r.Clone(r.Context())
 			r.URL.Path = "/"
+			path = "index.html"
+		}
+		// Vite puts a content hash in every asset name, so they can be cached
+		// forever. index.html must always be revalidated, and the service worker
+		// must never be pinned. Fonts are not hashed: keep them on a shorter TTL.
+		switch {
+		case strings.HasPrefix(path, "assets/"):
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		case path == "index.html":
+			w.Header().Set("Cache-Control", "no-cache")
+		case strings.HasPrefix(path, "fonts/"):
+			w.Header().Set("Cache-Control", "public, max-age=604800")
+		default:
+			w.Header().Set("Cache-Control", "no-cache")
 		}
 		fileServer.ServeHTTP(w, r)
 	})
+}
+
+// withResponseCache adds HTTP validators and gzip to JSON responses, and answers
+// If-None-Match with 304. Handlers stay unaware of it: writeJSON publishes the
+// ETag and the wrapper decides whether to reuse the cached representation.
+func (s *Server) withResponseCache(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cw := &responseCacheWriter{ResponseWriter: w, req: r}
+		next.ServeHTTP(cw, r)
+		cw.close()
+	})
+}
+
+type responseCacheWriter struct {
+	http.ResponseWriter
+	req     *http.Request
+	decided bool
+	notMod  bool
+	gz      *gzip.Writer
+}
+
+func (w *responseCacheWriter) WriteHeader(status int) {
+	if w.decided {
+		return
+	}
+	w.decided = true
+	header := w.Header()
+	if status == http.StatusOK && w.req.Method != http.MethodPost && w.req.Header.Get("Range") == "" &&
+		etagMatches(w.req.Header.Get("If-None-Match"), header.Get("ETag")) {
+		w.notMod = true
+		w.ResponseWriter.WriteHeader(http.StatusNotModified)
+		return
+	}
+	if status == http.StatusOK && shouldGzip(w.req, header) {
+		header.Set("Content-Encoding", "gzip")
+		header.Del("Content-Length")
+		appendVary(header, "Accept-Encoding")
+		w.gz = gzip.NewWriter(w.ResponseWriter)
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *responseCacheWriter) Write(p []byte) (int, error) {
+	if !w.decided {
+		w.WriteHeader(http.StatusOK)
+	}
+	if w.notMod {
+		// The client already has this representation: drop the body.
+		return len(p), nil
+	}
+	if w.gz != nil {
+		return w.gz.Write(p)
+	}
+	return w.ResponseWriter.Write(p)
+}
+
+func (w *responseCacheWriter) Flush() {
+	if w.gz != nil {
+		_ = w.gz.Flush()
+	}
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (w *responseCacheWriter) close() {
+	if w.gz != nil {
+		_ = w.gz.Close()
+	}
+}
+
+func shouldGzip(r *http.Request, header http.Header) bool {
+	if r.Method == http.MethodHead || !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") || r.Header.Get("Range") != "" {
+		return false
+	}
+	contentType := header.Get("Content-Type")
+	if strings.HasPrefix(contentType, "text/event-stream") {
+		return false
+	}
+	if strings.HasPrefix(contentType, "application/json") {
+		return true
+	}
+	// Static text assets (JS/CSS/SVG/HTML) are the bulk of the first load.
+	compressible := strings.HasPrefix(contentType, "text/") ||
+		strings.Contains(contentType, "javascript") ||
+		strings.Contains(contentType, "svg")
+	if !compressible {
+		return false
+	}
+	if raw := header.Get("Content-Length"); raw != "" {
+		if size, err := strconv.ParseInt(raw, 10, 64); err == nil && size < 1024 {
+			return false
+		}
+	}
+	return true
+}
+
+// appendVary adds a value to Vary without discarding existing entries.
+func appendVary(header http.Header, value string) {
+	for _, existing := range header.Values("Vary") {
+		for _, item := range strings.Split(existing, ",") {
+			if strings.EqualFold(strings.TrimSpace(item), value) {
+				return
+			}
+		}
+	}
+	header.Add("Vary", value)
 }
 
 func (s *Server) withLogging(next http.Handler) http.Handler {
@@ -177,9 +303,22 @@ func (s *Server) withLogging(next http.Handler) http.Handler {
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		// Never leave the client with an empty 200: marshal errors are bugs in
+		// the handler, so report a generic 500.
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":{"code":"internal","message":"resposta indisponivel"}}` + "\n"))
+		return
+	}
+	body = append(body, '\n')
+	sum := sha256.Sum256(body)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("ETag", `"`+hex.EncodeToString(sum[:8])+`"`)
+	appendVary(w.Header(), "Accept-Encoding")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(payload)
+	_, _ = w.Write(body)
 }
 
 func writeError(w http.ResponseWriter, status int, code, message string) {

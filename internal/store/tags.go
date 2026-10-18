@@ -84,6 +84,48 @@ func (s *Store) ListEntryTags(ctx context.Context, entryID string) ([]Tag, error
 	return out, rows.Err()
 }
 
+// ListEntryTagNames returns the tag names of many entries in one query, keyed
+// by entry id. The dashboard lists up to hundreds of entries and used to issue
+// one query per entry (N+1) on the single SQLite connection.
+func (s *Store) ListEntryTagNames(ctx context.Context, entryIDs []string) (map[string][]string, error) {
+	out := make(map[string][]string, len(entryIDs))
+	const chunk = 400
+	for start := 0; start < len(entryIDs); start += chunk {
+		end := start + chunk
+		if end > len(entryIDs) {
+			end = len(entryIDs)
+		}
+		ids := entryIDs[start:end]
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+		args := make([]any, 0, len(ids))
+		for _, id := range ids {
+			args = append(args, id)
+		}
+		rows, err := s.db.QueryContext(ctx, `
+			SELECT et.entry_id, t.name
+			FROM entry_tags et JOIN tags t ON t.id = et.tag_id
+			WHERE et.entry_id IN (`+placeholders+`)
+			ORDER BY et.entry_id, t.name`, args...)
+		if err != nil {
+			return nil, fmt.Errorf("store: list entry tag names: %w", err)
+		}
+		for rows.Next() {
+			var entryID, name string
+			if err := rows.Scan(&entryID, &name); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			out[entryID] = append(out[entryID], name)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+	}
+	return out, nil
+}
+
 // SetEntryTags replaces the tags of an entry, creating tags as needed.
 func (s *Store) SetEntryTags(ctx context.Context, entryID string, names []string) error {
 	tx, err := s.db.BeginTx(ctx, nil)

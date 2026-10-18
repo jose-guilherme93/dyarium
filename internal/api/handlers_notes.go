@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -171,7 +172,23 @@ func (s *Server) handleDeleteNote(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListRevisions(w http.ResponseWriter, r *http.Request) {
-	revs, err := s.deps.Store.ListRevisions(r.Context(), r.PathValue("id"))
+	query := r.URL.Query()
+	offset := 0
+	if raw := strings.TrimSpace(query.Get("cursor")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			offset = n
+		}
+	}
+	limit := 50
+	if raw := strings.TrimSpace(query.Get("limit")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	revs, more, err := s.deps.Store.ListRevisionsPage(r.Context(), r.PathValue("id"), offset, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
@@ -187,5 +204,9 @@ func (s *Server) handleListRevisions(w http.ResponseWriter, r *http.Request) {
 			"created_at":       rev.CreatedAt,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"revisions": out})
+	body := map[string]any{"revisions": out}
+	if more {
+		body["next_cursor"] = strconv.Itoa(offset + len(out))
+	}
+	writeJSON(w, http.StatusOK, body)
 }

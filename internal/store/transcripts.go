@@ -105,6 +105,55 @@ func (s *Store) ListTranscripts(ctx context.Context, entryID string) ([]Transcri
 	return out, rows.Err()
 }
 
+// LatestTranscript returns the most recent transcript of an entry without its
+// segments. Handlers that only need metadata should not pay to load them.
+func (s *Store) LatestTranscript(ctx context.Context, entryID string) (Transcript, error) {
+	return scanTranscript(s.db.QueryRowContext(ctx, `
+		SELECT `+transcriptColumns+`
+		FROM transcripts WHERE entry_id = ? ORDER BY created_at DESC LIMIT 1`, entryID))
+}
+
+// TranscriptByAttachment returns the transcript of one audio without segments.
+func (s *Store) TranscriptByAttachment(ctx context.Context, attachmentID string) (Transcript, error) {
+	return scanTranscript(s.db.QueryRowContext(ctx, `
+		SELECT `+transcriptColumns+`
+		FROM transcripts WHERE attachment_id = ? ORDER BY created_at DESC LIMIT 1`, attachmentID))
+}
+
+// ListSegmentsPage returns one page of segments ordered by index. It reads one
+// extra row to tell the caller whether another page exists.
+func (s *Store) ListSegmentsPage(ctx context.Context, transcriptID string, offset, limit int) ([]Segment, bool, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, transcript_id, idx, start_ms, end_ms, text, created_at
+		FROM segments WHERE transcript_id = ? ORDER BY idx LIMIT ? OFFSET ?`,
+		transcriptID, limit+1, offset)
+	if err != nil {
+		return nil, false, fmt.Errorf("store: list segment page: %w", err)
+	}
+	defer rows.Close()
+	var out []Segment
+	for rows.Next() {
+		var seg Segment
+		var createdAt string
+		if err := rows.Scan(&seg.ID, &seg.TranscriptID, &seg.Idx, &seg.StartMS, &seg.EndMS, &seg.Text, &createdAt); err != nil {
+			return nil, false, err
+		}
+		seg.CreatedAt = parseTS(createdAt)
+		out = append(out, seg)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	more := len(out) > limit
+	if more {
+		out = out[:limit]
+	}
+	return out, more, nil
+}
+
 // ListSegments returns the segments of a transcript ordered by index.
 func (s *Store) ListSegments(ctx context.Context, transcriptID string) ([]Segment, error) {
 	rows, err := s.db.QueryContext(ctx, `

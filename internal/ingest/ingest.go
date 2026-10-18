@@ -513,6 +513,26 @@ func (s *Service) DecryptAttachment(ctx context.Context, att store.Attachment, d
 	return n, nil
 }
 
+// DecryptAttachmentRange decrypts only the inclusive plaintext window
+// [start, end] of an attachment. It exists so a Range request does not pay for
+// the whole file.
+func (s *Service) DecryptAttachmentRange(ctx context.Context, att store.Attachment, start, end int64, dst io.Writer) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	path := filepath.Join(s.dataDir, att.StorageKey)
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, fmt.Errorf("ingest: open object: %w", err)
+	}
+	defer f.Close()
+	n, err := crypto.DecryptRange(f, s.key, start, end, dst)
+	if err != nil {
+		return n, fmt.Errorf("ingest: decrypt range: %w", err)
+	}
+	return n, nil
+}
+
 // DeleteAttachmentObject removes the ciphertext file of an attachment.
 func (s *Service) DeleteAttachmentObject(att store.Attachment) error {
 	path := filepath.Join(s.dataDir, att.StorageKey)

@@ -129,9 +129,18 @@ func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := make([]map[string]any, 0, len(entries))
+	ids := make([]string, 0, len(entries))
+	for _, e := range entries {
+		ids = append(ids, e.ID)
+	}
+	tagNames, err := s.deps.Store.ListEntryTagNames(r.Context(), ids)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
 	for _, e := range entries {
 		item := entryJSON(e)
-		if names, err := s.entryTagNames(r.Context(), e.ID); err == nil {
+		if names := tagNames[e.ID]; len(names) > 0 {
 			item["tags"] = names
 		}
 		out = append(out, item)
@@ -451,6 +460,7 @@ func (s *Server) handlePutTranscript(w http.ResponseWriter, r *http.Request) {
 
 // transcriptJSON renders a transcript with its segments.
 func transcriptJSON(t store.Transcript, segs []store.Segment) map[string]any {
+	body := transcriptSummaryJSON(t)
 	segments := make([]map[string]any, 0, len(segs))
 	for _, seg := range segs {
 		segments = append(segments, map[string]any{
@@ -459,14 +469,83 @@ func transcriptJSON(t store.Transcript, segs []store.Segment) map[string]any {
 			"text":     seg.Text,
 		})
 	}
+	body["segments"] = segments
+	return body
+}
+
+// transcriptSummaryJSON is the transcript without its segments. The full entry
+// payload uses it: segments are usually large and only needed when the user
+// expands the transcript, which fetches them page by page.
+func transcriptSummaryJSON(t store.Transcript) map[string]any {
 	return map[string]any{
 		"model":            t.Model,
 		"language":         t.Language,
 		"text":             t.Text,
 		"trim_silence":     t.TrimSilence,
 		"duration_seconds": t.DurationSeconds,
-		"segments":         segments,
 	}
+}
+
+// handleListSegments serves one page of transcript segments for the full
+// transcript view. `cursor` is the plaintext index of the first segment.
+func (s *Server) handleListSegments(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	entryID := r.PathValue("id")
+	query := r.URL.Query()
+
+	var t store.Transcript
+	var err error
+	if attachmentID := strings.TrimSpace(query.Get("attachment_id")); attachmentID != "" {
+		t, err = s.deps.Store.TranscriptByAttachment(ctx, attachmentID)
+		if err == nil && t.EntryID != entryID {
+			writeError(w, http.StatusNotFound, "not_found", "transcricao indisponivel")
+			return
+		}
+	} else {
+		t, err = s.deps.Store.LatestTranscript(ctx, entryID)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "not_found", "transcricao indisponivel")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+
+	offset := 0
+	if raw := strings.TrimSpace(query.Get("cursor")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			offset = n
+		}
+	}
+	limit := 200
+	if raw := strings.TrimSpace(query.Get("limit")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	segs, more, err := s.deps.Store.ListSegmentsPage(ctx, t.ID, offset, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	out := make([]map[string]any, 0, len(segs))
+	for _, seg := range segs {
+		out = append(out, map[string]any{
+			"start_ms": seg.StartMS,
+			"end_ms":   seg.EndMS,
+			"text":     seg.Text,
+		})
+	}
+	body := map[string]any{"segments": out}
+	if more {
+		body["next_cursor"] = strconv.Itoa(offset + len(out))
+	}
+	writeJSON(w, http.StatusOK, body)
 }
 
 // audiosJSON renders the audio attachments of an entry, each with its own
@@ -481,8 +560,8 @@ func (s *Server) audiosJSON(ctx context.Context, audios []store.Attachment) []ma
 			"duration_seconds": a.DurationSeconds,
 			"created_at":       a.CreatedAt,
 		}
-		if t, segs, err := s.deps.Store.GetTranscriptByAttachment(ctx, a.ID); err == nil {
-			item["transcript"] = transcriptJSON(t, segs)
+		if t, err := s.deps.Store.TranscriptByAttachment(ctx, a.ID); err == nil {
+			item["transcript"] = transcriptSummaryJSON(t)
 		}
 		out = append(out, item)
 	}

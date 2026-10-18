@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -33,11 +32,27 @@ func (s *Server) serveAttachment(w http.ResponseWriter, r *http.Request, att sto
 		contentType = "application/octet-stream"
 	}
 	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Cache-Control", "private, max-age=3600")
+	// An attachment id always points at the same immutable ciphertext. A long
+	// cache is safe: rotating the token changes the URL, and a re-upload creates
+	// a new id.
+	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
 	w.Header().Set("Accept-Ranges", "bytes")
+	etag := `"` + att.ID + `"`
+	if att.SHA256 != "" {
+		etag = `"` + att.SHA256 + `"`
+	}
+	w.Header().Set("ETag", etag)
+	if r.Header.Get("Range") == "" && etagMatches(r.Header.Get("If-None-Match"), etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
 
 	size := att.SizeBytes
 	if size <= 0 {
+		if r.Method == http.MethodHead {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 		if _, err := s.deps.Ingest.DecryptAttachment(r.Context(), att, w); err != nil && s.deps.Logger != nil {
 			s.deps.Logger.Error("api: transmitir anexo", "erro", err)
@@ -54,48 +69,37 @@ func (s *Server) serveAttachment(w http.ResponseWriter, r *http.Request, att sto
 		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 		w.WriteHeader(http.StatusOK)
 	}
-
-	var dst io.Writer = w
-	if partial {
-		dst = &windowWriter{dst: w, start: start, end: end}
+	// HEAD asks for metadata only: never decrypt the object to discard the body.
+	if r.Method == http.MethodHead {
+		return
 	}
-	if _, err := s.deps.Ingest.DecryptAttachment(r.Context(), att, dst); err != nil && s.deps.Logger != nil {
+
+	var err error
+	if partial {
+		// Decrypt only the requested window instead of the whole object.
+		_, err = s.deps.Ingest.DecryptAttachmentRange(r.Context(), att, start, end, w)
+	} else {
+		_, err = s.deps.Ingest.DecryptAttachment(r.Context(), att, w)
+	}
+	if err != nil && s.deps.Logger != nil {
 		s.deps.Logger.Error("api: transmitir anexo", "erro", err)
 	}
 }
 
-// windowWriter discards decrypted bytes outside [start, end], so a byte range
-// can be served even though the ciphertext must be decrypted from the start.
-type windowWriter struct {
-	dst   io.Writer
-	start int64
-	end   int64
-	pos   int64
-}
-
-func (w *windowWriter) Write(p []byte) (int, error) {
-	n := int64(len(p))
-	from := w.pos
-	to := w.pos + n - 1
-	w.pos += n
-	if from > w.end {
-		return len(p), nil
+// etagMatches reports whether an If-None-Match header value matches etag. An
+// absent header (or absent ETag) never matches: otherwise every response
+// without a validator would be turned into a 304.
+func etagMatches(header, etag string) bool {
+	if header == "" || etag == "" {
+		return false
 	}
-	lo := from
-	if lo < w.start {
-		lo = w.start
+	for _, candidate := range strings.Split(header, ",") {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "*" || candidate == etag || strings.TrimPrefix(candidate, "W/") == etag {
+			return true
+		}
 	}
-	hi := to
-	if hi > w.end {
-		hi = w.end
-	}
-	if lo > hi {
-		return len(p), nil
-	}
-	if _, err := w.dst.Write(p[lo-from : hi-from+1]); err != nil {
-		return len(p), err
-	}
-	return len(p), nil
+	return false
 }
 
 // parseRange parses a single-range "bytes=start-end" header. It returns the
