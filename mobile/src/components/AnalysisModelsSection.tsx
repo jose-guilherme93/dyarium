@@ -8,6 +8,7 @@ import { Card } from '@/components/Card';
 import {
   ANALYSIS_MODELS,
   analysisModelById,
+  modelFitsDevice,
   recommendAnalysisModel,
 } from '@/core/analysisModels';
 import { analysisNoteContent } from '@/core/analysisPrompt';
@@ -197,9 +198,16 @@ function EnabledAnalysisModelsSection() {
                   ) : null}
                 </View>
                 <Text style={styles.cardHint}>
-                  {model.fileName.replace('.gguf', '')} · {formatBytes(model.sizeBytes)}
+                  {model.fileName.replace('.gguf', '')} · {formatBytes(model.sizeBytes)} ·{' '}
+                  {formatBytes(model.minRamBytes)} de RAM
                   {isInstalled ? ' · baixado' : ''}
                 </Text>
+                {modelFitsDevice(model, Device.totalMemory) === false ? (
+                  <Text style={styles.ramWarning}>
+                    Este aparelho tem {formatBytes(Device.totalMemory ?? 0)}; o modelo pode ser
+                    encerrado pelo sistema.
+                  </Text>
+                ) : null}
               </View>
             </Pressable>
 
@@ -437,6 +445,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   progressBar: { height: 3, borderRadius: 2, backgroundColor: colors.accent },
+  ramWarning: { color: colors.warning, fontSize: fontSize.xs, lineHeight: 17 },
   error: { color: colors.danger, fontSize: fontSize.sm },
   benchmarkActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, flexWrap: 'wrap' },
   disabled: { opacity: 0.5 },

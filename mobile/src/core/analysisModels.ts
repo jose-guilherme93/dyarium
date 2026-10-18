@@ -73,6 +73,58 @@ export const ANALYSIS_MODELS: AnalysisModelInfo[] = [
     tier: 'recommended',
     license: 'Apache-2.0',
   },
+  {
+    id: 'gemma-3-1b',
+    label: 'Gemma 3 1B',
+    repo: 'unsloth/gemma-3-1b-it-GGUF',
+    revision: 'f0b45be0aac41bd6a100a4b5734cad5f67255bfb',
+    fileName: 'gemma-3-1b-it-Q4_K_M.gguf',
+    sizeBytes: 806_058_272,
+    sha256: '8270790f3ab69fdfe860b7b64008d9a19986d8df7e407bb018184caa08798ebd',
+    rank: 4,
+    minRamBytes: 8 * GB,
+    tier: 'balanced',
+    license: 'Gemma Terms of Use',
+  },
+  {
+    id: 'qwen3-1.7b',
+    label: 'Qwen3 1.7B',
+    repo: 'unsloth/Qwen3-1.7B-GGUF',
+    revision: 'd7f544eead698dbd1f15126ef60b45a1e1933222',
+    fileName: 'Qwen3-1.7B-Q4_K_M.gguf',
+    sizeBytes: 1_107_409_472,
+    sha256: 'b139949c5bd74937ad8ed8c8cf3d9ffb1e99c866c823204dc42c0d91fa181897',
+    rank: 5,
+    minRamBytes: 11 * GB,
+    tier: 'recommended',
+    license: 'Apache-2.0',
+  },
+  {
+    id: 'qwen3.5-2b',
+    label: 'Qwen3.5 2B',
+    repo: 'unsloth/Qwen3.5-2B-GGUF',
+    revision: 'f6d5376be1edb4d416d56da11e5397a961aca8ae',
+    fileName: 'Qwen3.5-2B-Q4_K_M.gguf',
+    sizeBytes: 1_280_835_840,
+    sha256: 'aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223',
+    rank: 6,
+    minRamBytes: 12 * GB,
+    tier: 'recommended',
+    license: 'Apache-2.0',
+  },
+  {
+    id: 'qwen3.5-4b',
+    label: 'Qwen3.5 4B',
+    repo: 'unsloth/Qwen3.5-4B-GGUF',
+    revision: 'e87f176479d0855a907a41277aca2f8ee7a09523',
+    fileName: 'Qwen3.5-4B-Q4_K_M.gguf',
+    sizeBytes: 2_740_937_888,
+    sha256: '00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4',
+    rank: 7,
+    minRamBytes: 16 * GB,
+    tier: 'recommended',
+    license: 'Apache-2.0',
+  },
 ];
 
 /** Modelo leve de reserva quando a RAM nao pode ser lida. */
@@ -91,6 +143,25 @@ export function analysisModelUrl(model: AnalysisModelInfo): string {
  * Modelo recomendado para a RAM total do aparelho (bytes). Sem informacao,
  * devolve o leve. Aparelhos com menos de 3 GB nao recebem recomendacao.
  */
+/**
+ * O aparelho tem RAM para o modelo? `null` quando a RAM nao pode ser lida (a
+ * tela nao mostra aviso nesse caso).
+ */
+export function modelFitsDevice(
+  model: AnalysisModelInfo,
+  totalMemoryBytes: number | null | undefined,
+): boolean | null {
+  if (
+    totalMemoryBytes === null ||
+    totalMemoryBytes === undefined ||
+    !Number.isFinite(totalMemoryBytes) ||
+    totalMemoryBytes <= 0
+  ) {
+    return null;
+  }
+  return totalMemoryBytes >= model.minRamBytes;
+}
+
 export function recommendAnalysisModel(
   totalMemoryBytes: number | null | undefined,
 ): AnalysisModelInfo | null {
