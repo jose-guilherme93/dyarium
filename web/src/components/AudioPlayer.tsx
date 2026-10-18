@@ -8,6 +8,8 @@ interface AudioPlayerProps {
   onTime?: (seconds: number) => void;
   /** Reports whether the audio is currently playing. */
   onPlaying?: (playing: boolean) => void;
+  /** Position restored from the previous visit, in seconds. */
+  initialTime?: number;
 }
 
 export interface AudioPlayerHandle {
@@ -18,7 +20,7 @@ const RATES = [0.75, 1, 1.25, 1.5, 2];
 
 // AudioPlayer is a compact player for a note's original audio.
 export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(function AudioPlayer(
-  { src, onTime, onPlaying }: AudioPlayerProps,
+  { src, onTime, onPlaying, initialTime = 0 }: AudioPlayerProps,
   handle,
 ) {
   const ref = useRef<HTMLAudioElement | null>(null);
@@ -99,6 +101,13 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
         onLoadedMetadata={(event) => {
           const value = event.currentTarget.duration;
           setDuration(Number.isFinite(value) ? value : 0);
+          if (initialTime > 0) {
+            const element = event.currentTarget;
+            // Seek instead of playing: restoring the position should not make
+            // audio start by itself when the note opens.
+            element.currentTime = Math.min(initialTime, Math.max(0, element.duration - 0.25));
+            setCurrent(element.currentTime);
+          }
         }}
       />
       <button type="button" className="player-toggle" onClick={toggle} aria-label={playing ? "Pausar" : "Reproduzir"}>

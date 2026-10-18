@@ -207,7 +207,7 @@ export const NotesEditor = forwardRef<NotesEditorHandle, NotesEditorProps>(funct
   );
 
   return (
-    <MediaContext.Provider value={{ audios, onOpenEntry: onOpenEntry ?? (() => {}) }}>
+    <MediaContext.Provider value={{ audios, entryId, onOpenEntry: onOpenEntry ?? (() => {}) }}>
       <BlockNoteView
         editor={editor}
         theme={dark ? "dark" : "light"}

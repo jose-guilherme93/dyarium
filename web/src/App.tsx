@@ -25,6 +25,13 @@ export function App() {
   const [openEntryId, setOpenEntryId] = useState<string | null>(null);
   const [entityFocus, setEntityFocus] = useState<{ kind: EntityKind; name: string } | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  // A nota aberta tem o seu proprio contador: um evento de outra entrada nao
+  // pode obrigar a nota visivel a recarregar tudo.
+  const [noteRefreshKey, setNoteRefreshKey] = useState(0);
+  const openEntryRef = useRef<string | null>(null);
+  useEffect(() => {
+    openEntryRef.current = openEntryId;
+  }, [openEntryId]);
   const [failures, setFailures] = useState<Record<string, string>>({});
   const [entryProgress, setEntryProgress] = useState<Record<string, { stage: string; done: number; total: number }>>({});
   const { notify } = useToast();
@@ -44,6 +51,9 @@ export function App() {
   const handleEvent = useCallback(
     (event: ServerEvent) => {
       const id = typeof event.data.entry_id === "string" ? event.data.entry_id : "";
+      if (id && (event.name === "analysis.ready" || event.name === "entry.status")) {
+        api.invalidateAnalysis(id);
+      }
       switch (event.name) {
         case "entry.status":
         case "transcript.ready":
@@ -51,6 +61,9 @@ export function App() {
         case "entry.failed":
         case "model.download":
           bumpRefresh();
+          if (id && id === openEntryRef.current) {
+            setNoteRefreshKey((key) => key + 1);
+          }
           break;
         case "job.progress":
           if (id) {
@@ -166,7 +179,10 @@ export function App() {
     );
   }
 
-  const refresh = () => setRefreshKey((key) => key + 1);
+  const refresh = () => {
+    setRefreshKey((key) => key + 1);
+    setNoteRefreshKey((key) => key + 1);
+  };
 
   const createNote = async (parentId: string | null) => {
     try {
@@ -274,7 +290,7 @@ export function App() {
                 <NoteEditor
                   key={openEntryId}
                   entryId={openEntryId}
-                  refreshKey={refreshKey}
+                  refreshKey={noteRefreshKey}
                   failureReason={failures[openEntryId]}
                   progress={entryProgress[openEntryId]}
                   onChanged={refresh}

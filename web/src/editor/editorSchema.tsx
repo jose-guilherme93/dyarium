@@ -19,8 +19,9 @@ import type { Audio } from "../types";
 // and to navigation between notes, without going through BlockNote internals.
 export const MediaContext = createContext<{
   audios: Map<string, Audio>;
+  entryId: string;
   onOpenEntry: (id: string) => void;
-}>({ audios: new Map(), onOpenEntry: () => {} });
+}>({ audios: new Map(), entryId: "", onOpenEntry: () => {} });
 
 // ---- inline content: a reference to another note (/link) ----
 
@@ -68,12 +69,12 @@ const audioBlock = createReactBlockSpec(
 );
 
 function AudioBlockView({ attachmentId }: { attachmentId: string }) {
-  const { audios } = useContext(MediaContext);
+  const { audios, entryId } = useContext(MediaContext);
   const audio = audios.get(attachmentId);
   if (!audio) {
     return <div className="doc-audio doc-audio--pending">Audio sendo processado...</div>;
   }
-  return <AudioTrack audio={audio} />;
+  return <AudioTrack audio={audio} entryId={entryId} />;
 }
 
 /** `![legenda](attachment:<id>)`, com a largura que o app le e escreve. */

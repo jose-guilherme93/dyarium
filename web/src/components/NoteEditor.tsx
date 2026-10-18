@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PartialBlock } from "@blocknote/core";
 import { api, isConflict } from "../api";
 import { AudioTrack } from "./AudioTrack";
@@ -7,6 +7,7 @@ import { markdownToPlain, noteBlocksToMarkdown, normalizeLegacyAttachmentImages 
 import { markdownToNoteBlocks } from "../editor/markdownBlocks";
 import { createAutosave, type Autosave } from "../lib/autosave";
 import { formatDateTime, formatDuration } from "../lib/format";
+import { patchNoteViewState, readNoteViewState } from "../lib/noteViewState";
 import type { Analysis, Attachment, Audio, EntityKind, Entry, Note, Revision } from "../types";
 import { Spinner, isBusy, statusLabel } from "./Status";
 import { TagEditor } from "./TagEditor";
@@ -262,8 +263,14 @@ export function NoteEditor({
   const [busy, setBusy] = useState<"analyze" | "retranscribe" | null>(null);
   const [saving, setSaving] = useState<"idle" | "saving" | "saved">("idle");
   const [error, setError] = useState("");
-  const [asideOpen, setAsideOpen] = useState(false);
+  const [asideOpen, setAsideOpen] = useState(() => readNoteViewState(entryId).asideOpen);
   const [optionsOpen, setOptionsOpen] = useState(false);
+  const [expandedAudios, setExpandedAudios] = useState<string[]>(() => readNoteViewState(entryId).expandedAudios);
+  const viewStateRef = useRef(readNoteViewState(entryId));
+  const docRef = useRef<HTMLDivElement | null>(null);
+  const scrollRestoredRef = useRef(false);
+  const bodyDirtyRef = useRef(false);
+  const titleDirtyRef = useRef(false);
   const [fullWidth, setFullWidth] = useState<boolean>(() => {
     try {
       return localStorage.getItem("dyarium.noteWidth") === "full";
@@ -286,7 +293,8 @@ export function NoteEditor({
   const titleVersionRef = useRef("");
   // Markdown cru: fonte da verdade e a segunda visualizacao da nota.
   const [rawMarkdown, setRawMarkdown] = useState("");
-  const [rawOpen, setRawOpen] = useState(false);
+  const [rawOpen, setRawOpen] = useState(() => readNoteViewState(entryId).rawOpen);
+  const [revisionsCursor, setRevisionsCursor] = useState<string | undefined>(undefined);
   const lastQueuedRef = useRef<string>("");
   const saveBodyRef = useRef<(document: unknown) => Promise<void>>(async () => {});
   const saveTitleRef = useRef<() => Promise<void>>(async () => {});
@@ -308,54 +316,96 @@ export function NoteEditor({
     el.style.height = `${Math.max(el.scrollHeight, 44)}px`;
   }, [title, entry]);
 
+  const applyNoteData = useCallback(
+    (loaded: Entry, analysisValue: Analysis | null, imagesValue: Attachment[], note: Note | undefined, applyBody: boolean) => {
+      setEntry(loaded);
+      if (!titleDirtyRef.current) {
+        setTitle(loaded.title || loaded.original_filename || "");
+      }
+      setAnalysis(analysisValue);
+      setImages(imagesValue);
+      if (note) {
+        noteIdRef.current = note.id;
+        setNoteId(note.id);
+        noteTitleRef.current = note.title ?? "";
+      } else {
+        noteIdRef.current = null;
+        setNoteId(null);
+        noteTitleRef.current = "";
+      }
+      // A versao do corpo lida agora: e o que o servidor compara na proxima
+      // gravacao, para recusar o que mudou no celular em vez de sobrescrever.
+      bodyVersionRef.current = note?.body_version ?? "";
+      titleVersionRef.current = loaded.versions?.title ?? "";
+      if (!applyBody) {
+        return;
+      }
+      const stored = note?.content_markdown ?? "";
+      // Corpo antigo pode ter a imagem como HTML (com o token do anexo na URL).
+      // A visao crua mostra o markdown canonico e, se houve conversao, a nota e
+      // regravada uma vez para o servidor voltar a ter a referencia `attachment:`.
+      const markdown = normalizeLegacyAttachmentImages(stored);
+      const filled = note ? noteBodyToBlocks(note) : undefined;
+      setRawMarkdown(markdown);
+      setInitialBody(filled);
+      lastQueuedRef.current = markdown;
+      setBodyLoaded(true);
+      if (markdown !== stored) {
+        autosaveRef.current?.schedule(markdown);
+      }
+    },
+    [],
+  );
+
   const loadFull = useCallback(async () => {
     setError("");
     setBodyLoaded(false);
     noteIdRef.current = null;
+
+    // First paint comes from the local cache: reopening a note should not wait
+    // for the network. The fresh copy is applied right after. Both start
+    // together so a slow IndexedDB never delays the request.
+    let freshApplied = false;
+    let cachedShown = false;
+    void Promise.all([
+      api.getEntryCached(entryId),
+      api.getAnalysisCached(entryId),
+      api.listNotesCached(entryId),
+      api.listAttachmentsCached(entryId),
+    ]).then(([cachedEntry, cachedAnalysis, cachedNotes, cachedImages]) => {
+      if (freshApplied || !cachedEntry) {
+        return;
+      }
+      cachedShown = true;
+      applyNoteData(
+        cachedEntry,
+        cachedAnalysis ?? null,
+        cachedImages?.attachments ?? [],
+        cachedNotes?.notes?.[0],
+        !bodyDirtyRef.current,
+      );
+    });
     const [entryRes, analysisRes, notesRes, imagesRes] = await Promise.allSettled([
       api.getEntry(entryId),
       api.getAnalysis(entryId),
       api.listNotes(entryId),
       api.listAttachments(entryId),
     ]);
+    freshApplied = true;
     if (entryRes.status !== "fulfilled") {
-      setError(entryRes.reason instanceof Error ? entryRes.reason.message : "falha ao carregar a nota");
+      if (!cachedShown) {
+        setError(entryRes.reason instanceof Error ? entryRes.reason.message : "falha ao carregar a nota");
+      }
       return;
     }
-    const loaded = entryRes.value;
-    setEntry(loaded);
-    setTitle(loaded.title || loaded.original_filename || "");
-    setAnalysis(analysisRes.status === "fulfilled" ? analysisRes.value : null);
-    const images = imagesRes.status === "fulfilled" ? imagesRes.value.attachments ?? [] : [];
-    setImages(images);
-    const note = notesRes.status === "fulfilled" ? notesRes.value.notes?.[0] : undefined;
-    const filled = note ? noteBodyToBlocks(note) : undefined;
-    if (note) {
-      noteIdRef.current = note.id;
-      setNoteId(note.id);
-      noteTitleRef.current = note.title ?? "";
-    } else {
-      noteIdRef.current = null;
-      setNoteId(null);
-      noteTitleRef.current = "";
-    }
-    // A versao do corpo lida agora: e o que o servidor compara na proxima
-    // gravacao, para recusar o que mudou no celular em vez de sobrescrever.
-    bodyVersionRef.current = note?.body_version ?? "";
-    titleVersionRef.current = loaded.versions?.title ?? "";
-    const stored = note?.content_markdown ?? "";
-    // Corpo antigo pode ter a imagem como HTML (com o token do anexo na URL).
-    // A visao crua mostra o markdown canonico e, se houve conversao, a nota e
-    // regravada uma vez para o servidor voltar a ter a referencia `attachment:`.
-    const markdown = normalizeLegacyAttachmentImages(stored);
-    setRawMarkdown(markdown);
-    setInitialBody(filled);
-    lastQueuedRef.current = markdown;
-    setBodyLoaded(true);
-    if (markdown !== stored) {
-      autosaveRef.current?.schedule(markdown);
-    }
-  }, [entryId]);
+    applyNoteData(
+      entryRes.value,
+      analysisRes.status === "fulfilled" ? analysisRes.value : null,
+      imagesRes.status === "fulfilled" ? imagesRes.value.attachments ?? [] : [],
+      notesRes.status === "fulfilled" ? notesRes.value.notes?.[0] : undefined,
+      !bodyDirtyRef.current,
+    );
+  }, [applyNoteData, entryId]);
 
   const loadLight = useCallback(async () => {
     const [entryRes, analysisRes, imagesRes] = await Promise.allSettled([
@@ -387,6 +437,7 @@ export function NoteEditor({
   useEffect(() => {
     if (!asideOpen || !noteId) {
       setRevisions([]);
+      setRevisionsCursor(undefined);
       return;
     }
     let active = true;
@@ -395,17 +446,61 @@ export function NoteEditor({
       .then((result) => {
         if (active) {
           setRevisions(result.revisions ?? []);
+          setRevisionsCursor(result.next_cursor);
         }
       })
       .catch(() => {
         if (active) {
           setRevisions([]);
+          setRevisionsCursor(undefined);
         }
       });
     return () => {
       active = false;
     };
   }, [asideOpen, noteId]);
+
+  const loadMoreRevisions = useCallback(() => {
+    if (!noteId || !revisionsCursor) {
+      return;
+    }
+    api
+      .listRevisions(noteId, revisionsCursor)
+      .then((result) => {
+        setRevisions((current) => [...current, ...(result.revisions ?? [])]);
+        setRevisionsCursor(result.next_cursor);
+      })
+      .catch(() => {
+        // keep what is already on screen
+      });
+  }, [noteId, revisionsCursor]);
+
+  // Preserve the ephemeral UI state across unmounting (view switch or note
+  // switch). Content itself is cached; these are the bits React would lose.
+  useEffect(() => {
+    patchNoteViewState(entryId, { asideOpen });
+  }, [asideOpen, entryId]);
+  useEffect(() => {
+    patchNoteViewState(entryId, { rawOpen });
+  }, [rawOpen, entryId]);
+  useEffect(() => {
+    patchNoteViewState(entryId, { expandedAudios });
+  }, [expandedAudios, entryId]);
+
+  // Restore the scroll position once the document is on screen.
+  useEffect(() => {
+    if (!bodyLoaded || scrollRestoredRef.current) {
+      return;
+    }
+    const el = docRef.current;
+    if (!el) {
+      return;
+    }
+    scrollRestoredRef.current = true;
+    window.requestAnimationFrame(() => {
+      el.scrollTop = viewStateRef.current.scrollTop;
+    });
+  }, [bodyLoaded]);
 
   const status = entry?.status;
   const running = isBusy(status);
@@ -467,6 +562,7 @@ export function NoteEditor({
     if (markdown === lastQueuedRef.current) {
       return;
     }
+    bodyDirtyRef.current = true;
     lastQueuedRef.current = markdown;
     autosaveRef.current?.schedule(markdown);
   }, []);
@@ -609,6 +705,39 @@ export function NoteEditor({
     });
   };
 
+  const audios = entry?.audios ?? [];
+  const audioMap = new Map<string, Audio>(audios.map((audio) => [audio.id, audio]));
+  const processing = running || busy !== null;
+  // Derived numbers walk the whole document. They used to be recomputed on
+  // every keystroke and every SSE event; memoizing keeps typing cheap.
+  const spokenText = useMemo(
+    () => audios.map((audio) => audio.transcript?.text ?? "").join(" "),
+    [audios],
+  );
+  const noteText = useMemo(
+    () => `${blocksText(initialBody)} ${spokenText}`.replace(/\s+/g, " ").trim(),
+    [initialBody, spokenText],
+  );
+  const words = useMemo(() => (noteText ? noteText.split(/\s+/).length : 0), [noteText]);
+  const chars = noteText.length;
+  const mediaBytes = useMemo(
+    () =>
+      audios.reduce((sum, audio) => sum + audio.size_bytes, 0) +
+      images.reduce((sum, image) => sum + image.size_bytes, 0),
+    [audios, images],
+  );
+  const totalBytes = useMemo(
+    () => mediaBytes + new TextEncoder().encode(noteText).length,
+    [mediaBytes, noteText],
+  );
+
+  // History is a word diff over every revision: only build it when the panel
+  // that shows it is open.
+  const history = useMemo(
+    () => (asideOpen ? buildHistory(revisions, initialBody) : []),
+    [asideOpen, revisions, initialBody],
+  );
+
   if (!entry) {
     return (
       <div className="note">
@@ -621,20 +750,6 @@ export function NoteEditor({
       </div>
     );
   }
-
-  const audios = entry.audios ?? [];
-  const audioMap = new Map<string, Audio>(audios.map((audio) => [audio.id, audio]));
-  const processing = running || busy !== null;
-  const spokenText = audios.map((audio) => audio.transcript?.text ?? "").join(" ");
-  const noteText = `${blocksText(initialBody)} ${spokenText}`.replace(/\s+/g, " ").trim();
-  const words = noteText ? noteText.split(/\s+/).length : 0;
-  const chars = noteText.length;
-  const mediaBytes =
-    audios.reduce((sum, audio) => sum + audio.size_bytes, 0) +
-    images.reduce((sum, image) => sum + image.size_bytes, 0);
-  const totalBytes = mediaBytes + new TextEncoder().encode(noteText).length;
-
-  const history = buildHistory(revisions, initialBody);
 
   const insights = processing ? (
     <div className="analysis-loading">
@@ -720,7 +835,14 @@ export function NoteEditor({
     <div
       className={`note note-font--${font}${fullWidth ? " note--wide" : ""}${asideOpen ? " note--aside-open" : ""}`}
     >
-      <div className="note-doc">
+      <div
+        className="note-doc"
+        ref={docRef}
+        onScroll={(event) => {
+          viewStateRef.current.scrollTop = event.currentTarget.scrollTop;
+          patchNoteViewState(entryId, { scrollTop: event.currentTarget.scrollTop });
+        }}
+      >
         <div className="note-topbar">
           <span className="save-state muted">
             {saving === "saving" ? "salvando" : saving === "saved" ? "salvo" : ""}
@@ -865,7 +987,10 @@ export function NoteEditor({
           className="note-title"
           rows={1}
           value={title}
-          onChange={(event) => setTitle(event.target.value)}
+          onChange={(event) => {
+            titleDirtyRef.current = true;
+            setTitle(event.target.value);
+          }}
           onBlur={() => void saveTitle()}
           placeholder="Sem titulo"
           aria-label="Titulo da nota"
@@ -885,7 +1010,20 @@ export function NoteEditor({
         {audios.length > 0 ? (
           <div className="audio-stack">
             {audios.map((audio) => (
-              <AudioTrack key={audio.id} audio={audio} />
+              <AudioTrack
+                key={audio.id}
+                audio={audio}
+                entryId={entry.id}
+                initialExpanded={expandedAudios.includes(audio.id)}
+                initialTime={viewStateRef.current.audioTimes[audio.id] ?? 0}
+                onExpandedChange={(expanded) => {
+                  setExpandedAudios((current) =>
+                    expanded
+                      ? current.includes(audio.id) ? current : [...current, audio.id]
+                      : current.filter((id) => id !== audio.id),
+                  );
+                }}
+              />
             ))}
           </div>
         ) : null}
@@ -988,6 +1126,11 @@ export function NoteEditor({
                   </li>
                 ))}
               </ul>
+            )}
+            {revisionsCursor && (
+              <button type="button" className="transcript-toggle" onClick={loadMoreRevisions}>
+                Carregar mais
+              </button>
             )}
           </section>
 

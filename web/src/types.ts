@@ -55,7 +55,8 @@ export interface Transcript {
   text: string;
   trim_silence: boolean;
   duration_seconds: number;
-  segments: Segment[];
+  /** Ausente no payload da entrada; carregado sob demanda ao expandir. */
+  segments?: Segment[];
 }
 
 export interface Analysis {

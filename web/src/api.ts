@@ -1,4 +1,5 @@
 import { cacheGet, cacheSet } from "./lib/idb";
+import { shrinkImage } from "./lib/image";
 import { setOffline } from "./lib/offline";
 import type {
   Analysis,
@@ -14,6 +15,7 @@ import type {
   MoodPoint,
   Note,
   Revision,
+  Segment,
   Settings,
   Tag,
   Transcript,
@@ -63,6 +65,109 @@ export class ApiError extends Error {
   }
 }
 
+// memoryCache keeps the last GET payloads in memory so switching notes can
+// paint instantly without even touching IndexedDB. IndexedDB holds the same
+// values across reloads.
+const memoryCache = new Map<string, string>();
+// ETags are tiny; keeping them in memory avoids an IndexedDB round-trip before
+// every revalidation.
+const etagCache = new Map<string, string>();
+// inflight deduplicates concurrent GETs for the same URL (the note loads four
+// endpoints in parallel and fast note switching used to fire them twice).
+const inflight = new Map<string, Promise<string>>();
+
+async function readCache(url: string): Promise<string | undefined> {
+  if (memoryCache.has(url)) {
+    return memoryCache.get(url);
+  }
+  const cached = await cacheGet(url);
+  if (cached !== undefined) {
+    memoryCache.set(url, cached);
+  }
+  return cached;
+}
+
+function writeCache(url: string, text: string): void {
+  memoryCache.set(url, text);
+  void cacheSet(url, text);
+}
+
+/**
+ * cachedGet returns the last cached copy of a GET without touching the network.
+ * Views use it for the first paint and then let the normal request revalidate
+ * in the background.
+ */
+export async function cachedGet<T>(path: string): Promise<T | undefined> {
+  const text = await readCache(`/api/v1${path}`);
+  if (text === undefined) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return undefined;
+  }
+}
+
+async function getText(url: string, headers: Record<string, string>): Promise<string> {
+  const pending = inflight.get(url);
+  if (pending) {
+    return pending;
+  }
+  const run = (async () => {
+    const cached = await readCache(url);
+    const etag = etagCache.get(url) || (await cacheGet(`etag:${url}`)) || "";
+    if (etag) {
+      etagCache.set(url, etag);
+    }
+    try {
+      const requestHeaders = etag ? { ...headers, "If-None-Match": etag } : headers;
+      const res = await fetch(url, { headers: requestHeaders });
+      if (res.status === 304) {
+        setOffline(false);
+        if (cached !== undefined) {
+          return cached;
+        }
+        // The validator survived but the body did not: fetch it again without
+        // the conditional header.
+        const retry = await fetch(url, { headers });
+        const text = await retry.text();
+        if (!retry.ok) {
+          throw new ApiError(retry.statusText, retry.status);
+        }
+        writeCache(url, text);
+        return text;
+      }
+      const text = await res.text();
+      if (!res.ok) {
+        const body = text ? JSON.parse(text) : {};
+        throw new ApiError(body?.error?.message ?? res.statusText, res.status, body?.error?.code);
+      }
+      setOffline(false);
+      writeCache(url, text);
+      const next = res.headers.get("ETag");
+      if (next) {
+        etagCache.set(url, next);
+        void cacheSet(`etag:${url}`, next);
+      }
+      return text;
+    } catch (err) {
+      // Serve the last cached copy when the network is unavailable.
+      if (!(err instanceof ApiError) && cached !== undefined) {
+        setOffline(true);
+        return cached;
+      }
+      throw err;
+    }
+  })();
+  inflight.set(url, run);
+  try {
+    return await run;
+  } finally {
+    inflight.delete(url);
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const method = (init?.method ?? "GET").toUpperCase();
   const isGet = method === "GET";
@@ -74,38 +179,27 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers["Content-Type"] = "application/json";
   }
   const url = `/api/v1${path}`;
-  try {
-    const res = await fetch(url, { ...init, headers });
-    if (res.status === 204) {
-      setOffline(false);
-      return undefined as T;
-    }
-    const text = await res.text();
-    if (!res.ok) {
-      const body = text ? JSON.parse(text) : {};
-      // 409 e conflito de edicao, nao erro: o chamador precisa saber qual campo
-      // brigou para oferecer a escolha ao usuario.
-      if (res.status === 409) {
-        throw new ConflictError(body?.error?.message ?? "a nota mudou no outro lugar", body?.conflict ?? []);
-      }
-      throw new ApiError(body?.error?.message ?? res.statusText, res.status, body?.error?.code);
-    }
-    setOffline(false);
-    if (isGet) {
-      void cacheSet(url, text);
-    }
+  if (isGet) {
+    const text = await getText(url, headers);
     return (text ? JSON.parse(text) : {}) as T;
-  } catch (err) {
-    // Serve the last cached copy when the network is unavailable.
-    if (isGet && !(err instanceof ApiError)) {
-      const cached = await cacheGet(url);
-      if (cached !== undefined) {
-        setOffline(true);
-        return JSON.parse(cached) as T;
-      }
-    }
-    throw err;
   }
+  const res = await fetch(url, { ...init, headers });
+  if (res.status === 204) {
+    setOffline(false);
+    return undefined as T;
+  }
+  const text = await res.text();
+  if (!res.ok) {
+    const body = text ? JSON.parse(text) : {};
+    // 409 e conflito de edicao, nao erro: o chamador precisa saber qual campo
+    // brigou para oferecer a escolha ao usuario.
+    if (res.status === 409) {
+      throw new ConflictError(body?.error?.message ?? "a nota mudou no outro lugar", body?.conflict ?? []);
+    }
+    throw new ApiError(body?.error?.message ?? res.statusText, res.status, body?.error?.code);
+  }
+  setOffline(false);
+  return (text ? JSON.parse(text) : {}) as T;
 }
 
 export interface EntryFilters {
@@ -135,38 +229,80 @@ export function isConflict(error: unknown): error is ConflictError {
   return error instanceof ConflictError;
 }
 
+function entriesPath(filters?: EntryFilters): string {
+  const params = new URLSearchParams();
+  if (filters?.person) {
+    params.set("person", filters.person);
+  }
+  if (filters?.place) {
+    params.set("place", filters.place);
+  }
+  if (filters?.theme) {
+    params.set("theme", filters.theme);
+  }
+  // Sem filtro o servidor traz as duas listas. O dashboard abre na lista de
+  // trabalho; as arquivadas ficam na aba delas.
+  if (filters?.archived !== undefined) {
+    params.set("archived", filters.archived ? "1" : "0");
+  }
+  const query = params.toString();
+  return `/entries${query ? `?${query}` : ""}`;
+}
+
+// analysisMisses remembers entries that answered 404 for analysis in this
+// session, so reopening the note does not pay another round-trip for a note
+// that has no analysis yet. A new analyze request clears it.
+const analysisMisses = new Set<string>();
+
+async function requestAnalysis(id: string): Promise<Analysis> {
+  if (analysisMisses.has(id)) {
+    throw new ApiError("Sem analise ainda.", 404, "not_found");
+  }
+  try {
+    return await request<Analysis>(`/entries/${id}/analysis`);
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) {
+      analysisMisses.add(id);
+    }
+    throw err;
+  }
+}
+
 export const api = {
-  listEntries: (filters?: EntryFilters) => {
-    const params = new URLSearchParams();
-    if (filters?.person) {
-      params.set("person", filters.person);
-    }
-    if (filters?.place) {
-      params.set("place", filters.place);
-    }
-    if (filters?.theme) {
-      params.set("theme", filters.theme);
-    }
-    // Sem filtro o servidor traz as duas listas. O dashboard abre na lista de
-    // trabalho; as arquivadas ficam na aba delas.
-    if (filters?.archived !== undefined) {
-      params.set("archived", filters.archived ? "1" : "0");
-    }
-    const query = params.toString();
-    return request<{ entries: Entry[] }>(`/entries${query ? `?${query}` : ""}`);
-  },
+  listEntries: (filters?: EntryFilters) => request<{ entries: Entry[] }>(entriesPath(filters)),
+  listEntriesCached: (filters?: EntryFilters) => cachedGet<{ entries: Entry[] }>(entriesPath(filters)),
   createEntry: (title: string, parentId?: string | null) =>
     request<Entry>("/entries", {
       method: "POST",
       body: JSON.stringify(parentId ? { title, parent_id: parentId } : { title }),
     }),
   getEntry: (id: string) => request<Entry>(`/entries/${id}`),
+  /** Ultima copia em cache da entrada, para a primeira pintura. */
+  getEntryCached: (id: string) => cachedGet<Entry>(`/entries/${id}`),
   getTranscript: (id: string) => request<Transcript>(`/entries/${id}/transcript`),
-  getAnalysis: (id: string) => request<Analysis>(`/entries/${id}/analysis`),
+  /** Uma pagina de segmentos; usada so ao expandir a transcricao. */
+  listSegments: (entryId: string, attachmentId: string, cursor?: string) => {
+    const params = new URLSearchParams({ attachment_id: attachmentId, limit: "500" });
+    if (cursor) {
+      params.set("cursor", cursor);
+    }
+    return request<{ segments: Segment[]; next_cursor?: string }>(
+      `/entries/${entryId}/segments?${params.toString()}`,
+    );
+  },
+  getAnalysis: (id: string) => requestAnalysis(id),
+  getAnalysisCached: (id: string) => cachedGet<Analysis>(`/entries/${id}/analysis`),
+  /** Esquece o 404 em cache depois de uma analise nova. */
+  invalidateAnalysis: (id: string) => {
+    analysisMisses.delete(id);
+  },
   retranscribe: (id: string) => request<{ status: string }>(`/entries/${id}/retranscribe`, { method: "POST" }),
   cancel: (id: string) =>
     request<{ status: string; cancelled: string[] }>(`/entries/${id}/cancel`, { method: "POST" }),
-  analyze: (id: string) => request<{ status: string }>(`/entries/${id}/analyze`, { method: "POST" }),
+  analyze: (id: string) => {
+    analysisMisses.delete(id);
+    return request<{ status: string }>(`/entries/${id}/analyze`, { method: "POST" });
+  },
   deleteEntry: (id: string) => request<void>(`/entries/${id}`, { method: "DELETE" }),
   /** Lixeira: entradas apagadas, com `deleted_at`, da mais recente para a mais antiga. */
   listDeletedEntries: () => request<{ entries: Entry[] }>("/entries?deleted=1&limit=200"),
@@ -189,6 +325,7 @@ export const api = {
     { method: "PATCH", body: JSON.stringify(patch) },
   ),
   listNotes: (id: string) => request<{ notes: Note[] }>(`/entries/${id}/notes`),
+  listNotesCached: (id: string) => cachedGet<{ notes: Note[] }>(`/entries/${id}/notes`),
   /** Cria a nota a partir do markdown do corpo. */
   createNote: (id: string, title: string, markdown: string) =>
     request<Note>(`/entries/${id}/notes`, {
@@ -204,7 +341,13 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ content_markdown: markdown, base_version: baseVersion ?? "" }),
     }),
-  listRevisions: (noteId: string) => request<{ revisions: Revision[] }>(`/notes/${noteId}/revisions`),
+  listRevisions: (noteId: string, cursor?: string) => {
+    const params = new URLSearchParams({ limit: "50" });
+    if (cursor) {
+      params.set("cursor", cursor);
+    }
+    return request<{ revisions: Revision[]; next_cursor?: string }>(`/notes/${noteId}/revisions?${params.toString()}`);
+  },
   listTags: () => request<{ tags: Tag[] }>("/tags"),
   listEntryTags: (entryId: string) => request<{ tags: Tag[] }>(`/entries/${entryId}/tags`),
   setEntryTags: (entryId: string, tags: string[]) =>
@@ -244,6 +387,8 @@ export const api = {
   getMetrics: () => request<MetricsResponse>("/metrics"),
   listAttachments: (entryId: string) =>
     request<{ attachments: Attachment[] }>(`/entries/${entryId}/attachments`),
+  listAttachmentsCached: (entryId: string) =>
+    cachedGet<{ attachments: Attachment[] }>(`/entries/${entryId}/attachments`),
   deleteAttachment: (id: string) => request<void>(`/attachments/${id}`, { method: "DELETE" }),
   createLink: (entryId: string, body: { to_entry_id?: string; url?: string; label?: string }) =>
     request<Link>(`/entries/${entryId}/links`, { method: "POST", body: JSON.stringify(body) }),
@@ -259,15 +404,18 @@ export function attachmentUrl(id: string): string {
   return `/api/v1/attachments/${id}?token=${encodeURIComponent(getToken())}`;
 }
 
-// uploadAttachment stores an image attached to an entry.
+// uploadAttachment stores an image attached to an entry. Photos are shrunk in
+// the browser first: the server has no thumbnail pipeline, so the stored bytes
+// are what every note open has to decrypt.
 export async function uploadAttachment(entryId: string, file: File): Promise<Attachment> {
+  const upload = await shrinkImage(file);
   const res = await fetch(`/api/v1/entries/${entryId}/attachments`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${getToken()}`,
-      "Content-Type": file.type || "application/octet-stream",
+      "Content-Type": upload.type || "application/octet-stream",
     },
-    body: file,
+    body: upload,
   });
   const text = await res.text();
   const body = text ? JSON.parse(text) : {};

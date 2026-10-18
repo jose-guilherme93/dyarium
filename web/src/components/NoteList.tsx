@@ -76,12 +76,18 @@ export function NoteList({ refreshKey, activeId, failures, onOpen, onCreate }: N
   const [searchingOpen, setSearchingOpen] = useState(false);
 
   const load = useCallback(async () => {
+    const cached = await api.listEntriesCached({ archived });
+    if (cached) {
+      setEntries(cached.entries ?? []);
+    }
     try {
       const result = await api.listEntries({ archived });
       setEntries(result.entries ?? []);
       setError("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "falha ao carregar");
+      if (!cached) {
+        setError(err instanceof Error ? err.message : "falha ao carregar");
+      }
     }
   }, [archived]);
 

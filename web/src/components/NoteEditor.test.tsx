@@ -54,6 +54,10 @@ vi.mock("../api", () => ({
     getAnalysis: vi.fn(async () => {
       throw new Error("sem analise");
     }),
+    getEntryCached: vi.fn(async () => undefined),
+    getAnalysisCached: vi.fn(async () => undefined),
+    listNotesCached: vi.fn(async () => undefined),
+    listAttachmentsCached: vi.fn(async () => undefined),
     listNotes: vi.fn(async () => ({ notes: [] })),
     listAttachments: vi.fn(async () => ({ attachments: [] })),
     listRevisions: vi.fn(async () => ({ revisions: [] })),
