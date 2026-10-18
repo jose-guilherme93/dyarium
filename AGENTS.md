@@ -9,13 +9,8 @@ O projeto tem tres superficies: o binario Go (`cmd/`, `internal/`), o dashboard
 
 ## Como trabalhar
 
-- **Toda tarefa comeca em um worktree proprio**, fora do checkout principal:
-  ```
-  /home/joseti/projects/dyarium.worktrees/<slug>
-  ```
-  Criado com `git worktree add -b <tipo>/<slug> <caminho>` a partir de `main`.
-- **Nunca trabalhe no checkout principal** (`/home/joseti/projects/dyarium`)
-  nem mexa nos outros worktrees. Um worktree por tarefa.
+- **Trabalhe direto no checkout e na branch `develop`**, sem worktree. Um
+  worktree por tarefa so quando o mantenedor pedir explicitamente.
 - Antes de mudar algo, leia `docs/` e os arquivos envolvidos. Trate mudancas nao
   commitadas que voce nao criou como trabalho de terceiros: investigue, nao apague.
 - **Nunca faca commit, push ou rebase sem pedido explicito.** Quando pedido, use

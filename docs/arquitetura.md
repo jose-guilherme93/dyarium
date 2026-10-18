@@ -57,6 +57,35 @@ Consequencias que valem registrar:
 - **Largura da imagem** viaja em `{w=50}` (percentual da largura da nota), que o
   markdown nao tem padrao para isso.
 
+## Abertura de nota e cache
+
+Abrir uma nota e uma operacao de leitura local; a rede so revalida. O que sustenta
+isso:
+
+- **Cliente local-first.** O app le titulo, corpo, transcricao e pilha de audios do
+  SQLite na hora. O dashboard pinta a ultima copia do IndexedDB (e da memoria) e
+  revalida em background com `If-None-Match`. Reabrir a mesma nota nao espera rede.
+- **Revalidacao sem bloquear.** A resposta revalidada substitui a copia local
+  quando chega; um evento SSE invalida apenas a entrada a que se refere, nunca a
+  nota aberta por causa de outra nota.
+- **Payload enxuto.** `GET /entries/{id}` carrega o texto da transcricao e nao os
+  segmentos; a transcricao completa vem paginada por
+  `GET /entries/{id}/segments`. JSON tem `ETag` e gzip, e responde `304` quando o
+  cliente ja tem a versao.
+- **Midia cacheavel e barata.** Anexos sao imutaveis por id
+  (`Cache-Control: immutable` + `ETag`), `HEAD` nao decifra e `Range` decifra so o
+  trecho pedido, pulando os registros AES-GCM anteriores. Imagens importadas sao
+  reduzidas para 2048 px no maior lado (app e dashboard) antes de subir.
+- **Editor unico.** O dashboard mantem no maximo o editor da nota atual. Ao
+  desmontar, scroll, painel de propriedades, modo markdown, transcricoes
+  expandidas e posicao do audio ficam num store em memoria por entrada e sao
+  reaplicados na volta.
+- **Leitura nativa no app.** O celular nao monta WebView para abrir a nota: o
+  markdown e interpretado em componentes nativos (texto, titulo, lista, imagem).
+  O editor rico so aparece no toque e desmonta quando o teclado fecha. Foto
+  inserida nasce no tamanho medio (50%) e sempre tem um paragrafo editavel
+  abaixo.
+
 ## Fluxo de dados
 
 1. Cliente inicia um upload: `POST /uploads` com metadados e o SHA-256 esperado do arquivo.

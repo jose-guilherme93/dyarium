@@ -90,12 +90,13 @@ Superficie Android em Expo (development build). O nucleo puro fica em `mobile/sr
 - Importacao de audios compartilhados por outros apps (share sheet): ate 50 por vez, com
   revisao (titulo, ano do lote, ordem dia/mes, 24h/AM-PM, duracao e playback). O audio
   original e preservado; dedupe por SHA-256 no servidor.
-- App de notas (texto e audio): tela da nota sempre editavel, autosave, editor rico
-  (negrito/italico/lista via WebView) e gravar audio embutido. A barra de acoes so aparece
-  com o teclado aberto e o titulo encolhe a fonte quando fica longo; os tres pontinhos
-  abrem compartilhar e a ficha de propriedades (criada em, origem, palavras, caracteres,
-  tamanho, status), como no dashboard. Nota so de texto entra na fila e e enviada como
-  conteudo (endpoint do servidor pendente).
+- App de notas (texto e audio): a nota abre em leitura nativa (markdown vira texto e
+  imagem, com a fonte do aparelho), autosave e gravacao de audio embutida. Tocar no texto
+  monta o editor rico (negrito/italico/lista via WebView); ao fechar o teclado, volta para a
+  leitura. A barra de acoes so aparece com o teclado aberto e o titulo encolhe a fonte quando
+  fica longo; os tres pontinhos abrem compartilhar e a ficha de propriedades (criada em,
+  origem, palavras, caracteres, tamanho, status), como no dashboard. Nota so de texto entra
+  na fila e e enviada como conteudo (endpoint do servidor pendente).
 - Transcricao no aparelho (opcional, nas Opcoes): usa `whisper.rn` (whisper.cpp) com modelos
   ggml baixados em runtime (Tiny..Large v3 Turbo), recomendado pela RAM; o audio AAC e
   decodificado para 16 kHz por um modulo nativo local (sem ffmpeg) e transcrito offline, com o texto
@@ -107,7 +108,10 @@ Superficie Android em Expo (development build). O nucleo puro fica em `mobile/sr
   proprio arquivo (`file://`), sem base64 nem download a cada abertura; um mapa de anexos
   evita reenviar a mesma imagem. Na importacao a foto e reduzida (maior lado ate 2048 px) e
   recomprimida em JPEG de alta qualidade (`expo-image-manipulator`), o que remove o atraso
-  de abrir a nota (o editor nao decodifica mais a foto em resolucao cheia).
+  de abrir a nota (o editor nao decodifica mais a foto em resolucao cheia). Imagem que ainda
+  nao esta no aparelho nao segura a abertura: o editor monta com as locais, baixa o resto em
+  segundo plano e troca o `src` no WebView quando chega. A pilha de audios do servidor
+  tambem fica em cache no SQLite e e revalidada em background.
 - Biblioteca por ano, busca local, pull-to-refresh, swipe para apagar/arquivar e opcoes.
 - Status de sincronizacao no cabecalho e tela de fila; notificacao quando a transcricao
   fica pronta; compartilhar o texto da nota.

@@ -9,6 +9,11 @@ Convencoes gerais:
 - Erros: `{ "error": { "code": "...", "message": "..." } }` com o codigo HTTP apropriado.
 - Ids sao opacos (ULID/UUID). Timestamps em RFC 3339 (UTC).
 - Paginacao por cursor: parametros `limit` e `cursor`; resposta com `next_cursor`.
+- Respostas JSON trazem `ETag` e `Vary: Accept-Encoding`, sao comprimidas com gzip
+  quando o cliente aceita e respondem `304 Not Modified` a `If-None-Match`. Os
+  binarios de midia sao imutaveis por id e usam
+  `Cache-Control: private, max-age=31536000, immutable`; `Range` decifra apenas o
+  trecho pedido e `HEAD` nao decifra o corpo.
 
 ## Sistema
 
@@ -191,10 +196,15 @@ caso contrario, o texto escrito da nota.
 - `created_at` (RFC 3339) posiciona a nota na linha do tempo quando ela nasceu offline.
 
 ### GET /api/v1/entries/{id}
-Retorna a entrada completa: metadados, `audios` (cada audio com a sua transcricao),
-analise, tags, notas e anexos. O `audios` e uma lista; uma nota pode ter varios. Cada
-item traz `id`, `content_type`, `size_bytes`, `duration_seconds`, `created_at` e, quando
-transcrito, `transcript` (modelo, idioma, texto e `segments`).
+Retorna a entrada completa: metadados, `audios`, `tags` e `metrics`. O `audios` e
+uma lista; uma nota pode ter varios. Cada item traz `id`, `content_type`,
+`size_bytes`, `duration_seconds`, `created_at` e, quando transcrito, `transcript`.
+
+O `transcript` aqui e **resumido**: `model`, `language`, `text`, `trim_silence` e
+`duration_seconds`, **sem `segments`**. Os segmentos sao grandes e so fazem falta
+quando o usuario expande a transcricao; use `GET /entries/{id}/segments` para
+busca-los em paginas. `GET /entries/{id}/transcript` continua devolvendo a
+transcricao inteira com `segments`.
 
 ### DELETE /api/v1/entries/{id}
 Remocao logica da entrada. A entrada fica na lixeira por uma janela de retencao
@@ -240,7 +250,11 @@ vez de transcrever, e o dashboard mostra o texto. Corpo:
   substituida. Emite `transcript.ready`.
 
 ### GET /api/v1/entries/{id}/segments
-Lista os segmentos com paginacao, para leitura incremental.
+Lista os segmentos com paginacao, para leitura incremental. Parametros:
+`attachment_id` (opcional; sem ele usa a transcricao mais recente da entrada),
+`limit` (padrao 200, teto 1000) e `cursor` (o `next_cursor` da pagina anterior).
+Resposta: `{ "segments": [{ "start_ms", "end_ms", "text" }], "next_cursor": "..." }`.
+`next_cursor` so aparece quando existe outra pagina.
 
 ## Midia
 
@@ -259,7 +273,9 @@ Envia uma imagem. O corpo e os bytes da imagem e o `Content-Type` deve comecar c
 
 ### GET /api/v1/attachments/{id}
 Transmite o anexo decifrado (imagens e audios), com suporte a `Range` para o audio.
-Resposta 200 (ou 206 em requisicoes parciais).
+Resposta 200 (ou 206 em requisicoes parciais). O id e imutavel, entao a resposta
+pode ser cacheada por muito tempo; `HEAD` responde apenas os metadados e `Range`
+nao decifra o arquivo inteiro.
 
 ### DELETE /api/v1/attachments/{id}
 Remove o anexo e o objeto cifrado. Resposta 204.
@@ -451,6 +467,8 @@ Retorna uma nota (markdown + `body_version`).
 Lista revisoes da nota, com o corpo anterior em `content_markdown`. Uma revisao so
 e criada quando o texto realmente mudou. (A coluna no banco se chama `document`
 por heranca do JSON antigo; o conteudo gravado e markdown.)
+Pagina com `limit` (padrao 50, teto 200) e `cursor`; a resposta pode trazer
+`next_cursor` quando houver mais historico.
 
 ## Links
 
