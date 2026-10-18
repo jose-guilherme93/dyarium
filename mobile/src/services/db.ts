@@ -247,6 +247,22 @@ const MIGRATIONS: Migration[] = [
       await addColumn(db, 'recordings', 'server_attachment_id');
     },
   },
+  {
+    version: 16,
+    run: async (db) => {
+      // Analise feita no aparelho vence a do servidor (first-wins): a origem
+      // evita que a leitura de fundo sobrescreva o resultado local.
+      await addColumn(db, 'analyses', 'origin');
+    },
+  },
+  {
+    version: 17,
+    run: async (db) => {
+      // Hash do conteudo analisado: a ficha sabe quando a analise guardada e
+      // de uma versao anterior da nota.
+      await addColumn(db, 'analyses', 'analysis_content_hash');
+    },
+  },
 ];
 
 async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
@@ -571,36 +587,57 @@ export async function markMetricsSynced(syncedAt: string): Promise<void> {
   await db.runAsync('UPDATE metrics_snapshot SET synced_at = ? WHERE id = 1', [syncedAt]);
 }
 
-/** Analise ja feita no servidor, guardada no aparelho para o painel. */
+/** Quem produziu a analise guardada: o servidor ou o modelo do aparelho. */
+export type AnalysisOrigin = 'server' | 'local';
+
+/** Analise de uma nota, guardada no aparelho para a ficha e o painel. */
 export interface CachedAnalysis {
   entryId: string;
   title: string;
   recordedAt: string;
+  /** Origem; ausente equivale a 'server' (dados de versoes anteriores). */
+  origin?: AnalysisOrigin;
+  /** Hash do conteudo analisado (so a analise local preenche). */
+  contentHash?: string;
   analysis: ServerAnalysis;
 }
 
 /**
- * Salva as analises que o servidor devolveu. Upsert por entrada: a mais nova
- * substitui a anterior, sem apagar o que ja estava guardado de outras notas.
+ * Salva as analises. Upsert por entrada: a mais nova substitui a anterior. O
+ * resultado local vence o do servidor (first-wins) e o servidor nunca
+ * sobrescreve uma analise feita no aparelho.
  */
 export async function saveCachedAnalyses(items: CachedAnalysis[]): Promise<void> {
   if (items.length === 0) return;
   const db = await getDb();
   const fetchedAt = new Date().toISOString();
-  await db.withExclusiveTransactionAsync(async (txn) => {
-    for (const item of items) {
-      await txn.runAsync(
-        `INSERT INTO analyses (entry_id, title, recorded_at, payload, fetched_at)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(entry_id) DO UPDATE SET
-           title = excluded.title,
-           recorded_at = excluded.recorded_at,
-           payload = excluded.payload,
-           fetched_at = excluded.fetched_at`,
-        [item.entryId, item.title, item.recordedAt, JSON.stringify(item.analysis), fetchedAt],
-      );
-    }
-  });
+  // Sem transacao exclusiva: a analise local nao pode esperar a fila de
+  // background. Cada upsert e atomico e idempotente por si.
+  for (const item of items) {
+    await db.runAsync(
+      `INSERT INTO analyses (
+         entry_id, title, recorded_at, payload, fetched_at, origin, analysis_content_hash
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(entry_id) DO UPDATE SET
+         title = excluded.title,
+         recorded_at = excluded.recorded_at,
+         payload = excluded.payload,
+         fetched_at = excluded.fetched_at,
+         origin = excluded.origin,
+         analysis_content_hash = excluded.analysis_content_hash
+       WHERE excluded.origin = 'local' OR analyses.origin IS NOT 'local'`,
+      [
+        item.entryId,
+        item.title,
+        item.recordedAt,
+        JSON.stringify(item.analysis),
+        fetchedAt,
+        item.origin ?? 'server',
+        item.contentHash ?? null,
+      ],
+    );
+  }
 }
 
 interface CachedAnalysisRow {
@@ -608,6 +645,8 @@ interface CachedAnalysisRow {
   title: string;
   recorded_at: string;
   payload: string;
+  origin: string | null;
+  analysis_content_hash: string | null;
 }
 
 function toCachedAnalysis(row: CachedAnalysisRow): CachedAnalysis | null {
@@ -616,6 +655,8 @@ function toCachedAnalysis(row: CachedAnalysisRow): CachedAnalysis | null {
       entryId: row.entry_id,
       title: row.title,
       recordedAt: row.recorded_at,
+      origin: row.origin === 'local' ? 'local' : 'server',
+      contentHash: row.analysis_content_hash ?? undefined,
       analysis: JSON.parse(row.payload) as ServerAnalysis,
     };
   } catch {
@@ -628,7 +669,7 @@ function toCachedAnalysis(row: CachedAnalysisRow): CachedAnalysis | null {
 export async function listCachedAnalyses(): Promise<CachedAnalysis[]> {
   const db = await getDb();
   const rows = await db.getAllAsync<CachedAnalysisRow>(
-    'SELECT entry_id, title, recorded_at, payload FROM analyses ORDER BY recorded_at DESC',
+    'SELECT entry_id, title, recorded_at, payload, origin, analysis_content_hash FROM analyses ORDER BY recorded_at DESC',
   );
   const out: CachedAnalysis[] = [];
   for (const row of rows) {
@@ -638,14 +679,42 @@ export async function listCachedAnalyses(): Promise<CachedAnalysis[]> {
   return out;
 }
 
-/** Analise guardada de uma nota, quando o servidor ja a produziu. */
+/** Analise guardada de uma nota. */
 export async function getCachedAnalysis(entryId: string): Promise<CachedAnalysis | null> {
   const db = await getDb();
   const row = await db.getFirstAsync<CachedAnalysisRow>(
-    'SELECT entry_id, title, recorded_at, payload FROM analyses WHERE entry_id = ?',
+    'SELECT entry_id, title, recorded_at, payload, origin, analysis_content_hash FROM analyses WHERE entry_id = ?',
     [entryId],
   );
   return row ? toCachedAnalysis(row) : null;
+}
+
+/**
+ * Move a analise de uma chave temporaria (id local da nota, antes do upload)
+ * para a chave definitiva (entry id do servidor). A origem local vence; se a
+ * chave de destino ja tem uma analise local, ela e mantida.
+ */
+export async function moveCachedAnalysis(fromKey: string, toKey: string): Promise<void> {
+  if (fromKey === toKey) return;
+  const db = await getDb();
+  await db.withTransactionAsync(async () => {
+    const source = await db.getFirstAsync<{ origin: string | null }>(
+      'SELECT origin FROM analyses WHERE entry_id = ?',
+      [fromKey],
+    );
+    if (!source) return;
+    const target = await db.getFirstAsync<{ origin: string | null }>(
+      'SELECT origin FROM analyses WHERE entry_id = ?',
+      [toKey],
+    );
+    // Destino local ou origem de destino mais forte: mantem o destino.
+    if (target && (target.origin === 'local' || source.origin !== 'local')) {
+      await db.runAsync('DELETE FROM analyses WHERE entry_id = ?', [fromKey]);
+      return;
+    }
+    await db.runAsync('DELETE FROM analyses WHERE entry_id = ?', [toKey]);
+    await db.runAsync('UPDATE analyses SET entry_id = ? WHERE entry_id = ?', [toKey, fromKey]);
+  });
 }
 
 /**

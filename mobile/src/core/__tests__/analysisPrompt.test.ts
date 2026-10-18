@@ -1,7 +1,9 @@
 import {
   MAX_ANALYSIS_INPUT_CHARS,
+  analysisContentHash,
   analysisNoteContent,
   buildAnalysisMessages,
+  interpretationOrOriginal,
   parseAnalysisJson,
 } from '../analysisPrompt';
 
@@ -37,6 +39,12 @@ describe('analysisNoteContent', () => {
 });
 
 describe('buildAnalysisMessages', () => {
+  it('nao mostra exemplo de JSON vazio para o modelo copiar', () => {
+    const messages = buildAnalysisMessages({ title: 'Nota', text: 'texto' });
+    expect(messages[0].content).not.toContain('"reading":""');
+    expect(messages[0].content).toContain('Nunca devolva');
+  });
+
   it('inclui titulo, data e conteudo delimitado', () => {
     const messages = buildAnalysisMessages({
       title: 'Um dia',
@@ -85,5 +93,66 @@ describe('parseAnalysisJson', () => {
     expect(parseAnalysisJson('nao sei')).toBeNull();
     expect(parseAnalysisJson('{"emotions":[]}')).toBeNull();
     expect(parseAnalysisJson('{"sentiment":{"score":"x"}}')).toBeNull();
+  });
+});
+
+describe('analysisContentHash', () => {
+  it('muda quando o texto, o titulo ou a transcricao mudam', () => {
+    const base = analysisContentHash({ title: 'Nota', text: 'texto', transcript: 'audio' });
+    expect(analysisContentHash({ title: 'Nota', text: 'texto', transcript: 'audio' })).toBe(base);
+    expect(analysisContentHash({ title: 'Outra', text: 'texto', transcript: 'audio' })).not.toBe(base);
+    expect(analysisContentHash({ title: 'Nota', text: 'texto novo', transcript: 'audio' })).not.toBe(base);
+    expect(analysisContentHash({ title: 'Nota', text: 'texto', transcript: 'outro' })).not.toBe(base);
+  });
+
+  it('ignora markdown e espacos redundantes', () => {
+    expect(analysisContentHash({ title: 'Nota', text: '  um   **texto**  ' })).toBe(
+      analysisContentHash({ title: 'Nota', text: 'um texto' }),
+    );
+  });
+});
+
+describe('interpretationOrOriginal', () => {
+  const input = 'Hoje acordei cansado, fui caminhar no parque e voltei melhor.';
+  const parsed = {
+    sentiment: { score: 0.3, label: 'positivo' as const },
+    emotions: [{ name: 'alivio', value: 0.7 }],
+    themes: [{ name: 'caminhada', value: 0.8 }],
+    people: [],
+    places: [{ name: 'parque' }],
+    events: [],
+    reading: 'Um dia que comeca cansado e melhora com a caminhada.',
+  };
+
+  it('mantem uma leitura que interpreta a nota', () => {
+    expect(interpretationOrOriginal(parsed, input).reading).toBe(parsed.reading);
+  });
+
+  it('troca a leitura quando ela repete o texto', () => {
+    const copied = interpretationOrOriginal({ ...parsed, reading: input }, input);
+    expect(copied.reading).not.toBe(input);
+    expect(copied.reading).toContain('Tom positivo');
+    expect(copied.reading).toContain('caminhada');
+    expect(copied.reading).toContain('alivio');
+  });
+});
+
+describe('parseAnalysisJson com resposta cortada', () => {
+  it('fecha JSON interrompido no meio da string', () => {
+    const raw =
+      '{"sentiment":{"score":0.4,"label":"positivo"},"emotions":[{"name":"alegria","intensity":0.8}],"themes":[{"name":"familia","confidence":0.7}],"people":[],"places":[],"events":[],"reading":"Um dia';
+    const parsed = parseAnalysisJson(raw);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.sentiment.score).toBe(0.4);
+    expect(parsed?.reading).toBe('Um dia');
+    expect(parsed?.themes).toEqual([{ name: 'familia', value: 0.7 }]);
+  });
+
+  it('fecha a chave final que faltou', () => {
+    const raw =
+      '{"sentiment":{"score":-0.5,"label":"negativo"},"emotions":[],"themes":[],"people":[],"places":[],"events":[],"reading":"Triste"';
+    const parsed = parseAnalysisJson(raw);
+    expect(parsed?.sentiment.label).toBe('negativo');
+    expect(parsed?.reading).toBe('Triste');
   });
 });

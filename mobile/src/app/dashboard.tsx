@@ -689,9 +689,17 @@ export default function DashboardScreen() {
         entryId: entry.id,
         title: entry.title || entry.original_filename,
         recordedAt: entry.recorded_at ?? entry.created_at,
+        origin: 'server' as const,
         analysis,
       })) ?? [];
-    return toAnalysisInsights(live.length > 0 ? live : cachedAnalyses);
+    // Local-first: a analise feita no aparelho vence a do servidor e continua
+    // no painel mesmo quando a nota ainda nao subiu.
+    const merged = new Map<string, CachedAnalysis>();
+    for (const item of cachedAnalyses) merged.set(item.entryId, item);
+    for (const item of live) {
+      if (merged.get(item.entryId)?.origin !== 'local') merged.set(item.entryId, item);
+    }
+    return toAnalysisInsights([...merged.values()]);
   }, [data, cachedAnalyses]);
 
   return (

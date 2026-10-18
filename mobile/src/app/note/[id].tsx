@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import * as Battery from 'expo-battery';
 import * as Clipboard from 'expo-clipboard';
 import { useAudioPlayerStatus, type AudioPlayer as AudioPlayerHandle } from 'expo-audio';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -29,7 +30,11 @@ import { caretScrollTarget, keyboardOverlap } from '@/core/keyboard';
 import { Screen } from '@/components/Screen';
 import { STATUS_META } from '@/components/StatusChip';
 import { SyncedTranscript } from '@/components/SyncedTranscript';
-import { toNoteAnalysis } from '@/core/analysis';
+import { simplifiedAnalysis, toNoteAnalysis, toServerAnalysis } from '@/core/analysis';
+import type { ServerAnalysis } from '@/core/api';
+import { analysisModelById } from '@/core/analysisModels';
+import { analysisContentHash } from '@/core/analysisPrompt';
+import { localAnalysisEnabled } from '@/core/features';
 import { checkpointPercent } from '@/core/transcription';
 import {
   formatBytes,
@@ -52,10 +57,23 @@ import {
   uploadLocalImage,
 } from '@/services/attachments';
 import { fetchNoteAnalysis } from '@/services/analysis';
+import { installedAnalysisModels, isAnalysisModelInstalled } from '@/services/analysisModels';
 import { releaseAudioFocus } from '@/services/audioFocus';
-import { getCachedAnalysis, getRecording, upsertRecording, type CachedAnalysis } from '@/services/db';
+import {
+  getCachedAnalysis,
+  getRecording,
+  moveCachedAnalysis,
+  saveCachedAnalyses,
+  upsertRecording,
+  type CachedAnalysis,
+} from '@/services/db';
 import { directoryBytes, sessionDirectory, sessionDirUri } from '@/services/files';
 import { pickImage } from '@/services/image';
+import {
+  analyzeRecording,
+  localAnalysisAvailable,
+  stopAnalysis,
+} from '@/services/localAnalysis';
 import { maybeTranscribeLocally } from '@/services/localTranscription';
 import { enterNote, leaveNote } from '@/services/noteVisibility';
 import { fetchTheirs, syncNoteForcing } from '@/services/noteSync';
@@ -164,7 +182,15 @@ function ToolButton({
 export default function NoteScreen() {
   const { id, action } = useLocalSearchParams<{ id: string; action?: string }>();
   const library = useLibrary();
-  const { typography, setTypography, ready: settingsReady } = useSettings();
+  const {
+    typography,
+    setTypography,
+    analysisModel,
+    setAnalysisModel,
+    analysisLowPower,
+    setAnalysisLowPower,
+    ready: settingsReady,
+  } = useSettings();
   // Enquanto esta tela esta viva, a sincronizacao de fundo espera: a nota e
   // local e nao pode disputar SQLite/rede com o que o usuario esta fazendo.
   useEffect(() => {
@@ -241,13 +267,82 @@ export default function NoteScreen() {
   // Diferencia "ainda nao verifiquei" de "verifiquei e nao ha analise": a
   // secao nao pisca "sem analise" enquanto o refresh silencioso acontece.
   const [analysisChecked, setAnalysisChecked] = useState(false);
+  const [analysisBusy, setAnalysisBusy] = useState(false);
+  const [analysisInput, setAnalysisInput] = useState<{ body: number; transcript: number } | null>(
+    null,
+  );
+  // Estatisticas ao vivo: tempo, tokens/s (CPU trabalhando) e bateria.
+  const [analysisLive, setAnalysisLive] = useState<{
+    elapsedMs: number;
+    tokens: number;
+    battery: number | null;
+  } | null>(null);
+  const [analysisLast, setAnalysisLast] = useState<{
+    elapsedMs: number;
+    tokensPerSecond: number;
+    batteryDelta: number | null;
+    threads: number;
+  } | null>(null);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const analysisTokensRef = useRef(0);
+  const analysisBatteryStartRef = useRef<number | null>(null);
+  const stopRequestedRef = useRef(false);
+  // A analise local nasce antes do upload: ate o entryId existir, a chave e o
+  // id da gravacao; depois ela e movida para a chave definitiva do servidor.
+  const analysisKey = note?.entryId ?? note?.id ?? '';
+  const localAnalysisReady = useMemo(
+    () => localAnalysisEnabled() && localAnalysisAvailable() && isAnalysisModelInstalled(analysisModel),
+    [analysisModel],
+  );
   const analysisView = useMemo(
     () =>
-      cachedAnalysis && cachedAnalysis.entryId === note?.entryId
+      cachedAnalysis && cachedAnalysis.entryId === analysisKey
         ? toNoteAnalysis(cachedAnalysis.analysis)
         : null,
-    [cachedAnalysis, note?.entryId],
+    [cachedAnalysis, analysisKey],
   );
+  // A analise guardada e de uma versao anterior do texto? So a local tem hash.
+  const analysisSimplified = cachedAnalysis?.analysis.model === 'local-fallback';
+  const analysisStale = useMemo(() => {
+    if (cachedAnalysis?.origin !== 'local' || !cachedAnalysis.contentHash) return false;
+    const current = analysisContentHash({
+      title: title.trim() || (note?.title ?? ''),
+      text: body,
+    });
+    return current !== cachedAnalysis.contentHash;
+  }, [cachedAnalysis, title, body, note?.title]);
+
+  // Enquanto analisa, mostra o tempo, os tokens/s (CPU) e a bateria atual.
+  useEffect(() => {
+    if (!analysisBusy) return;
+    const started = Date.now();
+    let alive = true;
+    const tick = () => {
+      if (!alive) return;
+      setAnalysisLive((current) => ({
+        elapsedMs: Date.now() - started,
+        tokens: analysisTokensRef.current,
+        battery: current?.battery ?? analysisBatteryStartRef.current ?? null,
+      }));
+    };
+    tick();
+    const timer = setInterval(tick, 1000);
+    const batteryTimer = setInterval(() => {
+      void Battery.getBatteryLevelAsync()
+        .then((level) => {
+          if (!alive) return;
+          setAnalysisLive((current) =>
+            current ? { ...current, battery: level >= 0 ? level : current.battery } : current,
+          );
+        })
+        .catch(() => undefined);
+    }, 5000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+      clearInterval(batteryTimer);
+    };
+  }, [analysisBusy]);
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkValue, setLinkValue] = useState('');
   const [viewerSrc, setViewerSrc] = useState<string | null>(null);
@@ -568,16 +663,35 @@ export default function NoteScreen() {
     };
   }, [noteId]);
 
-  // Analise do servidor: le o cache assim que a nota abre (funciona offline) e
-  // busca a versao atual no servidor quando o menu abre, sem gerar analise.
-  const analysisEntryId = note?.entryId;
+  // Analise: le o cache do aparelho assim que a nota abre (offline-first) e so
+  // busca a versao do servidor quando o menu abre, sem gerar nada.
+  const localNoteId = note?.id;
+  const noteEntryId = note?.entryId;
   useEffect(() => {
-    if (!analysisEntryId) return;
+    if (!localNoteId) return;
     let alive = true;
-    void getCachedAnalysis(analysisEntryId)
-      .then((item) => {
-        if (alive) setCachedAnalysis(item);
-      })
+    void (async () => {
+      let item: CachedAnalysis | null = null;
+      if (noteEntryId) {
+        const definitive = await getCachedAnalysis(noteEntryId);
+        const pending = await getCachedAnalysis(localNoteId);
+        if (pending?.origin === 'local') {
+          if (definitive?.origin === 'local') {
+            item = definitive;
+          } else {
+            // Analise local feita antes do upload: ela vence e passa a morar na
+            // chave definitiva.
+            await moveCachedAnalysis(localNoteId, noteEntryId);
+            item = { ...pending, entryId: noteEntryId };
+          }
+        } else {
+          item = definitive ?? pending;
+        }
+      } else {
+        item = await getCachedAnalysis(localNoteId);
+      }
+      if (alive) setCachedAnalysis(item);
+    })()
       .catch(() => {
         // Cache local e best-effort: sem ele a ficha fica sem analise.
       })
@@ -587,7 +701,7 @@ export default function NoteScreen() {
     return () => {
       alive = false;
     };
-  }, [analysisEntryId]);
+  }, [localNoteId, noteEntryId]);
 
   // Transcricao feita no aparelho antes do audio subir (ou antes desta versao
   // existir): garante que o servidor receba o texto ligado ao audio certo.
@@ -602,6 +716,11 @@ export default function NoteScreen() {
   const refreshAnalysis = useCallback(async () => {
     const target = note;
     if (!target?.entryId) return;
+    // Analise local e a fonte principal: o servidor nao sobrescreve.
+    if (cachedAnalysis?.origin === 'local') {
+      setAnalysisChecked(true);
+      return;
+    }
     const entryTitle = title.trim() || target.title;
     try {
       const analysis = await fetchNoteAnalysis({
@@ -622,15 +741,211 @@ export default function NoteScreen() {
     } finally {
       setAnalysisChecked(true);
     }
-  }, [note, title]);
+  }, [note, title, cachedAnalysis?.origin]);
+
+  // Analise sob demanda no aparelho: nada de rede e nada de texto saindo daqui.
+  const handleAnalyzeLocal = useCallback(async () => {
+    const target = note;
+    if (!target || analysisBusy) return;
+    // Diagnostico sem conteudo: so os booleanos que decidem o botao.
+    console.log('[analysis] press', {
+      available: localAnalysisAvailable(),
+      model: analysisModel,
+      installed: isAnalysisModelInstalled(analysisModel),
+    });
+    if (!localAnalysisAvailable()) {
+      setAnalysisError(
+        'Este build não tem o motor de análise local. Instale o development build mais recente.',
+      );
+      return;
+    }
+    // Usa o modelo escolhido; se ele nao estiver baixado, cai para qualquer
+    // modelo instalado em vez de deixar o botao sem resposta.
+    const selected = analysisModelById(analysisModel);
+    const installed = installedAnalysisModels().map((item) => item.id);
+    const model =
+      selected && installed.includes(selected.id)
+        ? selected
+        : installed.length > 0
+          ? analysisModelById(installed[0])
+          : null;
+    if (!model) {
+      setAnalysisError('Baixe um modelo de análise em Ajustes > Transcrição e modelos.');
+      return;
+    }
+    if (model.id !== analysisModel) {
+      void setAnalysisModel(model.id).catch(() => undefined);
+    }
+    // Usa o que esta na tela agora, nao a copia que a biblioteca carregou:
+    // o texto digitado ainda pode nao ter sido salvo, e a analise precisa dele.
+    const liveTitle = titleRef.current.trim() || target.title;
+    const liveBody = bodyRef.current;
+    const key = target.entryId ?? target.id;
+    setAnalysisError(null);
+    setAnalysisInput(null);
+    setAnalysisLast(null);
+    analysisTokensRef.current = 0;
+    analysisBatteryStartRef.current = null;
+    setAnalysisLive({ elapsedMs: 0, tokens: 0, battery: null });
+    void Battery.getBatteryLevelAsync()
+      .then((level) => {
+        if (level < 0) return;
+        analysisBatteryStartRef.current = level;
+        setAnalysisLive((current) => (current ? { ...current, battery: level } : current));
+      })
+      .catch(() => undefined);
+    stopRequestedRef.current = false;
+    setAnalysisBusy(true);
+    try {
+      // Le a transcricao mais nova do banco; a copia em memoria pode estar
+      // atrasada. Se a nota veio do servidor com varios audios, junta o texto
+      // de todos eles.
+      const fresh = await getRecording(target.id).catch(() => null);
+      const audioTranscripts = (fresh?.serverAudios ?? [])
+        .map((audio) => audio.transcript?.text?.trim() ?? '')
+        .filter(Boolean)
+        .join('\n\n');
+      const liveTranscript = (fresh?.transcript?.trim() || audioTranscripts).trim();
+      // Texto que sobra depois de tirar markdown (foto/link nao sao texto).
+      const plainBody = markdownToPlain(liveBody).trim();
+      const imageCount = (liveBody.match(/!\[[^\]]*\]\([^)]*\)/g) ?? []).length;
+      console.log('[analysis] input', {
+        title: liveTitle.length,
+        body: liveBody.length,
+        plainBody: plainBody.length,
+        transcript: liveTranscript.length,
+        images: imageCount,
+        savedBody: (target.text ?? '').length,
+      });
+      setAnalysisInput({ body: plainBody.length, transcript: liveTranscript.length });
+      if (!plainBody && !liveTranscript.trim()) {
+        setAnalysisError('Esta nota ainda não tem texto ou transcrição para analisar.');
+        return;
+      }
+      const input = { ...target, title: liveTitle, text: liveBody, transcript: liveTranscript };
+      const inputText = [plainBody, liveTranscript].filter(Boolean).join('\n\n');
+      const contentHash = analysisContentHash({ title: liveTitle, text: liveBody });
+      let lastRun: Awaited<ReturnType<typeof analyzeRecording>> | null = null;
+      let analysis: ServerAnalysis | null = null;
+
+      // Duas tentativas: a primeira usa o contexto carregado (rapida); a
+      // segunda recarrega o modelo do zero. Se as duas falharem, a nota ainda
+      // sai analisada pela leitura simplificada.
+      for (let attempt = 0; attempt < 2 && !stopRequestedRef.current; attempt += 1) {
+        analysisTokensRef.current = 0;
+        try {
+          const result = await analyzeRecording(input, model, {
+            fresh: attempt > 0,
+            lowPower: analysisLowPower,
+            onToken: () => {
+              analysisTokensRef.current += 1;
+            },
+          });
+          lastRun = result;
+          console.log('[analysis] attempt', {
+            attempt,
+            parsed: Boolean(result.parsed),
+            ms: result.run.wallMs,
+            chars: result.run.text.length,
+            reading: Boolean(result.parsed?.reading),
+            themes: result.parsed?.themes.length ?? 0,
+            emotions: result.parsed?.emotions.length ?? 0,
+          });
+          if (result.parsed) {
+            const candidate = toServerAnalysis(result.parsed, model.id);
+            if (toNoteAnalysis(candidate)) {
+              analysis = candidate;
+              break;
+            }
+          }
+        } catch (error) {
+          console.warn(
+            '[analysis] tentativa falhou',
+            attempt,
+            error instanceof Error ? error.message : 'erro desconhecido',
+          );
+        }
+      }
+      if (stopRequestedRef.current) {
+        setAnalysisError('Análise interrompida.');
+        return;
+      }
+      if (
+        !analysis &&
+        cachedAnalysis?.origin === 'local' &&
+        cachedAnalysis.contentHash === contentHash
+      ) {
+        // A nota nao mudou: preserva a analise boa em vez de degradar para a
+        // leitura simplificada.
+        analysis = cachedAnalysis.analysis;
+        setAnalysisError('Não foi possível refazer a análise; a anterior foi mantida.');
+      }
+      if (!analysis) {
+        // Garantia: havendo texto ou transcricao, a nota nao fica sem resposta.
+        analysis = simplifiedAnalysis(inputText);
+        console.log('[analysis] fallback', { model: analysis.model });
+      }
+      const item: CachedAnalysis = {
+        entryId: key,
+        title: title.trim() || target.title,
+        recordedAt: target.recordedAt,
+        origin: 'local',
+        contentHash,
+        analysis,
+      };
+      // Mostra o resultado na hora: a gravacao no SQLite nao pode segurar a
+      // interface (uma transacao concorrente ja travou essa espera antes).
+      setCachedAnalysis(item);
+      setAnalysisChecked(true);
+      if (lastRun) {
+        const endLevel = await Battery.getBatteryLevelAsync().catch(() => -1);
+        const startLevel = analysisBatteryStartRef.current;
+        setAnalysisLast({
+          elapsedMs: lastRun.run.wallMs,
+          tokensPerSecond: lastRun.run.timings?.predictedPerSecond ?? 0,
+          batteryDelta:
+            startLevel !== null && endLevel >= 0 ? (endLevel - startLevel) * 100 : null,
+          threads: analysisLowPower ? 2 : 4,
+        });
+      }
+      void saveCachedAnalyses([item]).catch(() => {
+        setAnalysisError('Análise feita, mas não foi possível guardar no aparelho.');
+      });
+    } catch (error) {
+      // Sem conteudo no log: so a mensagem tecnica do motor.
+      console.warn(
+        '[analysis] falhou',
+        error instanceof Error ? error.message : 'erro desconhecido',
+      );
+      setAnalysisError('Não foi possível analisar esta nota no aparelho.');
+    } finally {
+      setAnalysisBusy(false);
+      setAnalysisLive(null);
+    }
+  }, [
+    note,
+    analysisBusy,
+    analysisModel,
+    analysisLowPower,
+    cachedAnalysis,
+    setAnalysisModel,
+    title,
+  ]);
+
+  const handleStopAnalysis = useCallback(() => {
+    stopRequestedRef.current = true;
+    void stopAnalysis();
+  }, []);
 
   // Ficha da nota: soma os arquivos locais ao abrir o menu e mede o botao para
   // ancorar o popover logo abaixo dele.
   const openMenu = useCallback(() => {
     if (noteId) setMenuBytes(directoryBytes(sessionDirectory(noteId)));
     // Sem cache, esconde a secao durante o refresh silencioso: nada de
-    // "sem analise" piscando antes da resposta.
-    if (!cachedAnalysis) setAnalysisChecked(false);
+    // "sem analise" piscando antes da resposta. Com a analise local ligada a
+    // secao ja nasce visivel por causa do botao.
+    if (!cachedAnalysis && !localAnalysisEnabled()) setAnalysisChecked(false);
+    setAnalysisError(null);
     void refreshAnalysis();
     const button = configButtonRef.current;
     if (!button) {
@@ -1056,9 +1371,27 @@ export default function NoteScreen() {
         title={title}
         properties={properties}
         analysis={
-          note.entryId ? (analysisView ?? (analysisChecked ? null : undefined)) : undefined
+          localAnalysisEnabled()
+            ? analysisView
+            : note.entryId
+              ? (analysisView ?? (analysisChecked ? null : undefined))
+              : undefined
         }
         anchor={menuAnchor}
+        analysisEnabled={localAnalysisEnabled()}
+        analysisReady={localAnalysisReady}
+        analysisBusy={analysisBusy}
+        analysisInput={analysisInput}
+        analysisStale={analysisStale}
+        analysisSimplified={analysisSimplified}
+        analysisLowPower={analysisLowPower}
+        onChangeAnalysisLowPower={(next) => void setAnalysisLowPower(next)}
+        analysisModelLabel={analysisModelById(analysisModel)?.label ?? analysisModel}
+        analysisLive={analysisLive}
+        analysisLast={analysisLast}
+        analysisError={analysisError}
+        onAnalyzeLocal={() => void handleAnalyzeLocal()}
+        onStopAnalysis={handleStopAnalysis}
         typography={typography}
         onChangeTypography={(next) => void setTypography(next)}
         onClose={() => setMenuOpen(false)}

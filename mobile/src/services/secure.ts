@@ -81,6 +81,8 @@ export interface Prefs {
   transcriptionLanguage?: TranscriptionLanguage;
   /** Id do modelo de analise local escolhido. */
   analysisModel?: string;
+  /** Menos threads na analise local: mais lento, menos CPU e bateria. */
+  analysisLowPower?: boolean;
   /** Pasta escolhida para o backup local (uri). */
   backupFolder?: string;
   /** Meta de palavras por semana (Painel). */

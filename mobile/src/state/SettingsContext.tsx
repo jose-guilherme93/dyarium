@@ -64,6 +64,9 @@ interface SettingsValue {
   /** Modelo de analise local escolhido. */
   analysisModel: string;
   setAnalysisModel(id: string): Promise<void>;
+  /** Menos threads na analise local: mais lento, menos CPU e bateria. */
+  analysisLowPower: boolean;
+  setAnalysisLowPower(value: boolean): Promise<void>;
   /** Pasta escolhida para o backup local (uri). */
   backupFolder?: string;
   setBackupFolder(uri: string): Promise<void>;
@@ -115,6 +118,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [transcriptionLanguage, setTranscriptionLanguageState] =
     useState<TranscriptionLanguage>('pt');
   const [analysisModel, setAnalysisModelState] = useState(DEFAULT_ANALYSIS_MODEL);
+  const [analysisLowPower, setAnalysisLowPowerState] = useState(false);
   const [backupFolder, setBackupFolderState] = useState<string | undefined>(undefined);
   const [weeklyWordGoal, setWeeklyWordGoalState] = useState(1000);
   const [writingReminders, setWritingRemindersState] = useState(true);
@@ -146,6 +150,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         setTranscriptionModelState(prefs.transcriptionModel ?? DEFAULT_TRANSCRIPTION_MODEL);
         setTranscriptionLanguageState(prefs.transcriptionLanguage === 'auto' ? 'auto' : 'pt');
         setAnalysisModelState(prefs.analysisModel ?? DEFAULT_ANALYSIS_MODEL);
+        setAnalysisLowPowerState(prefs.analysisLowPower === true);
         setBackupFolderState(prefs.backupFolder);
         setWeeklyWordGoalState(prefs.weeklyWordGoal ?? 1000);
         setWritingRemindersState(prefs.writingReminders !== false);
@@ -220,6 +225,14 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     async (id: string) => {
       setAnalysisModelState(id);
       await persistPrefs({ analysisModel: id });
+    },
+    [persistPrefs],
+  );
+
+  const setAnalysisLowPower = useCallback(
+    async (value: boolean) => {
+      setAnalysisLowPowerState(value);
+      await persistPrefs({ analysisLowPower: value });
     },
     [persistPrefs],
   );
@@ -329,6 +342,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setTranscriptionLanguage,
       analysisModel,
       setAnalysisModel,
+      analysisLowPower,
+      setAnalysisLowPower,
       backupFolder,
       setBackupFolder,
       weeklyWordGoal,
@@ -362,6 +377,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setTranscriptionLanguage,
       analysisModel,
       setAnalysisModel,
+      analysisLowPower,
+      setAnalysisLowPower,
       backupFolder,
       setBackupFolder,
       weeklyWordGoal,

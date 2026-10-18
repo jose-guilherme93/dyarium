@@ -1,8 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import {
+  ActivityIndicator,
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   useWindowDimensions,
   View,
@@ -40,6 +42,28 @@ interface NoteMenuProps {
   analysis?: NoteAnalysisView | null;
   /** Posicao do popover (abaixo do botao de configuracoes). */
   anchor?: NoteMenuAnchor | null;
+  /** Analise local habilitada nesta build. */
+  analysisEnabled?: boolean;
+  /** Modelo local instalado e engine disponivel. */
+  analysisReady?: boolean;
+  analysisBusy?: boolean;
+  analysisInput?: { body: number; transcript: number } | null;
+  analysisStale?: boolean;
+  analysisSimplified?: boolean;
+  analysisLowPower?: boolean;
+  onChangeAnalysisLowPower?(next: boolean): void;
+  /** Nome do modelo escolhido, para o usuario saber o que esta testando. */
+  analysisModelLabel?: string;
+  analysisLive?: { elapsedMs: number; tokens: number; battery: number | null } | null;
+  analysisLast?: {
+    elapsedMs: number;
+    tokensPerSecond: number;
+    batteryDelta: number | null;
+    threads: number;
+  } | null;
+  analysisError?: string | null;
+  onAnalyzeLocal?(): void;
+  onStopAnalysis?(): void;
   typography: NoteTypography;
   onChangeTypography(next: NoteTypography): void;
   onClose(): void;
@@ -188,6 +212,20 @@ export function NoteMenu({
   properties,
   analysis,
   anchor,
+  analysisEnabled = false,
+  analysisReady = false,
+  analysisBusy = false,
+  analysisInput = null,
+  analysisStale = false,
+  analysisSimplified = false,
+  analysisLowPower = false,
+  onChangeAnalysisLowPower,
+  analysisModelLabel = '',
+  analysisLive = null,
+  analysisLast = null,
+  analysisError = null,
+  onAnalyzeLocal,
+  onStopAnalysis,
   typography,
   onChangeTypography,
   onClose,
@@ -229,11 +267,115 @@ export function NoteMenu({
             {analysis !== undefined ? (
               <>
                 <Text style={styles.sectionLabel}>Análise</Text>
+                {analysisError && analysis ? (
+                  <Text style={styles.analyzeError}>
+                    A análise abaixo é a anterior; a nova tentativa falhou.
+                  </Text>
+                ) : null}
+                {analysisStale && analysis ? (
+                  <Text style={styles.analyzeWarning}>
+                    Análise de uma versão anterior da nota. Analise de novo para atualizar.
+                  </Text>
+                ) : null}
+                {analysisSimplified && analysis ? (
+                  <Text style={styles.analyzeWarning}>
+                    Análise simplificada: o modelo não respondeu; o tom foi estimado pelas
+                    palavras da nota.
+                  </Text>
+                ) : null}
                 {analysis ? (
                   <AnalysisContent analysis={analysis} />
                 ) : (
-                  <Text style={styles.muted}>Sem análise do servidor para esta nota.</Text>
+                  <Text style={styles.muted}>Sem análise para esta nota.</Text>
                 )}
+                {analysisEnabled ? (
+                  <>
+                    <View style={styles.analysisActions}>
+                      <Pressable
+                        style={[styles.analyzeButton, analysisBusy && styles.analyzeButtonDisabled]}
+                        onPress={onAnalyzeLocal}
+                        disabled={analysisBusy}
+                        accessibilityLabel={
+                          analysis ? 'Analisar de novo no aparelho' : 'Analisar no aparelho'
+                        }
+                      >
+                        {analysisBusy ? (
+                          <ActivityIndicator size="small" color={colors.text} />
+                        ) : (
+                          <>
+                            <Ionicons
+                              name="phone-portrait-outline"
+                              size={17}
+                              color={colors.text}
+                            />
+                            <Text style={styles.analyzeText}>
+                              {analysis ? 'Analisar de novo' : 'Analisar no aparelho'}
+                            </Text>
+                          </>
+                        )}
+                      </Pressable>
+                      {analysisBusy && onStopAnalysis ? (
+                        <Pressable onPress={onStopAnalysis} accessibilityLabel="Parar análise">
+                          <Text style={styles.analyzeStop}>Parar</Text>
+                        </Pressable>
+                      ) : null}
+                    </View>
+                    {!analysisReady && !analysisBusy ? (
+                      <Text style={styles.analyzeWarning}>
+                        Baixe um modelo em Ajustes &gt; Transcrição e modelos.
+                      </Text>
+                    ) : null}
+                    {analysisError ? <Text style={styles.analyzeError}>{analysisError}</Text> : null}
+                    {analysisInput && !analysisBusy ? (
+                      <Text style={styles.analyzePrivacy}>
+                        Analisado: {analysisInput.body} caracteres de texto e{' '}
+                        {analysisInput.transcript} de transcrição.
+                      </Text>
+                    ) : null}
+                    {analysisModelLabel ? (
+                      <Text style={styles.analyzePrivacy}>Modelo: {analysisModelLabel}</Text>
+                    ) : null}
+                    {analysisBusy && analysisLive ? (
+                      <Text style={styles.analyzeStats}>
+                        {formatDuration(analysisLive.elapsedMs)} ·{' '}
+                        {(
+                          analysisLive.tokens / Math.max(1, analysisLive.elapsedMs / 1000)
+                        ).toFixed(1)}{' '}
+                        tok/s · CPU {analysisLowPower ? 2 : 4} threads
+                        {analysisLive.battery !== null
+                          ? ` · bateria ${Math.round(analysisLive.battery * 100)}%`
+                          : ''}
+                      </Text>
+                    ) : null}
+                    {!analysisBusy && analysisLast ? (
+                      <Text style={styles.analyzeStats}>
+                        Última análise: {formatDuration(analysisLast.elapsedMs)} ·{' '}
+                        {analysisLast.tokensPerSecond.toFixed(1)} tok/s · CPU{' '}
+                        {analysisLast.threads} threads
+                        {analysisLast.batteryDelta !== null
+                          ? ` · bateria ${analysisLast.batteryDelta > 0 ? '+' : ''}${analysisLast.batteryDelta.toFixed(0)}%`
+                          : ''}
+                      </Text>
+                    ) : null}
+                    <View style={styles.lowPowerRow}>
+                      <View style={styles.lowPowerText}>
+                        <Text style={styles.lowPowerTitle}>Menos CPU</Text>
+                        <Text style={styles.analyzePrivacy}>
+                          2 threads em vez de 4. A análise demora mais e gasta menos bateria.
+                        </Text>
+                      </View>
+                      <Switch
+                        value={analysisLowPower}
+                        onValueChange={onChangeAnalysisLowPower}
+                        trackColor={{ false: colors.surfaceElevated, true: colors.accent }}
+                        thumbColor={colors.text}
+                      />
+                    </View>
+                    <Text style={styles.analyzePrivacy}>
+                      Roda no aparelho. Lê o texto e a transcrição; fotos não são interpretadas.
+                    </Text>
+                  </>
+                ) : null}
               </>
             ) : null}
 
@@ -383,6 +525,35 @@ const styles = StyleSheet.create({
   propLabel: { color: colors.textSecondary, fontSize: fontSize.sm },
   propValue: { color: colors.text, fontSize: fontSize.sm, flexShrink: 1, textAlign: 'right' },
   muted: { color: colors.textSecondary, fontSize: fontSize.sm, lineHeight: 19 },
+  analysisActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  analyzeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    flex: 1,
+    paddingVertical: 9,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.sm,
+    backgroundColor: colors.surfaceElevated,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.borderStrong,
+  },
+  analyzeButtonDisabled: { opacity: 0.45 },
+  analyzeText: { color: colors.text, fontSize: fontSize.sm, fontWeight: '600' },
+  analyzeStop: { color: colors.accentStrong, fontSize: fontSize.sm, fontWeight: '600' },
+  analyzeWarning: { color: colors.warning, fontSize: fontSize.xs, lineHeight: 17 },
+  analyzeError: { color: colors.danger, fontSize: fontSize.xs, lineHeight: 17 },
+  analyzeStats: {
+    color: colors.textSecondary,
+    fontSize: fontSize.xs,
+    lineHeight: 17,
+    fontVariant: ['tabular-nums'],
+  },
+  lowPowerRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  lowPowerText: { flex: 1, gap: 2 },
+  lowPowerTitle: { color: colors.text, fontSize: fontSize.sm, fontWeight: '600' },
+  analyzePrivacy: { color: colors.textTertiary, fontSize: fontSize.xs, lineHeight: 17 },
   analysis: { gap: spacing.sm },
   analysisSentiment: { flexDirection: 'row', alignItems: 'baseline', gap: spacing.sm },
   analysisSentimentLabel: { color: colors.accentStrong, fontSize: fontSize.sm, fontWeight: '700' },

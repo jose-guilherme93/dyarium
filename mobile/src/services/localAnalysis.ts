@@ -8,7 +8,13 @@
 
 import { File } from 'expo-file-system';
 
-import { analysisNoteContent, buildAnalysisMessages, parseAnalysisJson, ANALYSIS_SCHEMA } from '@/core/analysisPrompt';
+import {
+  analysisNoteContent,
+  buildAnalysisMessages,
+  interpretationOrOriginal,
+  parseAnalysisJson,
+  ANALYSIS_SCHEMA,
+} from '@/core/analysisPrompt';
 import type { AnalysisModelInfo } from '@/core/analysisModels';
 import type { Recording } from '@/core/types';
 import { analysisModelFilePath } from './analysisModels';
@@ -40,6 +46,8 @@ interface LlamaContextHandle {
     callback?: (data: TokenData) => void,
   ): Promise<CompletionResult>;
   stopCompletion(): Promise<void>;
+  /** Limpa o KV cache entre conversas; sem isso a proxima herda a anterior. */
+  clearCache?(clearData?: boolean): Promise<void>;
   release(): Promise<void>;
 }
 
@@ -70,6 +78,8 @@ export interface AnalysisRunOptions {
   lowPower?: boolean;
   maxTokens?: number;
   onToken?(token: string): void;
+  /** Recarrega o modelo antes de gerar (contexto limpo de ponta a ponta). */
+  fresh?: boolean;
 }
 
 export interface AnalysisNoteResult {
@@ -156,8 +166,20 @@ export async function runAnalysis(
   messages: ReturnType<typeof buildAnalysisMessages>,
   options: AnalysisRunOptions = {},
 ): Promise<AnalysisRunResult> {
+  // A analise manual pede um contexto novo: o cache da lib ja se mostrou
+  // contaminado entre duas notas (a segunda vinha vazia).
+  if (options.fresh) await releaseAnalysisContext();
   await loadAnalysisContext(model, { lowPower: options.lowPower });
   if (!loaded) throw new Error('contexto indisponivel');
+
+  // O llama.rn mantem o cache de prompt entre completions. Sem limpar, a
+  // segunda analise herda o contexto da primeira e pode voltar vazia ou com o
+  // resultado anterior. Sempre comeca uma conversa nova.
+  try {
+    await loaded.context.clearCache?.();
+  } catch {
+    // versao sem suporte ou cache ja limpo: segue para a geracao
+  }
 
   const started = Date.now();
   const result = await loaded.context.completion(
@@ -167,7 +189,8 @@ export async function runAnalysis(
         type: 'json_schema',
         json_schema: { strict: true, schema: ANALYSIS_SCHEMA },
       },
-      n_predict: options.maxTokens ?? 400,
+      // 600 da folga para o JSON fechar; 400 cortava respostas com 3+ temas.
+      n_predict: options.maxTokens ?? 600,
       temperature: 0,
       top_k: 40,
       top_p: 0.95,
@@ -216,5 +239,10 @@ export async function analyzeRecording(
     }),
     options,
   );
-  return { content, run, parsed: parseAnalysisJson(run.text) };
+  const parsed = parseAnalysisJson(run.text);
+  return {
+    content,
+    run,
+    parsed: parsed ? interpretationOrOriginal(parsed, content.text) : null,
+  };
 }
