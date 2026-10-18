@@ -420,6 +420,14 @@ func (s *Server) handlePutTranscript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	attachmentID := strings.TrimSpace(req.AttachmentID)
+	if attachmentID == "" {
+		// Cliente antigo/atipico nao mandou o audio. Quando a entrada tem um
+		// unico audio, a transcricao e claramente dele: associa em vez de deixar
+		// o texto solto (que sumia da pilha no dashboard).
+		if audios, err := s.deps.Store.ListAudios(ctx, entryID); err == nil && len(audios) == 1 {
+			attachmentID = audios[0].ID
+		}
+	}
 	if attachmentID != "" {
 		att, err := s.deps.Store.GetAttachment(ctx, attachmentID)
 		if err != nil || att.EntryID != entryID {

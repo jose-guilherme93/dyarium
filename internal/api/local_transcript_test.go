@@ -46,6 +46,35 @@ func TestLocalTranscribeSkipsQueue(t *testing.T) {
 	}
 }
 
+// Cliente sem attachment_id e com um unico audio: a transcricao e ligada a ele
+// em vez de ficar solta (o dashboard mostrava audio sem transcricao).
+func TestPutTranscriptWithoutAttachmentLinksSingleAudio(t *testing.T) {
+	srv := newTestServer(t)
+	ctx := context.Background()
+	seedPlainEntry(t, srv, "e1")
+	now := time.Now().UTC()
+	if err := srv.deps.Store.CreateAttachment(ctx, store.Attachment{
+		ID: "a1", EntryID: "e1", Kind: store.AttachmentOriginal, StorageKey: "objects/a1",
+		ContentType: "audio/wav", SizeBytes: 10, Cipher: "aes-256-gcm", DurationSeconds: 12, CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("attachment: %v", err)
+	}
+
+	body := `{"language":"pt","text":"texto local","segments":[{"start_ms":0,"end_ms":1000,"text":"texto local"}]}`
+	rec, _ := doJSON(t, srv, http.MethodPut, "/api/v1/entries/e1/transcript", strings.NewReader(body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("put transcript: %d %s", rec.Code, rec.Body.String())
+	}
+
+	transcript, segments, err := srv.deps.Store.GetTranscriptByAttachment(ctx, "a1")
+	if err != nil {
+		t.Fatalf("transcript do audio: %v", err)
+	}
+	if transcript.Text != "texto local" || len(segments) != 1 {
+		t.Fatalf("transcript = %+v segments=%+v", transcript, segments)
+	}
+}
+
 // O app empurra a transcricao feita no aparelho; o servidor guarda com origem
 // local (model "local").
 func TestPutTranscriptStoresLocal(t *testing.T) {
