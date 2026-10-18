@@ -77,8 +77,10 @@ export function entryToRecording(entry: ServerEntry, note?: ServerNote): Recordi
     durationMs: entry.duration_seconds > 0 ? Math.round(entry.duration_seconds * 1000) : undefined,
     sizeBytes: entry.size_bytes > 0 ? entry.size_bytes : undefined,
     // O servidor ainda pode estar transcrevendo; `services/transcripts` busca o
-    // texto quando ele estiver pronto.
-    transcriptStatus: entry.content_type ? 'pending' : undefined,
+    // texto quando ele estiver pronto. Nota escrita (sem audio) nao tem
+    // transcricao: marcar como pendente faria o app pedir /transcript para
+    // sempre.
+    transcriptStatus: entry.content_type.startsWith('audio/') ? 'pending' : undefined,
     text: note?.content_markdown ?? '',
     archived: entry.archived,
     titleVersion: entry.versions?.title,

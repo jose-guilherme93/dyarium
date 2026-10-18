@@ -31,7 +31,7 @@ export interface RichEditorHandle {
   format(type: FormatType): void;
   focus(): void;
   /** Insere imagem no cursor: `displaySrc` e a previa; `persistSrc` e a URL salva. */
-  insertImage(displaySrc: string, persistSrc: string, alt: string): void;
+  insertImage(displaySrc: string, persistSrc: string, alt: string, widthPercent?: number): void;
   /** Insere um link no cursor (rotulo = texto; sem rotulo, usa a URL). */
   insertLink(url: string, label?: string): void;
   /** Muda a largura de uma imagem existente (percentual da largura da nota). */
@@ -99,6 +99,8 @@ export function buildEditorHtml(
   const safePlaceholder = placeholder.replace(/"/g, '&quot;');
   const fontFamily = fontFamilyCss(typography.family);
   const fontWeight = fontWeightCss(typography.weight);
+  // Texto normal em 700 (preferencia "negrito") faria `**bold**` parecer igual.
+  const strongWeight = fontWeight >= 700 ? 900 : 700;
   return `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
 <style>
   /* Fundo transparente: a cor vem da tela da nota. Com fundo proprio aqui, a
@@ -114,6 +116,7 @@ export function buildEditorHtml(
   ul { padding-left: 22px; margin: 6px 0; }
   div { min-height: 1.5em; }
   a { color: #8B7BE8; text-decoration: underline; }
+  b, strong { font-weight: ${strongWeight}; }
   h1, h2, h3, h4, h5, h6 { line-height: 1.3; margin: 18px 0 6px; font-weight: 700; }
   h1 { font-size: 1.6em; }
   h2 { font-size: 1.35em; }
@@ -127,7 +130,9 @@ export function buildEditorHtml(
   .opaque-preview { display: block; font-size: 0.9em; color: #A9A9B5; }
   .opaque-inline { padding: 1px 6px; border-radius: 6px; background: rgba(139,123,232,0.16); color: #B9AEF5; }
   .img-block { position: relative; display: block; margin: 6px 0; }
-  .img-block img { display: block; max-width: 100%; border-radius: 10px; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  /* Centralizada como na previa nativa: imagem com largura menor que a coluna
+     nao "pula" para a esquerda quando o editor monta. */
+  .img-block img { display: block; max-width: 100%; margin-left: auto; margin-right: auto; border-radius: 10px; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
   /* Sem largura definida = largura total da nota (o padrao da foto e preencher). */
   .img-block img:not([data-width]) { width: 100%; }
 </style></head><body>
@@ -175,7 +180,10 @@ export function buildEditorHtml(
     }
     function ensureParagraphAfter(block) {
       var next = block.nextSibling;
-      if (!next || next.nodeType !== 1) {
+      // Sempre precisa existir um paragrafo editavel logo depois do bloco:
+      // duas imagens seguidas ou um bloco opaco deixavam o cursor preso num
+      // elemento contenteditable=false e a nota ficava sem onde digitar.
+      if (!next || next.nodeType !== 1 || (next.classList && (next.classList.contains('img-block') || next.classList.contains('opaque-block')))) {
         var p = document.createElement('div');
         p.innerHTML = '<br>';
         editor.insertBefore(p, block.nextSibling);
@@ -305,14 +313,18 @@ export function buildEditorHtml(
     window.__exec = function (cmd) { editor.focus(); document.execCommand(cmd, false, null); send(); };
     window.__focus = function () { editor.focus(); };
     // Insere a imagem como bloco e deixa um paragrafo (com cursor) logo abaixo.
-    window.__insertImage = function (src, persistSrc, alt) {
+    window.__insertImage = function (src, persistSrc, alt, widthPercent) {
       editor.focus();
+      var width = (typeof widthPercent === 'number' && widthPercent > 0 && widthPercent <= 100) ? widthPercent : 50;
       var block = document.createElement('div');
       block.className = 'img-block';
       block.setAttribute('contenteditable', 'false');
       var img = document.createElement('img');
       img.src = src;
       img.alt = alt || '';
+      img.setAttribute('data-width', String(width));
+      img.setAttribute('width', width + '%');
+      img.style.width = width + '%';
       if (persistSrc) { img.setAttribute('data-src', persistSrc); }
       block.appendChild(img);
       var inserted = false;
@@ -328,6 +340,7 @@ export function buildEditorHtml(
       }
       if (!inserted) { editor.appendChild(block); }
       var after = ensureParagraphAfter(block);
+      ensureTrailing();
       placeCaret(after);
       send();
     };
@@ -503,6 +516,26 @@ const RichEditorInner = forwardRef<RichEditorHandle, RichEditorProps>(function R
     webRef.current.injectJavaScript(css);
   }, [typography]);
 
+  // Imagens que chegaram depois do primeiro paint (download em segundo plano)
+  // trocam o `src` no lugar, sem recarregar o editor nem perder o cursor.
+  const webReadyRef = useRef(false);
+  const pendingImagesRef = useRef<Record<string, string> | null>(null);
+  const applyImageSources = useCallback(() => {
+    const sources = pendingImagesRef.current;
+    const web = webRef.current;
+    if (!sources || !web) return;
+    const map = JSON.stringify(sources);
+    web.injectJavaScript(
+      `(function(){var m=${map};document.querySelectorAll('img[data-src]').forEach(function(img){` +
+        `var ref=img.getAttribute('data-src');var src=m[ref];` +
+        `if(src&&img.getAttribute('src')!==src){img.setAttribute('src',src);}});})();true;`,
+    );
+  }, []);
+  useEffect(() => {
+    pendingImagesRef.current = imageSources ?? null;
+    if (webReadyRef.current) applyImageSources();
+  }, [imageSources, applyImageSources]);
+
   const handleMessage = useCallback((event: { nativeEvent: { data: string } }) => {
     try {
       const data = JSON.parse(event.nativeEvent.data) as {
@@ -539,7 +572,9 @@ const RichEditorInner = forwardRef<RichEditorHandle, RichEditorProps>(function R
         return;
       }
       if (typeof data.height === 'number') {
-        setHeight(Math.min(Math.max(data.height, 160), 4000));
+        // Sem teto baixo demais: uma foto alta empurrava o paragrafo editavel
+        // para fora dos 4000 px e a nota ficava sem onde digitar embaixo.
+        setHeight(Math.min(Math.max(data.height, 160), 20000));
       }
       if (typeof data.caret === 'number') {
         onCaretRef.current?.(data.caret);
@@ -577,14 +612,15 @@ const RichEditorInner = forwardRef<RichEditorHandle, RichEditorProps>(function R
         }
         plainRef.current?.focus();
       },
-      insertImage(displaySrc, persistSrc, alt) {
+      insertImage(displaySrc, persistSrc, alt, widthPercent = 50) {
         if (WebViewModule && webRef.current) {
           webRef.current.injectJavaScript(
-            `window.__insertImage(${JSON.stringify(displaySrc)}, ${JSON.stringify(persistSrc)}, ${JSON.stringify(alt)}); true;`,
+            `window.__insertImage(${JSON.stringify(displaySrc)}, ${JSON.stringify(persistSrc)}, ${JSON.stringify(alt)}, ${Number(widthPercent) || 50}); true;`,
           );
           return;
         }
-        const next = `${plain}${plain ? '\n' : ''}![${alt}](${persistSrc})`;
+        const suffix = widthPercent >= 100 ? '' : `{w=${Math.round(widthPercent)}}`;
+        const next = `${plain}${plain ? '\n' : ''}![${alt}](${persistSrc})${suffix}`;
         setPlain(next);
         lastValue.current = next;
         onChangeMarkdown(next);
@@ -670,7 +706,11 @@ const RichEditorInner = forwardRef<RichEditorHandle, RichEditorProps>(function R
         originWhitelist={['*']}
         source={source}
         onMessage={handleMessage}
-        onLoadEnd={() => onReadyRef.current?.()}
+        onLoadEnd={() => {
+          webReadyRef.current = true;
+          applyImageSources();
+          onReadyRef.current?.();
+        }}
         style={styles.web}
         scrollEnabled={false}
         showsVerticalScrollIndicator={false}

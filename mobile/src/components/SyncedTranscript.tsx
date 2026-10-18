@@ -57,15 +57,16 @@ export function SyncedTranscript({ player, segments, onPress }: SyncedTranscript
   const translateY = useSharedValue(0);
   // Posicao/altura reais de cada trecho, medidas pelo layout (texto quebra linha).
   const offsets = useRef<Record<number, { y: number; height: number }>>({});
-  // Vira true na primeira medida para reposicionar a janela inicial.
-  const [measured, setMeasured] = useState(false);
+  // Cada medida incrementa o tick; o efeito abaixo recentraliza sem depender de
+  // um segundo render manual (e sem chamar setState dentro de efeito).
+  const [layoutTick, setLayoutTick] = useState(0);
   // Na primeira posicao a janela pula direto (sem deslizar ao abrir a nota).
   const positioned = useRef(false);
 
   const handleLayout = useCallback((index: number, event: LayoutChangeEvent) => {
     const { y, height } = event.nativeEvent.layout;
     offsets.current[index] = { y, height };
-    setMeasured(true);
+    setLayoutTick((tick) => tick + 1);
   }, []);
 
   useEffect(() => {
@@ -76,26 +77,34 @@ export function SyncedTranscript({ player, segments, onPress }: SyncedTranscript
       ? withTiming(target, { duration: motionDuration(450), easing: Easing.inOut(Easing.ease) })
       : target;
     positioned.current = true;
-  }, [active, measured, translateY]);
+  }, [active, layoutTick, translateY]);
 
   const trackStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: translateY.value }],
   }));
 
   // So remonta as linhas quando o trecho ativo muda (nao a cada atualizacao de
-  // tempo, que roda ~4x/s durante o play).
+  // tempo, que roda ~4x/s durante o play). Renderiza uma janela em volta do
+  // trecho ativo: uma nota com horas de transcricao nao monta milhares de
+  // `Text` so para mostrar cinco linhas.
+  const start = Math.max(0, active - 2);
+  const end = Math.min(segments.length, start + VISIBLE + 3);
+
   const lines = useMemo(
     () =>
-      segments.map((segment, index) => (
-        <Text
-          key={`${segment.start_ms}-${index}`}
-          onLayout={(event) => handleLayout(index, event)}
-          style={[styles.line, index === active && styles.lineActive]}
-        >
-          {segment.text}
-        </Text>
-      )),
-    [segments, active, handleLayout],
+      segments.slice(start, end).map((segment, offset) => {
+        const index = start + offset;
+        return (
+          <Text
+            key={`${segment.start_ms}-${index}`}
+            onLayout={(event) => handleLayout(index, event)}
+            style={[styles.line, index === active && styles.lineActive]}
+          >
+            {segment.text}
+          </Text>
+        );
+      }),
+    [segments, start, end, active, handleLayout],
   );
 
   return (

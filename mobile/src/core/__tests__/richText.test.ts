@@ -169,6 +169,13 @@ describe('countWords / countChars / markdownToPlain', () => {
     expect(countChars('**ola** mundo')).toBe(9);
     expect(countChars('')).toBe(0);
   });
+
+  it('nao conta a URL da imagem nem o codigo do markdown da foto', () => {
+    expect(markdownToPlain('antes ![foto](attachment:abc) depois')).toBe('antes  depois');
+    expect(countWords('antes ![foto](attachment:abc) depois')).toBe(2);
+    expect(markdownToPlain('veja [a nota](note:abc)')).toBe('veja ');
+    expect(markdownToPlain('veja [isso](https://exemplo.com/x)')).toBe('veja isso');
+  });
 });
 
 describe('breakSentences', () => {

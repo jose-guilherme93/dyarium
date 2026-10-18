@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { useAudioPlayerStatus, type AudioPlayer as AudioPlayerHandle } from 'expo-audio';
-import { router, useLocalSearchParams, useNavigation } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
@@ -22,6 +22,7 @@ import {
 import { ConflictDialog } from '@/components/ConflictDialog';
 import { FastModal } from '@/components/FastModal';
 import { NoteMenu, type NoteMenuAnchor, type NoteProperty } from '@/components/NoteMenu';
+import { NoteReader } from '@/components/NoteReader';
 import { DEFAULT_MEASURE, RichEditor, type RichEditorHandle } from '@/components/RichEditor';
 import { caretScrollTarget, keyboardOverlap } from '@/core/keyboard';
 import { Screen } from '@/components/Screen';
@@ -35,20 +36,16 @@ import {
   titleFontSize,
   utf8ByteLength,
 } from '@/core/format';
-import { IMAGE_WIDTH_OPTIONS } from '@/core/image';
-import { breakSentences, countChars, countWords, markdownToPlain } from '@/core/richText';
+import { DEFAULT_IMAGE_WIDTH, IMAGE_WIDTH_OPTIONS } from '@/core/image';
+import { breakSentences, countChars, countWords, markdownToPlain, removeImageFromMarkdown, setImageWidthInMarkdown } from '@/core/richText';
 import { clearNoteConflict, keepMine } from '@/core/noteSync';
-import {
-  fontFamilyNative,
-  fontWeightNative,
-  type NoteTypography,
-} from '@/core/typography';
 import { mark, useRenderCount } from '@/dev/perf';
 
 import {
   attachmentUri,
+  downloadMissingImageSources,
   localImageUri,
-  resolveImageSources,
+  resolveImageSourcesLocal,
   saveLocalImage,
   uploadLocalImage,
 } from '@/services/attachments';
@@ -58,6 +55,7 @@ import { getCachedAnalysis, getRecording, upsertRecording, type CachedAnalysis }
 import { directoryBytes, sessionDirectory, sessionDirUri } from '@/services/files';
 import { pickImage } from '@/services/image';
 import { maybeTranscribeLocally } from '@/services/localTranscription';
+import { enterNote, leaveNote } from '@/services/noteVisibility';
 import { fetchTheirs, syncNoteForcing } from '@/services/noteSync';
 import { playPlayer } from '@/services/playback';
 import { useLibrary } from '@/state/LibraryContext';
@@ -121,38 +119,6 @@ function NoteAudioPlayer({ player, durationMs }: { player: PlayerHandle; duratio
  * junto com a tela, no mesmo lugar e com a mesma tipografia; quando o editor
  * fica pronto ele toma o lugar, sem a nota abrir "vazia" por um instante.
  */
-function NotePreview({
-  text,
-  placeholder,
-  typography,
-  minHeight,
-}: {
-  text: string;
-  placeholder: string;
-  typography: NoteTypography;
-  minHeight: number;
-}) {
-  const plain = markdownToPlain(text).trim();
-  return (
-    <View style={[styles.previewBox, { minHeight }]}>
-      <Text
-        style={[
-          styles.preview,
-          plain ? null : styles.previewPlaceholder,
-          {
-            fontFamily: fontFamilyNative(typography.family),
-            fontSize: typography.size,
-            fontWeight: fontWeightNative(typography.weight),
-            lineHeight: Math.round(typography.size * 1.5),
-          },
-        ]}
-      >
-        {plain || placeholder}
-      </Text>
-    </View>
-  );
-}
-
 function ToolButton({
   label,
   onPress,
@@ -172,7 +138,13 @@ function ToolButton({
 export default function NoteScreen() {
   const { id, action } = useLocalSearchParams<{ id: string; action?: string }>();
   const library = useLibrary();
-  const { typography, setTypography } = useSettings();
+  const { typography, setTypography, ready: settingsReady } = useSettings();
+  // Enquanto esta tela esta viva, a sincronizacao de fundo espera: a nota e
+  // local e nao pode disputar SQLite/rede com o que o usuario esta fazendo.
+  useEffect(() => {
+    enterNote();
+    return () => leaveNote();
+  }, []);
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const editorMinHeight = Math.max(240, windowHeight - 360);
   const note = useMemo(
@@ -189,7 +161,7 @@ export default function NoteScreen() {
   // Pilha de audios do servidor. O app nao grava varios audios numa nota, mas
   // le a pilha: os audios do dashboard aparecem aqui, cada um com a sua
   // transcricao. Tocar em um deles troca a fonte do mesmo player.
-  const stack = useAudioStack(note?.entryId);
+  const stack = useAudioStack(note?.entryId, note?.serverAudios);
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
   const [downloadedUri, setDownloadedUri] = useState<string | null>(null);
   const playerUri = playingAudioId ? (downloadedUri ?? undefined) : filePath;
@@ -220,31 +192,17 @@ export default function NoteScreen() {
   usePauseOnUnmount();
   const segments = note?.transcriptSegments;
   useRenderCount('NoteScreen');
-  // Marco de tempo: da abertura da nota ate o editor ficar pronto (WebView).
+  // Marco de tempo: da abertura da nota ate o conteudo nativo aparecer.
   const [openedAt] = useState(() => Date.now());
-  // O editor (WebView) so monta depois da transicao de entrada: durante o
-  // deslize a tela fica leve e a animacao nao engasga. Fallback para o caso de
-  // nao haver transicao (abertura direta).
-  const navigation = useNavigation();
-  const [contentReady, setContentReady] = useState(false);
-  useEffect(() => {
-    const nav = navigation as unknown as {
-      addListener(event: 'transitionEnd', callback: () => void): () => void;
-    };
-    const unsubscribe = nav.addListener('transitionEnd', () => setContentReady(true));
-    const fallback = setTimeout(() => setContentReady(true), 400);
-    return () => {
-      unsubscribe();
-      clearTimeout(fallback);
-    };
-  }, [navigation]);
-
   const [title, setTitle] = useState(() => note?.title ?? '');
   const [body, setBody] = useState(() => note?.text ?? '');
-  // Corpo trocado por fora ("ficar com o de la"): o WebView monta uma vez com o
+  // Corpo trocado por fora ("ficar com o de la"): o editor monta uma vez com o
   // markdown que recebe, entao remontar e o que aplica o texto novo.
   const [editorKey, setEditorKey] = useState(0);
-  const [imageSources, setImageSources] = useState<Record<string, string> | null>(null);
+  const [imageSources, setImageSources] = useState<Record<string, string>>(() =>
+    note ? resolveImageSourcesLocal(note.id, note.text ?? '', note.attachments ?? {}) : {},
+  );
+  const [noteReady, setNoteReady] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<NoteMenuAnchor | null>(null);
   const [menuBytes, setMenuBytes] = useState(0);
@@ -271,15 +229,34 @@ export default function NoteScreen() {
   const caretRef = useRef<number | null>(null);
   const caretScrollAtRef = useRef(0);
   // Barra de acoes visivel so enquanto o teclado esta aberto (editando).
-  const [editing, setEditing] = useState(false);
+  // Abrir uma nota para leitura NAO monta o editor: ele so aparece no toque.
+  const [editing, setEditing] = useState(
+    () => action === 'text' || action === 'image' || action === 'link',
+  );
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const initializedRef = useRef(false);
   const actionDoneRef = useRef(false);
   const localTranscribeRef = useRef(false);
   const dirtyRef = useRef(false);
   const editorRef = useRef<RichEditorHandle>(null);
-  // Quando as imagens ficam resolvidas (o editor comeca a montar).
+  const focusOnEditRef = useRef(false);
+  // Enquanto o seletor de imagem/modal esta aberto, o teclado fecha; nao pode
+  // desmontar o editor no meio da insercao (senao a foto nao entra).
+  const suspendEditingRef = useRef(false);
+  // Quando o editor (WebView) comeca a montar.
   const editorMountRef = useRef(0);
+
+  const startEditing = useCallback(() => {
+    focusOnEditRef.current = true;
+    editorMountRef.current = Date.now();
+    setEditing(true);
+  }, []);
+
+  useEffect(() => {
+    if (editing && !editorMountRef.current) {
+      editorMountRef.current = Date.now();
+    }
+  }, [editing]);
 
   // Altura da janela sem teclado (capturada no mount). Serve para saber se o
   // Android redimensionou a janela com o teclado (adjustResize) ou nao (edge-to-edge).
@@ -331,11 +308,14 @@ export default function NoteScreen() {
   useEffect(() => {
     const show = Keyboard.addListener('keyboardDidShow', (event) => {
       setKeyboardHeight(event.endCoordinates?.height ?? 0);
-      setEditing(true);
     });
     const hide = Keyboard.addListener('keyboardDidHide', () => {
       setKeyboardHeight(0);
-      setEditing(false);
+      // Sem teclado, volta para a leitura nativa (desmonta o WebView). Exceto
+      // quando o teclado sumiu porque o seletor de imagem/modal abriu.
+      if (!suspendEditingRef.current) {
+        setEditing(false);
+      }
     });
     return () => {
       show.remove();
@@ -482,34 +462,46 @@ export default function NoteScreen() {
     refreshRef.current = library.refresh;
   }, [library.submitNote, library.updateNote, library.refresh]);
 
-  // Carrega o conteudo da nota uma vez, quando ela aparece, e resolve as fontes
-  // das imagens (arquivo local ou anexo) para exibir no editor.
+  // Resolve as imagens que ja estao no aparelho de forma sincrona e monta o
+  // editor na hora. As que faltam baixam em segundo plano e sao trocadas no
+  // WebView quando chegam: a nota nunca fica presa no preview por causa de uma
+  // foto.
   useEffect(() => {
     if (note && !initializedRef.current) {
       initializedRef.current = true;
       setTitle(note.title);
       setBody(note.text ?? '');
-      void resolveImageSources(note.id, note.text ?? '', note.attachments ?? {})
-        .then((sources) => {
-          editorMountRef.current = Date.now();
-          mark('note.images_ms', Date.now() - openedAt);
-          setImageSources(sources);
-        })
-        .catch(() => setImageSources({}));
+      const attachments = note.attachments ?? {};
+      const local = resolveImageSourcesLocal(note.id, note.text ?? '', attachments);
+      setImageSources(local);
+      setNoteReady(true);
+      mark('note.ready_ms', Date.now() - openedAt);
+      mark('note.images_ms', Date.now() - openedAt);
+      void downloadMissingImageSources(note.id, note.text ?? '', attachments, (ref, uri) => {
+        setImageSources((current) => ({ ...current, [ref]: uri }));
+      }).catch(() => undefined);
     }
   }, [note, openedAt]);
 
-  // Transcricao local: so depois da nota estar na tela (nunca atrasa a
-  // abertura). Se ligada nas configuracoes e com modelo baixado, transcreve.
+  // Transcricao local: so depois da nota estar na tela e das interacoes
+  // assentarem (nunca atrasa a abertura nem compete com a transicao). Se ligada
+  // nas configuracoes e com modelo baixado, transcreve.
   useEffect(() => {
     if (localTranscribeRef.current || !note) return undefined;
     if (!note.filePath || note.hasTranscript) return undefined;
+    let task: { cancel: () => void } | null = null;
     const timer = setTimeout(() => {
       if (localTranscribeRef.current) return;
-      localTranscribeRef.current = true;
-      void maybeTranscribeLocally(note.id).catch(() => undefined);
-    }, 800);
-    return () => clearTimeout(timer);
+      task = InteractionManager.runAfterInteractions(() => {
+        if (localTranscribeRef.current) return;
+        localTranscribeRef.current = true;
+        void maybeTranscribeLocally(note.id).catch(() => undefined);
+      });
+    }, 1500);
+    return () => {
+      clearTimeout(timer);
+      task?.cancel();
+    };
   }, [note]);
 
   // Autosave local (debounced).
@@ -618,6 +610,7 @@ export default function NoteScreen() {
 
   const handleAddImage = useCallback(async () => {
     if (!noteId) return;
+    suspendEditingRef.current = true;
     try {
       const picked = await pickImage();
       if (!picked) return;
@@ -634,10 +627,18 @@ export default function NoteScreen() {
           // offline: fica local e sobe no sync
         }
       }
-      editorRef.current?.insertImage(displaySrc, persistSrc, picked.name);
+      // A previa nativa precisa saber que esta referencia aponta para o arquivo
+      // local; o markdown em si carrega so `local:`/`attachment:`.
+      setImageSources((current) => ({ ...current, [persistSrc]: displaySrc }));
+      editorRef.current?.insertImage(displaySrc, persistSrc, picked.name, DEFAULT_IMAGE_WIDTH);
       dirtyRef.current = true;
+      // O seletor fecha o teclado; devolve o foco para o paragrafo criado
+      // abaixo da foto.
+      requestAnimationFrame(() => editorRef.current?.focus());
     } catch {
       // falha ao anexar imagem: segue sem anexar
+    } finally {
+      suspendEditingRef.current = false;
     }
   }, [noteId, note]);
 
@@ -658,7 +659,11 @@ export default function NoteScreen() {
       const target = imageMenu;
       setImageMenu(null);
       if (!target) return;
-      editorRef.current?.setImageWidth(target.src, percent);
+      if (editorRef.current) {
+        editorRef.current.setImageWidth(target.src, percent);
+      } else {
+        setBody((current) => setImageWidthInMarkdown(current, target.src, percent));
+      }
       dirtyRef.current = true;
     },
     [imageMenu],
@@ -668,7 +673,11 @@ export default function NoteScreen() {
     const target = imageMenu;
     setImageMenu(null);
     if (!target) return;
-    editorRef.current?.deleteImage(target.src);
+    if (editorRef.current) {
+      editorRef.current.deleteImage(target.src);
+    } else {
+      setBody((current) => removeImageFromMarkdown(current, target.src));
+    }
     dirtyRef.current = true;
   }, [imageMenu]);
 
@@ -696,6 +705,10 @@ export default function NoteScreen() {
   // Acao pedida pela tela inicial (texto/imagem/link): roda uma vez, quando o
   // editor termina de carregar, para reduzir passos dentro da nota.
   const handleEditorReady = useCallback(() => {
+    if (focusOnEditRef.current) {
+      focusOnEditRef.current = false;
+      editorRef.current?.focus();
+    }
     if (actionDoneRef.current || !noteId) return;
     actionDoneRef.current = true;
     mark('note.ready_ms', Date.now() - openedAt);
@@ -884,40 +897,47 @@ export default function NoteScreen() {
           </View>
         ) : null}
 
-        {imageSources && contentReady ? (
-          <View
-            onLayout={(event) => {
-              editorTopRef.current = event.nativeEvent.layout.y;
-            }}
-          >
-            <RichEditor
-              key={editorKey}
-              ref={editorRef}
-              value={body}
-              onChangeMarkdown={handleBodyChange}
-              onEditingChange={handleEditingChange}
-              onReady={handleEditorReady}
-              onCaret={handleCaret}
-              onImageOpen={handleImageOpen}
-              onImageMenu={handleImageMenu}
-              onOpaqueMenu={handleOpaqueMenu}
-              placeholder={editorPlaceholder}
+        {noteReady && settingsReady ? (
+          editing ? (
+            <View
+              style={{ minHeight: editorMinHeight }}
+              onLayout={(event) => {
+                editorTopRef.current = event.nativeEvent.layout.y;
+              }}
+            >
+              <RichEditor
+                key={editorKey}
+                ref={editorRef}
+                value={body}
+                onChangeMarkdown={handleBodyChange}
+                onEditingChange={handleEditingChange}
+                onReady={handleEditorReady}
+                onCaret={handleCaret}
+                onImageOpen={handleImageOpen}
+                onImageMenu={handleImageMenu}
+                onOpaqueMenu={handleOpaqueMenu}
+                placeholder={editorPlaceholder}
+                imageSources={imageSources}
+                baseUrl={editorBaseUrl}
+                typography={typography}
+                minHeight={editorMinHeight}
+                // Coluna de texto com medida e centralizada, como um documento.
+                measure={Math.min(DEFAULT_MEASURE, Math.max(320, windowWidth - 2 * spacing.lg))}
+              />
+            </View>
+          ) : (
+            <NoteReader
+              markdown={body}
               imageSources={imageSources}
-              baseUrl={editorBaseUrl}
               typography={typography}
               minHeight={editorMinHeight}
-              // Coluna de texto com medida e centralizada, como um documento.
-              measure={Math.min(DEFAULT_MEASURE, Math.max(320, windowWidth - 2 * spacing.lg))}
+              placeholder={editorPlaceholder}
+              onStartEditing={startEditing}
+              onImageOpen={handleImageOpen}
+              onImageMenu={(ref, width) => setImageMenu({ src: ref, width })}
             />
-          </View>
-        ) : (
-          <NotePreview
-            text={body}
-            placeholder={editorPlaceholder}
-            typography={typography}
-            minHeight={editorMinHeight}
-          />
-        )}
+          )
+        ) : null}
 
         {note.status === 'failed' ? (
           <Pressable
@@ -956,6 +976,10 @@ export default function NoteScreen() {
           </ToolButton>
           <ToolButton label="Gravar áudio" onPress={handleRecord}>
             <Ionicons name="mic-outline" size={20} color={colors.text} />
+          </ToolButton>
+          <View style={styles.toolDivider} />
+          <ToolButton label="Concluir edição" onPress={() => Keyboard.dismiss()}>
+            <Ionicons name="checkmark" size={20} color={colors.accentStrong} />
           </ToolButton>
         </View>
       ) : null}
@@ -1084,9 +1108,6 @@ const styles = StyleSheet.create({
   scroll: { flex: 1 },
   content: { padding: spacing.xl, gap: spacing.lg, paddingBottom: spacing.xxxl },
   contentEditing: { paddingBottom: 96 },
-  previewBox: { paddingVertical: 4 },
-  preview: { color: colors.text },
-  previewPlaceholder: { color: colors.textTertiary },
   titleInput: {
     color: colors.text,
     fontWeight: '700',

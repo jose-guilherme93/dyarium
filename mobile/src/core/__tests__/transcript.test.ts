@@ -27,6 +27,22 @@ describe('needsTranscript', () => {
     expect(needsTranscript(base({ entryId: 'en1', transcriptStatus: 'ready' }))).toBe(false);
   });
 
+  it('nao precisa em nota escrita (sem audio)', () => {
+    expect(
+      needsTranscript(
+        base({ entryId: 'en1', segmentCount: 0, contentType: 'text/plain', transcriptStatus: 'pending' }),
+      ),
+    ).toBe(false);
+  });
+
+  it('precisa em audio vindo do servidor (content-type de audio)', () => {
+    expect(
+      needsTranscript(
+        base({ entryId: 'en1', segmentCount: 0, contentType: 'audio/mp4', transcriptStatus: 'pending' }),
+      ),
+    ).toBe(true);
+  });
+
   it('nao precisa sem entryId (ainda nao enviada)', () => {
     expect(needsTranscript(base({ status: 'queued' }))).toBe(false);
   });

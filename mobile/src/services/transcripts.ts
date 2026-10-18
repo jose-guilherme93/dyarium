@@ -15,6 +15,11 @@ import { emitRecording } from './uploaderLoop';
 const doFetch = globalThis.fetch as unknown as FetchLike;
 
 let running = false;
+// Backoff por entrada quando o servidor responde 404 (ainda transcrevendo).
+// Sem isso, cada ciclo de 8 s pedia /transcript de todas as notas pendentes.
+const retryAt = new Map<string, number>();
+const retryDelay = new Map<string, number>();
+const MAX_RETRY_MS = 5 * 60_000;
 
 export async function fetchTranscriptsOnce(): Promise<void> {
   if (running) return;
@@ -26,8 +31,10 @@ export async function fetchTranscriptsOnce(): Promise<void> {
     const recordings = await listRecordings();
     for (const recording of recordings) {
       if (!needsTranscript(recording)) continue;
+      const entryId = recording.entryId as string;
+      if ((retryAt.get(entryId) ?? 0) > Date.now()) continue;
       try {
-        const transcript = await api.getTranscript(recording.entryId as string);
+        const transcript = await api.getTranscript(entryId);
         const updated: Recording = {
           ...recording,
           transcript: transcript.text,
@@ -38,11 +45,16 @@ export async function fetchTranscriptsOnce(): Promise<void> {
         };
         await upsertRecording(updated);
         emitRecording(updated);
+        retryAt.delete(entryId);
+        retryDelay.delete(entryId);
         // Aviso generico (sem conteudo sensivel).
         void notify('Transcrição pronta', 'Uma nota sua foi transcrita.');
       } catch (error) {
         if (error instanceof ApiError && error.status === 404) {
-          // ainda transcrevendo no servidor; tenta de novo no proximo ciclo
+          // ainda transcrevendo no servidor: espera mais a cada tentativa
+          const delay = Math.min((retryDelay.get(entryId) ?? 4_000) * 2, MAX_RETRY_MS);
+          retryDelay.set(entryId, delay);
+          retryAt.set(entryId, Date.now() + delay);
           continue;
         }
         // outros erros (rede, etc.): mantem pendente e tenta de novo depois

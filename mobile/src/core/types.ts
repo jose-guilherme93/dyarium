@@ -9,6 +9,20 @@
  */
 export type ConflictField = 'title' | 'recorded_at' | 'body';
 
+/** Um audio da nota, como o servidor guarda: uma nota pode ter varios. */
+export interface ServerAudio {
+  id: string;
+  content_type: string;
+  size_bytes: number;
+  duration_seconds: number;
+  created_at: string;
+  transcript?: {
+    text?: string;
+    language?: string;
+    segments?: TranscriptSegment[];
+  };
+}
+
 export type RecordingStatus =
   | 'draft' // nota nova, ainda sem conteudo; nao entra na fila
   | 'recording' // sessao ativa, gravando segmentos
@@ -63,6 +77,8 @@ export interface Recording {
   transcriptOrigin?: TranscriptOrigin;
   /** Segmentos da transcricao (cache local, para nao refazer fetch ao abrir). */
   transcriptSegments?: TranscriptSegment[];
+  /** Ultima pilha de audios lida do servidor (cache local para abrir sem esperar). */
+  serverAudios?: ServerAudio[];
   /** Origem do audio (default: gravado no microfone). */
   source?: RecordingSource;
   /** Texto da nota (nota de texto ou anotacao de uma nota de audio). */
@@ -132,10 +148,14 @@ export function isUploadable(r: Recording): boolean {
 
 /**
  * Gravacao enviada que ainda nao tem transcricao pronta. Notas transcritas no
- * aparelho (origem local) nao pedem transcricao ao servidor.
+ * aparelho (origem local) nao pedem transcricao ao servidor, e nota sem audio
+ * (texto) nunca tem transcricao para buscar.
  */
 export function needsTranscript(r: Recording): boolean {
+  const hasAudio =
+    Boolean(r.filePath) || r.segmentCount > 0 || Boolean(r.contentType?.startsWith('audio/'));
   return (
+    hasAudio &&
     Boolean(r.entryId) &&
     r.status === 'completed' &&
     r.transcriptOrigin !== 'local' &&

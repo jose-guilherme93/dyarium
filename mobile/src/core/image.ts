@@ -42,6 +42,12 @@ export const IMAGE_WIDTH_OPTIONS: ImageWidthOption[] = [
   { label: 'Miniatura', percent: 30 },
 ];
 
+/**
+ * Largura padrao de uma foto recem-inserida: metade da nota ("tamanho medio").
+ * Foto em largura total empurrava o paragrafo editavel para fora da tela.
+ */
+export const DEFAULT_IMAGE_WIDTH = 50;
+
 /** Maior largura que a foto pode ocupar (percentual da nota). */
 export const IMAGE_WIDTH_MIN = 15;
 

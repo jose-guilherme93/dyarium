@@ -6,7 +6,7 @@
 import * as SQLite from 'expo-sqlite';
 import { Directory, File, Paths } from 'expo-file-system';
 
-import type { ServerAnalysis } from '@/core/api';
+import type { ServerAnalysis, ServerAudio } from '@/core/api';
 import type {
   ConflictField,
   Recording,
@@ -55,6 +55,7 @@ interface Row {
   recorded_at_version: string | null;
   body_version: string | null;
   sync_conflict: string | null;
+  server_audios: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -220,6 +221,14 @@ const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 13,
+    run: async (db) => {
+      // Pilha de audios do servidor (JSON): abrir a nota mostra a ultima copia
+      // enquanto a rede revalida em segundo plano, em vez de comecar vazia.
+      await addColumn(db, 'recordings', 'server_audios');
+    },
+  },
 ];
 
 async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
@@ -294,6 +303,17 @@ function parseSegments(raw: string | null): TranscriptSegment[] | undefined {
   }
 }
 
+/** Pilha de audios do servidor cacheada em JSON; vazia quando nunca foi lida. */
+function parseServerAudios(raw: string | null): ServerAudio[] | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as ServerAudio[]) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function parseAttachments(raw: string | null): Record<string, string> | undefined {
   if (!raw) return undefined;
   try {
@@ -360,6 +380,7 @@ function rowToRecording(row: Row): Recording {
     recordedAtVersion: row.recorded_at_version ?? undefined,
     bodyVersion: row.body_version ?? undefined,
     syncConflict: parseConflict(row.sync_conflict),
+    serverAudios: parseServerAudios(row.server_audios),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -374,8 +395,8 @@ export async function upsertRecording(r: Recording): Promise<void> {
       transcript, transcript_language, transcript_status, transcript_segments,
       has_transcript, transcript_origin,
       source, text, content_type, file_name, duplicate, archived, note_dirty, attachments,
-      title_version, recorded_at_version, body_version, sync_conflict, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      title_version, recorded_at_version, body_version, sync_conflict, server_audios, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
       recorded_at = excluded.recorded_at,
@@ -411,6 +432,7 @@ export async function upsertRecording(r: Recording): Promise<void> {
       recorded_at_version = excluded.recorded_at_version,
       body_version = excluded.body_version,
       sync_conflict = excluded.sync_conflict,
+      server_audios = excluded.server_audios,
       updated_at = excluded.updated_at`,
     [
       r.id,
@@ -448,6 +470,7 @@ export async function upsertRecording(r: Recording): Promise<void> {
       r.recordedAtVersion ?? null,
       r.bodyVersion ?? null,
       r.syncConflict && r.syncConflict.length > 0 ? JSON.stringify(r.syncConflict) : null,
+      r.serverAudios ? JSON.stringify(r.serverAudios) : null,
       r.createdAt,
       r.updatedAt,
     ],
@@ -464,6 +487,15 @@ export async function getRecording(id: string): Promise<Recording | null> {
   const db = await getDb();
   const row = await db.getFirstAsync<Row>('SELECT * FROM recordings WHERE id = ?', [id]);
   return row ? rowToRecording(row) : null;
+}
+
+/** Cache da pilha de audios do servidor para uma entrada (JSON por linha). */
+export async function saveServerAudios(entryId: string, audios: ServerAudio[]): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    'UPDATE recordings SET server_audios = ? WHERE entry_id = ?',
+    [JSON.stringify(audios), entryId],
+  );
 }
 
 export async function deleteRecordingRow(id: string): Promise<void> {

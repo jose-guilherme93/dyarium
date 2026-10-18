@@ -100,7 +100,11 @@ function normalizeUrl(baseUrl: string): string {
 export function SettingsProvider({ children }: { children: ReactNode }) {
   bumpRender('SettingsProvider');
   const [config, setConfig] = useState<ServerConfig | null>(null);
-  const [ready, setReady] = useState(false);
+  // "ready" precisa significar configuracao E preferencias carregadas: a nota
+  // monta o editor quando ready vira true para a fonte nao piscar com o padrao.
+  const [configReady, setConfigReady] = useState(false);
+  const [prefsReady, setPrefsReady] = useState(false);
+  const ready = configReady && prefsReady;
   const [swipeAction, setSwipeActionState] = useState<SwipeAction>('delete');
   const [importYear, setImportYearState] = useState<number | undefined>(undefined);
   const [typography, setTypographyState] = useState<NoteTypography>(DEFAULT_TYPOGRAPHY);
@@ -129,7 +133,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       })
       .catch(() => undefined)
       .finally(() => {
-        if (alive) setReady(true);
+        if (alive) setConfigReady(true);
       });
     loadPrefs()
       .then((prefs) => {
@@ -149,7 +153,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         setCelebratedWordsState(prefs.celebratedWords ?? 0);
         setCelebratedStreakState(prefs.celebratedStreak ?? 0);
       })
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => {
+        if (alive) setPrefsReady(true);
+      });
     return () => {
       alive = false;
     };

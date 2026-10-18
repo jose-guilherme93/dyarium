@@ -9,6 +9,7 @@ import { bumpRender } from '@/dev/perf';
 import { deleteRecordingRow, getRecording, listRecordings, upsertRecording } from '@/services/db';
 import { deleteServerEntry } from '@/services/entries';
 import { deleteSessionAudioFiles, deleteSessionFiles } from '@/services/files';
+import { noteIsOpen } from '@/services/noteVisibility';
 import { pullServerEntries } from '@/services/pull';
 import { fetchTranscriptsOnce } from '@/services/transcripts';
 import { emitRecording, observeUploads, runUploadQueueOnce } from '@/services/uploaderLoop';
@@ -136,6 +137,8 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   const hasPendingTranscripts = recordings.some(needsTranscript);
 
   const pullTranscripts = useCallback(() => {
+    // A nota aberta e local-first: nada de rede/SQLite de fundo competindo.
+    if (noteIsOpen()) return;
     bumpRender('transcripts.called');
     void fetchTranscriptsOnce().then(refresh).catch(() => undefined);
   }, [refresh]);
@@ -143,6 +146,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   // Traz notas do servidor para o app (best-effort). Se nada novo chegou, nao
   // mexe na lista local.
   const pullServer = useCallback(() => {
+    if (noteIsOpen()) return;
     bumpRender('pullserver.called');
     void pullServerEntries()
       .then((changed) => {
@@ -248,12 +252,15 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       const changed =
         (patch.title !== undefined && patch.title !== current.title) ||
         (patch.text !== undefined && patch.text !== current.text);
+      // Abrir a nota nao e editar: sem mudanca real nao grava linha nem mexe em
+      // updatedAt (o que fazia a lista inteira se considerar alterada).
+      if (!changed) return;
       const updated: Recording = {
         ...current,
         ...patch,
         // Numa nota ja enviada, so marca o que mudou: o autosave tambem roda no
         // mount e nao pode enfileirar um reenvio a toa.
-        noteDirty: current.status === 'completed' && changed ? true : current.noteDirty,
+        noteDirty: current.status === 'completed' ? true : current.noteDirty,
         updatedAt: new Date().toISOString(),
       };
       // Persiste sem re-renderizar o app inteiro a cada autosave; a lista se

@@ -3,9 +3,9 @@
  * com um transporte falso. Nao ha estado aqui: cada chamada e independente.
  */
 
-import type { ConflictField, ServerConfig, TranscriptSegment } from './types';
+import type { ConflictField, ServerAudio, ServerConfig, TranscriptSegment } from './types';
 
-export type { ConflictField, TranscriptSegment };
+export type { ConflictField, ServerAudio, TranscriptSegment };
 
 export interface HttpResponse {
   ok: boolean;
@@ -233,20 +233,6 @@ export interface ServerNote {
 }
 
 /** Anexo de uma entrada (imagem anexada a nota). */
-/** Um audio da nota, como o servidor guarda: uma nota pode ter varios. */
-export interface ServerAudio {
-  id: string;
-  content_type: string;
-  size_bytes: number;
-  duration_seconds: number;
-  created_at: string;
-  transcript?: {
-    text?: string;
-    language?: string;
-    segments?: TranscriptSegment[];
-  };
-}
-
 export interface ServerAttachment {
   id: string;
   entry_id: string;

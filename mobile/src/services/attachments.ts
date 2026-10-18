@@ -90,21 +90,43 @@ async function cacheLocalCopy(noteId: string, name: string, id: string): Promise
     const source = new File(sessionDirectory(noteId), name);
     if (!source.exists) return;
     await source.copy(destination);
+    invalidateAttachmentIndex();
   } catch {
     // cache best-effort: sem ele a exibicao cai no arquivo local ou no download
   }
 }
 
+/** Indice do diretorio de cache por um curto periodo: listar uma vez por
+ * abertura, nao uma vez por imagem (a listagem e sincrona na thread de JS). */
+let index: { at: number; uris: Map<string, string> } | null = null;
+
+function attachmentIndex(): Map<string, string> {
+  const now = Date.now();
+  if (index && now - index.at < 2000) {
+    return index.uris;
+  }
+  const uris = new Map<string, string>();
+  try {
+    for (const entry of attachmentsDir().list()) {
+      const dot = entry.name.lastIndexOf('.');
+      if (dot > 0) {
+        uris.set(entry.name.slice(0, dot), entry.uri);
+      }
+    }
+  } catch {
+    // cache best-effort
+  }
+  index = { at: now, uris };
+  return uris;
+}
+
+export function invalidateAttachmentIndex(): void {
+  index = null;
+}
+
 /** Arquivo de cache ja existente para um anexo, ou null. */
 export function cachedAttachmentUri(id: string): string | null {
-  try {
-    const cached = attachmentsDir()
-      .list()
-      .find((entry) => entry.name.startsWith(`${id}.`));
-    return cached ? cached.uri : null;
-  } catch {
-    return null;
-  }
+  return attachmentIndex().get(id) ?? null;
 }
 
 /** Baixa o anexo do servidor para o cache e devolve a URI local. */
@@ -113,7 +135,19 @@ async function downloadAttachment(id: string): Promise<string | null> {
   if (!config) return null;
   try {
     const url = `${config.baseUrl.replace(/\/+$/, '')}/api/v1/attachments/${id}`;
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${config.token}` } });
+    // Sem teto, uma conexao pendurada prendia a imagem para sempre (e o editor
+    // ficava sem ela). 15 s e suficiente para uma foto.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        headers: { Authorization: `Bearer ${config.token}` },
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
     if (!res.ok) return null;
     const type = res.headers.get('Content-Type') ?? 'image/jpeg';
     const bytes = new Uint8Array(await res.arrayBuffer());
@@ -127,6 +161,7 @@ async function downloadAttachment(id: string): Promise<string | null> {
     } finally {
       handle.close();
     }
+    invalidateAttachmentIndex();
     return file.uri;
   } catch {
     return null;
@@ -167,6 +202,71 @@ export async function resolveLocalAttachments(
 }
 
 /**
+ * Mapa referencia -> fonte de exibicao apenas com o que ja esta no aparelho.
+ * Nao toca na rede: o editor pode montar imediatamente e as imagens que faltam
+ * entram depois, sem segurar a nota no preview de texto.
+ */
+export function resolveImageSourcesLocal(
+  noteId: string,
+  markdown: string,
+  attachments: Record<string, string> = {},
+): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const ref of extractImageUrls(markdown)) {
+    let uri: string | null = null;
+    if (isLocalAttachment(ref)) {
+      const name = localAttachmentName(ref);
+      uri = localImageUri(noteId, name);
+      // Arquivo local sumiu (ex.: liberou espaco): usa o anexo ja subido.
+      if (!uri && attachments[name]) uri = cachedAttachmentUri(attachments[name]);
+    } else if (ref.startsWith(ATTACHMENT_PREFIX)) {
+      uri = cachedAttachmentUri(attachmentRefId(ref));
+    } else {
+      const id = attachmentIdFromUrl(ref);
+      if (id) uri = cachedAttachmentUri(id);
+    }
+    if (uri) map[ref] = uri;
+  }
+  return map;
+}
+
+/**
+ * Baixa em segundo plano as imagens que ainda nao estao no aparelho e avisa o
+ * chamador a cada uma que chega, para o editor trocar o placeholder na hora.
+ */
+export async function downloadMissingImageSources(
+  noteId: string,
+  markdown: string,
+  attachments: Record<string, string>,
+  onFound: (ref: string, uri: string) => void,
+): Promise<void> {
+  const wanted = new Map<string, string[]>(); // attachment id -> refs
+  for (const ref of extractImageUrls(markdown)) {
+    let id: string | null = null;
+    if (isLocalAttachment(ref)) {
+      const name = localAttachmentName(ref);
+      if (localImageUri(noteId, name)) continue;
+      id = attachments[name] ?? null;
+    } else if (ref.startsWith(ATTACHMENT_PREFIX)) {
+      id = attachmentRefId(ref);
+    } else {
+      id = attachmentIdFromUrl(ref) ?? null;
+    }
+    if (!id || cachedAttachmentUri(id)) continue;
+    const refs = wanted.get(id) ?? [];
+    refs.push(ref);
+    wanted.set(id, refs);
+  }
+  await Promise.all(
+    [...wanted.entries()].map(async ([id, refs]) => {
+      const uri = await attachmentUri(id);
+      if (!uri) return;
+      for (const ref of refs) onFound(ref, uri);
+    }),
+  );
+}
+
+/**
  * Mapa referencia -> fonte de exibicao (`file://`) para as imagens do markdown:
  * `local:` sai da pasta da nota; `attachment:<id>` (ou URL de anexo) sai do
  * cache local e so baixa do servidor quando ainda nao existe no aparelho.
@@ -176,23 +276,9 @@ export async function resolveImageSources(
   markdown: string,
   attachments: Record<string, string> = {},
 ): Promise<Record<string, string>> {
-  const map: Record<string, string> = {};
-  await Promise.all(
-    extractImageUrls(markdown).map(async (ref) => {
-      let uri: string | null = null;
-      if (isLocalAttachment(ref)) {
-        const name = localAttachmentName(ref);
-        uri = localImageUri(noteId, name);
-        // Arquivo local sumiu (ex.: liberou espaco): usa o anexo ja subido.
-        if (!uri && attachments[name]) uri = await attachmentUri(attachments[name]);
-      } else if (ref.startsWith(ATTACHMENT_PREFIX)) {
-        uri = await attachmentUri(attachmentRefId(ref));
-      } else {
-        const id = attachmentIdFromUrl(ref);
-        if (id) uri = await attachmentUri(id);
-      }
-      if (uri) map[ref] = uri;
-    }),
-  );
+  const map = resolveImageSourcesLocal(noteId, markdown, attachments);
+  await downloadMissingImageSources(noteId, markdown, attachments, (ref, uri) => {
+    map[ref] = uri;
+  });
   return map;
 }

@@ -384,6 +384,10 @@ export function markdownToPlain(markdown: string): string {
       .replace(/^```[\s\S]*?^```[^\n]*$/gm, '')
       .replace(/^\|.*\|$/gm, '')
       .replace(/\[([^\]]*)\]\(note:[^)\s]+\)/g, '')
+      // Imagem e link nao sao texto da nota: a imagem vira bloco na previa e o
+      // link conta pelo rotulo (antes a URL inteira entrava na contagem).
+      .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
       .replace(/\*\*/g, '')
       .replace(/[`_]/g, '')
       .replace(/^#{1,6}\s+/gm, '')
