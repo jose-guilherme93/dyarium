@@ -23,11 +23,12 @@ import {
 import { ConflictDialog } from '@/components/ConflictDialog';
 import { AudioSeekBar } from '@/components/AudioSeekBar';
 import { FastModal } from '@/components/FastModal';
+import { NoteBody, type NoteBodyHandle } from '@/components/NoteBody';
 import { NoteMetaRow } from '@/components/NoteMetaRow';
 import { NoteMenu, type NoteMenuAnchor, type NoteProperty } from '@/components/NoteMenu';
 import { NotebookPicker } from '@/components/NotebookPicker';
 import { TagPicker } from '@/components/TagPicker';
-import { TentapNoteEditor, type NoteBodyEditorHandle } from '@/components/TentapNoteEditor';
+
 import { Screen } from '@/components/Screen';
 import { STATUS_META } from '@/components/StatusChip';
 import { SyncedTranscript } from '@/components/SyncedTranscript';
@@ -52,7 +53,7 @@ import {
 import { DEFAULT_IMAGE_WIDTH } from '@/core/image';
 import { breakSentences, countChars, countWords, markdownToPlain } from '@/core/richText';
 import { clearNoteConflict, keepMine } from '@/core/noteSync';
-import { mark, useRenderCount } from '@/dev/perf';
+import { BUILD_STAMP, mark, useRenderCount } from '@/dev/perf';
 
 import {
   attachmentUri,
@@ -73,14 +74,13 @@ import {
   upsertRecording,
   type CachedAnalysis,
 } from '@/services/db';
-import { directoryBytes, sessionDirectory, sessionDirUri } from '@/services/files';
+import { directoryBytes, sessionDirectory } from '@/services/files';
 import { pickImage } from '@/services/image';
 import {
   analyzeRecording,
   localAnalysisAvailable,
   stopAnalysis,
 } from '@/services/localAnalysis';
-import { maybeTranscribeLocally } from '@/services/localTranscription';
 import { enterNote, leaveNote } from '@/services/noteVisibility';
 import { fetchTheirs, syncNoteForcing } from '@/services/noteSync';
 import { pushTranscript } from '@/services/transcriptSync';
@@ -238,7 +238,6 @@ export default function NoteScreen() {
     return tags.sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
   }, [library.recordings, tagPickerOpen]);
   const noteId = note?.id;
-  const editorBaseUrl = useMemo(() => (noteId ? sessionDirUri(noteId) : undefined), [noteId]);
   const liveTranscriptionPercent = useTranscriptionProgress(noteId);
   const transcriptionPercent =
     liveTranscriptionPercent > 0
@@ -291,7 +290,7 @@ export default function NoteScreen() {
   const [imageSources, setImageSources] = useState<Record<string, string>>(() =>
     note ? resolveImageSourcesLocal(note.id, note.text ?? '', note.attachments ?? {}) : {},
   );
-  const [noteReady, setNoteReady] = useState(false);
+  const [noteReady, setNoteReady] = useState(() => Boolean(note));
   const [notebookPickerOpen, setNotebookPickerOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<NoteMenuAnchor | null>(null);
@@ -387,26 +386,35 @@ export default function NoteScreen() {
   const [linkValue, setLinkValue] = useState('');
   const [viewerSrc, setViewerSrc] = useState<string | null>(null);
   const configButtonRef = useRef<View>(null);
-  // Foco do editor: apenas para a transcricao local nao competir com a digitacao.
-  const [editing, setEditing] = useState(
-    () => action === 'text' || action === 'image' || action === 'link',
-  );
-  // Altura coberta pelo teclado (ja sem a barra de navegacao). Encolhe a area
-  // do editor e leva a barra de acoes para cima do teclado, sem medir views.
+  // Altura do teclado: a barra de acoes sobe com ele e a area rolavel da nota
+  // encolhe, para o campo em edicao nunca ficar embaixo do teclado. O Android
+  // reemite o evento enquanto o teclado sobe (com alturas parciais): mudar o
+  // layout a cada emissiono trava o cursor. A altura so entra depois de
+  // assentar, e ja fica reservada no proximo foco (sem pulo).
   const [keyboardPad, setKeyboardPad] = useState(0);
+  const keyboardHeightRef = useRef(0);
+  const keyboardTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     const show = Keyboard.addListener('keyboardDidShow', (event) => {
-      setKeyboardPad(event.endCoordinates.height);
+      keyboardHeightRef.current = event.endCoordinates.height;
+      if (keyboardTimerRef.current) clearTimeout(keyboardTimerRef.current);
+      keyboardTimerRef.current = setTimeout(() => {
+        keyboardTimerRef.current = null;
+        setKeyboardPad(keyboardHeightRef.current);
+      }, 120);
     });
-    const hide = Keyboard.addListener('keyboardDidHide', () => setKeyboardPad(0));
+    const hide = Keyboard.addListener('keyboardDidHide', () => {
+      if (keyboardTimerRef.current) clearTimeout(keyboardTimerRef.current);
+      keyboardHeightRef.current = 0;
+      setKeyboardPad(0);
+    });
     return () => {
       show.remove();
       hide.remove();
+      if (keyboardTimerRef.current) clearTimeout(keyboardTimerRef.current);
     };
   }, []);
-  const initializedRef = useRef(false);
-  const actionDoneRef = useRef(false);
-  const localTranscribeRef = useRef(false);
+  const initializedRef = useRef(false);  const actionDoneRef = useRef(false);
   const dirtyRef = useRef(false);
   const leavingRef = useRef(false);
   const bodyRef = useRef(body);
@@ -415,7 +423,7 @@ export default function NoteScreen() {
   useEffect(() => {
     titleRef.current = title;
   }, [title]);
-  const editorRef = useRef<NoteBodyEditorHandle>(null);
+  const editorRef = useRef<NoteBodyHandle>(null);
   const statusRef = useRef(note?.status);
   useEffect(() => {
     statusRef.current = note?.status;
@@ -459,15 +467,6 @@ export default function NoteScreen() {
     });
     return unsubscribe;
   }, [flushEditor, navigation]);
-  // Quando o editor comeca a montar (para o marco de tempo).
-  const editorMountRef = useRef(0);
-
-  useEffect(() => {
-    if (editing && !editorMountRef.current) {
-      editorMountRef.current = Date.now();
-    }
-  }, [editing]);
-
   // Handlers estaveis: o editor (memoizado) nao pode re-renderizar a cada tecla.
   const handleTitleChange = useCallback((value: string) => {
     dirtyRef.current = true;
@@ -500,8 +499,13 @@ export default function NoteScreen() {
 
   // Perder o foco entrega o texto pendente.
   const handleEditingChange = useCallback((value: boolean) => {
-    setEditing(value);
-    if (!value) void editorRef.current?.flush?.();
+    if (value) {
+      // O teclado vai subir: reserva a altura conhecida ANTES dele comecar, para
+      // o cursor nao ficar atras do teclado e a rolagem nao pular.
+      if (keyboardHeightRef.current > 0) setKeyboardPad(keyboardHeightRef.current);
+      return;
+    }
+    void editorRef.current?.flush?.();
   }, []);
 
   // Conflito: o servidor recusou a gravacao porque o campo ja mudou no
@@ -610,32 +614,23 @@ export default function NoteScreen() {
       setNoteReady(true);
       mark('note.ready_ms', Date.now() - openedAt);
       mark('note.images_ms', Date.now() - openedAt);
+      if (__DEV__) {
+        console.log('[perf] note.corpo', {
+          bundle: BUILD_STAMP,
+          chars: (note.text ?? '').length,
+          linhas: (note.text ?? '').split('\n').length,
+          fotos: Object.keys(attachments).length,
+        });
+      }
       void downloadMissingImageSources(note.id, note.text ?? '', attachments, queueImageSource).catch(
         () => undefined,
       );
     }
   }, [note, openedAt, queueImageSource]);
 
-  // Transcricao local: so depois da nota estar na tela, das interacoes
-  // assentarem e fora do modo de edicao. Whisper usa CPU e nao pode disputar
-  // com a digitacao/rolagem. Se ligada nas configuracoes, transcreve depois.
-  useEffect(() => {
-    if (localTranscribeRef.current || !note || editing) return undefined;
-    if (!note.filePath || note.hasTranscript) return undefined;
-    let task: { cancel: () => void } | null = null;
-    const timer = setTimeout(() => {
-      if (localTranscribeRef.current || editing) return;
-      task = InteractionManager.runAfterInteractions(() => {
-        if (localTranscribeRef.current || editing) return;
-        localTranscribeRef.current = true;
-        void maybeTranscribeLocally(note.id).catch(() => undefined);
-      });
-    }, 4000);
-    return () => {
-      clearTimeout(timer);
-      task?.cancel();
-    };
-  }, [editing, note]);
+  // A transcricao local (Whisper) nao roda aqui: ela satura a CPU do aparelho
+  // e trava a nota aberta (o quadro cai de 17 ms para segundos). Quem transcreve
+  // em segundo plano e o app fechado, pela task de background.
 
   // Autosave local (debounced).
   useEffect(() => {
@@ -1134,16 +1129,17 @@ export default function NoteScreen() {
   }, [linkValue, noteId]);
 
   // Acao pedida pela tela inicial (texto/imagem/link): roda uma vez, quando o
-  // editor termina de carregar, para reduzir passos dentro da nota.
-  const handleEditorReady = useCallback(() => {
-    if (actionDoneRef.current || !noteId) return;
+  // corpo da nota ja esta na tela.
+  useEffect(() => {
+    if (actionDoneRef.current || !noteId || !noteReady) return undefined;
     actionDoneRef.current = true;
-    mark('note.ready_ms', Date.now() - openedAt);
-    if (editorMountRef.current) mark('note.webview_ms', Date.now() - editorMountRef.current);
-    if (action === 'text') editorRef.current?.focus();
-    else if (action === 'image') void handleAddImage();
-    else if (action === 'link') void openLinkModal();
-  }, [action, noteId, handleAddImage, openLinkModal, openedAt]);
+    const timer = setTimeout(() => {
+      if (action === 'text') editorRef.current?.focus();
+      else if (action === 'image') void handleAddImage();
+      else if (action === 'link') void openLinkModal();
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [action, noteId, noteReady, handleAddImage, openLinkModal]);
 
   // Contagens varrem o texto inteiro: so recalcula quando o corpo ou a ficha
   // mudam (antes rodava a cada tecla e a cada re-render da nota).
@@ -1271,9 +1267,18 @@ export default function NoteScreen() {
         </View>
       </View>
 
-      {/* Barra fixa no topo removida: as acoes ficam na barra que sobe junto
-          com o teclado (mais abaixo). */}
-      <View style={styles.top}>
+      {/* A nota e uma peca so: titulo, data, tags, audios, transcricao e corpo
+          rolam juntos nesta ScrollView. O cabecalho (voltar/caderno/menu)
+          continua fixo. */}
+      <ScrollView
+        testID="note-scroll"
+        style={styles.scroll}
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+        nestedScrollEnabled
+        showsVerticalScrollIndicator={false}
+        scrollEventThrottle={16}
+      >
         <View style={styles.titleBlock}>
           <TextInput
             value={title}
@@ -1304,13 +1309,14 @@ export default function NoteScreen() {
           />
         </View>
 
-        {/* Player e transcricao ficam acima do corpo. Enquanto o corpo esta em
-            foco eles somem, para o teclado nao espremer o texto. */}
-        {!editing && hasAudio ? (
+        {/* Player, pilha de audios e transcricao ficam sempre visiveis. O
+            teclado so encolhe a area do editor; nada acima da nota e ocultado
+            nem deslocado. */}
+        {hasAudio ? (
           <NoteAudioPlayer player={player} durationMs={note.durationMs} />
         ) : null}
 
-        {!editing && stackAudios.length > 0 ? (
+        {stackAudios.length > 0 ? (
           <View style={styles.stack}>
             <Text style={styles.sectionLabel}>
               {stackAudios.length === 1 ? 'Áudio' : `${stackAudios.length} áudios`}
@@ -1348,14 +1354,14 @@ export default function NoteScreen() {
           </View>
         ) : null}
 
-        {!editing && hasAudio && segments && segments.length > 0 ? (
+        {hasAudio && segments && segments.length > 0 ? (
           <SyncedTranscript
             player={player}
             segments={segments}
             onOpen={openTranscript}
             onSeek={seekTranscript}
           />
-        ) : !editing && hasAudio && note.transcript && note.transcript.trim() ? (
+        ) : hasAudio && note.transcript && note.transcript.trim() ? (
           <Pressable
             style={styles.section}
             onPress={openTranscript}
@@ -1366,7 +1372,7 @@ export default function NoteScreen() {
               {breakSentences(note.transcript)}
             </Text>
           </Pressable>
-        ) : !editing && hasAudio && !note.hasTranscript && note.transcriptStatus === 'pending' ? (
+        ) : hasAudio && !note.hasTranscript && note.transcriptStatus === 'pending' ? (
           <View style={styles.transcribing}>
             <ActivityIndicator size="small" color={colors.textSecondary} />
             <Text style={styles.meta}>
@@ -1385,29 +1391,22 @@ export default function NoteScreen() {
             <Text style={styles.retryText}>Reenviar</Text>
           </Pressable>
         ) : null}
-      </View>
+        {noteReady && settingsReady ? (
+          <NoteBody
+            key={editorKey}
+            ref={editorRef}
+            value={body}
+            onChangeMarkdown={handleBodyChange}
+            onEditingChange={handleEditingChange}
+            onImageOpen={handleImageOpen}
+            placeholder={editorPlaceholder}
+            imageSources={imageSources}
+            typography={typography}
+          />
+        ) : null}
+      </ScrollView>
 
-      <View style={[styles.editorArea, { paddingBottom: keyboardPad }]}>
-        <View style={styles.editorFill}>
-          <View style={styles.editorClip}>
-          {noteReady && settingsReady ? (
-            <TentapNoteEditor
-              key={editorKey}
-              ref={editorRef}
-              value={body}
-              onChangeMarkdown={handleBodyChange}
-              onEditingChange={handleEditingChange}
-              onReady={handleEditorReady}
-              onImageOpen={handleImageOpen}
-              placeholder={editorPlaceholder}
-              imageSources={imageSources}
-              baseUrl={editorBaseUrl}
-              typography={typography}
-            />
-          ) : null}
-          </View>
-        </View>
-
+      <View style={[styles.toolbarHost, { paddingBottom: keyboardPad }]}>
         <View style={styles.toolbar}>
           <ScrollView
             horizontal
@@ -1616,14 +1615,14 @@ const styles = StyleSheet.create({
   },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   empty: { color: colors.textSecondary, fontSize: fontSize.md },
-  // Bloco fixo acima do corpo: titulo, data, player e previa da transcricao.
-  top: { paddingHorizontal: spacing.xl, gap: spacing.sm },
-  // Area do corpo: o editor rola por dentro e o teclado encolhe a area.
-  editorArea: { flex: 1 },
-  editorFill: { flex: 1, paddingHorizontal: spacing.xl },
-  // Recorta a faixa onde o WebView desenha a barra de rolagem nativa: o editor
-  // e 16px mais largo que esta area.
-  editorClip: { flex: 1, overflow: 'hidden' },
+  // A nota inteira rola nesta ScrollView; o cabecalho fica fixo.
+  scroll: { flex: 1, backgroundColor: colors.bg },
+  content: {
+    paddingHorizontal: spacing.xl,
+    paddingBottom: spacing.xxxl,
+    gap: spacing.sm,
+  },
+  toolbarHost: { backgroundColor: colors.surface },
   titleBlock: { gap: spacing.xs },
   titleInput: {
     color: colors.text,

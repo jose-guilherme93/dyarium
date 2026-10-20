@@ -40,28 +40,15 @@ jest.mock('expo-router', () => ({
   }),
 }));
 
-// A barra que acompanha o teclado usa o componente do TenTap, que depende de
-// modulos nativos; no Jest ele vira uma View comum.
-jest.mock('@10play/tentap-editor', () => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const React = require('react');
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { View } = require('react-native');
-  return {
-    EditorKeyboardAvoidingView: ({ children, ...props }: { children?: React.ReactNode }) =>
-      React.createElement(View, props, children),
-  };
-});
-
-// O WebView nao existe no Jest: a tela e testada com um TextInput que faz o
-// mesmo papel (entrega markdown, foco e as acoes imperativas do editor).
-jest.mock('@/components/TentapNoteEditor', () => {
+// O corpo nativo e testado com um TextInput que faz o mesmo papel (entrega
+// markdown, foco e as acoes imperativas do editor).
+jest.mock('@/components/NoteBody', () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const React = require('react');
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { TextInput } = require('react-native');
   return {
-    TentapNoteEditor: React.forwardRef(function MockEditor(props: any, ref: any) {
+    NoteBody: React.forwardRef(function MockEditor(props: any, ref: any) {
       const current = React.useRef(props.value);
       React.useImperativeHandle(ref, () => ({
         focus: jest.fn(),
@@ -326,6 +313,44 @@ describe('tela da nota', () => {
       await Promise.resolve();
     });
     expect(router.back).toHaveBeenCalled();
+  });
+
+  it('mantem o audio visivel enquanto o teclado esta aberto', async () => {
+    mockNote.filePath = 'file:///audio.aac';
+
+    try {
+      await renderNote();
+
+      expect(screen.getByLabelText('Tocar')).toBeTruthy();
+
+      fireEvent(screen.getByTestId('note-body'), 'focus');
+
+      // O audio do topo nao pode sumir quando o usuario comeca a digitar.
+      expect(screen.getByLabelText('Tocar')).toBeTruthy();
+    } finally {
+      delete mockNote.filePath;
+    }
+  });
+
+  it('mantem a previa da transcricao visivel enquanto o teclado esta aberto', async () => {
+    mockNote.filePath = 'file:///audio.aac';
+    mockNote.transcript = 'texto transcrito';
+    mockNote.hasTranscript = true;
+
+    try {
+      await renderNote();
+
+      expect(screen.getByLabelText('Abrir transcrição completa')).toBeTruthy();
+
+      fireEvent(screen.getByTestId('note-body'), 'focus');
+
+      // Nada acima da nota pode ser ocultado quando o teclado abre.
+      expect(screen.getByLabelText('Abrir transcrição completa')).toBeTruthy();
+    } finally {
+      delete mockNote.filePath;
+      delete mockNote.transcript;
+      delete mockNote.hasTranscript;
+    }
   });
 
   it('leva para a gravacao quando a nota ainda nao tem audio', async () => {
