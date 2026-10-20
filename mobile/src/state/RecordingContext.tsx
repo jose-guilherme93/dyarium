@@ -188,11 +188,14 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
   }, [clearTimers, elapsed, rotate]);
 
   const beginSession = useCallback(
-    async (session: Recording, startIndex: number) => {
+    async (session: Recording, startIndex: number, backgroundRecording = true) => {
       await setAudioModeAsync({
         playsInSilentMode: true,
         allowsRecording: true,
-        allowsBackgroundRecording: true,
+        // Sem POST_NOTIFICATIONS o Android recusa o foreground service da
+        // gravacao. Quem chama decide: com permissao grava em segundo plano;
+        // sem ela, grava em primeiro plano em vez de falhar.
+        allowsBackgroundRecording: backgroundRecording,
       });
       activeRef.current = session;
       setActive(session);
@@ -221,8 +224,10 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
         setError('Permissão de microfone negada.');
         return;
       }
-      // Nao bloquear o inicio da gravacao na permissao de notificacao.
-      void ensureNotificationPermission();
+      // O Android exige POST_NOTIFICATIONS para o foreground service da
+      // gravacao em segundo plano. Espera a resposta: disparar o pedido e
+      // preparar o recorder no mesmo tick fazia o prepare falhar.
+      const canRecordInBackground = await ensureNotificationPermission();
       const now = new Date();
       const id = newId('rec_');
       const session: Recording = {
@@ -237,7 +242,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
         createdAt: now.toISOString(),
         updatedAt: now.toISOString(),
       };
-      await beginSession(session, 0);
+      await beginSession(session, 0, canRecordInBackground);
     } catch (error) {
       console.warn('[dyarium] start error', String(error));
       setError('Não foi possível iniciar a gravação.');
@@ -335,7 +340,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
           setError('Permissão de microfone negada.');
           return;
         }
-        await ensureNotificationPermission();
+        const canRecordInBackground = await ensureNotificationPermission();
         const list = await listRecordings();
         const found = list.find((r) => r.id === id);
         if (!found) return;
@@ -344,7 +349,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
           status: 'recording',
           updatedAt: new Date().toISOString(),
         };
-        await beginSession(session, found.segmentCount);
+        await beginSession(session, found.segmentCount, canRecordInBackground);
       } catch (error) {
         console.warn('[dyarium] resume error', String(error));
         setError('Não foi possível retomar a gravação.');
