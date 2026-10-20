@@ -16,18 +16,17 @@ texto, guarda local, enfileira e envia para o servidor self-hosted.
   mostram player; as de audio mostram. Nota sincronizada aparece com um **icone de
   nuvem**. Cada card tem um menu de **tres pontinhos** (arquivar/apagar) e da para
   **arrastar para o lado** para apagar ou arquivar (configuravel nas Opcoes).
-- **Tela da nota** (`/note/[id]`): o **corpo** e um editor rico TenTap
-  (TipTap/ProseMirror em WebView); o titulo, o player e os metadados continuam
-  nativos. O texto aceita negrito, italico, listas, titulos e links, e a foto
-  entra **no cursor** (metade da largura por padrao). Tem **autosave** (sem botao
-  de salvar). A nota nasce limpa: a barra de acoes (negrito, italico, tachado,
-  codigo, titulo, listas, citacao, link e foto) fica
+- **Tela da nota** (`/note/[id]`): a nota e **um corpo so**, todo nativo (sem
+  WebView). Titulo, data, tags, player, previa da transcricao e texto rolam
+  juntos na mesma rolagem. O texto e editado no **editor nativo rico**
+  (`EnrichedTextInput`): negrito, italico, tachado, codigo, titulos, listas,
+  citacao e links aparecem enquanto o usuario digita, e a foto entra **no
+  corpo** (metade da largura por padrao). O markdown continua sendo o formato
+  salvo: o editor vira markdown no debounce e ao sair. Tem **autosave** (sem
+  botao de salvar). A barra de acoes (negrito, italico, tachado, codigo, titulo,
+  listas, citacao, link e foto) fica
   **grudada no topo do teclado**, desliza para o lado e nao monta/desmonta
-  quando o teclado sobe. O titulo, o player e a previa da transcricao ficam
-  fixos acima do corpo; o **corpo rola dentro do proprio editor**, e o navegador
-  mantem a linha sendo digitada tres linhas acima da base do editor, sem
-  `scrollTo` nativo. Ao focar o corpo, o player e a previa somem para dar espaco
-  ao texto. O titulo quebra linha (ate
+  quando o teclado sobe. O titulo quebra linha (ate
   duas linhas) e encolhe um pouco a fonte quando fica longo, sem sumir. No topo,
   o botao de microfone (discreto) e os **tres pontinhos** abrem as configuracoes
   da nota: **compartilhar** e a ficha de propriedades (criada em, origem,
@@ -48,9 +47,11 @@ texto, guarda local, enfileira e envia para o servidor self-hosted.
   base64; sobe no sync e continua abrindo do aparelho depois, sem baixar de novo.
   Assim o editor abre rapido, sem o atraso de decodificar a foto em resolucao
   cheia.
-  O editor rico exige `@10play/tentap-editor` e `react-native-webview` (novo
-  development build). Codigo, tabela e divisoria do dashboard ainda nao tem no
-  nativo: eles aparecem como texto no corpo e voltam iguais ao salvar.
+  O corpo e nativo, sem WebView. O editor rico (`EnrichedTextInput`, de
+  `react-native-enriched-html`) e codigo nativo: precisa do development build
+  com o modulo. Codigo, tabela e divisoria do dashboard ainda nao tem no
+  nativo: a tabela e a divisoria aparecem como bloco somente leitura e voltam
+  iguais ao salvar.
 - Grava em **AAC ADTS** (48 kHz mono ~128 kbps), em **segmentos de 60 s**, com
   foreground service do `expo-audio` (continua gravando com a tela bloqueada). A tela de
   gravacao tem **pausar/retomar** e uma waveform **ao vivo a 60 fps** (desenhada na thread

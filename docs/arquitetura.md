@@ -81,13 +81,13 @@ isso:
   expandidas e posicao do audio ficam num store em memoria por entrada e sao
   reaplicados na volta.
 - **Editor de blocos, sem WebView.** A nota e um documento de blocos nativos:
-  cada bloco de texto e um editor rico nativo (`EnrichedTextInput`) e cada foto e
-  uma `Image` nativa no lugar. Nao existe leitor separado nem troca de view ao
+  cada bloco de texto e um editor rico nativo (`EnrichedTextInput`) e cada foto
+  e uma `Image` nativa no lugar. Nao existe leitor separado nem troca de view ao
   tocar: o usuario toca no bloco e digita, com a mesma fonte e o mesmo layout o
   tempo todo. A selecao vira negrito/italico/lista pelo comando nativo, sem
-  mostrar markdown. O markdown continua sendo o formato salvo: os blocos sao
-  remontados num debounce curto (700 ms) e no blur/saida. Fotos entram na hora
-  pelo arquivo local e sobem no sync ao sair da nota.
+  mostrar markdown. O markdown continua sendo o formato salvo: o bloco vira
+  markdown num debounce curto e no blur/saida. Fotos entram na hora pelo arquivo
+  local e sobem no sync ao sair da nota.
 
 ## Fluxo de dados
 
