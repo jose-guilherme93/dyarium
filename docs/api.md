@@ -35,6 +35,8 @@ Cria um upload. Corpo:
   "sha256": "<hex de 64 caracteres do arquivo completo, opcional>",
   "title": "10/10/2026 18:05",
   "recorded_at": "2026-10-10T21:05:00Z",
+  "created_at": "2023-10-19T13:30:00Z",
+  "source": "share",
   "client_key": "ck_...",
   "entry_id": "en_...",
   "local_transcribe": false
@@ -52,6 +54,13 @@ Resposta 201:
   422 se divergir. Quando ausente, o servidor apenas grava o hash recomputado.
 - `title` e `recorded_at` sao metadados opcionais do cliente, aplicados a `Entry` criada
   no complete (`recorded_at` em RFC 3339).
+- `created_at` e a hora de criacao/importacao **original** da nota, em RFC 3339. O servidor
+  grava esse valor em `Entry.created_at` no complete, em vez da hora do upload. Depois de
+  criada, a entrada nunca muda esse campo (nem `PATCH`, nem um novo audio na pilha).
+  Ausente significa "usar a hora do complete"; invalido responde 400 `invalid_created_at`.
+- `source` registra a origem da nota. `share` identifica audio importado de outro app; o
+  app usa isso para mostrar "Importada em" e manter a origem depois de um pull em outro
+  aparelho. Ausente equivale a `upload`; outros valores respondem 400 `invalid_source`.
 - `client_key` torna a criacao idempotente: repetir o POST com a mesma chave devolve o
   upload existente (mesmo `id` e `offset`), evitando entradas duplicadas quando a resposta
   se perde. E o que o app movel usa, uma chave por gravacao.
@@ -107,9 +116,11 @@ Resposta 201:
 
 ### GET /api/v1/entries
 Lista entradas. Filtros: `person`, `place` e `theme` (entradas que mencionam a entidade,
-por nome, case-insensitive). Retorna resumos com id, titulo, status, duracao e data.
+por nome, case-insensitive) e `notebook_id` (notas de um caderno). Retorna resumos com id,
+titulo, status, duracao, data, `notebook_id` e, quando houver, `tags` (nomes).
 Com `deleted=1` lista a **lixeira**: as entradas apagadas (remocao logica) com
 `deleted_at`, da mais recente para a mais antiga.
+- `notebook_id` desconhecido responde 404 `notebook_not_found`.
 - O app reconcilia exclusoes por esta lista, e nao por ausencia: uma entrada que
   simplesmente sumiu (servidor novo, banco restaurado) nunca apaga a nota local.
 - Entradas apagadas aparecem em `entries` com `status: "deleted"` e o campo
@@ -170,11 +181,15 @@ Atualiza campos editaveis com versao por campo.
 {
   "title": "...",
   "recorded_at": "...",
+  "notebook_id": "nb_...",
   "archived": true,
   "versions": { "title": "...", "recorded_at": "..." }
 }
 ```
 Resposta 200: `{ "status": "ok", "versions": { "title": "...", "recorded_at": "..." } }`.
+- `notebook_id` move a nota de caderno. E um ponteiro, nao texto: nao tem versao
+  nem conflito, e a ultima gravacao vence. Caderno inexistente responde 422
+  `invalid_notebook`; vazio tambem (todo caderno e obrigatorio).
 - 409 com `{ "conflict": ["title"], "versions": {...} }` se aquele campo mudou
   depois da leitura; **os campos sem conflito nao sao gravados** — o cliente
   reenvia so o que o usuario escolher.
@@ -185,10 +200,11 @@ Resposta 200: `{ "status": "ok", "versions": { "title": "...", "recorded_at": ".
 - Nao altera o audio.
 
 ### POST /api/v1/entries
-Cria uma nota escrita (sem audio). Corpo `{ "title": "...", "id": "note_...", "created_at": "..." }`.
-A entrada nasce com `source: "text"` e `status: "ready"`; o corpo e gravado como documento de nota (BlockNote),
-igual a parte escrita de uma nota de audio. Analises usam a transcricao quando existe e,
-caso contrario, o texto escrito da nota.
+Cria uma nota escrita (sem audio). Corpo `{ "title": "...", "id": "note_...", "created_at": "...", "notebook_id": "..." }`.
+A entrada nasce com `source: "text"` e `status: "ready"`; o corpo e gravado como nota em
+markdown, igual a parte escrita de uma nota de audio. Analises usam a transcricao quando
+existe e, caso contrario, o texto escrito da nota. `notebook_id` e opcional; sem ele a nota
+nasce em "Notas ao acaso".
 - `id` e opcional (o cliente pode informar o id da nota criada offline) e o caminho e
   idempotente: se a id ja existir **viva**, devolve 200 com a entrada existente; se existir
   **na lixeira**, desfaz a remocao e devolve 200 (trazer a nota de volta sem duplicar); senao cria
@@ -315,6 +331,29 @@ O worker analisa a transcricao em janelas quando ela e longa, mescla os resultad
 meta-resumo quando ha mais de uma janela. Pessoas, lugares e temas viram entidades
 consultaveis.
 
+### GET /api/v1/analysis/runs/summary
+Agregado das execucoes de analise do worker, para o diagnostico do app
+(Configs > Avancado). Filtro `days` (padrao 30, teto 365). Nao expoe conteudo,
+so medidas.
+```json
+{
+  "days": 30,
+  "since": "2026-09-19T12:00:00Z",
+  "totals": { "runs": 10, "ok": 8, "failed": 1, "fallback": 1,
+    "success_rate": 0.8, "simplified_rate": 0.1,
+    "avg_duration_ms": 1234, "tokens_per_second": 12.3 },
+  "models": [ { "runtime": "server", "provider": "openai", "model": "gpt",
+    "runs": 10, "ok": 8, "failed": 1, "fallback": 1,
+    "success_rate": 0.8, "simplified_rate": 0.1,
+    "avg_duration_ms": 1234, "tokens_per_second": 12.3 } ]
+}
+```
+- `ok` e sucesso; `fallback` e a leitura simplificada; `failed` inclui erro, JSON
+  invalido e execucao interrompida.
+- Tempo medio e tokens/s consideram apenas as execucoes com `outcome=ok`.
+- As execucoes locais do app nao sobem para o servidor; o app agrega as suas em
+  `mobile/src/core/analysisRuns.ts`.
+
 ### GET /api/v1/analyze/local
 Estado do Ollama local (o provedor sem chave, configurado em um clique). Faz uma consulta
 curta ao servidor `DIARY_OLLAMA_URL` (padrao `http://ollama:11434`):
@@ -375,78 +414,153 @@ O app calcula as metricas da escrita **offline** (as mesmas do Painel no celular
 envia o documento pronto. O servidor guarda o ultimo snapshot de cada aparelho e o
 painel web desenha exatamente o que o aparelho calculou — sem recalcular nada.
 
+O contrato tem duas versoes aceitas:
+- **schema 1** (legado): `writing` com todas as notas + `history`.
+- **schema 2** (atual): `streak` + `windows` (7d/30d/365d) + `history`. Cada janela
+  tem `writing`, `voice`, `images`, `analysis`, `sentiment` e `summary`.
+O app envia schema 2; o servidor continua aceitando schema 1 de aparelhos antigos.
+
 ### PUT /api/v1/metrics
-Envia (ou substitui) o snapshot de um aparelho. Corpo:
+Envia (ou substitui) o snapshot de um aparelho. Corpo (schema 2):
 ```json
 {
   "device_id": "dev_01J8Z...",
   "device_name": "android 15",
-  "schema": 1,
-  "generated_at": "2026-10-16T12:00:00Z",
-  "writing": { "...": "metricas" },
-  "history": { "...": "series para os graficos" }
+  "schema": 2,
+  "generated_at": "2026-10-19T12:00:00Z",
+  "streak": { "current": 5, "longest": 21, "wrote_today": true },
+  "windows": {
+    "7d":   { "from": "2026-10-13", "to": "2026-10-19", "writing": { }, "voice": { },
+              "images": { }, "analysis": { }, "sentiment": { }, "summary": [] },
+    "30d":  { },
+    "365d": { }
+  },
+  "history": { }
 }
 ```
-Resposta 200: `{ "status": "ok", "received_at": "...", "schema": 1 }`.
+Resposta 200: `{ "status": "ok", "received_at": "...", "schema": 2 }`.
 - `device_id` e opaco, gerado pelo app na primeira vez e guardado no aparelho; o
   servidor guarda um snapshot por aparelho (o ultimo enviado vence).
-- `schema` e a versao do contrato. O servidor so aceita a versao atual
-  (`400 unsupported_schema`): assim um app mais novo nunca deixa um documento que o
-  painel nao sabe ler.
-- `writing` e `history` sao objetos JSON livres dentro do contrato (abaixo). O
-  servidor valida que sao objetos, que o total cabe em 256 KiB e que `generated_at` e
-  RFC 3339; o resto ele guarda como veio, para o app poder evoluir as metricas sem
-  migracao no servidor.
+- `schema` e 1 ou 2; qualquer outra versao responde `400 unsupported_schema`.
+- O servidor valida o envelope e a secao obrigatoria de cada versao (`writing` no
+  schema 1; `windows` e `streak` no schema 2), que `history` seja objeto quando
+  presente, que `generated_at` seja RFC 3339 e que o documento caiba em 256 KiB.
+  **O documento inteiro e guardado como veio**, inclusive secoes que o servidor
+  ainda nao conhece; so `device_id`/`device_name` saem do payload.
 - O app guarda o mesmo documento localmente mesmo sem servidor, entao um aparelho
-  offline perde nada: o snapshot sobe depois.
+  offline nao perde nada: o snapshot sobe depois.
 
-Contrato de `writing` (versao 1), espelhado em `mobile/src/core/metricsSnapshot.ts`
-e em `web/src/types.ts`:
+Contrato de `writing` no schema 2 (uma janela), espelhado em
+`mobile/src/core/metricsSnapshot.ts` e em `web/src/types.ts`:
 - Volume: `notes`, `with_text`, `with_audio`, `with_transcript`, `words`, `chars`,
   `sentences`, `paragraphs`, `unique_words`, `lexical_richness` (0..1),
   `average_words_per_note`, `average_sentence_words`, `average_word_length`,
-  `transcript_words`, `average_transcript_words`.
+  `reading_minutes`.
 - Ranking: `top_words[]` e `longest_words[]` (`{ "label": ..., "value": ... }`).
 - Marcadores: `questions`, `exclamations`, `links`, `images`, `list_items`.
-- Habito: `active_days`, `average_notes_per_active_day`, `current_streak`,
-  `longest_streak`, `wrote_today`, `top_weekday`, `top_hour`, `first_at`, `last_at`,
-  `longest_note`, `monthly[]`, `month_comparison_pct`.
-- Humor (lexico local do app): `sentiment` (`analyzed`, `average`, `positive`,
-  `neutral`, `negative`, `top_positive`, `top_negative`).
-- Constancia (dias escritos vs nao escritos): `consistency` (`days[]` com `key`,
-  `wrote`, `notes`, `words`; `written_days`, `tracked_days`, `rate`, `longest_run`).
-- Ritmo: `weekday_hour` (grade 7 x 8 faixas de 3 horas, quantas notas por celula).
-- `insights[]`: frases prontas derivadas dos numeros.
+- Habito: `active_days`, `average_notes_per_active_day`, `notes_per_week`,
+  `top_weekday`, `top_hour`, `weekday_hour`, `longest_note`.
+- Constancia: `consistency` (`days[]` com `key`, `wrote`, `notes`, `words`;
+  `written_days`, `tracked_days`, `rate`, `longest_run`).
 
-Contrato de `history` (versao 1): `weekly[]` (`label`, `words`, `notes`),
-`calendar[][]` (colunas de 7 dias com `key`, `words`, `notes`; `key` nulo em dia que
-ainda nao aconteceu), `max_weekly` e `max_daily`.
+`voice`: `audio_count`, `audio_minutes`, `transcribed_minutes`, `coverage`,
+`words`, `words_per_minute`, `words_per_audio`, `origin_local`, `origin_server`,
+`transcript_share`.
+
+`images`: `count`, `bytes_total`, `bytes_average`, `per_note`, `notes_with_image`,
+`notes_with_image_no_text`.
+
+`analysis`: `notes_with_content`, `notes_analyzed`, `coverage`, `stale`,
+`simplified`, `last_analyzed_at`.
+
+`topics`: `themes[]`, `people[]` e `places[]`, cada item
+`{ "label": ..., "count": ... }`; sao os nomes mais citados nas analises da
+janela (ate 8 por tipo).
+
+`sentiment`: `source` (`analysis` ou `lexical`), `analyzed`, `positive`, `neutral`,
+`negative`, `average`, `top_positive`, `top_negative`,
+`emotions[]` (`{ "label": ..., "count": ..., "tone": "positive|neutral|negative" }`),
+`series[]` (`{ "key": ..., "average": ..., "notes": ... }`) e `granularity`
+(`day` ou `week`). O `tone` de cada emocao vem do sentimento das notas em que ela
+apareceu; o app usa verde para cima e vermelho para baixo.
+
+`summary[]`: frases prontas do resumo da janela.
+
+`streak`: `current`, `longest`, `wrote_today` (global, independe da janela).
+
+Contrato de `history` (igual nos dois schemas): `weekly[]` (`label`, `words`,
+`notes`), `calendar[][]` (colunas de 7 dias com `key`, `words`, `notes`; `key` nulo
+em dia que ainda nao aconteceu), `max_weekly` e `max_daily`.
+
+O schema 1 continua com o contrato antigo de `writing` (todas as notas, com
+`current_streak`, `longest_streak`, `wrote_today`, `monthly`, `month_comparison_pct`,
+`transcript_words`, `average_transcript_words`, `first_at`, `last_at` e `insights`)
+e `sentiment` lexico (`analyzed`, `average`, `positive`, `neutral`, `negative`,
+`top_positive`, `top_negative`).
 
 ### GET /api/v1/metrics
-Ultimo snapshot de cada aparelho, do mais recente para o mais antigo.
+Ultimo snapshot de cada aparelho, do mais recente para o mais antigo. Cada item
+carrega o proprio `schema`; o `schema` do topo e a versao atual do servidor (2).
 ```json
 {
-  "schema": 1,
-  "snapshots": [ { "device_id": "...", "device_name": "android 15", "schema": 1,
-    "generated_at": "...", "received_at": "...", "writing": { }, "history": { } } ]
+  "schema": 2,
+  "snapshots": [ { "device_id": "...", "device_name": "android 15", "schema": 2,
+    "generated_at": "...", "received_at": "...", "streak": { }, "windows": { },
+    "history": { } } ]
 }
 ```
+Snapshots antigos continuam aparecendo com `schema: 1` e o layout de todas as notas.
 Filtro opcional `limit` (padrao 50, teto 200).
 
 ### DELETE /api/v1/metrics/{device_id}
 Remove o snapshot de um aparelho. Resposta 204, ou 404 se aquele aparelho nunca
 enviou metricas.
 
+## Cadernos
+
+Cada nota pertence a exatamente um caderno. O caderno padrao `notas-ao-acaso`
+("Notas ao acaso") e criado pela migracao 0017, nao pode ser renomeado nem
+excluido, e recebe as notas de cadernos excluidos.
+
+### GET /api/v1/notebooks
+Lista cadernos em ordem de criacao, com o padrao no fim:
+```json
+{ "notebooks": [ { "id": "...", "name": "Trabalho", "color": "#C7D8F2",
+  "is_default": false, "entry_count": 12, "last_entry_at": "...",
+  "created_at": "...", "updated_at": "..." } ] }
+```
+`entry_count` e `last_entry_at` consideram apenas notas ativas (nao arquivadas,
+nao apagadas); `last_entry_at` usa `recorded_at` (a data real da nota).
+
+### POST /api/v1/notebooks
+Cria um caderno (`{ "name": "...", "color": "...", "id": "nb_..." }`).
+- `id` e opcional: o app cria offline e preserva o mesmo id nos dois lados. Se o
+  id ja existir, responde 200 com o caderno existente (idempotente).
+- Nome vazio: 400 `invalid_name`; nome duplicado (case-insensitive): 409 `conflict`.
+
+### PATCH /api/v1/notebooks/{id}
+Renomeia e/ou recolore (`{ "name": "...", "color": "..." }`). O padrao responde
+409 `protected`; nome duplicado responde 409 `conflict`.
+
+### DELETE /api/v1/notebooks/{id}
+Exclui o caderno e move as notas para "Notas ao acaso" na mesma transacao.
+204; 409 `protected` para o padrao; 404 se nao existir.
+
 ## Tags
 
 ### GET /api/v1/tags
-Lista tags com contagem de entradas.
+Lista tags com contagem de entradas e cor. A cor e pastel, gerada de forma
+deterministica a partir do nome (mesma paleta no servidor, no app e no web);
+tags antigas sem cor sao preenchidas no boot.
 
 ### POST /api/v1/tags
-Cria uma tag (`{ "name": "...", "color": "..." }`).
+Cria uma tag (`{ "name": "...", "color": "..." }`). Sem cor, usa a paleta.
 
 ### PATCH /api/v1/tags/{id} e DELETE /api/v1/tags/{id}
-Atualizam e removem tags. Remover uma tag remove as associacoes (`EntryTag`).
+`PATCH` renomeia e/ou recolore (`{ "name": "...", "color": "..." }`). Renomear
+para um nome que ja existe **mescla** as duas tags: as notas passam para a tag
+existente, a antiga e apagada, e a resposta traz `merged: true` com o id da tag
+que ficou. Remover uma tag remove as associacoes (`EntryTag`), mas nao as notas.
 
 ## Notas
 
@@ -542,6 +656,7 @@ Eventos previstos:
 - `transcript.ready`: `{ "entry_id": "...", "segment_count": 123 }`
 - `analysis.ready`: `{ "entry_id": "..." }`
 - `entry.failed`: `{ "entry_id": "...", "reason": "..." }`
+- `notebook.changed`: `{ "notebook_id": "..." }` (criado, renomeado, recolorido ou excluido)
 
 Cada evento tem `id` (monotonico) e `event` (nome). O cliente retoma do ultimo `id` recebido.
 

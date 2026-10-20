@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -12,10 +13,14 @@ import (
 	"github.com/joseti/dyarium/internal/store"
 )
 
-// MetricsSchemaVersion is the snapshot contract version the server accepts. The
-// app sends the version it speaks; a newer one is refused instead of being
-// stored in a shape the dashboard cannot read.
-const MetricsSchemaVersion = 1
+// MetricsSchemaVersion is the newest snapshot contract the server accepts. Old
+// versions stay accepted while there are apps in the field; an unknown future
+// version is refused instead of being stored in a shape the dashboard cannot
+// read.
+const (
+	MetricsSchemaVersion    = 2
+	minMetricsSchemaVersion = 1
+)
 
 // maxMetricsPayloadBytes caps the snapshot document. It is far above what the
 // metrics need, but prevents a client from filling the database.
@@ -25,80 +30,80 @@ const maxMetricsPayloadBytes = 256 * 1024
 // digits, dash, underscore and dot).
 var deviceIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 
-type metricsRequest struct {
-	DeviceID    string          `json:"device_id"`
-	DeviceName  string          `json:"device_name"`
-	Schema      int             `json:"schema"`
-	GeneratedAt string          `json:"generated_at"`
-	Writing     json.RawMessage `json:"writing"`
-	History     json.RawMessage `json:"history"`
-}
-
-// handlePutMetrics stores the writing-metrics snapshot of a device. The app
-// computes everything offline and sends the finished document, so the dashboard
-// shows exactly what the phone shows.
+// handlePutMetrics stores the metrics snapshot of a device. The app computes
+// everything offline and sends the finished document, so the dashboard shows
+// exactly what the phone shows. The whole document is preserved for both
+// schemas; the server only understands the envelope.
 func (s *Server) handlePutMetrics(w http.ResponseWriter, r *http.Request) {
-	var req metricsRequest
-	if err := decodeJSON(r, &req); err != nil {
+	var body map[string]json.RawMessage
+	if err := decodeJSON(r, &body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_body", "corpo invalido")
 		return
 	}
-	deviceID := strings.TrimSpace(req.DeviceID)
-	if !deviceIDPattern.MatchString(deviceID) {
+
+	deviceID, ok := metricsString(body, "device_id")
+	if !ok || !deviceIDPattern.MatchString(strings.TrimSpace(deviceID)) {
 		writeError(w, http.StatusBadRequest, "invalid_device_id", "device_id invalido")
 		return
 	}
-	if req.Schema != MetricsSchemaVersion {
+	deviceID = strings.TrimSpace(deviceID)
+
+	deviceName, ok := metricsString(body, "device_name")
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid_device_name", "device_name invalido")
+		return
+	}
+
+	schema, ok := metricsInt(body, "schema")
+	if !ok || schema < minMetricsSchemaVersion || schema > MetricsSchemaVersion {
 		writeError(w, http.StatusBadRequest, "unsupported_schema", "versao de schema nao suportada")
 		return
 	}
-	writing := strings.TrimSpace(string(req.Writing))
-	if writing == "" || writing == "null" || !json.Valid([]byte(writing)) {
-		writeError(w, http.StatusBadRequest, "invalid_writing", "metricas ausentes ou invalidas")
+	if code, message := validateMetricsDocument(body, schema); code != "" {
+		writeError(w, http.StatusBadRequest, code, message)
 		return
 	}
-	if !strings.HasPrefix(writing, "{") {
-		writeError(w, http.StatusBadRequest, "invalid_writing", "metricas devem ser um objeto")
-		return
-	}
-	history := strings.TrimSpace(string(req.History))
-	if history == "" || history == "null" {
-		history = "{}"
-	}
-	if !json.Valid([]byte(history)) || !strings.HasPrefix(history, "{") {
-		writeError(w, http.StatusBadRequest, "invalid_history", "historico invalido")
-		return
-	}
-	if len(writing)+len(history) > maxMetricsPayloadBytes {
-		writeError(w, http.StatusRequestEntityTooLarge, "too_large", "metricas excedem o tamanho maximo")
-		return
-	}
+
 	generatedAt := time.Now().UTC()
-	if raw := strings.TrimSpace(req.GeneratedAt); raw != "" {
-		if parsed, err := time.Parse(time.RFC3339, raw); err == nil {
-			generatedAt = parsed.UTC()
-		} else {
+	if raw, ok := metricsString(body, "generated_at"); !ok {
+		writeError(w, http.StatusBadRequest, "invalid_generated_at", "generated_at invalido")
+		return
+	} else if raw = strings.TrimSpace(raw); raw != "" {
+		parsed, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_generated_at", "generated_at invalido")
 			return
 		}
+		generatedAt = parsed.UTC()
 	}
-	// Guarda o documento inteiro (escrita + historico) como o app o montou, para
-	// o painel desenhar sem recalcular nada.
-	payload, err := json.Marshal(map[string]any{
-		"schema":       req.Schema,
-		"generated_at": generatedAt,
-		"writing":      json.RawMessage(writing),
-		"history":      json.RawMessage(history),
-	})
+
+	// O documento e guardado inteiro; o envelope sai e a versao/data sao
+	// normalizadas. Assim o app pode evoluir as secoes sem migracao no servidor.
+	delete(body, "device_id")
+	delete(body, "device_name")
+	body["schema"] = json.RawMessage(strconv.Itoa(schema))
+	generatedRaw, err := json.Marshal(generatedAt)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
+	body["generated_at"] = generatedRaw
+
+	payload, err := json.Marshal(body)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	if len(payload) > maxMetricsPayloadBytes {
+		writeError(w, http.StatusRequestEntityTooLarge, "too_large", "metricas excedem o tamanho maximo")
+		return
+	}
+
 	received := time.Now().UTC()
 	snapshot := store.MetricsSnapshot{
 		DeviceID:      deviceID,
-		DeviceName:    strings.TrimSpace(req.DeviceName),
-		SchemaVersion: req.Schema,
+		DeviceName:    strings.TrimSpace(deviceName),
+		SchemaVersion: schema,
 		GeneratedAt:   generatedAt,
 		ReceivedAt:    received,
 		Payload:       string(payload),
@@ -110,8 +115,64 @@ func (s *Server) handlePutMetrics(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":      "ok",
 		"received_at": received,
-		"schema":      req.Schema,
+		"schema":      schema,
 	})
+}
+
+// validateMetricsDocument checks the one section each schema requires. The rest
+// of the document is stored as-is, so unknown sections are future-proof.
+func validateMetricsDocument(body map[string]json.RawMessage, schema int) (string, string) {
+	section, code := "writing", "invalid_writing"
+	if schema >= 2 {
+		section, code = "windows", "invalid_windows"
+	}
+	raw, ok := body[section]
+	if !ok || isJSONNull(raw) || !isJSONObject(raw) {
+		return code, "metricas ausentes ou invalidas"
+	}
+	if schema >= 2 {
+		raw, ok := body["streak"]
+		if !ok || isJSONNull(raw) || !isJSONObject(raw) {
+			return "invalid_streak", "streak invalido"
+		}
+	}
+	if raw, ok := body["history"]; ok && !isJSONNull(raw) && !isJSONObject(raw) {
+		return "invalid_history", "historico invalido"
+	}
+	return "", ""
+}
+
+func metricsString(body map[string]json.RawMessage, key string) (string, bool) {
+	raw, ok := body[key]
+	if !ok || isJSONNull(raw) {
+		return "", true
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return "", false
+	}
+	return value, true
+}
+
+func metricsInt(body map[string]json.RawMessage, key string) (int, bool) {
+	raw, ok := body[key]
+	if !ok {
+		return 0, false
+	}
+	var value int
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return 0, false
+	}
+	return value, true
+}
+
+func isJSONNull(raw json.RawMessage) bool {
+	return string(bytes.TrimSpace(raw)) == "null"
+}
+
+func isJSONObject(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	return len(trimmed) > 0 && trimmed[0] == '{' && json.Valid(trimmed)
 }
 
 // handleListMetrics returns the last snapshot of each device that ever sent

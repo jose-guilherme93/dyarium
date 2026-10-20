@@ -35,6 +35,67 @@ func sha256hex(b []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// A hora de criacao/importacao e a origem viajam com o upload e ficam
+// imutaveis na entrada; editar titulo depois nao as altera.
+func TestCompletePreservesEntryCreatedAtAndSource(t *testing.T) {
+	svc, st, _ := newService(t)
+	ctx := context.Background()
+	plain := bytes.Repeat([]byte("audio-data-"), 100)
+	created := time.Date(2023, 10, 19, 13, 30, 0, 0, time.UTC)
+
+	up, err := svc.Start(ctx, Meta{
+		Filename:    "antigo.wav",
+		ContentType: "audio/wav",
+		SizeBytes:   int64(len(plain)),
+		SHA256:      sha256hex(plain),
+		Title:       "Nota antiga",
+		RecordedAt:  &created,
+		CreatedAt:   &created,
+		Source:      "share",
+	})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	storedUpload, err := svc.Get(ctx, up.ID)
+	if err != nil {
+		t.Fatalf("get upload: %v", err)
+	}
+	if storedUpload.EntryCreatedAt == nil || !storedUpload.EntryCreatedAt.Equal(created) {
+		t.Fatalf("entry_created_at = %v, want %v", storedUpload.EntryCreatedAt, created)
+	}
+	if storedUpload.EntrySource != "share" {
+		t.Fatalf("entry_source = %q, want share", storedUpload.EntrySource)
+	}
+
+	if _, err := svc.Append(ctx, up.ID, 0, bytes.NewReader(plain)); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	result, err := svc.Complete(ctx, up.ID)
+	if err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	if !result.Entry.CreatedAt.Equal(created) {
+		t.Fatalf("entry.created_at = %v, want %v", result.Entry.CreatedAt, created)
+	}
+	if result.Entry.Source != "share" {
+		t.Fatalf("entry.source = %q, want share", result.Entry.Source)
+	}
+
+	newTitle := "titulo editado"
+	if _, conflict, err := st.UpdateEntryFields(ctx, result.Entry.ID, &newTitle, nil, nil, nil, "", ""); err != nil {
+		t.Fatalf("update: %v", err)
+	} else if len(conflict) > 0 {
+		t.Fatalf("update conflict: %v", conflict)
+	}
+	after, err := st.GetEntry(ctx, result.Entry.ID)
+	if err != nil {
+		t.Fatalf("get entry: %v", err)
+	}
+	if !after.CreatedAt.Equal(created) || after.Source != "share" {
+		t.Fatalf("created_at/origem mudaram: %+v", after)
+	}
+}
+
 func TestResumableUploadLifecycle(t *testing.T) {
 	svc, st, dir := newService(t)
 	ctx := context.Background()

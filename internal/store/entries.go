@@ -24,11 +24,13 @@ func (s *Store) CreateUpload(ctx context.Context, u Upload) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO uploads (id, status, filename, content_type, size_bytes, sha256,
 			title, recorded_at, client_key, entry_id, result_attachment_id, local_transcribe,
+			entry_created_at, entry_source,
 			received_bytes, storage_key, prefix, next_counter, created_at, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		u.ID, u.Status, u.Filename, u.ContentType, u.SizeBytes, nullString(u.SHA256),
 		nullString(u.Title), nullTS(u.RecordedAt), nullString(u.ClientKey), nullString(u.EntryID),
 		nullString(u.ResultAttachmentID), boolInt(u.LocalTranscribe),
+		nullTS(u.EntryCreatedAt), nullString(u.EntrySource),
 		u.ReceivedBytes, u.StorageKey, u.Prefix, u.NextCounter, ts(u.CreatedAt), ts(u.ExpiresAt))
 	if err != nil {
 		return fmt.Errorf("store: create upload: %w", err)
@@ -62,14 +64,17 @@ func (s *Store) getUpload(ctx context.Context, where string, arg any) (Upload, e
 	var u Upload
 	var createdAt, expiresAt string
 	var sha, title, recordedAt, clientKey, entryID, resultAttachmentID sql.NullString
+	var entryCreatedAt, entrySource sql.NullString
 	var localTranscribe int
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, status, filename, content_type, size_bytes, sha256,
 			title, recorded_at, client_key, entry_id, result_attachment_id, local_transcribe,
+			entry_created_at, entry_source,
 			received_bytes, storage_key, prefix, next_counter, created_at, expires_at
 		FROM uploads `+where, arg).Scan(
 		&u.ID, &u.Status, &u.Filename, &u.ContentType, &u.SizeBytes, &sha,
 		&title, &recordedAt, &clientKey, &entryID, &resultAttachmentID, &localTranscribe,
+		&entryCreatedAt, &entrySource,
 		&u.ReceivedBytes, &u.StorageKey, &u.Prefix, &u.NextCounter, &createdAt, &expiresAt)
 	if err != nil {
 		return Upload{}, err
@@ -84,6 +89,11 @@ func (s *Store) getUpload(ctx context.Context, where string, arg any) (Upload, e
 	u.EntryID = entryID.String
 	u.ResultAttachmentID = resultAttachmentID.String
 	u.LocalTranscribe = localTranscribe != 0
+	if entryCreatedAt.Valid {
+		t := parseTS(entryCreatedAt.String)
+		u.EntryCreatedAt = &t
+	}
+	u.EntrySource = entrySource.String
 	u.CreatedAt = parseTS(createdAt)
 	u.ExpiresAt = parseTS(expiresAt)
 	return u, nil
@@ -117,12 +127,16 @@ func (s *Store) SetUploadCompleted(ctx context.Context, id, attachmentID string)
 // empty version and the server cannot tell a first write from a stale one.
 func (s *Store) CreateEntry(ctx context.Context, e Entry) error {
 	stamp := ts(e.UpdatedAt)
+	notebookID := strings.TrimSpace(e.NotebookID)
+	if notebookID == "" {
+		notebookID = DefaultNotebookID
+	}
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO entries (id, title, status, source, parent_id, original_filename, content_type,
+		INSERT INTO entries (id, title, status, source, parent_id, notebook_id, original_filename, content_type,
 			size_bytes, duration_seconds, sha256, recorded_at, created_at, updated_at, deleted_at,
 			title_updated_at, recorded_at_updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.ID, e.Title, e.Status, e.Source, nullString(e.ParentID), e.OriginalFilename, e.ContentType,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.ID, e.Title, e.Status, e.Source, nullString(e.ParentID), notebookID, e.OriginalFilename, e.ContentType,
 		e.SizeBytes, e.DurationSeconds, e.SHA256, nullTS(e.RecordedAt), ts(e.CreatedAt), ts(e.UpdatedAt),
 		nullTS(e.DeletedAt), stamp, stamp)
 	if err != nil {
@@ -138,13 +152,13 @@ func (s *Store) GetEntry(ctx context.Context, id string) (Entry, error) {
 	var archived int
 	var createdAt, updatedAt string
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, COALESCE(title,''), status, source, COALESCE(parent_id,''), COALESCE(original_filename,''),
-			COALESCE(content_type,''), size_bytes, duration_seconds, COALESCE(sha256,''),
+		SELECT id, COALESCE(title,''), status, source, COALESCE(parent_id,''), COALESCE(notebook_id,''),
+			COALESCE(original_filename,''), COALESCE(content_type,''), size_bytes, duration_seconds, COALESCE(sha256,''),
 			recorded_at, created_at, updated_at, deleted_at, archived,
 			title_updated_at, recorded_at_updated_at,
 			COALESCE((SELECT body_updated_at FROM notes n WHERE n.entry_id = entries.id ORDER BY n.created_at DESC LIMIT 1), '')
 		FROM entries WHERE id = ? AND deleted_at IS NULL`, id).Scan(
-		&e.ID, &e.Title, &e.Status, &e.Source, &e.ParentID, &e.OriginalFilename, &e.ContentType,
+		&e.ID, &e.Title, &e.Status, &e.Source, &e.ParentID, &e.NotebookID, &e.OriginalFilename, &e.ContentType,
 		&e.SizeBytes, &e.DurationSeconds, &e.SHA256, &recordedAt, &createdAt, &updatedAt, &deletedAt, &archived,
 		&titleVersion, &recordedVersion, &bodyVersion)
 	if err != nil {
@@ -211,17 +225,27 @@ func (s *Store) ListEntries(ctx context.Context, limit int) ([]Entry, error) {
 // to entries that mention the given person, place and/or theme (case
 // insensitive). Empty arguments mean no filter.
 func (s *Store) ListEntriesFiltered(ctx context.Context, limit int, person, place, theme string, archived *bool) ([]Entry, error) {
+	return s.ListEntriesFilteredNotebook(ctx, limit, person, place, theme, archived, "")
+}
+
+// ListEntriesFilteredNotebook is ListEntriesFiltered with an optional notebook
+// filter. An empty notebookID means every notebook.
+func (s *Store) ListEntriesFilteredNotebook(ctx context.Context, limit int, person, place, theme string, archived *bool, notebookID string) ([]Entry, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	query := `
-		SELECT e.id, COALESCE(e.title,''), e.status, e.source, COALESCE(e.parent_id,''), COALESCE(e.original_filename,''),
-			COALESCE(e.content_type,''), e.size_bytes, e.duration_seconds, COALESCE(e.sha256,''),
+		SELECT e.id, COALESCE(e.title,''), e.status, e.source, COALESCE(e.parent_id,''), COALESCE(e.notebook_id,''),
+			COALESCE(e.original_filename,''), COALESCE(e.content_type,''), e.size_bytes, e.duration_seconds, COALESCE(e.sha256,''),
 			e.recorded_at, e.created_at, e.updated_at, e.archived,
 			e.title_updated_at, e.recorded_at_updated_at,
 			COALESCE((SELECT body_updated_at FROM notes n WHERE n.entry_id = e.id ORDER BY n.created_at DESC LIMIT 1), '')
 		FROM entries e WHERE e.deleted_at IS NULL`
 	var args []any
+	if notebookID = strings.TrimSpace(notebookID); notebookID != "" {
+		query += ` AND e.notebook_id = ?`
+		args = append(args, notebookID)
+	}
 	if archived != nil {
 		query += ` AND e.archived = ?`
 		args = append(args, boolInt(*archived))
@@ -254,7 +278,7 @@ func (s *Store) ListEntriesFiltered(ctx context.Context, limit int, person, plac
 		var recordedAt, titleVersion, recordedVersion, bodyVersion sql.NullString
 		var archived int
 		var createdAt, updatedAt string
-		if err := rows.Scan(&e.ID, &e.Title, &e.Status, &e.Source, &e.ParentID, &e.OriginalFilename,
+		if err := rows.Scan(&e.ID, &e.Title, &e.Status, &e.Source, &e.ParentID, &e.NotebookID, &e.OriginalFilename,
 			&e.ContentType, &e.SizeBytes, &e.DurationSeconds, &e.SHA256, &recordedAt, &createdAt, &updatedAt,
 			&archived, &titleVersion, &recordedVersion, &bodyVersion); err != nil {
 			return nil, fmt.Errorf("store: scan entry: %w", err)

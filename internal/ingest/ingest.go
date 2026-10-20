@@ -56,6 +56,11 @@ type Meta struct {
 	// entry created at Complete.
 	Title      string
 	RecordedAt *time.Time
+	// CreatedAt is the original creation time of the note (import time for an
+	// imported audio). Nil means "use the upload completion time".
+	CreatedAt *time.Time
+	// Source records where the note came from (e.g. "share" for imported audio).
+	Source string
 	// ClientKey makes Start idempotent: repeating it returns the same upload.
 	ClientKey string
 	// EntryID, when set, adds this audio to an existing entry instead of
@@ -114,6 +119,12 @@ func (s *Service) Start(ctx context.Context, meta Meta) (store.Upload, error) {
 	if entryID != "" && !id.Valid(entryID) {
 		return store.Upload{}, newError(400, "invalid_id", "entry_id invalido")
 	}
+	source := strings.TrimSpace(meta.Source)
+	switch source {
+	case "", "upload", "share", "microphone", "text", "telegram":
+	default:
+		return store.Upload{}, newError(400, "invalid_source", "origem invalida")
+	}
 
 	prefix, err := crypto.NewPrefix()
 	if err != nil {
@@ -150,6 +161,8 @@ func (s *Service) Start(ctx context.Context, meta Meta) (store.Upload, error) {
 		ClientKey:       clientKey,
 		EntryID:         entryID,
 		LocalTranscribe: meta.LocalTranscribe,
+		EntryCreatedAt:  meta.CreatedAt,
+		EntrySource:     source,
 		StorageKey:      storageKey,
 		Prefix:          prefix[:],
 		NextCounter:     0,
@@ -302,6 +315,14 @@ func (s *Service) Complete(ctx context.Context, uploadID string) (CompleteResult
 	}
 
 	now := time.Now().UTC()
+	createdAt := now
+	if u.EntryCreatedAt != nil {
+		createdAt = u.EntryCreatedAt.UTC()
+	}
+	source := "upload"
+	if u.EntrySource != "" {
+		source = u.EntrySource
+	}
 	var entry store.Entry
 	created := false
 	switch existing, err := s.store.GetEntry(ctx, u.EntryID); {
@@ -315,14 +336,14 @@ func (s *Service) Complete(ctx context.Context, uploadID string) (CompleteResult
 			ID:               id.New(),
 			Title:            title,
 			Status:           store.EntryStored,
-			Source:           "upload",
+			Source:           source,
 			OriginalFilename: u.Filename,
 			ContentType:      u.ContentType,
 			SizeBytes:        u.SizeBytes,
 			DurationSeconds:  durationSeconds,
 			SHA256:           sum,
 			RecordedAt:       u.RecordedAt,
-			CreatedAt:        now,
+			CreatedAt:        createdAt,
 			UpdatedAt:        now,
 		}
 		if err := s.store.CreateEntry(ctx, entry); err != nil {
@@ -340,14 +361,14 @@ func (s *Service) Complete(ctx context.Context, uploadID string) (CompleteResult
 			ID:               u.EntryID,
 			Title:            title,
 			Status:           store.EntryStored,
-			Source:           "upload",
+			Source:           source,
 			OriginalFilename: u.Filename,
 			ContentType:      u.ContentType,
 			SizeBytes:        u.SizeBytes,
 			DurationSeconds:  durationSeconds,
 			SHA256:           sum,
 			RecordedAt:       u.RecordedAt,
-			CreatedAt:        now,
+			CreatedAt:        createdAt,
 			UpdatedAt:        now,
 		}
 		if err := s.store.CreateEntry(ctx, entry); err != nil {

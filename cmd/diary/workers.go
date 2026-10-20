@@ -144,20 +144,55 @@ func analyzeHandler(st *store.Store, cfg config.Config, bus *events.Bus, logger 
 		if !analysisCfg.Enabled {
 			return analyze.ErrDisabled
 		}
+
+		started := time.Now().UTC()
+		saveRun := func(run store.AnalysisRun) {
+			run.Runtime = "server"
+			run.Provider = analysisCfg.Provider
+			run.Model = analysisCfg.Model
+			run.Attempt = job.Attempts + 1
+			run.StartedAt = started
+			if run.FinishedAt.IsZero() {
+				run.FinishedAt = time.Now().UTC()
+			}
+			if run.DurationMS == 0 && !run.FinishedAt.Before(run.StartedAt) {
+				run.DurationMS = run.FinishedAt.Sub(run.StartedAt).Milliseconds()
+			}
+			if run.DurationMS > 0 && run.CompletionTokens > 0 {
+				run.TokensPerSecond = float64(run.CompletionTokens) * 1000 / float64(run.DurationMS)
+			}
+			// O diagnostico nunca derruba a analise.
+			if err := st.SaveAnalysisRun(context.WithoutCancel(ctx), run); err != nil {
+				logger.Error("worker: registrar execucao da analise", "entry_id", payload.EntryID, "erro", err)
+			}
+		}
+
 		_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryAnalyzing)
 		bus.Publish("entry.status", map[string]string{"entry_id": payload.EntryID, "status": store.EntryAnalyzing})
-		input, language, err := analysisInput(ctx, st, payload.EntryID)
+
+		input, err := analysisInput(ctx, st, payload.EntryID)
+		run := store.AnalysisRun{
+			EntryID:              payload.EntryID,
+			InputTextChars:       input.TextChars,
+			InputTranscriptChars: input.TranscriptChars,
+			InputImages:          input.Images,
+		}
 		if err != nil {
+			run.Outcome = "error"
+			run.ErrorClass = "input"
+			run.FinishedAt = time.Now().UTC()
+			saveRun(run)
 			_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryFailed)
 			bus.Publish("entry.failed", map[string]string{"entry_id": payload.EntryID, "reason": analyze.FriendlyError(err)})
 			logger.Error("worker: analise sem entrada", "entry_id", payload.EntryID, "erro", err)
 			return err
 		}
-		if language != "" {
-			analysisCfg.Language = language
+		if input.Language != "" {
+			analysisCfg.Language = input.Language
 		}
+
 		client := analyze.New(analysisCfg)
-		result, err := analyze.NewPipeline(client).Run(ctx, input, func(stage string, done, total int) {
+		result, err := analyze.NewPipeline(client).Run(ctx, input.Segments, func(stage string, done, total int) {
 			bus.Publish("job.progress", map[string]any{
 				"entry_id": payload.EntryID,
 				"stage":    stage,
@@ -165,11 +200,24 @@ func analyzeHandler(st *store.Store, cfg config.Config, bus *events.Bus, logger 
 				"total":    total,
 			})
 		})
+		run.FinishedAt = time.Now().UTC()
+		run.DurationMS = run.FinishedAt.Sub(started).Milliseconds()
+		run.PromptTokens, run.CompletionTokens = client.Usage()
+		if run.DurationMS > 0 && run.CompletionTokens > 0 {
+			run.TokensPerSecond = float64(run.CompletionTokens) * 1000 / float64(run.DurationMS)
+		}
+
 		if err != nil {
 			// Erro transitorio (rede, 429, 5xx) ainda tem tentativas: manter a
 			// nota como "analisando" evita anunciar falha cedo demais, quando a
 			// retentativa ainda pode dar certo. Chave/modelo/endpoint errados sao
 			// finais e falham na hora, com a mensagem certa.
+			run.Outcome = "error"
+			if errors.Is(err, context.Canceled) {
+				run.Outcome = "stopped"
+			}
+			run.ErrorClass = analyze.ErrorClass(err)
+			saveRun(run)
 			if shouldGiveUpAnalysis(job.Attempts, job.MaxAttempts, err) {
 				_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryFailed)
 				bus.Publish("entry.failed", map[string]string{"entry_id": payload.EntryID, "reason": analyze.FriendlyError(err)})
@@ -179,8 +227,14 @@ func analyzeHandler(st *store.Store, cfg config.Config, bus *events.Bus, logger 
 		}
 		analysis, links := buildAnalysis(payload.EntryID, result)
 		if err := st.SaveRichAnalysis(ctx, analysis, links); err != nil {
+			run.Outcome = "error"
+			run.ErrorClass = "storage"
+			saveRun(run)
 			return err
 		}
+		run.AnalysisID = analysis.ID
+		run.Outcome = "ok"
+		saveRun(run)
 		_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryReady)
 		bus.Publish("analysis.ready", map[string]string{"entry_id": payload.EntryID})
 		bus.Publish("entry.status", map[string]string{"entry_id": payload.EntryID, "status": store.EntryReady})
@@ -253,12 +307,23 @@ func analyzeSegments(text string, segments []store.Segment) []analyze.Segment {
 	return out
 }
 
+// analysisInputResult carries the pipeline input and the measurements the run
+// record needs. Character counts are runes and never include the prefixes the
+// prompt adds.
+type analysisInputResult struct {
+	Segments        []analyze.Segment
+	Language        string
+	TextChars       int
+	TranscriptChars int
+	Images          int
+}
+
 // analysisInput builds the analysis input from every kind of content the entry
 // has: written text, audio transcripts, images (their captions/filenames) and
 // links. The pipeline receives an array of segments; when there is only one
 // audio and nothing else, the original segments are kept so key moments keep
 // their timestamps. With mixed content, one text segment carries everything.
-func analysisInput(ctx context.Context, st *store.Store, entryID string) ([]analyze.Segment, string, error) {
+func analysisInput(ctx context.Context, st *store.Store, entryID string) (analysisInputResult, error) {
 	transcripts, transcriptErr := st.ListTranscripts(ctx, entryID)
 	language := ""
 	if transcriptErr == nil {
@@ -273,11 +338,25 @@ func analysisInput(ctx context.Context, st *store.Store, entryID string) ([]anal
 	bodyText, noteErr := noteBodyText(ctx, st, entryID)
 	linksText := entryLinksText(ctx, st, entryID)
 
+	images := 0
+	if attachments, err := st.ListAttachments(ctx, entryID); err == nil {
+		for _, attachment := range attachments {
+			if attachment.Kind == "image" {
+				images += 1
+			}
+		}
+	}
+
 	// Somente um audio, sem texto escrito nem links: mantem os segmentos.
 	if transcriptErr == nil && len(transcripts) == 1 &&
 		strings.TrimSpace(bodyText) == "" && strings.TrimSpace(linksText) == "" {
 		if _, segments, err := st.GetTranscriptByAttachment(ctx, transcripts[0].AttachmentID); err == nil {
-			return analyzeSegments(transcripts[0].Text, segments), language, nil
+			return analysisInputResult{
+				Segments:        analyzeSegments(transcripts[0].Text, segments),
+				Language:        language,
+				TranscriptChars: len([]rune(strings.TrimSpace(transcripts[0].Text))),
+				Images:          images,
+			}, nil
 		}
 	}
 
@@ -292,15 +371,22 @@ func analysisInput(ctx context.Context, st *store.Store, entryID string) ([]anal
 		parts = append(parts, "Links da nota:\n"+text)
 	}
 	if len(parts) == 0 {
+		partial := analysisInputResult{Images: images}
 		if transcriptErr != nil {
-			return nil, "", fmt.Errorf("worker: transcript: %w", transcriptErr)
+			return partial, fmt.Errorf("worker: transcript: %w", transcriptErr)
 		}
 		if noteErr != nil {
-			return nil, "", noteErr
+			return partial, noteErr
 		}
-		return nil, "", errors.New("transcricao indisponivel")
+		return partial, errors.New("transcricao indisponivel")
 	}
-	return []analyze.Segment{{Text: strings.Join(parts, "\n\n")}}, language, nil
+	return analysisInputResult{
+		Segments:        []analyze.Segment{{Text: strings.Join(parts, "\n\n")}},
+		Language:        language,
+		TextChars:       len([]rune(strings.TrimSpace(bodyText))),
+		TranscriptChars: len([]rune(strings.TrimSpace(audioText))),
+		Images:          images,
+	}, nil
 }
 
 // transcriptText joins every audio transcript of the entry.

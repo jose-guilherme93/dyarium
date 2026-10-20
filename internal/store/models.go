@@ -46,12 +46,17 @@ type Upload struct {
 	// LocalTranscribe means the client will transcribe this audio on the device;
 	// the server must not enqueue its own transcription.
 	LocalTranscribe bool
-	ReceivedBytes   int64
-	StorageKey      string
-	Prefix          []byte
-	NextCounter     uint32
-	CreatedAt       time.Time
-	ExpiresAt       time.Time
+	// EntryCreatedAt is the original creation time of the note this audio will
+	// create. It is immutable once the entry exists; nil means "use upload time".
+	EntryCreatedAt *time.Time
+	// EntrySource is the origin of the note (e.g. "share" for imported audio).
+	EntrySource   string
+	ReceivedBytes int64
+	StorageKey    string
+	Prefix        []byte
+	NextCounter   uint32
+	CreatedAt     time.Time
+	ExpiresAt     time.Time
 }
 
 // Entry is a stored audio and its lifecycle.
@@ -61,7 +66,9 @@ type Entry struct {
 	Status string
 	Source string
 	// ParentID is the parent note in the tree; empty means it is at the root.
-	ParentID         string
+	ParentID string
+	// NotebookID is the notebook that owns the note. Every note has one.
+	NotebookID       string
 	OriginalFilename string
 	ContentType      string
 	SizeBytes        int64
@@ -171,6 +178,18 @@ type NoteRevision struct {
 	NoteID    string
 	Document  string
 	CreatedAt time.Time
+}
+
+// Notebook is a collection of entries. Every entry belongs to exactly one.
+type Notebook struct {
+	ID          string
+	Name        string
+	Color       string
+	IsDefault   bool
+	EntryCount  int
+	LastEntryAt *time.Time
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // Tag is a label that can be attached to entries.

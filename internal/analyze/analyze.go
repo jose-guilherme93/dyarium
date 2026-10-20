@@ -15,6 +15,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -89,6 +90,28 @@ type Client struct {
 	cfg       Config
 	http      *http.Client
 	sessionID string
+
+	usageMu          sync.Mutex
+	promptTokens     int
+	completionTokens int
+}
+
+// Usage returns the accumulated tokens of the calls made by this client. The
+// OpenCode provider does not report usage, so its counters stay at zero.
+func (c *Client) Usage() (prompt, completion int) {
+	c.usageMu.Lock()
+	defer c.usageMu.Unlock()
+	return c.promptTokens, c.completionTokens
+}
+
+func (c *Client) addUsage(prompt, completion int) {
+	if prompt <= 0 && completion <= 0 {
+		return
+	}
+	c.usageMu.Lock()
+	c.promptTokens += prompt
+	c.completionTokens += completion
+	c.usageMu.Unlock()
 }
 
 // New builds a Client. The session id is what the OpenCode gateway uses to
@@ -177,6 +200,41 @@ func Retryable(err error) bool {
 	return true
 }
 
+// ErrorClass maps a provider error to a stable, content-free class for the
+// diagnostics. The raw error stays in the job log; the run row only stores this.
+func ErrorClass(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, context.Canceled) {
+		return "stopped"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timeout"
+	}
+	message := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(message, "status 401"), strings.Contains(message, "status 403"):
+		return "auth"
+	case strings.Contains(message, "status 402"):
+		return "quota"
+	case strings.Contains(message, "status 429"):
+		return "rate_limit"
+	case strings.Contains(message, "status 5"):
+		return "provider"
+	case strings.Contains(message, "decode content"), strings.Contains(message, "decode summary"),
+		strings.Contains(message, "json invalido"):
+		return "invalid_json"
+	case strings.Contains(message, "timeout"), strings.Contains(message, "deadline"):
+		return "timeout"
+	case strings.Contains(message, "connection refused"), strings.Contains(message, "dial tcp"),
+		strings.Contains(message, "no such host"):
+		return "network"
+	default:
+		return "unknown"
+	}
+}
+
 type chatRequest struct {
 	Model          string        `json:"model"`
 	Messages       []chatMessage `json:"messages"`
@@ -207,6 +265,10 @@ type chatResponse struct {
 			Content string `json:"content"`
 		} `json:"message"`
 	} `json:"choices"`
+	Usage struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+	} `json:"usage"`
 }
 
 // analysisSchemaJSON is the JSON schema requested when the provider supports
@@ -402,6 +464,7 @@ func (c *Client) call(ctx context.Context, system, user string, maxTokens int, u
 	if strings.TrimSpace(content) == "" {
 		return "", errors.New("analyze: resposta sem conteudo")
 	}
+	c.addUsage(out.Usage.PromptTokens, out.Usage.CompletionTokens)
 	return content, nil
 }
 

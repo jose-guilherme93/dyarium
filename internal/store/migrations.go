@@ -43,7 +43,9 @@ func (s *Store) Migrate(ctx context.Context) error {
 			return err
 		}
 	}
-	return nil
+	// Cores de tag antigas (ou criadas por clientes que so mandam o nome) usam a
+	// mesma paleta deterministica do app e do dashboard.
+	return s.backfillTagColors(ctx)
 }
 
 type migration struct {

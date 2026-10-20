@@ -44,6 +44,10 @@ func (s *Server) handleCreateTag(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_name", "nome obrigatorio")
 		return
 	}
+	if !validColor(req.Color) {
+		writeError(w, http.StatusBadRequest, "invalid_color", "cor invalida")
+		return
+	}
 	tag := store.Tag{ID: id.New(), Name: name, Color: req.Color, CreatedAt: time.Now().UTC()}
 	if err := s.deps.Store.CreateTag(r.Context(), tag); err != nil {
 		writeError(w, http.StatusConflict, "conflict", err.Error())

@@ -80,11 +80,14 @@ isso:
   desmontar, scroll, painel de propriedades, modo markdown, transcricoes
   expandidas e posicao do audio ficam num store em memoria por entrada e sao
   reaplicados na volta.
-- **Leitura nativa no app.** O celular nao monta WebView para abrir a nota: o
-  markdown e interpretado em componentes nativos (texto, titulo, lista, imagem).
-  O editor rico so aparece no toque e desmonta quando o teclado fecha. Foto
-  inserida nasce no tamanho medio (50%) e sempre tem um paragrafo editavel
-  abaixo.
+- **Editor de blocos, sem WebView.** A nota e um documento de blocos nativos:
+  cada bloco de texto e um editor rico nativo (`EnrichedTextInput`) e cada foto e
+  uma `Image` nativa no lugar. Nao existe leitor separado nem troca de view ao
+  tocar: o usuario toca no bloco e digita, com a mesma fonte e o mesmo layout o
+  tempo todo. A selecao vira negrito/italico/lista pelo comando nativo, sem
+  mostrar markdown. O markdown continua sendo o formato salvo: os blocos sao
+  remontados num debounce curto (700 ms) e no blur/saida. Fotos entram na hora
+  pelo arquivo local e sobem no sync ao sair da nota.
 
 ## Fluxo de dados
 
@@ -181,10 +184,37 @@ a gravacao dos resultados e feita em transacao, com upsert por chave natural.
   e pode ser desligada sem afetar transcricao e metricas.
 - Frontend embutido via `go:embed`: um unico artefato para distribuir.
 - SSE para atualizacoes: unidirecional, simples, funciona atras do proxy de desenvolvimento.
+- Caderno obrigatorio por nota, com o padrao "Notas ao acaso" criado por migracao: separa
+  trabalho, estudo e outros conjuntos sem permitir nota orfa. O app abre no ultimo caderno
+  (preferencia local), o web usa a mesma ideia na sidebar. As notas sao ordenadas pela data
+  real (`recorded_at`), nao pela data de importacao.
+- Tags como eixo transversal (N:N) e cadernos como colecao (1:N): as duas coisas respondem
+  perguntas diferentes. A cor pastel e deterministica a partir do nome, para a tag criada
+  offline ja aparecer igual no servidor e no dashboard.
+- Subnotas desativadas: a arvore `parent_id` nao e mais criada nem exibida; os dados
+  existentes ficam no banco ate uma remocao futura. Cadernos e tags cobrem a organizacao
+  que as subnotas tentavam resolver.
+- Editor da nota: o markdown e fatiado em blocos (`core/noteBlocks`) preservando as linhas
+  exatas para o round-trip. Blocos de texto usam um `EnrichedTextInput` nativo cada, o que
+  mantem o custo por tecla limitado ao tamanho do bloco (sem o O(n) da nota inteira que
+  derrubava a digitacao no editor unico). Blocos de imagem sao `Image` nativas; tabela,
+  divisoria e codigo ficam somente leitura e so saem com confirmacao. O editor nao tem
+  `onChangeHtml` nem `getHTML` por tecla: cada bloco marca "sujo" pela selecao e so pede o
+  HTML no debounce, no blur ou no `flush`. O estado `body` da tela so e materializado no
+  menu/saida, para nao re-renderizar a nota durante a digitacao. A volta por gesto/tecla do
+  sistema usa `beforeRemove` para esperar o flush antes de desmontar. O `react-native-enriched-html`
+  voltou apenas como motor nativo por bloco; a WebView foi removida do caminho.
+- Abertura sem trabalho de fundo: enquanto a nota esta aberta, upload/rede e pulls esperam
+  (`noteIsOpen`), a pilha de audios so revalida depois da transicao, o audio nao e
+  decodificado ate o play/seek e a busca de anexos nao lista o diretorio inteiro (checa as
+  extensoes conhecidas direto). A transcricao local espera 4 s, nunca com o editor aberto, e
+  o progresso so notifica quando o percentual inteiro muda.
 
 ## Limites e configuracoes relevantes
 
 - Duracao maxima de audio: 50 minutos (configuravel por ambiente).
+- O app grava um audio por nota. Nota ja sincronizada (ou com audio local) nao aceita um
+  segundo audio pelo celular; a pilha do servidor e somente leitura no app.
 - Tamanho maximo de upload: configuravel por ambiente.
 - Formatos aceitos: wav, mp3, m4a, ogg, flac, aac, adts (configuravel).
 - Concorrencia de workers: padrao 1, dado o pico de memoria do whisper.

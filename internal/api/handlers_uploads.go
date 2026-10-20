@@ -20,7 +20,12 @@ type createUploadRequest struct {
 	SHA256      string `json:"sha256"`
 	Title       string `json:"title"`
 	RecordedAt  string `json:"recorded_at"`
-	ClientKey   string `json:"client_key"`
+	// CreatedAt is the original creation/import time of the note. It is stored
+	// on the entry and never changes afterwards.
+	CreatedAt string `json:"created_at"`
+	// Source records where the note came from (e.g. "share" for imported audio).
+	Source    string `json:"source"`
+	ClientKey string `json:"client_key"`
 	// EntryID, when set, adds the audio to an existing entry.
 	EntryID string `json:"entry_id"`
 	// LocalTranscribe means the client will transcribe on the device, so the
@@ -40,6 +45,15 @@ func (s *Server) handleCreateUpload(w http.ResponseWriter, r *http.Request) {
 			recordedAt = &t
 		}
 	}
+	var createdAt *time.Time
+	if raw := strings.TrimSpace(req.CreatedAt); raw != "" {
+		t, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_created_at", "created_at invalido")
+			return
+		}
+		createdAt = &t
+	}
 	up, err := s.deps.Ingest.Start(r.Context(), ingest.Meta{
 		Filename:        req.Filename,
 		ContentType:     req.ContentType,
@@ -47,6 +61,8 @@ func (s *Server) handleCreateUpload(w http.ResponseWriter, r *http.Request) {
 		SHA256:          req.SHA256,
 		Title:           req.Title,
 		RecordedAt:      recordedAt,
+		CreatedAt:       createdAt,
+		Source:          req.Source,
 		ClientKey:       req.ClientKey,
 		EntryID:         req.EntryID,
 		LocalTranscribe: req.LocalTranscribe,

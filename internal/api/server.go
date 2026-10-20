@@ -97,6 +97,7 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("GET /api/v1/entities", s.handleListEntities)
 	protected.HandleFunc("GET /api/v1/entities/{kind}/{name}", s.handleGetEntity)
 	protected.HandleFunc("GET /api/v1/mood", s.handleMood)
+	protected.HandleFunc("GET /api/v1/analysis/runs/summary", s.handleAnalysisRunsSummary)
 
 	protected.HandleFunc("PUT /api/v1/metrics", s.handlePutMetrics)
 	protected.HandleFunc("GET /api/v1/metrics", s.handleListMetrics)
@@ -118,7 +119,13 @@ func (s *Server) Handler() http.Handler {
 
 	protected.HandleFunc("GET /api/v1/tags", s.handleListTags)
 	protected.HandleFunc("POST /api/v1/tags", s.handleCreateTag)
+	protected.HandleFunc("PATCH /api/v1/tags/{id}", s.handleUpdateTag)
 	protected.HandleFunc("DELETE /api/v1/tags/{id}", s.handleDeleteTag)
+
+	protected.HandleFunc("GET /api/v1/notebooks", s.handleListNotebooks)
+	protected.HandleFunc("POST /api/v1/notebooks", s.handleCreateNotebook)
+	protected.HandleFunc("PATCH /api/v1/notebooks/{id}", s.handleUpdateNotebook)
+	protected.HandleFunc("DELETE /api/v1/notebooks/{id}", s.handleDeleteNotebook)
 
 	protected.HandleFunc("GET /api/v1/settings", s.handleGetSettings)
 	protected.HandleFunc("PUT /api/v1/settings", s.handlePutSettings)

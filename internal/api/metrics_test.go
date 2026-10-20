@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -49,6 +50,68 @@ func TestPutMetricsStoresSnapshotPerDevice(t *testing.T) {
 	}
 }
 
+// O schema 2 preserva o documento inteiro (janelas, sequencia e secoes que o
+// servidor ainda nao conhece), em vez de reconstruir so escrita + historico.
+func TestPutMetricsAcceptsSchema2AndPreservesDocument(t *testing.T) {
+	srv := newTestServer(t)
+	payload := `{"device_id":"dev_v2","device_name":"celular","schema":2,` +
+		`"generated_at":"2026-10-19T12:00:00Z",` +
+		`"streak":{"current":5,"longest":9,"wrote_today":true},` +
+		`"windows":{"7d":{"writing":{"words":12},"topics":{"themes":[{"label":"trabalho","count":2}]}},` +
+		`"30d":{"voice":{"audio_count":2}},"365d":{}},` +
+		`"history":{"weekly":[]},` +
+		`"extra":{"keep":true}}`
+
+	rec, body := doJSON(t, srv, http.MethodPut, "/api/v1/metrics", strings.NewReader(payload))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if body["schema"] != float64(2) {
+		t.Fatalf("schema = %v, want 2", body["schema"])
+	}
+
+	_, list := doJSON(t, srv, http.MethodGet, "/api/v1/metrics", nil)
+	if list["schema"] != float64(2) {
+		t.Fatalf("schema da listagem = %v, want 2", list["schema"])
+	}
+	snapshots, _ := list["snapshots"].([]any)
+	if len(snapshots) != 1 {
+		t.Fatalf("snapshots = %d, want 1", len(snapshots))
+	}
+	item, _ := snapshots[0].(map[string]any)
+	streak, _ := item["streak"].(map[string]any)
+	if streak["current"] != float64(5) {
+		t.Fatalf("streak.current = %v, want 5", streak["current"])
+	}
+	windows, _ := item["windows"].(map[string]any)
+	seven, _ := windows["7d"].(map[string]any)
+	writing, _ := seven["writing"].(map[string]any)
+	if writing["words"] != float64(12) {
+		t.Fatalf("windows.7d.writing.words = %v, want 12", writing["words"])
+	}
+	topics, _ := seven["topics"].(map[string]any)
+	themes, _ := topics["themes"].([]any)
+	if len(themes) != 1 {
+		t.Fatalf("windows.7d.topics.themes = %v, want 1 item", themes)
+	}
+	extra, _ := item["extra"].(map[string]any)
+	if extra["keep"] != true {
+		t.Fatalf("secao desconhecida nao foi preservada: %v", item)
+	}
+}
+
+func TestPutMetricsRejectsOversizedDocument(t *testing.T) {
+	srv := newTestServer(t)
+	payload := fmt.Sprintf(
+		`{"device_id":"dev_big","schema":2,"streak":{},"windows":{},"extra":%q}`,
+		strings.Repeat("a", maxMetricsPayloadBytes),
+	)
+	rec, _ := doJSON(t, srv, http.MethodPut, "/api/v1/metrics", strings.NewReader(payload))
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
 // O snapshot e por aparelho: reenviar substitui o anterior em vez de acumular.
 func TestPutMetricsReplacesSameDevice(t *testing.T) {
 	srv := newTestServer(t)
@@ -84,8 +147,14 @@ func TestPutMetricsValidatesInput(t *testing.T) {
 		{"sem device_id", `{"schema":1,"writing":{"words":1}}`, http.StatusBadRequest},
 		{"device_id invalido", `{"device_id":"com espaco","schema":1,"writing":{"words":1}}`, http.StatusBadRequest},
 		{"schema desconhecido", `{"device_id":"dev_1","schema":99,"writing":{"words":1}}`, http.StatusBadRequest},
+		{"schema antigo demais", `{"device_id":"dev_1","schema":0,"writing":{}}`, http.StatusBadRequest},
 		{"sem metricas", `{"device_id":"dev_1","schema":1}`, http.StatusBadRequest},
 		{"metricas nao sao objeto", `{"device_id":"dev_1","schema":1,"writing":[1,2]}`, http.StatusBadRequest},
+		{"schema 2 sem janelas", `{"device_id":"dev_1","schema":2,"streak":{}}`, http.StatusBadRequest},
+		{"schema 2 sem sequencia", `{"device_id":"dev_1","schema":2,"windows":{}}`, http.StatusBadRequest},
+		{"schema 2 janelas nao sao objeto", `{"device_id":"dev_1","schema":2,"windows":[]}`, http.StatusBadRequest},
+		{"schema 2 streak invalido", `{"device_id":"dev_1","schema":2,"windows":{},"streak":[]}`, http.StatusBadRequest},
+		{"history nao e objeto", `{"device_id":"dev_1","schema":1,"writing":{},"history":[]}`, http.StatusBadRequest},
 		{"generated_at invalido", `{"device_id":"dev_1","schema":1,"generated_at":"ontem","writing":{"words":1}}`, http.StatusBadRequest},
 	}
 	for _, tc := range cases {

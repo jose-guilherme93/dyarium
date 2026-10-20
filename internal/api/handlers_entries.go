@@ -36,6 +36,7 @@ func entryJSON(e store.Entry) map[string]any {
 		"status":            e.Status,
 		"source":            e.Source,
 		"parent_id":         e.ParentID,
+		"notebook_id":       e.NotebookID,
 		"original_filename": e.OriginalFilename,
 		"content_type":      e.ContentType,
 		"size_bytes":        e.SizeBytes,
@@ -122,8 +123,19 @@ func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"entries": out})
 		return
 	}
-	entries, err := s.deps.Store.ListEntriesFiltered(r.Context(), limit,
-		query.Get("person"), query.Get("place"), query.Get("theme"), archiveFilter(query))
+	notebookID := strings.TrimSpace(query.Get("notebook_id"))
+	if notebookID != "" {
+		if err := s.deps.Store.NotebookExists(r.Context(), notebookID); err != nil {
+			if errors.Is(err, store.ErrNotebookNotFound) {
+				writeError(w, http.StatusNotFound, "notebook_not_found", "caderno inexistente")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			return
+		}
+	}
+	entries, err := s.deps.Store.ListEntriesFilteredNotebook(r.Context(), limit,
+		query.Get("person"), query.Get("place"), query.Get("theme"), archiveFilter(query), notebookID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
@@ -163,13 +175,26 @@ func truthy(raw string) bool {
 // given, the note is created as a child of that note (subnote).
 func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID        string `json:"id"`
-		Title     string `json:"title"`
-		ParentID  string `json:"parent_id"`
-		CreatedAt string `json:"created_at"`
+		ID         string `json:"id"`
+		Title      string `json:"title"`
+		ParentID   string `json:"parent_id"`
+		NotebookID string `json:"notebook_id"`
+		CreatedAt  string `json:"created_at"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_body", "corpo invalido")
+		return
+	}
+	notebookID := strings.TrimSpace(req.NotebookID)
+	if notebookID == "" {
+		notebookID = store.DefaultNotebookID
+	}
+	if err := s.deps.Store.NotebookExists(r.Context(), notebookID); err != nil {
+		if errors.Is(err, store.ErrNotebookNotFound) {
+			writeError(w, http.StatusUnprocessableEntity, "invalid_notebook", "caderno inexistente")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
 	parentID := strings.TrimSpace(req.ParentID)
@@ -195,13 +220,14 @@ func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 		title = entrytitle.Name(entrytitle.Text)
 	}
 	entry := store.Entry{
-		ID:        id.New(),
-		Title:     title,
-		Status:    store.EntryReady,
-		Source:    "text",
-		ParentID:  parentID,
-		CreatedAt: createdAt,
-		UpdatedAt: now,
+		ID:         id.New(),
+		Title:      title,
+		Status:     store.EntryReady,
+		Source:     "text",
+		ParentID:   parentID,
+		NotebookID: notebookID,
+		CreatedAt:  createdAt,
+		UpdatedAt:  now,
 	}
 	if clientID := strings.TrimSpace(req.ID); clientID != "" {
 		if !id.Valid(clientID) {
@@ -276,6 +302,9 @@ func (s *Server) handleGetEntry(w http.ResponseWriter, r *http.Request) {
 type patchEntryRequest struct {
 	Title      *string `json:"title"`
 	RecordedAt *string `json:"recorded_at"`
+	// NotebookID move a nota entre cadernos. E um ponteiro, nao texto: a ultima
+	// gravacao vence, sem conflito.
+	NotebookID *string `json:"notebook_id"`
 	// Archived tira a nota da lista de trabalho sem apagar. E um interruptor, nao
 	// texto: nao tem versao nem conflito.
 	Archived *bool `json:"archived"`
@@ -303,14 +332,22 @@ func (s *Server) handlePatchEntry(w http.ResponseWriter, r *http.Request) {
 			recordedAt = &t
 		}
 	}
-	if req.Title == nil && recordedAt == nil && req.Archived == nil {
+	if req.Title == nil && recordedAt == nil && req.NotebookID == nil && req.Archived == nil {
 		writeError(w, http.StatusBadRequest, "empty_patch", "nada para atualizar")
 		return
 	}
+	if req.NotebookID != nil && strings.TrimSpace(*req.NotebookID) == "" {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_notebook", "caderno obrigatorio")
+		return
+	}
 	versions, conflict, err := s.deps.Store.UpdateEntryFields(r.Context(), id, req.Title, recordedAt,
-		req.Archived, req.Versions.Title, req.Versions.RecordedAt)
+		req.NotebookID, req.Archived, req.Versions.Title, req.Versions.RecordedAt)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", "entrada inexistente")
+		return
+	}
+	if errors.Is(err, store.ErrNotebookNotFound) {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_notebook", "caderno inexistente")
 		return
 	}
 	if err != nil {

@@ -17,7 +17,10 @@ Representa um audio enviado e seu ciclo de vida.
 | id | TEXT PK | ULID |
 | title | TEXT | opcional; editavel |
 | status | TEXT | estado da maquina de estados |
-| source | TEXT | `upload`, `telegram` |
+| source | TEXT | `upload`, `telegram`, `share`, `text` |
+| parent_id | TEXT FK -> Entry.id | subnota (desativada; ver nota abaixo) |
+| notebook_id | TEXT FK -> Notebook.id | caderno; obrigatorio na pratica |
+| archived | INTEGER | fora da lista de trabalho, sem apagar |
 | original_filename | TEXT | nome enviado |
 | content_type | TEXT | MIME do original |
 | size_bytes | INTEGER | tamanho do ciphertext |
@@ -28,7 +31,27 @@ Representa um audio enviado e seu ciclo de vida.
 | updated_at | TEXT | |
 | deleted_at | TEXT | remocao logica |
 
-Indices: `status`, `recorded_at`, `created_at`, `deleted_at`.
+Indices: `status`, `recorded_at`, `created_at`, `deleted_at`, `notebook_id`.
+
+`parent_id` existia para a arvore de subnotas. Com cadernos e tags, subnotas
+deixaram de ser necessarias: o web nao cria mais subnotas e a lista e plana. Os
+dados existentes continuam no banco; a remocao da coluna fica para depois.
+
+## Notebook
+
+Colecao de notas. Toda nota pertence a exatamente um caderno.
+
+| Campo | Tipo | Notas |
+|---|---|---|
+| id | TEXT PK | o padrao usa `notas-ao-acaso` |
+| name | TEXT | unico (case-sensitive no banco; API compara sem caixa) |
+| color | TEXT | opcional; vazio = neutro |
+| is_default | INTEGER | 1 no caderno "Notas ao acaso" |
+| created_at | TEXT | |
+| updated_at | TEXT | |
+
+Indices: unico em `name`; unico parcial em `is_default` quando 1. O caderno
+padrao e criado pela migracao 0017 e nao pode ser renomeado nem excluido.
 
 ## Attachment
 
@@ -204,10 +227,11 @@ Indices: `note_id`, (`note_id`, `created_at`).
 |---|---|---|
 | id | TEXT PK | |
 | name | TEXT | unico |
-| color | TEXT | opcional |
+| color | TEXT | pastel; gerado da paleta quando vazio |
 | created_at | TEXT | |
 
-Indices: unico em `name`.
+Indices: unico em `name`. Renomear para um nome existente mescla as tags
+(move `EntryTag` e apaga a antiga); excluir remove as associacoes.
 
 ## EntryTag
 
@@ -235,6 +259,39 @@ Relacoes entre entradas ou com URLs externas.
 | created_at | TEXT | |
 
 Indices: `from_entry_id`, `to_entry_id`.
+
+## AnalysisRun
+
+Uma tentativa de analise, no servidor ou no app (o app tem a mesma tabela no
+SQLite local, sem as FKs). Append-only: guarda medidas e resultado, nunca texto,
+transcricao ou audio.
+
+| Campo | Tipo | Notas |
+|---|---|---|
+| id | TEXT PK | |
+| entry_id | TEXT FK -> Entry.id | `ON DELETE CASCADE` |
+| analysis_id | TEXT FK -> Analysis.id | nulo em falha; `ON DELETE SET NULL` |
+| attachment_id | TEXT | audio quando aplicavel; sem FK |
+| runtime | TEXT | `server` ou `local` |
+| provider | TEXT | `openai`, `opencode`, `llama.cpp`, `lexical` |
+| model | TEXT | id do modelo; `local-fallback` na leitura simplificada |
+| attempt | INTEGER | 1-based; 0 no fallback |
+| outcome | TEXT | `ok`, `invalid_json`, `error`, `stopped`, `fallback` |
+| error_class | TEXT | classe generica, sem conteudo |
+| started_at | TEXT | |
+| finished_at | TEXT | |
+| duration_ms | INTEGER | |
+| input_text_chars | INTEGER | texto escrito |
+| input_transcript_chars | INTEGER | fala transcrita |
+| input_images | INTEGER | |
+| prompt_tokens | INTEGER | |
+| completion_tokens | INTEGER | |
+| tokens_per_second | REAL | sobre a duracao total |
+| threads | INTEGER | so local |
+| battery_delta_pct | REAL | so local; estimativa |
+| created_at | TEXT | |
+
+Indices: `started_at`, (`runtime`, `provider`, `model`), `entry_id`.
 
 ## Job
 
@@ -270,12 +327,17 @@ Estado do upload resumivel.
 | content_type | TEXT | |
 | size_bytes | INTEGER | esperado |
 | sha256 | TEXT | esperado |
+| title | TEXT | titulo proposto para a nota |
+| recorded_at | TEXT | data do evento |
+| entry_created_at | TEXT | criacao/importacao original; vira `Entry.created_at` uma vez |
+| entry_source | TEXT | origem da nota (`upload`, `share`, `microphone`, `text`, `telegram`) |
+| client_key | TEXT | idempotencia da criacao do upload |
 | entry_id | TEXT FK -> Entry.id | quando o audio vai para uma nota existente |
 | received_bytes | INTEGER | confirmado |
 | storage_key | TEXT | ciphertext em construcao |
 | prefix | BLOB | prefixo de nonce da cifra em streaming |
 | next_counter | INTEGER | proximo contador de nonce |
-| created_at | TEXT | |
+| created_at | TEXT | hora em que o upload comecou |
 | expires_at | TEXT | |
 
 Indices: `status`, `expires_at`.

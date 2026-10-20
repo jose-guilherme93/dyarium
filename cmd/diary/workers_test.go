@@ -62,15 +62,18 @@ func TestAnalysisInputReadsWrittenMarkdown(t *testing.T) {
 		t.Fatalf("create note: %v", err)
 	}
 
-	segments, language, err := analysisInput(ctx, st, entryID)
+	input, err := analysisInput(ctx, st, entryID)
 	if err != nil {
 		t.Fatalf("analysisInput: %v", err)
 	}
-	if len(segments) != 1 || !strings.Contains(segments[0].Text, "Primeiro O texto escrito.") {
-		t.Fatalf("segments = %v", segments)
+	if len(input.Segments) != 1 || !strings.Contains(input.Segments[0].Text, "Primeiro O texto escrito.") {
+		t.Fatalf("segments = %v", input.Segments)
 	}
-	if language != "" {
-		t.Fatalf("language = %q, want vazio", language)
+	if input.Language != "" {
+		t.Fatalf("language = %q, want vazio", input.Language)
+	}
+	if input.TextChars == 0 || input.TranscriptChars != 0 {
+		t.Fatalf("chars = texto %d, fala %d", input.TextChars, input.TranscriptChars)
 	}
 }
 
@@ -95,12 +98,12 @@ func TestAnalysisInputFallsBackToLegacyDocument(t *testing.T) {
 		t.Fatalf("create note: %v", err)
 	}
 
-	segments, _, err := analysisInput(ctx, st, entryID)
+	input, err := analysisInput(ctx, st, entryID)
 	if err != nil {
 		t.Fatalf("analysisInput: %v", err)
 	}
-	if len(segments) != 1 || !strings.Contains(segments[0].Text, "texto antigo") {
-		t.Fatalf("segments = %v", segments)
+	if len(input.Segments) != 1 || !strings.Contains(input.Segments[0].Text, "texto antigo") {
+		t.Fatalf("segments = %v", input.Segments)
 	}
 }
 
@@ -150,6 +153,12 @@ func TestAnalysisInputCombinesEveryKindOfContent(t *testing.T) {
 	if err := st.CreateAttachment(ctx, attachment); err != nil {
 		t.Fatalf("create attachment: %v", err)
 	}
+	if err := st.CreateAttachment(ctx, store.Attachment{
+		ID: id.New(), EntryID: entryID, Kind: "image",
+		StorageKey: "image-key", Cipher: "aes-256-gcm", CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("create image attachment: %v", err)
+	}
 	if err := st.SaveTranscript(ctx, store.Transcript{
 		ID: id.New(), EntryID: entryID, AttachmentID: attachment.ID,
 		Model: "teste", Language: "pt", Text: "fala do audio", CreatedAt: now,
@@ -162,14 +171,14 @@ func TestAnalysisInputCombinesEveryKindOfContent(t *testing.T) {
 		t.Fatalf("create link: %v", err)
 	}
 
-	segments, language, err := analysisInput(ctx, st, entryID)
+	input, err := analysisInput(ctx, st, entryID)
 	if err != nil {
 		t.Fatalf("analysisInput: %v", err)
 	}
-	if len(segments) != 1 {
-		t.Fatalf("segments = %d, want 1", len(segments))
+	if len(input.Segments) != 1 {
+		t.Fatalf("segments = %d, want 1", len(input.Segments))
 	}
-	text := segments[0].Text
+	text := input.Segments[0].Text
 	for _, want := range []string{
 		"Texto escrito:", "texto escrito", "imagem: foto", "https://exemplo.com",
 		"Transcricao do audio:", "fala do audio", "Links da nota:", "outra nota",
@@ -178,8 +187,11 @@ func TestAnalysisInputCombinesEveryKindOfContent(t *testing.T) {
 			t.Fatalf("faltou %q em:\n%s", want, text)
 		}
 	}
-	if language != "pt" {
-		t.Fatalf("language = %q, want pt", language)
+	if input.Language != "pt" {
+		t.Fatalf("language = %q, want pt", input.Language)
+	}
+	if input.TextChars == 0 || input.TranscriptChars == 0 || input.Images != 1 {
+		t.Fatalf("medidas = texto %d, fala %d, imagens %d", input.TextChars, input.TranscriptChars, input.Images)
 	}
 }
 
@@ -203,12 +215,12 @@ func TestAnalysisInputWithOnlyAnImage(t *testing.T) {
 		t.Fatalf("create note: %v", err)
 	}
 
-	segments, _, err := analysisInput(ctx, st, entryID)
+	input, err := analysisInput(ctx, st, entryID)
 	if err != nil {
 		t.Fatalf("analysisInput: %v", err)
 	}
-	if len(segments) != 1 || !strings.Contains(segments[0].Text, "imagem: 1000315674.jpg") {
-		t.Fatalf("segments = %v", segments)
+	if len(input.Segments) != 1 || !strings.Contains(input.Segments[0].Text, "imagem: 1000315674.jpg") {
+		t.Fatalf("segments = %v", input.Segments)
 	}
 }
 
