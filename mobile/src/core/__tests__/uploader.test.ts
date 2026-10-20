@@ -1,4 +1,4 @@
-import { ApiError, type DyariumApi } from '../api';
+import { ApiError, type CreateUploadBody, type DyariumApi } from '../api';
 import { uploadRecording, type UploadFileIO } from '../uploader';
 
 class FakeApi {
@@ -9,7 +9,7 @@ class FakeApi {
 
   constructor(private total: number) {}
 
-  createUpload = jest.fn(async () => {
+  createUpload = jest.fn(async (_body: CreateUploadBody) => {
     this.created += 1;
     this.offset = 0;
     return { id: 'up1', offset: 0, expires_at: '' };
@@ -57,6 +57,8 @@ const input = {
   contentType: 'audio/aac',
   title: '10/10/2026 21:00',
   recordedAt: '2026-10-10T21:00:00.000Z',
+  createdAt: '2026-10-10T20:55:00.000Z',
+  source: 'share' as const,
   localPath: 'sess/r1/recording.aac',
   sizeBytes: 10,
 };
@@ -77,6 +79,12 @@ describe('uploadRecording', () => {
     expect(result.entryId).toBe('en1');
     expect(onCreated).toHaveBeenCalledWith('up1', 0);
     expect(progress[progress.length - 1]).toBe(10);
+    expect(server.createUpload).toHaveBeenCalledWith(
+      expect.objectContaining({
+        created_at: input.createdAt,
+        source: 'share',
+      }),
+    );
   });
 
   it('retoma de um upload existente usando o offset do servidor', async () => {

@@ -1,8 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
-import { memo, useCallback, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  FlatList,
   Pressable,
   RefreshControl,
   SectionList,
@@ -19,9 +20,17 @@ import type { NoteProperty } from '@/components/NoteMenu';
 import { RecordingCard } from '@/components/RecordingCard';
 import { Screen } from '@/components/Screen';
 import { STATUS_META } from '@/components/StatusChip';
-import { formatBytes, formatDateTime, utf8ByteLength } from '@/core/format';
+import { TagFilterRow } from '@/components/TagFilterRow';
+import { formatBytes, formatDateTime, noteDateIso, utf8ByteLength } from '@/core/format';
 import { groupRecordingsByYear, type RecordingSection } from '@/core/group';
-import { isBlankDraft } from '@/core/note';
+import {
+  noteMatches,
+  notesInNotebook,
+  recentNotes,
+  recordingNotebookId,
+  tagCountsForFilter,
+} from '@/core/notebookFilter';
+import { DEFAULT_NOTEBOOK_ID } from '@/core/notebooks';
 import { countChars, countWords, markdownToPlain } from '@/core/richText';
 import { displayTitle } from '@/core/title';
 import { needsNoteSync, type Recording } from '@/core/types';
@@ -70,6 +79,7 @@ function SwipeRow({ children, label, icon, color, onAction }: SwipeRowProps) {
 interface NoteRowProps {
   item: Recording;
   swipeDelete: boolean;
+  notebookLabel?: string;
   onOpen(id: string): void;
   onLongPress(item: Recording, anchor: { x: number; y: number }): void;
   onRemove(id: string): void;
@@ -82,6 +92,7 @@ interface NoteRowProps {
 const NoteRow = memo(function NoteRow({
   item,
   swipeDelete,
+  notebookLabel,
   onOpen,
   onLongPress,
   onRemove,
@@ -97,7 +108,12 @@ const NoteRow = memo(function NoteRow({
         swipeDelete ? onRemove(item.id) : item.archived ? onUnarchive(item.id) : onArchive(item.id)
       }
     >
-      <RecordingCard recording={item} onOpen={onOpen} onLongPress={onLongPress} />
+      <RecordingCard
+        recording={item}
+        notebookLabel={notebookLabel}
+        onOpen={onOpen}
+        onLongPress={onLongPress}
+      />
     </SwipeRow>
   );
 });
@@ -111,19 +127,69 @@ function keyExtractor(item: Recording) {
   return item.id;
 }
 
-export default function RecordScreen() {
-  const { recordings, remove, kick, refresh, pull, createDraftNote, archiveNote, unarchiveNote } =
-    useLibrary();
+export default function NotebookScreen() {
+  const {
+    recordings,
+    notebooks,
+    ready,
+    remove,
+    kick,
+    refresh,
+    pull,
+    createDraftNote,
+    archiveNote,
+    unarchiveNote,
+  } = useLibrary();
   const { start: startRecording } = useRecording();
-  const { swipeAction } = useSettings();
-  useRenderCount('Home');
+  const { swipeAction, lastNotebookId, setLastNotebookId } = useSettings();
+  useRenderCount('NotebookScreen');
 
+  const [viewMode, setViewMode] = useState<'recent' | 'notebook'>('recent');
   const [query, setQuery] = useState('');
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [newMenuOpen, setNewMenuOpen] = useState(false);
   const [actionsNote, setActionsNote] = useState<Recording | null>(null);
   const [actionsProps, setActionsProps] = useState<NoteProperty[]>([]);
   const [actionsAnchor, setActionsAnchor] = useState<{ x: number; y: number } | null>(null);
+
+  const currentNotebook =
+    notebooks.find((notebook) => notebook.id === lastNotebookId) ??
+    (notebooks.length === 1 ? notebooks[0] : undefined);
+  const redirectedRef = useRef(false);
+  // Handlers da lista nao podem depender de `notebooks`: cada refresh do banco
+  // troca a identidade da lista, e isso recriava `openActions` e re-renderizava
+  // todos os cards. As refs guardam a versao mais nova sem mudar os handlers.
+  const notebooksRef = useRef(notebooks);
+  const currentNotebookRef = useRef(currentNotebook);
+  useEffect(() => {
+    notebooksRef.current = notebooks;
+  }, [notebooks]);
+  useEffect(() => {
+    currentNotebookRef.current = currentNotebook;
+  }, [currentNotebook]);
+
+  // Sem caderno valido e com mais de um, a escolha e a tela inicial.
+  useEffect(() => {
+    if (!ready || notebooks.length === 0) return;
+    if (currentNotebook) {
+      if (lastNotebookId !== currentNotebook.id) void setLastNotebookId(currentNotebook.id);
+      return;
+    }
+    if (!redirectedRef.current) {
+      redirectedRef.current = true;
+      router.replace('/notebooks');
+    }
+  }, [ready, notebooks.length, currentNotebook, lastNotebookId, setLastNotebookId]);
+
+  // Entrar em outro caderno zera busca e tags; o filtro nao fica preso.
+  const notebookId = currentNotebook?.id ?? DEFAULT_NOTEBOOK_ID;
+  useEffect(() => {
+    // Reset deliberado ao trocar de caderno ou de modo: filtros nao ficam presos.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSelectedTags([]);
+    setQuery('');
+  }, [notebookId, viewMode]);
 
   const pending = recordings.filter(
     (r) => PENDING_STATUSES.includes(r.status) || needsNoteSync(r),
@@ -135,8 +201,6 @@ export default function RecordScreen() {
     : pending > 0
       ? 'syncing'
       : 'ok';
-  // Nuvem discreta: o proprio icone diz o estado geral e um pequeno ponto ao
-  // lado sinaliza envio em andamento (azul) ou falha (vermelho).
   const syncIcon =
     syncState === 'error'
       ? 'cloud-offline-outline'
@@ -144,19 +208,45 @@ export default function RecordScreen() {
         ? 'cloud-upload-outline'
         : 'cloud-done-outline';
 
-  const term = query.trim().toLowerCase();
-  const matches = (r: Recording) =>
-    !term ||
-    r.title.toLowerCase().includes(term) ||
-    (r.text ?? '').toLowerCase().includes(term) ||
-    (r.transcript ?? '').toLowerCase().includes(term);
-
-  const activeNotes = recordings.filter((r) => !r.archived && !isBlankDraft(r) && matches(r));
-  const archivedNotes = recordings.filter((r) => r.archived && matches(r));
-  const sections: RecordingSection[] = groupRecordingsByYear(activeNotes);
-  if (archivedNotes.length > 0) {
-    sections.push({ year: 0, title: 'Arquivadas', data: archivedNotes });
-  }
+  const notebookFilter = useMemo(
+    () => ({ notebookId, tags: selectedTags, query }),
+    [notebookId, selectedTags, query],
+  );
+  const activeNotes = useMemo(
+    () => notesInNotebook(recordings, notebookFilter),
+    [recordings, notebookFilter],
+  );
+  const archivedNotes = useMemo(
+    () =>
+      recordings.filter(
+        (recording) => recording.archived && noteMatches(recording, notebookFilter),
+      ),
+    [recordings, notebookFilter],
+  );
+  const sections: RecordingSection[] = useMemo(() => {
+    const grouped = groupRecordingsByYear(activeNotes);
+    if (archivedNotes.length > 0) {
+      grouped.push({ year: 0, title: 'Arquivadas', data: archivedNotes });
+    }
+    return grouped;
+  }, [activeNotes, archivedNotes]);
+  const recentList = useMemo(
+    () => recentNotes(recordings, { tags: selectedTags, query }),
+    [recordings, selectedTags, query],
+  );
+  const notebookNames = useMemo(
+    () => new Map(notebooks.map((notebook) => [notebook.id, notebook.name])),
+    [notebooks],
+  );
+  const tagCounts = useMemo(
+    () =>
+      tagCountsForFilter(
+        recordings,
+        viewMode === 'recent' ? null : notebookId,
+        selectedTags,
+      ),
+    [recordings, viewMode, notebookId, selectedTags],
+  );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -174,20 +264,20 @@ export default function RecordScreen() {
   const startNote = useCallback(
     async (action: 'text' | 'image' | 'link') => {
       setNewMenuOpen(false);
-      const note = await createDraftNote();
+      const note = await createDraftNote(notebookId);
       router.push({ pathname: '/note/[id]', params: { id: note.id, action } });
     },
-    [createDraftNote],
+    [createDraftNote, notebookId],
   );
 
   const startAudio = useCallback(async () => {
     setNewMenuOpen(false);
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
-    const note = await createDraftNote();
+    const note = await createDraftNote(notebookId);
     // Dispara a gravacao enquanto navega: quando a tela abre, ja esta gravando.
     void startRecording();
-    router.push({ pathname: '/record', params: { noteId: note.id } });
-  }, [createDraftNote, startRecording]);
+    router.push({ pathname: '/record', params: { noteId: note.id, from: 'home' } });
+  }, [createDraftNote, notebookId, startRecording]);
 
   const openNote = useCallback(
     (noteId: string) => router.push({ pathname: '/note/[id]', params: { id: noteId } }),
@@ -195,15 +285,27 @@ export default function RecordScreen() {
   );
   const removeNote = useCallback((noteId: string) => void remove(noteId), [remove]);
 
-  // Toque longo no card: abre as opcoes (compartilhar, arquivar, apagar, ficha).
   const openActions = useCallback((item: Recording, anchor: { x: number; y: number }) => {
     const plain = markdownToPlain(item.text ?? '');
     const bytes = directoryBytes(sessionDirectory(item.id)) + utf8ByteLength(plain);
+    const notebook =
+      notebooksRef.current.find((entry) => entry.id === (item.notebookId || DEFAULT_NOTEBOOK_ID)) ??
+      currentNotebookRef.current;
     setActionsAnchor(anchor);
     setActionsNote(item);
     setActionsProps([
-      { label: 'Criada', value: formatDateTime(item.createdAt) },
-      { label: 'Origem', value: item.filePath ? 'Áudio' : 'Texto' },
+      { label: 'Caderno', value: notebook?.name ?? 'Notas ao acaso' },
+      { label: 'Gravada em', value: formatDateTime(noteDateIso(item)) },
+      item.source === 'share'
+        ? { label: 'Importada em', value: formatDateTime(item.createdAt) }
+        : { label: 'Criada em', value: formatDateTime(item.createdAt) },
+      ...(item.tags && item.tags.length > 0
+        ? [{ label: 'Tags', value: item.tags.join(', ') }]
+        : []),
+      {
+        label: 'Origem',
+        value: item.filePath ? (item.source === 'share' ? 'Áudio importado' : 'Áudio') : 'Texto',
+      },
       { label: 'Palavras', value: String(countWords(item.text ?? '')) },
       { label: 'Caracteres', value: String(countChars(item.text ?? '')) },
       { label: 'Tamanho', value: formatBytes(bytes) },
@@ -243,6 +345,14 @@ export default function RecordScreen() {
   const unarchive = useCallback((noteId: string) => void unarchiveNote(noteId), [unarchiveNote]);
   const swipeDelete = swipeAction === 'delete';
 
+  const toggleTag = useCallback((name: string) => {
+    setSelectedTags((prev) =>
+      prev.some((tag) => tag.toLowerCase() === name.toLowerCase())
+        ? prev.filter((tag) => tag.toLowerCase() !== name.toLowerCase())
+        : [...prev, name],
+    );
+  }, []);
+
   const renderItem = useCallback(
     ({ item }: { item: Recording }) => (
       <NoteRow
@@ -258,6 +368,30 @@ export default function RecordScreen() {
     [swipeDelete, openNote, openActions, removeNote, archive, unarchive],
   );
 
+  const renderRecentItem = useCallback(
+    ({ item }: { item: Recording }) => (
+      <NoteRow
+        item={item}
+        swipeDelete={swipeDelete}
+        notebookLabel={notebookNames.get(recordingNotebookId(item)) ?? 'Notas ao acaso'}
+        onOpen={openNote}
+        onLongPress={openActions}
+        onRemove={removeNote}
+        onArchive={archive}
+        onUnarchive={unarchive}
+      />
+    ),
+    [
+      swipeDelete,
+      notebookNames,
+      openNote,
+      openActions,
+      removeNote,
+      archive,
+      unarchive,
+    ],
+  );
+
   const renderSectionHeader = useCallback(
     ({ section }: { section: RecordingSection }) => (
       <Text style={styles.sectionHeader}>{section.title}</Text>
@@ -265,17 +399,32 @@ export default function RecordScreen() {
     [],
   );
 
+  if (!ready) {
+    // Evita piscar "Escolha um caderno" antes de o SQLite entregar o caderno
+    // salvo; a tela ja esta preta como o resto do app.
+    return (
+      <Screen style={styles.screen}>
+        <View />
+      </Screen>
+    );
+  }
+
+  if (!currentNotebook) {
+    return (
+      <Screen style={styles.screen}>
+        <View style={styles.header}>
+          <Text style={styles.largeTitle}>Cadernos</Text>
+        </View>
+        <View style={styles.empty}>
+          <Text style={styles.emptyTitle}>Escolha um caderno</Text>
+        </View>
+      </Screen>
+    );
+  }
+
   return (
     <Screen style={styles.screen}>
       <View style={styles.header}>
-        <View style={styles.headerText}>
-          <Text style={styles.largeTitle}>Notas</Text>
-          <Text style={styles.headerSub}>
-            {recordings.length === 0
-              ? 'Nada por aqui ainda'
-              : `${activeNotes.length} nota${activeNotes.length === 1 ? '' : 's'}`}
-          </Text>
-        </View>
         <View style={styles.headerActions}>
           <Pressable
             style={styles.iconButton}
@@ -300,68 +449,178 @@ export default function RecordScreen() {
             <Ionicons name="settings-outline" size={22} color={colors.text} />
           </Pressable>
         </View>
+
+        <Pressable
+          style={styles.notebookTitle}
+          onPress={() => router.push('/notebooks')}
+          accessibilityRole="button"
+          accessibilityLabel={`Caderno ${currentNotebook.name}. Trocar de caderno`}
+        >
+          <View
+            style={[
+              styles.notebookDot,
+              { backgroundColor: currentNotebook.color || colors.textTertiary },
+            ]}
+          />
+          <Text style={styles.largeTitle}>{currentNotebook.name}</Text>
+          <Ionicons name="chevron-down" size={18} color={colors.textTertiary} />
+        </Pressable>
       </View>
 
-      {(
-        <>
-          <View style={styles.searchWrap}>
-            <Ionicons name="search" size={16} color={colors.textTertiary} />
-            <TextInput
-              value={query}
-              onChangeText={setQuery}
-              placeholder="Buscar notas"
-              placeholderTextColor={colors.textTertiary}
-              selectionColor={colors.accent}
-              style={styles.searchInput}
+      <View style={styles.modeToggle}>
+        <Pressable
+          style={[styles.modeOption, viewMode === 'recent' ? styles.modeOptionOn : null]}
+          onPress={() => setViewMode('recent')}
+          accessibilityRole="tab"
+          accessibilityState={{ selected: viewMode === 'recent' }}
+        >
+          <Text
+            style={[styles.modeText, viewMode === 'recent' ? styles.modeTextOn : null]}
+          >
+            Páginas recentes
+          </Text>
+        </Pressable>
+        <Pressable
+          style={[styles.modeOption, viewMode === 'notebook' ? styles.modeOptionOn : null]}
+          onPress={() => setViewMode('notebook')}
+          accessibilityRole="tab"
+          accessibilityState={{ selected: viewMode === 'notebook' }}
+        >
+          <Text
+            style={[styles.modeText, viewMode === 'notebook' ? styles.modeTextOn : null]}
+          >
+            Caderno
+          </Text>
+        </Pressable>
+      </View>
+
+      <View style={styles.searchWrap}>
+        <Ionicons name="search" size={16} color={colors.textTertiary} />
+        <TextInput
+          value={query}
+          onChangeText={setQuery}
+          placeholder={
+            viewMode === 'recent' ? 'Buscar em todos os cadernos' : 'Buscar neste caderno'
+          }
+          placeholderTextColor={colors.textTertiary}
+          selectionColor={colors.accent}
+          style={styles.searchInput}
+        />
+        {query ? (
+          <Pressable onPress={() => setQuery('')} accessibilityLabel="Limpar busca">
+            <Ionicons name="close-circle" size={16} color={colors.textTertiary} />
+          </Pressable>
+        ) : null}
+      </View>
+
+      {interrupted > 0 ? (
+        <Pressable style={styles.alert} onPress={() => router.push('/recovery')}>
+          <Ionicons name="warning" size={18} color={colors.warning} />
+          <Text style={styles.alertText}>
+            {interrupted === 1
+              ? 'Uma gravação foi interrompida'
+              : `${interrupted} gravações interrompidas`}
+          </Text>
+          <Ionicons name="chevron-forward" size={16} color={colors.warning} />
+        </Pressable>
+      ) : null}
+
+      <View style={styles.padded}>
+        <TagFilterRow
+          tags={tagCounts}
+          selected={selectedTags}
+          onToggle={toggleTag}
+          onClear={() => setSelectedTags([])}
+          onManage={() => router.push('/tags')}
+        />
+      </View>
+
+      {viewMode === 'recent' ? (
+        <FlatList
+          data={recentList}
+          keyExtractor={keyExtractor}
+          contentContainerStyle={styles.list}
+          ItemSeparatorComponent={ItemSeparator}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={colors.textSecondary}
             />
-            {query ? (
-              <Pressable onPress={() => setQuery('')} accessibilityLabel="Limpar busca">
-                <Ionicons name="close-circle" size={16} color={colors.textTertiary} />
-              </Pressable>
-            ) : null}
-          </View>
-
-          {interrupted > 0 ? (
-            <Pressable style={styles.alert} onPress={() => router.push('/recovery')}>
-              <Ionicons name="warning" size={18} color={colors.warning} />
-              <Text style={styles.alertText}>
-                {interrupted === 1
-                  ? 'Uma gravação foi interrompida'
-                  : `${interrupted} gravações interrompidas`}
-              </Text>
-              <Ionicons name="chevron-forward" size={16} color={colors.warning} />
-            </Pressable>
-          ) : null}
-
-          <SectionList
-            sections={sections}
-            keyExtractor={keyExtractor}
-            contentContainerStyle={styles.list}
-            ItemSeparatorComponent={ItemSeparator}
-            stickySectionHeadersEnabled={false}
-            showsVerticalScrollIndicator={false}
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={onRefresh}
-                tintColor={colors.textSecondary}
-              />
-            }
-            renderSectionHeader={renderSectionHeader}
-            renderItem={renderItem}
-            ListEmptyComponent={
-              <View style={styles.empty}>
-                <View style={styles.emptyIcon}>
-                  <Ionicons name="document-text-outline" size={30} color={colors.textTertiary} />
-                </View>
-                <Text style={styles.emptyTitle}>Nenhuma nota</Text>
-                <Text style={styles.emptyText}>
-                  Toque em + para criar uma nota de texto, imagem, áudio ou link.
-                </Text>
+          }
+          renderItem={renderRecentItem}
+          ListEmptyComponent={
+            <View style={styles.empty}>
+              <View style={styles.emptyIcon}>
+                <Ionicons
+                  name={
+                    query || selectedTags.length > 0
+                      ? 'funnel-outline'
+                      : 'time-outline'
+                  }
+                  size={30}
+                  color={colors.textTertiary}
+                />
               </View>
-            }
-          />
-        </>
+              <Text style={styles.emptyTitle}>
+                {query || selectedTags.length > 0
+                  ? 'Nenhuma nota com esse filtro'
+                  : 'Nenhuma nota ainda'}
+              </Text>
+              <Text style={styles.emptyText}>
+                {query || selectedTags.length > 0
+                  ? 'Limpe a busca ou as tags para ver todas as notas.'
+                  : 'Toque em + para criar uma nota de texto, imagem, áudio ou link.'}
+              </Text>
+            </View>
+          }
+        />
+      ) : (
+        <SectionList
+          sections={sections}
+          keyExtractor={keyExtractor}
+          contentContainerStyle={styles.list}
+          ItemSeparatorComponent={ItemSeparator}
+          stickySectionHeadersEnabled={false}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={colors.textSecondary}
+            />
+          }
+          renderSectionHeader={renderSectionHeader}
+          renderItem={renderItem}
+          ListEmptyComponent={
+            <View style={styles.empty}>
+              <View style={styles.emptyIcon}>
+                <Ionicons
+                  name={
+                    query || selectedTags.length > 0
+                      ? 'funnel-outline'
+                      : 'document-text-outline'
+                  }
+                  size={30}
+                  color={colors.textTertiary}
+                />
+              </View>
+              <Text style={styles.emptyTitle}>
+                {query || selectedTags.length > 0
+                  ? 'Nenhuma nota com esse filtro'
+                  : 'Nenhuma nota'}
+              </Text>
+              <Text style={styles.emptyText}>
+                {query || selectedTags.length > 0
+                  ? 'Limpe a busca ou as tags para ver o caderno inteiro.'
+                  : 'Toque em + para criar uma nota de texto, imagem, áudio ou link.'}
+              </Text>
+            </View>
+          }
+        />
       )}
 
       {newMenuOpen ? (
@@ -433,15 +692,25 @@ function NewMenuItem({
 const styles = StyleSheet.create({
   screen: { paddingHorizontal: 0 },
   header: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
     paddingHorizontal: spacing.xl,
     paddingTop: spacing.sm,
-    paddingBottom: spacing.lg,
+    paddingBottom: spacing.md,
+    gap: spacing.xs,
   },
-  headerText: { gap: 2 },
-  headerActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  notebookTitle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'stretch',
+    gap: spacing.sm,
+    paddingRight: spacing.sm,
+  },
+  notebookDot: { width: 9, height: 9, borderRadius: 5 },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-end',
+    gap: spacing.sm,
+  },
   iconButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   syncDot: {
     position: 'absolute',
@@ -453,8 +722,34 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: colors.bg,
   },
-  largeTitle: { color: colors.text, fontSize: 34, fontWeight: '700', letterSpacing: 0.3 },
-  headerSub: { color: colors.textSecondary, fontSize: fontSize.sm },
+  largeTitle: {
+    flexShrink: 1,
+    color: colors.text,
+    fontSize: 30,
+    fontWeight: '700',
+    letterSpacing: 0.2,
+  },
+  modeToggle: {
+    flexDirection: 'row',
+    marginHorizontal: spacing.xl,
+    marginBottom: spacing.md,
+    padding: 3,
+    gap: 3,
+    borderRadius: radius.pill,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  modeOption: {
+    flex: 1,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.pill,
+  },
+  modeOptionOn: { backgroundColor: colors.surfaceElevated },
+  modeText: { color: colors.textSecondary, fontSize: fontSize.sm, fontWeight: '600' },
+  modeTextOn: { color: colors.text, fontWeight: '700' },
   searchWrap: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -467,22 +762,7 @@ const styles = StyleSheet.create({
     height: 40,
   },
   searchInput: { flex: 1, color: colors.text, fontSize: fontSize.sm, paddingVertical: 0 },
-  recordingView: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.xl,
-    paddingHorizontal: spacing.xl,
-  },
-  timer: {
-    color: colors.text,
-    fontSize: fontSize.display,
-    fontWeight: '300',
-    fontVariant: ['tabular-nums'],
-    letterSpacing: 1,
-  },
-  recHint: { color: colors.textSecondary, fontSize: fontSize.sm },
-  error: { color: colors.danger, fontSize: fontSize.sm, textAlign: 'center' },
+  padded: { paddingHorizontal: spacing.xl },
   list: { paddingHorizontal: spacing.xl, paddingBottom: 96 },
   separator: { height: spacing.sm },
   sectionHeader: {

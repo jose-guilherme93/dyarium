@@ -3,3 +3,5 @@
 allowBuilds:
   llama.rn: true
   unrs-resolver: true
+minimumReleaseAgeExclude:
+  - '@10play/tentap-editor@1.1.0'

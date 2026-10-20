@@ -213,12 +213,102 @@ function normalizeYear(value: number): number {
   return value < 100 ? 2000 + value : value;
 }
 
+/** Meses em ingles (e alguns em pt-BR) que aparecem em nomes de arquivo. */
+const MONTH_NAMES: Record<string, number> = {
+  jan: 1, january: 1, janeiro: 1,
+  feb: 2, february: 2, fev: 2, fevereiro: 2,
+  mar: 3, march: 3, marco: 3,
+  apr: 4, april: 4, abr: 4, abril: 4,
+  may: 5, maio: 5,
+  jun: 6, june: 6, junho: 6,
+  jul: 7, july: 7, julho: 7,
+  aug: 8, august: 8, ago: 8, agosto: 8,
+  sep: 9, sept: 9, september: 9, set: 9, setembro: 9,
+  oct: 10, october: 10, out: 10, outubro: 10,
+  nov: 11, november: 11, novembro: 11,
+  dec: 12, december: 12, dez: 12, dezembro: 12,
+};
+
+function monthNumber(word: string): number | null {
+  const key = word
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\.$/, '');
+  return MONTH_NAMES[key] ?? null;
+}
+
+/** Hora opcional no nome ("10:30", "10.30 PM"). */
+function parseNameTime(name: string): { hour: number; minute: number; second: number } {
+  const match = name.match(
+    /(?:^|[ T])(\d{1,2})[:.](\d{2})(?::(\d{2}))?(?:\s*([AaPp])\.?[Mm]\.?)?/,
+  );
+  if (!match) return { hour: 0, minute: 0, second: 0 };
+  let hour = Number(match[1]);
+  const minute = Number(match[2]);
+  const second = match[3] ? Number(match[3]) : 0;
+  const meridiem = match[4]?.toLowerCase() ?? '';
+  if (meridiem) {
+    if (hour < 1 || hour > 12) return { hour: 0, minute: 0, second: 0 };
+    if (meridiem === 'p' && hour !== 12) hour += 12;
+    if (meridiem === 'a' && hour === 12) hour = 0;
+  }
+  if (hour > 23 || minute > 59 || second > 59) return { hour: 0, minute: 0, second: 0 };
+  return { hour, minute, second };
+}
+
+/**
+ * Data com mes escrito ("Oct 19", "19 Oct 2026", "October 19, 2026 10:30 PM").
+ * Devolve null quando nao ha um mes reconhecido, para o parser numerico cuidar.
+ */
+function parseMonthNameDate(name: string): NameDate | null {
+  // Dia primeiro ("19 Oct 2026", "19-Oct-2026").
+  const dayFirst = name.match(
+    /(\d{1,2})[\s.-]+([A-Za-zÀ-ÿ]{3,9})\.?(?:[,\s.-]+(\d{2,4})(?!\s*[:.]\d{2}))?/,
+  );
+  // Mes primeiro ("Oct 19, 2026", "October 19").
+  const monthFirst = name.match(
+    /([A-Za-zÀ-ÿ]{3,9})\.?\s+(\d{1,2})(?:[,\s]+(\d{2,4})(?!\s*[:.]\d{2}))?/,
+  );
+
+  let day: number;
+  let month: number | null;
+  let yearText: string | undefined;
+
+  if (dayFirst) {
+    day = Number(dayFirst[1]);
+    month = monthNumber(dayFirst[2]);
+    yearText = dayFirst[3];
+  } else if (monthFirst) {
+    month = monthNumber(monthFirst[1]);
+    day = Number(monthFirst[2]);
+    yearText = monthFirst[3];
+  } else {
+    return null;
+  }
+  if (!month || month < 1 || month > 12 || day < 1 || day > 31) return null;
+
+  const time = parseNameTime(name);
+  return {
+    a: day,
+    b: month,
+    year: yearText ? normalizeYear(Number(yearText)) : undefined,
+    hour: time.hour,
+    minute: time.minute,
+    second: time.second,
+    order: 'day-first',
+  };
+}
+
 /**
  * Extrai a data do nome do arquivo, com ou sem ano. Detecta a ordem quando e
  * inequivoca (um componente > 12); quando dia e mes sao ambos <= 12, a ordem e
  * 'unknown' e a revisao usa um padrao (dia primeiro) com opcao de inverter.
  */
 export function parseNameDate(name: string): NameDate | null {
+  const named = parseMonthNameDate(name);
+  if (named) return named;
+
   const match = name.match(
     /(\d{1,4})[/.-](\d{1,2})(?:[/.-](\d{2,4}))?(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*([AaPp])\.?[Mm]\.?)?)?/,
   );

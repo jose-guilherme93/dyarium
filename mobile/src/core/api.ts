@@ -42,6 +42,10 @@ export interface CreateUploadBody {
   sha256?: string;
   title?: string;
   recorded_at?: string;
+  /** Hora de criacao/importacao original da nota; imutavel no servidor. */
+  created_at?: string;
+  /** Origem: `share` para audio importado. */
+  source?: 'upload' | 'share';
   /** Texto da nota associado ao audio (o servidor passa a usar depois). */
   text?: string;
   /** O cliente transcreve no aparelho; o servidor nao enfileira transcricao. */
@@ -63,6 +67,7 @@ export interface CreateTextEntryBody {
   recorded_at?: string;
   created_at?: string;
   text: string;
+  notebook_id?: string;
 }
 
 export interface CreateTextEntryResponse {
@@ -76,6 +81,8 @@ export interface CreateTextEntryResponse {
 export interface UpdateEntryBody {
   title?: string;
   recorded_at?: string;
+  /** Move a nota de caderno (ultima gravacao vence). */
+  notebook_id?: string;
   /** Arquivada: sai da lista de trabalho sem apagar. */
   archived?: boolean;
   /** Versoes lidas pelo cliente: o servidor recusa o campo que ja mudou. */
@@ -155,15 +162,41 @@ export interface VersionResponse {
 }
 
 /** Envelope do snapshot de metricas enviado ao servidor. */
+/** Agregado de execucoes de analise exposto pelo servidor (snake_case). */
+export interface ServerAnalysisRunTotals {
+  runs: number;
+  ok: number;
+  failed: number;
+  fallback: number;
+  success_rate: number;
+  simplified_rate: number;
+  avg_duration_ms: number;
+  tokens_per_second: number;
+}
+
+export interface ServerAnalysisRunModel extends ServerAnalysisRunTotals {
+  runtime: string;
+  provider: string;
+  model: string;
+}
+
+export interface ServerAnalysisRunsSummary {
+  days: number;
+  since: string;
+  totals: ServerAnalysisRunTotals;
+  models: ServerAnalysisRunModel[];
+}
+
 export interface MetricsUpload {
   device_id: string;
   device_name: string;
   schema: number;
   generated_at: string;
-  /** Metricas de escrita (ver core/metricsSnapshot.ts e docs/api.md). */
-  writing: unknown;
-  /** Series do historico para os graficos do painel. */
-  history: unknown;
+  /**
+   * Secoes do documento, versionadas em docs/api.md: `writing` e `history` no
+   * schema 1; `streak`, `windows` e `history` no schema 2.
+   */
+  [key: string]: unknown;
 }
 
 /** Entrada do servidor (resumo da lista). */
@@ -179,6 +212,10 @@ export interface ServerEntry {
   recorded_at: string | null;
   created_at: string;
   updated_at: string;
+  /** Caderno que possui a nota. */
+  notebook_id?: string;
+  /** Tags da nota (nomes), quando houver. */
+  tags?: string[];
   /** Nota arquivada: sai da lista de trabalho sem ser apagada. */
   archived?: boolean;
   /** Pilha de audios (so no detalhe da entrada), cada um com sua transcricao. */
@@ -219,6 +256,17 @@ export interface ServerTag {
   name: string;
   color: string;
   entry_count: number;
+}
+
+export interface ServerNotebook {
+  id: string;
+  name: string;
+  color: string;
+  is_default: boolean;
+  entry_count: number;
+  last_entry_at?: string;
+  created_at: string;
+  updated_at: string;
 }
 
 /** Nota (corpo rico) de uma entrada. `document` e o JSON de blocos do BlockNote. */
@@ -331,11 +379,21 @@ export class DyariumApi {
    * para o servidor colocar a nota na posicao cronologica certa. O servidor e
    * idempotente: reenviar o mesmo id devolve a entrada existente.
    */
-  async createEntry(entry: { id: string; title: string; createdAt: string }): Promise<{ id: string }> {
+  async createEntry(entry: {
+    id: string;
+    title: string;
+    createdAt: string;
+    notebookId?: string;
+  }): Promise<{ id: string }> {
     const res = await this.fetchImpl(this.url('/api/v1/entries'), {
       method: 'POST',
       headers: this.authHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ id: entry.id, title: entry.title, created_at: entry.createdAt }),
+      body: JSON.stringify({
+        id: entry.id,
+        title: entry.title,
+        created_at: entry.createdAt,
+        notebook_id: entry.notebookId,
+      }),
     });
     if (!res.ok) throw await this.parseError(res);
     const body = JSON.parse(await res.text()) as { id?: string };
@@ -554,6 +612,16 @@ export class DyariumApi {
     if (!res.ok) throw await this.parseError(res);
   }
 
+  /** Diagnostico das execucoes de analise do servidor. */
+  async analysisRunsSummary(days = 30): Promise<ServerAnalysisRunsSummary> {
+    const res = await this.fetchImpl(this.url(`/api/v1/analysis/runs/summary?days=${days}`), {
+      method: 'GET',
+      headers: this.authHeaders(),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    return JSON.parse(await res.text());
+  }
+
   /** Analise de uma entrada. Lanca ApiError 404 quando ainda nao existe. */
   async getAnalysis(entryId: string): Promise<ServerAnalysis> {
     const res = await this.fetchImpl(this.url(`/api/v1/entries/${entryId}/analysis`), {
@@ -574,6 +642,88 @@ export class DyariumApi {
       method: 'PUT',
       headers: this.authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(body),
+    });
+    if (!res.ok) throw await this.parseError(res);
+  }
+
+  /** Substitui as tags de uma entrada (a lista vazia limpa). */
+  async setEntryTags(entryId: string, tags: string[]): Promise<void> {
+    const res = await this.fetchImpl(this.url(`/api/v1/entries/${entryId}/tags`), {
+      method: 'PUT',
+      headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ tags }),
+    });
+    if (!res.ok) throw await this.parseError(res);
+  }
+
+  /** Cadernos do servidor, na ordem de criacao (padrao no fim). */
+  async listNotebooks(): Promise<ServerNotebook[]> {
+    const res = await this.fetchImpl(this.url('/api/v1/notebooks'), {
+      method: 'GET',
+      headers: this.authHeaders(),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    const body = JSON.parse(await res.text()) as { notebooks?: ServerNotebook[] };
+    return body.notebooks ?? [];
+  }
+
+  /** Cria um caderno. O id do app (offline) e preservado quando enviado. */
+  async createNotebook(notebook: {
+    id?: string;
+    name: string;
+    color: string;
+  }): Promise<ServerNotebook> {
+    const res = await this.fetchImpl(this.url('/api/v1/notebooks'), {
+      method: 'POST',
+      headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(notebook),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    return JSON.parse(await res.text());
+  }
+
+  /** Renomeia e/ou recolore um caderno. */
+  async updateNotebook(
+    id: string,
+    body: { name?: string; color?: string },
+  ): Promise<ServerNotebook> {
+    const res = await this.fetchImpl(this.url(`/api/v1/notebooks/${id}`), {
+      method: 'PATCH',
+      headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    return JSON.parse(await res.text());
+  }
+
+  /** Exclui um caderno; o servidor move as notas para o padrao. */
+  async deleteNotebook(id: string): Promise<void> {
+    const res = await this.fetchImpl(this.url(`/api/v1/notebooks/${id}`), {
+      method: 'DELETE',
+      headers: this.authHeaders(),
+    });
+    if (!res.ok) throw await this.parseError(res);
+  }
+
+  /** Renomeia/recolore uma tag; um nome existente mescla as duas. */
+  async updateTag(
+    id: string,
+    body: { name?: string; color?: string },
+  ): Promise<{ id: string; name: string; color: string; merged: boolean }> {
+    const res = await this.fetchImpl(this.url(`/api/v1/tags/${id}`), {
+      method: 'PATCH',
+      headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    return JSON.parse(await res.text());
+  }
+
+  /** Exclui uma tag (some de todas as notas). */
+  async deleteTag(id: string): Promise<void> {
+    const res = await this.fetchImpl(this.url(`/api/v1/tags/${id}`), {
+      method: 'DELETE',
+      headers: this.authHeaders(),
     });
     if (!res.ok) throw await this.parseError(res);
   }

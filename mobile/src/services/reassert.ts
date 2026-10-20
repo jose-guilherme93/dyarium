@@ -65,6 +65,7 @@ export async function reassertEntry(
       recorded_at: recording.recordedAt,
       created_at: recording.createdAt,
       text: recording.text ?? '',
+      notebook_id: recording.notebookId,
     });
     return 'recreated';
   } catch {

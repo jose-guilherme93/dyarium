@@ -37,7 +37,10 @@ import {
 
 export { localTranscriptionAvailable };
 
-const MAX_THREADS = 4;
+// O aparelho e pequeno: 4 threads de whisper saturam os nucleos e a interface
+// trava enquanto a nota transcreve. Duas threads transcrevem um pouco mais
+// devagar, mas o app continua respondendo (digitar, rolar, tocar audio).
+const MAX_THREADS = 2;
 /** Intervalo minimo entre gravacoes parciais (evita re-render a cada trecho). */
 const PERSIST_THROTTLE_MS = 1200;
 
@@ -70,8 +73,13 @@ export function transcriptionProgress(id: string): number {
 }
 
 function setProgress(id: string, percent: number): void {
-  progressValues.set(id, percent);
-  progressListeners.get(id)?.forEach((listener) => listener(percent));
+  const next = Math.max(0, Math.min(100, percent));
+  const previous = progressValues.get(id);
+  // O whisper reporta varias vezes por porcento. A tela inteira re-renderiza a
+  // cada aviso; notificar so quando o inteiro muda evita jank durante a leitura.
+  if (previous !== undefined && Math.floor(previous) === Math.floor(next)) return;
+  progressValues.set(id, next);
+  progressListeners.get(id)?.forEach((listener) => listener(next));
 }
 
 /** Libera os contextos do whisper (ao apagar/trocar de modelo). */

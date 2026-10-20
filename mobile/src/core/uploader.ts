@@ -26,6 +26,10 @@ export interface UploadInput {
   contentType: string;
   title: string;
   recordedAt: string;
+  /** Hora de criacao/importacao original da nota (imutavel no servidor). */
+  createdAt: string;
+  /** `share` quando o audio veio de outro app. */
+  source?: 'upload' | 'share';
   localPath: string;
   sizeBytes: number;
   durationSeconds?: number;
@@ -77,6 +81,8 @@ export async function uploadRecording(
       duration_seconds: input.durationSeconds,
       title: input.title,
       recorded_at: input.recordedAt,
+      created_at: input.createdAt,
+      source: input.source,
       text: input.text,
       local_transcribe: input.localTranscribe,
     });

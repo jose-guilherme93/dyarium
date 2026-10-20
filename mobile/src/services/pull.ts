@@ -20,6 +20,7 @@ import type { Recording } from '@/core/types';
 
 import { deleteRecordingRow, listRecordings, upsertRecording } from './db';
 import { deleteSessionFiles } from './files';
+import { pullNotebooks } from './notebookSync';
 import { loadServerConfig } from './secure';
 
 const doFetch = globalThis.fetch as unknown as FetchLike;
@@ -43,6 +44,9 @@ export async function pullServerEntries(): Promise<number> {
 async function pullOnce(): Promise<number> {
   const config = await loadServerConfig();
   if (!config) return 0;
+  // Cadernos primeiro: a entrada pode apontar para um caderno novo, e a lista
+  // local precisa dele para exibir nome/cor.
+  await pullNotebooks().catch(() => undefined);
   const api = new DyariumApi(config, doFetch);
   const entries = await api.listEntries(PULL_LIMIT);
   const local = await listRecordings();

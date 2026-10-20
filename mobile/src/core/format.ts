@@ -9,6 +9,30 @@ export function formatBytes(bytes: number): string {
   return `${value.toFixed(decimals)} ${units[i]}`;
 }
 
+/**
+ * Data que representa a nota: a do evento (`recordedAt`), com fallback para a
+ * criacao. Audio importado entra no dia em que foi gravado, nao no dia da
+ * importacao.
+ */
+export function noteDateIso(note: { recordedAt?: string; createdAt?: string }): string {
+  const recorded = note.recordedAt?.trim();
+  if (recorded && !Number.isNaN(new Date(recorded).getTime())) return recorded;
+  return note.createdAt?.trim() ?? '';
+}
+
+/**
+ * Data exibida abaixo do titulo. Fica nula quando o titulo ja e exatamente essa
+ * data (titulo padrao de audio), para nao duplicar.
+ */
+export function noteDateLabel(
+  title: string,
+  note: { recordedAt?: string; createdAt?: string },
+): string | null {
+  const date = formatDateTime(noteDateIso(note));
+  if (!date) return null;
+  return title.trim() === date ? null : date;
+}
+
 /** Data e hora em DD/MM/AAAA HH:mm (24h). Vazio quando a data e invalida. */
 export function formatDateTime(iso: string): string {
   const date = new Date(iso);

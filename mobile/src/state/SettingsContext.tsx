@@ -85,6 +85,12 @@ interface SettingsValue {
   /** Ultima sequencia (dias) comemorada. */
   celebratedStreak: number;
   setCelebratedStreak(value: number): Promise<void>;
+  /** Ultimo caderno aberto (local, nao sincronizado). */
+  lastNotebookId?: string;
+  setLastNotebookId(id: string): Promise<void>;
+  /** Ordenar cadernos alfabeticamente em vez da ordem de criacao. */
+  notebooksAlphabetical: boolean;
+  setNotebooksAlphabetical(value: boolean): Promise<void>;
   /** Testa alcance (healthz) e token (version) sem salvar. */
   test(baseUrl: string, token: string): Promise<ConnectionResult>;
   /** Testa e, se ok, persiste no SecureStore. */
@@ -125,6 +131,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [reminderHour, setReminderHourState] = useState(20);
   const [celebratedWords, setCelebratedWordsState] = useState(0);
   const [celebratedStreak, setCelebratedStreakState] = useState(0);
+  const [lastNotebookId, setLastNotebookIdState] = useState<string | undefined>(undefined);
+  const [notebooksAlphabetical, setNotebooksAlphabeticalState] = useState(false);
   // Espelho das preferencias atuais, para gravar sempre o conjunto completo.
   const prefsRef = useRef<Prefs>({ swipeAction: 'delete', typography: DEFAULT_TYPOGRAPHY });
 
@@ -157,6 +165,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         setReminderHourState(prefs.reminderHour ?? 20);
         setCelebratedWordsState(prefs.celebratedWords ?? 0);
         setCelebratedStreakState(prefs.celebratedStreak ?? 0);
+        setLastNotebookIdState(prefs.lastNotebookId);
+        setNotebooksAlphabeticalState(prefs.notebooksAlphabetical === true);
       })
       .catch(() => undefined)
       .finally(() => {
@@ -287,6 +297,22 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     [persistPrefs],
   );
 
+  const setLastNotebookId = useCallback(
+    async (id: string) => {
+      setLastNotebookIdState(id);
+      await persistPrefs({ lastNotebookId: id });
+    },
+    [persistPrefs],
+  );
+
+  const setNotebooksAlphabetical = useCallback(
+    async (value: boolean) => {
+      setNotebooksAlphabeticalState(value);
+      await persistPrefs({ notebooksAlphabetical: value });
+    },
+    [persistPrefs],
+  );
+
   const test = useCallback(async (baseUrl: string, token: string): Promise<ConnectionResult> => {
     const url = normalizeUrl(baseUrl);
     if (!url || !token.trim()) {
@@ -356,6 +382,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setCelebratedWords,
       celebratedStreak,
       setCelebratedStreak,
+      lastNotebookId,
+      setLastNotebookId,
+      notebooksAlphabetical,
+      setNotebooksAlphabetical,
       test,
       save,
       disconnect,
@@ -391,6 +421,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setCelebratedWords,
       celebratedStreak,
       setCelebratedStreak,
+      lastNotebookId,
+      setLastNotebookId,
+      notebooksAlphabetical,
+      setNotebooksAlphabetical,
       test,
       save,
       disconnect,

@@ -1,18 +1,32 @@
 /**
- * Snapshot das metricas de escrita: o documento pronto que o app envia ao
- * servidor (e que o painel web mostra igual ao Painel do app).
+ * Snapshot das metricas para o servidor e para o painel web: o documento pronto
+ * que o app envia (contrato versionado em docs/api.md e docs/metricas.md).
  *
  * Puro e testavel: recebe as notas e devolve o JSON do contrato. O envelope
  * (`device_id`, `device_name`) e do servico; aqui vive so o conteudo versionado.
  * Chaves em snake_case para casar com o resto da API.
+ *
+ * Schema 2: as tres janelas (7d/30d/365d) vao prontas. O web escolhe a janela e
+ * desenha, sem recalcular nada, para os numeros baterem com o app.
  */
 
-import type { WordCount } from './writing';
-import { analyzeWriting, writingHistory } from './writing';
+import {
+  buildMetricsReport,
+  type AnalysisFact,
+  type MetricsWindow,
+  type SentimentTone,
+  type WindowAnalysis,
+  type WindowImages,
+  type WindowMetrics,
+  type WindowSentiment,
+  type WindowVoice,
+  type WindowWriting,
+} from './metrics';
 import type { Recording } from './types';
+import { writingHistory, type WordCount } from './writing';
 
 /** Versao do contrato. Mudanca de forma (nao de valor) sobe esta versao. */
-export const METRICS_SCHEMA = 1;
+export const METRICS_SCHEMA = 2;
 
 export interface SnapshotWordCount {
   label: string;
@@ -38,17 +52,21 @@ export interface SnapshotConsistencyDay {
   words: number;
 }
 
-export interface SnapshotSentiment {
-  analyzed: number;
-  average: number;
-  positive: number;
-  neutral: number;
-  negative: number;
-  top_positive: { title: string; score: number } | null;
-  top_negative: { title: string; score: number } | null;
+export interface SnapshotEmotion {
+  label: string;
+  count: number;
+  tone: SentimentTone;
 }
 
-/** Metricas de escrita (o corpo das notas) e o retrato do habito. */
+export interface SnapshotConsistency {
+  days: SnapshotConsistencyDay[];
+  written_days: number;
+  tracked_days: number;
+  rate: number;
+  longest_run: number;
+}
+
+/** Escrita dentro de uma janela. */
 export interface SnapshotWriting {
   notes: number;
   with_text: number;
@@ -64,42 +82,98 @@ export interface SnapshotWriting {
   average_words_per_note: number;
   average_sentence_words: number;
   average_word_length: number;
+  reading_minutes: number;
+
   top_words: SnapshotWordCount[];
   longest_words: SnapshotWordCount[];
-
   questions: number;
   exclamations: number;
   links: number;
   images: number;
   list_items: number;
 
-  transcript_words: number;
-  average_transcript_words: number;
-
   active_days: number;
   average_notes_per_active_day: number;
-  current_streak: number;
-  longest_streak: number;
-  wrote_today: boolean;
+  notes_per_week: number;
   top_weekday: SnapshotWordCount | null;
   top_hour: SnapshotWordCount | null;
-  first_at: string | null;
-  last_at: string | null;
-  longest_note: { title: string; words: number } | null;
-
-  monthly: SnapshotSeriesPoint[];
-  month_comparison_pct: number | null;
-  sentiment: SnapshotSentiment;
-  /** Grade 7 (domingo..sabado) x 8 faixas de 3h: notas por faixa. */
   weekday_hour: number[][];
-  consistency: {
-    days: SnapshotConsistencyDay[];
-    written_days: number;
-    tracked_days: number;
-    rate: number;
-    longest_run: number;
-  };
-  insights: string[];
+  consistency: SnapshotConsistency;
+  longest_note: { title: string; words: number } | null;
+}
+
+export interface SnapshotVoice {
+  audio_count: number;
+  audio_minutes: number;
+  transcribed_minutes: number;
+  coverage: number;
+  words: number;
+  words_per_minute: number;
+  words_per_audio: number;
+  origin_local: number;
+  origin_server: number;
+  transcript_share: number;
+}
+
+export interface SnapshotImages {
+  count: number;
+  bytes_total: number;
+  bytes_average: number;
+  per_note: number;
+  notes_with_image: number;
+  notes_with_image_no_text: number;
+}
+
+export interface SnapshotAnalysis {
+  notes_with_content: number;
+  notes_analyzed: number;
+  coverage: number;
+  stale: number;
+  simplified: number;
+  last_analyzed_at: string | null;
+}
+
+export interface SnapshotRankedCount {
+  label: string;
+  count: number;
+}
+
+export interface SnapshotTopics {
+  themes: SnapshotRankedCount[];
+  people: SnapshotRankedCount[];
+  places: SnapshotRankedCount[];
+}
+
+export interface SnapshotSentiment {
+  source: 'analysis' | 'lexical';
+  analyzed: number;
+  positive: number;
+  neutral: number;
+  negative: number;
+  average: number;
+  top_positive: { title: string; score: number } | null;
+  top_negative: { title: string; score: number } | null;
+  emotions: SnapshotEmotion[];
+  series: { key: string; average: number; notes: number }[];
+  granularity: 'day' | 'week';
+}
+
+export interface SnapshotWindow {
+  from: string;
+  to: string;
+  writing: SnapshotWriting;
+  voice: SnapshotVoice;
+  images: SnapshotImages;
+  analysis: SnapshotAnalysis;
+  sentiment: SnapshotSentiment;
+  topics: SnapshotTopics;
+  summary: string[];
+}
+
+export interface SnapshotStreak {
+  current: number;
+  longest: number;
+  wrote_today: boolean;
 }
 
 /** Series do historico, para os graficos do painel. */
@@ -114,7 +188,8 @@ export interface SnapshotHistory {
 export interface MetricsSnapshot {
   schema: number;
   generated_at: string;
-  writing: SnapshotWriting;
+  streak: SnapshotStreak;
+  windows: Record<MetricsWindow, SnapshotWindow>;
   history: SnapshotHistory;
 }
 
@@ -122,84 +197,161 @@ function words(items: WordCount[]): SnapshotWordCount[] {
   return items.map((item) => ({ label: item.label, value: item.value }));
 }
 
+function snapshotWriting(writing: WindowWriting): SnapshotWriting {
+  return {
+    notes: writing.notes,
+    with_text: writing.withText,
+    with_audio: writing.withAudio,
+    with_transcript: writing.withTranscript,
+    words: writing.words,
+    chars: writing.chars,
+    sentences: writing.sentences,
+    paragraphs: writing.paragraphs,
+    unique_words: writing.uniqueWords,
+    lexical_richness: writing.lexicalRichness,
+    average_words_per_note: writing.averageWordsPerNote,
+    average_sentence_words: writing.averageSentenceWords,
+    average_word_length: writing.averageWordLength,
+    reading_minutes: writing.readingMinutes,
+    top_words: words(writing.topWords),
+    longest_words: words(writing.longestWords),
+    questions: writing.questions,
+    exclamations: writing.exclamations,
+    links: writing.links,
+    images: writing.images,
+    list_items: writing.listItems,
+    active_days: writing.activeDays,
+    average_notes_per_active_day: writing.averageNotesPerActiveDay,
+    notes_per_week: writing.notesPerWeek,
+    top_weekday: writing.topWeekday ? { label: writing.topWeekday.label, value: writing.topWeekday.value } : null,
+    top_hour: writing.topHour ? { label: writing.topHour.label, value: writing.topHour.value } : null,
+    weekday_hour: writing.weekdayHour,
+    consistency: {
+      days: writing.consistency.days.map((day) => ({
+        key: day.key,
+        wrote: day.wrote,
+        notes: day.notes,
+        words: day.words,
+      })),
+      written_days: writing.consistency.writtenDays,
+      tracked_days: writing.consistency.trackedDays,
+      rate: writing.consistency.rate,
+      longest_run: writing.consistency.longestRun,
+    },
+    longest_note: writing.longestNote
+      ? { title: writing.longestNote.title, words: writing.longestNote.words }
+      : null,
+  };
+}
+
+function snapshotVoice(voice: WindowVoice): SnapshotVoice {
+  return {
+    audio_count: voice.audioCount,
+    audio_minutes: voice.audioMinutes,
+    transcribed_minutes: voice.transcribedMinutes,
+    coverage: voice.coverage,
+    words: voice.words,
+    words_per_minute: voice.wordsPerMinute,
+    words_per_audio: voice.wordsPerAudio,
+    origin_local: voice.originLocal,
+    origin_server: voice.originServer,
+    transcript_share: voice.transcriptShare,
+  };
+}
+
+function snapshotImages(images: WindowImages): SnapshotImages {
+  return {
+    count: images.count,
+    bytes_total: images.bytesTotal,
+    bytes_average: images.bytesAverage,
+    per_note: images.perNote,
+    notes_with_image: images.notesWithImage,
+    notes_with_image_no_text: images.notesWithImageNoText,
+  };
+}
+
+function snapshotAnalysis(analysis: WindowAnalysis): SnapshotAnalysis {
+  return {
+    notes_with_content: analysis.notesWithContent,
+    notes_analyzed: analysis.notesAnalyzed,
+    coverage: analysis.coverage,
+    stale: analysis.stale,
+    simplified: analysis.simplified,
+    last_analyzed_at: analysis.lastAnalyzedAt,
+  };
+}
+
+function snapshotSentiment(sentiment: WindowSentiment): SnapshotSentiment {
+  return {
+    source: sentiment.source,
+    analyzed: sentiment.analyzed,
+    positive: sentiment.positive,
+    neutral: sentiment.neutral,
+    negative: sentiment.negative,
+    average: sentiment.average,
+    top_positive: sentiment.topPositive,
+    top_negative: sentiment.topNegative,
+    emotions: sentiment.emotions.map((emotion) => ({
+      label: emotion.label,
+      count: emotion.count,
+      tone: emotion.tone,
+    })),
+    series: sentiment.series.map((point) => ({
+      key: point.key,
+      average: point.average,
+      notes: point.notes,
+    })),
+    granularity: sentiment.granularity,
+  };
+}
+
+function snapshotTopics(metrics: WindowMetrics): SnapshotTopics {
+  return {
+    themes: metrics.topics.themes.map((item) => ({ label: item.label, count: item.count })),
+    people: metrics.topics.people.map((item) => ({ label: item.label, count: item.count })),
+    places: metrics.topics.places.map((item) => ({ label: item.label, count: item.count })),
+  };
+}
+
+function snapshotWindow(metrics: WindowMetrics): SnapshotWindow {
+  return {
+    from: metrics.from,
+    to: metrics.to,
+    writing: snapshotWriting(metrics.writing),
+    voice: snapshotVoice(metrics.voice),
+    images: snapshotImages(metrics.images),
+    analysis: snapshotAnalysis(metrics.analysis),
+    sentiment: snapshotSentiment(metrics.sentiment),
+    topics: snapshotTopics(metrics),
+    summary: metrics.summary,
+  };
+}
+
 /**
- * Monta o snapshot a partir das notas. Deterministico para a mesma entrada e
+ * Monta o documento a partir das notas. Deterministico para a mesma entrada e
  * `now`: e o que permite testar sem rede nem banco.
  */
 export function buildMetricsSnapshot(
   recordings: Recording[],
   now: Date = new Date(),
+  analyses: AnalysisFact[] = [],
+  imageBytes: Record<string, number> = {},
 ): MetricsSnapshot {
-  const metrics = analyzeWriting(recordings, now);
+  const report = buildMetricsReport({ recordings, analyses, imageBytes, now });
   const history = writingHistory(recordings, now);
 
   return {
     schema: METRICS_SCHEMA,
-    generated_at: now.toISOString(),
-    writing: {
-      notes: metrics.notes,
-      with_text: metrics.withText,
-      with_audio: metrics.withAudio,
-      with_transcript: metrics.withTranscript,
-      words: metrics.words,
-      chars: metrics.chars,
-      sentences: metrics.sentences,
-      paragraphs: metrics.paragraphs,
-      unique_words: metrics.uniqueWords,
-      lexical_richness: metrics.lexicalRichness,
-      average_words_per_note: metrics.averageWordsPerNote,
-      average_sentence_words: metrics.averageSentenceWords,
-      average_word_length: metrics.averageWordLength,
-      top_words: words(metrics.topWords),
-      longest_words: words(metrics.longestWords),
-      questions: metrics.questions,
-      exclamations: metrics.exclamations,
-      links: metrics.links,
-      images: metrics.images,
-      list_items: metrics.listItems,
-      transcript_words: metrics.transcriptWords,
-      average_transcript_words: metrics.averageTranscriptWords,
-      active_days: metrics.activeDays,
-      average_notes_per_active_day: metrics.averageNotesPerActiveDay,
-      current_streak: metrics.currentStreak,
-      longest_streak: metrics.longestStreak,
-      wrote_today: metrics.wroteToday,
-      top_weekday: metrics.topWeekday ? { label: metrics.topWeekday.label, value: metrics.topWeekday.value } : null,
-      top_hour: metrics.topHour ? { label: metrics.topHour.label, value: metrics.topHour.value } : null,
-      first_at: metrics.firstAt,
-      last_at: metrics.lastAt,
-      longest_note: metrics.longestNote
-        ? { title: metrics.longestNote.title, words: metrics.longestNote.words }
-        : null,
-      monthly: metrics.monthly.map((month) => ({
-        label: month.label,
-        words: month.words,
-        notes: month.notes,
-      })),
-      month_comparison_pct: metrics.monthComparisonPct,
-      sentiment: {
-        analyzed: metrics.sentiment.analyzed,
-        average: metrics.sentiment.average,
-        positive: metrics.sentiment.positive,
-        neutral: metrics.sentiment.neutral,
-        negative: metrics.sentiment.negative,
-        top_positive: metrics.sentiment.topPositive,
-        top_negative: metrics.sentiment.topNegative,
-      },
-      weekday_hour: metrics.weekdayHour,
-      consistency: {
-        days: metrics.consistency.days.map((day) => ({
-          key: day.key,
-          wrote: day.wrote,
-          notes: day.notes,
-          words: day.words,
-        })),
-        written_days: metrics.consistency.writtenDays,
-        tracked_days: metrics.consistency.trackedDays,
-        rate: metrics.consistency.rate,
-        longest_run: metrics.consistency.longestRun,
-      },
-      insights: metrics.insights,
+    generated_at: report.generatedAt,
+    streak: {
+      current: report.streak.current,
+      longest: report.streak.longest,
+      wrote_today: report.streak.wroteToday,
+    },
+    windows: {
+      '7d': snapshotWindow(report.windows['7d']),
+      '30d': snapshotWindow(report.windows['30d']),
+      '365d': snapshotWindow(report.windows['365d']),
     },
     history: {
       weekly: history.weekly.map((week) => ({

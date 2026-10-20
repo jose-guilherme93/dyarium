@@ -22,10 +22,12 @@ export interface NoteSyncApi {
     body: {
       title?: string;
       recorded_at?: string;
+      notebook_id?: string;
       archived?: boolean;
       versions?: { title?: string; recorded_at?: string };
     },
   ): Promise<{ title: string; recorded_at: string }>;
+  setEntryTags(entryId: string, tags: string[]): Promise<void>;
   listNotes(
     entryId: string,
   ): Promise<
@@ -105,6 +107,18 @@ export async function syncNoteWith(
     versions.recordedAt = entryVersions.recorded_at;
   } catch (error) {
     if (!isNoteConflict(error)) throw error;
+  }
+
+  // Caderno vai em um PATCH separado, sem versao: um conflito de titulo nao pode
+  // impedir a mudanca de caderno (e vice-versa).
+  if (note.notebookDirty && note.notebookId) {
+    await api.updateEntry(note.entryId, { notebook_id: note.notebookId });
+  }
+
+  // Tags: o PUT substitui o conjunto inteiro (ultima gravacao vence). Vai depois
+  // dos campos da entrada para uma falha de tag nao impedir titulo/data.
+  if (note.tagsDirty) {
+    await api.setEntryTags(note.entryId, note.tags ?? []);
   }
 
   // O corpo mora na nota (recurso filho da entrada).
@@ -219,6 +233,8 @@ export function applySyncResult(fresh: Recording, sent: Recording, result: SyncN
     bodyVersion: result.versions.body ?? fresh.bodyVersion,
     syncConflict: undefined,
     noteDirty: editedDuringSync ? true : undefined,
+    notebookDirty: editedDuringSync ? fresh.notebookDirty : undefined,
+    tagsDirty: editedDuringSync ? fresh.tagsDirty : undefined,
   };
 }
 

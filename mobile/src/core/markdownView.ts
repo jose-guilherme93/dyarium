@@ -18,6 +18,7 @@ export interface InlineSpan {
 }
 
 export type MarkdownBlock =
+  | { type: 'blank' }
   | { type: 'paragraph'; spans: InlineSpan[] }
   | { type: 'heading'; level: number; spans: InlineSpan[] }
   | { type: 'quote'; spans: InlineSpan[] }
@@ -39,10 +40,15 @@ const INLINE =
 
 export function parseMarkdownView(markdown: string): MarkdownBlock[] {
   const blocks: MarkdownBlock[] = [];
+  // Nota vazia continua mostrando o placeholder; nao e uma linha em branco.
+  if (markdown.trim() === '') return blocks;
   const lines = markdown.replace(/\r\n/g, '\n').split('\n');
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
     if (line.trim() === '') {
+      // A linha vazia tambem existe no editor (`<div><br></div>`). Manter o
+      // bloco aqui faz leitura e edicao terem o mesmo espacamento vertical.
+      blocks.push({ type: 'blank' });
       continue;
     }
 

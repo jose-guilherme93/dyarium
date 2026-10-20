@@ -7,18 +7,26 @@ import { Button } from '@/components/Button';
 import { Screen } from '@/components/Screen';
 import { summarize, toAnalysisInsights, type AnalysisInsight, type RankedItem } from '@/core/dashboard';
 import { formatBytes, formatDateTime, formatDuration } from '@/core/format';
-import { analyzeWriting, writingHistory, CONSISTENCY_WINDOW_DAYS, type ConsistencyMetrics, type DayCell, type MonthlyPoint, type SentimentMetrics, type WritingHistory, type WritingMetrics } from '@/core/writing';
+import {
+  METRICS_WINDOWS,
+  buildMetricsReport,
+  type AnalysisFact,
+  type MetricsStreak,
+  type MetricsWindow,
+  type SentimentTone,
+  type WindowImages,
+  type WindowMetrics,
+  type WindowSentiment,
+  type WindowTopics,
+  type WindowVoice,
+} from '@/core/metrics';
+import { analyzeWriting, writingHistory, CONSISTENCY_WINDOW_DAYS, type ConsistencyMetrics, type DayCell, type MonthlyPoint, type WritingHistory, type WritingMetrics } from '@/core/writing';
 import { loadDashboard, type DashboardData } from '@/services/dashboard';
 import { listCachedAnalyses, type CachedAnalysis } from '@/services/db';
+import { scanImageBytes } from '@/services/storageScan';
 import { useLibrary } from '@/state/LibraryContext';
 import { useSettings } from '@/state/SettingsContext';
 import { colors, fontSize, radius, spacing } from '@/theme/tokens';
-
-function sentimentLabel(value: number): string {
-  if (value > 0.15) return 'positivo';
-  if (value < -0.15) return 'negativo';
-  return 'neutro';
-}
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
@@ -27,6 +35,17 @@ function Metric({ label, value }: { label: string; value: string }) {
       <Text style={styles.metricLabel}>{label}</Text>
     </View>
   );
+}
+
+/** Seta de tom: verde para cima, vermelha para baixo, traco no neutro. */
+function ToneIcon({ tone }: { tone: SentimentTone }) {
+  if (tone === 'positive') {
+    return <Ionicons name="arrow-up" size={13} color={colors.success} />;
+  }
+  if (tone === 'negative') {
+    return <Ionicons name="arrow-down" size={13} color={colors.danger} />;
+  }
+  return <Ionicons name="remove" size={13} color={colors.textSecondary} />;
 }
 
 function RankedList({ title, items }: { title: string; items: RankedItem[] }) {
@@ -336,42 +355,204 @@ function HourHeatmap({ grid }: { grid: number[][] }) {
   );
 }
 
-function Humor({ sentiment }: { sentiment: SentimentMetrics }) {
-  if (sentiment.analyzed === 0) return null;
-  const tone = sentiment.average > 0.15 ? 'positivo' : sentiment.average < -0.15 ? 'negativo' : 'neutro';
-  const percent = (value: number) => `${Math.round((value / sentiment.analyzed) * 100)}%`;
+const WINDOW_LABELS: Record<MetricsWindow, string> = {
+  '7d': '7 dias',
+  '30d': '30 dias',
+  '365d': 'ano',
+};
+
+function WindowFilter({
+  value,
+  onChange,
+}: {
+  value: MetricsWindow;
+  onChange: (value: MetricsWindow) => void;
+}) {
+  return (
+    <View style={styles.filterRow}>
+      {METRICS_WINDOWS.map((kind) => {
+        const active = kind === value;
+        return (
+          <Pressable
+            key={kind}
+            onPress={() => onChange(kind)}
+            style={[styles.filterChip, active ? styles.filterChipActive : null]}
+            accessibilityRole="button"
+            accessibilityState={{ selected: active }}
+          >
+            <Text style={[styles.filterChipText, active ? styles.filterChipTextActive : null]}>
+              {WINDOW_LABELS[kind]}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+function WindowSummary({ sentences }: { sentences: string[] }) {
+  if (sentences.length === 0) return null;
+  return (
+    <View style={styles.section}>
+      {sentences.map((text, index) => (
+        <View key={index} style={styles.insight}>
+          <Ionicons name="sparkles-outline" size={15} color={colors.accent} />
+          <Text style={styles.insightText}>{text}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function WindowWritingCard({ metrics, streak }: { metrics: WindowMetrics; streak: MetricsStreak }) {
+  const writing = metrics.writing;
   return (
     <View style={styles.chartCard}>
-      <Text style={styles.sectionLabel}>Humor dos textos</Text>
-      <Text style={styles.sentiment}>
-        Tom {tone} ({sentiment.average.toFixed(2)})
+      <Text style={styles.sectionLabel}>Como você escreveu</Text>
+      <Text style={styles.headline}>
+        {writing.words.toLocaleString('pt-BR')} palavras em {writing.withText}{' '}
+        {writing.withText === 1 ? 'nota' : 'notas'}
       </Text>
+      <View style={styles.metricsRow}>
+        <Metric label="Notas/semana" value={String(writing.notesPerWeek)} />
+        <Metric label="Média por nota" value={String(writing.averageWordsPerNote)} />
+        <Metric label="Dias" value={String(writing.activeDays)} />
+      </View>
+      <View style={styles.metricsRow}>
+        <Metric label="Sequência" value={`${streak.current}/${streak.longest}`} />
+        <Metric label="Leitura" value={`${writing.readingMinutes} min`} />
+        <Metric label="Constância" value={`${Math.round(writing.consistency.rate * 100)}%`} />
+      </View>
+      {writing.topWeekday && writing.topHour ? (
+        <Text style={styles.muted}>
+          Você escreve mais na {writing.topWeekday.label} e pela {writing.topHour.label}.
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+function WindowSentimentCard({ sentiment }: { sentiment: WindowSentiment }) {
+  if (sentiment.analyzed === 0) {
+    return (
+      <View style={styles.chartCard}>
+        <Text style={styles.sectionLabel}>Como você se sentiu</Text>
+        <Text style={styles.muted}>Analise suas notas para ver o tom e as emoções desta janela.</Text>
+      </View>
+    );
+  }
+  const percent = (value: number) => Math.round((value / sentiment.analyzed) * 100);
+  return (
+    <View style={styles.chartCard}>
+      <Text style={styles.sectionLabel}>Como você se sentiu</Text>
       <View style={styles.chips}>
         <View style={styles.chip}>
-          <Text style={styles.chipText}>Positivos · {percent(sentiment.positive)}</Text>
+          <ToneIcon tone="positive" />
+          <Text style={styles.chipText}>Positivas · {percent(sentiment.positive)}%</Text>
         </View>
         <View style={styles.chip}>
-          <Text style={styles.chipText}>Neutros · {percent(sentiment.neutral)}</Text>
+          <ToneIcon tone="neutral" />
+          <Text style={styles.chipText}>Neutras · {percent(sentiment.neutral)}%</Text>
         </View>
         <View style={styles.chip}>
-          <Text style={styles.chipText}>Negativos · {percent(sentiment.negative)}</Text>
+          <ToneIcon tone="negative" />
+          <Text style={styles.chipText}>Negativas · {percent(sentiment.negative)}%</Text>
         </View>
       </View>
-      {sentiment.topPositive ? (
-        <View style={styles.row}>
-          <Text style={styles.rowTitle} numberOfLines={1}>
-            {sentiment.topPositive.title}
-          </Text>
-          <Text style={styles.rowValue}>+{sentiment.topPositive.score.toFixed(2)}</Text>
+      {sentiment.emotions.length > 0 ? (
+        <View style={styles.chips}>
+          {sentiment.emotions.slice(0, 3).map((emotion) => (
+            <View key={emotion.label} style={styles.chip}>
+              <ToneIcon tone={emotion.tone} />
+              <Text style={styles.chipText}>
+                {emotion.label} · {emotion.count}
+              </Text>
+            </View>
+          ))}
         </View>
       ) : null}
-      {sentiment.topNegative ? (
-        <View style={styles.row}>
-          <Text style={styles.rowTitle} numberOfLines={1}>
-            {sentiment.topNegative.title}
-          </Text>
-          <Text style={styles.rowValue}>{sentiment.topNegative.score.toFixed(2)}</Text>
-        </View>
+      <Text style={styles.muted}>
+        {sentiment.analyzed} {sentiment.analyzed === 1 ? 'nota analisada' : 'notas analisadas'} nesta
+        janela.
+      </Text>
+      {sentiment.source === 'lexical' ? (
+        <Text style={styles.muted}>Estimativa pelo texto, sem análise.</Text>
+      ) : null}
+    </View>
+  );
+}
+
+function WindowVoiceCard({ voice }: { voice: WindowVoice }) {
+  return (
+    <View style={styles.chartCard}>
+      <Text style={styles.sectionLabel}>Sua voz</Text>
+      <Text style={styles.headline}>
+        {voice.audioMinutes} min gravados, {voice.transcribedMinutes} transcritos
+      </Text>
+      <View style={styles.metricsRow}>
+        <Metric label="Cobertura" value={`${Math.round(voice.coverage * 100)}%`} />
+        <Metric label="Palavras/áudio" value={String(voice.wordsPerAudio)} />
+        <Metric label="Áudios" value={String(voice.audioCount)} />
+      </View>
+      <View style={styles.metricsRow}>
+        <Metric label="Locais" value={String(voice.originLocal)} />
+        <Metric label="Servidor" value={String(voice.originServer)} />
+        <Metric label="Texto da fala" value={`${Math.round(voice.transcriptShare * 100)}%`} />
+      </View>
+    </View>
+  );
+}
+
+function TopicRow({ title, items }: { title: string; items: WindowTopics['themes'] }) {
+  if (items.length === 0) return null;
+  return (
+    <View style={styles.section}>
+      <Text style={styles.muted}>{title}</Text>
+      <View style={styles.chips}>
+        {items.map((item) => (
+          <View key={item.label} style={styles.chip}>
+            <Text style={styles.chipText}>
+              {item.label} · {item.count}
+            </Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function WindowTopicsCard({ topics }: { topics: WindowTopics }) {
+  if (topics.themes.length === 0 && topics.people.length === 0 && topics.places.length === 0) {
+    return null;
+  }
+  return (
+    <View style={styles.chartCard}>
+      <Text style={styles.sectionLabel}>Sobre o que você escreveu</Text>
+      <TopicRow title="Temas" items={topics.themes} />
+      <TopicRow title="Pessoas" items={topics.people} />
+      <TopicRow title="Lugares" items={topics.places} />
+    </View>
+  );
+}
+
+function WindowImagesCard({ images }: { images: WindowImages }) {
+  if (images.count === 0) return null;
+  return (
+    <View style={styles.chartCard}>
+      <Text style={styles.sectionLabel}>Imagens</Text>
+      <Text style={styles.headline}>
+        {images.count} {images.count === 1 ? 'foto' : 'fotos'} · {formatBytes(images.bytesTotal)}
+      </Text>
+      <View style={styles.metricsRow}>
+        <Metric label="Por nota" value={String(images.perNote)} />
+        <Metric label="Tamanho médio" value={formatBytes(images.bytesAverage)} />
+        <Metric label="Com imagem" value={String(images.notesWithImage)} />
+      </View>
+      {images.notesWithImageNoText > 0 ? (
+        <Text style={styles.muted}>
+          {images.notesWithImageNoText}{' '}
+          {images.notesWithImageNoText === 1 ? 'nota' : 'notas'} com imagem e sem texto de apoio.
+        </Text>
       ) : null}
     </View>
   );
@@ -528,7 +709,7 @@ function WritingSection({
   const number = (value: number) => value.toLocaleString('pt-BR');
   return (
     <>
-      <Text style={styles.blockTitle}>Escrita</Text>
+      <Text style={styles.blockTitle}>Detalhes</Text>
       <Insights metrics={metrics} />
       <AnalysisInsights items={analysisInsights} />
       <WeeklyChart
@@ -542,7 +723,6 @@ function WritingSection({
       <Heatmap history={history} />
       <MonthlyChart points={metrics.monthly} comparisonPct={metrics.monthComparisonPct} />
       <HourHeatmap grid={metrics.weekdayHour} />
-      <Humor sentiment={metrics.sentiment} />
       <Goals
         history={history}
         metrics={metrics}
@@ -652,13 +832,17 @@ export default function DashboardScreen() {
   const { recordings } = useLibrary();
   const [data, setData] = useState<DashboardData | null>(null);
   const [cachedAnalyses, setCachedAnalyses] = useState<CachedAnalysis[]>([]);
+  const [windowKind, setWindowKind] = useState<MetricsWindow>('30d');
+  const [now, setNow] = useState(() => new Date());
+  const [imageBytes, setImageBytes] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const writing = useMemo(() => analyzeWriting(recordings, new Date()), [recordings]);
-  const history = useMemo(() => writingHistory(recordings, new Date()), [recordings]);
+  const writing = useMemo(() => analyzeWriting(recordings, now), [recordings, now]);
+  const history = useMemo(() => writingHistory(recordings, now), [recordings, now]);
 
   const load = useCallback(async () => {
+    setNow(new Date());
     // Analises ja feitas no servidor ficam guardadas no aparelho: mostra antes
     // da rede (ou sem ela) e sem refazer a analise.
     const cached = await listCachedAnalyses().catch(() => []);
@@ -681,6 +865,19 @@ export default function DashboardScreen() {
     return () => clearTimeout(timer);
   }, [load]);
 
+  useEffect(() => {
+    let alive = true;
+    // A varredura toca o disco: roda depois do primeiro desenho e so aplica o
+    // resultado se a tela ainda estiver montada.
+    const timer = setTimeout(() => {
+      if (alive) setImageBytes(scanImageBytes(recordings));
+    }, 0);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [recordings]);
+
   const summary = data ? summarize(data.entries, data.analyses.map((item) => item.analysis)) : null;
 
   const analysisInsights = useMemo(() => {
@@ -701,6 +898,45 @@ export default function DashboardScreen() {
     }
     return toAnalysisInsights([...merged.values()]);
   }, [data, cachedAnalyses]);
+
+  const analysisFacts = useMemo<AnalysisFact[]>(() => {
+    const merged = new Map<string, AnalysisFact>();
+    for (const item of cachedAnalyses) {
+      merged.set(item.entryId, {
+        entryId: item.entryId,
+        origin: item.origin ?? 'server',
+        contentHash: item.contentHash,
+        model: item.analysis.model,
+        sentiment: item.analysis.sentiment,
+        sentimentLabel: item.analysis.sentiment_label,
+        emotions: item.analysis.emotions,
+        themes: (item.analysis.themes ?? []).map((theme) => theme.name),
+        people: item.analysis.people ?? undefined,
+        places: item.analysis.places ?? undefined,
+      });
+    }
+    for (const { entry, analysis } of data?.analyses ?? []) {
+      if (merged.get(entry.id)?.origin === 'local') continue;
+      merged.set(entry.id, {
+        entryId: entry.id,
+        origin: 'server',
+        model: analysis.model,
+        sentiment: analysis.sentiment,
+        sentimentLabel: analysis.sentiment_label,
+        emotions: analysis.emotions,
+        themes: (analysis.themes ?? []).map((theme) => theme.name),
+        people: analysis.people ?? undefined,
+        places: analysis.places ?? undefined,
+      });
+    }
+    return [...merged.values()];
+  }, [data, cachedAnalyses]);
+
+  const report = useMemo(
+    () => buildMetricsReport({ recordings, analyses: analysisFacts, imageBytes, now }),
+    [recordings, analysisFacts, imageBytes, now],
+  );
+  const windowMetrics = report.windows[windowKind];
 
   return (
     <Screen>
@@ -730,17 +966,37 @@ export default function DashboardScreen() {
             Escreva sua primeira nota e o painel mostra as métricas da sua escrita.
           </Text>
         ) : (
-          <WritingSection
-            metrics={writing}
-            history={history}
-            analysisInsights={analysisInsights}
-            goal={weeklyWordGoal}
-            onGoal={(value) => void setWeeklyWordGoal(value)}
-            reminders={writingReminders}
-            onReminders={(value) => void setWritingReminders(value)}
-            hour={reminderHour}
-            onHour={(value) => void setReminderHour(value)}
-          />
+          <>
+            <WindowFilter value={windowKind} onChange={setWindowKind} />
+            <WindowSummary sentences={windowMetrics.summary} />
+            {windowMetrics.writing.withText > 0 ? (
+              <WindowWritingCard metrics={windowMetrics} streak={report.streak} />
+            ) : null}
+            {windowMetrics.sentiment.analyzed > 0 || windowMetrics.writing.withText > 0 ? (
+              <WindowSentimentCard sentiment={windowMetrics.sentiment} />
+            ) : null}
+            {windowMetrics.voice.audioCount > 0 ? (
+              <WindowVoiceCard voice={windowMetrics.voice} />
+            ) : null}
+            <WindowTopicsCard topics={windowMetrics.topics} />
+            <WindowImagesCard images={windowMetrics.images} />
+            {windowMetrics.writing.withText === 0 &&
+            windowMetrics.voice.audioCount === 0 &&
+            windowMetrics.sentiment.analyzed === 0 ? (
+              <Text style={styles.muted}>Nenhuma nota com conteúdo nesta janela.</Text>
+            ) : null}
+            <WritingSection
+              metrics={writing}
+              history={history}
+              analysisInsights={analysisInsights}
+              goal={weeklyWordGoal}
+              onGoal={(value) => void setWeeklyWordGoal(value)}
+              reminders={writingReminders}
+              onReminders={(value) => void setWritingReminders(value)}
+              hour={reminderHour}
+              onHour={(value) => void setReminderHour(value)}
+            />
+          </>
         )}
 
         <Text style={styles.blockTitle}>Servidor</Text>
@@ -766,26 +1022,6 @@ export default function DashboardScreen() {
                   <Metric label="Tamanho" value={formatBytes(summary.totalSizeBytes)} />
                   <Metric label="Falharam" value={String(summary.failed)} />
                 </View>
-
-                {summary.averageSentiment !== null ? (
-                  <View style={styles.section}>
-                    <Text style={styles.sectionLabel}>Humor</Text>
-                    <Text style={styles.sentiment}>
-                      Sentimento médio {summary.averageSentiment.toFixed(2)} (
-                      {sentimentLabel(summary.averageSentiment)})
-                    </Text>
-                    {data?.analyses.slice(0, 10).map((item) => (
-                      <View key={item.entry.id} style={styles.row}>
-                        <Text style={styles.rowTitle} numberOfLines={1}>
-                          {item.entry.title || item.entry.original_filename}
-                        </Text>
-                        <Text style={styles.rowValue}>{item.analysis.sentiment.toFixed(2)}</Text>
-                      </View>
-                    ))}
-                  </View>
-                ) : (
-                  <Text style={styles.muted}>Sem análises de sentimento ainda.</Text>
-                )}
 
                 <RankedList title="Emoções" items={summary.emotions} />
                 <RankedList title="Pessoas" items={summary.people} />
@@ -823,6 +1059,19 @@ const styles = StyleSheet.create({
   },
   error: { color: colors.danger, fontSize: fontSize.sm },
   muted: { color: colors.textSecondary, fontSize: fontSize.sm, lineHeight: 20 },
+  headline: { color: colors.text, fontSize: fontSize.xl, fontWeight: '700' },
+  filterRow: { flexDirection: 'row', gap: spacing.sm },
+  filterChip: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  filterChipActive: { backgroundColor: colors.accentSoft, borderColor: colors.accent },
+  filterChipText: { color: colors.textSecondary, fontSize: fontSize.sm, fontWeight: '600' },
+  filterChipTextActive: { color: colors.accentStrong },
   chartCard: {
     backgroundColor: colors.surface,
     borderRadius: radius.md,
@@ -916,6 +1165,9 @@ const styles = StyleSheet.create({
   rowValue: { color: colors.textSecondary, fontSize: fontSize.sm, fontVariant: ['tabular-nums'] },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     backgroundColor: colors.surface,
     borderRadius: radius.pill,
     paddingHorizontal: spacing.md,

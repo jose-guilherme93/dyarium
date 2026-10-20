@@ -12,6 +12,7 @@
  * backup interrompido nao invalida o anterior.
  */
 
+import type { Notebook } from './notebooks';
 import type { Recording } from './types';
 
 export const BACKUP_VERSION = 2;
@@ -42,6 +43,8 @@ export interface BackupManifest {
   createdAt: string;
   /** Versao do app que gerou o backup. */
   appVersion?: string;
+  /** Cadernos, para as notas restauradas nao ficarem sem lugar. */
+  notebooks?: Notebook[];
   /** Notas em ordem cronologica (mais antiga primeiro). */
   notes: BackupNote[];
 }
@@ -115,8 +118,15 @@ export function buildManifest(
   notes: BackupNote[],
   now: Date,
   appVersion?: string,
+  notebooks?: Notebook[],
 ): BackupManifest {
-  return { version: BACKUP_VERSION, createdAt: now.toISOString(), appVersion, notes };
+  return {
+    version: BACKUP_VERSION,
+    createdAt: now.toISOString(),
+    appVersion,
+    notebooks,
+    notes,
+  };
 }
 
 function parseFile(raw: unknown): BackupFile | null {
@@ -168,10 +178,28 @@ export function parseManifest(json: string): BackupManifest | null {
     });
   }
 
+  const notebooks: Notebook[] = [];
+  if (Array.isArray(obj.notebooks)) {
+    for (const raw of obj.notebooks) {
+      if (typeof raw !== 'object' || raw === null) continue;
+      const item = raw as Record<string, unknown>;
+      if (typeof item.id !== 'string' || typeof item.name !== 'string') continue;
+      notebooks.push({
+        id: item.id,
+        name: item.name,
+        color: typeof item.color === 'string' ? item.color : '',
+        isDefault: item.isDefault === true,
+        createdAt: typeof item.createdAt === 'string' ? item.createdAt : '',
+        updatedAt: typeof item.updatedAt === 'string' ? item.updatedAt : '',
+      });
+    }
+  }
+
   return {
     version: BACKUP_VERSION,
     createdAt: typeof obj.createdAt === 'string' ? obj.createdAt : '',
     appVersion: typeof obj.appVersion === 'string' ? obj.appVersion : undefined,
+    notebooks: notebooks.length > 0 ? notebooks : undefined,
     notes,
   };
 }

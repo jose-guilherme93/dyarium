@@ -119,6 +119,18 @@ export default function SettingsScreen() {
           </Card>
         </Pressable>
 
+        <Text style={styles.sectionLabel}>Avançado</Text>
+        <Pressable onPress={() => router.push('/diagnostics')}>
+          <Card style={styles.row}>
+            <Ionicons name="pulse-outline" size={20} color={colors.info} />
+            <View style={styles.rowText}>
+              <Text style={styles.cardTitle}>Diagnóstico da análise</Text>
+              <Text style={styles.cardHint}>Execuções, modelos e exportar métricas.</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
+          </Card>
+        </Pressable>
+
         {archived > 0 ? (
           <Text style={styles.cardHint}>
             {archived} nota(s) arquivada(s) ficam no fim da lista.

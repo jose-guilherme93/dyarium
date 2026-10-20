@@ -293,7 +293,7 @@ function markdownToHtmlFragment(markdown: string, imageSources?: Record<string, 
       const display = imageSources?.[image[2]] ?? image[2];
       const w = image[3] ? ` width="${image[3]}%" data-width="${image[3]}"` : '';
       out.push(
-        `<div class="img-block" contenteditable="false"><img src="${escapeHtml(display)}" data-src="${escapeHtml(image[2])}" alt="${escapeHtml(image[1])}"${w}></div>`,
+        `<div class="img-block" contenteditable="false"><img src="${escapeHtml(display)}" data-src="${escapeHtml(image[2])}" alt="${escapeHtml(image[1])}" decoding="async"${w}></div>`,
       );
       continue;
     }
@@ -346,7 +346,26 @@ export function htmlToMarkdown(html: string): string {
   });
 
   value = value.replace(/<br\s*\/?>/gi, '\n');
+  // Formato nativo do editor para bloco de codigo (o WebView usava <pre>).
+  value = value.replace(
+    /<codeblock[^>]*>([\s\S]*?)<\/codeblock>/gi,
+    (block, code: string) => {
+      const lang = /data-lang="([^"]*)"/i.exec(block)?.[1] ?? '';
+      return `\n\`\`\`${lang}\n${unescapeHtml(code)}\n\`\`\`\n`;
+    },
+  );
+  // Lista ordenada: o TipTap devolve <ol><li><p>..</p></li></ol>. Numera os
+  // itens antes que o tratamento generico de <li> transforme tudo em "- ".
+  value = value.replace(/<ol\b[^>]*>([\s\S]*?)<\/ol>/gi, (_all, inner: string) => {
+    let index = 0;
+    return `\n${inner.replace(
+      /<li\b[^>]*>([\s\S]*?)<\/li>/gi,
+      (_item, text: string) => `${(index += 1)}. ${text.trim()}\n`,
+    )}\n`;
+  });
   value = value.replace(/<li[^>]*>/gi, '- ');
+  // Codigo inline: antes o <code> sumia junto com as tags e virava texto comum.
+  value = value.replace(/<code\b[^>]*>([\s\S]*?)<\/code>/gi, '`$1`');
   // Citacao: o prefixo vai no conteudo interno, que ainda pode ter <b>/<a>.
   value = value.replace(/<blockquote\b[^>]*>([\s\S]*?)<\/blockquote>/gi, (_all, inner: string) => {
     return `\n> ${inner.trim()}\n`;
@@ -357,12 +376,16 @@ export function htmlToMarkdown(html: string): string {
   value = value.replace(/<\/(div|p|li|ul)>/gi, '\n');
   value = value.replace(/<(b|strong)\b[^>]*>/gi, '**').replace(/<\/(b|strong)>/gi, '**');
   value = value.replace(/<(i|em)\b[^>]*>/gi, '_').replace(/<\/(i|em)>/gi, '_');
+  value = value.replace(/<(s|del|strike)\b[^>]*>/gi, '~~').replace(/<\/(s|del|strike)>/gi, '~~');
   // Imagem: prefere `data-src` (URL do servidor) ao `src` (previa local/data uri).
   value = value.replace(/<img\b[^>]*>/gi, (tag) => {
     const persist = /data-src="([^"]*)"/i.exec(tag)?.[1];
     const src = persist ?? /src="([^"]*)"/i.exec(tag)?.[1] ?? '';
     const alt = /alt="([^"]*)"/i.exec(tag)?.[1] ?? '';
-    const width = /data-width="(\d+)"/i.exec(tag)?.[1];
+    // Largura do editor nativo vem como `data-width`; a do TipTap vem como
+    // `width="50%"` (o atributo em px do redimensionador e ignorado).
+    const width =
+      /data-width="(\d+)"/i.exec(tag)?.[1] ?? /\bwidth="(\d+)%"/i.exec(tag)?.[1];
     return `![${alt}](${src})${width ? `{w=${width}}` : ''}`;
   });
   // Link: <a href="url">texto</a> -> [texto](url).
@@ -394,6 +417,18 @@ export function markdownToPlain(markdown: string): string {
       .replace(/^>\s?/gm, '')
       .replace(/^-\s+/gm, '')
   );
+}
+
+/**
+ * Previa de uma linha para o card da lista. Corta o markdown antes de converter:
+ * a lista re-renderiza varios cards e nao pode parsear a nota inteira so para
+ * mostrar a primeira linha.
+ */
+export function markdownPreview(markdown: string | undefined, maxChars = 240): string {
+  const text = (markdown ?? '').trim();
+  if (!text) return '';
+  const cut = text.length > maxChars ? text.slice(0, maxChars) : text;
+  return markdownToPlain(cut).replace(/\s+/g, ' ').trim();
 }
 
 /** Numero de palavras do texto puro. */

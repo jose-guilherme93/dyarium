@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { AppState } from 'react-native';
 
 import { newId } from '@/core/id';
+import { DEFAULT_NOTEBOOK_ID, sameNotebooks, type Notebook } from '@/core/notebooks';
 import { buildDraftNote, buildTextNote, noteHasContent } from '@/core/note';
 import { markQueued } from '@/core/queue';
 import { isUploadable, needsNoteSync, needsTranscript, type Recording } from '@/core/types';
@@ -9,6 +10,13 @@ import { bumpRender } from '@/dev/perf';
 import { deleteRecordingRow, getRecording, listRecordings, upsertRecording } from '@/services/db';
 import { deleteServerEntry } from '@/services/entries';
 import { deleteSessionAudioFiles, deleteSessionFiles } from '@/services/files';
+import {
+  deleteLocalNotebook,
+  insertLocalNotebook,
+  listNotebooks,
+  updateLocalNotebook,
+} from '@/services/notebooks';
+import { pushNotebooks } from '@/services/notebookSync';
 import { noteIsOpen } from '@/services/noteVisibility';
 import { pullServerEntries } from '@/services/pull';
 import { fetchTranscriptsOnce } from '@/services/transcripts';
@@ -18,18 +26,35 @@ import { useSettings } from './SettingsContext';
 
 interface LibraryValue {
   recordings: Recording[];
+  notebooks: Notebook[];
   ready: boolean;
   refresh(): Promise<void>;
+  refreshNotebooks(): Promise<void>;
+  /** Cria um caderno local; o push ao servidor e best-effort. */
+  createNotebook(input: { name: string; color?: string }): Promise<Notebook>;
+  /** Renomeia/recolore um caderno. */
+  renameNotebook(id: string, patch: { name?: string; color?: string }): Promise<void>;
+  /** Exclui um caderno; as notas vao para "Notas ao acaso". */
+  removeNotebook(id: string): Promise<void>;
+  /** Move uma nota de caderno. */
+  moveNoteToNotebook(id: string, notebookId: string): Promise<void>;
+  /** Substitui as tags da nota. */
+  setNoteTags(id: string, tags: string[]): Promise<void>;
   /** Coloca uma gravacao recem-finalizada na fila e dispara o envio. */
   enqueue(recording: Recording): Promise<void>;
   /** Cria uma nota somente texto e a coloca na fila. */
-  createTextNote(input: { title: string; text: string; recordedAt?: string }): Promise<Recording>;
+  createTextNote(input: {
+    title: string;
+    text: string;
+    recordedAt?: string;
+    notebookId?: string;
+  }): Promise<Recording>;
   /** Cria um rascunho vazio de nota (nao entra na fila ainda). */
-  createDraftNote(): Promise<Recording>;
+  createDraftNote(notebookId?: string): Promise<Recording>;
   /** Salva titulo/texto da nota (autosave). */
   updateNote(id: string, patch: { title?: string; text?: string }): Promise<void>;
-  /** Anexa um audio gravado a uma nota. */
-  attachAudio(id: string, audio: Recording): Promise<void>;
+  /** Anexa um audio gravado a uma nota. `false` se a nota nao existe mais. */
+  attachAudio(id: string, audio: Recording): Promise<boolean>;
   /** Ao sair da nota: envia rascunho com conteudo (ou descarta vazio) e sincroniza editados. */
   submitNote(id: string): Promise<void>;
   /** Arquiva/desarquiva a nota (sai da lista principal). */
@@ -60,7 +85,13 @@ function mergeRecordings(prev: Recording[], next: Recording[]): Recording[] {
   let identical = prev.length === next.length;
   const merged = next.map((item, index) => {
     const old = byId.get(item.id);
-    if (old && old.updatedAt === item.updatedAt && old.status === item.status) {
+    if (
+      old &&
+      old.updatedAt === item.updatedAt &&
+      old.status === item.status &&
+      old.notebookId === item.notebookId &&
+      (old.tags ?? []).join('\u0000') === (item.tags ?? []).join('\u0000')
+    ) {
       if (prev[index] !== old) identical = false;
       return old;
     }
@@ -83,6 +114,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   const { config } = useSettings();
   bumpRender('LibraryProvider');
   const [recordings, setRecordings] = useState<Recording[]>([]);
+  const [notebooks, setNotebooks] = useState<Notebook[]>([]);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -103,17 +135,31 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     setRecordings((prev) => mergeRecordings(prev, list));
   }, []);
 
+  const refreshNotebooks = useCallback(async () => {
+    const list = await listNotebooks();
+    // O banco devolve objetos novos a cada leitura. Manter a identidade quando
+    // nada mudou evita re-renderizar a home (e todos os cards) a cada ciclo.
+    setNotebooks((prev) => (sameNotebooks(prev, list) ? prev : list));
+  }, []);
+
   const kick = useCallback(() => {
     bumpRender('kick.called');
+    // Enquanto a nota esta aberta, upload/rede/SQLite esperam: eles competem
+    // com a leitura e a digitacao. A fila e persistente e retoma ao sair.
+    if (noteIsOpen()) return;
+    // Cadernos pendentes (criados/renomeados/excluidos offline) sobem no mesmo
+    // ciclo da fila; se falhar, a linha continua suja para a proxima tentativa.
+    void pushNotebooks().then(refreshNotebooks).catch(() => undefined);
     void runUploadQueueOnce().then(refresh).catch(() => undefined);
-  }, [refresh]);
+  }, [refresh, refreshNotebooks]);
 
   useEffect(() => {
     let alive = true;
-    listRecordings()
-      .then((list) => {
+    Promise.all([listRecordings(), listNotebooks()])
+      .then(([list, notebookList]) => {
         if (!alive) return;
         setRecordings(list);
+        setNotebooks(notebookList);
       })
       .catch(() => undefined)
       .finally(() => {
@@ -149,12 +195,13 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     if (noteIsOpen()) return;
     bumpRender('pullserver.called');
     void pullServerEntries()
-      .then((changed) => {
+      .then(async (changed) => {
+        await refreshNotebooks();
         if (changed > 0) return refresh();
         return undefined;
       })
       .catch(() => undefined);
-  }, [refresh]);
+  }, [refresh, refreshNotebooks]);
 
   useEffect(() => {
     if (!ready) return;
@@ -175,6 +222,14 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     const id = setInterval(() => kick(), WORKER_INTERVAL_MS);
     return () => clearInterval(id);
   }, [hasPending, kick]);
+
+  // Caderno criado/alterado offline tambem tenta de novo periodicamente, mesmo
+  // sem nota pendente.
+  useEffect(() => {
+    if (!notebooks.some((notebook) => notebook.dirty)) return undefined;
+    const id = setInterval(() => kick(), WORKER_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [notebooks, kick]);
 
   useEffect(() => {
     if (!hasPendingTranscripts) return undefined;
@@ -220,14 +275,22 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   );
 
   const createTextNote = useCallback(
-    async (input: { title: string; text: string; recordedAt?: string }) => {
-      const note = buildTextNote({
-        id: newId('note_'),
-        title: input.title,
-        text: input.text,
-        recordedAt: input.recordedAt,
-        now: new Date(),
-      });
+    async (input: {
+      title: string;
+      text: string;
+      recordedAt?: string;
+      notebookId?: string;
+    }) => {
+      const note = {
+        ...buildTextNote({
+          id: newId('note_'),
+          title: input.title,
+          text: input.text,
+          recordedAt: input.recordedAt,
+          now: new Date(),
+        }),
+        notebookId: input.notebookId || DEFAULT_NOTEBOOK_ID,
+      };
       await upsertRecording(note);
       setRecordings((prev) => [note, ...prev]);
       kick();
@@ -236,10 +299,13 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     [kick],
   );
 
-  const createDraftNote = useCallback(async () => {
+  const createDraftNote = useCallback(async (notebookId = DEFAULT_NOTEBOOK_ID) => {
     // A nota nasce 100% local. A entrada no servidor e criada no envio (sync),
     // com o id temporal da nota — o app nao depende do servidor pra existir.
-    const note = buildDraftNote({ id: newId('note_'), now: new Date() });
+    const note = {
+      ...buildDraftNote({ id: newId('note_'), now: new Date() }),
+      notebookId,
+    };
     await upsertRecording(note);
     setRecordings((prev) => [note, ...prev]);
     return note;
@@ -272,7 +338,9 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
 
   const attachAudio = useCallback(async (id: string, audio: Recording) => {
     const current = await getRecording(id);
-    if (!current) return;
+    // A nota pode ter sido apagada enquanto a gravacao acontecia. Quem chama
+    // precisa saber: sem isso o audio era descartado em silencio.
+    if (!current) return false;
     const updated: Recording = {
       ...current,
       dir: audio.dir,
@@ -285,6 +353,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     };
     await upsertRecording(updated);
     setRecordings((prev) => prev.map((r) => (r.id === id ? updated : r)));
+    return true;
   }, []);
 
   const retry = useCallback(
@@ -368,6 +437,93 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   const archiveNote = useCallback((id: string) => setArchived(id, true), [setArchived]);
   const unarchiveNote = useCallback((id: string) => setArchived(id, false), [setArchived]);
 
+  const createNotebook = useCallback(
+    async (input: { name: string; color?: string }) => {
+      const now = new Date().toISOString();
+      const notebook: Notebook = {
+        id: newId('nb_'),
+        name: input.name.trim(),
+        color: input.color ?? '',
+        isDefault: false,
+        createdAt: now,
+        updatedAt: now,
+        dirty: true,
+        synced: false,
+      };
+      await insertLocalNotebook(notebook);
+      setNotebooks((prev) => [...prev, notebook]);
+      void pushNotebooks().then(refreshNotebooks).catch(() => undefined);
+      return notebook;
+    },
+    [refreshNotebooks],
+  );
+
+  const renameNotebook = useCallback(
+    async (id: string, patch: { name?: string; color?: string }) => {
+      await updateLocalNotebook(id, patch);
+      await refreshNotebooks();
+      void pushNotebooks().then(refreshNotebooks).catch(() => undefined);
+    },
+    [refreshNotebooks],
+  );
+
+  const removeNotebook = useCallback(
+    async (id: string) => {
+      await deleteLocalNotebook(id);
+      await Promise.all([refresh(), refreshNotebooks()]);
+      void pushNotebooks().then(refreshNotebooks).catch(() => undefined);
+    },
+    [refresh, refreshNotebooks],
+  );
+
+  const moveNoteToNotebook = useCallback(
+    async (id: string, notebookId: string) => {
+      const current = await getRecording(id);
+      if (!current || current.notebookId === notebookId) return;
+      const updated: Recording = {
+        ...current,
+        notebookId,
+        // Nota ja enviada: o sync leva o caderno. Rascunho local leva junto na
+        // criacao da entrada no servidor.
+        notebookDirty: current.entryId ? true : undefined,
+        updatedAt: new Date().toISOString(),
+      };
+      await upsertRecording(updated);
+      setRecordings((prev) => prev.map((r) => (r.id === id ? updated : r)));
+      if (current.entryId) kick();
+    },
+    [kick],
+  );
+
+  const setNoteTags = useCallback(
+    async (id: string, tags: string[]) => {
+      const seen = new Set<string>();
+      const normalized = tags
+        .map((tag) => tag.trim())
+        .filter((tag) => {
+          const key = tag.toLowerCase();
+          if (!tag || seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        })
+        .sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
+      const current = await getRecording(id);
+      if (!current) return;
+      const before = (current.tags ?? []).join('\u0000');
+      if (before === normalized.join('\u0000')) return;
+      const updated: Recording = {
+        ...current,
+        tags: normalized.length > 0 ? normalized : undefined,
+        tagsDirty: current.entryId ? true : undefined,
+        updatedAt: new Date().toISOString(),
+      };
+      await upsertRecording(updated);
+      setRecordings((prev) => prev.map((r) => (r.id === id ? updated : r)));
+      if (current.entryId) kick();
+    },
+    [kick],
+  );
+
   const freeAudioForNote = useCallback(
     async (id: string) => {
       const current =
@@ -418,8 +574,15 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   const value = useMemo<LibraryValue>(
     () => ({
       recordings,
+      notebooks,
       ready,
       refresh,
+      refreshNotebooks,
+      createNotebook,
+      renameNotebook,
+      removeNotebook,
+      moveNoteToNotebook,
+      setNoteTags,
       enqueue,
       createTextNote,
       createDraftNote,
@@ -437,8 +600,15 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     }),
     [
       recordings,
+      notebooks,
       ready,
       refresh,
+      refreshNotebooks,
+      createNotebook,
+      renameNotebook,
+      removeNotebook,
+      moveNoteToNotebook,
+      setNoteTags,
       enqueue,
       createTextNote,
       createDraftNote,

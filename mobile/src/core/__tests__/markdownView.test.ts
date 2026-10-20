@@ -16,6 +16,11 @@ describe('parseMarkdownView', () => {
     expect(blocks[2]).toMatchObject({ type: 'heading', level: 2 });
   });
 
+  it('mantem linha vazia como bloco, igual ao editor', () => {
+    const blocks = parseMarkdownView('um\n\ndois');
+    expect(blocks.map((block) => block.type)).toEqual(['paragraph', 'blank', 'paragraph']);
+  });
+
   it('le listas, citacao, codigo e divisoria', () => {
     const blocks = parseMarkdownView('- um\n1. dois\n> citacao\n```js\nx = 1\n```\n---');
     expect(blocks[0]).toMatchObject({ type: 'list', ordered: false });

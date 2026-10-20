@@ -95,6 +95,10 @@ export interface Prefs {
   celebratedWords?: number;
   /** Ultima sequencia (dias) ja comemorada. */
   celebratedStreak?: number;
+  /** Ultimo caderno aberto (navegacao local, nao sincronizada). */
+  lastNotebookId?: string;
+  /** Ordenar a lista de cadernos alfabeticamente (padrao: criacao). */
+  notebooksAlphabetical?: boolean;
 }
 
 const PREFS_KEY = 'dyarium.prefs';
@@ -136,6 +140,14 @@ export async function loadPrefs(): Promise<Prefs> {
       celebratedStreak:
         typeof parsed.celebratedStreak === 'number' && parsed.celebratedStreak >= 0
           ? parsed.celebratedStreak
+          : undefined,
+      lastNotebookId:
+        typeof parsed.lastNotebookId === 'string' && parsed.lastNotebookId.trim()
+          ? parsed.lastNotebookId
+          : undefined,
+      notebooksAlphabetical:
+        typeof parsed.notebooksAlphabetical === 'boolean'
+          ? parsed.notebooksAlphabetical
           : undefined,
     };
   } catch {

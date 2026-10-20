@@ -7,6 +7,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { startPerfReport, useRenderCount } from '@/dev/perf';
+import { stopForegroundTask } from '../../modules/foreground-task';
 import { registerUploadTask } from '@/services/background';
 import { configureNotifications } from '@/services/notifications';
 import { LibraryProvider } from '@/state/LibraryContext';
@@ -55,6 +56,10 @@ export default function RootLayout() {
     configureNotifications();
     startPerfReport();
     void registerUploadTask();
+    // Se o processo anterior morreu no meio de uma transcricao, a notificacao
+    // em primeiro plano fica presa para sempre. No boot nao ha transcricao
+    // rodando: limpar aqui evita o aviso fantasma de "Transcrevendo nota".
+    stopForegroundTask();
   }, []);
 
   return (

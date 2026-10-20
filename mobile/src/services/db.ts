@@ -5,8 +5,11 @@
 
 import * as SQLite from 'expo-sqlite';
 import { Directory, File, Paths } from 'expo-file-system';
+import { Platform } from 'react-native';
 
 import type { ServerAnalysis, ServerAudio } from '@/core/api';
+import type { AnalysisOutcome, AnalysisRun, AnalysisRuntime } from '@/core/analysisRuns';
+import { DEFAULT_NOTEBOOK_ID } from '@/core/notebooks';
 import type {
   ConflictField,
   Recording,
@@ -51,6 +54,10 @@ interface Row {
   file_name: string | null;
   duplicate: number | null;
   archived: number | null;
+  notebook_id: string | null;
+  tags: string | null;
+  notebook_dirty: string | null;
+  tags_dirty: string | null;
   note_dirty: string | null;
   attachments: string | null;
   title_version: string | null;
@@ -263,6 +270,76 @@ const MIGRATIONS: Migration[] = [
       await addColumn(db, 'analyses', 'analysis_content_hash');
     },
   },
+  {
+    version: 18,
+    run: async (db) => {
+      // Uma linha por tentativa de analise local. Diagnostico apenas: medidas e
+      // resultado, nunca o texto da nota. Append-only.
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS analysis_runs (
+          id TEXT PRIMARY KEY NOT NULL,
+          entry_id TEXT NOT NULL,
+          analysis_id TEXT,
+          attachment_id TEXT,
+          runtime TEXT NOT NULL,
+          provider TEXT NOT NULL,
+          model TEXT NOT NULL,
+          attempt INTEGER NOT NULL DEFAULT 1,
+          outcome TEXT NOT NULL,
+          error_class TEXT,
+          started_at TEXT NOT NULL,
+          finished_at TEXT NOT NULL,
+          duration_ms INTEGER NOT NULL DEFAULT 0,
+          input_text_chars INTEGER NOT NULL DEFAULT 0,
+          input_transcript_chars INTEGER NOT NULL DEFAULT 0,
+          input_images INTEGER NOT NULL DEFAULT 0,
+          prompt_tokens INTEGER NOT NULL DEFAULT 0,
+          completion_tokens INTEGER NOT NULL DEFAULT 0,
+          tokens_per_second REAL NOT NULL DEFAULT 0,
+          threads INTEGER,
+          battery_delta_pct REAL,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_analysis_runs_started ON analysis_runs(started_at);
+        CREATE INDEX IF NOT EXISTS idx_analysis_runs_model ON analysis_runs(runtime, provider, model);
+      `);
+    },
+  },
+  {
+    version: 19,
+    run: async (db) => {
+      // Cadernos locais: espelho do servidor + linhas criadas/alteradas offline
+      // (`dirty`/`synced`) e tombstones (`deleted`) ate o push confirmar.
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS notebooks (
+          id TEXT PRIMARY KEY NOT NULL,
+          name TEXT NOT NULL,
+          color TEXT NOT NULL DEFAULT '',
+          is_default INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          dirty INTEGER NOT NULL DEFAULT 0,
+          synced INTEGER NOT NULL DEFAULT 1,
+          deleted INTEGER NOT NULL DEFAULT 0
+        );
+      `);
+      const stamp = new Date().toISOString();
+      await db.runAsync(
+        `INSERT OR IGNORE INTO notebooks
+          (id, name, color, is_default, created_at, updated_at, dirty, synced, deleted)
+         VALUES (?, ?, '', 1, ?, ?, 0, 1, 0)`,
+        ['notas-ao-acaso', 'Notas ao acaso', stamp, stamp],
+      );
+      if (!(await columnExists(db, 'recordings', 'notebook_id'))) {
+        await db.execAsync(
+          "ALTER TABLE recordings ADD COLUMN notebook_id TEXT NOT NULL DEFAULT 'notas-ao-acaso'",
+        );
+      }
+      await addColumn(db, 'recordings', 'tags');
+      await addColumn(db, 'recordings', 'notebook_dirty');
+      await addColumn(db, 'recordings', 'tags_dirty');
+    },
+  },
 ];
 
 async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
@@ -270,18 +347,32 @@ async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
   let version = row?.user_version ?? 0;
   for (const migration of MIGRATIONS) {
     if (migration.version <= version) continue;
-    await db.withExclusiveTransactionAsync(async (txn) => {
-      await migration.run(txn);
-      await txn.execAsync(`PRAGMA user_version = ${migration.version}`);
-    });
+    // O SQLite web nao suporta transacao exclusiva; a comum serve para migrar e
+    // tambem mantem o banco consistente se algo falhar.
+    if (Platform.OS === 'web') {
+      await db.withTransactionAsync(async () => {
+        await migration.run(db);
+        await db.execAsync(`PRAGMA user_version = ${migration.version}`);
+      });
+    } else {
+      await db.withExclusiveTransactionAsync(async (txn) => {
+        await migration.run(txn);
+        await txn.execAsync(`PRAGMA user_version = ${migration.version}`);
+      });
+    }
     version = migration.version;
   }
+}
+
+export function getDatabase(): Promise<SQLite.SQLiteDatabase> {
+  return getDb();
 }
 
 function getDb(): Promise<SQLite.SQLiteDatabase> {
   if (!dbPromise) {
     dbPromise = SQLite.openDatabaseAsync('dyarium.db').then(async (db) => {
-      await db.execAsync('PRAGMA journal_mode = WAL;');
+      // O SQLite web (wasm) nao implementa WAL; no aparelho ele e essencial.
+      if (Platform.OS !== 'web') await db.execAsync('PRAGMA journal_mode = WAL;');
       // Espera a trava liberar em vez de falhar na hora: em desenvolvimento um
       // reload pode deixar a conexao anterior presa por um instante, o que
       // antes virava "database is locked" ao iniciar a gravacao.
@@ -343,6 +434,19 @@ function parseServerAudios(raw: string | null): ServerAudio[] | undefined {
   try {
     const parsed: unknown = JSON.parse(raw);
     return Array.isArray(parsed) ? (parsed as ServerAudio[]) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Tags da nota gravadas como JSON de nomes. */
+function parseTags(raw: string | null): string[] | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return undefined;
+    const tags = parsed.filter((value): value is string => typeof value === 'string' && value.trim() !== '');
+    return tags.length > 0 ? tags : undefined;
   } catch {
     return undefined;
   }
@@ -413,6 +517,10 @@ function rowToRecording(row: Row): Recording {
     fileName: row.file_name ?? undefined,
     duplicate: row.duplicate ? true : undefined,
     archived: row.archived ? true : undefined,
+    notebookId: row.notebook_id ?? DEFAULT_NOTEBOOK_ID,
+    tags: parseTags(row.tags),
+    notebookDirty: row.notebook_dirty ? true : undefined,
+    tagsDirty: row.tags_dirty ? true : undefined,
     noteDirty: row.note_dirty ? true : undefined,
     attachments: parseAttachments(row.attachments),
     titleVersion: row.title_version ?? undefined,
@@ -435,9 +543,11 @@ export async function upsertRecording(r: Recording): Promise<void> {
       transcript, transcript_language, transcript_status, transcript_segments,
       transcript_checkpoint_ms,
       has_transcript, transcript_origin,
-      source, text, content_type, file_name, duplicate, archived, note_dirty, attachments,
+      source, text, content_type, file_name, duplicate, archived,
+      notebook_id, tags, notebook_dirty, tags_dirty,
+      note_dirty, attachments,
       title_version, recorded_at_version, body_version, sync_conflict, server_audios, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
       recorded_at = excluded.recorded_at,
@@ -469,6 +579,10 @@ export async function upsertRecording(r: Recording): Promise<void> {
       file_name = excluded.file_name,
       duplicate = excluded.duplicate,
       archived = excluded.archived,
+      notebook_id = excluded.notebook_id,
+      tags = excluded.tags,
+      notebook_dirty = excluded.notebook_dirty,
+      tags_dirty = excluded.tags_dirty,
       note_dirty = excluded.note_dirty,
       attachments = excluded.attachments,
       title_version = excluded.title_version,
@@ -509,6 +623,10 @@ export async function upsertRecording(r: Recording): Promise<void> {
       r.fileName ?? null,
       r.duplicate ? 1 : null,
       r.archived ? 1 : null,
+      r.notebookId ?? DEFAULT_NOTEBOOK_ID,
+      r.tags && r.tags.length > 0 ? JSON.stringify(r.tags) : null,
+      r.notebookDirty ? 1 : null,
+      r.tagsDirty ? 1 : null,
       r.noteDirty ? 1 : null,
       r.attachments ? JSON.stringify(r.attachments) : null,
       r.titleVersion ?? null,
@@ -740,4 +858,106 @@ export async function databaseBytes(): Promise<number> {
   const pageCount = await db.getFirstAsync<{ page_count: number }>('PRAGMA page_count');
   const pageSize = await db.getFirstAsync<{ page_size: number }>('PRAGMA page_size');
   return (pageCount?.page_count ?? 0) * (pageSize?.page_size ?? 0);
+}
+
+interface AnalysisRunRow {
+  id: string;
+  entry_id: string;
+  analysis_id: string | null;
+  attachment_id: string | null;
+  runtime: string;
+  provider: string;
+  model: string;
+  attempt: number;
+  outcome: string;
+  error_class: string | null;
+  started_at: string;
+  finished_at: string;
+  duration_ms: number;
+  input_text_chars: number;
+  input_transcript_chars: number;
+  input_images: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  tokens_per_second: number;
+  threads: number | null;
+  battery_delta_pct: number | null;
+}
+
+/** Grava as tentativas de analise do aparelho. Idempotente por id. */
+export async function saveAnalysisRuns(runs: AnalysisRun[]): Promise<void> {
+  if (runs.length === 0) return;
+  const db = await getDb();
+  const createdAt = new Date().toISOString();
+  for (const run of runs) {
+    await db.runAsync(
+      `INSERT OR IGNORE INTO analysis_runs (
+        id, entry_id, analysis_id, attachment_id, runtime, provider, model, attempt,
+        outcome, error_class, started_at, finished_at, duration_ms, input_text_chars,
+        input_transcript_chars, input_images, prompt_tokens, completion_tokens,
+        tokens_per_second, threads, battery_delta_pct, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        run.id,
+        run.entryId,
+        run.analysisId ?? null,
+        run.attachmentId ?? null,
+        run.runtime,
+        run.provider,
+        run.model,
+        run.attempt,
+        run.outcome,
+        run.errorClass ?? null,
+        run.startedAt,
+        run.finishedAt,
+        run.durationMs,
+        run.inputTextChars,
+        run.inputTranscriptChars,
+        run.inputImages,
+        run.promptTokens,
+        run.completionTokens,
+        run.tokensPerSecond,
+        run.threads ?? null,
+        run.batteryDeltaPct ?? null,
+        createdAt,
+      ],
+    );
+  }
+}
+
+/** Execucoes de analise guardadas no aparelho, da mais recente para a antiga. */
+export async function listAnalysisRuns(limit = 1000): Promise<AnalysisRun[]> {
+  const db = await getDb();
+  const capped = Math.max(1, Math.min(limit, 5000));
+  const rows = await db.getAllAsync<AnalysisRunRow>(
+    `SELECT id, entry_id, analysis_id, attachment_id, runtime, provider, model, attempt,
+      outcome, error_class, started_at, finished_at, duration_ms, input_text_chars,
+      input_transcript_chars, input_images, prompt_tokens, completion_tokens,
+      tokens_per_second, threads, battery_delta_pct
+     FROM analysis_runs ORDER BY started_at DESC LIMIT ?`,
+    [capped],
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    entryId: row.entry_id,
+    analysisId: row.analysis_id ?? undefined,
+    attachmentId: row.attachment_id ?? undefined,
+    runtime: row.runtime as AnalysisRuntime,
+    provider: row.provider,
+    model: row.model,
+    attempt: row.attempt,
+    outcome: row.outcome as AnalysisOutcome,
+    errorClass: row.error_class ?? undefined,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+    durationMs: row.duration_ms,
+    inputTextChars: row.input_text_chars,
+    inputTranscriptChars: row.input_transcript_chars,
+    inputImages: row.input_images,
+    promptTokens: row.prompt_tokens,
+    completionTokens: row.completion_tokens,
+    tokensPerSecond: row.tokens_per_second,
+    threads: row.threads ?? undefined,
+    batteryDeltaPct: row.battery_delta_pct ?? undefined,
+  }));
 }

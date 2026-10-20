@@ -96,37 +96,40 @@ async function cacheLocalCopy(noteId: string, name: string, id: string): Promise
   }
 }
 
-/** Indice do diretorio de cache por um curto periodo: listar uma vez por
- * abertura, nao uma vez por imagem (a listagem e sincrona na thread de JS). */
-let index: { at: number; uris: Map<string, string> } | null = null;
-
-function attachmentIndex(): Map<string, string> {
-  const now = Date.now();
-  if (index && now - index.at < 2000) {
-    return index.uris;
-  }
-  const uris = new Map<string, string>();
-  try {
-    for (const entry of attachmentsDir().list()) {
-      const dot = entry.name.lastIndexOf('.');
-      if (dot > 0) {
-        uris.set(entry.name.slice(0, dot), entry.uri);
-      }
-    }
-  } catch {
-    // cache best-effort
-  }
-  index = { at: now, uris };
-  return uris;
-}
+// Extensoes que o app grava no cache. A busca e por arquivo direto (poucos
+// `exists`), nunca por `Directory.list()`: listar a pasta inteira na thread de
+// JS travava a abertura da nota quando o cache crescia.
+const ATTACHMENT_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'heic', 'avif', 'bmp'];
+const cachedUris = new Map<string, string>();
 
 export function invalidateAttachmentIndex(): void {
-  index = null;
+  cachedUris.clear();
 }
 
 /** Arquivo de cache ja existente para um anexo, ou null. */
 export function cachedAttachmentUri(id: string): string | null {
-  return attachmentIndex().get(id) ?? null;
+  const known = cachedUris.get(id);
+  if (known) {
+    try {
+      if (new File(known).exists) return known;
+    } catch {
+      // arquivo sumiu/ilegivel: procura de novo abaixo
+    }
+    cachedUris.delete(id);
+  }
+
+  const dir = attachmentsDir();
+  for (const extension of ATTACHMENT_EXTENSIONS) {
+    try {
+      const file = new File(dir, `${id}.${extension}`);
+      if (!file.exists) continue;
+      cachedUris.set(id, file.uri);
+      return file.uri;
+    } catch {
+      // extensao ilegivel: tenta a proxima
+    }
+  }
+  return null;
 }
 
 /** Baixa o anexo do servidor para o cache e devolve a URI local. */

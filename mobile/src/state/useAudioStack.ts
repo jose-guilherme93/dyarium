@@ -53,17 +53,16 @@ export function useAudioStack(entryId: string | undefined, cached: ServerAudio[]
   }, [entryId]);
 
   useEffect(() => {
-    // Com cache, a nota ja abriu completa: revalida so depois que a tela
-    // assentou. Sem cache, busca agora (senao a pilha nunca aparece).
-    if (cached.length > 0) {
-      const timer = setTimeout(() => {
+    // Nunca buscar durante a abertura/rolagem: a nota e o que importa. Com
+    // cache, a tela ja abriu completa e so revalida depois; sem cache, espera
+    // a transicao assentar antes de tocar na rede.
+    const timer = setTimeout(
+      () => {
         void refresh();
-      }, 2500);
-      return () => clearTimeout(timer);
-    }
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void refresh();
-    return undefined;
+      },
+      cached.length > 0 ? 2500 : 1500,
+    );
+    return () => clearTimeout(timer);
   }, [cached.length, refresh]);
 
   return { audios, refresh };

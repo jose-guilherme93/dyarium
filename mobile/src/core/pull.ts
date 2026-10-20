@@ -8,10 +8,14 @@
  */
 
 import type { ServerEntry, ServerNote } from './api';
+import { DEFAULT_NOTEBOOK_ID } from './notebooks';
 import type { Recording, RecordingSource } from './types';
 
-function toSource(contentType: string): RecordingSource {
-  return contentType ? 'microphone' : 'text';
+function toSource(entry: ServerEntry): RecordingSource {
+  // O servidor guarda `share` para audio importado; sem isso, audio e microfone
+  // sao indistinguiveis depois de um pull em outro aparelho.
+  if (entry.source === 'share') return 'share';
+  return entry.content_type ? 'microphone' : 'text';
 }
 
 /**
@@ -72,7 +76,7 @@ export function entryToRecording(entry: ServerEntry, note?: ServerNote): Recordi
     attempts: 0,
     entryId: entry.id,
     noteId: note?.id,
-    source: toSource(entry.content_type),
+    source: toSource(entry),
     contentType: entry.content_type || undefined,
     durationMs: entry.duration_seconds > 0 ? Math.round(entry.duration_seconds * 1000) : undefined,
     sizeBytes: entry.size_bytes > 0 ? entry.size_bytes : undefined,
@@ -83,12 +87,21 @@ export function entryToRecording(entry: ServerEntry, note?: ServerNote): Recordi
     transcriptStatus: entry.content_type.startsWith('audio/') ? 'pending' : undefined,
     text: note?.content_markdown ?? '',
     archived: entry.archived,
+    notebookId: entry.notebook_id || DEFAULT_NOTEBOOK_ID,
+    tags: entry.tags && entry.tags.length > 0 ? entry.tags : undefined,
     titleVersion: entry.versions?.title,
     recordedAtVersion: entry.versions?.recorded_at,
     bodyVersion: note?.body_version,
     createdAt: entry.created_at,
     updatedAt: entry.updated_at,
   };
+}
+
+function sameTags(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const left = [...a].map((tag) => tag.toLowerCase()).sort();
+  const right = [...b].map((tag) => tag.toLowerCase()).sort();
+  return left.every((tag, index) => tag === right[index]);
 }
 
 /** O servidor gravou depois da ultima edicao local? */
@@ -125,6 +138,10 @@ export function mergeServerNote(
   const recordedVersion = entry.versions?.recorded_at;
   const recordedMoved = Boolean(recordedVersion) && recordedVersion !== local.recordedAtVersion;
   const archivedMoved = typeof entry.archived === 'boolean' && entry.archived !== Boolean(local.archived);
+  const serverNotebook = entry.notebook_id || DEFAULT_NOTEBOOK_ID;
+  const notebookMoved = !local.notebookDirty && serverNotebook !== (local.notebookId || DEFAULT_NOTEBOOK_ID);
+  const serverTags = entry.tags ?? [];
+  const tagsMoved = !local.tagsDirty && !sameTags(serverTags, local.tags ?? []);
 
   // Nota marcada como suja, mas com o mesmo texto do servidor (o editor
   // normaliza espacos ao abrir): nao ha edicao para enviar. Adota a versao do
@@ -148,10 +165,25 @@ export function mergeServerNote(
   // Sem o texto nao da para aplicar a versao nova do corpo: espera o proximo
   // pull em vez de gravar uma versao sem o texto correspondente.
   if (applyBody && !note) return null;
-  if (!applyBody && !applyTitle && !applyRecorded && !archivedMoved) return null;
+  if (
+    !applyBody &&
+    !applyTitle &&
+    !applyRecorded &&
+    !archivedMoved &&
+    !notebookMoved &&
+    !tagsMoved
+  ) {
+    return null;
+  }
 
   return {
     ...local,
+    // A faixa de recentes usa updatedAt: uma edicao feita no dashboard precisa
+    // aparecer como atividade recente aqui tambem.
+    updatedAt:
+      entry.updated_at && entry.updated_at > local.updatedAt
+        ? entry.updated_at
+        : local.updatedAt,
     ...(applyBody
       ? {
           text: note?.content_markdown ?? '',
@@ -164,6 +196,8 @@ export function mergeServerNote(
       ? { recordedAt: entry.recorded_at ?? entry.created_at, recordedAtVersion: recordedVersion }
       : {}),
     ...(archivedMoved ? { archived: entry.archived } : {}),
+    ...(notebookMoved ? { notebookId: serverNotebook, notebookDirty: undefined } : {}),
+    ...(tagsMoved ? { tags: serverTags.length > 0 ? serverTags : undefined, tagsDirty: undefined } : {}),
     // Se o corpo veio do servidor, a pendencia local (texto e conflito) acabou.
     // Se so titulo/data vieram, o corpo sujo continua e vai no proximo sync.
     ...(applyBody ? { noteDirty: undefined, syncConflict: undefined } : {}),

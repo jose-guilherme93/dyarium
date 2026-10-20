@@ -3,6 +3,8 @@ import {
   formatDateTime,
   formatDuration,
   formatStamp,
+  noteDateIso,
+  noteDateLabel,
   titleFontSize,
   utf8ByteLength,
 } from '../format';
@@ -53,6 +55,37 @@ describe('titleFontSize', () => {
     expect(titleFontSize('x'.repeat(80))).toBeLessThan(34);
     expect(titleFontSize('x'.repeat(80))).toBeGreaterThanOrEqual(24);
     expect(titleFontSize('x'.repeat(500))).toBe(24);
+  });
+});
+
+describe('noteDateIso', () => {
+  it('prefere a data do evento e cai para a criacao', () => {
+    expect(noteDateIso({ recordedAt: '2023-12-31T23:00:00.000Z' })).toBe(
+      '2023-12-31T23:00:00.000Z',
+    );
+    expect(noteDateIso({ recordedAt: 'invalida', createdAt: '2026-10-19T10:00:00.000Z' })).toBe(
+      '2026-10-19T10:00:00.000Z',
+    );
+    expect(noteDateIso({ createdAt: '2026-10-19T10:00:00.000Z' })).toBe(
+      '2026-10-19T10:00:00.000Z',
+    );
+    expect(noteDateIso({})).toBe('');
+  });
+});
+
+describe('noteDateLabel', () => {
+  const note = { recordedAt: '2026-10-19T13:30:00.000Z' };
+
+  it('mostra a data do evento quando o titulo e outro', () => {
+    expect(noteDateLabel('Dia de chuva', note)).toBe('19/10/2026 10:30');
+  });
+
+  it('esconde quando o titulo ja e a data padrao do audio', () => {
+    expect(noteDateLabel('19/10/2026 10:30', note)).toBeNull();
+  });
+
+  it('devolve null sem data', () => {
+    expect(noteDateLabel('Nota', {})).toBeNull();
   });
 });
 

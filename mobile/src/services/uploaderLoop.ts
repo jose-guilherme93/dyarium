@@ -13,6 +13,7 @@ import { uploadRecording } from '@/core/uploader';
 
 import { acquireLock, getRecording, listRecordings, releaseLock, upsertRecording } from './db';
 import { CONTENT_TYPE, FILE_EXTENSION, uploadFileIO } from './files';
+import { pushNotebooks } from './notebookSync';
 import { applySyncConflict, applySyncResult } from '@/core/noteSync';
 
 import { conflictFields, syncNote, type SyncNoteResult } from './noteSync';
@@ -48,6 +49,9 @@ export async function runUploadQueueOnce(): Promise<void> {
     if (!lock) return;
     const config = await loadServerConfig();
     if (!config) return;
+    // Cadernos primeiro: uma nota nova pode apontar para um caderno criado
+    // offline, e o servidor recusa notebook_id inexistente.
+    await pushNotebooks().catch(() => undefined);
     const api = new DyariumApi(config, doFetch);
     // Notas ja enviadas cujo corpo mudou. Cada uma e tentada uma vez por rodada:
     // se falhar (sem rede), o flag continua e a proxima rodada tenta de novo.
@@ -133,6 +137,8 @@ async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
         contentType: current.contentType ?? CONTENT_TYPE,
         title: current.title,
         recordedAt: current.recordedAt,
+        createdAt: current.createdAt,
+        source: current.source === 'share' ? 'share' : 'upload',
         localPath: current.filePath as string,
         sizeBytes: current.sizeBytes as number,
         text: current.text,
@@ -168,6 +174,9 @@ async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
       ...mergeTranscript(markCompleted(current, result.entryId, new Date()), fresh),
       serverAttachmentId: result.attachmentId ?? fresh.serverAttachmentId ?? current.serverAttachmentId,
       duplicate: result.duplicate ? true : undefined,
+      // O upload cria a entrada no servidor; o caderno local e enviado no sync da
+      // nota logo abaixo (o endpoint de upload nao carrega o caderno).
+      notebookDirty: current.notebookId ? true : undefined,
     };
     await upsertRecording(current);
     emitRecording(current);
@@ -204,6 +213,7 @@ async function uploadTextOne(api: DyariumApi, recording: Recording): Promise<voi
       recorded_at: current.recordedAt,
       created_at: current.createdAt,
       text: current.text ?? '',
+      notebook_id: current.notebookId,
     });
     current = {
       ...markCompleted(current, result.id, new Date()),

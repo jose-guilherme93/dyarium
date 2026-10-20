@@ -1,9 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View, type GestureResponderEvent } from 'react-native';
 
-import { formatDuration, formatStamp } from '@/core/format';
-import { markdownToPlain } from '@/core/richText';
+import { TagChip } from '@/components/TagChip';
+import { formatDuration, formatStamp, noteDateIso } from '@/core/format';
+import { markdownPreview } from '@/core/richText';
 import { displayTitle } from '@/core/title';
 import { checkpointPercent } from '@/core/transcription';
 import type { Recording } from '@/core/types';
@@ -17,6 +18,8 @@ interface RecordingCardProps {
   onOpen?: (noteId: string) => void;
   /** Toque longo: abre as opcoes perto do dedo (arquivar, apagar, propriedades). */
   onLongPress?: (item: Recording, anchor: { x: number; y: number }) => void;
+  /** Nome do caderno, mostrado na busca global. */
+  notebookLabel?: string;
 }
 
 /**
@@ -29,11 +32,17 @@ export const RecordingCard = memo(function RecordingCard({
   recording,
   onOpen,
   onLongPress,
+  notebookLabel,
 }: RecordingCardProps) {
   useRenderCount('RecordingCard');
   const hasAudio = Boolean(recording.filePath);
-  const rawPreview = hasAudio ? recording.transcript : recording.text;
-  const preview = rawPreview ? markdownToPlain(rawPreview) : '';
+  const tags = recording.tags ?? [];
+  // O card mostra uma linha, mas a lista re-renderiza varios cards por ciclo:
+  // converter a nota inteira a cada render custava caro na home.
+  const preview = useMemo(
+    () => markdownPreview(hasAudio ? recording.transcript : recording.text),
+    [hasAudio, recording.transcript, recording.text],
+  );
   // Transcricao em andamento: mostra um icone discreto + porcentagem no canto.
   const transcribing =
     hasAudio && recording.transcriptStatus === 'pending' && !recording.hasTranscript;
@@ -75,7 +84,21 @@ export const RecordingCard = memo(function RecordingCard({
             <Text style={styles.sub}>{formatDuration(recording.durationMs)}</Text>
           ) : null}
           {recording.archived ? <Text style={styles.sub}>· arquivada</Text> : null}
+          {notebookLabel ? (
+            <Text style={styles.sub} numberOfLines={1}>
+              · {notebookLabel}
+            </Text>
+          ) : null}
         </View>
+
+        {tags.length > 0 ? (
+          <View style={styles.tags}>
+            {tags.slice(0, 2).map((tag) => (
+              <TagChip key={tag.toLowerCase()} name={tag} size="sm" />
+            ))}
+            {tags.length > 2 ? <Text style={styles.more}>+{tags.length - 2}</Text> : null}
+          </View>
+        ) : null}
 
         <View style={styles.footer}>
           {preview ? (
@@ -85,7 +108,7 @@ export const RecordingCard = memo(function RecordingCard({
           ) : (
             <View style={styles.grow} />
           )}
-          <Text style={styles.stamp}>{formatStamp(recording.createdAt)}</Text>
+          <Text style={styles.stamp}>{formatStamp(noteDateIso(recording))}</Text>
         </View>
       </Pressable>
     </View>
@@ -117,6 +140,8 @@ const styles = StyleSheet.create({
   },
   subRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   sub: { color: colors.textSecondary, fontSize: fontSize.xs },
+  tags: { flexDirection: 'row', alignItems: 'center', gap: 4, flexWrap: 'wrap', marginTop: 2 },
+  more: { color: colors.textTertiary, fontSize: 10, fontWeight: '600' },
   footer: { flexDirection: 'row', alignItems: 'flex-end', gap: spacing.sm, marginTop: 2 },
   grow: { flex: 1 },
   preview: { flex: 1, color: colors.textTertiary, fontSize: fontSize.sm },

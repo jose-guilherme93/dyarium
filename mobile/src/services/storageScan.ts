@@ -160,6 +160,28 @@ function diskSpace(): { freeBytes: number | null; totalBytes: number | null } {
   return { freeBytes, totalBytes };
 }
 
+/** Bytes de imagem por id local da nota, para as metricas do Painel e o snapshot. */
+export function scanImageBytes(recordings: Recording[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const recording of recordings) {
+    let bytes = 0;
+    try {
+      for (const file of sessionFiles(recording.id)) {
+        if (storageFileKind(file.name) !== 'image') continue;
+        try {
+          bytes += file.size;
+        } catch {
+          // arquivo inacessivel: ignora
+        }
+      }
+    } catch {
+      // pasta ilegivel: ignora a nota
+    }
+    if (bytes > 0) out[recording.id] = bytes;
+  }
+  return out;
+}
+
 /** Relatorio completo da tela de armazenamento. */
 export async function scanStorage(recordings: Recording[]): Promise<StorageReport> {
   const notes: NoteStorageUsage[] = [];

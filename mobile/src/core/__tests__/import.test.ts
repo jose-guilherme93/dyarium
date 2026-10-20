@@ -176,6 +176,43 @@ describe('parseNameDate', () => {
   });
 });
 
+describe('meses em ingles no nome', () => {
+  const fallback = new Date('2026-10-10T22:00:00.000Z');
+
+  it('entende Oct 19, 2026 com hora AM/PM', () => {
+    const date = parseNameDate('Voice Oct 19, 2026 10.30 PM.m4a');
+    expect(date).toMatchObject({
+      a: 19,
+      b: 10,
+      year: 2026,
+      hour: 22,
+      minute: 30,
+      order: 'day-first',
+    });
+    expect(formatBrDateTime(resolveRecordedAt(date, { year: 2000, invert: false, fallback }))).toBe(
+      '19/10/2026 22:30',
+    );
+  });
+
+  it('entende dia primeiro e mes escrito', () => {
+    const date = parseNameDate('19 Oct 2026');
+    expect(date).toMatchObject({ a: 19, b: 10, year: 2026, order: 'day-first' });
+  });
+
+  it('sem ano, usa o ano escolhido na revisao', () => {
+    const date = parseNameDate('October 19');
+    expect(date).toMatchObject({ a: 19, b: 10, order: 'day-first' });
+    expect(date?.year).toBeUndefined();
+    expect(formatBrDateTime(resolveRecordedAt(date, { year: 2020, invert: false, fallback }))).toBe(
+      '19/10/2020 00:00',
+    );
+  });
+
+  it('nao confunde a extensao com um mes', () => {
+    expect(parseNameDate('nota.m4a')).toBeNull();
+  });
+});
+
 describe('resolveRecordedAt', () => {
   const fallback = new Date('2026-10-10T22:00:00.000Z');
 

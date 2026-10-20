@@ -223,7 +223,7 @@ export function monthlySeries(
   return out;
 }
 
-function sentimentScore(words: string[]): number {
+export function sentimentScore(words: string[]): number {
   let positive = 0;
   let negative = 0;
   for (const word of words) {
@@ -250,11 +250,11 @@ export function plainText(markdown: string): string {
     .replace(/^\s*[-+]\s+/gm, ' ');
 }
 
-function wordsOf(text: string): string[] {
+export function wordsOf(text: string): string[] {
   return text.toLowerCase().match(/[a-z0-9à-ÿ]+/g) ?? [];
 }
 
-function dayKey(date: Date): string {
+export function dayKey(date: Date): string {
   const pad = (n: number) => (n < 10 ? `0${n}` : String(n));
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
@@ -283,6 +283,56 @@ function round1(value: number): number {
   return Math.round(value * 10) / 10;
 }
 
+export interface WritingStreaks {
+  /** Dias seguidos com pelo menos uma nota, terminando hoje ou ontem. */
+  current: number;
+  /** Maior sequencia de dias seguidos no historico completo. */
+  longest: number;
+  wroteToday: boolean;
+}
+
+/**
+ * Sequencias de escrita sobre o historico completo. Separado de
+ * `analyzeWriting` para o Painel calcular a sequencia global mesmo quando olha
+ * uma janela recortada (7d/30d/ano).
+ */
+export function writingStreaks(recordings: Recording[], now: Date = new Date()): WritingStreaks {
+  const daySet = new Set<string>();
+  for (const recording of recordings) {
+    const date = new Date(recording.recordedAt);
+    if (!Number.isNaN(date.getTime())) daySet.add(dayKey(date));
+  }
+  const days = [...daySet].sort();
+
+  let longest = 0;
+  let run = 0;
+  let previous: number | null = null;
+  for (const key of days) {
+    const time = new Date(`${key}T00:00:00`).getTime();
+    run = previous !== null && time - previous === 86_400_000 ? run + 1 : 1;
+    longest = Math.max(longest, run);
+    previous = time;
+  }
+
+  const today = dayKey(now);
+  const yesterday = dayKey(new Date(now.getTime() - 86_400_000));
+  const start = daySet.has(today)
+    ? now
+    : daySet.has(yesterday)
+      ? new Date(now.getTime() - 86_400_000)
+      : null;
+  let current = 0;
+  if (start) {
+    let cursor = start;
+    while (daySet.has(dayKey(cursor))) {
+      current += 1;
+      cursor = new Date(cursor.getTime() - 86_400_000);
+    }
+  }
+
+  return { current, longest, wroteToday: daySet.has(today) };
+}
+
 export function analyzeWriting(recordings: Recording[], now: Date = new Date()): WritingMetrics {
   const frequency = new Map<string, number>();
   const dayCounts = new Map<string, number>();
@@ -300,7 +350,6 @@ export function analyzeWriting(recordings: Recording[], now: Date = new Date()):
   let longestNote: { title: string; words: number } | null = null;
   let firstAt: string | null = null;
   let lastAt: string | null = null;
-  let wroteToday = false;
 
   let sentimentSum = 0;
   let sentimentCount = 0;
@@ -310,8 +359,6 @@ export function analyzeWriting(recordings: Recording[], now: Date = new Date()):
   let topPositive: { title: string; score: number } | null = null;
   let topNegative: { title: string; score: number } | null = null;
 
-  const todayKey = dayKey(now);
-
   for (const recording of recordings) {
     if (recording.filePath) withAudio += 1;
 
@@ -319,7 +366,6 @@ export function analyzeWriting(recordings: Recording[], now: Date = new Date()):
     if (!Number.isNaN(date.getTime())) {
       const key = dayKey(date);
       dayCounts.set(key, (dayCounts.get(key) ?? 0) + 1);
-      if (key === todayKey) wroteToday = true;
       if (!firstAt || recording.recordedAt < firstAt) firstAt = recording.recordedAt;
       if (!lastAt || recording.recordedAt > lastAt) lastAt = recording.recordedAt;
     }
@@ -386,31 +432,7 @@ export function analyzeWriting(recordings: Recording[], now: Date = new Date()):
     .map((word) => ({ label: word, value: word.length }));
 
   const days = [...dayCounts.keys()].sort();
-
-  // Dias com registro e sequencias (streak atual e a maior).
-  let longestStreak = 0;
-  let run = 0;
-  let previous: number | null = null;
-  const daySet = new Set(days);
-  for (const key of days) {
-    const time = new Date(`${key}T00:00:00`).getTime();
-    run = previous !== null && time - previous === 86_400_000 ? run + 1 : 1;
-    longestStreak = Math.max(longestStreak, run);
-    previous = time;
-  }
-  let currentStreak = 0;
-  const startFromNow = daySet.has(dayKey(now))
-    ? now
-    : daySet.has(dayKey(new Date(now.getTime() - 86_400_000)))
-      ? new Date(now.getTime() - 86_400_000)
-      : null;
-  if (startFromNow) {
-    let cursor = startFromNow;
-    while (daySet.has(dayKey(cursor))) {
-      currentStreak += 1;
-      cursor = new Date(cursor.getTime() - 86_400_000);
-    }
-  }
+  const streaks = writingStreaks(recordings, now);
 
   // Habito: dia da semana e faixa de hora (pelos eventos).
   const weekdayCounts = new Array(7).fill(0) as number[];
@@ -472,14 +494,14 @@ export function analyzeWriting(recordings: Recording[], now: Date = new Date()):
     activeDays: days.length,
     consistency: writingConsistency(recordings, now),
     averageNotesPerActiveDay: round1(average(recordings.length, days.length)),
-    currentStreak,
-    longestStreak,
+    currentStreak: streaks.current,
+    longestStreak: streaks.longest,
     topWeekday,
     topHour,
     firstAt,
     lastAt,
     longestNote,
-    wroteToday,
+    wroteToday: streaks.wroteToday,
     monthly,
     monthComparisonPct,
     sentiment: {

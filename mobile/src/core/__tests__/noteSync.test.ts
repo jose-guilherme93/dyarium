@@ -20,11 +20,13 @@ class FakeApi implements NoteSyncApi {
   patched: {
     title?: string;
     recorded_at?: string;
+    notebook_id?: string;
     archived?: boolean;
     versions?: Record<string, string>;
   }[] = [];
   bodies: { markdown: string; baseVersion?: string }[] = [];
   created: { entryId: string; title: string; markdown: string }[] = [];
+  tagCalls: { entryId: string; tags: string[] }[] = [];
   conflictOn: 'title' | 'body' | null = null;
   entryVersions = { title: 'v1-titulo', recorded_at: 'v1-data' };
   notes: { id: string; body_version?: string; content_markdown?: string }[] = [
@@ -43,7 +45,7 @@ class FakeApi implements NoteSyncApi {
 
   updateEntry = jest.fn(async (_id: string, body: Parameters<NoteSyncApi['updateEntry']>[1]) => {
     this.patched.push(body);
-    if (this.conflictOn === 'title') {
+    if (this.conflictOn === 'title' && body.title !== undefined) {
       throw new ConflictError(409, 'conflict', 'a nota mudou no outro lugar', ['title']);
     }
     return this.entryVersions;
@@ -54,6 +56,10 @@ class FakeApi implements NoteSyncApi {
   createNote = jest.fn(async (entryId: string, title: string, markdown: string) => {
     this.created.push({ entryId, title, markdown });
     return { id: 'n_criada', body_version: 'v_criada' };
+  });
+
+  setEntryTags = jest.fn(async (entryId: string, tags: string[]) => {
+    this.tagCalls.push({ entryId, tags });
   });
 
   updateNote = jest.fn(async (_id: string, markdown: string, baseVersion?: string) => {
@@ -91,6 +97,40 @@ const nota = (over: Partial<Recording> = {}): Recording => ({
 const semImagens = async (n: Recording) => ({ markdown: n.text ?? '', attachments: {} });
 
 describe('syncNoteWith', () => {
+  it('envia o caderno quando ele mudou e as tags quando estao sujas', async () => {
+    const api = new FakeApi();
+    await syncNoteWith(
+      api,
+      nota({
+        notebookId: 'nb_trabalho',
+        notebookDirty: true,
+        tags: ['viagem', 'familia'],
+        tagsDirty: true,
+      }),
+      semImagens,
+    );
+    expect(api.patched.some((body) => body.notebook_id === 'nb_trabalho')).toBe(true);
+    expect(api.tagCalls).toEqual([{ entryId: 'en1', tags: ['viagem', 'familia'] }]);
+  });
+
+  it('move o caderno mesmo quando o titulo conflita', async () => {
+    const api = new FakeApi();
+    api.conflictOn = 'title';
+    await syncNoteWith(
+      api,
+      nota({ notebookId: 'nb_trabalho', notebookDirty: true }),
+      semImagens,
+    );
+    expect(api.patched.some((body) => body.notebook_id === 'nb_trabalho')).toBe(true);
+  });
+
+  it('nao reenvia caderno nem tags quando nada mudou neles', async () => {
+    const api = new FakeApi();
+    await syncNoteWith(api, nota({ notebookId: 'nb_trabalho' }), semImagens);
+    expect(api.patched[0].notebook_id).toBeUndefined();
+    expect(api.tagCalls).toHaveLength(0);
+  });
+
   it('manda o corpo em markdown, sem passar por JSON de blocos', async () => {
     const api = new FakeApi();
     const markdown = '## Secao\n\nparagrafo\n\n- item\n\n![foto](attachment:at_1){w=50}\n';

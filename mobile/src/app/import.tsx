@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 
 import { Button } from '@/components/Button';
+import { NotebookPicker } from '@/components/NotebookPicker';
 import { Screen } from '@/components/Screen';
 import { formatBytes, formatDuration } from '@/core/format';
 import {
@@ -22,6 +23,7 @@ import {
   resolveRecordedAt,
   type ImportDraft,
 } from '@/core/import';
+import { DEFAULT_NOTEBOOK_ID } from '@/core/notebooks';
 import type { Recording } from '@/core/types';
 import { deleteSessionFiles } from '@/services/files';
 import { prepareSharedAudios } from '@/services/share';
@@ -154,8 +156,13 @@ function probeDuration(player: AudioPlayer, uri: string): Promise<number | null>
 
 export default function ImportReviewScreen() {
   const library = useLibrary();
-  const { importYear, setImportYear } = useSettings();
+  const { importYear, setImportYear, lastNotebookId } = useSettings();
   const [items, setItems] = useState<ReviewItem[] | null>(null);
+  const [notebookId, setNotebookId] = useState(lastNotebookId ?? DEFAULT_NOTEBOOK_ID);
+  const [notebookPickerOpen, setNotebookPickerOpen] = useState(false);
+  const targetNotebookId = library.notebooks.some((notebook) => notebook.id === notebookId)
+    ? notebookId
+    : (library.notebooks.find((notebook) => notebook.isDefault)?.id ?? DEFAULT_NOTEBOOK_ID);
   const [ignored, setIgnored] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -363,7 +370,7 @@ export default function ImportReviewScreen() {
           recordedAt: parsed.toISOString(),
           durationMs: item.durationMs ?? item.draft.durationMs,
         };
-        recordings.push(draftToRecording(draft, now));
+        recordings.push({ ...draftToRecording(draft, now), notebookId: targetNotebookId });
       }
       committedRef.current = true;
       for (const recording of recordings) {
@@ -374,7 +381,7 @@ export default function ImportReviewScreen() {
       setError('Não foi possível enfileirar os áudios.');
       setSending(false);
     }
-  }, [library, sending]);
+  }, [library, sending, targetNotebookId]);
 
   const supportedCount = items?.filter((it) => it.draft.supported).length ?? 0;
   const loading = items === null;
@@ -401,6 +408,22 @@ export default function ImportReviewScreen() {
               Confira o que vai ser enviado. O áudio original é preservado; só o título e a data
               podem mudar.
             </Text>
+
+            <View style={styles.controlRow}>
+              <Text style={styles.controlLabel}>Caderno</Text>
+              <Pressable
+                style={styles.segment}
+                onPress={() => setNotebookPickerOpen(true)}
+                accessibilityRole="button"
+                accessibilityLabel="Escolher caderno"
+              >
+                <Text style={styles.segmentText} numberOfLines={1}>
+                  {library.notebooks.find((item) => item.id === targetNotebookId)?.name ??
+                    'Notas ao acaso'}
+                </Text>
+                <Ionicons name="chevron-down" size={14} color={colors.textSecondary} />
+              </Pressable>
+            </View>
 
             <View style={styles.control}>
               <Text style={styles.controlLabel}>Ano das gravações</Text>
@@ -512,6 +535,17 @@ export default function ImportReviewScreen() {
           </View>
         </>
       )}
+
+      <NotebookPicker
+        visible={notebookPickerOpen}
+        notebooks={library.notebooks}
+        currentId={targetNotebookId}
+        onClose={() => setNotebookPickerOpen(false)}
+        onSelect={(id) => {
+          setNotebookId(id);
+          setNotebookPickerOpen(false);
+        }}
+      />
     </Screen>
   );
 }

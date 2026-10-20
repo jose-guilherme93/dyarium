@@ -95,6 +95,14 @@ export interface Recording {
   duplicate?: boolean;
   /** Nota arquivada: sai da lista principal, mas nao e apagada. */
   archived?: boolean;
+  /** Caderno da nota. O padrao ("Notas ao acaso") cobre notas antigas. */
+  notebookId?: string;
+  /** Tags da nota, na ordem canonica do servidor. */
+  tags?: string[];
+  /** Caderno alterado localmente e ainda nao enviado. */
+  notebookDirty?: boolean;
+  /** Tags alteradas localmente e ainda nao enviadas. */
+  tagsDirty?: boolean;
   /** Edicao local (titulo/texto/imagem) numa nota ja enviada, pendente de sync. */
   noteDirty?: boolean;
   /** Mapa nome local da imagem -> id do anexo no servidor (evita reenviar). */
@@ -178,7 +186,7 @@ export function needsNoteSync(r: Recording): boolean {
   return (
     Boolean(r.entryId) &&
     r.status === 'completed' &&
-    Boolean(r.noteDirty) &&
+    Boolean(r.noteDirty || r.notebookDirty || r.tagsDirty) &&
     !hasNoteConflict(r)
   );
 }

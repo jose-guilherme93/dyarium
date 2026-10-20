@@ -34,10 +34,12 @@ import {
   type BackupFile,
   type BackupNote,
 } from '@/core/backup';
+import { DEFAULT_NOTEBOOK_ID } from '@/core/notebooks';
 import type { Recording } from '@/core/types';
 
 import { listRecordings, upsertRecording } from './db';
 import { sessionDirectory, sessionDirUri } from './files';
+import { listNotebooks, restoreLocalNotebook } from './notebooks';
 
 export interface BackupSummary {
   notes: number;
@@ -189,6 +191,7 @@ export async function runBackup(
   onProgress?: BackupProgress,
 ): Promise<BackupSummary> {
   const recordings = orderForBackup(await listRecordings());
+  const notebooks = await listNotebooks();
   const existing = await listFolder(folderUri);
   const referenced = new Set<string>();
   const notes: BackupNote[] = [];
@@ -234,7 +237,7 @@ export async function runBackup(
   );
   await Legacy.writeAsStringAsync(
     manifestUri,
-    JSON.stringify(buildManifest(notes, new Date(), appVersion())),
+    JSON.stringify(buildManifest(notes, new Date(), appVersion(), notebooks)),
   );
   existing.set(BACKUP_MANIFEST, manifestUri);
 
@@ -259,6 +262,14 @@ export async function runRestore(
   if (!manifestUri) throw new BackupError('manifest_missing');
   const manifest = parseManifest(await Legacy.readAsStringAsync(manifestUri));
   if (!manifest) throw new BackupError('manifest_invalid');
+
+  // Cadernos primeiro: as notas restauradas precisam de um lugar. Backups
+  // antigos nao trazem cadernos; nesse caso as notas caem no padrao.
+  for (const notebook of manifest.notebooks ?? []) {
+    await restoreLocalNotebook(notebook);
+  }
+  const knownNotebooks = new Set((await listNotebooks()).map((notebook) => notebook.id));
+  knownNotebooks.add(DEFAULT_NOTEBOOK_ID);
 
   const notes = orderNotesForRestore(manifest.notes);
   const stageRoot = new Directory(Paths.cache, STAGE_DIR);
@@ -298,6 +309,10 @@ export async function runRestore(
     // apagada e trazida de volta nao pode ser apagada de novo por causa disso).
     await upsertRecording({
       ...toRestoredRecording(recording, sessionDirUri(recording.id), entry.audioFile),
+      notebookId:
+        recording.notebookId && knownNotebooks.has(recording.notebookId)
+          ? recording.notebookId
+          : DEFAULT_NOTEBOOK_ID,
       updatedAt: new Date().toISOString(),
     });
     files += entry.files.length;

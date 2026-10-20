@@ -9,16 +9,18 @@
 
 import { DyariumApi, type FetchLike } from '@/core/api';
 import { newId } from '@/core/id';
-import { METRICS_SCHEMA, buildMetricsSnapshot, type MetricsSnapshot } from '@/core/metricsSnapshot';
+import { buildMetricsSnapshot, type MetricsSnapshot } from '@/core/metricsSnapshot';
 import { Platform } from 'react-native';
 
 import {
+  listCachedAnalyses,
   listRecordings,
   loadMetricsSnapshot,
   markMetricsSynced,
   saveMetricsSnapshot,
 } from './db';
 import { loadDeviceIdentity, loadServerConfig, saveDeviceIdentity } from './secure';
+import { scanImageBytes } from './storageScan';
 
 const doFetch = globalThis.fetch as unknown as FetchLike;
 
@@ -42,8 +44,25 @@ function deviceLabel(): string {
  * sem ler o banco de novo).
  */
 export async function refreshMetricsSnapshot(now: Date = new Date()): Promise<MetricsSnapshot> {
-  const recordings = await listRecordings();
-  const snapshot = buildMetricsSnapshot(recordings, now);
+  const [recordings, cached] = await Promise.all([
+    listRecordings(),
+    listCachedAnalyses().catch(() => []),
+  ]);
+  // A mesma analise que o Painel ve (local vence a do servidor) alimenta o
+  // sentimento do snapshot; sem isso o web mostraria o lexico e o app a analise.
+  const analyses = cached.map((item) => ({
+    entryId: item.entryId,
+    origin: item.origin ?? ('server' as const),
+    contentHash: item.contentHash,
+    model: item.analysis.model,
+    sentiment: item.analysis.sentiment,
+    sentimentLabel: item.analysis.sentiment_label,
+    emotions: item.analysis.emotions,
+    themes: (item.analysis.themes ?? []).map((theme) => theme.name),
+    people: item.analysis.people ?? undefined,
+    places: item.analysis.places ?? undefined,
+  }));
+  const snapshot = buildMetricsSnapshot(recordings, now, analyses, scanImageBytes(recordings));
   await saveMetricsSnapshot(JSON.stringify(snapshot), snapshot.generated_at);
   return snapshot;
 }
@@ -67,10 +86,7 @@ export async function syncMetrics(now: Date = new Date()): Promise<boolean> {
   await api.putMetrics({
     device_id: device.id,
     device_name: device.name,
-    schema: METRICS_SCHEMA,
-    generated_at: snapshot.generated_at,
-    writing: snapshot.writing,
-    history: snapshot.history,
+    ...snapshot,
   });
   await markMetricsSynced(new Date().toISOString());
   return true;

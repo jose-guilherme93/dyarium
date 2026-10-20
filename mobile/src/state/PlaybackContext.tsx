@@ -27,13 +27,10 @@ const PlaybackContext = createContext<PlaybackValue | null>(null);
 
 // Atualiza o tempo com frequencia suficiente para a previa da transcricao.
 const PLAYER_OPTIONS = { updateInterval: 250 };
-// Abrir a nota carrega so o texto; o audio entra depois (ou ao apertar play).
-const LOAD_DELAY_MS = 900;
 
 /**
  * Um unico player para todo o app. Dois players (nota e transcricao) sempre
- * conflitavam: o audio parava e recomecava do zero. A fonte so e carregada
- * depois que a nota ja abriu, para a abertura nao travar.
+ * conflitavam: o audio parava e recomecava do zero.
  */
 export function PlaybackProvider({ children }: { children: ReactNode }) {
   const [player] = useState(() => createAudioPlayer(undefined, PLAYER_OPTIONS));
@@ -82,8 +79,9 @@ interface PlaybackSourceOptions {
 }
 
 /**
- * Aponta o player unico para `uri` e devolve ele. A carga e adiada por
- * `LOAD_DELAY_MS` (a menos que `immediate`), e so acontece quando a uri muda.
+ * Aponta o player unico para `uri` e devolve ele. Por padrao a fonte NAO e
+ * carregada: abrir uma nota nao pode decodificar audio. Quem precisa do audio
+ * pronto (tela de transcricao) passa `immediate`; a nota carrega no play/seek.
  */
 export function usePlaybackSource(uri: string | undefined, options?: PlaybackSourceOptions): AudioPlayer {
   const { player, desiredRef, load } = usePlaybackValue();
@@ -92,12 +90,8 @@ export function usePlaybackSource(uri: string | undefined, options?: PlaybackSou
   useEffect(() => {
     if (!uri) return undefined;
     desiredRef.current = uri;
-    if (immediate) {
-      load();
-      return undefined;
-    }
-    const timer = setTimeout(load, LOAD_DELAY_MS);
-    return () => clearTimeout(timer);
+    if (immediate) load();
+    return undefined;
   }, [uri, desiredRef, load, immediate]);
 
   return player;

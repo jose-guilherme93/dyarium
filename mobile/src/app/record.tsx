@@ -20,11 +20,12 @@ import { colors, fontSize, spacing } from '@/theme/tokens';
  * home, vira uma nota nova. Em ambos os casos, volta para a nota.
  */
 export default function RecordScreen() {
-  const { noteId } = useLocalSearchParams<{ noteId?: string }>();
-  const { attachAudio, enqueue, refresh } = useLibrary();
+  const { noteId, from } = useLocalSearchParams<{ noteId?: string; from?: string }>();
+  const { attachAudio, enqueue, refresh, submitNote } = useLibrary();
   const { active, elapsedMs, level, error, busy, paused, pause, unpause, start, stop } =
     useRecording();
   const [finishing, setFinishing] = useState(false);
+  const [finishError, setFinishError] = useState<string | null>(null);
   const startedRef = useRef(false);
   useRenderCount('Record');
 
@@ -35,27 +36,50 @@ export default function RecordScreen() {
   }, [start]);
 
   const finish = useCallback(async () => {
+    setFinishError(null);
     const finished = await stop({ enqueue: false });
     if (!finished) {
-      router.back();
+      // Nada foi capturado: o erro do contexto ja esta na tela. Sair calado
+      // deixava a impressao de que a nota tinha sido criada.
       return;
     }
     if (noteId) {
-      const movedPath = await moveAudio(finished.id, noteId);
+      // Se a nota sumiu no meio do caminho, o audio nao pode ser perdido: o
+      // anexo falha e a gravacao vira uma nota propria logo abaixo.
+      const movedPath = await moveAudio(finished.id, noteId).catch((error) => {
+        console.warn('[dyarium] falha ao mover o audio da gravacao', String(error));
+        return null;
+      });
       const attached: Recording = {
         ...finished,
-        dir: sessionDirUri(noteId),
+        dir: movedPath ? sessionDirUri(noteId) : finished.dir,
         filePath: movedPath ?? finished.filePath,
       };
-      await attachAudio(noteId, attached);
-      await deleteRecordingRow(finished.id);
-      await refresh();
-      router.replace({ pathname: '/note/[id]', params: { id: noteId } });
+      const kept = await attachAudio(noteId, attached).catch((error) => {
+        console.warn('[dyarium] falha ao anexar o audio na nota', String(error));
+        return false;
+      });
+      if (kept) {
+        await deleteRecordingRow(finished.id);
+        // A nota nasceu como rascunho (ou ja existia): garante que ela saia do
+        // status invisivel `draft` mesmo se a tela da nota nao abrir agora.
+        await submitNote(noteId);
+        await refresh();
+        // Se a gravacao veio da propria nota, voltar evita duas telas da mesma
+        // nota. Se veio da home, abre a nota para o audio nao ficar escondido
+        // atras de um rascunho sem caderno visivel.
+        if (from === 'note' && router.canGoBack()) router.back();
+        else router.replace({ pathname: '/note/[id]', params: { id: noteId } });
+        return;
+      }
+      console.warn('[dyarium] nota de destino sumiu; guardando a gravacao como nota');
+      await enqueue(attached);
+      router.replace({ pathname: '/note/[id]', params: { id: finished.id } });
       return;
     }
     await enqueue(finished);
     router.replace({ pathname: '/note/[id]', params: { id: finished.id } });
-  }, [stop, noteId, attachAudio, enqueue, refresh]);
+  }, [stop, noteId, from, attachAudio, enqueue, refresh, submitNote]);
 
   const handleStop = useCallback(async () => {
     if (finishing) return;
@@ -63,6 +87,10 @@ export default function RecordScreen() {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
     try {
       await finish();
+    } catch {
+      // Nada de conteudo do audio no aviso: so o suficiente para o usuario
+      // saber que a gravacao continua guardada e pode ser recuperada.
+      setFinishError('Não foi possível guardar esta gravação. Tente de novo.');
     } finally {
       setFinishing(false);
     }
@@ -106,7 +134,7 @@ export default function RecordScreen() {
                 ? 'Preparando...'
                 : '...'}
         </Text>
-        {error ? <Text style={styles.error}>{error}</Text> : null}
+        {finishError ?? error ? <Text style={styles.error}>{finishError ?? error}</Text> : null}
       </View>
 
       <View style={styles.bottom}>

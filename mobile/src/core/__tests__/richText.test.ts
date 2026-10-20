@@ -6,6 +6,7 @@ import {
   extractImageUrls,
   findOpaqueBlocks,
   htmlToMarkdown,
+  markdownPreview,
   markdownToHtml,
   markdownToPlain,
   removeImageFromMarkdown,
@@ -58,7 +59,7 @@ describe('htmlToMarkdown', () => {
 
   it('renderiza imagem como bloco (paragrafo depois) e volta para markdown', () => {
     expect(markdownToHtml('![foto](https://x.test/f.png)')).toBe(
-      '<div class="img-block" contenteditable="false"><img src="https://x.test/f.png" data-src="https://x.test/f.png" alt="foto"></div><div><br></div>',
+      '<div class="img-block" contenteditable="false"><img src="https://x.test/f.png" data-src="https://x.test/f.png" alt="foto" decoding="async"></div><div><br></div>',
     );
     expect(htmlToMarkdown('<div><img src="https://x.test/f.png" alt="foto"></div>')).toBe(
       '![foto](https://x.test/f.png)',
@@ -70,7 +71,7 @@ describe('htmlToMarkdown', () => {
     const sources = { 'attachment:abc': 'file:///data/attachments/abc.png' };
     const html = markdownToHtml(md, sources);
     expect(html).toBe(
-      '<div class="img-block" contenteditable="false"><img src="file:///data/attachments/abc.png" data-src="attachment:abc" alt="foto"></div><div><br></div>',
+      '<div class="img-block" contenteditable="false"><img src="file:///data/attachments/abc.png" data-src="attachment:abc" alt="foto" decoding="async"></div><div><br></div>',
     );
     // Ao salvar, volta a referencia original (nao a fonte de exibicao).
     expect(htmlToMarkdown(html)).toBe(md);
@@ -175,6 +176,24 @@ describe('countWords / countChars / markdownToPlain', () => {
     expect(countWords('antes ![foto](attachment:abc) depois')).toBe(2);
     expect(markdownToPlain('veja [a nota](note:abc)')).toBe('veja ');
     expect(markdownToPlain('veja [isso](https://exemplo.com/x)')).toBe('veja isso');
+  });
+});
+
+describe('markdownPreview', () => {
+  it('mostra o texto puro da nota', () => {
+    expect(markdownPreview('**ola** mundo')).toBe('ola mundo');
+    expect(markdownPreview('')).toBe('');
+    expect(markdownPreview(undefined)).toBe('');
+  });
+
+  it('corta antes de converter: nao parseia a nota inteira', () => {
+    const preview = markdownPreview(`${'palavra '.repeat(500)}fim`, 40);
+    expect(preview.length).toBeLessThanOrEqual(40);
+    expect(preview.startsWith('palavra')).toBe(true);
+  });
+
+  it('junta as linhas numa unica linha', () => {
+    expect(markdownPreview('linha um\nlinha dois')).toBe('linha um linha dois');
   });
 });
 

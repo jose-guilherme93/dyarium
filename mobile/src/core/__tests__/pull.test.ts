@@ -62,6 +62,19 @@ describe('entryToRecording', () => {
     expect(rec.text).toBe('');
   });
 
+  it('preserva a origem importada e a data de criacao do servidor', () => {
+    const rec = entryToRecording({
+      ...ENTRY,
+      source: 'share',
+      content_type: 'audio/aac',
+      created_at: '2026-10-19T10:00:00Z',
+      recorded_at: '2023-10-19T13:30:00Z',
+    });
+    expect(rec.source).toBe('share');
+    expect(rec.createdAt).toBe('2026-10-19T10:00:00Z');
+    expect(rec.recordedAt).toBe('2023-10-19T13:30:00Z');
+  });
+
   it('traz duracao e tamanho do servidor, para a nota nao abrir como 0:00', () => {
     const rec = entryToRecording({
       ...ENTRY,
@@ -82,6 +95,16 @@ describe('entryToRecording', () => {
   it('traz o arquivamento do servidor', () => {
     expect(entryToRecording({ ...ENTRY, archived: true }).archived).toBe(true);
     expect(entryToRecording({ ...ENTRY, archived: false }).archived).toBe(false);
+  });
+
+  it('traz caderno e tags do servidor', () => {
+    const rec = entryToRecording({
+      ...ENTRY,
+      notebook_id: 'nb_trabalho',
+      tags: ['viagem', 'familia'],
+    });
+    expect(rec.notebookId).toBe('nb_trabalho');
+    expect(rec.tags).toEqual(['viagem', 'familia']);
   });
 
   it('usa recorded_at quando presente', () => {
@@ -232,6 +255,20 @@ describe('mergeServerNote', () => {
     expect(merged?.title).toBe('titulo local');
   });
 
+  it('nao altera o createdAt local ao aplicar uma edicao do servidor', () => {
+    const local = clean({ createdAt: '2023-10-19T13:30:00.000Z' });
+    const merged = mergeServerNote(
+      local,
+      serverEntry({
+        title: 'titulo novo',
+        created_at: '2026-10-19T10:00:00Z',
+        versions: { title: 't2', recorded_at: 'r1', body: 'b1' },
+      }),
+      undefined,
+    );
+    expect(merged?.createdAt).toBe('2023-10-19T13:30:00.000Z');
+  });
+
   it('aplica titulo, data e arquivamento sem tocar no corpo', () => {
     const local = clean();
     const merged = mergeServerNote(
@@ -303,6 +340,30 @@ describe('mergeServerNote', () => {
 
   it('nao aplica versao de corpo sem o texto (espera o proximo pull)', () => {
     const merged = mergeServerNote(clean(), serverEntry({ versions: { body: 'b2' } }), undefined);
+    expect(merged).toBeNull();
+  });
+
+  it('adota caderno e tags do servidor quando nao ha mudanca local pendente', () => {
+    const local = recording({ notebookId: 'nb_antigo', tags: ['viagem'] });
+    const merged = mergeServerNote(
+      local,
+      { ...ENTRY, notebook_id: 'nb_novo', tags: ['estudo', 'ingles'] },
+    );
+    expect(merged?.notebookId).toBe('nb_novo');
+    expect(merged?.tags).toEqual(['estudo', 'ingles']);
+  });
+
+  it('nao sobrescreve caderno nem tags com alteracao local pendente', () => {
+    const local = recording({
+      notebookId: 'nb_local',
+      notebookDirty: true,
+      tags: ['meu'],
+      tagsDirty: true,
+    });
+    const merged = mergeServerNote(
+      local,
+      { ...ENTRY, notebook_id: 'nb_servidor', tags: ['deles'] },
+    );
     expect(merged).toBeNull();
   });
 
