@@ -112,7 +112,8 @@ func TestRetryingJobIsClaimedAfterBackoff(t *testing.T) {
 		t.Fatal("job em backoff nao deveria ser reivindicado")
 	}
 
-	time.Sleep(350 * time.Millisecond)
+	// backoff(300ms, 1) soma ate 75ms de jitter: espere alem do pior caso.
+	time.Sleep(450 * time.Millisecond)
 
 	again, err := q.Claim(ctx, "worker-1", time.Minute)
 	if err != nil {
