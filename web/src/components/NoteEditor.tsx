@@ -8,11 +8,11 @@ import { markdownToNoteBlocks } from "../editor/markdownBlocks";
 import { createAutosave, type Autosave } from "../lib/autosave";
 import { formatDateTime, formatDuration } from "../lib/format";
 import { patchNoteViewState, readNoteViewState } from "../lib/noteViewState";
-import type { Analysis, Attachment, Audio, EntityKind, Entry, Note, Revision } from "../types";
+import type { Analysis, Attachment, Audio, EntityKind, Entry, Note, Notebook, Revision } from "../types";
 import { Spinner, isBusy, statusLabel } from "./Status";
 import { TagEditor } from "./TagEditor";
 import { useToast } from "./Toasts";
-import { CheckIcon, ChevronIcon, CodeIcon, ImageIcon, LinkIcon, MicIcon, MoreIcon, PlusIcon, SparkIcon, TrashIcon } from "./icons";
+import { CheckIcon, ChevronIcon, CodeIcon, ImageIcon, LinkIcon, MicIcon, MoreIcon, SparkIcon, TrashIcon } from "./icons";
 
 interface NoteEditorProps {
   entryId: string;
@@ -23,7 +23,7 @@ interface NoteEditorProps {
   onDeleted: () => void;
   onOpenEntity: (kind: EntityKind, name: string) => void;
   onOpenEntry: (id: string) => void;
-  onCreateChild: (parentId: string) => void;
+  notebooks: Notebook[];
 }
 
 const FONTS = [
@@ -249,7 +249,7 @@ export function NoteEditor({
   onDeleted,
   onOpenEntity,
   onOpenEntry,
-  onCreateChild,
+  notebooks,
 }: NoteEditorProps) {
   const { notify } = useToast();
   const [entry, setEntry] = useState<Entry | null>(null);
@@ -887,15 +887,6 @@ export function NoteEditor({
             </button>
             <button
               type="button"
-              className="icon-button"
-              onClick={() => onCreateChild(entry.id)}
-              aria-label="Nova subnota"
-              title="Nova subnota"
-            >
-              <PlusIcon size={16} />
-            </button>
-            <button
-              type="button"
               className={asideOpen ? "icon-button icon-button--active" : "icon-button"}
               onClick={() => setAsideOpen((value) => !value)}
               aria-pressed={asideOpen}
@@ -1075,6 +1066,32 @@ export function NoteEditor({
               </button>
             </div>
           </div>
+
+          <section className="aside-block">
+            <h3>Caderno</h3>
+            <select
+              className="notebook-select"
+              value={entry.notebook_id ?? ""}
+              aria-label="Caderno da nota"
+              onChange={(event) => {
+                const next = event.target.value;
+                if (!next || next === entry.notebook_id) return;
+                void api
+                  .patchEntry(entry.id, { notebook_id: next })
+                  .then(() => {
+                    setEntry((current) => (current ? { ...current, notebook_id: next } : current));
+                    onChanged();
+                  })
+                  .catch(() => notify("Não foi possível mover a nota.", "error"));
+              }}
+            >
+              {notebooks.map((notebook) => (
+                <option key={notebook.id} value={notebook.id}>
+                  {notebook.name}
+                </option>
+              ))}
+            </select>
+          </section>
 
           <section className="aside-block">
             <h3>Detalhes</h3>

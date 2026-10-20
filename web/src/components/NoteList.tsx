@@ -1,23 +1,19 @@
-import { useCallback, useEffect, useState } from "react";
-import type { ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { formatDateTime } from "../lib/format";
-import type { Entry } from "../types";
-import { ArchiveIcon, ChevronIcon, CloseIcon, PlusIcon, SearchIcon } from "./icons";
+import { tagColor, withAlpha } from "../lib/tags";
+import type { Entry, Notebook } from "../types";
+import { ArchiveIcon, CloseIcon, PlusIcon, SearchIcon } from "./icons";
 
 interface NoteListProps {
   refreshKey: number;
   activeId: string | null;
   failures: Record<string, string>;
+  notebookId: string;
+  notebooks: Notebook[];
   onOpen: (id: string) => void;
-  // onCreate creates a note: parentId null creates a top-level note (under the
-  // root), otherwise a subnote of the given note.
-  onCreate: (parentId: string | null) => void;
-}
-
-interface TreeNode {
-  entry: Entry;
-  children: TreeNode[];
+  onCreate: () => void;
+  onManageTags: () => void;
 }
 
 // displayTitle hides the date older automatic titles carried; the date is shown
@@ -27,61 +23,79 @@ function displayTitle(entry: Entry): string {
   return raw.replace(/\s·\s\d{2}\/\d{2}\/\d{4}\s\d{2}:\d{2}$/, "");
 }
 
-function buildTree(entries: Entry[]): TreeNode[] {
-  const ids = new Set(entries.map((entry) => entry.id));
-  const childrenOf = new Map<string, Entry[]>();
-  for (const entry of entries) {
-    const parent = entry.parent_id && ids.has(entry.parent_id) ? entry.parent_id : "";
-    const list = childrenOf.get(parent);
-    if (list) {
-      list.push(entry);
-    } else {
-      childrenOf.set(parent, [entry]);
-    }
-  }
-  const make = (parent: string): TreeNode[] =>
-    (childrenOf.get(parent) ?? [])
-      .slice()
-      .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
-      .map((entry) => ({ entry, children: make(entry.id) }));
-  return make("");
+function noteDate(entry: Entry): string {
+  return entry.recorded_at ?? entry.created_at;
 }
 
 function matches(entry: Entry, query: string): boolean {
-  return `${displayTitle(entry)} ${entry.original_filename}`.toLowerCase().includes(query);
+  return `${displayTitle(entry)} ${entry.original_filename} ${(entry.tags ?? []).join(" ")}`
+    .toLowerCase()
+    .includes(query);
 }
 
-function prune(nodes: TreeNode[], query: string): TreeNode[] {
-  const out: TreeNode[] = [];
-  for (const node of nodes) {
-    const children = prune(node.children, query);
-    if (matches(node.entry, query) || children.length > 0) {
-      out.push({ entry: node.entry, children });
+function byDate(a: Entry, b: Entry): number {
+  return noteDate(a) < noteDate(b) ? 1 : -1;
+}
+
+function tagCounts(entries: Entry[], selected: string[]): { name: string; count: number }[] {
+  const universe = new Map<string, { name: string; count: number }>();
+  for (const entry of entries) {
+    for (const tag of entry.tags ?? []) {
+      const key = tag.toLowerCase();
+      const current = universe.get(key);
+      if (current) current.count += 1;
+      else universe.set(key, { name: tag, count: 1 });
     }
   }
-  return out;
+  if (selected.length === 0) {
+    return [...universe.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }
+  const selectedKeys = selected.map((tag) => tag.toLowerCase());
+  return [...universe.values()]
+    .map((tag) => {
+      const key = tag.name.toLowerCase();
+      const wanted = selectedKeys.includes(key) ? selectedKeys : [...selectedKeys, key];
+      const count = entries.filter((entry) => {
+        const present = new Set((entry.tags ?? []).map((item) => item.toLowerCase()));
+        return wanted.every((item) => present.has(item));
+      }).length;
+      return { name: tag.name, count };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-// NoteList is the notes tree in the left panel, like Trilium/Notion: notes can
-// have subnotes, expand/collapse, and a "+" on each row creates a child.
-export function NoteList({ refreshKey, activeId, failures, onOpen, onCreate }: NoteListProps) {
+// NoteList e a lista de notas do caderno ativo. A busca e global (todos os
+// cadernos); as tags filtram o caderno aberto com E entre si. Subnotas foram
+// desativadas: a lista e plana.
+export function NoteList({
+  refreshKey,
+  activeId,
+  failures,
+  notebookId,
+  notebooks,
+  onOpen,
+  onCreate,
+  onManageTags,
+}: NoteListProps) {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [query, setQuery] = useState("");
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [error, setError] = useState("");
-  // Arquivadas tem lista propria: sao as notas que o celular tirou da lista de
-  // trabalho. Sem isso, arquivar no celular sumiria com a nota daqui.
   const [archived, setArchived] = useState(false);
-  // A busca so ocupa espaco enquanto esta em uso.
   const [searchingOpen, setSearchingOpen] = useState(false);
+  // A lista abre em "Recentes" (todos os cadernos, por updated_at). O outro lado
+  // do toggle mostra o caderno atual na ordem temporal (recorded_at).
+  const [viewMode, setViewMode] = useState<"recent" | "notebook">("recent");
 
   const load = useCallback(async () => {
-    const cached = await api.listEntriesCached({ archived });
+    // Carrega as duas listas (ativas e arquivadas) de uma vez: a busca global
+    // inclui arquivadas e o toggle so muda a visao.
+    const cached = await api.listEntriesCached({ limit: 2000 });
     if (cached) {
       setEntries(cached.entries ?? []);
     }
     try {
-      const result = await api.listEntries({ archived });
+      const result = await api.listEntries({ limit: 2000 });
       setEntries(result.entries ?? []);
       setError("");
     } catch (err) {
@@ -89,83 +103,140 @@ export function NoteList({ refreshKey, activeId, failures, onOpen, onCreate }: N
         setError(err instanceof Error ? err.message : "falha ao carregar");
       }
     }
-  }, [archived]);
+  }, []);
 
   useEffect(() => {
     void load();
   }, [load, refreshKey]);
 
-  const toggle = (id: string) => {
-    setCollapsed((current) => {
-      const next = new Set(current);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
-  };
+  useEffect(() => {
+    setSelectedTags([]);
+    setQuery("");
+  }, [notebookId, viewMode]);
+
+  const notebookById = useMemo(
+    () => new Map(notebooks.map((notebook) => [notebook.id, notebook])),
+    [notebooks],
+  );
 
   const term = query.trim().toLowerCase();
-  const tree = term ? prune(buildTree(entries), term) : buildTree(entries);
+  const activeAcross = useMemo(
+    () => entries.filter((entry) => !entry.archived),
+    [entries],
+  );
+  const inNotebook = useMemo(
+    () =>
+      entries.filter(
+        (entry) =>
+          (entry.notebook_id ?? "") === notebookId && Boolean(entry.archived) === archived,
+      ),
+    [entries, notebookId, archived],
+  );
+  const scoped = viewMode === "recent" ? activeAcross : inNotebook;
+  const withTags = useMemo(() => {
+    if (selectedTags.length === 0) return scoped;
+    return scoped.filter((entry) => {
+      const present = new Set((entry.tags ?? []).map((tag) => tag.toLowerCase()));
+      return selectedTags.every((tag) => present.has(tag.toLowerCase()));
+    });
+  }, [scoped, selectedTags]);
+  const visible = useMemo(() => {
+    const filtered = term ? withTags.filter((entry) => matches(entry, term)) : withTags;
+    return [...filtered].sort(
+      viewMode === "recent"
+        ? (a, b) => (a.updated_at < b.updated_at ? 1 : -1)
+        : byDate,
+    );
+  }, [withTags, term, viewMode]);
+  const counts = useMemo(
+    () =>
+      tagCounts(
+        viewMode === "recent" ? activeAcross : inNotebook,
+        selectedTags,
+      ),
+    [viewMode, activeAcross, inNotebook, selectedTags],
+  );
 
-  // A busca e so um icone de lupa: o campo aparece quando ela e acionada e some
-  // quando nao ha nada digitado, para o menu ficar so com a lista de notas.
   const searching = searchingOpen || term !== "";
   const closeSearch = () => {
     setSearchingOpen(false);
     setQuery("");
   };
 
-  const renderNodes = (nodes: TreeNode[], depth: number): ReactNode =>
-    nodes.map((node) => {
-      const hasChildren = node.children.length > 0;
-      const isCollapsed = collapsed.has(node.entry.id);
-      return (
-        <li key={node.entry.id}>
-          <div
-            className={node.entry.id === activeId ? "tree-row tree-row--active" : "tree-row"}
-            style={{ paddingLeft: `${4 + depth * 14}px` }}
-          >
-            <button
-              type="button"
-              className={hasChildren ? "tree-toggle" : "tree-toggle tree-toggle--empty"}
-              onClick={() => hasChildren && toggle(node.entry.id)}
-              aria-label={isCollapsed ? "Expandir" : "Recolher"}
-              aria-expanded={hasChildren ? !isCollapsed : undefined}
-              tabIndex={hasChildren ? 0 : -1}
-            >
-              {hasChildren && (
-                <ChevronIcon size={14} />
-              )}
-            </button>
-            <button type="button" className="tree-main" onClick={() => onOpen(node.entry.id)}>
-              <span className="tree-title">{displayTitle(node.entry)}</span>
-              <span className="tree-date">
-                {formatDateTime(node.entry.created_at)}
-                {failures[node.entry.id] && <span className="tree-failed">falhou</span>}
+  const toggleTag = (name: string) => {
+    setSelectedTags((current) =>
+      current.some((tag) => tag.toLowerCase() === name.toLowerCase())
+        ? current.filter((tag) => tag.toLowerCase() !== name.toLowerCase())
+        : [...current, name],
+    );
+  };
+
+  const changeMode = (mode: "recent" | "notebook") => {
+    setViewMode(mode);
+    if (mode === "recent") setArchived(false);
+  };
+
+  const row = (entry: Entry, showNotebook: boolean) => (
+    <li key={entry.id}>
+      <div className={entry.id === activeId ? "tree-row tree-row--active" : "tree-row"}>
+        <button type="button" className="tree-main" onClick={() => onOpen(entry.id)}>
+          <span className="tree-title">{displayTitle(entry)}</span>
+          <span className="tree-date">
+            {formatDateTime(noteDate(entry))}
+            {showNotebook && (
+              <span className="tree-notebook">
+                {notebookById.get(entry.notebook_id ?? "")?.name ?? "Notas ao acaso"}
               </span>
-            </button>
-            <button
-              type="button"
-              className="tree-add"
-              onClick={() => onCreate(node.entry.id)}
-              aria-label="Nova subnota"
-              title="Nova subnota"
-            >
-              <PlusIcon size={14} />
-            </button>
-          </div>
-          {hasChildren && !isCollapsed && (
-            <ul className="tree-children">{renderNodes(node.children, depth + 1)}</ul>
+            )}
+            {failures[entry.id] && <span className="tree-failed">falhou</span>}
+          </span>
+          {(entry.tags ?? []).length > 0 && (
+            <span className="tree-tags">
+              {(entry.tags ?? []).slice(0, 2).map((tag) => {
+                const color = tagColor(tag);
+                return (
+                  <span
+                    key={tag}
+                    className="tree-tag"
+                    style={{ backgroundColor: withAlpha(color, 0.72), color: "#211e1a" }}
+                  >
+                    {tag}
+                  </span>
+                );
+              })}
+              {(entry.tags ?? []).length > 2 && (
+                <span className="tree-tag-more">+{(entry.tags ?? []).length - 2}</span>
+              )}
+            </span>
           )}
-        </li>
-      );
-    });
+        </button>
+      </div>
+    </li>
+  );
 
   return (
     <div className="list">
+      <div className="view-toggle" role="tablist" aria-label="Visão da lista">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={viewMode === "recent"}
+          className={viewMode === "recent" ? "view-toggle-option view-toggle-option--on" : "view-toggle-option"}
+          onClick={() => changeMode("recent")}
+        >
+          Recentes
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={viewMode === "notebook"}
+          className={viewMode === "notebook" ? "view-toggle-option view-toggle-option--on" : "view-toggle-option"}
+          onClick={() => changeMode("notebook")}
+        >
+          Caderno
+        </button>
+      </div>
+
       <div className="list-head">
         {searching ? (
           <label className="list-search">
@@ -180,8 +251,16 @@ export function NoteList({ refreshKey, activeId, failures, onOpen, onCreate }: N
                   closeSearch();
                 }
               }}
-              placeholder="Buscar notas"
-              aria-label="Buscar notas"
+              placeholder={
+                viewMode === "recent"
+                  ? "Buscar em todos os cadernos"
+                  : "Buscar neste caderno"
+              }
+              aria-label={
+                viewMode === "recent"
+                  ? "Buscar em todos os cadernos"
+                  : "Buscar neste caderno"
+              }
             />
             <button
               type="button"
@@ -198,26 +277,28 @@ export function NoteList({ refreshKey, activeId, failures, onOpen, onCreate }: N
             type="button"
             className="icon-button"
             onClick={() => setSearchingOpen(true)}
-            aria-label="Buscar notas"
-            title="Buscar notas"
+            aria-label="Buscar em todos os cadernos"
+            title="Buscar em todos os cadernos"
           >
             <SearchIcon size={16} />
           </button>
         )}
-        <button
-          type="button"
-          className={archived ? "icon-button icon-button--active" : "icon-button"}
-          onClick={() => setArchived((value) => !value)}
-          aria-pressed={archived}
-          aria-label={archived ? "Ver notas da lista de trabalho" : "Ver notas arquivadas"}
-          title={archived ? "Lista de trabalho" : "Arquivadas"}
-        >
-          <ArchiveIcon size={16} />
-        </button>
+        {viewMode === "notebook" && (
+          <button
+            type="button"
+            className={archived ? "icon-button icon-button--active" : "icon-button"}
+            onClick={() => setArchived((value) => !value)}
+            aria-pressed={archived}
+            aria-label={archived ? "Ver notas da lista de trabalho" : "Ver notas arquivadas"}
+            title={archived ? "Lista de trabalho" : "Ver arquivadas"}
+          >
+            <ArchiveIcon size={16} />
+          </button>
+        )}
         <button
           type="button"
           className="icon-button"
-          onClick={() => onCreate(null)}
+          onClick={onCreate}
           aria-label="Nova nota"
           title="Nova nota"
         >
@@ -227,13 +308,68 @@ export function NoteList({ refreshKey, activeId, failures, onOpen, onCreate }: N
 
       {error && <p className="error list-error">{error}</p>}
 
+      <div className="tag-filter" aria-label="Filtrar por tags">
+        <button
+          type="button"
+          className={selectedTags.length === 0 ? "tag-filter-all tag-filter-all--on" : "tag-filter-all"}
+          onClick={() => setSelectedTags([])}
+        >
+          Todas
+        </button>
+        {counts.map((tag) => {
+          const color = tagColor(tag.name);
+          const selected = selectedTags.some(
+            (item) => item.toLowerCase() === tag.name.toLowerCase(),
+          );
+          return (
+            <button
+              key={tag.name.toLowerCase()}
+              type="button"
+              className="tag-filter-chip"
+              aria-pressed={selected}
+              onClick={() => toggleTag(tag.name)}
+              style={{
+                backgroundColor: withAlpha(color, selected ? 0.92 : 0.62),
+                borderColor: selected ? "#211e1a" : withAlpha(color, 0.9),
+                color: "#211e1a",
+              }}
+            >
+              {tag.name}
+              <span className="tag-filter-count">{tag.count}</span>
+            </button>
+          );
+        })}
+        <button type="button" className="tag-filter-manage" onClick={onManageTags}>
+          Gerenciar tags
+        </button>
+      </div>
+
       <div className="list-scroll">
-        {tree.length === 0 ? (
+        {(viewMode === "notebook" || term) && (
+          <h3 className="list-section-label">
+            {term
+              ? "Resultados"
+              : archived
+                ? "Arquivadas"
+                : "Neste caderno"}
+          </h3>
+        )}
+        {visible.length === 0 ? (
           <div className="empty-state">
-            {archived ? (
+            {term ? (
+              <>
+                <p>Nada encontrado.</p>
+                <p>Tente outro termo ou uma tag.</p>
+              </>
+            ) : viewMode === "notebook" && archived ? (
               <>
                 <p>Nenhuma nota arquivada.</p>
-                <p>Arquivar no celular tira a nota da lista, sem apagar.</p>
+                <p>Arquivar tira a nota da lista, sem apagar.</p>
+              </>
+            ) : selectedTags.length > 0 ? (
+              <>
+                <p>Nenhuma nota com essas tags.</p>
+                <p>Limpe o filtro para ver a lista inteira.</p>
               </>
             ) : (
               <>
@@ -243,7 +379,9 @@ export function NoteList({ refreshKey, activeId, failures, onOpen, onCreate }: N
             )}
           </div>
         ) : (
-          <ul className="tree">{renderNodes(tree, 0)}</ul>
+          <ul className="tree">
+            {visible.map((entry) => row(entry, viewMode === "recent"))}
+          </ul>
         )}
       </div>
     </div>

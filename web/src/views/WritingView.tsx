@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { Spinner } from "../components/Status";
-import type { MetricsSnapshot } from "../types";
+import type {
+  MetricsConsistency,
+  MetricsEmotion,
+  MetricsRankedCount,
+  MetricsSeriesPoint,
+  MetricsSnapshot,
+  MetricsSnapshotV1,
+  MetricsSnapshotV2,
+  MetricsWordCount,
+} from "../types";
 
 /**
  * Painel "Escrita": mostra as metricas que o app calcula offline. O celular
@@ -11,6 +20,153 @@ import type { MetricsSnapshot } from "../types";
 
 const WEEKDAY_INITIALS = ["D", "S", "T", "Q", "Q", "S", "S"];
 const HOUR_LABELS = ["0h", "3h", "6h", "9h", "12h", "15h", "18h", "21h"];
+
+const WINDOW_KEYS = ["7d", "30d", "365d"] as const;
+type WindowKey = (typeof WINDOW_KEYS)[number];
+const WINDOW_LABELS: Record<WindowKey, string> = {
+  "7d": "7 dias",
+  "30d": "30 dias",
+  "365d": "ano",
+};
+
+/**
+ * Formato comum do que a tela desenha. O schema 1 (todas as notas) e o schema 2
+ * (janela escolhida) entram no mesmo molde, para o JSX ser um so.
+ */
+interface ViewWriting {
+  notes: number;
+  with_text: number;
+  words: number;
+  chars: number;
+  sentences: number;
+  paragraphs: number;
+  unique_words: number;
+  lexical_richness: number;
+  average_words_per_note: number;
+  average_sentence_words: number;
+  average_word_length: number;
+  transcript_words: number;
+  insights: string[];
+  consistency: MetricsConsistency;
+  monthly: MetricsSeriesPoint[];
+  month_comparison_pct: number | null;
+  weekday_hour: number[][];
+  current_streak: number;
+  longest_streak: number;
+  active_days: number;
+  average_notes_per_active_day: number;
+  wrote_today: boolean;
+  top_weekday: MetricsWordCount | null;
+  top_hour: MetricsWordCount | null;
+  top_words: MetricsWordCount[];
+  longest_words: MetricsWordCount[];
+  questions: number;
+  exclamations: number;
+  links: number;
+  images: number;
+  list_items: number;
+}
+
+interface ViewSentiment {
+  analyzed: number;
+  average: number;
+  positive: number;
+  neutral: number;
+  negative: number;
+  top_positive: { title: string; score: number } | null;
+  top_negative: { title: string; score: number } | null;
+  source?: "analysis" | "lexical";
+  emotions?: MetricsEmotion[];
+}
+
+/** Schema 1: um retrato de todas as notas, como o app envia hoje. */
+function legacyWriting(snapshot: MetricsSnapshotV1): ViewWriting {
+  const writing = snapshot.writing;
+  return {
+    notes: writing.notes,
+    with_text: writing.with_text,
+    words: writing.words,
+    chars: writing.chars,
+    sentences: writing.sentences,
+    paragraphs: writing.paragraphs,
+    unique_words: writing.unique_words,
+    lexical_richness: writing.lexical_richness,
+    average_words_per_note: writing.average_words_per_note,
+    average_sentence_words: writing.average_sentence_words,
+    average_word_length: writing.average_word_length,
+    transcript_words: writing.transcript_words,
+    insights: writing.insights,
+    consistency: writing.consistency,
+    monthly: writing.monthly,
+    month_comparison_pct: writing.month_comparison_pct,
+    weekday_hour: writing.weekday_hour,
+    current_streak: writing.current_streak,
+    longest_streak: writing.longest_streak,
+    active_days: writing.active_days,
+    average_notes_per_active_day: writing.average_notes_per_active_day,
+    wrote_today: writing.wrote_today,
+    top_weekday: writing.top_weekday,
+    top_hour: writing.top_hour,
+    top_words: writing.top_words,
+    longest_words: writing.longest_words,
+    questions: writing.questions,
+    exclamations: writing.exclamations,
+    links: writing.links,
+    images: writing.images,
+    list_items: writing.list_items,
+  };
+}
+
+/** Schema 2: a janela escolhida; a sequencia continua global. */
+function windowWriting(snapshot: MetricsSnapshotV2, key: WindowKey): ViewWriting {
+  const window = snapshot.windows[key];
+  const writing = window.writing;
+  return {
+    notes: writing.notes,
+    with_text: writing.with_text,
+    words: writing.words,
+    chars: writing.chars,
+    sentences: writing.sentences,
+    paragraphs: writing.paragraphs,
+    unique_words: writing.unique_words,
+    lexical_richness: writing.lexical_richness,
+    average_words_per_note: writing.average_words_per_note,
+    average_sentence_words: writing.average_sentence_words,
+    average_word_length: writing.average_word_length,
+    transcript_words: window.voice.words,
+    insights: window.summary,
+    consistency: writing.consistency,
+    monthly: [],
+    month_comparison_pct: null,
+    weekday_hour: writing.weekday_hour,
+    current_streak: snapshot.streak.current,
+    longest_streak: snapshot.streak.longest,
+    active_days: writing.active_days,
+    average_notes_per_active_day: writing.average_notes_per_active_day,
+    wrote_today: snapshot.streak.wrote_today,
+    top_weekday: writing.top_weekday,
+    top_hour: writing.top_hour,
+    top_words: writing.top_words,
+    longest_words: writing.longest_words,
+    questions: writing.questions,
+    exclamations: writing.exclamations,
+    links: writing.links,
+    images: writing.images,
+    list_items: writing.list_items,
+  };
+}
+
+function toneArrow(tone: MetricsEmotion["tone"]): string {
+  if (tone === "positive") return "↑";
+  if (tone === "negative") return "↓";
+  return "·";
+}
+
+function toneClass(tone: MetricsEmotion["tone"]): string {
+  if (tone === "positive") return "tone tone--up";
+  if (tone === "negative") return "tone tone--down";
+  return "tone";
+}
 
 function number(value: number): string {
   return value.toLocaleString("pt-BR");
@@ -27,6 +183,28 @@ function shortDate(iso: string): string {
 function percentOf(part: number, total: number): number {
   if (total <= 0) return 0;
   return Math.min(100, Math.round((part / total) * 100));
+}
+
+function bytes(value: number): string {
+  if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  if (value >= 1024) return `${Math.round(value / 1024)} KB`;
+  return `${value} B`;
+}
+
+function topicRow(title: string, items: MetricsRankedCount[]) {
+  if (items.length === 0) return null;
+  return (
+    <>
+      <p className="muted">{title}</p>
+      <ul className="chip-list">
+        {items.map((item) => (
+          <li className="chip" key={item.label}>
+            {item.label} · {item.count}
+          </li>
+        ))}
+      </ul>
+    </>
+  );
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
@@ -89,6 +267,7 @@ function heatColor(value: number, max: number): string {
 export function WritingView({ refreshKey }: { refreshKey: number }) {
   const [snapshots, setSnapshots] = useState<MetricsSnapshot[]>([]);
   const [selected, setSelected] = useState<string>("");
+  const [windowKey, setWindowKey] = useState<WindowKey>("30d");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -149,6 +328,8 @@ export function WritingView({ refreshKey }: { refreshKey: number }) {
           snapshot={snapshot}
           devices={snapshots}
           onSelect={setSelected}
+          windowKey={windowKey}
+          onWindow={setWindowKey}
         />
       )}
     </section>
@@ -159,19 +340,24 @@ function WritingBody({
   snapshot,
   devices,
   onSelect,
+  windowKey,
+  onWindow,
 }: {
   snapshot: MetricsSnapshot;
   devices: MetricsSnapshot[];
   onSelect: (deviceId: string) => void;
+  windowKey: WindowKey;
+  onWindow: (key: WindowKey) => void;
 }) {
-  const writing = snapshot.writing;
-  if (!writing) {
-    return <p className="muted">O snapshot deste aparelho esta em uma versao que nao sei ler.</p>;
-  }
+  const writing = snapshot.schema === 2 ? windowWriting(snapshot, windowKey) : legacyWriting(snapshot);
   const history = snapshot.history;
   const comparison = writing.month_comparison_pct;
   const percent = Math.round(writing.consistency.rate * 100);
-  const sentiment = writing.sentiment;
+  const sentiment: ViewSentiment =
+    snapshot.schema === 2 ? snapshot.windows[windowKey].sentiment : snapshot.writing.sentiment;
+  const voice = snapshot.schema === 2 ? snapshot.windows[windowKey].voice : null;
+  const topics = snapshot.schema === 2 ? snapshot.windows[windowKey].topics : null;
+  const images = snapshot.schema === 2 ? snapshot.windows[windowKey].images : null;
 
   return (
     <>
@@ -196,6 +382,22 @@ function WritingBody({
         </span>
       </div>
 
+      {snapshot.schema === 2 ? (
+        <div className="window-filter" role="group" aria-label="Janela">
+          {WINDOW_KEYS.map((key) => (
+            <button
+              key={key}
+              type="button"
+              className={key === windowKey ? "window-chip window-chip--active" : "window-chip"}
+              onClick={() => onWindow(key)}
+              aria-pressed={key === windowKey}
+            >
+              {WINDOW_LABELS[key]}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
       <div className="metric-grid">
         <Metric label="Palavras" value={number(writing.words)} />
         <Metric label="Notas" value={number(writing.notes)} />
@@ -213,10 +415,10 @@ function WritingBody({
 
       {writing.insights.length > 0 ? (
         <div className="chart-card">
-          <h3 className="chart-title">Insights</h3>
+          <h3 className="chart-title">{snapshot.schema === 2 ? "Resumo" : "Insights"}</h3>
           <ul className="insight-list">
-            {writing.insights.map((text) => (
-              <li key={text}>{text}</li>
+            {writing.insights.map((text, index) => (
+              <li key={index}>{text}</li>
             ))}
           </ul>
         </div>
@@ -242,20 +444,22 @@ function WritingBody({
           />
         ) : null}
 
-        <BarSeries
-          title="Palavras por mês"
-          caption={
-            comparison === null
-              ? undefined
-              : comparison > 5
-                ? `Você escreveu ${comparison}% mais que no mês passado.`
-                : comparison < -5
-                  ? `Você escreveu ${Math.abs(comparison)}% menos que no mês passado.`
-                  : "Seu ritmo está parecido com o do mês passado."
-          }
-          points={writing.monthly.map((month) => ({ label: month.label, value: month.words }))}
-          labelEvery={1}
-        />
+        {writing.monthly.length > 0 ? (
+          <BarSeries
+            title="Palavras por mês"
+            caption={
+              comparison === null
+                ? undefined
+                : comparison > 5
+                  ? `Você escreveu ${comparison}% mais que no mês passado.`
+                  : comparison < -5
+                    ? `Você escreveu ${Math.abs(comparison)}% menos que no mês passado.`
+                    : "Seu ritmo está parecido com o do mês passado."
+            }
+            points={writing.monthly.map((month) => ({ label: month.label, value: month.words }))}
+            labelEvery={1}
+          />
+        ) : null}
       </div>
 
       {history && history.calendar.length > 0 ? (
@@ -324,20 +528,45 @@ function WritingBody({
 
       <div className="chart-grid">
         <div className="chart-card">
-          <h3 className="chart-title">Humor dos textos</h3>
+          <h3 className="chart-title">Como você se sentiu</h3>
           {sentiment.analyzed === 0 ? (
-            <p className="muted">Sem textos analisados ainda.</p>
+            <p className="muted">Analise as notas para ver o tom desta janela.</p>
           ) : (
             <>
               <p>
-                Tom {sentiment.average > 0.15 ? "positivo" : sentiment.average < -0.15 ? "negativo" : "neutro"} (
-                {sentiment.average.toFixed(2)})
+                Tom {sentiment.average > 0.15 ? "positivo" : sentiment.average < -0.15 ? "negativo" : "neutro"}
               </p>
               <ul className="chip-list">
-                <li className="chip">Positivos · {percentOf(sentiment.positive, sentiment.analyzed)}%</li>
-                <li className="chip">Neutros · {percentOf(sentiment.neutral, sentiment.analyzed)}%</li>
-                <li className="chip">Negativos · {percentOf(sentiment.negative, sentiment.analyzed)}%</li>
+                <li className="chip">
+                  <span className="tone tone--up" aria-hidden="true">↑</span> Positivas ·{" "}
+                  {percentOf(sentiment.positive, sentiment.analyzed)}%
+                </li>
+                <li className="chip">
+                  <span className="tone" aria-hidden="true">·</span> Neutras ·{" "}
+                  {percentOf(sentiment.neutral, sentiment.analyzed)}%
+                </li>
+                <li className="chip">
+                  <span className="tone tone--down" aria-hidden="true">↓</span> Negativas ·{" "}
+                  {percentOf(sentiment.negative, sentiment.analyzed)}%
+                </li>
               </ul>
+              {sentiment.emotions && sentiment.emotions.length > 0 ? (
+                <ul className="chip-list">
+                  {sentiment.emotions.slice(0, 3).map((emotion) => (
+                    <li className="chip" key={emotion.label}>
+                      <span className={toneClass(emotion.tone)} aria-hidden="true">
+                        {toneArrow(emotion.tone)}
+                      </span>
+                      {emotion.label} · {emotion.count}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              <p className="muted">
+                {sentiment.analyzed} nota{sentiment.analyzed === 1 ? "" : "s"} analisada
+                {sentiment.analyzed === 1 ? "" : "s"} nesta janela.
+                {sentiment.source === "lexical" ? " Estimativa pelo texto, sem análise." : ""}
+              </p>
             </>
           )}
         </div>
@@ -360,6 +589,52 @@ function WritingBody({
           </p>
         </div>
       </div>
+
+      {voice ? (
+        <div className="chart-card">
+          <h3 className="chart-title">Sua voz</h3>
+          <p>
+            {voice.audio_minutes} min gravados, {voice.transcribed_minutes} transcritos
+          </p>
+          <ul className="chip-list">
+            <li className="chip">Cobertura · {Math.round(voice.coverage * 100)}%</li>
+            <li className="chip">Palavras/áudio · {voice.words_per_audio}</li>
+            <li className="chip">Áudios · {voice.audio_count}</li>
+            <li className="chip">Locais · {voice.origin_local}</li>
+            <li className="chip">Servidor · {voice.origin_server}</li>
+            <li className="chip">Texto da fala · {Math.round(voice.transcript_share * 100)}%</li>
+          </ul>
+        </div>
+      ) : null}
+
+      {topics && (topics.themes.length > 0 || topics.people.length > 0 || topics.places.length > 0) ? (
+        <div className="chart-card">
+          <h3 className="chart-title">Sobre o que você escreveu</h3>
+          {topicRow("Temas", topics.themes)}
+          {topicRow("Pessoas", topics.people)}
+          {topicRow("Lugares", topics.places)}
+        </div>
+      ) : null}
+
+      {images && images.count > 0 ? (
+        <div className="chart-card">
+          <h3 className="chart-title">Imagens</h3>
+          <p>
+            {images.count} {images.count === 1 ? "foto" : "fotos"} · {bytes(images.bytes_total)}
+          </p>
+          <ul className="chip-list">
+            <li className="chip">Por nota · {images.per_note}</li>
+            <li className="chip">Tamanho médio · {bytes(images.bytes_average)}</li>
+            <li className="chip">Com imagem · {images.notes_with_image}</li>
+          </ul>
+          {images.notes_with_image_no_text > 0 ? (
+            <p className="muted">
+              {images.notes_with_image_no_text} nota
+              {images.notes_with_image_no_text === 1 ? "" : "s"} com imagem e sem texto de apoio.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="chart-grid">
         {writing.top_words.length > 0 ? (

@@ -44,6 +44,7 @@ vi.mock("../api", () => ({
       status: "ready",
       source: "text",
       parent_id: "",
+      notebook_id: "notas-ao-acaso",
       content_type: "",
       original_filename: "",
       duration_seconds: 0,
@@ -90,7 +91,7 @@ describe("NoteEditor autosave", () => {
         onDeleted={noop}
         onOpenEntity={noop}
         onOpenEntry={noop}
-        onCreateChild={noop}
+        notebooks={[]}
       />,
     );
     const edit = await screen.findByRole("button", { name: "editar corpo" });
@@ -131,7 +132,7 @@ describe("NoteEditor autosave", () => {
         onDeleted={noop}
         onOpenEntity={noop}
         onOpenEntry={noop}
-        onCreateChild={noop}
+        notebooks={[]}
       />,
     );
     await screen.findByRole("button", { name: "editar corpo" });

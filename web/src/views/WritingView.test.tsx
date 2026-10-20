@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { WritingView } from "./WritingView";
-import type { MetricsSnapshot } from "../types";
+import type { MetricsSnapshot, MetricsWindow } from "../types";
 
 const SNAPSHOT: MetricsSnapshot = {
   device_id: "dev_1",
@@ -85,6 +85,112 @@ const SNAPSHOT: MetricsSnapshot = {
   },
 };
 
+function v2Window(words: number): MetricsWindow {
+  return {
+    from: "2026-09-20",
+    to: "2026-10-19",
+    writing: {
+      notes: 2,
+      with_text: 2,
+      with_audio: 1,
+      with_transcript: 1,
+      words,
+      chars: words * 5,
+      sentences: 10,
+      paragraphs: 4,
+      unique_words: 50,
+      lexical_richness: 0.5,
+      average_words_per_note: words / 2,
+      average_sentence_words: 12,
+      average_word_length: 5,
+      reading_minutes: Math.round((words / 200) * 10) / 10,
+      top_words: [{ label: "projeto", value: 4 }],
+      longest_words: [{ label: "extraordinario", value: 14 }],
+      questions: 1,
+      exclamations: 1,
+      links: 0,
+      images: 0,
+      list_items: 0,
+      active_days: 2,
+      average_notes_per_active_day: 1,
+      notes_per_week: 0.5,
+      top_weekday: { label: "terça", value: 2 },
+      top_hour: { label: "noite", value: 2 },
+      weekday_hour: Array.from({ length: 7 }, () => Array.from({ length: 8 }, () => 0)),
+      consistency: {
+        days: [],
+        written_days: 2,
+        tracked_days: 2,
+        rate: 1,
+        longest_run: 2,
+      },
+      longest_note: null,
+    },
+    voice: {
+      audio_count: 1,
+      audio_minutes: 2,
+      transcribed_minutes: 2,
+      coverage: 1,
+      words: 10,
+      words_per_minute: 5,
+      words_per_audio: 10,
+      origin_local: 1,
+      origin_server: 0,
+      transcript_share: 0.2,
+    },
+    images: {
+      count: 1,
+      bytes_total: 2048,
+      bytes_average: 2048,
+      per_note: 0.5,
+      notes_with_image: 1,
+      notes_with_image_no_text: 0,
+    },
+    analysis: {
+      notes_with_content: 2,
+      notes_analyzed: 1,
+      coverage: 0.5,
+      stale: 0,
+      simplified: 0,
+      last_analyzed_at: null,
+    },
+    sentiment: {
+      source: "analysis",
+      analyzed: 1,
+      positive: 1,
+      neutral: 0,
+      negative: 0,
+      average: 0.5,
+      top_positive: null,
+      top_negative: null,
+      emotions: [{ label: "alegria", count: 1, tone: "positive" }],
+      series: [],
+      granularity: "day",
+    },
+    topics: {
+      themes: [{ label: "trabalho", count: 2 }],
+      people: [{ label: "Ana", count: 1 }],
+      places: [],
+    },
+    summary: [`Resumo ${words}.`],
+  };
+}
+
+const V2_SNAPSHOT: MetricsSnapshot = {
+  device_id: "dev_2",
+  device_name: "celular",
+  schema: 2,
+  generated_at: "2026-10-19T12:00:00Z",
+  received_at: "2026-10-19T12:01:00Z",
+  streak: { current: 2, longest: 4, wrote_today: true },
+  windows: {
+    "7d": v2Window(70),
+    "30d": v2Window(200),
+    "365d": v2Window(900),
+  },
+  history: SNAPSHOT.history,
+};
+
 function mockApi(snapshots: unknown[]) {
   vi.stubGlobal(
     "fetch",
@@ -115,6 +221,25 @@ describe("WritingView", () => {
     expect(screen.getByText("Você escreveu 120 palavras em 2 notas.")).toBeInTheDocument();
     expect(screen.getByText("emulador")).toBeInTheDocument();
     expect(screen.getByText(/projeto · 4/)).toBeInTheDocument();
+  });
+
+  it("desenha o schema 2 e troca de janela", async () => {
+    mockApi([V2_SNAPSHOT]);
+    render(<WritingView refreshKey={0} />);
+
+    await waitFor(() => expect(screen.getByText("200")).toBeInTheDocument());
+    expect(screen.getByText("Resumo 200.")).toBeInTheDocument();
+    expect(screen.getByText("Sua voz")).toBeInTheDocument();
+    expect(screen.getByText("Sobre o que você escreveu")).toBeInTheDocument();
+    expect(screen.getByText("Imagens")).toBeInTheDocument();
+    expect(screen.getByText(/trabalho · 2/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "7 dias" })).toBeInTheDocument();
+    expect(screen.getAllByText("↑").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("↓").length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "7 dias" }));
+    await waitFor(() => expect(screen.getByText("70")).toBeInTheDocument());
+    expect(screen.getByText("Resumo 70.")).toBeInTheDocument();
   });
 
   it("avisa quando nenhum aparelho enviou metricas", async () => {

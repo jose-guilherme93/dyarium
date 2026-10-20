@@ -14,6 +14,7 @@ import type {
   ModelInfo,
   MoodPoint,
   Note,
+  Notebook,
   Revision,
   Segment,
   Settings,
@@ -206,6 +207,10 @@ export interface EntryFilters {
   person?: string;
   place?: string;
   theme?: string;
+  /** Restringe a um caderno. */
+  notebook_id?: string;
+  /** Teto de entradas (o servidor limita a 5000). */
+  limit?: number;
   /** `true` so as arquivadas, `false` so as da lista de trabalho. */
   archived?: boolean;
 }
@@ -240,6 +245,12 @@ function entriesPath(filters?: EntryFilters): string {
   if (filters?.theme) {
     params.set("theme", filters.theme);
   }
+  if (filters?.notebook_id) {
+    params.set("notebook_id", filters.notebook_id);
+  }
+  if (filters?.limit) {
+    params.set("limit", String(filters.limit));
+  }
   // Sem filtro o servidor traz as duas listas. O dashboard abre na lista de
   // trabalho; as arquivadas ficam na aba delas.
   if (filters?.archived !== undefined) {
@@ -271,10 +282,14 @@ async function requestAnalysis(id: string): Promise<Analysis> {
 export const api = {
   listEntries: (filters?: EntryFilters) => request<{ entries: Entry[] }>(entriesPath(filters)),
   listEntriesCached: (filters?: EntryFilters) => cachedGet<{ entries: Entry[] }>(entriesPath(filters)),
-  createEntry: (title: string, parentId?: string | null) =>
+  createEntry: (title: string, parentId?: string | null, notebookId?: string) =>
     request<Entry>("/entries", {
       method: "POST",
-      body: JSON.stringify(parentId ? { title, parent_id: parentId } : { title }),
+      body: JSON.stringify({
+        title,
+        ...(parentId ? { parent_id: parentId } : {}),
+        ...(notebookId ? { notebook_id: notebookId } : {}),
+      }),
     }),
   getEntry: (id: string) => request<Entry>(`/entries/${id}`),
   /** Ultima copia em cache da entrada, para a primeira pintura. */
@@ -317,6 +332,7 @@ export const api = {
     patch: {
       title?: string;
       recorded_at?: string;
+      notebook_id?: string;
       archived?: boolean;
       versions?: { title?: string; recorded_at?: string };
     },
@@ -357,6 +373,19 @@ export const api = {
     }),
   createTag: (name: string, color: string) =>
     request<{ id: string }>("/tags", { method: "POST", body: JSON.stringify({ name, color }) }),
+  updateTag: (id: string, patch: { name?: string; color?: string }) =>
+    request<{ id: string; name: string; color: string; merged: boolean }>(`/tags/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    }),
+  deleteTag: (id: string) => request<void>(`/tags/${id}`, { method: "DELETE" }),
+  listNotebooks: () => request<{ notebooks: Notebook[] }>("/notebooks"),
+  createNotebook: (notebook: { id?: string; name: string; color: string }) =>
+    request<Notebook>("/notebooks", { method: "POST", body: JSON.stringify(notebook) }),
+  updateNotebook: (id: string, patch: { name?: string; color?: string }) =>
+    request<Notebook>(`/notebooks/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteNotebook: (id: string) =>
+    request<void>(`/notebooks/${id}`, { method: "DELETE" }),
   getSettings: () => request<Settings>("/settings"),
   putSettings: (patch: Record<string, unknown>) =>
     request<{ status: string }>("/settings", { method: "PUT", body: JSON.stringify(patch) }),

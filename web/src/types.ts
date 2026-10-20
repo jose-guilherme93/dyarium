@@ -4,6 +4,8 @@ export interface Entry {
   status: string;
   source: string;
   parent_id?: string | null;
+  /** Caderno que possui a nota. */
+  notebook_id?: string;
   original_filename: string;
   content_type: string;
   size_bytes: number;
@@ -165,6 +167,17 @@ export interface Tag {
   entry_count: number;
 }
 
+export interface Notebook {
+  id: string;
+  name: string;
+  color: string;
+  is_default: boolean;
+  entry_count: number;
+  last_entry_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Attachment {
   id: string;
   entry_id: string;
@@ -285,6 +298,14 @@ export interface MetricsSentiment {
   top_negative: { title: string; score: number } | null;
 }
 
+export interface MetricsConsistency {
+  days: MetricsConsistencyDay[];
+  written_days: number;
+  tracked_days: number;
+  rate: number;
+  longest_run: number;
+}
+
 export interface MetricsWriting {
   notes: number;
   with_text: number;
@@ -322,13 +343,7 @@ export interface MetricsWriting {
   month_comparison_pct: number | null;
   sentiment: MetricsSentiment;
   weekday_hour: number[][];
-  consistency: {
-    days: MetricsConsistencyDay[];
-    written_days: number;
-    tracked_days: number;
-    rate: number;
-    longest_run: number;
-  };
+  consistency: MetricsConsistency;
   insights: string[];
 }
 
@@ -339,15 +354,143 @@ export interface MetricsHistory {
   max_daily: number;
 }
 
-export interface MetricsSnapshot {
+export interface MetricsSnapshotV1 {
   device_id: string;
   device_name: string;
-  schema: number;
+  schema: 1;
   generated_at: string;
   received_at: string;
   writing: MetricsWriting;
   history?: MetricsHistory;
 }
+
+export type MetricsTone = "positive" | "neutral" | "negative";
+
+export interface MetricsEmotion {
+  label: string;
+  count: number;
+  tone: MetricsTone;
+}
+
+/** Escrita dentro de uma janela (schema 2). */
+export interface MetricsWindowWriting {
+  notes: number;
+  with_text: number;
+  with_audio: number;
+  with_transcript: number;
+  words: number;
+  chars: number;
+  sentences: number;
+  paragraphs: number;
+  unique_words: number;
+  lexical_richness: number;
+  average_words_per_note: number;
+  average_sentence_words: number;
+  average_word_length: number;
+  reading_minutes: number;
+  top_words: MetricsWordCount[];
+  longest_words: MetricsWordCount[];
+  questions: number;
+  exclamations: number;
+  links: number;
+  images: number;
+  list_items: number;
+  active_days: number;
+  average_notes_per_active_day: number;
+  notes_per_week: number;
+  top_weekday: MetricsWordCount | null;
+  top_hour: MetricsWordCount | null;
+  weekday_hour: number[][];
+  consistency: MetricsConsistency;
+  longest_note: { title: string; words: number } | null;
+}
+
+export interface MetricsVoice {
+  audio_count: number;
+  audio_minutes: number;
+  transcribed_minutes: number;
+  coverage: number;
+  words: number;
+  words_per_minute: number;
+  words_per_audio: number;
+  origin_local: number;
+  origin_server: number;
+  transcript_share: number;
+}
+
+export interface MetricsImages {
+  count: number;
+  bytes_total: number;
+  bytes_average: number;
+  per_note: number;
+  notes_with_image: number;
+  notes_with_image_no_text: number;
+}
+
+export interface MetricsAnalysis {
+  notes_with_content: number;
+  notes_analyzed: number;
+  coverage: number;
+  stale: number;
+  simplified: number;
+  last_analyzed_at: string | null;
+}
+
+export interface MetricsRankedCount {
+  label: string;
+  count: number;
+}
+
+export interface MetricsTopics {
+  themes: MetricsRankedCount[];
+  people: MetricsRankedCount[];
+  places: MetricsRankedCount[];
+}
+
+export interface MetricsSentimentV2 {
+  source: "analysis" | "lexical";
+  analyzed: number;
+  positive: number;
+  neutral: number;
+  negative: number;
+  average: number;
+  top_positive: { title: string; score: number } | null;
+  top_negative: { title: string; score: number } | null;
+  emotions: MetricsEmotion[];
+  series: { key: string; average: number; notes: number }[];
+  granularity: "day" | "week";
+}
+
+export interface MetricsWindow {
+  from: string;
+  to: string;
+  writing: MetricsWindowWriting;
+  voice: MetricsVoice;
+  images: MetricsImages;
+  analysis: MetricsAnalysis;
+  sentiment: MetricsSentimentV2;
+  topics: MetricsTopics;
+  summary: string[];
+}
+
+export interface MetricsStreak {
+  current: number;
+  longest: number;
+  wrote_today: boolean;
+}
+
+export interface MetricsSnapshotV2 {
+  device_id: string;
+  device_name: string;
+  schema: 2;
+  generated_at: string;
+  received_at: string;
+  streak: MetricsStreak;
+  windows: Record<"7d" | "30d" | "365d", MetricsWindow>;
+  history?: MetricsHistory;
+}
+
+export type MetricsSnapshot = MetricsSnapshotV1 | MetricsSnapshotV2;
 
 export interface MetricsResponse {
   snapshots: MetricsSnapshot[];

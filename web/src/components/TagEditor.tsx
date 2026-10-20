@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
+import { tagColor, withAlpha } from "../lib/tags";
 import { CloseIcon } from "./icons";
 
 interface TagEditorProps {
@@ -13,6 +14,7 @@ interface TagEditorProps {
 export function TagEditor({ entryId, onChanged }: TagEditorProps) {
   const [tags, setTags] = useState<string[]>([]);
   const [allTags, setAllTags] = useState<string[]>([]);
+  const [colors, setColors] = useState<Record<string, string>>({});
   const [input, setInput] = useState("");
   const [open, setOpen] = useState(false);
   const [error, setError] = useState("");
@@ -25,6 +27,11 @@ export function TagEditor({ entryId, onChanged }: TagEditorProps) {
     }
     if (allRes.status === "fulfilled") {
       setAllTags(allRes.value.tags.map((tag) => tag.name));
+      setColors(
+        Object.fromEntries(
+          allRes.value.tags.map((tag) => [tag.name.toLowerCase(), tag.color]),
+        ),
+      );
     }
   }, [entryId]);
 
@@ -61,8 +68,18 @@ export function TagEditor({ entryId, onChanged }: TagEditorProps) {
 
   return (
     <div className="tags-row">
-      {tags.map((tag) => (
-        <span key={tag} className="tag-chip">
+      {tags.map((tag) => {
+        const color = tagColor(tag, colors[tag.toLowerCase()]);
+        return (
+        <span
+          key={tag}
+          className="tag-chip"
+          style={{
+            backgroundColor: withAlpha(color, 0.72),
+            color: "#211e1a",
+            borderColor: withAlpha(color, 0.9),
+          }}
+        >
           {tag}
           <button
             type="button"
@@ -73,7 +90,8 @@ export function TagEditor({ entryId, onChanged }: TagEditorProps) {
             <CloseIcon size={12} />
           </button>
         </span>
-      ))}
+        );
+      })}
       <div className="tag-add">
         <input
           className="tag-input"

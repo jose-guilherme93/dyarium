@@ -5,16 +5,39 @@ import { TokenGate } from "./components/TokenGate";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { NoteList } from "./components/NoteList";
 import { NoteEditor } from "./components/NoteEditor";
+import { NotebookDialog } from "./components/NotebookDialog";
+import { NotebookSwitcher } from "./components/NotebookSwitcher";
 import { OfflineBanner } from "./components/OfflineBanner";
+import { TagManager } from "./components/TagManager";
 import { useToast } from "./components/Toasts";
 import { ChevronIcon, ExitIcon, InsightsIcon, SettingsIcon, WritingIcon } from "./components/icons";
+import { DEFAULT_NOTEBOOK_ID } from "./lib/notebooks";
 import { InsightsView } from "./views/InsightsView";
 import { SettingsView } from "./views/SettingsView";
 import { WritingView } from "./views/WritingView";
-import type { EntityKind, ServerEvent } from "./types";
+import type { EntityKind, Notebook, ServerEvent } from "./types";
 import "./App.css";
 
 type ViewId = "notes" | "insights" | "writing" | "settings";
+
+const ACTIVE_NOTEBOOK_KEY = "dyarium.notebook";
+
+/** Caderno salvo neste navegador; a selecao e local, nao sincronizada. */
+function readActiveNotebook(): string {
+  try {
+    return localStorage.getItem(ACTIVE_NOTEBOOK_KEY) || DEFAULT_NOTEBOOK_ID;
+  } catch {
+    return DEFAULT_NOTEBOOK_ID;
+  }
+}
+
+function writeActiveNotebook(id: string): void {
+  try {
+    localStorage.setItem(ACTIVE_NOTEBOOK_KEY, id);
+  } catch {
+    // sem localStorage: a selecao vale so para esta sessao
+  }
+}
 
 export function App() {
   const [token, setTokenState] = useState(getToken());
@@ -25,6 +48,13 @@ export function App() {
   const [openEntryId, setOpenEntryId] = useState<string | null>(null);
   const [entityFocus, setEntityFocus] = useState<{ kind: EntityKind; name: string } | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [notebooks, setNotebooks] = useState<Notebook[]>([]);
+  const [activeNotebookId, setActiveNotebookId] = useState(() => readActiveNotebook());
+  const [notebookDialog, setNotebookDialog] = useState<{
+    mode: "create" | "rename";
+    notebook?: Notebook;
+  } | null>(null);
+  const [tagsOpen, setTagsOpen] = useState(false);
   // A nota aberta tem o seu proprio contador: um evento de outra entrada nao
   // pode obrigar a nota visivel a recarregar tudo.
   const [noteRefreshKey, setNoteRefreshKey] = useState(0);
@@ -60,6 +90,7 @@ export function App() {
         case "analysis.ready":
         case "entry.failed":
         case "model.download":
+        case "notebook.changed":
           bumpRefresh();
           if (id && id === openEntryRef.current) {
             setNoteRefreshKey((key) => key + 1);
@@ -143,6 +174,32 @@ export function App() {
     };
   }, []);
 
+  // Cadernos: espelho do servidor. A selecao fica no navegador; se o caderno
+  // sumiu, cai no padrao.
+  useEffect(() => {
+    if (!token) return;
+    let active = true;
+    api
+      .listNotebooks()
+      .then((result) => {
+        if (!active) return;
+        const list = result.notebooks ?? [];
+        setNotebooks(list);
+        setActiveNotebookId((current) => {
+          if (list.some((notebook) => notebook.id === current)) return current;
+          return (
+            list.find((notebook) => notebook.is_default)?.id ??
+            list[0]?.id ??
+            DEFAULT_NOTEBOOK_ID
+          );
+        });
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [token, refreshKey]);
+
   // Validate the token against the API before storing it, so a wrong token
   // keeps the gate open instead of entering an empty (broken) session.
   const handleLogin = async (value: string) => {
@@ -184,14 +241,55 @@ export function App() {
     setNoteRefreshKey((key) => key + 1);
   };
 
-  const createNote = async (parentId: string | null) => {
+  const selectNotebook = (id: string) => {
+    setActiveNotebookId(id);
+    writeActiveNotebook(id);
+    setOpenEntryId(null);
+  };
+
+  const createNote = async () => {
     try {
-      const entry = await api.createEntry("", parentId);
+      const entry = await api.createEntry("", null, activeNotebookId);
       setOpenEntryId(entry.id);
       setView("notes");
       refresh();
     } catch {
       refresh();
+    }
+  };
+
+  const saveNotebook = async (input: { name: string; color: string }) => {
+    if (!notebookDialog) return;
+    try {
+      if (notebookDialog.mode === "create") {
+        const created = await api.createNotebook(input);
+        selectNotebook(created.id);
+      } else if (notebookDialog.notebook) {
+        await api.updateNotebook(notebookDialog.notebook.id, input);
+      }
+      setNotebookDialog(null);
+      refresh();
+    } catch {
+      notify("Não foi possível salvar o caderno.", "error");
+    }
+  };
+
+  const deleteNotebook = async (notebook: Notebook) => {
+    if (notebook.is_default) return;
+    const ok = window.confirm(
+      notebook.entry_count > 0
+        ? `Excluir “${notebook.name}”? As ${notebook.entry_count} nota(s) vão para “Notas ao acaso”.`
+        : `Excluir “${notebook.name}”?`,
+    );
+    if (!ok) return;
+    try {
+      await api.deleteNotebook(notebook.id);
+      if (activeNotebookId === notebook.id) {
+        selectNotebook(DEFAULT_NOTEBOOK_ID);
+      }
+      refresh();
+    } catch {
+      notify("Não foi possível excluir o caderno.", "error");
     }
   };
 
@@ -220,16 +318,29 @@ export function App() {
         {/* O menu e a lista de notas: nao ha "Notas" aqui, porque a lista e as
             notas. As demais telas viram icones pequenos no rodape. */}
         {navOpen && (
-          <NoteList
-            refreshKey={refreshKey}
-            activeId={openEntryId}
-            failures={failures}
-            onOpen={(id) => {
-              setOpenEntryId(id);
-              setView("notes");
-            }}
-            onCreate={(parentId) => void createNote(parentId)}
-          />
+          <>
+            <NotebookSwitcher
+              notebooks={notebooks}
+              activeId={activeNotebookId}
+              onSelect={selectNotebook}
+              onCreate={() => setNotebookDialog({ mode: "create" })}
+              onRename={(notebook) => setNotebookDialog({ mode: "rename", notebook })}
+              onDelete={(notebook) => void deleteNotebook(notebook)}
+            />
+            <NoteList
+              refreshKey={refreshKey}
+              activeId={openEntryId}
+              failures={failures}
+              notebookId={activeNotebookId}
+              notebooks={notebooks}
+              onOpen={(id) => {
+                setOpenEntryId(id);
+                setView("notes");
+              }}
+              onCreate={() => void createNote()}
+              onManageTags={() => setTagsOpen(true)}
+            />
+          </>
         )}
 
         <nav className="sidebar-foot">
@@ -303,7 +414,7 @@ export function App() {
                     setView("insights");
                   }}
                   onOpenEntry={(id) => setOpenEntryId(id)}
-                  onCreateChild={(id) => void createNote(id)}
+                  notebooks={notebooks}
                 />
               ) : (
                 <div className="empty-editor">
@@ -327,6 +438,21 @@ export function App() {
           )}
         </ErrorBoundary>
       </main>
+
+      <NotebookDialog
+        open={notebookDialog !== null}
+        title={notebookDialog?.mode === "create" ? "Novo caderno" : "Renomear caderno"}
+        initialName={notebookDialog?.notebook?.name ?? ""}
+        initialColor={notebookDialog?.notebook?.color ?? ""}
+        onClose={() => setNotebookDialog(null)}
+        onSave={(input) => void saveNotebook(input)}
+      />
+
+      <TagManager
+        open={tagsOpen}
+        onClose={() => setTagsOpen(false)}
+        onChanged={refresh}
+      />
     </div>
   );
 }
