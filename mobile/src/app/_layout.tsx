@@ -2,6 +2,7 @@ import { Stack } from 'expo-router';
 import { setAudioModeAsync } from 'expo-audio';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
+import * as SystemUI from 'expo-system-ui';
 import { useEffect, type ReactNode } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -17,6 +18,11 @@ import { SettingsProvider, useSettings } from '@/state/SettingsContext';
 import { useMetricsSync } from '@/state/useMetricsSync';
 import { useWritingReminders } from '@/state/useWritingReminders';
 import { colors } from '@/theme/tokens';
+
+// Fundo da janela nativa: durante as transicoes e antes do primeiro frame nao
+// pode aparecer o branco padrao do sistema. O `backgroundColor` do app.json
+// cobre o build; aqui ele tambem vale para o runtime.
+void SystemUI.setBackgroundColorAsync(colors.bg).catch(() => undefined);
 
 SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
@@ -63,7 +69,7 @@ export default function RootLayout() {
   }, []);
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
+    <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.bg }}>
       <SafeAreaProvider>
         <SettingsProvider>
           <Ready>

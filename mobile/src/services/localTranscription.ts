@@ -248,6 +248,7 @@ export async function transcribeLocally(id: string): Promise<void> {
 
   running.add(id);
   attempted.add(id);
+  if (__DEV__) console.log('[perf] transcricao.comecou', { id, ms: Date.now() });
 
   const priorSegments = recording.transcriptSegments ?? [];
   const priorCheckpoint =

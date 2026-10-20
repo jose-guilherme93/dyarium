@@ -10,6 +10,13 @@ import { useEffect } from 'react';
 const renders = new Map<string, number>();
 const durations = new Map<string, number[]>();
 
+/**
+ * Momento em que este bundle foi carregado no aparelho. Serve para confirmar
+ * (pelo log do Metro) que o app esta rodando o codigo que acabamos de
+ * escrever, e nao um bundle velho em cache.
+ */
+export const BUILD_STAMP = Date.now();
+
 let started = false;
 
 export function bumpRender(name: string): void {
