@@ -88,6 +88,7 @@ import {
   localAnalysisAvailable,
   stopAnalysis,
 } from '@/services/localAnalysis';
+import { maybeTranscribeLocally } from '@/services/localTranscription';
 import { enterNote, leaveNote } from '@/services/noteVisibility';
 import { fetchTheirs, syncNoteForcing } from '@/services/noteSync';
 import { pushTranscript } from '@/services/transcriptSync';
@@ -348,6 +349,8 @@ export default function NoteScreen() {
   const analysisBusyRef = useRef(false);
   /** Parar a analise local quando a tela perde o foco (definido abaixo). */
   const stopAnalysisOnLeaveRef = useRef<() => void>(() => undefined);
+  /** Nota cuja transcricao local ja foi disparada nesta abertura. */
+  const transcribeStartedRef = useRef<string | null>(null);
   // A analise local nasce antes do upload: ate o entryId existir, a chave e o
   // id da gravacao; depois ela e movida para a chave definitiva do servidor.
   const analysisKey = note?.entryId ?? note?.id ?? '';
@@ -789,9 +792,18 @@ export default function NoteScreen() {
     }
   }, [note, openedAt, queueImageSource]);
 
-  // A transcricao local (Whisper) nao roda aqui: ela satura a CPU do aparelho
-  // e trava a nota aberta (o quadro cai de 17 ms para segundos). Quem transcreve
-  // em segundo plano e o app fechado, pela task de background.
+  // Transcricao local ao abrir uma nota com audio sem transcricao: e o que
+  // alimenta a porcentagem abaixo do audio. Usa no maximo 2 threads e o
+  // progresso aparece no card e na notificacao; a analise local, que tambem
+  // usa o llama.cpp, so roda por pedido e para ao sair da nota.
+  useEffect(() => {
+    if (!note?.filePath || note.hasTranscript || note.transcriptStatus === 'ready') {
+      return;
+    }
+    if (transcribeStartedRef.current === note.id) return;
+    transcribeStartedRef.current = note.id;
+    void maybeTranscribeLocally(note.id).catch(() => undefined);
+  }, [note]);
 
   // Autosave local (debounced). A montagem nao grava: abrir uma nota nao pode
   // virar escrita no banco (e a nota nem mudou).

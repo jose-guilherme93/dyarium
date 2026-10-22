@@ -17,6 +17,7 @@ const mockSaveLocalImage = jest.fn();
 const mockLocalImageUri = jest.fn();
 const mockFormat = jest.fn();
 const mockBlur = jest.fn();
+const mockMaybeTranscribeLocally = jest.fn(async (_id: string) => undefined);
 const mockInsertAudio = jest.fn();
 let mockInsertPosition: { nodeId: string; offset: number } | null = null;
 
@@ -237,7 +238,7 @@ jest.mock('@/services/localAnalysis', () => ({
 }));
 
 jest.mock('@/services/localTranscription', () => ({
-  maybeTranscribeLocally: jest.fn(async () => undefined),
+  maybeTranscribeLocally: (id: string) => mockMaybeTranscribeLocally(id),
 }));
 
 jest.mock('@/services/noteVisibility', () => ({
@@ -413,6 +414,19 @@ describe('tela da nota', () => {
       await Promise.resolve();
     });
     expect(router.back).toHaveBeenCalled();
+  });
+
+  it('inicia a transcricao local de uma nota com audio sem transcricao', async () => {
+    mockNote.filePath = 'file:///audio.aac';
+    mockNote.hasTranscript = false;
+
+    try {
+      await renderNote();
+      expect(mockMaybeTranscribeLocally).toHaveBeenCalledWith('note-1');
+    } finally {
+      delete mockNote.filePath;
+      delete mockNote.hasTranscript;
+    }
   });
 
   it('mantem o audio do corpo visivel enquanto o teclado esta aberto', async () => {
