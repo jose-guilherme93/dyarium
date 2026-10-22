@@ -1,9 +1,9 @@
 /**
  * Escolha de imagem na galeria, com os bytes prontos para enviar.
  *
- * Modulo nativo: so existe depois de um development build novo. O require e
- * tardio de proposito — importar `expo-image-picker`/`expo-image-manipulator` no
- * topo quebraria o app no build atual (modulo nativo ausente) ao abrir a nota.
+ * Modulo nativo: pode faltar num development build antigo. O require fica
+ * dentro de um try/catch e roda na avaliacao do bundle (nao no toque), para o
+ * seletor registrar o `ActivityResultLauncher` antes de o app abrir.
  *
  * Toda foto e reduzida (se preciso) e recomprimida em JPEG de alta qualidade
  * antes de entrar na nota: assim o editor abre rapido, sem perda visivel.
@@ -17,6 +17,9 @@ export interface PickedImage {
   name: string;
   mimeType: string;
   bytes: Uint8Array;
+  /** Dimensoes da imagem ja otimizada, para o editor nao distorcer a foto. */
+  width: number;
+  height: number;
 }
 
 type ImagePickerModule = typeof import('expo-image-picker');
@@ -40,13 +43,26 @@ function loadManipulator(): ImageManipulatorModule | null {
   }
 }
 
-/** Reduz (se preciso) e recomprime a imagem; devolve um URI JPEG. */
+/**
+ * Os modulos nativos sao carregados na abertura do app, e nao no toque.
+ *
+ * O seletor de fotos registra um `ActivityResultLauncher` na Activity quando o
+ * modulo nativo e criado. Criado so na hora do toque (com o app ja em
+ * primeiro plano), o registro chega tarde e o Android recusa a chamada com
+ * "Attempting to launch an unregistered ActivityResultLauncher". Carregar
+ * aqui, na avaliacao do bundle, deixa o registro pronto antes de qualquer
+ * toque; em build antigo, sem o modulo, o try/catch devolve null.
+ */
+const PICKER = loadPicker();
+const MANIPULATOR = loadManipulator();
+
+/** Reduz (se preciso) e recomprime a imagem; devolve um URI JPEG e dimensoes. */
 async function optimize(
   manipulator: ImageManipulatorModule,
   uri: string,
   width: number,
   height: number,
-): Promise<string> {
+): Promise<{ uri: string; width: number; height: number }> {
   const context = manipulator.ImageManipulator.manipulate(uri);
   const target = resizeTarget(width, height);
   if (target) context.resize(target);
@@ -55,15 +71,15 @@ async function optimize(
     compress: IMAGE_QUALITY,
     format: manipulator.SaveFormat.JPEG,
   });
-  return result.uri;
+  return { uri: result.uri, width: result.width, height: result.height };
 }
 
 export async function pickImage(): Promise<PickedImage | null> {
-  const picker = loadPicker();
-  if (!picker) return null;
+  const picker = PICKER;
+  if (!picker) throw new Error('seletor de imagens indisponivel neste build');
 
   const permission = await picker.requestMediaLibraryPermissionsAsync();
-  if (!permission.granted) return null;
+  if (!permission.granted) throw new Error('permissao de fotos negada');
 
   const result = await picker.launchImageLibraryAsync({
     mediaTypes: ['images'],
@@ -72,7 +88,7 @@ export async function pickImage(): Promise<PickedImage | null> {
   if (result.canceled || result.assets.length === 0) return null;
 
   const asset = result.assets[0];
-  const manipulator = loadManipulator();
+  const manipulator = MANIPULATOR;
   // Sem o modulo nativo (build antigo): segue com o original para nao quebrar.
   if (!manipulator) {
     const original = await new File(asset.uri).arrayBuffer();
@@ -80,17 +96,21 @@ export async function pickImage(): Promise<PickedImage | null> {
       name: asset.fileName ?? 'imagem',
       mimeType: asset.mimeType ?? 'image/jpeg',
       bytes: new Uint8Array(original),
+      width: asset.width,
+      height: asset.height,
     };
   }
 
-  const optimizedUri = await optimize(manipulator, asset.uri, asset.width, asset.height).catch(
-    () => asset.uri,
+  const optimized = await optimize(manipulator, asset.uri, asset.width, asset.height).catch(
+    () => null,
   );
-  const buffer = await new File(optimizedUri).arrayBuffer();
+  const buffer = await new File(optimized?.uri ?? asset.uri).arrayBuffer();
   const base = (asset.fileName ?? 'imagem').replace(/\.[^.]+$/, '');
   return {
     name: `${base}.jpg`,
     mimeType: 'image/jpeg',
     bytes: new Uint8Array(buffer),
+    width: optimized?.width ?? asset.width,
+    height: optimized?.height ?? asset.height,
   };
 }
