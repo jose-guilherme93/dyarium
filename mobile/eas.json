@@ -28,6 +28,17 @@
         "ORG_GRADLE_PROJECT_rnllamaVariants": "rnllama_v8,rnllama_v8_2,rnllama_v8_2_dotprod_i8mm"
       }
     },
+    "emulator": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "DYARIUM_EMULATOR": "1",
+        "EXPO_PUBLIC_LOCAL_ANALYSIS": "1"
+      }
+    },
     "production": {
       "autoIncrement": true
     }
