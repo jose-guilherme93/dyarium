@@ -16,42 +16,86 @@ texto, guarda local, enfileira e envia para o servidor self-hosted.
   mostram player; as de audio mostram. Nota sincronizada aparece com um **icone de
   nuvem**. Cada card tem um menu de **tres pontinhos** (arquivar/apagar) e da para
   **arrastar para o lado** para apagar ou arquivar (configuravel nas Opcoes).
-- **Tela da nota** (`/note/[id]`): a nota e **um corpo so**, todo nativo (sem
-  WebView). Titulo, data, tags, player, previa da transcricao e texto rolam
-  juntos na mesma rolagem. O texto e editado no **editor nativo rico**
-  (`EnrichedTextInput`): negrito, italico, tachado, codigo, titulos, listas,
-  citacao e links aparecem enquanto o usuario digita, e a foto entra **no
-  corpo** (metade da largura por padrao). O markdown continua sendo o formato
-  salvo: o editor vira markdown no debounce e ao sair. Tem **autosave** (sem
-  botao de salvar). A barra de acoes (negrito, italico, tachado, codigo, titulo,
-  listas, citacao, link e foto) fica
-  **grudada no topo do teclado**, desliza para o lado e nao monta/desmonta
-  quando o teclado sobe. O titulo quebra linha (ate
-  duas linhas) e encolhe um pouco a fonte quando fica longo, sem sumir. No topo,
-  o botao de microfone (discreto) e os **tres pontinhos** abrem as configuracoes
-  da nota: **compartilhar** e a ficha de propriedades (criada em, origem,
-  palavras, caracteres, tamanho e status), como no dashboard. Enter no titulo
-  desce para o corpo. Nota so de texto e enviada como conteudo textual; com
-  audio, o audio sobe e o texto vai junto. Com audio transcrito, a tela mostra o
-  **player** e uma **previa da transcricao sincronizada** (5 linhas, sem cortar
-  palavra): a fala atual fica no meio e o texto sobe suavemente conforme o audio
-  avanca; tocar abre a transcricao completa, que **ja continua no mesmo ponto do
-  audio**. O player de audio fica acima do corpo; o audio nao e um bloco no meio
-  do texto.
-  Ao sair, a nota e enviada (rascunho com conteudo) ou entra
-  na fila de sync (edicao de nota ja enviada), sem depender de rede na hora.
-- **Imagens**: a foto entra no corpo no cursor, em metade da largura por padrao;
-  **um toque** abre ela em tela cheia. A foto e reduzida (maior lado ate 2048 px)
-  e recomprimida em JPEG de alta qualidade antes de entrar na nota. Fica salva no
-  aparelho e e exibida pelo proprio arquivo (`file://`) no editor, nunca por
-  base64; sobe no sync e continua abrindo do aparelho depois, sem baixar de novo.
-  Assim o editor abre rapido, sem o atraso de decodificar a foto em resolucao
-  cheia.
-  O corpo e nativo, sem WebView. O editor rico (`EnrichedTextInput`, de
-  `react-native-enriched-html`) e codigo nativo: precisa do development build
-  com o modulo. Codigo, tabela e divisoria do dashboard ainda nao tem no
-  nativo: a tabela e a divisoria aparecem como bloco somente leitura e voltam
-  iguais ao salvar.
+- **Tela da nota** (`/note/[id]`): a nota e uma **lista ordenada de nos**
+  (texto, foto, audio), nao um texto com anexos. O texto da nota e **um editor
+  rico so** (negrito, italico, tachado, codigo, titulos, listas, citacao e
+  links): so as midias que cortam o texto dividem o editor. Cada foto e um
+  componente nativo e cada gravacao e um card com player no lugar. Inserir no
+  cursor divide o no de texto na posicao exata:
+  a foto e o audio entram **entre dois trechos**, e o player de audio fica **no
+  corpo**, nao acima dele. Foto e audio podem ser removidos do corpo pela propria
+  midia, e o texto dos dois lados volta a ficar junto. A foto ocupa uma largura
+  em percentual da nota (largura total, metade ou miniatura), que pode ser
+  redimensionada depois; essa largura viaja no markdown. O markdown continua sendo o formato salvo
+  (`![foto](ref){w=50}`, `!audio[ref]{d=12.5}`), com parser/serializer puro em
+  `core/noteDocument`; o texto de um no e o **conteudo** que o editor mostra e o
+  separador que fecha a linha antes da midia fica no `breakAfter` do no (o
+  markdown volta igual, sem perder linha nem espaco). So uma nota gigante e
+  cortada (8000 caracteres), em fronteira de palavra, e as partes voltam
+  coladas. Todo trecho de texto e o **editor rico nativo**
+  (`EnrichedTextInput`), montado desde a abertura: nao existe estado de leitura
+  separado nem renderizador de previa. O toque, o cursor, a selecao, o Enter e
+  a digitacao sao os do Android, e o texto aparece formatado (negrito, italico,
+  tachado, codigo, titulos, listas, citacao e links) em todos os estados. Nenhum
+  marcador de markdown e desenhado na tela; o unico asterisco que aparece e o
+  que o usuario digitar de proposito. Um editor por trecho de texto e barato
+  porque so as midias cortam o texto: uma nota sem foto nem audio tem um unico
+  campo nativo.
+  A leitura do HTML de um trecho e **uma por vez**: o editor nativo responde a um
+  pedido por vez, e dois pedidos juntos fazem um falhar (e o texto escrito
+  partir). Titulo, data e tags aparecem no primeiro frame, e o corpo monta
+  junto: nao ha esqueleto no caminho. Se o corpo ainda nao mediu depois de
+  100 ms, um indicador discreto aparece no lugar do texto e sai no primeiro
+  layout, sem bloquear a abertura nem o fechamento da nota. Tem
+  **autosave** (sem botao de salvar).
+  O corpo e **100% nativo**: nao ha WebView no app. Isso elimina o cold start,
+  a recarga do documento e o piscar da tela quando o texto muda.
+  O HTML do trecho vai para o editor no formato interno dele
+  (`<html>...</html>`): fora desse formato a biblioteca roda um parse de HTML5
+  completo a cada medicao. So o trecho tocado paga esse custo; a leitura nao.
+  Dentro desse formato o HTML segue o que a biblioteca devolve: uma quebra
+  entre os blocos e a linha em branco e um `<br>` solto (um `<p><br></p>` seria
+  lido como duas quebras e a linha em branco do markdown cresceria a cada
+  gravacao).
+  O editor tambem recebe `androidExperimentalSynchronousEvents`, que e a opcao
+  da biblioteca para o campo nao piscar quando ele muda de tamanho a cada
+  tecla.
+  Para medir no aparelho, o log de desenvolvimento traz
+  `[perf] typing` com `js_ms` (o que o app fez), `frame_ms` (o tempo ate o
+  proximo quadro), `chars` (o tamanho do no editado) e `rich` (quantos editores
+  nativos estao montados).
+  O `react-native-enriched-html` vem **patchado**
+  (`patches/react-native-enriched-html@1.1.1.patch`): no Android, ele
+  despachava um evento de estado de estilo a cada tecla mesmo sem mudanca de
+  estado (dezenas de mapas nativos por tecla, na thread de UI). Como o patch e
+  de codigo nativo, **precisa de rebuild** do development build - reload do
+  Metro nao traz o patch.
+  A barra de acoes (negrito, italico, tachado, codigo, titulo, listas, citacao,
+  link, foto e microfone) fica **grudada no topo do teclado** e nao monta/desmonta
+  quando o teclado sobe. Ela tambem funciona com a nota aberta em leitura: sem
+  editor em cena, o primeiro trecho monta e recebe a formatacao, e o teclado
+  sobe nele. O titulo quebra linha, encolhe um pouco a fonte quando
+  fica longo e Enter desce para o corpo. No topo, os **tres pontinhos** abrem
+  **compartilhar** e a ficha de propriedades (criada em, origem, palavras,
+  caracteres, tamanho e status), como no dashboard. Nota so de texto e enviada
+  como conteudo textual; com audio, cada gravacao sobe como anexo e o texto vai
+  junto. Com audio transcrito, o card mostra a **previa da transcricao** e tocar
+  abre a transcricao completa no mesmo ponto do audio. Ao sair, a nota e enviada
+  (rascunho com conteudo) ou entra na fila de sync (edicao de nota ja enviada),
+  sem depender de rede na hora.
+- **Imagens e audios**: a foto entra **no cursor**, inclusive no meio de um
+  paragrafo, em metade da largura por padrao; a gravacao entra como card de audio
+  no mesmo lugar. O texto antes e depois continua onde estava, e toda midia
+  deixa um campo de texto abaixo (mesmo vazio) para continuar digitando. A
+  foto tem um unico botao de informacao no canto: ele abre os tres tamanhos e,
+  por ultimo, "Remover foto". A foto e reduzida
+  (maior lado ate 2048 px) e recomprimida em JPEG de alta qualidade antes de
+  entrar na nota. Fica salva no aparelho e e exibida pelo proprio arquivo
+  (`file://`) no editor, nunca por base64; sobe no sync e continua abrindo do
+  aparelho depois, sem baixar de novo. O audio usa o mesmo caminho: arquivo local
+  ate subir, depois `attachment:<id>` com cache local. Codigo inline e bloco de
+  codigo sao editaveis; tabela e divisoria entram como texto e voltam iguais ao
+  salvar.
 - Grava em **AAC ADTS** (48 kHz mono ~128 kbps), em **segmentos de 60 s**, com
   foreground service do `expo-audio` (continua gravando com a tela bloqueada). A tela de
   gravacao tem **pausar/retomar** e uma waveform **ao vivo a 60 fps** (desenhada na thread
@@ -121,8 +165,7 @@ texto, guarda local, enfileira e envia para o servidor self-hosted.
 - A biblioteca organiza as notas **por ano** (mais novo no topo), pela data do evento, para
   que notas antigas importadas apareçam no ano a que pertencem.
 - **Notas somente texto** entram na mesma fila e sao enviadas como conteudo textual (o texto
-  e tratado como se fosse a transcricao, marcado como nota de texto). O endpoint do servidor
-  para isso ainda sera implementado; ate la a nota fica na fila e reenta com backoff.
+  e tratado como se fosse a transcricao, marcado como nota de texto).
 - Biblioteca local com estado, reproducao, retry e apagar.
 - Tela de recuperacao para gravacao interrompida (Enviar / Descartar / Continuar).
 

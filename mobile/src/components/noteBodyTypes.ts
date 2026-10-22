@@ -1,0 +1,55 @@
+/**
+ * Contrato do editor do corpo da nota.
+ *
+ * O corpo e uma lista de nos: texto rico, imagem e audio. O texto e editado
+ * por um `EnrichedTextInput` nativo por no; imagem e audio sao blocos nativos
+ * entre os textos. A tela da nota fala com o corpo por este contrato, sem
+ * saber o que existe por tras.
+ */
+
+import type { NoteInsertPosition } from '@/core/noteDocument';
+import type { FormatType } from '@/core/richText';
+
+export type { FormatType };
+export type { NoteInsertPosition };
+
+export interface NoteBodyHandle {
+  /** Foca o trecho de texto ativo (ou o primeiro). */
+  focus(): void;
+  /** Tira o foco do editor (fecha o teclado) antes de sair da tela. */
+  blur(): void;
+  /** Aplica formatacao no trecho ativo. */
+  format(type: FormatType): void;
+  /** Insere uma foto no cursor, dividindo o trecho de texto. */
+  insertImage(
+    displaySrc: string,
+    persistSrc: string,
+    alt: string,
+    widthPercent?: number,
+    naturalWidth?: number,
+    naturalHeight?: number,
+  ): void;
+  /** Insere um audio no cursor, dividindo o trecho de texto. */
+  insertAudio(ref: string, durationMs?: number): void;
+  /** Coloca um link no texto selecionado do trecho ativo. */
+  insertLink(url: string): void;
+  /** Onde o proximo no deve entrar (null quando nao ha cursor de texto). */
+  getInsertPosition(): NoteInsertPosition | null;
+  /** Entrega o markdown atual (a edicao ja e enviada no debounce). */
+  flush(): Promise<void>;
+}
+
+export interface NoteBodyProps {
+  value: string;
+  onChangeMarkdown: (markdown: string) => void;
+  /** Mapa referencia salva -> fonte de exibicao (arquivo local ou URL). */
+  imageSources?: Record<string, string>;
+  /** Resolve a fonte de um no de audio (`local:` ou `attachment:`). */
+  audioSource?: (ref: string) => Promise<string | null> | string | null;
+  /** Transcricao de cada audio, por referencia. */
+  audioTranscripts?: Record<string, string>;
+  typography?: import('@/core/typography').NoteTypography;
+  /** Abre a foto em tela cheia. */
+  onImageOpen?: (src: string) => void;
+  placeholder?: string;
+}

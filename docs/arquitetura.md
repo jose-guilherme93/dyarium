@@ -51,11 +51,24 @@ Consequencias que valem registrar:
 - **O que o markdown nao sabe, o editor nao oferece.** Cor de texto, cor de fundo e
   sublinhado sairam do schema do editor: dariam para formatar algo que nao sobrevive
   a gravacao.
-- **O que o app nao edita, ele mostra.** Tabela, divisoria e mencao a outra nota
-  viram bloco opaco no editor do celular: somente leitura, carregando o markdown
-  original, que volta intacto ao salvar.
+- **O que o app nao desenha, ele preserva.** Tabela, divisoria e mencao a outra
+  nota entram no editor do celular como texto markdown editavel e voltam iguais
+  ao salvar; o editor rico desenha o que tem comando nativo (enfase, listas,
+  titulos, citacao, link, codigo e imagem).
 - **Largura da imagem** viaja em `{w=50}` (percentual da largura da nota), que o
   markdown nao tem padrao para isso.
+- **O corpo e uma lista de nos, nao um texto com anexos.** O documento e
+  `[texto, imagem, texto, audio, texto, ...]`; texto e rich text, imagem e audio
+  sao nos do documento. O markdown continua canonico, com marcadores explicitos:
+  `![alt](local:...){w=50}` para imagem e `!audio[local:...]{d=12.5}` para audio.
+  O parser/serializer fica em `mobile/src/core/noteDocument`, e puro e testado no
+  nucleo. Inserir no cursor divide o no de texto na posicao exata; por isso a foto
+  e o audio entram entre dois trechos, nao no fim. Remover uma midia junta os dois
+  trechos de texto vizinhos. Nota antiga que ainda tem o audio da propria entrada
+  em `filePath` ganha o no correspondente na primeira abertura; a pilha adicional
+  criada no dashboard continua no topo, sem virar marcador no corpo. Liberar
+  espaco local so apaga audio quando todos os nos ja tem anexo conhecido e a nota
+  nao tem edicao pendente: sem isso, o arquivo local seria a unica copia.
 
 ## Abertura de nota e cache
 
@@ -80,14 +93,150 @@ isso:
   desmontar, scroll, painel de propriedades, modo markdown, transcricoes
   expandidas e posicao do audio ficam num store em memoria por entrada e sao
   reaplicados na volta.
-- **Editor de blocos, sem WebView.** A nota e um documento de blocos nativos:
-  cada bloco de texto e um editor rico nativo (`EnrichedTextInput`) e cada foto
-  e uma `Image` nativa no lugar. Nao existe leitor separado nem troca de view ao
-  tocar: o usuario toca no bloco e digita, com a mesma fonte e o mesmo layout o
-  tempo todo. A selecao vira negrito/italico/lista pelo comando nativo, sem
-  mostrar markdown. O markdown continua sendo o formato salvo: o bloco vira
-  markdown num debounce curto e no blur/saida. Fotos entram na hora pelo arquivo
-  local e sobem no sync ao sair da nota.
+- **Editor por nos, nativo.** Cada no de texto tem o seu `EnrichedTextInput` e
+  cada imagem/audio e um componente nativo no lugar. Negrito, italico, tachado,
+  codigo, titulos, listas, citacao e links sao desenhados enquanto o usuario
+  digita. A insercao no cursor chama `core/noteDocument`: o no de texto e dividido
+  e o no novo entra entre as duas metades. O custo por tecla fica limitado ao no
+  ativo, sem trocar de motor de edicao. **O texto da nota e um no so**: um
+  editor por paragrafo fazia o campo ser desmontado e remontado a cada troca
+  de paragrafo (com o custo e o lag do documento inteiro), e o Enter criava um
+  editor novo. As midias que cortam o texto sao os unicos pontos de divisao.
+  So uma nota gigante e cortada (8000 caracteres), em fronteira de palavra (ate
+  no meio de uma linha, sem quebra nenhuma), e as partes voltam coladas no
+  markdown - o texto do usuario nao muda. O texto de um no e o **conteudo** que
+  o editor mostra; as quebras que fecham a linha antes de uma midia ficam no
+  `breakAfter` do no, fora do conteudo (misturadas com ele, as quebras que o
+  usuario digita no fim do texto sumiam). Toda midia deixa um trecho de texto
+  (mesmo vazio) do lado direito: e o campo onde se digita abaixo de uma foto
+  ou audio, inclusive depois de reabrir a nota. A insercao e a remocao mexem
+  **na lista de nos**, sem reparsear o markdown: um id recalculado por um novo
+  parse apontava para outro trecho e fazia a foto mudar de lugar (e o texto
+  parecer perdido). A imagem e um no proprio: ocupa uma largura em percentual
+  da nota, que viaja no markdown (`{w=50}`); um unico botao de informacao no
+  canto abre o menu com os tres tamanhos e, por ultimo, remover a foto. Todo
+  trecho de texto e o editor rico
+  nativo, montado desde a abertura: nao ha estado de leitura, nem previa, nem
+  remontagem no toque. Um editor por trecho e barato porque so as midias
+  cortam o texto, e o toque, o cursor e o Enter sao os do Android. O
+  titulo, a data e as tags aparecem no primeiro frame, e o corpo monta junto:
+  nao ha esqueleto no lugar dele nem troca de etapa. Se o corpo ainda nao
+  mediu depois de 100 ms (aparelho lento), um indicador discreto aparece no
+  lugar do texto e sai no primeiro layout; ele nunca bloqueia a abertura nem o
+  fechamento da nota. O markdown continua sendo o
+  formato salvo: o HTML vira markdown num debounce curto e no blur/saida. Fotos e
+  audios entram na hora pelo arquivo local e sobem no sync ao sair da nota; a
+  referencia `local:`/`attachment:` fica no markdown, sem caminho de aparelho.
+- **Editor rico sempre montado, sem previa.** Todo trecho de texto e um
+  `EnrichedTextInput` desde a abertura, e o texto aparece formatado em todos
+  os estados. Nao existe renderizador de leitura: o que dividia a cena em
+  "previa" e "campo" era caro (duas geometrias para o mesmo texto, cursor
+  calculado por posicao de toque e `setSelection`) e podia mostrar o que o
+  usuario nao pediu. O corpo nao monta dezenas de campos porque um trecho de
+  texto so termina onde existe uma midia; a nota inteira e um campo quando nao
+  ha foto nem audio.
+- **Eventos sincronos no Android.** O editor muda de tamanho a cada tecla (o
+  texto cresce) e, com o evento assincrono, a atualizacao chega depois do
+  quadro: o campo pisca e a digitacao engasga. O `EnrichedTextInput` recebe
+  `androidExperimentalSynchronousEvents`, que e a opcao da propria biblioteca
+  para esse caso.
+- **HTML no formato interno do editor.** `core/noteHtml` entrega ao editor
+  rico o formato que ele reconhece como proprio (`<html>...</html>`). Fora desse
+  formato, a biblioteca trata o conteudo como HTML externo e roda o
+  normalizador (um parse de HTML5 completo, via Gumbo) no editor. No formato
+  interno, o parse e o da propria biblioteca, e a ida e volta do markdown
+  continua igual (`htmlToMarkdown` tira a casca).
+- **O HTML segue o que a biblioteca devolve.** Dentro do formato interno, a
+  biblioteca quebra o HTML em uma linha por tag e usa um `<br>` solto na linha
+  em branco. O app entrega o mesmo formato (uma quebra entre os blocos e
+  `<br>` na linha em branco) e a conversao tira essas quebras: elas sao
+  formatacao do HTML, nao texto. Sem isso, cada linha em branco do markdown
+  voltava dobrada a cada gravacao e o texto da nota crescia sozinho. Do mesmo
+  jeito, a conversao tira **uma** quebra do fim (a da tag que fecha o texto) e
+  nao todas: as que sobram sao as que o usuario digitou.
+- **Teclado e cursor.** A janela usa `adjustNothing` (plugin
+  `withKeyboardLayout`): o app reserva a altura do teclado na barra de acoes e
+  **nao rola a nota**. Quem cuida do cursor e o Android; rolar para o "inicio
+  do trecho" (medido pelo bloco, nao pelo cursor) fazia a nota pular para o
+  topo a cada toque perto do teclado. Fechar a nota tira o foco do editor
+  antes de desmontar a view: desmontar um campo com o teclado aberto travava
+  a thread de UI na transicao (tela preta/ANR).
+- **O texto e editado no editor nativo.** Todo trecho de texto e o proprio
+  `EnrichedTextInput` do app, montado desde a abertura: o toque, o cursor, a
+  selecao, o Enter e a digitacao sao os do Android. Nao ha previa no meio do
+  caminho, nem matematica de cursor, nem "condicoes" para o campo se comportar
+  como um campo. O que o usuario ve em todos os estados e o campo de verdade,
+  com o mesmo HTML que sera salvo.
+- **Uma leitura por trecho, por vez.** O editor nativo responde a um pedido de
+  HTML por vez. Duas leituras do mesmo trecho ao mesmo tempo fazem uma delas
+  falhar ("Component unmounted") - e o texto que o usuario escreveu nesse
+  trecho ia embora. As leituras ficam em fila por trecho.
+- **Um editor por trecho de texto, sempre montado.** So as midias cortam o
+  texto, entao uma nota sem foto nem audio tem um unico campo nativo, e uma
+  nota com tres audios tem quatro. Nao ha janela de visibilidade nem troca de
+  campo no toque: como o texto da nota e um no so, o editor nao e remontado
+  quando o cursor muda de linha; e o campo do Android que acompanha o cursor.
+- **A nota so rola quando o cursor some.** A rolagem para o cursor e feita
+  depois que o teclado abre e apenas se o cursor estiver fora da area visivel:
+  antes, qualquer toque rolava o paragrafo inteiro para o topo da tela e o
+  usuario perdia o texto que estava lendo.
+- **Pausa do player fora do desmonte.** `player.pause()` do `expo-audio` e uma
+  chamada sincrona que, no Android, termina em `AudioModule.runOnMain` ->
+  `runBlocking(main)`. Executada durante o desmonte da nota, ela cai no dispatch
+  de eventos do Fabric na thread principal e espera essa mesma thread: o app
+  fica "nao responde" por 5 s (ANR reproduzido no emulador, com a pilha
+  `EventBeatManager.tick -> AudioModule.runOnMain`). A pausa da saida e adiada
+  para o proximo tick do JS (`usePauseOnUnmount`), onde `runOnMain` agenda na
+  thread principal ja livre. Vale para qualquer chamada sincrona do
+  `expo-audio` em cleanup de tela.
+- **Diagnostico de digitacao.** O log de desenvolvimento separa o trabalho do
+  app do quadro perdido: `[perf] typing` traz `js_ms` (o que o app fez),
+  `frame_ms` (o tempo ate o proximo quadro), `chars` (o tamanho do no editado)
+  e `rich` (quantos editores nativos estao montados). E o que distingue "o JS
+  travou" de "a view nativa do editor e lenta".
+  `[perf] note.rehydrate` marca o corpo remontando (que tira o editor do
+  lugar).
+- **Patch no editor rico.** `react-native-enriched-html` recalcula o estado de
+  estilo do cursor a cada tecla e, no Android, emitia o evento de estado
+  **mesmo quando o estado nao tinha mudado**: cada emissao monta um payload
+  com todos os estilos, copia esse payload e despacha para o JS - dezenas de
+  mapas nativos por tecla, na thread de UI. A comparacao que_exists no
+  upstream ("nao emita se o payload for o mesmo") compara os *objetos* de
+  mapa, que nunca sao iguais, entao nunca segurava o evento. O iOS da
+  biblioteca ja faz o certo (so emite quando algo mudou); o Android nao.
+  O mesmo arquivo tinha um segundo defeito: o span de paragrafo vazio
+  (`EmptySpan`) era uma **classe local**, entao cada chamada criava uma classe
+  nova e os spans anteriores nunca eram removidos - um span de paragrafo a
+  mais a cada tecla, e o layout do texto ficava mais lento a cada tecla.
+  O patch tambem faz o evento de **selecao** ser assincrono: o editor o
+  despachava de forma sincrona (por causa de
+  `androidExperimentalSynchronousEvents`), entao cada toque e cada tecla
+  faziam a thread de UI esperar o JS - era o quadro perdido ao mover o cursor.
+  `mobile/patches/react-native-enriched-html@1.1.1.patch` corrige os tres no
+  Android. Como o patch e de codigo nativo, ele exige **rebuild** do
+  development build (reload do Metro nao basta).
+  Medido no aparelho antes do patch (nota de 11.852 chars, 56 nos): a tecla
+  custava de 132 ms a 1.772 ms, crescendo a cada tecla, com `js_ms = 0` (o JS
+  estava ocioso: o custo era todo nativo) e o corpo levando ~2 s para assentar.
+- **Editor unico, 100% nativo.** O corpo da nota e uma lista de nos
+  (`core/noteDocument`): texto rico, imagem e audio. Nao ha WebView no corpo:
+  o texto rico vive em `EnrichedTextInput`, um campo nativo por no de texto, e a
+  imagem e o audio sao componentes nativos no lugar. Isso elimina o cold start
+  da WebView, o recarregamento do documento e o piscar da tela quando o texto
+  muda. Todo trecho de texto e o campo rico, montado desde a abertura, com o
+  texto formatado em todos os estados (negrito, titulo, lista, codigo, citacao,
+  link): nao ha renderizador de leitura nem previa. O markdown continua sendo o
+  formato salvo: o HTML vira markdown num debounce curto e no blur/saida, e
+  nunca e mostrado. Fotos e audios entram na hora pelo arquivo local e sobem no
+  sync ao sair da nota; a referencia `local:`/`attachment:` fica no markdown,
+  sem caminho de aparelho.
+- **Decisao: corpo nativo, sem WebView.** A alternativa era o texto rico numa
+  WebView `contenteditable`, com o audio como card nativo entre os trechos. A
+  alternativa foi descartada: ela nao servia ao requisito (texto rico, fotos e
+  audios entre os trechos, markdown escondido e abertura rapida) e trazia cold
+  start, recarga do documento e tremor na digitacao. O que existia da
+  alternativa foi removido do app: `core/noteRuns`, `core/noteWebHtml`,
+  `core/webviewBridge` e o seletor de editor em Opcoes nao existem mais.
 
 ## Fluxo de dados
 
@@ -194,16 +343,14 @@ a gravacao dos resultados e feita em transacao, com upsert por chave natural.
 - Subnotas desativadas: a arvore `parent_id` nao e mais criada nem exibida; os dados
   existentes ficam no banco ate uma remocao futura. Cadernos e tags cobrem a organizacao
   que as subnotas tentavam resolver.
-- Editor da nota: o markdown e fatiado em blocos (`core/noteBlocks`) preservando as linhas
-  exatas para o round-trip. Blocos de texto usam um `EnrichedTextInput` nativo cada, o que
-  mantem o custo por tecla limitado ao tamanho do bloco (sem o O(n) da nota inteira que
-  derrubava a digitacao no editor unico). Blocos de imagem sao `Image` nativas; tabela,
-  divisoria e codigo ficam somente leitura e so saem com confirmacao. O editor nao tem
-  `onChangeHtml` nem `getHTML` por tecla: cada bloco marca "sujo" pela selecao e so pede o
-  HTML no debounce, no blur ou no `flush`. O estado `body` da tela so e materializado no
-  menu/saida, para nao re-renderizar a nota durante a digitacao. A volta por gesto/tecla do
-  sistema usa `beforeRemove` para esperar o flush antes de desmontar. O `react-native-enriched-html`
-  voltou apenas como motor nativo por bloco; a WebView foi removida do caminho.
+- Editor da nota: o corpo e uma lista ordenada de nos (`core/noteDocument`).
+  Texto, imagem e audio sao o mesmo tipo de coisa: um no do documento. Cada no de
+  texto tem o seu editor rico nativo; a insercao no cursor divide o no na posicao
+  visivel exata, fechando e reabrindo enfase/codigo quando necessario. O HTML do
+  no vira markdown no debounce (800 ms), no blur e no `flush`; `core/noteHtml`
+  preserva enfase, listas, titulos, citacao, link e codigo. O audio guarda a
+  referencia (`local:`/`attachment:`), a duracao no marcador e a transcricao no
+  cache da pilha; o player e um card entre os paragrafos, nao um campo da nota.
 - Abertura sem trabalho de fundo: enquanto a nota esta aberta, upload/rede e pulls esperam
   (`noteIsOpen`), a pilha de audios so revalida depois da transicao, o audio nao e
   decodificado ate o play/seek e a busca de anexos nao lista o diretorio inteiro (checa as
