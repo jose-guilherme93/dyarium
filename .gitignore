@@ -16,3 +16,7 @@ web/dist/
 # Ambiente
 .env
 *.local
+
+# Ferramentas locais de depuracao (IP/porta do aparelho; nunca vao para o repo)
+/scripts/adb-*.sh
+/scripts/qr-pair.py

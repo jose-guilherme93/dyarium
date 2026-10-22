@@ -49,6 +49,10 @@ O projeto tem tres superficies: o binario Go (`cmd/`, `internal/`), o dashboard
 - **Segredo nenhum no repositorio.** Token, chave mestra, chaves S3, tokens de
   bot, dominios, IPs e nomes de tailnet reais ficam fora do codigo e dos testes.
   Tudo por variavel de ambiente; `.env.example` sem valores reais.
+- **Ferramentas locais de depuracao ficam fora do repositorio.** Scripts que
+  apontam para o aparelho/emulador (`scripts/adb-*.sh`, `scripts/qr-pair.py`)
+  contem IP e porta reais e sao ignorados pelo git. Nunca force a entrada deles
+  com `git add -f`; se precisar compartilhar o procedimento, documente sem o IP.
 - **Segredos de runtime:** quando `DIARY_MASTER_KEY` e `DIARY_TOKEN` nao vem do
   ambiente, a chave mestra e o token sao gerados no primeiro boot e persistidos
   em `/data` (`master.key` e `token`, modo 0600). Nunca logue o valor; no maximo
