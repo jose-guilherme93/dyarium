@@ -35,7 +35,11 @@ class TaskService : Service() {
     } else {
       startForeground(NOTIFICATION_ID, notification)
     }
-    return START_STICKY
+    // NAO reiniciar sozinho: se o processo morrer no meio, o Android
+    // ressuscitaria o servico sem o JS, com uma notificacao presa e sem
+    // ninguem para atualiza-la ou para-lo. A transcricao retoma no proximo
+    // ciclo do app (checkpoint no banco).
+    return START_NOT_STICKY
   }
 
   private fun ensureChannel() {

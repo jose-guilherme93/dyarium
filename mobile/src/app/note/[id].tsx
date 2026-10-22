@@ -88,8 +88,13 @@ import {
   localAnalysisAvailable,
   stopAnalysis,
 } from '@/services/localAnalysis';
-import { maybeTranscribeLocally } from '@/services/localTranscription';
+import {
+  isTranscribing,
+  maybeTranscribeLocally,
+  stopTranscription,
+} from '@/services/localTranscription';
 import { enterNote, leaveNote } from '@/services/noteVisibility';
+import { willTranscribeLocally } from '@/services/whisper';
 import { fetchTheirs, syncNoteForcing } from '@/services/noteSync';
 import { pushTranscript } from '@/services/transcriptSync';
 import { playPlayer } from '@/services/playback';
@@ -97,7 +102,10 @@ import { useLibrary } from '@/state/LibraryContext';
 import { useAudioStack } from '@/state/useAudioStack';
 import { useLoadPlayback, usePauseOnUnmount, usePlaybackSource } from '@/state/PlaybackContext';
 import { useSettings } from '@/state/SettingsContext';
-import { useTranscriptionProgress } from '@/state/useTranscriptionProgress';
+import {
+  useTranscriptionProgress,
+  useTranscriptionRunning,
+} from '@/state/useTranscriptionProgress';
 import { colors, fontSize, radius, spacing } from '@/theme/tokens';
 
 /**
@@ -265,6 +273,7 @@ export default function NoteScreen() {
   }, [library.recordings, tagPickerOpen]);
   const noteId = note?.id;
   const liveTranscriptionPercent = useTranscriptionProgress(noteId);
+  const transcribing = useTranscriptionRunning(noteId);
   const transcriptionPercent =
     liveTranscriptionPercent > 0
       ? liveTranscriptionPercent
@@ -349,8 +358,6 @@ export default function NoteScreen() {
   const analysisBusyRef = useRef(false);
   /** Parar a analise local quando a tela perde o foco (definido abaixo). */
   const stopAnalysisOnLeaveRef = useRef<() => void>(() => undefined);
-  /** Nota cuja transcricao local ja foi disparada nesta abertura. */
-  const transcribeStartedRef = useRef<string | null>(null);
   // A analise local nasce antes do upload: ate o entryId existir, a chave e o
   // id da gravacao; depois ela e movida para a chave definitiva do servidor.
   const analysisKey = note?.entryId ?? note?.id ?? '';
@@ -792,19 +799,6 @@ export default function NoteScreen() {
     }
   }, [note, openedAt, queueImageSource]);
 
-  // Transcricao local ao abrir uma nota com audio sem transcricao: e o que
-  // alimenta a porcentagem abaixo do audio. Usa no maximo 2 threads e o
-  // progresso aparece no card e na notificacao; a analise local, que tambem
-  // usa o llama.cpp, so roda por pedido e para ao sair da nota.
-  useEffect(() => {
-    if (!note?.filePath || note.hasTranscript || note.transcriptStatus === 'ready') {
-      return;
-    }
-    if (transcribeStartedRef.current === note.id) return;
-    transcribeStartedRef.current = note.id;
-    void maybeTranscribeLocally(note.id).catch(() => undefined);
-  }, [note]);
-
   // Autosave local (debounced). A montagem nao grava: abrir uma nota nao pode
   // virar escrita no banco (e a nota nem mudou).
   const mountedRef = useRef(false);
@@ -1235,8 +1229,35 @@ export default function NoteScreen() {
     });
   }, [cachedAnalysis, noteId, refreshAnalysis, windowWidth]);
 
+  /**
+   * Transcricao local sob demanda.
+   *
+   * Nao comeca sozinha ao abrir a nota: uma nota de 15 min prenderia a CPU (e
+   * o microfone) mesmo quando o usuario so queria ler. O botao do card inicia
+   * e o mesmo botao para.
+   */
+  const handleTranscribe = useCallback(async () => {
+    if (!noteId) return;
+    if (!(await willTranscribeLocally())) {
+      Alert.alert(
+        'Transcrição no aparelho',
+        'Ative a transcrição local e baixe um modelo em Ajustes > Transcrição e modelos.',
+      );
+      return;
+    }
+    await maybeTranscribeLocally(noteId);
+  }, [noteId]);
+
+  const handleStopTranscribe = useCallback(() => {
+    if (!noteId) return;
+    void stopTranscription(noteId);
+  }, [noteId]);
+
   const handleRecord = useCallback(() => {
     if (!noteId) return;
+    // Libera a CPU e o microfone antes de gravar: uma transcricao rodando
+    // atrasava o inicio da gravacao.
+    if (isTranscribing(noteId)) void stopTranscription(noteId);
     // O cursor define onde a gravacao entra no corpo. Sem cursor de texto, o
     // audio entra no fim da nota.
     const openRecord = (at: NoteInsertPosition | null) => {
@@ -1639,11 +1660,10 @@ export default function NoteScreen() {
             imageSources={imageSources}
             audioSource={resolveAudio}
             audioTranscripts={audioTranscripts}
-            transcribingPercent={
-              transcriptionPercent > 0 && transcriptionPercent < 100
-                ? transcriptionPercent
-                : undefined
-            }
+            transcribingPercent={transcribing ? transcriptionPercent : undefined}
+            canTranscribe={Boolean(hasAudio) && !note.hasTranscript}
+            onTranscribe={() => void handleTranscribe()}
+            onStopTranscribe={handleStopTranscribe}
             typography={typography}
           />
         </View>

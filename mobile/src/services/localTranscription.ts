@@ -54,6 +54,11 @@ const attempted = new Set<string>();
 // Progresso (0..100) por gravacao, em memoria: a UI acompanha sem gravar no banco.
 const progressValues = new Map<string, number>();
 const progressListeners = new Map<string, Set<(percent: number) => void>>();
+const runningListeners = new Map<string, Set<(running: boolean) => void>>();
+/** Pedido de parada por gravacao (a janela atual termina e o loop para). */
+const cancelled = new Set<string>();
+/** Handle nativo da janela em andamento, para parar na hora quando possivel. */
+const activeRuns = new Map<string, { stop: () => Promise<void> }>();
 /** A notificacao de progresso esta na tela (o servico em primeiro plano roda). */
 let foregroundOn = false;
 
@@ -73,6 +78,50 @@ export function subscribeTranscriptionProgress(
 
 export function transcriptionProgress(id: string): number {
   return progressValues.get(id) ?? 0;
+}
+
+/** A transcricao desta gravacao esta rodando agora? */
+export function isTranscribing(id: string): boolean {
+  return running.has(id);
+}
+
+/** Acompanha inicio/fim da transcricao (para o botao do card). */
+export function subscribeTranscriptionRunning(
+  id: string,
+  listener: (running: boolean) => void,
+): () => void {
+  const set = runningListeners.get(id) ?? new Set();
+  set.add(listener);
+  runningListeners.set(id, set);
+  return () => {
+    set.delete(listener);
+    if (set.size === 0) runningListeners.delete(id);
+  };
+}
+
+function setRunning(id: string, value: boolean): void {
+  if (running.has(id) === value) return;
+  if (value) running.add(id);
+  else running.delete(id);
+  runningListeners.get(id)?.forEach((listener) => listener(value));
+}
+
+/**
+ * Para a transcricao desta gravacao.
+ *
+ * O checkpoint ja gravado fica valido: a proxima execucao (manual ou em
+ * segundo plano) retoma de onde parou. O botao do card usa isto para o usuario
+ * nunca ficar preso a uma transcricao longa.
+ */
+export async function stopTranscription(id: string): Promise<void> {
+  cancelled.add(id);
+  const run = activeRuns.get(id);
+  if (!run) return;
+  try {
+    await run.stop();
+  } catch {
+    // a janela pode ja ter terminado
+  }
 }
 
 function setProgress(id: string, percent: number): void {
@@ -254,7 +303,8 @@ export async function transcribeLocally(id: string): Promise<void> {
   const whisper = loadWhisper();
   if (!whisper || !audioDecodeAvailable()) return;
 
-  running.add(id);
+  setRunning(id, true);
+  cancelled.delete(id);
   attempted.add(id);
   if (__DEV__) console.log('[perf] transcricao.comecou', { id, ms: Date.now() });
 
@@ -304,14 +354,14 @@ export async function transcribeLocally(id: string): Promise<void> {
 
     let language = recording.transcriptLanguage ?? '';
     let lastPersist = 0;
-    while (checkpoint < durationMs - 5) {
+    while (checkpoint < durationMs - 5 && !cancelled.has(id)) {
       const slice = await writeWavRange(wavPath, chunkPath, checkpoint, checkpoint + CHUNK_MS);
       if (slice.endMs <= slice.startMs) break;
       const chunkStart = slice.startMs;
       const chunkEnd = slice.endMs;
       const partial: TranscriptSegment[] = [];
 
-      const { promise } = context.transcribe(chunkPath, {
+      const { promise, stop } = context.transcribe(chunkPath, {
         language: whisperLanguage(prefs.transcriptionLanguage),
         maxThreads: MAX_THREADS,
         onProgress: (percent) => {
@@ -336,6 +386,7 @@ export async function transcribeLocally(id: string): Promise<void> {
           });
         },
       });
+      activeRuns.set(id, { stop });
 
       const result = await promise;
       language = result.language || language;
@@ -349,10 +400,14 @@ export async function transcribeLocally(id: string): Promise<void> {
         transcriptCheckpointMs: checkpoint,
       });
       // Durable antes da proxima janela: se o app morrer agora, retoma daqui.
+      activeRuns.delete(id);
       await chain.catch(() => undefined);
     }
 
     await chain.catch(() => undefined);
+    // Cancelada pelo usuario: o que ja foi transcrito fica salvo como pending
+    // (checkpoint), nao como concluido.
+    if (cancelled.has(id)) throw new Error('transcricao cancelada');
     setProgress(id, 100);
     await persist(recording, {
       transcript: textOf(committed),
@@ -383,7 +438,9 @@ export async function transcribeLocally(id: string): Promise<void> {
     if (wav.exists) wav.delete();
     const chunk = new File(chunkPath);
     if (chunk.exists) chunk.delete();
-    running.delete(id);
+    activeRuns.delete(id);
+    cancelled.delete(id);
+    setRunning(id, false);
     foregroundOn = false;
     stopForegroundTask();
   }

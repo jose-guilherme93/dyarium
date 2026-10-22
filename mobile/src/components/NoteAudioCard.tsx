@@ -25,6 +25,12 @@ export interface NoteAudioCardProps {
   transcript?: string;
   /** Progresso (0..100) da transcricao desta nota, enquanto ela roda. */
   transcribingPercent?: number;
+  /** Ha modelo local e a nota ainda nao tem transcricao? */
+  canTranscribe?: boolean;
+  /** Inicia a transcricao local. */
+  onTranscribe?: () => void;
+  /** Para a transcricao local em andamento. */
+  onStopTranscribe?: () => void;
   /** Remove o audio do corpo da nota. */
   onRemove: () => void;
 }
@@ -35,6 +41,9 @@ export function NoteAudioCard({
   resolve,
   transcript,
   transcribingPercent,
+  canTranscribe,
+  onTranscribe,
+  onStopTranscribe,
   onRemove,
 }: NoteAudioCardProps) {
   const [open, setOpen] = useState(false);
@@ -94,7 +103,25 @@ export function NoteAudioCard({
             {node.durationMs > 0 ? formatDuration(node.durationMs) : 'Duração desconhecida'}
           </Text>
         </View>
-        <Ionicons name="mic-outline" size={17} color={colors.textTertiary} />
+        {transcribingPercent !== undefined ? (
+          <Pressable
+            onPress={onStopTranscribe}
+            accessibilityLabel="Parar transcrição"
+            hitSlop={8}
+          >
+            <Ionicons name="stop-circle-outline" size={18} color={colors.textSecondary} />
+          </Pressable>
+        ) : canTranscribe && onTranscribe ? (
+          <Pressable
+            onPress={onTranscribe}
+            accessibilityLabel="Transcrever áudio"
+            hitSlop={8}
+          >
+            <Ionicons name="text-outline" size={17} color={colors.textSecondary} />
+          </Pressable>
+        ) : (
+          <Ionicons name="mic-outline" size={17} color={colors.textTertiary} />
+        )}
         <Pressable
           onPress={onRemove}
           accessibilityLabel="Remover áudio"
@@ -109,7 +136,8 @@ export function NoteAudioCard({
         <View style={styles.transcribing} testID="audio-transcribing">
           <ActivityIndicator size="small" color={colors.textSecondary} />
           <Text style={styles.audioHint}>
-            Transcrevendo {Math.round(transcribingPercent)}%
+            Transcrevendo
+            {transcribingPercent > 0 ? ` ${Math.round(transcribingPercent)}%` : '...'}
           </Text>
         </View>
       ) : null}

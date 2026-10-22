@@ -50,6 +50,12 @@ export interface NoteBodyProps {
   audioTranscripts?: Record<string, string>;
   /** Progresso (0..100) da transcricao local da nota, enquanto ela roda. */
   transcribingPercent?: number;
+  /** Ha audio sem transcricao e modelo local disponivel? */
+  canTranscribe?: boolean;
+  /** Inicia a transcricao local da nota. */
+  onTranscribe?: () => void;
+  /** Para a transcricao local em andamento. */
+  onStopTranscribe?: () => void;
   typography?: import('@/core/typography').NoteTypography;
   /** Abre a foto em tela cheia. */
   onImageOpen?: (src: string) => void;

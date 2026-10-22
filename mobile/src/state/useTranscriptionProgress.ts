@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 
 import {
+  isTranscribing,
   subscribeTranscriptionProgress,
+  subscribeTranscriptionRunning,
   transcriptionProgress,
 } from '@/services/localTranscription';
 
@@ -15,4 +17,18 @@ export function useTranscriptionProgress(id: string | undefined, enabled = true)
   }, [id, enabled]);
 
   return enabled ? percent : 0;
+}
+
+/** A transcricao local desta gravacao esta rodando? (o card mostra parar). */
+export function useTranscriptionRunning(id: string | undefined, enabled = true): boolean {
+  const subscribe = useCallback(
+    (onChange: () => void) =>
+      id && enabled ? subscribeTranscriptionRunning(id, onChange) : () => undefined,
+    [id, enabled],
+  );
+  const snapshot = useCallback(
+    () => Boolean(id && enabled && isTranscribing(id)),
+    [id, enabled],
+  );
+  return useSyncExternalStore(subscribe, snapshot, snapshot);
 }

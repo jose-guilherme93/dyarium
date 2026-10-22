@@ -440,6 +440,39 @@ describe('corpo da nota em nos', () => {
     expect(screen.getByText('Transcrevendo 83%')).toBeTruthy();
   });
 
+  it('oferece transcrever o audio quando ha modelo e falta transcricao', () => {
+    const onTranscribe = jest.fn();
+    render(
+      <NoteBody
+        value={'A\n!audio[local:a.aac]{d=3}'}
+        onChangeMarkdown={jest.fn()}
+        canTranscribe
+        onTranscribe={onTranscribe}
+        typography={typography}
+      />,
+    );
+
+    fireEvent.press(screen.getByLabelText('Transcrever áudio'));
+    expect(onTranscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('para a transcricao pelo mesmo botao, mesmo em 0%', () => {
+    const onStopTranscribe = jest.fn();
+    render(
+      <NoteBody
+        value={'A\n!audio[local:a.aac]{d=3}'}
+        onChangeMarkdown={jest.fn()}
+        transcribingPercent={0}
+        onStopTranscribe={onStopTranscribe}
+        typography={typography}
+      />,
+    );
+
+    expect(screen.getByText('Transcrevendo...')).toBeTruthy();
+    fireEvent.press(screen.getByLabelText('Parar transcrição'));
+    expect(onStopTranscribe).toHaveBeenCalledTimes(1);
+  });
+
   it('nao mostra progresso quando nao ha transcricao rodando', () => {
     render(
       <NoteBody
