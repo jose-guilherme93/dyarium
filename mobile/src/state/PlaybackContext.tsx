@@ -97,16 +97,27 @@ export function usePlaybackSource(uri: string | undefined, options?: PlaybackSou
   return player;
 }
 
-/** Pausa o player unico (usado ao sair da nota). */
+/**
+ * Pausa o player unico (usado ao sair da nota).
+ *
+ * A pausa e adiada para o proximo tick do JS de proposito: `player.pause()` e
+ * uma chamada **sincrona** do expo-audio (`AudioModule.pause`). Executada no
+ * meio do desmonte, ela pode cair no dispatch de eventos do Fabric na thread
+ * principal, e o `runOnMain` do modulo espera essa mesma thread: o app fica
+ * "nao responde" por 5 s (ANR) ao sair da nota. Fora do desmonte, a chamada
+ * roda na thread do JS e o `runOnMain` agenda na principal, que esta livre.
+ */
 export function usePauseOnUnmount(): void {
   const player = usePlayback();
   useEffect(
     () => () => {
-      try {
-        player.pause();
-      } catch {
-        // player ja liberado
-      }
+      setTimeout(() => {
+        try {
+          player.pause();
+        } catch {
+          // player ja liberado
+        }
+      }, 0);
     },
     [player],
   );

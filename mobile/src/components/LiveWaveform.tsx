@@ -9,7 +9,9 @@ import Animated, {
 import { useRenderCount } from '@/dev/perf';
 import { colors } from '@/theme/tokens';
 
-const DEFAULT_BARS = 48;
+// Um numero menor de barras reduz o trabalho da thread de UI. A onda continua
+// parecendo continua porque cada barra e larga e o nivel e suavizado.
+const DEFAULT_BARS = 36;
 
 interface LiveWaveformProps {
   /** Gravando (anima). Fora disso, as barras ficam paradas. */
@@ -38,15 +40,23 @@ interface BarProps {
  * vivo vem do shared value `levels`, na thread de UI.
  */
 const Bar = memo(function Bar({ levels, index, total, width, height, color }: BarProps) {
+  // A altura vem de uma transformacao, e nao de `height`: mudar a altura de
+  // dezenas de barras a cada frame forca um layout novo no Android e derrubava
+  // a gravacao para ~38 fps. `scaleY` roda na composicao da UI, sem layout.
   const animated = useAnimatedStyle(() => {
     const amp = levels.value[index] ?? 0.06;
-    return { height: Math.max(3, amp * height) };
+    return { transform: [{ scaleY: Math.max(0.025, Math.min(1, amp)) }] };
   });
   // Trilha: as barras mais novas (a direita) ficam mais vivas.
   const opacity = 0.28 + 0.6 * (index / Math.max(1, total - 1));
   return (
     <Animated.View
-      style={[styles.bar, { width, borderRadius: width / 2, backgroundColor: color, opacity }, animated]}
+      testID={`wave-bar-${index}`}
+      style={[
+        styles.bar,
+        { width, height, borderRadius: width / 2, backgroundColor: color, opacity },
+        animated,
+      ]}
     />
   );
 });
@@ -66,6 +76,7 @@ export function LiveWaveform({
   const levels = useSharedValue<number[]>(new Array(bars).fill(0.06));
   const target = useSharedValue(0);
   const smoothed = useSharedValue(0);
+  const tick = useSharedValue(0);
   useRenderCount('LiveWaveform');
 
   useEffect(() => {
@@ -74,6 +85,11 @@ export function LiveWaveform({
 
   const frame = useFrameCallback(() => {
     'worklet';
+    // A onda anda a 30 fps: metade do trabalho por frame, enquanto o resto da
+    // tela (e a propria animacao) continua a 60 fps.
+    tick.value = (tick.value + 1) % 2;
+    if (tick.value !== 0) return;
+
     smoothed.value = smoothed.value + (target.value - smoothed.value) * 0.16;
     const prev = levels.value;
     const next = new Array<number>(prev.length);
@@ -89,7 +105,7 @@ export function LiveWaveform({
     return () => frame.setActive(false);
   }, [active, frame]);
 
-  const width = 2.5;
+  const width = 3.5;
 
   return (
     <View style={[styles.row, { height, opacity: paused ? 0.45 : 1 }]}>

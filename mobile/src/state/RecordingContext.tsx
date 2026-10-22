@@ -51,8 +51,6 @@ const RECORDING_OPTIONS: RecordingOptions = {
 
 interface RecordingValue {
   active: Recording | null;
-  elapsedMs: number;
-  level: number;
   error: string | null;
   busy: boolean;
   /** Gravacao pausada (o tempo da pausa nao conta). */
@@ -71,7 +69,20 @@ interface RecordingValue {
   finalizeInterrupted(id: string): Promise<void>;
 }
 
+/**
+ * Medidas ao vivo da gravacao (tempo e nivel).
+ *
+ * Separadas do contexto principal de proposito: elas mudam varias vezes por
+ * segundo. A home e as outras telas so precisam de `start`/`stop`, entao nao
+ * podem re-renderizar a lista inteira a cada amostra do microfone.
+ */
+interface RecordingLiveValue {
+  elapsedMs: number;
+  level: number;
+}
+
 const RecordingContext = createContext<RecordingValue | null>(null);
+const RecordingLiveContext = createContext<RecordingLiveValue | null>(null);
 
 function normalizeLevel(metering?: number): number {
   if (metering === undefined || Number.isNaN(metering)) return 0;
@@ -84,7 +95,9 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
   const library = useLibrary();
   bumpRender('RecordingProvider');
   const recorder = useAudioRecorder(RECORDING_OPTIONS);
-  const recorderState = useAudioRecorderState(recorder, 200);
+  // O nivel alimenta a waveform, que suaviza entre as amostras. 250 ms basta
+  // e evita um getStatus() nativo (e um render do provider) a cada 200 ms.
+  const recorderState = useAudioRecorderState(recorder, 250);
 
   const [active, setActive] = useState<Recording | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -179,9 +192,11 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
 
   const startTimers = useCallback(() => {
     clearTimers();
+    // O visor mostra segundos: 500 ms e suficiente e reduz os renders da tela
+    // durante a gravacao.
     tickRef.current = setInterval(() => {
       setElapsedMs(elapsed());
-    }, 250);
+    }, 500);
     rotateRef.current = setInterval(() => {
       void rotate();
     }, SEGMENT_MS);
@@ -197,6 +212,17 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
         // sem ela, grava em primeiro plano em vez de falhar.
         allowsBackgroundRecording: backgroundRecording,
       });
+      // Prepara e comeca a gravar ANTES de marcar a sessao como ativa. Se o
+      // microfone falhar (ocupado por outro app, permissao revogada), a sessao
+      // nao pode ficar presa: o proximo toque em gravar tem de tentar de novo.
+      try {
+        await recorder.prepareToRecordAsync(RECORDING_OPTIONS);
+        recorder.record();
+        await upsertRecording(session);
+      } catch (error) {
+        await recorder.stop().catch(() => undefined);
+        throw error;
+      }
       activeRef.current = session;
       setActive(session);
       segmentIndexRef.current = startIndex;
@@ -206,9 +232,6 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
       accumulatedPauseRef.current = 0;
       setPaused(false);
       setElapsedMs(0);
-      await upsertRecording(session);
-      await recorder.prepareToRecordAsync(RECORDING_OPTIONS);
-      recorder.record();
       startTimers();
     },
     [recorder, startTimers],
@@ -388,8 +411,6 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
   const value = useMemo<RecordingValue>(
     () => ({
       active,
-      elapsedMs,
-      level: normalizeLevel(recorderState.metering),
       error,
       busy,
       paused,
@@ -402,8 +423,6 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
     }),
     [
       active,
-      elapsedMs,
-      recorderState.metering,
       error,
       busy,
       paused,
@@ -416,15 +435,35 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
     ],
   );
 
+  const live = useMemo<RecordingLiveValue>(
+    () => ({ elapsedMs, level: normalizeLevel(recorderState.metering) }),
+    [elapsedMs, recorderState.metering],
+  );
+
   useEffect(() => {
     bumpRender('recording.value');
   }, [value]);
 
-  return <RecordingContext.Provider value={value}>{children}</RecordingContext.Provider>;
+  useEffect(() => {
+    bumpRender('recording.live');
+  }, [live]);
+
+  return (
+    <RecordingContext.Provider value={value}>
+      <RecordingLiveContext.Provider value={live}>{children}</RecordingLiveContext.Provider>
+    </RecordingContext.Provider>
+  );
 }
 
 export function useRecording(): RecordingValue {
   const value = useContext(RecordingContext);
   if (!value) throw new Error('useRecording deve ser usado dentro de RecordingProvider');
+  return value;
+}
+
+/** Tempo e nivel ao vivo: apenas a tela de gravacao usa isso. */
+export function useRecordingLive(): RecordingLiveValue {
+  const value = useContext(RecordingLiveContext);
+  if (!value) throw new Error('useRecordingLive deve ser usado dentro de RecordingProvider');
   return value;
 }

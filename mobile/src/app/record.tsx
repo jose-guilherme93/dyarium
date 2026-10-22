@@ -9,9 +9,10 @@ import { formatDuration } from '@/core/format';
 import type { Recording } from '@/core/types';
 import { useRenderCount } from '@/dev/perf';
 import { deleteRecordingRow } from '@/services/db';
-import { deleteSessionFiles, moveAudio, sessionDirUri } from '@/services/files';
+import { clearPendingInsert, takePendingInsert } from '@/services/noteInsert';
+import { audioFileName, deleteSessionFiles, moveAudio, sessionDirUri } from '@/services/files';
 import { useLibrary } from '@/state/LibraryContext';
-import { useRecording } from '@/state/RecordingContext';
+import { useRecording, useRecordingLive } from '@/state/RecordingContext';
 import { colors, fontSize, spacing } from '@/theme/tokens';
 
 /**
@@ -20,10 +21,15 @@ import { colors, fontSize, spacing } from '@/theme/tokens';
  * home, vira uma nota nova. Em ambos os casos, volta para a nota.
  */
 export default function RecordScreen() {
-  const { noteId, from } = useLocalSearchParams<{ noteId?: string; from?: string }>();
+  const { noteId, from } = useLocalSearchParams<{
+    noteId?: string;
+    from?: string;
+  }>();
   const { attachAudio, enqueue, refresh, submitNote } = useLibrary();
-  const { active, elapsedMs, level, error, busy, paused, pause, unpause, start, stop } =
-    useRecording();
+  const { active, error, busy, paused, pause, unpause, start, stop } = useRecording();
+  // Tempo e nivel mudam varias vezes por segundo e vivem em outro contexto:
+  // a home nao re-renderiza junto enquanto a gravacao esta aberta.
+  const { elapsedMs, level } = useRecordingLive();
   const [finishing, setFinishing] = useState(false);
   const [finishError, setFinishError] = useState<string | null>(null);
   const startedRef = useRef(false);
@@ -46,16 +52,21 @@ export default function RecordScreen() {
     if (noteId) {
       // Se a nota sumiu no meio do caminho, o audio nao pode ser perdido: o
       // anexo falha e a gravacao vira uma nota propria logo abaixo.
-      const movedPath = await moveAudio(finished.id, noteId).catch((error) => {
-        console.warn('[dyarium] falha ao mover o audio da gravacao', String(error));
-        return null;
-      });
+      const movedPath = await moveAudio(finished.id, noteId, audioFileName(finished.id)).catch(
+        (error) => {
+          console.warn('[dyarium] falha ao mover o audio da gravacao', String(error));
+          return null;
+        },
+      );
       const attached: Recording = {
         ...finished,
         dir: movedPath ? sessionDirUri(noteId) : finished.dir,
         filePath: movedPath ?? finished.filePath,
       };
-      const kept = await attachAudio(noteId, attached).catch((error) => {
+      // A posicao vem guardada pela tela da nota: o no de texto e o offset
+      // do cursor, para o audio entrar no lugar certo.
+      const position = takePendingInsert(noteId);
+      const kept = await attachAudio(noteId, attached, position).catch((error) => {
         console.warn('[dyarium] falha ao anexar o audio na nota', String(error));
         return false;
       });
@@ -96,6 +107,16 @@ export default function RecordScreen() {
     }
   }, [finishing, finish]);
 
+  // A tela pode sair pelo botao do sistema, sem passar pelo "X": a posicao
+  // guardada pela nota precisa ser descartada em qualquer saida, senao a
+  // proxima gravacao herda a posicao velha.
+  useEffect(
+    () => () => {
+      if (noteId) clearPendingInsert(noteId);
+    },
+    [noteId],
+  );
+
   const handleDiscard = useCallback(async () => {
     if (finishing) return;
     setFinishing(true);
@@ -108,9 +129,12 @@ export default function RecordScreen() {
       }
     } finally {
       setFinishing(false);
+      // A gravacao foi cancelada: a posicao guardada pela tela da nota nao
+      // vale mais, e a proxima gravacao nao pode herdar a antiga.
+      if (noteId) clearPendingInsert(noteId);
       router.back();
     }
-  }, [finishing, stop, refresh]);
+  }, [finishing, noteId, stop, refresh]);
 
   return (
     <View style={styles.screen}>
