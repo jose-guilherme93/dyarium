@@ -11,7 +11,6 @@
  */
 
 import { Directory, File, FileMode, Paths } from 'expo-file-system';
-import { AppState } from 'react-native';
 
 import { whisperLanguage } from '@/core/transcription';
 import type { Recording, TranscriptSegment } from '@/core/types';
@@ -20,6 +19,7 @@ import { audioDecodeAvailable, decodeToWav } from '../../modules/audio-decode';
 import {
   startForegroundTask,
   stopForegroundTask,
+  updateForegroundTask,
 } from '../../modules/foreground-task';
 import { getRecording, listRecordings, upsertRecording } from './db';
 import { ensureNotificationPermission, notify } from './notifications';
@@ -54,6 +54,8 @@ const attempted = new Set<string>();
 // Progresso (0..100) por gravacao, em memoria: a UI acompanha sem gravar no banco.
 const progressValues = new Map<string, number>();
 const progressListeners = new Map<string, Set<(percent: number) => void>>();
+/** A notificacao de progresso esta na tela (o servico em primeiro plano roda). */
+let foregroundOn = false;
 
 /** Acompanha o progresso da transcricao de uma gravacao. */
 export function subscribeTranscriptionProgress(
@@ -81,6 +83,11 @@ function setProgress(id: string, percent: number): void {
   if (previous !== undefined && Math.floor(previous) === Math.floor(next)) return;
   progressValues.set(id, next);
   progressListeners.get(id)?.forEach((listener) => listener(next));
+  if (foregroundOn) {
+    // A barra de notificacoes e o unico lugar onde o progresso aparece com o
+    // app em segundo plano; o texto acompanha a mesma porcentagem da nota.
+    updateForegroundTask('Transcrevendo nota', `${Math.round(next)}% concluído`, Math.round(next));
+  }
 }
 
 /** Libera os contextos do whisper (ao apagar/trocar de modelo). */
@@ -232,16 +239,8 @@ function lastSegmentEnd(segments: TranscriptSegment[]): number {
  * Transcreve a gravacao no aparelho. Idempotente por gravacao: grava o texto a
  * cada trecho (progressivo) e marca `hasTranscript` ao final.
  */
-/** O app esta na frente? Lido a cada chamada (o estado muda durante o loop). */
-function appIsActive(): boolean {
-  return AppState.currentState === 'active';
-}
-
 export async function transcribeLocally(id: string): Promise<void> {
   if (running.has(id) || attempted.has(id)) return;
-  // Whisper satura a CPU. A transcricao e trabalho de segundo plano: enquanto o
-  // app esta na frente (nota aberta, gravacao, waveform a 60 fps), ela espera.
-  if (appIsActive()) return;
   const recording = await getRecording(id);
   if (!recording?.filePath) return;
   if (recording.hasTranscript && recording.transcriptStatus === 'ready') return;
@@ -277,8 +276,10 @@ export async function transcribeLocally(id: string): Promise<void> {
     transcriptSegments: committed,
     transcript: committed.map((segment) => segment.text).join(' ').trim() || undefined,
   });
-  // Mantem o processo vivo (e o usuario informado) se ele sair do app.
-  startForegroundTask('Transcrevendo nota', 'A transcrição continua em segundo plano.');
+  // Mantem o processo vivo e mostra o progresso na barra de notificacoes.
+  // Duas threads deixam o app utilizavel mesmo com a nota aberta.
+  startForegroundTask('Transcrevendo nota', '0% concluído', 0);
+  foregroundOn = true;
   const wavPath = wavPathFor(id);
   const chunkPath = chunkPathFor(id);
 
@@ -304,12 +305,6 @@ export async function transcribeLocally(id: string): Promise<void> {
     let language = recording.transcriptLanguage ?? '';
     let lastPersist = 0;
     while (checkpoint < durationMs - 5) {
-      // O usuario voltou ao app no meio da transcricao: para na fronteira de
-      // uma janela. O checkpoint fica salvo e a proxima execucao em segundo
-      // plano retoma daqui, sem disputar CPU com a interface.
-      if (appIsActive()) {
-        throw new Error('app em primeiro plano');
-      }
       const slice = await writeWavRange(wavPath, chunkPath, checkpoint, checkpoint + CHUNK_MS);
       if (slice.endMs <= slice.startMs) break;
       const chunkStart = slice.startMs;
@@ -389,6 +384,7 @@ export async function transcribeLocally(id: string): Promise<void> {
     const chunk = new File(chunkPath);
     if (chunk.exists) chunk.delete();
     running.delete(id);
+    foregroundOn = false;
     stopForegroundTask();
   }
 }
@@ -425,7 +421,6 @@ export async function transcribePendingLocally(): Promise<void> {
     return;
   }
   for (const recording of list) {
-    if (appIsActive()) break;
     if (!recording.filePath || recording.hasTranscript || running.has(recording.id)) continue;
     await transcribeLocally(recording.id);
   }

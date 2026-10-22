@@ -124,6 +124,7 @@ const NativeNoteBody = memo(
       imageSources = EMPTY_SOURCES,
       audioSource,
       audioTranscripts = {},
+      transcribingPercent,
       typography,
       onImageOpen,
       placeholder,
@@ -693,6 +694,7 @@ const NativeNoteBody = memo(
           node={node}
           resolve={audioSource}
           transcript={audioTranscripts[node.ref]}
+          transcribingPercent={transcribingPercent}
           onRemove={() => confirmRemove('áudio', node.id)}
         />
       );

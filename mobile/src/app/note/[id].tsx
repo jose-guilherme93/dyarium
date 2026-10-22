@@ -1627,6 +1627,11 @@ export default function NoteScreen() {
             imageSources={imageSources}
             audioSource={resolveAudio}
             audioTranscripts={audioTranscripts}
+            transcribingPercent={
+              transcriptionPercent > 0 && transcriptionPercent < 100
+                ? transcriptionPercent
+                : undefined
+            }
             typography={typography}
           />
         </View>

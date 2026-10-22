@@ -12,7 +12,9 @@ import android.os.IBinder
 
 /**
  * Servico em primeiro plano para manter o processo vivo durante uma tarefa longa
- * (transcricao no aparelho). Mostra uma notificacao discreta enquanto roda.
+ * (transcricao no aparelho). Mostra uma notificacao discreta enquanto roda e
+ * aceita atualizacao de progresso (0..100), para o usuario acompanhar pela
+ * barra de notificacoes.
  */
 class TaskService : Service() {
   override fun onBind(intent: Intent?): IBinder? = null
@@ -26,7 +28,8 @@ class TaskService : Service() {
     ensureChannel()
     val title = intent?.getStringExtra(EXTRA_TITLE) ?: "Processando"
     val text = intent?.getStringExtra(EXTRA_TEXT) ?: ""
-    val notification = buildNotification(title, text)
+    val percent = intent?.getIntExtra(EXTRA_PERCENT, -1) ?: -1
+    val notification = buildNotification(title, text, percent)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
       startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
     } else {
@@ -46,27 +49,33 @@ class TaskService : Service() {
     }
   }
 
-  private fun buildNotification(title: String, text: String): Notification {
+  private fun buildNotification(title: String, text: String, percent: Int): Notification {
     val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
       Notification.Builder(this, CHANNEL_ID)
     } else {
       @Suppress("DEPRECATION")
       Notification.Builder(this)
     }
-    return builder
+    builder
       .setContentTitle(title)
       .setContentText(text)
       .setSmallIcon(applicationInfo.icon)
       .setOngoing(true)
       .setOnlyAlertOnce(true)
-      .build()
+    if (percent in 0..100) {
+      // Barra de progresso determinada: o usuario ve a porcentagem sem abrir o app.
+      builder.setProgress(100, percent, false)
+    }
+    return builder.build()
   }
 
   companion object {
     const val ACTION_START = "expo.modules.foregroundtask.START"
+    const val ACTION_UPDATE = "expo.modules.foregroundtask.UPDATE"
     const val ACTION_STOP = "expo.modules.foregroundtask.STOP"
     const val EXTRA_TITLE = "title"
     const val EXTRA_TEXT = "text"
+    const val EXTRA_PERCENT = "percent"
     private const val CHANNEL_ID = "dyarium-task"
     private const val NOTIFICATION_ID = 4711
   }

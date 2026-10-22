@@ -426,6 +426,32 @@ describe('corpo da nota em nos', () => {
     expect(onChange).toHaveBeenLastCalledWith('A editado\n');
   });
 
+  it('mostra o progresso da transcricao abaixo do audio', () => {
+    render(
+      <NoteBody
+        value={'A\n!audio[local:a.aac]{d=3}'}
+        onChangeMarkdown={jest.fn()}
+        transcribingPercent={83}
+        typography={typography}
+      />,
+    );
+
+    expect(screen.getByTestId('audio-transcribing')).toBeTruthy();
+    expect(screen.getByText('Transcrevendo 83%')).toBeTruthy();
+  });
+
+  it('nao mostra progresso quando nao ha transcricao rodando', () => {
+    render(
+      <NoteBody
+        value={'A\n!audio[local:a.aac]{d=3}'}
+        onChangeMarkdown={jest.fn()}
+        typography={typography}
+      />,
+    );
+
+    expect(screen.queryByTestId('audio-transcribing')).toBeNull();
+  });
+
   it('remove o audio do documento depois da confirmacao', async () => {
     const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
     const onChange = jest.fn();

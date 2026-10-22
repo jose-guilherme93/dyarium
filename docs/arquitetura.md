@@ -354,8 +354,11 @@ a gravacao dos resultados e feita em transacao, com upsert por chave natural.
 - Abertura sem trabalho de fundo: enquanto a nota esta aberta, upload/rede e pulls esperam
   (`noteIsOpen`), a pilha de audios so revalida depois da transicao, o audio nao e
   decodificado ate o play/seek e a busca de anexos nao lista o diretorio inteiro (checa as
-  extensoes conhecidas direto). A transcricao local espera 4 s, nunca com o editor aberto, e
-  o progresso so notifica quando o percentual inteiro muda.
+  extensoes conhecidas direto). A transcricao local usa no maximo 2 threads (o app continua
+  respondendo), mostra a porcentagem no card do audio e na notificacao (barra de progresso)
+  e o progresso so notifica quando o percentual inteiro muda. A analise local usa 2 threads
+  (1 no modo de economia) e para quando a nota perde o foco: antes eram 4 threads rodando
+  em segundo plano, e entrar/sair de qualquer tela custava dezenas de segundos.
 
 ## Limites e configuracoes relevantes
 

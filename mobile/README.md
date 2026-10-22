@@ -111,7 +111,9 @@ texto, guarda local, enfileira e envia para o servidor self-hosted.
   Medium, Large v3 Turbo) do mais leve ao mais preciso, com o **recomendado para a RAM do
   aparelho** e download sob demanda (nunca entram no build). Com um modelo baixado e o toggle
   ligado, a nota de audio e transcrita **offline**, com o texto aparecendo por trecho
-  ("Transcrevendo..." com a **porcentagem** e loading). Quem transcreve primeiro informa o
+  ("Transcrevendo..." com a **porcentagem** e loading no card do audio e barra de progresso
+  na notificacao). A transcricao usa no maximo 2 threads, para a interface continuar
+  respondendo. Quem transcreve primeiro informa o
   outro: ao subir o audio o app avisa o servidor (`local_transcribe`) e, ao terminar,
   **empurra o texto** (`PUT /entries/{id}/transcript`), entao o servidor nao transcreve de
   novo e o dashboard mostra o texto. Precisa de development build (`whisper.rn` + um modulo

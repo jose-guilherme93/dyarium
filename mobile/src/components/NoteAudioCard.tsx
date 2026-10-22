@@ -8,7 +8,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { AudioSeekBar } from '@/components/AudioSeekBar';
 import { formatDuration } from '@/core/format';
@@ -23,12 +23,20 @@ export interface NoteAudioCardProps {
   resolve?: (ref: string) => Promise<string | null> | string | null;
   /** Transcricao do audio, quando houver. */
   transcript?: string;
+  /** Progresso (0..100) da transcricao desta nota, enquanto ela roda. */
+  transcribingPercent?: number;
   /** Remove o audio do corpo da nota. */
   onRemove: () => void;
 }
 
 /** Audio do documento: player entre os trechos de texto. */
-export function NoteAudioCard({ node, resolve, transcript, onRemove }: NoteAudioCardProps) {
+export function NoteAudioCard({
+  node,
+  resolve,
+  transcript,
+  transcribingPercent,
+  onRemove,
+}: NoteAudioCardProps) {
   const [open, setOpen] = useState(false);
   const [uri, setUri] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -97,6 +105,14 @@ export function NoteAudioCard({ node, resolve, transcript, onRemove }: NoteAudio
       </View>
 
       {open && uri ? <ActiveAudio uri={uri} durationMs={node.durationMs} /> : null}
+      {transcribingPercent !== undefined ? (
+        <View style={styles.transcribing} testID="audio-transcribing">
+          <ActivityIndicator size="small" color={colors.textSecondary} />
+          <Text style={styles.audioHint}>
+            Transcrevendo {Math.round(transcribingPercent)}%
+          </Text>
+        </View>
+      ) : null}
       {busy ? <Text style={styles.audioHint}>Carregando áudio...</Text> : null}
       {failed ? <Text style={styles.audioHint}>Áudio indisponível neste aparelho.</Text> : null}
       {transcript ? (
@@ -169,6 +185,7 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   audioRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  transcribing: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   audioPlay: {
     width: 38,
     height: 38,

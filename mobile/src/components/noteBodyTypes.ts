@@ -48,6 +48,8 @@ export interface NoteBodyProps {
   audioSource?: (ref: string) => Promise<string | null> | string | null;
   /** Transcricao de cada audio, por referencia. */
   audioTranscripts?: Record<string, string>;
+  /** Progresso (0..100) da transcricao local da nota, enquanto ela roda. */
+  transcribingPercent?: number;
   typography?: import('@/core/typography').NoteTypography;
   /** Abre a foto em tela cheia. */
   onImageOpen?: (src: string) => void;
