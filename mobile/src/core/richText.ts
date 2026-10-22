@@ -47,8 +47,12 @@ export function markdownToPlain(markdown: string): string {
       .replace(/^\|.*\|$/gm, '')
       .replace(/\[([^\]]*)\]\(note:[^)\s]+\)/g, '')
       // Imagem e link nao sao texto da nota: a imagem vira bloco na previa e o
-      // link conta pelo rotulo (antes a URL inteira entrava na contagem).
-      .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+      // link conta pelo rotulo (antes a URL inteira entrava na contagem). O
+      // sufixo `{w=50}` e da imagem, nao texto: sem ele o card mostrava
+      // "`{w=50}`" depois do texto.
+      .replace(/!\[[^\]]*\]\([^)]*\)(?:\{w=\d+\})?/g, '')
+      // Marcador de audio do documento: o player nao e texto da nota.
+      .replace(/!audio\[[^\]]*\](?:\{d=[^}]*\})?/g, '')
       .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
       .replace(/\*\*/g, '')
       .replace(/~~/g, '')

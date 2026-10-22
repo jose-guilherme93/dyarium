@@ -32,7 +32,11 @@ describe('countWords / countChars / markdownToPlain', () => {
 
   it('nao conta a URL da imagem nem o codigo do markdown da foto', () => {
     expect(markdownToPlain('antes ![foto](attachment:abc) depois')).toBe('antes  depois');
+    expect(markdownToPlain('antes ![foto](attachment:abc){w=50} depois')).toBe('antes  depois');
+    expect(countWords('antes ![foto](attachment:abc){w=50} depois')).toBe(2);
     expect(countWords('antes ![foto](attachment:abc) depois')).toBe(2);
+    expect(markdownToPlain('antes !audio[attachment:abc]{d=3} depois')).toBe('antes  depois');
+    expect(countWords('antes !audio[attachment:abc]{d=3} depois')).toBe(2);
     expect(markdownToPlain('veja [a nota](note:abc)')).toBe('veja ');
     expect(markdownToPlain('veja [isso](https://exemplo.com/x)')).toBe('veja isso');
   });

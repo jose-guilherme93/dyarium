@@ -29,19 +29,23 @@ export function measureImageRatio(uri: string): Promise<number | undefined> {
   if (running) return running;
 
   const promise = new Promise<number | undefined>((resolve) => {
-    Image.getSize(
-      uri,
-      (width, height) => {
-        if (width <= 0 || height <= 0) {
-          resolve(undefined);
-          return;
-        }
-        const ratio = width / height;
-        ratios.set(uri, ratio);
-        resolve(ratio);
-      },
-      () => resolve(undefined),
-    );
+    try {
+      Image.getSize(
+        uri,
+        (width, height) => {
+          if (width <= 0 || height <= 0) {
+            resolve(undefined);
+            return;
+          }
+          const ratio = width / height;
+          ratios.set(uri, ratio);
+          resolve(ratio);
+        },
+        () => resolve(undefined),
+      );
+    } catch {
+      resolve(undefined);
+    }
   });
   pending.set(uri, promise);
   void promise.finally(() => pending.delete(uri));

@@ -1,6 +1,6 @@
 /**
- * Tipografia do editor de notas. Puro e testavel: a escolha vira CSS no WebView
- * e fica guardada como preferencia do aparelho.
+ * Tipografia do editor de notas. Puro e testavel: a escolha vira estilo do
+ * editor nativo e fica guardada como preferencia do aparelho.
  */
 
 export type NoteFontFamily = 'system' | 'serif' | 'mono';
@@ -48,10 +48,7 @@ export function fontWeightCss(weight: NoteFontWeight): number {
   return WEIGHTS[weight] ?? WEIGHTS.regular;
 }
 
-/**
- * Familia equivalente no React Native. As do CSS valem so dentro do WebView;
- * aqui ficam as pilhas que o sistema entende.
- */
+/** Familia equivalente no React Native: as pilhas que o sistema entende. */
 const NATIVE_FAMILIES: Record<NoteFontFamily, string | undefined> = {
   system: undefined,
   serif: 'serif',
