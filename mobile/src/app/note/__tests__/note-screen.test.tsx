@@ -4,15 +4,21 @@ import { Alert, InteractionManager } from 'react-native';
 
 import type { Recording } from '@/core/types';
 
+import { takePendingInsert } from '@/services/noteInsert';
+
 import NoteScreen from '../[id]';
 
 const mockUpdateNote = jest.fn(async () => undefined);
 const mockSubmitNote = jest.fn(async () => undefined);
 const mockRefresh = jest.fn(async () => undefined);
+const mockKick = jest.fn();
 const mockPickImage = jest.fn();
 const mockSaveLocalImage = jest.fn();
 const mockLocalImageUri = jest.fn();
 const mockFormat = jest.fn();
+const mockBlur = jest.fn();
+const mockInsertAudio = jest.fn();
+let mockInsertPosition: { nodeId: string; offset: number } | null = null;
 
 const mockNote: Recording = {
   id: 'note-1',
@@ -31,11 +37,18 @@ const mockNote: Recording = {
   notebookId: 'notas-ao-acaso',
 };
 
+let mockFocusListener: (() => void) | null = null;
+let mockBlurListener: (() => void) | null = null;
+
 jest.mock('expo-router', () => ({
   router: { push: jest.fn(), back: jest.fn(), replace: jest.fn(), canGoBack: () => true },
   useLocalSearchParams: () => ({ id: 'note-1' }),
   useNavigation: () => ({
-    addListener: jest.fn(() => jest.fn()),
+    addListener: (event: string, listener: () => void) => {
+      if (event === 'focus') mockFocusListener = listener;
+      if (event === 'blur') mockBlurListener = listener;
+      return jest.fn();
+    },
     dispatch: jest.fn(),
   }),
 }));
@@ -46,31 +59,45 @@ jest.mock('@/components/NoteBody', () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const React = require('react');
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { TextInput } = require('react-native');
+  const { Text, TextInput } = require('react-native');
   return {
     NoteBody: React.forwardRef(function MockEditor(props: any, ref: any) {
       const current = React.useRef(props.value);
       React.useImperativeHandle(ref, () => ({
         focus: jest.fn(),
+        blur: mockBlur,
         format: (...args: unknown[]) => mockFormat(...args),
         insertImage: (_display: string, persist: string, alt: string) => {
           current.current = `${current.current}\n![${alt}](${persist})`;
           props.onChangeMarkdown(current.current);
         },
+        insertAudio: (...args: unknown[]) => mockInsertAudio(...args),
+        getInsertPosition: () => mockInsertPosition,
         insertLink: jest.fn(),
         flush: jest.fn(async () => undefined),
       }));
-      return React.createElement(TextInput, {
-        testID: 'note-body',
-        defaultValue: props.value,
-        placeholder: props.placeholder,
-        onChangeText: (text: string) => {
-          current.current = text;
-          props.onChangeMarkdown(text);
-        },
-        onFocus: () => props.onEditingChange?.(true),
-        onBlur: () => props.onEditingChange?.(false),
-      });
+      const onLaidOut = props.onLaidOut;
+      React.useEffect(() => {
+        const timer = setTimeout(() => onLaidOut?.(), 0);
+        return () => clearTimeout(timer);
+      }, [onLaidOut]);
+      const transcript = Object.values(props.audioTranscripts ?? {}).join('\n');
+      return React.createElement(
+        React.Fragment,
+        null,
+        React.createElement(TextInput, {
+          testID: 'note-body',
+          defaultValue: props.value,
+          placeholder: props.placeholder,
+          onChangeText: (text: string) => {
+            current.current = text;
+            props.onChangeMarkdown(text);
+          },
+          onFocus: () => props.onEditingChange?.(true),
+          onBlur: () => props.onEditingChange?.(false),
+        }),
+        transcript ? React.createElement(Text, { testID: 'audio-transcript' }, transcript) : null,
+      );
     }),
   };
 });
@@ -93,15 +120,22 @@ jest.mock('@/state/LibraryContext', () => ({
     updateNote: mockUpdateNote,
     submitNote: mockSubmitNote,
     refresh: mockRefresh,
+    kick: mockKick,
     setNoteTags: jest.fn(),
     moveNoteToNotebook: jest.fn(),
     retry: jest.fn(),
   }),
 }));
 
+let mockTypography: {
+  family: 'system' | 'serif' | 'mono';
+  size: number;
+  weight: 'light' | 'regular' | 'bold';
+} = { family: 'system', size: 17, weight: 'regular' };
+
 jest.mock('@/state/SettingsContext', () => ({
   useSettings: () => ({
-    typography: { family: 'system', size: 17, weight: 'regular' },
+    typography: mockTypography,
     setTypography: jest.fn(async () => undefined),
     analysisModel: 'modelo-local',
     setAnalysisModel: jest.fn(async () => undefined),
@@ -128,8 +162,17 @@ jest.mock('@/state/PlaybackContext', () => ({
   usePauseOnUnmount: () => undefined,
 }));
 
+let mockStackAudios: {
+  id: string;
+  content_type: string;
+  size_bytes: number;
+  duration_seconds: number;
+  created_at: string;
+  transcript?: { text?: string };
+}[] = [];
+
 jest.mock('@/state/useAudioStack', () => ({
-  useAudioStack: () => ({ audios: [], refresh: jest.fn(async () => undefined) }),
+  useAudioStack: () => ({ audios: mockStackAudios, refresh: jest.fn(async () => undefined) }),
 }));
 
 jest.mock('@/state/useTranscriptionProgress', () => ({
@@ -161,9 +204,11 @@ jest.mock('@/services/audioFocus', () => ({
   releaseAudioFocus: jest.fn(),
 }));
 
+const mockGetRecording = jest.fn<Promise<Recording | null>, [string]>(async () => mockNote);
+
 jest.mock('@/services/db', () => ({
   getCachedAnalysis: jest.fn(async () => null),
-  getRecording: jest.fn(async () => mockNote),
+  getRecording: (...args: [string]) => mockGetRecording(...args),
   moveCachedAnalysis: jest.fn(async () => undefined),
   saveAnalysisRuns: jest.fn(async () => undefined),
   saveCachedAnalyses: jest.fn(async () => undefined),
@@ -240,6 +285,12 @@ describe('tela da nota', () => {
       task();
       return { cancel: jest.fn() };
     }) as never);
+    mockInsertPosition = null;
+    mockFocusListener = null;
+    mockBlurListener = null;
+    mockStackAudios = [];
+    mockTypography = { family: 'system', size: 17, weight: 'regular' };
+    mockGetRecording.mockResolvedValue(mockNote);
     mockLocalImageUri.mockReturnValue('file:///nota/img-1.jpg');
     mockSaveLocalImage.mockResolvedValue('img-1.jpg');
     mockPickImage.mockResolvedValue({
@@ -255,12 +306,61 @@ describe('tela da nota', () => {
   });
 
   const renderNote = async () => {
+    const view = render(<NoteScreen />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      // Esqueleto -> midia -> editor. Os dois atrasos sao curtos, mas existem
+      // para o primeiro frame nao montar o editor inteiro.
+      jest.advanceTimersByTime(300);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    return view;
+  };
+
+  it('monta o corpo junto com o titulo, sem esqueleto no caminho', async () => {
     render(<NoteScreen />);
+
+    // A nota abre inteira: titulo e corpo no primeiro render. Nada de esqueleto
+    // segurando o corpo ate "assentar" (o que atrasava a abertura).
+    expect(screen.getByPlaceholderText('título da nota')).toBeTruthy();
+    expect(screen.getByTestId('note-body')).toBeTruthy();
+    expect(screen.queryByTestId('note-skeleton')).toBeNull();
+  });
+
+  it('aplica a tipografia no titulo sem remontar a nota', async () => {
+    const view = await renderNote();
+    const title = screen.getByPlaceholderText('título da nota');
+    expect(title.props.style).toEqual(
+      expect.arrayContaining([expect.objectContaining({ fontFamily: undefined })]),
+    );
+
+    mockTypography = { family: 'serif', size: 21, weight: 'bold' };
+    await act(async () => {
+      view.rerender(<NoteScreen />);
+    });
+
+    // A fonte escolhida no menu e a mesma do corpo; trocar de fonte nao pode
+    // remontar a nota nem quebrar o layout.
+    expect(screen.getByPlaceholderText('título da nota').props.style).toEqual(
+      expect.arrayContaining([expect.objectContaining({ fontFamily: 'serif' })]),
+    );
+    expect(screen.getByTestId('note-body')).toBeTruthy();
+  });
+
+  it('fecha o teclado antes de sair da nota', async () => {
+    await renderNote();
+
+    fireEvent.press(screen.getByLabelText('Voltar'));
     await act(async () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-  };
+
+    expect(mockBlur).toHaveBeenCalled();
+    expect(router.back).toHaveBeenCalled();
+  });
 
   it('aplica formatacao pela barra mesmo sem o teclado aberto', async () => {
     await renderNote();
@@ -315,24 +415,24 @@ describe('tela da nota', () => {
     expect(router.back).toHaveBeenCalled();
   });
 
-  it('mantem o audio visivel enquanto o teclado esta aberto', async () => {
+  it('mantem o audio do corpo visivel enquanto o teclado esta aberto', async () => {
     mockNote.filePath = 'file:///audio.aac';
 
     try {
       await renderNote();
 
-      expect(screen.getByLabelText('Tocar')).toBeTruthy();
+      // O audio antigo vira um no do documento na abertura.
+      expect(screen.getByDisplayValue('primeira linha\n!audio[local:audio.aac]')).toBeTruthy();
 
       fireEvent(screen.getByTestId('note-body'), 'focus');
 
-      // O audio do topo nao pode sumir quando o usuario comeca a digitar.
-      expect(screen.getByLabelText('Tocar')).toBeTruthy();
+      expect(screen.getByDisplayValue('primeira linha\n!audio[local:audio.aac]')).toBeTruthy();
     } finally {
       delete mockNote.filePath;
     }
   });
 
-  it('mantem a previa da transcricao visivel enquanto o teclado esta aberto', async () => {
+  it('mantem a transcricao do audio no corpo enquanto o teclado esta aberto', async () => {
     mockNote.filePath = 'file:///audio.aac';
     mockNote.transcript = 'texto transcrito';
     mockNote.hasTranscript = true;
@@ -340,12 +440,12 @@ describe('tela da nota', () => {
     try {
       await renderNote();
 
-      expect(screen.getByLabelText('Abrir transcrição completa')).toBeTruthy();
+      expect(screen.getByTestId('audio-transcript').props.children).toBe('texto transcrito');
 
       fireEvent(screen.getByTestId('note-body'), 'focus');
 
-      // Nada acima da nota pode ser ocultado quando o teclado abre.
-      expect(screen.getByLabelText('Abrir transcrição completa')).toBeTruthy();
+      // A previa pertence ao no de audio; o teclado nao a esconde.
+      expect(screen.getByTestId('audio-transcript').props.children).toBe('texto transcrito');
     } finally {
       delete mockNote.filePath;
       delete mockNote.transcript;
@@ -367,22 +467,177 @@ describe('tela da nota', () => {
     });
   });
 
-  it('avisa que nota ja sincronizada nao aceita outro audio', async () => {
+  it('passa a posicao do cursor para o audio entrar no meio do texto', async () => {
+    mockInsertPosition = { nodeId: 't0', offset: 2 };
+    await renderNote();
+
+    fireEvent.press(screen.getByLabelText('Gravar áudio'));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // A posicao nao viaja pela rota: ela fica guardada por nota, e a rota
+    // leva so o id.
+    expect(takePendingInsert('note-1')).toEqual({
+      nodeId: 't0',
+      offset: 2,
+    });
+    expect(router.push).toHaveBeenCalledWith({
+      pathname: '/record',
+      params: { noteId: 'note-1', from: 'note' },
+    });
+  });
+
+  it('permite gravar outro audio numa nota ja sincronizada', async () => {
     const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
     mockNote.entryId = 'entry-1';
     mockNote.filePath = 'file:///audio.aac';
 
+    try {
+      await renderNote();
+      fireEvent.press(screen.getByLabelText('Gravar áudio'));
+      await act(async () => {
+        jest.advanceTimersByTime(2000);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(alert).not.toHaveBeenCalled();
+      expect(router.push).toHaveBeenCalledWith({
+        pathname: '/record',
+        params: { noteId: 'note-1', from: 'note' },
+      });
+    } finally {
+      delete mockNote.entryId;
+      delete mockNote.filePath;
+      alert.mockRestore();
+    }
+  });
+
+  it('reabre com o audio gravado no corpo ao voltar da gravacao', async () => {
     await renderNote();
-    fireEvent.press(screen.getByLabelText('Gravar áudio'));
+    expect(screen.getByDisplayValue('primeira linha')).toBeTruthy();
 
-    expect(alert).toHaveBeenCalledWith(
-      'Nota já sincronizada',
-      expect.stringContaining('nota nova'),
-    );
-    expect(router.push).not.toHaveBeenCalled();
+    const withAudio = {
+      ...mockNote,
+      text: 'primeira linha\n!audio[local:audio-rec-1.aac]{d=5}\n',
+    };
+    mockGetRecording.mockResolvedValue(withAudio);
 
-    delete mockNote.entryId;
-    delete mockNote.filePath;
-    alert.mockRestore();
+    await act(async () => {
+      mockBlurListener?.();
+      mockFocusListener?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(
+      screen.getByDisplayValue('primeira linha\n!audio[local:audio-rec-1.aac]{d=5}\n'),
+    ).toBeTruthy();
+  });
+
+  it('mostra a pilha inteira de uma nota somente do servidor', async () => {
+    mockStackAudios = [
+      {
+        id: 'at_1',
+        content_type: 'audio/aac',
+        size_bytes: 1,
+        duration_seconds: 3,
+        created_at: '2026-10-01T10:00:00Z',
+      },
+      {
+        id: 'at_2',
+        content_type: 'audio/aac',
+        size_bytes: 2,
+        duration_seconds: 4,
+        created_at: '2026-10-02T10:00:00Z',
+      },
+    ];
+
+    await renderNote();
+
+    expect(screen.getByLabelText('Ouvir áudio 1 de 2')).toBeTruthy();
+    expect(screen.getByLabelText('Ouvir áudio 2 de 2')).toBeTruthy();
+  });
+
+  it('mostra no card a transcricao que chega da pilha do servidor', async () => {
+    mockNote.text = 'A\n!audio[attachment:at_1]{d=3}\nB';
+    mockStackAudios = [
+      {
+        id: 'at_1',
+        content_type: 'audio/aac',
+        size_bytes: 1,
+        duration_seconds: 3,
+        created_at: '2026-10-01T10:00:00Z',
+        transcript: { text: 'fala do servidor' },
+      },
+    ];
+
+    try {
+      await renderNote();
+
+      expect(screen.getByTestId('audio-transcript').props.children).toBe('fala do servidor');
+    } finally {
+      mockNote.text = 'primeira linha';
+    }
+  });
+
+  it('nao duplica no topo o audio que ja esta no corpo', async () => {
+    mockNote.text = 'A\n!audio[local:a.aac]{d:3}\nB';
+    mockNote.filePath = 'file:///audio.aac';
+
+    try {
+      await renderNote();
+
+      // O player do documento e o unico; o player legado do topo nao aparece.
+      expect(screen.queryByLabelText('Tocar')).toBeNull();
+    } finally {
+      mockNote.text = 'primeira linha';
+      delete mockNote.filePath;
+    }
+  });
+
+  it('ao sair, grava o texto antes de liberar a fila de sincronizacao', async () => {
+    const order: string[] = [];
+    mockUpdateNote.mockImplementation(async () => {
+      order.push('update');
+    });
+    mockRefresh.mockImplementation(async () => {
+      order.push('refresh');
+    });
+    mockKick.mockImplementation(() => {
+      order.push('kick');
+    });
+
+    try {
+      const view = render(<NoteScreen />);
+      await act(async () => {
+        jest.advanceTimersByTime(100);
+        await Promise.resolve();
+      });
+      fireEvent.changeText(screen.getByTestId('note-body'), 'texto editado');
+      await act(async () => {
+        jest.advanceTimersByTime(100);
+        await Promise.resolve();
+      });
+
+      view.unmount();
+      await act(async () => {
+        jest.advanceTimersByTime(10);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      // A saida grava o texto, atualiza a lista e so entao acorda o worker:
+      // nada de upload/rede competindo com o ultimo autosave. (A tela do teste
+      // anterior pode deixar uma saida pendente; vale a ultima sequencia.)
+      expect(order.slice(-3)).toEqual(['update', 'refresh', 'kick']);
+    } finally {
+      mockUpdateNote.mockImplementation(async () => undefined);
+      mockRefresh.mockImplementation(async () => undefined);
+      mockKick.mockImplementation(() => undefined);
+    }
   });
 });

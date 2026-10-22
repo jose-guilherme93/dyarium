@@ -8,7 +8,6 @@ import {
   ActivityIndicator,
   Alert,
   Image,
-  InteractionManager,
   Keyboard,
   Pressable,
   ScrollView,
@@ -23,7 +22,8 @@ import {
 import { ConflictDialog } from '@/components/ConflictDialog';
 import { AudioSeekBar } from '@/components/AudioSeekBar';
 import { FastModal } from '@/components/FastModal';
-import { NoteBody, type NoteBodyHandle } from '@/components/NoteBody';
+import { NoteBody } from '@/components/NoteBody';
+import type { NoteBodyHandle, NoteInsertPosition } from '@/components/noteBodyTypes';
 import { NoteMetaRow } from '@/components/NoteMetaRow';
 import { NoteMenu, type NoteMenuAnchor, type NoteProperty } from '@/components/NoteMenu';
 import { NotebookPicker } from '@/components/NotebookPicker';
@@ -51,7 +51,11 @@ import {
   utf8ByteLength,
 } from '@/core/format';
 import { DEFAULT_IMAGE_WIDTH } from '@/core/image';
+import { fontFamilyNative } from '@/core/typography';
+import { appendAudioNodes, audioNodesForNote } from '@/core/noteAudio';
+import { noteAudioNodes } from '@/core/noteDocument';
 import { breakSentences, countChars, countWords, markdownToPlain } from '@/core/richText';
+import type { Recording } from '@/core/types';
 import { clearNoteConflict, keepMine } from '@/core/noteSync';
 import { BUILD_STAMP, mark, useRenderCount } from '@/dev/perf';
 
@@ -59,9 +63,11 @@ import {
   attachmentUri,
   downloadMissingImageSources,
   localImageUri,
+  resolveAudioSource,
   resolveImageSourcesLocal,
   saveLocalImage,
 } from '@/services/attachments';
+import { setPendingInsert } from '@/services/noteInsert';
 import { fetchNoteAnalysis } from '@/services/analysis';
 import { installedAnalysisModels, isAnalysisModelInstalled } from '@/services/analysisModels';
 import { releaseAudioFocus } from '@/services/audioFocus';
@@ -101,6 +107,17 @@ import { colors, fontSize, radius, spacing } from '@/theme/tokens';
  */
 
 type PlayerHandle = AudioPlayerHandle;
+
+/**
+ * Corpo inicial da nota. Nota antiga (ou gravacao criada fora da tela) tinha o
+ * audio em `filePath`/na pilha; aqui ele vira no do documento antes do editor
+ * montar, sem um quadro com o player legado no topo.
+ */
+function bodyWithAudioNodes(note: Recording): string {
+  const stored = note.text ?? '';
+  if (noteAudioNodes(stored).length > 0) return stored;
+  return appendAudioNodes(stored, audioNodesForNote(note));
+}
 
 /**
  * Player do audio da nota. Memoizado: digitar o titulo re-renderiza a tela, mas
@@ -175,9 +192,9 @@ const NoteAudioPlayer = memo(function NoteAudioPlayer({
 });
 
 /**
- * Previa do texto enquanto o editor (WebView) carrega. O corpo da nota aparece
- * junto com a tela, no mesmo lugar e com a mesma tipografia; quando o editor
- * fica pronto ele toma o lugar, sem a nota abrir "vazia" por um instante.
+ * Previa do texto enquanto o editor carrega. O corpo da nota aparece junto com
+ * a tela, no mesmo lugar e com a mesma tipografia; quando o editor fica pronto
+ * ele toma o lugar, sem a nota abrir "vazia" por um instante.
  */
 function ToolButton({
   label,
@@ -206,12 +223,19 @@ export default function NoteScreen() {
     setAnalysisModel,
     analysisLowPower,
     setAnalysisLowPower,
-    ready: settingsReady,
   } = useSettings();
   // Enquanto esta tela esta viva, a sincronizacao de fundo espera: a nota e
   // local e nao pode disputar SQLite/rede com o que o usuario esta fazendo.
+  // Ao sair, a fila volta na hora: sem este kick o envio so acontecia no
+  // intervalo de 15 s (ou quando o app ia para segundo plano).
+  const kickRef = useRef(library.kick);
+  useEffect(() => {
+    kickRef.current = library.kick;
+  }, [library.kick]);
   useEffect(() => {
     enterNote();
+    // A fila volta a andar no fim da saida, depois do texto ser gravado (ver o
+    // efeito de saida): disparar aqui disputava o SQLite com o ultimo autosave.
     return () => leaveNote();
   }, []);
   const { width: windowWidth } = useWindowDimensions();
@@ -283,14 +307,14 @@ export default function NoteScreen() {
   // Marco de tempo: da abertura da nota ate o conteudo nativo aparecer.
   const [openedAt] = useState(() => Date.now());
   const [title, setTitle] = useState(() => note?.title ?? '');
-  const [body, setBody] = useState(() => note?.text ?? '');
+  const [body, setBody] = useState(() => (note ? bodyWithAudioNodes(note) : ''));
   // Corpo trocado por fora ("ficar com o de la"): o editor monta uma vez com o
   // markdown que recebe, entao remontar e o que aplica o texto novo.
   const [editorKey, setEditorKey] = useState(0);
-  const [imageSources, setImageSources] = useState<Record<string, string>>(() =>
-    note ? resolveImageSourcesLocal(note.id, note.text ?? '', note.attachments ?? {}) : {},
-  );
-  const [noteReady, setNoteReady] = useState(() => Boolean(note));
+  // As imagens que ja estao no aparelho entram no primeiro render: se elas
+  // chegassem depois, cada trecho com foto inline remontaria o editor na
+  // abertura. As que faltam baixam em segundo plano e entram quando chegam.
+  const [imageSources, setImageSources] = useState<Record<string, string>>({});
   const [notebookPickerOpen, setNotebookPickerOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuAnchor, setMenuAnchor] = useState<NoteMenuAnchor | null>(null);
@@ -386,39 +410,49 @@ export default function NoteScreen() {
   const [linkValue, setLinkValue] = useState('');
   const [viewerSrc, setViewerSrc] = useState<string | null>(null);
   const configButtonRef = useRef<View>(null);
-  // Altura do teclado: a barra de acoes sobe com ele e a area rolavel da nota
-  // encolhe, para o campo em edicao nunca ficar embaixo do teclado. O Android
-  // reemite o evento enquanto o teclado sobe (com alturas parciais): mudar o
-  // layout a cada emissiono trava o cursor. A altura so entra depois de
-  // assentar, e ja fica reservada no proximo foco (sem pulo).
+  /**
+   * Altura do teclado.
+   *
+   * O app usa `adjustNothing` (o plugin nativo), entao e ele que reserva o
+   * espaco do teclado para a barra de acoes nao ficar coberta. A nota NAO rola
+   * sozinha: quem cuida do cursor e o Android, e rolar para o topo do trecho
+   * (medido pelo bloco, nao pelo cursor) fazia a nota pular sem motivo.
+   */
   const [keyboardPad, setKeyboardPad] = useState(0);
-  const keyboardHeightRef = useRef(0);
-  const keyboardTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     const show = Keyboard.addListener('keyboardDidShow', (event) => {
-      keyboardHeightRef.current = event.endCoordinates.height;
-      if (keyboardTimerRef.current) clearTimeout(keyboardTimerRef.current);
-      keyboardTimerRef.current = setTimeout(() => {
-        keyboardTimerRef.current = null;
-        setKeyboardPad(keyboardHeightRef.current);
-      }, 120);
+      setKeyboardPad(event.endCoordinates.height);
     });
-    const hide = Keyboard.addListener('keyboardDidHide', () => {
-      if (keyboardTimerRef.current) clearTimeout(keyboardTimerRef.current);
-      keyboardHeightRef.current = 0;
-      setKeyboardPad(0);
-    });
+    const hide = Keyboard.addListener('keyboardDidHide', () => setKeyboardPad(0));
     return () => {
       show.remove();
       hide.remove();
-      if (keyboardTimerRef.current) clearTimeout(keyboardTimerRef.current);
     };
   }, []);
+
   const initializedRef = useRef(false);  const actionDoneRef = useRef(false);
   const dirtyRef = useRef(false);
+  const editingRef = useRef(false);
   const leavingRef = useRef(false);
   const bodyRef = useRef(body);
   const bodySaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
+   * Autosave pendente.
+   *
+   * Separado do timer: o timer morre quando dispara, mas a gravacao ainda pode
+   * estar na fila. Enquanto houver gravacao pendente, uma versao que chega do
+   * servidor nao pode remontar o editor.
+   */
+  const savePendingRef = useRef(false);
+  /**
+   * Fila de gravacoes da nota.
+   *
+   * O autosave do texto, o do titulo e a saida chamam `updateNote`; em paralelo,
+   * cada chamada le e escreve a mesma linha no SQLite e a segunda encontra o
+   * banco ocupado ("database is locked"). Uma fila por tela mantem a ordem e
+   * entrega o texto mais novo por ultimo.
+   */
+  const saveChainRef = useRef<Promise<void>>(Promise.resolve());
   const titleRef = useRef(title);
   useEffect(() => {
     titleRef.current = title;
@@ -443,9 +477,34 @@ export default function NoteScreen() {
     if (!flush) return;
     await Promise.race([
       flush().catch(() => undefined),
-      new Promise<void>((resolve) => setTimeout(resolve, 1500)),
+      new Promise<void>((resolve) => setTimeout(resolve, 300)),
     ]);
   }, []);
+
+  /**
+   * Grava titulo/texto em fila.
+   *
+   * Serializa as gravacoes da nota (autosave do texto, do titulo e saida) para
+   * nao haver duas leituras+escritas concorrentes da mesma linha no SQLite.
+   * Erro de gravacao e best-effort: o texto continua em memoria e a saida
+   * tenta de novo.
+   */
+  const saveNote = useCallback(
+    (patch: { title?: string; text?: string }) => {
+      if (!noteId) return Promise.resolve();
+      const id = noteId;
+      savePendingRef.current = true;
+      const run = saveChainRef.current
+        .then(() => updateRef.current(id, patch))
+        .catch(() => undefined)
+        .then(() => {
+          savePendingRef.current = false;
+        });
+      saveChainRef.current = run;
+      return run;
+    },
+    [noteId],
+  );
 
 
 
@@ -460,6 +519,10 @@ export default function NoteScreen() {
       event.preventDefault();
       if (flushingBackRef.current) return;
       flushingBackRef.current = true;
+      // Fecha o teclado antes de a view nativa ser destruida (desmontar um
+      // campo aberto travava a thread de UI na transicao).
+      editorRef.current?.blur?.();
+      Keyboard.dismiss();
       void flushEditor().finally(() => {
         replayRemovalRef.current = true;
         navigation.dispatch(event.data.action);
@@ -479,35 +542,29 @@ export default function NoteScreen() {
       // O editor reemite o conteudo ao montar, normalizado (sem espacos no fim).
       // Isso nao e edicao: sem o guarda, abrir a nota a marcava como suja e o sync
       // reenviava o texto local por cima do que foi editado no dashboard.
-      if (markdown.trimEnd() === bodyRef.current.trimEnd()) return;
+      if (markdown.trimEnd() === bodyRef.current.trimEnd()) {
+        // So mudou o espaco do fim: o texto e o mesmo, mas o registro precisa
+        // acompanhar, senao o editor e reescrito e o cursor do usuario se
+        // perde.
+        bodyRef.current = markdown;
+        return;
+      }
       dirtyRef.current = true;
       bodyRef.current = markdown;
       // Nao atualiza `body` durante a digitacao: o estado da tela re-renderiza o
       // cabeçalho, contadores e a barra, competindo com o editor nativo. A tela
       // usa `bodyRef` para salvar e so materializa o estado ao sair do editor.
       if (bodySaveTimer.current) clearTimeout(bodySaveTimer.current);
+      savePendingRef.current = true;
       bodySaveTimer.current = setTimeout(() => {
-        if (!noteId) return;
-        void updateRef.current(noteId, {
-          title: titleRef.current,
-          text: bodyRef.current,
-        });
+        bodySaveTimer.current = null;
+        void saveNote({ title: titleRef.current, text: bodyRef.current });
       }, 1200);
     },
-    [noteId],
+    [saveNote],
   );
 
   // Perder o foco entrega o texto pendente.
-  const handleEditingChange = useCallback((value: boolean) => {
-    if (value) {
-      // O teclado vai subir: reserva a altura conhecida ANTES dele comecar, para
-      // o cursor nao ficar atras do teclado e a rolagem nao pular.
-      if (keyboardHeightRef.current > 0) setKeyboardPad(keyboardHeightRef.current);
-      return;
-    }
-    void editorRef.current?.flush?.();
-  }, []);
-
   // Conflito: o servidor recusou a gravacao porque o campo ja mudou no
   // dashboard. Nada foi sobrescrito; aqui o usuario decide.
   // O dialogo aparece enquanto houver conflito; "decidir depois" esconde sem
@@ -551,14 +608,27 @@ export default function NoteScreen() {
     await library.refresh();
   }, [library, note, noteId]);
 
+  /**
+   * Tira o foco do editor antes de sair.
+   *
+   * Desmontar um campo nativo com o teclado aberto travava a thread de UI na
+   * transicao ("pisca tudo preto"/ANR). Fechar o teclado primeiro libera a
+   * conexao de input antes de a view ser destruida.
+   */
+  const blurEditor = useCallback(() => {
+    editorRef.current?.blur?.();
+    Keyboard.dismiss();
+  }, []);
+
   const goBack = useCallback(() => {
     if (leavingRef.current) return;
     leavingRef.current = true;
+    blurEditor();
     void flushEditor().finally(() => {
       if (router.canGoBack()) router.back();
       else router.replace('/');
     });
-  }, [flushEditor]);
+  }, [blurEditor, flushEditor]);
 
   useEffect(() => {
     bodyRef.current = body;
@@ -571,12 +641,91 @@ export default function NoteScreen() {
   const shownBodyVersion = useRef<string | undefined>(note?.bodyVersion);
   useEffect(() => {
     if (!note || note.noteDirty || (note.syncConflict?.length ?? 0) > 0) return;
+    // Enquanto o usuario digita (ou o autosave local esta pendente), o texto
+    // local vence. Aplicar uma versao do servidor aqui remontava o editor e
+    // jogava o cursor para o comeco do texto.
+    if (editingRef.current || savePendingRef.current || bodySaveTimer.current) return;
     if (note.bodyVersion === shownBodyVersion.current) return;
     shownBodyVersion.current = note.bodyVersion;
     if ((note.text ?? '') === bodyRef.current) return;
     setBody(note.text ?? '');
     setEditorKey((value) => value + 1);
   }, [note]);
+
+  // Ao voltar de outra tela (gravacao, por exemplo), a nota pode ter ganhado um
+  // no novo no corpo. Reler do banco e remontar o editor e o que mostra o audio
+  // entre os textos, sem esperar a proxima abertura.
+  //
+  // So depois de a tela ter saido de foco: no primeiro foco (logo apos montar)
+  // o banco ainda tem o texto anterior a migracao do audio para o corpo, e
+  // reidratar ali remontava o documento inteiro logo na abertura.
+  useEffect(() => {
+    if (!noteId) return undefined;
+    let wentAway = false;
+    const unsubscribeBlur = navigation.addListener('blur', () => {
+      wentAway = true;
+    });
+    const unsubscribeFocus = navigation.addListener('focus', () => {
+      if (!wentAway) return;
+      wentAway = false;
+      void getRecording(noteId)
+        .then((fresh) => {
+          if (!fresh) return;
+          const text = fresh.text ?? '';
+          if (text === bodyRef.current) {
+            // O texto nao mudou: a gravacao foi cancelada e o corpo continua
+            // como esta.
+            return;
+          }
+          // A tela volta com o editor aberto (a gravacao abriu por cima dele).
+          // O texto do banco e o da gravacao: ele tem prioridade sobre o que
+          // esta no editor, senao o audio nao apareceria no corpo.
+          editingRef.current = false;
+          // O autosave pendente gravaria o texto antigo (sem o audio) por
+          // cima: ele e cancelado.
+          if (bodySaveTimer.current) {
+            clearTimeout(bodySaveTimer.current);
+            bodySaveTimer.current = null;
+          }
+          savePendingRef.current = false;
+          bodyRef.current = text;
+          setBody(text);
+          setEditorKey((value) => value + 1);
+        })
+        .catch(() => undefined);
+    });
+    return () => {
+      unsubscribeBlur();
+      unsubscribeFocus();
+    };
+  }, [navigation, noteId]);
+
+  // Fonte de cada audio do documento: arquivo local da nota ou anexo do
+  // servidor. Resolvido so quando o usuario toca em tocar.
+  const resolveAudio = useCallback(
+    (ref: string) => resolveAudioSource(noteId ?? '', ref, note?.attachments ?? {}),
+    [note?.attachments, noteId],
+  );
+
+  // Transcricao de cada audio, por referencia. A pilha do servidor traz a de
+  // cada anexo; a gravacao local usa a transcricao da propria nota.
+  const audioTranscripts = useMemo(() => {
+    const map: Record<string, string> = {};
+    // A pilha e revalidada em segundo plano; usar o estado dela (e nao so o
+    // cache da nota) faz a transcricao aparecer no card assim que chega.
+    for (const audio of stack.audios) {
+      const text = audio.transcript?.text?.trim();
+      if (text) map[`attachment:${audio.id}`] = text;
+    }
+    const localName = note?.filePath?.split('/').pop()?.split('?')[0];
+    if (localName && note?.transcript?.trim()) {
+      map[`local:${localName}`] = note.transcript.trim();
+    }
+    if (note?.serverAttachmentId && note.transcript?.trim()) {
+      map[`attachment:${note.serverAttachmentId}`] = note.transcript.trim();
+    }
+    return map;
+  }, [note, stack.audios]);
 
   // As imagens que faltam baixam em segundo plano. Agrupa os avisos num unico
   // render: varias fotos chegando juntas nao devem re-renderizar a nota varias
@@ -607,11 +756,16 @@ export default function NoteScreen() {
     if (note && !initializedRef.current) {
       initializedRef.current = true;
       setTitle(note.title);
-      setBody(note.text ?? '');
+      // Nota antiga (ou gravacao criada fora da tela): o audio vivia em
+      // `filePath`/na pilha do servidor. Ele vira no do corpo na primeira
+      // abertura, que e o que faz o player aparecer entre os textos.
+      const migrated = bodyWithAudioNodes(note);
+      setBody(migrated);
+      bodyRef.current = migrated;
       const attachments = note.attachments ?? {};
-      const local = resolveImageSourcesLocal(note.id, note.text ?? '', attachments);
-      setImageSources(local);
-      setNoteReady(true);
+      // As fotos locais entram depois do primeiro frame (checar arquivo no
+      // disco nao pode atrasar a abertura); as que faltam baixam em seguida.
+      setImageSources(resolveImageSourcesLocal(note.id, migrated, attachments));
       mark('note.ready_ms', Date.now() - openedAt);
       mark('note.images_ms', Date.now() - openedAt);
       if (__DEV__) {
@@ -622,7 +776,7 @@ export default function NoteScreen() {
           fotos: Object.keys(attachments).length,
         });
       }
-      void downloadMissingImageSources(note.id, note.text ?? '', attachments, queueImageSource).catch(
+      void downloadMissingImageSources(note.id, migrated, attachments, queueImageSource).catch(
         () => undefined,
       );
     }
@@ -632,36 +786,52 @@ export default function NoteScreen() {
   // e trava a nota aberta (o quadro cai de 17 ms para segundos). Quem transcreve
   // em segundo plano e o app fechado, pela task de background.
 
-  // Autosave local (debounced).
+  // Autosave local (debounced). A montagem nao grava: abrir uma nota nao pode
+  // virar escrita no banco (e a nota nem mudou).
+  const mountedRef = useRef(false);
   useEffect(() => {
     if (!noteId) return undefined;
+    if (!mountedRef.current) {
+      mountedRef.current = true;
+      return undefined;
+    }
     const timer = setTimeout(() => {
-      void updateRef.current(noteId, { title: titleRef.current, text: bodyRef.current });
+      void saveNote({ title: titleRef.current, text: bodyRef.current });
     }, 600);
     return () => clearTimeout(timer);
-  }, [title, body, noteId]);
+  }, [title, body, noteId, saveNote]);
 
   // Ao sair: grava e envia. Roda so depois da transicao de volta, para o trabalho
-  // (DB, enqueue, rede) nao competir com a animacao.
+  // (DB, enqueue, rede) nao competir com a animacao nem com o desmonte das
+  // views nativas da nota.
   useEffect(() => {
     if (!noteId) return undefined;
     const id = noteId;
     return () => {
-      if (bodySaveTimer.current) clearTimeout(bodySaveTimer.current);
+      if (bodySaveTimer.current) {
+        clearTimeout(bodySaveTimer.current);
+        bodySaveTimer.current = null;
+      }
       const title = titleRef.current;
       const text = bodyRef.current;
       const dirty = dirtyRef.current;
       const status = statusRef.current;
-      InteractionManager.runAfterInteractions(() => {
-        void updateRef
-          .current(id, { title, text })
+      const timer = setTimeout(() => {
+        // Entra na mesma fila dos autosaves: a gravacao de saida e a ultima e
+        // nao pode correr em paralelo com uma que ainda esta indo para o banco.
+        void saveChainRef.current
+          .then(() => updateRef.current(id, { title, text }))
           .then(() => {
             if (dirty || status === 'draft') return submitRef.current(id);
             return undefined;
           })
           .then(() => refreshRef.current())
+          .then(() => kickRef.current())
           .catch(() => undefined);
-      });
+      }, 0);
+      // O timer nao e cancelado no unmount (a tela ja saiu): o trabalho
+      // continua e a fila de sync assume.
+      void timer;
     };
   }, [noteId]);
 
@@ -1008,14 +1178,15 @@ export default function NoteScreen() {
   // ancorar o popover logo abaixo dele.
   const openMenu = useCallback(() => {
     // O menu mostra contadores/propriedades: materializa o corpo mais novo que
-    // ficou em `bodyRef` durante a digitacao.
-    setBody(bodyRef.current);
+    // ficou em `bodyRef` durante a digitacao. Sem mudanca, o estado atual fica:
+    // trocar a identidade remontaria todas as views do corpo a toa.
+    setBody((current) => (current === bodyRef.current ? current : bodyRef.current));
     // Somar arquivos lista a pasta da nota: faz depois da animacao do popover,
     // nao no caminho do toque.
     if (noteId) {
-      InteractionManager.runAfterInteractions(() => {
+      setTimeout(() => {
         setMenuBytes(directoryBytes(sessionDirectory(noteId)));
-      });
+      }, 50);
     }
     // Sem cache, esconde a secao durante o refresh silencioso: nada de
     // "sem analise" piscando antes da resposta. Com a analise local ligada a
@@ -1036,25 +1207,32 @@ export default function NoteScreen() {
 
   const handleRecord = useCallback(() => {
     if (!noteId) return;
-    // O app grava um audio por nota. Uma nota ja sincronizada nao aceita um
-    // segundo audio (o dashboard e a pilha do servidor sao somente leitura).
-    if (note?.entryId) {
-      Alert.alert(
-        'Nota já sincronizada',
-        'Grave o áudio em uma nota nova ou gerencie os áudios no dashboard.',
-      );
-      return;
-    }
-    if (note?.filePath) {
-      Alert.alert('Esta nota já tem áudio', 'Grave o novo áudio em uma nota separada.');
-      return;
-    }
-    // Grava o texto pendente antes de sair; a nota continua na pilha e volta
-    // com o audio anexado.
-    const openRecord = () =>
-      router.push({ pathname: '/record', params: { noteId, from: 'note' } });
-    void flushEditor().finally(openRecord);
-  }, [flushEditor, note?.entryId, note?.filePath, noteId]);
+    // O cursor define onde a gravacao entra no corpo. Sem cursor de texto, o
+    // audio entra no fim da nota.
+    const openRecord = (at: NoteInsertPosition | null) => {
+      // A posicao fica guardada por nota, e a rota leva so o id: a gravacao
+      // acontece em outra tela.
+      if (at) setPendingInsert(noteId, at);
+      router.push({
+        pathname: '/record',
+        params: { noteId, from: 'note' },
+      });
+    };
+    // O texto pendente vai para o banco antes da posicao ser pedida: a
+    // posicao tem que valer para o texto que vai ficar salvo, e nao para o
+    // de antes do flush.
+    void flushEditor()
+      .then(() =>
+        saveNote({
+          title: titleRef.current,
+          text: bodyRef.current,
+        }),
+      )
+      .catch(() => undefined)
+      .then(() => Promise.resolve(editorRef.current?.getInsertPosition() ?? null))
+      .then((at) => openRecord(at))
+      .catch(() => openRecord(null));
+  }, [flushEditor, noteId, saveNote]);
 
   // Abre a transcricao completa. O player e o mesmo, entao o audio continua
   // exatamente do ponto em que esta (sem parar nem recomecar).
@@ -1086,18 +1264,26 @@ export default function NoteScreen() {
       // Salva e insere local na hora. O upload fica para o sync ao sair da
       // nota: esperar a rede aqui deixava o seletor fechado e a nota travada.
       const name = await saveLocalImage(noteId, picked.bytes, picked.mimeType);
-      const displaySrc = localImageUri(noteId, name) ?? `local:${name}`;
+      const displaySrc = localImageUri(noteId, name);
+      if (!displaySrc) throw new Error('arquivo local da imagem indisponivel');
       const persistSrc = `local:${name}`;
       // A previa precisa saber que esta referencia aponta para o arquivo local;
       // o markdown em si carrega so `local:`/`attachment:`.
       setImageSources((current) => ({ ...current, [persistSrc]: displaySrc }));
-      editorRef.current?.insertImage(displaySrc, persistSrc, picked.name, DEFAULT_IMAGE_WIDTH);
+      editorRef.current?.insertImage(
+        displaySrc,
+        persistSrc,
+        picked.name,
+        DEFAULT_IMAGE_WIDTH,
+        picked.width,
+        picked.height,
+      );
       dirtyRef.current = true;
-      // O seletor fecha o teclado; devolve o foco para o paragrafo criado
-      // abaixo da foto.
-      requestAnimationFrame(() => editorRef.current?.focus());
-    } catch {
-      // falha ao anexar imagem: segue sem anexar
+    } catch (error) {
+      // Antes o erro era engolido e tocar em "Adicionar foto" nao fazia nada.
+      // O detalhe fica fora da tela do usuario (sem caminho nem conteudo).
+      if (__DEV__) console.warn('[dyarium] falha ao anexar foto', String(error));
+      Alert.alert('Não foi possível anexar a foto', 'Tente de novo em instantes.');
     }
   }, [noteId]);
 
@@ -1128,10 +1314,10 @@ export default function NoteScreen() {
     dirtyRef.current = true;
   }, [linkValue, noteId]);
 
-  // Acao pedida pela tela inicial (texto/imagem/link): roda uma vez, quando o
-  // corpo da nota ja esta na tela.
+  // Acao pedida pela tela inicial (texto/imagem/link): roda uma vez, quando a
+  // nota ja esta na tela.
   useEffect(() => {
-    if (actionDoneRef.current || !noteId || !noteReady) return undefined;
+    if (actionDoneRef.current || !noteId) return undefined;
     actionDoneRef.current = true;
     const timer = setTimeout(() => {
       if (action === 'text') editorRef.current?.focus();
@@ -1139,7 +1325,7 @@ export default function NoteScreen() {
       else if (action === 'link') void openLinkModal();
     }, 0);
     return () => clearTimeout(timer);
-  }, [action, noteId, noteReady, handleAddImage, openLinkModal]);
+  }, [action, noteId, handleAddImage, openLinkModal]);
 
   // Contagens varrem o texto inteiro: so recalcula quando o corpo ou a ficha
   // mudam (antes rodava a cada tecla e a cada re-render da nota).
@@ -1152,14 +1338,25 @@ export default function NoteScreen() {
     [body, menuBytes],
   );
 
+  // Derivados do documento: digitar no titulo re-renderiza a tela, e o corpo
+  // inteiro nao precisa ser parseado de novo a cada letra.
+  const bodyAudios = useMemo(() => noteAudioNodes(body), [body]);
+
   if (!note) {
     // A lista pode ainda estar carregando (abertura por link/atalho). Mostrar
     // "nota nao encontrada" antes disso piscava na tela e parecia perda de dado.
     if (!library.ready) {
+      // O cabecalho responde na hora; o carregamento fica so na area do corpo.
       return (
         <Screen>
-          <View style={styles.center}>
-            <ActivityIndicator size="small" color={colors.textSecondary} />
+          <View style={styles.header}>
+            <Pressable onPress={goBack} style={styles.iconButton} accessibilityLabel="Voltar">
+              <Ionicons name="chevron-back" size={24} color={colors.text} />
+            </Pressable>
+            <View style={styles.headerActions} />
+          </View>
+          <View style={[styles.content, { paddingTop: spacing.lg }]}>
+            <ActivityIndicator color={colors.textTertiary} testID="note-loading" />
           </View>
         </Screen>
       );
@@ -1179,11 +1376,18 @@ export default function NoteScreen() {
     );
   }
 
-  const hasAudio = Boolean(note.filePath);
+  // Derivados do documento: digitar no titulo re-renderiza a tela, e o corpo
+  // inteiro nao precisa ser parseado de novo a cada letra.
+  const hasAudio = Boolean(note.filePath) || bodyAudios.length > 0 || stack.audios.length > 0;
+  // Notas antigas ainda tem o audio fora do documento. Nelas o player do topo
+  // continua sendo a unica forma de ouvir; quando o audio ja e um no do corpo,
+  // o player fica no meio do texto e o topo nao duplica.
+  const legacyAudio = Boolean(note.filePath) && bodyAudios.length === 0;
   // O primeiro audio da pilha e o proprio audio desta nota (o app que gravou e
   // subiu): o player local ja o mostra. Os demais vieram do dashboard e ganham
   // a sua linha. Sem audio local (nota criada no servidor), a pilha e inteira.
-  const stackAudios = hasAudio ? stack.audios.slice(1) : stack.audios;
+  const stackAudios =
+    bodyAudios.length > 0 ? [] : legacyAudio ? stack.audios.slice(1) : stack.audios;
   const editorPlaceholder = hasAudio ? 'Escreva sobre este áudio...' : 'Comece a escrever...';
   // Em tela estreita o titulo comeca menor; em ambas quebra linha em vez de sumir.
   const titleSize = titleFontSize(title, windowWidth < 380 ? 30 : 34, 24);
@@ -1274,10 +1478,11 @@ export default function NoteScreen() {
         testID="note-scroll"
         style={styles.scroll}
         contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled"
+        // "always": o toque no campo nativo do editor tem de chegar nele,
+        // senao o teclado nao sobe e nao da para digitar.
+        keyboardShouldPersistTaps="always"
         nestedScrollEnabled
         showsVerticalScrollIndicator={false}
-        scrollEventThrottle={16}
       >
         <View style={styles.titleBlock}>
           <TextInput
@@ -1293,6 +1498,7 @@ export default function NoteScreen() {
             onSubmitEditing={() => editorRef.current?.focus()}
             style={[
               styles.titleInput,
+              { fontFamily: fontFamilyNative(typography.family) },
               { fontSize: titleSize, lineHeight: Math.round(titleSize * 1.25) },
             ]}
           />
@@ -1309,101 +1515,103 @@ export default function NoteScreen() {
           />
         </View>
 
-        {/* Player, pilha de audios e transcricao ficam sempre visiveis. O
-            teclado so encolhe a area do editor; nada acima da nota e ocultado
-            nem deslocado. */}
-        {hasAudio ? (
-          <NoteAudioPlayer player={player} durationMs={note.durationMs} />
-        ) : null}
+        <View>
+          {/* Player, pilha de audios e transcricao ficam sempre visiveis. O
+              teclado so encolhe a area do editor; nada acima da nota e
+              ocultado nem deslocado. */}
+          {legacyAudio ? (
+            <NoteAudioPlayer player={player} durationMs={note.durationMs} />
+          ) : null}
 
-        {stackAudios.length > 0 ? (
-          <View style={styles.stack}>
-            <Text style={styles.sectionLabel}>
-              {stackAudios.length === 1 ? 'Áudio' : `${stackAudios.length} áudios`}
-            </Text>
-            {stackAudios.map((audio, index) => (
-              <Pressable
-                key={audio.id}
-                style={[styles.stackRow, playingAudioId === audio.id ? styles.stackRowOn : null]}
-                onPress={() => void playStackAudio(audio.id)}
-                accessibilityRole="button"
-                accessibilityLabel={`Ouvir áudio ${index + 1} de ${stackAudios.length}`}
-              >
-                <Ionicons
-                  name={playingAudioId === audio.id ? 'pause' : 'play'}
-                  size={16}
-                  color={colors.textSecondary}
-                />
-                <View style={styles.stackInfo}>
-                  <Text style={styles.stackTitle}>
-                    {formatDateTime(audio.created_at)}
-                    {audio.duration_seconds > 0
-                      ? ` · ${formatDuration(Math.round(audio.duration_seconds))}`
-                      : ''}
-                  </Text>
-                  {audio.transcript?.text ? (
-                    <Text style={styles.stackText} numberOfLines={2}>
-                      {audio.transcript.text}
+          {stackAudios.length > 0 ? (
+            <View style={styles.stack}>
+              <Text style={styles.sectionLabel}>
+                {stackAudios.length === 1 ? 'Áudio' : `${stackAudios.length} áudios`}
+              </Text>
+              {stackAudios.map((audio, index) => (
+                <Pressable
+                  key={audio.id}
+                  style={[styles.stackRow, playingAudioId === audio.id ? styles.stackRowOn : null]}
+                  onPress={() => void playStackAudio(audio.id)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Ouvir áudio ${index + 1} de ${stackAudios.length}`}
+                >
+                  <Ionicons
+                    name={playingAudioId === audio.id ? 'pause' : 'play'}
+                    size={16}
+                    color={colors.textSecondary}
+                  />
+                  <View style={styles.stackInfo}>
+                    <Text style={styles.stackTitle}>
+                      {formatDateTime(audio.created_at)}
+                      {audio.duration_seconds > 0
+                        ? ` · ${formatDuration(Math.round(audio.duration_seconds))}`
+                        : ''}
                     </Text>
-                  ) : (
-                    <Text style={styles.stackText}>Sem transcrição</Text>
-                  )}
-                </View>
-              </Pressable>
-            ))}
-          </View>
-        ) : null}
+                    {audio.transcript?.text ? (
+                      <Text style={styles.stackText} numberOfLines={2}>
+                        {audio.transcript.text}
+                      </Text>
+                    ) : (
+                      <Text style={styles.stackText}>Sem transcrição</Text>
+                    )}
+                  </View>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
 
-        {hasAudio && segments && segments.length > 0 ? (
-          <SyncedTranscript
-            player={player}
-            segments={segments}
-            onOpen={openTranscript}
-            onSeek={seekTranscript}
-          />
-        ) : hasAudio && note.transcript && note.transcript.trim() ? (
-          <Pressable
-            style={styles.section}
-            onPress={openTranscript}
-            accessibilityLabel="Abrir transcrição completa"
-          >
-            <Text style={styles.sectionLabel}>Transcrição</Text>
-            <Text style={styles.transcript} numberOfLines={6}>
-              {breakSentences(note.transcript)}
-            </Text>
-          </Pressable>
-        ) : hasAudio && !note.hasTranscript && note.transcriptStatus === 'pending' ? (
-          <View style={styles.transcribing}>
-            <ActivityIndicator size="small" color={colors.textSecondary} />
-            <Text style={styles.meta}>
-              Transcrevendo{transcriptionPercent > 0 ? ` ${Math.round(transcriptionPercent)}%` : '...'}
-            </Text>
-          </View>
-        ) : null}
+          {legacyAudio && segments && segments.length > 0 ? (
+            <SyncedTranscript
+              player={player}
+              segments={segments}
+              onOpen={openTranscript}
+              onSeek={seekTranscript}
+            />
+          ) : legacyAudio && note.transcript && note.transcript.trim() ? (
+            <Pressable
+              style={styles.section}
+              onPress={openTranscript}
+              accessibilityLabel="Abrir transcrição completa"
+            >
+              <Text style={styles.sectionLabel}>Transcrição</Text>
+              <Text style={styles.transcript} numberOfLines={6}>
+                {breakSentences(note.transcript)}
+              </Text>
+            </Pressable>
+          ) : legacyAudio && !note.hasTranscript && note.transcriptStatus === 'pending' ? (
+            <View style={styles.transcribing}>
+              <ActivityIndicator size="small" color={colors.textSecondary} />
+              <Text style={styles.meta}>
+                Transcrevendo{transcriptionPercent > 0 ? ` ${Math.round(transcriptionPercent)}%` : '...'}
+              </Text>
+            </View>
+          ) : null}
 
-        {note.status === 'failed' ? (
-          <Pressable
-            style={styles.retry}
-            onPress={() => void library.retry(note.id)}
-            accessibilityLabel="Reenviar"
-          >
-            <Ionicons name="refresh" size={18} color={colors.warning} />
-            <Text style={styles.retryText}>Reenviar</Text>
-          </Pressable>
-        ) : null}
-        {noteReady && settingsReady ? (
+          {note.status === 'failed' ? (
+            <Pressable
+              style={styles.retry}
+              onPress={() => void library.retry(note.id)}
+              accessibilityLabel="Reenviar"
+            >
+              <Ionicons name="refresh" size={18} color={colors.warning} />
+              <Text style={styles.retryText}>Reenviar</Text>
+            </Pressable>
+          ) : null}
+
           <NoteBody
             key={editorKey}
             ref={editorRef}
             value={body}
             onChangeMarkdown={handleBodyChange}
-            onEditingChange={handleEditingChange}
             onImageOpen={handleImageOpen}
             placeholder={editorPlaceholder}
             imageSources={imageSources}
+            audioSource={resolveAudio}
+            audioTranscripts={audioTranscripts}
             typography={typography}
           />
-        ) : null}
+        </View>
       </ScrollView>
 
       <View style={[styles.toolbarHost, { paddingBottom: keyboardPad }]}>

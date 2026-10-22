@@ -83,7 +83,6 @@ export default function RootLayout() {
                     screenOptions={{
                       headerShown: false,
                       contentStyle: { backgroundColor: colors.bg },
-                      freezeOnBlur: true,
                     }}
                   >
                     {/* Desliza pro lado (como antes), mas na variante rapida do Android
