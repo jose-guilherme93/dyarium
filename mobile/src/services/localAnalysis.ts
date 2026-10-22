@@ -88,12 +88,25 @@ export interface AnalysisNoteResult {
   parsed: ReturnType<typeof parseAnalysisJson>;
 }
 
-const MAX_THREADS = 4;
-const LOW_POWER_THREADS = 2;
+// O aparelho e pequeno e a inferencia divide os nucleos com a interface. Quatro
+// threads deixavam a nota (e a navegacao) travada por dezenas de segundos
+// enquanto o modelo gerava; duas mantem o app respondendo. O modo de economia
+// usa uma thread e demora mais, mas quase nao aparece.
+const MAX_THREADS = 2;
+const LOW_POWER_THREADS = 1;
 const DEFAULT_CONTEXT = 4096;
 const STOP_WORDS = ['</s>', '<|end|>', '<|im_end|>', '<|endoftext|>', '<|eot_id|>', '<|end_of_text|>'];
 
-let loaded: { modelId: string; context: LlamaContextHandle } | null = null;
+/** Threads da inferencia local (exportado para o diagnostico e os testes). */
+export function analysisThreads(lowPower = false): number {
+  return lowPower ? LOW_POWER_THREADS : MAX_THREADS;
+}
+
+let loaded: {
+  modelId: string;
+  context: LlamaContextHandle;
+  threads: number;
+} | null = null;
 
 function loadLlama(): LlamaModule | null {
   try {
@@ -114,7 +127,8 @@ export async function loadAnalysisContext(
   model: AnalysisModelInfo,
   options: { lowPower?: boolean; contextSize?: number } = {},
 ): Promise<void> {
-  if (loaded?.modelId === model.id) return;
+  const threads = analysisThreads(options.lowPower);
+  if (loaded?.modelId === model.id && loaded.threads === threads) return;
   await releaseAnalysisContext();
 
   const llama = loadLlama();
@@ -129,7 +143,7 @@ export async function loadAnalysisContext(
     model: filePath,
     n_ctx: options.contextSize ?? DEFAULT_CONTEXT,
     n_batch: 256,
-    n_threads: options.lowPower ? LOW_POWER_THREADS : MAX_THREADS,
+    n_threads: threads,
     n_gpu_layers: 0,
     use_mmap: true,
     use_mlock: false,
@@ -137,7 +151,7 @@ export async function loadAnalysisContext(
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`carregar modelo: ${message}`);
   });
-  loaded = { modelId: model.id, context };
+  loaded = { modelId: model.id, context, threads };
 }
 
 export async function releaseAnalysisContext(): Promise<void> {

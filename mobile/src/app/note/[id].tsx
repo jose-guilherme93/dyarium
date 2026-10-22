@@ -84,6 +84,7 @@ import { directoryBytes, sessionDirectory } from '@/services/files';
 import { pickImage } from '@/services/image';
 import {
   analyzeRecording,
+  analysisThreads,
   localAnalysisAvailable,
   stopAnalysis,
 } from '@/services/localAnalysis';
@@ -344,6 +345,9 @@ export default function NoteScreen() {
   const analysisTokensRef = useRef(0);
   const analysisBatteryStartRef = useRef<number | null>(null);
   const stopRequestedRef = useRef(false);
+  const analysisBusyRef = useRef(false);
+  /** Parar a analise local quando a tela perde o foco (definido abaixo). */
+  const stopAnalysisOnLeaveRef = useRef<() => void>(() => undefined);
   // A analise local nasce antes do upload: ate o entryId existir, a chave e o
   // id da gravacao; depois ela e movida para a chave definitiva do servidor.
   const analysisKey = note?.entryId ?? note?.id ?? '';
@@ -664,6 +668,9 @@ export default function NoteScreen() {
     let wentAway = false;
     const unsubscribeBlur = navigation.addListener('blur', () => {
       wentAway = true;
+      // A analise local divide a CPU com a interface: sair da nota para
+      // qualquer lugar a interrompe, em vez de deixar a navegacao lenta.
+      stopAnalysisOnLeaveRef.current();
     });
     const unsubscribeFocus = navigation.addListener('focus', () => {
       if (!wentAway) return;
@@ -1049,7 +1056,7 @@ export default function NoteScreen() {
             promptTokens: result.run.timings?.promptTokens ?? 0,
             completionTokens: result.run.timings?.predictedTokens ?? 0,
             tokensPerSecond: result.run.timings?.predictedPerSecond ?? 0,
-            threads: analysisLowPower ? 2 : 4,
+            threads: analysisThreads(analysisLowPower),
           });
           if (accepted) break;
         } catch (error) {
@@ -1069,7 +1076,7 @@ export default function NoteScreen() {
             promptTokens: 0,
             completionTokens: 0,
             tokensPerSecond: 0,
-            threads: analysisLowPower ? 2 : 4,
+            threads: analysisThreads(analysisLowPower),
           });
           console.warn(
             '[analysis] tentativa falhou',
@@ -1137,7 +1144,7 @@ export default function NoteScreen() {
           elapsedMs: lastRun.run.wallMs,
           tokensPerSecond: lastRun.run.timings?.predictedPerSecond ?? 0,
           batteryDelta,
-          threads: analysisLowPower ? 2 : 4,
+          threads: analysisThreads(analysisLowPower),
         });
       }
       void saveCachedAnalyses([item]).catch(() => {
@@ -1173,6 +1180,17 @@ export default function NoteScreen() {
     stopRequestedRef.current = true;
     void stopAnalysis();
   }, []);
+
+  useEffect(() => {
+    analysisBusyRef.current = analysisBusy;
+  }, [analysisBusy]);
+
+  useEffect(() => {
+    stopAnalysisOnLeaveRef.current = () => {
+      if (!analysisBusyRef.current) return;
+      handleStopAnalysis();
+    };
+  }, [handleStopAnalysis]);
 
   // Ficha da nota: soma os arquivos locais ao abrir o menu e mede o botao para
   // ancorar o popover logo abaixo dele.

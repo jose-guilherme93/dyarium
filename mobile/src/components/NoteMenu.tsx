@@ -361,7 +361,7 @@ export function NoteMenu({
                       <View style={styles.lowPowerText}>
                         <Text style={styles.lowPowerTitle}>Menos CPU</Text>
                         <Text style={styles.analyzePrivacy}>
-                          2 threads em vez de 4. A análise demora mais e gasta menos bateria.
+                          1 thread em vez de 2. A análise demora mais e gasta menos bateria.
                         </Text>
                       </View>
                       <Switch
