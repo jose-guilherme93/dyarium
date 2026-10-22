@@ -49,6 +49,11 @@ export function outputFileName(): string {
   return `recording${FILE_EXTENSION}`;
 }
 
+/** Nome unico de um audio anexado a uma nota (varias gravacoes no mesmo corpo). */
+export function audioFileName(sessionId: string): string {
+  return `audio-${sessionId}${FILE_EXTENSION}`;
+}
+
 export function outputFileUri(sessionId: string): string {
   return new File(sessionDirectory(sessionId), outputFileName()).uri;
 }
@@ -246,11 +251,15 @@ export function deleteSessionAudioFiles(sessionId: string): FreedAudio {
  * removendo os arquivos temporarios da origem. Usado quando uma gravacao avulsa
  * e anexada a uma nota existente. Devolve o novo uri, ou null.
  */
-export async function moveAudio(fromSessionId: string, toSessionId: string): Promise<string | null> {
+export async function moveAudio(
+  fromSessionId: string,
+  toSessionId: string,
+  fileName: string = outputFileName(),
+): Promise<string | null> {
   if (!fromSessionId || !toSessionId || fromSessionId === toSessionId) return null;
   const source = new File(sessionDirectory(fromSessionId), outputFileName());
   if (!source.exists) return null;
-  const destination = new File(sessionDirectory(toSessionId), outputFileName());
+  const destination = new File(sessionDirectory(toSessionId), fileName);
   if (destination.exists) destination.delete();
   await source.move(destination);
   deleteSessionFiles(fromSessionId);

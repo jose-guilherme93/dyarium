@@ -94,7 +94,11 @@ const nota = (over: Partial<Recording> = {}): Recording => ({
 });
 
 /** Nao ha imagem local: o markdown entra como esta. */
-const semImagens = async (n: Recording) => ({ markdown: n.text ?? '', attachments: {} });
+const semImagens = async (n: Recording) => ({
+  markdown: n.text ?? '',
+  attachments: {},
+  pending: [],
+});
 
 describe('syncNoteWith', () => {
   it('envia o caderno quando ele mudou e as tags quando estao sujas', async () => {
@@ -278,6 +282,18 @@ describe('o que a nota guarda depois do envio', () => {
     const updated = applySyncResult(fresh, sent, {
       noteId: 'n1',
       attachments: {},
+      versions: { body: 'v2-corpo' },
+    });
+
+    expect(updated.noteDirty).toBe(true);
+  });
+
+  it('mantem a nota suja quando uma imagem ainda nao subiu', () => {
+    const sent = nota({ updatedAt: '2026-10-16T12:00:00Z' });
+    const updated = applySyncResult(sent, sent, {
+      noteId: 'n1',
+      attachments: {},
+      pendingAttachments: ['img_1.jpg'],
       versions: { body: 'v2-corpo' },
     });
 

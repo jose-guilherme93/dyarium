@@ -4,6 +4,8 @@ import { AppState } from 'react-native';
 import { newId } from '@/core/id';
 import { DEFAULT_NOTEBOOK_ID, sameNotebooks, type Notebook } from '@/core/notebooks';
 import { buildDraftNote, buildTextNote, noteHasContent } from '@/core/note';
+import { attachAudioToNote, audioRefFromPath, canFreeLocalAudio } from '@/core/noteAudio';
+import type { NoteInsertPosition } from '@/core/noteDocument';
 import { markQueued } from '@/core/queue';
 import { isUploadable, needsNoteSync, needsTranscript, type Recording } from '@/core/types';
 import { bumpRender } from '@/dev/perf';
@@ -53,8 +55,12 @@ interface LibraryValue {
   createDraftNote(notebookId?: string): Promise<Recording>;
   /** Salva titulo/texto da nota (autosave). */
   updateNote(id: string, patch: { title?: string; text?: string }): Promise<void>;
-  /** Anexa um audio gravado a uma nota. `false` se a nota nao existe mais. */
-  attachAudio(id: string, audio: Recording): Promise<boolean>;
+  /**
+   * Anexa um audio gravado a uma nota como no do corpo. `at` e o cursor onde o
+   * player deve entrar; sem ele, o audio vai para o fim. `false` se a nota nao
+   * existe mais.
+   */
+  attachAudio(id: string, audio: Recording, at?: NoteInsertPosition | null): Promise<boolean>;
   /** Ao sair da nota: envia rascunho com conteudo (ou descarta vazio) e sincroniza editados. */
   submitNote(id: string): Promise<void>;
   /** Arquiva/desarquiva a nota (sai da lista principal). */
@@ -336,25 +342,30 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  const attachAudio = useCallback(async (id: string, audio: Recording) => {
-    const current = await getRecording(id);
-    // A nota pode ter sido apagada enquanto a gravacao acontecia. Quem chama
-    // precisa saber: sem isso o audio era descartado em silencio.
-    if (!current) return false;
-    const updated: Recording = {
-      ...current,
-      dir: audio.dir,
-      filePath: audio.filePath,
-      segmentCount: audio.segmentCount,
-      durationMs: audio.durationMs,
-      sizeBytes: audio.sizeBytes,
-      source: 'microphone',
-      updatedAt: new Date().toISOString(),
-    };
-    await upsertRecording(updated);
-    setRecordings((prev) => prev.map((r) => (r.id === id ? updated : r)));
-    return true;
-  }, []);
+  const attachAudio = useCallback(
+    async (id: string, audio: Recording, at?: NoteInsertPosition | null) => {
+      const current = await getRecording(id);
+      // A nota pode ter sido apagada enquanto a gravacao acontecia. Quem chama
+      // precisa saber: sem isso o audio era descartado em silencio.
+      if (!current) return false;
+      const ref = audioRefFromPath(audio.filePath);
+      if (!ref) return false;
+      const updated = attachAudioToNote(
+        current,
+        {
+          ref,
+          filePath: audio.filePath,
+          durationMs: audio.durationMs,
+          sizeBytes: audio.sizeBytes,
+        },
+        at,
+      );
+      await upsertRecording(updated);
+      setRecordings((prev) => prev.map((r) => (r.id === id ? updated : r)));
+      return true;
+    },
+    [],
+  );
 
   const retry = useCallback(
     async (id: string) => {
@@ -529,7 +540,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       const current =
         (await getRecording(id)) ?? recordingsRef.current.find((item) => item.id === id);
       if (!current) return 0;
-      if (current.status !== 'completed' || !current.entryId) return 0;
+      if (!canFreeLocalAudio(current)) return 0;
 
       const freed = deleteSessionAudioFiles(id);
       if (freed.files === 0) return 0;
@@ -553,7 +564,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     let notes = 0;
     let bytes = 0;
     for (const recording of list) {
-      if (recording.status !== 'completed' || !recording.entryId) continue;
+      if (!canFreeLocalAudio(recording)) continue;
       const freed = deleteSessionAudioFiles(recording.id);
       if (freed.files === 0) continue;
       const updated: Recording = {

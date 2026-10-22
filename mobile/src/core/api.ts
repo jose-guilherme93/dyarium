@@ -50,6 +50,8 @@ export interface CreateUploadBody {
   text?: string;
   /** O cliente transcreve no aparelho; o servidor nao enfileira transcricao. */
   local_transcribe?: boolean;
+  /** Quando presente, adiciona o audio a uma entrada existente. */
+  entry_id?: string;
 }
 
 export interface PutTranscriptBody {

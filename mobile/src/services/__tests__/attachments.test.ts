@@ -90,4 +90,52 @@ describe('attachments', () => {
     expect(attachments.cachedAttachmentUri('ghi')).toBe('file:///cache/attachments/ghi.png');
     expect(mockList).not.toHaveBeenCalled();
   });
+
+  it('acha audio no cache pela extensao', () => {
+    mockFiles.add('file:///cache/attachments/audio1.aac');
+
+    expect(attachments.cachedAttachmentUri('audio1')).toBe(
+      'file:///cache/attachments/audio1.aac',
+    );
+    expect(mockList).not.toHaveBeenCalled();
+  });
+
+  it('estima o Content-Type do audio pela extensao', () => {
+    expect(attachments.audioMimeFromName('a.aac')).toBe('audio/aac');
+    expect(attachments.audioMimeFromName('a.m4a')).toBe('audio/mp4');
+    expect(attachments.audioMimeFromName('a.mp3')).toBe('audio/mpeg');
+    expect(attachments.audioMimeFromName('a.wav')).toBe('audio/wav');
+    expect(attachments.audioMimeFromName('a.flac')).toBe('audio/flac');
+    expect(attachments.audioMimeFromName('a.webm')).toBe('audio/webm');
+    expect(attachments.audioMimeFromName('a.bin')).toBe('audio/aac');
+  });
+
+  it('resolve o arquivo local do audio da nota', async () => {
+    mockFiles.add('file:///docs/nota/audio_1.aac');
+
+    expect(attachments.localAudioUri('nota', 'audio_1.aac')).toBe(
+      'file:///docs/nota/audio_1.aac',
+    );
+    await expect(
+      attachments.resolveAudioSource('nota', 'local:audio_1.aac'),
+    ).resolves.toBe('file:///docs/nota/audio_1.aac');
+  });
+
+  it('resolve o audio que ja esta no cache do servidor', async () => {
+    mockFiles.add('file:///cache/attachments/at_audio.mp3');
+
+    await expect(
+      attachments.resolveAudioSource('nota', 'attachment:at_audio'),
+    ).resolves.toBe('file:///cache/attachments/at_audio.mp3');
+  });
+
+  it('usa o arquivo local quando o anexo veio do proprio aparelho', async () => {
+    mockFiles.add('file:///docs/nota/audio_1.aac');
+
+    await expect(
+      attachments.resolveAudioSource('nota', 'attachment:at_1', {
+        'audio_1.aac': 'at_1',
+      }),
+    ).resolves.toBe('file:///docs/nota/audio_1.aac');
+  });
 });

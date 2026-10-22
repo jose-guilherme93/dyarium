@@ -6,6 +6,7 @@
 
 import { DyariumApi, type FetchLike } from '@/core/api';
 import { isPermanentUploadError } from '@/core/errors';
+import { withUploadedAudio } from '@/core/noteAudio';
 import { markCompleted, markFailed, markFailedTerminal, pickNextToUpload } from '@/core/queue';
 import { mergeTranscript } from '@/core/transcript';
 import { isTextNote, needsNoteSync, type Recording } from '@/core/types';
@@ -170,14 +171,22 @@ async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
     // durante o upload. Preserva o texto/segmentos e nunca rebaixa para "pending"
     // (senao a nota ficava "Transcrevendo" para sempre).
     const fresh = (await getRecording(current.id)) ?? current;
-    current = {
-      ...mergeTranscript(markCompleted(current, result.entryId, new Date()), fresh),
-      serverAttachmentId: result.attachmentId ?? fresh.serverAttachmentId ?? current.serverAttachmentId,
-      duplicate: result.duplicate ? true : undefined,
-      // O upload cria a entrada no servidor; o caderno local e enviado no sync da
-      // nota logo abaixo (o endpoint de upload nao carrega o caderno).
-      notebookDirty: current.notebookId ? true : undefined,
-    };
+    const attachmentId =
+      result.attachmentId ?? fresh.serverAttachmentId ?? current.serverAttachmentId;
+    // O audio que subiu como conteudo da entrada ja tem id no servidor: troca o
+    // marcador `local:` no documento e guarda o mapa, para o sync do corpo nao
+    // subir o mesmo audio de novo.
+    current = withUploadedAudio(
+      {
+        ...mergeTranscript(markCompleted(current, result.entryId, new Date()), fresh),
+        serverAttachmentId: attachmentId,
+        duplicate: result.duplicate ? true : undefined,
+        // O upload cria a entrada no servidor; o caderno local e enviado no
+        // sync da nota logo abaixo (o endpoint de upload nao carrega o caderno).
+        notebookDirty: current.notebookId ? true : undefined,
+      },
+      attachmentId ?? '',
+    );
     await upsertRecording(current);
     emitRecording(current);
     current = await pushNoteDocument(current);

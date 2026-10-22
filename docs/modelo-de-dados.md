@@ -194,14 +194,31 @@ Indices: chave primaria em `entry_id`.
 
 ## Note
 
-Notas livres por entrada, no formato do editor BlockNote (JSON).
+Corpo da entrada, canonico em markdown. O documento e uma lista ordenada de nos
+de texto, imagem e audio; o markdown traz marcadores explicitos para os nos nao
+textuais:
+
+```
+texto antes
+![foto](attachment:abc){w=50}
+texto no meio
+!audio[attachment:xyz]{d=12.5}
+texto depois
+```
+
+`local:<arquivo>` identifica um anexo que ainda esta so no aparelho; depois do
+sync vira `attachment:<id>`. `{w=N}` e a largura da imagem em percentual da nota
+e `{d=N}` e a duracao do audio em segundos. O parser/serializer do app fica em
+`mobile/src/core/noteDocument`; o dashboard continua lendo o markdown.
 
 | Campo | Tipo | Notas |
 |---|---|---|
 | id | TEXT PK | |
 | entry_id | TEXT FK -> Entry.id | |
 | title | TEXT | opcional |
-| document | TEXT | JSON do BlockNote |
+| document | TEXT | legado do BlockNote (vazio nas notas novas) |
+| content_markdown | TEXT | corpo canonico em markdown |
+| body_updated_at | TEXT | versao do corpo para conflito |
 | created_at | TEXT | |
 | updated_at | TEXT | |
 

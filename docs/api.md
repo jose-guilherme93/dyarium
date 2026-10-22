@@ -152,6 +152,10 @@ cliente pergunta ao usuario em vez de sobrescrever em silencio.
   disponivel para clientes que queiram oferecer a escolha ao usuario.
 - O titulo vive na **entrada**, nao na nota. A nota nao tem mais `title` no
   caminho de escrita: era a origem de "renomear no desktop e o titulo voltar".
+- O app representa imagem e audio como nos do documento, com marcadores no
+  markdown: `![alt](attachment:<id>){w=50}` (largura em percentual) e
+  `!audio[attachment:<id>]{d=12.5}` (duracao em segundos). O servidor trata o
+  corpo como texto opaco; clientes que nao conhecem o marcador o preservam.
 
 ### POST /api/v1/entries/{id}/notes
 Cria a nota da entrada. Corpo:

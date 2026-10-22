@@ -9,10 +9,15 @@
 
 import * as BackgroundTask from 'expo-background-task';
 import * as TaskManager from 'expo-task-manager';
+import { AppState } from 'react-native';
 
 export const UPLOAD_TASK = 'dyarium-upload-queue';
 
 TaskManager.defineTask(UPLOAD_TASK, async () => {
+  // O WorkManager pode acordar a task com o app na frente. Upload e, acima de
+  // tudo, Whisper disputariam CPU/SQLite com a nota ou a gravacao: nesse caso
+  // a task termina sem trabalho e tenta de novo no proximo ciclo.
+  if (AppState.currentState === 'active') return BackgroundTask.BackgroundTaskResult.Success;
   try {
     const { runUploadQueueOnce } = await import('./uploaderLoop');
     await runUploadQueueOnce();

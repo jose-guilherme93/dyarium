@@ -48,13 +48,15 @@ export interface NoteSyncApi {
 /** Substitui as referencias `local:` por `attachment:<id>` (os anexos ja subiram). */
 export type ImageResolver = (
   note: Recording,
-) => Promise<{ markdown: string; attachments: Record<string, string> }>;
+) => Promise<{ markdown: string; attachments: Record<string, string>; pending: string[] }>;
 
 export interface SyncNoteResult {
   /** Id da nota (corpo) no servidor. */
   noteId: string;
   /** Mapa referencia da imagem -> id do anexo, para nao reenviar. */
   attachments: Record<string, string>;
+  /** Anexos que ainda nao subiram: a nota precisa continuar suja. */
+  pendingAttachments?: string[];
   /** Versoes gravadas: a proxima sincronizacao comeca daqui. */
   versions: NoteVersions;
 }
@@ -128,7 +130,15 @@ export async function syncNoteWith(
       : await api.listNotes(note.entryId);
   const target = notes[0];
   if (!target) {
-    return createBody(api, note.entryId, note.title, markdown, resolved.attachments, versions);
+    return createBody(
+      api,
+      note.entryId,
+      note.title,
+      markdown,
+      resolved.attachments,
+      resolved.pending,
+      versions,
+    );
   }
 
   try {
@@ -140,9 +150,22 @@ export async function syncNoteWith(
     // banco do servidor reiniciado): cria de novo em vez de reprovar para
     // sempre, o que deixaria o texto preso no aparelho sem chegar a nenhum lado.
     if (!isMissing(error)) throw error;
-    return createBody(api, note.entryId, note.title, markdown, resolved.attachments, versions);
+    return createBody(
+      api,
+      note.entryId,
+      note.title,
+      markdown,
+      resolved.attachments,
+      resolved.pending,
+      versions,
+    );
   }
-  return { noteId: target.id, attachments: resolved.attachments, versions };
+  return {
+    noteId: target.id,
+    attachments: resolved.attachments,
+    pendingAttachments: resolved.pending,
+    versions,
+  };
 }
 
 /** Cria a nota da entrada e devolve o resultado com a versao do corpo criado. */
@@ -152,11 +175,17 @@ async function createBody(
   title: string,
   markdown: string,
   attachments: Record<string, string>,
+  pending: string[],
   versions: NoteVersions,
 ): Promise<SyncNoteResult> {
   const created = await api.createNote(entryId, title, markdown);
   versions.body = created.body_version ?? "";
-  return { noteId: created.id, attachments, versions };
+  return {
+    noteId: created.id,
+    attachments,
+    pendingAttachments: pending,
+    versions,
+  };
 }
 
 /** O servidor respondeu 404: o recurso nao existe la. */
@@ -224,6 +253,9 @@ export function conflictFields(error: unknown): ConflictField[] {
  */
 export function applySyncResult(fresh: Recording, sent: Recording, result: SyncNoteResult): Recording {
   const editedDuringSync = fresh.updatedAt !== sent.updatedAt;
+  // Anexo que nao subiu mantem a nota suja mesmo com o texto gravado: sem isso
+  // a foto ficava presa em `local:` e o proximo sync nunca mais tentava.
+  const pendingImages = (result.pendingAttachments?.length ?? 0) > 0;
   return {
     ...fresh,
     noteId: result.noteId,
@@ -232,7 +264,7 @@ export function applySyncResult(fresh: Recording, sent: Recording, result: SyncN
     recordedAtVersion: result.versions.recordedAt ?? fresh.recordedAtVersion,
     bodyVersion: result.versions.body ?? fresh.bodyVersion,
     syncConflict: undefined,
-    noteDirty: editedDuringSync ? true : undefined,
+    noteDirty: editedDuringSync || pendingImages ? true : undefined,
     notebookDirty: editedDuringSync ? fresh.notebookDirty : undefined,
     tagsDirty: editedDuringSync ? fresh.tagsDirty : undefined,
   };

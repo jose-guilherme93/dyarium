@@ -40,6 +40,8 @@ export interface UploadInput {
   /** Se ja existe um upload em andamento, informe id e offset para retomar. */
   uploadId?: string;
   offset?: number;
+  /** Adiciona o audio a uma entrada existente em vez de criar outra. */
+  entryId?: string;
 }
 
 export interface UploadDeps {
@@ -85,6 +87,7 @@ export async function uploadRecording(
       source: input.source,
       text: input.text,
       local_transcribe: input.localTranscribe,
+      entry_id: input.entryId,
     });
     uploadId = created.id;
     offset = created.offset ?? 0;

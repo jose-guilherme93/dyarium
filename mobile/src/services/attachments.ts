@@ -3,8 +3,9 @@
  *
  * A imagem vive no aparelho desde a captura e so sobe quando o sync roda. Para
  * exibir no editor usamos o proprio arquivo local (`file://`), nunca um data URI
- * base64: o WebView le o arquivo nativamente e o guarda em cache, entao abrir a
- * nota nao depende de rede nem de recomprimir bytes na thread de JS.
+ * base64: o componente nativo le o arquivo e o mantem em cache, entao abrir a
+ * nota nao depende de rede nem de recomprimir bytes na thread de JS. O audio
+ * local segue o mesmo caminho.
  *
  * Depois que uma imagem sobe, guardamos uma copia em `attachments/<id>.<ext>` no
  * cache. Assim notas ja sincronizadas continuam abrindo pelo arquivo local em
@@ -20,14 +21,17 @@ import {
   attachmentRefId,
   isLocalAttachment,
   localAttachmentName,
+  localAudioName,
   mimeFromName,
   resolveLocalAttachmentRefs,
+  resolveLocalAudioRefs,
   type AttachmentResolution,
 } from '@/core/attachments';
 import { newId } from '@/core/id';
 import { extractImageUrls } from '@/core/richText';
+import { uploadRecording } from '@/core/uploader';
 
-import { sessionDirectory } from './files';
+import { uploadFileIO, sessionDirectory } from './files';
 import { loadServerConfig } from './secure';
 
 const doFetch = globalThis.fetch as unknown as FetchLike;
@@ -99,7 +103,25 @@ async function cacheLocalCopy(noteId: string, name: string, id: string): Promise
 // Extensoes que o app grava no cache. A busca e por arquivo direto (poucos
 // `exists`), nunca por `Directory.list()`: listar a pasta inteira na thread de
 // JS travava a abertura da nota quando o cache crescia.
-const ATTACHMENT_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'heic', 'avif', 'bmp'];
+const ATTACHMENT_EXTENSIONS = [
+  'jpg',
+  'jpeg',
+  'png',
+  'webp',
+  'gif',
+  'heic',
+  'avif',
+  'bmp',
+  'aac',
+  'adts',
+  'm4a',
+  'mp3',
+  'wav',
+  'ogg',
+  'flac',
+  'webm',
+  'mp4',
+];
 const cachedUris = new Map<string, string>();
 
 export function invalidateAttachmentIndex(): void {
@@ -198,9 +220,96 @@ export async function resolveLocalAttachments(
   markdown: string,
   known: Record<string, string> = {},
 ): Promise<AttachmentResolution> {
-  if (!entryId) return { markdown, attachments: { ...known } };
+  if (!entryId) return { markdown, attachments: { ...known }, pending: [] };
   return resolveLocalAttachmentRefs(markdown, known, (name) =>
     uploadLocalImage(entryId, noteId, name),
+  );
+}
+
+/** URI `file://` de um audio local da nota, ou null quando o arquivo sumiu. */
+export function localAudioUri(noteId: string, name: string): string | null {
+  try {
+    const file = new File(sessionDirectory(noteId), name);
+    return file.exists ? file.uri : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Content-Type de um audio pela extensao do arquivo. */
+export function audioMimeFromName(name: string): string {
+  const extension = name.split('.').pop()?.toLowerCase();
+  switch (extension) {
+    case 'm4a':
+    case 'mp4':
+      return 'audio/mp4';
+    case 'mp3':
+      return 'audio/mpeg';
+    case 'wav':
+      return 'audio/wav';
+    case 'ogg':
+      return 'audio/ogg';
+    case 'flac':
+      return 'audio/flac';
+    case 'webm':
+      return 'audio/webm';
+    case 'adts':
+      return 'audio/aac';
+    default:
+      return 'audio/aac';
+  }
+}
+
+/**
+ * Sobe um audio que ainda esta `local:` para anexar a uma entrada existente.
+ * Usa o mesmo upload resumivel do audio da nota, com `entry_id`: o servidor
+ * adiciona o audio a entrada em vez de criar outra.
+ */
+export async function uploadLocalAudio(
+  entryId: string,
+  noteId: string,
+  name: string,
+  durationMs: number,
+): Promise<string> {
+  const config = await loadServerConfig();
+  if (!config) throw new Error('sem servidor configurado');
+  const uri = localAudioUri(noteId, name);
+  if (!uri) throw new Error('arquivo de audio local indisponivel');
+  const api = new DyariumApi(config, doFetch);
+  const now = new Date().toISOString();
+  const sizeBytes = new File(uri).size;
+  const result = await uploadRecording(
+    {
+      clientKey: `audio:${noteId}:${name}`,
+      filename: name,
+      contentType: audioMimeFromName(name),
+      title: name,
+      recordedAt: now,
+      createdAt: now,
+      localPath: uri,
+      sizeBytes,
+      durationSeconds: durationMs > 0 ? durationMs / 1000 : undefined,
+      entryId,
+    },
+    { api, file: uploadFileIO },
+  );
+  if (!result.attachmentId) throw new Error('servidor nao devolveu o anexo do audio');
+  return result.attachmentId;
+}
+
+/**
+ * Troca os audios locais do documento por anexos do servidor. O mapa `known`
+ * (nome -> id) evita reenviar o mesmo audio a cada edicao da nota.
+ */
+export async function resolveLocalAudioAttachments(
+  entryId: string | undefined,
+  noteId: string,
+  markdown: string,
+  known: Record<string, string> = {},
+): Promise<AttachmentResolution> {
+  if (!entryId) return { markdown, attachments: { ...known }, pending: [] };
+  return resolveLocalAudioRefs(markdown, known, (name, durationMs) =>
+    uploadLocalAudio(entryId, noteId, name, durationMs),
   );
 }
 
@@ -231,6 +340,38 @@ export function resolveImageSourcesLocal(
     if (uri) map[ref] = uri;
   }
   return map;
+}
+
+/**
+ * Fonte exibivel de um audio do documento: arquivo local da nota ou anexo do
+ * servidor (cache local e, se faltar, download). Devolve null quando o audio
+ * nao esta disponivel.
+ */
+export async function resolveAudioSource(
+  noteId: string,
+  ref: string,
+  attachments: Record<string, string> = {},
+): Promise<string | null> {
+  const local = localAudioName(ref);
+  if (local) {
+    const uri = localAudioUri(noteId, local);
+    if (uri) return uri;
+    const uploaded = attachments[local];
+    return uploaded ? attachmentUri(uploaded) : null;
+  }
+  if (ref.startsWith(ATTACHMENT_PREFIX)) {
+    const id = attachmentRefId(ref);
+    // Anexo que veio deste aparelho: o arquivo local ainda e a fonte mais
+    // barata, mesmo depois de o marcador virar `attachment:<id>`.
+    for (const [name, known] of Object.entries(attachments)) {
+      if (known !== id) continue;
+      const local = localAudioUri(noteId, name);
+      if (local) return local;
+    }
+    return attachmentUri(id);
+  }
+  const id = attachmentIdFromUrl(ref);
+  return id ? attachmentUri(id) : null;
 }
 
 /**

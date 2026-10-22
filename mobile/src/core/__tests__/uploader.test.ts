@@ -64,6 +64,16 @@ const input = {
 };
 
 describe('uploadRecording', () => {
+  it('leva entry_id quando o audio sera anexado a uma nota existente', async () => {
+    const server = new FakeApi(10);
+    await uploadRecording({ ...input, entryId: 'entry-1' }, {
+      api: server.asApi(),
+      file: memFile(payload(10)),
+    });
+
+    expect(server.createUpload.mock.calls[0][0]).toMatchObject({ entry_id: 'entry-1' });
+  });
+
   it('envia chunks sequenciais e conclui', async () => {
     const server = new FakeApi(10);
     const progress: number[] = [];

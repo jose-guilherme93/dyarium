@@ -5,6 +5,8 @@
  */
 
 import { ApiError, DyariumApi, type FetchLike } from '@/core/api';
+import { localAudioName } from '@/core/attachments';
+import { audioRefFromPath } from '@/core/noteAudio';
 import {
   conflictFields,
   fetchServerNote,
@@ -16,14 +18,46 @@ import {
 } from '@/core/noteSync';
 import type { Recording } from '@/core/types';
 
-import { resolveLocalAttachments } from './attachments';
+import {
+  resolveLocalAttachments,
+  resolveLocalAudioAttachments,
+} from './attachments';
 import { loadServerConfig } from './secure';
 
 const doFetch = globalThis.fetch as unknown as FetchLike;
 
-/** Resolver de imagens: sobe o que ainda esta `local:` e devolve o markdown. */
-const resolveImages: ImageResolver = (note) =>
-  resolveLocalAttachments(note.entryId, note.id, note.text ?? '', note.attachments ?? {});
+/**
+ * Resolve os anexos do documento: sobe imagens e audios que ainda estao
+ * `local:` e devolve o markdown com `attachment:<id>`. O que falhar continua
+ * local e mantem a nota suja para a proxima tentativa.
+ */
+const resolveAttachments: ImageResolver = async (note) => {
+  const known = { ...(note.attachments ?? {}) };
+  // Nota antiga: o audio da propria entrada ja tinha id no servidor, mas o mapa
+  // nome -> anexo pode nao existir. Sem isto o sync subiria o mesmo audio de
+  // novo so para descobrir que o SHA-256 ja estava la.
+  const localRef = audioRefFromPath(note.filePath);
+  const localName = localRef ? localAudioName(localRef) : undefined;
+  if (localName && note.serverAttachmentId) known[localName] = note.serverAttachmentId;
+
+  const images = await resolveLocalAttachments(
+    note.entryId,
+    note.id,
+    note.text ?? '',
+    known,
+  );
+  const audios = await resolveLocalAudioAttachments(
+    note.entryId,
+    note.id,
+    images.markdown,
+    images.attachments,
+  );
+  return {
+    markdown: audios.markdown,
+    attachments: audios.attachments,
+    pending: [...images.pending, ...audios.pending],
+  };
+};
 
 async function withServer<T>(
   note: Recording,
@@ -40,12 +74,12 @@ async function withServer<T>(
  * entrada no servidor. Conflito sobe como `ConflictError` (409), sem nada gravado.
  */
 export function syncNote(note: Recording): Promise<SyncNoteResult | undefined> {
-  return withServer(note, (api) => syncNoteWith(api, note, resolveImages));
+  return withServer(note, (api) => syncNoteWith(api, note, resolveAttachments));
 }
 
 /** "Manter o meu": reenvia sem versao, porque a escolha ja foi do usuario. */
 export function syncNoteForcing(note: Recording): Promise<SyncNoteResult | undefined> {
-  return withServer(note, (api) => syncNoteWith(api, note, resolveImages, { force: true }));
+  return withServer(note, (api) => syncNoteWith(api, note, resolveAttachments, { force: true }));
 }
 
 /** "Ficar com o de la": o que o servidor tem agora, para mostrar antes de trocar. */
