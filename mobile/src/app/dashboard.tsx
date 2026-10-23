@@ -840,7 +840,7 @@ export default function DashboardScreen() {
   const [windowKind, setWindowKind] = useState<MetricsWindow>('30d');
   const [now, setNow] = useState(() => new Date());
   const [imageBytes, setImageBytes] = useState<Record<string, number>>({});
-  const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const writing = useMemo(() => analyzeWriting(recordings, now), [recordings, now]);
@@ -852,8 +852,10 @@ export default function DashboardScreen() {
     // da rede (ou sem ela) e sem refazer a analise.
     const cached = await listCachedAnalyses().catch(() => []);
     setCachedAnalyses(cached);
-    if (!config) return;
-    setLoading(true);
+    if (!config) {
+      setLoaded(true);
+      return;
+    }
     setError(null);
     try {
       const result = await loadDashboard();
@@ -861,7 +863,7 @@ export default function DashboardScreen() {
     } catch {
       setError('Nao foi possivel carregar o painel do servidor. Verifique a rede.');
     } finally {
-      setLoading(false);
+      setLoaded(true);
     }
   }, [config]);
 
@@ -960,7 +962,7 @@ export default function DashboardScreen() {
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
-            refreshing={loading && data !== null}
+            refreshing={!loaded}
             onRefresh={load}
             tintColor={colors.textSecondary}
           />
@@ -1012,7 +1014,7 @@ export default function DashboardScreen() {
             </Text>
             <Button label="Configurar servidor" variant="secondary" onPress={() => push('/server')} />
           </View>
-        ) : loading && !data ? null : (
+        ) : !loaded ? null : (
           <>
             {error ? <Text style={styles.error}>{error}</Text> : null}
             {summary ? (
