@@ -333,14 +333,29 @@ describe('tela da nota', () => {
     return view;
   };
 
-  it('monta o corpo junto com o titulo, sem esqueleto no caminho', async () => {
+  it('mostra o cabecalho antes de montar o editor', () => {
+    let finishBody: (() => void) | null = null;
+    jest.spyOn(InteractionManager, 'runAfterInteractions').mockImplementation(((
+      task: () => void,
+    ) => {
+      finishBody = task;
+      return { cancel: jest.fn() };
+    }) as never);
+
     render(<NoteScreen />);
 
-    // A nota abre inteira: titulo e corpo no primeiro render. Nada de esqueleto
-    // segurando o corpo ate "assentar" (o que atrasava a abertura).
+    // O cabecalho e os botoes respondem antes do parse/montagem do corpo.
     expect(screen.getByPlaceholderText('título da nota')).toBeTruthy();
+    expect(screen.getByLabelText('Configurações da nota')).toBeTruthy();
+    expect(screen.getByTestId('note-body-hydrating')).toBeTruthy();
+    expect(screen.queryByTestId('note-body')).toBeNull();
+
+    act(() => {
+      finishBody?.();
+    });
+
     expect(screen.getByTestId('note-body')).toBeTruthy();
-    expect(screen.queryByTestId('note-skeleton')).toBeNull();
+    expect(screen.queryByTestId('note-body-hydrating')).toBeNull();
   });
 
   it('aplica a tipografia no titulo sem remontar a nota', async () => {

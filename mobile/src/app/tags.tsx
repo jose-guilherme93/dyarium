@@ -173,8 +173,8 @@ export default function TagsScreen() {
       />
 
       <FastModal visible={rename !== null} onRequestClose={() => setRename(null)}>
-        <Press style={styles.backdrop} onPress={() => setRename(null)}>
-          <Press style={styles.card} onPress={() => undefined}>
+        <Press style={styles.backdrop} onPress={() => setRename(null)} feedback={false}>
+          <Press style={styles.card} onPress={() => undefined} feedback={false}>
             <Text style={styles.cardTitle}>Renomear tag</Text>
             <TextInput
               value={name}

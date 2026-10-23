@@ -1,6 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
+  PanResponder,
   ScrollView,
   StyleSheet,
   Switch,
@@ -19,6 +22,7 @@ import {
   type NoteFontWeight,
   type NoteTypography,
 } from '@/core/typography';
+import { motionDuration } from '@/theme/motion';
 import { colors, fontSize, radius, spacing } from '@/theme/tokens';
 
 export interface NoteProperty {
@@ -26,9 +30,94 @@ export interface NoteProperty {
   value: string;
 }
 
-export interface NoteMenuAnchor {
-  top: number;
-  right: number;
+const SHEET_MOTION = motionDuration(220);
+
+function isVertical(gesture: { dy: number; dx: number }): boolean {
+  return Math.abs(gesture.dy) > 6 && Math.abs(gesture.dy) > Math.abs(gesture.dx);
+}
+
+/**
+ * Quando o corpo da folha pode iniciar um arrasto. Recolhida, qualquer deslize
+ * vertical expande. Expandida, o corpo rola; so um deslize para baixo no topo
+ * recolhe (para o gesto nao roubar a rolagem da lista).
+ */
+export function canStartSheetDrag(
+  gesture: { dy: number; dx: number },
+  expanded: boolean,
+  atTop: boolean,
+): boolean {
+  if (!isVertical(gesture)) return false;
+  if (!expanded) return true;
+  return atTop && gesture.dy > 0;
+}
+
+interface SheetResponderOptions {
+  canStart(gesture: { dy: number; dx: number }): boolean;
+  expanded: boolean;
+  travel: number;
+  expansion: Animated.Value;
+  animateExpansion(next: boolean): void;
+  onClose(): void;
+}
+
+export type SheetRelease = 'close' | 'collapse' | 'expand';
+
+/** Decide o que um gesto solto faz, sem depender do responder. */
+export function sheetReleaseAction(
+  expanded: boolean,
+  dy: number,
+  vy: number,
+): SheetRelease {
+  if (expanded) {
+    // Puxada longa/rapida fecha direto; uma puxada curta volta para a metade.
+    if (vy > 1.1 || dy > 140) return 'close';
+    if (vy > 0.4 || dy > 40) return 'collapse';
+    return 'expand';
+  }
+  if (vy > 0.8 || dy > 55) return 'close';
+  if (vy < -0.6 || dy < -30) return 'expand';
+  return 'collapse';
+}
+
+/**
+ * Gesto da folha. O mesmo conjunto de handlers e ligado ao corpo (so quando
+ * recolhida) e ao cabecalho (sempre), para o usuario poder puxar de qualquer
+ * ponto e, expandido, continuar rolando a lista.
+ */
+function createSheetResponder({
+  canStart,
+  expanded,
+  travel,
+  expansion,
+  animateExpansion,
+  onClose,
+}: SheetResponderOptions) {
+  return PanResponder.create({
+    onStartShouldSetPanResponder: () => false,
+    onStartShouldSetPanResponderCapture: () => false,
+    onMoveShouldSetPanResponder: (_event, gesture) => canStart(gesture),
+    onMoveShouldSetPanResponderCapture: (_event, gesture) => canStart(gesture),
+    onPanResponderGrant: () => {
+      expansion.stopAnimation();
+    },
+    onPanResponderMove: (_event, gesture) => {
+      if (travel <= 0) return;
+      const base = expanded ? 1 : 0;
+      const next = Math.max(0, Math.min(1, base - gesture.dy / travel));
+      expansion.setValue(next);
+    },
+    onPanResponderRelease: (_event, gesture) => {
+      const action = sheetReleaseAction(expanded, gesture.dy, gesture.vy);
+      if (action === 'close') {
+        onClose();
+        return;
+      }
+      animateExpansion(action === 'expand');
+    },
+    onPanResponderTerminate: () => {
+      animateExpansion(expanded);
+    },
+  });
 }
 
 interface NoteMenuProps {
@@ -40,8 +129,6 @@ interface NoteMenuProps {
    * entrada no servidor); `null` mostra que ainda nao ha analise.
    */
   analysis?: NoteAnalysisView | null;
-  /** Posicao do popover (abaixo do botao de configuracoes). */
-  anchor?: NoteMenuAnchor | null;
   /** Analise local habilitada nesta build. */
   analysisEnabled?: boolean;
   /** Modelo local instalado e engine disponivel. */
@@ -202,16 +289,15 @@ function AnalysisContent({ analysis }: { analysis: NoteAnalysisView }) {
 }
 
 /**
- * Configuracoes da nota: um popover que abre logo abaixo do botao (tres
- * pontinhos), sem subir de baixo. Reune compartilhar, tipografia do editor e a
- * ficha de propriedades.
+ * Configuracoes da nota: uma folha que sobe do rodape e para na metade da tela.
+ * Puxar para cima expande para mostrar toda a analise, a tipografia e as
+ * propriedades sem apertar tudo num popover pequeno.
  */
 export function NoteMenu({
   visible,
   title,
   properties,
   analysis,
-  anchor,
   analysisEnabled = false,
   analysisReady = false,
   analysisBusy = false,
@@ -233,32 +319,146 @@ export function NoteMenu({
 }: NoteMenuProps) {
   const shown = title.trim() || 'Nota sem título';
   const { height } = useWindowDimensions();
-  const placement = anchor
-    ? { top: anchor.top, right: anchor.right }
-    : { top: 80, right: spacing.lg };
-  // O card nunca pode passar do rodape da tela; o que nao couber rola dentro.
-  const available = anchor ? height - anchor.top - spacing.lg : height - 120;
-  const maxHeight = Math.max(240, Math.min(600, available));
-  // ScrollView so rola no Android quando tem altura maxima explicita.
-  const scrollMaxHeight = Math.max(160, maxHeight - spacing.lg * 2);
+  const collapsedHeight = Math.max(260, Math.round(height * 0.5));
+  const expandedHeight = Math.max(collapsedHeight + 80, Math.round(height * 0.96));
+  const travel = expandedHeight - collapsedHeight;
+
+  const [expansion] = useState(() => new Animated.Value(0));
+  const [slide] = useState(() => new Animated.Value(1));
+  const [expanded, setExpanded] = useState(false);
+  const [atTop, setAtTop] = useState(true);
+
+  const animateExpansion = useCallback(
+    (next: boolean) => {
+      setExpanded(next);
+      Animated.timing(expansion, {
+        toValue: next ? 1 : 0,
+        duration: SHEET_MOTION,
+        useNativeDriver: false,
+      }).start();
+    },
+    [expansion],
+  );
+
+  // Ao abrir, a folha sobe do rodape ja no tamanho recolhido (metade da tela).
+  useEffect(() => {
+    if (!visible) return;
+    expansion.setValue(0);
+    slide.setValue(1);
+    const entrance = Animated.timing(slide, {
+      toValue: 0,
+      duration: SHEET_MOTION,
+      useNativeDriver: false,
+    });
+    entrance.start();
+    return () => entrance.stop();
+  }, [visible, expansion, slide]);
+
+  // Recolhida, a folha escuta o corpo inteiro: um deslize para cima em qualquer
+  // ponto expande. Expandida, o corpo rola e, no topo, puxar para baixo recolhe;
+  // o cabecalho continua puxando a folha de volta de qualquer posicao.
+  const sheetResponder = useMemo(
+    () =>
+      createSheetResponder({
+        canStart: (gesture) => canStartSheetDrag(gesture, expanded, atTop),
+        expanded,
+        travel,
+        expansion,
+        animateExpansion,
+        onClose,
+      }),
+    [animateExpansion, atTop, expanded, expansion, onClose, travel],
+  );
+
+  const headerResponder = useMemo(
+    () =>
+      createSheetResponder({
+        canStart: isVertical,
+        expanded,
+        travel,
+        expansion,
+        animateExpansion,
+        onClose,
+      }),
+    [animateExpansion, expanded, expansion, onClose, travel],
+  );
+
+  const sheetHeight = expansion.interpolate({
+    inputRange: [0, 1],
+    outputRange: [collapsedHeight, expandedHeight],
+  });
+  const sheetSlide = slide.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, collapsedHeight],
+  });
 
   return (
     <FastModal visible={visible} onRequestClose={onClose}>
       <View style={styles.root}>
-        <Press style={styles.backdrop} onPress={onClose} accessibilityLabel="Fechar menu" />
-        <View style={[styles.card, placement, { maxHeight }]}>
+        <Press
+          style={styles.backdrop}
+          onPress={onClose}
+          feedback={false}
+          accessibilityLabel="Fechar menu"
+        />
+        <Animated.View
+          testID="note-menu-sheet"
+          style={[
+            styles.sheet,
+            { height: sheetHeight, transform: [{ translateY: sheetSlide }] },
+          ]}
+          {...sheetResponder.panHandlers}
+        >
+          <View style={styles.header} {...headerResponder.panHandlers}>
+            <View
+              style={styles.headerContent}
+              accessible
+              accessibilityRole="button"
+              accessibilityLabel="Detalhes da nota"
+              accessibilityHint={
+                expanded
+                  ? 'Puxe para baixo para recolher'
+                  : 'Puxe para cima para expandir'
+              }
+              accessibilityState={{ expanded }}
+              accessibilityActions={[
+                { name: 'expand', label: 'Expandir detalhes' },
+                { name: 'collapse', label: 'Recolher detalhes' },
+              ]}
+              onAccessibilityAction={(event) => {
+                const action = event.nativeEvent.actionName;
+                if (action === 'expand') animateExpansion(true);
+                if (action === 'collapse') animateExpansion(false);
+              }}
+            >
+              <View style={styles.grabber} />
+              <Text
+                style={[styles.title, { fontSize: titleFontSize(shown, 20, 14) }]}
+                numberOfLines={2}
+              >
+                {shown}
+              </Text>
+              <Text style={styles.hint}>
+                {expanded ? 'Puxe para baixo para recolher' : 'Puxe para cima para ver tudo'}
+              </Text>
+            </View>
+          </View>
+
           <ScrollView
-            style={[styles.scroll, { maxHeight: scrollMaxHeight }]}
+            testID="note-menu-scroll"
+            style={styles.scroll}
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
             bounces={false}
             nestedScrollEnabled
+            scrollEnabled={expanded}
+            scrollEventThrottle={16}
+            onScroll={(event) => {
+              const next = event.nativeEvent.contentOffset.y <= 0;
+              setAtTop((current) => (current === next ? current : next));
+            }}
             keyboardShouldPersistTaps="handled"
           >
-            <Text style={[styles.title, { fontSize: titleFontSize(shown, 20, 14) }]} numberOfLines={2}>
-              {shown}
-            </Text>
-
             <Press style={styles.action} onPress={onShare} accessibilityLabel="Compartilhar nota">
               <Ionicons name="share-outline" size={19} color={colors.text} />
               <Text style={styles.actionText}>Compartilhar nota</Text>
@@ -425,7 +625,7 @@ export function NoteMenu({
             </View>
 
           </ScrollView>
-        </View>
+        </Animated.View>
       </View>
     </FastModal>
   );
@@ -439,31 +639,56 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     left: 0,
-    backgroundColor: 'rgba(0,0,0,0.35)',
+    backgroundColor: colors.overlay,
   },
-  card: {
+  sheet: {
     position: 'absolute',
-    width: 300,
-    maxHeight: 460,
+    left: 0,
+    right: 0,
+    bottom: 0,
     backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    borderWidth: StyleSheet.hairlineWidth,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    borderTopWidth: StyleSheet.hairlineWidth,
     borderColor: colors.borderStrong,
-    padding: spacing.lg,
-    gap: spacing.md,
     overflow: 'hidden',
     zIndex: 1,
-    elevation: 8,
+    elevation: 16,
+    shadowColor: '#000000',
+    shadowOpacity: 0.35,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: -4 },
   },
-  scroll: { flexShrink: 1 },
-  scrollContent: { gap: spacing.md },
-  title: { color: colors.text, fontWeight: '700' },
+  header: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+  },
+  headerContent: { gap: spacing.xs },
+  grabber: {
+    width: 40,
+    height: 4,
+    borderRadius: radius.pill,
+    backgroundColor: colors.borderStrong,
+    alignSelf: 'center',
+    marginBottom: spacing.sm,
+  },
+  hint: { color: colors.textTertiary, fontSize: fontSize.xs },
+  scroll: { flex: 1 },
+  scrollContent: {
+    gap: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.xxxl,
+  },
+  title: { color: colors.text, fontWeight: '700', flex: 1 },
   action: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
     paddingVertical: spacing.sm,
-    borderTopWidth: StyleSheet.hairlineWidth,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
   },

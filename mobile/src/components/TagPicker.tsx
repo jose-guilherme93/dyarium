@@ -84,8 +84,8 @@ export function TagPicker({ visible, selected, knownTags, onClose, onSave }: Tag
 
   return (
     <FastModal visible={visible} onRequestClose={onClose}>
-      <Press style={styles.backdrop} onPress={onClose}>
-        <Press style={styles.card} onPress={() => undefined}>
+      <Press style={styles.backdrop} onPress={onClose} feedback={false}>
+        <Press style={styles.card} onPress={() => undefined} feedback={false}>
           <View style={styles.header}>
             <Text style={styles.title}>Tags</Text>
             <Press onPress={() => onSave(picked)} accessibilityLabel="Concluir tags">

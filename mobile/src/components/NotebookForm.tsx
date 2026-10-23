@@ -44,8 +44,8 @@ export function NotebookForm({
 
   return (
     <FastModal visible={visible} onRequestClose={onClose}>
-      <Press style={styles.backdrop} onPress={onClose}>
-        <Press style={styles.card} onPress={() => undefined}>
+      <Press style={styles.backdrop} onPress={onClose} feedback={false}>
+        <Press style={styles.card} onPress={() => undefined} feedback={false}>
           <Text style={styles.title}>{title}</Text>
           <TextInput
             value={name}

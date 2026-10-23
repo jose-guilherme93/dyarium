@@ -162,8 +162,8 @@ export function ActivityCenter({ visible, onClose }: ActivityCenterProps) {
 
   return (
     <FastModal visible={visible} onRequestClose={onClose}>
-      <Press style={styles.backdrop} onPress={onClose}>
-        <Press style={styles.card} onPress={() => undefined}>
+      <Press style={styles.backdrop} onPress={onClose} feedback={false}>
+        <Press style={styles.card} onPress={() => undefined} feedback={false}>
           <View style={styles.header}>
             <View>
               <Text style={styles.title}>Atividade</Text>

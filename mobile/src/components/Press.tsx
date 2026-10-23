@@ -12,17 +12,25 @@ import { Platform, Pressable, StyleSheet, type PressableProps, type View } from 
 
 const RIPPLE = { color: 'rgba(255,255,255,0.10)', borderless: false } as const;
 
-export const Press = forwardRef<View, PressableProps>(function Press(
-  { style, android_ripple, ...rest },
+type PressProps = PressableProps & {
+  /**
+   * Desliga o feedback visual. Use em alvos que apenas capturam o toque (fundo
+   * de modal, cartao que impede o fundo de fechar) e nao sao botoes.
+   */
+  feedback?: boolean;
+};
+
+export const Press = forwardRef<View, PressProps>(function Press(
+  { style, android_ripple, feedback = true, ...rest },
   ref,
 ) {
   return (
     <Pressable
       ref={ref}
-      android_ripple={android_ripple ?? RIPPLE}
+      android_ripple={feedback ? (android_ripple ?? RIPPLE) : undefined}
       style={(state) => [
         typeof style === 'function' ? style(state) : style,
-        state.pressed && Platform.OS !== 'android' ? styles.pressed : null,
+        feedback && state.pressed && Platform.OS !== 'android' ? styles.pressed : null,
       ]}
       {...rest}
     />

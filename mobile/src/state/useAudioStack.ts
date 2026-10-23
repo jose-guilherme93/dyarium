@@ -29,9 +29,16 @@ export interface AudioStack {
   refresh: () => Promise<void>;
 }
 
+const EMPTY_AUDIOS: ServerAudio[] = [];
+
 /** Le a pilha de audios de uma entrada. Vazio quando nao ha servidor ou audio. */
-export function useAudioStack(entryId: string | undefined, cached: ServerAudio[] = []): AudioStack {
-  const [audios, setAudios] = useState<ServerAudio[]>(cached);
+export function useAudioStack(
+  entryId: string | undefined,
+  cached: ServerAudio[] = EMPTY_AUDIOS,
+): AudioStack {
+  // `null` = ainda nao leu do servidor; o cache da nota (que pode chegar
+  // depois do primeiro frame) e o estado inicial.
+  const [audios, setAudios] = useState<ServerAudio[] | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -65,7 +72,7 @@ export function useAudioStack(entryId: string | undefined, cached: ServerAudio[]
     return () => clearTimeout(timer);
   }, [cached.length, refresh]);
 
-  return { audios, refresh };
+  return { audios: audios ?? cached, refresh };
 }
 
 /** Duracao de um audio da pilha, em ms (0 quando o servidor nao sabe). */

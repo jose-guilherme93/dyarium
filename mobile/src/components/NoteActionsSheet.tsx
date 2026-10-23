@@ -28,8 +28,8 @@ interface NoteActionsSheetProps {
 }
 
 /**
- * Opcoes da nota na lista (toque longo no card). Abre colado ao dedo, como o
- * menu da nota (popover), e nao de baixo. Mesmo visual do menu da nota.
+ * Opcoes da nota na lista (toque longo no card). Abre colado ao dedo, como um
+ * menu de contexto, e nao como a folha do menu da nota.
  */
 export function NoteActionsSheet({
   recording,
@@ -56,10 +56,16 @@ export function NoteActionsSheet({
 
   return (
     <FastModal visible={recording != null} onRequestClose={onClose}>
-      <Press style={styles.backdrop} onPress={onClose} accessibilityLabel="Fechar menu">
+      <Press
+        style={styles.backdrop}
+        onPress={onClose}
+        feedback={false}
+        accessibilityLabel="Fechar menu"
+      >
         <Press
           style={[styles.card, { width: menuWidth, left, maxHeight: height * 0.6 }, placement]}
           onPress={() => undefined}
+          feedback={false}
         >
           <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
             <Text style={[styles.title, { fontSize: titleFontSize(shown, 20, 14) }]} numberOfLines={2}>

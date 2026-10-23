@@ -227,8 +227,8 @@ export default function NotebooksScreen() {
       />
 
       <FastModal visible={actionsNotebook !== null} onRequestClose={() => setActionsNotebook(null)}>
-        <Press style={styles.sheetBackdrop} onPress={() => setActionsNotebook(null)}>
-          <Press style={styles.sheet} onPress={() => undefined}>
+        <Press style={styles.sheetBackdrop} onPress={() => setActionsNotebook(null)} feedback={false}>
+          <Press style={styles.sheet} onPress={() => undefined} feedback={false}>
             <Text style={styles.sheetTitle}>{actionsNotebook?.name}</Text>
             <Press
               style={styles.sheetRow}

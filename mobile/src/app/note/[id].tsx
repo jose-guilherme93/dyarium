@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  InteractionManager,
   Keyboard,
   ScrollView,
   Share,
@@ -27,7 +28,7 @@ import { FastModal } from '@/components/FastModal';
 import { NoteBody } from '@/components/NoteBody';
 import type { NoteBodyHandle } from '@/components/noteBodyTypes';
 import { NoteMetaRow } from '@/components/NoteMetaRow';
-import { NoteMenu, type NoteMenuAnchor, type NoteProperty } from '@/components/NoteMenu';
+import { NoteMenu, type NoteProperty } from '@/components/NoteMenu';
 import { NotebookPicker } from '@/components/NotebookPicker';
 import { TagPicker } from '@/components/TagPicker';
 
@@ -113,9 +114,9 @@ import { colors, fontSize, radius, spacing } from '@/theme/tokens';
 /**
  * Tela da nota: sempre editavel (titulo e texto), com gravacao de audio embutida
  * e autosave. A nota nasce limpa: as acoes de formatacao so aparecem quando o
- * teclado esta aberto (editando). O menu da nota (tres pontinhos) reune
- * compartilhar e a ficha de propriedades. Ao sair, a nota e enviada ou entra na
- * fila de sync.
+ * teclado esta aberto (editando). O menu da nota (tres pontinhos) sobe como uma
+ * folha de detalhes com compartilhar, analise e propriedades. Ao sair, a nota e
+ * enviada ou entra na fila de sync.
  */
 
 /**
@@ -204,10 +205,19 @@ export default function NoteScreen() {
       : checkpointPercent(note ?? {});
   // Player unico do app: um audio toca por vez, seja ele um no do corpo ou um
   // audio da pilha do servidor. O card de audio nao cria player proprio.
+  // O corpo e hidratado depois do primeiro frame: o cabecalho (voltar, menu,
+  // titulo) aparece na hora, sem esperar o parse do documento. Enquanto isso, a
+  // area do corpo mostra um carregamento proprio.
+  const [body, setBody] = useState('');
+  const [hydrated, setHydrated] = useState(false);
+  const [bodyReady, setBodyReady] = useState(false);
+
   // Pilha de audios do servidor. O app nao grava varios audios numa nota, mas
   // le a pilha: os audios do dashboard aparecem aqui, cada um com a sua
   // transcricao. Tocar em um deles troca a fonte do mesmo player.
-  const stack = useAudioStack(note?.entryId, note?.serverAudios);
+  // O cache JSON so e lido depois do primeiro frame; o hook sincroniza quando
+  // ele chega, em vez de parsear no caminho de abrir a nota.
+  const stack = useAudioStack(note?.entryId, bodyReady ? note?.serverAudios : undefined);
   const player = usePlayback();
   const playSource = usePlaySource();
   /** Referencia do audio que esta no player (no do corpo ou id da pilha). */
@@ -253,7 +263,6 @@ export default function NoteScreen() {
   // Marco de tempo: da abertura da nota ate o conteudo nativo aparecer.
   const [openedAt] = useState(() => Date.now());
   const [title, setTitle] = useState(() => note?.title ?? '');
-  const [body, setBody] = useState(() => (note ? bodyWithAudioNodes(note) : ''));
   // Corpo trocado por fora ("ficar com o de la"): o editor monta uma vez com o
   // markdown que recebe, entao remontar e o que aplica o texto novo.
   const [editorKey, setEditorKey] = useState(0);
@@ -263,8 +272,12 @@ export default function NoteScreen() {
   const [imageSources, setImageSources] = useState<Record<string, string>>({});
   const [notebookPickerOpen, setNotebookPickerOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [menuAnchor, setMenuAnchor] = useState<NoteMenuAnchor | null>(null);
   const [menuBytes, setMenuBytes] = useState(0);
+  const [menuStats, setMenuStats] = useState<{
+    words: number;
+    chars: number;
+    bodyBytes: number;
+  } | null>(null);
   // Analise ja feita no servidor: o cache aparece na hora e a rede so atualiza.
   const [cachedAnalysis, setCachedAnalysis] = useState<CachedAnalysis | null>(null);
   // Diferencia "ainda nao verifiquei" de "verifiquei e nao ha analise": a
@@ -316,13 +329,14 @@ export default function NoteScreen() {
   // A analise guardada e de uma versao anterior do texto? So a local tem hash.
   const analysisSimplified = cachedAnalysis?.analysis.model === 'local-fallback';
   const analysisStale = useMemo(() => {
+    if (!menuOpen) return false;
     if (cachedAnalysis?.origin !== 'local' || !cachedAnalysis.contentHash) return false;
     const current = analysisContentHash({
       title: title.trim() || (note?.title ?? ''),
       text: body,
     });
     return current !== cachedAnalysis.contentHash;
-  }, [cachedAnalysis, title, body, note?.title]);
+  }, [cachedAnalysis, title, body, note?.title, menuOpen]);
 
   // Enquanto analisa, mostra o tempo, os tokens/s (CPU) e a bateria atual.
   useEffect(() => {
@@ -358,7 +372,6 @@ export default function NoteScreen() {
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkValue, setLinkValue] = useState('');
   const [viewerSrc, setViewerSrc] = useState<string | null>(null);
-  const configButtonRef = useRef<View>(null);
   /**
    * Altura do teclado.
    *
@@ -653,9 +666,13 @@ export default function NoteScreen() {
 
   // Fonte de cada audio do documento: arquivo local da nota ou anexo do
   // servidor. Resolvido so quando o usuario toca em tocar.
+  const attachmentsRef = useRef<Record<string, string>>({});
+  useEffect(() => {
+    attachmentsRef.current = note?.attachments ?? {};
+  }, [note]);
   const resolveAudio = useCallback(
-    (ref: string) => resolveAudioSource(noteId ?? '', ref, note?.attachments ?? {}),
-    [note?.attachments, noteId],
+    (ref: string) => resolveAudioSource(noteId ?? '', ref, attachmentsRef.current),
+    [noteId],
   );
 
   // Transcricao de cada audio, por referencia. A pilha do servidor traz a de
@@ -683,6 +700,7 @@ export default function NoteScreen() {
   // mesma gravacao pode aparecer como `local:<arquivo>` (antes do upload) ou
   // como `attachment:<id>` (depois), entao o card casa pelos dois.
   const ownAudioRefs = useMemo(() => {
+    if (!bodyReady) return [];
     const refs = new Set<string>();
     const localRef = audioRefFromPath(note?.filePath);
     if (localRef) {
@@ -693,11 +711,12 @@ export default function NoteScreen() {
     }
     if (note?.serverAttachmentId) refs.add(`attachment:${note.serverAttachmentId}`);
     return [...refs];
-  }, [note]);
+  }, [bodyReady, note]);
 
   // Segmentos por referencia: a previa de cinco linhas e a edicao por trecho
   // dependem deles; sem segmentos o card mostra o texto simples.
   const audioSegments = useMemo(() => {
+    if (!bodyReady) return {};
     const map: Record<string, TranscriptSegment[]> = {};
     for (const audio of stack.audios) {
       const list = audio.transcript?.segments;
@@ -708,7 +727,7 @@ export default function NoteScreen() {
       for (const ref of ownAudioRefs) map[ref] = own;
     }
     return map;
-  }, [note?.transcriptSegments, ownAudioRefs, stack.audios]);
+  }, [bodyReady, note, ownAudioRefs, stack.audios]);
 
   const playBodyAudio = useCallback(
     async (ref: string, startMs?: number) => {
@@ -755,40 +774,50 @@ export default function NoteScreen() {
   // leitura na hora. As que faltam baixam em segundo plano e entram quando
   // chegam: a nota nunca fica presa esperando uma foto.
   useEffect(() => {
-    if (note && !initializedRef.current) {
-      initializedRef.current = true;
-      setTitle(note.title);
-      // Nota antiga (ou gravacao criada fora da tela): o audio vivia em
-      // `filePath`/na pilha do servidor. Ele vira no do corpo na primeira
-      // abertura, que e o que faz o player aparecer entre os textos.
-      const migrated = bodyWithAudioNodes(note);
-      setBody(migrated);
-      bodyRef.current = migrated;
-      const attachments = note.attachments ?? {};
-      // As fotos locais entram depois do primeiro frame (checar arquivo no
-      // disco nao pode atrasar a abertura); as que faltam baixam em seguida.
-      setImageSources(resolveImageSourcesLocal(note.id, migrated, attachments));
-      mark('note.ready_ms', Date.now() - openedAt);
-      mark('note.images_ms', Date.now() - openedAt);
-      if (__DEV__) {
-        console.log('[perf] note.corpo', {
-          bundle: BUILD_STAMP,
-          chars: (note.text ?? '').length,
-          linhas: (note.text ?? '').split('\n').length,
-          fotos: Object.keys(attachments).length,
-        });
-      }
-      void downloadMissingImageSources(note.id, migrated, attachments, queueImageSource).catch(
-        () => undefined,
-      );
+    if (!note || initializedRef.current) return undefined;
+    initializedRef.current = true;
+    setTitle(note.title);
+    // Nota antiga (ou gravacao criada fora da tela): o audio vivia em
+    // `filePath`/na pilha do servidor. Ele vira no do corpo na primeira
+    // abertura, que e o que faz o player aparecer entre os textos.
+    const migrated = bodyWithAudioNodes(note);
+    setBody(migrated);
+    bodyRef.current = migrated;
+    const attachments = note.attachments ?? {};
+    // As fotos locais entram depois do primeiro frame (checar arquivo no
+    // disco nao pode atrasar a abertura); as que faltam baixam em seguida.
+    setImageSources(resolveImageSourcesLocal(note.id, migrated, attachments));
+    mark('note.ready_ms', Date.now() - openedAt);
+    mark('note.images_ms', Date.now() - openedAt);
+    if (__DEV__) {
+      console.log('[perf] note.corpo', {
+        bundle: BUILD_STAMP,
+        chars: (note.text ?? '').length,
+        linhas: (note.text ?? '').split('\n').length,
+        fotos: Object.keys(attachments).length,
+      });
     }
+    void downloadMissingImageSources(note.id, migrated, attachments, queueImageSource).catch(
+      () => undefined,
+    );
+    setHydrated(true);
   }, [note, openedAt, queueImageSource]);
+
+  // O editor nativo e a parte mais cara da tela. Monta depois da transicao,
+  // para o cabecalho e os botoes ja estarem na tela e respondendo.
+  useEffect(() => {
+    if (!hydrated || bodyReady) return undefined;
+    const interaction = InteractionManager.runAfterInteractions(() => {
+      setBodyReady(true);
+    });
+    return () => interaction.cancel();
+  }, [bodyReady, hydrated]);
 
   // Autosave local (debounced). A montagem nao grava: abrir uma nota nao pode
   // virar escrita no banco (e a nota nem mudou).
   const mountedRef = useRef(false);
   useEffect(() => {
-    if (!noteId) return undefined;
+    if (!noteId || !bodyReady) return undefined;
     if (!mountedRef.current) {
       mountedRef.current = true;
       return undefined;
@@ -797,7 +826,7 @@ export default function NoteScreen() {
       void saveNote({ title: titleRef.current, text: bodyRef.current });
     }, 600);
     return () => clearTimeout(timer);
-  }, [title, body, noteId, saveNote]);
+  }, [body, bodyReady, noteId, saveNote, title]);
 
   // Ao sair: grava e envia. Roda so depois da transicao de volta, para o trabalho
   // (DB, enqueue, rede) nao competir com a animacao nem com o desmonte das
@@ -1187,14 +1216,16 @@ export default function NoteScreen() {
     };
   }, [handleStopAnalysis]);
 
-  // Ficha da nota: soma os arquivos locais ao abrir o menu e mede o botao para
-  // ancorar o popover logo abaixo dele.
+  // Ficha da nota: soma os arquivos locais ao abrir a folha de detalhes.
   const openMenu = useCallback(() => {
     // O menu mostra contadores/propriedades: materializa o corpo mais novo que
     // ficou em `bodyRef` durante a digitacao. Sem mudanca, o estado atual fica:
     // trocar a identidade remontaria todas as views do corpo a toa.
     setBody((current) => (current === bodyRef.current ? current : bodyRef.current));
-    // Somar arquivos lista a pasta da nota: faz depois da animacao do popover,
+    setMenuStats(null);
+    // A folha ocupa o rodape: fecha o teclado para ela nao nascer atras dele.
+    Keyboard.dismiss();
+    // Somar arquivos lista a pasta da nota: faz depois da animacao da folha,
     // nao no caminho do toque.
     if (noteId) {
       setTimeout(() => {
@@ -1207,16 +1238,8 @@ export default function NoteScreen() {
     if (!cachedAnalysis && !localAnalysisEnabled()) setAnalysisChecked(false);
     setAnalysisError(null);
     void refreshAnalysis();
-    const button = configButtonRef.current;
-    if (!button) {
-      setMenuOpen(true);
-      return;
-    }
-    button.measureInWindow((x, y, width, height) => {
-      setMenuAnchor({ top: y + height + 6, right: Math.max(spacing.lg, windowWidth - (x + width)) });
-      setMenuOpen(true);
-    });
-  }, [cachedAnalysis, noteId, refreshAnalysis, windowWidth]);
+    setMenuOpen(true);
+  }, [cachedAnalysis, noteId, refreshAnalysis]);
 
   /**
    * Transcricao local sob demanda.
@@ -1365,16 +1388,27 @@ export default function NoteScreen() {
     return () => clearTimeout(timer);
   }, [action, noteId, handleAddImage, openLinkModal]);
 
-  // Contagens varrem o texto inteiro: so recalcula quando o corpo ou a ficha
-  // mudam (antes rodava a cada tecla e a cada re-render da nota).
-  const { words, chars, totalBytes } = useMemo(
-    () => ({
-      words: countWords(body),
-      chars: countChars(body),
-      totalBytes: menuBytes + utf8ByteLength(markdownToPlain(body)),
-    }),
-    [body, menuBytes],
-  );
+  // Contagens varrem o texto inteiro e so servem ao menu de propriedades. Sao
+  // calculadas quando o menu abre (depois do primeiro frame), nunca no caminho
+  // de abrir a nota.
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    let alive = true;
+    const timer = setTimeout(() => {
+      if (!alive) return;
+      const text = bodyRef.current;
+      const plain = markdownToPlain(text);
+      setMenuStats({
+        words: countWords(text),
+        chars: countChars(text),
+        bodyBytes: utf8ByteLength(plain),
+      });
+    }, 0);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [menuOpen]);
 
   // Derivados do documento: digitar no titulo re-renderiza a tela, e o corpo
   // inteiro nao precisa ser parseado de novo a cada letra.
@@ -1444,9 +1478,12 @@ export default function NoteScreen() {
       ? [{ label: 'Tags', value: note.tags.join(', ') }]
       : []),
     { label: 'Origem', value: hasAudio ? (note.source === 'share' ? 'Audio importado' : 'Audio') : 'Texto' },
-    { label: 'Palavras', value: String(words) },
-    { label: 'Caracteres', value: String(chars) },
-    { label: 'Tamanho', value: formatBytes(totalBytes) },
+    { label: 'Palavras', value: menuStats ? String(menuStats.words) : '...' },
+    { label: 'Caracteres', value: menuStats ? String(menuStats.chars) : '...' },
+    {
+      label: 'Tamanho',
+      value: menuStats ? formatBytes(menuBytes + menuStats.bodyBytes) : '...',
+    },
     { label: 'Status', value: STATUS_META[note.status].label },
   ];
 
@@ -1490,7 +1527,6 @@ export default function NoteScreen() {
         </Press>
         <View style={styles.headerActions}>
           <Press
-            ref={configButtonRef}
             style={styles.circleButton}
             onPress={openMenu}
             accessibilityLabel="Configurações da nota"
@@ -1620,30 +1656,43 @@ export default function NoteScreen() {
             </Press>
           ) : null}
 
-          <NoteBody
-            key={editorKey}
-            ref={editorRef}
-            value={body}
-            onChangeMarkdown={handleBodyChange}
-            onImageOpen={handleImageOpen}
-            placeholder={editorPlaceholder}
-            imageSources={imageSources}
-            audioTranscripts={audioTranscripts}
-            audioSegments={audioSegments}
-            activeAudioRef={activeAudioRef}
-            audioPlayer={player}
-            audioStartMs={activeAudioStartMs}
-            ownAudioRefs={ownAudioRefs}
-            transcribingWait={!transcribing && serverTranscribing}
-            transcribingPercent={transcribing ? transcriptionPercent : undefined}
-            canTranscribe={Boolean(hasAudio) && !note.hasTranscript}
-            onTranscribe={() => void handleTranscribe()}
-            onStopTranscribe={handleStopTranscribe}
-            onPlayAudio={handlePlayAudio}
-            onOpenTranscript={openTranscript}
-            onEditTranscript={editTranscript}
-            typography={typography}
-          />
+          {bodyReady ? (
+            <NoteBody
+              key={editorKey}
+              ref={editorRef}
+              value={body}
+              onChangeMarkdown={handleBodyChange}
+              onImageOpen={handleImageOpen}
+              placeholder={editorPlaceholder}
+              imageSources={imageSources}
+              audioTranscripts={audioTranscripts}
+              audioSegments={audioSegments}
+              activeAudioRef={activeAudioRef}
+              audioPlayer={player}
+              audioStartMs={activeAudioStartMs}
+              ownAudioRefs={ownAudioRefs}
+              transcribingWait={!transcribing && serverTranscribing}
+              transcribingPercent={transcribing ? transcriptionPercent : undefined}
+              canTranscribe={Boolean(hasAudio) && !note.hasTranscript}
+              onTranscribe={() => void handleTranscribe()}
+              onStopTranscribe={handleStopTranscribe}
+              onPlayAudio={handlePlayAudio}
+              onOpenTranscript={openTranscript}
+              onEditTranscript={editTranscript}
+              typography={typography}
+            />
+          ) : (
+            <View
+              style={styles.bodySkeleton}
+              testID="note-body-hydrating"
+              pointerEvents="none"
+              accessibilityLabel="Carregando nota"
+            >
+              {[92, 84, 96, 68, 88, 54].map((width, index) => (
+                <View key={index} style={[styles.bodySkeletonLine, { width: `${width}%` }]} />
+              ))}
+            </View>
+          )}
         </View>
       </ScrollView>
 
@@ -1759,7 +1808,6 @@ export default function NoteScreen() {
               ? (analysisView ?? (analysisChecked ? null : undefined))
               : undefined
         }
-        anchor={menuAnchor}
         analysisEnabled={localAnalysisEnabled()}
         analysisReady={localAnalysisReady}
         analysisBusy={analysisBusy}
@@ -1786,8 +1834,8 @@ export default function NoteScreen() {
 
       {linkOpen ? (
         <FastModal visible onRequestClose={() => setLinkOpen(false)}>
-          <Press style={styles.linkBackdrop} onPress={() => setLinkOpen(false)}>
-            <Press style={styles.linkCard} onPress={() => undefined}>
+          <Press style={styles.linkBackdrop} onPress={() => setLinkOpen(false)} feedback={false}>
+            <Press style={styles.linkCard} onPress={() => undefined} feedback={false}>
               <Text style={styles.linkTitle}>Adicionar link</Text>
               <TextInput
                 value={linkValue}
@@ -1817,7 +1865,12 @@ export default function NoteScreen() {
 
       {viewerSrc != null ? (
         <FastModal visible onRequestClose={closeViewer}>
-          <Press style={styles.viewerBackdrop} onPress={closeViewer} accessibilityLabel="Fechar">
+          <Press
+            style={styles.viewerBackdrop}
+            onPress={closeViewer}
+            feedback={false}
+            accessibilityLabel="Fechar"
+          >
             <Image
               source={{ uri: viewerSrc }}
               style={styles.viewerImage}
@@ -1879,6 +1932,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xl,
     paddingBottom: spacing.xxxl,
     gap: spacing.sm,
+  },
+  bodySkeleton: {
+    paddingVertical: spacing.md,
+    gap: spacing.sm,
+  },
+  bodySkeletonLine: {
+    height: 12,
+    borderRadius: 4,
+    backgroundColor: colors.surface,
+    opacity: 0.8,
   },
   toolbarHost: { backgroundColor: colors.surface },
   titleBlock: { gap: spacing.xs },

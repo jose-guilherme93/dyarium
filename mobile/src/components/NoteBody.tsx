@@ -752,7 +752,7 @@ const NativeNoteBody = memo(
             botoes, e o remover sumia da lista. */}
         {imageMenu ? (
           <FastModal visible transparent onRequestClose={() => setImageMenuId(null)}>
-            <Press style={styles.sheetBackdrop} onPress={() => setImageMenuId(null)}>
+            <Press style={styles.sheetBackdrop} onPress={() => setImageMenuId(null)} feedback={false}>
               <View style={styles.sheet}>
                 <Text style={styles.sheetTitle}>Foto</Text>
                 {IMAGE_WIDTH_OPTIONS.map((option) => (
