@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { memo, useMemo } from 'react';
-import { Pressable, StyleSheet, Text, View, type GestureResponderEvent } from 'react-native';
+import { StyleSheet, Text, View, type GestureResponderEvent } from 'react-native';
+import { Press } from '@/components/Press';
 
 import { TagChip } from '@/components/TagChip';
 import { formatDuration, formatStamp, noteDateIso } from '@/core/format';
@@ -51,7 +52,7 @@ export const RecordingCard = memo(function RecordingCard({
 
   return (
     <View style={styles.wrap}>
-      <Pressable
+      <Press
         style={styles.content}
         onPress={() => onOpen?.(recording.id)}
         onLongPress={(event: GestureResponderEvent) =>
@@ -110,7 +111,7 @@ export const RecordingCard = memo(function RecordingCard({
           )}
           <Text style={styles.stamp}>{formatStamp(noteDateIso(recording))}</Text>
         </View>
-      </Pressable>
+      </Press>
     </View>
   );
 });

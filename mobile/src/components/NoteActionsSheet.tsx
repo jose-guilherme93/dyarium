@@ -1,12 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
 import {
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   useWindowDimensions,
   View,
 } from 'react-native';
+import { Press } from '@/components/Press';
 
 import { FastModal } from '@/components/FastModal';
 import { titleFontSize } from '@/core/format';
@@ -56,8 +56,8 @@ export function NoteActionsSheet({
 
   return (
     <FastModal visible={recording != null} onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Fechar menu">
-        <Pressable
+      <Press style={styles.backdrop} onPress={onClose} accessibilityLabel="Fechar menu">
+        <Press
           style={[styles.card, { width: menuWidth, left, maxHeight: height * 0.6 }, placement]}
           onPress={() => undefined}
         >
@@ -66,20 +66,20 @@ export function NoteActionsSheet({
               {shown}
             </Text>
 
-            <Pressable style={styles.action} onPress={onShare} accessibilityLabel="Compartilhar">
+            <Press style={styles.action} onPress={onShare} accessibilityLabel="Compartilhar">
               <Ionicons name="share-outline" size={18} color={colors.text} />
               <Text style={styles.actionText}>Compartilhar</Text>
-            </Pressable>
+            </Press>
 
-            <Pressable style={styles.action} onPress={onArchive} accessibilityLabel="Arquivar">
+            <Press style={styles.action} onPress={onArchive} accessibilityLabel="Arquivar">
               <Ionicons name="archive-outline" size={18} color={colors.text} />
               <Text style={styles.actionText}>{recording?.archived ? 'Desarquivar' : 'Arquivar'}</Text>
-            </Pressable>
+            </Press>
 
-            <Pressable style={styles.action} onPress={onDelete} accessibilityLabel="Apagar">
+            <Press style={styles.action} onPress={onDelete} accessibilityLabel="Apagar">
               <Ionicons name="trash-outline" size={18} color={colors.danger} />
               <Text style={[styles.actionText, styles.danger]}>Apagar</Text>
-            </Pressable>
+            </Press>
 
             <Text style={styles.sectionLabel}>Propriedades</Text>
             <View style={styles.props}>
@@ -93,8 +93,8 @@ export function NoteActionsSheet({
               ))}
             </View>
           </ScrollView>
-        </Pressable>
-      </Pressable>
+        </Press>
+      </Press>
     </FastModal>
   );
 }

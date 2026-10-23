@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { back } from '@/services/appNavigation';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Press } from '@/components/Press';
 
 import { Button } from '@/components/Button';
 import { Screen } from '@/components/Screen';
@@ -19,9 +20,9 @@ export default function SyncScreen() {
   return (
     <Screen>
       <View style={styles.header}>
-        <Pressable onPress={() => back()} style={styles.iconButton} accessibilityLabel="Voltar">
+        <Press onPress={() => back()} style={styles.iconButton} accessibilityLabel="Voltar">
           <Ionicons name="chevron-back" size={24} color={colors.text} />
-        </Pressable>
+        </Press>
         <Text style={styles.headerTitle}>Sincronização</Text>
         <View style={styles.iconButton} />
       </View>
@@ -83,9 +84,9 @@ function SyncRow({ recording, onRetry }: { recording: Recording; onRetry: () => 
         <Text style={styles.rowSub}>{needsNoteSync(recording) ? 'Aguardando envio' : meta.label}</Text>
       </View>
       {recording.status === 'failed' ? (
-        <Pressable onPress={onRetry} accessibilityLabel="Reenviar" hitSlop={8}>
+        <Press onPress={onRetry} accessibilityLabel="Reenviar" hitSlop={8}>
           <Ionicons name="refresh" size={20} color={colors.warning} />
-        </Pressable>
+        </Press>
       ) : null}
     </View>
   );

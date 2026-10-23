@@ -73,6 +73,22 @@ export function useLoadPlayback(): () => void {
   return usePlaybackValue().load;
 }
 
+/**
+ * Aponta o player unico para `uri` e carrega na hora. Usado quando a pessoa
+ * escolhe um audio (tocar ou pular para um trecho); abrir a nota continua sem
+ * decodificar audio.
+ */
+export function usePlaySource(): (uri: string) => void {
+  const { desiredRef, load } = usePlaybackValue();
+  return useCallback(
+    (uri: string) => {
+      desiredRef.current = uri;
+      load();
+    },
+    [desiredRef, load],
+  );
+}
+
 interface PlaybackSourceOptions {
   /** Carrega sem esperar (a tela de transcricao precisa do audio pronto). */
   immediate?: boolean;

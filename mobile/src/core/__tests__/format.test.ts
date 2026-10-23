@@ -1,5 +1,6 @@
 import {
   formatBytes,
+  formatClock,
   formatDateTime,
   formatDuration,
   formatStamp,
@@ -109,5 +110,18 @@ describe('formatStamp', () => {
   });
   it('outro ano mostra a data completa', () => {
     expect(formatStamp(new Date(2025, 0, 3, 9, 7).toISOString(), now)).toBe('03/01/2025');
+  });
+});
+
+describe('formatClock', () => {
+  it('mostra dia da semana, data por extenso e hora 24 h', () => {
+    expect(formatClock(new Date(2026, 9, 22, 9, 5))).toEqual({
+      date: 'quinta-feira, 22 de outubro',
+      time: '09:05',
+    });
+  });
+
+  it('preenche a hora com zero a esquerda', () => {
+    expect(formatClock(new Date(2026, 0, 4, 0, 0)).time).toBe('00:00');
   });
 });

@@ -4,7 +4,6 @@ import { push, replace } from '@/services/appNavigation';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
-  Pressable,
   RefreshControl,
   SectionList,
   Share,
@@ -13,6 +12,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { Press } from '@/components/Press';
 import { Swipeable } from 'react-native-gesture-handler';
 
 import { NoteActionsSheet } from '@/components/NoteActionsSheet';
@@ -58,7 +58,7 @@ function SwipeRow({ children, label, icon, color, onAction }: SwipeRowProps) {
       ref={ref}
       overshootRight={false}
       renderRightActions={() => (
-        <Pressable
+        <Press
           style={[styles.swipeAction, { backgroundColor: color }]}
           onPress={() => {
             ref.current?.close();
@@ -68,7 +68,7 @@ function SwipeRow({ children, label, icon, color, onAction }: SwipeRowProps) {
         >
           <Ionicons name={icon} size={22} color="#FFFFFF" />
           <Text style={styles.swipeLabel}>{label}</Text>
-        </Pressable>
+        </Press>
       )}
     >
       {children}
@@ -273,9 +273,10 @@ export default function NotebookScreen() {
   const startAudio = useCallback(async () => {
     setNewMenuOpen(false);
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
-    const note = await createDraftNote(notebookId);
-    // Dispara a gravacao enquanto navega: quando a tela abre, ja esta gravando.
+    // O microfone abre no toque, antes da nota ser criada: a tela de gravacao
+    // entra na frente enquanto o rascunho e resolvido por tras.
     void startRecording();
+    const note = await createDraftNote(notebookId);
     push({ pathname: '/record', params: { noteId: note.id, from: 'home' } });
   }, [createDraftNote, notebookId, startRecording]);
 
@@ -426,7 +427,7 @@ export default function NotebookScreen() {
     <Screen style={styles.screen}>
       <View style={styles.header}>
         <View style={styles.headerActions}>
-          <Pressable
+          <Press
             style={styles.iconButton}
             onPress={() => push('/sync')}
             accessibilityLabel="Sincronização"
@@ -440,17 +441,17 @@ export default function NotebookScreen() {
                 ]}
               />
             ) : null}
-          </Pressable>
-          <Pressable
+          </Press>
+          <Press
             style={styles.iconButton}
             onPress={() => push('/settings')}
             accessibilityLabel="Opções"
           >
             <Ionicons name="settings-outline" size={22} color={colors.text} />
-          </Pressable>
+          </Press>
         </View>
 
-        <Pressable
+        <Press
           style={styles.notebookTitle}
           onPress={() => push('/notebooks')}
           accessibilityRole="button"
@@ -464,11 +465,11 @@ export default function NotebookScreen() {
           />
           <Text style={styles.largeTitle}>{currentNotebook.name}</Text>
           <Ionicons name="chevron-down" size={18} color={colors.textTertiary} />
-        </Pressable>
+        </Press>
       </View>
 
       <View style={styles.modeToggle}>
-        <Pressable
+        <Press
           style={[styles.modeOption, viewMode === 'recent' ? styles.modeOptionOn : null]}
           onPress={() => setViewMode('recent')}
           accessibilityRole="tab"
@@ -479,8 +480,8 @@ export default function NotebookScreen() {
           >
             Páginas recentes
           </Text>
-        </Pressable>
-        <Pressable
+        </Press>
+        <Press
           style={[styles.modeOption, viewMode === 'notebook' ? styles.modeOptionOn : null]}
           onPress={() => setViewMode('notebook')}
           accessibilityRole="tab"
@@ -491,7 +492,7 @@ export default function NotebookScreen() {
           >
             Caderno
           </Text>
-        </Pressable>
+        </Press>
       </View>
 
       <View style={styles.searchWrap}>
@@ -507,14 +508,14 @@ export default function NotebookScreen() {
           style={styles.searchInput}
         />
         {query ? (
-          <Pressable onPress={() => setQuery('')} accessibilityLabel="Limpar busca">
+          <Press onPress={() => setQuery('')} accessibilityLabel="Limpar busca">
             <Ionicons name="close-circle" size={16} color={colors.textTertiary} />
-          </Pressable>
+          </Press>
         ) : null}
       </View>
 
       {interrupted > 0 ? (
-        <Pressable style={styles.alert} onPress={() => push('/recovery')}>
+        <Press style={styles.alert} onPress={() => push('/recovery')}>
           <Ionicons name="warning" size={18} color={colors.warning} />
           <Text style={styles.alertText}>
             {interrupted === 1
@@ -522,7 +523,7 @@ export default function NotebookScreen() {
               : `${interrupted} gravações interrompidas`}
           </Text>
           <Ionicons name="chevron-forward" size={16} color={colors.warning} />
-        </Pressable>
+        </Press>
       ) : null}
 
       <View style={styles.padded}>
@@ -624,7 +625,7 @@ export default function NotebookScreen() {
       )}
 
       {newMenuOpen ? (
-        <Pressable
+        <Press
           style={styles.fabBackdrop}
           onPress={() => setNewMenuOpen(false)}
           accessibilityLabel="Fechar menu"
@@ -648,13 +649,13 @@ export default function NotebookScreen() {
             />
           </View>
         ) : null}
-        <Pressable
+        <Press
           style={styles.fab}
           onPress={() => setNewMenuOpen((value) => !value)}
           accessibilityLabel={newMenuOpen ? 'Fechar menu' : 'Nova nota'}
         >
           <Ionicons name={newMenuOpen ? 'close' : 'add'} size={28} color="#FFFFFF" />
-        </Pressable>
+        </Press>
       </View>
 
       <NoteActionsSheet
@@ -680,12 +681,12 @@ function NewMenuItem({
   onPress: () => void;
 }) {
   return (
-    <Pressable style={styles.fabItem} onPress={onPress} accessibilityLabel={label}>
+    <Press style={styles.fabItem} onPress={onPress} accessibilityLabel={label}>
       <Text style={styles.fabItemLabel}>{label}</Text>
       <View style={styles.fabItemIcon}>
         <Ionicons name={icon} size={18} color={colors.text} />
       </View>
-    </Pressable>
+    </Press>
   );
 }
 

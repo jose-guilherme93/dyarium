@@ -1,6 +1,8 @@
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { Pressable, Text } from 'react-native';
 
+import { upsertRecording } from '@/services/db';
+
 import { RecordingProvider, useRecording } from '../RecordingContext';
 
 /**
@@ -39,6 +41,7 @@ jest.mock('@/services/files', () => ({
 
 jest.mock('@/services/notifications', () => ({
   ensureNotificationPermission: jest.fn(async () => true),
+  notificationPermissionGranted: jest.fn(async () => true),
 }));
 
 jest.mock('@/state/LibraryContext', () => ({
@@ -54,6 +57,7 @@ jest.mock('@/core/concat', () => ({
 
 jest.mock('@/dev/perf', () => ({
   bumpRender: jest.fn(),
+  mark: jest.fn(),
 }));
 
 function Probe() {
@@ -72,6 +76,41 @@ function Probe() {
 describe('RecordingProvider', () => {
   beforeEach(() => {
     mockPrepare.mockReset();
+    mockPrepare.mockResolvedValue(undefined);
+    jest.mocked(upsertRecording).mockReset();
+    jest.mocked(upsertRecording).mockResolvedValue(undefined);
+  });
+
+  it('mostra a sessao ativa antes de esperar a escrita no banco', async () => {
+    let release: () => void = () => undefined;
+    jest.mocked(upsertRecording).mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+    );
+
+    render(
+      <RecordingProvider>
+        <Probe />
+      </RecordingProvider>,
+    );
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('start'));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // O microfone ja esta gravando e a tela ja tem cronometro/waveform; o
+    // registro da sessao entra logo atras.
+    expect(screen.getByTestId('active')).not.toHaveTextContent('none');
+    expect(screen.getByTestId('error')).toHaveTextContent('none');
+
+    await act(async () => {
+      release();
+      await Promise.resolve();
+    });
   });
 
   it('libera uma nova tentativa quando o preparo do microfone falha', async () => {

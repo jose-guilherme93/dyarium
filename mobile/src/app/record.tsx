@@ -3,9 +3,11 @@ import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams } from 'expo-router';
 import { back, replace } from '@/services/appNavigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
+import { Press } from '@/components/Press';
 
 import { LiveWaveform } from '@/components/LiveWaveform';
+import { RecordClock } from '@/components/RecordClock';
 import { formatDuration } from '@/core/format';
 import type { Recording } from '@/core/types';
 import { useRenderCount } from '@/dev/perf';
@@ -27,7 +29,7 @@ export default function RecordScreen() {
     from?: string;
   }>();
   const { attachAudio, enqueue, refresh, submitNote } = useLibrary();
-  const { active, error, busy, paused, pause, unpause, start, stop } = useRecording();
+  const { active, error, busy, starting, paused, pause, unpause, start, stop } = useRecording();
   // Tempo e nivel mudam varias vezes por segundo e vivem em outro contexto:
   // a home nao re-renderiza junto enquanto a gravacao esta aberta.
   const { elapsedMs, level } = useRecordingLive();
@@ -140,22 +142,23 @@ export default function RecordScreen() {
   return (
     <View style={styles.screen}>
       <View style={styles.top}>
-        <Pressable onPress={() => void handleDiscard()} accessibilityLabel="Cancelar" hitSlop={12}>
+        <Press onPress={() => void handleDiscard()} accessibilityLabel="Cancelar" hitSlop={12}>
           <Ionicons name="close" size={26} color={colors.textSecondary} />
-        </Pressable>
+        </Press>
         <Text style={styles.label}>{noteId ? 'Gravando na nota' : 'Nova gravação'}</Text>
         <View style={styles.spacer} />
       </View>
 
       <View style={styles.center}>
+        <RecordClock />
+        <LiveWaveform active={Boolean(active)} paused={paused} level={level} height={100} color={colors.accent} />
         <Text style={styles.timer}>{formatDuration(elapsedMs)}</Text>
-        <LiveWaveform active={Boolean(active)} paused={paused} level={level} height={120} color={colors.accent} />
         <Text style={styles.hint}>
           {paused
             ? 'Pausado'
             : active
               ? 'Gravando com a tela bloqueada'
-              : busy
+              : starting || busy
                 ? 'Preparando...'
                 : '...'}
         </Text>
@@ -164,22 +167,22 @@ export default function RecordScreen() {
 
       <View style={styles.bottom}>
         <View style={styles.controls}>
-          <Pressable
+          <Press
             style={[styles.pause, !active && styles.stopDisabled]}
             onPress={() => (paused ? unpause() : pause())}
             disabled={!active || finishing}
             accessibilityLabel={paused ? 'Retomar gravação' : 'Pausar gravação'}
           >
             <Ionicons name={paused ? 'play' : 'pause'} size={26} color={colors.text} />
-          </Pressable>
-          <Pressable
+          </Press>
+          <Press
             style={[styles.stop, finishing && styles.stopDisabled]}
             onPress={() => void handleStop()}
             disabled={finishing || !active}
             accessibilityLabel="Parar gravação"
           >
             <Ionicons name="stop" size={30} color="#FFFFFF" />
-          </Pressable>
+          </Press>
         </View>
         <Text style={styles.bottomHint}>Pausar · Parar</Text>
       </View>
@@ -203,7 +206,7 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: spacing.xl,
+    gap: spacing.lg,
     paddingHorizontal: spacing.xl,
   },
   timer: {

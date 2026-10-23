@@ -2,7 +2,8 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Device from 'expo-device';
 import { back } from '@/services/appNavigation';
 import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Press } from '@/components/Press';
 
 import { Card } from '@/components/Card';
 import { AnalysisModelsSection } from '@/components/AnalysisModelsSection';
@@ -72,13 +73,13 @@ export default function TranscriptionScreen() {
   return (
     <Screen>
       <View style={styles.header}>
-        <Pressable
+        <Press
           onPress={() => back()}
           style={styles.iconButton}
           accessibilityLabel="Voltar"
         >
           <Ionicons name="chevron-back" size={24} color={colors.text} />
-        </Pressable>
+        </Press>
         <Text style={styles.headerTitle}>Modelos no aparelho</Text>
         <View style={styles.iconButton} />
       </View>
@@ -117,7 +118,7 @@ export default function TranscriptionScreen() {
             {TRANSCRIPTION_LANGUAGES.map((option) => {
               const active = transcriptionLanguage === option.value;
               return (
-                <Pressable
+                <Press
                   key={option.value}
                   onPress={() => void setTranscriptionLanguage(option.value)}
                   style={[styles.segmentItem, active && styles.segmentActive]}
@@ -126,7 +127,7 @@ export default function TranscriptionScreen() {
                   <Text style={[styles.segmentText, active && styles.segmentTextActive]}>
                     {option.label}
                   </Text>
-                </Pressable>
+                </Press>
               );
             })}
           </View>
@@ -143,7 +144,7 @@ export default function TranscriptionScreen() {
           const isDownloading = downloading === model.id;
           return (
             <Card key={model.id} style={styles.modelCard}>
-              <Pressable
+              <Press
                 style={styles.modelMain}
                 onPress={() => isInstalled && void setTranscriptionModel(model.id)}
                 disabled={!isInstalled}
@@ -168,7 +169,7 @@ export default function TranscriptionScreen() {
                     {isInstalled ? ' · baixado' : ''}
                   </Text>
                 </View>
-              </Pressable>
+              </Press>
 
               {isDownloading ? (
                 <View style={styles.progressWrap}>
@@ -178,22 +179,22 @@ export default function TranscriptionScreen() {
                   <Text style={styles.cardHint}>{Math.round(progress * 100)}%</Text>
                 </View>
               ) : isInstalled ? (
-                <Pressable
+                <Press
                   onPress={() => void handleDelete(model.id)}
                   accessibilityLabel={`Apagar ${model.label}`}
                   hitSlop={8}
                 >
                   <Ionicons name="trash-outline" size={20} color={colors.danger} />
-                </Pressable>
+                </Press>
               ) : (
-                <Pressable
+                <Press
                   style={styles.downloadButton}
                   onPress={() => void handleDownload(model.id)}
                   accessibilityLabel={`Baixar ${model.label}`}
                 >
                   <Ionicons name="download-outline" size={16} color={colors.text} />
                   <Text style={styles.downloadText}>Baixar</Text>
-                </Pressable>
+                </Press>
               )}
             </Card>
           );

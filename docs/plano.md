@@ -123,6 +123,21 @@ Superficie Android em Expo (development build). O nucleo puro fica em `mobile/sr
   cold start, recarga do documento e tremor na digitacao. Nota so de texto entra
   na fila e e enviada como conteudo
   (`POST /api/v1/entries` + corpo markdown).
+- Audio na nota, em um player so: o card do corpo tem um unico play/pause, tempo
+  e barra de progresso; tocar ou arrastar a barra pula para o trecho, e o seek e
+  aplicado quando a fonte termina de carregar (AAC informa a duracao real depois
+  do metadado). Abaixo do audio fica a previa da transcricao em cinco linhas,
+  que acompanha a fala; tocar numa linha toca dali, o toque longo abre a
+  transcricao completa editando aquele trecho, e arrastar a janela pausa o
+  acompanhamento por tres segundos. A transcricao em andamento aparece no
+  proprio audio, com progresso, tanto a local quanto a pedida ao servidor. Nao
+  existe player duplicado no topo nem segundo botao de play no card.
+- Gravacao comeca no toque: o microfone abre no mesmo gesto e a tela de gravacao
+  entra na frente; criar o registro no SQLite e resolver a posicao do cursor
+  acontecem depois, sem segurar o audio. A waveform e uma fila de 40 barras
+  comuns movida pelo medidor (4 Hz), sem animacao por frame, e a tela mostra a
+  hora, o dia da semana e a data por extenso. A barra de acoes acima do teclado
+  rola na horizontal e leva a gravacao de audio, a foto, o link e a formatacao.
 - Transcricao no aparelho (opcional, nas Opcoes): usa `whisper.rn` (whisper.cpp) com modelos
   ggml baixados em runtime (Tiny..Large v3 Turbo), recomendado pela RAM; o audio AAC e
   decodificado para 16 kHz por um modulo nativo local (sem ffmpeg) e transcrito offline, com o texto

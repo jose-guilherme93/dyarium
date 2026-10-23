@@ -1,13 +1,13 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { Press } from '@/components/Press';
 
 import { FastModal } from '@/components/FastModal';
 import { TagChip } from '@/components/TagChip';
@@ -84,13 +84,13 @@ export function TagPicker({ visible, selected, knownTags, onClose, onSave }: Tag
 
   return (
     <FastModal visible={visible} onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable style={styles.card} onPress={() => undefined}>
+      <Press style={styles.backdrop} onPress={onClose}>
+        <Press style={styles.card} onPress={() => undefined}>
           <View style={styles.header}>
             <Text style={styles.title}>Tags</Text>
-            <Pressable onPress={() => onSave(picked)} accessibilityLabel="Concluir tags">
+            <Press onPress={() => onSave(picked)} accessibilityLabel="Concluir tags">
               <Text style={styles.done}>Concluir</Text>
-            </Pressable>
+            </Press>
           </View>
 
           {picked.length > 0 ? (
@@ -118,32 +118,32 @@ export function TagPicker({ visible, selected, knownTags, onClose, onSave }: Tag
 
           <ScrollView style={styles.list} keyboardShouldPersistTaps="handled">
             {canCreate ? (
-              <Pressable style={styles.row} onPress={create}>
+              <Press style={styles.row} onPress={create}>
                 <View style={[styles.dot, { backgroundColor: tagColor(term) }]} />
                 <Text style={styles.create} numberOfLines={1}>
                   Criar “{term}”
                 </Text>
                 <Ionicons name="add" size={18} color={colors.accent} />
-              </Pressable>
+              </Press>
             ) : null}
             {filtered.map((name) => {
               const active = picked.some((item) => item.toLowerCase() === name.toLowerCase());
               return (
-                <Pressable key={name.toLowerCase()} style={styles.row} onPress={() => toggle(name)}>
+                <Press key={name.toLowerCase()} style={styles.row} onPress={() => toggle(name)}>
                   <View style={[styles.dot, { backgroundColor: tagColor(name) }]} />
                   <Text style={styles.name} numberOfLines={1}>
                     {name}
                   </Text>
                   {active ? <Ionicons name="checkmark" size={18} color={colors.accent} /> : null}
-                </Pressable>
+                </Press>
               );
             })}
             {filtered.length === 0 && !canCreate ? (
               <Text style={styles.empty}>Nenhuma tag ainda. Digite para criar a primeira.</Text>
             ) : null}
           </ScrollView>
-        </Pressable>
-      </Pressable>
+        </Press>
+      </Press>
     </FastModal>
   );
 }

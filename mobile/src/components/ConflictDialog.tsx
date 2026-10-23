@@ -8,7 +8,8 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Modal, StyleSheet, Text, View } from 'react-native';
+import { Press } from '@/components/Press';
 
 import type { ConflictField, Recording } from '@/core/types';
 import { colors, fontSize, radius, spacing } from '@/theme/tokens';
@@ -56,19 +57,19 @@ export function ConflictDialog({
             O que está aqui no celular não foi enviado. O que decide?
           </Text>
 
-          <Pressable style={styles.action} onPress={onKeepMine} accessibilityRole="button">
+          <Press style={styles.action} onPress={onKeepMine} accessibilityRole="button">
             <Text style={styles.actionTitle}>Manter o meu</Text>
             <Text style={styles.actionHint}>Substitui o que está no dashboard</Text>
-          </Pressable>
+          </Press>
 
-          <Pressable style={styles.action} onPress={onTakeTheirs} accessibilityRole="button">
+          <Press style={styles.action} onPress={onTakeTheirs} accessibilityRole="button">
             <Text style={styles.actionTitle}>Ficar com o de lá</Text>
             <Text style={styles.actionHint}>Troca o que está aqui pelo do dashboard</Text>
-          </Pressable>
+          </Press>
 
-          <Pressable style={styles.cancel} onPress={onDismiss} accessibilityRole="button">
+          <Press style={styles.cancel} onPress={onDismiss} accessibilityRole="button">
             <Text style={styles.cancelText}>Decidir depois</Text>
-          </Pressable>
+          </Press>
         </View>
       </View>
     </Modal>

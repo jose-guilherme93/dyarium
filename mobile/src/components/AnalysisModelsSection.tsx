@@ -2,7 +2,8 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Battery from 'expo-battery';
 import * as Device from 'expo-device';
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { Press } from '@/components/Press';
 
 import { Card } from '@/components/Card';
 import {
@@ -177,7 +178,7 @@ function EnabledAnalysisModelsSection() {
         const isDownloading = downloading === model.id;
         return (
           <Card key={model.id} style={styles.modelCard}>
-            <Pressable
+            <Press
               style={styles.modelMain}
               onPress={() => isInstalled && void setAnalysisModel(model.id)}
               disabled={!isInstalled}
@@ -209,7 +210,7 @@ function EnabledAnalysisModelsSection() {
                   </Text>
                 ) : null}
               </View>
-            </Pressable>
+            </Press>
 
             {isDownloading ? (
               <View style={styles.progressWrap}>
@@ -221,31 +222,31 @@ function EnabledAnalysisModelsSection() {
             ) : isInstalled ? (
               <View style={styles.modelActions}>
                 {!isSelected ? (
-                  <Pressable
+                  <Press
                     style={styles.useButton}
                     onPress={() => void setAnalysisModel(model.id)}
                     accessibilityLabel={`Usar ${model.label}`}
                   >
                     <Text style={styles.useText}>Usar</Text>
-                  </Pressable>
+                  </Press>
                 ) : null}
-                <Pressable
+                <Press
                   onPress={() => void handleDelete(model.id)}
                   accessibilityLabel={`Apagar ${model.label}`}
                   hitSlop={8}
                 >
                   <Ionicons name="trash-outline" size={20} color={colors.danger} />
-                </Pressable>
+                </Press>
               </View>
             ) : (
-              <Pressable
+              <Press
                 style={styles.downloadButton}
                 onPress={() => void handleDownload(model.id)}
                 accessibilityLabel={`Baixar e usar ${model.label}`}
               >
                 <Ionicons name="download-outline" size={16} color={colors.text} />
                 <Text style={styles.downloadText}>Baixar e usar</Text>
-              </Pressable>
+              </Press>
             )}
           </Card>
         );
@@ -347,7 +348,7 @@ function BenchmarkPanel({
           carregar o modelo aparece separado.
         </Text>
         <View style={styles.benchmarkActions}>
-          <Pressable
+          <Press
             style={[styles.downloadButton, (!available || !installed || running) && styles.disabled]}
             onPress={() => void run()}
             disabled={!available || !installed || running}
@@ -359,14 +360,14 @@ function BenchmarkPanel({
               <Ionicons name="flask-outline" size={16} color={colors.text} />
             )}
             <Text style={styles.downloadText}>{running ? progress : 'Rodar benchmark'}</Text>
-          </Pressable>
-          <Pressable
+          </Press>
+          <Press
             style={styles.useButton}
             onPress={() => void release()}
             accessibilityLabel="Liberar modelo"
           >
             <Text style={styles.useText}>Liberar modelo</Text>
-          </Pressable>
+          </Press>
         </View>
         {loadMs !== null ? (
           <Text style={styles.cardHint}>Carga do modelo: {(loadMs / 1000).toFixed(1)} s</Text>

@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Press } from '@/components/Press';
 
 import { FastModal } from '@/components/FastModal';
 import type { Notebook } from '@/core/notebooks';
@@ -22,14 +23,14 @@ export function NotebookPicker({
 }: NotebookPickerProps) {
   return (
     <FastModal visible={visible} onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable style={styles.card} onPress={() => undefined}>
+      <Press style={styles.backdrop} onPress={onClose}>
+        <Press style={styles.card} onPress={() => undefined}>
           <Text style={styles.title}>Mover para caderno</Text>
           <ScrollView style={styles.list} showsVerticalScrollIndicator={false}>
             {notebooks.map((notebook) => {
               const active = notebook.id === currentId;
               return (
-                <Pressable
+                <Press
                   key={notebook.id}
                   style={[styles.row, active ? styles.rowOn : null]}
                   onPress={() => onSelect(notebook.id)}
@@ -46,12 +47,12 @@ export function NotebookPicker({
                     {notebook.name}
                   </Text>
                   {active ? <Ionicons name="checkmark" size={18} color={colors.accent} /> : null}
-                </Pressable>
+                </Press>
               );
             })}
           </ScrollView>
-        </Pressable>
-      </Pressable>
+        </Press>
+      </Press>
     </FastModal>
   );
 }

@@ -1,7 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import { back, push } from '@/services/appNavigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { RefreshControl, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Press } from '@/components/Press';
 
 import { Button } from '@/components/Button';
 import { Screen } from '@/components/Screen';
@@ -373,7 +374,7 @@ function WindowFilter({
       {METRICS_WINDOWS.map((kind) => {
         const active = kind === value;
         return (
-          <Pressable
+          <Press
             key={kind}
             onPress={() => onChange(kind)}
             style={[styles.filterChip, active ? styles.filterChipActive : null]}
@@ -383,7 +384,7 @@ function WindowFilter({
             <Text style={[styles.filterChipText, active ? styles.filterChipTextActive : null]}>
               {WINDOW_LABELS[kind]}
             </Text>
-          </Pressable>
+          </Press>
         );
       })}
     </View>
@@ -587,16 +588,16 @@ function Goals({
           {weekWords.toLocaleString('pt-BR')} / {goal.toLocaleString('pt-BR')} palavras
         </Text>
         <View style={styles.stepper}>
-          <Pressable
+          <Press
             onPress={() => onGoal(Math.max(0, goal - 250))}
             accessibilityLabel="Diminuir meta"
             hitSlop={6}
           >
             <Text style={styles.step}>−</Text>
-          </Pressable>
-          <Pressable onPress={() => onGoal(goal + 250)} accessibilityLabel="Aumentar meta" hitSlop={6}>
+          </Press>
+          <Press onPress={() => onGoal(goal + 250)} accessibilityLabel="Aumentar meta" hitSlop={6}>
             <Text style={styles.step}>+</Text>
-          </Pressable>
+          </Press>
         </View>
       </View>
       <View style={styles.progressTrack}>
@@ -624,21 +625,21 @@ function Goals({
         <View style={styles.goalRow}>
           <Text style={styles.goalLabel}>Horário do lembrete</Text>
           <View style={styles.stepper}>
-            <Pressable
+            <Press
               onPress={() => onHour(Math.max(6, hour - 1))}
               accessibilityLabel="Mais cedo"
               hitSlop={6}
             >
               <Text style={styles.step}>−</Text>
-            </Pressable>
+            </Press>
             <Text style={styles.goalValue}>{hour}h</Text>
-            <Pressable
+            <Press
               onPress={() => onHour(Math.min(23, hour + 1))}
               accessibilityLabel="Mais tarde"
               hitSlop={6}
             >
               <Text style={styles.step}>+</Text>
-            </Pressable>
+            </Press>
           </View>
         </View>
       ) : null}
@@ -941,13 +942,13 @@ export default function DashboardScreen() {
   return (
     <Screen>
       <View style={styles.header}>
-        <Pressable onPress={() => back()} style={styles.iconButton} accessibilityLabel="Voltar">
+        <Press onPress={() => back()} style={styles.iconButton} accessibilityLabel="Voltar">
           <Ionicons name="chevron-back" size={24} color={colors.text} />
-        </Pressable>
+        </Press>
         <Text style={styles.headerTitle}>Painel</Text>
-        <Pressable onPress={() => void load()} style={styles.iconButton} accessibilityLabel="Atualizar">
+        <Press onPress={() => void load()} style={styles.iconButton} accessibilityLabel="Atualizar">
           <Ionicons name="refresh" size={20} color={colors.text} />
-        </Pressable>
+        </Press>
       </View>
 
       <ScrollView

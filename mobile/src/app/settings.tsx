@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { back, push } from '@/services/appNavigation';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Press } from '@/components/Press';
 
 import { Card } from '@/components/Card';
 import { Screen } from '@/components/Screen';
@@ -16,13 +17,13 @@ export default function SettingsScreen() {
   return (
     <Screen>
       <View style={styles.header}>
-        <Pressable
+        <Press
           onPress={() => back()}
           style={styles.iconButton}
           accessibilityLabel="Voltar"
         >
           <Ionicons name="chevron-back" size={24} color={colors.text} />
-        </Pressable>
+        </Press>
         <Text style={styles.headerTitle}>Opções</Text>
         <View style={styles.iconButton} />
       </View>
@@ -33,7 +34,7 @@ export default function SettingsScreen() {
           <Text style={styles.cardTitle}>Arrastar para o lado</Text>
           <Text style={styles.cardHint}>O que o gesto faz na tela inicial.</Text>
           <View style={styles.segment}>
-            <Pressable
+            <Press
               onPress={() => void setSwipeAction('delete')}
               style={[styles.segmentItem, swipeAction === 'delete' && styles.segmentActive]}
               accessibilityRole="button"
@@ -41,8 +42,8 @@ export default function SettingsScreen() {
               <Text style={[styles.segmentText, swipeAction === 'delete' && styles.segmentTextActive]}>
                 Apagar
               </Text>
-            </Pressable>
-            <Pressable
+            </Press>
+            <Press
               onPress={() => void setSwipeAction('archive')}
               style={[styles.segmentItem, swipeAction === 'archive' && styles.segmentActive]}
               accessibilityRole="button"
@@ -52,12 +53,12 @@ export default function SettingsScreen() {
               >
                 Arquivar
               </Text>
-            </Pressable>
+            </Press>
           </View>
         </Card>
 
         <Text style={styles.sectionLabel}>Métricas</Text>
-        <Pressable onPress={() => push('/dashboard')}>
+        <Press onPress={() => push('/dashboard')}>
           <Card style={styles.row}>
             <Ionicons name="stats-chart-outline" size={20} color={colors.info} />
             <View style={styles.rowText}>
@@ -66,9 +67,9 @@ export default function SettingsScreen() {
             </View>
             <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
           </Card>
-        </Pressable>
+        </Press>
 
-        <Pressable onPress={() => push('/storage')}>
+        <Press onPress={() => push('/storage')}>
           <Card style={styles.row}>
             <Ionicons name="save-outline" size={20} color={colors.info} />
             <View style={styles.rowText}>
@@ -77,9 +78,9 @@ export default function SettingsScreen() {
             </View>
             <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
           </Card>
-        </Pressable>
+        </Press>
 
-        <Pressable onPress={() => push('/backup')}>
+        <Press onPress={() => push('/backup')}>
           <Card style={styles.row}>
             <Ionicons name="cloud-download-outline" size={20} color={colors.info} />
             <View style={styles.rowText}>
@@ -88,9 +89,9 @@ export default function SettingsScreen() {
             </View>
             <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
           </Card>
-        </Pressable>
+        </Press>
 
-        <Pressable onPress={() => push('/transcription')}>
+        <Press onPress={() => push('/transcription')}>
           <Card style={styles.row}>
             <Ionicons name="mic-circle-outline" size={20} color={colors.info} />
             <View style={styles.rowText}>
@@ -99,10 +100,10 @@ export default function SettingsScreen() {
             </View>
             <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
           </Card>
-        </Pressable>
+        </Press>
 
         <Text style={styles.sectionLabel}>Servidor</Text>
-        <Pressable onPress={() => push('/server')}>
+        <Press onPress={() => push('/server')}>
           <Card style={styles.row}>
             <Ionicons
               name="cloud-outline"
@@ -117,10 +118,10 @@ export default function SettingsScreen() {
             </View>
             <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
           </Card>
-        </Pressable>
+        </Press>
 
         <Text style={styles.sectionLabel}>Avançado</Text>
-        <Pressable onPress={() => push('/diagnostics')}>
+        <Press onPress={() => push('/diagnostics')}>
           <Card style={styles.row}>
             <Ionicons name="pulse-outline" size={20} color={colors.info} />
             <View style={styles.rowText}>
@@ -129,7 +130,7 @@ export default function SettingsScreen() {
             </View>
             <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
           </Card>
-        </Pressable>
+        </Press>
 
         {archived > 0 ? (
           <Text style={styles.cardHint}>

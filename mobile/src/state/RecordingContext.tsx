@@ -22,10 +22,10 @@ import { newId } from '@/core/id';
 import { markRecorded } from '@/core/queue';
 import { formatTitle, toRecordedAt } from '@/core/title';
 import type { Recording } from '@/core/types';
-import { bumpRender } from '@/dev/perf';
+import { bumpRender, mark } from '@/dev/perf';
 import { listRecordings, upsertRecording } from '@/services/db';
 import { concatIO, outputFileUri, sessionDirUri, storeSegment } from '@/services/files';
-import { ensureNotificationPermission } from '@/services/notifications';
+import { notificationPermissionGranted } from '@/services/notifications';
 
 import { useLibrary } from './LibraryContext';
 
@@ -53,6 +53,8 @@ interface RecordingValue {
   active: Recording | null;
   error: string | null;
   busy: boolean;
+  /** Preparando o microfone (permissao/audio mode/arquivo). */
+  starting: boolean;
   /** Gravacao pausada (o tempo da pausa nao conta). */
   paused: boolean;
   pause(): void;
@@ -103,6 +105,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
   const [elapsedMs, setElapsedMs] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [starting, setStarting] = useState(false);
   const [paused, setPaused] = useState(false);
 
   const activeRef = useRef<Recording | null>(null);
@@ -204,6 +207,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
 
   const beginSession = useCallback(
     async (session: Recording, startIndex: number, backgroundRecording = true) => {
+      const modeAt = Date.now();
       await setAudioModeAsync({
         playsInSilentMode: true,
         allowsRecording: true,
@@ -212,17 +216,21 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
         // sem ela, grava em primeiro plano em vez de falhar.
         allowsBackgroundRecording: backgroundRecording,
       });
+      mark('record.mode_ms', Date.now() - modeAt);
       // Prepara e comeca a gravar ANTES de marcar a sessao como ativa. Se o
       // microfone falhar (ocupado por outro app, permissao revogada), a sessao
       // nao pode ficar presa: o proximo toque em gravar tem de tentar de novo.
+      const prepareAt = Date.now();
       try {
         await recorder.prepareToRecordAsync(RECORDING_OPTIONS);
         recorder.record();
-        await upsertRecording(session);
       } catch (error) {
         await recorder.stop().catch(() => undefined);
         throw error;
       }
+      mark('record.prepare_ms', Date.now() - prepareAt);
+      // A sessao fica ativa na tela no mesmo quadro em que o microfone abre:
+      // cronometro e waveform aparecem sem esperar o banco.
       activeRef.current = session;
       setActive(session);
       segmentIndexRef.current = startIndex;
@@ -233,6 +241,16 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
       setPaused(false);
       setElapsedMs(0);
       startTimers();
+      // O registro entra logo atras, antes de qualquer outro trabalho. Se a
+      // escrita falhar, a gravacao continua e o stop grava a sessao de novo.
+      const dbAt = Date.now();
+      try {
+        await upsertRecording(session);
+      } catch {
+        // Sem a linha, a recuperacao de sessao nao ve esta gravacao; o audio
+        // ja esta no disco e o stop persiste o estado final.
+      }
+      mark('record.db_ms', Date.now() - dbAt);
     },
     [recorder, startTimers],
   );
@@ -240,17 +258,21 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
   const start = useCallback(async () => {
     if (startingRef.current || activeRef.current) return;
     startingRef.current = true;
+    setStarting(true);
     setError(null);
     try {
+      const permissionAt = Date.now();
       const permission = await requestRecordingPermissionsAsync();
+      mark('record.permission_ms', Date.now() - permissionAt);
       if (!permission.granted) {
         setError('Permissão de microfone negada.');
         return;
       }
-      // O Android exige POST_NOTIFICATIONS para o foreground service da
-      // gravacao em segundo plano. Espera a resposta: disparar o pedido e
-      // preparar o recorder no mesmo tick fazia o prepare falhar.
-      const canRecordInBackground = await ensureNotificationPermission();
+      // O dialogo de notificacao nunca segura o inicio: sem a permissao a
+      // gravacao roda em primeiro plano e o pedido fica para depois.
+      const notifyAt = Date.now();
+      const canRecordInBackground = await notificationPermissionGranted();
+      mark('record.notify_ms', Date.now() - notifyAt);
       const now = new Date();
       const id = newId('rec_');
       const session: Recording = {
@@ -271,6 +293,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
       setError('Não foi possível iniciar a gravação.');
     } finally {
       startingRef.current = false;
+      setStarting(false);
     }
   }, [beginSession]);
 
@@ -356,6 +379,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
     async (id: string) => {
       if (startingRef.current || activeRef.current) return;
       startingRef.current = true;
+      setStarting(true);
       setError(null);
       try {
         const permission = await requestRecordingPermissionsAsync();
@@ -363,7 +387,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
           setError('Permissão de microfone negada.');
           return;
         }
-        const canRecordInBackground = await ensureNotificationPermission();
+        const canRecordInBackground = await notificationPermissionGranted();
         const list = await listRecordings();
         const found = list.find((r) => r.id === id);
         if (!found) return;
@@ -378,6 +402,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
         setError('Não foi possível retomar a gravação.');
       } finally {
         startingRef.current = false;
+        setStarting(false);
       }
     },
     [beginSession],
@@ -413,6 +438,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
       active,
       error,
       busy,
+      starting,
       paused,
       pause,
       unpause,
@@ -425,6 +451,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
       active,
       error,
       busy,
+      starting,
       paused,
       pause,
       unpause,

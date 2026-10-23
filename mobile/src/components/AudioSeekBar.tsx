@@ -17,12 +17,14 @@ interface AudioSeekBarProps {
   /** Duracao total em segundos (0 desabilita a barra). */
   duration: number;
   onSeek: (seconds: number) => void;
+  /** Posicao sob o dedo (null quando soltou): o texto do tempo acompanha. */
+  onScrubChange?: (seconds: number | null) => void;
 }
 
 const THUMB = 12;
 const HIT_HEIGHT = 32;
 
-export function AudioSeekBar({ current, duration, onSeek }: AudioSeekBarProps) {
+export function AudioSeekBar({ current, duration, onSeek, onScrubChange }: AudioSeekBarProps) {
   const [width, setWidth] = useState(0);
   const [scrub, setScrub] = useState<number | null>(null);
   const scrubRef = useRef<number | null>(null);
@@ -33,12 +35,14 @@ export function AudioSeekBar({ current, duration, onSeek }: AudioSeekBarProps) {
     const value = ratio * duration;
     scrubRef.current = value;
     setScrub(value);
+    onScrubChange?.(value);
   };
 
   const release = () => {
     const value = scrubRef.current;
     scrubRef.current = null;
     setScrub(null);
+    onScrubChange?.(null);
     if (value !== null) onSeek(value);
   };
 

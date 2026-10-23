@@ -5,13 +5,13 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import { Press } from '@/components/Press';
 
 import { Button } from '@/components/Button';
 import { Screen } from '@/components/Screen';
@@ -103,14 +103,14 @@ function NoteRow({
         <Text style={styles.noteMeta}>{parts.join(' · ')}</Text>
       </View>
       {note.canFreeAudio ? (
-        <Pressable
+        <Press
           style={styles.rowAction}
           onPress={onFree}
           disabled={busy}
           accessibilityLabel={`Liberar áudio de ${note.title}`}
         >
           <Text style={styles.rowActionText}>Liberar áudio</Text>
-        </Pressable>
+        </Press>
       ) : null}
     </View>
   );
@@ -250,17 +250,17 @@ export default function StorageScreen() {
   return (
     <Screen>
       <View style={styles.header}>
-        <Pressable onPress={() => back()} style={styles.iconButton} accessibilityLabel="Voltar">
+        <Press onPress={() => back()} style={styles.iconButton} accessibilityLabel="Voltar">
           <Ionicons name="chevron-back" size={24} color={colors.text} />
-        </Pressable>
+        </Press>
         <Text style={styles.headerTitle}>Armazenamento</Text>
-        <Pressable onPress={() => void refresh()} style={styles.iconButton} accessibilityLabel="Atualizar">
+        <Press onPress={() => void refresh()} style={styles.iconButton} accessibilityLabel="Atualizar">
           {scanning ? (
             <ActivityIndicator size="small" color={colors.textSecondary} />
           ) : (
             <Ionicons name="refresh" size={20} color={colors.text} />
           )}
-        </Pressable>
+        </Press>
       </View>
 
       <ScrollView
@@ -360,7 +360,7 @@ export default function StorageScreen() {
             </View>
 
             <Text style={styles.sectionLabel}>Modelos</Text>
-            <Pressable onPress={() => push('/transcription')}>
+            <Press onPress={() => push('/transcription')}>
               <View style={styles.card}>
                 <View style={styles.linkRow}>
                   <View style={styles.linkText}>
@@ -373,7 +373,7 @@ export default function StorageScreen() {
                   <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
                 </View>
               </View>
-            </Pressable>
+            </Press>
 
             <Text style={styles.sectionLabel}>Ações</Text>
             <View style={styles.actions}>
@@ -415,7 +415,7 @@ export default function StorageScreen() {
             )}
 
             {notes.length > NOTE_PREVIEW ? (
-              <Pressable onPress={() => setShowAll((value) => !value)} style={styles.showAll}>
+              <Press onPress={() => setShowAll((value) => !value)} style={styles.showAll}>
                 <Text style={styles.showAllText}>
                   {showAll ? 'Mostrar menos' : `Mostrar todas (${notes.length})`}
                 </Text>
@@ -424,7 +424,7 @@ export default function StorageScreen() {
                   size={16}
                   color={colors.accent}
                 />
-              </Pressable>
+              </Press>
             ) : null}
 
             <Text style={styles.hint}>

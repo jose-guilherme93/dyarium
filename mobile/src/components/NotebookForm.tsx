@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import {
-  Pressable,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { Press } from '@/components/Press';
 
 import { FastModal } from '@/components/FastModal';
 import { NOTEBOOK_COLORS } from '@/core/notebooks';
@@ -44,8 +44,8 @@ export function NotebookForm({
 
   return (
     <FastModal visible={visible} onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable style={styles.card} onPress={() => undefined}>
+      <Press style={styles.backdrop} onPress={onClose}>
+        <Press style={styles.card} onPress={() => undefined}>
           <Text style={styles.title}>{title}</Text>
           <TextInput
             value={name}
@@ -60,7 +60,7 @@ export function NotebookForm({
           {showColors ? (
             <View style={styles.colors}>
               {NOTEBOOK_COLORS.map((option) => (
-                <Pressable
+                <Press
                   key={option || 'neutral'}
                   onPress={() => setColor(option)}
                   accessibilityRole="button"
@@ -72,25 +72,25 @@ export function NotebookForm({
                   ]}
                 >
                   {option === color ? <View style={styles.check} /> : null}
-                </Pressable>
+                </Press>
               ))}
             </View>
           ) : null}
           <View style={styles.actions}>
-            <Pressable onPress={onClose} style={styles.cancel} accessibilityRole="button">
+            <Press onPress={onClose} style={styles.cancel} accessibilityRole="button">
               <Text style={styles.cancelText}>Cancelar</Text>
-            </Pressable>
-            <Pressable
+            </Press>
+            <Press
               onPress={save}
               style={[styles.save, !name.trim() ? styles.saveOff : null]}
               disabled={!name.trim()}
               accessibilityRole="button"
             >
               <Text style={styles.saveText}>Salvar</Text>
-            </Pressable>
+            </Press>
           </View>
-        </Pressable>
-      </Pressable>
+        </Press>
+      </Press>
     </FastModal>
   );
 }

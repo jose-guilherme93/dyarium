@@ -1,16 +1,16 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Battery from 'expo-battery';
 import * as Clipboard from 'expo-clipboard';
-import { useAudioPlayerStatus, type AudioPlayer as AudioPlayerHandle } from 'expo-audio';
+import * as Haptics from 'expo-haptics';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { back, push } from '@/services/appNavigation';
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Alert,
   Image,
   Keyboard,
-  Pressable,
   ScrollView,
   Share,
   StyleSheet,
@@ -19,12 +19,13 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import { Press } from '@/components/Press';
 
 import { ConflictDialog } from '@/components/ConflictDialog';
-import { AudioSeekBar } from '@/components/AudioSeekBar';
+import { AudioTransport } from '@/components/AudioTransport';
 import { FastModal } from '@/components/FastModal';
 import { NoteBody } from '@/components/NoteBody';
-import type { NoteBodyHandle, NoteInsertPosition } from '@/components/noteBodyTypes';
+import type { NoteBodyHandle } from '@/components/noteBodyTypes';
 import { NoteMetaRow } from '@/components/NoteMetaRow';
 import { NoteMenu, type NoteMenuAnchor, type NoteProperty } from '@/components/NoteMenu';
 import { NotebookPicker } from '@/components/NotebookPicker';
@@ -53,10 +54,10 @@ import {
 } from '@/core/format';
 import { DEFAULT_IMAGE_WIDTH } from '@/core/image';
 import { fontFamilyNative } from '@/core/typography';
-import { appendAudioNodes, audioNodesForNote } from '@/core/noteAudio';
+import { appendAudioNodes, audioNodesForNote, audioRefFromPath } from '@/core/noteAudio';
 import { noteAudioNodes } from '@/core/noteDocument';
-import { breakSentences, countChars, countWords, markdownToPlain } from '@/core/richText';
-import type { Recording } from '@/core/types';
+import { countChars, countWords, markdownToPlain } from '@/core/richText';
+import type { Recording, TranscriptSegment } from '@/core/types';
 import { clearNoteConflict, keepMine } from '@/core/noteSync';
 import { BUILD_STAMP, mark, useRenderCount } from '@/dev/perf';
 
@@ -71,7 +72,6 @@ import {
 import { setPendingInsert } from '@/services/noteInsert';
 import { fetchNoteAnalysis } from '@/services/analysis';
 import { installedAnalysisModels, isAnalysisModelInstalled } from '@/services/analysisModels';
-import { releaseAudioFocus } from '@/services/audioFocus';
 import {
   getCachedAnalysis,
   getRecording,
@@ -100,8 +100,9 @@ import { fetchTheirs, syncNoteForcing } from '@/services/noteSync';
 import { pushTranscript } from '@/services/transcriptSync';
 import { playPlayer } from '@/services/playback';
 import { useLibrary } from '@/state/LibraryContext';
+import { useRecording } from '@/state/RecordingContext';
 import { useAudioStack } from '@/state/useAudioStack';
-import { useLoadPlayback, usePauseOnUnmount, usePlaybackSource } from '@/state/PlaybackContext';
+import { usePlaySource, usePauseOnUnmount, usePlayback } from '@/state/PlaybackContext';
 import { useSettings } from '@/state/SettingsContext';
 import {
   useTranscriptionProgress,
@@ -117,8 +118,6 @@ import { colors, fontSize, radius, spacing } from '@/theme/tokens';
  * fila de sync.
  */
 
-type PlayerHandle = AudioPlayerHandle;
-
 /**
  * Corpo inicial da nota. Nota antiga (ou gravacao criada fora da tela) tinha o
  * audio em `filePath`/na pilha; aqui ele vira no do documento antes do editor
@@ -130,83 +129,6 @@ function bodyWithAudioNodes(note: Recording): string {
   return appendAudioNodes(stored, audioNodesForNote(note));
 }
 
-/**
- * Player do audio da nota. Memoizado: digitar o titulo re-renderiza a tela, mas
- * nao precisa refazer o player (ele mesmo assina o status do audio).
- */
-const NoteAudioPlayer = memo(function NoteAudioPlayer({
-  player,
-  durationMs,
-}: {
-  player: PlayerHandle;
-  durationMs?: number;
-}) {
-  const status = useAudioPlayerStatus(player);
-  const load = useLoadPlayback();
-  // Antes de carregar, `duration` e 0: usa a duracao conhecida da nota.
-  const duration = status.duration > 0 ? status.duration : (durationMs ?? 0) / 1000;
-  const current = status.currentTime || 0;
-  // Seek pedido antes de a fonte terminar de carregar: aplica quando o player
-  // informa a duracao real (antes disso o seek seria ignorado).
-  const [pendingSeek, setPendingSeek] = useState<number | null>(null);
-
-  const appliedSeekRef = useRef<number | null>(null);
-  useEffect(() => {
-    if (pendingSeek === null || status.duration <= 0) return;
-    if (appliedSeekRef.current === pendingSeek) return;
-    appliedSeekRef.current = pendingSeek;
-    void player.seekTo(pendingSeek).catch(() => undefined);
-  }, [pendingSeek, player, status.duration]);
-
-  const toggle = () => {
-    if (status.playing) {
-      player.pause();
-      return;
-    }
-    load();
-    playPlayer(player);
-  };
-
-  const seek = (seconds: number) => {
-    load();
-    if (status.duration > 0) {
-      void player.seekTo(seconds).catch(() => undefined);
-    } else {
-      setPendingSeek(seconds);
-    }
-  };
-
-  useEffect(() => () => releaseAudioFocus(player), [player]);
-
-  return (
-    <View style={styles.player}>
-      <View style={styles.playerRow}>
-        <Pressable
-          style={styles.play}
-          onPress={toggle}
-          accessibilityLabel={status.playing ? 'Pausar' : 'Tocar'}
-        >
-          <Ionicons
-            name={status.playing ? 'pause' : 'play'}
-            size={22}
-            color={colors.text}
-            style={status.playing ? undefined : { marginLeft: 2 }}
-          />
-        </Pressable>
-        <Text style={styles.playerTime}>
-          {formatDuration(current * 1000)} / {formatDuration(duration * 1000)}
-        </Text>
-      </View>
-      <AudioSeekBar current={current} duration={duration} onSeek={seek} />
-    </View>
-  );
-});
-
-/**
- * Previa do texto enquanto o editor carrega. O corpo da nota aparece junto com
- * a tela, no mesmo lugar e com a mesma tipografia; quando o editor fica pronto
- * ele toma o lugar, sem a nota abrir "vazia" por um instante.
- */
 function ToolButton({
   label,
   onPress,
@@ -217,9 +139,9 @@ function ToolButton({
   children: ReactNode;
 }) {
   return (
-    <Pressable style={styles.tool} onPress={onPress} accessibilityLabel={label} hitSlop={6}>
+    <Press style={styles.tool} onPress={onPress} accessibilityLabel={label} hitSlop={6}>
       {children}
-    </Pressable>
+    </Press>
   );
 }
 
@@ -227,6 +149,7 @@ export default function NoteScreen() {
   const { id, action } = useLocalSearchParams<{ id: string; action?: string }>();
   const navigation = useNavigation();
   const library = useLibrary();
+  const { start: startRecording } = useRecording();
   const {
     typography,
     setTypography,
@@ -279,42 +202,53 @@ export default function NoteScreen() {
     liveTranscriptionPercent > 0
       ? liveTranscriptionPercent
       : checkpointPercent(note ?? {});
-  // Player unico do app: o controle de play e a previa de transcricao usam o
-  // mesmo audio da nota (sem dois players em conflito).
-  const filePath = note?.filePath;
+  // Player unico do app: um audio toca por vez, seja ele um no do corpo ou um
+  // audio da pilha do servidor. O card de audio nao cria player proprio.
   // Pilha de audios do servidor. O app nao grava varios audios numa nota, mas
   // le a pilha: os audios do dashboard aparecem aqui, cada um com a sua
   // transcricao. Tocar em um deles troca a fonte do mesmo player.
   const stack = useAudioStack(note?.entryId, note?.serverAudios);
-  const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
-  const [downloadedUri, setDownloadedUri] = useState<string | null>(null);
-  const playerUri = playingAudioId ? (downloadedUri ?? undefined) : filePath;
-  const player = usePlaybackSource(playerUri);
-  const loadPlayback = useLoadPlayback();
+  const player = usePlayback();
+  const playSource = usePlaySource();
+  /** Referencia do audio que esta no player (no do corpo ou id da pilha). */
+  const [activeAudioRef, setActiveAudioRef] = useState<string | null>(null);
+  /** Trecho inicial, quando a reproducao comecou por uma linha da transcricao. */
+  const [activeAudioStartMs, setActiveAudioStartMs] = useState<number | null>(null);
 
-  const playStackAudio = useCallback(
-    async (audioId: string) => {
-      if (playingAudioId === audioId) {
-        player.pause();
-        setPlayingAudioId(null);
-        setDownloadedUri(null);
-        return;
-      }
-      setPlayingAudioId(audioId);
-      const uri = await attachmentUri(audioId);
-      setDownloadedUri(uri);
+  const activateAudio = useCallback(
+    (ref: string, uri: string, startMs?: number) => {
+      playSource(uri);
+      setActiveAudioRef(ref);
+      setActiveAudioStartMs(startMs ?? null);
     },
-    [playingAudioId, player],
+    [playSource],
   );
 
-  // A pilha troca a fonte do player unico: carrega a fonte apontada e toca.
+  // Sem trecho inicial, o audio comeca do zero assim que a fonte e apontada.
+  // Com trecho, o transporte busca a posicao quando o player carregar e toca.
   useEffect(() => {
-    if (!playingAudioId || !downloadedUri) return;
-    loadPlayback();
+    if (!activeAudioRef || activeAudioStartMs !== null) return;
     playPlayer(player);
-  }, [playingAudioId, downloadedUri, loadPlayback, player]);
+  }, [activeAudioRef, activeAudioStartMs, player]);
+
+  const playStackAudio = useCallback(
+    async (audioId: string, startMs?: number) => {
+      const key = `stack:${audioId}`;
+      if (activeAudioRef === key && startMs === undefined) {
+        player.pause();
+        return;
+      }
+      try {
+        const uri = await attachmentUri(audioId);
+        if (!uri) throw new Error('audio indisponivel');
+        activateAudio(key, uri, startMs);
+      } catch {
+        Alert.alert('Áudio indisponível', 'Não foi possível abrir este áudio neste aparelho.');
+      }
+    },
+    [activateAudio, activeAudioRef, player],
+  );
   usePauseOnUnmount();
-  const segments = note?.transcriptSegments;
   useRenderCount('NoteScreen');
   // Marco de tempo: da abertura da nota ate o conteudo nativo aparecer.
   const [openedAt] = useState(() => Date.now());
@@ -743,6 +677,57 @@ export default function NoteScreen() {
     }
     return map;
   }, [note, stack.audios]);
+
+  // Referencias do audio da propria nota: e o unico com transcricao completa
+  // (tela com edicao por trecho) e o unico que recebe o progresso local. A
+  // mesma gravacao pode aparecer como `local:<arquivo>` (antes do upload) ou
+  // como `attachment:<id>` (depois), entao o card casa pelos dois.
+  const ownAudioRefs = useMemo(() => {
+    const refs = new Set<string>();
+    const localRef = audioRefFromPath(note?.filePath);
+    if (localRef) {
+      refs.add(localRef);
+      const name = localRef.slice('local:'.length);
+      const attachmentId = note?.attachments?.[name];
+      if (attachmentId) refs.add(`attachment:${attachmentId}`);
+    }
+    if (note?.serverAttachmentId) refs.add(`attachment:${note.serverAttachmentId}`);
+    return [...refs];
+  }, [note]);
+
+  // Segmentos por referencia: a previa de cinco linhas e a edicao por trecho
+  // dependem deles; sem segmentos o card mostra o texto simples.
+  const audioSegments = useMemo(() => {
+    const map: Record<string, TranscriptSegment[]> = {};
+    for (const audio of stack.audios) {
+      const list = audio.transcript?.segments;
+      if (list && list.length > 0) map[`attachment:${audio.id}`] = list;
+    }
+    const own = note?.transcriptSegments;
+    if (own && own.length > 0) {
+      for (const ref of ownAudioRefs) map[ref] = own;
+    }
+    return map;
+  }, [note?.transcriptSegments, ownAudioRefs, stack.audios]);
+
+  const playBodyAudio = useCallback(
+    async (ref: string, startMs?: number) => {
+      const uri = await resolveAudio(ref);
+      if (!uri) {
+        Alert.alert('Áudio indisponível', 'Não foi possível abrir este áudio neste aparelho.');
+        return;
+      }
+      activateAudio(ref, uri, startMs);
+    },
+    [activateAudio, resolveAudio],
+  );
+
+  // Callback estavel: o NoteBody e memoizado e um lambda inline anularia a
+  // memoizacao a cada render da tela (inclusive ao digitar no titulo).
+  const handlePlayAudio = useCallback(
+    (ref: string, startMs?: number) => void playBodyAudio(ref, startMs),
+    [playBodyAudio],
+  );
 
   // As imagens que faltam baixam em segundo plano. Agrupa os avisos num unico
   // render: varias fotos chegando juntas nao devem re-renderizar a nota varias
@@ -1258,32 +1243,32 @@ export default function NoteScreen() {
     // Libera a CPU e o microfone antes de gravar: uma transcricao rodando
     // atrasava o inicio da gravacao.
     if (isTranscribing(noteId)) void stopTranscription(noteId);
-    // O cursor define onde a gravacao entra no corpo. Sem cursor de texto, o
-    // audio entra no fim da nota.
-    const openRecord = (at: NoteInsertPosition | null) => {
-      // A posicao fica guardada por nota, e a rota leva so o id: a gravacao
-      // acontece em outra tela.
-      if (at) setPendingInsert(noteId, at);
-      push({
-        pathname: '/record',
-        params: { noteId, from: 'note' },
-      });
-    };
-    // O texto pendente vai para o banco antes da posicao ser pedida: a
-    // posicao tem que valer para o texto que vai ficar salvo, e nao para o
-    // de antes do flush.
-    void flushEditor()
+    // O microfone abre no mesmo toque e a tela de gravacao entra na frente. O
+    // texto e a posicao do cursor sao resolvidos por tras, sem segurar o audio.
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
+    const started = startRecording();
+    push({
+      pathname: '/record',
+      params: { noteId, from: 'note' },
+    });
+    // Ler o HTML do editor e esperar o microfone abrir sao trabalhos pesados:
+    // fazer os dois juntos atrasava o prepare. O flush so comeca quando a
+    // sessao ja esta ativa. A posicao so e lida quando a gravacao termina;
+    // ate la o texto ja entrou no banco. Sem cursor, o audio vai para o fim.
+    void started
+      .then(() => flushEditor())
       .then(() =>
         saveNote({
           title: titleRef.current,
           text: bodyRef.current,
         }),
       )
-      .catch(() => undefined)
       .then(() => Promise.resolve(editorRef.current?.getInsertPosition() ?? null))
-      .then((at) => openRecord(at))
-      .catch(() => openRecord(null));
-  }, [flushEditor, noteId, saveNote]);
+      .then((at) => {
+        if (at) setPendingInsert(noteId, at);
+      })
+      .catch(() => undefined);
+  }, [flushEditor, noteId, saveNote, startRecording]);
 
   // Abre a transcricao completa. O player e o mesmo, entao o audio continua
   // exatamente do ponto em que esta (sem parar nem recomecar).
@@ -1292,19 +1277,17 @@ export default function NoteScreen() {
     push({ pathname: '/transcript/[id]', params: { id: noteId } });
   }, [noteId]);
 
-  // Tocar num trecho da previa leva o audio para aquele instante. Espera o
-  // `replace` terminar quando a fonte ainda nao estava carregada.
-  const seekTranscript = useCallback(
+  // Toque longo num trecho da previa: abre a transcricao completa ja editando
+  // aquela frase.
+  const editTranscript = useCallback(
     (startMs: number) => {
-      loadPlayback();
-      setTimeout(() => {
-        void player
-          .seekTo(Math.max(0, startMs) / 1000)
-          .then(() => player.play())
-          .catch(() => undefined);
-      }, 80);
+      if (!noteId) return;
+      push({
+        pathname: '/transcript/[id]',
+        params: { id: noteId, edit: String(Math.max(0, Math.round(startMs))) },
+      });
     },
-    [loadPlayback, player],
+    [noteId],
   );
 
   const handleAddImage = useCallback(async () => {
@@ -1401,9 +1384,9 @@ export default function NoteScreen() {
       return (
         <Screen>
           <View style={styles.header}>
-            <Pressable onPress={goBack} style={styles.iconButton} accessibilityLabel="Voltar">
+            <Press onPress={goBack} style={styles.iconButton} accessibilityLabel="Voltar">
               <Ionicons name="chevron-back" size={24} color={colors.text} />
-            </Pressable>
+            </Press>
             <View style={styles.headerActions} />
           </View>
           <View style={[styles.content, { paddingTop: spacing.lg }]}>
@@ -1415,9 +1398,9 @@ export default function NoteScreen() {
     return (
       <Screen>
         <View style={styles.header}>
-          <Pressable onPress={goBack} style={styles.iconButton} accessibilityLabel="Voltar">
+          <Press onPress={goBack} style={styles.iconButton} accessibilityLabel="Voltar">
             <Ionicons name="chevron-back" size={24} color={colors.text} />
-          </Pressable>
+          </Press>
           <View style={styles.headerActions} />
         </View>
         <View style={styles.center}>
@@ -1430,15 +1413,13 @@ export default function NoteScreen() {
   // Derivados do documento: digitar no titulo re-renderiza a tela, e o corpo
   // inteiro nao precisa ser parseado de novo a cada letra.
   const hasAudio = Boolean(note.filePath) || bodyAudios.length > 0 || stack.audios.length > 0;
-  // Notas antigas ainda tem o audio fora do documento. Nelas o player do topo
-  // continua sendo a unica forma de ouvir; quando o audio ja e um no do corpo,
-  // o player fica no meio do texto e o topo nao duplica.
-  const legacyAudio = Boolean(note.filePath) && bodyAudios.length === 0;
-  // O primeiro audio da pilha e o proprio audio desta nota (o app que gravou e
-  // subiu): o player local ja o mostra. Os demais vieram do dashboard e ganham
-  // a sua linha. Sem audio local (nota criada no servidor), a pilha e inteira.
-  const stackAudios =
-    bodyAudios.length > 0 ? [] : legacyAudio ? stack.audios.slice(1) : stack.audios;
+  // Quando o audio da nota ja e um no do corpo, ele aparece no meio do texto;
+  // a pilha fica para as notas criadas no servidor (varios audios do
+  // dashboard), que nao tem no de audio local.
+  const stackAudios = bodyAudios.length > 0 ? [] : stack.audios;
+  // Transcricao pedida e ainda sem andamento local (ex.: feita no servidor):
+  // o card mostra que esta em fila, em vez de parecer parado.
+  const serverTranscribing = !note.hasTranscript && note.transcriptStatus === 'pending';
   const editorPlaceholder = hasAudio ? 'Escreva sobre este áudio...' : 'Comece a escrever...';
   // Em tela estreita o titulo comeca menor; em ambas quebra linha em vez de sumir.
   const titleSize = titleFontSize(title, windowWidth < 380 ? 30 : 34, 24);
@@ -1483,10 +1464,10 @@ export default function NoteScreen() {
   return (
     <Screen>
       <View style={styles.header}>
-        <Pressable onPress={goBack} style={styles.iconButton} accessibilityLabel="Voltar">
+        <Press onPress={goBack} style={styles.iconButton} accessibilityLabel="Voltar">
           <Ionicons name="chevron-back" size={24} color={colors.text} />
-        </Pressable>
-        <Pressable
+        </Press>
+        <Press
           style={styles.headerNotebook}
           onPress={() => setNotebookPickerOpen(true)}
           accessibilityRole="button"
@@ -1502,23 +1483,16 @@ export default function NoteScreen() {
             {notebookName}
           </Text>
           <Ionicons name="chevron-down" size={13} color={colors.textTertiary} />
-        </Pressable>
+        </Press>
         <View style={styles.headerActions}>
-          <Pressable
-            style={styles.iconButton}
-            onPress={handleRecord}
-            accessibilityLabel="Gravar áudio"
-          >
-            <Ionicons name="mic-outline" size={22} color={colors.text} />
-          </Pressable>
-          <Pressable
+          <Press
             ref={configButtonRef}
             style={styles.circleButton}
             onPress={openMenu}
             accessibilityLabel="Configurações da nota"
           >
             <Ionicons name="ellipsis-horizontal" size={18} color={colors.text} />
-          </Pressable>
+          </Press>
         </View>
       </View>
 
@@ -1567,87 +1541,79 @@ export default function NoteScreen() {
         </View>
 
         <View>
-          {/* Player, pilha de audios e transcricao ficam sempre visiveis. O
-              teclado so encolhe a area do editor; nada acima da nota e
-              ocultado nem deslocado. */}
-          {legacyAudio ? (
-            <NoteAudioPlayer player={player} durationMs={note.durationMs} />
-          ) : null}
-
+          {/* Pilha de audios do servidor e corpo da nota. O transporte de cada
+              audio vive no card (corpo) ou na linha da pilha; so o audio ativo
+              mostra botao de play e barra, nunca dois controles do mesmo audio. */}
           {stackAudios.length > 0 ? (
             <View style={styles.stack}>
               <Text style={styles.sectionLabel}>
                 {stackAudios.length === 1 ? 'Áudio' : `${stackAudios.length} áudios`}
               </Text>
-              {stackAudios.map((audio, index) => (
-                <Pressable
-                  key={audio.id}
-                  style={[styles.stackRow, playingAudioId === audio.id ? styles.stackRowOn : null]}
-                  onPress={() => void playStackAudio(audio.id)}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Ouvir áudio ${index + 1} de ${stackAudios.length}`}
-                >
-                  <Ionicons
-                    name={playingAudioId === audio.id ? 'pause' : 'play'}
-                    size={16}
-                    color={colors.textSecondary}
-                  />
-                  <View style={styles.stackInfo}>
-                    <Text style={styles.stackTitle}>
-                      {formatDateTime(audio.created_at)}
-                      {audio.duration_seconds > 0
-                        ? ` · ${formatDuration(Math.round(audio.duration_seconds))}`
-                        : ''}
-                    </Text>
-                    {audio.transcript?.text ? (
-                      <Text style={styles.stackText} numberOfLines={2}>
-                        {audio.transcript.text}
-                      </Text>
-                    ) : (
-                      <Text style={styles.stackText}>Sem transcrição</Text>
-                    )}
+              {stackAudios.map((audio, index) => {
+                const key = `stack:${audio.id}`;
+                const active = activeAudioRef === key;
+                const stackSegments = audio.transcript?.segments;
+                return (
+                  <View
+                    key={audio.id}
+                    style={[styles.stackRow, active ? styles.stackRowOn : null]}
+                  >
+                    <Press
+                      style={styles.stackHead}
+                      onPress={() => void playStackAudio(audio.id)}
+                      disabled={active}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Ouvir áudio ${index + 1} de ${stackAudios.length}`}
+                    >
+                      {active ? null : (
+                        <Ionicons name="play" size={16} color={colors.textSecondary} />
+                      )}
+                      <View style={styles.stackInfo}>
+                        <Text style={styles.stackTitle}>
+                          {formatDateTime(audio.created_at)}
+                          {audio.duration_seconds > 0
+                            ? ` · ${formatDuration(Math.round(audio.duration_seconds))}`
+                            : ''}
+                        </Text>
+                        {!active && !(stackSegments && stackSegments.length > 0) ? (
+                          audio.transcript?.text ? (
+                            <Text style={styles.stackText} numberOfLines={2}>
+                              {audio.transcript.text}
+                            </Text>
+                          ) : (
+                            <Text style={styles.stackText}>Sem transcrição</Text>
+                          )
+                        ) : null}
+                      </View>
+                    </Press>
+                    {active ? (
+                      <AudioTransport
+                        player={player}
+                        durationMs={Math.round(audio.duration_seconds * 1000)}
+                        startMs={activeAudioStartMs}
+                        segments={stackSegments}
+                      />
+                    ) : stackSegments && stackSegments.length > 0 ? (
+                      <SyncedTranscript
+                        segments={stackSegments}
+                        onSeek={(startMs) => void playStackAudio(audio.id, startMs)}
+                      />
+                    ) : null}
                   </View>
-                </Pressable>
-              ))}
-            </View>
-          ) : null}
-
-          {legacyAudio && segments && segments.length > 0 ? (
-            <SyncedTranscript
-              player={player}
-              segments={segments}
-              onOpen={openTranscript}
-              onSeek={seekTranscript}
-            />
-          ) : legacyAudio && note.transcript && note.transcript.trim() ? (
-            <Pressable
-              style={styles.section}
-              onPress={openTranscript}
-              accessibilityLabel="Abrir transcrição completa"
-            >
-              <Text style={styles.sectionLabel}>Transcrição</Text>
-              <Text style={styles.transcript} numberOfLines={6}>
-                {breakSentences(note.transcript)}
-              </Text>
-            </Pressable>
-          ) : legacyAudio && !note.hasTranscript && note.transcriptStatus === 'pending' ? (
-            <View style={styles.transcribing}>
-              <ActivityIndicator size="small" color={colors.textSecondary} />
-              <Text style={styles.meta}>
-                Transcrevendo{transcriptionPercent > 0 ? ` ${Math.round(transcriptionPercent)}%` : '...'}
-              </Text>
+                );
+              })}
             </View>
           ) : null}
 
           {note.status === 'failed' ? (
-            <Pressable
+            <Press
               style={styles.retry}
               onPress={() => void library.retry(note.id)}
               accessibilityLabel="Reenviar"
             >
               <Ionicons name="refresh" size={18} color={colors.warning} />
               <Text style={styles.retryText}>Reenviar</Text>
-            </Pressable>
+            </Press>
           ) : null}
 
           <NoteBody
@@ -1658,12 +1624,20 @@ export default function NoteScreen() {
             onImageOpen={handleImageOpen}
             placeholder={editorPlaceholder}
             imageSources={imageSources}
-            audioSource={resolveAudio}
             audioTranscripts={audioTranscripts}
+            audioSegments={audioSegments}
+            activeAudioRef={activeAudioRef}
+            audioPlayer={player}
+            audioStartMs={activeAudioStartMs}
+            ownAudioRefs={ownAudioRefs}
+            transcribingWait={!transcribing && serverTranscribing}
             transcribingPercent={transcribing ? transcriptionPercent : undefined}
             canTranscribe={Boolean(hasAudio) && !note.hasTranscript}
             onTranscribe={() => void handleTranscribe()}
             onStopTranscribe={handleStopTranscribe}
+            onPlayAudio={handlePlayAudio}
+            onOpenTranscript={openTranscript}
+            onEditTranscript={editTranscript}
             typography={typography}
           />
         </View>
@@ -1677,6 +1651,18 @@ export default function NoteScreen() {
             keyboardShouldPersistTaps="always"
             contentContainerStyle={styles.toolRow}
           >
+            {/* Gravar entra primeiro: e a acao mais usada dentro da nota. O
+                microfone do cabecalho saiu para nao duplicar o comando. */}
+            <ToolButton label="Gravar áudio" onPress={handleRecord}>
+              <Ionicons name="mic-outline" size={18} color={colors.text} />
+            </ToolButton>
+            <ToolButton label="Adicionar foto" onPress={() => void handleAddImage()}>
+              <Ionicons name="image-outline" size={18} color={colors.text} />
+            </ToolButton>
+            <ToolButton label="Link" onPress={() => void openLinkModal()}>
+              <Ionicons name="link-outline" size={18} color={colors.text} />
+            </ToolButton>
+            <View style={styles.toolDivider} />
             <ToolButton label="Negrito" onPress={() => editorRef.current?.format('bold')}>
               <Text style={styles.toolBold}>B</Text>
             </ToolButton>
@@ -1705,14 +1691,19 @@ export default function NoteScreen() {
             <ToolButton label="Citação" onPress={() => editorRef.current?.format('quote')}>
               <Ionicons name="chatbox-ellipses-outline" size={18} color={colors.text} />
             </ToolButton>
-            <View style={styles.toolDivider} />
-            <ToolButton label="Link" onPress={() => void openLinkModal()}>
-              <Ionicons name="link-outline" size={18} color={colors.text} />
-            </ToolButton>
-            <ToolButton label="Adicionar foto" onPress={() => void handleAddImage()}>
-              <Ionicons name="image-outline" size={18} color={colors.text} />
-            </ToolButton>
           </ScrollView>
+          {/* A barra rola na horizontal; as bordas esmaecem para o conteudo
+              continuar depois delas, sem corte seco. */}
+          <LinearGradient
+            pointerEvents="none"
+            colors={[colors.surface, 'transparent']}
+            style={[styles.toolFade, styles.toolFadeLeft]}
+          />
+          <LinearGradient
+            pointerEvents="none"
+            colors={['transparent', colors.surface]}
+            style={[styles.toolFade, styles.toolFadeRight]}
+          />
         </View>
       </View>
 
@@ -1791,8 +1782,8 @@ export default function NoteScreen() {
 
       {linkOpen ? (
         <FastModal visible onRequestClose={() => setLinkOpen(false)}>
-          <Pressable style={styles.linkBackdrop} onPress={() => setLinkOpen(false)}>
-            <Pressable style={styles.linkCard} onPress={() => undefined}>
+          <Press style={styles.linkBackdrop} onPress={() => setLinkOpen(false)}>
+            <Press style={styles.linkCard} onPress={() => undefined}>
               <Text style={styles.linkTitle}>Adicionar link</Text>
               <TextInput
                 value={linkValue}
@@ -1808,35 +1799,35 @@ export default function NoteScreen() {
                 style={styles.linkInput}
               />
               <View style={styles.linkActions}>
-                <Pressable onPress={() => setLinkOpen(false)} accessibilityLabel="Cancelar">
+                <Press onPress={() => setLinkOpen(false)} accessibilityLabel="Cancelar">
                   <Text style={styles.linkCancel}>Cancelar</Text>
-                </Pressable>
-                <Pressable onPress={submitLink} accessibilityLabel="Inserir link">
+                </Press>
+                <Press onPress={submitLink} accessibilityLabel="Inserir link">
                   <Text style={styles.linkConfirm}>Inserir</Text>
-                </Pressable>
+                </Press>
               </View>
-            </Pressable>
-          </Pressable>
+            </Press>
+          </Press>
         </FastModal>
       ) : null}
 
       {viewerSrc != null ? (
         <FastModal visible onRequestClose={closeViewer}>
-          <Pressable style={styles.viewerBackdrop} onPress={closeViewer} accessibilityLabel="Fechar">
+          <Press style={styles.viewerBackdrop} onPress={closeViewer} accessibilityLabel="Fechar">
             <Image
               source={{ uri: viewerSrc }}
               style={styles.viewerImage}
               resizeMode="contain"
             />
-            <Pressable
+            <Press
               style={styles.viewerClose}
               onPress={closeViewer}
               accessibilityLabel="Fechar"
               hitSlop={10}
             >
               <Ionicons name="close" size={24} color={colors.text} />
-            </Pressable>
-          </Pressable>
+            </Press>
+          </Press>
         </FastModal>
       ) : null}
     </Screen>
@@ -1900,28 +1891,6 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.xs,
   },
   meta: { color: colors.textSecondary, fontSize: fontSize.sm },
-  transcribing: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  player: {
-    gap: spacing.xs,
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    padding: spacing.md,
-  },
-  playerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.lg,
-  },
-  play: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: colors.surfaceElevated,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  playerTime: { color: colors.text, fontSize: fontSize.md, fontVariant: ['tabular-nums'] },
-  section: { gap: spacing.sm },
   sectionLabel: {
     color: colors.textTertiary,
     fontSize: fontSize.xs,
@@ -1929,7 +1898,6 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 0.6,
   },
-  transcript: { color: colors.textSecondary, fontSize: fontSize.md, lineHeight: 22 },
   retry: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1993,6 +1961,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
   },
   toolRow: { alignItems: 'center', paddingHorizontal: spacing.xs, gap: 2 },
+  toolFade: { position: 'absolute', top: 0, bottom: 0, width: 22 },
+  toolFadeLeft: { left: 0 },
+  toolFadeRight: { right: 0 },
   tool: { width: 34, height: 44, alignItems: 'center', justifyContent: 'center' },
   toolDivider: {
     width: StyleSheet.hairlineWidth,
@@ -2002,8 +1973,6 @@ const styles = StyleSheet.create({
   },
   stack: { paddingHorizontal: spacing.lg, paddingBottom: spacing.sm, gap: spacing.xs },
   stackRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
     gap: spacing.sm,
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
@@ -2011,6 +1980,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
   },
   stackRowOn: { backgroundColor: colors.surfaceElevated },
+  stackHead: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   stackInfo: { flex: 1, gap: 2 },
   stackTitle: { color: colors.text, fontSize: fontSize.sm },
   stackText: { color: colors.textTertiary, fontSize: fontSize.sm },

@@ -1,4 +1,5 @@
-import { ActivityIndicator, Pressable, StyleSheet, Text, type StyleProp, type ViewStyle } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, type StyleProp, type ViewStyle } from 'react-native';
+import { Press } from '@/components/Press';
 
 import { colors, fontSize, radius, spacing } from '@/theme/tokens';
 
@@ -23,7 +24,7 @@ export function Button({
 }: ButtonProps) {
   const isDisabled = disabled || loading;
   return (
-    <Pressable
+    <Press
       accessibilityRole="button"
       onPress={onPress}
       disabled={isDisabled}
@@ -41,7 +42,7 @@ export function Button({
       ) : (
         <Text style={[styles.label, variant === 'primary' && styles.labelOnAccent]}>{label}</Text>
       )}
-    </Pressable>
+    </Press>
   );
 }
 

@@ -1,7 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import {
   ActivityIndicator,
-  Pressable,
   ScrollView,
   StyleSheet,
   Switch,
@@ -9,6 +8,7 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import { Press } from '@/components/Press';
 
 import { FastModal } from '@/components/FastModal';
 import type { NoteAnalysisView } from '@/core/analysis';
@@ -96,7 +96,7 @@ function Segment<T extends string>({
       {options.map((option) => {
         const active = option.value === value;
         return (
-          <Pressable
+          <Press
             key={option.value}
             style={[styles.segmentItem, active && styles.segmentItemActive]}
             onPress={() => onChange(option.value)}
@@ -105,7 +105,7 @@ function Segment<T extends string>({
             <Text style={[styles.segmentText, active && styles.segmentTextActive]}>
               {option.label}
             </Text>
-          </Pressable>
+          </Press>
         );
       })}
     </View>
@@ -245,7 +245,7 @@ export function NoteMenu({
   return (
     <FastModal visible={visible} onRequestClose={onClose}>
       <View style={styles.root}>
-        <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Fechar menu" />
+        <Press style={styles.backdrop} onPress={onClose} accessibilityLabel="Fechar menu" />
         <View style={[styles.card, placement, { maxHeight }]}>
           <ScrollView
             style={[styles.scroll, { maxHeight: scrollMaxHeight }]}
@@ -259,10 +259,10 @@ export function NoteMenu({
               {shown}
             </Text>
 
-            <Pressable style={styles.action} onPress={onShare} accessibilityLabel="Compartilhar nota">
+            <Press style={styles.action} onPress={onShare} accessibilityLabel="Compartilhar nota">
               <Ionicons name="share-outline" size={19} color={colors.text} />
               <Text style={styles.actionText}>Compartilhar nota</Text>
-            </Pressable>
+            </Press>
 
             {analysis !== undefined ? (
               <>
@@ -291,7 +291,7 @@ export function NoteMenu({
                 {analysisEnabled ? (
                   <>
                     <View style={styles.analysisActions}>
-                      <Pressable
+                      <Press
                         style={[styles.analyzeButton, analysisBusy && styles.analyzeButtonDisabled]}
                         onPress={onAnalyzeLocal}
                         disabled={analysisBusy}
@@ -313,11 +313,11 @@ export function NoteMenu({
                             </Text>
                           </>
                         )}
-                      </Pressable>
+                      </Press>
                       {analysisBusy && onStopAnalysis ? (
-                        <Pressable onPress={onStopAnalysis} accessibilityLabel="Parar análise">
+                        <Press onPress={onStopAnalysis} accessibilityLabel="Parar análise">
                           <Text style={styles.analyzeStop}>Parar</Text>
-                        </Pressable>
+                        </Press>
                       ) : null}
                     </View>
                     {!analysisReady && !analysisBusy ? (
@@ -388,21 +388,21 @@ export function NoteMenu({
 
             <Text style={styles.sectionLabel}>Tamanho</Text>
             <View style={styles.stepper}>
-              <Pressable
+              <Press
                 style={styles.stepButton}
                 onPress={() => onChangeTypography({ ...typography, size: clampFontSize(typography.size - 1) })}
                 accessibilityLabel="Diminuir fonte"
               >
                 <Text style={styles.stepText}>A-</Text>
-              </Pressable>
+              </Press>
               <Text style={styles.stepValue}>{typography.size}</Text>
-              <Pressable
+              <Press
                 style={styles.stepButton}
                 onPress={() => onChangeTypography({ ...typography, size: clampFontSize(typography.size + 1) })}
                 accessibilityLabel="Aumentar fonte"
               >
                 <Text style={styles.stepText}>A+</Text>
-              </Pressable>
+              </Press>
             </View>
 
             <Text style={styles.sectionLabel}>Peso</Text>

@@ -1,7 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import { back } from '@/services/appNavigation';
 import { useEffect, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Press } from '@/components/Press';
 
 import { Button } from '@/components/Button';
 import { Screen } from '@/components/Screen';
@@ -166,9 +167,9 @@ export default function BackupScreen() {
   return (
     <Screen>
       <View style={styles.header}>
-        <Pressable onPress={() => back()} style={styles.iconButton} accessibilityLabel="Voltar">
+        <Press onPress={() => back()} style={styles.iconButton} accessibilityLabel="Voltar">
           <Ionicons name="chevron-back" size={24} color={colors.text} />
-        </Pressable>
+        </Press>
         <Text style={styles.headerTitle}>Backup local</Text>
         <View style={styles.iconButton} />
       </View>

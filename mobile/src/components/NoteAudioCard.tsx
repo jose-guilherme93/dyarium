@@ -1,211 +1,170 @@
 /**
  * Card de audio do corpo da nota.
  *
- * O audio e nativo: o player fica entre os trechos, com duracao, transcricao
- * e o botao de remover.
+ * O audio e nativo e fica entre os trechos, com a transcricao logo abaixo. Quem
+ * toca e o player unico do app, passado pela tela da nota: o card nao cria um
+ * player proprio (dois players tocavam o mesmo audio e cada um tinha o seu
+ * botao de play).
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import type { AudioPlayer } from 'expo-audio';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
-import { AudioSeekBar } from '@/components/AudioSeekBar';
+import { AudioTransport } from '@/components/AudioTransport';
+import { Press } from '@/components/Press';
+import { SyncedTranscript } from '@/components/SyncedTranscript';
 import { formatDuration } from '@/core/format';
 import type { NoteAudioNode } from '@/core/noteDocument';
-import { releaseAudioFocus } from '@/services/audioFocus';
-import { playPlayer } from '@/services/playback';
+import type { TranscriptSegment } from '@/core/types';
 import { colors, radius, spacing } from '@/theme/tokens';
 
 export interface NoteAudioCardProps {
   node: NoteAudioNode;
-  /** Resolve a URI do audio a partir da referencia salva. */
-  resolve?: (ref: string) => Promise<string | null> | string | null;
   /** Transcricao do audio, quando houver. */
   transcript?: string;
-  /** Progresso (0..100) da transcricao desta nota, enquanto ela roda. */
+  /** Segmentos com minutagem: ligam a previa sincronizada e a edicao. */
+  segments?: TranscriptSegment[];
+  /** Este e o audio que esta no player agora. */
+  active?: boolean;
+  /** Player unico do app (so quando `active`). */
+  player?: AudioPlayer | null;
+  /** Trecho inicial quando a reproducao comecou pela transcricao. */
+  startMs?: number | null;
+  /** Progresso (0..100) da transcricao, enquanto ela roda. */
   transcribingPercent?: number;
+  /** Transcricao pedida e ainda sem andamento (ex.: feita no servidor). */
+  transcribingWait?: boolean;
   /** Ha modelo local e a nota ainda nao tem transcricao? */
   canTranscribe?: boolean;
-  /** Inicia a transcricao local. */
   onTranscribe?: () => void;
-  /** Para a transcricao local em andamento. */
   onStopTranscribe?: () => void;
-  /** Remove o audio do corpo da nota. */
-  onRemove: () => void;
+  /** Toca este audio do inicio. */
+  onPlay?: () => void;
+  /** Toca este audio a partir de um trecho (audio parado). */
+  onPlayFrom?: (startMs: number) => void;
+  onOpenTranscript?: () => void;
+  onEditTranscript?: (startMs: number) => void;
+  onRemove?: () => void;
 }
 
 /** Audio do documento: player entre os trechos de texto. */
 export function NoteAudioCard({
   node,
-  resolve,
   transcript,
+  segments,
+  active = false,
+  player,
+  startMs,
   transcribingPercent,
+  transcribingWait = false,
   canTranscribe,
   onTranscribe,
   onStopTranscribe,
+  onPlay,
+  onPlayFrom,
+  onOpenTranscript,
+  onEditTranscript,
   onRemove,
 }: NoteAudioCardProps) {
-  const [open, setOpen] = useState(false);
-  const [uri, setUri] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState(false);
-
-  const toggle = useCallback(async () => {
-    if (open) {
-      setOpen(false);
-      return;
-    }
-    if (uri) {
-      setOpen(true);
-      return;
-    }
-    if (!resolve) {
-      setFailed(true);
-      return;
-    }
-    setBusy(true);
-    setFailed(false);
-    try {
-      const resolved = await resolve(node.ref);
-      if (!resolved) {
-        setFailed(true);
-        return;
-      }
-      setUri(resolved);
-      setOpen(true);
-    } catch {
-      setFailed(true);
-    } finally {
-      setBusy(false);
-    }
-  }, [node.ref, open, resolve, uri]);
+  const transcribing = transcribingPercent !== undefined || transcribingWait;
+  const hasSegments = Boolean(segments && segments.length > 0);
 
   return (
     <View style={styles.audioCard}>
       <View style={styles.audioRow}>
-        <Pressable
-          style={styles.audioPlay}
-          onPress={() => void toggle()}
-          accessibilityLabel={open ? 'Pausar áudio' : 'Tocar áudio'}
-          disabled={busy}
-        >
-          <Ionicons
-            name={open ? 'pause' : 'play'}
-            size={18}
-            color={colors.text}
-            style={open ? undefined : { marginLeft: 2 }}
-          />
-        </Pressable>
+        {active ? null : (
+          <Press style={styles.audioPlay} onPress={onPlay} accessibilityLabel="Tocar áudio">
+            <Ionicons
+              name="play"
+              size={18}
+              color={colors.text}
+              style={{ marginLeft: 2 }}
+            />
+          </Press>
+        )}
         <View style={styles.audioInfo}>
           <Text style={styles.audioTitle}>Áudio</Text>
-          <Text style={styles.audioDuration}>
-            {node.durationMs > 0 ? formatDuration(node.durationMs) : 'Duração desconhecida'}
-          </Text>
+          {active ? null : (
+            <Text style={styles.audioDuration}>
+              {node.durationMs > 0 ? formatDuration(node.durationMs) : 'Duração desconhecida'}
+            </Text>
+          )}
         </View>
-        {transcribingPercent !== undefined ? (
-          <Pressable
-            onPress={onStopTranscribe}
-            accessibilityLabel="Parar transcrição"
-            hitSlop={8}
-          >
+        {transcribing ? (
+          <Press onPress={onStopTranscribe} accessibilityLabel="Parar transcrição" hitSlop={8}>
             <Ionicons name="stop-circle-outline" size={18} color={colors.textSecondary} />
-          </Pressable>
+          </Press>
         ) : canTranscribe && onTranscribe ? (
-          <Pressable
-            onPress={onTranscribe}
-            accessibilityLabel="Transcrever áudio"
-            hitSlop={8}
-          >
+          <Press onPress={onTranscribe} accessibilityLabel="Transcrever áudio" hitSlop={8}>
             <Ionicons name="text-outline" size={17} color={colors.textSecondary} />
-          </Pressable>
+          </Press>
         ) : (
           <Ionicons name="mic-outline" size={17} color={colors.textTertiary} />
         )}
-        <Pressable
-          onPress={onRemove}
-          accessibilityLabel="Remover áudio"
-          hitSlop={8}
-        >
+        <Press onPress={onRemove} accessibilityLabel="Remover áudio" hitSlop={8}>
           <Ionicons name="trash-outline" size={17} color={colors.textTertiary} />
-        </Pressable>
+        </Press>
       </View>
 
-      {open && uri ? <ActiveAudio uri={uri} durationMs={node.durationMs} /> : null}
-      {transcribingPercent !== undefined ? (
+      {active && player ? (
+        <AudioTransport
+          player={player}
+          durationMs={node.durationMs}
+          startMs={startMs}
+          segments={segments}
+          onOpenTranscript={onOpenTranscript}
+          onEditTranscript={onEditTranscript}
+        />
+      ) : hasSegments ? (
+        <SyncedTranscript
+          segments={segments ?? []}
+          onSeek={onPlayFrom}
+          onOpen={onOpenTranscript}
+          onEdit={onEditTranscript}
+        />
+      ) : transcript ? (
+        onOpenTranscript ? (
+          // O texto e o proprio atalho para a transcricao completa (onde cada
+          // frase e a minutagem podem ser editadas), como era antes.
+          <Press onPress={onOpenTranscript} accessibilityLabel="Abrir transcrição completa">
+            <Text style={styles.audioTranscript} numberOfLines={3} testID="audio-transcript">
+              {transcript}
+            </Text>
+          </Press>
+        ) : (
+          <Text style={styles.audioTranscript} numberOfLines={3} testID="audio-transcript">
+            {transcript}
+          </Text>
+        )
+      ) : null}
+
+      {transcribing ? (
         <View style={styles.transcribing} testID="audio-transcribing">
           <ActivityIndicator size="small" color={colors.textSecondary} />
           <Text style={styles.audioHint}>
             Transcrevendo
-            {transcribingPercent > 0 ? ` ${Math.round(transcribingPercent)}%` : '...'}
+            {transcribingPercent && transcribingPercent > 0
+              ? ` ${Math.round(transcribingPercent)}%`
+              : '...'}
           </Text>
         </View>
       ) : null}
-      {busy ? <Text style={styles.audioHint}>Carregando áudio...</Text> : null}
-      {failed ? <Text style={styles.audioHint}>Áudio indisponível neste aparelho.</Text> : null}
-      {transcript ? (
-        <Text style={styles.audioTranscript} numberOfLines={3}>
-          {transcript}
-        </Text>
+      {transcribing && transcribingPercent !== undefined ? (
+        <View style={styles.progressTrack}>
+          <View
+            style={[styles.progressFill, { width: `${Math.min(100, Math.max(0, transcribingPercent))}%` }]}
+          />
+        </View>
       ) : null}
-    </View>
-  );
-}
-
-/** Player nativo do audio ativo. Monta so quando o usuario toca em tocar. */
-function ActiveAudio({ uri, durationMs }: { uri: string; durationMs: number }) {
-  const player = useAudioPlayer(uri, { updateInterval: 250 });
-  const status = useAudioPlayerStatus(player);
-  const [pendingSeek, setPendingSeek] = useState<number | null>(null);
-  const appliedSeek = useRef<number | null>(null);
-  const duration = status.duration > 0 ? status.duration : Math.max(0, durationMs) / 1000;
-  const current = status.currentTime || 0;
-
-  useEffect(() => {
-    playPlayer(player);
-    return () => releaseAudioFocus(player);
-  }, [player]);
-
-  useEffect(() => {
-    if (pendingSeek === null || status.duration <= 0 || appliedSeek.current === pendingSeek) {
-      return;
-    }
-    appliedSeek.current = pendingSeek;
-    void player.seekTo(pendingSeek).catch(() => undefined);
-  }, [pendingSeek, player, status.duration]);
-
-  const seek = (seconds: number) => {
-    if (status.duration > 0) {
-      void player.seekTo(seconds).catch(() => undefined);
-    } else {
-      setPendingSeek(seconds);
-    }
-  };
-
-  return (
-    <View style={styles.audioPlayer}>
-      <View style={styles.audioPlayerRow}>
-        <Pressable
-          onPress={() => (status.playing ? player.pause() : playPlayer(player))}
-          accessibilityLabel={status.playing ? 'Pausar' : 'Tocar'}
-          hitSlop={8}
-        >
-          <Ionicons name={status.playing ? 'pause' : 'play'} size={18} color={colors.text} />
-        </Pressable>
-        <Text style={styles.audioTime}>
-          {formatDuration(current * 1000)} / {formatDuration(duration * 1000)}
-        </Text>
-      </View>
-      <AudioSeekBar current={current} duration={duration} onSeek={seek} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   audioCard: {
-    // O card reserva o espaco da previa da transcricao (ate tres linhas) mesmo
-    // antes de ela chegar. Sem isso, o texto de baixo pulava quando o audio
-    // terminava de carregar.
+    // Reserva o espaco da previa da transcricao: sem isso, a nota inteira
+    // pulava quando o texto chegava ou o player abria.
     minHeight: 128,
     backgroundColor: colors.surface,
     borderRadius: radius.md,
@@ -214,6 +173,13 @@ const styles = StyleSheet.create({
   },
   audioRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   transcribing: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  progressTrack: {
+    height: 2,
+    borderRadius: 1,
+    backgroundColor: colors.surfaceElevated,
+    overflow: 'hidden',
+  },
+  progressFill: { height: 2, backgroundColor: colors.accent },
   audioPlay: {
     width: 38,
     height: 38,
@@ -227,7 +193,4 @@ const styles = StyleSheet.create({
   audioDuration: { color: colors.textSecondary, fontSize: 12 },
   audioHint: { color: colors.textSecondary, fontSize: 12 },
   audioTranscript: { color: colors.textSecondary, fontSize: 13, lineHeight: 19 },
-  audioPlayer: { gap: spacing.xs },
-  audioPlayerRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
-  audioTime: { color: colors.text, fontSize: 13, fontVariant: ['tabular-nums'] },
 });

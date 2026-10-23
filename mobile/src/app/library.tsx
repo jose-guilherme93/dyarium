@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { back, push } from '@/services/appNavigation';
-import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { FlatList, StyleSheet, Text, View } from 'react-native';
+import { Press } from '@/components/Press';
 
 import { RecordingCard } from '@/components/RecordingCard';
 import { Screen } from '@/components/Screen';
@@ -15,9 +16,9 @@ export default function LibraryScreen() {
   return (
     <Screen>
       <View style={styles.header}>
-        <Pressable onPress={() => back()} style={styles.back} accessibilityLabel="Voltar">
+        <Press onPress={() => back()} style={styles.back} accessibilityLabel="Voltar">
           <Ionicons name="chevron-back" size={24} color={colors.text} />
-        </Pressable>
+        </Press>
         <View style={styles.headerText}>
           <Text style={styles.title}>Minhas gravações</Text>
           <Text style={styles.subtitle}>

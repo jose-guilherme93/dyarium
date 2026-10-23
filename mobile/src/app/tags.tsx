@@ -4,12 +4,12 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
   FlatList,
-  Pressable,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { Press } from '@/components/Press';
 
 import { FastModal } from '@/components/FastModal';
 import { Screen } from '@/components/Screen';
@@ -123,9 +123,9 @@ export default function TagsScreen() {
   return (
     <Screen>
       <View style={styles.header}>
-        <Pressable onPress={() => back()} style={styles.iconButton} accessibilityLabel="Voltar">
+        <Press onPress={() => back()} style={styles.iconButton} accessibilityLabel="Voltar">
           <Ionicons name="chevron-back" size={24} color={colors.text} />
-        </Pressable>
+        </Press>
         <View style={styles.headerText}>
           <Text style={styles.title}>Tags</Text>
           <Text style={styles.subtitle}>
@@ -141,7 +141,7 @@ export default function TagsScreen() {
         contentContainerStyle={styles.list}
         ItemSeparatorComponent={() => <View style={styles.separator} />}
         renderItem={({ item }) => (
-          <Pressable
+          <Press
             style={styles.row}
             onPress={() => openRename(item)}
             onLongPress={() => actions(item)}
@@ -155,7 +155,7 @@ export default function TagsScreen() {
             </Text>
             <Text style={styles.count}>{item.entry_count}</Text>
             <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
-          </Pressable>
+          </Press>
         )}
         ListEmptyComponent={
           <View style={styles.empty}>
@@ -173,8 +173,8 @@ export default function TagsScreen() {
       />
 
       <FastModal visible={rename !== null} onRequestClose={() => setRename(null)}>
-        <Pressable style={styles.backdrop} onPress={() => setRename(null)}>
-          <Pressable style={styles.card} onPress={() => undefined}>
+        <Press style={styles.backdrop} onPress={() => setRename(null)}>
+          <Press style={styles.card} onPress={() => undefined}>
             <Text style={styles.cardTitle}>Renomear tag</Text>
             <TextInput
               value={name}
@@ -188,19 +188,19 @@ export default function TagsScreen() {
               autoCapitalize="none"
             />
             <View style={styles.actions}>
-              <Pressable onPress={() => setRename(null)} style={styles.cancel}>
+              <Press onPress={() => setRename(null)} style={styles.cancel}>
                 <Text style={styles.cancelText}>Cancelar</Text>
-              </Pressable>
-              <Pressable
+              </Press>
+              <Press
                 onPress={saveRename}
                 style={[styles.save, !name.trim() ? styles.saveOff : null]}
                 disabled={!name.trim()}
               >
                 <Text style={styles.saveText}>Salvar</Text>
-              </Pressable>
+              </Press>
             </View>
-          </Pressable>
-        </Pressable>
+          </Press>
+        </Press>
       </FastModal>
     </Screen>
   );

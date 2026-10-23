@@ -3,7 +3,8 @@ import { useAudioPlayerStatus } from 'expo-audio';
 import { useLocalSearchParams } from 'expo-router';
 import { back } from '@/services/appNavigation';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { FlatList, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Press } from '@/components/Press';
 
 import { DyariumApi, type FetchLike, type TranscriptSegment } from '@/core/api';
 import { formatDuration } from '@/core/format';
@@ -67,26 +68,26 @@ const SegmentRow = memo(function SegmentRow({
             style={styles.editInput}
           />
           <View style={styles.editActions}>
-            <Pressable onPress={onCancelEdit} accessibilityLabel="Cancelar">
+            <Press onPress={onCancelEdit} accessibilityLabel="Cancelar">
               <Text style={styles.editCancel}>Cancelar</Text>
-            </Pressable>
-            <Pressable onPress={() => onSubmitEdit(index)} accessibilityLabel="Salvar trecho">
+            </Press>
+            <Press onPress={() => onSubmitEdit(index)} accessibilityLabel="Salvar trecho">
               <Text style={styles.editSave}>Salvar</Text>
-            </Pressable>
+            </Press>
           </View>
         </View>
       ) : (
         <>
-          <Pressable style={styles.segmentBody} onPress={() => onSeek(index)}>
+          <Press style={styles.segmentBody} onPress={() => onSeek(index)}>
             <Text style={[styles.segmentText, active && styles.segmentTextActive]}>{text}</Text>
-          </Pressable>
-          <Pressable
+          </Press>
+          <Press
             onPress={() => onStartEdit(index)}
             accessibilityLabel="Editar trecho"
             hitSlop={8}
           >
             <Ionicons name="create-outline" size={16} color={colors.textTertiary} />
-          </Pressable>
+          </Press>
         </>
       )}
     </View>
@@ -98,7 +99,7 @@ const SegmentRow = memo(function SegmentRow({
  * acompanha o play e tocar num trecho pula o audio para ali (como no dashboard).
  */
 export default function TranscriptScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, edit } = useLocalSearchParams<{ id: string; edit?: string }>();
   const { recordings } = useLibrary();
   const note = recordings.find((r) => r.id === id);
   const noteId = note?.id;
@@ -113,6 +114,8 @@ export default function TranscriptScreen() {
   const draftRef = useRef('');
   const listRef = useRef<FlatList<TranscriptSegment>>(null);
   const activeIndexRef = useRef(-1);
+  /** O trecho pedido pela previa (`edit`) ja foi aberto uma vez. */
+  const editOpenedRef = useRef(false);
 
   useEffect(() => {
     draftRef.current = draft;
@@ -147,6 +150,30 @@ export default function TranscriptScreen() {
   const segments = hasCache && cachedSegments ? cachedSegments : fetched;
   const transcriptionPercent = useTranscriptionProgress(noteId);
   const transcribing = note?.transcriptStatus === 'pending';
+
+  // Toque longo numa linha da previa abre a transcricao ja editando aquele
+  // trecho. O parametro chega em ms; casa pelo inicio do segmento, porque o
+  // indice local pode mudar se a transcricao for recarregada.
+  const editStartMs = edit ? Number(edit) : null;
+  useEffect(() => {
+    if (editOpenedRef.current) return;
+    if (editStartMs === null || !Number.isFinite(editStartMs) || segments.length === 0) return;
+    editOpenedRef.current = true;
+    const index = segments.findIndex(
+      (segment) => Math.abs(segment.start_ms - editStartMs) < 1,
+    );
+    if (index < 0) return;
+    // Estado derivado de dados assincronos: os segmentos chegam depois do
+    // parametro de rota, entao abrir a edicao aqui e a sincronizacao com o
+    // carregamento da transcricao.
+    // O trecho pedido pela rota abre em edicao quando os segmentos chegam.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setEditingIndex(index);
+    setDraft(segments[index].text);
+    requestAnimationFrame(() => {
+      listRef.current?.scrollToIndex({ index, animated: false, viewPosition: 0.4 });
+    });
+  }, [editStartMs, segments]);
 
   // Mesmo player unico da nota: ao abrir a transcricao o audio continua
   // exatamente de onde estava (sem criar outro player e sem reiniciar).
@@ -265,18 +292,18 @@ export default function TranscriptScreen() {
   return (
     <View style={styles.screen}>
       <View style={styles.header}>
-        <Pressable onPress={() => back()} accessibilityLabel="Voltar" hitSlop={12}>
+        <Press onPress={() => back()} accessibilityLabel="Voltar" hitSlop={12}>
           <Ionicons name="chevron-back" size={24} color={colors.text} />
-        </Pressable>
+        </Press>
         <Text style={styles.title}>Transcrição</Text>
         <View style={styles.spacer} />
       </View>
 
       {note?.filePath ? (
         <View style={styles.player}>
-          <Pressable style={styles.play} onPress={toggle} accessibilityLabel={status.playing ? 'Pausar' : 'Tocar'}>
+          <Press style={styles.play} onPress={toggle} accessibilityLabel={status.playing ? 'Pausar' : 'Tocar'}>
             <Ionicons name={status.playing ? 'pause' : 'play'} size={20} color={colors.text} />
-          </Pressable>
+          </Press>
           <Text style={styles.playerTime}>
             {formatDuration(currentMs)} / {formatDuration((status.duration || 0) * 1000)}
           </Text>

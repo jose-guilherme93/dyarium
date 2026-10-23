@@ -1,71 +1,95 @@
+/**
+ * Previa da transcricao que acompanha o audio.
+ *
+ * A janela mostra cinco linhas e sobe suave conforme a fala avanca. O texto de
+ * cada trecho nao e cortado (quebra linha se precisar) e a posicao usa a altura
+ * real medida de cada linha.
+ *
+ * Toque numa linha toca o audio dali; toque longo abre a edicao daquele trecho
+ * na transcricao completa. Se a pessoa arrastar a janela com o dedo, o
+ * acompanhamento pausa e volta sozinho tres segundos depois.
+ *
+ * A previa pode viver sem player (audio parado): ela mostra o comeco da
+ * transcricao e qualquer linha continua levando o audio para o trecho.
+ */
+
 import { type AudioPlayer } from 'expo-audio';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
-import Animated, {
-  Easing,
-  useAnimatedStyle,
-  useSharedValue,
-  withTiming,
-} from 'react-native-reanimated';
+import {
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+  type LayoutChangeEvent,
+} from 'react-native';
 
-import { activeSegmentIndex } from '@/core/transcript';
+import { Press } from '@/components/Press';
 import { formatDuration } from '@/core/format';
+import { activeSegmentIndex } from '@/core/transcript';
 import type { TranscriptSegment } from '@/core/types';
 import { useRenderCount } from '@/dev/perf';
-import { motionDuration } from '@/theme/motion';
 import { colors, fontSize, spacing } from '@/theme/tokens';
-
-type PlayerHandle = AudioPlayer;
 
 /** Altura de uma linha e quantas ficam visiveis na previa. */
 const LINE = 22;
+/** Respiro vertical de cada linha (entra na altura real da janela). */
+const LINE_PAD = 1;
 const VISIBLE = 5;
-const VIEWPORT = LINE * VISIBLE;
-/** Ponto (y) onde o centro da fala atual fica: no meio da janela. */
-const CENTER = VIEWPORT / 2;
+const VIEWPORT = (LINE + LINE_PAD * 2) * VISIBLE;
+/** Quantas linhas ficam montadas em volta do trecho atual. */
+const WINDOW = 80;
+/** Tempo com o dedo parado antes de voltar a seguir o audio. */
+const RESUME_MS = 3000;
 
 interface SyncedTranscriptProps {
-  player: PlayerHandle;
+  /** Player do audio (ausente quando o audio esta parado). */
+  player?: AudioPlayer | null;
   segments: TranscriptSegment[];
   /** Abre a tela de transcricao completa. */
   onOpen?: () => void;
   /** Toca o audio a partir do trecho (ms). */
   onSeek?: (startMs: number) => void;
+  /** Abre a edicao do trecho (ms). */
+  onEdit?: (startMs: number) => void;
 }
 
-/**
- * Previa da transcricao que acompanha o audio: a fala atual fica no meio e o
- * texto sobe suavemente conforme o play avanca. Nenhum trecho e cortado (quebra
- * linha se precisar); a posicao usa a altura real medida de cada trecho. Toque
- * num trecho toca o audio dali; "Ver tudo" abre a transcricao completa.
- */
-export function SyncedTranscript({ player, segments, onOpen, onSeek }: SyncedTranscriptProps) {
+export function SyncedTranscript({
+  player,
+  segments,
+  onOpen,
+  onSeek,
+  onEdit,
+}: SyncedTranscriptProps) {
   useRenderCount('SyncedTranscript');
   // So re-renderiza quando o trecho ativo muda: assina o player e compara o
   // indice, em vez de acompanhar cada tick (que roda varias vezes por segundo).
-  const [active, setActive] = useState(0);
+  const [active, setActive] = useState(() =>
+    player
+      ? Math.max(0, activeSegmentIndex(segments, (player.currentTime || 0) * 1000))
+      : 0,
+  );
   useEffect(() => {
-    const apply = (currentMs: number) => {
-      const index = activeSegmentIndex(segments, currentMs);
+    if (!player) return undefined;
+    const subscription = player.addListener('playbackStatusUpdate', (status) => {
+      const index = activeSegmentIndex(segments, (status.currentTime || 0) * 1000);
       const next = index < 0 ? 0 : index;
       setActive((prev) => (prev === next ? prev : next));
-    };
-    apply((player.currentTime || 0) * 1000);
-    const subscription = player.addListener('playbackStatusUpdate', (status) => {
-      apply((status.currentTime || 0) * 1000);
     });
     return () => subscription.remove();
   }, [player, segments]);
 
-  const translateY = useSharedValue(0);
-  // Posicao/altura reais de cada trecho, medidas pelo layout (texto quebra linha).
+  const [following, setFollowing] = useState(true);
+  // Com o dedo na janela, a ancora congela no trecho em que o usuario parou.
+  // So muda no gesto; enquanto segue, a ancora nem e usada.
+  const [anchor, setAnchor] = useState(0);
+  const scrollRef = useRef<ScrollView>(null);
   const offsets = useRef<Record<number, { y: number; height: number }>>({});
-  // Cada medida incrementa o tick; o efeito abaixo recentraliza sem depender de
-  // um segundo render manual (e sem chamar setState dentro de efeito).
   const [layoutTick, setLayoutTick] = useState(0);
-  // Na primeira posicao a janela pula direto (sem deslizar ao abrir a nota).
   const positioned = useRef(false);
+  const resumeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const focus = following ? active : anchor;
 
   const handleLayout = useCallback((index: number, event: LayoutChangeEvent) => {
     const { y, height } = event.nativeEvent.layout;
@@ -74,67 +98,91 @@ export function SyncedTranscript({ player, segments, onOpen, onSeek }: SyncedTra
   }, []);
 
   useEffect(() => {
-    const info = offsets.current[active];
+    if (!following) return;
+    const info = offsets.current[focus];
     if (!info) return;
-    const target = CENTER - (info.y + info.height / 2);
-    translateY.value = positioned.current
-      ? withTiming(target, { duration: motionDuration(450), easing: Easing.inOut(Easing.ease) })
-      : target;
+    const target = Math.max(0, info.y - VIEWPORT / 2 + info.height / 2);
+    scrollRef.current?.scrollTo({ y: target, animated: positioned.current });
     positioned.current = true;
-  }, [active, layoutTick, translateY]);
+  }, [focus, following, layoutTick]);
 
-  const trackStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: translateY.value }],
-  }));
+  const pauseFollow = useCallback(() => {
+    if (resumeTimer.current) clearTimeout(resumeTimer.current);
+    setAnchor(active);
+    setFollowing(false);
+  }, [active]);
 
-  // So remonta as linhas quando o trecho ativo muda (nao a cada atualizacao de
-  // tempo, que roda ~4x/s durante o play). Renderiza uma janela em volta do
-  // trecho ativo: uma nota com horas de transcricao nao monta milhares de
-  // `Text` so para mostrar cinco linhas.
-  const start = Math.max(0, active - 2);
-  const end = Math.min(segments.length, start + VISIBLE + 3);
+  const scheduleResume = useCallback(() => {
+    if (resumeTimer.current) clearTimeout(resumeTimer.current);
+    resumeTimer.current = setTimeout(() => {
+      setFollowing(true);
+    }, RESUME_MS);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (resumeTimer.current) clearTimeout(resumeTimer.current);
+    },
+    [],
+  );
+
+  // Monta uma janela em volta da ancora: uma nota com horas de transcricao nao
+  // cria milhares de `Text` para mostrar cinco linhas.
+  const start = Math.max(0, Math.min(focus - WINDOW / 2, segments.length - WINDOW));
+  const end = Math.min(segments.length, start + WINDOW);
 
   const lines = useMemo(
     () =>
       segments.slice(start, end).map((segment, offset) => {
         const index = start + offset;
         return (
-          <Pressable
+          <Press
             key={`${segment.start_ms}-${index}`}
             onLayout={(event) => handleLayout(index, event)}
             onPress={() => onSeek?.(segment.start_ms)}
+            onLongPress={onEdit ? () => onEdit(segment.start_ms) : undefined}
+            delayLongPress={350}
             accessibilityLabel={`Ouvir a partir de ${formatDuration(segment.start_ms)}`}
           >
             <Text style={[styles.line, index === active && styles.lineActive]}>
               {segment.text}
             </Text>
-          </Pressable>
+          </Press>
         );
       }),
-    [segments, start, end, active, handleLayout, onSeek],
+    [segments, start, end, active, handleLayout, onSeek, onEdit],
   );
 
   return (
     <View style={styles.section}>
       <View style={styles.header}>
         <Text style={styles.label}>Transcrição</Text>
-        <Pressable
-          onPress={onOpen}
-          accessibilityLabel="Abrir transcrição completa"
-          hitSlop={8}
-        >
-          <Text style={styles.open}>Ver tudo</Text>
-        </Pressable>
+        {onOpen ? (
+          <Press onPress={onOpen} accessibilityLabel="Abrir transcrição completa" hitSlop={8}>
+            <Text style={styles.open}>Ver tudo</Text>
+          </Press>
+        ) : null}
       </View>
       <View style={styles.viewport}>
-        <Animated.View style={[styles.track, trackStyle]}>{lines}</Animated.View>
+        <ScrollView
+          ref={scrollRef}
+          testID="transcript-window"
+          showsVerticalScrollIndicator={false}
+          nestedScrollEnabled
+          scrollEventThrottle={32}
+          onScrollBeginDrag={pauseFollow}
+          onScrollEndDrag={scheduleResume}
+          onMomentumScrollEnd={scheduleResume}
+        >
+          {lines}
+        </ScrollView>
         <LinearGradient
-          colors={['rgba(0,0,0,1)', 'rgba(0,0,0,0)']}
+          colors={[colors.surface, 'rgba(0,0,0,0)']}
           style={styles.fadeTop}
           pointerEvents="none"
         />
         <LinearGradient
-          colors={['rgba(0,0,0,0)', 'rgba(0,0,0,1)']}
+          colors={['rgba(0,0,0,0)', colors.surface]}
           style={styles.fadeBottom}
           pointerEvents="none"
         />
@@ -155,11 +203,10 @@ const styles = StyleSheet.create({
     letterSpacing: 0.6,
   },
   viewport: { height: VIEWPORT, overflow: 'hidden' },
-  track: { position: 'absolute', left: 0, right: 0, top: 0 },
   line: {
     fontSize: fontSize.md,
     lineHeight: LINE,
-    paddingVertical: spacing.xs,
+    paddingVertical: LINE_PAD,
     color: colors.textSecondary,
   },
   lineActive: { color: colors.text },

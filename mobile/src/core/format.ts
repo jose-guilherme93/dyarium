@@ -95,3 +95,41 @@ export function formatDuration(ms: number): string {
   const pad = (n: number) => (n < 10 ? `0${n}` : String(n));
   return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
 }
+
+const WEEKDAYS = [
+  'domingo',
+  'segunda-feira',
+  'terça-feira',
+  'quarta-feira',
+  'quinta-feira',
+  'sexta-feira',
+  'sábado',
+] as const;
+
+const MONTHS = [
+  'janeiro',
+  'fevereiro',
+  'março',
+  'abril',
+  'maio',
+  'junho',
+  'julho',
+  'agosto',
+  'setembro',
+  'outubro',
+  'novembro',
+  'dezembro',
+] as const;
+
+/**
+ * Data e hora de agora para a tela de gravacao: dia da semana + data por
+ * extenso e hora 24 h. A hora corrente situa quem vai falar (o dia da semana
+ * costuma entrar na fala); o cronometro da gravacao e outra coisa.
+ */
+export function formatClock(now: Date): { date: string; time: string } {
+  const pad = (n: number) => (n < 10 ? `0${n}` : String(n));
+  return {
+    date: `${WEEKDAYS[now.getDay()]}, ${now.getDate()} de ${MONTHS[now.getMonth()]}`,
+    time: `${pad(now.getHours())}:${pad(now.getMinutes())}`,
+  };
+}

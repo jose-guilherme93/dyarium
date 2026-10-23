@@ -431,6 +431,7 @@ describe('corpo da nota em nos', () => {
       <NoteBody
         value={'A\n!audio[local:a.aac]{d=3}'}
         onChangeMarkdown={jest.fn()}
+        ownAudioRefs={['local:a.aac']}
         transcribingPercent={83}
         typography={typography}
       />,
@@ -446,6 +447,7 @@ describe('corpo da nota em nos', () => {
       <NoteBody
         value={'A\n!audio[local:a.aac]{d=3}'}
         onChangeMarkdown={jest.fn()}
+        ownAudioRefs={['local:a.aac']}
         canTranscribe
         onTranscribe={onTranscribe}
         typography={typography}
@@ -462,6 +464,7 @@ describe('corpo da nota em nos', () => {
       <NoteBody
         value={'A\n!audio[local:a.aac]{d=3}'}
         onChangeMarkdown={jest.fn()}
+        ownAudioRefs={['local:a.aac']}
         transcribingPercent={0}
         onStopTranscribe={onStopTranscribe}
         typography={typography}

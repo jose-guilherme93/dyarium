@@ -158,9 +158,17 @@ const mockPlayer = {
 };
 
 jest.mock('@/state/PlaybackContext', () => ({
+  usePlayback: () => mockPlayer,
   usePlaybackSource: () => mockPlayer,
+  usePlaySource: () => jest.fn(),
   useLoadPlayback: () => jest.fn(),
   usePauseOnUnmount: () => undefined,
+}));
+
+jest.mock('@/state/RecordingContext', () => ({
+  useRecording: () => ({
+    start: jest.fn(async () => undefined),
+  }),
 }));
 
 let mockStackAudios: {

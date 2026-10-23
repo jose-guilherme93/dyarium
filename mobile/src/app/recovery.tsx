@@ -1,7 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import { back, replace } from '@/services/appNavigation';
 import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Press } from '@/components/Press';
 
 import { Button } from '@/components/Button';
 import { Card } from '@/components/Card';
@@ -42,9 +43,9 @@ export default function RecoveryScreen() {
   return (
     <Screen>
       <View style={styles.header}>
-        <Pressable onPress={() => back()} style={styles.back} accessibilityLabel="Voltar">
+        <Press onPress={() => back()} style={styles.back} accessibilityLabel="Voltar">
           <Ionicons name="chevron-back" size={24} color={colors.text} />
-        </Pressable>
+        </Press>
         <Text style={styles.title}>Gravação interrompida</Text>
         <View style={styles.back} />
       </View>

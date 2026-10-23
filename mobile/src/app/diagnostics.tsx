@@ -8,13 +8,13 @@ import { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import { Press } from '@/components/Press';
 
 import { Button } from '@/components/Button';
 import { Card } from '@/components/Card';
@@ -263,21 +263,21 @@ export default function DiagnosticsScreen() {
   return (
     <Screen>
       <View style={styles.header}>
-        <Pressable
+        <Press
           onPress={() => back()}
           style={styles.iconButton}
           accessibilityLabel="Voltar"
         >
           <Ionicons name="chevron-back" size={24} color={colors.text} />
-        </Pressable>
+        </Press>
         <Text style={styles.headerTitle}>Diagnóstico</Text>
-        <Pressable
+        <Press
           onPress={() => void load()}
           style={styles.iconButton}
           accessibilityLabel="Atualizar"
         >
           <Ionicons name="refresh" size={20} color={colors.text} />
-        </Pressable>
+        </Press>
       </View>
 
       <ScrollView

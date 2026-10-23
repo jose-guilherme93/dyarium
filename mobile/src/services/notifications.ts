@@ -24,6 +24,19 @@ export async function ensureNotificationPermission(): Promise<boolean> {
   return requested.granted;
 }
 
+/**
+ * Permissao ja concedida, sem abrir dialogo. O inicio da gravacao nao pode
+ * esperar a resposta do usuario: sem a permissao ele grava em primeiro plano.
+ */
+export async function notificationPermissionGranted(): Promise<boolean> {
+  try {
+    const current = await Notifications.getPermissionsAsync();
+    return current.granted;
+  } catch {
+    return false;
+  }
+}
+
 export async function notify(title: string, body: string): Promise<void> {
   try {
     await Notifications.scheduleNotificationAsync({

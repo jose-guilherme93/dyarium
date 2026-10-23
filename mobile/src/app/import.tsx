@@ -4,13 +4,13 @@ import { replace } from '@/services/appNavigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { Press } from '@/components/Press';
 
 import { Button } from '@/components/Button';
 import { NotebookPicker } from '@/components/NotebookPicker';
@@ -75,7 +75,7 @@ function ItemCard({
   return (
     <View style={styles.card}>
       <View style={styles.cardHead}>
-        <Pressable
+        <Press
           style={[styles.play, !draft.supported && styles.playDisabled]}
           onPress={onTogglePlay}
           disabled={!draft.supported || !draft.filePath}
@@ -87,16 +87,16 @@ function ItemCard({
             color={draft.supported ? colors.text : colors.textTertiary}
             style={isPlaying ? undefined : { marginLeft: 2 }}
           />
-        </Pressable>
+        </Press>
         <View style={styles.cardHeadText}>
           <Text style={styles.original} numberOfLines={1}>
             {draft.originalName}
           </Text>
           <Text style={styles.meta}>{meta}</Text>
         </View>
-        <Pressable style={styles.remove} onPress={onRemove} accessibilityLabel="Remover">
+        <Press style={styles.remove} onPress={onRemove} accessibilityLabel="Remover">
           <Ionicons name="close" size={20} color={colors.textSecondary} />
-        </Pressable>
+        </Press>
       </View>
 
       {draft.supported ? (
@@ -389,9 +389,9 @@ export default function ImportReviewScreen() {
   return (
     <Screen>
       <View style={styles.header}>
-        <Pressable onPress={() => replace('/')} style={styles.back} accessibilityLabel="Voltar">
+        <Press onPress={() => replace('/')} style={styles.back} accessibilityLabel="Voltar">
           <Ionicons name="chevron-back" size={24} color={colors.text} />
-        </Pressable>
+        </Press>
         <Text style={styles.headerTitle}>Revisar importação</Text>
         <View style={styles.back} />
       </View>
@@ -411,7 +411,7 @@ export default function ImportReviewScreen() {
 
             <View style={styles.controlRow}>
               <Text style={styles.controlLabel}>Caderno</Text>
-              <Pressable
+              <Press
                 style={styles.segment}
                 onPress={() => setNotebookPickerOpen(true)}
                 accessibilityRole="button"
@@ -422,7 +422,7 @@ export default function ImportReviewScreen() {
                     'Notas ao acaso'}
                 </Text>
                 <Ionicons name="chevron-down" size={14} color={colors.textSecondary} />
-              </Pressable>
+              </Press>
             </View>
 
             <View style={styles.control}>
@@ -433,7 +433,7 @@ export default function ImportReviewScreen() {
                 contentContainerStyle={styles.yearRow}
               >
                 {YEARS.map((value) => (
-                  <Pressable
+                  <Press
                     key={value}
                     onPress={() => chooseYear(value)}
                     style={[styles.yearChip, year === value && styles.yearChipActive]}
@@ -442,7 +442,7 @@ export default function ImportReviewScreen() {
                     <Text style={[styles.yearText, year === value && styles.yearTextActive]}>
                       {value}
                     </Text>
-                  </Pressable>
+                  </Press>
                 ))}
               </ScrollView>
             </View>
@@ -450,7 +450,7 @@ export default function ImportReviewScreen() {
             <View style={styles.controlRow}>
               <Text style={styles.controlLabel}>Ordem dia/mês</Text>
               <View style={styles.segment}>
-                <Pressable
+                <Press
                   onPress={() => chooseInvert(false)}
                   style={[styles.segmentItem, !invert && styles.segmentItemActive]}
                   accessibilityRole="button"
@@ -458,8 +458,8 @@ export default function ImportReviewScreen() {
                   <Text style={[styles.segmentText, !invert && styles.segmentTextActive]}>
                     Dia/Mês
                   </Text>
-                </Pressable>
-                <Pressable
+                </Press>
+                <Press
                   onPress={() => chooseInvert(true)}
                   style={[styles.segmentItem, invert && styles.segmentItemActive]}
                   accessibilityRole="button"
@@ -467,21 +467,21 @@ export default function ImportReviewScreen() {
                   <Text style={[styles.segmentText, invert && styles.segmentTextActive]}>
                     Mês/Dia
                   </Text>
-                </Pressable>
+                </Press>
               </View>
             </View>
 
             <View style={styles.controlRow}>
               <Text style={styles.controlLabel}>Formato de hora</Text>
               <View style={styles.segment}>
-                <Pressable
+                <Press
                   onPress={() => setTimeFormat(true)}
                   style={[styles.segmentItem, use24h && styles.segmentItemActive]}
                   accessibilityRole="button"
                 >
                   <Text style={[styles.segmentText, use24h && styles.segmentTextActive]}>24h</Text>
-                </Pressable>
-                <Pressable
+                </Press>
+                <Press
                   onPress={() => setTimeFormat(false)}
                   style={[styles.segmentItem, !use24h && styles.segmentItemActive]}
                   accessibilityRole="button"
@@ -489,7 +489,7 @@ export default function ImportReviewScreen() {
                   <Text style={[styles.segmentText, !use24h && styles.segmentTextActive]}>
                     AM/PM
                   </Text>
-                </Pressable>
+                </Press>
               </View>
             </View>
 

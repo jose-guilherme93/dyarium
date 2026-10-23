@@ -7,8 +7,11 @@
  * saber o que existe por tras.
  */
 
+import type { AudioPlayer } from 'expo-audio';
+
 import type { NoteInsertPosition } from '@/core/noteDocument';
 import type { FormatType } from '@/core/richText';
+import type { TranscriptSegment } from '@/core/types';
 
 export type { FormatType };
 export type { NoteInsertPosition };
@@ -44,10 +47,23 @@ export interface NoteBodyProps {
   onChangeMarkdown: (markdown: string) => void;
   /** Mapa referencia salva -> fonte de exibicao (arquivo local ou URL). */
   imageSources?: Record<string, string>;
-  /** Resolve a fonte de um no de audio (`local:` ou `attachment:`). */
-  audioSource?: (ref: string) => Promise<string | null> | string | null;
   /** Transcricao de cada audio, por referencia. */
   audioTranscripts?: Record<string, string>;
+  /** Segmentos com minutagem de cada audio, por referencia. */
+  audioSegments?: Record<string, TranscriptSegment[]>;
+  /** Referencia do audio que esta no player. */
+  activeAudioRef?: string | null;
+  /** Player unico do app: o card de audio nao cria player proprio. */
+  audioPlayer?: AudioPlayer | null;
+  /** Trecho inicial do audio ativo, quando a reproducao veio da transcricao. */
+  audioStartMs?: number | null;
+  /**
+   * Referencias do audio da propria nota (pode aparecer como `local:` ou como
+   * `attachment:`). So ele tem transcricao completa e recebe o progresso.
+   */
+  ownAudioRefs?: string[];
+  /** Transcricao pedida e ainda sem andamento (ex.: feita no servidor). */
+  transcribingWait?: boolean;
   /** Progresso (0..100) da transcricao local da nota, enquanto ela roda. */
   transcribingPercent?: number;
   /** Ha audio sem transcricao e modelo local disponivel? */
@@ -56,6 +72,12 @@ export interface NoteBodyProps {
   onTranscribe?: () => void;
   /** Para a transcricao local em andamento. */
   onStopTranscribe?: () => void;
+  /** Toca um audio do corpo (do inicio ou de um trecho). */
+  onPlayAudio?: (ref: string, startMs?: number) => void;
+  /** Abre a transcricao completa da nota. */
+  onOpenTranscript?: () => void;
+  /** Abre a edicao de um trecho da transcricao completa. */
+  onEditTranscript?: (startMs: number) => void;
   typography?: import('@/core/typography').NoteTypography;
   /** Abre a foto em tela cheia. */
   onImageOpen?: (src: string) => void;

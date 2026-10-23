@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
+import { Press } from '@/components/Press';
 
 import { tagColor, withAlpha } from '@/core/tags';
 import { fontSize, radius, spacing } from '@/theme/tokens';
@@ -64,26 +65,26 @@ export function TagChip({
 
   if (onRemove) {
     return (
-      <Pressable
+      <Press
         onPress={onRemove}
         accessibilityRole="button"
         accessibilityLabel={`Remover tag ${name}`}
         hitSlop={4}
       >
         {body}
-      </Pressable>
+      </Press>
     );
   }
   if (onPress) {
     return (
-      <Pressable
+      <Press
         onPress={onPress}
         accessibilityRole="button"
         accessibilityState={{ selected }}
         accessibilityLabel={`Tag ${name}${typeof count === 'number' ? `, ${count} notas` : ''}`}
       >
         {body}
-      </Pressable>
+      </Press>
     );
   }
   return body;

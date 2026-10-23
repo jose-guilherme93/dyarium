@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Pressable, StyleSheet } from 'react-native';
+import { StyleSheet } from 'react-native';
+import { Press } from '@/components/Press';
 
 import { TagChip } from '@/components/TagChip';
 import { TagStrip } from '@/components/TagStrip';
@@ -19,7 +20,7 @@ export function NoteMetaRow({ note, onAddTag, onRemoveTag }: NoteMetaRowProps) {
       {(note.tags ?? []).map((tag) => (
         <TagChip key={tag.toLowerCase()} name={tag} onRemove={() => onRemoveTag(tag)} />
       ))}
-      <Pressable
+      <Press
         onPress={onAddTag}
         style={styles.add}
         accessibilityRole="button"
@@ -27,7 +28,7 @@ export function NoteMetaRow({ note, onAddTag, onRemoveTag }: NoteMetaRowProps) {
         hitSlop={4}
       >
         <Ionicons name="pricetag-outline" size={14} color={colors.textSecondary} />
-      </Pressable>
+      </Press>
     </TagStrip>
   );
 }

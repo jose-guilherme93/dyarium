@@ -5,12 +5,12 @@ import { useMemo, useState } from 'react';
 import {
   Alert,
   FlatList,
-  Pressable,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { Press } from '@/components/Press';
 
 import { FastModal } from '@/components/FastModal';
 import { NotebookForm } from '@/components/NotebookForm';
@@ -109,9 +109,9 @@ export default function NotebooksScreen() {
   const header = (
     <View style={styles.header}>
       {canGoBack ? (
-        <Pressable onPress={closeOrHome} style={styles.iconButton} accessibilityLabel="Voltar">
+        <Press onPress={closeOrHome} style={styles.iconButton} accessibilityLabel="Voltar">
           <Ionicons name="chevron-back" size={24} color={colors.text} />
-        </Pressable>
+        </Press>
       ) : (
         <View style={styles.iconButton} />
       )}
@@ -124,7 +124,7 @@ export default function NotebooksScreen() {
         </Text>
       </View>
       <View style={styles.headerActions}>
-        <Pressable
+        <Press
           onPress={() => void setNotebooksAlphabetical(!notebooksAlphabetical)}
           style={styles.iconButton}
           accessibilityLabel={notebooksAlphabetical ? 'Ordenar por criação' : 'Ordenar A-Z'}
@@ -134,14 +134,14 @@ export default function NotebooksScreen() {
             size={20}
             color={colors.textSecondary}
           />
-        </Pressable>
-        <Pressable
+        </Press>
+        <Press
           onPress={() => setForm({ mode: 'create' })}
           style={styles.iconButton}
           accessibilityLabel="Novo caderno"
         >
           <Ionicons name="add" size={24} color={colors.text} />
-        </Pressable>
+        </Press>
       </View>
     </View>
   );
@@ -160,9 +160,9 @@ export default function NotebooksScreen() {
           style={styles.searchInput}
         />
         {query ? (
-          <Pressable onPress={() => setQuery('')} accessibilityLabel="Limpar busca">
+          <Press onPress={() => setQuery('')} accessibilityLabel="Limpar busca">
             <Ionicons name="close-circle" size={16} color={colors.textTertiary} />
-          </Pressable>
+          </Press>
         ) : null}
       </View>
 
@@ -227,10 +227,10 @@ export default function NotebooksScreen() {
       />
 
       <FastModal visible={actionsNotebook !== null} onRequestClose={() => setActionsNotebook(null)}>
-        <Pressable style={styles.sheetBackdrop} onPress={() => setActionsNotebook(null)}>
-          <Pressable style={styles.sheet} onPress={() => undefined}>
+        <Press style={styles.sheetBackdrop} onPress={() => setActionsNotebook(null)}>
+          <Press style={styles.sheet} onPress={() => undefined}>
             <Text style={styles.sheetTitle}>{actionsNotebook?.name}</Text>
-            <Pressable
+            <Press
               style={styles.sheetRow}
               onPress={() => {
                 const notebook = actionsNotebook;
@@ -240,8 +240,8 @@ export default function NotebooksScreen() {
             >
               <Ionicons name="create-outline" size={18} color={colors.text} />
               <Text style={styles.sheetText}>Renomear</Text>
-            </Pressable>
-            <Pressable
+            </Press>
+            <Press
               style={styles.sheetRow}
               onPress={() => {
                 const notebook = actionsNotebook;
@@ -251,8 +251,8 @@ export default function NotebooksScreen() {
             >
               <Ionicons name="color-palette-outline" size={18} color={colors.text} />
               <Text style={styles.sheetText}>Cor</Text>
-            </Pressable>
-            <Pressable
+            </Press>
+            <Press
               style={styles.sheetRow}
               onPress={() => {
                 const notebook = actionsNotebook;
@@ -262,12 +262,12 @@ export default function NotebooksScreen() {
             >
               <Ionicons name="trash-outline" size={18} color={colors.danger} />
               <Text style={[styles.sheetText, styles.sheetDanger]}>Excluir</Text>
-            </Pressable>
-            <Pressable style={styles.sheetRow} onPress={() => setActionsNotebook(null)}>
+            </Press>
+            <Press style={styles.sheetRow} onPress={() => setActionsNotebook(null)}>
               <Text style={styles.sheetText}>Cancelar</Text>
-            </Pressable>
-          </Pressable>
-        </Pressable>
+            </Press>
+          </Press>
+        </Press>
       </FastModal>
     </Screen>
   );
@@ -289,7 +289,7 @@ function NotebookRow({
   onLongPress(): void;
 }) {
   return (
-    <Pressable
+    <Press
       onPress={onPress}
       onLongPress={onLongPress}
       delayLongPress={350}
@@ -316,7 +316,7 @@ function NotebookRow({
         </Text>
       </View>
       {active ? <Ionicons name="checkmark" size={20} color={colors.accent} /> : null}
-    </Pressable>
+    </Press>
   );
 }
 

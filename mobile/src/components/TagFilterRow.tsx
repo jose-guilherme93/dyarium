@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
+import { Press } from '@/components/Press';
 
 import { TagChip } from '@/components/TagChip';
 import { TagStrip } from '@/components/TagStrip';
@@ -17,7 +18,7 @@ export function TagFilterRow({ tags, selected, onToggle, onClear, onManage }: Ta
   return (
     <View style={styles.row}>
       <TagStrip>
-        <Pressable
+        <Press
           onPress={onClear}
           accessibilityRole="button"
           accessibilityState={{ selected: selected.length === 0 }}
@@ -26,7 +27,7 @@ export function TagFilterRow({ tags, selected, onToggle, onClear, onManage }: Ta
           <Text style={[styles.allText, selected.length === 0 ? styles.allTextOn : null]}>
             Todas
           </Text>
-        </Pressable>
+        </Press>
         {tags.map((tag) => (
           <TagChip
             key={tag.name.toLowerCase()}
@@ -36,7 +37,7 @@ export function TagFilterRow({ tags, selected, onToggle, onClear, onManage }: Ta
             onPress={() => onToggle(tag.name)}
           />
         ))}
-        <Pressable
+        <Press
           onPress={onManage}
           accessibilityRole="button"
           accessibilityLabel="Gerenciar tags"
@@ -44,7 +45,7 @@ export function TagFilterRow({ tags, selected, onToggle, onClear, onManage }: Ta
         >
           <Ionicons name="pricetags-outline" size={14} color={colors.textSecondary} />
           <Text style={styles.manageText}>{tags.length > 0 ? 'Tags' : 'Gerenciar tags'}</Text>
-        </Pressable>
+        </Press>
       </TagStrip>
     </View>
   );

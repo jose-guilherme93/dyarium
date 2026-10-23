@@ -33,7 +33,6 @@ import {
   ActivityIndicator,
   Alert,
   Image,
-  Pressable,
   StyleSheet,
   Text,
   useWindowDimensions,
@@ -41,6 +40,7 @@ import {
   type LayoutChangeEvent,
   type NativeSyntheticEvent,
 } from 'react-native';
+import { Press } from '@/components/Press';
 import {
   EnrichedTextInput,
   type EnrichedInputStyle,
@@ -63,6 +63,7 @@ import {
 } from '@/core/noteDocument';
 import { htmlToMarkdown, markdownToHtml, noteImages } from '@/core/noteHtml';
 import { fontFamilyNative, fontWeightNative } from '@/core/typography';
+import type { TranscriptSegment } from '@/core/types';
 import { cachedImageRatio, imageRatio, measureImageRatio, rememberImageRatio } from '@/services/imageRatios';
 import { colors, radius, spacing } from '@/theme/tokens';
 
@@ -78,6 +79,8 @@ export type { FormatType, NoteBodyHandle, NoteBodyProps } from './noteBodyTypes'
 const FLUSH_MS = 4000;
 const MIN_TEXT_HEIGHT = 28;
 const EMPTY_SOURCES: Record<string, string> = {};
+const EMPTY_SEGMENTS: Record<string, TranscriptSegment[]> = {};
+const EMPTY_REFS: string[] = [];
 
 type Selection = { start: number; end: number; text: string };
 
@@ -122,12 +125,20 @@ const NativeNoteBody = memo(
       value,
       onChangeMarkdown,
       imageSources = EMPTY_SOURCES,
-      audioSource,
       audioTranscripts = {},
+      audioSegments = EMPTY_SEGMENTS,
+      activeAudioRef,
+      audioPlayer,
+      audioStartMs,
+      ownAudioRefs = EMPTY_REFS,
+      transcribingWait,
       transcribingPercent,
       canTranscribe,
       onTranscribe,
       onStopTranscribe,
+      onPlayAudio,
+      onOpenTranscript,
+      onEditTranscript,
       typography,
       onImageOpen,
       placeholder,
@@ -691,16 +702,25 @@ const NativeNoteBody = memo(
         );
       }
 
+      const own = ownAudioRefs.includes(node.ref);
       return (
         <NoteAudioCard
           key={node.id}
           node={node}
-          resolve={audioSource}
           transcript={audioTranscripts[node.ref]}
-          transcribingPercent={transcribingPercent}
-          canTranscribe={canTranscribe}
-          onTranscribe={onTranscribe}
-          onStopTranscribe={onStopTranscribe}
+          segments={audioSegments[node.ref]}
+          active={activeAudioRef === node.ref}
+          player={activeAudioRef === node.ref ? audioPlayer : null}
+          startMs={activeAudioRef === node.ref ? audioStartMs : null}
+          transcribingPercent={own ? transcribingPercent : undefined}
+          transcribingWait={own && transcribingWait}
+          canTranscribe={own && canTranscribe}
+          onTranscribe={own ? onTranscribe : undefined}
+          onStopTranscribe={own ? onStopTranscribe : undefined}
+          onPlay={() => onPlayAudio?.(node.ref)}
+          onPlayFrom={(startMs) => onPlayAudio?.(node.ref, startMs)}
+          onOpenTranscript={own ? onOpenTranscript : undefined}
+          onEditTranscript={own ? onEditTranscript : undefined}
           onRemove={() => confirmRemove('áudio', node.id)}
         />
       );
@@ -732,11 +752,11 @@ const NativeNoteBody = memo(
             botoes, e o remover sumia da lista. */}
         {imageMenu ? (
           <FastModal visible transparent onRequestClose={() => setImageMenuId(null)}>
-            <Pressable style={styles.sheetBackdrop} onPress={() => setImageMenuId(null)}>
+            <Press style={styles.sheetBackdrop} onPress={() => setImageMenuId(null)}>
               <View style={styles.sheet}>
                 <Text style={styles.sheetTitle}>Foto</Text>
                 {IMAGE_WIDTH_OPTIONS.map((option) => (
-                  <Pressable
+                  <Press
                     key={option.label}
                     style={styles.sheetRow}
                     accessibilityRole="button"
@@ -746,9 +766,9 @@ const NativeNoteBody = memo(
                     }}
                   >
                     <Text style={styles.sheetText}>{option.label}</Text>
-                  </Pressable>
+                  </Press>
                 ))}
-                <Pressable
+                <Press
                   style={styles.sheetRow}
                   accessibilityRole="button"
                   onPress={() => {
@@ -757,9 +777,9 @@ const NativeNoteBody = memo(
                   }}
                 >
                   <Text style={[styles.sheetText, styles.sheetDanger]}>Remover foto</Text>
-                </Pressable>
+                </Press>
               </View>
-            </Pressable>
+            </Press>
           </FastModal>
         ) : null}
       </View>
@@ -879,7 +899,7 @@ function ImageBlock({
   return (
     <View style={[styles.imageBlock, { width: `${node.width}%` }]}>
       {src ? (
-        <Pressable
+        <Press
           onPress={() => onOpen?.(src)}
           accessibilityRole="imagebutton"
           accessibilityLabel={node.alt || 'Foto da nota'}
@@ -889,21 +909,21 @@ function ImageBlock({
             style={[styles.image, { aspectRatio: ratio }]}
             resizeMode="cover"
           />
-        </Pressable>
+        </Press>
       ) : (
         <View style={styles.imagePlaceholder}>
           <Ionicons name="image-outline" size={20} color={colors.textTertiary} />
           <Text style={styles.imagePlaceholderText}>Foto</Text>
         </View>
       )}
-      <Pressable
+      <Press
         style={styles.imageInfo}
         onPress={onOptions}
         accessibilityLabel="Opções da foto"
         hitSlop={10}
       >
         <Ionicons name="information-circle-outline" size={18} color={colors.text} />
-      </Pressable>
+      </Press>
     </View>
   );
 }
