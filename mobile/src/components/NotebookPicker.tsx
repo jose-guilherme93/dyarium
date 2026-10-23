@@ -10,6 +10,12 @@ interface NotebookPickerProps {
   visible: boolean;
   notebooks: Notebook[];
   currentId?: string;
+  title?: string;
+  /** Marca "Páginas recentes" como o escopo atual da home. */
+  recentSelected?: boolean;
+  onSelectRecent?(): void;
+  /** Abre a tela de cadernos para criar, renomear ou excluir. */
+  onManage?(): void;
   onClose(): void;
   onSelect(id: string): void;
 }
@@ -18,6 +24,10 @@ export function NotebookPicker({
   visible,
   notebooks,
   currentId,
+  title = 'Mover para caderno',
+  recentSelected = false,
+  onSelectRecent,
+  onManage,
   onClose,
   onSelect,
 }: NotebookPickerProps) {
@@ -25,8 +35,26 @@ export function NotebookPicker({
     <FastModal visible={visible} onRequestClose={onClose}>
       <Press style={styles.backdrop} onPress={onClose}>
         <Press style={styles.card} onPress={() => undefined}>
-          <Text style={styles.title}>Mover para caderno</Text>
+          <Text style={styles.title}>{title}</Text>
           <ScrollView style={styles.list} showsVerticalScrollIndicator={false}>
+            {onSelectRecent ? (
+              <Press
+                style={[styles.row, recentSelected ? styles.rowOn : null]}
+                onPress={onSelectRecent}
+                accessibilityRole="button"
+                accessibilityState={{ selected: recentSelected }}
+              >
+                <View style={styles.iconSlot}>
+                  <Ionicons name="time-outline" size={14} color={colors.textSecondary} />
+                </View>
+                <Text style={styles.name} numberOfLines={1}>
+                  Páginas recentes
+                </Text>
+                {recentSelected ? (
+                  <Ionicons name="checkmark" size={18} color={colors.accent} />
+                ) : null}
+              </Press>
+            ) : null}
             {notebooks.map((notebook) => {
               const active = notebook.id === currentId;
               return (
@@ -51,6 +79,12 @@ export function NotebookPicker({
               );
             })}
           </ScrollView>
+          {onManage ? (
+            <Press style={styles.manage} onPress={onManage} accessibilityRole="button">
+              <Ionicons name="add-circle-outline" size={20} color={colors.accent} />
+              <Text style={styles.manageText}>Novo ou gerenciar cadernos</Text>
+            </Press>
+          ) : null}
         </Press>
       </Press>
     </FastModal>
@@ -82,6 +116,17 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
   },
   rowOn: { backgroundColor: colors.surface },
+  iconSlot: { width: 10, alignItems: 'center' },
   dot: { width: 10, height: 10, borderRadius: 5 },
   name: { flex: 1, color: colors.text, fontSize: fontSize.md },
+  manage: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingTop: spacing.md,
+    paddingHorizontal: spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+  },
+  manageText: { color: colors.accent, fontSize: fontSize.sm, fontWeight: '600' },
 });

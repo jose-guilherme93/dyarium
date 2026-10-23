@@ -52,7 +52,7 @@ export function TagFilterRow({ tags, selected, onToggle, onClear, onManage }: Ta
 }
 
 const styles = StyleSheet.create({
-  row: { marginBottom: spacing.md },
+  row: { marginBottom: spacing.xs },
   all: {
     borderRadius: radius.pill,
     borderWidth: StyleSheet.hairlineWidth,

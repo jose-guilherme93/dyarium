@@ -138,6 +138,18 @@ Superficie Android em Expo (development build). O nucleo puro fica em `mobile/sr
   comuns movida pelo medidor (4 Hz), sem animacao por frame, e a tela mostra a
   hora, o dia da semana e a data por extenso. A barra de acoes acima do teclado
   rola na horizontal e leva a gravacao de audio, a foto, o link e a formatacao.
+- Home compacta: paginas recentes por padrao, sem alternador de modo nem barra
+  de busca fixa. O caderno vira um icone no topo que abre uma folha com as
+  paginas recentes, os cadernos e o atalho para criar ou gerenciar. A busca so
+  aparece ao tocar na lupa, e cada nota e uma linha de largura total com divisor,
+  sem cartao e sem margem externa (estilo OneNote).
+- Centro de atividade na home, ao lado da nuvem: transcricao, analise local,
+  backup/restauracao e download de modelo publicam inicio, progresso e fim num
+  store em memoria. A folha mostra a fase real (trecho transcrito, tokens
+  gerados, notas copiadas) e guarda as concluidas recentes ate serem limpas. Uma
+  falha ou interrupcao oferece uma acao de recuperacao: tentar de novo
+  (transcricao, backup, restauracao e download) ou abrir a nota (analise). O
+  estado da fila de envio continua no icone da nuvem.
 - Transcricao no aparelho (opcional, nas Opcoes): usa `whisper.rn` (whisper.cpp) com modelos
   ggml baixados em runtime (Tiny..Large v3 Turbo), recomendado pela RAM; o audio AAC e
   decodificado para 16 kHz por um modulo nativo local (sem ffmpeg) e transcrito offline, com o texto

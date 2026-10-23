@@ -21,6 +21,8 @@ interface RecordingCardProps {
   onLongPress?: (item: Recording, anchor: { x: number; y: number }) => void;
   /** Nome do caderno, mostrado na busca global. */
   notebookLabel?: string;
+  /** Linha compacta da home, sem cartao arredondado e com divisor. */
+  dense?: boolean;
 }
 
 /**
@@ -34,6 +36,7 @@ export const RecordingCard = memo(function RecordingCard({
   onOpen,
   onLongPress,
   notebookLabel,
+  dense = false,
 }: RecordingCardProps) {
   useRenderCount('RecordingCard');
   const hasAudio = Boolean(recording.filePath);
@@ -51,9 +54,9 @@ export const RecordingCard = memo(function RecordingCard({
   const percent = livePercent > 0 ? Math.round(livePercent) : checkpointPercent(recording);
 
   return (
-    <View style={styles.wrap}>
+    <View style={[styles.wrap, dense ? styles.wrapDense : null]}>
       <Press
-        style={styles.content}
+        style={[styles.content, dense ? styles.contentDense : null]}
         onPress={() => onOpen?.(recording.id)}
         onLongPress={(event: GestureResponderEvent) =>
           onLongPress?.(recording, { x: event.nativeEvent.pageX, y: event.nativeEvent.pageY })
@@ -122,7 +125,14 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     overflow: 'hidden',
   },
+  wrapDense: {
+    backgroundColor: colors.bg,
+    borderRadius: 0,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
   content: { padding: spacing.md, gap: 3 },
+  contentDense: { paddingHorizontal: spacing.lg, paddingVertical: 10, gap: 2 },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   title: { flex: 1, color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
   transcribing: {

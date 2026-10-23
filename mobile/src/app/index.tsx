@@ -1,30 +1,29 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { push, replace } from '@/services/appNavigation';
+import { push } from '@/services/appNavigation';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
   RefreshControl,
-  SectionList,
   Share,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import { Press } from '@/components/Press';
 import { Swipeable } from 'react-native-gesture-handler';
 
+import { ActivityCenter } from '@/components/ActivityCenter';
+import { HomeHeader } from '@/components/HomeHeader';
 import { NoteActionsSheet } from '@/components/NoteActionsSheet';
 import type { NoteProperty } from '@/components/NoteMenu';
+import { NotebookPicker } from '@/components/NotebookPicker';
 import { RecordingCard } from '@/components/RecordingCard';
 import { Screen } from '@/components/Screen';
 import { STATUS_META } from '@/components/StatusChip';
 import { TagFilterRow } from '@/components/TagFilterRow';
 import { formatBytes, formatDateTime, noteDateIso, utf8ByteLength } from '@/core/format';
-import { groupRecordingsByYear, type RecordingSection } from '@/core/group';
 import {
-  noteMatches,
   notesInNotebook,
   recentNotes,
   recordingNotebookId,
@@ -110,6 +109,7 @@ const NoteRow = memo(function NoteRow({
     >
       <RecordingCard
         recording={item}
+        dense
         notebookLabel={notebookLabel}
         onOpen={onOpen}
         onLongPress={onLongPress}
@@ -119,10 +119,6 @@ const NoteRow = memo(function NoteRow({
 });
 
 // Identidade estavel: evita re-render dos cards a cada atualizacao da lista.
-function ItemSeparator() {
-  return <View style={styles.separator} />;
-}
-
 function keyExtractor(item: Recording) {
   return item.id;
 }
@@ -144,52 +140,42 @@ export default function NotebookScreen() {
   const { swipeAction, lastNotebookId, setLastNotebookId } = useSettings();
   useRenderCount('NotebookScreen');
 
-  const [viewMode, setViewMode] = useState<'recent' | 'notebook'>('recent');
   const [query, setQuery] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [newMenuOpen, setNewMenuOpen] = useState(false);
+  const [notebookPickerOpen, setNotebookPickerOpen] = useState(false);
+  const [activityOpen, setActivityOpen] = useState(false);
+  // `null` = paginas recentes (todos os cadernos); um id = so aquele caderno.
+  const [scopeId, setScopeId] = useState<string | null>(null);
   const [actionsNote, setActionsNote] = useState<Recording | null>(null);
   const [actionsProps, setActionsProps] = useState<NoteProperty[]>([]);
   const [actionsAnchor, setActionsAnchor] = useState<{ x: number; y: number } | null>(null);
 
-  const currentNotebook =
+  const scopeNotebook = scopeId
+    ? notebooks.find((notebook) => notebook.id === scopeId)
+    : undefined;
+  // O caderno do escopo tambem e o destino de novas notas; sem escopo, vale o
+  // ultimo escolhido e, por fim, o padrao.
+  const targetNotebook =
+    scopeNotebook ??
     notebooks.find((notebook) => notebook.id === lastNotebookId) ??
-    (notebooks.length === 1 ? notebooks[0] : undefined);
-  const redirectedRef = useRef(false);
+    notebooks.find((notebook) => notebook.isDefault) ??
+    notebooks[0];
   // Handlers da lista nao podem depender de `notebooks`: cada refresh do banco
   // troca a identidade da lista, e isso recriava `openActions` e re-renderizava
   // todos os cards. As refs guardam a versao mais nova sem mudar os handlers.
   const notebooksRef = useRef(notebooks);
-  const currentNotebookRef = useRef(currentNotebook);
+  const targetNotebookRef = useRef(targetNotebook);
   useEffect(() => {
     notebooksRef.current = notebooks;
   }, [notebooks]);
   useEffect(() => {
-    currentNotebookRef.current = currentNotebook;
-  }, [currentNotebook]);
+    targetNotebookRef.current = targetNotebook;
+  }, [targetNotebook]);
 
-  // Sem caderno valido e com mais de um, a escolha e a tela inicial.
-  useEffect(() => {
-    if (!ready || notebooks.length === 0) return;
-    if (currentNotebook) {
-      if (lastNotebookId !== currentNotebook.id) void setLastNotebookId(currentNotebook.id);
-      return;
-    }
-    if (!redirectedRef.current) {
-      redirectedRef.current = true;
-      replace('/notebooks');
-    }
-  }, [ready, notebooks.length, currentNotebook, lastNotebookId, setLastNotebookId]);
-
-  // Entrar em outro caderno zera busca e tags; o filtro nao fica preso.
-  const notebookId = currentNotebook?.id ?? DEFAULT_NOTEBOOK_ID;
-  useEffect(() => {
-    // Reset deliberado ao trocar de caderno ou de modo: filtros nao ficam presos.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setSelectedTags([]);
-    setQuery('');
-  }, [notebookId, viewMode]);
+  const notebookId = targetNotebook?.id ?? DEFAULT_NOTEBOOK_ID;
 
   const pending = recordings.filter(
     (r) => PENDING_STATUSES.includes(r.status) || needsNoteSync(r),
@@ -201,51 +187,25 @@ export default function NotebookScreen() {
     : pending > 0
       ? 'syncing'
       : 'ok';
-  const syncIcon =
-    syncState === 'error'
-      ? 'cloud-offline-outline'
-      : syncState === 'syncing'
-        ? 'cloud-upload-outline'
-        : 'cloud-done-outline';
 
-  const notebookFilter = useMemo(
-    () => ({ notebookId, tags: selectedTags, query }),
-    [notebookId, selectedTags, query],
-  );
-  const activeNotes = useMemo(
-    () => notesInNotebook(recordings, notebookFilter),
-    [recordings, notebookFilter],
-  );
-  const archivedNotes = useMemo(
+  const noteList = useMemo(
     () =>
-      recordings.filter(
-        (recording) => recording.archived && noteMatches(recording, notebookFilter),
-      ),
-    [recordings, notebookFilter],
-  );
-  const sections: RecordingSection[] = useMemo(() => {
-    const grouped = groupRecordingsByYear(activeNotes);
-    if (archivedNotes.length > 0) {
-      grouped.push({ year: 0, title: 'Arquivadas', data: archivedNotes });
-    }
-    return grouped;
-  }, [activeNotes, archivedNotes]);
-  const recentList = useMemo(
-    () => recentNotes(recordings, { tags: selectedTags, query }),
-    [recordings, selectedTags, query],
+      scopeNotebook
+        ? notesInNotebook(recordings, {
+            notebookId: scopeNotebook.id,
+            tags: selectedTags,
+            query,
+          })
+        : recentNotes(recordings, { tags: selectedTags, query }),
+    [recordings, scopeNotebook, selectedTags, query],
   );
   const notebookNames = useMemo(
     () => new Map(notebooks.map((notebook) => [notebook.id, notebook.name])),
     [notebooks],
   );
   const tagCounts = useMemo(
-    () =>
-      tagCountsForFilter(
-        recordings,
-        viewMode === 'recent' ? null : notebookId,
-        selectedTags,
-      ),
-    [recordings, viewMode, notebookId, selectedTags],
+    () => tagCountsForFilter(recordings, scopeNotebook?.id ?? null, selectedTags),
+    [recordings, scopeNotebook, selectedTags],
   );
 
   const onRefresh = useCallback(async () => {
@@ -291,7 +251,7 @@ export default function NotebookScreen() {
     const bytes = directoryBytes(sessionDirectory(item.id)) + utf8ByteLength(plain);
     const notebook =
       notebooksRef.current.find((entry) => entry.id === (item.notebookId || DEFAULT_NOTEBOOK_ID)) ??
-      currentNotebookRef.current;
+      targetNotebookRef.current;
     setActionsAnchor(anchor);
     setActionsNote(item);
     setActionsProps([
@@ -354,27 +314,36 @@ export default function NotebookScreen() {
     );
   }, []);
 
-  const renderItem = useCallback(
-    ({ item }: { item: Recording }) => (
-      <NoteRow
-        item={item}
-        swipeDelete={swipeDelete}
-        onOpen={openNote}
-        onLongPress={openActions}
-        onRemove={removeNote}
-        onArchive={archive}
-        onUnarchive={unarchive}
-      />
-    ),
-    [swipeDelete, openNote, openActions, removeNote, archive, unarchive],
+  const toggleSearch = useCallback(() => {
+    if (searchOpen) {
+      setSearchOpen(false);
+      setQuery('');
+      return;
+    }
+    setSearchOpen(true);
+  }, [searchOpen]);
+
+  const selectScope = useCallback(
+    (id: string | null) => {
+      setScopeId(id);
+      setNotebookPickerOpen(false);
+      setQuery('');
+      setSelectedTags([]);
+      if (id) void setLastNotebookId(id);
+    },
+    [setLastNotebookId],
   );
 
-  const renderRecentItem = useCallback(
+  const renderNote = useCallback(
     ({ item }: { item: Recording }) => (
       <NoteRow
         item={item}
         swipeDelete={swipeDelete}
-        notebookLabel={notebookNames.get(recordingNotebookId(item)) ?? 'Notas ao acaso'}
+        notebookLabel={
+          scopeNotebook
+            ? undefined
+            : (notebookNames.get(recordingNotebookId(item)) ?? 'Notas ao acaso')
+        }
         onOpen={openNote}
         onLongPress={openActions}
         onRemove={removeNote}
@@ -384,6 +353,7 @@ export default function NotebookScreen() {
     ),
     [
       swipeDelete,
+      scopeNotebook,
       notebookNames,
       openNote,
       openActions,
@@ -393,16 +363,9 @@ export default function NotebookScreen() {
     ],
   );
 
-  const renderSectionHeader = useCallback(
-    ({ section }: { section: RecordingSection }) => (
-      <Text style={styles.sectionHeader}>{section.title}</Text>
-    ),
-    [],
-  );
-
   if (!ready) {
-    // Evita piscar "Escolha um caderno" antes de o SQLite entregar o caderno
-    // salvo; a tela ja esta preta como o resto do app.
+    // Evita piscar a tela vazia antes de o SQLite entregar cadernos e notas; a
+    // tela ja esta preta como o resto do app.
     return (
       <Screen style={styles.screen}>
         <View />
@@ -410,109 +373,23 @@ export default function NotebookScreen() {
     );
   }
 
-  if (!currentNotebook) {
-    return (
-      <Screen style={styles.screen}>
-        <View style={styles.header}>
-          <Text style={styles.largeTitle}>Cadernos</Text>
-        </View>
-        <View style={styles.empty}>
-          <Text style={styles.emptyTitle}>Escolha um caderno</Text>
-        </View>
-      </Screen>
-    );
-  }
-
   return (
     <Screen style={styles.screen}>
-      <View style={styles.header}>
-        <View style={styles.headerActions}>
-          <Press
-            style={styles.iconButton}
-            onPress={() => push('/sync')}
-            accessibilityLabel="Sincronização"
-          >
-            <Ionicons name={syncIcon} size={22} color={colors.textTertiary} />
-            {syncState !== 'ok' ? (
-              <View
-                style={[
-                  styles.syncDot,
-                  { backgroundColor: syncState === 'error' ? colors.danger : colors.accent },
-                ]}
-              />
-            ) : null}
-          </Press>
-          <Press
-            style={styles.iconButton}
-            onPress={() => push('/settings')}
-            accessibilityLabel="Opções"
-          >
-            <Ionicons name="settings-outline" size={22} color={colors.text} />
-          </Press>
-        </View>
-
-        <Press
-          style={styles.notebookTitle}
-          onPress={() => push('/notebooks')}
-          accessibilityRole="button"
-          accessibilityLabel={`Caderno ${currentNotebook.name}. Trocar de caderno`}
-        >
-          <View
-            style={[
-              styles.notebookDot,
-              { backgroundColor: currentNotebook.color || colors.textTertiary },
-            ]}
-          />
-          <Text style={styles.largeTitle}>{currentNotebook.name}</Text>
-          <Ionicons name="chevron-down" size={18} color={colors.textTertiary} />
-        </Press>
-      </View>
-
-      <View style={styles.modeToggle}>
-        <Press
-          style={[styles.modeOption, viewMode === 'recent' ? styles.modeOptionOn : null]}
-          onPress={() => setViewMode('recent')}
-          accessibilityRole="tab"
-          accessibilityState={{ selected: viewMode === 'recent' }}
-        >
-          <Text
-            style={[styles.modeText, viewMode === 'recent' ? styles.modeTextOn : null]}
-          >
-            Páginas recentes
-          </Text>
-        </Press>
-        <Press
-          style={[styles.modeOption, viewMode === 'notebook' ? styles.modeOptionOn : null]}
-          onPress={() => setViewMode('notebook')}
-          accessibilityRole="tab"
-          accessibilityState={{ selected: viewMode === 'notebook' }}
-        >
-          <Text
-            style={[styles.modeText, viewMode === 'notebook' ? styles.modeTextOn : null]}
-          >
-            Caderno
-          </Text>
-        </Press>
-      </View>
-
-      <View style={styles.searchWrap}>
-        <Ionicons name="search" size={16} color={colors.textTertiary} />
-        <TextInput
-          value={query}
-          onChangeText={setQuery}
-          placeholder={
-            viewMode === 'recent' ? 'Buscar em todos os cadernos' : 'Buscar neste caderno'
-          }
-          placeholderTextColor={colors.textTertiary}
-          selectionColor={colors.accent}
-          style={styles.searchInput}
-        />
-        {query ? (
-          <Press onPress={() => setQuery('')} accessibilityLabel="Limpar busca">
-            <Ionicons name="close-circle" size={16} color={colors.textTertiary} />
-          </Press>
-        ) : null}
-      </View>
+      <HomeHeader
+        notebook={scopeNotebook}
+        syncState={syncState}
+        searchOpen={searchOpen}
+        query={query}
+        searchPlaceholder={
+          scopeNotebook ? 'Buscar neste caderno' : 'Buscar em todos os cadernos'
+        }
+        onToggleSearch={toggleSearch}
+        onChangeQuery={setQuery}
+        onOpenNotebooks={() => setNotebookPickerOpen(true)}
+        onOpenSync={() => push('/sync')}
+        onOpenActivity={() => setActivityOpen(true)}
+        onOpenSettings={() => push('/settings')}
+      />
 
       {interrupted > 0 ? (
         <Press style={styles.alert} onPress={() => push('/recovery')}>
@@ -536,93 +413,54 @@ export default function NotebookScreen() {
         />
       </View>
 
-      {viewMode === 'recent' ? (
-        <FlatList
-          data={recentList}
-          keyExtractor={keyExtractor}
-          contentContainerStyle={styles.list}
-          ItemSeparatorComponent={ItemSeparator}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              tintColor={colors.textSecondary}
-            />
-          }
-          renderItem={renderRecentItem}
-          ListEmptyComponent={
-            <View style={styles.empty}>
-              <View style={styles.emptyIcon}>
-                <Ionicons
-                  name={
-                    query || selectedTags.length > 0
-                      ? 'funnel-outline'
+      <FlatList
+        data={noteList}
+        keyExtractor={keyExtractor}
+        contentContainerStyle={styles.list}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={colors.textSecondary}
+          />
+        }
+        renderItem={renderNote}
+        ListEmptyComponent={
+          <View style={styles.empty}>
+            <View style={styles.emptyIcon}>
+              <Ionicons
+                name={
+                  query || selectedTags.length > 0
+                    ? 'funnel-outline'
+                    : scopeNotebook
+                      ? 'book-outline'
                       : 'time-outline'
-                  }
-                  size={30}
-                  color={colors.textTertiary}
-                />
-              </View>
-              <Text style={styles.emptyTitle}>
-                {query || selectedTags.length > 0
-                  ? 'Nenhuma nota com esse filtro'
+                }
+                size={30}
+                color={colors.textTertiary}
+              />
+            </View>
+            <Text style={styles.emptyTitle}>
+              {query || selectedTags.length > 0
+                ? 'Nenhuma nota com esse filtro'
+                : scopeNotebook
+                  ? 'Nenhuma nota neste caderno'
                   : 'Nenhuma nota ainda'}
-              </Text>
-              <Text style={styles.emptyText}>
-                {query || selectedTags.length > 0
-                  ? 'Limpe a busca ou as tags para ver todas as notas.'
-                  : 'Toque em + para criar uma nota de texto, imagem, áudio ou link.'}
-              </Text>
-            </View>
-          }
-        />
-      ) : (
-        <SectionList
-          sections={sections}
-          keyExtractor={keyExtractor}
-          contentContainerStyle={styles.list}
-          ItemSeparatorComponent={ItemSeparator}
-          stickySectionHeadersEnabled={false}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              tintColor={colors.textSecondary}
-            />
-          }
-          renderSectionHeader={renderSectionHeader}
-          renderItem={renderItem}
-          ListEmptyComponent={
-            <View style={styles.empty}>
-              <View style={styles.emptyIcon}>
-                <Ionicons
-                  name={
-                    query || selectedTags.length > 0
-                      ? 'funnel-outline'
-                      : 'document-text-outline'
-                  }
-                  size={30}
-                  color={colors.textTertiary}
-                />
-              </View>
-              <Text style={styles.emptyTitle}>
-                {query || selectedTags.length > 0
-                  ? 'Nenhuma nota com esse filtro'
-                  : 'Nenhuma nota'}
-              </Text>
-              <Text style={styles.emptyText}>
-                {query || selectedTags.length > 0
+            </Text>
+            <Text style={styles.emptyText}>
+              {query || selectedTags.length > 0
+                ? scopeNotebook
                   ? 'Limpe a busca ou as tags para ver o caderno inteiro.'
+                  : 'Limpe a busca ou as tags para ver todas as notas.'
+                : scopeNotebook
+                  ? 'Toque em + para criar a primeira nota deste caderno.'
                   : 'Toque em + para criar uma nota de texto, imagem, áudio ou link.'}
-              </Text>
-            </View>
-          }
-        />
-      )}
+            </Text>
+          </View>
+        }
+      />
 
       {newMenuOpen ? (
         <Press
@@ -658,6 +496,25 @@ export default function NotebookScreen() {
         </Press>
       </View>
 
+      <NotebookPicker
+        visible={notebookPickerOpen}
+        notebooks={notebooks}
+        currentId={scopeNotebook?.id}
+        recentSelected={!scopeNotebook}
+        title="Cadernos"
+        onClose={() => setNotebookPickerOpen(false)}
+        onSelectRecent={() => selectScope(null)}
+        onManage={() => {
+          setNotebookPickerOpen(false);
+          push('/notebooks');
+        }}
+        onSelect={selectScope}
+      />
+
+      {activityOpen ? (
+        <ActivityCenter visible onClose={() => setActivityOpen(false)} />
+      ) : null}
+
       <NoteActionsSheet
         recording={actionsNote}
         properties={actionsProps}
@@ -692,106 +549,24 @@ function NewMenuItem({
 
 const styles = StyleSheet.create({
   screen: { paddingHorizontal: 0 },
-  header: {
-    paddingHorizontal: spacing.xl,
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.md,
-    gap: spacing.xs,
-  },
-  notebookTitle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'stretch',
-    gap: spacing.sm,
-    paddingRight: spacing.sm,
-  },
-  notebookDot: { width: 9, height: 9, borderRadius: 5 },
-  headerActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-end',
-    gap: spacing.sm,
-  },
-  iconButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  syncDot: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    borderWidth: 1.5,
-    borderColor: colors.bg,
-  },
-  largeTitle: {
-    flexShrink: 1,
-    color: colors.text,
-    fontSize: 30,
-    fontWeight: '700',
-    letterSpacing: 0.2,
-  },
-  modeToggle: {
-    flexDirection: 'row',
-    marginHorizontal: spacing.xl,
-    marginBottom: spacing.md,
-    padding: 3,
-    gap: 3,
-    borderRadius: radius.pill,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-  },
-  modeOption: {
-    flex: 1,
-    height: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: radius.pill,
-  },
-  modeOptionOn: { backgroundColor: colors.surfaceElevated },
-  modeText: { color: colors.textSecondary, fontSize: fontSize.sm, fontWeight: '600' },
-  modeTextOn: { color: colors.text, fontWeight: '700' },
-  searchWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    marginHorizontal: spacing.xl,
-    marginBottom: spacing.md,
-    backgroundColor: colors.surface,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.lg,
-    height: 40,
-  },
-  searchInput: { flex: 1, color: colors.text, fontSize: fontSize.sm, paddingVertical: 0 },
-  padded: { paddingHorizontal: spacing.xl },
-  list: { paddingHorizontal: spacing.xl, paddingBottom: 96 },
-  separator: { height: spacing.sm },
-  sectionHeader: {
-    color: colors.textSecondary,
-    fontSize: fontSize.sm,
-    fontWeight: '700',
-    letterSpacing: 1,
-    marginTop: spacing.lg,
-    marginBottom: spacing.sm,
-  },
+  padded: { paddingHorizontal: spacing.sm },
+  list: { paddingBottom: 96 },
   swipeAction: {
     width: 88,
     justifyContent: 'center',
     alignItems: 'center',
     gap: 4,
-    borderRadius: 14,
-    marginLeft: spacing.sm,
   },
   swipeLabel: { color: '#FFFFFF', fontSize: fontSize.xs, fontWeight: '700' },
   alert: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.md,
-    marginHorizontal: spacing.xl,
-    marginBottom: spacing.md,
+    gap: spacing.sm,
+    marginHorizontal: spacing.sm,
+    marginBottom: spacing.sm,
     backgroundColor: colors.warningSoft,
-    borderRadius: 14,
-    padding: spacing.md,
+    borderRadius: radius.sm,
+    padding: spacing.sm,
   },
   alertText: { flex: 1, color: colors.warning, fontSize: fontSize.sm, fontWeight: '600' },
   empty: { alignItems: 'center', gap: spacing.md, paddingTop: spacing.xxxl },
