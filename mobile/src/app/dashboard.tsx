@@ -27,6 +27,7 @@ import { listCachedAnalyses, type CachedAnalysis } from '@/services/db';
 import { scanImageBytes } from '@/services/storageScan';
 import { useLibrary } from '@/state/LibraryContext';
 import { useSettings } from '@/state/SettingsContext';
+import { useMetricsSync } from '@/state/useMetricsSync';
 import { colors, fontSize, radius, spacing } from '@/theme/tokens';
 
 function Metric({ label, value }: { label: string; value: string }) {
@@ -831,6 +832,9 @@ export default function DashboardScreen() {
   const { config, weeklyWordGoal, setWeeklyWordGoal, writingReminders, setWritingReminders, reminderHour, setReminderHour } =
     useSettings();
   const { recordings } = useLibrary();
+  // O snapshot de metricas do aparelho so e recalculado quando o Painel abre:
+  // varrer a biblioteca e o disco no boot atrasava a abertura das notas.
+  useMetricsSync();
   const [data, setData] = useState<DashboardData | null>(null);
   const [cachedAnalyses, setCachedAnalyses] = useState<CachedAnalysis[]>([]);
   const [windowKind, setWindowKind] = useState<MetricsWindow>('30d');

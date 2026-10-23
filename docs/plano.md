@@ -143,6 +143,13 @@ Superficie Android em Expo (development build). O nucleo puro fica em `mobile/sr
   paginas recentes, os cadernos e o atalho para criar ou gerenciar. A busca so
   aparece ao tocar na lupa, e cada nota e uma linha de largura total com divisor,
   sem cartao e sem margem externa (estilo OneNote).
+- Menu da nota (tres pontinhos) como folha que sobe do rodape e para em metade
+  da tela: compartilhar, analise, tipografia e propriedades rolam dentro dela.
+  Puxar para cima em qualquer ponto da folha recolhida expande para quase a tela
+  inteira; depois de expandida, a lista rola, puxar para baixo no topo recolhe e
+  o cabecalho recolhe de qualquer posicao. Nao ha botao de fechar no canto: o
+  fundo fecha e nao pisca feedback, que fica reservado a botoes e acoes. O
+  teclado fecha ao abrir, para a folha nao nascer atras dele.
 - Centro de atividade na home, ao lado da nuvem: transcricao, analise local,
   backup/restauracao e download de modelo publicam inicio, progresso e fim num
   store em memoria. A folha mostra a fase real (trecho transcrito, tokens
@@ -150,6 +157,13 @@ Superficie Android em Expo (development build). O nucleo puro fica em `mobile/sr
   falha ou interrupcao oferece uma acao de recuperacao: tentar de novo
   (transcricao, backup, restauracao e download) ou abrir a nota (analise). O
   estado da fila de envio continua no icone da nuvem.
+- Abertura sob demanda: a home pinta o cabecalho e um esqueleto da lista antes
+  de o SQLite responder; a nota pinta cabecalho, titulo e botoes antes de
+  hidratar/montar o editor nativo. Segmentos de transcricao, anexos e a pilha de
+  audios de cada nota so sao parseados quando a nota abre. Metricas de escrita e
+  varredura de armazenamento saem do boot e rodam apenas nas telas que as
+  mostram (Painel/Diagnostico/Armazenamento); o cofre de preferencias nao segura
+  mais a primeira tela.
 - Transcricao no aparelho (opcional, nas Opcoes): usa `whisper.rn` (whisper.cpp) com modelos
   ggml baixados em runtime (Tiny..Large v3 Turbo), recomendado pela RAM; o audio AAC e
   decodificado para 16 kHz por um modulo nativo local (sem ffmpeg) e transcrito offline, com o texto

@@ -9,7 +9,7 @@ import type { NoteInsertPosition } from '@/core/noteDocument';
 import { markQueued } from '@/core/queue';
 import { isUploadable, needsNoteSync, needsTranscript, type Recording } from '@/core/types';
 import { bumpRender } from '@/dev/perf';
-import { deleteRecordingRow, getRecording, listRecordings, upsertRecording } from '@/services/db';
+import { deleteRecordingRow, getRecording, listRecordings, updateRecordingNote, upsertRecording } from '@/services/db';
 import { deleteServerEntry } from '@/services/entries';
 import { deleteSessionAudioFiles, deleteSessionFiles } from '@/services/files';
 import {
@@ -210,18 +210,16 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   }, [refresh, refreshNotebooks]);
 
   useEffect(() => {
-    if (!ready) return;
-    kick();
-    pullTranscripts();
-    pullServer();
-  }, [ready, kick, pullTranscripts, pullServer]);
-
-  useEffect(() => {
-    if (!config) return;
-    kick();
-    pullTranscripts();
-    pullServer();
-  }, [config, kick, pullTranscripts, pullServer]);
+    if (!ready || !config) return undefined;
+    // A lista e a prioridade do boot. Envio, transcricao e pull entram depois
+    // que a tela assentou, e cada um desiste se uma nota abrir no meio.
+    const timer = setTimeout(() => {
+      kick();
+      pullTranscripts();
+      pullServer();
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [ready, config, kick, pullTranscripts, pullServer]);
 
   useEffect(() => {
     if (!hasPending) return undefined;
@@ -319,25 +317,9 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
 
   const updateNote = useCallback(
     async (id: string, patch: { title?: string; text?: string }) => {
-      const current = await getRecording(id);
-      if (!current) return;
-      const changed =
-        (patch.title !== undefined && patch.title !== current.title) ||
-        (patch.text !== undefined && patch.text !== current.text);
-      // Abrir a nota nao e editar: sem mudanca real nao grava linha nem mexe em
-      // updatedAt (o que fazia a lista inteira se considerar alterada).
-      if (!changed) return;
-      const updated: Recording = {
-        ...current,
-        ...patch,
-        // Numa nota ja enviada, so marca o que mudou: o autosave tambem roda no
-        // mount e nao pode enfileirar um reenvio a toa.
-        noteDirty: current.status === 'completed' ? true : current.noteDirty,
-        updatedAt: new Date().toISOString(),
-      };
-      // Persiste sem re-renderizar o app inteiro a cada autosave; a lista se
-      // atualiza no refresh ao sair da nota.
-      await upsertRecording(updated);
+      // Update direcionado: o autosave nao pode ler e reescrever a linha inteira
+      // (transcricao, segmentos e anexos) a cada pausa da digitacao.
+      await updateRecordingNote(id, patch);
     },
     [],
   );

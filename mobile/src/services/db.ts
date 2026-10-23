@@ -481,8 +481,24 @@ function parseConflict(raw: string | null): ConflictField[] | undefined {
   }
 }
 
+/** Cache de um JSON pesado: so parseia quando alguem pede o campo. */
+function lazyParsed<T>(
+  raw: string | null,
+  parse: (raw: string | null) => T | undefined,
+): () => T | undefined {
+  let loaded = false;
+  let value: T | undefined;
+  return () => {
+    if (!loaded) {
+      value = parse(raw);
+      loaded = true;
+    }
+    return value;
+  };
+}
+
 function rowToRecording(row: Row): Recording {
-  return {
+  const recording: Recording = {
     id: row.id,
     title: row.title,
     recordedAt: row.recorded_at,
@@ -504,7 +520,6 @@ function rowToRecording(row: Row): Recording {
     transcript: row.transcript ?? undefined,
     transcriptLanguage: row.transcript_language ?? undefined,
     transcriptStatus: (row.transcript_status as TranscriptStatus | null) ?? undefined,
-    transcriptSegments: parseSegments(row.transcript_segments),
     transcriptCheckpointMs:
       row.transcript_checkpoint_ms && Number.isFinite(Number(row.transcript_checkpoint_ms))
         ? Number(row.transcript_checkpoint_ms)
@@ -522,15 +537,26 @@ function rowToRecording(row: Row): Recording {
     notebookDirty: row.notebook_dirty ? true : undefined,
     tagsDirty: row.tags_dirty ? true : undefined,
     noteDirty: row.note_dirty ? true : undefined,
-    attachments: parseAttachments(row.attachments),
     titleVersion: row.title_version ?? undefined,
     recordedAtVersion: row.recorded_at_version ?? undefined,
     bodyVersion: row.body_version ?? undefined,
     syncConflict: parseConflict(row.sync_conflict),
-    serverAudios: parseServerAudios(row.server_audios),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+
+  // Segmentos, anexos e a pilha de audios so sao usados ao abrir a nota. Na
+  // home, parsear esses JSONs de todas as notas era trabalho de boot sem uso.
+  const segments = lazyParsed(row.transcript_segments, parseSegments);
+  const attachments = lazyParsed(row.attachments, parseAttachments);
+  const serverAudios = lazyParsed(row.server_audios, parseServerAudios);
+  Object.defineProperties(recording, {
+    transcriptSegments: { enumerable: true, configurable: true, get: segments },
+    attachments: { enumerable: true, configurable: true, get: attachments },
+    serverAudios: { enumerable: true, configurable: true, get: serverAudios },
+  });
+
+  return recording;
 }
 
 export async function upsertRecording(r: Recording): Promise<void> {
@@ -658,6 +684,41 @@ export async function saveServerAudios(entryId: string, audios: ServerAudio[]): 
   await db.runAsync(
     'UPDATE recordings SET server_audios = ? WHERE entry_id = ?',
     [JSON.stringify(audios), entryId],
+  );
+}
+
+/** Atualiza so o titulo/texto (autosave), sem ler/reescrever os JSONs pesados. */
+export async function updateRecordingNote(
+  id: string,
+  patch: { title?: string; text?: string },
+): Promise<void> {
+  if (patch.title === undefined && patch.text === undefined) return;
+  const db = await getDb();
+  const hasTitle = patch.title !== undefined ? 1 : 0;
+  const hasText = patch.text !== undefined ? 1 : 0;
+  const title = patch.title ?? '';
+  const text = patch.text ?? '';
+  await db.runAsync(
+    `UPDATE recordings
+     SET title = CASE WHEN ? THEN ? ELSE title END,
+         text = CASE WHEN ? THEN ? ELSE text END,
+         note_dirty = CASE WHEN status = 'completed' THEN 1 ELSE note_dirty END,
+         updated_at = ?
+     WHERE id = ? AND (
+       (? = 1 AND title <> ?) OR (? = 1 AND COALESCE(text, '') <> ?)
+     )`,
+    [
+      hasTitle,
+      title,
+      hasText,
+      text,
+      new Date().toISOString(),
+      id,
+      hasTitle,
+      title,
+      hasText,
+      text,
+    ],
   );
 }
 

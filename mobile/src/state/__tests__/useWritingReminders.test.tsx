@@ -56,7 +56,7 @@ describe('useWritingReminders', () => {
     render(<Probe enabled />);
 
     await act(async () => {
-      jest.advanceTimersByTime(2000);
+      jest.advanceTimersByTime(10_000);
       await Promise.resolve();
     });
 

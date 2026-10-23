@@ -109,8 +109,8 @@ function normalizeUrl(baseUrl: string): string {
 export function SettingsProvider({ children }: { children: ReactNode }) {
   bumpRender('SettingsProvider');
   const [config, setConfig] = useState<ServerConfig | null>(null);
-  // "ready" precisa significar configuracao E preferencias carregadas: a nota
-  // monta o editor quando ready vira true para a fonte nao piscar com o padrao.
+  // "ready" significa configuracao E preferencias carregadas. A home e a nota
+  // nao esperam: abrem com os padroes e atualizam quando o cofre responde.
   const [configReady, setConfigReady] = useState(false);
   const [prefsReady, setPrefsReady] = useState(false);
   const ready = configReady && prefsReady;

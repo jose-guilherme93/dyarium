@@ -363,33 +363,37 @@ export default function NotebookScreen() {
     ],
   );
 
+  const header = (
+    <HomeHeader
+      notebook={scopeNotebook}
+      syncState={syncState}
+      searchOpen={searchOpen}
+      query={query}
+      searchPlaceholder={
+        scopeNotebook ? 'Buscar neste caderno' : 'Buscar em todos os cadernos'
+      }
+      onToggleSearch={toggleSearch}
+      onChangeQuery={setQuery}
+      onOpenNotebooks={() => setNotebookPickerOpen(true)}
+      onOpenSync={() => push('/sync')}
+      onOpenActivity={() => setActivityOpen(true)}
+      onOpenSettings={() => push('/settings')}
+    />
+  );
+
   if (!ready) {
-    // Evita piscar a tela vazia antes de o SQLite entregar cadernos e notas; a
-    // tela ja esta preta como o resto do app.
+    // O cabecalho aparece no primeiro frame; so a lista espera o SQLite.
     return (
       <Screen style={styles.screen}>
-        <View />
+        {header}
+        <NoteListSkeleton />
       </Screen>
     );
   }
 
   return (
     <Screen style={styles.screen}>
-      <HomeHeader
-        notebook={scopeNotebook}
-        syncState={syncState}
-        searchOpen={searchOpen}
-        query={query}
-        searchPlaceholder={
-          scopeNotebook ? 'Buscar neste caderno' : 'Buscar em todos os cadernos'
-        }
-        onToggleSearch={toggleSearch}
-        onChangeQuery={setQuery}
-        onOpenNotebooks={() => setNotebookPickerOpen(true)}
-        onOpenSync={() => push('/sync')}
-        onOpenActivity={() => setActivityOpen(true)}
-        onOpenSettings={() => push('/settings')}
-      />
+      {header}
 
       {interrupted > 0 ? (
         <Press style={styles.alert} onPress={() => push('/recovery')}>
@@ -466,6 +470,7 @@ export default function NotebookScreen() {
         <Press
           style={styles.fabBackdrop}
           onPress={() => setNewMenuOpen(false)}
+          feedback={false}
           accessibilityLabel="Fechar menu"
         />
       ) : null}
@@ -547,10 +552,49 @@ function NewMenuItem({
   );
 }
 
+/** Esqueleto da lista: o app abre antes do SQLite terminar de ler. */
+function NoteListSkeleton() {
+  return (
+    <View
+      style={styles.skeleton}
+      testID="home-loading"
+      pointerEvents="none"
+      accessibilityLabel="Carregando notas"
+    >
+      {[0, 1, 2, 3, 4, 5].map((index) => (
+        <View key={index} style={styles.skeletonRow}>
+          <View style={styles.skeletonTitle} />
+          <View style={styles.skeletonSub} />
+        </View>
+      ))}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   screen: { paddingHorizontal: 0 },
   padded: { paddingHorizontal: spacing.sm },
   list: { paddingBottom: 96 },
+  skeleton: { paddingHorizontal: spacing.lg, paddingTop: spacing.md },
+  skeletonRow: {
+    gap: spacing.sm,
+    paddingVertical: spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  skeletonTitle: {
+    width: '55%',
+    height: 15,
+    borderRadius: 4,
+    backgroundColor: colors.surface,
+  },
+  skeletonSub: {
+    width: '82%',
+    height: 11,
+    borderRadius: 4,
+    backgroundColor: colors.surface,
+    opacity: 0.7,
+  },
   swipeAction: {
     width: 88,
     justifyContent: 'center',
