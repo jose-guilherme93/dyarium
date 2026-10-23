@@ -158,12 +158,12 @@ Superficie Android em Expo (development build). O nucleo puro fica em `mobile/sr
   (transcricao, backup, restauracao e download) ou abrir a nota (analise). O
   estado da fila de envio continua no icone da nuvem.
 - Abertura sob demanda: a home pinta o cabecalho e um esqueleto da lista antes
-  de o SQLite responder; a nota pinta cabecalho, titulo e botoes antes de
-  hidratar/montar o editor nativo. Segmentos de transcricao, anexos e a pilha de
-  audios de cada nota so sao parseados quando a nota abre. Metricas de escrita e
-  varredura de armazenamento saem do boot e rodam apenas nas telas que as
-  mostram (Painel/Diagnostico/Armazenamento); o cofre de preferencias nao segura
-  mais a primeira tela.
+  de o SQLite responder; a nota pinta cabecalho, titulo e um preview textual
+  antes de montar o editor nativo, e so depois carrega segmentos, anexos, pilha
+  de audios e imagens. O JSON pesado de cada nota so e parseado quando a nota
+  abre. Metricas de escrita e varredura de armazenamento saem do boot e rodam
+  apenas nas telas que as mostram (Painel/Diagnostico/Armazenamento); o cofre de
+  preferencias nao segura mais a primeira tela.
 - Transcricao no aparelho (opcional, nas Opcoes): usa `whisper.rn` (whisper.cpp) com modelos
   ggml baixados em runtime (Tiny..Large v3 Turbo), recomendado pela RAM; o audio AAC e
   decodificado para 16 kHz por um modulo nativo local (sem ffmpeg) e transcrito offline, com o texto

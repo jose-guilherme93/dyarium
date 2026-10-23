@@ -324,8 +324,11 @@ describe('tela da nota', () => {
     await act(async () => {
       await Promise.resolve();
       await Promise.resolve();
-      // Esqueleto -> midia -> editor. Os dois atrasos sao curtos, mas existem
-      // para o primeiro frame nao montar o editor inteiro.
+      // Esqueleto -> preview -> editor -> midia. Cada fase e agendada depois
+      // que a anterior renderiza, por isso os dois passos de timer.
+      jest.advanceTimersByTime(200);
+      await Promise.resolve();
+      await Promise.resolve();
       jest.advanceTimersByTime(300);
       await Promise.resolve();
       await Promise.resolve();
@@ -333,25 +336,18 @@ describe('tela da nota', () => {
     return view;
   };
 
-  it('mostra o cabecalho antes de montar o editor', () => {
-    let finishBody: (() => void) | null = null;
-    jest.spyOn(InteractionManager, 'runAfterInteractions').mockImplementation(((
-      task: () => void,
-    ) => {
-      finishBody = task;
-      return { cancel: jest.fn() };
-    }) as never);
-
+  it('mostra o cabecalho e o preview antes de montar o editor', () => {
     render(<NoteScreen />);
 
-    // O cabecalho e os botoes respondem antes do parse/montagem do corpo.
+    // Cabecalho, botoes e conteudo textual aparecem antes do editor nativo.
     expect(screen.getByPlaceholderText('título da nota')).toBeTruthy();
     expect(screen.getByLabelText('Configurações da nota')).toBeTruthy();
     expect(screen.getByTestId('note-body-hydrating')).toBeTruthy();
+    expect(screen.getByTestId('note-body-preview')).toBeTruthy();
     expect(screen.queryByTestId('note-body')).toBeNull();
 
     act(() => {
-      finishBody?.();
+      jest.advanceTimersByTime(200);
     });
 
     expect(screen.getByTestId('note-body')).toBeTruthy();
@@ -642,7 +638,7 @@ describe('tela da nota', () => {
     try {
       const view = render(<NoteScreen />);
       await act(async () => {
-        jest.advanceTimersByTime(100);
+        jest.advanceTimersByTime(200);
         await Promise.resolve();
       });
       fireEvent.changeText(screen.getByTestId('note-body'), 'texto editado');
