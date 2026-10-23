@@ -6,6 +6,7 @@
 import { Directory, File, Paths } from 'expo-file-system';
 
 import { TRANSCRIPTION_MODELS, modelById, modelUrl } from '@/core/transcription';
+import { failActivity, finishActivity, startActivity, updateActivity } from './activity';
 
 const DIR_NAME = 'whisper-models';
 
@@ -70,16 +71,33 @@ export async function downloadModel(
   const destination = new File(dir, info.fileName);
   if (destination.exists) return destination.uri;
 
-  const file = await File.downloadFileAsync(modelUrl(info), destination, {
-    idempotent: true,
-    signal: options.signal,
-    onProgress: ({ bytesWritten, totalBytes }) => {
-      if (options.onProgress && totalBytes > 0) {
-        options.onProgress(Math.min(1, bytesWritten / totalBytes));
-      }
-    },
+  const activity = `download:transcription:${id}`;
+  startActivity({
+    id: activity,
+    kind: 'download',
+    title: `Modelo ${info.label}`,
+    detail: 'Baixando modelo de transcrição',
+    progress: 0,
+    action: { label: 'Tentar de novo', run: () => downloadModel(id) },
   });
-  return file.uri;
+
+  try {
+    const file = await File.downloadFileAsync(modelUrl(info), destination, {
+      idempotent: true,
+      signal: options.signal,
+      onProgress: ({ bytesWritten, totalBytes }) => {
+        if (totalBytes <= 0) return;
+        const ratio = Math.min(1, bytesWritten / totalBytes);
+        options.onProgress?.(ratio);
+        updateActivity(activity, { progress: ratio * 100 });
+      },
+    });
+    finishActivity(activity, 'Modelo de transcrição pronto');
+    return file.uri;
+  } catch (error) {
+    failActivity(activity, 'Não foi possível baixar o modelo');
+    throw error;
+  }
 }
 
 export function deleteModel(id: string): void {

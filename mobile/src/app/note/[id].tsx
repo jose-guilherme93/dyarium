@@ -1014,6 +1014,10 @@ export default function NoteScreen() {
           const result = await analyzeRecording(input, model, {
             fresh: attempt > 0,
             lowPower: analysisLowPower,
+            failureAction: {
+              label: 'Abrir nota',
+              run: () => push({ pathname: '/note/[id]', params: { id: target.id } }),
+            },
             onToken: () => {
               analysisTokensRef.current += 1;
             },

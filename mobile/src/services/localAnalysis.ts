@@ -17,6 +17,13 @@ import {
 } from '@/core/analysisPrompt';
 import type { AnalysisModelInfo } from '@/core/analysisModels';
 import type { Recording } from '@/core/types';
+import {
+  failActivity,
+  finishActivity,
+  startActivity,
+  updateActivity,
+  type ActivityAction,
+} from './activity';
 import { analysisModelFilePath } from './analysisModels';
 
 export interface TokenData {
@@ -80,6 +87,8 @@ export interface AnalysisRunOptions {
   onToken?(token: string): void;
   /** Recarrega o modelo antes de gerar (contexto limpo de ponta a ponta). */
   fresh?: boolean;
+  /** Acao exibida no centro de atividade se a analise falhar. */
+  failureAction?: ActivityAction;
 }
 
 export interface AnalysisNoteResult {
@@ -243,20 +252,51 @@ export async function analyzeRecording(
   options: AnalysisRunOptions = {},
 ): Promise<AnalysisNoteResult> {
   const content = analysisNoteContent(recording);
-  const run = await runAnalysis(
-    model,
-    buildAnalysisMessages({
-      title: content.title,
-      text: content.text,
-      recordedAt: recording.recordedAt,
-      truncated: content.truncated,
-    }),
-    options,
-  );
-  const parsed = parseAnalysisJson(run.text);
-  return {
-    content,
-    run,
-    parsed: parsed ? interpretationOrOriginal(parsed, content.text) : null,
-  };
+  const activity = `analysis:${recording.id}`;
+  let tokens = 0;
+
+  startActivity({
+    id: activity,
+    kind: 'analysis',
+    title: content.title || 'Sem título',
+    detail: 'Preparando modelo',
+    action: options.failureAction,
+  });
+
+  try {
+    const run = await runAnalysis(
+      model,
+      buildAnalysisMessages({
+        title: content.title,
+        text: content.text,
+        recordedAt: recording.recordedAt,
+        truncated: content.truncated,
+      }),
+      {
+        ...options,
+        onToken: (token) => {
+          tokens += 1;
+          options.onToken?.(token);
+          // O total de tokens nao e conhecido: o contador e o sinal de que a
+          // leitura esta avancando sem atualizar a interface a cada token.
+          if (tokens === 1 || tokens % 16 === 0) {
+            updateActivity(activity, {
+              detail: `Gerando análise · ${tokens} token${tokens === 1 ? '' : 's'}`,
+            });
+          }
+        },
+      },
+    );
+    updateActivity(activity, { detail: 'Concluindo análise' });
+    const parsed = parseAnalysisJson(run.text);
+    finishActivity(activity, 'Análise pronta');
+    return {
+      content,
+      run,
+      parsed: parsed ? interpretationOrOriginal(parsed, content.text) : null,
+    };
+  } catch (error) {
+    failActivity(activity, 'Não foi possível analisar');
+    throw error;
+  }
 }

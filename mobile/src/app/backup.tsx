@@ -8,6 +8,12 @@ import { Button } from '@/components/Button';
 import { Screen } from '@/components/Screen';
 import { formatBytes, formatDateTime } from '@/core/format';
 import {
+  failActivity,
+  finishActivity,
+  startActivity,
+  updateActivity,
+} from '@/services/activity';
+import {
   BackupError,
   pickBackupFolder,
   readManifestSummary,
@@ -21,6 +27,21 @@ import { reassertNotesOnServer, type ReassertResult } from '@/services/reassert'
 import { useLibrary } from '@/state/LibraryContext';
 import { useSettings } from '@/state/SettingsContext';
 import { colors, fontSize, radius, spacing } from '@/theme/tokens';
+
+const BACKUP_ACTIVITY = 'backup:local';
+const RESTORE_ACTIVITY = 'restore:local';
+
+function copyDetail(done: number, total: number): string {
+  return total > 0 ? `Copiando notas · ${done} de ${total}` : 'Copiando notas';
+}
+
+function restoreDetail(done: number, total: number): string {
+  return total > 0 ? `Restaurando notas · ${done} de ${total}` : 'Restaurando notas';
+}
+
+function ratio(done: number, total: number): number | null {
+  return total > 0 ? (done / total) * 100 : null;
+}
 
 /** Mostra a parte final do caminho (o resto nao informa nada). */
 function shortFolder(uri: string): string {
@@ -110,13 +131,27 @@ export default function BackupScreen() {
     setError(null);
     setMessage(null);
     setProgress(null);
+    startActivity({
+      id: BACKUP_ACTIVITY,
+      kind: 'backup',
+      title: 'Backup local',
+      detail: 'Preparando cópia',
+      progress: 0,
+      action: { label: 'Tentar de novo', run: () => handleBackup() },
+    });
     try {
-      const summary = await runBackup(backupFolder, (done, total) =>
-        setProgress(`${done}/${total}`),
-      );
+      const summary = await runBackup(backupFolder, (done, total) => {
+        setProgress(`${done}/${total}`);
+        updateActivity(BACKUP_ACTIVITY, {
+          detail: copyDetail(done, total),
+          progress: ratio(done, total),
+        });
+      });
+      finishActivity(BACKUP_ACTIVITY, summaryLine(summary));
       setMessage(`Backup concluído: ${summaryLine(summary)}.`);
       setReload((n) => n + 1);
     } catch (err) {
+      failActivity(BACKUP_ACTIVITY, 'Não foi possível concluir o backup');
       setError(messageFor(err));
     } finally {
       setBusy(null);
@@ -139,21 +174,43 @@ export default function BackupScreen() {
             setError(null);
             setMessage(null);
             setProgress(null);
-            void runRestore(backupFolder, (done, total) => setProgress(`${done}/${total}`))
+            startActivity({
+              id: RESTORE_ACTIVITY,
+              kind: 'restore',
+              title: 'Restauração',
+              detail: 'Conferindo backup',
+              progress: 0,
+              action: { label: 'Tentar de novo', run: () => handleRestore() },
+            });
+            void runRestore(backupFolder, (done, total) => {
+              setProgress(`${done}/${total}`);
+              updateActivity(RESTORE_ACTIVITY, {
+                detail: restoreDetail(done, total),
+                progress: ratio(done, total),
+              });
+            })
               .then(async (summary) => {
                 // Reafirma as notas no servidor ANTES de sincronizar: uma nota
                 // apagada e trazida de volta pelo backup nao pode ser apagada de
                 // novo pelo servidor.
                 setProgress(null);
+                updateActivity(RESTORE_ACTIVITY, {
+                  detail: 'Sincronizando notas restauradas',
+                  progress: 100,
+                });
                 const restoredNotes = await listRecordings();
                 const server = await reassertNotesOnServer(restoredNotes).catch(() => null);
+                finishActivity(RESTORE_ACTIVITY, summaryLine(summary));
                 await refresh();
                 const line = server ? serverLine(server) : null;
                 setMessage(
                   `Restaurado: ${summaryLine(summary)}.${line ? ` ${line}` : ''}`,
                 );
               })
-              .catch((err) => setError(messageFor(err)))
+              .catch((err) => {
+                failActivity(RESTORE_ACTIVITY, 'Não foi possível restaurar o backup');
+                setError(messageFor(err));
+              })
               .finally(() => {
                 setBusy(null);
                 setProgress(null);

@@ -15,6 +15,7 @@ import {
   analysisModelUrl,
   type AnalysisModelInfo,
 } from '@/core/analysisModels';
+import { failActivity, finishActivity, startActivity, updateActivity } from './activity';
 
 const DIR_NAME = 'analysis-models';
 
@@ -98,21 +99,38 @@ export async function downloadAnalysisModel(
     throw new Error('espaco insuficiente');
   }
 
-  const file = await File.downloadFileAsync(analysisModelUrl(info), destination, {
-    idempotent: true,
-    signal: options.signal,
-    onProgress: ({ bytesWritten, totalBytes }) => {
-      if (options.onProgress && totalBytes > 0) {
-        options.onProgress(Math.min(1, bytesWritten / totalBytes));
-      }
-    },
+  const activity = `download:analysis:${id}`;
+  startActivity({
+    id: activity,
+    kind: 'download',
+    title: `Modelo ${info.label}`,
+    detail: 'Baixando modelo de análise',
+    progress: 0,
+    action: { label: 'Tentar de novo', run: () => downloadAnalysisModel(id) },
   });
 
-  if (file.size !== info.sizeBytes) {
-    if (file.exists) file.delete();
-    throw new Error('modelo incompleto');
+  try {
+    const file = await File.downloadFileAsync(analysisModelUrl(info), destination, {
+      idempotent: true,
+      signal: options.signal,
+      onProgress: ({ bytesWritten, totalBytes }) => {
+        if (totalBytes <= 0) return;
+        const ratio = Math.min(1, bytesWritten / totalBytes);
+        options.onProgress?.(ratio);
+        updateActivity(activity, { progress: ratio * 100 });
+      },
+    });
+
+    if (file.size !== info.sizeBytes) {
+      if (file.exists) file.delete();
+      throw new Error('modelo incompleto');
+    }
+    finishActivity(activity, 'Modelo de análise pronto');
+    return file.uri;
+  } catch (error) {
+    failActivity(activity, 'Não foi possível baixar o modelo');
+    throw error;
   }
-  return file.uri;
 }
 
 export function deleteAnalysisModel(id: string): void {

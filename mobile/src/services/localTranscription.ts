@@ -13,6 +13,7 @@
 import { Directory, File, FileMode, Paths } from 'expo-file-system';
 
 import { whisperLanguage } from '@/core/transcription';
+import { displayTitle } from '@/core/title';
 import type { Recording, TranscriptSegment } from '@/core/types';
 
 import { audioDecodeAvailable, decodeToWav } from '../../modules/audio-decode';
@@ -21,6 +22,7 @@ import {
   stopForegroundTask,
   updateForegroundTask,
 } from '../../modules/foreground-task';
+import { cancelActivity, failActivity, finishActivity, startActivity, updateActivity } from './activity';
 import { getRecording, listRecordings, upsertRecording } from './db';
 import { ensureNotificationPermission, notify } from './notifications';
 import { emitRecording } from './uploaderLoop';
@@ -115,6 +117,7 @@ function setRunning(id: string, value: boolean): void {
  */
 export async function stopTranscription(id: string): Promise<void> {
   cancelled.add(id);
+  updateActivity(activityId(id), { detail: 'Parando após o trecho atual' });
   const run = activeRuns.get(id);
   if (!run) return;
   try {
@@ -122,6 +125,11 @@ export async function stopTranscription(id: string): Promise<void> {
   } catch {
     // a janela pode ja ter terminado
   }
+}
+
+/** Id estavel da atividade: parar/retomar a mesma nota nao cria duas linhas. */
+function activityId(id: string): string {
+  return `transcription:${id}`;
 }
 
 function setProgress(id: string, percent: number): void {
@@ -132,6 +140,7 @@ function setProgress(id: string, percent: number): void {
   if (previous !== undefined && Math.floor(previous) === Math.floor(next)) return;
   progressValues.set(id, next);
   progressListeners.get(id)?.forEach((listener) => listener(next));
+  updateActivity(activityId(id), { progress: next });
   if (foregroundOn) {
     // A barra de notificacoes e o unico lugar onde o progresso aparece com o
     // app em segundo plano; o texto acompanha a mesma porcentagem da nota.
@@ -343,18 +352,34 @@ export async function transcribeLocally(id: string): Promise<void> {
   const textOf = (segments: TranscriptSegment[]) =>
     segments.map((segment) => segment.text).join(' ').trim();
 
+  const activity = activityId(id);
+  startActivity({
+    id: activity,
+    kind: 'transcription',
+    title: displayTitle(recording),
+    detail: checkpoint > 0 ? 'Retomando transcrição' : 'Preparando áudio',
+    progress: transcriptionProgress(id),
+    action: { label: 'Tentar de novo', run: () => retryTranscription(id) },
+  });
+
   try {
     await decodeToWav(recording.filePath, wavPath);
     const durationMs = wavDurationMs(wavPath);
     if (durationMs <= 0) {
       throw new Error('wav sem dados');
     }
+    updateActivity(activity, { detail: 'Carregando modelo' });
     const context = await getContext(whisper, modelId, modelPath);
     setProgress(id, Math.min(100, (checkpoint / durationMs) * 100));
 
+    const totalChunks = Math.max(1, Math.ceil(durationMs / CHUNK_MS));
     let language = recording.transcriptLanguage ?? '';
     let lastPersist = 0;
     while (checkpoint < durationMs - 5 && !cancelled.has(id)) {
+      const chunkNumber = Math.min(totalChunks, Math.floor(checkpoint / CHUNK_MS) + 1);
+      updateActivity(activity, {
+        detail: `Transcrevendo trecho ${chunkNumber} de ${totalChunks}`,
+      });
       const slice = await writeWavRange(wavPath, chunkPath, checkpoint, checkpoint + CHUNK_MS);
       if (slice.endMs <= slice.startMs) break;
       const chunkStart = slice.startMs;
@@ -408,6 +433,7 @@ export async function transcribeLocally(id: string): Promise<void> {
     // Cancelada pelo usuario: o que ja foi transcrito fica salvo como pending
     // (checkpoint), nao como concluido.
     if (cancelled.has(id)) throw new Error('transcricao cancelada');
+    updateActivity(activity, { detail: 'Salvando transcrição' });
     setProgress(id, 100);
     await persist(recording, {
       transcript: textOf(committed),
@@ -418,6 +444,7 @@ export async function transcribeLocally(id: string): Promise<void> {
       transcriptOrigin: 'local',
       hasTranscript: true,
     });
+    finishActivity(activity, 'Transcrição pronta');
     // Avisa o servidor (best-effort) para ele nao transcrever de novo e mostrar
     // o texto no dashboard. Se o entryId ainda nao existir, tenta apos o upload.
     await pushTranscript(id);
@@ -425,6 +452,11 @@ export async function transcribeLocally(id: string): Promise<void> {
   } catch {
     // Falhou no meio: guarda o que ja foi transcrito e o ponto de retomada.
     // A proxima abertura do app continua daqui em vez de recomecar do zero.
+    if (cancelled.has(id)) {
+      cancelActivity(activity, 'Transcrição interrompida');
+    } else {
+      failActivity(activity, 'Não foi possível transcrever');
+    }
     await chain.catch(() => undefined);
     await persist(recording, {
       transcript: textOf(committed),
@@ -444,6 +476,15 @@ export async function transcribeLocally(id: string): Promise<void> {
     foregroundOn = false;
     stopForegroundTask();
   }
+}
+
+/**
+ * Tenta a transcricao de novo depois de uma falha ou interrupcao. O checkpoint
+ * salvo continua valendo, entao a retomada nao recomeca o audio inteiro.
+ */
+export async function retryTranscription(id: string): Promise<void> {
+  attempted.delete(id);
+  await transcribeLocally(id);
 }
 
 /**
