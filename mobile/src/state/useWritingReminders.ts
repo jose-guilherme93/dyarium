@@ -22,7 +22,14 @@ import { useSettings } from './SettingsContext';
 /** Reavalia de tempo em tempo (pega virada do dia e texto salvo so no banco). */
 const SYNC_INTERVAL_MS = 15 * 60 * 1000;
 
-export function useWritingReminders(): void {
+/** Espera a tela assentar antes de analisar a biblioteca (nunca no toque). */
+const FIRST_SYNC_DELAY_MS = 2000;
+
+/**
+ * `enabled` fica falso enquanto o microfone abre ou grava: analisar a
+ * biblioteca inteira no mesmo instante atrasava o inicio da gravacao.
+ */
+export function useWritingReminders(enabled = true): void {
   const { recordings } = useLibrary();
   const {
     weeklyWordGoal,
@@ -62,6 +69,7 @@ export function useWritingReminders(): void {
   ]);
 
   const sync = useCallback(async () => {
+    if (!enabled) return;
     const state = stateRef.current;
     if (!state.writingReminders) {
       await syncWritingReminder(null, state.reminderHour);
@@ -93,17 +101,19 @@ export function useWritingReminders(): void {
       writingReminder({ metrics, weeklyWords, goal: state.weeklyWordGoal, now }),
       state.reminderHour,
     );
-  }, [setCelebratedStreak, setCelebratedWords]);
+  }, [enabled, setCelebratedStreak, setCelebratedWords]);
 
   useEffect(() => {
-    void sync();
+    if (!enabled) return;
+    const first = setTimeout(() => void sync(), FIRST_SYNC_DELAY_MS);
     const interval = setInterval(() => void sync(), SYNC_INTERVAL_MS);
     const subscription = AppState.addEventListener('change', (status) => {
       if (status === 'active') void sync();
     });
     return () => {
+      clearTimeout(first);
       clearInterval(interval);
       subscription.remove();
     };
-  }, [sync, recordings.length]);
+  }, [sync, recordings.length, enabled]);
 }

@@ -160,10 +160,18 @@ function diskSpace(): { freeBytes: number | null; totalBytes: number | null } {
   return { freeBytes, totalBytes };
 }
 
+/** Mesma marca de imagem que as metricas contam no texto da nota. */
+const IMAGE_MARKDOWN = /!\[[^\]]*\]\(/;
+
 /** Bytes de imagem por id local da nota, para as metricas do Painel e o snapshot. */
 export function scanImageBytes(recordings: Recording[]): Record<string, number> {
   const out: Record<string, number> = {};
   for (const recording of recordings) {
+    // A metrica de imagens so consulta notas que tem imagem no texto. Sem este
+    // filtro, cada recálculo listava a pasta de TODAS as notas com chamadas
+    // sincronas de filesystem na thread de JS; numa biblioteca grande isso
+    // segurava o app por varios segundos, inclusive no inicio de uma gravacao.
+    if (!IMAGE_MARKDOWN.test(recording.text ?? '')) continue;
     let bytes = 0;
     try {
       for (const file of sessionFiles(recording.id)) {

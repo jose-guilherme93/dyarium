@@ -13,7 +13,7 @@ import { registerUploadTask } from '@/services/background';
 import { configureNotifications } from '@/services/notifications';
 import { LibraryProvider } from '@/state/LibraryContext';
 import { PlaybackProvider } from '@/state/PlaybackContext';
-import { RecordingProvider } from '@/state/RecordingContext';
+import { RecordingProvider, useRecording } from '@/state/RecordingContext';
 import { SettingsProvider, useSettings } from '@/state/SettingsContext';
 import { useMetricsSync } from '@/state/useMetricsSync';
 import { useWritingReminders } from '@/state/useWritingReminders';
@@ -44,13 +44,17 @@ function Ready({ children }: { children: ReactNode }) {
 
 /** Agenda os lembretes de escrita (precisa dos providers de biblioteca/config). */
 function Reminders() {
-  useWritingReminders();
+  // Deter o microfone tem prioridade: analisar a biblioteca inteira durante o
+  // prepare/gravacao era o que travava a tela de gravacao.
+  const { active, starting } = useRecording();
+  useWritingReminders(!active && !starting);
   return null;
 }
 
 /** Mantem as metricas de escrita prontas e sincronizadas com o servidor. */
 function Metrics() {
-  useMetricsSync();
+  const { active, starting } = useRecording();
+  useMetricsSync(!active && !starting);
   return null;
 }
 
