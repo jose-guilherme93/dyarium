@@ -742,4 +742,30 @@ describe('corpo da nota em nos', () => {
 
     expect(onChange).toHaveBeenLastCalledWith('A novo\n\nB novo');
   });
+
+  it('abre a nota grande so com as primeiras linhas e revela o resto depois', () => {
+    // Paragrafo longo (cruza 60 linhas) seguido de 40 fotos: no primeiro
+    // frame so o texto monta, o resto fica com esqueleto de texto e carrega
+    // em lotes depois que a nota ja abriu.
+    const intro = Array.from({ length: 70 }, (_, i) => `intro ${i}`).join('\n');
+    const photos = Array.from({ length: 40 }, (_, i) => `![f](local:f${i}.jpg)`).join('\n');
+
+    render(
+      <NoteBody
+        value={`${intro}\n${photos}`}
+        onChangeMarkdown={jest.fn()}
+        typography={typography}
+      />,
+    );
+
+    // Primeiro frame: esqueleto no lugar do que ainda nao carregou.
+    expect(screen.queryByTestId('note-body-skeleton')).toBeTruthy();
+    expect(screen.getByTestId('rich-editor').props.value).toContain('intro 0');
+
+    // Depois que a nota abriu, o resto carrega em lotes e o esqueleto some.
+    act(() => {
+      jest.advanceTimersByTime(2000);
+    });
+    expect(screen.queryByTestId('note-body-skeleton')).toBeNull();
+  });
 });

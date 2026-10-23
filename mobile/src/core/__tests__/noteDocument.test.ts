@@ -10,6 +10,7 @@ import {
   removeFromNoteNodes,
   removeNoteNode,
   replaceAudioRef,
+  revealIndexForLines,
   serializeNoteDocument,
   setNoteNodeWidth,
   splitMarkdownAtCursor,
@@ -337,5 +338,52 @@ describe('setNoteNodeWidth', () => {
     expect(setNoteNodeWidth('![foto](local:foto.jpg){w=50}', 'i0', 50)).toBe(
       '![foto](local:foto.jpg){w=50}',
     );
+  });
+});
+
+describe('revealIndexForLines', () => {
+  it('revela o documento inteiro quando cabe no limite de linhas', () => {
+    const nodes = parseNoteDocument('A\nB\nC');
+    expect(revealIndexForLines(nodes, 60)).toBe(nodes.length);
+  });
+
+  it('revela o documento inteiro de uma nota so de texto', () => {
+    const long = Array.from({ length: 40 }, (_, i) => `paragrafo ${i}`).join('\n');
+    const nodes = parseNoteDocument(long);
+    // Um unico no de texto grande demais pra 60 linhas: vem inteiro.
+    expect(nodes).toHaveLength(1);
+    expect(revealIndexForLines(nodes, 60)).toBe(1);
+  });
+
+  it('para no no que cruza o limite de linhas, sem cortar o texto', () => {
+    // 55 linhas de texto + uma foto: o texto vem inteiro, a foto tambem.
+    const body = Array.from({ length: 55 }, (_, i) => `linha ${i}`).join('\n');
+    const nodes = parseNoteDocument(`${body}\n![foto](local:foto.jpg)`);
+    expect(revealIndexForLines(nodes, 60)).toBe(nodes.length);
+  });
+
+  it('esconde o que passa do limite num documento com midias intercaladas', () => {
+    // Um paragrafo longo (70 linhas, cruza o limite) seguido de 40 fotos: o
+    // texto vem inteiro de imediato e as fotos sao reveladas depois.
+    const intro = Array.from({ length: 70 }, (_, i) => `intro ${i}`).join('\n');
+    const photos = Array.from({ length: 40 }, (_, i) => `![f](local:f${i}.jpg)`).join('\n');
+    const nodes = parseNoteDocument(`${intro}\n${photos}`);
+    // O parser coloca um no de texto vazio entre fotos consecutivas, entao
+    // sao 40 fotos + 39 vazios + 1 vazio no fim, mais o texto inicial.
+    expect(nodes.length).toBe(81);
+    expect(revealIndexForLines(nodes, 60)).toBe(1);
+  });
+
+  it('conta as linhas so dos nos de texto (ignora vazios e midias)', () => {
+    // Dezenas de fotos antes do paragrafo longo: os nos vazios entre elas nao
+    // contam linha, e o texto so aparece no fim, cruzando 60 linhas.
+    const photos = Array.from({ length: 30 }, (_, i) => `![f](local:f${i}.jpg)`).join('\n');
+    const body = Array.from({ length: 70 }, (_, i) => `linha ${i}`).join('\n');
+    const nodes = parseNoteDocument(`${photos}\n${body}`);
+    // 30 fotos + 29 vazios entre elas (o parser nao repete no fim porque o
+    // texto final vem depois) + 1 texto = 60 nos.
+    expect(nodes.length).toBe(60);
+    // O texto so no fim cruza 60 linhas: revela o documento inteiro.
+    expect(revealIndexForLines(nodes, 60)).toBe(60);
   });
 });

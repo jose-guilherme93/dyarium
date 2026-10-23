@@ -208,6 +208,31 @@ export function parseNoteDocument(markdown: string): NoteNode[] {
 }
 
 /**
+ * Quantos nos revelar numa primeira abertura, limitado a `maxLines` linhas de
+ * conteudo de texto.
+ *
+ * Midias que caiam dentro desse trecho tambem entram, e o no que cruza o limite
+ * e incluido inteiro (o editor nativo nao divide um no no meio). Notas menores
+ * que o limite revelam o documento inteiro.
+ *
+ * Usado para a nota grande nao montar dezenas de editores de uma vez ao abrir:
+ * so as primeiras linhas viram editores e o resto carrega depois, com um
+ * esqueleto de texto no lugar.
+ */
+export function revealIndexForLines(nodes: NoteNode[], maxLines: number): number {
+  let lines = 0;
+  for (let index = 0; index < nodes.length; index += 1) {
+    const node = nodes[index];
+    if (node.kind === 'text') {
+      const newlines = node.markdown.match(/\n/g)?.length ?? 0;
+      lines += newlines + 1;
+    }
+    if (lines >= maxLines) return index + 1;
+  }
+  return nodes.length;
+}
+
+/**
  * Corta um trecho de texto grande demais, na fronteira de uma palavra.
  *
  * As partes voltam coladas: o markdown do usuario nao muda. So entra em jogo

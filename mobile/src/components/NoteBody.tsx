@@ -54,6 +54,7 @@ import {
   insertIntoNoteNodes,
   parseNoteDocument,
   removeFromNoteNodes,
+  revealIndexForLines,
   serializeNoteDocument,
   setWidthInNoteNodes,
   type NoteAudioNode,
@@ -78,6 +79,16 @@ export type { FormatType, NoteBodyHandle, NoteBodyProps } from './noteBodyTypes'
 // campo; o markdown so e montado depois de uma pausa longa, no blur ou ao sair.
 const FLUSH_MS = 4000;
 const MIN_TEXT_HEIGHT = 28;
+/** Linhas de conteudo de texto reveladas de imediato ao abrir a nota. */
+const INITIAL_BODY_LINES = 60;
+/** Nos revelados por lote depois que a nota abriu. */
+const REVEAL_CHUNK = 12;
+/** Intervalo entre lotes de revelacao (ms). */
+const REVEAL_INTERVAL = 90;
+/** Espera apos montar para comecar a revelar o resto (nota ja aberta). */
+const REVEAL_START = 220;
+/** Linhas do esqueleto de texto enquanto o resto do corpo nao carregou. */
+const SKELETON_LINES = 6;
 const EMPTY_SOURCES: Record<string, string> = {};
 const EMPTY_SEGMENTS: Record<string, TranscriptSegment[]> = {};
 const EMPTY_REFS: string[] = [];
@@ -148,6 +159,20 @@ const NativeNoteBody = memo(
     const window = useWindowDimensions();
     const [nodes, setNodes] = useState<NoteNode[]>(() => parseNoteDocument(value));
     const nodesRef = useRef(nodes);
+    // Carga parcial do corpo: ao abrir, so as primeiras linhas viram editores;
+    // o resto carrega depois que a nota ja esta na tela, com um esqueleto de
+    // texto no lugar. Evita montar dezenas de editores de uma vez (o que travava
+    // a nota grande ao abrir).
+    const [revealed, setRevealed] = useState<number>(() =>
+      revealIndexForLines(nodes, INITIAL_BODY_LINES),
+    );
+    // Espelho de `revealed` para leitura sincrona dentro do temporizador de
+    // revelacao (o setState so atualiza o valor na proxima render).
+    const revealedRef = useRef(revealed);
+    useEffect(() => {
+      revealedRef.current = revealed;
+    }, [revealed]);
+    const [loadEpoch, setLoadEpoch] = useState(0);
     // Geracao dos trechos: o editor monta com o HTML do trecho. Quando o
     // documento muda por fora (ou uma midia divide um trecho), a geracao muda
     // e o trecho recebe o conteudo novo.
@@ -177,6 +202,36 @@ const NativeNoteBody = memo(
       }, 100);
       return () => clearTimeout(timer);
     }, []);
+
+    // Revela o resto do corpo em lotes, depois que a nota abriu (montou e deu o
+    // primeiro frame). O esqueleto ocupa o lugar do que ainda nao carregou, e
+    // cada lote acrescenta mais nos sem remontar os que ja estao na tela.
+    useEffect(() => {
+      let cancelled = false;
+      let timer: ReturnType<typeof setTimeout>;
+      let progress = revealedRef.current;
+      const tick = () => {
+        if (cancelled) return;
+        // Nunca recua: uma edicao pode ter revelado o corpo inteiro de uma vez
+        // (ex.: insercao de foto/audio no meio do que estava oculto).
+        const next = Math.min(
+          nodesRef.current.length,
+          Math.max(progress, revealedRef.current) + REVEAL_CHUNK,
+        );
+        progress = next;
+        revealedRef.current = next;
+        setRevealed(next);
+        if (next < nodesRef.current.length) {
+          timer = setTimeout(tick, REVEAL_INTERVAL);
+        }
+      };
+      timer = setTimeout(tick, REVEAL_START);
+      return () => {
+        cancelled = true;
+        clearTimeout(timer);
+      };
+    }, [loadEpoch]);
+
     const lastEmitted = useRef(value);
     const srcToRef = useRef(new Map<string, string>());
     const srcToAlt = useRef(new Map<string, string>());
@@ -324,6 +379,9 @@ const NativeNoteBody = memo(
         if (activeId.current === id) activeId.current = null;
         focused.current = false;
         setNodes(next);
+        // A edicao estrutural revela o conteudo novo de imediato (o corpo nunca
+        // esconde o que o usuario acabou de criar).
+        setRevealed(next.length);
         setVersion((current) => current + 1);
         emit(next);
       },
@@ -360,6 +418,8 @@ const NativeNoteBody = memo(
         // Sem remontar os trechos de texto: a estrutura do documento nao
         // mudou, e o editor nao pode perder o texto pendente.
         setNodes(next);
+        // A largura da foto e uma edicao: revela o conteudo que estava oculto.
+        setRevealed(next.length);
         emit(next);
       },
       [emit, flushNodes],
@@ -421,9 +481,13 @@ const NativeNoteBody = memo(
       selections.current.clear();
       activeId.current = null;
       focused.current = false;
-      // O documento mudou por fora: os editores recebem o conteudo novo.
+      // O documento mudou por fora: os editores recebem o conteudo novo. A
+      // carga parcial recomeca (so as primeiras linhas de imediato) e o resto
+      // carrega depois, com esqueleto no lugar.
       setNodes(next);
       setVersion((current) => current + 1);
+      setRevealed(revealIndexForLines(next, INITIAL_BODY_LINES));
+      setLoadEpoch((epoch) => epoch + 1);
       if (timer.current) {
         clearTimeout(timer.current);
         timer.current = null;
@@ -582,6 +646,8 @@ const NativeNoteBody = memo(
         // O documento mudou (o trecho foi dividido): os editores remontam com o
         // HTML novo e o cursor entra no trecho que ficou depois da midia.
         setNodes(next);
+        // Inserir no meio/salvar revela o conteudo novo de imediato.
+        setRevealed(next.length);
         setVersion((current) => current + 1);
         emit(next);
 
@@ -726,6 +792,12 @@ const NativeNoteBody = memo(
       );
     };
 
+    // Carga parcial: so os primeiros nos (ate as linhas iniciais) viram editores
+    // de imediato; o resto aparece depois que a nota abriu, com um esqueleto de
+    // texto no lugar do que ainda nao carregou.
+    const shown = Math.min(revealed, nodes.length);
+    const visibleNodes = nodes.slice(0, shown);
+
     return (
       <View
         testID="note-body"
@@ -737,7 +809,20 @@ const NativeNoteBody = memo(
           setSlow(false);
         }}
       >
-        {nodes.map((node, index) => renderNode(node, index === 0))}
+        {visibleNodes.map((node, index) => renderNode(node, index === 0))}
+        {shown < nodes.length ? (
+          <View style={styles.skeleton} pointerEvents="none" testID="note-body-skeleton">
+            {Array.from({ length: SKELETON_LINES }, (_, line) => (
+              <View
+                key={line}
+                style={[
+                  styles.skeletonLine,
+                  line % 3 === 2 && styles.skeletonLineShort,
+                ]}
+              />
+            ))}
+          </View>
+        ) : null}
         {/* Teto de 100 ms: se o corpo nao chegou a medir nesse tempo, um
             indicador discreto aparece no lugar do texto. Ele nao bloqueia a
             nota (nem a abertura, nem o fechamento) e nao empurra o layout. */}
@@ -958,6 +1043,18 @@ const styles = StyleSheet.create({
     height: 120,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  skeleton: {
+    gap: spacing.xs,
+    paddingVertical: spacing.xs,
+  },
+  skeletonLine: {
+    height: 12,
+    borderRadius: radius.sm,
+    backgroundColor: colors.border,
+  },
+  skeletonLineShort: {
+    width: '70%',
   },
   image: {
     borderRadius: radius.md,

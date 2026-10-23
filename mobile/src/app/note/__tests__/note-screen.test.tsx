@@ -324,8 +324,8 @@ describe('tela da nota', () => {
     await act(async () => {
       await Promise.resolve();
       await Promise.resolve();
-      // Esqueleto -> preview -> editor -> midia. Cada fase e agendada depois
-      // que a anterior renderiza, por isso os dois passos de timer.
+      // A midia entra depois do primeiro frame; os timers apenas liberam a
+      // fase de anexos/pilha/segmentos.
       jest.advanceTimersByTime(200);
       await Promise.resolve();
       await Promise.resolve();
@@ -336,22 +336,20 @@ describe('tela da nota', () => {
     return view;
   };
 
-  it('mostra o cabecalho e o preview antes de montar o editor', () => {
+  it('monta o editor rico formatado no primeiro frame, sem previa crua', () => {
     render(<NoteScreen />);
 
-    // Cabecalho, botoes e conteudo textual aparecem antes do editor nativo.
+    // Cabecalho e o editor rico aparecem de imediato: o usuario ve as edicoes
+    // dele (negrito, italico, listas) ja no primeiro frame, sem passar por uma
+    // previa de texto cru nem por um esqueleto.
     expect(screen.getByPlaceholderText('título da nota')).toBeTruthy();
     expect(screen.getByLabelText('Configurações da nota')).toBeTruthy();
-    expect(screen.getByTestId('note-body-hydrating')).toBeTruthy();
-    expect(screen.getByTestId('note-body-preview')).toBeTruthy();
-    expect(screen.queryByTestId('note-body')).toBeNull();
-
-    act(() => {
-      jest.advanceTimersByTime(200);
-    });
-
     expect(screen.getByTestId('note-body')).toBeTruthy();
     expect(screen.queryByTestId('note-body-hydrating')).toBeNull();
+    expect(screen.queryByTestId('note-body-preview')).toBeNull();
+
+    // O corpo ja vem com o texto da nota (o markdown vira o formato do editor).
+    expect(screen.getByDisplayValue('primeira linha')).toBeTruthy();
   });
 
   it('aplica a tipografia no titulo sem remontar a nota', async () => {

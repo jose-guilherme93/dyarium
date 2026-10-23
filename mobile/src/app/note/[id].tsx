@@ -53,7 +53,7 @@ import {
   utf8ByteLength,
 } from '@/core/format';
 import { DEFAULT_IMAGE_WIDTH } from '@/core/image';
-import { fontFamilyNative, fontWeightNative } from '@/core/typography';
+import { fontFamilyNative } from '@/core/typography';
 import { appendAudioNodes, audioNodesForNote, audioRefFromPath } from '@/core/noteAudio';
 import { countChars, countWords, markdownToPlain } from '@/core/richText';
 import type { Recording, TranscriptSegment } from '@/core/types';
@@ -132,8 +132,6 @@ function bodyWithAudioNodes(note: Recording): string {
 }
 
 /** Tetos do preview usado enquanto o editor nativo nao monta. */
-const PREVIEW_CHARS = 6000;
-const EDITOR_DELAY_MS = 170;
 const MEDIA_DELAY_MS = 400;
 
 function ToolButton({
@@ -211,13 +209,14 @@ export default function NoteScreen() {
       : checkpointPercent(note ?? {});
   // Player unico do app: um audio toca por vez, seja ele um no do corpo ou um
   // audio da pilha do servidor. O card de audio nao cria player proprio.
-  // O corpo e hidratado depois do primeiro frame: o cabecalho (voltar, menu,
-  // titulo) aparece na hora, sem esperar o parse do documento. Enquanto isso, a
-  // area do corpo mostra um carregamento proprio.
-  const [body, setBody] = useState('');
-  const [bodyPreview, setBodyPreview] = useState('');
-  const [hydrated, setHydrated] = useState(false);
-  const [bodyReady, setBodyReady] = useState(false);
+  // Cabecalho (voltar, menu, titulo) e corpo montam juntos no primeiro frame:
+  // o titulo vem do estado lazy e o corpo ja nasce com o documento migrado,
+  // entao o editor rico aparece formatado de imediato. A midia (anexos, pilha
+  // de audios, segmentos) entra depois, porque e o JSON mais pesado da nota.
+  // O corpo nasce no primeiro frame com o documento ja migrado: o editor rico
+  // monta formatado (negrito, italico, listas) de imediato, sem previa crua nem
+  // esqueleto entre o usuario e as edicoes que ele ja fez.
+  const [body, setBody] = useState(() => (note ? bodyWithAudioNodes(note) : ''));
   const [mediaReady, setMediaReady] = useState(false);
 
   // Pilha de audios do servidor. O app nao grava varios audios numa nota, mas
@@ -787,12 +786,15 @@ export default function NoteScreen() {
     setTitle(note.title);
     // Nota antiga (ou gravacao criada fora da tela): o audio vivia em
     // `filePath`/na pilha do servidor. Ele vira no do corpo na primeira
-    // abertura, que e o que faz o player aparecer entre os textos.
+    // abertura, que e o que faz o player aparecer entre os textos. O corpo ja
+    // nasce no estado com esse documento (lazy useState), entao o editor monta
+    // formatado no primeiro frame; aqui so sincronizamos o ref quando o valor
+    // ainda nao foi o inicial (nota que apareceu depois da biblioteca).
     const migrated = bodyWithAudioNodes(note);
-    setBody(migrated);
-    bodyRef.current = migrated;
-    const preview = markdownToPlain(migrated.slice(0, PREVIEW_CHARS));
-    setBodyPreview(migrated.length > PREVIEW_CHARS ? `${preview}\n...` : preview);
+    if (migrated !== bodyRef.current) {
+      setBody(migrated);
+      bodyRef.current = migrated;
+    }
     mark('note.ready_ms', Date.now() - openedAt);
     if (__DEV__) {
       console.log('[perf] note.corpo', {
@@ -801,29 +803,19 @@ export default function NoteScreen() {
         linhas: (note.text ?? '').split('\n').length,
       });
     }
-    setHydrated(true);
   }, [note, openedAt]);
 
-  // O editor nativo e a parte mais cara. Monta depois da transicao, com o
-  // preview ja visivel: a nota nunca fica sem conteudo durante a troca.
-  useEffect(() => {
-    if (!hydrated || bodyReady) return undefined;
-    const wait = Math.max(0, EDITOR_DELAY_MS - (Date.now() - openedAt));
-    const timer = setTimeout(() => {
-      mark('note.editor_ms', Date.now() - openedAt);
-      setBodyReady(true);
-    }, wait);
-    return () => clearTimeout(timer);
-  }, [bodyReady, hydrated, openedAt]);
+  // O editor rico monta no primeiro frame (o corpo ja nasce migrado), sem o
+  // atraso que trocava uma previa crua pela versao formatada.
 
   // Midia (segmentos, anexos, pilha de audios) entra depois do editor. Sao os
   // JSONs mais pesados da nota e nao podem disputar o primeiro frame.
   useEffect(() => {
-    if (!hydrated || mediaReady) return undefined;
+    if (mediaReady) return undefined;
     const wait = Math.max(0, MEDIA_DELAY_MS - (Date.now() - openedAt));
     const timer = setTimeout(() => setMediaReady(true), wait);
     return () => clearTimeout(timer);
-  }, [hydrated, mediaReady, openedAt]);
+  }, [mediaReady, openedAt]);
 
   // Imagens entram depois da midia: checar disco e baixar anexos nao pode
   // atrasar nem travar o conteudo.
@@ -855,7 +847,7 @@ export default function NoteScreen() {
   // virar escrita no banco (e a nota nem mudou).
   const mountedRef = useRef(false);
   useEffect(() => {
-    if (!noteId || !bodyReady) return undefined;
+    if (!noteId) return undefined;
     if (!mountedRef.current) {
       mountedRef.current = true;
       return undefined;
@@ -864,7 +856,7 @@ export default function NoteScreen() {
       void saveNote({ title: titleRef.current, text: bodyRef.current });
     }, 600);
     return () => clearTimeout(timer);
-  }, [body, bodyReady, noteId, saveNote, title]);
+  }, [body, noteId, saveNote, title]);
 
   // Ao sair: grava e envia. Roda so depois da transicao de volta, para o trabalho
   // (DB, enqueue, rede) nao competir com a animacao nem com o desmonte das
@@ -948,7 +940,6 @@ export default function NoteScreen() {
   // `pushTranscript` compara o texto e nao reenvia quando ja esta igual.
   useEffect(() => {
     if (
-      !bodyReady ||
       !noteId ||
       !note?.entryId ||
       !note.hasTranscript ||
@@ -957,7 +948,7 @@ export default function NoteScreen() {
       return;
     }
     void pushTranscript(noteId);
-  }, [bodyReady, noteId, note?.entryId, note?.hasTranscript, note?.transcriptOrigin]);
+  }, [noteId, note?.entryId, note?.hasTranscript, note?.transcriptOrigin]);
 
   const refreshAnalysis = useCallback(async () => {
     const target = note;
@@ -1703,60 +1694,30 @@ export default function NoteScreen() {
             </Press>
           ) : null}
 
-          {bodyReady ? (
-            <NoteBody
-              key={editorKey}
-              ref={editorRef}
-              value={body}
-              onChangeMarkdown={handleBodyChange}
-              onImageOpen={handleImageOpen}
-              placeholder={editorPlaceholder}
-              imageSources={imageSources}
-              audioTranscripts={audioTranscripts}
-              audioSegments={audioSegments}
-              activeAudioRef={activeAudioRef}
-              audioPlayer={player}
-              audioStartMs={activeAudioStartMs}
-              ownAudioRefs={ownAudioRefs}
-              transcribingWait={!transcribing && serverTranscribing}
-              transcribingPercent={transcribing ? transcriptionPercent : undefined}
-              canTranscribe={Boolean(hasAudio) && !note.hasTranscript}
-              onTranscribe={() => void handleTranscribe()}
-              onStopTranscribe={handleStopTranscribe}
-              onPlayAudio={handlePlayAudio}
-              onOpenTranscript={openTranscript}
-              onEditTranscript={editTranscript}
-              typography={typography}
-            />
-          ) : (
-            <View
-              style={styles.bodySkeleton}
-              testID="note-body-hydrating"
-              pointerEvents="none"
-              accessibilityLabel={bodyPreview ? 'Conteúdo da nota' : 'Carregando nota'}
-            >
-              {bodyPreview ? (
-                <Text
-                  testID="note-body-preview"
-                  style={[
-                    styles.bodyPreview,
-                    {
-                      fontFamily: fontFamilyNative(typography.family),
-                      fontSize: typography.size,
-                      fontWeight: fontWeightNative(typography.weight),
-                      lineHeight: Math.round(typography.size * 1.5),
-                    },
-                  ]}
-                >
-                  {bodyPreview}
-                </Text>
-              ) : (
-                [92, 84, 96, 68, 88, 54].map((width, index) => (
-                  <View key={index} style={[styles.bodySkeletonLine, { width: `${width}%` }]} />
-                ))
-              )}
-            </View>
-          )}
+          <NoteBody
+            key={editorKey}
+            ref={editorRef}
+            value={body}
+            onChangeMarkdown={handleBodyChange}
+            onImageOpen={handleImageOpen}
+            placeholder={editorPlaceholder}
+            imageSources={imageSources}
+            audioTranscripts={audioTranscripts}
+            audioSegments={audioSegments}
+            activeAudioRef={activeAudioRef}
+            audioPlayer={player}
+            audioStartMs={activeAudioStartMs}
+            ownAudioRefs={ownAudioRefs}
+            transcribingWait={!transcribing && serverTranscribing}
+            transcribingPercent={transcribing ? transcriptionPercent : undefined}
+            canTranscribe={Boolean(hasAudio) && !note.hasTranscript}
+            onTranscribe={() => void handleTranscribe()}
+            onStopTranscribe={handleStopTranscribe}
+            onPlayAudio={handlePlayAudio}
+            onOpenTranscript={openTranscript}
+            onEditTranscript={editTranscript}
+            typography={typography}
+          />
         </View>
       </ScrollView>
 
@@ -1996,17 +1957,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xl,
     paddingBottom: spacing.xxxl,
     gap: spacing.sm,
-  },
-  bodySkeleton: {
-    paddingVertical: spacing.md,
-    gap: spacing.sm,
-  },
-  bodyPreview: { color: colors.text },
-  bodySkeletonLine: {
-    height: 12,
-    borderRadius: 4,
-    backgroundColor: colors.surface,
-    opacity: 0.8,
   },
   toolbarHost: { backgroundColor: colors.surface },
   titleBlock: { gap: spacing.xs },
