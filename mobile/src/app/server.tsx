@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { back } from '@/services/appNavigation';
 import { useCallback, useEffect, useState } from 'react';
 import {
   KeyboardAvoidingView,
@@ -26,7 +26,7 @@ export default function ServerScreen() {
   return (
     <Screen>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.back} accessibilityLabel="Voltar">
+        <Pressable onPress={() => back()} style={styles.back} accessibilityLabel="Voltar">
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
         <Text style={styles.title}>Servidor</Text>

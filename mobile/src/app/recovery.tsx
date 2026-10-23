@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { back, replace } from '@/services/appNavigation';
 import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
@@ -22,27 +22,27 @@ export default function RecoveryScreen() {
     setBusyId(id);
     await resume(id);
     setBusyId(null);
-    router.replace('/');
+    replace('/');
   };
 
   const handleSend = async (id: string) => {
     setBusyId(id);
     await finalizeInterrupted(id);
     setBusyId(null);
-    router.back();
+    back();
   };
 
   const handleDiscard = async (id: string) => {
     setBusyId(id);
     await remove(id);
     setBusyId(null);
-    if (interrupted.length <= 1) router.back();
+    if (interrupted.length <= 1) back();
   };
 
   return (
     <Screen>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.back} accessibilityLabel="Voltar">
+        <Pressable onPress={() => back()} style={styles.back} accessibilityLabel="Voltar">
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
         <Text style={styles.title}>Gravação interrompida</Text>

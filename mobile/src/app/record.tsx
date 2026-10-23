@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { router, useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
+import { back, replace } from '@/services/appNavigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -79,17 +80,17 @@ export default function RecordScreen() {
         // Se a gravacao veio da propria nota, voltar evita duas telas da mesma
         // nota. Se veio da home, abre a nota para o audio nao ficar escondido
         // atras de um rascunho sem caderno visivel.
-        if (from === 'note' && router.canGoBack()) router.back();
-        else router.replace({ pathname: '/note/[id]', params: { id: noteId } });
+        if (from === 'note') back();
+        else replace({ pathname: '/note/[id]', params: { id: noteId } });
         return;
       }
       console.warn('[dyarium] nota de destino sumiu; guardando a gravacao como nota');
       await enqueue(attached);
-      router.replace({ pathname: '/note/[id]', params: { id: finished.id } });
+      replace({ pathname: '/note/[id]', params: { id: finished.id } });
       return;
     }
     await enqueue(finished);
-    router.replace({ pathname: '/note/[id]', params: { id: finished.id } });
+    replace({ pathname: '/note/[id]', params: { id: finished.id } });
   }, [stop, noteId, from, attachAudio, enqueue, refresh, submitNote]);
 
   const handleStop = useCallback(async () => {
@@ -132,7 +133,7 @@ export default function RecordScreen() {
       // A gravacao foi cancelada: a posicao guardada pela tela da nota nao
       // vale mais, e a proxima gravacao nao pode herdar a antiga.
       if (noteId) clearPendingInsert(noteId);
-      router.back();
+      back();
     }
   }, [finishing, noteId, stop, refresh]);
 

@@ -7,6 +7,7 @@ import type { Recording } from '@/core/types';
 import { takePendingInsert } from '@/services/noteInsert';
 
 import NoteScreen from '../[id]';
+import { resetNavigationGuard } from '@/services/appNavigation';
 
 const mockUpdateNote = jest.fn(async () => undefined);
 const mockSubmitNote = jest.fn(async () => undefined);
@@ -283,6 +284,7 @@ jest.mock('expo-clipboard', () => ({
 describe('tela da nota', () => {
   beforeEach(() => {
     jest.useFakeTimers();
+    resetNavigationGuard();
     jest.clearAllMocks();
     jest.spyOn(console, 'warn').mockImplementation(() => undefined);
     jest.spyOn(InteractionManager, 'runAfterInteractions').mockImplementation(((task: () => void) => {

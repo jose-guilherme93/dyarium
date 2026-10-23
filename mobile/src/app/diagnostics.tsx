@@ -1,7 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import { File, Paths } from 'expo-file-system';
 import * as Legacy from 'expo-file-system/legacy';
-import { router, useFocusEffect } from 'expo-router';
+import { useFocusEffect } from 'expo-router';
+import { back } from '@/services/appNavigation';
 import * as Sharing from 'expo-sharing';
 import { useCallback, useMemo, useState } from 'react';
 import {
@@ -263,7 +264,7 @@ export default function DiagnosticsScreen() {
     <Screen>
       <View style={styles.header}>
         <Pressable
-          onPress={() => router.back()}
+          onPress={() => back()}
           style={styles.iconButton}
           accessibilityLabel="Voltar"
         >

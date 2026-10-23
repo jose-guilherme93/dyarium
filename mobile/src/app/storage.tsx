@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import { router, useFocusEffect } from 'expo-router';
+import { useFocusEffect } from 'expo-router';
+import { back, push } from '@/services/appNavigation';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -249,7 +250,7 @@ export default function StorageScreen() {
   return (
     <Screen>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.iconButton} accessibilityLabel="Voltar">
+        <Pressable onPress={() => back()} style={styles.iconButton} accessibilityLabel="Voltar">
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
         <Text style={styles.headerTitle}>Armazenamento</Text>
@@ -359,7 +360,7 @@ export default function StorageScreen() {
             </View>
 
             <Text style={styles.sectionLabel}>Modelos</Text>
-            <Pressable onPress={() => router.push('/transcription')}>
+            <Pressable onPress={() => push('/transcription')}>
               <View style={styles.card}>
                 <View style={styles.linkRow}>
                   <View style={styles.linkText}>

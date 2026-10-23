@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { back, push } from '@/services/appNavigation';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { Card } from '@/components/Card';
@@ -17,7 +17,7 @@ export default function SettingsScreen() {
     <Screen>
       <View style={styles.header}>
         <Pressable
-          onPress={() => router.back()}
+          onPress={() => back()}
           style={styles.iconButton}
           accessibilityLabel="Voltar"
         >
@@ -57,7 +57,7 @@ export default function SettingsScreen() {
         </Card>
 
         <Text style={styles.sectionLabel}>Métricas</Text>
-        <Pressable onPress={() => router.push('/dashboard')}>
+        <Pressable onPress={() => push('/dashboard')}>
           <Card style={styles.row}>
             <Ionicons name="stats-chart-outline" size={20} color={colors.info} />
             <View style={styles.rowText}>
@@ -68,7 +68,7 @@ export default function SettingsScreen() {
           </Card>
         </Pressable>
 
-        <Pressable onPress={() => router.push('/storage')}>
+        <Pressable onPress={() => push('/storage')}>
           <Card style={styles.row}>
             <Ionicons name="save-outline" size={20} color={colors.info} />
             <View style={styles.rowText}>
@@ -79,7 +79,7 @@ export default function SettingsScreen() {
           </Card>
         </Pressable>
 
-        <Pressable onPress={() => router.push('/backup')}>
+        <Pressable onPress={() => push('/backup')}>
           <Card style={styles.row}>
             <Ionicons name="cloud-download-outline" size={20} color={colors.info} />
             <View style={styles.rowText}>
@@ -90,7 +90,7 @@ export default function SettingsScreen() {
           </Card>
         </Pressable>
 
-        <Pressable onPress={() => router.push('/transcription')}>
+        <Pressable onPress={() => push('/transcription')}>
           <Card style={styles.row}>
             <Ionicons name="mic-circle-outline" size={20} color={colors.info} />
             <View style={styles.rowText}>
@@ -102,7 +102,7 @@ export default function SettingsScreen() {
         </Pressable>
 
         <Text style={styles.sectionLabel}>Servidor</Text>
-        <Pressable onPress={() => router.push('/server')}>
+        <Pressable onPress={() => push('/server')}>
           <Card style={styles.row}>
             <Ionicons
               name="cloud-outline"
@@ -120,7 +120,7 @@ export default function SettingsScreen() {
         </Pressable>
 
         <Text style={styles.sectionLabel}>Avançado</Text>
-        <Pressable onPress={() => router.push('/diagnostics')}>
+        <Pressable onPress={() => push('/diagnostics')}>
           <Card style={styles.row}>
             <Ionicons name="pulse-outline" size={20} color={colors.info} />
             <View style={styles.rowText}>

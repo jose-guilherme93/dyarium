@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { back } from '@/services/appNavigation';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { Button } from '@/components/Button';
@@ -19,7 +19,7 @@ export default function SyncScreen() {
   return (
     <Screen>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.iconButton} accessibilityLabel="Voltar">
+        <Pressable onPress={() => back()} style={styles.iconButton} accessibilityLabel="Voltar">
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
         <Text style={styles.headerTitle}>Sincronização</Text>

@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Device from 'expo-device';
-import { router } from 'expo-router';
+import { back } from '@/services/appNavigation';
 import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 
@@ -73,7 +73,7 @@ export default function TranscriptionScreen() {
     <Screen>
       <View style={styles.header}>
         <Pressable
-          onPress={() => router.back()}
+          onPress={() => back()}
           style={styles.iconButton}
           accessibilityLabel="Voltar"
         >

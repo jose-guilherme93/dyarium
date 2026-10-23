@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useAudioPlayerStatus } from 'expo-audio';
-import { router, useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
+import { back } from '@/services/appNavigation';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
@@ -264,7 +265,7 @@ export default function TranscriptScreen() {
   return (
     <View style={styles.screen}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} accessibilityLabel="Voltar" hitSlop={12}>
+        <Pressable onPress={() => back()} accessibilityLabel="Voltar" hitSlop={12}>
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
         <Text style={styles.title}>Transcrição</Text>

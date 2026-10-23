@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { createAudioPlayer, type AudioPlayer } from 'expo-audio';
-import { router } from 'expo-router';
+import { replace } from '@/services/appNavigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -376,7 +376,7 @@ export default function ImportReviewScreen() {
       for (const recording of recordings) {
         await library.enqueue(recording);
       }
-      router.replace('/');
+      replace('/');
     } catch {
       setError('Não foi possível enfileirar os áudios.');
       setSending(false);
@@ -389,7 +389,7 @@ export default function ImportReviewScreen() {
   return (
     <Screen>
       <View style={styles.header}>
-        <Pressable onPress={() => router.replace('/')} style={styles.back} accessibilityLabel="Voltar">
+        <Pressable onPress={() => replace('/')} style={styles.back} accessibilityLabel="Voltar">
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
         <Text style={styles.headerTitle}>Revisar importação</Text>

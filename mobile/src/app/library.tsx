@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { back, push } from '@/services/appNavigation';
 import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { RecordingCard } from '@/components/RecordingCard';
@@ -15,7 +15,7 @@ export default function LibraryScreen() {
   return (
     <Screen>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.back} accessibilityLabel="Voltar">
+        <Pressable onPress={() => back()} style={styles.back} accessibilityLabel="Voltar">
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
         <View style={styles.headerText}>
@@ -38,7 +38,7 @@ export default function LibraryScreen() {
         renderItem={({ item }) => (
           <RecordingCard
             recording={item}
-            onOpen={(id) => router.push({ pathname: '/note/[id]', params: { id } })}
+            onOpen={(id) => push({ pathname: '/note/[id]', params: { id } })}
           />
         )}
         ListEmptyComponent={

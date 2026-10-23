@@ -2,7 +2,8 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Battery from 'expo-battery';
 import * as Clipboard from 'expo-clipboard';
 import { useAudioPlayerStatus, type AudioPlayer as AudioPlayerHandle } from 'expo-audio';
-import { router, useLocalSearchParams, useNavigation } from 'expo-router';
+import { useLocalSearchParams, useNavigation } from 'expo-router';
+import { back, push } from '@/services/appNavigation';
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
@@ -639,8 +640,7 @@ export default function NoteScreen() {
     leavingRef.current = true;
     blurEditor();
     void flushEditor().finally(() => {
-      if (router.canGoBack()) router.back();
-      else router.replace('/');
+      back();
     });
   }, [blurEditor, flushEditor]);
 
@@ -1264,7 +1264,7 @@ export default function NoteScreen() {
       // A posicao fica guardada por nota, e a rota leva so o id: a gravacao
       // acontece em outra tela.
       if (at) setPendingInsert(noteId, at);
-      router.push({
+      push({
         pathname: '/record',
         params: { noteId, from: 'note' },
       });
@@ -1289,7 +1289,7 @@ export default function NoteScreen() {
   // exatamente do ponto em que esta (sem parar nem recomecar).
   const openTranscript = useCallback(() => {
     if (!noteId) return;
-    router.push({ pathname: '/transcript/[id]', params: { id: noteId } });
+    push({ pathname: '/transcript/[id]', params: { id: noteId } });
   }, [noteId]);
 
   // Tocar num trecho da previa leva o audio para aquele instante. Espera o

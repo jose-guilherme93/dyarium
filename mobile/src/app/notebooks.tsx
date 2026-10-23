@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import { back, push } from '@/services/appNavigation';
 import { useMemo, useState } from 'react';
 import {
   Alert,
@@ -54,17 +55,16 @@ export default function NotebooksScreen() {
 
   const canGoBack = router.canGoBack();
   const closeOrHome = () => {
-    if (canGoBack) router.back();
+    back();
   };
 
   const select = async (notebook: Notebook) => {
     await setLastNotebookId(notebook.id);
-    if (router.canGoBack()) router.back();
-    else router.replace('/');
+    back();
   };
 
   const openNote = (id: string) =>
-    router.push({ pathname: '/note/[id]', params: { id } });
+    push({ pathname: '/note/[id]', params: { id } });
 
   const confirmDelete = (notebook: Notebook) => {
     const count = activeNoteCount(recordings, notebook.id);

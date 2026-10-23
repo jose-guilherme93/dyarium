@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { back, push } from '@/services/appNavigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 
@@ -941,7 +941,7 @@ export default function DashboardScreen() {
   return (
     <Screen>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.iconButton} accessibilityLabel="Voltar">
+        <Pressable onPress={() => back()} style={styles.iconButton} accessibilityLabel="Voltar">
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
         <Text style={styles.headerTitle}>Painel</Text>
@@ -1005,7 +1005,7 @@ export default function DashboardScreen() {
             <Text style={styles.muted}>
               Humor, emoções, pessoas e lugares são analisados pelo servidor. Configure para ver.
             </Text>
-            <Button label="Configurar servidor" variant="secondary" onPress={() => router.push('/server')} />
+            <Button label="Configurar servidor" variant="secondary" onPress={() => push('/server')} />
           </View>
         ) : loading && !data ? null : (
           <>

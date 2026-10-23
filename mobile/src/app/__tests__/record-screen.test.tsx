@@ -5,6 +5,7 @@ import type { Recording } from '@/core/types';
 import { setPendingInsert, takePendingInsert } from '@/services/noteInsert';
 
 import RecordScreen from '../record';
+import { resetNavigationGuard } from '@/services/appNavigation';
 
 const mockRecording: Recording = {
   id: 'rec-1',
@@ -105,6 +106,7 @@ async function pressStop() {
 describe('tela de gravacao', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    resetNavigationGuard();
     mockError = null;
     mockParams = { noteId: 'note-1', from: 'home' };
     mockStop.mockResolvedValue(mockRecording);

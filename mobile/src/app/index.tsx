@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { router } from 'expo-router';
+import { push, replace } from '@/services/appNavigation';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
@@ -178,7 +178,7 @@ export default function NotebookScreen() {
     }
     if (!redirectedRef.current) {
       redirectedRef.current = true;
-      router.replace('/notebooks');
+      replace('/notebooks');
     }
   }, [ready, notebooks.length, currentNotebook, lastNotebookId, setLastNotebookId]);
 
@@ -265,7 +265,7 @@ export default function NotebookScreen() {
     async (action: 'text' | 'image' | 'link') => {
       setNewMenuOpen(false);
       const note = await createDraftNote(notebookId);
-      router.push({ pathname: '/note/[id]', params: { id: note.id, action } });
+      push({ pathname: '/note/[id]', params: { id: note.id, action } });
     },
     [createDraftNote, notebookId],
   );
@@ -276,11 +276,11 @@ export default function NotebookScreen() {
     const note = await createDraftNote(notebookId);
     // Dispara a gravacao enquanto navega: quando a tela abre, ja esta gravando.
     void startRecording();
-    router.push({ pathname: '/record', params: { noteId: note.id, from: 'home' } });
+    push({ pathname: '/record', params: { noteId: note.id, from: 'home' } });
   }, [createDraftNote, notebookId, startRecording]);
 
   const openNote = useCallback(
-    (noteId: string) => router.push({ pathname: '/note/[id]', params: { id: noteId } }),
+    (noteId: string) => push({ pathname: '/note/[id]', params: { id: noteId } }),
     [],
   );
   const removeNote = useCallback((noteId: string) => void remove(noteId), [remove]);
@@ -428,7 +428,7 @@ export default function NotebookScreen() {
         <View style={styles.headerActions}>
           <Pressable
             style={styles.iconButton}
-            onPress={() => router.push('/sync')}
+            onPress={() => push('/sync')}
             accessibilityLabel="Sincronização"
           >
             <Ionicons name={syncIcon} size={22} color={colors.textTertiary} />
@@ -443,7 +443,7 @@ export default function NotebookScreen() {
           </Pressable>
           <Pressable
             style={styles.iconButton}
-            onPress={() => router.push('/settings')}
+            onPress={() => push('/settings')}
             accessibilityLabel="Opções"
           >
             <Ionicons name="settings-outline" size={22} color={colors.text} />
@@ -452,7 +452,7 @@ export default function NotebookScreen() {
 
         <Pressable
           style={styles.notebookTitle}
-          onPress={() => router.push('/notebooks')}
+          onPress={() => push('/notebooks')}
           accessibilityRole="button"
           accessibilityLabel={`Caderno ${currentNotebook.name}. Trocar de caderno`}
         >
@@ -514,7 +514,7 @@ export default function NotebookScreen() {
       </View>
 
       {interrupted > 0 ? (
-        <Pressable style={styles.alert} onPress={() => router.push('/recovery')}>
+        <Pressable style={styles.alert} onPress={() => push('/recovery')}>
           <Ionicons name="warning" size={18} color={colors.warning} />
           <Text style={styles.alertText}>
             {interrupted === 1
@@ -531,7 +531,7 @@ export default function NotebookScreen() {
           selected={selectedTags}
           onToggle={toggleTag}
           onClear={() => setSelectedTags([])}
-          onManage={() => router.push('/tags')}
+          onManage={() => push('/tags')}
         />
       </View>
 
