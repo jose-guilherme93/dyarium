@@ -190,6 +190,13 @@ isso:
   tamanho recolhido a folha acompanha o dedo e, ao soltar, fecha descendo (o
   inverso da entrada, com o fundo escurecido sumindo junto) ou volta para a
   posicao recolhida.
+- **Toque nos botoes.** Todo alvo tocavel passa por `Press`, com o ripple
+  recortado pela forma do alvo. O raio vem do proprio estilo quando declarado;
+  quando nao, a forma sai da geometria medida (alvo quadrado pequeno vira
+  circulo e o resto ganha um canto suave), entao telas novas ja entram certas
+  sem configuracao. O ripple nativo do Android fica so para `borderless`,
+  porque a mascara nativa e sempre retangular. No iOS, onde nao ha ripple, o
+  alvo escurece enquanto esta pressionado.
 - **O texto e editado no editor nativo.** Todo trecho de texto e o proprio
   `EnrichedTextInput` do app, montado desde a abertura: o toque, o cursor, a
   selecao, o Enter e a digitacao sao os do Android. Nao ha previa no meio do
