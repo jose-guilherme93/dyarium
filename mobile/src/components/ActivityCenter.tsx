@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { FastModal } from '@/components/FastModal';
+import { BottomSheet } from '@/components/BottomSheet';
 import { Press } from '@/components/Press';
 import {
   clearFinishedActivities,
@@ -161,73 +161,61 @@ export function ActivityCenter({ visible, onClose }: ActivityCenterProps) {
   }, [visible, unread]);
 
   return (
-    <FastModal visible={visible} onRequestClose={onClose}>
-      <Press style={styles.backdrop} onPress={onClose} feedback={false}>
-        <Press style={styles.card} onPress={() => undefined} feedback={false}>
-          <View style={styles.header}>
-            <View>
-              <Text style={styles.title}>Atividade</Text>
-              <Text style={styles.subtitle}>
-                {running.length > 0 ? `${running.length} em andamento` : 'Tudo em dia'}
-              </Text>
-            </View>
-            {finished.length > 0 ? (
-              <Press
-                onPress={clearFinishedActivities}
-                hitSlop={10}
-                accessibilityRole="button"
-                accessibilityLabel="Limpar concluídas"
-              >
-                <Text style={styles.clear}>Limpar</Text>
-              </Press>
-            ) : null}
-          </View>
-
-          <ScrollView
-            style={styles.list}
-            contentContainerStyle={styles.listContent}
-            showsVerticalScrollIndicator={false}
+    <BottomSheet visible={visible} onClose={onClose} cardStyle={styles.card}>
+      <View style={styles.header}>
+        <View>
+          <Text style={styles.title}>Atividade</Text>
+          <Text style={styles.subtitle}>
+            {running.length > 0 ? `${running.length} em andamento` : 'Tudo em dia'}
+          </Text>
+        </View>
+        {finished.length > 0 ? (
+          <Press
+            onPress={clearFinishedActivities}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel="Limpar concluídas"
           >
-            {activities.length === 0 ? (
-              <View style={styles.empty}>
-                <View style={styles.emptyIcon}>
-                  <Ionicons name="pulse-outline" size={26} color={colors.textTertiary} />
-                </View>
-                <Text style={styles.emptyTitle}>Nada em andamento</Text>
-                <Text style={styles.emptyText}>
-                  Transcrições, análises e backups aparecem aqui enquanto acontecem.
-                </Text>
-              </View>
-            ) : (
-              <>
-                {running.length > 0 ? <SectionLabel>Em andamento</SectionLabel> : null}
-                {running.map((item) => (
-                  <ActivityRow key={item.id} item={item} />
-                ))}
+            <Text style={styles.clear}>Limpar</Text>
+          </Press>
+        ) : null}
+      </View>
 
-                {finished.length > 0 ? <SectionLabel>Recentes</SectionLabel> : null}
-                {finished.map((item) => (
-                  <ActivityRow key={item.id} item={item} />
-                ))}
-              </>
-            )}
-          </ScrollView>
-        </Press>
-      </Press>
-    </FastModal>
+      <ScrollView
+        style={styles.list}
+        contentContainerStyle={styles.listContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {activities.length === 0 ? (
+          <View style={styles.empty}>
+            <View style={styles.emptyIcon}>
+              <Ionicons name="pulse-outline" size={26} color={colors.textTertiary} />
+            </View>
+            <Text style={styles.emptyTitle}>Nada em andamento</Text>
+            <Text style={styles.emptyText}>
+              Transcrições, análises e backups aparecem aqui enquanto acontecem.
+            </Text>
+          </View>
+        ) : (
+          <>
+            {running.length > 0 ? <SectionLabel>Em andamento</SectionLabel> : null}
+            {running.map((item) => (
+              <ActivityRow key={item.id} item={item} />
+            ))}
+
+            {finished.length > 0 ? <SectionLabel>Recentes</SectionLabel> : null}
+            {finished.map((item) => (
+              <ActivityRow key={item.id} item={item} />
+            ))}
+          </>
+        )}
+      </ScrollView>
+    </BottomSheet>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: {
-    flex: 1,
-    backgroundColor: colors.overlay,
-    justifyContent: 'flex-end',
-  },
   card: {
-    backgroundColor: colors.bgElevated,
-    borderTopLeftRadius: radius.lg,
-    borderTopRightRadius: radius.lg,
     paddingHorizontal: spacing.xl,
     paddingTop: spacing.xl,
     paddingBottom: spacing.lg,
@@ -243,7 +231,7 @@ const styles = StyleSheet.create({
   title: { color: colors.text, fontSize: fontSize.lg, fontWeight: '700' },
   subtitle: { color: colors.textSecondary, fontSize: fontSize.sm, marginTop: 2 },
   clear: { color: colors.accent, fontSize: fontSize.sm, fontWeight: '600', paddingTop: 3 },
-  list: { flexGrow: 0 },
+  list: { flexGrow: 0, flexShrink: 1 },
   listContent: { paddingBottom: spacing.xs },
   section: {
     color: colors.textTertiary,

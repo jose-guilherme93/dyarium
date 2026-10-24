@@ -1,21 +1,36 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Animated, Modal, StyleSheet, type ModalProps } from 'react-native';
+import {
+  Animated,
+  KeyboardAvoidingView,
+  Modal,
+  StyleSheet,
+  type ModalProps,
+} from 'react-native';
 
 import { MOTION_FAST } from '@/theme/motion';
 
 type FastModalProps = Pick<ModalProps, 'visible' | 'transparent' | 'onRequestClose'> & {
   children: ReactNode;
+  /** Sobe o conteudo acima do teclado (padrao: sim). */
+  avoidKeyboard?: boolean;
 };
 
 /**
  * Modal com fade rapido no lugar da animacao nativa (`animationType="fade"`,
  * ~150 ms e fixa). Aqui a duracao vem do token de movimento e pode ser ajustada
  * num lugar so.
+ *
+ * A janela do app usa `adjustNothing` (plugin `withKeyboardLayout`): ela nao
+ * encolhe quando o teclado abre. Por isso todo modal com campo de texto precisa
+ * reservar o espaco do teclado aqui; sem isso o campo e o botao de concluir
+ * ficam atras do teclado. O `KeyboardAvoidingView` calcula a sobreposicao pelo
+ * quadro real do modal e anima o padding com a duracao do teclado.
  */
 export function FastModal({
   visible,
   transparent = true,
   onRequestClose,
+  avoidKeyboard = true,
   children,
 }: FastModalProps) {
   const [opacity] = useState(() => new Animated.Value(0));
@@ -39,7 +54,13 @@ export function FastModal({
       animationType="none"
       onRequestClose={onRequestClose}
     >
-      <Animated.View style={[styles.fill, { opacity }]}>{children}</Animated.View>
+      <KeyboardAvoidingView
+        style={styles.fill}
+        behavior="padding"
+        enabled={avoidKeyboard}
+      >
+        <Animated.View style={[styles.fill, { opacity }]}>{children}</Animated.View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

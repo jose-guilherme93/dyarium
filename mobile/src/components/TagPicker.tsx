@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import { Press } from '@/components/Press';
 
-import { FastModal } from '@/components/FastModal';
+import { BottomSheet } from '@/components/BottomSheet';
 import { TagChip } from '@/components/TagChip';
 import { listTagBank } from '@/services/tagAdmin';
 import { tagColor } from '@/core/tags';
@@ -83,77 +83,83 @@ export function TagPicker({ visible, selected, knownTags, onClose, onSave }: Tag
   };
 
   return (
-    <FastModal visible={visible} onRequestClose={onClose}>
-      <Press style={styles.backdrop} onPress={onClose} feedback={false}>
-        <Press style={styles.card} onPress={() => undefined} feedback={false}>
-          <View style={styles.header}>
-            <Text style={styles.title}>Tags</Text>
-            <Press onPress={() => onSave(picked)} accessibilityLabel="Concluir tags">
-              <Text style={styles.done}>Concluir</Text>
-            </Press>
-          </View>
-
-          {picked.length > 0 ? (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.picked}>
-              {picked.map((name) => (
-                <TagChip key={name.toLowerCase()} name={name} onRemove={() => toggle(name)} />
-              ))}
-            </ScrollView>
-          ) : null}
-
-          <View style={styles.search}>
-            <Ionicons name="search" size={16} color={colors.textTertiary} />
-            <TextInput
-              value={query}
-              onChangeText={setQuery}
-              placeholder="Buscar ou criar tag"
-              placeholderTextColor={colors.textTertiary}
-              selectionColor={colors.accent}
-              style={styles.input}
-              autoCapitalize="none"
-              autoCorrect={false}
-              onSubmitEditing={canCreate ? create : undefined}
-            />
-          </View>
-
-          <ScrollView style={styles.list} keyboardShouldPersistTaps="handled">
-            {canCreate ? (
-              <Press style={styles.row} onPress={create}>
-                <View style={[styles.dot, { backgroundColor: tagColor(term) }]} />
-                <Text style={styles.create} numberOfLines={1}>
-                  Criar “{term}”
-                </Text>
-                <Ionicons name="add" size={18} color={colors.accent} />
-              </Press>
-            ) : null}
-            {filtered.map((name) => {
-              const active = picked.some((item) => item.toLowerCase() === name.toLowerCase());
-              return (
-                <Press key={name.toLowerCase()} style={styles.row} onPress={() => toggle(name)}>
-                  <View style={[styles.dot, { backgroundColor: tagColor(name) }]} />
-                  <Text style={styles.name} numberOfLines={1}>
-                    {name}
-                  </Text>
-                  {active ? <Ionicons name="checkmark" size={18} color={colors.accent} /> : null}
-                </Press>
-              );
-            })}
-            {filtered.length === 0 && !canCreate ? (
-              <Text style={styles.empty}>Nenhuma tag ainda. Digite para criar a primeira.</Text>
-            ) : null}
-          </ScrollView>
+    <BottomSheet visible={visible} onClose={onClose} cardStyle={styles.card} testID="tag-picker">
+      <View style={styles.header}>
+        <Text style={styles.title}>Tags</Text>
+        <Press onPress={() => onSave(picked)} accessibilityLabel="Concluir tags">
+          <Text style={styles.done}>Concluir</Text>
         </Press>
-      </Press>
-    </FastModal>
+      </View>
+
+      {/* A faixa de selecionadas tem altura fixa. Antes ela so existia com
+          tags marcadas, e marcar a primeira (ou remover a ultima) mudava a
+          altura do cartao no meio da interacao. */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.pickedRow}
+        contentContainerStyle={styles.picked}
+      >
+        {picked.length > 0 ? (
+          picked.map((name) => (
+            <TagChip key={name.toLowerCase()} name={name} onRemove={() => toggle(name)} />
+          ))
+        ) : (
+          <Text style={styles.pickedEmpty}>Nenhuma tag marcada</Text>
+        )}
+      </ScrollView>
+
+      <View style={styles.search}>
+        <Ionicons name="search" size={16} color={colors.textTertiary} />
+        <TextInput
+          value={query}
+          onChangeText={setQuery}
+          placeholder="Buscar ou criar tag"
+          placeholderTextColor={colors.textTertiary}
+          selectionColor={colors.accent}
+          style={styles.input}
+          autoCapitalize="none"
+          autoCorrect={false}
+          onSubmitEditing={canCreate ? create : undefined}
+        />
+      </View>
+
+      <ScrollView
+        style={styles.list}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+      >
+        {canCreate ? (
+          <Press style={styles.row} onPress={create}>
+            <View style={[styles.dot, { backgroundColor: tagColor(term) }]} />
+            <Text style={styles.create} numberOfLines={1}>
+              Criar “{term}”
+            </Text>
+            <Ionicons name="add" size={18} color={colors.accent} />
+          </Press>
+        ) : null}
+        {filtered.map((name) => {
+          const active = picked.some((item) => item.toLowerCase() === name.toLowerCase());
+          return (
+            <Press key={name.toLowerCase()} style={styles.row} onPress={() => toggle(name)}>
+              <View style={[styles.dot, { backgroundColor: tagColor(name) }]} />
+              <Text style={styles.name} numberOfLines={1}>
+                {name}
+              </Text>
+              {active ? <Ionicons name="checkmark" size={18} color={colors.accent} /> : null}
+            </Press>
+          );
+        })}
+        {filtered.length === 0 && !canCreate ? (
+          <Text style={styles.empty}>Nenhuma tag ainda. Digite para criar a primeira.</Text>
+        ) : null}
+      </ScrollView>
+    </BottomSheet>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: colors.overlay, justifyContent: 'flex-end' },
   card: {
-    backgroundColor: colors.bgElevated,
-    borderTopLeftRadius: radius.lg,
-    borderTopRightRadius: radius.lg,
     padding: spacing.xl,
     maxHeight: '82%',
     gap: spacing.md,
@@ -161,7 +167,9 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   title: { color: colors.text, fontSize: fontSize.lg, fontWeight: '700' },
   done: { color: colors.accent, fontSize: fontSize.md, fontWeight: '700' },
-  picked: { gap: spacing.sm, paddingRight: spacing.xl },
+  pickedRow: { height: 32, flexGrow: 0 },
+  picked: { gap: spacing.sm, paddingRight: spacing.xl, alignItems: 'center' },
+  pickedEmpty: { color: colors.textTertiary, fontSize: fontSize.sm },
   search: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -172,7 +180,9 @@ const styles = StyleSheet.create({
     height: 40,
   },
   input: { flex: 1, color: colors.text, fontSize: fontSize.sm, paddingVertical: 0 },
-  list: { flexGrow: 0 },
+  // Altura fixa: filtrar ou receber o banco do servidor nao muda o tamanho da
+  // folha no meio da interacao; o que nao cabe rola.
+  list: { height: 220, flexShrink: 1 },
   row: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -13,3 +13,6 @@ export function motionDuration(baseMs: number): number {
 
 /** Fade rapido dos menus e modais (o fade nativo do Android leva ~150 ms). */
 export const MOTION_FAST = motionDuration(150);
+
+/** Entrada das folhas que sobem do rodape (curta, mas visivel como movimento). */
+export const MOTION_SHEET = motionDuration(260);
