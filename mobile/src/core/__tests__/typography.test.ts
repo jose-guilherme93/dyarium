@@ -2,11 +2,13 @@ import {
   DEFAULT_TYPOGRAPHY,
   MAX_FONT_SIZE,
   MIN_FONT_SIZE,
+  NOTE_LETTER_SPACING,
   clampFontSize,
   fontFamilyCss,
   fontFamilyNative,
   fontWeightCss,
   fontWeightNative,
+  noteLineHeight,
   normalizeTypography,
 } from '../typography';
 
@@ -25,6 +27,7 @@ describe('clampFontSize', () => {
 describe('normalizeTypography', () => {
   it('usa o padrao sem entrada', () => {
     expect(normalizeTypography(undefined)).toEqual(DEFAULT_TYPOGRAPHY);
+    expect(DEFAULT_TYPOGRAPHY.size).toBe(16);
   });
 
   it('aceita valores validos', () => {
@@ -66,5 +69,11 @@ describe('nativo', () => {
     expect(fontWeightNative('light')).toBe('300');
     expect(fontWeightNative('regular')).toBe('400');
     expect(fontWeightNative('bold')).toBe('700');
+  });
+
+  it('usa entrelinha e espacamento de leitura do Notion', () => {
+    expect(noteLineHeight(16)).toBe(26);
+    expect(noteLineHeight(20)).toBe(32);
+    expect(NOTE_LETTER_SPACING).toBe(0.1);
   });
 });

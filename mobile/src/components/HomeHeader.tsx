@@ -1,10 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
-import { StyleSheet, Text, TextInput, View } from 'react-native';
+import { Text, TextInput, View } from 'react-native';
 
 import { HomeActivityButton } from '@/components/HomeActivityButton';
 import { Press } from '@/components/Press';
 import type { Notebook } from '@/core/notebooks';
-import { colors, fontSize, radius, spacing } from '@/theme/tokens';
+import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 export type SyncState = 'ok' | 'syncing' | 'error';
 
@@ -39,6 +41,9 @@ export function HomeHeader({
   onOpenActivity,
   onOpenSettings,
 }: HomeHeaderProps) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const recent = !notebook;
   const syncIcon =
     syncState === 'error'
@@ -131,7 +136,7 @@ export function HomeHeader({
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -150,7 +155,7 @@ const styles = StyleSheet.create({
   },
   notebookName: {
     flexShrink: 1,
-    color: colors.text,
+    color: baseColors.text,
     fontSize: fontSize.md,
     fontWeight: '600',
   },
@@ -164,7 +169,7 @@ const styles = StyleSheet.create({
     height: 7,
     borderRadius: 4,
     borderWidth: 1.5,
-    borderColor: colors.bg,
+    borderColor: baseColors.bg,
   },
   searchWrap: {
     flexDirection: 'row',
@@ -175,7 +180,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     height: 38,
     borderRadius: radius.pill,
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
   },
-  searchInput: { flex: 1, color: colors.text, fontSize: fontSize.sm, paddingVertical: 0 },
+  searchInput: { flex: 1, color: baseColors.text, fontSize: fontSize.sm, paddingVertical: 0 },
 });

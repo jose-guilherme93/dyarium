@@ -12,9 +12,11 @@ import { FastModal } from '@/components/FastModal';
 import { titleFontSize } from '@/core/format';
 import { displayTitle } from '@/core/title';
 import type { Recording } from '@/core/types';
-import { colors, fontSize, radius, spacing } from '@/theme/tokens';
+import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
 
 import type { NoteProperty } from './NoteMenu';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 interface NoteActionsSheetProps {
   recording: Recording | null;
@@ -40,6 +42,9 @@ export function NoteActionsSheet({
   onArchive,
   onDelete,
 }: NoteActionsSheetProps) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const { width, height } = useWindowDimensions();
   const menuWidth = Math.min(300, width - spacing.xl * 2);
   const opensDown = (anchor?.y ?? 0) < height / 2;
@@ -105,30 +110,30 @@ export function NoteActionsSheet({
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)' },
   card: {
     position: 'absolute',
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     borderRadius: radius.lg,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.borderStrong,
+    borderColor: baseColors.borderStrong,
     padding: spacing.lg,
     gap: spacing.sm,
   },
-  title: { color: colors.text, fontWeight: '700' },
+  title: { color: baseColors.text, fontWeight: '700' },
   action: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
     paddingVertical: spacing.sm,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
+    borderColor: baseColors.border,
   },
-  actionText: { color: colors.text, fontSize: fontSize.md },
-  danger: { color: colors.danger },
+  actionText: { color: baseColors.text, fontSize: fontSize.md },
+  danger: { color: baseColors.danger },
   sectionLabel: {
-    color: colors.textTertiary,
+    color: baseColors.textTertiary,
     fontSize: fontSize.xs,
     fontWeight: '700',
     textTransform: 'uppercase',
@@ -142,6 +147,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: spacing.lg,
   },
-  propLabel: { color: colors.textSecondary, fontSize: fontSize.sm },
-  propValue: { color: colors.text, fontSize: fontSize.sm, flexShrink: 1, textAlign: 'right' },
+  propLabel: { color: baseColors.textSecondary, fontSize: fontSize.sm },
+  propValue: { color: baseColors.text, fontSize: fontSize.sm, flexShrink: 1, textAlign: 'right' },
 });

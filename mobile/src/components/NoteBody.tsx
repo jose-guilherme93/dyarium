@@ -32,7 +32,6 @@ import {
 import {
   Alert,
   Image,
-  StyleSheet,
   Text,
   useWindowDimensions,
   View,
@@ -61,16 +60,18 @@ import {
   type NoteTextNode,
 } from '@/core/noteDocument';
 import { htmlToMarkdown, markdownToHtml, noteImages } from '@/core/noteHtml';
-import { fontFamilyNative, fontWeightNative } from '@/core/typography';
+import { fontFamilyNative, fontWeightNative, noteLineHeight, NOTE_LETTER_SPACING } from '@/core/typography';
 import type { TranscriptSegment } from '@/core/types';
 import { mark } from '@/dev/perf';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
 import { cachedImageRatio, imageRatio, measureImageRatio, rememberImageRatio } from '@/services/imageRatios';
-import { colors, radius, spacing } from '@/theme/tokens';
+import { baseColors, radius, spacing } from '@/theme/tokens';
 
 import { FastModal } from './FastModal';
 import { NoteAudioCard } from './NoteAudioCard';
 import { noteHtmlStyle } from './noteHtmlStyle';
 import type { FormatType, NoteBodyHandle, NoteBodyProps } from './noteBodyTypes';
+import { defineStyles } from '@/theme/themedStyles';
 
 export type { FormatType, NoteBodyHandle, NoteBodyProps } from './noteBodyTypes';
 
@@ -145,6 +146,8 @@ const NativeNoteBody = memo(
     },
     ref,
   ) {
+  const styles = useThemedStyles(baseStyles);
+
     const window = useWindowDimensions();
     const [nodes, setNodes] = useState<NoteNode[]>(() => parseNoteDocument(value));
     const nodesRef = useRef(nodes);
@@ -159,6 +162,7 @@ const NativeNoteBody = memo(
     const dirty = useRef(new Set<string>());
     /** Id das midias inseridas nesta sessao (o markdown nao guarda id). */
     const insertSeq = useRef(0);
+    const { colors } = useTheme();
 
     /**
      * Formatacao pedida sem um trecho em foco (barra de acoes com a nota sem
@@ -651,16 +655,17 @@ const NativeNoteBody = memo(
       () => ({
         color: colors.text,
         fontFamily: fontFamilyNative(typography?.family ?? 'system'),
-        fontSize: typography?.size ?? 17,
+        fontSize: typography?.size ?? 16,
         fontWeight: fontWeightNative(typography?.weight ?? 'regular'),
-        lineHeight: Math.round((typography?.size ?? 17) * 1.5),
+        lineHeight: noteLineHeight(typography?.size ?? 16),
+        letterSpacing: NOTE_LETTER_SPACING,
         padding: 0,
         minHeight: MIN_TEXT_HEIGHT,
       }),
-      [typography],
+      [typography, colors],
     );
 
-    const htmlStyle = useMemo<HtmlStyle>(() => noteHtmlStyle(typography), [typography]);
+    const htmlStyle = useMemo<HtmlStyle>(() => noteHtmlStyle(typography, colors), [typography, colors]);
 
     const renderNode = (node: NoteNode, first: boolean) => {
       if (node.kind === 'text') {
@@ -809,6 +814,8 @@ const TextNodeEditor = memo(function TextNodeEditor({
   onBlur: (id: string) => void;
   onLayout: (event: LayoutChangeEvent) => void;
 }) {
+  const { colors } = useTheme();
+
   const ref = useRef<EnrichedTextInputInstance>(null);
   const [html] = useState(() =>
     markdownToHtml(markdown, {
@@ -871,6 +878,9 @@ function ImageBlock({
   /** Abre as opcoes da foto (tamanho e remover). */
   onOptions: () => void;
 }) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const [ratio, setRatio] = useState(() => (src ? (cachedImageRatio(src) ?? 4 / 3) : 4 / 3));
 
   useEffect(() => {
@@ -937,42 +947,42 @@ function lookup(map: Map<string, string>, src: string): string | undefined {
 
 export const NoteBody = NativeNoteBody;
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   image: {
     borderRadius: radius.md,
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
   },
   imagePlaceholder: {
     minHeight: 84,
     borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
+    borderColor: baseColors.border,
+    backgroundColor: baseColors.surface,
     alignItems: 'center',
     justifyContent: 'center',
     gap: spacing.xs,
   },
-  imagePlaceholderText: { color: colors.textTertiary, fontSize: 12 },
+  imagePlaceholderText: { color: baseColors.textTertiary, fontSize: 12 },
   sheetBackdrop: {
     flex: 1,
     justifyContent: 'flex-end',
-    backgroundColor: colors.overlay,
+    backgroundColor: baseColors.overlay,
   },
   sheet: {
     margin: spacing.md,
     borderRadius: radius.lg,
-    backgroundColor: colors.bgElevated,
+    backgroundColor: baseColors.bgElevated,
     paddingVertical: spacing.xs,
   },
   sheetTitle: {
-    color: colors.textSecondary,
+    color: baseColors.textSecondary,
     fontSize: 13,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
   },
   sheetRow: { paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
-  sheetText: { color: colors.text, fontSize: 16 },
-  sheetDanger: { color: colors.danger },
+  sheetText: { color: baseColors.text, fontSize: 16 },
+  sheetDanger: { color: baseColors.danger },
   imageBlock: {
     // A foto tem largura propria (percentual da nota) e a altura vem da
     // proporcao conhecida: o bloco nao muda de tamanho quando a imagem carrega.
@@ -986,7 +996,7 @@ const styles = StyleSheet.create({
     width: 26,
     height: 26,
     borderRadius: 13,
-    backgroundColor: colors.surfaceElevated,
+    backgroundColor: baseColors.surfaceElevated,
     alignItems: 'center',
     justifyContent: 'center',
   },

@@ -38,12 +38,16 @@ import { scanImageBytes } from '@/services/storageScan';
 import { installedModels } from '@/services/transcriptionModels';
 import { useLibrary } from '@/state/LibraryContext';
 import { useSettings } from '@/state/SettingsContext';
-import { colors, fontSize, spacing } from '@/theme/tokens';
+import { baseColors, fontSize, spacing } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 const doFetch = globalThis.fetch as unknown as FetchLike;
 const ANALYSIS_DAYS = 30;
 
 function Row({ label, value }: { label: string; value: string }) {
+  const styles = useThemedStyles(baseStyles);
+
   return (
     <View style={styles.row}>
       <Text style={styles.rowLabel}>{label}</Text>
@@ -72,6 +76,8 @@ function toFacts(items: CachedAnalysis[]): AnalysisFact[] {
 }
 
 function SummaryCard({ summary }: { summary: AnalysisRunSummary }) {
+  const styles = useThemedStyles(baseStyles);
+
   const healthy = summary.runs > 0 && summary.successRate >= 0.8;
   return (
     <Card style={styles.card}>
@@ -98,6 +104,8 @@ function SummaryCard({ summary }: { summary: AnalysisRunSummary }) {
 }
 
 function ModelsCard({ summary }: { summary: AnalysisRunSummary }) {
+  const styles = useThemedStyles(baseStyles);
+
   if (summary.models.length === 0) return null;
   return (
     <Card style={styles.card}>
@@ -132,6 +140,8 @@ function ServerCard({
   summary: ServerAnalysisRunsSummary | null;
   configured: boolean;
 }) {
+  const styles = useThemedStyles(baseStyles);
+
   if (!summary) {
     return (
       <Card style={styles.card}>
@@ -166,6 +176,9 @@ function ServerCard({
 }
 
 export default function DiagnosticsScreen() {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const { recordings } = useLibrary();
   const { config, analysisLowPower } = useSettings();
   const [runs, setRuns] = useState<AnalysisRun[]>([]);
@@ -338,7 +351,7 @@ export default function DiagnosticsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -347,30 +360,30 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
   },
   iconButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { color: colors.text, fontSize: fontSize.lg, fontWeight: '700' },
+  headerTitle: { color: baseColors.text, fontSize: fontSize.lg, fontWeight: '700' },
   content: { padding: spacing.xl, gap: spacing.lg, paddingBottom: spacing.xxxl },
   card: { gap: spacing.sm },
-  cardTitle: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
-  muted: { color: colors.textSecondary, fontSize: fontSize.sm, lineHeight: 20 },
+  cardTitle: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
+  muted: { color: baseColors.textSecondary, fontSize: fontSize.sm, lineHeight: 20 },
   health: { fontSize: fontSize.md, fontWeight: '600' },
-  healthOk: { color: colors.success },
-  healthWarn: { color: colors.warning },
-  error: { color: colors.danger, fontSize: fontSize.sm },
+  healthOk: { color: baseColors.success },
+  healthWarn: { color: baseColors.warning },
+  error: { color: baseColors.danger, fontSize: fontSize.sm },
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md },
-  rowLabel: { color: colors.textSecondary, fontSize: fontSize.sm },
-  rowValue: { color: colors.text, fontSize: fontSize.sm, fontVariant: ['tabular-nums'] },
+  rowLabel: { color: baseColors.textSecondary, fontSize: fontSize.sm },
+  rowValue: { color: baseColors.text, fontSize: fontSize.sm, fontVariant: ['tabular-nums'] },
   modelRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
     paddingVertical: spacing.sm,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
+    borderTopColor: baseColors.border,
   },
   modelMain: { flex: 1, gap: 2 },
-  modelName: { color: colors.text, fontSize: fontSize.sm, fontWeight: '600' },
-  modelMeta: { color: colors.textSecondary, fontSize: fontSize.xs },
+  modelName: { color: baseColors.text, fontSize: fontSize.sm, fontWeight: '600' },
+  modelMeta: { color: baseColors.textSecondary, fontSize: fontSize.xs },
   modelStats: { alignItems: 'flex-end', gap: 2 },
-  modelValue: { color: colors.text, fontSize: fontSize.sm, fontWeight: '700' },
+  modelValue: { color: baseColors.text, fontSize: fontSize.sm, fontWeight: '700' },
   serverModels: { gap: 4, marginTop: spacing.sm },
 });

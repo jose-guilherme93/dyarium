@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import {
-  StyleSheet,
   Text,
   TextInput,
   View,
@@ -9,7 +8,9 @@ import { Press } from '@/components/Press';
 
 import { FastModal } from '@/components/FastModal';
 import { NOTEBOOK_COLORS } from '@/core/notebooks';
-import { colors, fontSize, radius, spacing } from '@/theme/tokens';
+import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 interface NotebookFormProps {
   visible: boolean;
@@ -31,6 +32,9 @@ export function NotebookForm({
   onClose,
   onSave,
 }: NotebookFormProps) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   // O pai remonta o formulario com uma `key` por modo/caderno; assim o estado
   // inicial vem das props sem um efeito de sincronizacao.
   const [name, setName] = useState(initialName);
@@ -95,14 +99,14 @@ export function NotebookForm({
   );
 }
 
-const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: colors.overlay, justifyContent: 'center', padding: spacing.xl },
-  card: { backgroundColor: colors.bgElevated, borderRadius: radius.lg, padding: spacing.xl, gap: spacing.lg },
-  title: { color: colors.text, fontSize: fontSize.lg, fontWeight: '700' },
+const baseStyles = defineStyles({
+  backdrop: { flex: 1, backgroundColor: baseColors.overlay, justifyContent: 'center', padding: spacing.xl },
+  card: { backgroundColor: baseColors.bgElevated, borderRadius: radius.lg, padding: spacing.xl, gap: spacing.lg },
+  title: { color: baseColors.text, fontSize: fontSize.lg, fontWeight: '700' },
   input: {
-    color: colors.text,
+    color: baseColors.text,
     fontSize: fontSize.md,
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     borderRadius: radius.sm,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.md,
@@ -117,17 +121,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  colorOn: { borderColor: colors.text },
-  check: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.text },
+  colorOn: { borderColor: baseColors.text },
+  check: { width: 8, height: 8, borderRadius: 4, backgroundColor: baseColors.text },
   actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: spacing.md },
   cancel: { paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
-  cancelText: { color: colors.textSecondary, fontSize: fontSize.md, fontWeight: '600' },
+  cancelText: { color: baseColors.textSecondary, fontSize: fontSize.md, fontWeight: '600' },
   save: {
-    backgroundColor: colors.accent,
+    backgroundColor: baseColors.accent,
     borderRadius: radius.pill,
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.md,
   },
   saveOff: { opacity: 0.4 },
-  saveText: { color: '#FFFFFF', fontSize: fontSize.md, fontWeight: '700' },
+  saveText: { color: baseColors.onAccent, fontSize: fontSize.md, fontWeight: '700' },
 });

@@ -1,7 +1,9 @@
-import { StyleSheet, View } from 'react-native';
+import { View } from 'react-native';
 import { Press } from '@/components/Press';
 
-import { colors } from '@/theme/tokens';
+import { baseColors } from '@/theme/tokens';
+import { useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 interface RecordButtonProps {
   recording: boolean;
@@ -22,6 +24,8 @@ export function RecordButton({
   onPress,
   size = 76,
 }: RecordButtonProps) {
+  const styles = useThemedStyles(baseStyles);
+
   const innerSize = recording ? size * 0.4 : size * 0.8;
   return (
     <Press
@@ -51,15 +55,15 @@ export function RecordButton({
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   pressable: {
     borderWidth: 3,
-    borderColor: colors.textSecondary,
+    borderColor: baseColors.textSecondary,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  ringActive: { borderColor: colors.record },
+  ringActive: { borderColor: baseColors.record },
   disabled: { opacity: 0.4 },
   pressed: { transform: [{ scale: 0.94 }] },
-  inner: { backgroundColor: colors.record },
+  inner: { backgroundColor: baseColors.record },
 });

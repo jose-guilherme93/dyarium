@@ -15,9 +15,17 @@ export interface NoteTypography {
 
 export const DEFAULT_TYPOGRAPHY: NoteTypography = {
   family: 'system',
-  size: 17,
+  size: 16,
   weight: 'regular',
 };
+
+/** Entrelinha e espacamento das letras do texto da nota, no tom do Notion. */
+export const NOTE_LINE_HEIGHT = 1.6;
+export const NOTE_LETTER_SPACING = 0.1;
+
+export function noteLineHeight(size: number): number {
+  return Math.round(size * NOTE_LINE_HEIGHT);
+}
 
 export const MIN_FONT_SIZE = 14;
 export const MAX_FONT_SIZE = 26;

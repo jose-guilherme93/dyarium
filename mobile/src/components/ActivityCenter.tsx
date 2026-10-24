@@ -12,7 +12,9 @@ import {
   type ActivityStatus,
 } from '@/services/activity';
 import { useActivities } from '@/state/useActivities';
-import { colors, fontSize, radius, spacing } from '@/theme/tokens';
+import { baseColors, fontSize, radius, spacing, type ThemeColors } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 interface ActivityCenterProps {
   visible: boolean;
@@ -23,44 +25,34 @@ const KIND_META: Record<
   ActivityKind,
   {
     icon: keyof typeof Ionicons.glyphMap;
-    color: string;
-    soft: string;
     label: string;
   }
 > = {
-  transcription: {
-    icon: 'mic-outline',
-    color: colors.accent,
-    soft: colors.accentSoft,
-    label: 'Transcrição',
-  },
-  analysis: {
-    icon: 'sparkles-outline',
-    color: colors.info,
-    soft: colors.infoSoft,
-    label: 'Análise',
-  },
-  backup: {
-    icon: 'cloud-upload-outline',
-    color: colors.success,
-    soft: colors.successSoft,
-    label: 'Backup',
-  },
-  restore: {
-    icon: 'cloud-download-outline',
-    color: colors.warning,
-    soft: colors.warningSoft,
-    label: 'Restauração',
-  },
-  download: {
-    icon: 'download-outline',
-    color: colors.accent,
-    soft: colors.accentSoft,
-    label: 'Download',
-  },
+  transcription: { icon: 'mic-outline', label: 'Transcrição' },
+  analysis: { icon: 'sparkles-outline', label: 'Análise' },
+  backup: { icon: 'cloud-upload-outline', label: 'Backup' },
+  restore: { icon: 'cloud-download-outline', label: 'Restauração' },
+  download: { icon: 'download-outline', label: 'Download' },
 };
 
-function statusMeta(status: Exclude<ActivityStatus, 'running'>): {
+function kindColor(kind: ActivityKind, colors: ThemeColors): { color: string; soft: string } {
+  switch (kind) {
+    case 'analysis':
+      return { color: colors.info, soft: colors.infoSoft };
+    case 'backup':
+      return { color: colors.success, soft: colors.successSoft };
+    case 'restore':
+      return { color: colors.warning, soft: colors.warningSoft };
+    case 'transcription':
+    case 'download':
+      return { color: colors.accent, soft: colors.accentSoft };
+  }
+}
+
+function statusMeta(
+  status: Exclude<ActivityStatus, 'running'>,
+  colors: ThemeColors,
+): {
   icon: keyof typeof Ionicons.glyphMap;
   color: string;
 } {
@@ -79,11 +71,15 @@ function runAction(item: Activity): void {
 }
 
 function ActivityRow({ item }: { item: Activity }) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const meta = KIND_META[item.kind];
+  const palette = kindColor(item.kind, colors);
   const running = item.status === 'running';
   const percent =
     running && item.progress !== undefined ? Math.round(item.progress) : undefined;
-  const status = item.status === 'running' ? null : statusMeta(item.status);
+  const status = item.status === 'running' ? null : statusMeta(item.status, colors);
   const action =
     !running && (item.status === 'error' || item.status === 'cancelled')
       ? item.action
@@ -91,8 +87,8 @@ function ActivityRow({ item }: { item: Activity }) {
 
   return (
     <View style={styles.row}>
-      <View style={[styles.kindIcon, { backgroundColor: meta.soft }]}>
-        <Ionicons name={meta.icon} size={17} color={meta.color} />
+      <View style={[styles.kindIcon, { backgroundColor: palette.soft }]}>
+        <Ionicons name={meta.icon} size={17} color={palette.color} />
       </View>
 
       <View style={styles.rowBody}>
@@ -120,7 +116,7 @@ function ActivityRow({ item }: { item: Activity }) {
             <View
               style={[
                 styles.progressFill,
-                { width: `${percent}%`, backgroundColor: meta.color },
+                { width: `${percent}%`, backgroundColor: palette.color },
               ]}
             />
           </View>
@@ -143,6 +139,8 @@ function ActivityRow({ item }: { item: Activity }) {
 }
 
 function SectionLabel({ children }: { children: string }) {
+  const styles = useThemedStyles(baseStyles);
+
   return <Text style={styles.section}>{children}</Text>;
 }
 
@@ -151,6 +149,9 @@ function SectionLabel({ children }: { children: string }) {
  * as ultimas tarefas concluidas, sem tirar o usuario da tela.
  */
 export function ActivityCenter({ visible, onClose }: ActivityCenterProps) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const activities = useActivities();
   const running = activities.filter((item) => item.status === 'running');
   const finished = activities.filter((item) => item.status !== 'running');
@@ -214,7 +215,7 @@ export function ActivityCenter({ visible, onClose }: ActivityCenterProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   card: {
     paddingHorizontal: spacing.xl,
     paddingTop: spacing.xl,
@@ -228,13 +229,13 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: spacing.md,
   },
-  title: { color: colors.text, fontSize: fontSize.lg, fontWeight: '700' },
-  subtitle: { color: colors.textSecondary, fontSize: fontSize.sm, marginTop: 2 },
-  clear: { color: colors.accent, fontSize: fontSize.sm, fontWeight: '600', paddingTop: 3 },
+  title: { color: baseColors.text, fontSize: fontSize.lg, fontWeight: '700' },
+  subtitle: { color: baseColors.textSecondary, fontSize: fontSize.sm, marginTop: 2 },
+  clear: { color: baseColors.accent, fontSize: fontSize.sm, fontWeight: '600', paddingTop: 3 },
   list: { flexGrow: 0, flexShrink: 1 },
   listContent: { paddingBottom: spacing.xs },
   section: {
-    color: colors.textTertiary,
+    color: baseColors.textTertiary,
     fontSize: fontSize.xs,
     fontWeight: '700',
     letterSpacing: 0.6,
@@ -248,7 +249,7 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     paddingVertical: spacing.md,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
+    borderTopColor: baseColors.border,
   },
   kindIcon: {
     width: 34,
@@ -264,24 +265,24 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     minHeight: 20,
   },
-  rowTitle: { flex: 1, color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
+  rowTitle: { flex: 1, color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
   percent: {
-    color: colors.textSecondary,
+    color: baseColors.textSecondary,
     fontSize: fontSize.xs,
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
   },
-  detail: { color: colors.textSecondary, fontSize: fontSize.sm, lineHeight: 18 },
+  detail: { color: baseColors.textSecondary, fontSize: fontSize.sm, lineHeight: 18 },
   progressTrack: {
     height: 3,
     borderRadius: 2,
-    backgroundColor: colors.surfaceElevated,
+    backgroundColor: baseColors.surfaceElevated,
     overflow: 'hidden',
     marginTop: spacing.xs,
   },
   progressFill: { height: 3, borderRadius: 2 },
   action: { alignSelf: 'flex-start', paddingVertical: 3, marginTop: 2 },
-  actionText: { color: colors.accent, fontSize: fontSize.sm, fontWeight: '600' },
+  actionText: { color: baseColors.accent, fontSize: fontSize.sm, fontWeight: '600' },
   empty: {
     alignItems: 'center',
     gap: spacing.sm,
@@ -292,14 +293,14 @@ const styles = StyleSheet.create({
     width: 58,
     height: 58,
     borderRadius: 29,
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: spacing.xs,
   },
-  emptyTitle: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
+  emptyTitle: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
   emptyText: {
-    color: colors.textSecondary,
+    color: baseColors.textSecondary,
     fontSize: fontSize.sm,
     lineHeight: 19,
     textAlign: 'center',

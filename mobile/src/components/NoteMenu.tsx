@@ -24,7 +24,9 @@ import {
   type NoteTypography,
 } from '@/core/typography';
 import { motionDuration } from '@/theme/motion';
-import { colors, fontSize, radius, spacing } from '@/theme/tokens';
+import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 export interface NoteProperty {
   label: string;
@@ -179,6 +181,8 @@ function Segment<T extends string>({
   options: { value: T; label: string }[];
   onChange: (next: T) => void;
 }) {
+  const styles = useThemedStyles(baseStyles);
+
   return (
     <View style={styles.segment}>
       {options.map((option) => {
@@ -205,6 +209,8 @@ function Segment<T extends string>({
  * nota, sem cortar campos. Fica no topo do menu para nao sumir na rolagem.
  */
 function AnalysisContent({ analysis }: { analysis: NoteAnalysisView }) {
+  const styles = useThemedStyles(baseStyles);
+
   return (
     <View style={styles.analysis}>
       {analysis.sentimentLabel ? (
@@ -318,6 +324,9 @@ export function NoteMenu({
   onClose,
   onShare,
 }: NoteMenuProps) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const shown = title.trim() || 'Nota sem título';
   const { height: windowHeight } = useWindowDimensions();
   // A geometria da folha e congelada na abertura. `useWindowDimensions` pode
@@ -640,7 +649,7 @@ export function NoteMenu({
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   root: { flex: 1 },
   backdrop: {
     position: 'absolute',
@@ -648,7 +657,7 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     left: 0,
-    backgroundColor: colors.overlay,
+    backgroundColor: baseColors.overlay,
   },
   // O host posiciona e anima o translateY no driver nativo; a altura animada
   // (expandir/recolher) fica no filho, que roda no driver de JS. Misturar as
@@ -661,11 +670,11 @@ const styles = StyleSheet.create({
     zIndex: 1,
   },
   sheet: {
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     borderTopLeftRadius: radius.xl,
     borderTopRightRadius: radius.xl,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.borderStrong,
+    borderColor: baseColors.borderStrong,
     overflow: 'hidden',
     elevation: 16,
     shadowColor: '#000000',
@@ -678,18 +687,18 @@ const styles = StyleSheet.create({
     paddingTop: spacing.sm,
     paddingBottom: spacing.md,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
+    borderColor: baseColors.border,
   },
   headerContent: { gap: spacing.xs },
   grabber: {
     width: 40,
     height: 4,
     borderRadius: radius.pill,
-    backgroundColor: colors.borderStrong,
+    backgroundColor: baseColors.borderStrong,
     alignSelf: 'center',
     marginBottom: spacing.sm,
   },
-  hint: { color: colors.textTertiary, fontSize: fontSize.xs },
+  hint: { color: baseColors.textTertiary, fontSize: fontSize.xs },
   scroll: { flex: 1 },
   scrollContent: {
     gap: spacing.md,
@@ -697,18 +706,18 @@ const styles = StyleSheet.create({
     paddingTop: spacing.md,
     paddingBottom: spacing.xxxl,
   },
-  title: { color: colors.text, fontWeight: '700', flex: 1 },
+  title: { color: baseColors.text, fontWeight: '700', flex: 1 },
   action: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
     paddingVertical: spacing.sm,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
+    borderColor: baseColors.border,
   },
-  actionText: { color: colors.text, fontSize: fontSize.md },
+  actionText: { color: baseColors.text, fontSize: fontSize.md },
   sectionLabel: {
-    color: colors.textTertiary,
+    color: baseColors.textTertiary,
     fontSize: fontSize.xs,
     fontWeight: '700',
     textTransform: 'uppercase',
@@ -717,7 +726,7 @@ const styles = StyleSheet.create({
   },
   segment: {
     flexDirection: 'row',
-    backgroundColor: colors.bgElevated,
+    backgroundColor: baseColors.bgElevated,
     borderRadius: radius.sm,
     padding: 2,
     gap: 2,
@@ -728,14 +737,14 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: radius.sm - 2,
   },
-  segmentItemActive: { backgroundColor: colors.surfaceElevated },
-  segmentText: { color: colors.textSecondary, fontSize: fontSize.sm },
-  segmentTextActive: { color: colors.text, fontWeight: '600' },
+  segmentItemActive: { backgroundColor: baseColors.surfaceElevated },
+  segmentText: { color: baseColors.textSecondary, fontSize: fontSize.sm },
+  segmentTextActive: { color: baseColors.text, fontWeight: '600' },
   stepper: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: colors.bgElevated,
+    backgroundColor: baseColors.bgElevated,
     borderRadius: radius.sm,
     padding: 2,
   },
@@ -744,13 +753,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 6,
     borderRadius: radius.sm - 2,
-    backgroundColor: colors.surfaceElevated,
+    backgroundColor: baseColors.surfaceElevated,
   },
-  stepText: { color: colors.text, fontSize: fontSize.sm, fontWeight: '700' },
+  stepText: { color: baseColors.text, fontSize: fontSize.sm, fontWeight: '700' },
   stepValue: {
     minWidth: 44,
     textAlign: 'center',
-    color: colors.text,
+    color: baseColors.text,
     fontSize: fontSize.sm,
     fontVariant: ['tabular-nums'],
   },
@@ -761,9 +770,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: spacing.lg,
   },
-  propLabel: { color: colors.textSecondary, fontSize: fontSize.sm },
-  propValue: { color: colors.text, fontSize: fontSize.sm, flexShrink: 1, textAlign: 'right' },
-  muted: { color: colors.textSecondary, fontSize: fontSize.sm, lineHeight: 19 },
+  propLabel: { color: baseColors.textSecondary, fontSize: fontSize.sm },
+  propValue: { color: baseColors.text, fontSize: fontSize.sm, flexShrink: 1, textAlign: 'right' },
+  muted: { color: baseColors.textSecondary, fontSize: fontSize.sm, lineHeight: 19 },
   analysisActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   analyzeButton: {
     flexDirection: 'row',
@@ -774,56 +783,56 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
     paddingHorizontal: spacing.md,
     borderRadius: radius.sm,
-    backgroundColor: colors.surfaceElevated,
+    backgroundColor: baseColors.surfaceElevated,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.borderStrong,
+    borderColor: baseColors.borderStrong,
   },
   analyzeButtonDisabled: { opacity: 0.45 },
-  analyzeText: { color: colors.text, fontSize: fontSize.sm, fontWeight: '600' },
-  analyzeStop: { color: colors.accentStrong, fontSize: fontSize.sm, fontWeight: '600' },
-  analyzeWarning: { color: colors.warning, fontSize: fontSize.xs, lineHeight: 17 },
-  analyzeError: { color: colors.danger, fontSize: fontSize.xs, lineHeight: 17 },
+  analyzeText: { color: baseColors.text, fontSize: fontSize.sm, fontWeight: '600' },
+  analyzeStop: { color: baseColors.accentStrong, fontSize: fontSize.sm, fontWeight: '600' },
+  analyzeWarning: { color: baseColors.warning, fontSize: fontSize.xs, lineHeight: 17 },
+  analyzeError: { color: baseColors.danger, fontSize: fontSize.xs, lineHeight: 17 },
   analyzeStats: {
-    color: colors.textSecondary,
+    color: baseColors.textSecondary,
     fontSize: fontSize.xs,
     lineHeight: 17,
     fontVariant: ['tabular-nums'],
   },
   lowPowerRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   lowPowerText: { flex: 1, gap: 2 },
-  lowPowerTitle: { color: colors.text, fontSize: fontSize.sm, fontWeight: '600' },
-  analyzePrivacy: { color: colors.textTertiary, fontSize: fontSize.xs, lineHeight: 17 },
+  lowPowerTitle: { color: baseColors.text, fontSize: fontSize.sm, fontWeight: '600' },
+  analyzePrivacy: { color: baseColors.textTertiary, fontSize: fontSize.xs, lineHeight: 17 },
   analysis: { gap: spacing.sm },
   analysisSentiment: { flexDirection: 'row', alignItems: 'baseline', gap: spacing.sm },
-  analysisSentimentLabel: { color: colors.accentStrong, fontSize: fontSize.sm, fontWeight: '700' },
+  analysisSentimentLabel: { color: baseColors.accentStrong, fontSize: fontSize.sm, fontWeight: '700' },
   analysisScore: {
-    color: colors.textTertiary,
+    color: baseColors.textTertiary,
     fontSize: fontSize.xs,
     fontVariant: ['tabular-nums'],
   },
-  analysisSummary: { color: colors.text, fontSize: fontSize.sm, lineHeight: 20 },
+  analysisSummary: { color: baseColors.text, fontSize: fontSize.sm, lineHeight: 20 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
   chip: {
-    color: colors.textSecondary,
+    color: baseColors.textSecondary,
     fontSize: fontSize.xs,
-    backgroundColor: colors.surfaceElevated,
+    backgroundColor: baseColors.surfaceElevated,
     borderRadius: radius.pill,
     paddingHorizontal: spacing.sm,
     paddingVertical: 3,
     overflow: 'hidden',
   },
-  analysisMeta: { color: colors.textSecondary, fontSize: fontSize.xs, lineHeight: 18 },
+  analysisMeta: { color: baseColors.textSecondary, fontSize: fontSize.xs, lineHeight: 18 },
   analysisBlock: { gap: 3 },
   analysisBlockTitle: {
-    color: colors.textTertiary,
+    color: baseColors.textTertiary,
     fontSize: fontSize.xs,
     fontWeight: '700',
     textTransform: 'uppercase',
     letterSpacing: 0.4,
   },
-  analysisMoment: { color: colors.textSecondary, fontSize: fontSize.xs, lineHeight: 18 },
+  analysisMoment: { color: baseColors.textSecondary, fontSize: fontSize.xs, lineHeight: 18 },
   analysisTime: {
-    color: colors.textTertiary,
+    color: baseColors.textTertiary,
     fontVariant: ['tabular-nums'],
   },
 });

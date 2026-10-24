@@ -260,6 +260,24 @@ isso:
   alternativa foi removido do app: `core/noteRuns`, `core/noteWebHtml`,
   `core/webviewBridge` e o seletor de editor em Opcoes nao existem mais.
 
+## Temas e leitura
+
+O app tem tres paletas: claro, escuro (cinza do Notion) e preto (AMOLED, o
+padrao historico). A escolha fica em `Prefs`, no SecureStore; trocar de tema
+atualiza a tela aberta sem recriar a navegacao nem o estado das notas.
+
+- **Leitores da paleta ativa.** `colors` e `gradients` devolvem os valores da
+  paleta selecionada. As telas e os componentes memoizados assinam `useTheme()`;
+  os estilos estaticos usam `createThemedStyles`, que troca apenas as
+  propriedades de cor da paleta base (AMOLED) pela ativa e memoriza a variante
+  por tema. Layout, tamanhos, sombras e comportamento nao mudam.
+- **Mesma nota, outra luz.** O editor e o HTML rico recebem a paleta atual
+  (texto, links, codigo e citacao). O tema nao altera o markdown, o cursor nem
+  o documento.
+- **Ritmo de leitura do Notion.** O texto da nota usa 16 px, entrelinha 1,6 e
+  espacamento de letras de 0,1 px (quando a plataforma do editor suporta), para
+  o texto corrido nao ficar compacto.
+
 ## Fluxo de dados
 
 1. Cliente inicia um upload: `POST /uploads` com metadados e o SHA-256 esperado do arquivo.

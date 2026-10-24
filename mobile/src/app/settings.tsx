@@ -7,10 +7,16 @@ import { Card } from '@/components/Card';
 import { Screen } from '@/components/Screen';
 import { useLibrary } from '@/state/LibraryContext';
 import { useSettings } from '@/state/SettingsContext';
-import { colors, fontSize, radius, spacing } from '@/theme/tokens';
+import { THEMES, THEME_OPTIONS, baseColors, fontSize, radius, spacing } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 export default function SettingsScreen() {
-  const { config, ready: settingsReady, swipeAction, setSwipeAction } = useSettings();
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
+  const { config, ready: settingsReady, swipeAction, setSwipeAction, theme, setTheme } =
+    useSettings();
   const { ready, recordings } = useLibrary();
   const archived = recordings.filter((r) => r.archived).length;
 
@@ -61,6 +67,44 @@ export default function SettingsScreen() {
                   </Text>
                 </Press>
               </View>
+            </Card>
+
+            <Text style={styles.sectionLabel}>Aparência</Text>
+            <Card style={styles.card}>
+              <Text style={styles.cardTitle}>Tema</Text>
+              <Text style={styles.cardHint}>Muda apenas as cores do app.</Text>
+              {THEME_OPTIONS.map((option) => {
+                const active = theme === option.name;
+                const palette = THEMES[option.name].colors;
+                return (
+                  <Press
+                    key={option.name}
+                    onPress={() => void setTheme(option.name)}
+                    style={styles.themeRow}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: active }}
+                    accessibilityLabel={`Tema ${option.label}`}
+                  >
+                    <View
+                      style={[
+                        styles.themeSwatch,
+                        { backgroundColor: palette.bg, borderColor: palette.borderStrong },
+                      ]}
+                    >
+                      <View style={[styles.themeSwatchBar, { backgroundColor: palette.surface }]} />
+                      <View style={[styles.themeSwatchLine, { backgroundColor: palette.text }]} />
+                      <View style={[styles.themeSwatchLineSoft, { backgroundColor: palette.textTertiary }]} />
+                    </View>
+                    <View style={styles.rowText}>
+                      <Text style={styles.cardTitle}>{option.label}</Text>
+                      <Text style={styles.cardHint}>{option.hint}</Text>
+                    </View>
+                    {active ? (
+                      <Ionicons name="checkmark" size={18} color={colors.accent} />
+                    ) : null}
+                  </Press>
+                );
+              })}
             </Card>
 
             <Text style={styles.sectionLabel}>Métricas</Text>
@@ -150,7 +194,7 @@ export default function SettingsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -159,10 +203,10 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
   },
   iconButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { color: colors.text, fontSize: fontSize.lg, fontWeight: '700' },
+  headerTitle: { color: baseColors.text, fontSize: fontSize.lg, fontWeight: '700' },
   content: { padding: spacing.xl, gap: spacing.lg },
   sectionLabel: {
-    color: colors.textTertiary,
+    color: baseColors.textTertiary,
     fontSize: fontSize.xs,
     fontWeight: '700',
     textTransform: 'uppercase',
@@ -170,20 +214,39 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   card: { gap: spacing.sm },
-  cardTitle: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
-  cardHint: { color: colors.textSecondary, fontSize: fontSize.sm },
+  cardTitle: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
+  cardHint: { color: baseColors.textSecondary, fontSize: fontSize.sm },
+  themeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingVertical: spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderColor: baseColors.border,
+  },
+  themeSwatch: {
+    width: 44,
+    height: 32,
+    borderRadius: radius.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: 5,
+    justifyContent: 'space-between',
+  },
+  themeSwatchBar: { height: 4, borderRadius: 2, width: '70%' },
+  themeSwatchLine: { height: 3, borderRadius: 2, width: '55%' },
+  themeSwatchLineSoft: { height: 3, borderRadius: 2, width: '40%' },
   segment: {
     flexDirection: 'row',
-    backgroundColor: colors.bgElevated,
+    backgroundColor: baseColors.bgElevated,
     borderRadius: radius.pill,
     padding: 3,
     gap: 3,
     marginTop: spacing.sm,
   },
   segmentItem: { flex: 1, alignItems: 'center', paddingVertical: spacing.sm, borderRadius: radius.pill },
-  segmentActive: { backgroundColor: colors.accent },
-  segmentText: { color: colors.textSecondary, fontSize: fontSize.sm, fontWeight: '600' },
-  segmentTextActive: { color: '#FFFFFF' },
+  segmentActive: { backgroundColor: baseColors.accent },
+  segmentText: { color: baseColors.textSecondary, fontSize: fontSize.sm, fontWeight: '600' },
+  segmentTextActive: { color: baseColors.onAccent },
   row: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   rowText: { flex: 1, gap: 2 },
 });

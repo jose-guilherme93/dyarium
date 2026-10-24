@@ -1,7 +1,9 @@
 import { ActivityIndicator, StyleSheet, Text, type StyleProp, type ViewStyle } from 'react-native';
 import { Press } from '@/components/Press';
 
-import { colors, fontSize, radius, spacing } from '@/theme/tokens';
+import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
 
@@ -22,6 +24,9 @@ export function Button({
   loading,
   style,
 }: ButtonProps) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const isDisabled = disabled || loading;
   return (
     <Press
@@ -38,7 +43,7 @@ export function Button({
       ]}
     >
       {loading ? (
-        <ActivityIndicator color={variant === 'primary' ? '#FFFFFF' : colors.text} />
+        <ActivityIndicator color={variant === 'primary' ? colors.onAccent : colors.text} />
       ) : (
         <Text style={[styles.label, variant === 'primary' && styles.labelOnAccent]}>{label}</Text>
       )}
@@ -46,7 +51,7 @@ export function Button({
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   base: {
     height: 52,
     borderRadius: radius.md,
@@ -54,16 +59,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: spacing.xl,
   },
-  primary: { backgroundColor: colors.accent },
+  primary: { backgroundColor: baseColors.accent },
   secondary: {
-    backgroundColor: colors.surfaceElevated,
+    backgroundColor: baseColors.surfaceElevated,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.borderStrong,
+    borderColor: baseColors.borderStrong,
   },
   ghost: { backgroundColor: 'transparent' },
-  danger: { backgroundColor: colors.dangerSoft, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.danger },
+  danger: { backgroundColor: baseColors.dangerSoft, borderWidth: StyleSheet.hairlineWidth, borderColor: baseColors.danger },
   disabled: { opacity: 0.45 },
   pressed: { opacity: 0.85, transform: [{ scale: 0.99 }] },
-  label: { color: colors.text, fontSize: fontSize.md, fontWeight: '600', letterSpacing: 0.2 },
-  labelOnAccent: { color: '#FFFFFF' },
+  label: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600', letterSpacing: 0.2 },
+  labelOnAccent: { color: baseColors.onAccent },
 });

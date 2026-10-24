@@ -16,12 +16,7 @@ import { PlaybackProvider } from '@/state/PlaybackContext';
 import { RecordingProvider, useRecording } from '@/state/RecordingContext';
 import { SettingsProvider } from '@/state/SettingsContext';
 import { useWritingReminders } from '@/state/useWritingReminders';
-import { colors } from '@/theme/tokens';
-
-// Fundo da janela nativa: durante as transicoes e antes do primeiro frame nao
-// pode aparecer o branco padrao do sistema. O `backgroundColor` do app.json
-// cobre o build; aqui ele tambem vale para o runtime.
-void SystemUI.setBackgroundColorAsync(colors.bg).catch(() => undefined);
+import { useTheme, ThemeProvider } from '@/theme/ThemeContext';
 
 SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
@@ -32,6 +27,46 @@ function Reminders() {
   const { active, starting } = useRecording();
   useWritingReminders(!active && !starting);
   return null;
+}
+
+/**
+ * Arvore que depende do tema. Fica dentro de `ThemeProvider` para o fundo da
+ * janela, a barra de status e as telas acompanharem a troca.
+ */
+function ThemedRoot() {
+  useRenderCount('ThemedRoot');
+  const { colors, name } = useTheme();
+
+  useEffect(() => {
+    // Fundo da janela nativa: durante as transicoes e antes do primeiro frame
+    // nao pode aparecer o branco padrao do sistema.
+    void SystemUI.setBackgroundColorAsync(colors.bg).catch(() => undefined);
+  }, [colors.bg]);
+
+  return (
+    <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.bg }}>
+      <LibraryProvider>
+        <PlaybackProvider>
+          <RecordingProvider>
+            <Reminders />
+            <StatusBar style={name === 'light' ? 'dark' : 'light'} />
+            <Stack
+              screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: colors.bg },
+              }}
+            >
+              {/* Desliza pro lado (como antes), mas na variante rapida do Android
+                  (`ios_from_right` = 150 ms); o `slide_from_*` e fixo em 300 ms. */}
+              <Stack.Screen name="note/[id]" options={{ animation: 'ios_from_right' }} />
+              <Stack.Screen name="transcript/[id]" options={{ animation: 'ios_from_right' }} />
+              <Stack.Screen name="record" options={{ animation: 'slide_from_bottom' }} />
+            </Stack>
+          </RecordingProvider>
+        </PlaybackProvider>
+      </LibraryProvider>
+    </GestureHandlerRootView>
+  );
 }
 
 export default function RootLayout() {
@@ -52,31 +87,12 @@ export default function RootLayout() {
   }, []);
 
   return (
-    <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.bg }}>
-      <SafeAreaProvider>
-        <SettingsProvider>
-          <LibraryProvider>
-            <PlaybackProvider>
-              <RecordingProvider>
-                <Reminders />
-                <StatusBar style="light" />
-                <Stack
-                  screenOptions={{
-                    headerShown: false,
-                    contentStyle: { backgroundColor: colors.bg },
-                  }}
-                >
-                  {/* Desliza pro lado (como antes), mas na variante rapida do Android
-                      (`ios_from_right` = 150 ms); o `slide_from_*` e fixo em 300 ms. */}
-                  <Stack.Screen name="note/[id]" options={{ animation: 'ios_from_right' }} />
-                  <Stack.Screen name="transcript/[id]" options={{ animation: 'ios_from_right' }} />
-                  <Stack.Screen name="record" options={{ animation: 'slide_from_bottom' }} />
-                </Stack>
-              </RecordingProvider>
-            </PlaybackProvider>
-          </LibraryProvider>
-        </SettingsProvider>
-      </SafeAreaProvider>
-    </GestureHandlerRootView>
+    <SafeAreaProvider>
+      <SettingsProvider>
+        <ThemeProvider>
+          <ThemedRoot />
+        </ThemeProvider>
+      </SettingsProvider>
+    </SafeAreaProvider>
   );
 }

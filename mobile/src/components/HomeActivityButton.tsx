@@ -1,9 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
-import { StyleSheet, View } from 'react-native';
+import { View } from 'react-native';
 
 import { Press } from '@/components/Press';
 import { useActivities } from '@/state/useActivities';
-import { colors } from '@/theme/tokens';
+import { baseColors } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 interface HomeActivityButtonProps {
   onPress(): void;
@@ -15,6 +17,9 @@ interface HomeActivityButtonProps {
  * re-renderizar a lista de notas inteira.
  */
 export function HomeActivityButton({ onPress }: HomeActivityButtonProps) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const activities = useActivities();
   const running = activities.filter((item) => item.status === 'running').length;
   const unread = activities.filter(
@@ -46,7 +51,7 @@ export function HomeActivityButton({ onPress }: HomeActivityButtonProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   button: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center' },
   dot: {
     position: 'absolute',
@@ -56,6 +61,6 @@ const styles = StyleSheet.create({
     height: 7,
     borderRadius: 4,
     borderWidth: 1.5,
-    borderColor: colors.bg,
+    borderColor: baseColors.bg,
   },
 });

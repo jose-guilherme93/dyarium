@@ -8,9 +8,9 @@
  */
 
 import { forwardRef } from 'react';
-import { Platform, Pressable, StyleSheet, type PressableProps, type View } from 'react-native';
-
-const RIPPLE = { color: 'rgba(255,255,255,0.10)', borderless: false } as const;
+import { Platform, Pressable, type PressableProps, type View } from 'react-native';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 type PressProps = PressableProps & {
   /**
@@ -24,10 +24,13 @@ export const Press = forwardRef<View, PressProps>(function Press(
   { style, android_ripple, feedback = true, ...rest },
   ref,
 ) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   return (
     <Pressable
       ref={ref}
-      android_ripple={feedback ? (android_ripple ?? RIPPLE) : undefined}
+      android_ripple={feedback ? (android_ripple ?? { color: colors.ripple, borderless: false }) : undefined}
       style={(state) => [
         typeof style === 'function' ? style(state) : style,
         feedback && state.pressed && Platform.OS !== 'android' ? styles.pressed : null,
@@ -37,7 +40,7 @@ export const Press = forwardRef<View, PressProps>(function Press(
   );
 });
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   // No iOS nao ha ripple: o alvo fica fosco enquanto o dedo esta nele.
   pressed: { opacity: 0.6 },
 });

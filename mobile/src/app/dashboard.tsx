@@ -6,7 +6,6 @@ import {
   AppState,
   RefreshControl,
   ScrollView,
-  StyleSheet,
   Switch,
   Text,
   View,
@@ -40,9 +39,13 @@ import { scanImageBytesAsync } from '@/services/storageScan';
 import { useLibrary } from '@/state/LibraryContext';
 import { useSettings } from '@/state/SettingsContext';
 import { useMetricsSync } from '@/state/useMetricsSync';
-import { colors, fontSize, radius, spacing } from '@/theme/tokens';
+import { baseColors, fontSize, radius, spacing, type ThemeColors } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 function Metric({ label, value }: { label: string; value: string }) {
+  const styles = useThemedStyles(baseStyles);
+
   return (
     <View style={styles.metric}>
       <Text style={styles.metricValue}>{value}</Text>
@@ -53,6 +56,8 @@ function Metric({ label, value }: { label: string; value: string }) {
 
 /** Seta de tom: verde para cima, vermelha para baixo, traco no neutro. */
 function ToneIcon({ tone }: { tone: SentimentTone }) {
+  const { colors } = useTheme();
+
   if (tone === 'positive') {
     return <Ionicons name="arrow-up" size={13} color={colors.success} />;
   }
@@ -63,6 +68,8 @@ function ToneIcon({ tone }: { tone: SentimentTone }) {
 }
 
 function RankedList({ title, items }: { title: string; items: RankedItem[] }) {
+  const styles = useThemedStyles(baseStyles);
+
   if (items.length === 0) return null;
   return (
     <View style={styles.section}>
@@ -81,23 +88,32 @@ function RankedList({ title, items }: { title: string; items: RankedItem[] }) {
 }
 
 /** Cores do mapa de calor (0 = sem escrita, 4 = muito). */
-const HEAT = ['#2C2C2E', 'rgba(10,132,255,0.28)', 'rgba(10,132,255,0.5)', 'rgba(10,132,255,0.75)', '#0A84FF'];
+function heatScale(colors: ThemeColors): string[] {
+  // Hex de 6 digitos + alfa: o mesmo tom do accent em quatro intensidades.
+  return [
+    colors.surfaceElevated,
+    `${colors.accent}33`,
+    `${colors.accent}66`,
+    `${colors.accent}AA`,
+    colors.accent,
+  ];
+}
 
 /** Grafico de linha com react-native-svg. Desligado ate o build com o modulo. */
 const SVG_ENABLED = false;
 const HOUR_LABELS = ['0h', '3h', '6h', '9h', '12h', '15h', '18h', '21h'];
 const WEEKDAY_INITIALS = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
 
-function heatColor(cell: DayCell, max: number): string {
+function heatColor(cell: DayCell, max: number, heat: string[]): string {
   if (cell.key === null) return 'transparent';
-  if (cell.words === 0) return HEAT[cell.notes > 0 ? 1 : 0];
+  if (cell.words === 0) return heat[cell.notes > 0 ? 1 : 0];
   const level = Math.min(4, Math.max(1, Math.ceil((cell.words / Math.max(1, max)) * 4)));
-  return HEAT[level];
+  return heat[level];
 }
 
-function levelColor(value: number, max: number): string {
-  if (value <= 0) return HEAT[0];
-  return HEAT[Math.min(4, Math.max(1, Math.ceil((value / Math.max(1, max)) * 4)))];
+function levelColor(value: number, max: number, heat: string[]): string {
+  if (value <= 0) return heat[0];
+  return heat[Math.min(4, Math.max(1, Math.ceil((value / Math.max(1, max)) * 4)))];
 }
 
 function BarChart({
@@ -111,6 +127,8 @@ function BarChart({
   labelEvery?: number;
   caption?: string;
 }) {
+  const styles = useThemedStyles(baseStyles);
+
   const max = Math.max(1, ...points.map((point) => point.value));
   // Rotulos por posicao absoluta: com `flex: 1` cada rotulo tinha a largura de
   // UMA barra e "DD/MM" era cortado. Aqui o rotulo pode ser mais largo que a
@@ -180,6 +198,9 @@ function LineChart({
   caption?: string;
   labelEvery?: number;
 }) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { default: Svg, Polyline, Circle } = require('react-native-svg') as typeof import('react-native-svg');
   const width = 300;
@@ -258,6 +279,10 @@ function WeeklyChart({ points }: { points: { label: string; value: number }[] })
 }
 
 function Heatmap({ history }: { history: WritingHistory }) {
+  const styles = useThemedStyles(baseStyles);
+
+  const { colors } = useTheme();
+  const heat = heatScale(colors);
   const [width, setWidth] = useState(0);
   const gap = 3;
   const columns = history.calendar.length;
@@ -277,7 +302,7 @@ function Heatmap({ history }: { history: WritingHistory }) {
                   {
                     width: cellSize,
                     height: cellSize,
-                    backgroundColor: heatColor(cell, history.maxDaily),
+                    backgroundColor: heatColor(cell, history.maxDaily, heat),
                   },
                 ]}
               />
@@ -287,7 +312,7 @@ function Heatmap({ history }: { history: WritingHistory }) {
       </View>
       <View style={styles.legend}>
         <Text style={styles.legendText}>menos</Text>
-        {HEAT.map((color, level) => (
+        {heat.map((color, level) => (
           <View key={level} style={[styles.heatCell, { backgroundColor: color }]} />
         ))}
         <Text style={styles.legendText}>mais</Text>
@@ -297,6 +322,8 @@ function Heatmap({ history }: { history: WritingHistory }) {
 }
 
 function MonthlyChart({ points, comparisonPct }: { points: MonthlyPoint[]; comparisonPct: number | null }) {
+  const styles = useThemedStyles(baseStyles);
+
   const comparison =
     comparisonPct === null
       ? null
@@ -318,6 +345,10 @@ function MonthlyChart({ points, comparisonPct }: { points: MonthlyPoint[]; compa
 }
 
 function HourHeatmap({ grid }: { grid: number[][] }) {
+  const styles = useThemedStyles(baseStyles);
+
+  const { colors } = useTheme();
+  const heat = heatScale(colors);
   const max = Math.max(1, ...grid.flat());
   const [width, setWidth] = useState(0);
   const gap = 3;
@@ -349,7 +380,7 @@ function HourHeatmap({ grid }: { grid: number[][] }) {
                     {
                       width: cellSize,
                       height: cellSize,
-                      backgroundColor: levelColor(value, max),
+                      backgroundColor: levelColor(value, max, heat),
                     },
                   ]}
                 />
@@ -382,6 +413,8 @@ function WindowFilter({
   value: MetricsWindow;
   onChange: (value: MetricsWindow) => void;
 }) {
+  const styles = useThemedStyles(baseStyles);
+
   return (
     <View style={styles.filterRow}>
       {METRICS_WINDOWS.map((kind) => {
@@ -405,6 +438,9 @@ function WindowFilter({
 }
 
 function WindowSummary({ sentences }: { sentences: string[] }) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   if (sentences.length === 0) return null;
   return (
     <View style={styles.section}>
@@ -419,6 +455,8 @@ function WindowSummary({ sentences }: { sentences: string[] }) {
 }
 
 function WindowWritingCard({ metrics, streak }: { metrics: WindowMetrics; streak: MetricsStreak }) {
+  const styles = useThemedStyles(baseStyles);
+
   const writing = metrics.writing;
   return (
     <View style={styles.chartCard}>
@@ -447,6 +485,8 @@ function WindowWritingCard({ metrics, streak }: { metrics: WindowMetrics; streak
 }
 
 function WindowSentimentCard({ sentiment }: { sentiment: WindowSentiment }) {
+  const styles = useThemedStyles(baseStyles);
+
   if (sentiment.analyzed === 0) {
     return (
       <View style={styles.chartCard}>
@@ -497,6 +537,8 @@ function WindowSentimentCard({ sentiment }: { sentiment: WindowSentiment }) {
 }
 
 function WindowVoiceCard({ voice }: { voice: WindowVoice }) {
+  const styles = useThemedStyles(baseStyles);
+
   return (
     <View style={styles.chartCard}>
       <Text style={styles.sectionLabel}>Sua voz</Text>
@@ -518,6 +560,8 @@ function WindowVoiceCard({ voice }: { voice: WindowVoice }) {
 }
 
 function TopicRow({ title, items }: { title: string; items: WindowTopics['themes'] }) {
+  const styles = useThemedStyles(baseStyles);
+
   if (items.length === 0) return null;
   return (
     <View style={styles.section}>
@@ -536,6 +580,8 @@ function TopicRow({ title, items }: { title: string; items: WindowTopics['themes
 }
 
 function WindowTopicsCard({ topics }: { topics: WindowTopics }) {
+  const styles = useThemedStyles(baseStyles);
+
   if (topics.themes.length === 0 && topics.people.length === 0 && topics.places.length === 0) {
     return null;
   }
@@ -550,6 +596,8 @@ function WindowTopicsCard({ topics }: { topics: WindowTopics }) {
 }
 
 function WindowImagesCard({ images }: { images: WindowImages }) {
+  const styles = useThemedStyles(baseStyles);
+
   if (images.count === 0) return null;
   return (
     <View style={styles.chartCard}>
@@ -591,6 +639,9 @@ function Goals({
   hour: number;
   onHour: (value: number) => void;
 }) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const weekWords = history.weekly[history.weekly.length - 1]?.words ?? 0;
   const progress = goal > 0 ? Math.min(1, weekWords / goal) : 0;
   return (
@@ -631,7 +682,7 @@ function Goals({
           value={reminders}
           onValueChange={onReminders}
           trackColor={{ false: colors.surfaceElevated, true: colors.accent }}
-          thumbColor="#FFFFFF"
+          thumbColor={colors.onAccent}
         />
       </View>
       {reminders ? (
@@ -661,6 +712,9 @@ function Goals({
 }
 
 function Insights({ metrics }: { metrics: WritingMetrics }) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   if (metrics.insights.length === 0) return null;
   return (
     <View style={styles.section}>
@@ -678,6 +732,8 @@ function Insights({ metrics }: { metrics: WritingMetrics }) {
 }
 
 function AnalysisInsights({ items }: { items: AnalysisInsight[] }) {
+  const styles = useThemedStyles(baseStyles);
+
   if (items.length === 0) return null;
   return (
     <View style={styles.section}>
@@ -720,6 +776,8 @@ function WritingSection({
   hour: number;
   onHour: (value: number) => void;
 }) {
+  const styles = useThemedStyles(baseStyles);
+
   const number = (value: number) => value.toLocaleString('pt-BR');
   return (
     <>
@@ -867,6 +925,8 @@ function PanelContent({
   loaded: boolean;
   error: string | null;
 }) {
+  const styles = useThemedStyles(baseStyles);
+
   const { config, weeklyWordGoal, setWeeklyWordGoal, writingReminders, setWritingReminders, reminderHour, setReminderHour } =
     useSettings();
   const [windowKind, setWindowKind] = useState<MetricsWindow>('30d');
@@ -1022,6 +1082,9 @@ function PanelContent({
 }
 
 export default function DashboardScreen() {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const { config } = useSettings();
   const { recordings, refresh } = useLibrary();
   const [data, setData] = useState<DashboardData | null>(null);
@@ -1169,7 +1232,7 @@ export default function DashboardScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1178,84 +1241,84 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
   },
   iconButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { color: colors.text, fontSize: fontSize.lg, fontWeight: '700' },
+  headerTitle: { color: baseColors.text, fontSize: fontSize.lg, fontWeight: '700' },
   content: { padding: spacing.xl, gap: spacing.lg, paddingBottom: spacing.xxxl },
   center: { paddingVertical: spacing.xxxl, alignItems: 'center' },
   blockTitle: {
-    color: colors.text,
+    color: baseColors.text,
     fontSize: fontSize.xl,
     fontWeight: '700',
     marginTop: spacing.sm,
   },
-  error: { color: colors.danger, fontSize: fontSize.sm },
-  muted: { color: colors.textSecondary, fontSize: fontSize.sm, lineHeight: 20 },
-  headline: { color: colors.text, fontSize: fontSize.xl, fontWeight: '700' },
+  error: { color: baseColors.danger, fontSize: fontSize.sm },
+  muted: { color: baseColors.textSecondary, fontSize: fontSize.sm, lineHeight: 20 },
+  headline: { color: baseColors.text, fontSize: fontSize.xl, fontWeight: '700' },
   filterRow: { flexDirection: 'row', gap: spacing.sm },
   filterChip: {
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     borderRadius: radius.pill,
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     borderWidth: 1,
     borderColor: 'transparent',
   },
-  filterChipActive: { backgroundColor: colors.accentSoft, borderColor: colors.accent },
-  filterChipText: { color: colors.textSecondary, fontSize: fontSize.sm, fontWeight: '600' },
-  filterChipTextActive: { color: colors.accentStrong },
+  filterChipActive: { backgroundColor: baseColors.accentSoft, borderColor: baseColors.accent },
+  filterChipText: { color: baseColors.textSecondary, fontSize: fontSize.sm, fontWeight: '600' },
+  filterChipTextActive: { color: baseColors.accentStrong },
   chartCard: {
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     borderRadius: radius.md,
     padding: spacing.lg,
     gap: spacing.md,
   },
   bars: { flexDirection: 'row', alignItems: 'flex-end', height: 88, gap: 4 },
   barSlot: { flex: 1, justifyContent: 'flex-end' },
-  bar: { backgroundColor: colors.accent, borderRadius: 3 },
+  bar: { backgroundColor: baseColors.accent, borderRadius: 3 },
   barLabels: { height: 14, position: 'relative' },
-  barLabel: { color: colors.textTertiary, fontSize: 9, textAlign: 'center' },
+  barLabel: { color: baseColors.textTertiary, fontSize: 9, textAlign: 'center' },
   lineLabels: { flexDirection: 'row', gap: 4 },
-  lineLabel: { flex: 1, color: colors.textTertiary, fontSize: 9, textAlign: 'center' },
+  lineLabel: { flex: 1, color: baseColors.textTertiary, fontSize: 9, textAlign: 'center' },
   heatmap: { flexDirection: 'row', gap: 3 },
   heatColumn: { gap: 3 },
   heatCell: { width: 12, height: 12, borderRadius: 3 },
   heatCellFill: { borderRadius: 3 },
   legend: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  legendText: { color: colors.textTertiary, fontSize: fontSize.xs, marginHorizontal: 2 },
+  legendText: { color: baseColors.textTertiary, fontSize: fontSize.xs, marginHorizontal: 2 },
   hourGrid: { flexDirection: 'row', gap: spacing.sm },
   hourLabelsColumn: { gap: 3, paddingTop: 0 },
-  hourRowLabel: { color: colors.textTertiary, fontSize: 9, width: 10 },
+  hourRowLabel: { color: baseColors.textTertiary, fontSize: 9, width: 10 },
   hourRows: { flex: 1, gap: 3 },
   hourRow: { flexDirection: 'row', gap: 3 },
   hourCellFill: { borderRadius: 3 },
   hourTicks: { flexDirection: 'row', gap: 3, marginLeft: 18 },
-  hourLabel: { textAlign: 'center', color: colors.textTertiary, fontSize: 8 },
+  hourLabel: { textAlign: 'center', color: baseColors.textTertiary, fontSize: 8 },
   goalRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  goalValue: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
-  goalLabel: { color: colors.text, fontSize: fontSize.md },
+  goalValue: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
+  goalLabel: { color: baseColors.text, fontSize: fontSize.md },
   stepper: { flexDirection: 'row', gap: spacing.lg },
-  step: { color: colors.accent, fontSize: fontSize.xl, fontWeight: '700' },
+  step: { color: baseColors.accent, fontSize: fontSize.xl, fontWeight: '700' },
   progressTrack: {
     height: 8,
     borderRadius: 4,
-    backgroundColor: colors.surfaceElevated,
+    backgroundColor: baseColors.surfaceElevated,
     overflow: 'hidden',
   },
-  progressFill: { height: 8, borderRadius: 4, backgroundColor: colors.accent },
-  warn: { color: colors.warning, fontSize: fontSize.sm },
-  ok: { color: colors.success, fontSize: fontSize.sm },
+  progressFill: { height: 8, borderRadius: 4, backgroundColor: baseColors.accent },
+  warn: { color: baseColors.warning, fontSize: fontSize.sm },
+  ok: { color: baseColors.success, fontSize: fontSize.sm },
   metricsRow: { flexDirection: 'row', gap: spacing.md },
   metric: {
     flex: 1,
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     borderRadius: radius.md,
     padding: spacing.md,
     gap: 4,
   },
-  metricValue: { color: colors.text, fontSize: fontSize.lg, fontWeight: '700' },
-  metricLabel: { color: colors.textSecondary, fontSize: fontSize.xs },
+  metricValue: { color: baseColors.text, fontSize: fontSize.lg, fontWeight: '700' },
+  metricLabel: { color: baseColors.textSecondary, fontSize: fontSize.xs },
   section: { gap: spacing.sm },
   sectionLabel: {
-    color: colors.textTertiary,
+    color: baseColors.textTertiary,
     fontSize: fontSize.xs,
     fontWeight: '700',
     textTransform: 'uppercase',
@@ -1266,42 +1329,42 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: spacing.sm,
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     borderRadius: radius.md,
     padding: spacing.md,
   },
   analysisList: { gap: spacing.sm },
   analysisCard: {
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     borderRadius: radius.md,
     padding: spacing.md,
     gap: 4,
   },
-  analysisMeta: { color: colors.textSecondary, fontSize: fontSize.sm },
-  analysisText: { color: colors.text, fontSize: fontSize.sm, lineHeight: 20 },
-  analysisThemes: { color: colors.accent, fontSize: fontSize.sm },
-  insightText: { flex: 1, color: colors.text, fontSize: fontSize.sm, lineHeight: 20 },
-  sentiment: { color: colors.text, fontSize: fontSize.md },
+  analysisMeta: { color: baseColors.textSecondary, fontSize: fontSize.sm },
+  analysisText: { color: baseColors.text, fontSize: fontSize.sm, lineHeight: 20 },
+  analysisThemes: { color: baseColors.accent, fontSize: fontSize.sm },
+  insightText: { flex: 1, color: baseColors.text, fontSize: fontSize.sm, lineHeight: 20 },
+  sentiment: { color: baseColors.text, fontSize: fontSize.md },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     borderRadius: radius.sm,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
-  rowTitle: { flex: 1, color: colors.text, fontSize: fontSize.sm },
-  rowValue: { color: colors.textSecondary, fontSize: fontSize.sm, fontVariant: ['tabular-nums'] },
+  rowTitle: { flex: 1, color: baseColors.text, fontSize: fontSize.sm },
+  rowValue: { color: baseColors.textSecondary, fontSize: fontSize.sm, fontVariant: ['tabular-nums'] },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     borderRadius: radius.pill,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
-  chipText: { color: colors.text, fontSize: fontSize.sm },
+  chipText: { color: baseColors.text, fontSize: fontSize.sm },
 });

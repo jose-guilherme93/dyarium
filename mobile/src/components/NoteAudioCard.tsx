@@ -9,7 +9,7 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import type { AudioPlayer } from 'expo-audio';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Text, View } from 'react-native';
 
 import { AudioTransport } from '@/components/AudioTransport';
 import { Press } from '@/components/Press';
@@ -17,7 +17,9 @@ import { SyncedTranscript } from '@/components/SyncedTranscript';
 import { formatDuration } from '@/core/format';
 import type { NoteAudioNode } from '@/core/noteDocument';
 import type { TranscriptSegment } from '@/core/types';
-import { colors, radius, spacing } from '@/theme/tokens';
+import { baseColors, radius, spacing } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 export interface NoteAudioCardProps {
   node: NoteAudioNode;
@@ -67,6 +69,9 @@ export function NoteAudioCard({
   onEditTranscript,
   onRemove,
 }: NoteAudioCardProps) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const transcribing = transcribingPercent !== undefined || transcribingWait;
   const hasSegments = Boolean(segments && segments.length > 0);
 
@@ -161,12 +166,12 @@ export function NoteAudioCard({
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   audioCard: {
     // Reserva o espaco da previa da transcricao: sem isso, a nota inteira
     // pulava quando o texto chegava ou o player abria.
     minHeight: 128,
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     borderRadius: radius.md,
     padding: spacing.md,
     gap: spacing.sm,
@@ -176,21 +181,21 @@ const styles = StyleSheet.create({
   progressTrack: {
     height: 2,
     borderRadius: 1,
-    backgroundColor: colors.surfaceElevated,
+    backgroundColor: baseColors.surfaceElevated,
     overflow: 'hidden',
   },
-  progressFill: { height: 2, backgroundColor: colors.accent },
+  progressFill: { height: 2, backgroundColor: baseColors.accent },
   audioPlay: {
     width: 38,
     height: 38,
     borderRadius: 19,
-    backgroundColor: colors.surfaceElevated,
+    backgroundColor: baseColors.surfaceElevated,
     alignItems: 'center',
     justifyContent: 'center',
   },
   audioInfo: { flex: 1, gap: 2 },
-  audioTitle: { color: colors.text, fontSize: 15, fontWeight: '600' },
-  audioDuration: { color: colors.textSecondary, fontSize: 12 },
-  audioHint: { color: colors.textSecondary, fontSize: 12 },
-  audioTranscript: { color: colors.textSecondary, fontSize: 13, lineHeight: 19 },
+  audioTitle: { color: baseColors.text, fontSize: 15, fontWeight: '600' },
+  audioDuration: { color: baseColors.textSecondary, fontSize: 12 },
+  audioHint: { color: baseColors.textSecondary, fontSize: 12 },
+  audioTranscript: { color: baseColors.textSecondary, fontSize: 13, lineHeight: 19 },
 });

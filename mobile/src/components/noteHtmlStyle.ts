@@ -8,9 +8,12 @@
 import type { HtmlStyle } from 'react-native-enriched-html';
 
 import type { NoteTypography } from '@/core/typography';
-import { colors, radius } from '@/theme/tokens';
+import { colors, radius, type ThemeColors } from '@/theme/tokens';
 
-export function noteHtmlStyle(typography?: NoteTypography): HtmlStyle {
+export function noteHtmlStyle(
+  typography?: NoteTypography,
+  palette: ThemeColors = colors,
+): HtmlStyle {
   const size = typography?.size ?? 17;
   return {
     h1: { fontSize: Math.round(size * 1.6), bold: true },
@@ -20,26 +23,26 @@ export function noteHtmlStyle(typography?: NoteTypography): HtmlStyle {
     h5: { fontSize: size, bold: true },
     h6: { fontSize: size, bold: true },
     blockquote: {
-      borderColor: colors.borderStrong,
+      borderColor: palette.borderStrong,
       borderWidth: 3,
       gapWidth: 12,
-      color: colors.textSecondary,
+      color: palette.textSecondary,
     },
     codeblock: {
-      color: colors.text,
-      backgroundColor: colors.surface,
+      color: palette.text,
+      backgroundColor: palette.surface,
       borderRadius: radius.sm,
     },
     code: {
-      color: colors.accentStrong,
-      backgroundColor: colors.surface,
+      color: palette.accentStrong,
+      backgroundColor: palette.surface,
     },
     a: {
-      color: colors.accent,
+      color: palette.accent,
       textDecorationLine: 'underline',
     },
     ul: {
-      bulletColor: colors.textSecondary,
+      bulletColor: palette.textSecondary,
       bulletSize: 7,
       marginLeft: 20,
       gapWidth: 8,
@@ -47,7 +50,7 @@ export function noteHtmlStyle(typography?: NoteTypography): HtmlStyle {
     ol: {
       marginLeft: 20,
       gapWidth: 8,
-      markerColor: colors.textSecondary,
+      markerColor: palette.textSecondary,
     },
   };
 }

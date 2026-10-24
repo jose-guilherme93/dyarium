@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { back } from '@/services/appNavigation';
 import { useEffect, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, ScrollView, Text, View } from 'react-native';
 import { Press } from '@/components/Press';
 
 import { Button } from '@/components/Button';
@@ -26,7 +26,9 @@ import { listRecordings } from '@/services/db';
 import { reassertNotesOnServer, type ReassertResult } from '@/services/reassert';
 import { useLibrary } from '@/state/LibraryContext';
 import { useSettings } from '@/state/SettingsContext';
-import { colors, fontSize, radius, spacing } from '@/theme/tokens';
+import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 const BACKUP_ACTIVITY = 'backup:local';
 const RESTORE_ACTIVITY = 'restore:local';
@@ -87,6 +89,9 @@ function serverLine(result: ReassertResult): string | null {
 }
 
 export default function BackupScreen() {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const { backupFolder, setBackupFolder } = useSettings();
   const { refresh } = useLibrary();
   const [busy, setBusy] = useState<'backup' | 'restore' | null>(null);
@@ -290,7 +295,7 @@ export default function BackupScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -299,26 +304,26 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
   },
   iconButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { color: colors.text, fontSize: fontSize.lg, fontWeight: '700' },
+  headerTitle: { color: baseColors.text, fontSize: fontSize.lg, fontWeight: '700' },
   content: { padding: spacing.xl, gap: spacing.lg },
   card: {
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     borderRadius: radius.md,
     padding: spacing.lg,
     gap: spacing.xs,
   },
   cardLabel: {
-    color: colors.textTertiary,
+    color: baseColors.textTertiary,
     fontSize: fontSize.xs,
     fontWeight: '700',
     textTransform: 'uppercase',
     letterSpacing: 0.6,
   },
-  folder: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
-  infoStrong: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
-  infoFaint: { color: colors.textSecondary, fontSize: fontSize.sm },
-  hint: { color: colors.textSecondary, fontSize: fontSize.sm, lineHeight: 20 },
-  status: { color: colors.textSecondary, fontSize: fontSize.sm },
-  success: { color: colors.success, fontSize: fontSize.sm },
-  error: { color: colors.danger, fontSize: fontSize.sm },
+  folder: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
+  infoStrong: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
+  infoFaint: { color: baseColors.textSecondary, fontSize: fontSize.sm },
+  hint: { color: baseColors.textSecondary, fontSize: fontSize.sm, lineHeight: 20 },
+  status: { color: baseColors.textSecondary, fontSize: fontSize.sm },
+  success: { color: baseColors.success, fontSize: fontSize.sm },
+  error: { color: baseColors.danger, fontSize: fontSize.sm },
 });

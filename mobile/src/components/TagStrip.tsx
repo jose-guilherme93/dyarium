@@ -1,8 +1,10 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { useState, type ReactNode } from 'react';
-import { ScrollView, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import { ScrollView, View, type StyleProp, type ViewStyle } from 'react-native';
 
-import { colors, spacing } from '@/theme/tokens';
+import { spacing } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 interface TagStripProps {
   children: ReactNode;
@@ -15,6 +17,9 @@ interface TagStripProps {
  * e so visual (pointerEvents none), entao o toque continua indo para os chips.
  */
 export function TagStrip({ children, style, contentStyle }: TagStripProps) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const [viewport, setViewport] = useState(0);
   const [content, setContent] = useState(0);
   const [offset, setOffset] = useState(0);
@@ -57,7 +62,7 @@ export function TagStrip({ children, style, contentStyle }: TagStripProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   wrap: { position: 'relative' },
   content: { gap: spacing.sm, paddingRight: spacing.xl },
   fade: { position: 'absolute', top: 0, bottom: 0, width: 22 },

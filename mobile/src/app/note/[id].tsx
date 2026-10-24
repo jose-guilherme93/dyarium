@@ -32,7 +32,7 @@ import { NotebookPicker } from '@/components/NotebookPicker';
 import { TagPicker } from '@/components/TagPicker';
 
 import { Screen } from '@/components/Screen';
-import { STATUS_META } from '@/components/StatusChip';
+import { STATUS_LABELS } from '@/components/StatusChip';
 import { SyncedTranscript } from '@/components/SyncedTranscript';
 import { simplifiedAnalysis, toNoteAnalysis, toServerAnalysis } from '@/core/analysis';
 import type { AnalysisOutcome, AnalysisRun } from '@/core/analysisRuns';
@@ -107,7 +107,9 @@ import {
   useTranscriptionProgress,
   useTranscriptionRunning,
 } from '@/state/useTranscriptionProgress';
-import { colors, fontSize, radius, spacing } from '@/theme/tokens';
+import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 /**
  * Tela da nota: sempre editavel (titulo e texto), com gravacao de audio embutida
@@ -157,6 +159,8 @@ function ToolButton({
   onPress: () => void;
   children: ReactNode;
 }) {
+  const styles = useThemedStyles(baseStyles);
+
   return (
     <Press style={styles.tool} onPress={onPress} accessibilityLabel={label} hitSlop={6}>
       {children}
@@ -165,6 +169,9 @@ function ToolButton({
 }
 
 export default function NoteScreen() {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const { id, action } = useLocalSearchParams<{ id: string; action?: string }>();
   const navigation = useNavigation();
   const library = useLibrary();
@@ -1543,7 +1550,7 @@ export default function NoteScreen() {
       label: 'Tamanho',
       value: menuStats ? formatBytes(menuBytes + menuStats.bodyBytes) : '...',
     },
-    { label: 'Status', value: STATUS_META[note.status].label },
+    { label: 'Status', value: STATUS_LABELS[note.status] },
   ];
 
   const handleShare = async () => {
@@ -1937,7 +1944,7 @@ export default function NoteScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1956,7 +1963,7 @@ const styles = StyleSheet.create({
   headerNotebookDot: { width: 7, height: 7, borderRadius: 4 },
   headerNotebookName: {
     flexShrink: 1,
-    color: colors.textSecondary,
+    color: baseColors.textSecondary,
     fontSize: fontSize.sm,
     fontWeight: '600',
   },
@@ -1966,36 +1973,36 @@ const styles = StyleSheet.create({
     height: 36,
     borderRadius: 18,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.borderStrong,
+    borderColor: baseColors.borderStrong,
     alignItems: 'center',
     justifyContent: 'center',
   },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  empty: { color: colors.textSecondary, fontSize: fontSize.md },
+  empty: { color: baseColors.textSecondary, fontSize: fontSize.md },
   // A nota inteira rola nesta ScrollView; o cabecalho fica fixo.
-  scroll: { flex: 1, backgroundColor: colors.bg },
+  scroll: { flex: 1, backgroundColor: baseColors.bg },
   content: {
     paddingHorizontal: spacing.xl,
     paddingBottom: spacing.xxxl,
     gap: spacing.sm,
   },
-  toolbarHost: { backgroundColor: colors.surface },
+  toolbarHost: { backgroundColor: baseColors.surface },
   titleBlock: { gap: spacing.xs },
   titleInput: {
-    color: colors.text,
+    color: baseColors.text,
     fontWeight: '700',
     paddingVertical: spacing.sm,
     textAlignVertical: 'top',
     backgroundColor: 'transparent',
   },
   noteDate: {
-    color: colors.textSecondary,
+    color: baseColors.textSecondary,
     fontSize: fontSize.sm,
     paddingBottom: spacing.xs,
   },
-  meta: { color: colors.textSecondary, fontSize: fontSize.sm },
+  meta: { color: baseColors.textSecondary, fontSize: fontSize.sm },
   sectionLabel: {
-    color: colors.textTertiary,
+    color: baseColors.textTertiary,
     fontSize: fontSize.xs,
     fontWeight: '700',
     textTransform: 'uppercase',
@@ -2006,12 +2013,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.sm,
     alignSelf: 'flex-start',
-    backgroundColor: colors.warningSoft,
+    backgroundColor: baseColors.warningSoft,
     borderRadius: radius.md,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
-  retryText: { color: colors.warning, fontSize: fontSize.sm, fontWeight: '600' },
+  retryText: { color: baseColors.warning, fontSize: fontSize.sm, fontWeight: '600' },
   linkBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
@@ -2022,23 +2029,23 @@ const styles = StyleSheet.create({
   linkCard: {
     width: '100%',
     maxWidth: 420,
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     borderRadius: radius.lg,
     padding: spacing.lg,
     gap: spacing.md,
   },
-  linkTitle: { color: colors.text, fontSize: fontSize.lg, fontWeight: '700' },
+  linkTitle: { color: baseColors.text, fontSize: fontSize.lg, fontWeight: '700' },
   linkInput: {
-    backgroundColor: colors.bgElevated,
+    backgroundColor: baseColors.bgElevated,
     borderRadius: radius.sm,
-    color: colors.text,
+    color: baseColors.text,
     fontSize: fontSize.md,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
   linkActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: spacing.xl },
-  linkCancel: { color: colors.textSecondary, fontSize: fontSize.md },
-  linkConfirm: { color: colors.accent, fontSize: fontSize.md, fontWeight: '700' },
+  linkCancel: { color: baseColors.textSecondary, fontSize: fontSize.md },
+  linkConfirm: { color: baseColors.accent, fontSize: fontSize.md, fontWeight: '700' },
   viewerBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.94)',
@@ -2060,8 +2067,8 @@ const styles = StyleSheet.create({
   toolbar: {
     height: 44,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
-    backgroundColor: colors.surface,
+    borderTopColor: baseColors.border,
+    backgroundColor: baseColors.surface,
   },
   toolRow: { alignItems: 'center', paddingHorizontal: spacing.xs, gap: 2 },
   toolFade: { position: 'absolute', top: 0, bottom: 0, width: 22 },
@@ -2071,7 +2078,7 @@ const styles = StyleSheet.create({
   toolDivider: {
     width: StyleSheet.hairlineWidth,
     height: 20,
-    backgroundColor: colors.border,
+    backgroundColor: baseColors.border,
     marginHorizontal: spacing.xs,
   },
   stack: { paddingHorizontal: spacing.lg, paddingBottom: spacing.sm, gap: spacing.xs },
@@ -2080,20 +2087,20 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
     borderRadius: radius.md,
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
   },
-  stackRowOn: { backgroundColor: colors.surfaceElevated },
+  stackRowOn: { backgroundColor: baseColors.surfaceElevated },
   stackHead: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   stackInfo: { flex: 1, gap: 2 },
-  stackTitle: { color: colors.text, fontSize: fontSize.sm },
-  stackText: { color: colors.textTertiary, fontSize: fontSize.sm },
-  toolBold: { color: colors.text, fontSize: fontSize.lg, fontWeight: '800' },
-  toolItalic: { color: colors.text, fontSize: fontSize.lg, fontWeight: '600', fontStyle: 'italic' },
+  stackTitle: { color: baseColors.text, fontSize: fontSize.sm },
+  stackText: { color: baseColors.textTertiary, fontSize: fontSize.sm },
+  toolBold: { color: baseColors.text, fontSize: fontSize.lg, fontWeight: '800' },
+  toolItalic: { color: baseColors.text, fontSize: fontSize.lg, fontWeight: '600', fontStyle: 'italic' },
   toolStrike: {
-    color: colors.text,
+    color: baseColors.text,
     fontSize: fontSize.lg,
     fontWeight: '600',
     textDecorationLine: 'line-through',
   },
-  toolNumber: { color: colors.text, fontSize: fontSize.md, fontWeight: '700' },
+  toolNumber: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '700' },
 });

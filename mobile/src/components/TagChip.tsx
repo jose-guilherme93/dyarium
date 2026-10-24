@@ -4,6 +4,8 @@ import { Press } from '@/components/Press';
 
 import { tagColor, withAlpha } from '@/core/tags';
 import { fontSize, radius, spacing } from '@/theme/tokens';
+import { useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 interface TagChipProps {
   name: string;
@@ -30,6 +32,8 @@ export function TagChip({
   size = 'md',
   storedColor,
 }: TagChipProps) {
+  const styles = useThemedStyles(baseStyles);
+
   const color = tagColor(name, storedColor);
   const body = (
     <View
@@ -90,7 +94,7 @@ export function TagChip({
   return body;
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   chip: {
     flexDirection: 'row',
     alignItems: 'center',

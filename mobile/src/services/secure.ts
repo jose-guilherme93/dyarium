@@ -11,6 +11,7 @@ import {
 } from '@/core/transcription';
 import { normalizeTypography, type NoteTypography } from '@/core/typography';
 import type { ServerConfig } from '@/core/types';
+import { normalizeTheme, type ThemeName } from '@/theme/tokens';
 
 const KEY = 'dyarium.server.config';
 
@@ -67,6 +68,8 @@ export async function saveDeviceIdentity(identity: DeviceIdentity): Promise<void
 export type SwipeAction = 'delete' | 'archive';
 
 export interface Prefs {
+  /** Tema visual do app. */
+  theme?: ThemeName;
   /** O que o gesto de arrastar na lista faz. */
   swipeAction: SwipeAction;
   /** Ultimo ano usado na importacao (agiliza remessas do mesmo ano). */
@@ -110,6 +113,7 @@ export async function loadPrefs(): Promise<Prefs> {
     if (!raw) return DEFAULT_PREFS;
     const parsed = JSON.parse(raw) as Partial<Prefs>;
     return {
+      theme: normalizeTheme(parsed.theme),
       swipeAction: parsed.swipeAction === 'archive' ? 'archive' : 'delete',
       importYear: typeof parsed.importYear === 'number' ? parsed.importYear : undefined,
       typography: parsed.typography ? normalizeTypography(parsed.typography) : undefined,

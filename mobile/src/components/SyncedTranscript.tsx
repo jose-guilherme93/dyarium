@@ -18,7 +18,6 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ScrollView,
-  StyleSheet,
   Text,
   View,
   type LayoutChangeEvent,
@@ -29,7 +28,9 @@ import { formatDuration } from '@/core/format';
 import { activeSegmentIndex } from '@/core/transcript';
 import type { TranscriptSegment } from '@/core/types';
 import { useRenderCount } from '@/dev/perf';
-import { colors, fontSize, spacing } from '@/theme/tokens';
+import { baseColors, fontSize, spacing } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 /** Altura de uma linha e quantas ficam visiveis na previa. */
 const LINE = 22;
@@ -61,6 +62,9 @@ export function SyncedTranscript({
   onSeek,
   onEdit,
 }: SyncedTranscriptProps) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   useRenderCount('SyncedTranscript');
   // So re-renderiza quando o trecho ativo muda: assina o player e compara o
   // indice, em vez de acompanhar cada tick (que roda varias vezes por segundo).
@@ -150,7 +154,7 @@ export function SyncedTranscript({
           </Press>
         );
       }),
-    [segments, start, end, active, handleLayout, onSeek, onEdit],
+    [segments, start, end, active, handleLayout, onSeek, onEdit, styles],
   );
 
   return (
@@ -191,12 +195,12 @@ export function SyncedTranscript({
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   section: { gap: spacing.sm },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  open: { color: colors.accentStrong, fontSize: fontSize.xs, fontWeight: '600' },
+  open: { color: baseColors.accentStrong, fontSize: fontSize.xs, fontWeight: '600' },
   label: {
-    color: colors.textTertiary,
+    color: baseColors.textTertiary,
     fontSize: fontSize.xs,
     fontWeight: '700',
     textTransform: 'uppercase',
@@ -207,9 +211,9 @@ const styles = StyleSheet.create({
     fontSize: fontSize.md,
     lineHeight: LINE,
     paddingVertical: LINE_PAD,
-    color: colors.textSecondary,
+    color: baseColors.textSecondary,
   },
-  lineActive: { color: colors.text },
+  lineActive: { color: baseColors.text },
   fadeTop: { position: 'absolute', top: 0, left: 0, right: 0, height: 14 },
   fadeBottom: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 14 },
 });

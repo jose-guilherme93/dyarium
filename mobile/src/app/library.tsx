@@ -1,15 +1,20 @@
 import { Ionicons } from '@expo/vector-icons';
 import { back, push } from '@/services/appNavigation';
-import { FlatList, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Text, View } from 'react-native';
 import { Press } from '@/components/Press';
 
 import { RecordingCard } from '@/components/RecordingCard';
 import { Screen } from '@/components/Screen';
 import { formatBytes } from '@/core/format';
 import { useLibrary } from '@/state/LibraryContext';
-import { colors, fontSize, spacing } from '@/theme/tokens';
+import { baseColors, fontSize, spacing } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 export default function LibraryScreen() {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const { recordings } = useLibrary();
   const total = recordings.reduce((sum, r) => sum + (r.sizeBytes ?? 0), 0);
 
@@ -58,7 +63,7 @@ export default function LibraryScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -68,8 +73,8 @@ const styles = StyleSheet.create({
   },
   back: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   headerText: { alignItems: 'center' },
-  title: { color: colors.text, fontSize: fontSize.lg, fontWeight: '700' },
-  subtitle: { color: colors.textTertiary, fontSize: fontSize.xs, marginTop: 2 },
+  title: { color: baseColors.text, fontSize: fontSize.lg, fontWeight: '700' },
+  subtitle: { color: baseColors.textTertiary, fontSize: fontSize.xs, marginTop: 2 },
   list: { padding: spacing.xl, paddingTop: spacing.sm },
   separator: { height: spacing.md },
   empty: { alignItems: 'center', gap: spacing.md, paddingTop: spacing.xxxl },
@@ -77,13 +82,13 @@ const styles = StyleSheet.create({
     width: 72,
     height: 72,
     borderRadius: 36,
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  emptyTitle: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
+  emptyTitle: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
   emptyText: {
-    color: colors.textTertiary,
+    color: baseColors.textTertiary,
     fontSize: fontSize.sm,
     textAlign: 'center',
     paddingHorizontal: spacing.xl,

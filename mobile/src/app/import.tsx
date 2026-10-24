@@ -29,7 +29,9 @@ import { deleteSessionFiles } from '@/services/files';
 import { prepareSharedAudios } from '@/services/share';
 import { useLibrary } from '@/state/LibraryContext';
 import { useSettings } from '@/state/SettingsContext';
-import { colors, fontSize, radius, spacing } from '@/theme/tokens';
+import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 interface ReviewItem {
   draft: ImportDraft;
@@ -60,6 +62,9 @@ function ItemCard({
   onTogglePlay,
   onRemove,
 }: ItemCardProps) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const { draft } = item;
 
   const durationLabel = item.durationMs ? formatDuration(item.durationMs) : '--:--';
@@ -155,6 +160,9 @@ function probeDuration(player: AudioPlayer, uri: string): Promise<number | null>
 }
 
 export default function ImportReviewScreen() {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const library = useLibrary();
   const { importYear, setImportYear, lastNotebookId } = useSettings();
   const [items, setItems] = useState<ReviewItem[] | null>(null);
@@ -550,7 +558,7 @@ export default function ImportReviewScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -559,11 +567,11 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
   },
   back: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { color: colors.text, fontSize: fontSize.lg, fontWeight: '700' },
+  headerTitle: { color: baseColors.text, fontSize: fontSize.lg, fontWeight: '700' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.md },
-  hint: { color: colors.textSecondary, fontSize: fontSize.sm },
+  hint: { color: baseColors.textSecondary, fontSize: fontSize.sm },
   list: { padding: spacing.xl, gap: spacing.lg },
-  lead: { color: colors.textSecondary, fontSize: fontSize.md, lineHeight: 22 },
+  lead: { color: baseColors.textSecondary, fontSize: fontSize.md, lineHeight: 22 },
   control: { gap: spacing.sm },
   controlRow: {
     flexDirection: 'row',
@@ -572,7 +580,7 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   controlLabel: {
-    color: colors.textSecondary,
+    color: baseColors.textSecondary,
     fontSize: fontSize.xs,
     fontWeight: '600',
     textTransform: 'uppercase',
@@ -583,14 +591,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
     borderRadius: radius.pill,
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
   },
-  yearChipActive: { backgroundColor: colors.accent },
-  yearText: { color: colors.textSecondary, fontSize: fontSize.sm, fontWeight: '600' },
-  yearTextActive: { color: '#FFFFFF' },
+  yearChipActive: { backgroundColor: baseColors.accent },
+  yearText: { color: baseColors.textSecondary, fontSize: fontSize.sm, fontWeight: '600' },
+  yearTextActive: { color: baseColors.onAccent },
   segment: {
     flexDirection: 'row',
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     borderRadius: radius.pill,
     padding: 3,
     gap: 3,
@@ -600,20 +608,20 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     borderRadius: radius.pill,
   },
-  segmentItemActive: { backgroundColor: colors.accent },
-  segmentText: { color: colors.textSecondary, fontSize: fontSize.sm, fontWeight: '600' },
-  segmentTextActive: { color: '#FFFFFF' },
+  segmentItemActive: { backgroundColor: baseColors.accent },
+  segmentText: { color: baseColors.textSecondary, fontSize: fontSize.sm, fontWeight: '600' },
+  segmentTextActive: { color: baseColors.onAccent },
   alert: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
-    backgroundColor: colors.warningSoft,
+    backgroundColor: baseColors.warningSoft,
     borderRadius: radius.md,
     padding: spacing.md,
   },
-  alertText: { flex: 1, color: colors.warning, fontSize: fontSize.sm, fontWeight: '600' },
+  alertText: { flex: 1, color: baseColors.warning, fontSize: fontSize.sm, fontWeight: '600' },
   card: {
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     borderRadius: radius.md,
     padding: spacing.lg,
     gap: spacing.lg,
@@ -623,30 +631,30 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: colors.surfaceElevated,
+    backgroundColor: baseColors.surfaceElevated,
     alignItems: 'center',
     justifyContent: 'center',
   },
   playDisabled: { opacity: 0.5 },
   cardHeadText: { flex: 1, gap: 3 },
-  original: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
-  meta: { color: colors.textSecondary, fontSize: fontSize.xs },
+  original: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
+  meta: { color: baseColors.textSecondary, fontSize: fontSize.xs },
   remove: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   fields: { gap: spacing.md },
   field: { gap: spacing.sm },
   fieldLabel: {
-    color: colors.textSecondary,
+    color: baseColors.textSecondary,
     fontSize: fontSize.xs,
     fontWeight: '600',
     textTransform: 'uppercase',
     letterSpacing: 0.6,
   },
   input: {
-    backgroundColor: colors.bgElevated,
+    backgroundColor: baseColors.bgElevated,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.borderStrong,
+    borderColor: baseColors.borderStrong,
     borderRadius: radius.md,
-    color: colors.text,
+    color: baseColors.text,
     fontSize: fontSize.md,
     paddingHorizontal: spacing.lg,
     height: 48,
@@ -655,17 +663,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
-    backgroundColor: colors.warningSoft,
+    backgroundColor: baseColors.warningSoft,
     borderRadius: radius.md,
     padding: spacing.md,
   },
-  rejectText: { flex: 1, color: colors.warning, fontSize: fontSize.sm },
-  emptyText: { color: colors.textSecondary, fontSize: fontSize.sm },
-  error: { color: colors.danger, fontSize: fontSize.sm, textAlign: 'center' },
+  rejectText: { flex: 1, color: baseColors.warning, fontSize: fontSize.sm },
+  emptyText: { color: baseColors.textSecondary, fontSize: fontSize.sm },
+  error: { color: baseColors.danger, fontSize: fontSize.sm, textAlign: 'center' },
   footer: {
     padding: spacing.xl,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
-    backgroundColor: colors.bg,
+    borderTopColor: baseColors.border,
+    backgroundColor: baseColors.bg,
   },
 });

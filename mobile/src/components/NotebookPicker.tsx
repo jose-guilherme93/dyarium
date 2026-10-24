@@ -4,7 +4,9 @@ import { Press } from '@/components/Press';
 
 import { BottomSheet } from '@/components/BottomSheet';
 import type { Notebook } from '@/core/notebooks';
-import { colors, fontSize, radius, spacing } from '@/theme/tokens';
+import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 interface NotebookPickerProps {
   visible: boolean;
@@ -31,6 +33,9 @@ export function NotebookPicker({
   onClose,
   onSelect,
 }: NotebookPickerProps) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   return (
     <BottomSheet visible={visible} onClose={onClose} cardStyle={styles.card}>
       <Text style={styles.title}>{title}</Text>
@@ -91,13 +96,13 @@ export function NotebookPicker({
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   card: {
     padding: spacing.xl,
     maxHeight: '70%',
     gap: spacing.md,
   },
-  title: { color: colors.text, fontSize: fontSize.lg, fontWeight: '700' },
+  title: { color: baseColors.text, fontSize: fontSize.lg, fontWeight: '700' },
   list: { flexGrow: 0, flexShrink: 1 },
   row: {
     flexDirection: 'row',
@@ -107,10 +112,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     borderRadius: radius.sm,
   },
-  rowOn: { backgroundColor: colors.surface },
+  rowOn: { backgroundColor: baseColors.surface },
   iconSlot: { width: 10, alignItems: 'center' },
   dot: { width: 10, height: 10, borderRadius: 5 },
-  name: { flex: 1, color: colors.text, fontSize: fontSize.md },
+  name: { flex: 1, color: baseColors.text, fontSize: fontSize.md },
   manage: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -118,7 +123,7 @@ const styles = StyleSheet.create({
     paddingTop: spacing.md,
     paddingHorizontal: spacing.sm,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
+    borderTopColor: baseColors.border,
   },
-  manageText: { color: colors.accent, fontSize: fontSize.sm, fontWeight: '600' },
+  manageText: { color: baseColors.accent, fontSize: fontSize.sm, fontWeight: '600' },
 });

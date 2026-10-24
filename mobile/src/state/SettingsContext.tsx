@@ -31,6 +31,12 @@ import {
   type Prefs,
   type SwipeAction,
 } from '@/services/secure';
+import {
+  DEFAULT_THEME,
+  normalizeTheme,
+  setActiveTheme,
+  type ThemeName,
+} from '@/theme/tokens';
 
 const doFetch = globalThis.fetch as unknown as FetchLike;
 
@@ -43,6 +49,9 @@ export interface ConnectionResult {
 interface SettingsValue {
   config: ServerConfig | null;
   ready: boolean;
+  /** Tema visual do app. */
+  theme: ThemeName;
+  setTheme(theme: ThemeName): Promise<void>;
   /** O que o gesto de arrastar na lista faz. */
   swipeAction: SwipeAction;
   setSwipeAction(action: SwipeAction): Promise<void>;
@@ -114,6 +123,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [configReady, setConfigReady] = useState(false);
   const [prefsReady, setPrefsReady] = useState(false);
   const ready = configReady && prefsReady;
+  const [theme, setThemeState] = useState<ThemeName>(DEFAULT_THEME);
   const [swipeAction, setSwipeActionState] = useState<SwipeAction>('delete');
   const [importYear, setImportYearState] = useState<number | undefined>(undefined);
   const [typography, setTypographyState] = useState<NoteTypography>(DEFAULT_TYPOGRAPHY);
@@ -151,6 +161,11 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       .then((prefs) => {
         if (!alive) return;
         prefsRef.current = prefs;
+        const loadedTheme = normalizeTheme(prefs.theme);
+        // A paleta ativa precisa estar definida antes do estado que dispara o
+        // render dos consumidores de `useTheme`.
+        setActiveTheme(loadedTheme);
+        setThemeState(loadedTheme);
         setSwipeActionState(prefs.swipeAction);
         setImportYearState(prefs.importYear);
         setTypographyState(normalizeTypography(prefs.typography));
@@ -187,6 +202,18 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     async (action: SwipeAction) => {
       setSwipeActionState(action);
       await persistPrefs({ swipeAction: action });
+    },
+    [persistPrefs],
+  );
+
+  const setTheme = useCallback(
+    async (next: ThemeName) => {
+      const themeName = normalizeTheme(next);
+      // Atualiza a paleta antes do estado: os leitores (`colors`, estilos)
+      // enxergam a nova cor ja no render disparado por `setThemeState`.
+      setActiveTheme(themeName);
+      setThemeState(themeName);
+      await persistPrefs({ theme: themeName });
     },
     [persistPrefs],
   );
@@ -354,6 +381,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     () => ({
       config,
       ready,
+      theme,
+      setTheme,
       swipeAction,
       setSwipeAction,
       importYear,
@@ -393,6 +422,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     [
       config,
       ready,
+      theme,
+      setTheme,
       swipeAction,
       setSwipeAction,
       importYear,

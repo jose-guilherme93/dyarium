@@ -2,7 +2,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ScrollView,
-  StyleSheet,
   Text,
   TextInput,
   View,
@@ -13,7 +12,9 @@ import { BottomSheet } from '@/components/BottomSheet';
 import { TagChip } from '@/components/TagChip';
 import { listTagBank } from '@/services/tagAdmin';
 import { tagColor } from '@/core/tags';
-import { colors, fontSize, radius, spacing } from '@/theme/tokens';
+import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 interface TagPickerProps {
   visible: boolean;
@@ -25,6 +26,9 @@ interface TagPickerProps {
 }
 
 export function TagPicker({ visible, selected, knownTags, onClose, onSave }: TagPickerProps) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const [query, setQuery] = useState('');
   const [bank, setBank] = useState<string[]>([]);
   const [picked, setPicked] = useState<string[]>(selected);
@@ -158,28 +162,28 @@ export function TagPicker({ visible, selected, knownTags, onClose, onSave }: Tag
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   card: {
     padding: spacing.xl,
     maxHeight: '82%',
     gap: spacing.md,
   },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  title: { color: colors.text, fontSize: fontSize.lg, fontWeight: '700' },
-  done: { color: colors.accent, fontSize: fontSize.md, fontWeight: '700' },
+  title: { color: baseColors.text, fontSize: fontSize.lg, fontWeight: '700' },
+  done: { color: baseColors.accent, fontSize: fontSize.md, fontWeight: '700' },
   pickedRow: { height: 32, flexGrow: 0 },
   picked: { gap: spacing.sm, paddingRight: spacing.xl, alignItems: 'center' },
-  pickedEmpty: { color: colors.textTertiary, fontSize: fontSize.sm },
+  pickedEmpty: { color: baseColors.textTertiary, fontSize: fontSize.sm },
   search: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     borderRadius: radius.pill,
     paddingHorizontal: spacing.lg,
     height: 40,
   },
-  input: { flex: 1, color: colors.text, fontSize: fontSize.sm, paddingVertical: 0 },
+  input: { flex: 1, color: baseColors.text, fontSize: fontSize.sm, paddingVertical: 0 },
   // Altura fixa: filtrar ou receber o banco do servidor nao muda o tamanho da
   // folha no meio da interacao; o que nao cabe rola.
   list: { height: 220, flexShrink: 1 },
@@ -192,7 +196,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
   },
   dot: { width: 10, height: 10, borderRadius: 5 },
-  name: { flex: 1, color: colors.text, fontSize: fontSize.md },
-  create: { flex: 1, color: colors.text, fontSize: fontSize.md, fontStyle: 'italic' },
-  empty: { color: colors.textTertiary, fontSize: fontSize.sm, padding: spacing.md },
+  name: { flex: 1, color: baseColors.text, fontSize: fontSize.md },
+  create: { flex: 1, color: baseColors.text, fontSize: fontSize.md, fontStyle: 'italic' },
+  empty: { color: baseColors.textTertiary, fontSize: fontSize.sm, padding: spacing.md },
 });

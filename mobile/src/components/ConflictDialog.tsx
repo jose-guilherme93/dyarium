@@ -8,11 +8,13 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import { Modal, StyleSheet, Text, View } from 'react-native';
+import { Modal, Text, View } from 'react-native';
 import { Press } from '@/components/Press';
 
 import type { ConflictField, Recording } from '@/core/types';
-import { colors, fontSize, radius, spacing } from '@/theme/tokens';
+import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 /** Rotulo legivel do campo em conflito. */
 export const CONFLICT_LABEL: Record<ConflictField, string> = {
@@ -42,6 +44,9 @@ export function ConflictDialog({
   onTakeTheirs,
   onDismiss,
 }: ConflictDialogProps) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   if (!note?.syncConflict?.length) return null;
 
   return (
@@ -76,7 +81,7 @@ export function ConflictDialog({
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   backdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.6)',
@@ -84,23 +89,23 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
   },
   card: {
-    backgroundColor: colors.bgElevated,
+    backgroundColor: baseColors.bgElevated,
     borderRadius: radius.lg,
     padding: spacing.lg,
     gap: spacing.sm,
   },
   iconRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  title: { color: colors.text, fontSize: fontSize.lg, fontWeight: '600' },
-  body: { color: colors.textSecondary, fontSize: fontSize.md, lineHeight: 21 },
+  title: { color: baseColors.text, fontSize: fontSize.lg, fontWeight: '600' },
+  body: { color: baseColors.textSecondary, fontSize: fontSize.md, lineHeight: 21 },
   action: {
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.md,
     borderRadius: radius.md,
-    backgroundColor: colors.surfaceElevated,
+    backgroundColor: baseColors.surfaceElevated,
     gap: 2,
   },
-  actionTitle: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
-  actionHint: { color: colors.textTertiary, fontSize: fontSize.sm },
+  actionTitle: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
+  actionHint: { color: baseColors.textTertiary, fontSize: fontSize.sm },
   cancel: { paddingVertical: spacing.sm, alignItems: 'center' },
-  cancelText: { color: colors.textSecondary, fontSize: fontSize.md },
+  cancelText: { color: baseColors.textSecondary, fontSize: fontSize.md },
 });

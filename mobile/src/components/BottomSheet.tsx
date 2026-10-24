@@ -12,7 +12,9 @@ import { Press } from '@/components/Press';
 
 import { FastModal } from './FastModal';
 import { MOTION_SHEET } from '@/theme/motion';
-import { colors, radius } from '@/theme/tokens';
+import { baseColors, radius } from '@/theme/tokens';
+import { useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 interface BottomSheetProps {
   visible: boolean;
@@ -43,6 +45,8 @@ export function BottomSheet({
   testID,
   accessibilityLabel = 'Fechar menu',
 }: BottomSheetProps) {
+  const styles = useThemedStyles(baseStyles);
+
   const { height } = useWindowDimensions();
   // A distancia da entrada e congelada na primeira montagem: se a dimensao da
   // janela mudar no meio da animacao (modal), a folha nao salta.
@@ -92,7 +96,7 @@ export function BottomSheet({
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   fill: { flex: 1 },
   backdrop: {
     position: 'absolute',
@@ -100,12 +104,14 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     left: 0,
-    backgroundColor: colors.overlay,
+    backgroundColor: baseColors.overlay,
   },
   card: {
     marginTop: 'auto',
     maxHeight: '85%',
-    backgroundColor: colors.bgElevated,
+    backgroundColor: baseColors.bgElevated,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: baseColors.borderStrong,
     borderTopLeftRadius: radius.lg,
     borderTopRightRadius: radius.lg,
     overflow: 'hidden',

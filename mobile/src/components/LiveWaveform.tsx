@@ -8,9 +8,11 @@
  */
 
 import { useEffect, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { View } from 'react-native';
 
-import { colors } from '@/theme/tokens';
+import { baseColors } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 const DEFAULT_BARS = 40;
 const MIN_LEVEL = 0.06;
@@ -34,8 +36,12 @@ export function LiveWaveform({
   level,
   bars = DEFAULT_BARS,
   height = 120,
-  color = colors.accent,
+  color,
 }: LiveWaveformProps) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+  const barColor = color ?? colors.accent;
+
   const [levels, setLevels] = useState<number[]>(() =>
     new Array(bars).fill(MIN_LEVEL),
   );
@@ -75,7 +81,7 @@ export function LiveWaveform({
               width: BAR_WIDTH,
               height: Math.max(3, value * height),
               borderRadius: BAR_WIDTH / 2,
-              backgroundColor: color,
+              backgroundColor: barColor,
               opacity: 0.28 + (0.6 * index) / Math.max(1, bars - 1),
             },
           ]}
@@ -85,12 +91,12 @@ export function LiveWaveform({
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 2,
   },
-  bar: { backgroundColor: colors.accent },
+  bar: { backgroundColor: baseColors.accent },
 });

@@ -3,7 +3,7 @@ import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams } from 'expo-router';
 import { back, replace } from '@/services/appNavigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Text, View } from 'react-native';
 import { Press } from '@/components/Press';
 
 import { LiveWaveform } from '@/components/LiveWaveform';
@@ -16,7 +16,9 @@ import { clearPendingInsert, takePendingInsert } from '@/services/noteInsert';
 import { audioFileName, deleteSessionFiles, moveAudio, sessionDirUri } from '@/services/files';
 import { useLibrary } from '@/state/LibraryContext';
 import { useRecording, useRecordingLive } from '@/state/RecordingContext';
-import { colors, fontSize, spacing } from '@/theme/tokens';
+import { baseColors, fontSize, spacing } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 /**
  * Tela de gravacao em tela cheia, com a waveform animada pelo microfone.
@@ -24,6 +26,9 @@ import { colors, fontSize, spacing } from '@/theme/tokens';
  * home, vira uma nota nova. Em ambos os casos, volta para a nota.
  */
 export default function RecordScreen() {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const { noteId, from } = useLocalSearchParams<{
     noteId?: string;
     from?: string;
@@ -181,7 +186,7 @@ export default function RecordScreen() {
             disabled={finishing || !active}
             accessibilityLabel="Parar gravação"
           >
-            <Ionicons name="stop" size={30} color="#FFFFFF" />
+            <Ionicons name="stop" size={30} color={colors.onAccent} />
           </Press>
         </View>
         <Text style={styles.bottomHint}>Pausar · Parar</Text>
@@ -190,8 +195,8 @@ export default function RecordScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg },
+const baseStyles = defineStyles({
+  screen: { flex: 1, backgroundColor: baseColors.bg },
   top: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -200,7 +205,7 @@ const styles = StyleSheet.create({
     paddingTop: spacing.xxxl,
     paddingBottom: spacing.lg,
   },
-  label: { color: colors.textSecondary, fontSize: fontSize.sm, fontWeight: '600' },
+  label: { color: baseColors.textSecondary, fontSize: fontSize.sm, fontWeight: '600' },
   spacer: { width: 26 },
   center: {
     flex: 1,
@@ -210,21 +215,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xl,
   },
   timer: {
-    color: colors.text,
+    color: baseColors.text,
     fontSize: fontSize.display,
     fontWeight: '300',
     fontVariant: ['tabular-nums'],
     letterSpacing: 1,
   },
-  hint: { color: colors.textSecondary, fontSize: fontSize.sm },
-  error: { color: colors.danger, fontSize: fontSize.sm, textAlign: 'center' },
+  hint: { color: baseColors.textSecondary, fontSize: fontSize.sm },
+  error: { color: baseColors.danger, fontSize: fontSize.sm, textAlign: 'center' },
   bottom: { alignItems: 'center', gap: spacing.lg, paddingBottom: spacing.xxxl },
   controls: { flexDirection: 'row', alignItems: 'center', gap: spacing.xxl },
   pause: {
     width: 64,
     height: 64,
     borderRadius: 32,
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -232,10 +237,10 @@ const styles = StyleSheet.create({
     width: 84,
     height: 84,
     borderRadius: 42,
-    backgroundColor: colors.danger,
+    backgroundColor: baseColors.danger,
     alignItems: 'center',
     justifyContent: 'center',
   },
   stopDisabled: { opacity: 0.5 },
-  bottomHint: { color: colors.textTertiary, fontSize: fontSize.xs },
+  bottomHint: { color: baseColors.textTertiary, fontSize: fontSize.xs },
 });

@@ -5,7 +5,6 @@ import { useMemo, useState } from 'react';
 import {
   Alert,
   FlatList,
-  StyleSheet,
   Text,
   TextInput,
   View,
@@ -25,11 +24,16 @@ import {
 import { sortNotebooks, type Notebook } from '@/core/notebooks';
 import { useLibrary } from '@/state/LibraryContext';
 import { useSettings } from '@/state/SettingsContext';
-import { colors, fontSize, radius, spacing } from '@/theme/tokens';
+import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 type FormMode = 'create' | 'rename' | 'color';
 
 export default function NotebooksScreen() {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const { notebooks, recordings, createNotebook, renameNotebook, removeNotebook } = useLibrary();
   const {
     lastNotebookId,
@@ -290,6 +294,9 @@ function NotebookRow({
   onPress(): void;
   onLongPress(): void;
 }) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   return (
     <Press
       onPress={onPress}
@@ -322,7 +329,7 @@ function NotebookRow({
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -331,8 +338,8 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   headerText: { flex: 1 },
-  title: { color: colors.text, fontSize: fontSize.xl, fontWeight: '700' },
-  subtitle: { color: colors.textTertiary, fontSize: fontSize.xs },
+  title: { color: baseColors.text, fontSize: fontSize.xl, fontWeight: '700' },
+  subtitle: { color: baseColors.textTertiary, fontSize: fontSize.xs },
   headerActions: { flexDirection: 'row', alignItems: 'center' },
   iconButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   searchWrap: {
@@ -341,33 +348,33 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     marginHorizontal: spacing.xl,
     marginBottom: spacing.md,
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     borderRadius: radius.pill,
     paddingHorizontal: spacing.lg,
     height: 40,
   },
-  searchInput: { flex: 1, color: colors.text, fontSize: fontSize.sm, paddingVertical: 0 },
+  searchInput: { flex: 1, color: baseColors.text, fontSize: fontSize.sm, paddingVertical: 0 },
   list: { paddingHorizontal: spacing.xl, paddingBottom: spacing.xxxl },
   separator: { height: spacing.sm },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     borderRadius: radius.md,
     padding: spacing.md,
   },
-  rowOn: { backgroundColor: colors.surfaceElevated },
+  rowOn: { backgroundColor: baseColors.surfaceElevated },
   dot: { width: 10, height: 10, borderRadius: 5 },
   rowText: { flex: 1, gap: 2 },
-  name: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
-  meta: { color: colors.textTertiary, fontSize: fontSize.xs },
+  name: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
+  meta: { color: baseColors.textTertiary, fontSize: fontSize.xs },
   sheet: {
     padding: spacing.xl,
     gap: spacing.xs,
   },
   sheetTitle: {
-    color: colors.textSecondary,
+    color: baseColors.textSecondary,
     fontSize: fontSize.xs,
     fontWeight: '700',
     textTransform: 'uppercase',
@@ -382,9 +389,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     borderRadius: radius.sm,
   },
-  sheetText: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
-  sheetDanger: { color: colors.danger },
+  sheetText: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
+  sheetDanger: { color: baseColors.danger },
   empty: { alignItems: 'center', gap: spacing.sm, paddingTop: spacing.xxxl },
-  emptyTitle: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
-  emptyText: { color: colors.textSecondary, fontSize: fontSize.sm },
+  emptyTitle: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
+  emptyText: { color: baseColors.textSecondary, fontSize: fontSize.sm },
 });

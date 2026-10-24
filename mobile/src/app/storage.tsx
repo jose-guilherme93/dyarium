@@ -7,7 +7,6 @@ import {
   Alert,
   RefreshControl,
   ScrollView,
-  StyleSheet,
   Text,
   View,
 } from 'react-native';
@@ -23,17 +22,38 @@ import type {
 } from '@/core/storage';
 import { clearAllStorageCaches, scanStorage } from '@/services/storageScan';
 import { useLibrary } from '@/state/LibraryContext';
-import { colors, fontSize, radius, spacing } from '@/theme/tokens';
+import { baseColors, fontSize, radius, spacing, type ThemeColors } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
-const CATEGORY_META: Record<StorageCategoryId, { label: string; color: string }> = {
-  audio: { label: 'Áudio', color: colors.accent },
-  images: { label: 'Imagens', color: colors.info },
-  'models-transcription': { label: 'Modelos de transcrição', color: colors.warning },
-  'models-analysis': { label: 'Modelos de análise', color: colors.success },
-  cache: { label: 'Cache', color: colors.textTertiary },
-  database: { label: 'Banco de dados', color: colors.accentStrong },
-  other: { label: 'Outros', color: colors.textSecondary },
+const CATEGORY_META: Record<StorageCategoryId, { label: string }> = {
+  audio: { label: 'Áudio' },
+  images: { label: 'Imagens' },
+  'models-transcription': { label: 'Modelos de transcrição' },
+  'models-analysis': { label: 'Modelos de análise' },
+  cache: { label: 'Cache' },
+  database: { label: 'Banco de dados' },
+  other: { label: 'Outros' },
 };
+
+function categoryColor(id: StorageCategoryId, colors: ThemeColors): string {
+  switch (id) {
+    case 'audio':
+      return colors.accent;
+    case 'images':
+      return colors.info;
+    case 'models-transcription':
+      return colors.warning;
+    case 'models-analysis':
+      return colors.success;
+    case 'cache':
+      return colors.textTertiary;
+    case 'database':
+      return colors.accentStrong;
+    case 'other':
+      return colors.textSecondary;
+  }
+}
 
 const NOTE_PREVIEW = 20;
 
@@ -42,6 +62,8 @@ function categoryBytes(report: StorageReport, id: StorageCategoryId): number {
 }
 
 function Row({ label, value }: { label: string; value: string }) {
+  const styles = useThemedStyles(baseStyles);
+
   return (
     <View style={styles.row}>
       <Text style={styles.rowLabel}>{label}</Text>
@@ -51,6 +73,8 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 function Badge({ children }: { children: string }) {
+  const styles = useThemedStyles(baseStyles);
+
   return (
     <View style={styles.badge}>
       <Text style={styles.badgeText}>{children}</Text>
@@ -59,6 +83,9 @@ function Badge({ children }: { children: string }) {
 }
 
 function StorageBar({ report }: { report: StorageReport }) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const visible = report.categories.filter((category) => category.bytes > 0);
   if (visible.length === 0) return <View style={styles.bar} />;
   return (
@@ -68,7 +95,7 @@ function StorageBar({ report }: { report: StorageReport }) {
           key={category.id}
           style={{
             flex: category.bytes,
-            backgroundColor: CATEGORY_META[category.id].color,
+            backgroundColor: categoryColor(category.id, colors),
           }}
         />
       ))}
@@ -85,6 +112,8 @@ function NoteRow({
   busy: boolean;
   onFree(): void;
 }) {
+  const styles = useThemedStyles(baseStyles);
+
   const parts: string[] = [];
   if (note.audioBytes > 0) parts.push(`Áudio ${formatBytes(note.audioBytes)}`);
   if (note.imageBytes > 0) parts.push(`Imagens ${formatBytes(note.imageBytes)}`);
@@ -117,6 +146,9 @@ function NoteRow({
 }
 
 export default function StorageScreen() {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const { recordings, freeSyncedAudio, freeAudioForNote } = useLibrary();
   const [report, setReport] = useState<StorageReport | null>(null);
   const [scanning, setScanning] = useState(true);
@@ -322,7 +354,7 @@ export default function StorageScreen() {
                       <View
                         style={[
                           styles.dot,
-                          { backgroundColor: CATEGORY_META[category.id].color },
+                          { backgroundColor: categoryColor(category.id, colors) },
                         ]}
                       />
                       <Text style={styles.legendLabel}>{CATEGORY_META[category.id].label}</Text>
@@ -453,7 +485,7 @@ export default function StorageScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -462,28 +494,28 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
   },
   iconButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { color: colors.text, fontSize: fontSize.lg, fontWeight: '700' },
+  headerTitle: { color: baseColors.text, fontSize: fontSize.lg, fontWeight: '700' },
   content: { padding: spacing.xl, gap: spacing.lg, paddingBottom: spacing.xxxl },
   center: { paddingVertical: spacing.xxxl, alignItems: 'center' },
   summaryCard: {
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     borderRadius: radius.lg,
     padding: spacing.lg,
     gap: spacing.sm,
   },
   summaryLabel: {
-    color: colors.textTertiary,
+    color: baseColors.textTertiary,
     fontSize: fontSize.xs,
     fontWeight: '700',
     textTransform: 'uppercase',
     letterSpacing: 0.6,
   },
-  summaryValue: { color: colors.text, fontSize: fontSize.xxl, fontWeight: '700' },
-  summaryHint: { color: colors.textSecondary, fontSize: fontSize.sm },
+  summaryValue: { color: baseColors.text, fontSize: fontSize.xxl, fontWeight: '700' },
+  summaryHint: { color: baseColors.textSecondary, fontSize: fontSize.sm },
   bar: {
     height: 10,
     borderRadius: 5,
-    backgroundColor: colors.bgElevated,
+    backgroundColor: baseColors.bgElevated,
     overflow: 'hidden',
     flexDirection: 'row',
     marginTop: spacing.xs,
@@ -491,9 +523,9 @@ const styles = StyleSheet.create({
   legend: { gap: spacing.xs, marginTop: spacing.xs },
   legendRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   dot: { width: 8, height: 8, borderRadius: 4 },
-  legendLabel: { flex: 1, color: colors.textSecondary, fontSize: fontSize.sm },
+  legendLabel: { flex: 1, color: baseColors.textSecondary, fontSize: fontSize.sm },
   legendValue: {
-    color: colors.text,
+    color: baseColors.text,
     fontSize: fontSize.sm,
     fontWeight: '600',
     fontVariant: ['tabular-nums'],
@@ -502,43 +534,43 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: spacing.md,
-    backgroundColor: colors.warningSoft,
+    backgroundColor: baseColors.warningSoft,
     borderRadius: radius.md,
     padding: spacing.md,
   },
-  warningText: { flex: 1, color: colors.warning, fontSize: fontSize.sm, lineHeight: 20 },
+  warningText: { flex: 1, color: baseColors.warning, fontSize: fontSize.sm, lineHeight: 20 },
   metrics: { flexDirection: 'row', gap: spacing.sm },
   metric: {
     flex: 1,
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     borderRadius: radius.md,
     paddingVertical: spacing.md,
     alignItems: 'center',
     gap: 2,
   },
   metricValue: {
-    color: colors.text,
+    color: baseColors.text,
     fontSize: fontSize.lg,
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
   },
-  metricLabel: { color: colors.textTertiary, fontSize: fontSize.xs, textAlign: 'center' },
+  metricLabel: { color: baseColors.textTertiary, fontSize: fontSize.xs, textAlign: 'center' },
   card: {
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     borderRadius: radius.md,
     padding: spacing.lg,
     gap: spacing.md,
   },
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  rowLabel: { color: colors.textSecondary, fontSize: fontSize.md },
+  rowLabel: { color: baseColors.textSecondary, fontSize: fontSize.md },
   rowValue: {
-    color: colors.text,
+    color: baseColors.text,
     fontSize: fontSize.md,
     fontWeight: '600',
     fontVariant: ['tabular-nums'],
   },
   sectionLabel: {
-    color: colors.textTertiary,
+    color: baseColors.textTertiary,
     fontSize: fontSize.xs,
     fontWeight: '700',
     textTransform: 'uppercase',
@@ -547,28 +579,28 @@ const styles = StyleSheet.create({
   },
   linkRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   linkText: { flex: 1, gap: 2 },
-  linkTitle: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
-  linkHint: { color: colors.textSecondary, fontSize: fontSize.sm },
+  linkTitle: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
+  linkHint: { color: baseColors.textSecondary, fontSize: fontSize.sm },
   actions: { gap: spacing.sm },
   noteRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   noteMain: { flex: 1, gap: 3 },
   noteTitleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, flexWrap: 'wrap' },
-  noteTitle: { color: colors.text, fontSize: fontSize.md, fontWeight: '600', flexShrink: 1 },
-  noteMeta: { color: colors.textSecondary, fontSize: fontSize.sm },
+  noteTitle: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600', flexShrink: 1 },
+  noteMeta: { color: baseColors.textSecondary, fontSize: fontSize.sm },
   badge: {
-    backgroundColor: colors.surfaceElevated,
+    backgroundColor: baseColors.surfaceElevated,
     borderRadius: radius.pill,
     paddingHorizontal: spacing.sm,
     paddingVertical: 2,
   },
-  badgeText: { color: colors.textSecondary, fontSize: fontSize.xs, fontWeight: '600' },
+  badgeText: { color: baseColors.textSecondary, fontSize: fontSize.xs, fontWeight: '600' },
   rowAction: {
-    backgroundColor: colors.accentSoft,
+    backgroundColor: baseColors.accentSoft,
     borderRadius: radius.pill,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
-  rowActionText: { color: colors.accent, fontSize: fontSize.sm, fontWeight: '600' },
+  rowActionText: { color: baseColors.accent, fontSize: fontSize.sm, fontWeight: '600' },
   showAll: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -576,7 +608,7 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
     paddingVertical: spacing.sm,
   },
-  showAllText: { color: colors.accent, fontSize: fontSize.sm, fontWeight: '600' },
-  hint: { color: colors.textSecondary, fontSize: fontSize.sm, lineHeight: 20 },
-  error: { color: colors.danger, fontSize: fontSize.sm },
+  showAllText: { color: baseColors.accent, fontSize: fontSize.sm, fontWeight: '600' },
+  hint: { color: baseColors.textSecondary, fontSize: fontSize.sm, lineHeight: 20 },
+  error: { color: baseColors.danger, fontSize: fontSize.sm },
 });

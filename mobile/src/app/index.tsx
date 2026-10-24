@@ -20,7 +20,7 @@ import type { NoteProperty } from '@/components/NoteMenu';
 import { NotebookPicker } from '@/components/NotebookPicker';
 import { RecordingCard } from '@/components/RecordingCard';
 import { Screen } from '@/components/Screen';
-import { STATUS_META } from '@/components/StatusChip';
+import { STATUS_LABELS } from '@/components/StatusChip';
 import { TagFilterRow } from '@/components/TagFilterRow';
 import { formatBytes, formatDateTime, noteDateIso } from '@/core/format';
 import {
@@ -39,7 +39,9 @@ import { directoryBytes, sessionDirectory } from '@/services/files';
 import { useLibrary } from '@/state/LibraryContext';
 import { useRecording } from '@/state/RecordingContext';
 import { useSettings } from '@/state/SettingsContext';
-import { colors, fontSize, radius, spacing } from '@/theme/tokens';
+import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 const PENDING_STATUSES = ['recorded', 'queued', 'uploading', 'failed'];
 
@@ -52,6 +54,9 @@ interface SwipeRowProps {
 }
 
 function SwipeRow({ children, label, icon, color, onAction }: SwipeRowProps) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const ref = useRef<Swipeable>(null);
   return (
     <Swipeable
@@ -66,7 +71,7 @@ function SwipeRow({ children, label, icon, color, onAction }: SwipeRowProps) {
           }}
           accessibilityLabel={label}
         >
-          <Ionicons name={icon} size={22} color="#FFFFFF" />
+          <Ionicons name={icon} size={22} color={colors.onAccent} />
           <Text style={styles.swipeLabel}>{label}</Text>
         </Press>
       )}
@@ -99,6 +104,8 @@ const NoteRow = memo(function NoteRow({
   onArchive,
   onUnarchive,
 }: NoteRowProps) {
+  const { colors } = useTheme();
+
   return (
     <SwipeRow
       label={swipeDelete ? 'Apagar' : item.archived ? 'Desarquivar' : 'Arquivar'}
@@ -125,6 +132,9 @@ function keyExtractor(item: Recording) {
 }
 
 export default function NotebookScreen() {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const {
     recordings,
     notebooks,
@@ -272,7 +282,7 @@ export default function NotebookScreen() {
       { label: 'Palavras', value: String(stats.words) },
       { label: 'Caracteres', value: String(stats.chars) },
       { label: 'Tamanho', value: formatBytes(bytes) },
-      { label: 'Status', value: STATUS_META[item.status].label },
+      { label: 'Status', value: STATUS_LABELS[item.status] },
     ]);
   }, []);
 
@@ -499,7 +509,7 @@ export default function NotebookScreen() {
           onPress={() => setNewMenuOpen((value) => !value)}
           accessibilityLabel={newMenuOpen ? 'Fechar menu' : 'Nova nota'}
         >
-          <Ionicons name={newMenuOpen ? 'close' : 'add'} size={28} color="#FFFFFF" />
+          <Ionicons name={newMenuOpen ? 'close' : 'add'} size={28} color={colors.onAccent} />
         </Press>
       </View>
 
@@ -544,6 +554,9 @@ function NewMenuItem({
   label: string;
   onPress: () => void;
 }) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   return (
     <Press style={styles.fabItem} onPress={onPress} accessibilityLabel={label}>
       <Text style={styles.fabItemLabel}>{label}</Text>
@@ -556,6 +569,8 @@ function NewMenuItem({
 
 /** Esqueleto da lista: o app abre antes do SQLite terminar de ler. */
 function NoteListSkeleton() {
+  const styles = useThemedStyles(baseStyles);
+
   return (
     <View
       style={styles.skeleton}
@@ -573,7 +588,7 @@ function NoteListSkeleton() {
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   screen: { paddingHorizontal: 0 },
   padded: { paddingHorizontal: spacing.sm },
   list: { paddingBottom: 96 },
@@ -582,19 +597,19 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     paddingVertical: spacing.md,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
+    borderBottomColor: baseColors.border,
   },
   skeletonTitle: {
     width: '55%',
     height: 15,
     borderRadius: 4,
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
   },
   skeletonSub: {
     width: '82%',
     height: 11,
     borderRadius: 4,
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     opacity: 0.7,
   },
   swipeAction: {
@@ -603,30 +618,30 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 4,
   },
-  swipeLabel: { color: '#FFFFFF', fontSize: fontSize.xs, fontWeight: '700' },
+  swipeLabel: { color: baseColors.onAccent, fontSize: fontSize.xs, fontWeight: '700' },
   alert: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
     marginHorizontal: spacing.sm,
     marginBottom: spacing.sm,
-    backgroundColor: colors.warningSoft,
+    backgroundColor: baseColors.warningSoft,
     borderRadius: radius.sm,
     padding: spacing.sm,
   },
-  alertText: { flex: 1, color: colors.warning, fontSize: fontSize.sm, fontWeight: '600' },
+  alertText: { flex: 1, color: baseColors.warning, fontSize: fontSize.sm, fontWeight: '600' },
   empty: { alignItems: 'center', gap: spacing.md, paddingTop: spacing.xxxl },
   emptyIcon: {
     width: 68,
     height: 68,
     borderRadius: 34,
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  emptyTitle: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
+  emptyTitle: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
   emptyText: {
-    color: colors.textSecondary,
+    color: baseColors.textSecondary,
     fontSize: fontSize.sm,
     textAlign: 'center',
     paddingHorizontal: spacing.xl,
@@ -652,20 +667,20 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     borderRadius: radius.pill,
     paddingLeft: spacing.lg,
     paddingRight: spacing.sm,
     paddingVertical: spacing.sm,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.borderStrong,
+    borderColor: baseColors.borderStrong,
   },
-  fabItemLabel: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
+  fabItemLabel: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
   fabItemIcon: {
     width: 30,
     height: 30,
     borderRadius: 15,
-    backgroundColor: colors.surfaceElevated,
+    backgroundColor: baseColors.surfaceElevated,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -673,7 +688,7 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: colors.accent,
+    backgroundColor: baseColors.accent,
     alignItems: 'center',
     justifyContent: 'center',
   },

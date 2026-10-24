@@ -6,12 +6,16 @@
  */
 
 import { useEffect, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Text, View } from 'react-native';
 
 import { formatClock } from '@/core/format';
-import { colors, fontSize, spacing } from '@/theme/tokens';
+import { baseColors, fontSize, spacing } from '@/theme/tokens';
+import { useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 export function RecordClock() {
+  const styles = useThemedStyles(baseStyles);
+
   const [now, setNow] = useState(() => new Date());
 
   useEffect(() => {
@@ -33,14 +37,14 @@ export function RecordClock() {
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   block: { alignItems: 'center', gap: spacing.xs },
   time: {
-    color: colors.text,
+    color: baseColors.text,
     fontSize: fontSize.xxl,
     fontWeight: '500',
     fontVariant: ['tabular-nums'],
     letterSpacing: 0.5,
   },
-  date: { color: colors.textSecondary, fontSize: fontSize.lg },
+  date: { color: baseColors.textSecondary, fontSize: fontSize.lg },
 });

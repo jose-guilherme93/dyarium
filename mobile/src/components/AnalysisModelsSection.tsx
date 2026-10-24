@@ -30,7 +30,9 @@ import {
 } from '@/services/localAnalysis';
 import { useLibrary } from '@/state/LibraryContext';
 import { useSettings } from '@/state/SettingsContext';
-import { colors, fontSize, radius, spacing } from '@/theme/tokens';
+import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 const BENCHMARK_NOTES = 3;
 
@@ -74,6 +76,9 @@ function useBatteryLabel(): string {
  * padrao e so aparece com EXPO_PUBLIC_LOCAL_ANALYSIS=1 (ver docs/analise-local).
  */
 export function AnalysisModelsSection() {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   if (!localAnalysisEnabled()) {
     return (
       <>
@@ -91,6 +96,9 @@ export function AnalysisModelsSection() {
 }
 
 function EnabledAnalysisModelsSection() {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const { analysisModel, setAnalysisModel } = useSettings();
   const {
     recordings,
@@ -277,6 +285,9 @@ function BenchmarkPanel({
   installed: boolean;
   recordings: Recording[];
 }) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState('');
   const [loadMs, setLoadMs] = useState<number | null>(null);
@@ -394,9 +405,9 @@ function BenchmarkPanel({
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   sectionLabel: {
-    color: colors.textTertiary,
+    color: baseColors.textTertiary,
     fontSize: fontSize.xs,
     fontWeight: '700',
     textTransform: 'uppercase',
@@ -404,58 +415,58 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   card: { gap: spacing.sm },
-  cardTitle: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
-  cardHint: { color: colors.textSecondary, fontSize: fontSize.sm },
+  cardTitle: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
+  cardHint: { color: baseColors.textSecondary, fontSize: fontSize.sm },
   notice: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
-  noticeText: { flex: 1, color: colors.textSecondary, fontSize: fontSize.sm, lineHeight: 20 },
+  noticeText: { flex: 1, color: baseColors.textSecondary, fontSize: fontSize.sm, lineHeight: 20 },
   rowText: { flex: 1, gap: 2 },
   modelCard: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   modelMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   modelTitleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   modelActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   badge: {
-    backgroundColor: colors.accentSoft,
+    backgroundColor: baseColors.accentSoft,
     borderRadius: radius.pill,
     paddingHorizontal: spacing.sm,
     paddingVertical: 2,
   },
-  badgeText: { color: colors.accent, fontSize: fontSize.xs, fontWeight: '700' },
+  badgeText: { color: baseColors.accent, fontSize: fontSize.xs, fontWeight: '700' },
   downloadButton: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: colors.surfaceElevated,
+    backgroundColor: baseColors.surfaceElevated,
     borderRadius: radius.pill,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
-  downloadText: { color: colors.text, fontSize: fontSize.sm, fontWeight: '600' },
+  downloadText: { color: baseColors.text, fontSize: fontSize.sm, fontWeight: '600' },
   useButton: {
-    backgroundColor: colors.accentSoft,
+    backgroundColor: baseColors.accentSoft,
     borderRadius: radius.pill,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
-  useText: { color: colors.accent, fontSize: fontSize.sm, fontWeight: '600' },
+  useText: { color: baseColors.accent, fontSize: fontSize.sm, fontWeight: '600' },
   progressWrap: { alignItems: 'flex-end', gap: 4, width: 72 },
   progressTrack: {
     width: 72,
     height: 3,
     borderRadius: 2,
-    backgroundColor: colors.surfaceElevated,
+    backgroundColor: baseColors.surfaceElevated,
     overflow: 'hidden',
   },
-  progressBar: { height: 3, borderRadius: 2, backgroundColor: colors.accent },
-  ramWarning: { color: colors.warning, fontSize: fontSize.xs, lineHeight: 17 },
-  error: { color: colors.danger, fontSize: fontSize.sm },
+  progressBar: { height: 3, borderRadius: 2, backgroundColor: baseColors.accent },
+  ramWarning: { color: baseColors.warning, fontSize: fontSize.xs, lineHeight: 17 },
+  error: { color: baseColors.danger, fontSize: fontSize.sm },
   benchmarkActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, flexWrap: 'wrap' },
   disabled: { opacity: 0.5 },
   benchmarkRow: {
     gap: 3,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
+    borderColor: baseColors.border,
     paddingTop: spacing.sm,
   },
-  reading: { color: colors.text, fontSize: fontSize.sm, lineHeight: 20 },
-  raw: { color: colors.textTertiary, fontSize: fontSize.xs, lineHeight: 16 },
+  reading: { color: baseColors.text, fontSize: fontSize.sm, lineHeight: 20 },
+  raw: { color: baseColors.textTertiary, fontSize: fontSize.xs, lineHeight: 16 },
 });

@@ -3,11 +3,12 @@ import {
   Animated,
   KeyboardAvoidingView,
   Modal,
-  StyleSheet,
   type ModalProps,
 } from 'react-native';
 
 import { MOTION_FAST } from '@/theme/motion';
+import { useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 type FastModalProps = Pick<ModalProps, 'visible' | 'transparent' | 'onRequestClose'> & {
   children: ReactNode;
@@ -33,6 +34,8 @@ export function FastModal({
   avoidKeyboard = true,
   children,
 }: FastModalProps) {
+  const styles = useThemedStyles(baseStyles);
+
   const [opacity] = useState(() => new Animated.Value(0));
 
   useEffect(() => {
@@ -65,6 +68,6 @@ export function FastModal({
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   fill: { flex: 1 },
 });

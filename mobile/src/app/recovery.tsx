@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { back, replace } from '@/services/appNavigation';
 import { useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, Text, View } from 'react-native';
 import { Press } from '@/components/Press';
 
 import { Button } from '@/components/Button';
@@ -10,9 +10,14 @@ import { Screen } from '@/components/Screen';
 import { formatDuration } from '@/core/format';
 import { useLibrary } from '@/state/LibraryContext';
 import { useRecording } from '@/state/RecordingContext';
-import { colors, fontSize, spacing } from '@/theme/tokens';
+import { baseColors, fontSize, spacing } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 export default function RecoveryScreen() {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const { recordings, remove } = useLibrary();
   const { resume, finalizeInterrupted } = useRecording();
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -103,7 +108,7 @@ export default function RecoveryScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -112,16 +117,16 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
   },
   back: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  title: { color: colors.text, fontSize: fontSize.lg, fontWeight: '700' },
+  title: { color: baseColors.text, fontSize: fontSize.lg, fontWeight: '700' },
   content: { padding: spacing.xl, gap: spacing.lg },
-  lead: { color: colors.textSecondary, fontSize: fontSize.md, lineHeight: 22 },
+  lead: { color: baseColors.textSecondary, fontSize: fontSize.md, lineHeight: 22 },
   card: { gap: spacing.lg },
   cardHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   cardHeaderText: { flex: 1, gap: 2 },
-  cardTitle: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
-  cardMeta: { color: colors.textTertiary, fontSize: fontSize.xs },
+  cardTitle: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
+  cardMeta: { color: baseColors.textTertiary, fontSize: fontSize.xs },
   actions: { gap: spacing.sm },
   action: {},
   empty: { alignItems: 'center', gap: spacing.sm, paddingTop: spacing.xl },
-  emptyText: { color: colors.textSecondary, fontSize: fontSize.sm },
+  emptyText: { color: baseColors.textSecondary, fontSize: fontSize.sm },
 });

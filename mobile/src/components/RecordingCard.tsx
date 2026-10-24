@@ -11,7 +11,9 @@ import { checkpointPercent } from '@/core/transcription';
 import type { Recording } from '@/core/types';
 import { useRenderCount } from '@/dev/perf';
 import { useTranscriptionProgress } from '@/state/useTranscriptionProgress';
-import { colors, fontSize, radius, spacing } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
+import { defineStyles } from '@/theme/themedStyles';
 
 interface RecordingCardProps {
   recording: Recording;
@@ -38,6 +40,9 @@ export const RecordingCard = memo(function RecordingCard({
   notebookLabel,
   dense = false,
 }: RecordingCardProps) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   useRenderCount('RecordingCard');
   const hasAudio = Boolean(recording.filePath);
   const tags = recording.tags ?? [];
@@ -119,42 +124,42 @@ export const RecordingCard = memo(function RecordingCard({
   );
 });
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   wrap: {
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     borderRadius: radius.md,
     overflow: 'hidden',
   },
   wrapDense: {
-    backgroundColor: colors.bg,
+    backgroundColor: baseColors.bg,
     borderRadius: 0,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
+    borderBottomColor: baseColors.border,
   },
   content: { padding: spacing.md, gap: 3 },
   contentDense: { paddingHorizontal: spacing.lg, paddingVertical: 10, gap: 2 },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  title: { flex: 1, color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
+  title: { flex: 1, color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
   transcribing: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 3,
-    backgroundColor: colors.accentSoft,
+    backgroundColor: baseColors.accentSoft,
     borderRadius: radius.pill,
     paddingHorizontal: 6,
     paddingVertical: 2,
   },
   transcribingText: {
-    color: colors.accentStrong,
+    color: baseColors.accentStrong,
     fontSize: fontSize.xs,
     fontVariant: ['tabular-nums'],
   },
   subRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  sub: { color: colors.textSecondary, fontSize: fontSize.xs },
+  sub: { color: baseColors.textSecondary, fontSize: fontSize.xs },
   tags: { flexDirection: 'row', alignItems: 'center', gap: 4, flexWrap: 'wrap', marginTop: 2 },
-  more: { color: colors.textTertiary, fontSize: 10, fontWeight: '600' },
+  more: { color: baseColors.textTertiary, fontSize: 10, fontWeight: '600' },
   footer: { flexDirection: 'row', alignItems: 'flex-end', gap: spacing.sm, marginTop: 2 },
   grow: { flex: 1 },
-  preview: { flex: 1, color: colors.textTertiary, fontSize: fontSize.sm },
-  stamp: { color: colors.textTertiary, fontSize: fontSize.xs, fontVariant: ['tabular-nums'] },
+  preview: { flex: 1, color: baseColors.textTertiary, fontSize: fontSize.sm },
+  stamp: { color: baseColors.textTertiary, fontSize: fontSize.xs, fontVariant: ['tabular-nums'] },
 });

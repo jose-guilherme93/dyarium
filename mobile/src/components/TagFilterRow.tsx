@@ -4,7 +4,9 @@ import { Press } from '@/components/Press';
 
 import { TagChip } from '@/components/TagChip';
 import { TagStrip } from '@/components/TagStrip';
-import { colors, fontSize, radius, spacing } from '@/theme/tokens';
+import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 interface TagFilterRowProps {
   tags: { name: string; count: number }[];
@@ -15,6 +17,9 @@ interface TagFilterRowProps {
 }
 
 export function TagFilterRow({ tags, selected, onToggle, onClear, onManage }: TagFilterRowProps) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   return (
     <View style={styles.row}>
       <TagStrip>
@@ -51,28 +56,28 @@ export function TagFilterRow({ tags, selected, onToggle, onClear, onManage }: Ta
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   row: { marginBottom: spacing.xs },
   all: {
     borderRadius: radius.pill,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.borderStrong,
+    borderColor: baseColors.borderStrong,
     paddingHorizontal: spacing.md,
     paddingVertical: 5,
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
   },
-  allOn: { backgroundColor: colors.text, borderColor: colors.text },
-  allText: { color: colors.textSecondary, fontSize: fontSize.xs, fontWeight: '700' },
-  allTextOn: { color: '#141416' },
+  allOn: { backgroundColor: baseColors.text, borderColor: baseColors.text },
+  allText: { color: baseColors.textSecondary, fontSize: fontSize.xs, fontWeight: '700' },
+  allTextOn: { color: baseColors.bg },
   manage: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
     borderRadius: radius.pill,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
+    borderColor: baseColors.border,
     paddingHorizontal: spacing.md,
     paddingVertical: 5,
   },
-  manageText: { color: colors.textSecondary, fontSize: fontSize.xs, fontWeight: '600' },
+  manageText: { color: baseColors.textSecondary, fontSize: fontSize.xs, fontWeight: '600' },
 });

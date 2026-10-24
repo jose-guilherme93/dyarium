@@ -3,7 +3,7 @@ import { useAudioPlayerStatus } from 'expo-audio';
 import { useLocalSearchParams } from 'expo-router';
 import { back } from '@/services/appNavigation';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, StyleSheet, Text, TextInput, View } from 'react-native';
+import { FlatList, Text, TextInput, View } from 'react-native';
 import { Press } from '@/components/Press';
 
 import { DyariumApi, type FetchLike, type TranscriptSegment } from '@/core/api';
@@ -20,7 +20,9 @@ import { emitRecording } from '@/services/uploaderLoop';
 import { useLibrary } from '@/state/LibraryContext';
 import { useLoadPlayback, usePlaybackSource } from '@/state/PlaybackContext';
 import { useTranscriptionProgress } from '@/state/useTranscriptionProgress';
-import { colors, fontSize, radius, spacing } from '@/theme/tokens';
+import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 const doFetch = globalThis.fetch as unknown as FetchLike;
 
@@ -53,6 +55,9 @@ const SegmentRow = memo(function SegmentRow({
   onCancelEdit,
   onSubmitEdit,
 }: SegmentRowProps) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const text = useMemo(() => breakSentences(segment.text), [segment.text]);
   return (
     <View style={[styles.segment, active && styles.segmentActive]}>
@@ -99,6 +104,9 @@ const SegmentRow = memo(function SegmentRow({
  * acompanha o play e tocar num trecho pula o audio para ali (como no dashboard).
  */
 export default function TranscriptScreen() {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const { id, edit } = useLocalSearchParams<{ id: string; edit?: string }>();
   const { recordings } = useLibrary();
   const note = recordings.find((r) => r.id === id);
@@ -349,8 +357,8 @@ export default function TranscriptScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.bg },
+const baseStyles = defineStyles({
+  screen: { flex: 1, backgroundColor: baseColors.bg },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -359,7 +367,7 @@ const styles = StyleSheet.create({
     paddingTop: spacing.xxxl,
     paddingBottom: spacing.md,
   },
-  title: { color: colors.text, fontSize: fontSize.lg, fontWeight: '700' },
+  title: { color: baseColors.text, fontSize: fontSize.lg, fontWeight: '700' },
   spacer: { width: 24 },
   player: {
     flexDirection: 'row',
@@ -372,13 +380,13 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  playerTime: { color: colors.textSecondary, fontSize: fontSize.sm, fontVariant: ['tabular-nums'] },
+  playerTime: { color: baseColors.textSecondary, fontSize: fontSize.sm, fontVariant: ['tabular-nums'] },
   playerSpacer: { flex: 1 },
-  progress: { color: colors.accent, fontSize: fontSize.sm, fontWeight: '600' },
+  progress: { color: baseColors.accent, fontSize: fontSize.sm, fontWeight: '600' },
   list: { paddingHorizontal: spacing.xl, paddingBottom: spacing.xxxl },
   segment: {
     flexDirection: 'row',
@@ -387,23 +395,23 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     borderRadius: 10,
   },
-  segmentActive: { backgroundColor: colors.accentSoft },
-  timestamp: { color: colors.textTertiary, fontSize: fontSize.xs, width: 44, paddingTop: 3, fontVariant: ['tabular-nums'] },
+  segmentActive: { backgroundColor: baseColors.accentSoft },
+  timestamp: { color: baseColors.textTertiary, fontSize: fontSize.xs, width: 44, paddingTop: 3, fontVariant: ['tabular-nums'] },
   segmentBody: { flex: 1 },
-  segmentText: { color: colors.textSecondary, fontSize: fontSize.md, lineHeight: 22 },
-  segmentTextActive: { color: colors.text },
+  segmentText: { color: baseColors.textSecondary, fontSize: fontSize.md, lineHeight: 22 },
+  segmentTextActive: { color: baseColors.text },
   editWrap: { flex: 1, gap: spacing.sm },
   editInput: {
-    color: colors.text,
+    color: baseColors.text,
     fontSize: fontSize.md,
     lineHeight: 22,
-    backgroundColor: colors.bgElevated,
+    backgroundColor: baseColors.bgElevated,
     borderRadius: radius.sm,
     padding: spacing.sm,
   },
   editActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: spacing.lg },
-  editCancel: { color: colors.textSecondary, fontSize: fontSize.sm },
-  editSave: { color: colors.accent, fontSize: fontSize.sm, fontWeight: '700' },
+  editCancel: { color: baseColors.textSecondary, fontSize: fontSize.sm },
+  editSave: { color: baseColors.accent, fontSize: fontSize.sm, fontWeight: '700' },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl },
-  emptyText: { color: colors.textSecondary, fontSize: fontSize.sm, textAlign: 'center' },
+  emptyText: { color: baseColors.textSecondary, fontSize: fontSize.sm, textAlign: 'center' },
 });

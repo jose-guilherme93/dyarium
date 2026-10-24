@@ -7,9 +7,11 @@
  */
 
 import { useRef, useState } from 'react';
-import { StyleSheet, View, type GestureResponderEvent } from 'react-native';
+import { View, type GestureResponderEvent } from 'react-native';
 
-import { colors } from '@/theme/tokens';
+import { baseColors } from '@/theme/tokens';
+import { useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 interface AudioSeekBarProps {
   /** Posicao atual em segundos. */
@@ -25,6 +27,8 @@ const THUMB = 12;
 const HIT_HEIGHT = 32;
 
 export function AudioSeekBar({ current, duration, onSeek, onScrubChange }: AudioSeekBarProps) {
+  const styles = useThemedStyles(baseStyles);
+
   const [width, setWidth] = useState(0);
   const [scrub, setScrub] = useState<number | null>(null);
   const scrubRef = useRef<number | null>(null);
@@ -76,22 +80,22 @@ export function AudioSeekBar({ current, duration, onSeek, onScrubChange }: Audio
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   hit: { height: HIT_HEIGHT, justifyContent: 'center' },
   track: {
     height: 4,
     borderRadius: 2,
-    backgroundColor: colors.surfaceElevated,
+    backgroundColor: baseColors.surfaceElevated,
     overflow: 'hidden',
   },
-  fill: { height: 4, backgroundColor: colors.accent },
+  fill: { height: 4, backgroundColor: baseColors.accent },
   thumb: {
     position: 'absolute',
     top: (HIT_HEIGHT - THUMB) / 2,
     width: THUMB,
     height: THUMB,
     borderRadius: THUMB / 2,
-    backgroundColor: colors.accentStrong,
+    backgroundColor: baseColors.accentStrong,
   },
 });
 

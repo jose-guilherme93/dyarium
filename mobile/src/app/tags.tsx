@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
   FlatList,
-  StyleSheet,
   Text,
   TextInput,
   View,
@@ -17,9 +16,14 @@ import type { ServerTag } from '@/core/api';
 import { tagColor } from '@/core/tags';
 import { listTagBank, removeTag, renameTag } from '@/services/tagAdmin';
 import { useLibrary } from '@/state/LibraryContext';
-import { colors, fontSize, radius, spacing } from '@/theme/tokens';
+import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 export default function TagsScreen() {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const { pull } = useLibrary();
   const [tags, setTags] = useState<ServerTag[]>([]);
   const [loading, setLoading] = useState(true);
@@ -206,7 +210,7 @@ export default function TagsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -215,8 +219,8 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   headerText: { flex: 1, alignItems: 'center' },
-  title: { color: colors.text, fontSize: fontSize.xl, fontWeight: '700' },
-  subtitle: { color: colors.textTertiary, fontSize: fontSize.xs },
+  title: { color: baseColors.text, fontSize: fontSize.xl, fontWeight: '700' },
+  subtitle: { color: baseColors.textTertiary, fontSize: fontSize.xs },
   iconButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   list: { paddingHorizontal: spacing.xl, paddingBottom: spacing.xxxl },
   separator: { height: spacing.sm },
@@ -224,41 +228,41 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     borderRadius: radius.md,
     padding: spacing.md,
   },
   dot: { width: 10, height: 10, borderRadius: 5 },
-  name: { flex: 1, color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
-  count: { color: colors.textTertiary, fontSize: fontSize.xs, fontVariant: ['tabular-nums'] },
+  name: { flex: 1, color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
+  count: { color: baseColors.textTertiary, fontSize: fontSize.xs, fontVariant: ['tabular-nums'] },
   empty: { alignItems: 'center', gap: spacing.sm, paddingTop: spacing.xxxl },
-  emptyTitle: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
+  emptyTitle: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
   emptyText: {
-    color: colors.textSecondary,
+    color: baseColors.textSecondary,
     fontSize: fontSize.sm,
     textAlign: 'center',
     paddingHorizontal: spacing.xl,
   },
-  backdrop: { flex: 1, backgroundColor: colors.overlay, justifyContent: 'center', padding: spacing.xl },
-  card: { backgroundColor: colors.bgElevated, borderRadius: radius.lg, padding: spacing.xl, gap: spacing.lg },
-  cardTitle: { color: colors.text, fontSize: fontSize.lg, fontWeight: '700' },
+  backdrop: { flex: 1, backgroundColor: baseColors.overlay, justifyContent: 'center', padding: spacing.xl },
+  card: { backgroundColor: baseColors.bgElevated, borderRadius: radius.lg, padding: spacing.xl, gap: spacing.lg },
+  cardTitle: { color: baseColors.text, fontSize: fontSize.lg, fontWeight: '700' },
   input: {
-    color: colors.text,
+    color: baseColors.text,
     fontSize: fontSize.md,
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     borderRadius: radius.sm,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.md,
   },
   actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: spacing.md },
   cancel: { paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
-  cancelText: { color: colors.textSecondary, fontSize: fontSize.md, fontWeight: '600' },
+  cancelText: { color: baseColors.textSecondary, fontSize: fontSize.md, fontWeight: '600' },
   save: {
-    backgroundColor: colors.accent,
+    backgroundColor: baseColors.accent,
     borderRadius: radius.pill,
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.md,
   },
   saveOff: { opacity: 0.4 },
-  saveText: { color: '#FFFFFF', fontSize: fontSize.md, fontWeight: '700' },
+  saveText: { color: baseColors.onAccent, fontSize: fontSize.md, fontWeight: '700' },
 });

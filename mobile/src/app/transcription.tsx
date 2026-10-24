@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Device from 'expo-device';
 import { back } from '@/services/appNavigation';
 import { useState } from 'react';
-import { ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { ScrollView, Switch, Text, View } from 'react-native';
 import { Press } from '@/components/Press';
 
 import { Card } from '@/components/Card';
@@ -22,9 +22,14 @@ import {
   installedModelsBytes,
 } from '@/services/transcriptionModels';
 import { useSettings } from '@/state/SettingsContext';
-import { colors, fontSize, radius, spacing } from '@/theme/tokens';
+import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 export default function TranscriptionScreen() {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const {
     localTranscription,
     setLocalTranscription,
@@ -211,7 +216,7 @@ export default function TranscriptionScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -220,10 +225,10 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
   },
   iconButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { color: colors.text, fontSize: fontSize.lg, fontWeight: '700' },
+  headerTitle: { color: baseColors.text, fontSize: fontSize.lg, fontWeight: '700' },
   content: { padding: spacing.xl, gap: spacing.md },
   sectionLabel: {
-    color: colors.textTertiary,
+    color: baseColors.textTertiary,
     fontSize: fontSize.xs,
     fontWeight: '700',
     textTransform: 'uppercase',
@@ -231,51 +236,51 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   card: { gap: spacing.sm },
-  cardTitle: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
-  cardHint: { color: colors.textSecondary, fontSize: fontSize.sm },
+  cardTitle: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
+  cardHint: { color: baseColors.textSecondary, fontSize: fontSize.sm },
   notice: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
-  noticeText: { flex: 1, color: colors.textSecondary, fontSize: fontSize.sm, lineHeight: 20 },
+  noticeText: { flex: 1, color: baseColors.textSecondary, fontSize: fontSize.sm, lineHeight: 20 },
   toggleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   rowText: { flex: 1, gap: 2 },
   segment: {
     flexDirection: 'row',
-    backgroundColor: colors.bgElevated,
+    backgroundColor: baseColors.bgElevated,
     borderRadius: radius.pill,
     padding: 3,
     gap: 3,
   },
   segmentItem: { flex: 1, alignItems: 'center', paddingVertical: spacing.sm, borderRadius: radius.pill },
-  segmentActive: { backgroundColor: colors.accent },
-  segmentText: { color: colors.textSecondary, fontSize: fontSize.sm, fontWeight: '600' },
-  segmentTextActive: { color: '#FFFFFF' },
+  segmentActive: { backgroundColor: baseColors.accent },
+  segmentText: { color: baseColors.textSecondary, fontSize: fontSize.sm, fontWeight: '600' },
+  segmentTextActive: { color: baseColors.onAccent },
   modelCard: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   modelMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   modelTitleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   badge: {
-    backgroundColor: colors.accentSoft,
+    backgroundColor: baseColors.accentSoft,
     borderRadius: radius.pill,
     paddingHorizontal: spacing.sm,
     paddingVertical: 2,
   },
-  badgeText: { color: colors.accent, fontSize: fontSize.xs, fontWeight: '700' },
+  badgeText: { color: baseColors.accent, fontSize: fontSize.xs, fontWeight: '700' },
   downloadButton: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: colors.surfaceElevated,
+    backgroundColor: baseColors.surfaceElevated,
     borderRadius: radius.pill,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
-  downloadText: { color: colors.text, fontSize: fontSize.sm, fontWeight: '600' },
+  downloadText: { color: baseColors.text, fontSize: fontSize.sm, fontWeight: '600' },
   progressWrap: { alignItems: 'flex-end', gap: 4, width: 72 },
   progressTrack: {
     width: 72,
     height: 3,
     borderRadius: 2,
-    backgroundColor: colors.surfaceElevated,
+    backgroundColor: baseColors.surfaceElevated,
     overflow: 'hidden',
   },
-  progressBar: { height: 3, borderRadius: 2, backgroundColor: colors.accent },
-  error: { color: colors.danger, fontSize: fontSize.sm },
+  progressBar: { height: 3, borderRadius: 2, backgroundColor: baseColors.accent },
+  error: { color: baseColors.danger, fontSize: fontSize.sm },
 });

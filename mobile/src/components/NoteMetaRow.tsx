@@ -5,7 +5,9 @@ import { Press } from '@/components/Press';
 import { TagChip } from '@/components/TagChip';
 import { TagStrip } from '@/components/TagStrip';
 import type { Recording } from '@/core/types';
-import { colors, radius, spacing } from '@/theme/tokens';
+import { baseColors, radius, spacing } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 interface NoteMetaRowProps {
   note: Recording;
@@ -15,6 +17,9 @@ interface NoteMetaRowProps {
 
 /** Linha de tags logo abaixo da data; o caderno fica no cabecalho da nota. */
 export function NoteMetaRow({ note, onAddTag, onRemoveTag }: NoteMetaRowProps) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   return (
     <TagStrip style={styles.tags}>
       {(note.tags ?? []).map((tag) => (
@@ -33,7 +38,7 @@ export function NoteMetaRow({ note, onAddTag, onRemoveTag }: NoteMetaRowProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   tags: { marginTop: spacing.sm },
   add: {
     alignItems: 'center',
@@ -42,6 +47,6 @@ const styles = StyleSheet.create({
     height: 28,
     borderRadius: radius.pill,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
+    borderColor: baseColors.border,
   },
 });

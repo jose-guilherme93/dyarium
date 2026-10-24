@@ -12,7 +12,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useAudioPlayerStatus, type AudioPlayer } from 'expo-audio';
 import { useEffect, useRef, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Text, View } from 'react-native';
 
 import { AudioSeekBar } from '@/components/AudioSeekBar';
 import { Press } from '@/components/Press';
@@ -20,7 +20,9 @@ import { SyncedTranscript } from '@/components/SyncedTranscript';
 import { formatDuration } from '@/core/format';
 import type { TranscriptSegment } from '@/core/types';
 import { playPlayer } from '@/services/playback';
-import { colors, spacing } from '@/theme/tokens';
+import { baseColors, spacing } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 /** Quanto tempo o alvo do seek fica na barra esperando o player alcancar. */
 const HOLD_MS = 1200;
@@ -46,6 +48,9 @@ export function AudioTransport({
   onOpenTranscript,
   onEditTranscript,
 }: AudioTransportProps) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const status = useAudioPlayerStatus(player);
   const [scrub, setScrub] = useState<number | null>(null);
   /** Alvo do ultimo seek: a barra mostra esse ponto enquanto o player nao
@@ -151,8 +156,8 @@ export function AudioTransport({
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   transport: { gap: spacing.xs },
   row: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
-  time: { color: colors.text, fontSize: 13, fontVariant: ['tabular-nums'] },
+  time: { color: baseColors.text, fontSize: 13, fontVariant: ['tabular-nums'] },
 });
