@@ -1,7 +1,16 @@
 import { Ionicons } from '@expo/vector-icons';
 import { back, push } from '@/services/appNavigation';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { RefreshControl, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  AppState,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  View,
+} from 'react-native';
 import { Press } from '@/components/Press';
 
 import { Button } from '@/components/Button';
@@ -11,6 +20,7 @@ import { formatBytes, formatDateTime, formatDuration } from '@/core/format';
 import {
   METRICS_WINDOWS,
   buildMetricsReport,
+  warmMetricsFacts,
   type AnalysisFact,
   type MetricsStreak,
   type MetricsWindow,
@@ -21,10 +31,12 @@ import {
   type WindowTopics,
   type WindowVoice,
 } from '@/core/metrics';
+import { buildMetricsSnapshotFromReport } from '@/core/metricsSnapshot';
 import { analyzeWriting, writingHistory, CONSISTENCY_WINDOW_DAYS, type ConsistencyMetrics, type DayCell, type MonthlyPoint, type WritingHistory, type WritingMetrics } from '@/core/writing';
+import type { Recording } from '@/core/types';
 import { loadDashboard, type DashboardData } from '@/services/dashboard';
 import { listCachedAnalyses, type CachedAnalysis } from '@/services/db';
-import { scanImageBytes } from '@/services/storageScan';
+import { scanImageBytesAsync } from '@/services/storageScan';
 import { useLibrary } from '@/state/LibraryContext';
 import { useSettings } from '@/state/SettingsContext';
 import { useMetricsSync } from '@/state/useMetricsSync';
@@ -828,62 +840,43 @@ function WritingSection({
   );
 }
 
-export default function DashboardScreen() {
+/** Mesma marca de imagem que a varredura de armazenamento usa. */
+const IMAGE_MARKDOWN = /!\[[^\]]*\]\(/;
+
+/**
+ * Conteudo do Painel.
+ *
+ * Fica separado do resto de proposito: so monta depois que os fatos da
+ * biblioteca foram aquecidos em blocos. Medir a biblioteca inteira no primeiro
+ * desenho (tres janelas, historico e snapshot) travava a abertura da tela.
+ */
+function PanelContent({
+  recordings,
+  cachedAnalyses,
+  imageBytes,
+  now,
+  data,
+  loaded,
+  error,
+}: {
+  recordings: Recording[];
+  cachedAnalyses: CachedAnalysis[];
+  imageBytes: Record<string, number>;
+  now: Date;
+  data: DashboardData | null;
+  loaded: boolean;
+  error: string | null;
+}) {
   const { config, weeklyWordGoal, setWeeklyWordGoal, writingReminders, setWritingReminders, reminderHour, setReminderHour } =
     useSettings();
-  const { recordings } = useLibrary();
-  // O snapshot de metricas do aparelho so e recalculado quando o Painel abre:
-  // varrer a biblioteca e o disco no boot atrasava a abertura das notas.
-  useMetricsSync();
-  const [data, setData] = useState<DashboardData | null>(null);
-  const [cachedAnalyses, setCachedAnalyses] = useState<CachedAnalysis[]>([]);
   const [windowKind, setWindowKind] = useState<MetricsWindow>('30d');
-  const [now, setNow] = useState(() => new Date());
-  const [imageBytes, setImageBytes] = useState<Record<string, number>>({});
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const writing = useMemo(() => analyzeWriting(recordings, now), [recordings, now]);
   const history = useMemo(() => writingHistory(recordings, now), [recordings, now]);
-
-  const load = useCallback(async () => {
-    setNow(new Date());
-    // Analises ja feitas no servidor ficam guardadas no aparelho: mostra antes
-    // da rede (ou sem ela) e sem refazer a analise.
-    const cached = await listCachedAnalyses().catch(() => []);
-    setCachedAnalyses(cached);
-    if (!config) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await loadDashboard();
-      setData(result);
-    } catch {
-      setError('Nao foi possivel carregar o painel do servidor. Verifique a rede.');
-    } finally {
-      setLoading(false);
-    }
-  }, [config]);
-
-  useEffect(() => {
-    const timer = setTimeout(() => void load(), 0);
-    return () => clearTimeout(timer);
-  }, [load]);
-
-  useEffect(() => {
-    let alive = true;
-    // A varredura toca o disco: roda depois do primeiro desenho e so aplica o
-    // resultado se a tela ainda estiver montada.
-    const timer = setTimeout(() => {
-      if (alive) setImageBytes(scanImageBytes(recordings));
-    }, 0);
-    return () => {
-      alive = false;
-      clearTimeout(timer);
-    };
-  }, [recordings]);
-
-  const summary = data ? summarize(data.entries, data.analyses.map((item) => item.analysis)) : null;
+  const summary = useMemo(
+    () => (data ? summarize(data.entries, data.analyses.map((item) => item.analysis)) : null),
+    [data],
+  );
 
   const analysisInsights = useMemo(() => {
     const live =
@@ -941,7 +934,197 @@ export default function DashboardScreen() {
     () => buildMetricsReport({ recordings, analyses: analysisFacts, imageBytes, now }),
     [recordings, analysisFacts, imageBytes, now],
   );
+  // O Painel monta o documento uma vez (contrato do snapshot); o sync guarda e
+  // envia exatamente este, sem recalcular a biblioteca de novo.
+  const snapshot = useMemo(() => buildMetricsSnapshotFromReport(report, history), [report, history]);
+  useMetricsSync(snapshot);
+
   const windowMetrics = report.windows[windowKind];
+
+  return (
+    <>
+      {writing.notes === 0 ? (
+        <Text style={styles.muted}>
+          Escreva sua primeira nota e o painel mostra as métricas da sua escrita.
+        </Text>
+      ) : (
+        <>
+          <WindowFilter value={windowKind} onChange={setWindowKind} />
+          <WindowSummary sentences={windowMetrics.summary} />
+          {windowMetrics.writing.withText > 0 ? (
+            <WindowWritingCard metrics={windowMetrics} streak={report.streak} />
+          ) : null}
+          {windowMetrics.sentiment.analyzed > 0 || windowMetrics.writing.withText > 0 ? (
+            <WindowSentimentCard sentiment={windowMetrics.sentiment} />
+          ) : null}
+          {windowMetrics.voice.audioCount > 0 ? (
+            <WindowVoiceCard voice={windowMetrics.voice} />
+          ) : null}
+          <WindowTopicsCard topics={windowMetrics.topics} />
+          <WindowImagesCard images={windowMetrics.images} />
+          {windowMetrics.writing.withText === 0 &&
+          windowMetrics.voice.audioCount === 0 &&
+          windowMetrics.sentiment.analyzed === 0 ? (
+            <Text style={styles.muted}>Nenhuma nota com conteúdo nesta janela.</Text>
+          ) : null}
+          <WritingSection
+            metrics={writing}
+            history={history}
+            analysisInsights={analysisInsights}
+            goal={weeklyWordGoal}
+            onGoal={(value) => void setWeeklyWordGoal(value)}
+            reminders={writingReminders}
+            onReminders={(value) => void setWritingReminders(value)}
+            hour={reminderHour}
+            onHour={(value) => void setReminderHour(value)}
+          />
+        </>
+      )}
+
+      <Text style={styles.blockTitle}>Servidor</Text>
+      {!config ? (
+        <View style={styles.section}>
+          <Text style={styles.muted}>
+            Humor, emoções, pessoas e lugares são analisados pelo servidor. Configure para ver.
+          </Text>
+          <Button label="Configurar servidor" variant="secondary" onPress={() => push('/server')} />
+        </View>
+      ) : !loaded ? null : (
+        <>
+          {error ? <Text style={styles.error}>{error}</Text> : null}
+          {summary ? (
+            <>
+              <View style={styles.metricsRow}>
+                <Metric label="Notas" value={String(summary.total)} />
+                <Metric label="Transcritas" value={String(summary.transcribed)} />
+                <Metric label="Analisadas" value={String(summary.analyzed)} />
+              </View>
+              <View style={styles.metricsRow}>
+                <Metric label="Duração total" value={formatDuration(summary.totalDurationSeconds * 1000)} />
+                <Metric label="Tamanho" value={formatBytes(summary.totalSizeBytes)} />
+                <Metric label="Falharam" value={String(summary.failed)} />
+              </View>
+
+              <RankedList title="Emoções" items={summary.emotions} />
+              <RankedList title="Pessoas" items={summary.people} />
+              <RankedList title="Lugares" items={summary.places} />
+              <RankedList
+                title="Tags"
+                items={data?.tags.map((tag) => ({ label: tag.name, value: tag.entry_count })) ?? []}
+              />
+              <RankedList title="Status" items={summary.statusCounts} />
+            </>
+          ) : null}
+        </>
+      )}
+    </>
+  );
+}
+
+export default function DashboardScreen() {
+  const { config } = useSettings();
+  const { recordings, refresh } = useLibrary();
+  const [data, setData] = useState<DashboardData | null>(null);
+  const [cachedAnalyses, setCachedAnalyses] = useState<CachedAnalysis[] | null>(null);
+  const [imageBytes, setImageBytes] = useState<Record<string, number> | null>(null);
+  const [now, setNow] = useState(() => new Date());
+  const [warm, setWarm] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // A varredura de disco roda depois de um refresh: precisa da lista atual, e
+  // nao da que estava em memoria quando o efeito foi agendado.
+  const recordingsRef = useRef(recordings);
+  useEffect(() => {
+    recordingsRef.current = recordings;
+  }, [recordings]);
+
+  const load = useCallback(async () => {
+    setNow(new Date());
+    // Analises ja feitas no servidor ficam guardadas no aparelho: mostra antes
+    // da rede (ou sem ela) e sem refazer a analise.
+    const cached = await listCachedAnalyses().catch(() => []);
+    setCachedAnalyses(cached);
+    if (!config) {
+      setLoaded(true);
+      return;
+    }
+    setError(null);
+    try {
+      const result = await loadDashboard();
+      setData(result);
+    } catch {
+      setError('Nao foi possivel carregar o painel do servidor. Verifique a rede.');
+    } finally {
+      setLoaded(true);
+    }
+  }, [config]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => void load(), 0);
+    return () => clearTimeout(timer);
+  }, [load]);
+
+  // Ao voltar para o app o `now` muda (virada do dia) e o Painel se refaz.
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (status) => {
+      if (status === 'active') void load();
+    });
+    return () => subscription.remove();
+  }, [load]);
+
+  useEffect(() => {
+    let alive = true;
+    // Relê o banco antes de medir: o autosave do texto nao passa pela lista em
+    // memoria. O aquecimento roda em blocos, entao o toque nao espera.
+    void (async () => {
+      const fresh = await refresh().catch(() => undefined);
+      if (!alive) return;
+      await warmMetricsFacts(fresh ?? recordingsRef.current).catch(() => undefined);
+      if (alive) setWarm(true);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [refresh]);
+
+  // Notas novas ou alteradas depois da abertura: aquece so o que ainda falta.
+  useEffect(() => {
+    if (!warm) return;
+    void warmMetricsFacts(recordings).catch(() => undefined);
+  }, [recordings, warm]);
+
+  // A varredura de imagens toca o disco: refaz so quando uma nota com imagem muda.
+  const imageKey = useMemo(
+    () =>
+      recordings
+        .filter((recording) => IMAGE_MARKDOWN.test(recording.text ?? ''))
+        .map((recording) => `${recording.id}:${recording.updatedAt}`)
+        .join('|'),
+    [recordings],
+  );
+
+  useEffect(() => {
+    let alive = true;
+    void scanImageBytesAsync(recordingsRef.current)
+      .then((bytes) => {
+        if (alive) setImageBytes(bytes);
+      })
+      .catch(() => {
+        if (alive) setImageBytes({});
+      });
+    return () => {
+      alive = false;
+    };
+  }, [imageKey]);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    void load().finally(() => setRefreshing(false));
+  }, [load]);
+
+  const ready = warm && cachedAnalyses !== null && imageBytes !== null;
 
   return (
     <Screen>
@@ -950,7 +1133,7 @@ export default function DashboardScreen() {
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Press>
         <Text style={styles.headerTitle}>Painel</Text>
-        <Press onPress={() => void load()} style={styles.iconButton} accessibilityLabel="Atualizar">
+        <Press onPress={onRefresh} style={styles.iconButton} accessibilityLabel="Atualizar">
           <Ionicons name="refresh" size={20} color={colors.text} />
         </Press>
       </View>
@@ -960,85 +1143,26 @@ export default function DashboardScreen() {
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
-            refreshing={loading && data !== null}
-            onRefresh={load}
+            refreshing={refreshing}
+            onRefresh={onRefresh}
             tintColor={colors.textSecondary}
           />
         }
       >
-        {writing.notes === 0 ? (
-          <Text style={styles.muted}>
-            Escreva sua primeira nota e o painel mostra as métricas da sua escrita.
-          </Text>
+        {ready ? (
+          <PanelContent
+            recordings={recordings}
+            cachedAnalyses={cachedAnalyses}
+            imageBytes={imageBytes}
+            now={now}
+            data={data}
+            loaded={loaded}
+            error={error}
+          />
         ) : (
-          <>
-            <WindowFilter value={windowKind} onChange={setWindowKind} />
-            <WindowSummary sentences={windowMetrics.summary} />
-            {windowMetrics.writing.withText > 0 ? (
-              <WindowWritingCard metrics={windowMetrics} streak={report.streak} />
-            ) : null}
-            {windowMetrics.sentiment.analyzed > 0 || windowMetrics.writing.withText > 0 ? (
-              <WindowSentimentCard sentiment={windowMetrics.sentiment} />
-            ) : null}
-            {windowMetrics.voice.audioCount > 0 ? (
-              <WindowVoiceCard voice={windowMetrics.voice} />
-            ) : null}
-            <WindowTopicsCard topics={windowMetrics.topics} />
-            <WindowImagesCard images={windowMetrics.images} />
-            {windowMetrics.writing.withText === 0 &&
-            windowMetrics.voice.audioCount === 0 &&
-            windowMetrics.sentiment.analyzed === 0 ? (
-              <Text style={styles.muted}>Nenhuma nota com conteúdo nesta janela.</Text>
-            ) : null}
-            <WritingSection
-              metrics={writing}
-              history={history}
-              analysisInsights={analysisInsights}
-              goal={weeklyWordGoal}
-              onGoal={(value) => void setWeeklyWordGoal(value)}
-              reminders={writingReminders}
-              onReminders={(value) => void setWritingReminders(value)}
-              hour={reminderHour}
-              onHour={(value) => void setReminderHour(value)}
-            />
-          </>
-        )}
-
-        <Text style={styles.blockTitle}>Servidor</Text>
-        {!config ? (
-          <View style={styles.section}>
-            <Text style={styles.muted}>
-              Humor, emoções, pessoas e lugares são analisados pelo servidor. Configure para ver.
-            </Text>
-            <Button label="Configurar servidor" variant="secondary" onPress={() => push('/server')} />
+          <View style={styles.center}>
+            <ActivityIndicator size="large" color={colors.textSecondary} />
           </View>
-        ) : loading && !data ? null : (
-          <>
-            {error ? <Text style={styles.error}>{error}</Text> : null}
-            {summary ? (
-              <>
-                <View style={styles.metricsRow}>
-                  <Metric label="Notas" value={String(summary.total)} />
-                  <Metric label="Transcritas" value={String(summary.transcribed)} />
-                  <Metric label="Analisadas" value={String(summary.analyzed)} />
-                </View>
-                <View style={styles.metricsRow}>
-                  <Metric label="Duração total" value={formatDuration(summary.totalDurationSeconds * 1000)} />
-                  <Metric label="Tamanho" value={formatBytes(summary.totalSizeBytes)} />
-                  <Metric label="Falharam" value={String(summary.failed)} />
-                </View>
-
-                <RankedList title="Emoções" items={summary.emotions} />
-                <RankedList title="Pessoas" items={summary.people} />
-                <RankedList title="Lugares" items={summary.places} />
-                <RankedList
-                  title="Tags"
-                  items={data?.tags.map((tag) => ({ label: tag.name, value: tag.entry_count })) ?? []}
-                />
-                <RankedList title="Status" items={summary.statusCounts} />
-              </>
-            ) : null}
-          </>
         )}
       </ScrollView>
     </Screen>
@@ -1056,6 +1180,7 @@ const styles = StyleSheet.create({
   iconButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   headerTitle: { color: colors.text, fontSize: fontSize.lg, fontWeight: '700' },
   content: { padding: spacing.xl, gap: spacing.lg, paddingBottom: spacing.xxxl },
+  center: { paddingVertical: spacing.xxxl, alignItems: 'center' },
   blockTitle: {
     color: colors.text,
     fontSize: fontSize.xl,

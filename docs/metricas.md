@@ -254,6 +254,24 @@ leitura simplificada no SQLite do aparelho. O agregado do servidor sai em
 `mobile/src/core/analysisRuns.ts`. A tela fica em
 `mobile/src/app/diagnostics.tsx` (Configs > Avancado) e exporta o JSON dali.
 
+## Custo no aparelho
+
+Abrir o Painel nao pode travar a thread de JS. Tres regras sustentam isso:
+
+- **Um cache de fatos por nota** (`noteTextFacts`, em
+  `mobile/src/core/writing.ts`): tokenizar o corpo (markdown, palavras,
+  sentencas, marcas, tom) custa caro, e as tres janelas, o historico e o snapshot
+  leem as mesmas notas. O cache e um `WeakMap` com o proprio objeto `Recording`
+  como chave; o `LibraryContext` reutiliza os objetos inalterados e cria um novo
+  a cada gravacao (`updatedAt` muda), entao editar uma nota invalida so aquela.
+- **Aquecimento em blocos** (`warmMetricsFacts`, em `mobile/src/core/metrics.ts`):
+  o Painel aquece o cache antes de montar os cards, cedendo a thread entre os
+  blocos. So a agregacao (barata) roda durante o desenho. A varredura de imagens
+  segue o mesmo caminho (`scanImageBytesAsync`).
+- **Um documento so**: o Painel monta o snapshot uma vez e entrega o mesmo
+  documento ao sync (`publishMetricsSnapshot`), que nao rele a biblioteca do
+  banco para recalcular.
+
 ## Ordem de implementacao
 
 1. **Nucleo puro** (implementado): agregacao por janela e frases de resumo em

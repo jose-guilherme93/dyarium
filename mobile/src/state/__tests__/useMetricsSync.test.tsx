@@ -1,26 +1,34 @@
 import { act, render } from '@testing-library/react-native';
 
+import type { MetricsSnapshot } from '@/core/metricsSnapshot';
 import { useMetricsSync } from '@/state/useMetricsSync';
 
-const mockSyncMetrics = jest.fn().mockResolvedValue(false);
-
-jest.mock('../LibraryContext', () => ({
-  useLibrary: () => ({ recordings: [] }),
-}));
+const mockPublish = jest.fn().mockResolvedValue(false);
 
 jest.mock('../../services/metricsSync', () => ({
-  syncMetrics: (...args: unknown[]) => mockSyncMetrics(...args),
+  publishMetricsSnapshot: (...args: unknown[]) => mockPublish(...args),
 }));
 
-function Probe({ enabled }: { enabled: boolean }) {
-  useMetricsSync(enabled);
+const snapshot = {
+  schema: 2,
+  generated_at: '2026-10-14T18:00:00.000Z',
+} as MetricsSnapshot;
+
+function Probe({
+  enabled,
+  value = snapshot,
+}: {
+  enabled: boolean;
+  value?: MetricsSnapshot | null;
+}) {
+  useMetricsSync(value, enabled);
   return null;
 }
 
 describe('useMetricsSync', () => {
   beforeEach(() => {
     jest.useFakeTimers();
-    mockSyncMetrics.mockClear();
+    mockPublish.mockClear();
   });
 
   afterEach(() => {
@@ -35,10 +43,10 @@ describe('useMetricsSync', () => {
       await Promise.resolve();
     });
 
-    expect(mockSyncMetrics).not.toHaveBeenCalled();
+    expect(mockPublish).not.toHaveBeenCalled();
   });
 
-  it('recalcula depois que a tela assenta', async () => {
+  it('publica depois que a tela assenta', async () => {
     render(<Probe enabled />);
 
     await act(async () => {
@@ -46,6 +54,33 @@ describe('useMetricsSync', () => {
       await Promise.resolve();
     });
 
-    expect(mockSyncMetrics).toHaveBeenCalledTimes(1);
+    expect(mockPublish).toHaveBeenCalledTimes(1);
+    expect(mockPublish).toHaveBeenCalledWith(snapshot);
+  });
+
+  it('nao publica sem snapshot (metricas ainda nao montadas)', async () => {
+    render(<Probe enabled value={null} />);
+
+    await act(async () => {
+      jest.advanceTimersByTime(60_000);
+      await Promise.resolve();
+    });
+
+    expect(mockPublish).not.toHaveBeenCalled();
+  });
+
+  it('reenvia quando o snapshot muda, sem calcular de novo', async () => {
+    const { rerender } = render(<Probe enabled />);
+    const next = { ...snapshot, generated_at: '2026-10-15T09:00:00.000Z' } as MetricsSnapshot;
+
+    rerender(<Probe enabled value={next} />);
+
+    await act(async () => {
+      jest.advanceTimersByTime(2000);
+      await Promise.resolve();
+    });
+
+    expect(mockPublish).toHaveBeenCalledTimes(1);
+    expect(mockPublish).toHaveBeenCalledWith(next);
   });
 });
