@@ -30,7 +30,6 @@ import {
   useState,
 } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   Image,
   StyleSheet,
@@ -64,6 +63,7 @@ import {
 import { htmlToMarkdown, markdownToHtml, noteImages } from '@/core/noteHtml';
 import { fontFamilyNative, fontWeightNative } from '@/core/typography';
 import type { TranscriptSegment } from '@/core/types';
+import { mark } from '@/dev/perf';
 import { cachedImageRatio, imageRatio, measureImageRatio, rememberImageRatio } from '@/services/imageRatios';
 import { colors, radius, spacing } from '@/theme/tokens';
 
@@ -167,16 +167,9 @@ const NativeNoteBody = memo(
     const pendingFormat = useRef<FormatType | null>(null);
     const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const widthRef = useRef(Math.max(1, window.width));
-    /** Primeiro layout do corpo: e o que tira o indicador de carregamento. */
-    const laidOut = useRef(false);
-    const [slow, setSlow] = useState(false);
-    useEffect(() => {
-      if (laidOut.current) return undefined;
-      const timer = setTimeout(() => {
-        if (!laidOut.current) setSlow(true);
-      }, 100);
-      return () => clearTimeout(timer);
-    }, []);
+    const [mountedAt] = useState(() => Date.now());
+    const measuredOnce = useRef(false);
+
     const lastEmitted = useRef(value);
     const srcToRef = useRef(new Map<string, string>());
     const srcToAlt = useRef(new Map<string, string>());
@@ -731,21 +724,16 @@ const NativeNoteBody = memo(
         testID="note-body"
         style={{ gap: spacing.xs }}
         onLayout={(event: LayoutChangeEvent) => {
-          const measured = Math.max(1, Math.round(event.nativeEvent.layout.width));
-          widthRef.current = measured;
-          laidOut.current = true;
-          setSlow(false);
+          widthRef.current = Math.max(1, Math.round(event.nativeEvent.layout.width));
+          if (!measuredOnce.current) {
+            measuredOnce.current = true;
+            // Marco de desenvolvimento: do mount do corpo ate o primeiro layout
+            // (mostra no resumo [perf] se a abertura gastou no editor nativo).
+            mark('note.body_layout_ms', Date.now() - mountedAt);
+          }
         }}
       >
         {nodes.map((node, index) => renderNode(node, index === 0))}
-        {/* Teto de 100 ms: se o corpo nao chegou a medir nesse tempo, um
-            indicador discreto aparece no lugar do texto. Ele nao bloqueia a
-            nota (nem a abertura, nem o fechamento) e nao empurra o layout. */}
-        {slow ? (
-          <View style={styles.loading} pointerEvents="none" testID="note-body-loading">
-            <ActivityIndicator size="small" color={colors.textTertiary} />
-          </View>
-        ) : null}
 
         {/* Opcoes da foto: tamanho e, por ultimo, remover. Um menu proprio (e
             nao um Alert) porque o Alert do Android mostra no maximo tres
@@ -950,15 +938,6 @@ function lookup(map: Map<string, string>, src: string): string | undefined {
 export const NoteBody = NativeNoteBody;
 
 const styles = StyleSheet.create({
-  loading: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 120,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   image: {
     borderRadius: radius.md,
     backgroundColor: colors.surface,

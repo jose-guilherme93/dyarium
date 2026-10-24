@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
+  Easing,
   PanResponder,
   ScrollView,
   StyleSheet,
@@ -318,7 +319,11 @@ export function NoteMenu({
   onShare,
 }: NoteMenuProps) {
   const shown = title.trim() || 'Nota sem título';
-  const { height } = useWindowDimensions();
+  const { height: windowHeight } = useWindowDimensions();
+  // A geometria da folha e congelada na abertura. `useWindowDimensions` pode
+  // mudar quando a janela do modal assenta; recalcular `collapsedHeight` no
+  // meio da entrada fazia a folha "cortar" a altura enquanto subia.
+  const [height] = useState(() => Math.max(1, windowHeight));
   const collapsedHeight = Math.max(260, Math.round(height * 0.5));
   const expandedHeight = Math.max(collapsedHeight + 80, Math.round(height * 0.96));
   const travel = expandedHeight - collapsedHeight;
@@ -348,7 +353,10 @@ export function NoteMenu({
     const entrance = Animated.timing(slide, {
       toValue: 0,
       duration: SHEET_MOTION,
-      useNativeDriver: false,
+      easing: Easing.out(Easing.cubic),
+      // So o translateY muda: o driver nativo mantem a entrada fluida mesmo
+      // enquanto o conteudo do menu monta na thread de JS.
+      useNativeDriver: true,
     });
     entrance.start();
     return () => entrance.stop();
@@ -402,229 +410,230 @@ export function NoteMenu({
           accessibilityLabel="Fechar menu"
         />
         <Animated.View
-          testID="note-menu-sheet"
-          style={[
-            styles.sheet,
-            { height: sheetHeight, transform: [{ translateY: sheetSlide }] },
-          ]}
-          {...sheetResponder.panHandlers}
+          style={[styles.sheetHost, { transform: [{ translateY: sheetSlide }] }]}
         >
-          <View style={styles.header} {...headerResponder.panHandlers}>
-            <View
-              style={styles.headerContent}
-              accessible
-              accessibilityRole="button"
-              accessibilityLabel="Detalhes da nota"
-              accessibilityHint={
-                expanded
-                  ? 'Puxe para baixo para recolher'
-                  : 'Puxe para cima para expandir'
-              }
-              accessibilityState={{ expanded }}
-              accessibilityActions={[
-                { name: 'expand', label: 'Expandir detalhes' },
-                { name: 'collapse', label: 'Recolher detalhes' },
-              ]}
-              onAccessibilityAction={(event) => {
-                const action = event.nativeEvent.actionName;
-                if (action === 'expand') animateExpansion(true);
-                if (action === 'collapse') animateExpansion(false);
-              }}
-            >
-              <View style={styles.grabber} />
-              <Text
-                style={[styles.title, { fontSize: titleFontSize(shown, 20, 14) }]}
-                numberOfLines={2}
-              >
-                {shown}
-              </Text>
-              <Text style={styles.hint}>
-                {expanded ? 'Puxe para baixo para recolher' : 'Puxe para cima para ver tudo'}
-              </Text>
-            </View>
-          </View>
-
-          <ScrollView
-            testID="note-menu-scroll"
-            style={styles.scroll}
-            contentContainerStyle={styles.scrollContent}
-            showsVerticalScrollIndicator={false}
-            bounces={false}
-            nestedScrollEnabled
-            scrollEnabled={expanded}
-            scrollEventThrottle={16}
-            onScroll={(event) => {
-              const next = event.nativeEvent.contentOffset.y <= 0;
-              setAtTop((current) => (current === next ? current : next));
-            }}
-            keyboardShouldPersistTaps="handled"
+          <Animated.View
+            testID="note-menu-sheet"
+            style={[styles.sheet, { height: sheetHeight }]}
+            {...sheetResponder.panHandlers}
           >
-            <Press style={styles.action} onPress={onShare} accessibilityLabel="Compartilhar nota">
-              <Ionicons name="share-outline" size={19} color={colors.text} />
-              <Text style={styles.actionText}>Compartilhar nota</Text>
-            </Press>
+            <View style={styles.header} {...headerResponder.panHandlers}>
+              <View
+                style={styles.headerContent}
+                accessible
+                accessibilityRole="button"
+                accessibilityLabel="Detalhes da nota"
+                accessibilityHint={
+                  expanded
+                    ? 'Puxe para baixo para recolher'
+                    : 'Puxe para cima para expandir'
+                }
+                accessibilityState={{ expanded }}
+                accessibilityActions={[
+                  { name: 'expand', label: 'Expandir detalhes' },
+                  { name: 'collapse', label: 'Recolher detalhes' },
+                ]}
+                onAccessibilityAction={(event) => {
+                  const action = event.nativeEvent.actionName;
+                  if (action === 'expand') animateExpansion(true);
+                  if (action === 'collapse') animateExpansion(false);
+                }}
+              >
+                <View style={styles.grabber} />
+                <Text
+                  style={[styles.title, { fontSize: titleFontSize(shown, 20, 14) }]}
+                  numberOfLines={2}
+                >
+                  {shown}
+                </Text>
+                <Text style={styles.hint}>
+                  {expanded ? 'Puxe para baixo para recolher' : 'Puxe para cima para ver tudo'}
+                </Text>
+              </View>
+            </View>
 
-            {analysis !== undefined ? (
-              <>
-                <Text style={styles.sectionLabel}>Análise</Text>
-                {analysisError && analysis ? (
-                  <Text style={styles.analyzeError}>
-                    A análise abaixo é a anterior; a nova tentativa falhou.
-                  </Text>
-                ) : null}
-                {analysisStale && analysis ? (
-                  <Text style={styles.analyzeWarning}>
-                    Análise de uma versão anterior da nota. Analise de novo para atualizar.
-                  </Text>
-                ) : null}
-                {analysisSimplified && analysis ? (
-                  <Text style={styles.analyzeWarning}>
-                    Análise simplificada: o modelo não respondeu; o tom foi estimado pelas
-                    palavras da nota.
-                  </Text>
-                ) : null}
-                {analysis ? (
-                  <AnalysisContent analysis={analysis} />
-                ) : (
-                  <Text style={styles.muted}>Sem análise para esta nota.</Text>
-                )}
-                {analysisEnabled ? (
-                  <>
-                    <View style={styles.analysisActions}>
-                      <Press
-                        style={[styles.analyzeButton, analysisBusy && styles.analyzeButtonDisabled]}
-                        onPress={onAnalyzeLocal}
-                        disabled={analysisBusy}
-                        accessibilityLabel={
-                          analysis ? 'Analisar de novo no aparelho' : 'Analisar no aparelho'
-                        }
-                      >
-                        {analysisBusy ? (
-                          <ActivityIndicator size="small" color={colors.text} />
-                        ) : (
-                          <>
-                            <Ionicons
-                              name="phone-portrait-outline"
-                              size={17}
-                              color={colors.text}
-                            />
-                            <Text style={styles.analyzeText}>
-                              {analysis ? 'Analisar de novo' : 'Analisar no aparelho'}
-                            </Text>
-                          </>
-                        )}
-                      </Press>
-                      {analysisBusy && onStopAnalysis ? (
-                        <Press onPress={onStopAnalysis} accessibilityLabel="Parar análise">
-                          <Text style={styles.analyzeStop}>Parar</Text>
-                        </Press>
-                      ) : null}
-                    </View>
-                    {!analysisReady && !analysisBusy ? (
-                      <Text style={styles.analyzeWarning}>
-                        Baixe um modelo em Ajustes &gt; Transcrição e modelos.
-                      </Text>
-                    ) : null}
-                    {analysisError ? <Text style={styles.analyzeError}>{analysisError}</Text> : null}
-                    {analysisInput && !analysisBusy ? (
-                      <Text style={styles.analyzePrivacy}>
-                        Analisado: {analysisInput.body} caracteres de texto e{' '}
-                        {analysisInput.transcript} de transcrição.
-                      </Text>
-                    ) : null}
-                    {analysisModelLabel ? (
-                      <Text style={styles.analyzePrivacy}>Modelo: {analysisModelLabel}</Text>
-                    ) : null}
-                    {analysisBusy && analysisLive ? (
-                      <Text style={styles.analyzeStats}>
-                        {formatDuration(analysisLive.elapsedMs)} ·{' '}
-                        {(
-                          analysisLive.tokens / Math.max(1, analysisLive.elapsedMs / 1000)
-                        ).toFixed(1)}{' '}
-                        tok/s · CPU {analysisLowPower ? 2 : 4} threads
-                        {analysisLive.battery !== null
-                          ? ` · bateria ${Math.round(analysisLive.battery * 100)}%`
-                          : ''}
-                      </Text>
-                    ) : null}
-                    {!analysisBusy && analysisLast ? (
-                      <Text style={styles.analyzeStats}>
-                        Última análise: {formatDuration(analysisLast.elapsedMs)} ·{' '}
-                        {analysisLast.tokensPerSecond.toFixed(1)} tok/s · CPU{' '}
-                        {analysisLast.threads} threads
-                        {analysisLast.batteryDelta !== null
-                          ? ` · bateria ${analysisLast.batteryDelta > 0 ? '+' : ''}${analysisLast.batteryDelta.toFixed(0)}%`
-                          : ''}
-                      </Text>
-                    ) : null}
-                    <View style={styles.lowPowerRow}>
-                      <View style={styles.lowPowerText}>
-                        <Text style={styles.lowPowerTitle}>Menos CPU</Text>
-                        <Text style={styles.analyzePrivacy}>
-                          1 thread em vez de 2. A análise demora mais e gasta menos bateria.
-                        </Text>
-                      </View>
-                      <Switch
-                        value={analysisLowPower}
-                        onValueChange={onChangeAnalysisLowPower}
-                        trackColor={{ false: colors.surfaceElevated, true: colors.accent }}
-                        thumbColor={colors.text}
-                      />
-                    </View>
-                    <Text style={styles.analyzePrivacy}>
-                      Roda no aparelho. Lê o texto e a transcrição; fotos não são interpretadas.
+            <ScrollView
+              testID="note-menu-scroll"
+              style={styles.scroll}
+              contentContainerStyle={styles.scrollContent}
+              showsVerticalScrollIndicator={false}
+              bounces={false}
+              nestedScrollEnabled
+              scrollEnabled={expanded}
+              scrollEventThrottle={16}
+              onScroll={(event) => {
+                const next = event.nativeEvent.contentOffset.y <= 0;
+                setAtTop((current) => (current === next ? current : next));
+              }}
+              keyboardShouldPersistTaps="handled"
+            >
+              <Press style={styles.action} onPress={onShare} accessibilityLabel="Compartilhar nota">
+                <Ionicons name="share-outline" size={19} color={colors.text} />
+                <Text style={styles.actionText}>Compartilhar nota</Text>
+              </Press>
+
+              {analysis !== undefined ? (
+                <>
+                  <Text style={styles.sectionLabel}>Análise</Text>
+                  {analysisError && analysis ? (
+                    <Text style={styles.analyzeError}>
+                      A análise abaixo é a anterior; a nova tentativa falhou.
                     </Text>
-                  </>
-                ) : null}
-              </>
-            ) : null}
+                  ) : null}
+                  {analysisStale && analysis ? (
+                    <Text style={styles.analyzeWarning}>
+                      Análise de uma versão anterior da nota. Analise de novo para atualizar.
+                    </Text>
+                  ) : null}
+                  {analysisSimplified && analysis ? (
+                    <Text style={styles.analyzeWarning}>
+                      Análise simplificada: o modelo não respondeu; o tom foi estimado pelas
+                      palavras da nota.
+                    </Text>
+                  ) : null}
+                  {analysis ? (
+                    <AnalysisContent analysis={analysis} />
+                  ) : (
+                    <Text style={styles.muted}>Sem análise para esta nota.</Text>
+                  )}
+                  {analysisEnabled ? (
+                    <>
+                      <View style={styles.analysisActions}>
+                        <Press
+                          style={[styles.analyzeButton, analysisBusy && styles.analyzeButtonDisabled]}
+                          onPress={onAnalyzeLocal}
+                          disabled={analysisBusy}
+                          accessibilityLabel={
+                            analysis ? 'Analisar de novo no aparelho' : 'Analisar no aparelho'
+                          }
+                        >
+                          {analysisBusy ? (
+                            <ActivityIndicator size="small" color={colors.text} />
+                          ) : (
+                            <>
+                              <Ionicons
+                                name="phone-portrait-outline"
+                                size={17}
+                                color={colors.text}
+                              />
+                              <Text style={styles.analyzeText}>
+                                {analysis ? 'Analisar de novo' : 'Analisar no aparelho'}
+                              </Text>
+                            </>
+                          )}
+                        </Press>
+                        {analysisBusy && onStopAnalysis ? (
+                          <Press onPress={onStopAnalysis} accessibilityLabel="Parar análise">
+                            <Text style={styles.analyzeStop}>Parar</Text>
+                          </Press>
+                        ) : null}
+                      </View>
+                      {!analysisReady && !analysisBusy ? (
+                        <Text style={styles.analyzeWarning}>
+                          Baixe um modelo em Ajustes &gt; Transcrição e modelos.
+                        </Text>
+                      ) : null}
+                      {analysisError ? <Text style={styles.analyzeError}>{analysisError}</Text> : null}
+                      {analysisInput && !analysisBusy ? (
+                        <Text style={styles.analyzePrivacy}>
+                          Analisado: {analysisInput.body} caracteres de texto e{' '}
+                          {analysisInput.transcript} de transcrição.
+                        </Text>
+                      ) : null}
+                      {analysisModelLabel ? (
+                        <Text style={styles.analyzePrivacy}>Modelo: {analysisModelLabel}</Text>
+                      ) : null}
+                      {analysisBusy && analysisLive ? (
+                        <Text style={styles.analyzeStats}>
+                          {formatDuration(analysisLive.elapsedMs)} ·{' '}
+                          {(
+                            analysisLive.tokens / Math.max(1, analysisLive.elapsedMs / 1000)
+                          ).toFixed(1)}{' '}
+                          tok/s · CPU {analysisLowPower ? 2 : 4} threads
+                          {analysisLive.battery !== null
+                            ? ` · bateria ${Math.round(analysisLive.battery * 100)}%`
+                            : ''}
+                        </Text>
+                      ) : null}
+                      {!analysisBusy && analysisLast ? (
+                        <Text style={styles.analyzeStats}>
+                          Última análise: {formatDuration(analysisLast.elapsedMs)} ·{' '}
+                          {analysisLast.tokensPerSecond.toFixed(1)} tok/s · CPU{' '}
+                          {analysisLast.threads} threads
+                          {analysisLast.batteryDelta !== null
+                            ? ` · bateria ${analysisLast.batteryDelta > 0 ? '+' : ''}${analysisLast.batteryDelta.toFixed(0)}%`
+                            : ''}
+                        </Text>
+                      ) : null}
+                      <View style={styles.lowPowerRow}>
+                        <View style={styles.lowPowerText}>
+                          <Text style={styles.lowPowerTitle}>Menos CPU</Text>
+                          <Text style={styles.analyzePrivacy}>
+                            1 thread em vez de 2. A análise demora mais e gasta menos bateria.
+                          </Text>
+                        </View>
+                        <Switch
+                          value={analysisLowPower}
+                          onValueChange={onChangeAnalysisLowPower}
+                          trackColor={{ false: colors.surfaceElevated, true: colors.accent }}
+                          thumbColor={colors.text}
+                        />
+                      </View>
+                      <Text style={styles.analyzePrivacy}>
+                        Roda no aparelho. Lê o texto e a transcrição; fotos não são interpretadas.
+                      </Text>
+                    </>
+                  ) : null}
+                </>
+              ) : null}
 
-            <Text style={styles.sectionLabel}>Fonte</Text>
-            <Segment
-              value={typography.family}
-              options={FAMILY_OPTIONS}
-              onChange={(family) => onChangeTypography({ ...typography, family })}
-            />
+              <Text style={styles.sectionLabel}>Fonte</Text>
+              <Segment
+                value={typography.family}
+                options={FAMILY_OPTIONS}
+                onChange={(family) => onChangeTypography({ ...typography, family })}
+              />
 
-            <Text style={styles.sectionLabel}>Tamanho</Text>
-            <View style={styles.stepper}>
-              <Press
-                style={styles.stepButton}
-                onPress={() => onChangeTypography({ ...typography, size: clampFontSize(typography.size - 1) })}
-                accessibilityLabel="Diminuir fonte"
-              >
-                <Text style={styles.stepText}>A-</Text>
-              </Press>
-              <Text style={styles.stepValue}>{typography.size}</Text>
-              <Press
-                style={styles.stepButton}
-                onPress={() => onChangeTypography({ ...typography, size: clampFontSize(typography.size + 1) })}
-                accessibilityLabel="Aumentar fonte"
-              >
-                <Text style={styles.stepText}>A+</Text>
-              </Press>
-            </View>
+              <Text style={styles.sectionLabel}>Tamanho</Text>
+              <View style={styles.stepper}>
+                <Press
+                  style={styles.stepButton}
+                  onPress={() => onChangeTypography({ ...typography, size: clampFontSize(typography.size - 1) })}
+                  accessibilityLabel="Diminuir fonte"
+                >
+                  <Text style={styles.stepText}>A-</Text>
+                </Press>
+                <Text style={styles.stepValue}>{typography.size}</Text>
+                <Press
+                  style={styles.stepButton}
+                  onPress={() => onChangeTypography({ ...typography, size: clampFontSize(typography.size + 1) })}
+                  accessibilityLabel="Aumentar fonte"
+                >
+                  <Text style={styles.stepText}>A+</Text>
+                </Press>
+              </View>
 
-            <Text style={styles.sectionLabel}>Peso</Text>
-            <Segment
-              value={typography.weight}
-              options={WEIGHT_OPTIONS}
-              onChange={(weight) => onChangeTypography({ ...typography, weight })}
-            />
+              <Text style={styles.sectionLabel}>Peso</Text>
+              <Segment
+                value={typography.weight}
+                options={WEIGHT_OPTIONS}
+                onChange={(weight) => onChangeTypography({ ...typography, weight })}
+              />
 
-            <Text style={styles.sectionLabel}>Propriedades</Text>
-            <View style={styles.props}>
-              {properties.map((property) => (
-                <View key={property.label} style={styles.propRow}>
-                  <Text style={styles.propLabel}>{property.label}</Text>
-                  <Text style={styles.propValue} numberOfLines={1}>
-                    {property.value}
-                  </Text>
-                </View>
-              ))}
-            </View>
+              <Text style={styles.sectionLabel}>Propriedades</Text>
+              <View style={styles.props}>
+                {properties.map((property) => (
+                  <View key={property.label} style={styles.propRow}>
+                    <Text style={styles.propLabel}>{property.label}</Text>
+                    <Text style={styles.propValue} numberOfLines={1}>
+                      {property.value}
+                    </Text>
+                  </View>
+                ))}
+              </View>
 
-          </ScrollView>
+            </ScrollView>
+          </Animated.View>
         </Animated.View>
       </View>
     </FastModal>
@@ -641,18 +650,23 @@ const styles = StyleSheet.create({
     left: 0,
     backgroundColor: colors.overlay,
   },
-  sheet: {
+  // O host posiciona e anima o translateY no driver nativo; a altura animada
+  // (expandir/recolher) fica no filho, que roda no driver de JS. Misturar as
+  // duas no mesmo Animated.View obrigava a entrada a rodar na thread de JS.
+  sheetHost: {
     position: 'absolute',
     left: 0,
     right: 0,
     bottom: 0,
+    zIndex: 1,
+  },
+  sheet: {
     backgroundColor: colors.surface,
     borderTopLeftRadius: radius.xl,
     borderTopRightRadius: radius.xl,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderColor: colors.borderStrong,
     overflow: 'hidden',
-    zIndex: 1,
     elevation: 16,
     shadowColor: '#000000',
     shadowOpacity: 0.35,

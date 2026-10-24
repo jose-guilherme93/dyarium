@@ -78,6 +78,15 @@ isso:
 - **Cliente local-first.** O app le titulo, corpo, transcricao e pilha de audios do
   SQLite na hora. O dashboard pinta a ultima copia do IndexedDB (e da memoria) e
   revalida em background com `If-None-Match`. Reabrir a mesma nota nao espera rede.
+- **Custo por identidade da nota.** A biblioteca reutiliza o objeto `Recording`
+  quando a nota nao mudou e cria outro a cada edicao. Sobre isso ficam caches
+  `WeakMap`: texto normalizado de busca e chaves de tag (`core/notebookFilter`),
+  titulo de nota sem titulo (`core/title`), corpo com o audio legado ja migrado
+  (`core/noteAudio`) e os fatos do Painel (`core/writing`). Digitar na busca,
+  filtrar por tag, rolar a lista e reabrir a nota leem o valor ja calculado; a
+  edicao invalida so aquela nota. As contagens do menu saem de uma conversao so
+  (`core/noteStats`), e a lista de cadernos e resumida numa passada
+  (`notebookStats`).
 - **Revalidacao sem bloquear.** A resposta revalidada substitui a copia local
   quando chega; um evento SSE invalida apenas a entrada a que se refere, nunca a
   nota aberta por causa de outra nota.
@@ -120,10 +129,8 @@ isso:
   remontagem no toque. Um editor por trecho e barato porque so as midias
   cortam o texto, e o toque, o cursor e o Enter sao os do Android. O
   titulo, a data e as tags aparecem no primeiro frame, e o corpo monta junto:
-  nao ha esqueleto no lugar dele nem troca de etapa. Se o corpo ainda nao
-  mediu depois de 100 ms (aparelho lento), um indicador discreto aparece no
-  lugar do texto e sai no primeiro layout; ele nunca bloqueia a abertura nem o
-  fechamento da nota. O markdown continua sendo o
+  nao ha esqueleto no lugar dele nem troca de etapa, e nada de carregamento
+  cobre o texto depois que a nota abriu. O markdown continua sendo o
   formato salvo: o HTML vira markdown num debounce curto e no blur/saida. Fotos e
   audios entram na hora pelo arquivo local e sobem no sync ao sair da nota; a
   referencia `local:`/`attachment:` fica no markdown, sem caminho de aparelho.
@@ -161,12 +168,27 @@ isso:
   topo a cada toque perto do teclado. Fechar a nota tira o foco do editor
   antes de desmontar a view: desmontar um campo com o teclado aberto travava
   a thread de UI na transicao (tela preta/ANR).
+- **Teclado nos modais.** Como a janela nao encolhe, todo modal com campo de
+  texto precisa reservar o teclado por conta propria. `FastModal` envolve o
+  conteudo num `KeyboardAvoidingView` (behavior `padding`), entao o seletor de
+  tags, o campo de link e os formularios sobem acima do teclado em vez de
+  ficarem atras dele.
+- **Folhas do rodape.** Quem sobe do rodape (`BottomSheet`) anima so
+  `translateY` e a opacidade do fundo, no driver nativo: nenhuma medida de
+  conteudo entra na entrada, entao a altura nao "corta" durante a animacao. O
+  seletor de tags tem altura fixa para a lista e para a faixa de selecionadas:
+  filtrar, receber o banco do servidor ou marcar a primeira tag nao muda o
+  tamanho do cartao no meio da interacao. A folha da nota separa o transform
+  (nativo) da altura animada (JS) em dois `Animated.View`, porque misturar os
+  dois drivers no mesmo no obriga a entrada a rodar na thread de JS.
 - **O texto e editado no editor nativo.** Todo trecho de texto e o proprio
   `EnrichedTextInput` do app, montado desde a abertura: o toque, o cursor, a
   selecao, o Enter e a digitacao sao os do Android. Nao ha previa no meio do
   caminho, nem matematica de cursor, nem "condicoes" para o campo se comportar
   como um campo. O que o usuario ve em todos os estados e o campo de verdade,
-  com o mesmo HTML que sera salvo.
+  com o mesmo HTML que sera salvo. O editor e a nota nao trocam de aparencia
+  depois de abertos: nenhum esqueleto, previa ou indicador entra na frente do
+  texto enquanto algo carrega.
 - **Uma leitura por trecho, por vez.** O editor nativo responde a um pedido de
   HTML por vez. Duas leituras do mesmo trecho ao mesmo tempo fazem uma delas
   falhar ("Component unmounted") - e o texto que o usuario escreveu nesse

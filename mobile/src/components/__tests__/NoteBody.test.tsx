@@ -222,20 +222,15 @@ describe('corpo da nota em nos', () => {
     expect(mockGetHTML).not.toHaveBeenCalled();
   });
 
-  it('mostra o indicador no corpo so depois de 100 ms sem layout', () => {
+  it('nunca cobre o texto com indicador de carregamento', () => {
     render(<NoteBody value="linha" onChangeMarkdown={jest.fn()} typography={typography} />);
 
-    expect(screen.queryByTestId('note-body-loading')).toBeNull();
     act(() => {
-      jest.advanceTimersByTime(100);
-    });
-    expect(screen.getByTestId('note-body-loading')).toBeTruthy();
-
-    // O primeiro layout tira o indicador: ele nunca fica por cima da nota.
-    fireEvent(screen.getByTestId('note-body'), 'layout', {
-      nativeEvent: { layout: { x: 0, y: 0, width: 320, height: 600 } },
+      jest.advanceTimersByTime(1000);
     });
     expect(screen.queryByTestId('note-body-loading')).toBeNull();
+    expect(screen.queryByTestId('note-body-skeleton')).toBeNull();
+    expect(screen.getByTestId('rich-editor')).toBeTruthy();
   });
 
   it('atualiza a fonte do trecho nativo sem remontar o editor', () => {
@@ -741,5 +736,28 @@ describe('corpo da nota em nos', () => {
     await flushDebounce();
 
     expect(onChange).toHaveBeenLastCalledWith('A novo\n\nB novo');
+  });
+
+  it('monta o documento inteiro na abertura, sem esqueleto', () => {
+    // Paragrafo longo (cruza 60 linhas) seguido de 40 fotos: tudo entra no
+    // primeiro frame. A nota nunca muda de aparencia depois de aberta.
+    const intro = Array.from({ length: 70 }, (_, i) => `intro ${i}`).join('\n');
+    const photos = Array.from({ length: 40 }, (_, i) => `![f](local:f${i}.jpg)`).join('\n');
+
+    render(
+      <NoteBody
+        value={`${intro}\n${photos}`}
+        onChangeMarkdown={jest.fn()}
+        typography={typography}
+      />,
+    );
+
+    // Cada midia divide o texto, entao sao 41 editores (o texto inicial e um
+    // trecho vazio depois de cada foto): todos montam no primeiro frame.
+    expect(screen.getAllByTestId('rich-editor')).toHaveLength(41);
+    expect(screen.getAllByTestId('rich-editor')[0].props.value).toContain('intro 69');
+    expect(screen.getAllByLabelText('Opções da foto')).toHaveLength(40);
+    expect(screen.queryByTestId('note-body-skeleton')).toBeNull();
+    expect(screen.queryByTestId('note-body-loading')).toBeNull();
   });
 });
