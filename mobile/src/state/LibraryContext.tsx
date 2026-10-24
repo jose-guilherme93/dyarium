@@ -30,7 +30,8 @@ interface LibraryValue {
   recordings: Recording[];
   notebooks: Notebook[];
   ready: boolean;
-  refresh(): Promise<void>;
+  /** Relê a lista do banco e devolve a lista mesclada que a tela desenha. */
+  refresh(): Promise<Recording[]>;
   refreshNotebooks(): Promise<void>;
   /** Cria um caderno local; o push ao servidor e best-effort. */
   createNotebook(input: { name: string; color?: string }): Promise<Notebook>;
@@ -138,7 +139,11 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     bumpRender('refresh.called');
     const list = await listRecordings();
     // Reutiliza os itens inalterados: so o card que mudou re-renderiza.
-    setRecordings((prev) => mergeRecordings(prev, list));
+    // Devolve a lista ja mesclada, e nao a do banco: quem aquece cache com ela
+    // (o Painel de metricas) precisa dos mesmos objetos que vao ser desenhados.
+    const merged = mergeRecordings(recordingsRef.current, list);
+    setRecordings((prev) => (prev === recordingsRef.current ? merged : mergeRecordings(prev, list)));
+    return merged;
   }, []);
 
   const refreshNotebooks = useCallback(async () => {

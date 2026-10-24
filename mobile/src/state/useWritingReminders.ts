@@ -10,6 +10,7 @@ import { AppState } from 'react-native';
 
 import {
   analyzeWriting,
+  warmWritingFacts,
   wordMilestone,
   writingHistory,
   writingReminder,
@@ -77,6 +78,10 @@ export function useWritingReminders(enabled = true): void {
       return;
     }
     const now = new Date();
+    // Analisa em blocos: a biblioteca inteira de uma vez segurava o toque na
+    // home por alguns segundos logo depois de abrir o app. O cache fica quente
+    // para o Painel tambem.
+    await warmWritingFacts(state.recordings).catch(() => undefined);
     const metrics = analyzeWriting(state.recordings, now);
     if (metrics.notes === 0) {
       await syncWritingReminder(null, state.reminderHour);

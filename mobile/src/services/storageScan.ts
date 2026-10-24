@@ -163,29 +163,65 @@ function diskSpace(): { freeBytes: number | null; totalBytes: number | null } {
 /** Mesma marca de imagem que as metricas contam no texto da nota. */
 const IMAGE_MARKDOWN = /!\[[^\]]*\]\(/;
 
+/** Notas por bloco na varredura assincrona (cada bloco cede a thread). */
+const IMAGE_SCAN_BATCH = 10;
+
+/** Bytes de imagem de uma nota; null quando o texto nao tem imagem. */
+function imageBytesOf(recording: Recording): number | null {
+  // A metrica de imagens so consulta notas que tem imagem no texto. Sem este
+  // filtro, cada recálculo listava a pasta de TODAS as notas com chamadas
+  // sincronas de filesystem na thread de JS; numa biblioteca grande isso
+  // segurava o app por varios segundos, inclusive no inicio de uma gravacao.
+  if (!IMAGE_MARKDOWN.test(recording.text ?? '')) return null;
+  let bytes = 0;
+  try {
+    for (const file of sessionFiles(recording.id)) {
+      if (storageFileKind(file.name) !== 'image') continue;
+      try {
+        bytes += file.size;
+      } catch {
+        // arquivo inacessivel: ignora
+      }
+    }
+  } catch {
+    // pasta ilegivel: ignora a nota
+  }
+  return bytes;
+}
+
 /** Bytes de imagem por id local da nota, para as metricas do Painel e o snapshot. */
 export function scanImageBytes(recordings: Recording[]): Record<string, number> {
   const out: Record<string, number> = {};
   for (const recording of recordings) {
-    // A metrica de imagens so consulta notas que tem imagem no texto. Sem este
-    // filtro, cada recálculo listava a pasta de TODAS as notas com chamadas
-    // sincronas de filesystem na thread de JS; numa biblioteca grande isso
-    // segurava o app por varios segundos, inclusive no inicio de uma gravacao.
-    if (!IMAGE_MARKDOWN.test(recording.text ?? '')) continue;
-    let bytes = 0;
-    try {
-      for (const file of sessionFiles(recording.id)) {
-        if (storageFileKind(file.name) !== 'image') continue;
-        try {
-          bytes += file.size;
-        } catch {
-          // arquivo inacessivel: ignora
-        }
-      }
-    } catch {
-      // pasta ilegivel: ignora a nota
-    }
-    if (bytes > 0) out[recording.id] = bytes;
+    const bytes = imageBytesOf(recording);
+    if (bytes) out[recording.id] = bytes;
+  }
+  return out;
+}
+
+/**
+ * A mesma varredura, em blocos.
+ *
+ * Ler pastas e sincrono no expo-file-system: numa biblioteca com muitas imagens
+ * a varredura inteira segurava o primeiro desenho do Painel. Aqui cada bloco
+ * devolve a thread para a interface antes do proximo.
+ */
+export async function scanImageBytesAsync(
+  recordings: Recording[],
+  {
+    batchSize = IMAGE_SCAN_BATCH,
+    yieldToUI = () => new Promise<void>((resolve) => setTimeout(resolve, 0)),
+  }: { batchSize?: number; yieldToUI?: () => Promise<void> } = {},
+): Promise<Record<string, number>> {
+  const out: Record<string, number> = {};
+  const size = Math.max(1, batchSize);
+  // Só as notas com imagem entram na fila (mesma condicao da versao sincrona).
+  const pending = recordings.filter((recording) => IMAGE_MARKDOWN.test(recording.text ?? ''));
+  for (let index = 0; index < pending.length; index += 1) {
+    const bytes = imageBytesOf(pending[index]);
+    if (bytes) out[pending[index].id] = bytes;
+    const done = index + 1;
+    if (done < pending.length && done % size === 0) await yieldToUI();
   }
   return out;
 }
