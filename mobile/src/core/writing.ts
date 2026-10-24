@@ -171,6 +171,141 @@ const NEGATIVE_WORDS = new Set([
   'demais', 'infeliz', 'pena', 'odeio', 'terrivel',
 ]);
 
+// --- Fatos por nota (cache) -------------------------------------------------
+
+/** Marcadores contados no markdown cru. */
+export interface NoteMarks {
+  questions: number;
+  exclamations: number;
+  links: number;
+  images: number;
+  listItems: number;
+}
+
+/**
+ * Tudo o que as metricas derivam do texto de uma nota, calculado uma vez.
+ *
+ * O Painel monta as tres janelas e o historico sobre as mesmas notas; sem este
+ * cache cada passada re-tokenizava a biblioteca inteira na thread de JS (e a
+ * tela travava ao abrir). A chave e o proprio objeto `Recording`, num WeakMap:
+ * o `LibraryContext` reutiliza os objetos que nao mudaram e cria um novo quando
+ * o banco muda (todo autosave mexe em `updatedAt`), entao o cache se invalida
+ * sozinho e o objeto antigo e liberado.
+ */
+export interface NoteTextFacts {
+  /** `recorded_at` valido (ms desde a epoch); null quando a data nao serve. */
+  time: number | null;
+  /** Data do evento: `recorded_at`, com fallback para `created_at`. */
+  eventTime: number | null;
+  /** Chave do dia do evento (YYYY-MM-DD) ou null. */
+  day: string | null;
+  /** Dia da semana (0 = domingo). */
+  weekday: number;
+  /** Hora local do evento (0..23). */
+  hour: number;
+  /** A nota tem audio local (`filePath`). */
+  hasAudio: boolean;
+  /** O corpo (texto cru) tem algo alem de espaco. */
+  hasText: boolean;
+  /** O corpo, sem markdown, tem algo alem de espaco. */
+  hasPlainText: boolean;
+  chars: number;
+  words: number;
+  sentences: number;
+  paragraphs: number;
+  marks: NoteMarks;
+  /** Tom do texto pelo lexico local (-1..1). */
+  sentiment: number;
+  /** Ha transcricao local. */
+  hasTranscript: boolean;
+  transcriptWords: number;
+  /** Frequencia das palavras do corpo (somente leitura: nao mutar). */
+  frequency: Map<string, number>;
+}
+
+function computeTextFacts(recording: Recording): NoteTextFacts {
+  const recorded = new Date(recording.recordedAt);
+  const recordedTime = Number.isNaN(recorded.getTime()) ? null : recorded.getTime();
+  let eventTime = recordedTime;
+  if (eventTime === null) {
+    const created = new Date(recording.createdAt);
+    if (!Number.isNaN(created.getTime())) eventTime = created.getTime();
+  }
+  const date = recordedTime === null ? null : recorded;
+  const raw = (recording.text ?? '').trim();
+  const plain = raw ? plainText(raw) : '';
+  const list = plain ? wordsOf(plain) : [];
+  const frequency = new Map<string, number>();
+  for (const word of list) frequency.set(word, (frequency.get(word) ?? 0) + 1);
+  const transcript = (recording.transcript ?? '').trim();
+
+  return {
+    time: recordedTime,
+    eventTime,
+    day: date ? dayKey(date) : null,
+    weekday: date ? date.getDay() : 0,
+    hour: date ? date.getHours() : 0,
+    hasAudio: Boolean(recording.filePath),
+    hasText: raw.length > 0,
+    hasPlainText: plain.trim().length > 0,
+    chars: plain.length,
+    words: list.length,
+    sentences: raw ? plain.split(/[.!?…]+/).filter((s) => s.trim().length > 0).length : 0,
+    paragraphs: raw ? raw.split(/\n{2,}/).filter((p) => p.trim().length > 0).length : 0,
+    marks: countMarks(raw),
+    sentiment: list.length > 0 ? sentimentScore(list) : 0,
+    hasTranscript: transcript.length > 0,
+    transcriptWords: transcript ? wordsOf(plainText(transcript)).length : 0,
+    frequency,
+  };
+}
+
+const textFactsCache = new WeakMap<Recording, NoteTextFacts>();
+
+/** Fatos do texto de uma nota, calculados uma vez por objeto `Recording`. */
+export function noteTextFacts(recording: Recording): NoteTextFacts {
+  const cached = textFactsCache.get(recording);
+  if (cached) return cached;
+  const facts = computeTextFacts(recording);
+  textFactsCache.set(recording, facts);
+  return facts;
+}
+
+/** Notas por bloco no aquecimento: cada bloco cede a thread para a interface. */
+export const WARM_FACTS_BATCH = 8;
+
+export interface WarmFactsOptions {
+  /** Quantas notas analisar antes de devolver a thread. */
+  batchSize?: number;
+  /** Cede a thread para a interface; os testes trocam por um fake. */
+  yieldToUI?: () => Promise<void>;
+}
+
+/** Devolve a thread para a interface (render, toque, animacao). */
+export function yieldToUI(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/**
+ * Preenche o cache de fatos em blocos, entre um desenho e outro.
+ *
+ * A conta e a mesma de `analyzeWriting`; a diferenca e nao fazer tudo de uma vez
+ * no primeiro desenho do Painel. Notas ja aquecidas sao puladas, entao chamar de
+ * novo depois de um refresh e barato.
+ */
+export async function warmWritingFacts(
+  recordings: Recording[],
+  { batchSize = WARM_FACTS_BATCH, yieldToUI: yieldToUi = yieldToUI }: WarmFactsOptions = {},
+): Promise<void> {
+  const missing = recordings.filter((recording) => !textFactsCache.has(recording));
+  const size = Math.max(1, batchSize);
+  for (let index = 0; index < missing.length; index += 1) {
+    noteTextFacts(missing[index]);
+    const done = index + 1;
+    if (done < missing.length && done % size === 0) await yieldToUi();
+  }
+}
+
 /** Media 7 x 8 (faixas de 3h) de contagem de notas. */
 function emptyGrid(): number[][] {
   return Array.from({ length: 7 }, () => Array.from({ length: 24 / HOUR_STEP }, () => 0));
@@ -180,10 +315,10 @@ function emptyGrid(): number[][] {
 export function weekdayHourGrid(recordings: Recording[]): number[][] {
   const grid = emptyGrid();
   for (const recording of recordings) {
-    const date = new Date(recording.recordedAt);
-    if (Number.isNaN(date.getTime())) continue;
-    const bucket = Math.min(grid[0].length - 1, Math.floor(date.getHours() / HOUR_STEP));
-    grid[date.getDay()][bucket] += 1;
+    const facts = noteTextFacts(recording);
+    if (facts.time === null) continue;
+    const bucket = Math.min(grid[0].length - 1, Math.floor(facts.hour / HOUR_STEP));
+    grid[facts.weekday][bucket] += 1;
   }
   return grid;
 }
@@ -196,8 +331,9 @@ export function monthlySeries(
 ): MonthlyPoint[] {
   const totals = new Map<string, { words: number; notes: number; date: Date }>();
   for (const recording of recordings) {
-    const date = new Date(recording.recordedAt);
-    if (Number.isNaN(date.getTime())) continue;
+    const facts = noteTextFacts(recording);
+    if (facts.time === null) continue;
+    const date = new Date(facts.time);
     const key = `${date.getFullYear()}-${date.getMonth()}`;
     const entry = totals.get(key) ?? {
       words: 0,
@@ -205,7 +341,7 @@ export function monthlySeries(
       date: new Date(date.getFullYear(), date.getMonth(), 1),
     };
     entry.notes += 1;
-    entry.words += wordsOf(plainText(recording.text ?? '')).length;
+    entry.words += facts.words;
     totals.set(key, entry);
   }
 
@@ -259,7 +395,7 @@ export function dayKey(date: Date): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
-function countMarks(markdown: string): { questions: number; exclamations: number; links: number; images: number; listItems: number } {
+function countMarks(markdown: string): NoteMarks {
   const images = (markdown.match(/!\[[^\]]*\]\(/g) ?? []).length;
   const linksAll = (markdown.match(/\[[^\]]*\]\(/g) ?? []).length;
   const questions = (markdown.match(/\?/g) ?? []).length;
@@ -360,30 +496,26 @@ export function analyzeWriting(recordings: Recording[], now: Date = new Date()):
   let topNegative: { title: string; score: number } | null = null;
 
   for (const recording of recordings) {
-    if (recording.filePath) withAudio += 1;
+    const facts = noteTextFacts(recording);
+    if (facts.hasAudio) withAudio += 1;
 
-    const date = new Date(recording.recordedAt);
-    if (!Number.isNaN(date.getTime())) {
-      const key = dayKey(date);
-      dayCounts.set(key, (dayCounts.get(key) ?? 0) + 1);
+    if (facts.day !== null) {
+      dayCounts.set(facts.day, (dayCounts.get(facts.day) ?? 0) + 1);
       if (!firstAt || recording.recordedAt < firstAt) firstAt = recording.recordedAt;
       if (!lastAt || recording.recordedAt > lastAt) lastAt = recording.recordedAt;
     }
 
-    const raw = (recording.text ?? '').trim();
-    if (raw) {
+    if (facts.hasText) {
       withText += 1;
-      const plain = plainText(raw);
-      chars += plain.length;
-      const list = wordsOf(plain);
-      words += list.length;
-      sentences += plain.split(/[.!?…]+/).filter((s) => s.trim().length > 0).length;
-      paragraphs += raw.split(/\n{2,}/).filter((p) => p.trim().length > 0).length;
-      for (const word of list) {
-        frequency.set(word, (frequency.get(word) ?? 0) + 1);
+      chars += facts.chars;
+      words += facts.words;
+      sentences += facts.sentences;
+      paragraphs += facts.paragraphs;
+      for (const [word, count] of facts.frequency) {
+        frequency.set(word, (frequency.get(word) ?? 0) + count);
         if (word.length >= 8) wordLengths.set(word, word.length);
       }
-      const noteMarks = countMarks(raw);
+      const noteMarks = facts.marks;
       marks = {
         questions: marks.questions + noteMarks.questions,
         exclamations: marks.exclamations + noteMarks.exclamations,
@@ -392,12 +524,12 @@ export function analyzeWriting(recordings: Recording[], now: Date = new Date()):
         listItems: marks.listItems + noteMarks.listItems,
       };
       const title = displayTitle(recording);
-      if (!longestNote || list.length > longestNote.words) {
-        longestNote = { title, words: list.length };
+      if (!longestNote || facts.words > longestNote.words) {
+        longestNote = { title, words: facts.words };
       }
       // Humor (lexico local): so conta nota com texto.
-      if (list.length > 0) {
-        const score = sentimentScore(list);
+      if (facts.words > 0) {
+        const score = facts.sentiment;
         sentimentCount += 1;
         sentimentSum += score;
         if (score > 0.15) positive += 1;
@@ -412,10 +544,9 @@ export function analyzeWriting(recordings: Recording[], now: Date = new Date()):
       }
     }
 
-    const transcript = (recording.transcript ?? '').trim();
-    if (transcript) {
+    if (facts.hasTranscript) {
       withTranscript += 1;
-      transcriptWords += wordsOf(plainText(transcript)).length;
+      transcriptWords += facts.transcriptWords;
     }
   }
 
@@ -438,10 +569,10 @@ export function analyzeWriting(recordings: Recording[], now: Date = new Date()):
   const weekdayCounts = new Array(7).fill(0) as number[];
   const hourCounts = HOUR_BUCKETS.map(() => 0);
   for (const recording of recordings) {
-    const date = new Date(recording.recordedAt);
-    if (Number.isNaN(date.getTime())) continue;
-    weekdayCounts[date.getDay()] += 1;
-    const bucket = HOUR_BUCKETS.findIndex((b) => date.getHours() >= b.from && date.getHours() <= b.to);
+    const facts = noteTextFacts(recording);
+    if (facts.time === null) continue;
+    weekdayCounts[facts.weekday] += 1;
+    const bucket = HOUR_BUCKETS.findIndex((b) => facts.hour >= b.from && facts.hour <= b.to);
     if (bucket >= 0) hourCounts[bucket] += 1;
   }
   const topWeekdayIndex = weekdayCounts.indexOf(Math.max(...weekdayCounts));
@@ -652,13 +783,12 @@ export function writingHistory(
 ): WritingHistory {
   const counts = new Map<string, { words: number; notes: number }>();
   for (const recording of recordings) {
-    const date = new Date(recording.recordedAt);
-    if (Number.isNaN(date.getTime())) continue;
-    const key = dayKey(date);
-    const entry = counts.get(key) ?? { words: 0, notes: 0 };
+    const facts = noteTextFacts(recording);
+    if (facts.day === null) continue;
+    const entry = counts.get(facts.day) ?? { words: 0, notes: 0 };
     entry.notes += 1;
-    entry.words += wordsOf(plainText(recording.text ?? '')).length;
-    counts.set(key, entry);
+    entry.words += facts.words;
+    counts.set(facts.day, entry);
   }
 
   const today = startOfDay(now);
@@ -715,14 +845,13 @@ export function writingConsistency(
   const counts = new Map<string, { notes: number; words: number }>();
   let firstDay: Date | null = null;
   for (const recording of recordings) {
-    const date = new Date(recording.recordedAt);
-    if (Number.isNaN(date.getTime())) continue;
-    const key = dayKey(date);
-    const entry = counts.get(key) ?? { notes: 0, words: 0 };
+    const facts = noteTextFacts(recording);
+    if (facts.day === null || facts.time === null) continue;
+    const entry = counts.get(facts.day) ?? { notes: 0, words: 0 };
     entry.notes += 1;
-    entry.words += wordsOf(plainText(recording.text ?? '')).length;
-    counts.set(key, entry);
-    const day = startOfDay(date);
+    entry.words += facts.words;
+    counts.set(facts.day, entry);
+    const day = startOfDay(new Date(facts.time));
     if (!firstDay || day.getTime() < firstDay.getTime()) firstDay = day;
   }
 

@@ -13,14 +13,18 @@ import { analysisContentHash } from './analysisPrompt';
 import { displayTitle } from './title';
 import type { Recording } from './types';
 import {
+  WARM_FACTS_BATCH,
   analyzeWriting,
   dayKey,
+  noteTextFacts,
   plainText,
-  sentimentScore,
   wordsOf,
   writingConsistency,
   writingStreaks,
+  yieldToUI,
+  warmWritingFacts,
   type ConsistencyMetrics,
+  type WarmFactsOptions,
   type WordCount,
   type WritingStreaks,
 } from './writing';
@@ -226,14 +230,6 @@ function startOfWeek(date: Date): Date {
   return addDays(day, -day.getDay());
 }
 
-/** Data do evento: `recorded_at`; sem ele, a data de criacao. */
-function eventDate(recording: Recording): Date | null {
-  const recorded = new Date(recording.recordedAt);
-  if (!Number.isNaN(recorded.getTime())) return recorded;
-  const created = new Date(recording.createdAt);
-  return Number.isNaN(created.getTime()) ? null : created;
-}
-
 export function metricsRange(kind: MetricsWindow, now: Date = new Date()): MetricsRange {
   const days = METRICS_WINDOW_DAYS[kind];
   return {
@@ -253,8 +249,7 @@ function previousRange(range: MetricsRange): MetricsRange {
   };
 }
 
-function inRange(date: Date, range: MetricsRange): boolean {
-  const time = date.getTime();
+function inTimeRange(time: number, range: MetricsRange): boolean {
   return time >= range.from.getTime() && time <= range.to.getTime();
 }
 
@@ -263,6 +258,8 @@ function inRange(date: Date, range: MetricsRange): boolean {
 interface AudioFact {
   seconds: number;
   transcript: string;
+  /** Palavras faladas na transcricao (ja contadas uma vez). */
+  words: number;
   origin: MetricsAnalysisOrigin | null;
 }
 
@@ -280,7 +277,7 @@ function hasLocalAudio(recording: Recording): boolean {
  * transcricao do servidor (caso de transcricao feita no aparelho e ainda nao
  * enviada).
  */
-function audioFacts(recording: Recording): AudioFact[] {
+function computeAudioFacts(recording: Recording): AudioFact[] {
   const serverAudios = recording.serverAudios ?? [];
   if (serverAudios.length > 0) {
     const localText = (recording.transcript ?? '').trim();
@@ -292,6 +289,7 @@ function audioFacts(recording: Recording): AudioFact[] {
         seconds:
           audio.duration_seconds || (serverAudios.length === 1 ? (recording.durationMs ?? 0) / 1000 : 0),
         transcript,
+        words: transcript ? wordsOf(plainText(transcript)).length : 0,
         origin: transcript ? (localFallback ? (recording.transcriptOrigin ?? 'local') : 'server') : null,
       };
     });
@@ -303,9 +301,21 @@ function audioFacts(recording: Recording): AudioFact[] {
     {
       seconds: (recording.durationMs ?? 0) / 1000,
       transcript,
+      words: transcript ? wordsOf(plainText(transcript)).length : 0,
       origin: transcript ? (recording.transcriptOrigin ?? 'local') : null,
     },
   ];
+}
+
+const audioFactsCache = new WeakMap<Recording, AudioFact[]>();
+
+/** Audios de uma nota; a transcricao so e tokenizada na primeira janela. */
+function audioFacts(recording: Recording): AudioFact[] {
+  const cached = audioFactsCache.get(recording);
+  if (cached) return cached;
+  const facts = computeAudioFacts(recording);
+  audioFactsCache.set(recording, facts);
+  return facts;
 }
 
 /** Transcricao para hash de conteudo: local primeiro, depois a do servidor. */
@@ -355,7 +365,7 @@ function voiceOf(recordings: Recording[], writingWords: number): VoiceFacts {
       noteTranscribed = true;
       transcribedCount += 1;
       transcribedSeconds += fact.seconds;
-      words += wordsOf(plainText(fact.transcript)).length;
+      words += fact.words;
       if (fact.origin === 'local') originLocal += 1;
       else if (fact.origin === 'server') originServer += 1;
     }
@@ -386,15 +396,14 @@ function imagesOf(recordings: Recording[], imageBytes?: Record<string, number>):
   let notesWithImageNoText = 0;
 
   for (const recording of recordings) {
-    const raw = (recording.text ?? '').trim();
-    const images = (raw.match(/!\[[^\]]*\]\(/g) ?? []).length;
+    const facts = noteTextFacts(recording);
+    const images = facts.marks.images;
     if (images === 0) continue;
     count += images;
     notesWithImage += 1;
     bytes += imageBytes?.[recording.id] ?? 0;
-    const hasWrittenText = plainText(raw).trim().length > 0;
     const hasTranscript = transcriptText(recording).length > 0;
-    if (!hasWrittenText && !hasTranscript) notesWithImageNoText += 1;
+    if (!facts.hasPlainText && !hasTranscript) notesWithImageNoText += 1;
   }
 
   return {
@@ -445,9 +454,9 @@ function analysisOf(recordings: Recording[], byEntry: Map<string, AnalysisFact>)
   let lastAnalyzedAt: string | null = null;
 
   for (const recording of recordings) {
-    const hasWrittenText = plainText(recording.text ?? '').trim().length > 0;
+    const facts = noteTextFacts(recording);
     const hasTranscript = transcriptText(recording).length > 0;
-    if (!hasWrittenText && !hasTranscript) continue;
+    if (!facts.hasPlainText && !hasTranscript) continue;
     notesWithContent += 1;
 
     const fact = byEntry.get(recording.entryId ?? recording.id);
@@ -561,8 +570,9 @@ function sentimentOf(
   const matchedFacts: AnalysisFact[] = [];
 
   for (const recording of recordings) {
-    const date = eventDate(recording);
-    if (!date) continue;
+    const facts = noteTextFacts(recording);
+    if (facts.eventTime === null) continue;
+    const date = new Date(facts.eventTime);
     const fact = byEntry.get(recording.entryId ?? recording.id);
     if (fact && Number.isFinite(fact.sentiment)) {
       matchedFacts.push(fact);
@@ -573,11 +583,10 @@ function sentimentOf(
       });
       continue;
     }
-    const words = wordsOf(plainText(recording.text ?? ''));
-    if (words.length === 0) continue;
+    if (facts.words === 0) continue;
     lexicalEntries.push({
       date,
-      score: sentimentScore(words),
+      score: facts.sentiment,
       title: displayTitle(recording),
     });
   }
@@ -664,8 +673,8 @@ function sentimentOf(
 
 function computeWindow(input: MetricsInput, range: MetricsRange): WindowMetrics {
   const selected = input.recordings.filter((recording) => {
-    const date = eventDate(recording);
-    return date !== null && inRange(date, range);
+    const { eventTime } = noteTextFacts(recording);
+    return eventTime !== null && inTimeRange(eventTime, range);
   });
 
   const base = analyzeWriting(selected, range.to);
@@ -745,7 +754,7 @@ function windowLabel(kind: MetricsWindow): string {
 function summarizeWindow(
   kind: MetricsWindow,
   current: WindowMetrics,
-  previous: WindowMetrics,
+  previousWords: number,
   streak: MetricsStreak,
 ): string[] {
   const out: string[] = [];
@@ -757,7 +766,7 @@ function summarizeWindow(
       'palavra',
       'palavras',
     )} em ${writing.withText} ${plural(writing.withText, 'nota', 'notas')}`;
-    const before = previous.writing.words;
+    const before = previousWords;
     if (before > 0) {
       const pct = Math.round(((writing.words - before) / before) * 100);
       if (pct >= 5) sentence += `, ${pct}% mais que nos ${windowLabel(kind)} anteriores`;
@@ -806,6 +815,17 @@ function summarizeWindow(
   return out.slice(0, 3);
 }
 
+/** Palavras escritas numa janela (o resumo so compara o volume anterior). */
+function wordsIn(recordings: Recording[], range: MetricsRange): number {
+  let words = 0;
+  for (const recording of recordings) {
+    const facts = noteTextFacts(recording);
+    if (facts.eventTime === null || !inTimeRange(facts.eventTime, range)) continue;
+    words += facts.words;
+  }
+  return words;
+}
+
 /**
  * Monta as tres janelas do Painel de uma vez. O mesmo `now` vale para todas,
  * para os numeros fecharem entre o resumo, as secoes e o snapshot.
@@ -818,10 +838,35 @@ export function buildMetricsReport(input: MetricsInput): MetricsReport {
   for (const kind of METRICS_WINDOWS) {
     const range = metricsRange(kind, now);
     const current = computeWindow(input, range);
-    const previous = computeWindow(input, previousRange(range));
-    current.summary = summarizeWindow(kind, current, previous, streak);
+    // A janela anterior so alimenta a frase de comparacao: montar o card
+    // inteiro dela custava uma passada extra pela biblioteca toda.
+    const previousWords = wordsIn(input.recordings, previousRange(range));
+    current.summary = summarizeWindow(kind, current, previousWords, streak);
     windows[kind] = current;
   }
 
   return { generatedAt: now.toISOString(), streak, windows };
+}
+
+/**
+ * Aquece os fatos de texto e de audio em blocos, cedendo a thread entre eles.
+ *
+ * O Painel chama isto antes de montar os cards: a primeira analise da biblioteca
+ * deixa de bloquear o toque e o desenho, e as tres janelas seguintes ja leem o
+ * cache.
+ */
+export async function warmMetricsFacts(
+  recordings: Recording[],
+  options: WarmFactsOptions = {},
+): Promise<void> {
+  const { batchSize = WARM_FACTS_BATCH, yieldToUI: yieldToUi = yieldToUI } = options;
+  await warmWritingFacts(recordings, { batchSize, yieldToUI: yieldToUi });
+
+  const missing = recordings.filter((recording) => !audioFactsCache.has(recording));
+  const size = Math.max(1, batchSize);
+  for (let index = 0; index < missing.length; index += 1) {
+    audioFacts(missing[index]);
+    const done = index + 1;
+    if (done < missing.length && done % size === 0) await yieldToUi();
+  }
 }

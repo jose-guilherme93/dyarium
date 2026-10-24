@@ -3,6 +3,7 @@ import {
   analyzeWriting,
   monthlySeries,
   plainText,
+  warmWritingFacts,
   weekdayHourGrid,
   wordMilestone,
   writingConsistency,
@@ -312,5 +313,53 @@ describe('writingReminder', () => {
 
   it('nao lembra sem notas', () => {
     expect(writingReminder({ metrics: analyzeWriting([], now), weeklyWords: 0, goal: 1000, now })).toBeNull();
+  });
+});
+
+describe('warmWritingFacts', () => {
+  const now = new Date('2026-10-14T12:00:00.000Z');
+
+  it('aquece em blocos e entrega as mesmas metricas', async () => {
+    const recordings = [
+      base({ id: 'a', text: 'primeira nota com algumas palavras' }),
+      base({ id: 'b', text: 'segunda nota, dia feliz', recordedAt: '2026-10-09T09:00:00.000Z' }),
+      base({ id: 'c', text: 'terceira', transcript: 'falei aqui' }),
+      base({ id: 'd', text: 'quarta', recordedAt: '2026-10-08T21:00:00.000Z' }),
+      base({ id: 'e', text: 'quinta' }),
+    ];
+    // Objetos equivalentes, mas fora do cache: o "antes" nao pode aquecer as notas.
+    const antes = analyzeWriting(
+      recordings.map((recording) => ({ ...recording })),
+      now,
+    );
+
+    const yieldToUI = jest.fn().mockResolvedValue(undefined);
+    await warmWritingFacts(recordings, { batchSize: 2, yieldToUI });
+
+    // 5 notas, 2 por bloco: cede a thread depois da 2a e da 4a.
+    expect(yieldToUI).toHaveBeenCalledTimes(2);
+    expect(analyzeWriting(recordings, now)).toEqual(antes);
+  });
+
+  it('pula notas ja aquecidas: aquecer de novo nao cede a thread', async () => {
+    const recordings = [base({ id: 'a', text: 'oi' }), base({ id: 'b', text: 'tudo bem?' })];
+
+    const primeira = jest.fn().mockResolvedValue(undefined);
+    await warmWritingFacts(recordings, { batchSize: 1, yieldToUI: primeira });
+    expect(primeira).toHaveBeenCalledTimes(1);
+
+    const segunda = jest.fn().mockResolvedValue(undefined);
+    await warmWritingFacts(recordings, { batchSize: 1, yieldToUI: segunda });
+    expect(segunda).not.toHaveBeenCalled();
+  });
+
+  it('um objeto novo (nota alterada) e analisado de novo', async () => {
+    const original = base({ id: 'a', text: 'oi' });
+    const yieldToUI = jest.fn().mockResolvedValue(undefined);
+    await warmWritingFacts([original], { batchSize: 1, yieldToUI });
+
+    // O autosave devolve um objeto novo (updatedAt muda): o texto novo conta.
+    const editada = { ...original, text: 'oi, tudo bem?', updatedAt: '2026-10-11T12:00:00.000Z' };
+    expect(analyzeWriting([editada], now).words).toBe(3);
   });
 });

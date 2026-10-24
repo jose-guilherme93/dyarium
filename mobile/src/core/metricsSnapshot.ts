@@ -13,6 +13,7 @@
 import {
   buildMetricsReport,
   type AnalysisFact,
+  type MetricsReport,
   type MetricsWindow,
   type SentimentTone,
   type WindowAnalysis,
@@ -23,7 +24,7 @@ import {
   type WindowWriting,
 } from './metrics';
 import type { Recording } from './types';
-import { writingHistory, type WordCount } from './writing';
+import { writingHistory, type WordCount, type WritingHistory } from './writing';
 
 /** Versao do contrato. Mudanca de forma (nao de valor) sobe esta versao. */
 export const METRICS_SCHEMA = 2;
@@ -337,9 +338,23 @@ export function buildMetricsSnapshot(
   analyses: AnalysisFact[] = [],
   imageBytes: Record<string, number> = {},
 ): MetricsSnapshot {
-  const report = buildMetricsReport({ recordings, analyses, imageBytes, now });
-  const history = writingHistory(recordings, now);
+  return buildMetricsSnapshotFromReport(
+    buildMetricsReport({ recordings, analyses, imageBytes, now }),
+    writingHistory(recordings, now),
+  );
+}
 
+/**
+ * O mesmo documento, a partir das contas que o Painel ja fez.
+ *
+ * E o que mantem a regra do contrato: a tela monta uma vez, com um unico `now`,
+ * e usa o mesmo documento no Painel e no upload. Sem isto o sync recalculava a
+ * biblioteca inteira de novo na abertura do Painel.
+ */
+export function buildMetricsSnapshotFromReport(
+  report: MetricsReport,
+  history: WritingHistory,
+): MetricsSnapshot {
   return {
     schema: METRICS_SCHEMA,
     generated_at: report.generatedAt,

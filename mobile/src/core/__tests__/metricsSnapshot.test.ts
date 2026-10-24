@@ -1,5 +1,7 @@
+import { buildMetricsReport } from '../metrics';
 import type { Recording } from '../types';
-import { METRICS_SCHEMA, buildMetricsSnapshot } from '../metricsSnapshot';
+import { METRICS_SCHEMA, buildMetricsSnapshot, buildMetricsSnapshotFromReport } from '../metricsSnapshot';
+import { writingHistory } from '../writing';
 
 function base(overrides: Partial<Recording> = {}): Recording {
   return {
@@ -207,5 +209,29 @@ describe('buildMetricsSnapshot', () => {
     expect(window.sentiment.negative).toBe(1);
     expect(window.sentiment.emotions).toEqual([]);
     expect(snapshot.streak.current).toBe(2);
+  });
+
+  it('monta o mesmo documento a partir das contas que o Painel ja fez', () => {
+    const recordings = [
+      base({ id: 'a', text: 'escrevi bastante sobre o projeto hoje mesmo' }),
+      base({
+        id: 'b',
+        text: 'que dia maravilhoso',
+        transcript: 'falei algumas palavras',
+        filePath: 'file://a',
+      }),
+    ];
+    const analyses = [
+      { entryId: 'b', origin: 'local' as const, model: 'qwen', sentiment: 0.8 },
+    ];
+    const imageBytes = { b: 2048 };
+
+    const direto = buildMetricsSnapshot(recordings, now, analyses, imageBytes);
+    const peloPainel = buildMetricsSnapshotFromReport(
+      buildMetricsReport({ recordings, analyses, imageBytes, now }),
+      writingHistory(recordings, now),
+    );
+
+    expect(peloPainel).toEqual(direto);
   });
 });
