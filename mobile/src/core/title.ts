@@ -21,15 +21,29 @@ function firstLine(value: string): string {
 /**
  * Titulo exibido na lista: o titulo do usuario; quando vazio, a primeira linha
  * do texto (ou da transcricao) serve de titulo temporario.
+ *
+ * Nota sem titulo paga `markdownToPlain` no corpo inteiro, e o card, a busca, o
+ * menu e as metricas pedem o mesmo titulo varias vezes para o mesmo objeto. A
+ * biblioteca troca o objeto quando qualquer campo muda, entao o WeakMap por
+ * identidade devolve o valor ja calculado e se invalida sozinho.
  */
+const titleCache = new WeakMap<object, string>();
+
 export function displayTitle(recording: {
   title?: string;
   text?: string;
   transcript?: string;
 }): string {
+  const cached = titleCache.get(recording);
+  if (cached !== undefined) return cached;
   const title = (recording.title ?? '').trim();
-  if (title) return title;
-  return firstLine(recording.text ?? '') || firstLine(recording.transcript ?? '') || 'Sem título';
+  const value =
+    title ||
+    firstLine(recording.text ?? '') ||
+    firstLine(recording.transcript ?? '') ||
+    'Sem título';
+  titleCache.set(recording, value);
+  return value;
 }
 
 export function formatTitle(date: Date): string {

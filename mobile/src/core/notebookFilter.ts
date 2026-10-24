@@ -19,21 +19,85 @@ export function recordingNotebookId(recording: Recording): string {
   return recording.notebookId || DEFAULT_NOTEBOOK_ID;
 }
 
+/**
+ * Texto normalizado para busca, por identidade da nota.
+ *
+ * Baixar o corpo inteiro a cada tecla custava uma varredura completa da
+ * biblioteca (e uma alocacao por nota) por caractere digitado. A biblioteca
+ * troca o objeto da nota quando qualquer campo muda, entao o WeakMap se
+ * invalida sozinho e nao segura a copia de uma nota removida. O custo e pago
+ * apenas quando existe busca ativa.
+ */
+interface SearchText {
+  title: string;
+  text: string;
+  transcript: string;
+  tags: string[];
+}
+
+let searchTextCache = new WeakMap<Recording, SearchText>();
+let searchCacheUsed = false;
+
+/**
+ * Solta as copias normalizadas quando ninguem esta buscando.
+ *
+ * Elas sao grandes (corpo e transcricao em minusculas) e as notas continuam
+ * vivas na biblioteca; manter tudo depois de fechar a busca pesava no heap do
+ * app inteiro. O WeakMap e trocado por um vazio, sem tocar nos objetos.
+ */
+function releaseSearchCache(): void {
+  if (!searchCacheUsed) return;
+  searchCacheUsed = false;
+  searchTextCache = new WeakMap();
+}
+
+function searchText(recording: Recording): SearchText {
+  const cached = searchTextCache.get(recording);
+  if (cached) return cached;
+  const value: SearchText = {
+    title: (recording.title ?? '').toLowerCase(),
+    text: (recording.text ?? '').toLowerCase(),
+    transcript: (recording.transcript ?? '').toLowerCase(),
+    tags: (recording.tags ?? []).map((tag) => tag.toLowerCase()),
+  };
+  searchCacheUsed = true;
+  searchTextCache.set(recording, value);
+  return value;
+}
+
+function matchesTerm(recording: Recording, term: string): boolean {
+  const searchable = searchText(recording);
+  return (
+    searchable.title.includes(term) ||
+    searchable.text.includes(term) ||
+    searchable.transcript.includes(term) ||
+    searchable.tags.some((tag) => tag.includes(term))
+  );
+}
+
+/** Tags da nota em minusculas, para comparacao sem baixar de novo. */
+const tagKeysCache = new WeakMap<Recording, string[]>();
+
+function tagKeys(recording: Recording): string[] {
+  const cached = tagKeysCache.get(recording);
+  if (cached) return cached;
+  // Array (e nao Set): a lista tem poucas tags e o Set por nota pesava no heap
+  // quando a biblioteca inteira passava pelas contagens.
+  const value = (recording.tags ?? []).map((tag) => tag.toLowerCase());
+  tagKeysCache.set(recording, value);
+  return value;
+}
+
 export function noteMatches(recording: Recording, filter: NoteFilter): boolean {
   if (filter.notebookId && recordingNotebookId(recording) !== filter.notebookId) return false;
   const wanted = (filter.tags ?? []).map((tag) => tag.toLowerCase());
   if (wanted.length > 0) {
-    const present = new Set((recording.tags ?? []).map((tag) => tag.toLowerCase()));
-    if (wanted.some((tag) => !present.has(tag))) return false;
+    const present = tagKeys(recording);
+    if (wanted.some((tag) => !present.includes(tag))) return false;
   }
   const term = (filter.query ?? '').trim().toLowerCase();
   if (!term) return true;
-  return (
-    recording.title.toLowerCase().includes(term) ||
-    (recording.text ?? '').toLowerCase().includes(term) ||
-    (recording.transcript ?? '').toLowerCase().includes(term) ||
-    (recording.tags ?? []).some((tag) => tag.toLowerCase().includes(term))
-  );
+  return matchesTerm(recording, term);
 }
 
 /** Notas ativas e nao vazias de um caderno, ja filtradas. */
@@ -41,6 +105,7 @@ export function notesInNotebook(
   recordings: Recording[],
   filter: NoteFilter,
 ): Recording[] {
+  if (!(filter.query ?? '').trim()) releaseSearchCache();
   return recordings.filter(
     (recording) =>
       !recording.archived &&
@@ -73,16 +138,12 @@ function isBlank(recording: Recording): boolean {
  */
 export function searchRecordings(recordings: Recording[], query: string): Recording[] {
   const term = query.trim().toLowerCase();
-  if (!term) return [];
+  if (!term) {
+    releaseSearchCache();
+    return [];
+  }
   return recordings
-    .filter(
-      (recording) =>
-        isVisibleNote(recording) &&
-        (recording.title.toLowerCase().includes(term) ||
-          (recording.text ?? '').toLowerCase().includes(term) ||
-          (recording.transcript ?? '').toLowerCase().includes(term) ||
-          (recording.tags ?? []).some((tag) => tag.toLowerCase().includes(term))),
-    )
+    .filter((recording) => isVisibleNote(recording) && matchesTerm(recording, term))
     .sort((a, b) => noteDate(b).localeCompare(noteDate(a)));
 }
 
@@ -98,6 +159,7 @@ export function recentNotes(
   recordings: Recording[],
   filter: Pick<NoteFilter, 'tags' | 'query'> = {},
 ): Recording[] {
+  if (!(filter.query ?? '').trim()) releaseSearchCache();
   return recordings
     .filter(
       (recording) =>
@@ -144,12 +206,14 @@ export function tagCountsForFilter(
   return universe.map((tag) => {
     const key = tag.name.toLowerCase();
     const wanted = selectedKeys.includes(key) ? selectedKeys : [...selectedKeys, key];
-    const count = recordings.filter((recording) => {
-      if (recording.archived || !isVisibleNote(recording)) return false;
-      if (notebookId && recordingNotebookId(recording) !== notebookId) return false;
-      const present = new Set((recording.tags ?? []).map((item) => item.toLowerCase()));
-      return wanted.every((item) => present.has(item));
-    }).length;
+    let count = 0;
+    for (const recording of recordings) {
+      if (recording.archived || !isVisibleNote(recording)) continue;
+      if (notebookId && recordingNotebookId(recording) !== notebookId) continue;
+      // `tagKeys` e cacheado por identidade: as contagens de todas as tags
+      // reaproveitam a mesma lista em vez de remonta-la a cada linha.
+      if (wanted.every((item) => tagKeys(recording).includes(item))) count += 1;
+    }
     return { name: tag.name, count };
   });
 }
@@ -174,4 +238,35 @@ export function lastNoteAt(recordings: Recording[], notebookId: string): string 
     if (!latest || when > latest) latest = when;
   }
   return latest;
+}
+
+export interface NotebookStats {
+  /** Notas ativas e visiveis do caderno. */
+  count: number;
+  /** Data da ultima nota, pela data real. */
+  lastAt?: string;
+}
+
+/**
+ * Contagem e ultima data de todos os cadernos numa passada so.
+ *
+ * A tela de cadernos chamava `activeNoteCount`/`lastNoteAt` por item visivel,
+ * e cada uma varria a lista inteira: O(cadernos * notas) por renderizacao.
+ * Aqui a lista e varrida uma vez e o mapa e reaproveitado no `renderItem`.
+ */
+export function notebookStats(recordings: Recording[]): Map<string, NotebookStats> {
+  const stats = new Map<string, NotebookStats>();
+  for (const recording of recordings) {
+    if (recording.archived || !isVisibleNote(recording)) continue;
+    const id = recordingNotebookId(recording);
+    const when = recording.recordedAt || recording.createdAt;
+    const current = stats.get(id);
+    if (!current) {
+      stats.set(id, { count: 1, lastAt: when });
+      continue;
+    }
+    current.count += 1;
+    if (!current.lastAt || when > current.lastAt) current.lastAt = when;
+  }
+  return stats;
 }

@@ -33,4 +33,12 @@ describe('displayTitle', () => {
   it('usa um rotulo seguro quando nao ha nada', () => {
     expect(displayTitle({})).toBe('Sem título');
   });
+
+  it('acompanha a nova identidade da nota', () => {
+    const note = { text: '**Primeira** linha' };
+    expect(displayTitle(note)).toBe('Primeira linha');
+
+    const edited = { ...note, text: 'Outra coisa' };
+    expect(displayTitle(edited)).toBe('Outra coisa');
+  });
 });

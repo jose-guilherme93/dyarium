@@ -22,7 +22,7 @@ import { RecordingCard } from '@/components/RecordingCard';
 import { Screen } from '@/components/Screen';
 import { STATUS_META } from '@/components/StatusChip';
 import { TagFilterRow } from '@/components/TagFilterRow';
-import { formatBytes, formatDateTime, noteDateIso, utf8ByteLength } from '@/core/format';
+import { formatBytes, formatDateTime, noteDateIso } from '@/core/format';
 import {
   notesInNotebook,
   recentNotes,
@@ -30,7 +30,8 @@ import {
   tagCountsForFilter,
 } from '@/core/notebookFilter';
 import { DEFAULT_NOTEBOOK_ID } from '@/core/notebooks';
-import { countChars, countWords, markdownToPlain } from '@/core/richText';
+import { noteStats } from '@/core/noteStats';
+import { markdownToPlain } from '@/core/richText';
 import { displayTitle } from '@/core/title';
 import { needsNoteSync, type Recording } from '@/core/types';
 import { useRenderCount } from '@/dev/perf';
@@ -247,8 +248,9 @@ export default function NotebookScreen() {
   const removeNote = useCallback((noteId: string) => void remove(noteId), [remove]);
 
   const openActions = useCallback((item: Recording, anchor: { x: number; y: number }) => {
-    const plain = markdownToPlain(item.text ?? '');
-    const bytes = directoryBytes(sessionDirectory(item.id)) + utf8ByteLength(plain);
+    // Uma conversao para texto puro alimenta palavras, caracteres e tamanho.
+    const stats = noteStats(item.text ?? '');
+    const bytes = directoryBytes(sessionDirectory(item.id)) + stats.bodyBytes;
     const notebook =
       notebooksRef.current.find((entry) => entry.id === (item.notebookId || DEFAULT_NOTEBOOK_ID)) ??
       targetNotebookRef.current;
@@ -267,8 +269,8 @@ export default function NotebookScreen() {
         label: 'Origem',
         value: item.filePath ? (item.source === 'share' ? 'Áudio importado' : 'Áudio') : 'Texto',
       },
-      { label: 'Palavras', value: String(countWords(item.text ?? '')) },
-      { label: 'Caracteres', value: String(countChars(item.text ?? '')) },
+      { label: 'Palavras', value: String(stats.words) },
+      { label: 'Caracteres', value: String(stats.chars) },
       { label: 'Tamanho', value: formatBytes(bytes) },
       { label: 'Status', value: STATUS_META[item.status].label },
     ]);

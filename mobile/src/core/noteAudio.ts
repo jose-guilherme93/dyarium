@@ -52,6 +52,40 @@ export function appendAudioNodes(markdown: string, nodes: AudioNodeRef[]): strin
   return value;
 }
 
+interface CachedBody {
+  text: string;
+  filePath: string | undefined;
+  value: string;
+}
+
+const bodyWithAudioCache = new WeakMap<Recording, CachedBody>();
+
+/**
+ * Corpo da nota com os audios legados ja convertidos em nos do documento.
+ *
+ * A tela da nota precisa do mesmo corpo no estado inicial do editor e na
+ * hidratacao; sem cache, uma nota antiga era parseada e serializada duas vezes
+ * no caminho de abertura. O WeakMap usa a identidade da nota, que muda quando o
+ * texto muda, entao o valor nunca fica velho. Comparar texto e caminho tambem
+ * cobre um chamador que edite o objeto no lugar; no caso normal as duas strings
+ * sao a mesma referencia e a comparacao e imediata.
+ */
+export function noteBodyWithAudio(note: Recording): string {
+  const stored = note.text ?? '';
+  const cached = bodyWithAudioCache.get(note);
+  if (cached && cached.text === stored && cached.filePath === note.filePath) {
+    return cached.value;
+  }
+  // A migracao so existe para gravacoes com arquivo local. Se o documento ja
+  // tem um marcador de audio, nao ha o que acrescentar.
+  const value =
+    !note.filePath || /(^|\n)!audio\[/.test(stored)
+      ? stored
+      : appendAudioNodes(stored, audioNodesForNote(note));
+  bodyWithAudioCache.set(note, { text: stored, filePath: note.filePath, value });
+  return value;
+}
+
 /** Referencia `local:` a partir do caminho do arquivo ja movido para a nota. */
 export function audioRefFromPath(filePath: string | undefined): string | undefined {
   if (!filePath) return undefined;

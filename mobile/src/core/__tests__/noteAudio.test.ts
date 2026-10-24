@@ -4,6 +4,7 @@ import {
   audioNodesForNote,
   audioRefFromPath,
   canFreeLocalAudio,
+  noteBodyWithAudio,
   withUploadedAudio,
   type AudioAttachment,
 } from '../noteAudio';
@@ -121,6 +122,54 @@ describe('appendAudioNodes', () => {
       'local:a.aac',
       'attachment:at_2',
     ]);
+  });
+});
+
+describe('noteBodyWithAudio', () => {
+  it('migra o audio legado para o fim do corpo', () => {
+    const legacy = note({
+      filePath: 'file:///notas/note-1/recording.aac',
+      durationMs: 5000,
+    });
+
+    expect(noteBodyWithAudio(legacy)).toBe('AB\n!audio[local:recording.aac]{d=5}\n');
+  });
+
+  it('nao duplica o marcador quando o documento ja tem audio', () => {
+    const stored = 'A\n!audio[local:a.aac]{d=3}\nB';
+    const migrated = note({
+      text: stored,
+      filePath: 'file:///notas/note-1/a.aac',
+      durationMs: 3000,
+    });
+
+    expect(noteBodyWithAudio(migrated)).toBe(stored);
+  });
+
+  it('devolve o mesmo corpo nas duas chamadas e acompanha a nova identidade', () => {
+    const legacy = note({
+      filePath: 'file:///notas/note-1/recording.aac',
+      durationMs: 5000,
+    });
+    expect(noteBodyWithAudio(legacy)).toBe(noteBodyWithAudio(legacy));
+
+    const edited = { ...legacy, text: 'novo' };
+    expect(noteBodyWithAudio(edited)).toBe('novo\n!audio[local:recording.aac]{d=5}\n');
+  });
+
+  it('recalcula quando o mesmo objeto e editado no lugar', () => {
+    const legacy = note({
+      filePath: 'file:///notas/note-1/a.aac',
+      durationMs: 3000,
+    });
+    expect(noteBodyWithAudio(legacy)).toBe('AB\n!audio[local:a.aac]{d=3}\n');
+
+    legacy.text = 'CD';
+    expect(noteBodyWithAudio(legacy)).toBe('CD\n!audio[local:a.aac]{d=3}\n');
+  });
+
+  it('sem audio legado devolve o texto salvo intacto', () => {
+    expect(noteBodyWithAudio(note({ text: 'so texto' }))).toBe('so texto');
   });
 });
 

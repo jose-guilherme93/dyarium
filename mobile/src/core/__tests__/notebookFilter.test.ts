@@ -3,6 +3,7 @@ import {
   isVisibleNote,
   lastNoteAt,
   noteMatches,
+  notebookStats,
   notesInNotebook,
   recentNotes,
   searchRecordings,
@@ -86,6 +87,43 @@ describe('notebook filter', () => {
   it('conta e data usam a data real da nota', () => {
     expect(activeNoteCount(list, 'nb_trabalho')).toBe(2);
     expect(lastNoteAt(list, 'nb_trabalho')).toBe('2026-10-01T10:00:00Z');
+  });
+
+  it('resume todos os cadernos numa passada, ignorando arquivadas', () => {
+    const stats = notebookStats([
+      rec('a', { notebookId: 'nb_trabalho', recordedAt: '2026-10-01T10:00:00Z' }),
+      rec('b', { notebookId: 'nb_trabalho', recordedAt: '2026-10-05T10:00:00Z' }),
+      rec('d', {
+        archived: true,
+        notebookId: 'nb_trabalho',
+        recordedAt: '2026-10-09T10:00:00Z',
+      }),
+      rec('c', { notebookId: 'nb_estudo', recordedAt: '2026-10-02T10:00:00Z' }),
+    ]);
+
+    expect(stats.get('nb_trabalho')).toEqual({
+      count: 2,
+      lastAt: '2026-10-05T10:00:00Z',
+    });
+    expect(stats.get('nb_estudo')).toEqual({
+      count: 1,
+      lastAt: '2026-10-02T10:00:00Z',
+    });
+    expect(stats.get('nb_vazio')).toBeUndefined();
+  });
+
+  it('busca e tags acompanham a nova identidade da nota', () => {
+    const original = rec('a', { title: '', text: 'praia' });
+    expect(noteMatches(original, { query: 'montanha' })).toBe(false);
+    expect(noteMatches(original, { tags: ['trilha'] })).toBe(false);
+
+    const edited = { ...original, text: 'montanha', tags: ['trilha'] };
+    expect(noteMatches(edited, { query: 'montanha' })).toBe(true);
+    expect(noteMatches(edited, { tags: ['trilha'] })).toBe(true);
+    expect(searchRecordings([original], 'trilha')).toEqual([]);
+    expect(searchRecordings([original], 'montanha')).toEqual([]);
+    expect(searchRecordings([edited], 'trilha').map((item) => item.id)).toEqual(['a']);
+    expect(searchRecordings([edited], 'montanha').map((item) => item.id)).toEqual(['a']);
   });
 });
 

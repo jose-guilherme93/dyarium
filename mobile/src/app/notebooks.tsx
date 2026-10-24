@@ -12,14 +12,13 @@ import {
 } from 'react-native';
 import { Press } from '@/components/Press';
 
-import { FastModal } from '@/components/FastModal';
+import { BottomSheet } from '@/components/BottomSheet';
 import { NotebookForm } from '@/components/NotebookForm';
 import { RecordingCard } from '@/components/RecordingCard';
 import { Screen } from '@/components/Screen';
 import { formatStamp } from '@/core/format';
 import {
-  activeNoteCount,
-  lastNoteAt,
+  notebookStats,
   recordingNotebookId,
   searchRecordings,
 } from '@/core/notebookFilter';
@@ -48,6 +47,9 @@ export default function NotebooksScreen() {
   );
   const term = query.trim();
   const results = useMemo(() => searchRecordings(recordings, term), [recordings, term]);
+  // Uma passada pela biblioteca alimenta a contagem e a data de todos os
+  // cadernos; antes cada item visivel varria a lista inteira.
+  const stats = useMemo(() => notebookStats(recordings), [recordings]);
   const notebookById = useMemo(
     () => new Map(notebooks.map((notebook) => [notebook.id, notebook])),
     [notebooks],
@@ -67,7 +69,7 @@ export default function NotebooksScreen() {
     push({ pathname: '/note/[id]', params: { id } });
 
   const confirmDelete = (notebook: Notebook) => {
-    const count = activeNoteCount(recordings, notebook.id);
+    const count = stats.get(notebook.id)?.count ?? 0;
     Alert.alert(
       'Excluir caderno?',
       count === 0
@@ -199,8 +201,8 @@ export default function NotebooksScreen() {
             <NotebookRow
               notebook={item}
               active={item.id === lastNotebookId}
-              count={activeNoteCount(recordings, item.id)}
-              last={lastNoteAt(recordings, item.id)}
+              count={stats.get(item.id)?.count ?? 0}
+              last={stats.get(item.id)?.lastAt}
               onPress={() => void select(item)}
               onLongPress={() => {
                 if (!item.isDefault) setActionsNotebook(item);
@@ -226,49 +228,49 @@ export default function NotebooksScreen() {
         onSave={(input) => void saveForm(input)}
       />
 
-      <FastModal visible={actionsNotebook !== null} onRequestClose={() => setActionsNotebook(null)}>
-        <Press style={styles.sheetBackdrop} onPress={() => setActionsNotebook(null)} feedback={false}>
-          <Press style={styles.sheet} onPress={() => undefined} feedback={false}>
-            <Text style={styles.sheetTitle}>{actionsNotebook?.name}</Text>
-            <Press
-              style={styles.sheetRow}
-              onPress={() => {
-                const notebook = actionsNotebook;
-                setActionsNotebook(null);
-                if (notebook) setForm({ mode: 'rename', notebook });
-              }}
-            >
-              <Ionicons name="create-outline" size={18} color={colors.text} />
-              <Text style={styles.sheetText}>Renomear</Text>
-            </Press>
-            <Press
-              style={styles.sheetRow}
-              onPress={() => {
-                const notebook = actionsNotebook;
-                setActionsNotebook(null);
-                if (notebook) setForm({ mode: 'color', notebook });
-              }}
-            >
-              <Ionicons name="color-palette-outline" size={18} color={colors.text} />
-              <Text style={styles.sheetText}>Cor</Text>
-            </Press>
-            <Press
-              style={styles.sheetRow}
-              onPress={() => {
-                const notebook = actionsNotebook;
-                setActionsNotebook(null);
-                if (notebook) confirmDelete(notebook);
-              }}
-            >
-              <Ionicons name="trash-outline" size={18} color={colors.danger} />
-              <Text style={[styles.sheetText, styles.sheetDanger]}>Excluir</Text>
-            </Press>
-            <Press style={styles.sheetRow} onPress={() => setActionsNotebook(null)}>
-              <Text style={styles.sheetText}>Cancelar</Text>
-            </Press>
-          </Press>
+      <BottomSheet
+        visible={actionsNotebook !== null}
+        onClose={() => setActionsNotebook(null)}
+        cardStyle={styles.sheet}
+      >
+        <Text style={styles.sheetTitle}>{actionsNotebook?.name}</Text>
+        <Press
+          style={styles.sheetRow}
+          onPress={() => {
+            const notebook = actionsNotebook;
+            setActionsNotebook(null);
+            if (notebook) setForm({ mode: 'rename', notebook });
+          }}
+        >
+          <Ionicons name="create-outline" size={18} color={colors.text} />
+          <Text style={styles.sheetText}>Renomear</Text>
         </Press>
-      </FastModal>
+        <Press
+          style={styles.sheetRow}
+          onPress={() => {
+            const notebook = actionsNotebook;
+            setActionsNotebook(null);
+            if (notebook) setForm({ mode: 'color', notebook });
+          }}
+        >
+          <Ionicons name="color-palette-outline" size={18} color={colors.text} />
+          <Text style={styles.sheetText}>Cor</Text>
+        </Press>
+        <Press
+          style={styles.sheetRow}
+          onPress={() => {
+            const notebook = actionsNotebook;
+            setActionsNotebook(null);
+            if (notebook) confirmDelete(notebook);
+          }}
+        >
+          <Ionicons name="trash-outline" size={18} color={colors.danger} />
+          <Text style={[styles.sheetText, styles.sheetDanger]}>Excluir</Text>
+        </Press>
+        <Press style={styles.sheetRow} onPress={() => setActionsNotebook(null)}>
+          <Text style={styles.sheetText}>Cancelar</Text>
+        </Press>
+      </BottomSheet>
     </Screen>
   );
 }
@@ -360,11 +362,7 @@ const styles = StyleSheet.create({
   rowText: { flex: 1, gap: 2 },
   name: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
   meta: { color: colors.textTertiary, fontSize: fontSize.xs },
-  sheetBackdrop: { flex: 1, backgroundColor: colors.overlay, justifyContent: 'flex-end' },
   sheet: {
-    backgroundColor: colors.bgElevated,
-    borderTopLeftRadius: radius.lg,
-    borderTopRightRadius: radius.lg,
     padding: spacing.xl,
     gap: spacing.xs,
   },
