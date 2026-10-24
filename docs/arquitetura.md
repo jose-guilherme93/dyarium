@@ -180,7 +180,16 @@ isso:
   filtrar, receber o banco do servidor ou marcar a primeira tag nao muda o
   tamanho do cartao no meio da interacao. A folha da nota separa o transform
   (nativo) da altura animada (JS) em dois `Animated.View`, porque misturar os
-  dois drivers no mesmo no obriga a entrada a rodar na thread de JS.
+  dois drivers no mesmo no obriga a entrada a rodar na thread de JS. O arrasto
+  dessa folha e um gesto nativo do `react-native-gesture-handler` (com um
+  `GestureHandlerRootView` proprio, ja que ela vive num `Modal`): o cabecalho
+  sempre puxa a folha nos dois sentidos e o corpo inteiro arrasta quando esta
+  recolhido. O `PanResponder` do JS perdia o toque para os botoes e para a
+  rolagem, o que deixava a folha reagindo so numa faixa estreita. Expandida, o
+  corpo rola e so puxa a folha para baixo quando a lista esta no topo. Abaixo do
+  tamanho recolhido a folha acompanha o dedo e, ao soltar, fecha descendo (o
+  inverso da entrada, com o fundo escurecido sumindo junto) ou volta para a
+  posicao recolhida.
 - **O texto e editado no editor nativo.** Todo trecho de texto e o proprio
   `EnrichedTextInput` do app, montado desde a abertura: o toque, o cursor, a
   selecao, o Enter e a digitacao sao os do Android. Nao ha previa no meio do

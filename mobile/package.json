@@ -17,6 +17,9 @@
   "jest": {
     "preset": "jest-expo",
     "maxWorkers": 1,
+    "setupFiles": [
+      "<rootDir>/node_modules/react-native-gesture-handler/jestSetup.js"
+    ],
     "testMatch": [
       "<rootDir>/src/**/__tests__/**/*.test.ts?(x)"
     ]

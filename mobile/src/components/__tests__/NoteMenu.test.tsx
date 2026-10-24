@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react-native';
 
 import { Press } from '../Press';
-import { NoteMenu, canStartSheetDrag, sheetReleaseAction } from '../NoteMenu';
+import { NoteMenu, sheetDragMode, sheetReleaseAction } from '../NoteMenu';
 
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
 
@@ -9,10 +9,9 @@ const typography = { family: 'system', size: 17, weight: 'regular' } as const;
 
 describe('NoteMenu', () => {
   it('deixa o deslize para baixo recolher a folha expandida no topo', () => {
-    expect(canStartSheetDrag({ dy: -30, dx: 0 }, false, true)).toBe(true);
-    expect(canStartSheetDrag({ dy: 30, dx: 0 }, true, true)).toBe(true);
-    expect(canStartSheetDrag({ dy: -30, dx: 0 }, true, true)).toBe(false);
-    expect(canStartSheetDrag({ dy: 30, dx: 0 }, true, false)).toBe(false);
+    expect(sheetDragMode(false, true)).toEqual({ enabled: true, bothDirections: true });
+    expect(sheetDragMode(true, true)).toEqual({ enabled: true, bothDirections: false });
+    expect(sheetDragMode(true, false)).toEqual({ enabled: false, bothDirections: false });
   });
 
   it('fecha com uma puxada para baixo, recolhe com uma curta', () => {
@@ -20,7 +19,15 @@ describe('NoteMenu', () => {
     expect(sheetReleaseAction(false, -40, 0)).toBe('expand');
     expect(sheetReleaseAction(true, 60, 0)).toBe('collapse');
     expect(sheetReleaseAction(true, 160, 0)).toBe('close');
-    expect(sheetReleaseAction(true, 10, -0.8)).toBe('expand');
+    expect(sheetReleaseAction(true, 10, -800)).toBe('expand');
+  });
+
+  it('nao fecha com um arrasto curto e lento para baixo', () => {
+    // Cerca de 1 cm, devagar: volta para a posicao recolhida.
+    expect(sheetReleaseAction(false, 30, 500)).toBe('collapse');
+    expect(sheetReleaseAction(false, 30, 900)).toBe('close');
+    expect(sheetReleaseAction(true, 30, -200)).toBe('expand');
+    expect(sheetReleaseAction(true, 30, 500)).toBe('collapse');
   });
 
   it('sobe recolhido e expande os detalhes pela acao de acessibilidade', () => {
