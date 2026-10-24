@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import { back, push } from '@/services/appNavigation';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState, useEffect } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -120,6 +120,7 @@ export default function StorageScreen() {
   const { recordings, freeSyncedAudio, freeAudioForNote } = useLibrary();
   const [report, setReport] = useState<StorageReport | null>(null);
   const [scanning, setScanning] = useState(true);
+  const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -138,7 +139,10 @@ export default function StorageScreen() {
         setError('Não foi possível ler o armazenamento do aparelho.');
       }
     } finally {
-      if (scanId === scanIdRef.current) setScanning(false);
+      if (scanId === scanIdRef.current) {
+        setScanning(false);
+        setLoaded(true);
+      }
     }
   }, [recordings]);
 
@@ -147,6 +151,17 @@ export default function StorageScreen() {
       void refresh();
     }, [refresh]),
   );
+
+  useEffect(() => {
+    if (loaded) return undefined;
+    // Teto para o esqueleto de carregamento: se a varredura demorar (ou falhar
+    // sem preencher o relatorio), a tela mostra o erro em vez de girar para
+    // sempre. O relatorio continua chegando quando terminar.
+    const timer = setTimeout(() => {
+      setLoaded(true);
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [loaded]);
 
   const notes = useMemo(() => report?.notes ?? [], [report]);
   const visibleNotes = useMemo(
@@ -274,7 +289,7 @@ export default function StorageScreen() {
           />
         }
       >
-        {!report && scanning ? (
+        {!report && !loaded ? (
           <View style={styles.center}>
             <ActivityIndicator size="large" color={colors.textSecondary} />
           </View>
