@@ -197,6 +197,56 @@ isso:
   sem configuracao. O ripple nativo do Android fica so para `borderless`,
   porque a mascara nativa e sempre retangular. No iOS, onde nao ha ripple, o
   alvo escurece enquanto esta pressionado.
+- **Audio com onda e seek por trecho.** O audio da nota mostra uma onda
+  desenhada por `AudioWaveform`: a parte tocada usa a cor de destaque e o resto
+  fica no tom neutro; tocar ou arrastar em qualquer ponto pula para ali (parado,
+  ja toca dali). A posicao do toque sai do `pageX` menos a origem medida da
+  onda, e nao do `locationX`: o evento pode chegar com coordenadas relativas a
+  uma barra filha, o que jogava o seek para o comeco. A altura das barras vem de
+  `core/waveform`, que combina a densidade de fala dos segmentos da transcricao
+  com um ruido estavel por referencia do audio (o app nao decodifica PCM, entao
+  a onda nao vem do sinal) - a mesma referencia gera sempre a mesma onda. A
+  onda tem 88 barras (o dobro das 48 originais) e 48 dp de altura: a fala
+  mantem o relevo das silabas (barras altas com valas curtas) e a pausa fica
+  no traco minimo de 2,5 dp, o mesmo contraste da waveform da gravacao. A
+  minutagem de cada trecho, na transcricao completa, e um alvo de toque. Todo
+  seek passa pelo `playAt` do player unico: se a fonte ja e a atual o player so
+  pula; se mudou, o `replace` aponta a fonte e o seek e pedido **depois** de ela
+  ficar pronta (poll do `currentStatus`), nunca no meio do buffering. O motivo
+  real do "sempre reinicia" era o formato: o AAC **ADTS** nao tem tabela de
+  posicoes, o ExoPlayer o trata como fluxo nao buscavel e manda qualquer seek
+  para o inicio. O patch em `mobile/patches/expo-audio@57.0.5.patch` liga a
+  busca por taxa constante do ADTS (`AdtsExtractor`), que e exata para o audio
+  CBR gravado pelo app; depois disso o seek cai no trecho pedido, inclusive num
+  audio que ja terminou. O patch tambem remove o `publication` do
+  `expo-module.config.json`: sem isso o Expo consome o AAR pre-construido do
+  modulo e o Kotlin patcheado nem chega a ser compilado. Buscar antes de a fonte
+  ficar pronta tambem nao resolvia: o ADTS monta a tabela de posicoes durante a
+  preparacao, e um seek pedido no meio do buffering era aceito e descartado na
+  abertura (a posicao voltava a 0). A fonte so conta como pronta pelo status
+  (`currentStatus.isLoaded`): a propriedade `isLoaded` e falsa quando o audio
+  **terminou**.
+- **Onda da gravacao em duas camadas.** A tela de gravacao le o medidor do
+  microfone (dB, ~28 amostras por segundo) e entrega o nivel numa fila
+  compartilhada. A onda inteira e **um unico `Path` SVG**, redesenhado so quando
+  uma amostra entra (~17 vezes por segundo); o **movimento** e um `translateX`
+  do container, recalculado por quadro na thread de UI (Reanimated, 60 fps). Uma
+  view por barra custava dezenas de estilos por amostra e refazer o path a cada
+  quadro custava uma atualizacao grande por quadro; separados, o quadro so mexe
+  no translado. Nao ha `setState` por amostra: o relogio da tela fica num
+  componente proprio e a tela de gravacao nao re-renderiza a cada meio segundo.
+  O dB nao vira altura por uma escala fixa: cada aparelho mede em um nivel
+  diferente (ha telefone em que a fala fica perto de -20 e outro em que mal
+  passa de -45), e uma escala fixa deixava a fala do segundo com um terco da
+  altura. A onda observa a propria gravacao: o piso e o ruido de fundo (desce na
+  hora, sobe 0,5 dB/s) e o topo e o pico da fala (sobe na hora, cai 3 dB/s), com
+  faixa entre 10 e 36 dB. Assim a fala chega ao topo em qualquer aparelho, o
+  silencio fica no traco minimo e um ruido constante nao vira barra. O envelope
+  de ataque imediato e queda de 36 dB/s suaviza a cauda entre as amostras. A fita
+  desenha uma barra a mais que a area visivel; quando o deslocamento fecha uma
+  barra, a amostra entra na ponta e a fita volta a zero no mesmo quadro, sem
+  salto. O passo fica em `components/liveWaveAnimation` (`stepLiveWave` e
+  `wavePath`), testado sem Reanimated.
 - **O texto e editado no editor nativo.** Todo trecho de texto e o proprio
   `EnrichedTextInput` do app, montado desde a abertura: o toque, o cursor, a
   selecao, o Enter e a digitacao sao os do Android. Nao ha previa no meio do

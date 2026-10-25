@@ -79,10 +79,14 @@ texto, guarda local, enfileira e envia para o servidor self-hosted.
   **compartilhar** e a ficha de propriedades (criada em, origem, palavras,
   caracteres, tamanho e status), como no dashboard. Nota so de texto e enviada
   como conteudo textual; com audio, cada gravacao sobe como anexo e o texto vai
-  junto. Com audio transcrito, o card mostra a **previa da transcricao** e tocar
-  abre a transcricao completa no mesmo ponto do audio. Ao sair, a nota e enviada
-  (rascunho com conteudo) ou entra na fila de sync (edicao de nota ja enviada),
-  sem depender de rede na hora.
+  junto. Com audio transcrito, o card mostra a **previa da transcricao** (tocar
+  numa linha leva o audio para aquele trecho) e a onda do audio no lugar da
+  barra: 88 barras altas, com a fala perto do topo e a pausa no traco minimo, a
+  parte tocada na cor de destaque e tocar ou arrastar em qualquer ponto pula
+  para ali (parado, ja toca dali). "Ver tudo" abre a transcricao completa, onde
+  cada minutagem tambem e um alvo de toque. Ao sair, a nota e
+  enviada (rascunho com conteudo) ou entra na fila de sync (edicao de nota ja
+  enviada), sem depender de rede na hora.
 - **Imagens e audios**: a foto entra **no cursor**, inclusive no meio de um
   paragrafo, em metade da largura por padrao; a gravacao entra como card de audio
   no mesmo lugar. O texto antes e depois continua onde estava, e toda midia
@@ -98,8 +102,21 @@ texto, guarda local, enfileira e envia para o servidor self-hosted.
   salvar.
 - Grava em **AAC ADTS** (48 kHz mono ~128 kbps), em **segmentos de 60 s**, com
   foreground service do `expo-audio` (continua gravando com a tela bloqueada). A tela de
-  gravacao tem **pausar/retomar** e uma waveform **ao vivo a 60 fps** (desenhada na thread
-  de UI, sem travar o JS).
+  gravacao tem **pausar/retomar** e uma waveform **ao vivo**: o nivel do microfone
+  (dB) e amostrado ~28 vezes por segundo, o desenho e um unico `Path` SVG refeito
+  a cada amostra e o movimento anda a 60 fps na thread de UI (Reanimated
+  `translateX`), sem render da tela por amostra. Silencio fica no traco minimo e
+  fala sobe ate o topo da area em qualquer aparelho: a altura usa a faixa que a
+  propria gravacao observa (ruido de fundo no piso, pico da fala no topo), sem
+  barras vazias ou aleatorias.
+- O AAC ADTS nao tem tabela de posicoes: o patch em
+  `patches/expo-audio@57.0.5.patch` liga a busca por taxa constante do
+  `AdtsExtractor`, e e o que faz a minutagem pular para o trecho pedido em vez
+  de reiniciar o audio. O mesmo patch remove o `publication` do
+  `expo-module.config.json`, senao o Expo usa o AAR pre-construido e o Kotlin
+  patcheado nao e compilado. O seek so e pedido depois de a fonte carregar
+  (poll do status): buscar durante o buffering fazia a posicao voltar a 0. Ele e
+  codigo nativo: exige um novo development build.
 - Concatena os segmentos e enfileira automaticamente ao parar.
 - Envia por upload resumivel e **idempotente** (`client_key` por gravacao).
 - **Importa audios compartilhados** por outros apps (share sheet do Android): ate 50 por

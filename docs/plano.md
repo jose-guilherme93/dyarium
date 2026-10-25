@@ -124,20 +124,31 @@ Superficie Android em Expo (development build). O nucleo puro fica em `mobile/sr
   na fila e e enviada como conteudo
   (`POST /api/v1/entries` + corpo markdown).
 - Audio na nota, em um player so: o card do corpo tem um unico play/pause, tempo
-  e barra de progresso; tocar ou arrastar a barra pula para o trecho, e o seek e
-  aplicado quando a fonte termina de carregar (AAC informa a duracao real depois
-  do metadado). Abaixo do audio fica a previa da transcricao em cinco linhas,
-  que acompanha a fala; tocar numa linha toca dali, o toque longo abre a
-  transcricao completa editando aquele trecho, e arrastar a janela pausa o
-  acompanhamento por tres segundos. A transcricao em andamento aparece no
-  proprio audio, com progresso, tanto a local quanto a pedida ao servidor. Nao
-  existe player duplicado no topo nem segundo botao de play no card.
+  e onda; tocar ou arrastar a onda pula para o trecho. A onda tem 88 barras e
+  48 dp de altura, com a fala perto do topo e a pausa no traco minimo, o mesmo
+  contraste da waveform da gravacao. O seek e aplicado quando a fonte fica
+  pronta: o ADTS monta a tabela de posicoes durante a preparacao, e
+  buscar antes disso fazia a posicao voltar ao zero. O gravador usa AAC ADTS; o
+  patch do `expo-audio` liga a busca por taxa constante, porque o ADTS nao tem
+  tabela de posicoes e, sem isso, todo seek cai no inicio do arquivo. Abaixo do
+  audio fica a previa da transcricao em cinco linhas, que acompanha a fala;
+  tocar numa linha toca dali, o toque longo abre a transcricao completa editando
+  aquele trecho, e arrastar a janela pausa o acompanhamento por tres segundos. A
+  transcricao em andamento aparece no proprio audio, com progresso, tanto a
+  local quanto a pedida ao servidor. Nao existe player duplicado no topo nem
+  segundo botao de play no card.
 - Gravacao comeca no toque: o microfone abre no mesmo gesto e a tela de gravacao
   entra na frente; criar o registro no SQLite e resolver a posicao do cursor
-  acontecem depois, sem segurar o audio. A waveform e uma fila de 40 barras
-  comuns movida pelo medidor (4 Hz), sem animacao por frame, e a tela mostra a
-  hora, o dia da semana e a data por extenso. A barra de acoes acima do teclado
-  rola na horizontal e leva a gravacao de audio, a foto, o link e a formatacao.
+  acontecem depois, sem segurar o audio. A waveform e uma fita de 88 barras
+  alimentada pelo medidor em dB (~28 amostras/s), com o desenho em um unico
+  `Path` SVG refeito a cada amostra e o movimento por `translateX` a 60 fps na
+  thread de UI (sem render do JS); a cada barra completada a amostra entra na
+  ponta. A altura sai da faixa que a propria gravacao observa (ruido de fundo
+  no piso, pico da fala no topo), entao a fala chega ao topo mesmo em aparelho
+  que mede baixo; o silencio fica no traco minimo.
+  A tela mostra a hora, o dia da semana e a data por extenso. A barra de acoes
+  acima do teclado rola na horizontal e leva a gravacao de audio, a foto, o
+  link e a formatacao.
 - Home compacta: paginas recentes por padrao, sem alternador de modo nem barra
   de busca fixa. O caderno vira um icone no topo que abre uma folha com as
   paginas recentes, os cadernos e o atalho para criar ou gerenciar. A busca so
