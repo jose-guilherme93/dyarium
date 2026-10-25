@@ -4,21 +4,23 @@ import { useLocalSearchParams } from 'expo-router';
 import { back } from '@/services/appNavigation';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, Text, TextInput, View } from 'react-native';
+import { AudioWaveform } from '@/components/AudioWaveform';
 import { Press } from '@/components/Press';
 
 import { DyariumApi, type FetchLike, type TranscriptSegment } from '@/core/api';
 import { formatDuration } from '@/core/format';
+import { audioRefFromPath } from '@/core/noteAudio';
 import { breakSentences } from '@/core/richText';
 import { activeSegmentIndex } from '@/core/transcript';
 import { useRenderCount } from '@/dev/perf';
+import { resolveAudioSource } from '@/services/attachments';
 import { releaseAudioFocus } from '@/services/audioFocus';
 import { getRecording, upsertRecording } from '@/services/db';
-import { playPlayer } from '@/services/playback';
 import { loadServerConfig } from '@/services/secure';
 import { pushTranscript } from '@/services/transcriptSync';
 import { emitRecording } from '@/services/uploaderLoop';
 import { useLibrary } from '@/state/LibraryContext';
-import { useLoadPlayback, usePlaybackSource } from '@/state/PlaybackContext';
+import { usePlayAt, usePlayback } from '@/state/PlaybackContext';
 import { useTranscriptionProgress } from '@/state/useTranscriptionProgress';
 import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
 import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
@@ -61,7 +63,17 @@ const SegmentRow = memo(function SegmentRow({
   const text = useMemo(() => breakSentences(segment.text), [segment.text]);
   return (
     <View style={[styles.segment, active && styles.segmentActive]}>
-      <Text style={styles.timestamp}>{formatDuration(segment.start_ms)}</Text>
+      <Press
+        style={styles.timestamp}
+        onPress={() => onSeek(index)}
+        hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel={`Ouvir a partir de ${formatDuration(segment.start_ms)}`}
+      >
+        <Text style={[styles.timestampText, active && styles.timestampActive]}>
+          {formatDuration(segment.start_ms)}
+        </Text>
+      </Press>
       {editing ? (
         <View style={styles.editWrap}>
           <TextInput
@@ -185,11 +197,35 @@ export default function TranscriptScreen() {
 
   // Mesmo player unico da nota: ao abrir a transcricao o audio continua
   // exatamente de onde estava (sem criar outro player e sem reiniciar).
-  const player = usePlaybackSource(note?.filePath, { immediate: true });
-  const load = useLoadPlayback();
+  const player = usePlayback();
+  const playAt = usePlayAt();
   const status = useAudioPlayerStatus(player);
   const currentMs = (status.currentTime || 0) * 1000;
   useRenderCount('Transcript');
+
+  // Referencia do audio da nota: o mesmo arquivo (local ou anexo) que a nota
+  // toca. Resolver aqui evita apontar o player para uma fonte diferente e
+  // recomecar o audio do zero ao abrir esta tela.
+  const audioRef = useMemo(() => {
+    if (!note) return undefined;
+    return (
+      audioRefFromPath(note.filePath) ??
+      (note.serverAttachmentId ? `attachment:${note.serverAttachmentId}` : undefined)
+    );
+  }, [note]);
+  const uriRef = useRef<string | null>(null);
+  const resolveUri = useCallback(async () => {
+    if (uriRef.current) return uriRef.current;
+    if (!note || !audioRef) return null;
+    const uri = await resolveAudioSource(note.id, audioRef, note.attachments ?? {});
+    if (uri) uriRef.current = uri;
+    return uri;
+  }, [audioRef, note]);
+
+  // A midia da nota pode ganhar um anexo novo (upload): descarta o uri antigo.
+  useEffect(() => {
+    uriRef.current = null;
+  }, [audioRef]);
 
   useEffect(() => {
     // Segmentos em cache local: nao refaz o fetch ao abrir.
@@ -241,8 +277,10 @@ export default function TranscriptScreen() {
       player.pause();
       return;
     }
-    load();
-    playPlayer(player);
+    const at = status.currentTime || 0;
+    void resolveUri().then((uri) => {
+      if (uri) playAt(uri, at);
+    });
   };
 
   useEffect(() => () => releaseAudioFocus(player), [player]);
@@ -251,11 +289,13 @@ export default function TranscriptScreen() {
   // trecho muda (ativo/edicao), nao a cada atualizacao de tempo do player.
   const handleSeek = useCallback(
     (index: number) => {
-      load();
       const seg = segments[index];
-      if (seg) void player.seekTo(seg.start_ms / 1000);
+      if (!seg) return;
+      void resolveUri().then((uri) => {
+        if (uri) playAt(uri, seg.start_ms / 1000);
+      });
     },
-    [load, player, segments],
+    [playAt, resolveUri, segments],
   );
   const handleStartEdit = useCallback(
     (index: number) => {
@@ -307,20 +347,37 @@ export default function TranscriptScreen() {
         <View style={styles.spacer} />
       </View>
 
-      {note?.filePath ? (
+      {audioRef ? (
         <View style={styles.player}>
-          <Press style={styles.play} onPress={toggle} accessibilityLabel={status.playing ? 'Pausar' : 'Tocar'}>
-            <Ionicons name={status.playing ? 'pause' : 'play'} size={20} color={colors.text} />
-          </Press>
-          <Text style={styles.playerTime}>
-            {formatDuration(currentMs)} / {formatDuration((status.duration || 0) * 1000)}
-          </Text>
-          <View style={styles.playerSpacer} />
-          {transcribing ? (
-            <Text style={styles.progress}>
-              Transcrevendo{transcriptionPercent > 0 ? ` ${Math.round(transcriptionPercent)}%` : '...'}
+          <View style={styles.playerRow}>
+            <Press
+              style={styles.play}
+              onPress={toggle}
+              accessibilityLabel={status.playing ? 'Pausar' : 'Tocar'}
+            >
+              <Ionicons name={status.playing ? 'pause' : 'play'} size={20} color={colors.text} />
+            </Press>
+            <Text style={styles.playerTime}>
+              {formatDuration(currentMs)} / {formatDuration((status.duration || 0) * 1000)}
             </Text>
-          ) : null}
+            <View style={styles.playerSpacer} />
+            {transcribing ? (
+              <Text style={styles.progress}>
+                Transcrevendo{transcriptionPercent > 0 ? ` ${Math.round(transcriptionPercent)}%` : '...'}
+              </Text>
+            ) : null}
+          </View>
+          <AudioWaveform
+            seed={note?.id ?? audioRef}
+            current={status.currentTime || 0}
+            duration={status.duration || (note?.durationMs ? note.durationMs / 1000 : 0)}
+            segments={segments}
+            onSeek={(seconds) => {
+              void resolveUri().then((uri) => {
+                if (uri) playAt(uri, seconds);
+              });
+            }}
+          />
         </View>
       ) : null}
 
@@ -370,11 +427,14 @@ const baseStyles = defineStyles({
   title: { color: baseColors.text, fontSize: fontSize.lg, fontWeight: '700' },
   spacer: { width: 24 },
   player: {
+    gap: spacing.xs,
+    paddingHorizontal: spacing.xl,
+    paddingBottom: spacing.md,
+  },
+  playerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
-    paddingHorizontal: spacing.xl,
-    paddingBottom: spacing.md,
   },
   play: {
     width: 40,
@@ -396,7 +456,13 @@ const baseStyles = defineStyles({
     borderRadius: 10,
   },
   segmentActive: { backgroundColor: baseColors.accentSoft },
-  timestamp: { color: baseColors.textTertiary, fontSize: fontSize.xs, width: 44, paddingTop: 3, fontVariant: ['tabular-nums'] },
+  timestamp: { width: 44, paddingTop: 3 },
+  timestampText: {
+    color: baseColors.textTertiary,
+    fontSize: fontSize.xs,
+    fontVariant: ['tabular-nums'],
+  },
+  timestampActive: { color: baseColors.accentStrong },
   segmentBody: { flex: 1 },
   segmentText: { color: baseColors.textSecondary, fontSize: fontSize.md, lineHeight: 22 },
   segmentTextActive: { color: baseColors.text },

@@ -3,12 +3,13 @@ import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { NoteAudioCard } from '@/components/NoteAudioCard';
 import type { NoteAudioNode } from '@/core/noteDocument';
 import type { TranscriptSegment } from '@/core/types';
-import { playPlayer } from '@/services/playback';
 
 const player = {
   currentTime: 10,
   duration: 120,
+  currentStatus: { isLoaded: true },
   playing: false,
+  isLoaded: true,
   pause: jest.fn(),
   play: jest.fn(),
   seekTo: jest.fn(() => Promise.resolve()),
@@ -21,8 +22,9 @@ jest.mock('expo-audio', () => ({
   useAudioPlayerStatus: () => mockStatus,
 }));
 
-jest.mock('@/services/playback', () => ({
-  playPlayer: jest.fn(),
+jest.mock('@/services/audioFocus', () => ({
+  requestAudioFocus: jest.fn(),
+  releaseAudioFocus: jest.fn(),
 }));
 
 const node: NoteAudioNode = {
@@ -69,7 +71,19 @@ describe('NoteAudioCard', () => {
     });
 
     expect(player.seekTo).toHaveBeenCalledWith(60);
-    expect(playPlayer).toHaveBeenCalledWith(player);
+    expect(player.play).toHaveBeenCalled();
+  });
+
+  it('parado, a onda toca o audio a partir do ponto tocado', () => {
+    const onPlayFrom = jest.fn();
+    render(<NoteAudioCard node={node} onPlayFrom={onPlayFrom} segments={segments} />);
+
+    const wave = screen.getByLabelText('Ouvir a partir de');
+    fireEvent(wave, 'layout', { nativeEvent: { layout: { width: 240, height: 34 } } });
+    fireEvent(wave, 'responderGrant', { nativeEvent: { locationX: 60 } });
+    fireEvent(wave, 'responderRelease', { nativeEvent: { locationX: 60 } });
+
+    expect(onPlayFrom).toHaveBeenCalledWith(30_000);
   });
 
   it('a previa da transcricao abre a transcricao completa ao toque', () => {

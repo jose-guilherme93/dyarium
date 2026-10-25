@@ -3,13 +3,10 @@ import { act, render } from '@testing-library/react-native';
 import { PlaybackProvider, usePauseOnUnmount } from '@/state/PlaybackContext';
 
 const mockPause = jest.fn();
-const mockRelease = jest.fn();
 
 jest.mock('expo-audio', () => ({
   createAudioPlayer: () => ({
     pause: (...args: unknown[]) => mockPause(...args),
-    release: (...args: unknown[]) => mockRelease(...args),
-    replace: jest.fn(),
   }),
 }));
 
@@ -22,7 +19,6 @@ describe('pausa do player ao sair da tela', () => {
   beforeEach(() => {
     jest.useFakeTimers();
     mockPause.mockClear();
-    mockRelease.mockClear();
   });
 
   afterEach(() => {

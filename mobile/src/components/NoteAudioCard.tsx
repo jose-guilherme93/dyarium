@@ -12,6 +12,7 @@ import type { AudioPlayer } from 'expo-audio';
 import { ActivityIndicator, Text, View } from 'react-native';
 
 import { AudioTransport } from '@/components/AudioTransport';
+import { AudioWaveform } from '@/components/AudioWaveform';
 import { Press } from '@/components/Press';
 import { SyncedTranscript } from '@/components/SyncedTranscript';
 import { formatDuration } from '@/core/format';
@@ -115,13 +116,27 @@ export function NoteAudioCard({
       {active && player ? (
         <AudioTransport
           player={player}
+          seed={node.ref}
           durationMs={node.durationMs}
           startMs={startMs}
           segments={segments}
           onOpenTranscript={onOpenTranscript}
           onEditTranscript={onEditTranscript}
         />
-      ) : hasSegments ? (
+      ) : (
+        // Parado, a onda continua ali: tocar nela ja toca o audio dali, sem
+        // precisar abrir a transcricao so para escolher um ponto.
+        <AudioWaveform
+          seed={node.ref}
+          current={0}
+          duration={node.durationMs / 1000}
+          segments={segments}
+          label="Ouvir a partir de"
+          onSeek={(seconds) => onPlayFrom?.(Math.round(seconds * 1000))}
+        />
+      )}
+
+      {active && player ? null : hasSegments ? (
         <SyncedTranscript
           segments={segments ?? []}
           onSeek={onPlayFrom}

@@ -159,9 +159,7 @@ const mockPlayer = {
 
 jest.mock('@/state/PlaybackContext', () => ({
   usePlayback: () => mockPlayer,
-  usePlaybackSource: () => mockPlayer,
-  usePlaySource: () => jest.fn(),
-  useLoadPlayback: () => jest.fn(),
+  usePlayAt: () => jest.fn(),
   usePauseOnUnmount: () => undefined,
 }));
 

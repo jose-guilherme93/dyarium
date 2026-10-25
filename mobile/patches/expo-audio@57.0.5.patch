@@ -1,0 +1,47 @@
+diff --git a/android/src/main/java/expo/modules/audio/AudioModule.kt b/android/src/main/java/expo/modules/audio/AudioModule.kt
+index 992239ba7631ce0c97c0b41c5fbf61cc842386fe..525c703f382257207d46df47967eacfbf97ef4d3 100644
+--- a/android/src/main/java/expo/modules/audio/AudioModule.kt
++++ b/android/src/main/java/expo/modules/audio/AudioModule.kt
+@@ -23,6 +23,8 @@ import androidx.media3.common.util.Util
+ import androidx.media3.datasource.DataSource
+ import androidx.media3.datasource.DefaultDataSource
+ import androidx.media3.datasource.okhttp.OkHttpDataSource
++import androidx.media3.extractor.DefaultExtractorsFactory
++import androidx.media3.extractor.ts.AdtsExtractor
+ import androidx.media3.exoplayer.dash.DashMediaSource
+ import androidx.media3.exoplayer.hls.HlsMediaSource
+ import androidx.media3.exoplayer.smoothstreaming.SsMediaSource
+@@ -931,7 +933,14 @@ class AudioModule : Module() {
+       CONTENT_TYPE_SS -> SsMediaSource.Factory(factory)
+       CONTENT_TYPE_DASH -> DashMediaSource.Factory(factory)
+       CONTENT_TYPE_HLS -> HlsMediaSource.Factory(factory)
+-      CONTENT_TYPE_OTHER -> ProgressiveMediaSource.Factory(factory)
++      // O AAC ADTS gravado pelo app nao tem tabela de posicoes; sem a busca
++      // por taxa constante o ExoPlayer trata o arquivo como nao buscavel e
++      // qualquer seek cai no inicio (a minutagem "reiniciava" o audio).
++      CONTENT_TYPE_OTHER -> ProgressiveMediaSource.Factory(
++        factory,
++        DefaultExtractorsFactory()
++          .setAdtsExtractorFlags(AdtsExtractor.FLAG_ENABLE_CONSTANT_BITRATE_SEEKING)
++      )
+       else -> throw IllegalStateException("Unsupported type: $type")
+     }.createMediaSource(mediaItem)
+   }
+diff --git a/expo-module.config.json b/expo-module.config.json
+index 0e90deb3fedae8f08474e550164ada1dc0b7b084..9a131dd948d2eb5adf3cf9b759829a0e8fed15a1 100644
+--- a/expo-module.config.json
++++ b/expo-module.config.json
+@@ -4,12 +4,6 @@
+     "modules": ["AudioModule"]
+   },
+   "android": {
+-    "modules": ["expo.modules.audio.AudioModule"],
+-    "publication": {
+-      "groupId": "expo.modules.audio",
+-      "artifactId": "expo.modules.audio",
+-      "version": "57.0.5",
+-      "repository": "local-maven-repo"
+-    }
++    "modules": ["expo.modules.audio.AudioModule"]
+   }
+ }

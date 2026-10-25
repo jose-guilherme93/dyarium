@@ -11,16 +11,20 @@ import {
 } from 'react';
 
 import { bumpRender } from '@/dev/perf';
+import { seekPlayer } from '@/services/playback';
 
 interface PlaybackValue {
   /** Player unico do app (nota e transcricao usam o mesmo audio). */
   player: AudioPlayer;
-  /** Fonte desejada (a nota aberta). */
-  desiredRef: { current: string | null };
-  /** Fonte que ja foi carregada no player. */
-  loadedRef: { current: string | null };
-  /** Carrega a fonte desejada agora (se ainda nao estiver carregada). */
-  load(): void;
+  /**
+   * Aponta a fonte (so quando muda) e toca a partir de `seconds`.
+   *
+   * A troca de fonte e assincrona: `replace` a agenda e o `seekPlayer` espera
+   * o status carregado antes de pedir a posicao. O AAC ADTS so tem o seek map
+   * depois da preparacao, e um seek pedido antes disso era aceito e descartado
+   * (a posicao voltava a 0). Quando a fonte ja e a atual, o seek e imediato.
+   */
+  playAt(uri: string, seconds: number): void;
 }
 
 const PlaybackContext = createContext<PlaybackValue | null>(null);
@@ -34,22 +38,28 @@ const PLAYER_OPTIONS = { updateInterval: 250 };
  */
 export function PlaybackProvider({ children }: { children: ReactNode }) {
   const [player] = useState(() => createAudioPlayer(undefined, PLAYER_OPTIONS));
-  const desiredRef = useRef<string | null>(null);
+  /** Fonte que ja foi apontada no player. */
   const loadedRef = useRef<string | null>(null);
 
-  const load = useCallback(() => {
-    const uri = desiredRef.current;
-    if (!uri || loadedRef.current === uri) return;
-    loadedRef.current = uri;
-    player.replace(uri);
-  }, [player]);
-
-  useEffect(() => () => player.release(), [player]);
-
-  const value = useMemo<PlaybackValue>(
-    () => ({ player, desiredRef, loadedRef, load }),
-    [player, load],
+  const playAt = useCallback(
+    (uri: string, seconds: number) => {
+      if (loadedRef.current !== uri) {
+        // So troca a fonte quando ela muda: recarregar o mesmo audio o jogaria
+        // de volta ao comeco.
+        loadedRef.current = uri;
+        player.replace(uri);
+      }
+      // `seekPlayer` espera a fonte ficar pronta antes de pular: buscar durante
+      // o buffering fazia a posicao ser descartada quando o ADTS terminava de
+      // abrir. O `replace` acima ja foi agendado antes.
+      void seekPlayer(player, Math.max(0, Number.isFinite(seconds) ? seconds : 0), {
+        autoplay: true,
+      }).catch(() => undefined);
+    },
+    [player],
   );
+
+  const value = useMemo<PlaybackValue>(() => ({ player, playAt }), [player, playAt]);
 
   useEffect(() => {
     bumpRender('playback.value');
@@ -68,49 +78,9 @@ export function usePlayback(): AudioPlayer {
   return usePlaybackValue().player;
 }
 
-/** Carrega a fonte desejada agora (usar antes de tocar/seek). */
-export function useLoadPlayback(): () => void {
-  return usePlaybackValue().load;
-}
-
-/**
- * Aponta o player unico para `uri` e carrega na hora. Usado quando a pessoa
- * escolhe um audio (tocar ou pular para um trecho); abrir a nota continua sem
- * decodificar audio.
- */
-export function usePlaySource(): (uri: string) => void {
-  const { desiredRef, load } = usePlaybackValue();
-  return useCallback(
-    (uri: string) => {
-      desiredRef.current = uri;
-      load();
-    },
-    [desiredRef, load],
-  );
-}
-
-interface PlaybackSourceOptions {
-  /** Carrega sem esperar (a tela de transcricao precisa do audio pronto). */
-  immediate?: boolean;
-}
-
-/**
- * Aponta o player unico para `uri` e devolve ele. Por padrao a fonte NAO e
- * carregada: abrir uma nota nao pode decodificar audio. Quem precisa do audio
- * pronto (tela de transcricao) passa `immediate`; a nota carrega no play/seek.
- */
-export function usePlaybackSource(uri: string | undefined, options?: PlaybackSourceOptions): AudioPlayer {
-  const { player, desiredRef, load } = usePlaybackValue();
-  const immediate = options?.immediate ?? false;
-
-  useEffect(() => {
-    if (!uri) return undefined;
-    desiredRef.current = uri;
-    if (immediate) load();
-    return undefined;
-  }, [uri, desiredRef, load, immediate]);
-
-  return player;
+/** Aponta o audio do player e toca a partir de um instante (segundos). */
+export function usePlayAt(): (uri: string, seconds: number) => void {
+  return usePlaybackValue().playAt;
 }
 
 /**
@@ -121,7 +91,7 @@ export function usePlaybackSource(uri: string | undefined, options?: PlaybackSou
  * meio do desmonte, ela pode cair no dispatch de eventos do Fabric na thread
  * principal, e o `runOnMain` do modulo espera essa mesma thread: o app fica
  * "nao responde" por 5 s (ANR) ao sair da nota. Fora do desmonte, a chamada
- * roda na thread do JS e o `runOnMain` agenda na principal, que esta livre.
+ * roda na thread do JS e o `runOnMain` agenda a principal, que esta livre.
  */
 export function usePauseOnUnmount(): void {
   const player = usePlayback();

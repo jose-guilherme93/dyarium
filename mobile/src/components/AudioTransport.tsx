@@ -1,12 +1,13 @@
 /**
- * Transporte do audio que esta tocando: play/pause, tempo, barra e a previa da
+ * Transporte do audio que esta tocando: play/pause, tempo, onda e a previa da
  * transcricao.
  *
  * Um unico player (o do app) alimenta este componente. A posicao mostrada
- * acompanha o dedo e segura o alvo por um instante depois do seek, para a barra
- * nao voltar enquanto o player nao alcanca o ponto pedido. O seek so e enviado
- * quando a fonte terminou de carregar (`isLoaded`); antes disso ele fica
- * pendente e e aplicado na hora em que carregar.
+ * acompanha o dedo e segura o alvo por um instante depois do seek, para a onda
+ * nao voltar enquanto o player nao alcanca o ponto pedido. O seek entra direto
+ * no player: quando a fonte acabou de ser apontada, a troca e o seek ficam na
+ * mesma fila da thread principal, entao tocar num trecho logo depois de abrir o
+ * audio nao o joga de volta ao comeco.
  */
 
 import { Ionicons } from '@expo/vector-icons';
@@ -14,23 +15,25 @@ import { useAudioPlayerStatus, type AudioPlayer } from 'expo-audio';
 import { useEffect, useRef, useState } from 'react';
 import { Text, View } from 'react-native';
 
-import { AudioSeekBar } from '@/components/AudioSeekBar';
+import { AudioWaveform } from '@/components/AudioWaveform';
 import { Press } from '@/components/Press';
 import { SyncedTranscript } from '@/components/SyncedTranscript';
 import { formatDuration } from '@/core/format';
 import type { TranscriptSegment } from '@/core/types';
-import { playPlayer } from '@/services/playback';
+import { playPlayer, seekPlayer } from '@/services/playback';
 import { baseColors, spacing } from '@/theme/tokens';
 import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
 import { defineStyles } from '@/theme/themedStyles';
 
-/** Quanto tempo o alvo do seek fica na barra esperando o player alcancar. */
+/** Quanto tempo o alvo do seek fica na onda esperando o player alcancar. */
 const HOLD_MS = 1200;
 /** Distancia (s) a partir da qual consideramos que o player chegou ao alvo. */
 const REACHED = 0.6;
 
 interface AudioTransportProps {
   player: AudioPlayer;
+  /** Semente da onda: a referencia do audio (mesma onda em qualquer tela). */
+  seed: string;
   /** Duracao conhecida do audio, usada antes de o player carregar. */
   durationMs: number;
   /** Posicao inicial (quando o toque veio de um trecho da transcricao). */
@@ -42,6 +45,7 @@ interface AudioTransportProps {
 
 export function AudioTransport({
   player,
+  seed,
   durationMs,
   startMs,
   segments,
@@ -53,14 +57,10 @@ export function AudioTransport({
 
   const status = useAudioPlayerStatus(player);
   const [scrub, setScrub] = useState<number | null>(null);
-  /** Alvo do ultimo seek: a barra mostra esse ponto enquanto o player nao
+  /** Alvo do ultimo seek: a onda mostra esse ponto enquanto o player nao
    * reporta a posicao nova. O timer solta o alvo depois de HOLD_MS. */
   const [hold, setHold] = useState<number | null>(startMs != null ? startMs / 1000 : null);
   const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** Seek que ainda espera a fonte carregar (segundos). */
-  const pendingSeek = useRef<number | null>(startMs != null ? startMs / 1000 : null);
-  /** Depois do seek pendente, comecar a tocar? */
-  const playAfterSeek = useRef(startMs != null);
 
   useEffect(
     () => () => {
@@ -69,48 +69,19 @@ export function AudioTransport({
     [],
   );
 
-  // Seek pedido antes da fonte carregar: aplica quando o player avisa que esta
-  // pronto. A barra ja mostra a duracao do metadado, entao esperar pela
-  // duracao real deixava o toque sem efeito em AAC.
-  useEffect(() => {
-    if (pendingSeek.current === null || !status.isLoaded) return;
-    const target = pendingSeek.current;
-    pendingSeek.current = null;
-    // O alvo entra na barra no mesmo instante em que o seek e enviado.
-    setHold(target);
-    if (holdTimer.current) clearTimeout(holdTimer.current);
-    holdTimer.current = setTimeout(() => setHold(null), HOLD_MS);
-    void player
-      .seekTo(target)
-      .then(() => {
-        if (playAfterSeek.current) {
-          playAfterSeek.current = false;
-          playPlayer(player);
-        }
-      })
-      .catch(() => undefined);
-  }, [player, status.isLoaded]);
-
   const current = status.currentTime || 0;
   const held = hold !== null && Math.abs(current - hold) > REACHED ? hold : null;
   const shown = scrub ?? held ?? current;
 
-  const seek = (seconds: number, autoplay = false) => {
+  const holdAt = (seconds: number) => {
     setHold(seconds);
     if (holdTimer.current) clearTimeout(holdTimer.current);
     holdTimer.current = setTimeout(() => setHold(null), HOLD_MS);
-    if (status.isLoaded) {
-      playAfterSeek.current = false;
-      void player
-        .seekTo(seconds)
-        .then(() => {
-          if (autoplay) playPlayer(player);
-        })
-        .catch(() => undefined);
-    } else {
-      playAfterSeek.current = autoplay;
-      pendingSeek.current = seconds;
-    }
+  };
+
+  const seek = (seconds: number, autoplay = false) => {
+    holdAt(seconds);
+    void seekPlayer(player, seconds, { autoplay }).catch(() => undefined);
   };
 
   const duration = status.duration > 0 ? status.duration : Math.max(0, durationMs) / 1000;
@@ -137,10 +108,13 @@ export function AudioTransport({
           {formatDuration(shown * 1000)} / {formatDuration(duration * 1000)}
         </Text>
       </View>
-      <AudioSeekBar
+      <AudioWaveform
+        seed={seed}
         current={shown}
         duration={duration}
-        onSeek={seek}
+        segments={segments}
+        // Parado (ou no fim), tocar na onda ja toca dali; tocando, so pula.
+        onSeek={(seconds) => seek(seconds, !status.playing)}
         onScrubChange={setScrub}
       />
       {segments && segments.length > 0 ? (

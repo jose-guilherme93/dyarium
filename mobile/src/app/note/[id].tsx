@@ -23,6 +23,7 @@ import { Press } from '@/components/Press';
 
 import { ConflictDialog } from '@/components/ConflictDialog';
 import { AudioTransport } from '@/components/AudioTransport';
+import { AudioWaveform } from '@/components/AudioWaveform';
 import { FastModal } from '@/components/FastModal';
 import { NoteBody } from '@/components/NoteBody';
 import type { NoteBodyHandle } from '@/components/noteBodyTypes';
@@ -97,11 +98,10 @@ import { enterNote, leaveNote } from '@/services/noteVisibility';
 import { willTranscribeLocally } from '@/services/whisper';
 import { fetchTheirs, syncNoteForcing } from '@/services/noteSync';
 import { pushTranscript } from '@/services/transcriptSync';
-import { playPlayer } from '@/services/playback';
 import { useLibrary } from '@/state/LibraryContext';
 import { useRecording } from '@/state/RecordingContext';
 import { useAudioStack } from '@/state/useAudioStack';
-import { usePlaySource, usePauseOnUnmount, usePlayback } from '@/state/PlaybackContext';
+import { usePlayAt, usePauseOnUnmount, usePlayback } from '@/state/PlaybackContext';
 import { useSettings } from '@/state/SettingsContext';
 import {
   useTranscriptionProgress,
@@ -244,7 +244,7 @@ export default function NoteScreen() {
   // ele chega, em vez de parsear no caminho de abrir a nota.
   const stack = useAudioStack(note?.entryId, mediaReady ? note?.serverAudios : undefined);
   const player = usePlayback();
-  const playSource = usePlaySource();
+  const playAt = usePlayAt();
   /** Referencia do audio que esta no player (no do corpo ou id da pilha). */
   const [activeAudioRef, setActiveAudioRef] = useState<string | null>(null);
   /** Trecho inicial, quando a reproducao comecou por uma linha da transcricao. */
@@ -252,19 +252,14 @@ export default function NoteScreen() {
 
   const activateAudio = useCallback(
     (ref: string, uri: string, startMs?: number) => {
-      playSource(uri);
       setActiveAudioRef(ref);
       setActiveAudioStartMs(startMs ?? null);
+      // O provider aponta a fonte (so quando muda) e busca o trecho na mesma
+      // fila da thread principal, ja tocando.
+      playAt(uri, (startMs ?? 0) / 1000);
     },
-    [playSource],
+    [playAt],
   );
-
-  // Sem trecho inicial, o audio comeca do zero assim que a fonte e apontada.
-  // Com trecho, o transporte busca a posicao quando o player carregar e toca.
-  useEffect(() => {
-    if (!activeAudioRef || activeAudioStartMs !== null) return;
-    playPlayer(player);
-  }, [activeAudioRef, activeAudioStartMs, player]);
 
   const playStackAudio = useCallback(
     async (audioId: string, startMs?: number) => {
@@ -276,12 +271,17 @@ export default function NoteScreen() {
       try {
         const uri = await attachmentUri(audioId);
         if (!uri) throw new Error('audio indisponivel');
+        if (activeAudioRef === key) {
+          // Mesmo audio: so pula. Recarregar a fonte jogaria o player no zero.
+          playAt(uri, (startMs ?? 0) / 1000);
+          return;
+        }
         activateAudio(key, uri, startMs);
       } catch {
         Alert.alert('Áudio indisponível', 'Não foi possível abrir este áudio neste aparelho.');
       }
     },
-    [activateAudio, activeAudioRef, player],
+    [activateAudio, activeAudioRef, player, playAt],
   );
   usePauseOnUnmount();
   useRenderCount('NoteScreen');
@@ -768,9 +768,15 @@ export default function NoteScreen() {
         Alert.alert('Áudio indisponível', 'Não foi possível abrir este áudio neste aparelho.');
         return;
       }
+      if (activeAudioRef === ref) {
+        // Mesmo audio: so pula para o trecho. Trocar a fonte de novo faria o
+        // player voltar ao comeco (o "sempre reinicia" da transcricao).
+        playAt(uri, (startMs ?? 0) / 1000);
+        return;
+      }
       activateAudio(ref, uri, startMs);
     },
-    [activateAudio, resolveAudio],
+    [activateAudio, activeAudioRef, playAt, resolveAudio],
   );
 
   // Callback estavel: o NoteBody e memoizado e um lambda inline anularia a
@@ -1695,16 +1701,31 @@ export default function NoteScreen() {
                     {active ? (
                       <AudioTransport
                         player={player}
+                        seed={key}
                         durationMs={Math.round(audio.duration_seconds * 1000)}
                         startMs={activeAudioStartMs}
                         segments={stackSegments}
                       />
-                    ) : stackSegments && stackSegments.length > 0 ? (
-                      <SyncedTranscript
-                        segments={stackSegments}
-                        onSeek={(startMs) => void playStackAudio(audio.id, startMs)}
-                      />
-                    ) : null}
+                    ) : (
+                      <>
+                        <AudioWaveform
+                          seed={key}
+                          current={0}
+                          duration={audio.duration_seconds}
+                          segments={stackSegments}
+                          label="Ouvir a partir de"
+                          onSeek={(seconds) =>
+                            void playStackAudio(audio.id, Math.round(seconds * 1000))
+                          }
+                        />
+                        {stackSegments && stackSegments.length > 0 ? (
+                          <SyncedTranscript
+                            segments={stackSegments}
+                            onSeek={(startMs) => void playStackAudio(audio.id, startMs)}
+                          />
+                        ) : null}
+                      </>
+                    )}
                   </View>
                 );
               })}
