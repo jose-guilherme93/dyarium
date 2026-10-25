@@ -23,8 +23,8 @@ jest.mock('expo-audio', () => ({
     stop: jest.fn(async () => undefined),
     pause: jest.fn(),
     uri: 'file:///rec.aac',
+    getStatus: () => ({ metering: -20 }),
   }),
-  useAudioRecorderState: () => ({ metering: -20 }),
 }));
 
 jest.mock('@/services/db', () => ({

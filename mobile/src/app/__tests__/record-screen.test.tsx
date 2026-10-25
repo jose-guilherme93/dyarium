@@ -65,8 +65,9 @@ jest.mock('@/state/RecordingContext', () => ({
     unpause: jest.fn(),
     start: mockStart,
     stop: mockStop,
+    readMetering: () => -20,
   }),
-  useRecordingLive: () => ({ elapsedMs: 5000, level: 0.5 }),
+  useRecordingLive: () => ({ elapsedMs: 5000 }),
 }));
 
 jest.mock('@/state/LibraryContext', () => ({

@@ -34,10 +34,13 @@ export default function RecordScreen() {
     from?: string;
   }>();
   const { attachAudio, enqueue, refresh, submitNote } = useLibrary();
-  const { active, error, busy, starting, paused, pause, unpause, start, stop } = useRecording();
-  // Tempo e nivel mudam varias vezes por segundo e vivem em outro contexto:
-  // a home nao re-renderiza junto enquanto a gravacao esta aberta.
-  const { elapsedMs, level } = useRecordingLive();
+  const { active, error, busy, starting, paused, pause, unpause, start, stop, readMetering } =
+    useRecording();
+  // O nivel do microfone e lido pela propria onda, sem passar por estado. O
+  // tempo fica no componente `RecordTimer`: se ele ficasse aqui, a tela (e a
+  // onda dentro dela) re-renderizaria duas vezes por segundo so para trocar o
+  // relogio, e cada render custava quadros.
+
   const [finishing, setFinishing] = useState(false);
   const [finishError, setFinishError] = useState<string | null>(null);
   const startedRef = useRef(false);
@@ -156,8 +159,16 @@ export default function RecordScreen() {
 
       <View style={styles.center}>
         <RecordClock />
-        <LiveWaveform active={Boolean(active)} paused={paused} level={level} height={100} color={colors.accent} />
-        <Text style={styles.timer}>{formatDuration(elapsedMs)}</Text>
+        <LiveWaveform
+          active={Boolean(active)}
+          paused={paused}
+          sampleMetering={readMetering}
+          // 40% mais alta que as 100 dp originais: a diferenca entre silencio
+          // (traco minimo) e fala fica visivel sem esforco.
+          height={140}
+          color={colors.accent}
+        />
+        <RecordTimer />
         <Text style={styles.hint}>
           {paused
             ? 'Pausado'
@@ -192,6 +203,20 @@ export default function RecordScreen() {
         <Text style={styles.bottomHint}>Pausar · Parar</Text>
       </View>
     </View>
+  );
+}
+
+/**
+ * Relogio da gravacao. Consome o tempo ao vivo isolado: a tela de gravacao e a
+ * onda nao re-renderizam a cada meio segundo por causa do relogio.
+ */
+function RecordTimer() {
+  const styles = useThemedStyles(baseStyles);
+  const { elapsedMs } = useRecordingLive();
+  return (
+    <Text style={styles.timer} testID="record-timer">
+      {formatDuration(elapsedMs)}
+    </Text>
   );
 }
 

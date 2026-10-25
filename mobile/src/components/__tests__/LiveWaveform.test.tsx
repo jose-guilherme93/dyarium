@@ -1,43 +1,83 @@
-import { render, screen } from '@testing-library/react-native';
+import { act, render, screen } from '@testing-library/react-native';
 
 import { LiveWaveform } from '@/components/LiveWaveform';
+import { MIN_BAR, SAMPLE_MS } from '@/components/liveWaveAnimation';
 
-function barHeight(testID: string): number {
-  const styles = screen.getByTestId(testID).props.style;
-  const list = Array.isArray(styles) ? styles : [styles];
-  const style = list.find((item: unknown) => item && typeof item === 'object' && 'height' in item);
-  return Number((style as { height: number }).height);
+// O Reanimated real nao inicializa no Jest. O mock devolve valores comuns e
+// chama o worklet na hora; o que importa aqui e a estrutura, a cadencia da
+// amostragem e o desenho, nao o quadro.
+jest.mock('react-native-reanimated', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { View } = require('react-native');
+  return {
+    __esModule: true,
+    default: { View, createAnimatedComponent: (component: unknown) => component },
+    useSharedValue: (initial: unknown) => ({ value: initial }),
+    useAnimatedProps: (factory: () => unknown) => factory(),
+    useAnimatedStyle: (factory: () => unknown) => factory(),
+    useFrameCallback: () => ({ setActive: jest.fn(), isActive: false, callbackId: 0 }),
+  };
+});
+
+jest.mock('react-native-svg', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { View } = require('react-native');
+  return { __esModule: true, default: View, Path: View };
+});
+
+function pathD(): string {
+  return String(screen.getByTestId('wave-path').props.animatedProps?.d ?? '');
 }
 
 describe('LiveWaveform', () => {
-  it('desenha a quantidade de barras pedida', () => {
-    render(<LiveWaveform active={false} level={0} bars={8} />);
-
-    expect(screen.getAllByTestId(/wave-bar-/)).toHaveLength(8);
+  beforeEach(() => {
+    jest.useFakeTimers();
   });
 
-  it('a barra mais nova acompanha o nivel do microfone', () => {
-    render(<LiveWaveform active level={0.5} bars={8} height={100} />);
-
-    // A amostra entra na ponta direita; as antigas ficam no minimo.
-    expect(barHeight('wave-bar-7')).toBe(50);
-    expect(barHeight('wave-bar-0')).toBe(6);
+  afterEach(() => {
+    jest.useRealTimers();
   });
 
-  it('com a gravacao parada, todas as barras ficam no minimo', () => {
-    render(<LiveWaveform active={false} level={0.9} bars={8} height={100} />);
+  it('desenha uma barra a mais que a area (a que entra pela direita)', () => {
+    render(<LiveWaveform active={false} bars={8} />);
 
-    expect(barHeight('wave-bar-7')).toBe(6);
+    expect(pathD().match(/M/g)).toHaveLength(9);
   });
 
-  it('pausada, a onda congela no ponto em que parou', () => {
+  it('comeca com todas as barras no traco minimo', () => {
+    render(<LiveWaveform active={false} bars={8} height={100} />);
+
+    // Sem largura medida, todas as barras caem em x = 0; altura = MIN_LEVEL.
+    expect(pathD()).toContain('48.7V51.4');
+    expect(MIN_BAR).toBeGreaterThanOrEqual(2);
+  });
+
+  it('amostra o microfone no ritmo da onda enquanto grava', () => {
+    const sampleMetering = jest.fn(() => -20);
+    render(<LiveWaveform active sampleMetering={sampleMetering} bars={8} />);
+
+    act(() => {
+      jest.advanceTimersByTime(SAMPLE_MS * 3);
+    });
+
+    expect(sampleMetering.mock.calls.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('nao amostra com a gravacao parada ou pausada', () => {
+    const sampleMetering = jest.fn(() => -20);
     const { rerender } = render(
-      <LiveWaveform active level={0.5} bars={8} height={100} />,
+      <LiveWaveform active={false} sampleMetering={sampleMetering} bars={8} />,
     );
-    expect(barHeight('wave-bar-7')).toBe(50);
 
-    rerender(<LiveWaveform active paused level={0} bars={8} height={100} />);
+    act(() => {
+      jest.advanceTimersByTime(500);
+    });
+    expect(sampleMetering).not.toHaveBeenCalled();
 
-    expect(barHeight('wave-bar-7')).toBe(50);
+    rerender(<LiveWaveform active paused sampleMetering={sampleMetering} bars={8} />);
+    act(() => {
+      jest.advanceTimersByTime(500);
+    });
+    expect(sampleMetering).not.toHaveBeenCalled();
   });
 });

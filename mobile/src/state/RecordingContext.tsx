@@ -3,7 +3,6 @@ import {
   requestRecordingPermissionsAsync,
   setAudioModeAsync,
   useAudioRecorder,
-  useAudioRecorderState,
   type RecordingOptions,
 } from 'expo-audio';
 import {
@@ -19,6 +18,7 @@ import {
 
 import { concatenateSegments } from '@/core/concat';
 import { newId } from '@/core/id';
+import { METER_SILENCE_DB } from '@/core/waveform';
 import { markRecorded } from '@/core/queue';
 import { formatTitle, toRecordedAt } from '@/core/title';
 import type { Recording } from '@/core/types';
@@ -69,6 +69,12 @@ interface RecordingValue {
   resume(id: string): Promise<void>;
   /** Finaliza (concatena) uma gravacao interrompida e a coloca na fila. */
   finalizeInterrupted(id: string): Promise<void>;
+  /**
+   * Nivel do microfone em dB (aprox. -160..0) lido na hora. E a waveform que
+   * amostra, no ritmo dela, sem passar pelo estado do React (nada de render
+   * por amostra).
+   */
+  readMetering(): number;
 }
 
 /**
@@ -80,26 +86,20 @@ interface RecordingValue {
  */
 interface RecordingLiveValue {
   elapsedMs: number;
-  level: number;
 }
 
 const RecordingContext = createContext<RecordingValue | null>(null);
 const RecordingLiveContext = createContext<RecordingLiveValue | null>(null);
 
-function normalizeLevel(metering?: number): number {
-  if (metering === undefined || Number.isNaN(metering)) return 0;
-  // metering vem em dB (aprox. -160..0); mapeia para 0..1
-  const clamped = Math.max(-60, Math.min(0, metering));
-  return (clamped + 60) / 60;
-}
-
 export function RecordingProvider({ children }: { children: ReactNode }) {
   const library = useLibrary();
   bumpRender('RecordingProvider');
   const recorder = useAudioRecorder(RECORDING_OPTIONS);
-  // O nivel alimenta a waveform, que suaviza entre as amostras. 250 ms basta
-  // e evita um getStatus() nativo (e um render do provider) a cada 200 ms.
-  const recorderState = useAudioRecorderState(recorder, 250);
+  /** Nivel do microfone (dB) sob demanda: a waveform amostra no ritmo dela. */
+  const readMetering = useCallback(
+    () => recorder.getStatus().metering ?? METER_SILENCE_DB,
+    [recorder],
+  );
 
   const [active, setActive] = useState<Recording | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -446,6 +446,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
       stop,
       resume,
       finalizeInterrupted,
+      readMetering,
     }),
     [
       active,
@@ -459,13 +460,11 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
       stop,
       resume,
       finalizeInterrupted,
+      readMetering,
     ],
   );
 
-  const live = useMemo<RecordingLiveValue>(
-    () => ({ elapsedMs, level: normalizeLevel(recorderState.metering) }),
-    [elapsedMs, recorderState.metering],
-  );
+  const live = useMemo<RecordingLiveValue>(() => ({ elapsedMs }), [elapsedMs]);
 
   useEffect(() => {
     bumpRender('recording.value');
