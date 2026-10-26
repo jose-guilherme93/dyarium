@@ -128,12 +128,18 @@ Com `deleted=1` lista a **lixeira**: as entradas apagadas (remocao logica) com
 - `archived=0` (padrao explicito do app e do dashboard) traz so as notas da lista
   de trabalho; `archived=1` traz so as arquivadas; **sem o filtro traz as duas**,
   para nenhum cliente perder nota por omissao.
+- Paginacao: `limit` (padrao 100, teto 5000) e `cursor` (o `next_cursor` da pagina
+  anterior). A resposta traz `next_cursor` enquanto houver outra pagina; o app
+  percorre todas para reconciliar a biblioteca inteira, sem parar no teto.
 - Cada entrada traz `archived` e `versions` com a versao atual de `title`, `recorded_at` e
   `body`. E o que o cliente guarda para mandar de volta na gravacao: assim o
   servidor consegue recusar (409) o que ja foi editado em outro lugar, e o app
   pergunta ao usuario em vez de sobrescrever. As versoes sao devolvidas
   **exatamente** como estao gravadas: reformatar aqui faria a gravacao seguinte
   do proprio cliente parecer conflito consigo mesma.
+- `primary_attachment_id` (quando a nota tem audio) aponta o primeiro audio
+  original. A lista nao carrega a pilha inteira; e por este id que o app resolve o
+  player de uma nota puxada do servidor.
 
 ## Markdown como formato da nota
 
@@ -146,10 +152,15 @@ cliente pergunta ao usuario em vez de sobrescrever em silencio.
 - Versoes sao RFC 3339 (UTC, com nanossegundos) devolvidas em `versions`.
 - Cliente que **nao manda versao** (app antigo) continua funcionando: ultimo a
   escrever vence.
-- Os clientes oficiais usam essa politica: o app grava o corpo sem `base_version` e
-  o dashboard reenvia sem versao quando recebe `409`. O pull do app aplica a versao
-  do servidor quando ela e mais nova que a ultima edicao local; o `409` fica
-  disponivel para clientes que queiram oferecer a escolha ao usuario.
+- Os clientes oficiais usam essa politica: o app grava o corpo **sem
+  `base_version`** (ultima gravacao vence, porque e uma pessoa so editando; se ela
+  editou no dashboard depois, foi ela quem mudou por ultimo) e o dashboard reenvia
+  sem versao quando recebe `409`. O pull do app aplica a versao do servidor quando
+  ela e mais nova que a ultima edicao local; o `409` fica disponivel para clientes
+  que queiram oferecer a escolha ao usuario.
+- Como a ultima gravacao vence, o texto substituido **nunca se perde**: cada
+  escrita grava o corpo anterior em `GET /api/v1/notes/{id}/revisions`, entao a
+  comparacao (diff) e a recuperacao continuam possiveis depois.
 - O titulo vive na **entrada**, nao na nota. A nota nao tem mais `title` no
   caminho de escrita: era a origem de "renomear no desktop e o titulo voltar".
 - O app representa imagem e audio como nos do documento, com marcadores no
@@ -160,10 +171,13 @@ cliente pergunta ao usuario em vez de sobrescrever em silencio.
 ### POST /api/v1/entries/{id}/notes
 Cria a nota da entrada. Corpo:
 ```json
-{ "id": "note_...", "content_markdown": "## Titulo\n\nTexto.", "base_version": "" }
+{ "id": "note_...", "content_markdown": "## Titulo\n\nTexto." }
 ```
 Resposta 201 com a nota, `content_markdown` e `body_version`. `document` (JSON do
-BlockNote) nao e mais aceito nem devolvido.
+BlockNote) nao e mais aceito nem devolvido. `id` e opcional e idempotente: o app
+manda o id local, e um reenvio depois de uma resposta perdida devolve a mesma
+nota em vez de criar uma segunda. Sem `base_version` o corpo e gravado como
+ultima-gravacao-vence, com o texto anterior guardado em revisoes.
 
 ### PUT /api/v1/notes/{id}
 Grava o corpo. Corpo:
@@ -196,7 +210,10 @@ Resposta 200: `{ "status": "ok", "versions": { "title": "...", "recorded_at": ".
   `invalid_notebook`; vazio tambem (todo caderno e obrigatorio).
 - 409 com `{ "conflict": ["title"], "versions": {...} }` se aquele campo mudou
   depois da leitura; **os campos sem conflito nao sao gravados** — o cliente
-  reenvia so o que o usuario escolher.
+  reenvia so o que o usuario escolher. O app faz esse reenvio sozinho: manda data,
+  arquivamento e caderno de novo sem o campo em conflito, para nao ficarem presos.
+- Gravar o **mesmo valor** de titulo ou data nao muda a versao nem `updated_at`: e
+  o que impede o sync periodico do app de gerar 409 sem ter havido edicao.
 - `archived` tira a nota da lista de trabalho sem apagar: ela continua existindo
   (e no aparelho), so sai da lista do dia. E um interruptor, entao nao tem versao
   nem conflito.
@@ -204,9 +221,15 @@ Resposta 200: `{ "status": "ok", "versions": { "title": "...", "recorded_at": ".
 - Nao altera o audio.
 
 ### POST /api/v1/entries
-Cria uma nota escrita (sem audio). Corpo `{ "title": "...", "id": "note_...", "created_at": "...", "notebook_id": "..." }`.
-A entrada nasce com `source: "text"` e `status: "ready"`; o corpo e gravado como nota em
-markdown, igual a parte escrita de uma nota de audio. Analises usam a transcricao quando
+Cria uma nota escrita (sem audio). Corpo:
+```json
+{ "title": "...", "id": "note_...", "created_at": "...", "recorded_at": "...", "notebook_id": "..." }
+```
+A entrada nasce com `source: "text"` e `status: "ready"`; o corpo **nao** vai
+aqui: ele e gravado como nota em markdown por `POST /api/v1/entries/{id}/notes`,
+igual a parte escrita de uma nota de audio. `recorded_at` (RFC 3339) e a data do
+evento; sem ele vale `created_at`. `id` e opcional e idempotente, e `created_at`
+preserva a hora original de criacao/importacao. Analises usam a transcricao quando
 existe e, caso contrario, o texto escrito da nota. `notebook_id` e opcional; sem ele a nota
 nasce em "Notas ao acaso".
 - `id` e opcional (o cliente pode informar o id da nota criada offline) e o caminho e
@@ -583,7 +606,8 @@ Retorna uma nota (markdown + `body_version`).
 
 ### GET /api/v1/notes/{id}/revisions
 Lista revisoes da nota, com o corpo anterior em `content_markdown`. Uma revisao so
-e criada quando o texto realmente mudou. (A coluna no banco se chama `document`
+e criada quando o texto realmente mudou. E a fonte para comparar (diff) e
+recuperar o texto que a ultima-gravacao-vence substituiu. (A coluna no banco se chama `document`
 por heranca do JSON antigo; o conteudo gravado e markdown.)
 Pagina com `limit` (padrao 50, teto 200) e `cursor`; a resposta pode trazer
 `next_cursor` quando houver mais historico.

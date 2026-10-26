@@ -122,7 +122,11 @@ Superficie Android em Expo (development build). O nucleo puro fica em `mobile/sr
   da importacao. O corpo e **100% nativo**: nao ha WebView no app, o que elimina
   cold start, recarga do documento e tremor na digitacao. Nota so de texto entra
   na fila e e enviada como conteudo
-  (`POST /api/v1/entries` + corpo markdown).
+  (`POST /api/v1/entries` + corpo markdown em `POST /api/v1/entries/{id}/notes`).
+  O corpo so conta como enviado depois da segunda chamada; o `noteDirty` e
+  gravado antes, entao matar o app entre as duas nao perde o texto. Cada
+  metadado (caderno, tags, arquivamento) tem pendencia propria, e o pull percorre
+  `next_cursor` ate o fim da biblioteca.
 - Audio na nota, em um player so: o card do corpo tem um unico play/pause, tempo
   e onda; tocar ou arrastar a onda pula para o trecho. A onda tem 88 barras e
   48 dp de altura, com a fala perto do topo e a pausa no traco minimo, o mesmo

@@ -134,10 +134,21 @@ texto, guarda local, enfileira e envia para o servidor self-hosted.
   outro: ao subir o audio o app avisa o servidor (`local_transcribe`) e, ao terminar,
   **empurra o texto** (`PUT /entries/{id}/transcript`), entao o servidor nao transcreve de
   novo e o dashboard mostra o texto. Precisa de development build (`whisper.rn` + um modulo
-  nativo local que decodifica o AAC para WAV 16 kHz).
+  nativo local que decodifica o AAC para WAV 16 kHz). Sem modelo ou com o toggle desligado,
+  o icone de transcrever abre um aviso com **Abrir ajustes** (vai direto para essa tela) e
+  um **X** que dispensa o aviso de vez; depois disso o toque vai direto para as Opcoes, sem
+  popup repetido.
 - **Status de sincronizacao** no cabecalho (nuvem discreta): abre a tela de Sincronizacao com
   o que esta na fila/falhou e "Enviar agora". O envio continua em segundo plano
   (WorkManager) quando o app fica em segundo plano.
+- **Contrato do sync da nota**: cada pendencia tem o seu flag (`noteDirty`,
+  `notebookDirty`, `tagsDirty`, `archivedDirty`), entao um conflito de titulo nao
+  deixa data, caderno, tags ou arquivamento presos no aparelho. O corpo sobe como
+  markdown sem `base_version` (ultima gravacao vence, porque e uma pessoa so); o
+  servidor guarda o texto substituido em revisoes para comparar/recuperar depois.
+  Uma nota de texto so e considerada enviada depois do `POST /entries/{id}/notes`;
+  o `noteDirty` e gravado antes, entao matar o app entre as duas chamadas nao perde
+  o corpo. O pull percorre `next_cursor` ate o fim da biblioteca.
 - **Painel** (nas Opcoes): duas partes. **Escrita** (local, sempre disponivel): **graficos** de
   palavras por semana, **palavras por dia (30 dias)** e **notas por semana** (barras; o de linha
   com SVG ja esta pronto, desligado ate o build — quando liga, toda serie vira linha),
