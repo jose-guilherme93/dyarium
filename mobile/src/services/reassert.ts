@@ -60,11 +60,9 @@ export async function reassertEntry(
   try {
     await api.createTextEntry({
       id: entryId,
-      client_key: entryId,
       title: recording.title,
       recorded_at: recording.recordedAt,
       created_at: recording.createdAt,
-      text: recording.text ?? '',
       notebook_id: recording.notebookId,
     });
     return 'recreated';

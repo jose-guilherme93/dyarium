@@ -58,6 +58,45 @@ export function recordingsDeletedOnServer(
 }
 
 /**
+ * Linhas locais que apontam para a mesma entrada do servidor. Acontece quando o
+ * mesmo audio e importado duas vezes: o servidor deduplica por SHA-256 e devolve
+ * a entrada existente, mas o aparelho ficava com duas notas (dois cartoes) para
+ * a mesma entrada. So remove linhas **limpas** (sem edicao pendente): com
+ * qualquer pendencia, as duas ficam e o sync decide, para nao perder trabalho.
+ */
+export function duplicateEntryRecordings(local: Recording[]): Recording[] {
+  const groups = new Map<string, Recording[]>();
+  for (const recording of local) {
+    if (!recording.entryId || recording.status !== 'completed') continue;
+    const group = groups.get(recording.entryId) ?? [];
+    group.push(recording);
+    groups.set(recording.entryId, group);
+  }
+  const remove: Recording[] = [];
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    const clean = group.filter(
+      (recording) =>
+        !recording.noteDirty &&
+        !recording.notebookDirty &&
+        !recording.tagsDirty &&
+        !recording.archivedDirty &&
+        (recording.syncConflict?.length ?? 0) === 0,
+    );
+    if (clean.length < 2) continue;
+    // Prefere a linha com o audio local; entre iguais, a atualizada por ultimo.
+    clean.sort((a, b) => {
+      const localA = a.filePath ? 1 : 0;
+      const localB = b.filePath ? 1 : 0;
+      if (localA !== localB) return localB - localA;
+      return Date.parse(b.updatedAt) - Date.parse(a.updatedAt);
+    });
+    remove.push(...clean.slice(1));
+  }
+  return remove;
+}
+
+/**
  * Entrada do servidor (com a nota) virada em gravacao local. O corpo vem em
  * markdown: o app guarda exatamente o texto que o dashboard mostra.
  *
@@ -78,6 +117,9 @@ export function entryToRecording(entry: ServerEntry, note?: ServerNote): Recordi
     noteId: note?.id,
     source: toSource(entry),
     contentType: entry.content_type || undefined,
+    // Sem esta referencia, a tela de transcricao de uma nota puxada do servidor
+    // nao acha o audio e fica sem player.
+    serverAttachmentId: entry.primary_attachment_id ?? entry.audios?.[0]?.id,
     durationMs: entry.duration_seconds > 0 ? Math.round(entry.duration_seconds * 1000) : undefined,
     sizeBytes: entry.size_bytes > 0 ? entry.size_bytes : undefined,
     // O servidor ainda pode estar transcrevendo; `services/transcripts` busca o
@@ -137,11 +179,16 @@ export function mergeServerNote(
   const titleMoved = Boolean(titleVersion) && titleVersion !== local.titleVersion;
   const recordedVersion = entry.versions?.recorded_at;
   const recordedMoved = Boolean(recordedVersion) && recordedVersion !== local.recordedAtVersion;
-  const archivedMoved = typeof entry.archived === 'boolean' && entry.archived !== Boolean(local.archived);
+  const archivedMoved =
+    !local.archivedDirty &&
+    typeof entry.archived === 'boolean' &&
+    entry.archived !== Boolean(local.archived);
   const serverNotebook = entry.notebook_id || DEFAULT_NOTEBOOK_ID;
   const notebookMoved = !local.notebookDirty && serverNotebook !== (local.notebookId || DEFAULT_NOTEBOOK_ID);
   const serverTags = entry.tags ?? [];
   const tagsMoved = !local.tagsDirty && !sameTags(serverTags, local.tags ?? []);
+  const primaryAttachment = entry.primary_attachment_id ?? entry.audios?.[0]?.id;
+  const attachmentMoved = Boolean(primaryAttachment) && primaryAttachment !== local.serverAttachmentId;
 
   // Nota marcada como suja, mas com o mesmo texto do servidor (o editor
   // normaliza espacos ao abrir): nao ha edicao para enviar. Adota a versao do
@@ -171,19 +218,23 @@ export function mergeServerNote(
     !applyRecorded &&
     !archivedMoved &&
     !notebookMoved &&
-    !tagsMoved
+    !tagsMoved &&
+    !attachmentMoved
   ) {
     return null;
   }
+
+  const serverUpdated = entry.updated_at ? Date.parse(entry.updated_at) : NaN;
+  const localUpdated = Date.parse(local.updatedAt);
+  const serverIsMoreRecent =
+    !Number.isNaN(serverUpdated) && (Number.isNaN(localUpdated) || serverUpdated > localUpdated);
 
   return {
     ...local,
     // A faixa de recentes usa updatedAt: uma edicao feita no dashboard precisa
     // aparecer como atividade recente aqui tambem.
-    updatedAt:
-      entry.updated_at && entry.updated_at > local.updatedAt
-        ? entry.updated_at
-        : local.updatedAt,
+    updatedAt: serverIsMoreRecent ? entry.updated_at : local.updatedAt,
+    ...(attachmentMoved ? { serverAttachmentId: primaryAttachment } : {}),
     ...(applyBody
       ? {
           text: note?.content_markdown ?? '',

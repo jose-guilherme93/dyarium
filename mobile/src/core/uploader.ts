@@ -33,8 +33,6 @@ export interface UploadInput {
   localPath: string;
   sizeBytes: number;
   durationSeconds?: number;
-  /** Texto da nota associado ao audio (opcional). */
-  text?: string;
   /** O cliente transcreve no aparelho; o servidor nao enfileira transcricao. */
   localTranscribe?: boolean;
   /** Se ja existe um upload em andamento, informe id e offset para retomar. */
@@ -85,7 +83,6 @@ export async function uploadRecording(
       recorded_at: input.recordedAt,
       created_at: input.createdAt,
       source: input.source,
-      text: input.text,
       local_transcribe: input.localTranscribe,
       entry_id: input.entryId,
     });

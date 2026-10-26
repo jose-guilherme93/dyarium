@@ -142,7 +142,6 @@ async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
         source: current.source === 'share' ? 'share' : 'upload',
         localPath: current.filePath as string,
         sizeBytes: current.sizeBytes as number,
-        text: current.text,
         localTranscribe,
         durationSeconds: current.durationMs
           ? Math.max(1, Math.round(current.durationMs / 1000))
@@ -217,16 +216,18 @@ async function uploadTextOne(api: DyariumApi, recording: Recording): Promise<voi
   try {
     const result = await api.createTextEntry({
       id: current.id,
-      client_key: current.id,
       title: current.title,
       recorded_at: current.recordedAt,
       created_at: current.createdAt,
-      text: current.text ?? '',
       notebook_id: current.notebookId,
     });
     current = {
       ...markCompleted(current, result.id, new Date()),
       transcriptStatus: 'ready',
+      // A entrada existe, mas o corpo ainda nao: marca antes de tentar o
+      // POST /notes para que uma morte do app entre as duas chamadas nao deixe
+      // a nota sem texto no servidor.
+      noteDirty: true,
       duplicate: result.duplicate ? true : undefined,
     };
     await upsertRecording(current);

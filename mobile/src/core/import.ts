@@ -9,6 +9,19 @@
 
 import type { Recording } from './types';
 
+/**
+ * Normaliza a URI de um arquivo compartilhado. O `expo-sharing` no Android
+ * devolve `file:/data/...` (um slash), e o `File` do expo-file-system espera
+ * `file:///data/...`; sem isso a copia do audio falhava com "nao foi possivel
+ * copiar o audio". URIs `content://` e `file://` ficam como estao.
+ */
+export function normalizeSharedUri(uri: string): string {
+  if (uri.startsWith('file:/') && !uri.startsWith('file://')) {
+    return `file://${uri.slice('file:'.length)}`;
+  }
+  return uri;
+}
+
 export interface ShareAudioPayload {
   /** URI local legivel do conteudo compartilhado. */
   uri: string;

@@ -58,6 +58,7 @@ interface Row {
   tags: string | null;
   notebook_dirty: string | null;
   tags_dirty: string | null;
+  archived_dirty: string | null;
   note_dirty: string | null;
   attachments: string | null;
   title_version: string | null;
@@ -340,6 +341,15 @@ const MIGRATIONS: Migration[] = [
       await addColumn(db, 'recordings', 'tags_dirty');
     },
   },
+  {
+    version: 20,
+    run: async (db) => {
+      // Arquivamento pendente. Sem este flag, o sync mandava `archived: false`
+      // em toda gravacao e desfazia um arquivamento feito no dashboard antes do
+      // pull; o pull tambem podia reverter o que o usuario acabou de arquivar.
+      await addColumn(db, 'recordings', 'archived_dirty');
+    },
+  },
 ];
 
 async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
@@ -536,6 +546,7 @@ function rowToRecording(row: Row): Recording {
     tags: parseTags(row.tags),
     notebookDirty: row.notebook_dirty ? true : undefined,
     tagsDirty: row.tags_dirty ? true : undefined,
+    archivedDirty: row.archived_dirty ? true : undefined,
     noteDirty: row.note_dirty ? true : undefined,
     titleVersion: row.title_version ?? undefined,
     recordedAtVersion: row.recorded_at_version ?? undefined,
@@ -570,10 +581,10 @@ export async function upsertRecording(r: Recording): Promise<void> {
       transcript_checkpoint_ms,
       has_transcript, transcript_origin,
       source, text, content_type, file_name, duplicate, archived,
-      notebook_id, tags, notebook_dirty, tags_dirty,
+      notebook_id, tags, notebook_dirty, tags_dirty, archived_dirty,
       note_dirty, attachments,
       title_version, recorded_at_version, body_version, sync_conflict, server_audios, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
       recorded_at = excluded.recorded_at,
@@ -609,6 +620,7 @@ export async function upsertRecording(r: Recording): Promise<void> {
       tags = excluded.tags,
       notebook_dirty = excluded.notebook_dirty,
       tags_dirty = excluded.tags_dirty,
+      archived_dirty = excluded.archived_dirty,
       note_dirty = excluded.note_dirty,
       attachments = excluded.attachments,
       title_version = excluded.title_version,
@@ -653,6 +665,7 @@ export async function upsertRecording(r: Recording): Promise<void> {
       r.tags && r.tags.length > 0 ? JSON.stringify(r.tags) : null,
       r.notebookDirty ? 1 : null,
       r.tagsDirty ? 1 : null,
+      r.archivedDirty ? 1 : null,
       r.noteDirty ? 1 : null,
       r.attachments ? JSON.stringify(r.attachments) : null,
       r.titleVersion ?? null,

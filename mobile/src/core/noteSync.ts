@@ -37,7 +37,8 @@ export interface NoteSyncApi {
     entryId: string,
     title: string,
     markdown: string,
-  ): Promise<{ id: string; body_version?: string }>;
+    id?: string,
+  ): Promise<{ id: string; body_version?: string; content_markdown?: string }>;
   updateNote(
     noteId: string,
     markdown: string,
@@ -90,25 +91,51 @@ export async function syncNoteWith(
     options.force ? { titleVersion: "", recordedAtVersion: "" } : note;
 
   // Titulo e data: campos da entrada, com versao propria cada um. Arquivar vem
-  // junto: e interruptor, entao nao entra em versao nem em conflito.
+  // junto **quando mudou** (`archivedDirty`): mandar o interruptor em toda
+  // sincronizacao desfazia um arquivamento feito no dashboard antes do pull.
   //
   // Conflito aqui nao aborta o sync: o servidor gravou esses campos depois, e
-  // eles ficam com ele (o pull atualiza o app). O corpo segue por ultimo-que-
-  // escreve-vence, que e o que o usuario espera do texto.
+  // eles ficam com ele (o pull atualiza o app). O que sobra de pendente e
+  // reenviado sem a versao vencida, para data/arquivamento/caderno nao ficarem
+  // presos no aparelho por causa de um titulo em conflito.
+  const baseVersions = {
+    title: known.titleVersion ?? "",
+    recorded_at: known.recordedAtVersion ?? "",
+  };
   try {
     const entryVersions = await api.updateEntry(note.entryId, {
       title: note.title,
       recorded_at: note.recordedAt,
-      archived: note.archived ?? false,
-      versions: {
-        title: known.titleVersion ?? "",
-        recorded_at: known.recordedAtVersion ?? "",
-      },
+      ...(note.archivedDirty ? { archived: note.archived ?? false } : {}),
+      versions: baseVersions,
     });
     versions.title = entryVersions.title;
     versions.recordedAt = entryVersions.recorded_at;
   } catch (error) {
     if (!isNoteConflict(error)) throw error;
+    const conflicted = new Set<ConflictField>(error.fields);
+    const serverVersions = error.versions ?? {};
+    const retry: {
+      title?: string;
+      recorded_at?: string;
+      archived?: boolean;
+      versions?: { title?: string; recorded_at?: string };
+    } = {
+      versions: {
+        title: serverVersions.title ?? baseVersions.title,
+        recorded_at: serverVersions.recorded_at ?? baseVersions.recorded_at,
+      },
+    };
+    if (!conflicted.has("title")) retry.title = note.title;
+    if (!conflicted.has("recorded_at")) retry.recorded_at = note.recordedAt;
+    if (note.archivedDirty) retry.archived = note.archived ?? false;
+    if (retry.title !== undefined || retry.recorded_at !== undefined || retry.archived !== undefined) {
+      const entryVersions = await api.updateEntry(note.entryId, retry);
+      // O campo em conflito **nao** adota a versao do servidor: assim o pull
+      // seguinte ve a versao nova e traz o valor de la para o app.
+      if (!conflicted.has("title")) versions.title = entryVersions.title;
+      if (!conflicted.has("recorded_at")) versions.recordedAt = entryVersions.recorded_at;
+    }
   }
 
   // Caderno vai em um PATCH separado, sem versao: um conflito de titulo nao pode
@@ -138,12 +165,15 @@ export async function syncNoteWith(
       resolved.attachments,
       resolved.pending,
       versions,
+      note.id,
     );
   }
 
   try {
     // Sem versao de base: a ultima gravacao vence. O texto que o usuario acabou
-    // de ver/editado substitui o do servidor, sem dialogo de conflito.
+    // de ver/editado substitui o do servidor, sem dialogo de conflito. O servidor
+    // guarda a versao substituida em `note_revisions`, entao a comparacao e a
+    // recuperacao continuam possiveis.
     versions.body = await api.updateNote(target.id, markdown);
   } catch (error) {
     // A nota nao existe mais no servidor (id local velho, nota apagada de la,
@@ -158,6 +188,7 @@ export async function syncNoteWith(
       resolved.attachments,
       resolved.pending,
       versions,
+      note.id,
     );
   }
   return {
@@ -177,9 +208,17 @@ async function createBody(
   attachments: Record<string, string>,
   pending: string[],
   versions: NoteVersions,
+  localID: string,
 ): Promise<SyncNoteResult> {
-  const created = await api.createNote(entryId, title, markdown);
+  // Id estavel do aparelho: se a resposta se perder, o reenvio devolve a mesma
+  // nota em vez de criar uma segunda. O servidor e idempotente por id.
+  const created = await api.createNote(entryId, title, markdown, localID);
   versions.body = created.body_version ?? "";
+  // Reenvio idempotente devolve a nota existente; se o corpo de la ficou para
+  // tras (resposta perdida entre create e update), grava o texto atual.
+  if (created.content_markdown !== undefined && created.content_markdown !== markdown) {
+    versions.body = await api.updateNote(created.id, markdown);
+  }
   return {
     noteId: created.id,
     attachments,
@@ -256,6 +295,11 @@ export function applySyncResult(fresh: Recording, sent: Recording, result: SyncN
   // Anexo que nao subiu mantem a nota suja mesmo com o texto gravado: sem isso
   // a foto ficava presa em `local:` e o proximo sync nunca mais tentava.
   const pendingImages = (result.pendingAttachments?.length ?? 0) > 0;
+  // So limpa a pendencia do que foi enviado nesta sincronizacao. Um caderno ou
+  // tag marcado depois (ou sem destino) continua de pe para a proxima rodada.
+  const archiveSent = Boolean(sent.archivedDirty);
+  const notebookSent = Boolean(sent.notebookDirty && sent.notebookId);
+  const tagsSent = Boolean(sent.tagsDirty);
   return {
     ...fresh,
     noteId: result.noteId,
@@ -265,8 +309,9 @@ export function applySyncResult(fresh: Recording, sent: Recording, result: SyncN
     bodyVersion: result.versions.body ?? fresh.bodyVersion,
     syncConflict: undefined,
     noteDirty: editedDuringSync || pendingImages ? true : undefined,
-    notebookDirty: editedDuringSync ? fresh.notebookDirty : undefined,
-    tagsDirty: editedDuringSync ? fresh.tagsDirty : undefined,
+    notebookDirty: editedDuringSync ? fresh.notebookDirty : notebookSent ? undefined : fresh.notebookDirty,
+    tagsDirty: editedDuringSync ? fresh.tagsDirty : tagsSent ? undefined : fresh.tagsDirty,
+    archivedDirty: editedDuringSync ? fresh.archivedDirty : archiveSent ? undefined : fresh.archivedDirty,
   };
 }
 

@@ -103,6 +103,8 @@ export interface Recording {
   notebookDirty?: boolean;
   /** Tags alteradas localmente e ainda nao enviadas. */
   tagsDirty?: boolean;
+  /** Arquivamento alterado localmente e ainda nao enviado. */
+  archivedDirty?: boolean;
   /** Edicao local (titulo/texto/imagem) numa nota ja enviada, pendente de sync. */
   noteDirty?: boolean;
   /** Mapa nome local da imagem -> id do anexo no servidor (evita reenviar). */
@@ -186,7 +188,7 @@ export function needsNoteSync(r: Recording): boolean {
   return (
     Boolean(r.entryId) &&
     r.status === 'completed' &&
-    Boolean(r.noteDirty || r.notebookDirty || r.tagsDirty) &&
+    Boolean(r.noteDirty || r.notebookDirty || r.tagsDirty || r.archivedDirty) &&
     !hasNoteConflict(r)
   );
 }

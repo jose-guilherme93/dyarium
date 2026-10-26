@@ -25,9 +25,10 @@ class FakeApi implements NoteSyncApi {
     versions?: Record<string, string>;
   }[] = [];
   bodies: { markdown: string; baseVersion?: string }[] = [];
-  created: { entryId: string; title: string; markdown: string }[] = [];
+  created: { entryId: string; title: string; markdown: string; id?: string }[] = [];
   tagCalls: { entryId: string; tags: string[] }[] = [];
   conflictOn: 'title' | 'body' | null = null;
+  conflictVersions: Record<string, string> = { title: 'v2-titulo', recorded_at: 'v2-data' };
   entryVersions = { title: 'v1-titulo', recorded_at: 'v1-data' };
   notes: { id: string; body_version?: string; content_markdown?: string }[] = [
     { id: 'n1', body_version: 'v1-corpo', content_markdown: 'antigo' },
@@ -46,17 +47,25 @@ class FakeApi implements NoteSyncApi {
   updateEntry = jest.fn(async (_id: string, body: Parameters<NoteSyncApi['updateEntry']>[1]) => {
     this.patched.push(body);
     if (this.conflictOn === 'title' && body.title !== undefined) {
-      throw new ConflictError(409, 'conflict', 'a nota mudou no outro lugar', ['title']);
+      throw new ConflictError(
+        409,
+        'conflict',
+        'a nota mudou no outro lugar',
+        ['title'],
+        this.conflictVersions,
+      );
     }
     return this.entryVersions;
   });
 
   listNotes = jest.fn(async () => this.notes);
 
-  createNote = jest.fn(async (entryId: string, title: string, markdown: string) => {
-    this.created.push({ entryId, title, markdown });
-    return { id: 'n_criada', body_version: 'v_criada' };
-  });
+  createNote = jest.fn(
+    async (entryId: string, title: string, markdown: string, id?: string) => {
+      this.created.push({ entryId, title, markdown, id });
+      return { id: 'n_criada', body_version: 'v_criada', content_markdown: markdown };
+    },
+  );
 
   setEntryTags = jest.fn(async (entryId: string, tags: string[]) => {
     this.tagCalls.push({ entryId, tags });
@@ -171,6 +180,25 @@ describe('syncNoteWith', () => {
     expect(result?.versions.title).toBeUndefined();
   });
 
+  it('conflito no titulo ainda leva data e arquivamento no reenvio', async () => {
+    const api = new FakeApi();
+    api.conflictOn = 'title';
+
+    await syncNoteWith(
+      api,
+      nota({ archived: true, archivedDirty: true, recordedAt: '2026-10-20T08:00:00Z' }),
+      semImagens,
+    );
+
+    expect(api.patched).toHaveLength(2);
+    // O titulo nao vai de novo (o servidor venceu); o resto segue.
+    expect(api.patched[1].title).toBeUndefined();
+    expect(api.patched[1].recorded_at).toBe('2026-10-20T08:00:00Z');
+    expect(api.patched[1].archived).toBe(true);
+    // A versao do titulo continua a antiga: o pull traz o valor do servidor.
+    expect(api.patched[1].versions?.title).toBe('v2-titulo');
+  });
+
   it('devolve as versoes gravadas, para a proxima gravacao comecar de la', async () => {
     const api = new FakeApi();
     const result = await syncNoteWith(api, nota(), semImagens);
@@ -181,9 +209,9 @@ describe('syncNoteWith', () => {
     });
   });
 
-  it('leva o arquivamento junto, e sem versao', async () => {
+  it('leva o arquivamento quando ele mudou, e sem versao', async () => {
     const api = new FakeApi();
-    await syncNoteWith(api, nota({ archived: true }), semImagens);
+    await syncNoteWith(api, nota({ archived: true, archivedDirty: true }), semImagens);
 
     expect(api.patched[0].archived).toBe(true);
     expect(api.patched[0].versions).toEqual({ title: 'v1-titulo', recorded_at: 'v1-data' });
@@ -191,8 +219,14 @@ describe('syncNoteWith', () => {
 
   it('desarquivar tambem viaja (false explicito, nao ausencia)', async () => {
     const api = new FakeApi();
-    await syncNoteWith(api, nota({ text: 'x' }), semImagens);
+    await syncNoteWith(api, nota({ text: 'x', archivedDirty: true }), semImagens);
     expect(api.patched[0].archived).toBe(false);
+  });
+
+  it('nao manda o interruptor de arquivamento quando ele nao mudou', async () => {
+    const api = new FakeApi();
+    await syncNoteWith(api, nota({ archived: true }), semImagens);
+    expect(api.patched[0].archived).toBeUndefined();
   });
 
   it('cria a nota quando a entrada ainda nao tem corpo', async () => {
@@ -200,8 +234,32 @@ describe('syncNoteWith', () => {
     api.notes = [];
     const result = await syncNoteWith(api, nota({ text: 'primeiro texto', noteId: undefined }), semImagens);
 
-    expect(api.created).toEqual([{ entryId: 'en1', title: 'meu titulo', markdown: 'primeiro texto' }]);
+    expect(api.created).toEqual([
+      { entryId: 'en1', title: 'meu titulo', markdown: 'primeiro texto', id: 'r1' },
+    ]);
     expect(result?.noteId).toBe('n_criada');
+  });
+
+  it('reenvio idempotente da nota grava o corpo que ficou para tras', async () => {
+    const api = new FakeApi();
+    api.notes = [];
+    api.createNote = jest.fn(
+      async (_entryId: string, _title: string, _markdown: string) => ({
+        id: 'n_existente',
+        body_version: 'v_antiga',
+        content_markdown: 'texto antigo',
+      }),
+    );
+
+    const result = await syncNoteWith(
+      api,
+      nota({ text: 'texto atual', noteId: undefined }),
+      semImagens,
+    );
+
+    expect(api.bodies).toEqual([{ markdown: 'texto atual', baseVersion: undefined }]);
+    expect(result?.noteId).toBe('n_existente');
+    expect(result?.versions.body).toBe('v2-corpo');
   });
 
   it('recria a nota quando o servidor devolve 404 (id local velho)', async () => {
@@ -274,6 +332,32 @@ describe('o que a nota guarda depois do envio', () => {
     expect(updated.noteDirty).toBeUndefined();
     expect(updated.syncConflict).toBeUndefined();
     expect(updated.attachments?.['attachment:at_1']).toBe('at_1');
+  });
+
+  it('limpa a pendencia de arquivamento depois de enviada', () => {
+    const sent = nota({ archivedDirty: true, archived: true });
+    const updated = applySyncResult(sent, sent, {
+      noteId: 'n1',
+      attachments: {},
+      versions: { body: 'v2-corpo' },
+    });
+
+    expect(updated.archivedDirty).toBeUndefined();
+  });
+
+  it('mantem a pendencia que nao foi enviada nesta rodada', () => {
+    const sent = nota({ tagsDirty: true });
+    const updated = applySyncResult(sent, { ...sent, tagsDirty: false }, {
+      noteId: 'n1',
+      attachments: {},
+      versions: { body: 'v2-corpo' },
+    });
+
+    expect(updated.tagsDirty).toBe(true);
+  });
+
+  it('arquivamento pendente entra na fila de sync', () => {
+    expect(needsNoteSync(nota({ archivedDirty: true }))).toBe(true);
   });
 
   it('mantem o sujo se o usuario editou durante o envio', () => {

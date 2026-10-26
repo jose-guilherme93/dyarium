@@ -420,17 +420,19 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   const setArchived = useCallback(async (id: string, archived: boolean) => {
     const current = await getRecording(id);
     if (!current) return;
+    if (Boolean(current.archived) === archived) return;
     const updated: Recording = {
       ...current,
       archived: archived || undefined,
-      // Arquivar e uma propriedade da nota, entao vai para o servidor como o
-      // resto: a nota fica suja para o sync levar.
-      noteDirty: current.entryId ? true : current.noteDirty,
+      // O sync manda o interruptor so quando ele mudou. O pull respeita o flag:
+      // arquivar no aparelho nao volta atras antes de o servidor confirmar.
+      archivedDirty: true,
       updatedAt: new Date().toISOString(),
     };
     await upsertRecording(updated);
     setRecordings((prev) => prev.map((r) => (r.id === id ? updated : r)));
-  }, []);
+    if (current.entryId) kick();
+  }, [kick]);
 
   const archiveNote = useCallback((id: string) => setArchived(id, true), [setArchived]);
   const unarchiveNote = useCallback((id: string) => setArchived(id, false), [setArchived]);
@@ -512,7 +514,9 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       const updated: Recording = {
         ...current,
         tags: normalized.length > 0 ? normalized : undefined,
-        tagsDirty: current.entryId ? true : undefined,
+        // Mesmo sem entrada criada ainda: a nota sobe depois com o conjunto.
+        // Sem o flag, as tags ficavam so no aparelho e o pull as apagava.
+        tagsDirty: true,
         updatedAt: new Date().toISOString(),
       };
       await upsertRecording(updated);

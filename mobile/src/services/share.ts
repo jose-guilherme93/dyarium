@@ -12,6 +12,7 @@ import {
   MAX_SHARED_FILES,
   analyzeShareAudio,
   buildShareFileName,
+  normalizeSharedUri,
   type ImportDraft,
   type ShareAudioPayload,
 } from '@/core/import';
@@ -32,7 +33,7 @@ function toPayload(payload: {
 }): ShareAudioPayload | null {
   if (!payload.contentUri) return null;
   return {
-    uri: payload.contentUri,
+    uri: normalizeSharedUri(payload.contentUri),
     mimeType: payload.contentMimeType,
     name: payload.originalName,
     size: payload.contentSize,

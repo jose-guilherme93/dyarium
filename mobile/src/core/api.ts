@@ -46,8 +46,6 @@ export interface CreateUploadBody {
   created_at?: string;
   /** Origem: `share` para audio importado. */
   source?: 'upload' | 'share';
-  /** Texto da nota associado ao audio (o servidor passa a usar depois). */
-  text?: string;
   /** O cliente transcreve no aparelho; o servidor nao enfileira transcricao. */
   local_transcribe?: boolean;
   /** Quando presente, adiciona o audio a uma entrada existente. */
@@ -64,11 +62,11 @@ export interface PutTranscriptBody {
 export interface CreateTextEntryBody {
   /** Id temporal do app (ULID): o servidor usa-o para a nota manter a posicao. */
   id?: string;
-  client_key: string;
   title: string;
+  /** Data do evento; vira `recorded_at` da entrada. */
   recorded_at?: string;
+  /** Hora de criacao/importacao original; o servidor nao a muda depois. */
   created_at?: string;
-  text: string;
   notebook_id?: string;
 }
 
@@ -106,10 +104,19 @@ export interface FieldVersions {
  */
 export class ConflictError extends ApiError {
   readonly fields: ConflictField[];
-  constructor(status: number, code: string, message: string, fields: ConflictField[]) {
+  /** Versoes atuais do servidor para os campos que brigaram. */
+  readonly versions: Record<string, string>;
+  constructor(
+    status: number,
+    code: string,
+    message: string,
+    fields: ConflictField[],
+    versions: Record<string, string> = {},
+  ) {
     super(status, code, message);
     this.name = 'ConflictError';
     this.fields = fields;
+    this.versions = versions;
   }
 }
 
@@ -117,6 +124,12 @@ export class ConflictError extends ApiError {
 interface ConflictBody {
   conflict?: ConflictField[];
   versions?: Record<string, string>;
+}
+
+/** Corpo de erro lido uma unica vez; o `text()` da Response nao pode repetir. */
+interface ParsedError {
+  error: ApiError;
+  body: Record<string, unknown>;
 }
 
 export interface CreateUploadResponse {
@@ -222,6 +235,8 @@ export interface ServerEntry {
   archived?: boolean;
   /** Pilha de audios (so no detalhe da entrada), cada um com sua transcricao. */
   audios?: ServerAudio[];
+  /** Primeiro audio original da entrada (a listagem traz so o id, nao a pilha). */
+  primary_attachment_id?: string;
   /** Versao de cada campo (o servidor devolve tambem a do corpo). */
   versions?: { title?: string; recorded_at?: string; body?: string };
   /** Presente apenas na listagem da lixeira (`?deleted=1`). */
@@ -318,20 +333,32 @@ export class DyariumApi {
     return { Authorization: `Bearer ${this.token}`, ...extra };
   }
 
-  private async parseError(res: HttpResponse): Promise<ApiError> {
+  private async readError(res: HttpResponse): Promise<ParsedError> {
     let code = 'http_error';
     let message = `HTTP ${res.status}`;
     let offset: number | undefined;
+    let body: Record<string, unknown> = {};
     try {
       const raw = await res.text();
-      const body = raw ? JSON.parse(raw) : {};
-      if (body?.error?.code) code = String(body.error.code);
-      if (body?.error?.message) message = String(body.error.message);
-      if (typeof body?.offset === 'number') offset = body.offset;
+      const parsed: unknown = raw ? JSON.parse(raw) : {};
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        body = parsed as Record<string, unknown>;
+      }
+      const envelope = body.error;
+      if (envelope && typeof envelope === 'object') {
+        const detail = envelope as { code?: unknown; message?: unknown };
+        if (detail.code) code = String(detail.code);
+        if (detail.message) message = String(detail.message);
+      }
+      if (typeof body.offset === 'number') offset = body.offset;
     } catch {
       // corpo nao-JSON: mantem a mensagem generica
     }
-    return new ApiError(res.status, code, message, offset);
+    return { error: new ApiError(res.status, code, message, offset), body };
+  }
+
+  private async parseError(res: HttpResponse): Promise<ApiError> {
+    return (await this.readError(res)).error;
   }
 
   /** Health check publico (sem autenticacao). */
@@ -453,11 +480,16 @@ export class DyariumApi {
   }
 
   /** Cria a nota de uma entrada a partir do markdown do corpo. */
-  async createNote(entryId: string, title: string, markdown: string): Promise<ServerNote> {
+  async createNote(
+    entryId: string,
+    title: string,
+    markdown: string,
+    id?: string,
+  ): Promise<ServerNote> {
     const res = await this.fetchImpl(this.url(`/api/v1/entries/${entryId}/notes`), {
       method: 'POST',
       headers: this.authHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ title, content_markdown: markdown }),
+      body: JSON.stringify({ ...(id ? { id } : {}), title, content_markdown: markdown }),
     });
     if (!res.ok) throw await this.parseError(res);
     return JSON.parse(await res.text());
@@ -482,18 +514,25 @@ export class DyariumApi {
     return parsed.versions?.body ?? '';
   }
 
-  /** Converte um 409 em ConflictError, dizendo os campos em conflito. */
+  /**
+   * Converte um 409 em ConflictError, dizendo os campos em conflito e as versoes
+   * atuais do servidor. Le o corpo **uma vez**: uma Response nao pode ser lida
+   * duas vezes, e a segunda leitura engolia a lista de campos.
+   */
   private async parseErrorWithConflict(res: HttpResponse): Promise<ApiError> {
-    const error = await this.parseError(res);
+    const { error, body } = await this.readError(res);
     if (res.status !== 409) return error;
-    let fields: ConflictField[] = [];
-    try {
-      const body = (await res.text()) as unknown as ConflictBody;
-      if (Array.isArray(body.conflict)) fields = body.conflict;
-    } catch {
-      // corpo nao-JSON: fica sem lista de campos
-    }
-    return new ConflictError(res.status, error.code, error.message, fields);
+    const conflict = body as unknown as ConflictBody;
+    const fields = Array.isArray(conflict.conflict)
+      ? conflict.conflict.filter(
+          (field): field is ConflictField =>
+            field === 'title' || field === 'recorded_at' || field === 'body',
+        )
+      : [];
+    const versions = conflict.versions && typeof conflict.versions === 'object'
+      ? conflict.versions
+      : {};
+    return new ConflictError(res.status, error.code, error.message, fields, versions);
   }
 
   /** Sobe uma imagem como anexo da entrada (bytes crus, Content-Type image/*). */
@@ -571,13 +610,29 @@ export class DyariumApi {
 
   /** Lista de entradas do servidor (resumo). `limit` alto para reconciliar. */
   async listEntries(limit = 100): Promise<ServerEntry[]> {
-    const res = await this.fetchImpl(this.url(`/api/v1/entries?limit=${limit}`), {
+    return (await this.listEntriesPage(limit)).entries;
+  }
+
+  /**
+   * Uma pagina da lista de entradas. `cursor` e o `next_cursor` da pagina
+   * anterior; sem ele a pagina e a ultima. O pull percorre todas as paginas para
+   * nao parar em silencio quando a biblioteca passa do limite.
+   */
+  async listEntriesPage(
+    limit = 100,
+    cursor?: string,
+  ): Promise<{ entries: ServerEntry[]; next_cursor?: string }> {
+    const params = `limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+    const res = await this.fetchImpl(this.url(`/api/v1/entries?${params}`), {
       method: 'GET',
       headers: this.authHeaders(),
     });
     if (!res.ok) throw await this.parseError(res);
-    const body = JSON.parse(await res.text()) as { entries?: ServerEntry[] };
-    return body.entries ?? [];
+    const body = JSON.parse(await res.text()) as {
+      entries?: ServerEntry[];
+      next_cursor?: string;
+    };
+    return { entries: body.entries ?? [], next_cursor: body.next_cursor };
   }
 
   /**
@@ -586,13 +641,25 @@ export class DyariumApi {
    * (ou restaurado de um backup antigo) nao apaga o aparelho inteiro.
    */
   async listDeletedEntries(limit = 100): Promise<ServerEntry[]> {
-    const res = await this.fetchImpl(this.url(`/api/v1/entries?deleted=1&limit=${limit}`), {
+    return (await this.listDeletedEntriesPage(limit)).entries;
+  }
+
+  /** Uma pagina da lixeira; mesma regra de `next_cursor` da lista de entradas. */
+  async listDeletedEntriesPage(
+    limit = 100,
+    cursor?: string,
+  ): Promise<{ entries: ServerEntry[]; next_cursor?: string }> {
+    const params = `deleted=1&limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+    const res = await this.fetchImpl(this.url(`/api/v1/entries?${params}`), {
       method: 'GET',
       headers: this.authHeaders(),
     });
     if (!res.ok) throw await this.parseError(res);
-    const body = JSON.parse(await res.text()) as { entries?: ServerEntry[] };
-    return body.entries ?? [];
+    const body = JSON.parse(await res.text()) as {
+      entries?: ServerEntry[];
+      next_cursor?: string;
+    };
+    return { entries: body.entries ?? [], next_cursor: body.next_cursor };
   }
 
   /** Desfaz a exclusao logica de uma entrada (traz de volta da lixeira). */

@@ -210,7 +210,8 @@ export default function TranscriptScreen() {
     if (!note) return undefined;
     return (
       audioRefFromPath(note.filePath) ??
-      (note.serverAttachmentId ? `attachment:${note.serverAttachmentId}` : undefined)
+      (note.serverAttachmentId ? `attachment:${note.serverAttachmentId}` : undefined) ??
+      (note.serverAudios?.[0]?.id ? `attachment:${note.serverAudios[0].id}` : undefined)
     );
   }, [note]);
   const uriRef = useRef<string | null>(null);

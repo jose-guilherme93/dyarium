@@ -14,8 +14,14 @@
  * Best-effort e idempotente. Devolve quantas mudancas houve.
  */
 
-import { DyariumApi, type FetchLike } from '@/core/api';
-import { entryToRecording, isBlankServerEntry, mergeServerNote, recordingsDeletedOnServer } from '@/core/pull';
+import { DyariumApi, type FetchLike, type ServerEntry } from '@/core/api';
+import {
+  duplicateEntryRecordings,
+  entryToRecording,
+  isBlankServerEntry,
+  mergeServerNote,
+  recordingsDeletedOnServer,
+} from '@/core/pull';
 import type { Recording } from '@/core/types';
 
 import { deleteRecordingRow, listRecordings, upsertRecording } from './db';
@@ -24,9 +30,6 @@ import { pullNotebooks } from './notebookSync';
 import { loadServerConfig } from './secure';
 
 const doFetch = globalThis.fetch as unknown as FetchLike;
-
-/** Alto o bastante para reconciliar exclusoes; o servidor tem teto proprio. */
-const PULL_LIMIT = 2000;
 
 /** Evita dois pulls ao mesmo tempo (o periodico e o de foco podem se cruzar). */
 let pulling = false;
@@ -41,6 +44,30 @@ export async function pullServerEntries(): Promise<number> {
   }
 }
 
+const PULL_PAGE_SIZE = 500;
+// Teto de seguranca: uma biblioteca absurda nao pode prender o app num laco.
+const PULL_MAX_PAGES = 100;
+
+interface PagedResult {
+  items: ServerEntry[];
+  /** false quando o teto de paginas foi atingido: a lista veio incompleta. */
+  complete: boolean;
+}
+
+async function listAllPages(
+  load: (cursor?: string) => Promise<{ entries: ServerEntry[]; next_cursor?: string }>,
+): Promise<PagedResult> {
+  const items: ServerEntry[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < PULL_MAX_PAGES; page += 1) {
+    const result = await load(cursor);
+    items.push(...result.entries);
+    if (!result.next_cursor) return { items, complete: true };
+    cursor = result.next_cursor;
+  }
+  return { items, complete: false };
+}
+
 async function pullOnce(): Promise<number> {
   const config = await loadServerConfig();
   if (!config) return 0;
@@ -48,19 +75,33 @@ async function pullOnce(): Promise<number> {
   // local precisa dele para exibir nome/cor.
   await pullNotebooks().catch(() => undefined);
   const api = new DyariumApi(config, doFetch);
-  const entries = await api.listEntries(PULL_LIMIT);
+  // Pagina ate o fim: antes o pull parava em 2000 notas e as mais antigas
+  // nunca chegavam ao aparelho.
+  const entriesPage = await listAllPages((cursor) => api.listEntriesPage(PULL_PAGE_SIZE, cursor));
+  const entries = entriesPage.items;
   const local = await listRecordings();
 
   let changed = 0;
   const removed = new Set<string>();
 
+  // O mesmo audio importado duas vezes vira uma unica entrada no servidor
+  // (dedupe por SHA-256), mas o aparelho ficava com duas linhas e dois cartoes.
+  for (const recording of duplicateEntryRecordings(local)) {
+    deleteSessionFiles(recording.id);
+    await deleteRecordingRow(recording.id);
+    removed.add(recording.id);
+    changed += 1;
+  }
+
   // Exclusoes: so o que o servidor confirma como apagado, e so quando a lista
   // veio completa (nao truncada). Se a lixeira nao puder ser lida, nao apagamos
   // nada: na duvida, o dado fica.
-  const deleted = await api.listDeletedEntries(PULL_LIMIT).catch(() => null);
-  if (deleted && deleted.length < PULL_LIMIT) {
+  const deletedPage = await listAllPages((cursor) =>
+    api.listDeletedEntriesPage(PULL_PAGE_SIZE, cursor),
+  ).catch(() => null);
+  if (deletedPage?.complete) {
     const deletedAt = new Map<string, string>();
-    for (const entry of deleted) {
+    for (const entry of deletedPage.items) {
       if (entry.id) deletedAt.set(entry.id, entry.deleted_at ?? entry.updated_at);
     }
     for (const recording of recordingsDeletedOnServer(local, deletedAt)) {

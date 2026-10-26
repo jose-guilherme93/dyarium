@@ -1,4 +1,4 @@
-import { entryToRecording, isBlankServerEntry, mergeServerNote, recordingsDeletedOnServer } from '../pull';
+import { duplicateEntryRecordings, entryToRecording, isBlankServerEntry, mergeServerNote, recordingsDeletedOnServer } from '../pull';
 import type { ServerEntry, ServerNote } from '../api';
 import type { Recording } from '../types';
 
@@ -32,6 +32,47 @@ const ENTRY: ServerEntry = {
   created_at: '2026-10-11T14:00:00Z',
   updated_at: '2026-10-11T14:05:00Z',
 };
+
+describe('duplicateEntryRecordings', () => {
+  it('remove a linha limpa mais antiga quando duas apontam para a mesma entrada', () => {
+    const older = recording({
+      id: 'old',
+      entryId: 'e1',
+      updatedAt: '2026-10-11T14:00:00Z',
+      filePath: 'file:///old.wav',
+    });
+    const newer = recording({
+      id: 'new',
+      entryId: 'e1',
+      updatedAt: '2026-10-11T15:00:00Z',
+      filePath: 'file:///new.wav',
+    });
+
+    expect(duplicateEntryRecordings([older, newer]).map((r) => r.id)).toEqual(['old']);
+    expect(duplicateEntryRecordings([newer, older]).map((r) => r.id)).toEqual(['old']);
+  });
+
+  it('nao remove nada quando ha edicao pendente em uma das linhas', () => {
+    const clean = recording({ id: 'a', entryId: 'e1', updatedAt: '2026-10-11T14:00:00Z' });
+    const dirty = recording({
+      id: 'b',
+      entryId: 'e1',
+      updatedAt: '2026-10-11T15:00:00Z',
+      noteDirty: true,
+    });
+
+    expect(duplicateEntryRecordings([clean, dirty])).toEqual([]);
+  });
+
+  it('nao mexe em notas de entradas diferentes', () => {
+    expect(
+      duplicateEntryRecordings([
+        recording({ id: 'a', entryId: 'e1' }),
+        recording({ id: 'b', entryId: 'e2' }),
+      ]),
+    ).toEqual([]);
+  });
+});
 
 describe('entryToRecording', () => {
   it('mapeia uma nota de texto como concluida e sem transcricao pendente', () => {
@@ -95,6 +136,19 @@ describe('entryToRecording', () => {
   it('traz o arquivamento do servidor', () => {
     expect(entryToRecording({ ...ENTRY, archived: true }).archived).toBe(true);
     expect(entryToRecording({ ...ENTRY, archived: false }).archived).toBe(false);
+  });
+
+  it('traz o primeiro audio do servidor como referencia para o player', () => {
+    const byList = entryToRecording({ ...ENTRY, primary_attachment_id: 'at_1' });
+    expect(byList.serverAttachmentId).toBe('at_1');
+
+    const byDetail = entryToRecording({
+      ...ENTRY,
+      audios: [
+        { id: 'at_2', content_type: 'audio/aac', size_bytes: 1, duration_seconds: 1, created_at: 'x' },
+      ],
+    });
+    expect(byDetail.serverAttachmentId).toBe('at_2');
   });
 
   it('traz caderno e tags do servidor', () => {
@@ -365,6 +419,22 @@ describe('mergeServerNote', () => {
       { ...ENTRY, notebook_id: 'nb_servidor', tags: ['deles'] },
     );
     expect(merged).toBeNull();
+  });
+
+  it('nao desfaz no pull um arquivamento local ainda pendente', () => {
+    const local = clean({ archived: true, archivedDirty: true });
+    const merged = mergeServerNote(local, serverEntry({ archived: false }), undefined);
+    expect(merged).toBeNull();
+  });
+
+  it('completa a referencia do audio de uma nota que ja existia no aparelho', () => {
+    const local = clean();
+    const merged = mergeServerNote(
+      local,
+      serverEntry({ primary_attachment_id: 'at_9' }),
+      undefined,
+    );
+    expect(merged?.serverAttachmentId).toBe('at_9');
   });
 
   it('sem nada novo, nao devolve mudanca', () => {

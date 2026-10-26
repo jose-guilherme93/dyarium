@@ -5,6 +5,7 @@ import {
   extensionFor,
   formatBrDateTime,
   mimeForExtension,
+  normalizeSharedUri,
   parseBrDateTime,
   parseNameDate,
   parseUsDateTime,
@@ -299,5 +300,20 @@ describe('mimeForExtension', () => {
     expect(mimeForExtension('mp3')).toBe('audio/mpeg');
     expect(mimeForExtension('m4a')).toBe('audio/mp4');
     expect(mimeForExtension('desconhecida')).toBe('application/octet-stream');
+  });
+});
+
+describe('normalizeSharedUri', () => {
+  it('completa o file: de um slash que o expo-sharing devolve', () => {
+    expect(normalizeSharedUri('file:/data/user/0/com.dyarium.app/cache/a.wav')).toBe(
+      'file:///data/user/0/com.dyarium.app/cache/a.wav',
+    );
+  });
+
+  it('preserva file:// e content:// como estao', () => {
+    expect(normalizeSharedUri('file:///data/a.wav')).toBe('file:///data/a.wav');
+    expect(normalizeSharedUri('content://media/external/audio/media/1')).toBe(
+      'content://media/external/audio/media/1',
+    );
   });
 });

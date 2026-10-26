@@ -1,10 +1,24 @@
-import { ApiError, DyariumApi, type FetchLike, type HttpResponse } from '../api';
+import { ApiError, ConflictError, DyariumApi, type FetchLike, type HttpResponse } from '../api';
 
 function resp(status: number, body: unknown): HttpResponse {
   return {
     ok: status >= 200 && status < 300,
     status,
     text: async () => JSON.stringify(body),
+  };
+}
+
+/** Resposta cujo corpo so pode ser lido uma vez, como uma Response real. */
+function respOnce(status: number, body: unknown): HttpResponse {
+  let read = false;
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    text: async () => {
+      if (read) throw new Error('Body is unusable: Body has already been read');
+      read = true;
+      return JSON.stringify(body);
+    },
   };
 }
 
@@ -82,18 +96,63 @@ describe('DyariumApi', () => {
     expect((err as ApiError).offset).toBe(8);
   });
 
-  it('createTextEntry envia POST /entries com o texto', async () => {
+  it('createTextEntry envia POST /entries com id, titulo e data', async () => {
     const { api, calls } = makeApi(() => resp(201, { id: 'en1', status: 'ready' }));
     const out = await api.createTextEntry({
-      client_key: 'note_1',
+      id: 'note_1',
       title: 'Minha nota',
       recorded_at: '2026-10-10T21:00:00.000Z',
-      text: 'texto da nota',
+      created_at: '2026-10-10T22:00:00.000Z',
     });
     expect(calls[0].url).toBe('http://host:8080/api/v1/entries');
     expect(calls[0].init?.method).toBe('POST');
     expect(calls[0].init?.headers?.['Content-Type']).toBe('application/json');
-    expect(JSON.parse(String(calls[0].init?.body)).text).toBe('texto da nota');
+    const body = JSON.parse(String(calls[0].init?.body));
+    expect(body).toEqual({
+      id: 'note_1',
+      title: 'Minha nota',
+      recorded_at: '2026-10-10T21:00:00.000Z',
+      created_at: '2026-10-10T22:00:00.000Z',
+    });
     expect(out.id).toBe('en1');
+  });
+
+  it('409 de conflito traz campos e versoes lendo o corpo uma vez', async () => {
+    const { api } = makeApi(() =>
+      respOnce(409, {
+        error: { code: 'conflict', message: 'a nota mudou no outro lugar' },
+        conflict: ['title', 'recorded_at'],
+        versions: { title: 'v2-titulo', recorded_at: 'v2-data' },
+      }),
+    );
+
+    const err = await api
+      .updateEntry('en1', { title: 'meu', versions: { title: 'v1', recorded_at: 'v1' } })
+      .catch((error) => error);
+
+    expect(err).toBeInstanceOf(ConflictError);
+    expect((err as ConflictError).fields).toEqual(['title', 'recorded_at']);
+    expect((err as ConflictError).versions).toEqual({
+      title: 'v2-titulo',
+      recorded_at: 'v2-data',
+    });
+  });
+
+  it('pagina a lista de entradas com cursor e devolve next_cursor', async () => {
+    const { api, calls } = makeApi(() =>
+      resp(200, {
+        entries: [{ id: 'en1' }],
+        next_cursor: '500',
+      }),
+    );
+
+    const page = await api.listEntriesPage(500);
+
+    expect(calls[0].url).toBe('http://host:8080/api/v1/entries?limit=500');
+    expect(page.entries).toHaveLength(1);
+    expect(page.next_cursor).toBe('500');
+
+    await api.listEntriesPage(500, '500');
+    expect(calls[1].url).toBe('http://host:8080/api/v1/entries?limit=500&cursor=500');
   });
 });
