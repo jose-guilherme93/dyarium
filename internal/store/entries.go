@@ -156,11 +156,13 @@ func (s *Store) GetEntry(ctx context.Context, id string) (Entry, error) {
 			COALESCE(original_filename,''), COALESCE(content_type,''), size_bytes, duration_seconds, COALESCE(sha256,''),
 			recorded_at, created_at, updated_at, deleted_at, archived,
 			title_updated_at, recorded_at_updated_at,
-			COALESCE((SELECT body_updated_at FROM notes n WHERE n.entry_id = entries.id ORDER BY n.created_at DESC LIMIT 1), '')
-		FROM entries WHERE id = ? AND deleted_at IS NULL`, id).Scan(
+			COALESCE((SELECT body_updated_at FROM notes n WHERE n.entry_id = entries.id ORDER BY n.created_at DESC LIMIT 1), ''),
+			COALESCE((SELECT id FROM attachments a WHERE a.entry_id = entries.id AND a.kind = ?
+				ORDER BY a.created_at ASC LIMIT 1), '')
+		FROM entries WHERE id = ? AND deleted_at IS NULL`, AttachmentOriginal, id).Scan(
 		&e.ID, &e.Title, &e.Status, &e.Source, &e.ParentID, &e.NotebookID, &e.OriginalFilename, &e.ContentType,
 		&e.SizeBytes, &e.DurationSeconds, &e.SHA256, &recordedAt, &createdAt, &updatedAt, &deletedAt, &archived,
-		&titleVersion, &recordedVersion, &bodyVersion)
+		&titleVersion, &recordedVersion, &bodyVersion, &e.PrimaryAttachmentID)
 	if err != nil {
 		return Entry{}, err
 	}
@@ -218,30 +220,37 @@ func (s *Store) PurgeEntry(ctx context.Context, id string) error {
 
 // ListEntries returns recent entries, newest first.
 func (s *Store) ListEntries(ctx context.Context, limit int) ([]Entry, error) {
-	return s.ListEntriesFiltered(ctx, limit, "", "", "", nil)
+	return s.ListEntriesFilteredNotebook(ctx, limit, 0, "", "", "", nil, "")
 }
 
 // ListEntriesFiltered returns recent entries, newest first, optionally limited
 // to entries that mention the given person, place and/or theme (case
 // insensitive). Empty arguments mean no filter.
 func (s *Store) ListEntriesFiltered(ctx context.Context, limit int, person, place, theme string, archived *bool) ([]Entry, error) {
-	return s.ListEntriesFilteredNotebook(ctx, limit, person, place, theme, archived, "")
+	return s.ListEntriesFilteredNotebook(ctx, limit, 0, person, place, theme, archived, "")
 }
 
 // ListEntriesFilteredNotebook is ListEntriesFiltered with an optional notebook
-// filter. An empty notebookID means every notebook.
-func (s *Store) ListEntriesFilteredNotebook(ctx context.Context, limit int, person, place, theme string, archived *bool, notebookID string) ([]Entry, error) {
+// filter. An empty notebookID means every notebook. `offset` pages through the
+// result; the order is stable (created_at, id) so a page boundary does not
+// repeat or skip rows while nothing changes.
+func (s *Store) ListEntriesFilteredNotebook(ctx context.Context, limit, offset int, person, place, theme string, archived *bool, notebookID string) ([]Entry, error) {
 	if limit <= 0 {
 		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
 	}
 	query := `
 		SELECT e.id, COALESCE(e.title,''), e.status, e.source, COALESCE(e.parent_id,''), COALESCE(e.notebook_id,''),
 			COALESCE(e.original_filename,''), COALESCE(e.content_type,''), e.size_bytes, e.duration_seconds, COALESCE(e.sha256,''),
 			e.recorded_at, e.created_at, e.updated_at, e.archived,
 			e.title_updated_at, e.recorded_at_updated_at,
-			COALESCE((SELECT body_updated_at FROM notes n WHERE n.entry_id = e.id ORDER BY n.created_at DESC LIMIT 1), '')
+			COALESCE((SELECT body_updated_at FROM notes n WHERE n.entry_id = e.id ORDER BY n.created_at DESC LIMIT 1), ''),
+			COALESCE((SELECT id FROM attachments a WHERE a.entry_id = e.id AND a.kind = ?
+				ORDER BY a.created_at ASC LIMIT 1), '')
 		FROM entries e WHERE e.deleted_at IS NULL`
-	var args []any
+	args := []any{AttachmentOriginal}
 	if notebookID = strings.TrimSpace(notebookID); notebookID != "" {
 		query += ` AND e.notebook_id = ?`
 		args = append(args, notebookID)
@@ -264,8 +273,8 @@ func (s *Store) ListEntriesFilteredNotebook(ctx context.Context, limit int, pers
 	addFilter(EntityPerson, person)
 	addFilter(EntityPlace, place)
 	addFilter(EntityTheme, theme)
-	query += ` ORDER BY e.created_at DESC LIMIT ?`
-	args = append(args, limit)
+	query += ` ORDER BY e.created_at DESC, e.id DESC LIMIT ? OFFSET ?`
+	args = append(args, limit, offset)
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -280,7 +289,7 @@ func (s *Store) ListEntriesFilteredNotebook(ctx context.Context, limit int, pers
 		var createdAt, updatedAt string
 		if err := rows.Scan(&e.ID, &e.Title, &e.Status, &e.Source, &e.ParentID, &e.NotebookID, &e.OriginalFilename,
 			&e.ContentType, &e.SizeBytes, &e.DurationSeconds, &e.SHA256, &recordedAt, &createdAt, &updatedAt,
-			&archived, &titleVersion, &recordedVersion, &bodyVersion); err != nil {
+			&archived, &titleVersion, &recordedVersion, &bodyVersion, &e.PrimaryAttachmentID); err != nil {
 			return nil, fmt.Errorf("store: scan entry: %w", err)
 		}
 		if recordedAt.Valid {
@@ -300,14 +309,17 @@ func (s *Store) ListEntriesFilteredNotebook(ctx context.Context, limit int, pers
 // They are the "tombstones" the app uses to reconcile: a local note is only
 // removed when the server confirms the deletion (never because the entry is
 // merely absent, which would wipe the phone on a fresh or reset server).
-func (s *Store) ListDeletedEntries(ctx context.Context, limit int) ([]Entry, error) {
+func (s *Store) ListDeletedEntries(ctx context.Context, limit, offset int) ([]Entry, error) {
 	if limit <= 0 {
 		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, COALESCE(title,''), created_at, updated_at, deleted_at
 		FROM entries WHERE deleted_at IS NOT NULL
-		ORDER BY deleted_at DESC LIMIT ?`, limit)
+		ORDER BY deleted_at DESC, id DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("store: list deleted entries: %w", err)
 	}

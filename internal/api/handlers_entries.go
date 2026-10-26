@@ -53,6 +53,9 @@ func entryJSON(e store.Entry) map[string]any {
 	if e.DeletedAt != nil {
 		body["deleted_at"] = e.DeletedAt
 	}
+	if e.PrimaryAttachmentID != "" {
+		body["primary_attachment_id"] = e.PrimaryAttachmentID
+	}
 	return body
 }
 
@@ -108,10 +111,25 @@ func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 	if limit > 5000 {
 		limit = 5000
 	}
+	// Paginacao por deslocamento. A resposta traz `next_cursor` enquanto houver
+	// outra pagina, para o app nao parar em 2000 notas sem aviso.
+	cursor := 0
+	if raw := strings.TrimSpace(query.Get("cursor")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			cursor = n
+		}
+	}
+	pageJSON := func(out []map[string]any, count int) map[string]any {
+		body := map[string]any{"entries": out}
+		if count == limit {
+			body["next_cursor"] = strconv.Itoa(cursor + count)
+		}
+		return body
+	}
 	// `deleted=1` lista as lixeiras (tombstones): o app so apaga uma nota local
 	// quando o servidor confirma que ela foi apagada.
 	if truthy(query.Get("deleted")) {
-		entries, err := s.deps.Store.ListDeletedEntries(r.Context(), limit)
+		entries, err := s.deps.Store.ListDeletedEntries(r.Context(), limit, cursor)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", err.Error())
 			return
@@ -120,7 +138,7 @@ func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 		for _, e := range entries {
 			out = append(out, entryJSON(e))
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"entries": out})
+		writeJSON(w, http.StatusOK, pageJSON(out, len(entries)))
 		return
 	}
 	notebookID := strings.TrimSpace(query.Get("notebook_id"))
@@ -134,13 +152,12 @@ func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	entries, err := s.deps.Store.ListEntriesFilteredNotebook(r.Context(), limit,
+	entries, err := s.deps.Store.ListEntriesFilteredNotebook(r.Context(), limit, cursor,
 		query.Get("person"), query.Get("place"), query.Get("theme"), archiveFilter(query), notebookID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
-	out := make([]map[string]any, 0, len(entries))
 	ids := make([]string, 0, len(entries))
 	for _, e := range entries {
 		ids = append(ids, e.ID)
@@ -150,6 +167,13 @@ func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
+	body := pageJSON(entriesJSON(entries, tagNames), len(entries))
+	writeJSON(w, http.StatusOK, body)
+}
+
+// entriesJSON converte as entradas e anexa os nomes das tags num lugar so.
+func entriesJSON(entries []store.Entry, tagNames map[string][]string) []map[string]any {
+	out := make([]map[string]any, 0, len(entries))
 	for _, e := range entries {
 		item := entryJSON(e)
 		if names := tagNames[e.ID]; len(names) > 0 {
@@ -157,7 +181,7 @@ func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, item)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"entries": out})
+	return out
 }
 
 // truthy accepts the query-param spellings a client may use for a boolean.
@@ -180,6 +204,10 @@ func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 		ParentID   string `json:"parent_id"`
 		NotebookID string `json:"notebook_id"`
 		CreatedAt  string `json:"created_at"`
+		// RecordedAt is the date of the event, when it differs from the creation
+		// time (offline note, imported entry). Without it the app had to PATCH
+		// the date right after creating the note.
+		RecordedAt string `json:"recorded_at"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_body", "corpo invalido")
@@ -219,6 +247,16 @@ func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 	if title == "" {
 		title = entrytitle.Name(entrytitle.Text)
 	}
+	var recordedAt *time.Time
+	if raw := strings.TrimSpace(req.RecordedAt); raw != "" {
+		parsed, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_recorded_at", "recorded_at invalido")
+			return
+		}
+		t := parsed.UTC()
+		recordedAt = &t
+	}
 	entry := store.Entry{
 		ID:         id.New(),
 		Title:      title,
@@ -226,6 +264,7 @@ func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 		Source:     "text",
 		ParentID:   parentID,
 		NotebookID: notebookID,
+		RecordedAt: recordedAt,
 		CreatedAt:  createdAt,
 		UpdatedAt:  now,
 	}

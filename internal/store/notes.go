@@ -71,12 +71,25 @@ func (s *Store) RestoreEntry(ctx context.Context, id string) error {
 // CreateNote inserts a note.
 func (s *Store) CreateNote(ctx context.Context, n Note) error {
 	bodyVersion := versionNow()
-	_, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: create note: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO notes (id, entry_id, title, document, content_markdown, body_updated_at, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		n.ID, n.EntryID, n.Title, n.Document, n.ContentMarkdown, bodyVersion,
-		ts(n.CreatedAt), ts(n.UpdatedAt))
-	if err != nil {
+		ts(n.CreatedAt), ts(n.UpdatedAt)); err != nil {
+		return fmt.Errorf("store: create note: %w", err)
+	}
+	// A nota recem-criada e atividade recente da entrada. Sem isto, o corpo que
+	// acabou de chegar nao muda a ordem de "recentes" no app.
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE entries SET updated_at = ? WHERE id = ?`, ts(n.UpdatedAt), n.EntryID); err != nil {
+		return fmt.Errorf("store: touch entry after note: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("store: create note: %w", err)
 	}
 	return nil
@@ -183,6 +196,13 @@ func (s *Store) UpdateNoteBody(ctx context.Context, id, markdown, readVersion st
 		`UPDATE notes SET content_markdown = ?, document = '', body_updated_at = ?, updated_at = ? WHERE id = ?`,
 		markdown, stamp, ts(time.Now()), id); err != nil {
 		return "", false, fmt.Errorf("store: update note body: %w", err)
+	}
+	// A edicao do corpo e atividade recente da entrada: sem tocar em updated_at,
+	// a nota editada no dashboard nao subia na ordem de "recentes" do app.
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE entries SET updated_at = ? WHERE id = (SELECT entry_id FROM notes WHERE id = ?)`,
+		ts(time.Now()), id); err != nil {
+		return "", false, fmt.Errorf("store: touch entry after note body: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return "", false, fmt.Errorf("store: update note body: %w", err)

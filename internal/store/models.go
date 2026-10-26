@@ -80,6 +80,9 @@ type Entry struct {
 	DeletedAt        *time.Time
 	// Archived: a nota saiu da lista de trabalho, mas nao foi apagada.
 	Archived bool
+	// PrimaryAttachmentID is the first original audio of the entry. It lets the
+	// list response point the app at the audio without fetching every stack.
+	PrimaryAttachmentID string
 
 	// Versoes dos campos editaveis, como o cliente leu (so preenchidas nas
 	// leituras que as trazem). Sao os valores **exatos** gravados no banco: o
