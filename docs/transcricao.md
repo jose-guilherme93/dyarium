@@ -103,3 +103,15 @@ Metodo:
 
 Criterio de aceite do benchmark: o pico reportado deve ser reproduzivel entre execucoes
 (variacao pequena) e documentado em `docs/transcricao.md` apos a medicao.
+
+## No aparelho (app)
+
+- Ligar a transcricao local e baixar o modelo **nao** varre o acervo. Uma nota com
+  transcricao pronta — feita no aparelho ou pelo servidor — nunca e transcrita de novo por
+  iniciativa do app; refazer e acao explicita do usuario.
+- A fila automatica (boot e segundo plano) so pega audio que ainda nao tem texto e que nao
+  pertence ao servidor. Quem e o dono fica em `transcriptOrigin` (`local` ou `server`),
+  gravado no envio pelo `local_transcribe` e mantido no pull.
+- Nota que o servidor transcreveu espera o `GET /transcript` e e marcada como pronta
+  (`hasTranscript`); o texto do servidor nunca e refeito no aparelho so porque o modelo
+  local apareceu depois.
