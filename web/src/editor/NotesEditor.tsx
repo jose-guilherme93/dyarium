@@ -13,6 +13,7 @@ import "@blocknote/mantine/style.css";
 import { api, uploadAttachment, uploadFile } from "../api";
 import { CloseIcon } from "../components/icons";
 import { useEscape } from "../lib/useEscape";
+import { removeAudioBlocks } from "./audioBlocks";
 import { blocksToNoteMarkdown } from "./blocknoteMarkdown";
 import { createEditorSchema, MediaContext } from "./editorSchema";
 import type { Audio, Entry } from "../types";
@@ -28,6 +29,8 @@ interface NotesEditorProps {
   onChange?: (markdown: string) => void;
   onMediaAdded?: () => void;
   onOpenEntry?: (id: string) => void;
+  /** Apaga o audio (corpo + servidor); o menu do player chama isto. */
+  onDeleteAudio?: (attachmentId: string) => void;
 }
 
 // NotesEditorHandle lets the note header trigger the media/link inserters that
@@ -36,6 +39,11 @@ export interface NotesEditorHandle {
   addImage: () => void;
   addAudio: () => void;
   openLink: () => void;
+  /**
+   * Remove o bloco de audio do documento e devolve o markdown resultante.
+   * `undefined` quando nao havia bloco (audio so na pilha ou modo cru).
+   */
+  removeAudio: (attachmentId: string) => string | undefined;
 }
 
 const schema = createEditorSchema();
@@ -44,7 +52,7 @@ const schema = createEditorSchema();
 // plus the /link command. Audio and image are media blocks with the same markers
 // the app reads and writes.
 export const NotesEditor = forwardRef<NotesEditorHandle, NotesEditorProps>(function NotesEditor(
-  { entryId, initialContent, audios = new Map(), onChange, onMediaAdded, onOpenEntry },
+  { entryId, initialContent, audios = new Map(), onChange, onMediaAdded, onOpenEntry, onDeleteAudio },
   ref,
 ) {
   const editor = useCreateBlockNote({ schema, initialContent, dictionary: pt });
@@ -56,12 +64,6 @@ export const NotesEditor = forwardRef<NotesEditorHandle, NotesEditorProps>(funct
   const [picker, setPicker] = useState(false);
   const [pickerEntries, setPickerEntries] = useState<Entry[]>([]);
   const [term, setTerm] = useState("");
-
-  useImperativeHandle(ref, () => ({
-    addImage: () => imageInput.current?.click(),
-    addAudio: () => audioInput.current?.click(),
-    openLink: () => setPicker(true),
-  }));
 
   useEffect(() => {
     if (!picker) {
@@ -93,7 +95,25 @@ export const NotesEditor = forwardRef<NotesEditorHandle, NotesEditorProps>(funct
   }, []);
 
   /** Markdown do documento atual, como o app e o servidor falam. */
-  const emit = () => onChange?.(blocksToNoteMarkdown(editor, editor.document as never[]));
+  const markdownOf = () => blocksToNoteMarkdown(editor, editor.document as never[]);
+  const emit = () => onChange?.(markdownOf());
+
+  /** Tira o bloco de audio do documento; o anexo e apagado por quem chama. */
+  const removeAudio = (attachmentId: string) => {
+    if (!removeAudioBlocks(editor, attachmentId)) {
+      return undefined;
+    }
+    const markdown = markdownOf();
+    onChange?.(markdown);
+    return markdown;
+  };
+
+  useImperativeHandle(ref, () => ({
+    addImage: () => imageInput.current?.click(),
+    addAudio: () => audioInput.current?.click(),
+    openLink: () => setPicker(true),
+    removeAudio,
+  }));
 
   const addMedia = () => {
     try {
@@ -320,7 +340,14 @@ export const NotesEditor = forwardRef<NotesEditorHandle, NotesEditorProps>(funct
   );
 
   return (
-    <MediaContext.Provider value={{ audios, entryId, onOpenEntry: onOpenEntry ?? (() => {}) }}>
+    <MediaContext.Provider
+      value={{
+        audios,
+        entryId,
+        onOpenEntry: onOpenEntry ?? (() => {}),
+        onDeleteAudio: onDeleteAudio ?? (() => {}),
+      }}
+    >
       <BlockNoteView
         editor={editor}
         theme={dark ? "dark" : "light"}

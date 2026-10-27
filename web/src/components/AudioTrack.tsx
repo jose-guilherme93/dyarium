@@ -5,6 +5,8 @@ import { formatDuration } from "../lib/format";
 import { rememberAudioTime } from "../lib/noteViewState";
 import type { Audio, Segment } from "../types";
 import { AudioPlayer, type AudioPlayerHandle } from "./AudioPlayer";
+import { ReviewChip } from "./ReviewChip";
+import { SparkIcon } from "./icons";
 
 interface AudioTrackProps {
   audio: Audio;
@@ -19,6 +21,8 @@ interface AudioTrackProps {
   onExpandedChange?: (expanded: boolean) => void;
   /** Playback position restored from the previous visit (seconds). */
   initialTime?: number;
+  /** Removes this audio from the note and from the server. */
+  onDelete?: () => void;
 }
 
 // AudioTrack renders one audio of a note with its own player and a compact
@@ -32,6 +36,7 @@ export function AudioTrack({
   initialExpanded = false,
   onExpandedChange,
   initialTime = 0,
+  onDelete,
 }: AudioTrackProps) {
   const localRef = useRef<AudioPlayerHandle | null>(null);
   const ref = playerRef ?? localRef;
@@ -41,6 +46,9 @@ export function AudioTrack({
   const [segments, setSegments] = useState<Segment[]>(audio.transcript?.segments ?? []);
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [loading, setLoading] = useState(false);
+  // Index of the segment whose original text is revealed. Only segments the
+  // revision actually changed carry the icon.
+  const [originalAt, setOriginalAt] = useState<number | null>(null);
   const lineRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
   const transcript = audio.transcript ?? null;
@@ -112,6 +120,7 @@ export function AudioTrack({
         ref={ref}
         src={attachmentUrl(audio.id)}
         initialTime={initialTime}
+        onDelete={onDelete}
         onTime={(seconds) => {
           setCurrentTime(seconds);
           if (entryId) {
@@ -122,25 +131,47 @@ export function AudioTrack({
       />
       {hasTranscript && transcript && (
         <div className="audio-transcript">
+          {showFull && segments.length > 0 && (
+            <ReviewChip transcript={transcript} segments={segments} />
+          )}
           {showFull ? (
             <blockquote className="transcript">
               {segments.length > 0 ? (
-                segments.map((segment, index) => (
-                  <p key={`${segment.start_ms}-${index}`}>
-                    <button
-                      ref={(el) => {
-                        lineRefs.current[index] = el;
-                      }}
-                      type="button"
-                      className={index === activeSegment ? "transcript-line transcript-line--active" : "transcript-line"}
-                      onClick={() => ref.current?.seek(segment.start_ms / 1000)}
-                      title="Ouvir a partir daqui"
-                    >
-                      <span className="timestamp">{formatDuration(segment.start_ms / 1000)}</span>
-                      {segment.text}
-                    </button>
-                  </p>
-                ))
+                segments.map((segment, index) => {
+                  const revised = segment.revised;
+                  const open = originalAt === index;
+                  return (
+                    <div key={`${segment.start_ms}-${index}`} className="transcript-row">
+                      <button
+                        ref={(el) => {
+                          lineRefs.current[index] = el;
+                        }}
+                        type="button"
+                        className={index === activeSegment ? "transcript-line transcript-line--active" : "transcript-line"}
+                        onClick={() => ref.current?.seek(segment.start_ms / 1000)}
+                        title="Ouvir a partir daqui"
+                      >
+                        <span className="timestamp">{formatDuration(segment.start_ms / 1000)}</span>
+                        {revised ?? segment.text}
+                      </button>
+                      {revised && (
+                        <button
+                          type="button"
+                          className="transcript-original-toggle"
+                          aria-label="Ver o texto original do whisper"
+                          aria-expanded={open}
+                          title={open ? "Ocultar o texto original" : "Melhorado por IA: ver o texto original"}
+                          onClick={() => setOriginalAt(open ? null : index)}
+                        >
+                          <SparkIcon size={13} />
+                        </button>
+                      )}
+                      {open && revised && (
+                        <p className="transcript-original">Original do whisper: {segment.text}</p>
+                      )}
+                    </div>
+                  );
+                })
               ) : (
                 <p>{loading ? "Carregando transcrição..." : text}</p>
               )}

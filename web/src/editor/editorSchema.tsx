@@ -29,7 +29,9 @@ export const MediaContext = createContext<{
   audios: Map<string, Audio>;
   entryId: string;
   onOpenEntry: (id: string) => void;
-}>({ audios: new Map(), entryId: "", onOpenEntry: () => {} });
+  /** Remove o audio do corpo e do servidor (o menu do player). */
+  onDeleteAudio: (attachmentId: string) => void;
+}>({ audios: new Map(), entryId: "", onOpenEntry: () => {}, onDeleteAudio: () => {} });
 
 // ---- inline content: a reference to another note (/link) ----
 
@@ -78,14 +80,18 @@ const audioBlock = createReactBlockSpec(
 );
 
 function AudioBlockView({ attachmentId }: { attachmentId: string }) {
-  const { audios, entryId } = useContext(MediaContext);
+  const { audios, entryId, onDeleteAudio } = useContext(MediaContext);
   const audio = audios.get(attachmentId);
   if (!audio) {
     return <div className="doc-audio doc-audio--pending">Áudio sendo processado...</div>;
   }
   return (
     <div className="doc-audio">
-      <AudioTrack audio={audio} entryId={entryId} />
+      <AudioTrack
+        audio={audio}
+        entryId={entryId}
+        onDelete={onDeleteAudio ? () => onDeleteAudio(attachmentId) : undefined}
+      />
     </div>
   );
 }

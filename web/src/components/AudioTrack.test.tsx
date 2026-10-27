@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { AudioTrack } from "./AudioTrack";
 import type { Audio } from "../types";
@@ -37,5 +37,57 @@ describe("AudioTrack transcript", () => {
     expect(screen.getByRole("button", { name: "Ocultar transcrição" })).toBeInTheDocument();
     expect(container.querySelector(".transcript--clamped")).toBeNull();
     expect(container.querySelectorAll(".transcript-line")).toHaveLength(3);
+  });
+});
+
+describe("AudioTrack revisao por IA", () => {
+  const revised: Audio = {
+    ...audio,
+    transcript: {
+      ...audio.transcript!,
+      text: "Um, dois. Tres, quatro.",
+      segments: [
+        { start_ms: 0, end_ms: 1000, text: "um dois", revised: "Um, dois." },
+        { start_ms: 1000, end_ms: 2000, text: "tres quatro" },
+        { start_ms: 2000, end_ms: 3000, text: "cinco seis" },
+      ],
+    },
+  };
+
+  it("mostra o texto revisado e marca so o trecho que a IA mudou", () => {
+    const { container } = render(<AudioTrack audio={revised} />);
+    fireEvent.click(screen.getByRole("button", { name: "Mostrar transcrição" }));
+    expect(screen.getByText(/Um, dois\./)).toBeInTheDocument();
+    expect(container.querySelectorAll(".transcript-original-toggle")).toHaveLength(1);
+  });
+
+  it("revela o texto original do whisper ao tocar no icone", () => {
+    const { container } = render(<AudioTrack audio={revised} />);
+    fireEvent.click(screen.getByRole("button", { name: "Mostrar transcrição" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ver o texto original do whisper" }));
+    expect(screen.getByText(/Original do whisper: um dois/)).toBeInTheDocument();
+    expect(container.querySelector(".transcript-original")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Ver o texto original do whisper" }));
+    expect(container.querySelector(".transcript-original")).toBeNull();
+  });
+});
+
+describe("AudioTrack menu", () => {
+  it("oferece apagar o audio e avisa quem cuida do anexo", () => {
+    const onDelete = vi.fn();
+    render(<AudioTrack audio={audio} onDelete={onDelete} />);
+
+    fireEvent.click(screen.getByLabelText("Opções do áudio"));
+    fireEvent.click(screen.getByText("Apagar áudio"));
+
+    expect(onDelete).toHaveBeenCalledTimes(1);
+  });
+
+  it("nao mostra apagar quando nao ha quem remova", () => {
+    render(<AudioTrack audio={audio} />);
+
+    fireEvent.click(screen.getByLabelText("Opções do áudio"));
+
+    expect(screen.queryByText("Apagar áudio")).toBeNull();
   });
 });

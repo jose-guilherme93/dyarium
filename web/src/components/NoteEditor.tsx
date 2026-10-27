@@ -57,6 +57,20 @@ function sentimentText(label?: string): string {
   }
 }
 
+/** Tira do markdown o marcador do audio apagado (pilha ou modo cru). */
+function withoutAudioMarker(markdown: string, attachmentId: string): string {
+  const marker = `!audio[attachment:${attachmentId}]`;
+  if (!markdown.includes(marker)) {
+    return markdown;
+  }
+  return markdown
+    .split("\n")
+    .filter((line) => !line.includes(marker))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trimEnd();
+}
+
 function processingText(
   progress: { stage: string; done: number; total: number } | undefined,
   status?: string,
@@ -559,6 +573,47 @@ export function NoteEditor({
   }, []);
 
   /**
+   * Apaga o audio de verdade: tira o bloco do corpo (persistindo o markdown) e
+   * remove o anexo no servidor, junto com a transcricao. Sem isso, remover so o
+   * marcador deixava o audio reaparecendo na pilha do topo, sem como apagar.
+   */
+  const deleteAudio = useCallback(
+    async (audioId: string) => {
+      if (
+        !window.confirm(
+          "Apagar este áudio? O áudio e a transcrição saem da nota e do servidor. Não dá para desfazer.",
+        )
+      ) {
+        return;
+      }
+      try {
+        // O corpo pode ter edicao pendente: grava antes de apagar o anexo.
+        await autosaveRef.current?.flush();
+        const markdownAfter = notesRef.current?.removeAudio(audioId);
+        if (markdownAfter === undefined) {
+          const next = withoutAudioMarker(rawMarkdown, audioId);
+          if (next !== rawMarkdown) {
+            handleBodyChange(next);
+          }
+        }
+        await autosaveRef.current?.flush();
+        await api.deleteAttachment(audioId);
+        setEntry((current) =>
+          current
+            ? { ...current, audios: (current.audios ?? []).filter((audio) => audio.id !== audioId) }
+            : current,
+        );
+        void loadLight();
+        onChanged();
+        notify("Áudio apagado", "success");
+      } catch (err) {
+        notify(err instanceof Error ? err.message : "Não foi possível apagar o áudio", "error");
+      }
+    },
+    [handleBodyChange, loadLight, notify, onChanged, rawMarkdown],
+  );
+
+  /**
    * Alterna entre o editor formatado e o markdown cru. Ao voltar, o editor
    * remonta com o conteudo inicial: ele precisa ser o markdown editado aqui,
    * senao a proxima tecla gravaria o corpo antigo por cima da edicao.
@@ -784,7 +839,47 @@ export function NoteEditor({
         Sentimento: <strong>{sentimentText(analysis.sentiment_label)}</strong>{" "}
         <span className="muted">({Number(analysis.sentiment ?? 0).toFixed(2)})</span>
       </p>
-      {analysis.summary && <p className="insight-summary">{analysis.summary}</p>}
+      {typeof analysis.comprehension === "number" && analysis.comprehension >= 0 && (
+        <p className="insight-comprehension">
+          Compreensão lógica: <strong>{analysis.comprehension}/100</strong>{" "}
+          <span className="muted">
+            {analysis.comprehension_source === "review"
+              ? `estimativa do texto transcrito; ${analysis.revised_segments ?? 0} trecho(s) melhorado(s) pela IA`
+              : "estimativa do modelo sobre o texto lido, sem revisão da transcrição"}
+          </span>
+        </p>
+      )}
+      {((analysis.stutter_rate ?? 0) > 0 || (analysis.hesitation_rate ?? 0) > 0) && (
+        <p className="muted insight-disfluency">
+          Fala: gagueira {Number(analysis.stutter_rate ?? 0).toFixed(1)} e hesitação{" "}
+          {Number(analysis.hesitation_rate ?? 0).toFixed(1)} por 100 palavras
+        </p>
+      )}
+      {/* A prosa e legenda das metricas: duas frases no maximo. O resumo so
+          aparece quando nao ha leitura (analises antigas). */}
+      {(analysis.reading || analysis.summary) && (
+        <p className="insight-reading">{analysis.reading || analysis.summary}</p>
+      )}
+
+      {analysis.sections && analysis.sections.length > 1 && (
+        <div className="analysis-block">
+          <h4>Seções</h4>
+          {analysis.sections.map((section, index) => (
+            <details key={`${section.heading}-${index}`} className="insight-section">
+              <summary>
+                {section.heading || "Nota"}
+                <span className="muted">
+                  {" "}
+                  {sentimentText(section.sentiment?.label ?? "")}
+                </span>
+              </summary>
+              {(section.reading || section.summary) && (
+                <p>{section.reading || section.summary}</p>
+              )}
+            </details>
+          ))}
+        </div>
+      )}
 
       {analysis.themes && analysis.themes.length > 0 && (
         <div className="analysis-block">
@@ -1055,6 +1150,7 @@ export function NoteEditor({
                       : current.filter((id) => id !== audio.id),
                   );
                 }}
+                onDelete={() => void deleteAudio(audio.id)}
               />
             ))}
           </div>
@@ -1087,6 +1183,7 @@ export function NoteEditor({
                   onChanged();
                 }}
                 onOpenEntry={onOpenEntry}
+                onDeleteAudio={(id) => void deleteAudio(id)}
               />
             ))}
         </div>

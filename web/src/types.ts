@@ -48,17 +48,35 @@ export interface Metrics {
 }
 
 export interface Segment {
+  /** Position in the transcript; the key the revision is applied to. */
+  idx?: number;
   start_ms: number;
   end_ms: number;
+  /** Original text from whisper. Never overwritten by the revision. */
   text: string;
+  /** AI revision of this segment, present only when it differs from text. */
+  revised?: string;
+  /** Segment written by the user; the revision never touches it. */
+  edited?: boolean;
 }
 
 export interface Transcript {
   model: string;
   language: string;
+  /** The text the user reads: the revision when it exists, the raw one otherwise. */
   text: string;
   trim_silence: boolean;
   duration_seconds: number;
+  /** Whether this transcript already has an AI revision. */
+  revised?: boolean;
+  /** Modelo que revisou; vazio quando nunca revisou. */
+  revised_model?: string;
+  /** Estimativa 0-100 da compreensao logica; -1 quando ausente. */
+  revised_comprehension?: number;
+  /** Trechos que ficaram sem revisao (resposta recusada ou janela perdida). */
+  revised_rejected?: number;
+  /** Trechos que a passada ainda nao alcancou; 0 quando terminou. */
+  revised_pending?: number;
   /** Ausente no payload da entrada; carregado sob demanda ao expandir. */
   segments?: Segment[];
 }
@@ -74,6 +92,32 @@ export interface Analysis {
   emotions_detail?: AnalysisEmotion[] | null;
   people_detail?: AnalysisPerson[] | null;
   places_detail?: AnalysisPlace[] | null;
+  themes?: AnalysisTheme[] | null;
+  /** Análise de verdade: o que o texto diz, o que revela, o que fica em aberto. */
+  reading?: string | null;
+  /** Análise seção por seção (títulos do texto escrito e a transcrição). */
+  sections?: AnalysisSection[] | null;
+  key_moments?: KeyMoment[] | null;
+  questions?: string[] | null;
+  decisions?: string[] | null;
+  /** 0-100 estimate of how well the transcript represents the speech; -1 when absent. */
+  comprehension?: number;
+  /** "review" when the revision pass measured it, "analysis" for the model estimate. */
+  comprehension_source?: string;
+  /** Disfluency series per 100 words of the raw audio text. */
+  stutter_rate?: number;
+  hesitation_rate?: number;
+  /** How many segments the revision actually changed. */
+  revised_segments?: number;
+}
+
+export interface AnalysisSection {
+  heading: string;
+  /** "text" para uma seção escrita, "transcript" para a fala. */
+  kind: string;
+  reading: string;
+  summary: string;
+  sentiment: { score: number; label: string };
   themes?: AnalysisTheme[] | null;
   key_moments?: KeyMoment[] | null;
   questions?: string[] | null;
@@ -133,6 +177,16 @@ export interface MoodPoint {
   date: string;
   sentiment: number;
   entries: number;
+}
+
+/** Um processo que terminou numa nota (transcricao ou analise). */
+export interface Activity {
+  id: string;
+  entry_id: string;
+  /** "transcription" ou "analysis". */
+  kind: string;
+  title: string;
+  finished_at: string;
 }
 
 export interface EntryVersions {
@@ -213,6 +267,10 @@ export interface Settings {
   analyze_model: string;
   analyze_api_key_set: boolean;
   analysis_themes: string;
+  /** Revise the transcript with the same model before analysing it. */
+  review_enabled: boolean;
+  /** Keep hesitations and stutters in the revised text. */
+  literal_transcript: boolean;
 }
 
 export interface EntryProgress {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { BlockNoteEditor } from "@blocknote/core";
 import { createEditorSchema } from "./editorSchema";
+import { removeAudioBlocks } from "./audioBlocks";
 import {
   blocksToNoteMarkdown,
   normalizeLegacyAttachmentImages,
@@ -61,5 +62,23 @@ describe("audio da nota no editor do dashboard", () => {
     expect(out).toContain("!audio[attachment:at_audio]{d=28.794}");
     expect(out).not.toContain("DYARIUMAUDIO");
     expect(out.match(/!audio\[/g)).toHaveLength(1);
+  });
+});
+
+describe("apagar audio do editor", () => {
+  it("remove o bloco e o marcador do markdown, sem tocar no resto da nota", () => {
+    const instance = editor();
+    instance.replaceBlocks(
+      instance.document,
+      noteMarkdownToBlocks(instance, "Antes\n\n!audio[attachment:at_audio]{d=28.794}\n\nDepois"),
+    );
+
+    expect(removeAudioBlocks(instance, "at_audio")).toBe(true);
+
+    const out = blocksToNoteMarkdown(instance, instance.document);
+    expect(out).not.toContain("!audio[");
+    expect(out).toContain("Antes");
+    expect(out).toContain("Depois");
+    expect(removeAudioBlocks(instance, "at_audio")).toBe(false);
   });
 });

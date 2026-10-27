@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { NoteEditor } from "./NoteEditor";
 import { api } from "../api";
 
@@ -37,6 +37,7 @@ vi.mock("../editor/markdownBlocks", () => ({
 vi.mock("./TagEditor", () => ({ TagEditor: () => null }));
 
 vi.mock("../api", () => ({
+  attachmentUrl: (id: string) => `/api/v1/attachments/${id}`,
   api: {
     getEntry: vi.fn(async () => ({
       id: "e1",
@@ -68,6 +69,7 @@ vi.mock("../api", () => ({
     retranscribe: vi.fn(async () => ({ status: "ok" })),
     analyze: vi.fn(async () => ({ status: "ok" })),
     deleteEntry: vi.fn(async () => undefined),
+    deleteAttachment: vi.fn(async () => undefined),
   },
 }));
 
@@ -150,5 +152,83 @@ describe("NoteEditor autosave", () => {
 
     expect(vi.mocked(api.updateNote).mock.calls.at(-1)?.[0]).toBe("n1");
     expect(vi.mocked(api.updateNote).mock.calls.at(-1)?.[1]).toBe("novo texto editado");
+  });
+});
+
+describe("NoteEditor apagar audio", () => {
+  it("apaga o anexo no servidor quando o menu do player pede", async () => {
+    const base = await vi.mocked(api.getEntry)("e1");
+    vi.mocked(api.getEntry).mockResolvedValueOnce({
+      ...base,
+      duration_seconds: 3,
+      audios: [
+        {
+          id: "a1",
+          content_type: "audio/aac",
+          size_bytes: 1234,
+          duration_seconds: 3,
+          created_at: "2026-10-15T12:00:00Z",
+          transcript: null,
+        },
+      ],
+    });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const onChanged = vi.fn();
+
+    render(
+      <NoteEditor
+        entryId="e1"
+        refreshKey={0}
+        onChanged={onChanged}
+        onDeleted={noop}
+        onOpenEntity={noop}
+        onOpenEntry={noop}
+        notebooks={[]}
+      />,
+    );
+
+    fireEvent.click(await screen.findByLabelText("Opções do áudio"));
+    fireEvent.click(screen.getByText("Apagar áudio"));
+
+    await waitFor(() => expect(api.deleteAttachment).toHaveBeenCalledWith("a1"));
+    expect(onChanged).toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByLabelText("Opções do áudio")).toBeNull());
+    confirm.mockRestore();
+  });
+
+  it("nao apaga nada quando a confirmacao e cancelada", async () => {
+    const base = await vi.mocked(api.getEntry)("e1");
+    vi.mocked(api.getEntry).mockResolvedValueOnce({
+      ...base,
+      audios: [
+        {
+          id: "a1",
+          content_type: "audio/aac",
+          size_bytes: 1234,
+          duration_seconds: 3,
+          created_at: "2026-10-15T12:00:00Z",
+          transcript: null,
+        },
+      ],
+    });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    render(
+      <NoteEditor
+        entryId="e1"
+        refreshKey={0}
+        onChanged={noop}
+        onDeleted={noop}
+        onOpenEntity={noop}
+        onOpenEntry={noop}
+        notebooks={[]}
+      />,
+    );
+
+    fireEvent.click(await screen.findByLabelText("Opções do áudio"));
+    fireEvent.click(screen.getByText("Apagar áudio"));
+
+    expect(api.deleteAttachment).not.toHaveBeenCalled();
+    confirm.mockRestore();
   });
 });
