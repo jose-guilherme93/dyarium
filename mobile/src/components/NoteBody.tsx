@@ -30,14 +30,15 @@ import {
   useState,
 } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Image,
-  Text,
   useWindowDimensions,
   View,
   type LayoutChangeEvent,
   type NativeSyntheticEvent,
 } from 'react-native';
+import { Text } from '@/components/AppText';
 import { Press } from '@/components/Press';
 import {
   EnrichedTextInput,
@@ -80,6 +81,7 @@ export type { FormatType, NoteBodyHandle, NoteBodyProps } from './noteBodyTypes'
 const FLUSH_MS = 4000;
 const MIN_TEXT_HEIGHT = 28;
 const EMPTY_SOURCES: Record<string, string> = {};
+const EMPTY_LOADING: Record<string, boolean> = {};
 const EMPTY_SEGMENTS: Record<string, TranscriptSegment[]> = {};
 const EMPTY_REFS: string[] = [];
 
@@ -126,6 +128,7 @@ const NativeNoteBody = memo(
       value,
       onChangeMarkdown,
       imageSources = EMPTY_SOURCES,
+      imageLoading = EMPTY_LOADING,
       audioTranscripts = {},
       audioSegments = EMPTY_SEGMENTS,
       activeAudioRef,
@@ -625,6 +628,14 @@ const NativeNoteBody = memo(
             width: clampImageWidth(widthPercent),
           });
         },
+        removeImage(persistSrc) {
+          // A foto pendente ainda nao tem arquivo nem anexo: se o preparo
+          // falhar, o no sai inteiro para nao deixar um quadro vazio na nota.
+          const node = nodesRef.current.find(
+            (item): item is NoteImageNode => item.kind === 'image' && item.ref === persistSrc,
+          );
+          if (node) void removeNode(node.id);
+        },
         insertAudio(ref, durationMs = 0) {
           void insert({ kind: 'audio', id: 'insert', ref, durationMs });
         },
@@ -648,15 +659,23 @@ const NativeNoteBody = memo(
           await flushPending();
         },
       }),
-      [editorFor, flushPending, focusNode, format, insert, markDirty],
+      [editorFor, flushPending, focusNode, format, insert, markDirty, removeNode],
     );
 
     const textStyle = useMemo(
       () => ({
         color: colors.text,
-        fontFamily: fontFamilyNative(typography?.family ?? 'system'),
+        fontFamily: fontFamilyNative(
+          typography?.family ?? 'system',
+          typography?.weight ?? 'regular',
+        ),
         fontSize: typography?.size ?? 16,
-        fontWeight: fontWeightNative(typography?.weight ?? 'regular'),
+        // A familia Inter ja carrega o peso no proprio arquivo. Deixar o peso
+        // sintetico ligado engrossa a letra de novo no iOS.
+        fontWeight:
+          (typography?.family ?? 'system') === 'system'
+            ? ('normal' as const)
+            : fontWeightNative(typography?.weight ?? 'regular'),
         lineHeight: noteLineHeight(typography?.size ?? 16),
         letterSpacing: NOTE_LETTER_SPACING,
         padding: 0,
@@ -694,6 +713,7 @@ const NativeNoteBody = memo(
             key={node.id}
             node={node}
             src={imageSources[node.ref]}
+            loading={imageLoading[node.ref] === true}
             onOpen={onImageOpen}
             onOptions={() => setImageMenuId(node.id)}
           />
@@ -869,11 +889,14 @@ const TextNodeEditor = memo(function TextNodeEditor({
 function ImageBlock({
   node,
   src,
+  loading = false,
   onOpen,
   onOptions,
 }: {
   node: NoteImageNode;
   src?: string;
+  /** A foto ainda esta sendo preparada (recompressao, gravacao local). */
+  loading?: boolean;
   onOpen?: (src: string) => void;
   /** Abre as opcoes da foto (tamanho e remover). */
   onOptions: () => void;
@@ -882,6 +905,10 @@ function ImageBlock({
   const { colors } = useTheme();
 
   const [ratio, setRatio] = useState(() => (src ? (cachedImageRatio(src) ?? 4 / 3) : 4 / 3));
+  // A fonte que terminou de carregar: trocar a URI (previa -> arquivo local)
+  // recomeca o esqueleto sem precisar de um efeito que zere o estado.
+  const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
+  const loaded = Boolean(src) && loadedSrc === src;
 
   useEffect(() => {
     if (!src) return undefined;
@@ -894,26 +921,49 @@ function ImageBlock({
     };
   }, [src]);
 
+  // Enquanto a foto nao esta pronta, o bloco ja ocupa o tamanho final (pela
+  // proporcao conhecida) e mostra a propria imagem borrada com um giro no
+  // centro. Assim o texto nao pula quando ela aparece.
+  const busy = loading || !loaded;
+
   return (
     <View style={[styles.imageBlock, { width: `${node.width}%` }]}>
-      {src ? (
-        <Press
-          onPress={() => onOpen?.(src)}
-          accessibilityRole="imagebutton"
-          accessibilityLabel={node.alt || 'Foto da nota'}
-        >
-          <Image
-            source={{ uri: src }}
-            style={[styles.image, { aspectRatio: ratio }]}
-            resizeMode="cover"
-          />
-        </Press>
-      ) : (
-        <View style={styles.imagePlaceholder}>
-          <Ionicons name="image-outline" size={20} color={colors.textTertiary} />
-          <Text style={styles.imagePlaceholderText}>Foto</Text>
-        </View>
-      )}
+      <View style={styles.imageFrame}>
+        {src ? (
+          <Press
+            onPress={() => onOpen?.(src)}
+            disabled={busy}
+            accessibilityRole="imagebutton"
+            accessibilityLabel={node.alt || 'Foto da nota'}
+            style={styles.imagePress}
+          >
+            <Image
+              testID="note-image"
+              source={{ uri: src }}
+              style={[styles.image, { aspectRatio: ratio }]}
+              resizeMode="cover"
+              blurRadius={busy ? 16 : 0}
+              onLoadEnd={() => setLoadedSrc(src ?? null)}
+              onError={() => setLoadedSrc(src ?? null)}
+            />
+          </Press>
+        ) : (
+          <View style={[styles.imageSkeleton, { aspectRatio: ratio }]} />
+        )}
+        {busy ? (
+          <View
+            style={styles.imageLoading}
+            pointerEvents="none"
+            testID="note-image-loading"
+            accessibilityLabel="Carregando foto"
+          >
+            {!src ? <View style={styles.imageShimmer} testID="note-image-skeleton" /> : null}
+            <View style={styles.imageSpinner}>
+              <ActivityIndicator size="small" color={colors.accent} />
+            </View>
+          </View>
+        ) : null}
+      </View>
       <Press
         style={styles.imageInfo}
         onPress={onOptions}
@@ -949,20 +999,47 @@ export const NoteBody = NativeNoteBody;
 
 const baseStyles = defineStyles({
   image: {
+    width: '100%',
     borderRadius: radius.md,
     backgroundColor: baseColors.surface,
   },
-  imagePlaceholder: {
-    minHeight: 84,
+  imageFrame: {
     borderRadius: radius.md,
+    overflow: 'hidden',
+    backgroundColor: baseColors.surface,
+  },
+  imagePress: { width: '100%' },
+  imageSkeleton: {
+    width: '100%',
+    backgroundColor: baseColors.surface,
     borderWidth: 1,
     borderColor: baseColors.border,
-    backgroundColor: baseColors.surface,
+  },
+  imageLoading: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: spacing.xs,
   },
-  imagePlaceholderText: { color: baseColors.textTertiary, fontSize: 12 },
+  imageShimmer: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: baseColors.surface,
+  },
+  imageSpinner: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: baseColors.bgElevated,
+  },
   sheetBackdrop: {
     flex: 1,
     justifyContent: 'flex-end',

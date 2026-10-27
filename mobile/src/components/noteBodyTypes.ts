@@ -32,6 +32,8 @@ export interface NoteBodyHandle {
     naturalWidth?: number,
     naturalHeight?: number,
   ): void;
+  /** Remove uma foto que ainda nao terminou de entrar na nota. */
+  removeImage(persistSrc: string): void;
   /** Insere um audio no cursor, dividindo o trecho de texto. */
   insertAudio(ref: string, durationMs?: number): void;
   /** Coloca um link no texto selecionado do trecho ativo. */
@@ -47,6 +49,8 @@ export interface NoteBodyProps {
   onChangeMarkdown: (markdown: string) => void;
   /** Mapa referencia salva -> fonte de exibicao (arquivo local ou URL). */
   imageSources?: Record<string, string>;
+  /** Fotos que ainda estao sendo preparadas/gravadas, por referencia. */
+  imageLoading?: Record<string, boolean>;
   /** Transcricao de cada audio, por referencia. */
   audioTranscripts?: Record<string, string>;
   /** Segmentos com minutagem de cada audio, por referencia. */

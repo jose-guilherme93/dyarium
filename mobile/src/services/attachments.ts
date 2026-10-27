@@ -46,8 +46,8 @@ export async function saveLocalImage(
   noteId: string,
   bytes: Uint8Array,
   mime: string,
+  name = `${newId('img_')}.${extensionOf(mime)}`,
 ): Promise<string> {
-  const name = `${newId('img_')}.${extensionOf(mime)}`;
   const file = new File(sessionDirectory(noteId), name);
   if (!file.exists) file.create({ intermediates: true, overwrite: true });
   const handle = file.open(FileMode.Append);

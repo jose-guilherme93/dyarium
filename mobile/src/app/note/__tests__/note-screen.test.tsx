@@ -19,6 +19,7 @@ const mockLocalImageUri = jest.fn();
 const mockFormat = jest.fn();
 const mockBlur = jest.fn();
 const mockInsertAudio = jest.fn();
+const mockInsertImage = jest.fn();
 let mockInsertPosition: { nodeId: string; offset: number } | null = null;
 
 const mockNote: Recording = {
@@ -68,10 +69,12 @@ jest.mock('@/components/NoteBody', () => {
         focus: jest.fn(),
         blur: mockBlur,
         format: (...args: unknown[]) => mockFormat(...args),
-        insertImage: (_display: string, persist: string, alt: string) => {
+        insertImage: (display: string, persist: string, alt: string, ...rest: unknown[]) => {
+          mockInsertImage(display, persist, alt, ...rest);
           current.current = `${current.current}\n![${alt}](${persist})`;
           props.onChangeMarkdown(current.current);
         },
+        removeImage: jest.fn(),
         insertAudio: (...args: unknown[]) => mockInsertAudio(...args),
         getInsertPosition: () => mockInsertPosition,
         insertLink: jest.fn(),
@@ -238,6 +241,7 @@ jest.mock('@/services/image', () => ({
 jest.mock('@/services/imageRatios', () => ({
   cachedImageRatio: () => undefined,
   measureImageRatio: () => Promise.resolve(4 / 3),
+  rememberImageRatio: jest.fn(),
 }));
 
 jest.mock('@/services/localAnalysis', () => ({
@@ -307,15 +311,33 @@ describe('tela da nota', () => {
     mockTypography = { family: 'system', size: 17, weight: 'regular' };
     mockGetRecording.mockResolvedValue(mockNote);
     mockLocalImageUri.mockReturnValue('file:///nota/img-1.jpg');
-    mockSaveLocalImage.mockResolvedValue('img-1.jpg');
-    mockPickImage.mockResolvedValue({
-      name: 'foto.jpg',
-      mimeType: 'image/jpeg',
-      bytes: new Uint8Array([1, 2, 3]),
+    mockSaveLocalImage.mockImplementation(
+      async (_noteId: string, _bytes: Uint8Array, _mime: string, name?: string) =>
+        name ?? 'img-1.jpg',
+    );
+    mockPickImage.mockImplementation(async (onPreview?: (preview: unknown) => void) => {
+      const preview = {
+        uri: 'file:///seletor/foto-original.jpg',
+        name: 'foto.jpg',
+        mimeType: 'image/jpeg',
+        width: 1200,
+        height: 800,
+        localName: 'img-1.jpg',
+      };
+      onPreview?.(preview);
+      return {
+        name: 'foto.jpg',
+        mimeType: 'image/jpeg',
+        bytes: new Uint8Array([1, 2, 3]),
+        width: 1200,
+        height: 800,
+        localName: 'img-1.jpg',
+      };
     });
   });
 
   afterEach(() => {
+    jest.clearAllTimers();
     jest.useRealTimers();
     jest.restoreAllMocks();
   });
@@ -356,7 +378,7 @@ describe('tela da nota', () => {
     const view = await renderNote();
     const title = screen.getByPlaceholderText('título da nota');
     expect(title.props.style).toEqual(
-      expect.arrayContaining([expect.objectContaining({ fontFamily: undefined })]),
+      expect.arrayContaining([expect.objectContaining({ fontFamily: 'Inter_400Regular' })]),
     );
 
     mockTypography = { family: 'serif', size: 21, weight: 'bold' };
@@ -436,6 +458,66 @@ describe('tela da nota', () => {
       await Promise.resolve();
     });
     expect(router.back).toHaveBeenCalled();
+  });
+
+  it('mostra a foto borrada antes de terminar de preparar o arquivo', async () => {
+    let finish: ((value: unknown) => void) | null = null;
+    mockPickImage.mockImplementation((onPreview?: (preview: unknown) => void) => {
+      const preview = {
+        uri: 'file:///seletor/foto-original.jpg',
+        name: 'foto.jpg',
+        mimeType: 'image/jpeg',
+        width: 1200,
+        height: 800,
+        localName: 'img-pendente.jpg',
+      };
+      onPreview?.(preview);
+      return new Promise((resolve) => {
+        finish = resolve;
+      });
+    });
+
+    const view = await renderNote();
+    fireEvent.press(screen.getByLabelText('Adicionar foto'));
+
+    // Antes de recompressao/gravacao, o no ja entrou com a foto do seletor.
+    expect(mockInsertImage).toHaveBeenCalledWith(
+      'file:///seletor/foto-original.jpg',
+      'local:img-pendente.jpg',
+      'foto.jpg',
+      expect.any(Number),
+      1200,
+      800,
+    );
+    expect(mockSaveLocalImage).not.toHaveBeenCalled();
+
+    await act(async () => {
+      finish?.({
+        name: 'foto.jpg',
+        mimeType: 'image/jpeg',
+        bytes: new Uint8Array([1]),
+        width: 1200,
+        height: 800,
+        localName: 'img-pendente.jpg',
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockSaveLocalImage).toHaveBeenCalledWith(
+      'note-1',
+      expect.any(Uint8Array),
+      'image/jpeg',
+      'img-pendente.jpg',
+    );
+
+    // Fecha a tela e descarrega o autosave pendente da foto antes do proximo
+    // teste: um timer antigo nao pode gravar na nota seguinte.
+    view.unmount();
+    await act(async () => {
+      jest.advanceTimersByTime(2000);
+      await Promise.resolve();
+    });
   });
 
   it('abrir uma nota antiga com audio nao a marca como editada', async () => {

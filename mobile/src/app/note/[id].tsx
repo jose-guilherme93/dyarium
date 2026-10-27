@@ -14,11 +14,10 @@ import {
   ScrollView,
   Share,
   StyleSheet,
-  Text,
-  TextInput,
   useWindowDimensions,
   View,
 } from 'react-native';
+import { Text, TextInput } from '@/components/AppText';
 import { Press } from '@/components/Press';
 
 import { ConflictDialog } from '@/components/ConflictDialog';
@@ -85,6 +84,7 @@ import {
 } from '@/services/db';
 import { directoryBytes, sessionDirectory } from '@/services/files';
 import { pickImage } from '@/services/image';
+import { rememberImageRatio } from '@/services/imageRatios';
 import {
   analyzeRecording,
   analysisThreads,
@@ -301,6 +301,9 @@ export default function NoteScreen() {
   const [imageSources, setImageSources] = useState<Record<string, string>>(() =>
     note ? resolveImageSourcesLocal(note.id, body, note.attachments ?? {}) : {},
   );
+  // Foto recem-escolhida que ainda esta sendo recomprimida/gravada: o bloco ja
+  // aparece no lugar, borrado e com giro, em vez de a nota ficar parada.
+  const [imageLoading, setImageLoading] = useState<Record<string, boolean>>({});
   const [notebookPickerOpen, setNotebookPickerOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [transcriptionPromptOpen, setTranscriptionPromptOpen] = useState(false);
@@ -1432,28 +1435,72 @@ export default function NoteScreen() {
 
   const handleAddImage = useCallback(async () => {
     if (!noteId) return;
+    /** No inserido com a foto do seletor, ainda sem arquivo local. */
+    let pending: { ref: string } | null = null;
+
+    const discardPending = () => {
+      if (!pending) return;
+      const ref = pending.ref;
+      pending = null;
+      editorRef.current?.removeImage(ref);
+      setImageLoading((current) => {
+        const next = { ...current };
+        delete next[ref];
+        return next;
+      });
+      setImageSources((current) => {
+        const next = { ...current };
+        delete next[ref];
+        return next;
+      });
+    };
+
     try {
-      const picked = await pickImage();
-      if (!picked) return;
-      // Salva e insere local na hora. O upload fica para o sync ao sair da
-      // nota: esperar a rede aqui deixava o seletor fechado e a nota travada.
-      const name = await saveLocalImage(noteId, picked.bytes, picked.mimeType);
+      // O seletor entrega a foto original antes de recomprimir/gravar: o no
+      // entra na hora com a imagem borrada e o giro, e o resto acontece atras.
+      const picked = await pickImage((preview) => {
+        const ref = `local:${preview.localName}`;
+        pending = { ref };
+        if (preview.height > 0) {
+          rememberImageRatio(preview.uri, preview.width / preview.height);
+        }
+        setImageSources((current) => ({ ...current, [ref]: preview.uri }));
+        setImageLoading((current) => ({ ...current, [ref]: true }));
+        editorRef.current?.insertImage(
+          preview.uri,
+          ref,
+          preview.name,
+          DEFAULT_IMAGE_WIDTH,
+          preview.width,
+          preview.height,
+        );
+      });
+      if (!picked) {
+        discardPending();
+        return;
+      }
+      // Salva e insere local. O upload fica para o sync ao sair da nota:
+      // esperar a rede aqui deixava o seletor fechado e a nota travada.
+      const name = await saveLocalImage(
+        noteId,
+        picked.bytes,
+        picked.mimeType,
+        picked.localName,
+      );
+      const persistSrc = `local:${name}`;
       const displaySrc = localImageUri(noteId, name);
       if (!displaySrc) throw new Error('arquivo local da imagem indisponivel');
-      const persistSrc = `local:${name}`;
+      if (picked.height > 0) {
+        rememberImageRatio(displaySrc, picked.width / picked.height);
+      }
       // A previa precisa saber que esta referencia aponta para o arquivo local;
       // o markdown em si carrega so `local:`/`attachment:`.
       setImageSources((current) => ({ ...current, [persistSrc]: displaySrc }));
-      editorRef.current?.insertImage(
-        displaySrc,
-        persistSrc,
-        picked.name,
-        DEFAULT_IMAGE_WIDTH,
-        picked.width,
-        picked.height,
-      );
+      setImageLoading((current) => ({ ...current, [persistSrc]: false }));
+      pending = null;
       dirtyRef.current = true;
     } catch (error) {
+      discardPending();
       // Antes o erro era engolido e tocar em "Adicionar foto" nao fazia nada.
       // O detalhe fica fora da tela do usuario (sem caminho nem conteudo).
       if (__DEV__) console.warn('[dyarium] falha ao anexar foto', String(error));
@@ -1670,8 +1717,13 @@ export default function NoteScreen() {
             onSubmitEditing={() => editorRef.current?.focus()}
             style={[
               styles.titleInput,
-              { fontFamily: fontFamilyNative(typography.family) },
-              { fontSize: titleSize, lineHeight: Math.round(titleSize * 1.25) },
+              { fontFamily: fontFamilyNative(typography.family, typography.weight) },
+              {
+                fontSize: titleSize,
+                lineHeight: Math.round(titleSize * 1.25),
+                // Inter ja tem um arquivo por peso; ver o comentario do corpo.
+                fontWeight: typography.family === 'system' ? 'normal' : '700',
+              },
             ]}
           />
           {noteDateShown ? <Text style={styles.noteDate}>{noteDateShown}</Text> : null}
@@ -1786,6 +1838,7 @@ export default function NoteScreen() {
             onImageOpen={handleImageOpen}
             placeholder={editorPlaceholder}
             imageSources={imageSources}
+            imageLoading={imageLoading}
             audioTranscripts={audioTranscripts}
             audioSegments={audioSegments}
             activeAudioRef={activeAudioRef}

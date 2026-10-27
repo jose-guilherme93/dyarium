@@ -12,6 +12,18 @@
 import { File } from 'expo-file-system';
 
 import { IMAGE_QUALITY, resizeTarget } from '@/core/image';
+import { newId } from '@/core/id';
+
+export interface PickedImagePreview {
+  /** URI temporaria do seletor, exibida borrada enquanto a foto e preparada. */
+  uri: string;
+  name: string;
+  mimeType: string;
+  width: number;
+  height: number;
+  /** Nome definitivo na pasta da nota; o no entra no documento ja com ele. */
+  localName: string;
+}
 
 export interface PickedImage {
   name: string;
@@ -20,6 +32,8 @@ export interface PickedImage {
   /** Dimensoes da imagem ja otimizada, para o editor nao distorcer a foto. */
   width: number;
   height: number;
+  /** Arquivo local a gravar, gerado antes da otimizacao para o no nao mudar. */
+  localName: string;
 }
 
 type ImagePickerModule = typeof import('expo-image-picker');
@@ -74,7 +88,16 @@ async function optimize(
   return { uri: result.uri, width: result.width, height: result.height };
 }
 
-export async function pickImage(): Promise<PickedImage | null> {
+function extensionFor(mimeType: string): string {
+  const sub = mimeType.split('/')[1]?.toLowerCase() ?? '';
+  if (sub === 'jpeg') return 'jpg';
+  if (sub === 'svg+xml') return 'svg';
+  return /^[a-z0-9]+$/.test(sub) ? sub : 'jpg';
+}
+
+export async function pickImage(
+  onPreview?: (preview: PickedImagePreview) => void,
+): Promise<PickedImage | null> {
   const picker = PICKER;
   if (!picker) throw new Error('seletor de imagens indisponivel neste build');
 
@@ -89,15 +112,29 @@ export async function pickImage(): Promise<PickedImage | null> {
 
   const asset = result.assets[0];
   const manipulator = MANIPULATOR;
+  // A otimizacao (redimensionar e recomprimir) e o que demorava segundos. O
+  // aviso com a foto original borrada sai agora; o trabalho pesado continua.
+  const finalMime = manipulator ? 'image/jpeg' : asset.mimeType ?? 'image/jpeg';
+  const localName = `${newId('img_')}.${extensionFor(finalMime)}`;
+  onPreview?.({
+    uri: asset.uri,
+    name: asset.fileName ?? 'imagem',
+    mimeType: finalMime,
+    width: asset.width,
+    height: asset.height,
+    localName,
+  });
+
   // Sem o modulo nativo (build antigo): segue com o original para nao quebrar.
   if (!manipulator) {
     const original = await new File(asset.uri).arrayBuffer();
     return {
       name: asset.fileName ?? 'imagem',
-      mimeType: asset.mimeType ?? 'image/jpeg',
+      mimeType: finalMime,
       bytes: new Uint8Array(original),
       width: asset.width,
       height: asset.height,
+      localName,
     };
   }
 
@@ -105,12 +142,12 @@ export async function pickImage(): Promise<PickedImage | null> {
     () => null,
   );
   const buffer = await new File(optimized?.uri ?? asset.uri).arrayBuffer();
-  const base = (asset.fileName ?? 'imagem').replace(/\.[^.]+$/, '');
   return {
-    name: `${base}.jpg`,
-    mimeType: 'image/jpeg',
+    name: asset.fileName ?? 'imagem',
+    mimeType: finalMime,
     bytes: new Uint8Array(buffer),
     width: optimized?.width ?? asset.width,
     height: optimized?.height ?? asset.height,
+    localName,
   };
 }

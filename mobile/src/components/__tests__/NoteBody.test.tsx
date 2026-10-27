@@ -316,6 +316,49 @@ describe('corpo da nota em nos', () => {
     expect(onChange).toHaveBeenLastCalledWith('A\n![foto](local:f.jpg)\nB');
   });
 
+  it('mostra esqueleto e giro enquanto a foto carrega', async () => {
+    const view = render(
+      <NoteBody
+        value={'![foto](local:f.jpg)'}
+        onChangeMarkdown={jest.fn()}
+        imageSources={{ 'local:f.jpg': 'file:///dados/f.jpg' }}
+        imageLoading={{ 'local:f.jpg': true }}
+        typography={typography}
+      />,
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId('note-image-loading')).toBeTruthy();
+
+    view.rerender(
+      <NoteBody
+        value={'![foto](local:f.jpg)'}
+        onChangeMarkdown={jest.fn()}
+        imageSources={{ 'local:f.jpg': 'file:///dados/f.jpg' }}
+        imageLoading={{}}
+        typography={typography}
+      />,
+    );
+    fireEvent(screen.getByTestId('note-image'), 'loadEnd');
+
+    expect(screen.queryByTestId('note-image-loading')).toBeNull();
+  });
+
+  it('foto sem arquivo local ainda ocupa o tamanho com esqueleto', () => {
+    render(
+      <NoteBody
+        value={'![foto](local:f.jpg)'}
+        onChangeMarkdown={jest.fn()}
+        typography={typography}
+      />,
+    );
+
+    expect(screen.getByTestId('note-image-skeleton')).toBeTruthy();
+    expect(screen.getByTestId('note-image-loading')).toBeTruthy();
+  });
+
   it('opcoes da foto: tamanhos e remover por ultimo, sem botoes sobre a imagem', () => {
     render(
       <NoteBody
