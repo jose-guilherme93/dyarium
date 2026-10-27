@@ -274,12 +274,16 @@ func (q *Queue) CountByStatus(ctx context.Context, status Status) (int, error) {
 // CancelEntry marks the active jobs of an entry as cancelled and returns their
 // ids so their running contexts can be cancelled.
 func (q *Queue) CancelEntry(ctx context.Context, entryID string) ([]string, error) {
+	// O payload diz a qual entrada o job pertence. As chaves de idempotencia
+	// nao servem: a transcricao usa o id do audio e a analise leva o modelo no
+	// fim, entao procurar por "transcribe:{entry}" nunca casava.
 	rows, err := q.db.QueryContext(ctx, `
 		SELECT id FROM jobs
-		WHERE idempotency_key IN (?, ?)
-		  AND status IN (?, ?, ?, ?)`,
-		"transcribe:"+entryID, "analyze:"+entryID,
-		string(StatusQueued), string(StatusLeased), string(StatusRunning), string(StatusRetrying))
+		WHERE status IN (?, ?, ?, ?)
+		  AND (json_extract(payload, '$.entry_id') = ?
+		       OR idempotency_key IN (?, ?))`,
+		string(StatusQueued), string(StatusLeased), string(StatusRunning), string(StatusRetrying),
+		entryID, "transcribe:"+entryID, "analyze:"+entryID)
 	if err != nil {
 		return nil, fmt.Errorf("jobs: cancel select: %w", err)
 	}

@@ -156,10 +156,11 @@ var errTest = testError{}
 func TestCancelEntry(t *testing.T) {
 	q := newQueue(t)
 	ctx := context.Background()
-	if _, err := q.Enqueue(ctx, jobs.TypeTranscribe, "transcribe:en1", jobs.TranscribePayload{EntryID: "en1"}); err != nil {
+	// As chaves reais: a transcricao usa o id do audio, a analise leva o modelo.
+	if _, err := q.Enqueue(ctx, jobs.TypeTranscribe, "transcribe:att-9", jobs.TranscribePayload{EntryID: "en1", AttachmentID: "att-9"}); err != nil {
 		t.Fatalf("enqueue transcribe: %v", err)
 	}
-	if _, err := q.Enqueue(ctx, jobs.TypeAnalyze, "analyze:en1", jobs.AnalyzePayload{EntryID: "en1"}); err != nil {
+	if _, err := q.Enqueue(ctx, jobs.TypeAnalyze, "analyze:en1:modelo", jobs.AnalyzePayload{EntryID: "en1"}); err != nil {
 		t.Fatalf("enqueue analyze: %v", err)
 	}
 	ids, err := q.CancelEntry(ctx, "en1")

@@ -237,6 +237,11 @@ func (s *Server) handleDeleteAttachment(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
+	// A transcricao e os segmentos caem junto (FK ON DELETE CASCADE). A duracao
+	// da nota e a soma dos audios que sobraram, nao a do audio que saiu.
+	if err := s.deps.Store.SyncEntryDuration(ctx, att.EntryID); err != nil && s.deps.Logger != nil {
+		s.deps.Logger.Error("api: sincronizar duracao da entrada", "entry_id", att.EntryID, "erro", err)
+	}
 	if err := s.deps.Ingest.DeleteAttachmentObject(att); err != nil && s.deps.Logger != nil {
 		s.deps.Logger.Error("api: remover objeto de anexo", "erro", err)
 	}
