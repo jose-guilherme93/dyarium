@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { blocksToNoteMarkdown, noteMarkdownToBlocks } from "./blocknoteMarkdown";
+import {
+  audioAttachmentIds,
+  blocksToNoteMarkdown,
+  markdownToPlain,
+  noteMarkdownToBlocks,
+} from "./blocknoteMarkdown";
 import { createNoteStyleSchema } from "./schema";
 
 /**
@@ -45,11 +50,80 @@ describe("markdown da nota", () => {
     expect(image?.props?.width).toBe("50");
   });
 
-  it("imagem em largura total nao ganha marcador", () => {
+  it("imagem em largura total não ganha marcador", () => {
     const markdown = blocksToNoteMarkdown(editor, [
       { type: "image", props: { attachmentId: "at_2", caption: "", width: "" } },
     ] as never);
     expect(markdown).toBe("![](attachment:at_2)\n");
+  });
+
+  it("foto ainda subindo nao entra no corpo", () => {
+    const markdown = blocksToNoteMarkdown(editor, [
+      { type: "paragraph", content: "antes" },
+      {
+        type: "image",
+        props: { attachmentId: "", caption: "", width: "", pending: true, preview: "blob:foto" },
+      },
+      { type: "paragraph", content: "depois" },
+    ] as never);
+
+    // Sem anexo nao ha marcador: o autosave nao pode gravar um `attachment:`
+    // vazio nem uma imagem quebrada antes de o upload terminar.
+    expect(markdown).not.toContain("attachment:");
+    expect(markdown).not.toContain("![](");
+    expect(markdown).toContain("antes");
+    expect(markdown).toContain("depois");
+  });
+
+  it("audio vira bloco na posicao do marcador e volta igual", () => {
+    const markdown = "Antes\n\n!audio[attachment:at_audio]{d=28.794}\n\nDepois";
+
+    const blocks = noteMarkdownToBlocks(editor, markdown) as never as {
+      type: string;
+      props?: Record<string, string>;
+    }[];
+    expect(blocks.map((block) => block.type)).toEqual(["paragraph", "audio", "paragraph"]);
+    const audio = blocks.find((block) => block.type === "audio");
+    expect(audio?.props).toEqual({ attachmentId: "at_audio", duration: "28.794" });
+
+    const again = blocksToNoteMarkdown(editor, blocks);
+    expect(again).toContain("!audio[attachment:at_audio]{d=28.794}");
+    expect(again).not.toContain("DYARIUMAUDIO");
+    expect(again.indexOf("Antes")).toBeLessThan(again.indexOf("!audio"));
+    expect(again.indexOf("!audio")).toBeLessThan(again.indexOf("Depois"));
+  });
+
+  it("audio sem duracao preserva o marcador sem {d=...}", () => {
+    const blocks = noteMarkdownToBlocks(editor, "!audio[attachment:at_audio]") as never as {
+      type: string;
+      props?: Record<string, string>;
+    }[];
+    expect(blocks[0]?.props?.duration).toBe("");
+    const again = blocksToNoteMarkdown(editor, blocks);
+    expect(again.trim()).toBe("!audio[attachment:at_audio]");
+  });
+
+  it("texto do usuario que parece o marcador temporario nao e apagado", () => {
+    const markdown = "DYARIUMAUDIOnao-e-bloco\n\nDepois";
+    const again = blocksToNoteMarkdown(editor, noteMarkdownToBlocks(editor, markdown));
+    expect(again).toContain("DYARIUMAUDIOnao-e-bloco");
+  });
+
+  it("imagem e audio em sequencia nao trocam de lugar", () => {
+    const markdown = [
+      "texto",
+      "![foto](attachment:at_img){w=40}",
+      "!audio[attachment:at_audio]{d=3.5}",
+      "fim",
+    ].join("\n");
+
+    const blocks = noteMarkdownToBlocks(editor, markdown);
+    const again = blocksToNoteMarkdown(editor, blocks);
+    const image = again.indexOf("![foto](attachment:at_img){w=40}");
+    const audio = again.indexOf("!audio[attachment:at_audio]{d=3.5}");
+    expect(image).toBeGreaterThan(-1);
+    expect(audio).toBeGreaterThan(image);
+    expect(again.indexOf("fim")).toBeGreaterThan(audio);
   });
 
   it("tabela, lista numerada e aninhada sobrevivem", () => {
@@ -77,8 +151,8 @@ describe("markdown da nota", () => {
     expect(again).toContain("1. um");
   });
 
-  it("mencao a outra nota vira link para note:<id> e nao some", () => {
-    // Sem o toExternalHTML do bloco, o conversor do BlockNote descartava a mencao
+  it("menção a outra nota vira link para note:<id> e não some", () => {
+    // Sem o toExternalHTML do bloco, o conversor do BlockNote descartava a menção
     // ao gerar o markdown: a nota ficava vazia depois da conversao.
     const markdown = blocksToNoteMarkdown(editor, [
       {
@@ -114,12 +188,30 @@ describe("markdown da nota", () => {
     expect(blocksToNoteMarkdown(editor, blocks)).toContain("| a");
   });
 
-  it("o schema nao tem cor nem sublinhado: o markdown nao sabe representar", () => {
+  it("o schema não tem cor nem sublinhado: o markdown não sabe representar", () => {
     const styles = Object.keys(createNoteStyleSchema());
     expect(styles).toContain("bold");
     expect(styles).toContain("italic");
     expect(styles).not.toContain("underline");
     expect(styles).not.toContain("textColor");
     expect(styles).not.toContain("backgroundColor");
+  });
+});
+describe("texto simples da nota", () => {
+  it("nao deixa a largura da imagem nem a marcacao no texto contado", () => {
+    const markdown = "![foto](attachment:abc){w=50}\n\n# Titulo\n\nTexto **forte**.";
+    expect(markdownToPlain(markdown)).toBe("foto Titulo Texto forte.");
+  });
+
+  it("nao conta o marcador de audio como palavra", () => {
+    const markdown = "Antes\n!audio[attachment:at_audio]{d=28.794}\nDepois";
+    expect(markdownToPlain(markdown)).toBe("Antes Depois");
+  });
+});
+
+describe("audios citados no corpo", () => {
+  it("lista so os que tem marcador proprio", () => {
+    const markdown = "!audio[attachment:at_a]{d=1}\n\nTexto\n\n!audio[attachment:at_b]";
+    expect([...audioAttachmentIds(markdown)]).toEqual(["at_a", "at_b"]);
   });
 });

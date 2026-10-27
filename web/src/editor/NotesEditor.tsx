@@ -11,6 +11,8 @@ import {
 import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/mantine/style.css";
 import { api, uploadAttachment, uploadFile } from "../api";
+import { CloseIcon } from "../components/icons";
+import { useEscape } from "../lib/useEscape";
 import { blocksToNoteMarkdown } from "./blocknoteMarkdown";
 import { createEditorSchema, MediaContext } from "./editorSchema";
 import type { Audio, Entry } from "../types";
@@ -21,7 +23,7 @@ interface NotesEditorProps {
   audios?: Map<string, Audio>;
   /**
    * Mudanca no corpo. Entrega o **markdown** (o formato canonico dos dois
-   * lados), nao os blocos: quem salva nao precisa conhecer o BlockNote.
+   * lados), não os blocos: quem salva não precisa conhecer o BlockNote.
    */
   onChange?: (markdown: string) => void;
   onMediaAdded?: () => void;
@@ -38,9 +40,9 @@ export interface NotesEditorHandle {
 
 const schema = createEditorSchema();
 
-// NotesEditor is the written body of a note (markdown): text and images, plus the
-// /link command. Audio is not part of the body anymore: the stack of audios sits
-// at the top of the note, outside the document.
+// NotesEditor is the written body of a note (markdown): text, images and audio,
+// plus the /link command. Audio and image are media blocks with the same markers
+// the app reads and writes.
 export const NotesEditor = forwardRef<NotesEditorHandle, NotesEditorProps>(function NotesEditor(
   { entryId, initialContent, audios = new Map(), onChange, onMediaAdded, onOpenEntry },
   ref,
@@ -101,17 +103,67 @@ export const NotesEditor = forwardRef<NotesEditorHandle, NotesEditorProps>(funct
     }
   };
 
-  /** Insere a imagem no corpo, como bloco (o audio nao entra no corpo). */
-  const insertImage = (id: string) => {
-    const block = addMedia();
+  /** Insere midia no corpo, logo depois do bloco em que o cursor esta. */
+  const insertBlockAfterCursor = (
+    block: Record<string, unknown>,
+    options?: { commit?: boolean },
+  ) => {
+    const target = addMedia();
     type InsertedBlock = Parameters<typeof editor.insertBlocks>[0][number];
-    editor.insertBlocks(
-      [{ type: "image", props: { attachmentId: id } } as unknown as InsertedBlock],
-      block,
-      "after",
-    );
-    emit();
-    onMediaAdded?.();
+    const inserted = editor.insertBlocks([block as unknown as InsertedBlock], target, "after");
+    if (options?.commit !== false) {
+      emit();
+      onMediaAdded?.();
+    }
+    return inserted[0];
+  };
+
+  /** Dimensoes naturais da foto, para o esqueleto ja nascer com o tamanho certo. */
+  const readImageDimensions = (file: File) =>
+    new Promise<{ width: number; height: number } | null>((resolve) => {
+      const url = URL.createObjectURL(file);
+      const image = new Image();
+      image.onload = () => {
+        const size =
+          image.naturalWidth > 0 && image.naturalHeight > 0
+            ? { width: image.naturalWidth, height: image.naturalHeight }
+            : null;
+        URL.revokeObjectURL(url);
+        resolve(size);
+      };
+      image.onerror = () => {
+        URL.revokeObjectURL(url);
+        resolve(null);
+      };
+      image.src = url;
+    });
+
+  /** Duracao do arquivo local, em milissegundos (0 quando nao da para ler). */
+  const readDuration = (file: File) =>
+    new Promise<number>((resolve) => {
+      const url = URL.createObjectURL(file);
+      const audio = new Audio();
+      const done = (value: number) => {
+        URL.revokeObjectURL(url);
+        resolve(Number.isFinite(value) && value > 0 ? Math.round(value * 1000) : 0);
+      };
+      audio.preload = "metadata";
+      audio.onloadedmetadata = () => done(audio.duration);
+      audio.onerror = () => done(0);
+      audio.src = url;
+    });
+
+  /** Segundos no mesmo formato que o app grava no marcador (`{d=12.5}`). */
+  const markedSeconds = (milliseconds: number) => {
+    if (milliseconds <= 0) return "";
+    return (milliseconds / 1000).toFixed(3).replace(/\.?0+$/, "");
+  };
+
+  const insertAudio = (id: string, milliseconds: number) => {
+    insertBlockAfterCursor({
+      type: "audio",
+      props: { attachmentId: id, duration: markedSeconds(milliseconds) },
+    });
   };
 
   const onAudioFile = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -121,10 +173,13 @@ export const NotesEditor = forwardRef<NotesEditorHandle, NotesEditorProps>(funct
       return;
     }
     try {
-      // O audio entra na pilha da nota, no servidor: nao ha bloco de audio no
-      // corpo, e a pilha aparece no topo assim que a nota recarrega.
-      await uploadFile(file, undefined, entryId);
-      onMediaAdded?.();
+      // O audio sobe como anexo e entra no corpo no ponto do cursor: o mesmo
+      // marcador que o app le, na mesma posicao em que ele vai mostrar.
+      const [uploaded, duration] = await Promise.all([
+        uploadFile(file, undefined, entryId),
+        readDuration(file),
+      ]);
+      insertAudio(uploaded.attachment_id, duration);
     } catch {
       // The pending block already communicates failure; keep the editor calm.
     }
@@ -136,11 +191,62 @@ export const NotesEditor = forwardRef<NotesEditorHandle, NotesEditorProps>(funct
     if (!file) {
       return;
     }
+    // A foto entra no documento ainda sem anexo, com a miniatura local borrada
+    // e um giro no centro. O upload/recompressao continua atras; so quando ele
+    // termina o bloco ganha o `attachment:<id>` e passa a valer no markdown.
+    const preview = URL.createObjectURL(file);
+    const block = insertBlockAfterCursor(
+      {
+        type: "image",
+        props: {
+          attachmentId: "",
+          caption: "",
+          width: "",
+          preview,
+          pending: true,
+          error: false,
+          aspect: "",
+        },
+      },
+      { commit: false },
+    );
+    if (!block) {
+      URL.revokeObjectURL(preview);
+      return;
+    }
+
+    /** Atualiza so as props pedidas, sem reverter o que outra etapa ja mudou. */
+    const patchBlock = (props: Record<string, unknown>) => {
+      const current = editor.getBlock(block.id);
+      if (!current) return;
+      editor.updateBlock(current, {
+        props: { ...current.props, ...props } as typeof current.props,
+      });
+    };
+
+    // Medir a foto e barato e paralelo ao upload; o esqueleto comeca em 4/3 e
+    // logo assume a proporcao real, sem esperar a imagem do servidor.
+    void readImageDimensions(file).then((size) => {
+      if (!size) return;
+      patchBlock({ aspect: `${size.width}/${size.height}` });
+    });
+
     try {
       const attachment = await uploadAttachment(entryId, file);
-      insertImage(attachment.id);
+      patchBlock({
+        attachmentId: attachment.id,
+        preview: "",
+        pending: false,
+        error: false,
+      });
+      URL.revokeObjectURL(preview);
+      emit();
+      onMediaAdded?.();
     } catch {
-      // Ignore; the image simply is not added.
+      // O bloco fica no lugar com a mensagem e o botao de remover: a foto nao
+      // some em silencio, como acontecia quando o upload falhava.
+      patchBlock({ preview: "", pending: false, error: true });
+      URL.revokeObjectURL(preview);
     }
   };
 
@@ -169,8 +275,8 @@ export const NotesEditor = forwardRef<NotesEditorHandle, NotesEditorProps>(funct
     const items = getDefaultReactSlashMenuItems(editor).filter((item) => item.group !== "Mídia");
     const extra: DefaultReactSuggestionItem[] = [
       {
-        title: "Audio",
-        subtext: "Gravar ou enviar um audio aqui",
+        title: "Áudio",
+        subtext: "Enviar um áudio aqui",
         aliases: ["audio", "gravar", "voz", "enviar"],
         group: "Midia",
         onItemClick: () => audioInput.current?.click(),
@@ -185,7 +291,7 @@ export const NotesEditor = forwardRef<NotesEditorHandle, NotesEditorProps>(funct
       {
         title: "Link para nota",
         subtext: "Referenciar outra nota do diario",
-        aliases: ["link", "nota", "referencia", "mencao"],
+        aliases: ["link", "nota", "referencia", "menção"],
         group: "Midia",
         onItemClick: () => setPicker(true),
       },
@@ -202,8 +308,15 @@ export const NotesEditor = forwardRef<NotesEditorHandle, NotesEditorProps>(funct
     );
   };
 
+  useEscape(picker, () => {
+    setPicker(false);
+    setTerm("");
+  });
+
   const filtered = pickerEntries.filter((entry) =>
-    (entry.title || entry.original_filename || "").toLowerCase().includes(term.trim().toLowerCase()),
+    `${entry.title} ${entry.original_filename ?? ""} ${entry.preview ?? ""}`
+      .toLowerCase()
+      .includes(term.trim().toLowerCase()),
   );
 
   return (
@@ -225,9 +338,18 @@ export const NotesEditor = forwardRef<NotesEditorHandle, NotesEditorProps>(funct
           <div className="note-picker-backdrop" onClick={() => setPicker(false)} />
           <div className="note-picker-card">
             <div className="note-picker-head">
-              <h3>Link para nota</h3>
-              <button type="button" onClick={() => setPicker(false)}>
-                Fechar
+              <div>
+                <h3>Link para nota</h3>
+                <p className="muted">A nota escolhida entra como menção, com um link entre as duas.</p>
+              </div>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => setPicker(false)}
+                aria-label="Fechar"
+                title="Fechar"
+              >
+                <CloseIcon size={15} />
               </button>
             </div>
             <input
@@ -235,17 +357,27 @@ export const NotesEditor = forwardRef<NotesEditorHandle, NotesEditorProps>(funct
               type="search"
               value={term}
               onChange={(event) => setTerm(event.target.value)}
-              placeholder="Buscar nota"
+              onKeyDown={(event) => {
+                if (event.key === "Escape") setPicker(false);
+                if (event.key === "Enter" && filtered[0]) insertMention(filtered[0]);
+              }}
+              placeholder="Buscar pelo título ou pelo texto"
               aria-label="Buscar nota para vincular"
             />
             <ul className="note-picker-list">
               {filtered.length === 0 ? (
-                <li className="muted">Nenhuma nota encontrada.</li>
+                <li className="muted note-picker-empty">Nenhuma nota encontrada.</li>
               ) : (
                 filtered.map((entry) => (
                   <li key={entry.id}>
                     <button type="button" onClick={() => insertMention(entry)}>
-                      {entry.title || entry.original_filename || "Nota"}
+                      <span className="note-picker-title">
+                        {entry.title || entry.original_filename || "Nota"}
+                      </span>
+                      <span className="note-picker-meta">
+                        {new Date(entry.recorded_at ?? entry.created_at).toLocaleDateString("pt-BR")}
+                        {entry.preview ? ` · ${entry.preview}` : ""}
+                      </span>
                     </button>
                   </li>
                 ))

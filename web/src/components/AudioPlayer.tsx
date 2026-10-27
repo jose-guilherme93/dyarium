@@ -122,7 +122,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
         step={0.1}
         value={current}
         onChange={(event) => seek(Number(event.target.value))}
-        aria-label="Progresso do audio"
+        aria-label="Progresso do áudio"
         style={{ background: `linear-gradient(to right, var(--color-accent) ${percent}%, var(--color-border) ${percent}%)` }}
       />
       <span className="player-time">{formatDuration(duration)}</span>
@@ -131,7 +131,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
           type="button"
           className="icon-button"
           onClick={() => setMenuOpen((value) => !value)}
-          aria-label="Opcoes do audio"
+          aria-label="Opções do áudio"
           aria-expanded={menuOpen}
         >
           <MoreIcon size={16} />

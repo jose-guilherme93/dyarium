@@ -41,3 +41,25 @@ describe("imagem da nota no editor", () => {
     expect(out).not.toContain("<img");
   });
 });
+
+describe("largura da imagem", () => {
+  it("grava a porcentagem inteira e usa vazio para a largura total", async () => {
+    const { imageWidthValue } = await import("./editorSchema");
+    expect(imageWidthValue(100)).toBe("");
+    expect(imageWidthValue(120)).toBe("");
+    expect(imageWidthValue(50.4)).toBe("50");
+    expect(imageWidthValue(2)).toBe("20");
+  });
+});
+
+describe("audio da nota no editor do dashboard", () => {
+  it("exporta o mesmo marcador que o app le, sem o texto temporario", () => {
+    const instance = editor();
+    const markdown = "Antes\n\n!audio[attachment:at_audio]{d=28.794}\n\nDepois";
+    const out = blocksToNoteMarkdown(instance, noteMarkdownToBlocks(instance, markdown));
+
+    expect(out).toContain("!audio[attachment:at_audio]{d=28.794}");
+    expect(out).not.toContain("DYARIUMAUDIO");
+    expect(out.match(/!audio\[/g)).toHaveLength(1);
+  });
+});

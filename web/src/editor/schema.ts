@@ -14,11 +14,48 @@ import {
   defaultStyleSpecs,
 } from "@blocknote/core";
 
-/** Audio dentro do documento (o audio da pilha do topo nao usa isto). */
+/**
+ * Propriedades do bloco de audio. `duration` guarda o `{d=...}` exatamente como
+ * veio no markdown, para a gravacao devolver o mesmo texto ao app.
+ */
+export const audioPropSchema = {
+  attachmentId: { default: "" },
+  duration: { default: "" },
+};
+
+/**
+ * Marcador do audio no markdown, o mesmo que o app le e escreve. Sem duracao o
+ * `{d=...}` e omitido, que e o formato aceito pelo parser do celular.
+ */
+export function audioMarker(attachmentId: string, duration: string): string {
+  const seconds = duration.trim();
+  return seconds
+    ? `!audio[attachment:${attachmentId}]{d=${seconds}}`
+    : `!audio[attachment:${attachmentId}]`;
+}
+
+/**
+ * Marcador temporario do conversor.
+ *
+ * O bloco de audio nao tem equivalente nativo em markdown: o conversor do
+ * BlockNote o descartaria. O `toExternalHTML` entrega um paragrafo com este
+ * prefixo (so letras e numeros, o conversor nao escapa) e
+ * `blocksToNoteMarkdown` o troca pelo `!audio[...]` na posicao certa.
+ */
+export const AUDIO_PLACEHOLDER = "DYARIUMAUDIO";
+
+/** Audio dentro do documento: `!audio[attachment:<id>]{d=12.5}` no markdown. */
 export const audioBlockSpec = () =>
   createBlockSpec(
-    { type: "audio", propSchema: { attachmentId: { default: "" } }, content: "none" },
-    { render: () => ({ dom: document.createElement("div") }) },
+    { type: "audio", propSchema: audioPropSchema, content: "none" },
+    {
+      render: () => ({ dom: document.createElement("div") }),
+      toExternalHTML: (block: { props: Record<string, string> }) => {
+        const paragraph = document.createElement("p");
+        paragraph.textContent = `${AUDIO_PLACEHOLDER}${block.props.attachmentId}`;
+        return { dom: paragraph };
+      },
+    },
   )();
 
 /**

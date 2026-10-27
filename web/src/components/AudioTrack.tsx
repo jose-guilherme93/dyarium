@@ -142,7 +142,7 @@ export function AudioTrack({
                   </p>
                 ))
               ) : (
-                <p>{loading ? "Carregando transcricao..." : text}</p>
+                <p>{loading ? "Carregando transcrição..." : text}</p>
               )}
               {cursor && (
                 <button type="button" className="transcript-toggle" onClick={loadMore} disabled={loading}>
@@ -166,7 +166,7 @@ export function AudioTrack({
                 });
               }}
             >
-              {showFull ? "Ocultar transcricao" : "Mostrar transcricao"}
+              {showFull ? "Ocultar transcrição" : "Mostrar transcrição"}
             </button>
           )}
         </div>

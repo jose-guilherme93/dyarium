@@ -26,15 +26,15 @@ const audio: Audio = {
 describe("AudioTrack transcript", () => {
   it("mostra um preview compacto por padrao, sem listar os segmentos", () => {
     const { container } = render(<AudioTrack audio={audio} />);
-    expect(screen.getByRole("button", { name: "Mostrar transcricao" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Mostrar transcrição" })).toBeInTheDocument();
     expect(container.querySelector(".transcript--clamped")).not.toBeNull();
     expect(container.querySelectorAll(".transcript-line")).toHaveLength(0);
   });
 
-  it("expande a transcricao completa ao clicar", () => {
+  it("expande a transcrição completa ao clicar", () => {
     const { container } = render(<AudioTrack audio={audio} />);
-    fireEvent.click(screen.getByRole("button", { name: "Mostrar transcricao" }));
-    expect(screen.getByRole("button", { name: "Ocultar transcricao" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Mostrar transcrição" }));
+    expect(screen.getByRole("button", { name: "Ocultar transcrição" })).toBeInTheDocument();
     expect(container.querySelector(".transcript--clamped")).toBeNull();
     expect(container.querySelectorAll(".transcript-line")).toHaveLength(3);
   });

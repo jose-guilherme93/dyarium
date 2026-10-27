@@ -3,16 +3,28 @@ import type { PartialBlock } from "@blocknote/core";
 import { api, isConflict } from "../api";
 import { AudioTrack } from "./AudioTrack";
 import { NotesEditor, type NotesEditorHandle } from "../editor/NotesEditor";
-import { markdownToPlain, noteBlocksToMarkdown, normalizeLegacyAttachmentImages } from "../editor/blocknoteMarkdown";
+import { markdownToPlain, noteBlocksToMarkdown, normalizeLegacyAttachmentImages, audioAttachmentIds } from "../editor/blocknoteMarkdown";
 import { markdownToNoteBlocks } from "../editor/markdownBlocks";
 import { createAutosave, type Autosave } from "../lib/autosave";
-import { formatDateTime, formatDuration } from "../lib/format";
+import { formatBytes, formatDateTime, formatDuration } from "../lib/format";
 import { patchNoteViewState, readNoteViewState } from "../lib/noteViewState";
+import { useEscape } from "../lib/useEscape";
 import type { Analysis, Attachment, Audio, EntityKind, Entry, Note, Notebook, Revision } from "../types";
 import { Spinner, isBusy, statusLabel } from "./Status";
 import { TagEditor } from "./TagEditor";
 import { useToast } from "./Toasts";
-import { CheckIcon, ChevronIcon, CodeIcon, ImageIcon, LinkIcon, MicIcon, MoreIcon, SparkIcon, TrashIcon } from "./icons";
+import {
+  ArchiveIcon,
+  CheckIcon,
+  CloseIcon,
+  CodeIcon,
+  ImageIcon,
+  LinkIcon,
+  MicIcon,
+  MoreIcon,
+  SparkIcon,
+  TrashIcon,
+} from "./icons";
 
 interface NoteEditorProps {
   entryId: string;
@@ -27,9 +39,9 @@ interface NoteEditorProps {
 }
 
 const FONTS = [
-  { id: "default", label: "Padrao", preview: "inherit" },
-  { id: "serif", label: "Serifada", preview: "var(--font-serif)" },
-  { id: "mono", label: "Monoespacada", preview: "var(--font-mono)" },
+  { id: "default", label: "Padrão", preview: "inherit" },
+  { id: "serif", label: "Serifada", preview: '"Newsreader", Georgia, serif' },
+  { id: "mono", label: "Monoespaçada", preview: "var(--font-mono)" },
 ];
 
 function sentimentText(label?: string): string {
@@ -61,7 +73,7 @@ function processingText(
     case "queued":
       return "Na fila...";
     case "transcribing":
-      return "Transcrevendo o audio...";
+      return "Transcrevendo o áudio...";
     case "analyzing":
       return "Analisando...";
     default:
@@ -69,7 +81,7 @@ function processingText(
   }
 }
 
-/** Revisao guardada no formato antigo (JSON de blocos), e nao markdown. */
+/** Revisao guardada no formato antigo (JSON de blocos), e não markdown. */
 function isLegacyBlockJson(value: string): boolean {
   const trimmed = value.trim();
   return trimmed.startsWith("[") && trimmed.endsWith("]");
@@ -85,27 +97,6 @@ function blocksToMarkdownText(value: unknown): string {
   return markdownToPlain(noteBlocksToMarkdown(value as Record<string, unknown>[]));
 }
 
-// blocksText concatenates every inline text of a BlockNote document.
-function blocksText(value: unknown): string {
-  let out = "";
-  const walk = (node: unknown) => {
-    if (Array.isArray(node)) {
-      node.forEach(walk);
-      return;
-    }
-    if (node && typeof node === "object") {
-      const record = node as Record<string, unknown>;
-      if (typeof record.text === "string") {
-        out += `${record.text} `;
-      }
-      for (const key of Object.keys(record)) {
-        walk(record[key]);
-      }
-    }
-  };
-  walk(value);
-  return out.replace(/\s+/g, " ").trim();
-}
 
 // diffWords is a simple multiset diff: which words were added and removed
 // between two versions of the body.
@@ -192,16 +183,16 @@ function buildHistory(revisions: Revision[], current: unknown): HistoryDay[] {
     return [];
   }
   // Instantaneos do corpo em markdown, do mais antigo para o mais novo: o estado
-  // antes de cada gravacao e, por ultimo, o estado atual.
+  // antes de cada gravacao e, por último, o estado atual.
   const states: Array<{ at: string; markdown: string }> = [];
   for (let i = revisions.length - 1; i >= 0; i--) {
-    // Revisao em JSON do BlockNote (notas anteriores a conversao): nao da para
-    // comparar palavras com markdown, e poluir o historico com `type: paragraph`
+    // Revisao em JSON do BlockNote (notas anteriores a conversao): não da para
+    // comparar palavras com markdown, e poluir o histórico com `type: paragraph`
     // ajuda ninguem.
     if (isLegacyBlockJson(revisions[i].content_markdown)) {
       continue;
     }
-    states.push({ at: revisions[i].created_at, markdown: revisions[i].content_markdown });
+    states.push({ at: revisions[i].created_at, markdown: markdownToPlain(revisions[i].content_markdown) });
   }
   states.push({ at: new Date().toISOString(), markdown: blocksToMarkdownText(current) });
 
@@ -226,7 +217,7 @@ function buildHistory(revisions: Revision[], current: unknown): HistoryDay[] {
 
 /**
  * Corpo da nota como blocos do editor. O markdown e o formato canonico; o
- * `document` em JSON so aparece em nota ainda nao convertida.
+ * `document` em JSON so aparece em nota ainda não convertida.
  */
 function noteBodyToBlocks(note: Note): PartialBlock[] | undefined {
   const markdown = note.content_markdown;
@@ -531,7 +522,7 @@ export function NoteEditor({
       } catch (err) {
         setSaving("idle");
         if (isConflict(err) && noteIdRef.current) {
-          // Outro aparelho gravou depois que esta aba abriu. Ultimo a escrever
+          // Outro aparelho gravou depois que esta aba abriu. Último a escrever
           // vence: o texto que o usuario acabou de digitar entra por cima, sem
           // dialogo. O corpo e reenviado sem versao de base.
           try {
@@ -545,7 +536,7 @@ export function NoteEditor({
           }
         }
         setError(err instanceof Error ? err.message : "falha ao salvar a nota");
-        notify("Nao foi possivel salvar a nota", "error");
+        notify("Não foi possível salvar a nota", "error");
       }
     },
     [entryId, notify],
@@ -555,10 +546,10 @@ export function NoteEditor({
     saveBodyRef.current = saveBody;
   }, [saveBody]);
 
-  /** "Manter o meu" nao existe mais: a ultima gravacao vence, sem dialogo. */
+  /** "Manter o meu" não existe mais: a última gravacao vence, sem dialogo. */
   const handleBodyChange = useCallback((markdown: string) => {
     setRawMarkdown(markdown);
-    // Ignora o evento de montagem e edicoes que nao mudaram nada.
+    // Ignora o evento de montagem e edicoes que não mudaram nada.
     if (markdown === lastQueuedRef.current) {
       return;
     }
@@ -595,7 +586,7 @@ export function NoteEditor({
       onChanged();
     } catch (err) {
       if (isConflict(err)) {
-        // Titulo mudou em outro lugar: a ultima gravacao vence, entao reenvia
+        // Titulo mudou em outro lugar: a última gravacao vence, entao reenvia
         // sem versao em vez de interromper o usuario com um dialogo.
         try {
           const saved = await api.patchEntry(entry.id, { title });
@@ -607,8 +598,8 @@ export function NoteEditor({
           // sem sorte no reenvio: mostra o erro generico abaixo
         }
       }
-      setError(err instanceof Error ? err.message : "falha ao salvar o titulo");
-      notify("Nao foi possivel salvar o titulo", "error");
+      setError(err instanceof Error ? err.message : "falha ao salvar o título");
+      notify("Não foi possível salvar o título", "error");
     }
   }, [entry, title, onChanged, notify]);
 
@@ -616,7 +607,7 @@ export function NoteEditor({
     saveTitleRef.current = saveTitle;
   }, [saveTitle]);
 
-  // Nao perde a ultima digitacao (corpo e titulo) ao sair da nota, esconder a
+  // Não perde a última digitacao (corpo e titulo) ao sair da nota, esconder a
   // aba ou fechar a pagina.
   useEffect(() => {
     const flushAll = () => {
@@ -642,10 +633,10 @@ export function NoteEditor({
     setError("");
     try {
       await api.retranscribe(entryId);
-      notify("Transcricao enfileirada", "info");
+      notify("Transcrição enfileirada", "info");
     } catch (err) {
       setError(err instanceof Error ? err.message : "falha");
-      notify("Nao foi possivel retranscrever", "error");
+      notify("Não foi possível retranscrever", "error");
       setBusy(null);
     }
   };
@@ -656,10 +647,10 @@ export function NoteEditor({
     setAsideOpen(true);
     try {
       await api.analyze(entryId);
-      notify("Analise iniciada", "info");
+      notify("Análise iniciada", "info");
     } catch (err) {
       if (err instanceof Error && err.message.includes("desligada")) {
-        notify("A analise esta desligada. Ative em Configuracao.", "error");
+        notify("A análise esta desligada. Ative em Configuração.", "error");
       } else {
         notify(err instanceof Error ? err.message : "falha ao analisar", "error");
       }
@@ -671,7 +662,7 @@ export function NoteEditor({
     if (!entry) {
       return;
     }
-    if (!window.confirm("Apagar esta nota e os audios? Esta acao nao pode ser desfeita.")) {
+    if (!window.confirm("Apagar esta nota e os áudios? Esta ação não pode ser desfeita.")) {
       return;
     }
     try {
@@ -680,7 +671,24 @@ export function NoteEditor({
       onDeleted();
     } catch (err) {
       setError(err instanceof Error ? err.message : "falha ao apagar");
-      notify("Nao foi possivel apagar", "error");
+      notify("Não foi possível apagar", "error");
+    }
+  };
+
+  useEscape(optionsOpen, () => setOptionsOpen(false));
+
+  const toggleArchived = async () => {
+    if (!entry) return;
+    const next = !entry.archived;
+    try {
+      await api.patchEntry(entry.id, { archived: next });
+      setEntry((current) => (current ? { ...current, archived: next } : current));
+      notify(next ? "Nota arquivada" : "Nota desarquivada", "success");
+      onChanged();
+    } catch {
+      notify("Não foi possível arquivar a nota.", "error");
+    } finally {
+      setOptionsOpen(false);
     }
   };
 
@@ -707,6 +715,10 @@ export function NoteEditor({
 
   const audios = entry?.audios ?? [];
   const audioMap = new Map<string, Audio>(audios.map((audio) => [audio.id, audio]));
+  // O audio que tem marcador no corpo ja aparece no lugar em que o app o mostra;
+  // so a pilha (notas antigas e audios enviados pelo dashboard) fica no topo.
+  const bodyAudioIds = useMemo(() => audioAttachmentIds(rawMarkdown), [rawMarkdown]);
+  const stackAudios = audios.filter((audio) => !bodyAudioIds.has(audio.id));
   const processing = running || busy !== null;
   // Derived numbers walk the whole document. They used to be recomputed on
   // every keystroke and every SSE event; memoizing keeps typing cheap.
@@ -714,11 +726,17 @@ export function NoteEditor({
     () => audios.map((audio) => audio.transcript?.text ?? "").join(" "),
     [audios],
   );
+  // O texto da nota para as métricas sai do markdown vivo, não do corpo que veio
+  // do servidor: antes os numeros ficavam em 0 ate reabrir a nota, mesmo com o
+  // texto todo na tela.
   const noteText = useMemo(
-    () => `${blocksText(initialBody)} ${spokenText}`.replace(/\s+/g, " ").trim(),
-    [initialBody, spokenText],
+    () => `${markdownToPlain(rawMarkdown)} ${spokenText}`.replace(/\s+/g, " ").trim(),
+    [rawMarkdown, spokenText],
   );
-  const words = useMemo(() => (noteText ? noteText.split(/\s+/).length : 0), [noteText]);
+  const words = useMemo(
+    () => (noteText ? noteText.split(/\s+/).filter(Boolean).length : 0),
+    [noteText],
+  );
   const chars = noteText.length;
   const mediaBytes = useMemo(
     () =>
@@ -828,7 +846,7 @@ export function NoteEditor({
       )}
     </div>
   ) : (
-    <p className="muted">Sem analise ainda.</p>
+    <p className="muted">Sem análise ainda.</p>
   );
 
   return (
@@ -844,7 +862,7 @@ export function NoteEditor({
         }}
       >
         <div className="note-topbar">
-          <span className="save-state muted">
+          <span className="save-state muted" aria-live="polite">
             {saving === "saving" ? "salvando" : saving === "saved" ? "salvo" : ""}
           </span>
           <div className="note-head-actions">
@@ -859,6 +877,25 @@ export function NoteEditor({
             </button>
             <button
               type="button"
+              className="icon-button"
+              onClick={() => notesRef.current?.openLink()}
+              aria-label="Link para nota"
+              title="Link para nota"
+            >
+              <LinkIcon size={16} />
+            </button>
+            <button
+              type="button"
+              className="icon-button"
+              onClick={() => notesRef.current?.addAudio()}
+              aria-label="Enviar áudio"
+              title="Enviar áudio"
+            >
+              <MicIcon size={16} />
+            </button>
+            <span className="head-sep" aria-hidden />
+            <button
+              type="button"
               className={rawOpen ? "icon-button icon-button--active" : "icon-button"}
               onClick={toggleRaw}
               aria-pressed={rawOpen}
@@ -869,44 +906,22 @@ export function NoteEditor({
             </button>
             <button
               type="button"
-              className="icon-button"
-              onClick={() => notesRef.current?.addAudio()}
-              aria-label="Gravar ou enviar audio"
-              title="Audio"
-            >
-              <MicIcon size={16} />
-            </button>
-            <button
-              type="button"
-              className="icon-button"
-              onClick={() => notesRef.current?.openLink()}
-              aria-label="Link para nota"
-              title="Link para nota"
-            >
-              <LinkIcon size={16} />
-            </button>
-            <button
-              type="button"
               className={asideOpen ? "icon-button icon-button--active" : "icon-button"}
               onClick={() => setAsideOpen((value) => !value)}
               aria-pressed={asideOpen}
-              aria-label={asideOpen ? "Fechar insights" : "Abrir insights"}
-              title="Insights"
+              aria-label={asideOpen ? "Fechar propriedades" : "Abrir propriedades"}
+              title="Propriedades e insights"
             >
               <SparkIcon size={16} />
             </button>
-            {audios.length > 0 && (
-              <button type="button" onClick={() => void retranscribe()} disabled={busy === "retranscribe" || running}>
-                {busy === "retranscribe" ? <Spinner /> : null} Retranscrever
-              </button>
-            )}
             <div className="note-options">
               <button
                 type="button"
                 className="icon-button"
                 onClick={() => setOptionsOpen((value) => !value)}
-                aria-label="Opcoes da nota"
+                aria-label="Mais opções da nota"
                 aria-expanded={optionsOpen}
+                title="Mais opções"
               >
                 <MoreIcon size={16} />
               </button>
@@ -914,16 +929,6 @@ export function NoteEditor({
                 <>
                   <div className="menu-backdrop" onClick={() => setOptionsOpen(false)} />
                   <div className="menu" role="menu">
-                    <button
-                      type="button"
-                      className="menu-item"
-                      role="menuitemcheckbox"
-                      aria-checked={fullWidth}
-                      onClick={toggleFullWidth}
-                    >
-                      <span>Largura total</span>
-                      {fullWidth && <CheckIcon size={14} />}
-                    </button>
                     <button
                       type="button"
                       className="menu-item"
@@ -936,6 +941,16 @@ export function NoteEditor({
                     >
                       <span>Propriedades e insights</span>
                       {asideOpen && <CheckIcon size={14} />}
+                    </button>
+                    <button
+                      type="button"
+                      className="menu-item"
+                      role="menuitemcheckbox"
+                      aria-checked={fullWidth}
+                      onClick={toggleFullWidth}
+                    >
+                      <span>Largura total</span>
+                      {fullWidth && <CheckIcon size={14} />}
                     </button>
                     <div className="menu-label">Fonte</div>
                     {FONTS.map((option) => (
@@ -955,8 +970,33 @@ export function NoteEditor({
                       </button>
                     ))}
                     <div className="menu-label">Nota</div>
+                    {audios.length > 0 && (
+                      <button
+                        type="button"
+                        className="menu-item"
+                        role="menuitem"
+                        disabled={busy === "retranscribe" || running}
+                        onClick={() => {
+                          setOptionsOpen(false);
+                          void retranscribe();
+                        }}
+                      >
+                        <span>Transcrever novamente</span>
+                        {busy === "retranscribe" ? <Spinner /> : <MicIcon size={14} />}
+                      </button>
+                    )}
                     <button
                       type="button"
+                      className="menu-item"
+                      role="menuitem"
+                      onClick={() => void toggleArchived()}
+                    >
+                      <span>{entry.archived ? "Desarquivar nota" : "Arquivar nota"}</span>
+                      <ArchiveIcon size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
                       className="menu-item menu-item--danger"
                       onClick={() => {
                         setOptionsOpen(false);
@@ -983,24 +1023,25 @@ export function NoteEditor({
             setTitle(event.target.value);
           }}
           onBlur={() => void saveTitle()}
-          placeholder="Sem titulo"
-          aria-label="Titulo da nota"
+          placeholder="Sem título"
+          aria-label="Título da nota"
         />
 
         <p className="note-byline">
           <span>{formatDateTime(entry.recorded_at ?? entry.created_at)}</span>
-          <span className="note-status">{statusLabel(status)}</span>
+          <span className={status === "failed" ? "note-status note-status--failed" : "note-status"}>{statusLabel(status)}</span>
+          {entry.archived && <span className="note-archived">Arquivada</span>}
           {entry.duration_seconds > 0 && <span>{formatDuration(entry.duration_seconds)}</span>}
         </p>
 
         {failureReason && <div className="banner banner--error">Falha: {failureReason}</div>}
         {error && <p className="error">{error}</p>}
 
-        {/* A pilha de audios fica no topo da nota, fora do corpo: o corpo e
-            texto (markdown) e nao carrega mais player. */}
-        {audios.length > 0 ? (
+        {/* Audios sem marcador no corpo (notas antigas e os enviados por aqui)
+            ficam na pilha do topo. */}
+        {stackAudios.length > 0 ? (
           <div className="audio-stack">
-            {audios.map((audio) => (
+            {stackAudios.map((audio) => (
               <AudioTrack
                 key={audio.id}
                 audio={audio}
@@ -1061,8 +1102,9 @@ export function NoteEditor({
                 className="icon-button"
                 onClick={() => setAsideOpen(false)}
                 aria-label="Fechar propriedades"
+                title="Fechar propriedades"
               >
-                <ChevronIcon size={16} />
+                <CloseIcon size={15} />
               </button>
             </div>
           </div>
@@ -1099,17 +1141,15 @@ export function NoteEditor({
               <dt>Criada</dt>
               <dd>{formatDateTime(entry.created_at)}</dd>
               <dt>Origem</dt>
-              <dd>{entry.source === "text" ? "Texto" : "Audio"}</dd>
-              <dt>Audios</dt>
+              <dd>{entry.source === "text" ? "Texto" : "Áudio"}</dd>
+              <dt>Áudios</dt>
               <dd>{audios.length}</dd>
               <dt>Palavras</dt>
               <dd>{words}</dd>
               <dt>Caracteres</dt>
               <dd>{chars}</dd>
               <dt>Tamanho</dt>
-              <dd>
-                {totalBytes} bytes ({(totalBytes / 1048576).toFixed(2)} MB)
-              </dd>
+              <dd title={`${totalBytes} bytes`}>{formatBytes(totalBytes)}</dd>
               <dt>Status</dt>
               <dd>{statusLabel(status)}</dd>
             </dl>
@@ -1119,10 +1159,10 @@ export function NoteEditor({
           </section>
 
           <section className="aside-block">
-            <h3>Historico</h3>
+            <h3>Histórico</h3>
             <p className="muted history-created">Criada em {formatDateTime(entry.created_at)}</p>
             {history.length === 0 ? (
-              <p className="muted">Sem alteracoes registradas.</p>
+              <p className="muted">Sem alterações registradas.</p>
             ) : (
               <ul className="history">
                 {history.map((item, index) => (
@@ -1131,14 +1171,21 @@ export function NoteEditor({
                     {item.added.length === 0 && item.removed.length === 0 ? (
                       <span className="muted">reorganizado</span>
                     ) : (
-                      <>
+                      <span className="history-counts">
                         {item.added.length > 0 && (
-                          <p className="history-added">+ {item.added.slice(0, 40).join(" ")}</p>
+                          <span className="history-added">+{item.added.length}</span>
                         )}
                         {item.removed.length > 0 && (
-                          <p className="history-removed">- {item.removed.slice(0, 40).join(" ")}</p>
+                          <span className="history-removed">−{item.removed.length}</span>
                         )}
-                      </>
+                        <span className="muted">palavras</span>
+                      </span>
+                    )}
+                    {item.added.length > 0 && (
+                      <span className="history-excerpt">
+                        {item.added.slice(0, 10).join(" ")}
+                        {item.added.length > 10 ? "…" : ""}
+                      </span>
                     )}
                   </li>
                 ))}
