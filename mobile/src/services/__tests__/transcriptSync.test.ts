@@ -93,6 +93,25 @@ describe('pushTranscript', () => {
     });
   });
 
+  it('nao substitui no servidor o texto cru quando a unica diferenca e a revisao', async () => {
+    mockGetEntry.mockResolvedValue({
+      audios: [
+        {
+          id: 'a1',
+          transcript: {
+            text: 'A sede do PT.\nForam 3 pessoas.',
+            raw_text: 'a sede do pt\nforam 3 pessoas',
+          },
+        },
+      ],
+    });
+
+    await pushTranscript('rec_1');
+
+    expect(mockPutTranscript).not.toHaveBeenCalled();
+    expect(mockPutRevisions).toHaveBeenCalled();
+  });
+
   it('manda o texto cru (nunca o revisado) e marca o trecho editado', async () => {
     mockGetEntry.mockResolvedValue(serverEntry('A sede do PT (Partido dos Trabalhadores).'));
 

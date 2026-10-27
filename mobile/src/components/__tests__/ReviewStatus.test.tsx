@@ -55,6 +55,34 @@ describe('estado da revisão na tela de transcrição', () => {
     expect(screen.getByText('Revisão desligada nas configurações.')).toBeTruthy();
   });
 
+  it('passada interrompida mostra pausa e continuar de onde parou', () => {
+    const onResume = jest.fn();
+    const paused = { ...review, finishedAt: undefined, reviewedThrough: 1 };
+    render(<ReviewStatus segments={SEGMENTS} review={paused} onResume={onResume} />);
+    expect(screen.getByText('1 de 2')).toBeTruthy();
+    expect(
+      screen.getByLabelText(
+        'Revisão interrompida em 1 de 2 trechos. Toque para continuar.',
+      ),
+    ).toBeTruthy();
+    fireEvent.press(
+      screen.getByLabelText(
+        'Revisão interrompida em 1 de 2 trechos. Toque para continuar.',
+      ),
+    );
+    fireEvent.press(screen.getByLabelText('Continuar a revisão de onde parou'));
+    expect(onResume).toHaveBeenCalled();
+  });
+
+  it('passada rodando mostra o progresso, sem botao de continuar', () => {
+    const running = { ...review, finishedAt: undefined, reviewedThrough: 1 };
+    render(<ReviewStatus segments={SEGMENTS} review={running} running />);
+    expect(
+      screen.getByLabelText('Revisando 1 de 2 trechos.'),
+    ).toBeTruthy();
+    expect(screen.queryByLabelText('Continuar a revisão de onde parou')).toBeNull();
+  });
+
   it('mostra o que ficou sem revisao e oferece repetir so isso', () => {
     const onRetryRejected = jest.fn();
     render(

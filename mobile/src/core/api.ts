@@ -179,6 +179,8 @@ export interface TranscriptResponse {
   language: string;
   /** Texto visivel: o revisado quando existe, o cru do whisper quando nao. */
   text: string;
+  /** Texto cru do whisper, preservado mesmo quando ha revisao. */
+  raw_text?: string;
   trim_silence?: boolean;
   duration_seconds?: number;
   segments: TranscriptSegment[];
@@ -192,6 +194,10 @@ export interface TranscriptResponse {
   revised_rejected?: number;
   /** Trechos que a passada ainda nao alcancou; 0 quando terminou. */
   revised_pending?: number;
+  /** Indice do primeiro trecho que a passada ainda nao alcancou. */
+  revised_through?: number;
+  /** A passada chegou ao fim (mesmo com recusas no caminho). */
+  revised_finished?: boolean;
 }
 
 export interface VersionResponse {
@@ -285,6 +291,10 @@ export interface ServerAnalysis {
   people: string[] | null;
   places: string[] | null;
   summary: string;
+  /** Leitura curta da IA: o que o texto revela, no maximo duas frases. */
+  reading?: string | null;
+  /** Analise secao por secao (titulos do texto e a transcricao). */
+  sections?: ServerAnalysisSection[] | null;
   /** Compreensao logica (0 a 100); -1 ou ausente quando nao medida. */
   comprehension?: number;
   comprehension_source?: string;
@@ -297,6 +307,15 @@ export interface ServerAnalysis {
   key_moments?: AnalysisMoment[] | null;
   questions?: string[] | null;
   decisions?: string[] | null;
+}
+
+export interface ServerAnalysisSection {
+  heading: string;
+  /** "text" para uma secao escrita, "transcript" para a fala. */
+  kind: string;
+  reading?: string;
+  summary?: string;
+  sentiment?: { score: number; label: string };
 }
 
 export interface ServerTag {

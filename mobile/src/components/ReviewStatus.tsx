@@ -20,6 +20,10 @@ interface ReviewStatusProps {
   reason?: string;
   /** Revisa de novo apenas os trechos que ficaram sem revisao. */
   onRetryRejected?(): Promise<void> | void;
+  /** Uma passada esta rodando agora (sem isso, parcial = interrompida). */
+  running?: boolean;
+  /** Continua uma passada interrompida de onde ela parou. */
+  onResume?(): Promise<void> | void;
 }
 
 /**
@@ -27,12 +31,22 @@ interface ReviewStatusProps {
  * escrever: o chip diz quanto mudou, quanto ficou de fora e a compreensao; a
  * explicacao (e a lista antes/depois) mora atras de um toque.
  */
-export function ReviewStatus({ segments, review, reason, onRetryRejected }: ReviewStatusProps) {
+export function ReviewStatus({
+  segments,
+  review,
+  reason,
+  onRetryRejected,
+  running = false,
+  onResume,
+}: ReviewStatusProps) {
   const styles = useThemedStyles(baseStyles);
   const { colors } = useTheme();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const state = useMemo(() => reviewState(review, segments), [review, segments]);
+  const state = useMemo(
+    () => reviewState(review, segments, running),
+    [review, segments, running],
+  );
 
   const comprehension =
     state.kind === 'changed' || state.kind === 'empty' || state.kind === 'partial'
@@ -59,6 +73,17 @@ export function ReviewStatus({ segments, review, reason, onRetryRejected }: Revi
     }
   };
 
+  const resume = async () => {
+    if (!onResume || busy) return;
+    setBusy(true);
+    try {
+      await onResume();
+    } finally {
+      setBusy(false);
+      setOpen(false);
+    }
+  };
+
   return (
     <>
       <Press
@@ -71,13 +96,29 @@ export function ReviewStatus({ segments, review, reason, onRetryRejected }: Revi
           <ActivityIndicator size="small" color={colors.accent} />
         ) : (
           <Ionicons
-            name={state.kind === 'none' ? 'sparkles-outline' : 'sparkles'}
+            name={
+              state.kind === 'none'
+                ? 'sparkles-outline'
+                : state.kind === 'paused'
+                  ? 'pause-circle-outline'
+                  : 'sparkles'
+            }
             size={15}
-            color={state.kind === 'none' ? colors.textTertiary : colors.accent}
+            color={
+              state.kind === 'none' || state.kind === 'paused'
+                ? colors.textTertiary
+                : colors.accent
+            }
           />
         )}
         {state.kind === 'running' ? (
           <Text style={styles.count}>
+            {state.done} de {state.total}
+          </Text>
+        ) : state.kind === 'paused' ? (
+          // Passada interrompida: o numero e o que falta continuar, e o icone
+          // de pausa diz que ninguem esta trabalhando agora.
+          <Text style={[styles.count, styles.countMuted]}>
             {state.done} de {state.total}
           </Text>
         ) : state.kind === 'changed' || state.kind === 'partial' ? (
@@ -128,6 +169,29 @@ export function ReviewStatus({ segments, review, reason, onRetryRejected }: Revi
             <Text style={styles.note}>
               {state.done} de {state.total} trechos revisados
             </Text>
+          ) : null}
+
+          {state.kind === 'paused' ? (
+            <View style={styles.retryRow}>
+              <Ionicons name="pause-circle-outline" size={16} color={colors.warning} />
+              <Text style={styles.retryText}>
+                {state.done} de {state.total} trechos
+              </Text>
+              <View style={styles.spacer} />
+              {onResume ? (
+                <Press
+                  style={styles.retryButton}
+                  onPress={() => void resume()}
+                  accessibilityLabel="Continuar a revisão de onde parou"
+                >
+                  {busy ? (
+                    <ActivityIndicator size="small" color={colors.accent} />
+                  ) : (
+                    <Ionicons name="play" size={16} color={colors.accent} />
+                  )}
+                </Press>
+              ) : null}
+            </View>
           ) : null}
 
           {state.kind === 'none' ? (
@@ -191,6 +255,8 @@ function chipLabel(state: ReturnType<typeof reviewState>): string {
       return 'Transcrição não revisada. Toque para saber por quê.';
     case 'running':
       return `Revisando ${state.done} de ${state.total} trechos.`;
+    case 'paused':
+      return `Revisão interrompida em ${state.done} de ${state.total} trechos. Toque para continuar.`;
     case 'changed':
       return `${plural(state.changed, 'trecho alterado', 'trechos alterados')}. Toque para ver o antes e o depois.`;
     case 'empty':

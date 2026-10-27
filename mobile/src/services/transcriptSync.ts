@@ -12,6 +12,11 @@ import { loadServerConfig } from './secure';
 
 const doFetch = globalThis.fetch as unknown as FetchLike;
 
+/** Compara texto cru sem depender de quebras de linha/espacos do transporte. */
+function normalizeText(text: string): string {
+  return text.replace(/\s+/g, ' ').trim();
+}
+
 export async function pushTranscript(id: string): Promise<boolean> {
   const recording = await getRecording(id);
   if (!recording?.entryId) return true;
@@ -40,6 +45,7 @@ export async function pushTranscript(id: string): Promise<boolean> {
     // texto ficava solto na entrada e o dashboard mostrava audio sem texto.
     let attachmentId = recording.serverAttachmentId;
     let serverText: string | undefined;
+    let serverRaw: string | undefined;
     try {
       const entry = await api.getEntry(recording.entryId);
       const audios = entry.audios ?? [];
@@ -61,7 +67,9 @@ export async function pushTranscript(id: string): Promise<boolean> {
         }
       }
       if (attachmentId) {
-        serverText = audios.find((audio) => audio.id === attachmentId)?.transcript?.text?.trim();
+        const transcript = audios.find((audio) => audio.id === attachmentId)?.transcript;
+        serverText = transcript?.text?.trim();
+        serverRaw = transcript?.raw_text?.trim();
       }
     } catch {
       // Sem leitura da entrada seguimos com o id conhecido (ou deixamos o
@@ -72,9 +80,16 @@ export async function pushTranscript(id: string): Promise<boolean> {
     // local bem menor que a do servidor e uma transcricao que parou no meio:
     // nao pode sobrescrever o texto completo que ja esta la.
     const localChars = Math.max(raw.trim().length, visible.length);
-    const truncated = Boolean(serverText && localChars < serverText.trim().length * 0.8);
+    const serverChars = (serverRaw ?? serverText ?? '').trim().length;
+    const truncated = Boolean(serverText && serverChars > 0 && localChars < serverChars * 0.8);
+    // O texto cru igual significa que a unica diferenca e a revisao: reenviar
+    // o cru apagaria a revisao do servidor. Um editor antigo que nao manda
+    // `raw_text` cai na comparacao pelo texto visivel.
+    const sameRaw =
+      serverRaw !== undefined && normalizeText(serverRaw) === normalizeText(raw);
     const needsTranscript =
       !truncated &&
+      !sameRaw &&
       (serverText === undefined || (serverText !== raw && serverText !== visible));
     if (needsTranscript) {
       await api.putTranscript(recording.entryId, {

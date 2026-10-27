@@ -17,7 +17,7 @@ import { DyariumApi, type FetchLike, type TranscriptSegment } from '@/core/api';
 import { localAnalysisEnabled as localAnalysisAvailable } from '@/core/features';
 import { formatDuration } from '@/core/format';
 import { audioRefFromPath } from '@/core/noteAudio';
-import { reviewHash, visibleTranscript } from '@/core/transcriptReview';
+import { reviewFromServer, visibleTranscript } from '@/core/transcriptReview';
 import { breakSentences } from '@/core/richText';
 import { activeSegmentIndex } from '@/core/transcript';
 import { useRenderCount } from '@/dev/perf';
@@ -27,6 +27,7 @@ import { resolveAnalysisModel } from '@/services/analysisModels';
 import { getRecording, upsertRecording } from '@/services/db';
 import { loadServerConfig } from '@/services/secure';
 import { reviewRecording } from '@/services/transcriptReview';
+import { useActivities } from '@/state/useActivities';
 import { pushTranscript } from '@/services/transcriptSync';
 import { emitRecording } from '@/services/uploaderLoop';
 import { useLibrary } from '@/state/LibraryContext';
@@ -165,6 +166,9 @@ export default function TranscriptScreen() {
   const entryId = note?.entryId;
   const cachedSegments = note?.transcriptSegments;
   const hasCache = Boolean(cachedSegments && cachedSegments.length > 0);
+  // Nota cuja transcricao veio do servidor: abrir a tela confere se uma
+  // revisao nova chegou la. Com edicao local pendente, o cache manda.
+  const hasLocalEdit = Boolean(cachedSegments?.some((segment) => segment.edited));
 
   const [fetched, setFetched] = useState<TranscriptSegment[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -236,6 +240,25 @@ export default function TranscriptScreen() {
   }, [note, analysisModel, literalTranscript, analysisLowPower]);
   const transcriptionPercent = useTranscriptionProgress(noteId);
   const transcribing = note?.transcriptStatus === 'pending';
+  // A passada esta rodando agora? A atividade e por gravacao; sem isso o chip
+  // tratava uma passada interrompida como se estivesse trabalhando.
+  const activities = useActivities();
+  const reviewing = activities.some(
+    (activity) => activity.id === `review:${note?.id}` && activity.status === 'running',
+  );
+
+  // Continua uma passada interrompida (cancelada no servidor, app morto) do
+  // primeiro trecho que faltou. O que ja foi revisado nao e refeito.
+  const resumeReview = useCallback(async () => {
+    if (!note) return;
+    const model = resolveAnalysisModel(analysisModel);
+    if (!model) return;
+    await reviewRecording(note, model, {
+      literal: literalTranscript,
+      lowPower: analysisLowPower,
+      title: note.title,
+    });
+  }, [note, analysisModel, literalTranscript, analysisLowPower]);
 
   // Toque longo numa linha da previa abre a transcricao ja editando aquele
   // trecho. O parametro chega em ms; casa pelo inicio do segmento, porque o
@@ -295,8 +318,11 @@ export default function TranscriptScreen() {
   }, [audioRef]);
 
   useEffect(() => {
-    // Segmentos em cache local: nao refaz o fetch ao abrir.
-    if (!entryId || hasCache) return undefined;
+    // Cache local de uma nota nossa: nao refaz o fetch ao abrir. Nota do
+    // servidor e conferida mesmo com cache, para a revisao feita la aparecer
+    // aqui; uma edicao local pendente vence e evita sobrescrever.
+    const serverOwned = note?.transcriptOrigin === 'server' && !hasLocalEdit;
+    if (!entryId || (hasCache && !serverOwned)) return undefined;
     let alive = true;
     (async () => {
       const config = await loadServerConfig();
@@ -313,27 +339,9 @@ export default function TranscriptScreen() {
             await upsertRecording({
               ...current,
               transcriptSegments: transcript.segments,
+              transcriptOrigin: current.transcriptOrigin === 'local' ? 'local' : 'server',
               transcriptReview:
-                transcript.revised_prompt_version && transcript.revised_prompt_version > 0
-                  ? {
-                      model: transcript.revised_model ?? '',
-                      promptVersion: transcript.revised_prompt_version,
-                      literal: transcript.revised_literal === true,
-                      comprehension: transcript.revised_comprehension ?? -1,
-                      hash: reviewHash(transcript.segments ?? []),
-                      rejected: transcript.revised_rejected ?? 0,
-                      reviewedThrough: Math.max(
-                        0,
-                        (transcript.segments?.length ?? 0) - (transcript.revised_pending ?? 0),
-                      ),
-                      // Sem trechos pendentes a passada terminou; com pendentes
-                      // o chip mostra "em andamento" em vez de "nada a mudar".
-                      finishedAt:
-                        (transcript.revised_pending ?? 0) === 0
-                          ? new Date().toISOString()
-                          : undefined,
-                    }
-                  : current.transcriptReview,
+                reviewFromServer(transcript, transcript.segments) ?? current.transcriptReview,
               updatedAt: new Date().toISOString(),
             });
           }
@@ -345,7 +353,7 @@ export default function TranscriptScreen() {
     return () => {
       alive = false;
     };
-  }, [entryId, hasCache, noteId]);
+  }, [entryId, hasCache, noteId, note?.transcriptOrigin, hasLocalEdit]);
 
   const activeIndex = useMemo(
     () => activeSegmentIndex(segments, currentMs),
@@ -440,6 +448,8 @@ export default function TranscriptScreen() {
           segments={segments}
           review={note?.transcriptReview}
           reason={reviewReason}
+          running={reviewing}
+          onResume={note?.transcriptReview && !note.transcriptReview.finishedAt ? resumeReview : undefined}
           onRetryRejected={note?.transcriptReview?.rejectedIdx?.length ? retryRejected : undefined}
         />
       ) : null}

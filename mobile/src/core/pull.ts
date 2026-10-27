@@ -127,6 +127,9 @@ export function entryToRecording(entry: ServerEntry, note?: ServerNote): Recordi
     // transcricao: marcar como pendente faria o app pedir /transcript para
     // sempre.
     transcriptStatus: entry.content_type.startsWith('audio/') ? 'pending' : undefined,
+    // Nota importada do servidor: o texto, quando existir, e de la. O app nao
+    // deve reenviar a transcricao como se a tivesse produzido.
+    transcriptOrigin: 'server',
     text: note?.content_markdown ?? '',
     archived: entry.archived,
     notebookId: entry.notebook_id || DEFAULT_NOTEBOOK_ID,

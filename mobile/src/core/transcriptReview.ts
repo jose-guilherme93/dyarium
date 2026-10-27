@@ -8,7 +8,12 @@
  */
 
 import { parseJsonLoose } from './analysisPrompt';
-import type { TranscriptReview, TranscriptSegment } from './types';
+import type {
+  Recording,
+  TranscriptOrigin,
+  TranscriptReview,
+  TranscriptSegment,
+} from './types';
 
 /** Versao do prompt e das regras. Entra na chave de cache da revisao. */
 export const REVIEW_PROMPT_VERSION = 1;
@@ -67,10 +72,15 @@ export function reviewChunks(
   const walk = only
     ? [...new Set(only)].filter((index) => index >= 0 && index < segments.length).sort((a, b) => a - b)
     : null;
-  const total = walk ? walk.length : segments.length;
+  // Sem `only`, a passada comeca em `from`: o total e so o que falta, nunca a
+  // transcricao inteira. Contar o total cheio aqui estourava o indice ao
+  // retomar uma revisao interrompida.
+  const start = Math.max(0, from);
+  const total = walk ? walk.length : Math.max(0, segments.length - start);
   for (let position = 0; position < total; position += 1) {
-    const index = walk ? walk[position] : Math.max(0, from) + position;
-    if (segments[index].edited) continue;
+    const index = walk ? walk[position] : start + position;
+    const segment = segments[index];
+    if (!segment || segment.edited) continue;
     if (!current) {
       current = {
         indices: [],
@@ -165,10 +175,14 @@ export function parseReviewJson(raw: string, expected: number): ParsedReview | n
   if (!Array.isArray(root.segments)) return null;
   const texts = root.segments.map((item) => (typeof item === 'string' ? item.trim() : ''));
   if (texts.length !== expected || texts.some((text) => text === '')) return null;
-  const comprehension =
+  // -1 e o "nao medido" que o prompt permite: nao pode virar 0, senao uma
+  // janela sem nota puxa a media da transcricao inteira para baixo.
+  const rawComprehension =
     typeof root.comprehension === 'number' && Number.isFinite(root.comprehension)
-      ? Math.max(0, Math.min(100, Math.round(root.comprehension)))
+      ? Math.round(root.comprehension)
       : -1;
+  const comprehension =
+    rawComprehension < 0 ? -1 : Math.min(100, rawComprehension);
   return { comprehension, texts };
 }
 
@@ -338,9 +352,147 @@ export function reviewIsCurrent(
       review.literal === literal &&
       // Uma passada interrompida no meio nao vale: os trechos que faltaram
       // continuam com o texto do whisper.
-      review.finishedAt &&
+      reviewFinished(review) &&
       review.hash === reviewHash(segments),
   );
+}
+
+/** O que o servidor manda sobre uma revisao ja feita (GET /transcript). */
+export interface ServerReview {
+  revised?: boolean;
+  revised_model?: string;
+  revised_prompt_version?: number;
+  revised_literal?: boolean;
+  revised_comprehension?: number;
+  revised_rejected?: number;
+  revised_pending?: number;
+  revised_through?: number;
+  revised_finished?: boolean;
+}
+
+/**
+ * Reconstroi o estado local da revisao a partir do que veio do servidor.
+ *
+ * O servidor guarda o estado da passada (`revised_through`/`revised_finished`),
+ * mas o app precisa da mesma forma que a revisao local usa para o chip e para
+ * nao refazer o trabalho. Sem `finishedAt` o estado parecia "revisando para
+ * sempre"; e um trecho recusado nao pode ser confundido com um trecho que a
+ * passada ainda nao alcancou.
+ */
+export function reviewFromServer(
+  transcript: ServerReview,
+  segments: TranscriptSegment[],
+): TranscriptReview | undefined {
+  if (!transcript.revised_prompt_version || transcript.revised_prompt_version <= 0) {
+    return undefined;
+  }
+  const pending = transcript.revised_pending ?? 0;
+  const through =
+    typeof transcript.revised_through === 'number'
+      ? transcript.revised_through
+      : Math.max(0, segments.length - pending);
+  const finished =
+    typeof transcript.revised_finished === 'boolean'
+      ? transcript.revised_finished
+      : pending === 0;
+  const hasReviewedFlag = segments.some((segment) => typeof segment.reviewed === 'boolean');
+  const rejectedIdx = hasReviewedFlag
+    ? segments
+        .map((segment, index) => ({ segment, index }))
+        .filter(
+          ({ segment, index }) =>
+            !segment.edited && segment.reviewed === false && index < through,
+        )
+        .map(({ index }) => index)
+    : [];
+  return {
+    model: transcript.revised_model ?? '',
+    promptVersion: transcript.revised_prompt_version,
+    literal: transcript.revised_literal === true,
+    comprehension: transcript.revised_comprehension ?? -1,
+    hash: reviewHash(segments),
+    rejected: transcript.revised_rejected ?? 0,
+    rejectedIdx,
+    reviewedThrough: Math.max(0, through),
+    // A presenca do campo e o que marca a passada como terminada; a data em si
+    // nao e exibida.
+    finishedAt: finished ? new Date().toISOString() : undefined,
+  };
+}
+
+/** Corpo de `GET /entries/{id}/transcript`, no que toca a revisao. */
+export interface ServerTranscriptPayload extends ServerReview {
+  text?: string;
+  language?: string;
+  segments?: TranscriptSegment[];
+}
+
+/** A passada do servidor e a mesma que o aparelho ja tem? */
+function sameReviewState(a: TranscriptReview, b: TranscriptReview): boolean {
+  return (
+    a.model === b.model &&
+    a.promptVersion === b.promptVersion &&
+    a.literal === b.literal &&
+    a.comprehension === b.comprehension &&
+    a.rejected === b.rejected &&
+    a.hash === b.hash &&
+    a.reviewedThrough === b.reviewedThrough &&
+    Boolean(a.finishedAt) === Boolean(b.finishedAt)
+  );
+}
+
+/**
+ * Aplica sobre a copia local uma transcricao vinda do servidor.
+ *
+ * O primeiro pull de uma nota so acontece enquanto ela nao tem texto; depois
+ * disso o servidor pode revisar de novo (outro aparelho, o dashboard). Sem esta
+ * fusao a nota aberta no app analisava o texto antigo, e o chip mentia sobre o
+ * estado da passada. Devolve `null` quando a copia local deve vencer: edicao
+ * manual pendente, nenhuma revisao nova no servidor, ou a mesma passada.
+ */
+export function mergeServerTranscript(
+  recording: Recording,
+  transcript: ServerTranscriptPayload,
+): Recording | null {
+  const segments = transcript.segments ?? [];
+  if (segments.length === 0) return null;
+  // O que o usuario escreveu a mao ainda vai subir: o servidor nao o conhece.
+  if ((recording.transcriptSegments ?? []).some((segment) => segment.edited)) return null;
+  const review = reviewFromServer(transcript, segments);
+  const localSegments = recording.transcriptSegments ?? [];
+  const sameText =
+    localSegments.length === segments.length &&
+    localSegments.every((segment, index) => segment.text === segments[index].text);
+  if (!review) {
+    // Sem revisao no servidor e o mesmo texto: a revisao local continua
+    // valendo e vai subir pela fila de sync. Com texto diferente houve
+    // retranscricao no servidor; a revisao local descrevia o texto antigo e
+    // cai junto com ele.
+    if (sameText) return null;
+    return {
+      ...recording,
+      transcript: transcript.text ?? visibleTranscript(segments),
+      transcriptLanguage: transcript.language ?? recording.transcriptLanguage,
+      transcriptOrigin: 'server',
+      transcriptStatus: 'ready',
+      transcriptSegments: segments,
+      transcriptReview: undefined,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+  if (recording.transcriptReview && sameReviewState(recording.transcriptReview, review)) {
+    return null;
+  }
+  return {
+    ...recording,
+    transcript: transcript.text ?? visibleTranscript(segments),
+    transcriptLanguage: transcript.language ?? recording.transcriptLanguage,
+    transcriptOrigin: 'server',
+    transcriptStatus: 'ready',
+    transcriptSegments: segments,
+    transcriptReview: review,
+    updatedAt: new Date().toISOString(),
+  };
 }
 
 export interface AppliedRevision {
@@ -403,17 +555,27 @@ export function withRevisedTexts(
 export type ReviewState =
   | { kind: 'none' }
   | { kind: 'running'; done: number; total: number }
+  | { kind: 'paused'; done: number; total: number }
   | { kind: 'changed'; changed: number; comprehension: number }
   | { kind: 'empty'; comprehension: number }
   | { kind: 'partial'; changed: number; rejected: number; comprehension: number };
 
+/**
+ * Estado da revisao para o chip. `running` diz se uma passada esta rodando
+ * agora; sem ele uma passada interrompida (app morto, cancelada no servidor)
+ * aparecia girando para sempre, como se estivesse trabalhando.
+ */
 export function reviewState(
   review: TranscriptReview | undefined,
   segments: TranscriptSegment[],
+  running = false,
 ): ReviewState {
   if (!review || !review.model) return { kind: 'none' };
-  if (!review.finishedAt) {
-    return { kind: 'running', done: review.reviewedThrough ?? 0, total: segments.length };
+  if (!reviewFinished(review)) {
+    const done = review.reviewedThrough ?? 0;
+    return running
+      ? { kind: 'running', done, total: segments.length }
+      : { kind: 'paused', done, total: segments.length };
   }
   const changed = changedSegments(segments);
   const comprehension = review.comprehension ?? -1;
@@ -421,6 +583,36 @@ export function reviewState(
   if (rejected > 0) return { kind: 'partial', changed, rejected, comprehension };
   if (changed > 0) return { kind: 'changed', changed, comprehension };
   return { kind: 'empty', comprehension };
+}
+
+/**
+ * A passada terminou? `finishedAt` e o marcador atual. Revisoes importadas por
+ * uma versao anterior do app nao tinham esse campo nem `reviewedThrough`; para
+ * elas a presenca do modelo e do hash ja significa uma passada concluida (uma
+ * passada interrompida sempre grava o ponto de retomada). Sem esta leitura, o
+ * chip ficava girando para sempre e o app refazia a revisao inteira.
+ */
+function reviewFinished(review: TranscriptReview): boolean {
+  if (review.finishedAt) return true;
+  return review.reviewedThrough === undefined && review.rejectedIdx === undefined;
+}
+
+/**
+ * Uma passada local ficou pela metade e deve ser retomada no boot? So vale para
+ * revisao feita no aparelho: a do servidor continua no servidor, e uma revisao
+ * importada por versao antiga (sem `reviewedThrough`) ja conta como terminada.
+ */
+export function reviewNeedsResume(
+  review: TranscriptReview | undefined,
+  origin: TranscriptOrigin | undefined,
+): boolean {
+  return Boolean(
+    review &&
+      review.model &&
+      !review.finishedAt &&
+      review.reviewedThrough !== undefined &&
+      origin !== 'server',
+  );
 }
 
 /** Quantos trechos tem texto revisado diferente do original. */

@@ -18,6 +18,8 @@ export interface ServerAudio {
   created_at: string;
   transcript?: {
     text?: string;
+    /** Texto cru do whisper, quando o servidor o expoe. */
+    raw_text?: string;
     language?: string;
     segments?: TranscriptSegment[];
   };
@@ -144,6 +146,8 @@ export interface TranscriptSegment {
   revised?: string;
   /** Trecho escrito a mao: a revisao nunca toca nele. */
   edited?: boolean;
+  /** A passada de revisao chegou neste trecho (mesmo sem mudar nada). */
+  reviewed?: boolean;
 }
 
 /**

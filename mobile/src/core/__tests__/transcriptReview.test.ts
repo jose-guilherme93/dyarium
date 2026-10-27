@@ -8,15 +8,18 @@ import {
   perHundred,
   rawTranscript,
   reviewChunks,
+  mergeServerTranscript,
+  reviewFromServer,
   reviewHash,
   reviewWindow,
   reviewIsCurrent,
+  reviewNeedsResume,
   speechCounts,
   visibleSegmentText,
   visibleTranscript,
   withRevisedTexts,
 } from '../transcriptReview';
-import type { TranscriptSegment } from '../types';
+import type { Recording, TranscriptSegment } from '../types';
 
 const segments: TranscriptSegment[] = [
   { start_ms: 0, end_ms: 1000, text: 'a sede do pt fica em sao paulo' },
@@ -26,6 +29,12 @@ const segments: TranscriptSegment[] = [
 ];
 
 describe('reviewChunks', () => {
+  it('retomar de um ponto nao passa do fim da transcricao', () => {
+    const chunks = reviewChunks(segments, 3, 2);
+    expect(chunks.map((chunk) => chunk.indices)).toEqual([[2]]);
+    expect(reviewChunks(segments, 3, segments.length)).toEqual([]);
+  });
+
   it('fatia em janelas de tres e pula os trechos escritos a mao', () => {
     const chunks = reviewChunks(segments, 3);
     expect(chunks).toHaveLength(1);
@@ -118,6 +127,12 @@ describe('parseReviewJson', () => {
 
   it('marca compreensao ausente como -1', () => {
     expect(parseReviewJson('{"segments": ["um"]}', 1)?.comprehension).toBe(-1);
+  });
+
+  it('preserva -1 explicito em vez de virar zero', () => {
+    expect(
+      parseReviewJson('{"comprehension": -1, "segments": ["um"]}', 1)?.comprehension,
+    ).toBe(-1);
   });
 });
 
@@ -224,8 +239,235 @@ describe('estado da revisao na tela', () => {
     });
   });
 
-  it('passada sem fim aparece em andamento', () => {
+  it('passada rodando aparece em andamento', () => {
     const running = { ...reviewed, finishedAt: undefined, reviewedThrough: 2 };
-    expect(reviewState(running, segments)).toEqual({ kind: 'running', done: 2, total: 4 });
+    expect(reviewState(running, segments, true)).toEqual({
+      kind: 'running',
+      done: 2,
+      total: 4,
+    });
+  });
+
+  it('passada sem fim e sem trabalho agora aparece interrompida', () => {
+    // App morto no meio, ou passada cancelada no servidor: ninguem esta
+    // revisando, e o chip nao pode girar para sempre.
+    const paused = { ...reviewed, finishedAt: undefined, reviewedThrough: 2 };
+    expect(reviewState(paused, segments)).toEqual({ kind: 'paused', done: 2, total: 4 });
+  });
+});
+
+describe('reviewFromServer', () => {
+  const serverSegments: TranscriptSegment[] = [
+    { start_ms: 0, end_ms: 1000, text: 'a sede do pt', reviewed: true, revised: 'A sede do PT.' },
+    { start_ms: 1000, end_ms: 2000, text: 'foram 3 pessoas', reviewed: true },
+    { start_ms: 2000, end_ms: 3000, text: 'trecho recusado', reviewed: false },
+    { start_ms: 3000, end_ms: 4000, text: 'trecho escrito', edited: true, reviewed: false },
+  ];
+
+  const server = {
+    revised: true,
+    revised_model: 'glm-5.3-flash',
+    revised_prompt_version: REVIEW_PROMPT_VERSION,
+    revised_literal: false,
+    revised_comprehension: 76,
+    revised_rejected: 1,
+    revised_through: 3,
+    revised_finished: true,
+    revised_pending: 1,
+  };
+
+  it('reconstroi o estado terminado, com os recusados e sem os pendentes', () => {
+    const review = reviewFromServer(server, serverSegments);
+    expect(review?.finishedAt).toBeTruthy();
+    expect(review?.reviewedThrough).toBe(3);
+    expect(review?.comprehension).toBe(76);
+    expect(review?.rejected).toBe(1);
+    // O trecho escrito a mao e o pendente nao entram nos recusados.
+    expect(review?.rejectedIdx).toEqual([2]);
+    expect(review?.hash).toBe(reviewHash(serverSegments));
+  });
+
+  it('passada parcial fica sem fim e retoma do ponto salvo', () => {
+    const review = reviewFromServer(
+      { ...server, revised_finished: false, revised_through: 2, revised_pending: 2 },
+      serverSegments,
+    );
+    expect(review?.finishedAt).toBeUndefined();
+    expect(review?.reviewedThrough).toBe(2);
+    expect(review?.rejectedIdx).toEqual([]);
+    expect(reviewIsCurrent(review, false, serverSegments)).toBe(false);
+    expect(reviewResumeFrom(review, false, serverSegments)).toEqual({
+      from: 2,
+      rejected: 1,
+      rejectedIdx: [],
+    });
+  });
+
+  it('nao inventa revisao quando o servidor nao marcou', () => {
+    expect(reviewFromServer({}, serverSegments)).toBeUndefined();
+    expect(reviewFromServer({ revised_prompt_version: 0 }, serverSegments)).toBeUndefined();
+  });
+
+  it('revisao importada por versao antiga conta como terminada', () => {
+    // Sem finishedAt e sem reviewedThrough: veio de um pull antigo, nao de uma
+    // passada local interrompida.
+    const legacy = {
+      model: 'glm',
+      promptVersion: REVIEW_PROMPT_VERSION,
+      literal: false,
+      comprehension: 70,
+      hash: reviewHash(serverSegments),
+    };
+    expect(reviewState(legacy, serverSegments)).toEqual({
+      kind: 'changed',
+      changed: 1,
+      comprehension: 70,
+    });
+    expect(reviewIsCurrent(legacy, false, serverSegments)).toBe(true);
+  });
+});
+
+describe('reviewNeedsResume', () => {
+  const partial = {
+    model: 'modelo-local',
+    promptVersion: REVIEW_PROMPT_VERSION,
+    literal: false,
+    comprehension: -1,
+    hash: 'x',
+    reviewedThrough: 4,
+  };
+
+  it('retoma uma passada local interrompida com ponto salvo', () => {
+    expect(reviewNeedsResume(partial, 'local')).toBe(true);
+    expect(reviewNeedsResume(partial, undefined)).toBe(true);
+  });
+
+  it('nao retoma revisao do servidor nem passada terminada', () => {
+    expect(reviewNeedsResume(partial, 'server')).toBe(false);
+    expect(reviewNeedsResume({ ...partial, finishedAt: '2026-10-20T10:00:00Z' }, 'local')).toBe(
+      false,
+    );
+    expect(reviewNeedsResume(undefined, 'local')).toBe(false);
+  });
+
+  it('nao confunde revisao importada por versao antiga com interrompida', () => {
+    expect(
+      reviewNeedsResume(
+        { model: 'glm', promptVersion: REVIEW_PROMPT_VERSION, literal: false, comprehension: 70 },
+        'server',
+      ),
+    ).toBe(false);
+  });
+});
+
+describe('mergeServerTranscript', () => {
+  const local: Recording = {
+    id: 'rec_server',
+    title: 'do servidor',
+    recordedAt: '2026-10-20T10:00:00.000Z',
+    dir: '',
+    segmentCount: 0,
+    status: 'completed',
+    offset: 0,
+    attempts: 0,
+    entryId: 'e1',
+    transcriptOrigin: 'server',
+    transcriptStatus: 'ready',
+    transcript: 'a sede do pt',
+    transcriptSegments: [{ start_ms: 0, end_ms: 1000, text: 'a sede do pt' }],
+    createdAt: '2026-10-20T10:00:00.000Z',
+    updatedAt: '2026-10-20T10:00:00.000Z',
+  };
+
+  const payload = {
+    text: 'A sede do PT.',
+    language: 'pt',
+    segments: [
+      {
+        start_ms: 0,
+        end_ms: 1000,
+        text: 'a sede do pt',
+        reviewed: true,
+        revised: 'A sede do PT.',
+      },
+      { start_ms: 1000, end_ms: 2000, text: 'foram 3 pessoas', reviewed: true },
+    ],
+    revised: true,
+    revised_model: 'glm-5.3-flash',
+    revised_prompt_version: REVIEW_PROMPT_VERSION,
+    revised_comprehension: 82,
+    revised_rejected: 0,
+    revised_through: 2,
+    revised_finished: true,
+    revised_pending: 0,
+  };
+
+  it('aplica revisao feita no servidor depois do primeiro pull', () => {
+    const merged = mergeServerTranscript(local, payload);
+    expect(merged?.transcript).toBe('A sede do PT.');
+    expect(merged?.transcriptOrigin).toBe('server');
+    expect(merged?.transcriptSegments).toHaveLength(2);
+    expect(merged?.transcriptReview).toMatchObject({
+      model: 'glm-5.3-flash',
+      comprehension: 82,
+      reviewedThrough: 2,
+      rejected: 0,
+    });
+    expect(merged?.transcriptReview?.finishedAt).toBeTruthy();
+  });
+
+  it('nao desfaz edicao manual pendente', () => {
+    const edited: Recording = {
+      ...local,
+      transcriptSegments: [{ ...local.transcriptSegments![0], edited: true }],
+    };
+    expect(mergeServerTranscript(edited, payload)).toBeNull();
+  });
+
+  it('nao reescreve a nota quando a passada e a mesma', () => {
+    const first = mergeServerTranscript(local, payload);
+    expect(first).not.toBeNull();
+    expect(mergeServerTranscript(first!, payload)).toBeNull();
+  });
+
+  it('aplica retranscricao do servidor e descarta a revisao do texto antigo', () => {
+    const withLocalReview: Recording = {
+      ...local,
+      transcriptReview: {
+        model: 'modelo-local',
+        promptVersion: REVIEW_PROMPT_VERSION,
+        literal: false,
+        comprehension: 70,
+        hash: reviewHash(local.transcriptSegments!),
+        finishedAt: '2026-10-20T10:05:00.000Z',
+      },
+    };
+    const merged = mergeServerTranscript(withLocalReview, {
+      text: 'outro audio inteiro',
+      language: 'pt',
+      segments: [{ start_ms: 0, end_ms: 1000, text: 'outro audio inteiro' }],
+    });
+    expect(merged?.transcriptReview).toBeUndefined();
+    expect(merged?.transcriptSegments?.[0].text).toBe('outro audio inteiro');
+  });
+
+  it('nao rebaixa revisao local quando o servidor nao tem nenhuma', () => {
+    const withLocalReview: Recording = {
+      ...local,
+      transcriptReview: {
+        model: 'modelo-local',
+        promptVersion: REVIEW_PROMPT_VERSION,
+        literal: false,
+        comprehension: 70,
+        hash: reviewHash(local.transcriptSegments!),
+        finishedAt: '2026-10-20T10:05:00.000Z',
+      },
+    };
+    const raw = {
+      text: 'a sede do pt',
+      language: 'pt',
+      segments: [{ start_ms: 0, end_ms: 1000, text: 'a sede do pt' }],
+    };
+    expect(mergeServerTranscript(withLocalReview, raw)).toBeNull();
   });
 });

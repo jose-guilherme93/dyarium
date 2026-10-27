@@ -19,7 +19,12 @@ import {
   updateLocalNotebook,
 } from '@/services/notebooks';
 import { pushNotebooks } from '@/services/notebookSync';
+import { analysisModelById } from '@/core/analysisModels';
+import { reviewNeedsResume } from '@/core/transcriptReview';
+import { isAnalysisModelInstalled } from '@/services/analysisModels';
+import { localAnalysisAvailable } from '@/services/localAnalysis';
 import { resumeInterruptedTranscriptions } from '@/services/localTranscription';
+import { reviewRecording } from '@/services/transcriptReview';
 import { noteIsOpen } from '@/services/noteVisibility';
 import { pullServerEntries } from '@/services/pull';
 import { pushPendingTranscriptsOnce } from '@/services/transcriptSync';
@@ -120,7 +125,13 @@ const TRANSCRIPT_INTERVAL_MS = 8_000;
 const SERVER_PULL_INTERVAL_MS = 20_000;
 
 export function LibraryProvider({ children }: { children: ReactNode }) {
-  const { config } = useSettings();
+  const {
+    config,
+    reviewTranscript: reviewEnabled,
+    literalTranscript,
+    analysisModel,
+    analysisLowPower,
+  } = useSettings();
   bumpRender('LibraryProvider');
   const [recordings, setRecordings] = useState<Recording[]>([]);
   const [notebooks, setNotebooks] = useState<Notebook[]>([]);
@@ -212,6 +223,32 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     void pushPendingTranscriptsOnce().catch(() => undefined);
   }, []);
 
+  // Uma revisao interrompida (app morto no meio) retoma no boot, como a
+  // transcricao. Sem isso o chip ficava em "revisando" para sempre e o texto
+  // nunca terminava de ser limpo.
+  const resumeReviews = useCallback(async () => {
+    if (!reviewEnabled || noteIsOpen()) return;
+    if (!localAnalysisAvailable() || !isAnalysisModelInstalled(analysisModel)) return;
+    const model = analysisModelById(analysisModel);
+    if (!model) return;
+    const list = await listRecordings().catch(() => [] as Recording[]);
+    for (const recording of list) {
+      if (recording.transcriptOrigin === 'server') continue;
+      if (!recording.transcriptSegments?.length) continue;
+      if (!reviewNeedsResume(recording.transcriptReview, recording.transcriptOrigin)) continue;
+      try {
+        await reviewRecording(recording, model, {
+          literal: literalTranscript,
+          lowPower: analysisLowPower,
+          title: recording.title,
+        });
+      } catch {
+        // retoma na proxima abertura
+      }
+      break;
+    }
+  }, [reviewEnabled, literalTranscript, analysisModel, analysisLowPower]);
+
   const pullServer = useCallback(() => {
     if (noteIsOpen()) return;
     bumpRender('pullserver.called');
@@ -235,9 +272,10 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       pullServer();
       // O que ficou pela metade antes de o app morrer continua de onde parou.
       void resumeInterruptedTranscriptions().catch(() => undefined);
+      void resumeReviews().catch(() => undefined);
     }, 2000);
     return () => clearTimeout(timer);
-  }, [ready, config, kick, pullTranscripts, pushTranscripts, pullServer]);
+  }, [ready, config, kick, pullTranscripts, pushTranscripts, pullServer, resumeReviews]);
 
   useEffect(() => {
     if (!hasPending) return undefined;

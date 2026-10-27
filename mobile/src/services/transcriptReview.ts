@@ -41,6 +41,10 @@ export interface ReviewWindow {
   reviewedThrough: number;
   /** Trechos sem revisao somados ate aqui. */
   rejected: number;
+  /** Quais trechos ficaram sem revisao, para retomar so eles. */
+  rejectedIdx: number[];
+  /** Media ponderada da compreensao ate aqui; -1 quando ainda nao ha medida. */
+  comprehension: number;
   /** Trechos alcancados, para a barra de progresso. */
   done: number;
   total: number;
@@ -74,6 +78,10 @@ export interface ReviewOptions {
   only?: number[];
   /** Primeiro trecho ainda nao alcancado, quando a passada ja andou. */
   through?: number;
+  /** Id da atividade em andamento, por gravacao (o chip sabe se ela roda). */
+  activityId?: string;
+  /** Compreensao media da parte ja revisada, para a retomada nao perder a nota. */
+  priorComprehension?: number;
   onProgress?(done: number, total: number): void;
   /** Cada janela pronta: grave e publique sem esperar o fim. */
   onWindow?(window: ReviewWindow): Promise<void> | void;
@@ -95,7 +103,7 @@ export async function reviewTranscript(
     from,
     options.only,
   );
-  const activity = 'review:transcript';
+  const activity = options.activityId ?? 'review:transcript';
   let current = segments;
   let rejected = Math.max(0, options.rejected ?? 0);
   const rejectedIdx = new Set<number>(options.rejectedIdx ?? []);
@@ -108,6 +116,17 @@ export async function reviewTranscript(
   let failedWindows = 0;
   let comprehensionSum = 0;
   let comprehensionWeight = 0;
+  // Uma passada interrompida guarda a media ja calculada. Retomar do zero faria
+  // a nota final refletir so as ultimas janelas, nao a transcricao inteira.
+  if (from > 0 && (options.priorComprehension ?? -1) >= 0) {
+    const priorWeight = segments
+      .slice(0, from)
+      .reduce((total, segment) => total + Math.max(segment.text.length, 1), 0);
+    if (priorWeight > 0) {
+      comprehensionSum = (options.priorComprehension as number) * priorWeight;
+      comprehensionWeight = priorWeight;
+    }
+  }
 
   if (chunks.length > 0) {
     startActivity({
@@ -174,6 +193,11 @@ export async function reviewTranscript(
         segments: current,
         reviewedThrough,
         rejected,
+        rejectedIdx: [...rejectedIdx].sort((a, b) => a - b),
+        comprehension:
+          comprehensionWeight > 0
+            ? Math.round(comprehensionSum / comprehensionWeight)
+            : -1,
         done: reviewedThrough,
         total: segments.length,
       });
@@ -267,6 +291,8 @@ export async function reviewRecording(
       rejectedIdx: options.only ? undefined : samePass ? stored?.rejectedIdx : undefined,
       only: options.only,
       through: samePass ? stored?.reviewedThrough : undefined,
+      priorComprehension: samePass ? stored?.comprehension : undefined,
+      activityId: `review:${recording.id}`,
       onWindow: async (window) => {
         const partial: Recording = {
           ...recording,
@@ -275,9 +301,10 @@ export async function reviewRecording(
             model: model.id,
             promptVersion: REVIEW_PROMPT_VERSION,
             literal: options.literal,
-            comprehension: -1,
+            comprehension: window.comprehension,
             hash,
             rejected: window.rejected,
+            rejectedIdx: window.rejectedIdx,
             reviewedThrough: window.reviewedThrough,
           },
           transcript: visibleTranscript(window.segments) || recording.transcript,
@@ -305,10 +332,16 @@ export async function reviewRecording(
     stopForegroundTask();
   }
 
+  // Revisar so os recusados nao pode substituir a nota de compreensao da
+  // transcricao inteira por uma media calculada apenas nesses trechos.
+  const review =
+    options.only && stored && stored.comprehension >= 0
+      ? { ...outcome.review, comprehension: stored.comprehension }
+      : outcome.review;
   const next: Recording = {
     ...recording,
     transcriptSegments: outcome.segments,
-    transcriptReview: outcome.review,
+    transcriptReview: review,
     transcript: visibleTranscript(outcome.segments) || recording.transcript,
     updatedAt: new Date().toISOString(),
   };
