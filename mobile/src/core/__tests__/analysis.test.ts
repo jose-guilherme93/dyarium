@@ -60,6 +60,48 @@ describe('toNoteAnalysis', () => {
     ]);
   });
 
+  it('leva a leitura e as secoes do servidor para a ficha', () => {
+    const view = toNoteAnalysis(
+      analysis({
+        summary: 'resumo curto',
+        reading: '  O dia girou em torno do trabalho e da familia.  ',
+        sections: [
+          {
+            heading: '  Trabalho  ',
+            kind: 'text',
+            reading: ' Pressao no trabalho. ',
+            summary: '',
+            sentiment: { score: -0.3, label: 'negativo' },
+          },
+          { heading: '', kind: 'transcript', reading: 'A fala revela cansaco.', summary: '' },
+        ],
+      }),
+    );
+    expect(view?.reading).toBe('O dia girou em torno do trabalho e da familia.');
+    expect(view?.sections).toEqual([
+      {
+        heading: 'Trabalho',
+        kind: 'text',
+        reading: 'Pressao no trabalho.',
+        summary: '',
+        sentimentLabel: 'negativo',
+      },
+      {
+        heading: '',
+        kind: 'transcript',
+        reading: 'A fala revela cansaco.',
+        summary: '',
+        sentimentLabel: '',
+      },
+    ]);
+  });
+
+  it('nao descarta uma analise que so tem leitura', () => {
+    const view = toNoteAnalysis(analysis({ reading: 'So a leitura.', summary: '' }));
+    expect(view?.reading).toBe('So a leitura.');
+    expect(view?.summary).toBe('');
+  });
+
   it('deduz o rotulo do sentimento quando o servidor nao manda um', () => {
     const view = toNoteAnalysis(analysis({ summary: 'resumo', sentiment: -0.8 }));
     expect(view?.sentimentLabel).toBe('negativo');

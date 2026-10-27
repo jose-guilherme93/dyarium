@@ -39,7 +39,7 @@ import { simplifiedAnalysis, toNoteAnalysis, toServerAnalysis } from '@/core/ana
 import type { AnalysisOutcome, AnalysisRun } from '@/core/analysisRuns';
 import type { ServerAnalysis } from '@/core/api';
 import { analysisModelById, type AnalysisModelInfo } from '@/core/analysisModels';
-import { analysisContentHash } from '@/core/analysisPrompt';
+import { analysisContentHash, analysisNoteContent } from '@/core/analysisPrompt';
 import { localAnalysisEnabled } from '@/core/features';
 import { newId } from '@/core/id';
 import { DEFAULT_NOTEBOOK_ID } from '@/core/notebooks';
@@ -80,6 +80,7 @@ import {
 import { setPendingInsert } from '@/services/noteInsert';
 import { fetchNoteAnalysis } from '@/services/analysis';
 import { reviewRecording } from '@/services/transcriptReview';
+import { refreshServerTranscript } from '@/services/transcripts';
 import { installedAnalysisModels, isAnalysisModelInstalled } from '@/services/analysisModels';
 import {
   getCachedAnalysis,
@@ -325,9 +326,10 @@ export default function NoteScreen() {
   // secao nao pisca "sem analise" enquanto o refresh silencioso acontece.
   const [analysisChecked, setAnalysisChecked] = useState(false);
   const [analysisBusy, setAnalysisBusy] = useState(false);
-  const [analysisInput, setAnalysisInput] = useState<{ body: number; transcript: number } | null>(
-    null,
-  );
+  const [analysisInput, setAnalysisInput] = useState<{
+    chars: number;
+    truncated: boolean;
+  } | null>(null);
   // Estatisticas ao vivo: tempo, tokens/s (CPU trabalhando) e bateria.
   const [analysisLive, setAnalysisLive] = useState<{
     elapsedMs: number;
@@ -372,12 +374,20 @@ export default function NoteScreen() {
   const analysisStale = useMemo(() => {
     if (!menuOpen) return false;
     if (cachedAnalysis?.origin !== 'local' || !cachedAnalysis.contentHash) return false;
+    // O hash cobre texto + transcricao: uma revisao ou retranscricao nova
+    // invalida a analise, mesmo com o corpo igual.
+    const serverTranscript = (note?.serverAudios ?? [])
+      .map((audio) => audio.transcript?.text?.trim() ?? '')
+      .filter(Boolean)
+      .join('\n\n');
+    const currentTranscript = (note?.transcript ?? '').trim() || serverTranscript;
     const current = analysisContentHash({
       title: title.trim() || (note?.title ?? ''),
       text: body,
+      transcript: currentTranscript,
     });
     return current !== cachedAnalysis.contentHash;
-  }, [cachedAnalysis, title, body, note?.title, menuOpen]);
+  }, [cachedAnalysis, title, body, note?.title, note?.transcript, note?.serverAudios, menuOpen]);
 
   // Enquanto analisa, mostra o tempo, os tokens/s (CPU) e a bateria atual.
   useEffect(() => {
@@ -1049,6 +1059,11 @@ export default function NoteScreen() {
           recordedAt: target.recordedAt,
           analysis,
         });
+      } else {
+        // Sem analise no servidor (ou sem rede): relê o cache. Se o servidor
+        // apagou a analise junto com o audio, a copia some da ficha.
+        const stored = await getCachedAnalysis(target.entryId).catch(() => null);
+        if (!stored) setCachedAnalysis(null);
       }
     } catch {
       // Sem rede o cache que ja estiver carregado continua valendo.
@@ -1089,11 +1104,13 @@ export default function NoteScreen() {
     const target = note;
     if (!target || analysisBusy) return;
     // Diagnostico sem conteudo: so os booleanos que decidem o botao.
-    console.log('[analysis] press', {
-      available: localAnalysisAvailable(),
-      model: analysisModel,
-      installed: isAnalysisModelInstalled(analysisModel),
-    });
+    if (__DEV__) {
+      console.log('[analysis] press', {
+        available: localAnalysisAvailable(),
+        model: analysisModel,
+        installed: isAnalysisModelInstalled(analysisModel),
+      });
+    }
     if (!localAnalysisAvailable()) {
       setAnalysisError(
         'Este build não tem o motor de análise local. Instale o development build mais recente.',
@@ -1147,6 +1164,15 @@ export default function NoteScreen() {
       // atrasada. Se a nota veio do servidor com varios audios, junta o texto
       // de todos eles.
       let fresh = await getRecording(target.id).catch(() => null);
+      // A revisao pode ter mudado no servidor depois do primeiro pull (outro
+      // aparelho, o dashboard). A analise le o texto que o dashboard mostra.
+      if (fresh?.transcriptOrigin === 'server' && fresh.transcriptStatus === 'ready') {
+        try {
+          fresh = (await refreshServerTranscript(fresh)) ?? fresh;
+        } catch {
+          // sem rede a copia local continua valendo
+        }
+      }
       // A revisao roda antes: e o texto revisado que a analise le. Sem revisao
       // ligada, ou sem modelo, `fresh` segue como esta.
       try {
@@ -1165,22 +1191,34 @@ export default function NoteScreen() {
       // Texto que sobra depois de tirar markdown (foto/link nao sao texto).
       const plainBody = markdownToPlain(liveBody).trim();
       const imageCount = (liveBody.match(/!\[[^\]]*\]\([^)]*\)/g) ?? []).length;
-      console.log('[analysis] input', {
-        title: liveTitle.length,
-        body: liveBody.length,
-        plainBody: plainBody.length,
-        transcript: liveTranscript.length,
-        images: imageCount,
-        savedBody: (target.text ?? '').length,
+      const content = analysisNoteContent({
+        title: liveTitle,
+        text: liveBody,
+        transcript: liveTranscript,
       });
-      setAnalysisInput({ body: plainBody.length, transcript: liveTranscript.length });
+      if (__DEV__) {
+        console.log('[analysis] input', {
+          title: liveTitle.length,
+          body: liveBody.length,
+          plainBody: plainBody.length,
+          transcript: liveTranscript.length,
+          images: imageCount,
+          analyzed: content.text.length,
+          truncated: content.truncated,
+        });
+      }
+      setAnalysisInput({ chars: content.text.length, truncated: content.truncated });
       if (!plainBody && !liveTranscript.trim()) {
         setAnalysisError('Esta nota ainda não tem texto ou transcrição para analisar.');
         return;
       }
       const input = { ...target, title: liveTitle, text: liveBody, transcript: liveTranscript };
       const inputText = [plainBody, liveTranscript].filter(Boolean).join('\n\n');
-      const contentHash = analysisContentHash({ title: liveTitle, text: liveBody });
+      const contentHash = analysisContentHash({
+        title: liveTitle,
+        text: liveBody,
+        transcript: liveTranscript,
+      });
       let lastRun: Awaited<ReturnType<typeof analyzeRecording>> | null = null;
       let analysis: ServerAnalysis | null = null;
       const loopStarted = new Date();
@@ -1204,15 +1242,17 @@ export default function NoteScreen() {
             },
           });
           lastRun = result;
-          console.log('[analysis] attempt', {
-            attempt,
-            parsed: Boolean(result.parsed),
-            ms: result.run.wallMs,
-            chars: result.run.text.length,
-            reading: Boolean(result.parsed?.reading),
-            themes: result.parsed?.themes.length ?? 0,
-            emotions: result.parsed?.emotions.length ?? 0,
-          });
+          if (__DEV__) {
+            console.log('[analysis] attempt', {
+              attempt,
+              parsed: Boolean(result.parsed),
+              ms: result.run.wallMs,
+              chars: result.run.text.length,
+              reading: Boolean(result.parsed?.reading),
+              themes: result.parsed?.themes.length ?? 0,
+              emotions: result.parsed?.emotions.length ?? 0,
+            });
+          }
           const candidate = result.parsed ? toServerAnalysis(result.parsed, model.id) : null;
           if (candidate && fresh) {
             const segments = fresh.transcriptSegments ?? [];
@@ -1307,7 +1347,7 @@ export default function NoteScreen() {
           completionTokens: 0,
           tokensPerSecond: 0,
         });
-        console.log('[analysis] fallback', { model: analysis.model });
+        if (__DEV__) console.log('[analysis] fallback', { model: analysis.model });
       }
       const item: CachedAnalysis = {
         entryId: key,

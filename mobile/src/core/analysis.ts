@@ -17,10 +17,22 @@ export interface NoteAnalysisEmotion {
   intensity: number;
 }
 
+export interface NoteAnalysisSection {
+  heading: string;
+  kind: string;
+  reading: string;
+  summary: string;
+  sentimentLabel: string;
+}
+
 export interface NoteAnalysisView {
   sentiment: number | null;
   sentimentLabel: string;
   summary: string;
+  /** Leitura curta da IA; cai no resumo quando a analise e antiga. */
+  reading: string;
+  /** Leitura de cada secao (titulos do texto e a transcricao). */
+  sections: NoteAnalysisSection[];
   themes: string[];
   emotions: NoteAnalysisEmotion[];
   people: string[];
@@ -196,6 +208,16 @@ export function toNoteAnalysis(
   if (!analysis) return null;
 
   const summary = (analysis.summary ?? '').trim();
+  const reading = (analysis.reading ?? '').trim();
+  const sections = (analysis.sections ?? [])
+    .map((section) => ({
+      heading: (section.heading ?? '').trim(),
+      kind: (section.kind ?? '').trim(),
+      reading: (section.reading ?? '').trim(),
+      summary: (section.summary ?? '').trim(),
+      sentimentLabel: (section.sentiment?.label ?? '').trim(),
+    }))
+    .filter((section) => section.heading !== '' || section.reading !== '' || section.summary !== '');
   const themes = cleanList((analysis.themes ?? []).map((theme) => theme.name));
   const emotions = toEmotions(analysis.emotions);
   const people = cleanList(analysis.people);
@@ -212,6 +234,8 @@ export function toNoteAnalysis(
 
   if (
     summary === '' &&
+    reading === '' &&
+    sections.length === 0 &&
     themes.length === 0 &&
     emotions.length === 0 &&
     people.length === 0 &&
@@ -233,6 +257,8 @@ export function toNoteAnalysis(
     sentiment,
     sentimentLabel: sentimentText(sentiment, analysis.sentiment_label),
     summary,
+    reading,
+    sections,
     themes,
     emotions,
     people,

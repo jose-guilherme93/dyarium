@@ -900,6 +900,21 @@ export async function listCachedAnalyses(): Promise<CachedAnalysis[]> {
   return out;
 }
 
+/**
+ * Apaga a analise que veio do servidor. A analise local fica: ela descreve o
+ * texto do aparelho e so o proprio app a invalida (hash do conteudo).
+ *
+ * Serve para quando o servidor deixa de ter analise (o audio e a transcricao
+ * foram apagados); manter a copia mostraria a medida de um texto que nao existe.
+ */
+export async function deleteCachedServerAnalysis(entryId: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `DELETE FROM analyses WHERE entry_id = ? AND origin IS NOT 'local'`,
+    [entryId],
+  );
+}
+
 /** Analise guardada de uma nota. */
 export async function getCachedAnalysis(entryId: string): Promise<CachedAnalysis | null> {
   const db = await getDb();

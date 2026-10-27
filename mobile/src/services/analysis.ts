@@ -4,9 +4,9 @@
  * ou sem analise, devolve null e o cache local continua valendo.
  */
 
-import { DyariumApi, type FetchLike, type ServerAnalysis } from '@/core/api';
+import { ApiError, DyariumApi, type FetchLike, type ServerAnalysis } from '@/core/api';
 
-import { saveCachedAnalyses } from './db';
+import { deleteCachedServerAnalysis, saveCachedAnalyses } from './db';
 import { loadServerConfig } from './secure';
 
 const doFetch = globalThis.fetch as unknown as FetchLike;
@@ -41,9 +41,14 @@ export async function fetchNoteAnalysis(
     }
 
     return analysis;
-  } catch {
-    // 404 (analise ainda nao existe) e falta de rede sao esperados; quem
-    // chamou decide mostrar o cache que ja tiver.
+  } catch (error) {
+    // 404: o servidor nao tem mais analise desta nota (por exemplo, o audio e
+    // a transcricao foram apagados). A copia do servidor no aparelho precisa
+    // cair junto; senao a nota mostra a medida de um texto que nao existe.
+    if (error instanceof ApiError && error.status === 404) {
+      await deleteCachedServerAnalysis(target.entryId).catch(() => undefined);
+    }
+    // Falta de rede e esperada: quem chamou decide mostrar o cache que tiver.
     return null;
   }
 }

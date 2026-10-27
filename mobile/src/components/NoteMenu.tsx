@@ -160,7 +160,8 @@ interface NoteMenuProps {
   /** Modelo local instalado e engine disponivel. */
   analysisReady?: boolean;
   analysisBusy?: boolean;
-  analysisInput?: { body: number; transcript: number } | null;
+  /** Quanto texto a analise leu de fato e se o aparelho cortou o resto. */
+  analysisInput?: { chars: number; truncated: boolean } | null;
   analysisStale?: boolean;
   analysisSimplified?: boolean;
   analysisLowPower?: boolean;
@@ -245,18 +246,47 @@ function AnalysisContent({ analysis }: { analysis: NoteAnalysisView }) {
         </View>
       ) : null}
 
-      {analysis.summary ? <Text style={styles.analysisSummary}>{analysis.summary}</Text> : null}
+      {analysis.reading || analysis.summary ? (
+        <Text style={styles.analysisSummary}>{analysis.reading || analysis.summary}</Text>
+      ) : null}
+
+      {analysis.sections.length > 1 ? (
+        <View style={styles.analysisBlock}>
+          <Text style={styles.analysisBlockTitle}>Seções</Text>
+          {analysis.sections.map((section, index) => (
+            <View key={`${section.heading}-${index}`} style={styles.analysisSection}>
+              <Text style={styles.analysisSectionTitle}>
+                {section.heading || 'Nota'}
+                {section.sentimentLabel ? ` · ${section.sentimentLabel}` : ''}
+              </Text>
+              {section.reading || section.summary ? (
+                <Text style={styles.analysisMeta}>{section.reading || section.summary}</Text>
+              ) : null}
+            </View>
+          ))}
+        </View>
+      ) : null}
 
       {analysis.comprehension !== null ? (
-        <Text style={styles.analysisMeta}>
-          Compreensão lógica: {analysis.comprehension}/100
-          {analysis.comprehensionSource === 'analysis' ? ' (sem revisão)' : ''}
+        <Text
+          style={styles.analysisMeta}
+          accessibilityLabel={
+            analysis.comprehensionSource === 'review'
+              ? `Compreensão lógica estimada do texto revisado: ${analysis.comprehension} de 100.`
+              : `Compreensão lógica estimada pelo modelo sobre o texto lido: ${analysis.comprehension} de 100. A transcrição não foi revisada.`
+          }
+        >
+          Compreensão {analysis.comprehension}/100
+          {analysis.comprehensionSource === 'analysis' ? ' · sem revisão' : ''}
         </Text>
       ) : null}
       {analysis.stutterRate > 0 || analysis.hesitationRate > 0 ? (
-        <Text style={styles.analysisMeta}>
-          Fala: gagueira {analysis.stutterRate.toFixed(1)} e hesitação{' '}
-          {analysis.hesitationRate.toFixed(1)} por 100 palavras
+        <Text
+          style={styles.analysisMeta}
+          accessibilityLabel={`Gagueira e hesitação por 100 palavras do texto cru do áudio: ${analysis.stutterRate.toFixed(1)} e ${analysis.hesitationRate.toFixed(1)}.`}
+        >
+          Gagueira {analysis.stutterRate.toFixed(1)} · Hesitação{' '}
+          {analysis.hesitationRate.toFixed(1)}
         </Text>
       ) : null}
 
@@ -630,9 +660,16 @@ export function NoteMenu({
                         ) : null}
                         {analysisError ? <Text style={styles.analyzeError}>{analysisError}</Text> : null}
                         {analysisInput && !analysisBusy ? (
-                          <Text style={styles.analyzePrivacy}>
-                            Analisado: {analysisInput.body} caracteres de texto e{' '}
-                            {analysisInput.transcript} de transcrição.
+                          <Text
+                            style={styles.analyzePrivacy}
+                            accessibilityLabel={
+                              analysisInput.truncated
+                                ? 'O texto passou do limite do aparelho; a análise leu só o começo.'
+                                : undefined
+                            }
+                          >
+                            Analisado: {analysisInput.chars} caracteres
+                            {analysisInput.truncated ? ' · cortado' : ''}
                           </Text>
                         ) : null}
                         {analysisModelLabel ? (
@@ -897,6 +934,8 @@ const baseStyles = defineStyles({
     fontSize: fontSize.xs,
     fontVariant: ['tabular-nums'],
   },
+  analysisSection: { gap: 2, marginBottom: spacing.xs },
+  analysisSectionTitle: { fontSize: fontSize.sm, fontWeight: '600', color: baseColors.text },
   analysisSummary: { color: baseColors.text, fontSize: fontSize.sm, lineHeight: 20 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
   chip: {
