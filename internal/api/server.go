@@ -137,6 +137,8 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("GET /api/v1/models", s.handleListModels)
 	protected.HandleFunc("POST /api/v1/models/download", s.handleDownloadModel)
 
+	protected.HandleFunc("GET /api/v1/activities", s.handleListActivities)
+
 	protected.HandleFunc("GET /api/v1/events", s.handleEvents)
 
 	mux.Handle("/api/v1/", s.requireAuth(protected))
