@@ -100,9 +100,15 @@ com o botao **Analisar no aparelho**. O botao:
 - cada analise local guarda um hash de `titulo + texto + transcricao`; se qualquer
   um mudar (inclusive uma revisao nova da transcricao), a ficha avisa que a
   analise e de uma versao anterior;
-- o aparelho corta a entrada no limite que cabe no contexto local. A ficha mostra
-  quantos caracteres foram realmente lidos e marca **cortado** quando o texto
-  passou do limite; nunca diz que analisou o que nao leu;
+- nota que cabe no limite vai inteira. Nota maior: o **mesmo** orcamento e
+  dividido entre as secoes pelos titulos (e a transcricao), proporcional ao
+  tamanho e com um piso para nenhuma sumir — o modelo le o comeco de todas em
+  vez de so as primeiras paginas. Nenhuma chamada extra, nenhum token a mais: o
+  texto continua com no maximo 6.000 caracteres, e por isso a tela nao trava e
+  a bateria gasta o mesmo;
+- a ficha mostra quantos caracteres foram realmente lidos e marca **cortado**
+  quando alguma secao precisou ser encurtada; nunca diz que analisou o que nao
+  leu;
 - grava o JSON derivado no SQLite local (`analyses`, origem `local`);
 - deixa a analise local vencer a do servidor (first-wins): a leitura de fundo
   do servidor nao sobrescreve o resultado feito no aparelho;
