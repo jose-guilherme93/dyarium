@@ -13,7 +13,7 @@ import type {
 } from "../types";
 
 /**
- * Painel "Escrita": mostra as metricas que o app calcula offline. O celular
+ * Painel "Escrita": mostra as métricas que o app calcula offline. O celular
  * envia o documento pronto (contrato em docs/api.md); aqui so desenhamos, sem
  * recalcular nada, para os numeros baterem exatamente com o app.
  */
@@ -278,7 +278,7 @@ export function WritingView({ refreshKey }: { refreshKey: number }) {
       setSnapshots(list);
       setError("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "falha ao carregar as metricas");
+      setError(err instanceof Error ? err.message : "falha ao carregar as métricas");
     } finally {
       setLoading(false);
     }
@@ -294,9 +294,11 @@ export function WritingView({ refreshKey }: { refreshKey: number }) {
   if (loading && snapshots.length === 0) {
     return (
       <section className="view">
-        <div className="view-header">
-          <h1>Escrita</h1>
-        </div>
+        <header className="page-head">
+          <div>
+            <h1>Escrita</h1>
+          </div>
+        </header>
         <p className="muted">
           <Spinner /> Carregando...
         </p>
@@ -306,21 +308,26 @@ export function WritingView({ refreshKey }: { refreshKey: number }) {
 
   return (
     <section className="view">
-      <div className="view-header">
-        <h1>Escrita</h1>
-        <button type="button" className="link-button" onClick={() => void load()}>
+      <header className="page-head">
+        <div>
+          <h1>Escrita</h1>
+          <p>
+            Métricas calculadas no aparelho, sobre as suas notas. O dashboard só desenha os números.
+          </p>
+        </div>
+        <button type="button" className="button button--ghost" onClick={() => void load()}>
           Atualizar
         </button>
-      </div>
+      </header>
 
       {error ? <p className="error">{error}</p> : null}
 
       {!snapshot ? (
         <div className="empty-state">
-          <p>Nenhuma metrica recebida ainda.</p>
-          <p className="muted">
-            Abra o app no aparelho com o servidor configurado: as metricas de escrita sao calculadas
-            no proprio celular e enviadas para ca.
+          <p>Nenhuma métrica recebida ainda.</p>
+          <p>
+            Abra o app no aparelho com o servidor configurado: as métricas de escrita são
+            calculadas no próprio celular e enviadas para cá.
           </p>
         </div>
       ) : (
@@ -530,7 +537,7 @@ function WritingBody({
         <div className="chart-card">
           <h3 className="chart-title">Como você se sentiu</h3>
           {sentiment.analyzed === 0 ? (
-            <p className="muted">Analise as notas para ver o tom desta janela.</p>
+            <p className="muted">Análise as notas para ver o tom desta janela.</p>
           ) : (
             <>
               <p>

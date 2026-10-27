@@ -1,6 +1,12 @@
-/** Cadernos: o padrao existe sempre e nao pode ser renomeado nem excluido. */
+/** Cadernos: o padrao existe sempre e não pode ser renomeado nem excluido. */
 export const DEFAULT_NOTEBOOK_ID = "notas-ao-acaso";
 export const DEFAULT_NOTEBOOK_NAME = "Notas ao acaso";
+
+/**
+ * Escopo "todos os cadernos" do seletor. Não e um caderno do servidor: e o
+ * valor local que a lista usa para mostrar a biblioteca inteira.
+ */
+export const ALL_NOTEBOOKS = "__all__";
 
 export const NOTEBOOK_COLORS = [
   "",

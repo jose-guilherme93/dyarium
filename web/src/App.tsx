@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { MouseEvent as ReactMouseEvent } from "react";
 import { api, ApiError, clearToken, getToken, setToken, verifyToken } from "./api";
 import { useEvents } from "./useEvents";
 import { TokenGate } from "./components/TokenGate";
@@ -9,9 +10,19 @@ import { NotebookDialog } from "./components/NotebookDialog";
 import { NotebookSwitcher } from "./components/NotebookSwitcher";
 import { OfflineBanner } from "./components/OfflineBanner";
 import { TagManager } from "./components/TagManager";
+import { ComposeDialog, type ComposeAnchor } from "./components/ComposeDialog";
 import { useToast } from "./components/Toasts";
-import { ChevronIcon, ExitIcon, InsightsIcon, SettingsIcon, WritingIcon } from "./components/icons";
-import { DEFAULT_NOTEBOOK_ID } from "./lib/notebooks";
+import {
+  ChevronIcon,
+  ExitIcon,
+  InsightsIcon,
+  MenuIcon,
+  PlusIcon,
+  SearchIcon,
+  SettingsIcon,
+  WritingIcon,
+} from "./components/icons";
+import { ALL_NOTEBOOKS, DEFAULT_NOTEBOOK_ID } from "./lib/notebooks";
 import { InsightsView } from "./views/InsightsView";
 import { SettingsView } from "./views/SettingsView";
 import { WritingView } from "./views/WritingView";
@@ -22,12 +33,12 @@ type ViewId = "notes" | "insights" | "writing" | "settings";
 
 const ACTIVE_NOTEBOOK_KEY = "dyarium.notebook";
 
-/** Caderno salvo neste navegador; a selecao e local, nao sincronizada. */
+/** Caderno salvo neste navegador; a selecao e local, não sincronizada. */
 function readActiveNotebook(): string {
   try {
-    return localStorage.getItem(ACTIVE_NOTEBOOK_KEY) || DEFAULT_NOTEBOOK_ID;
+    return localStorage.getItem(ACTIVE_NOTEBOOK_KEY) || ALL_NOTEBOOKS;
   } catch {
-    return DEFAULT_NOTEBOOK_ID;
+    return ALL_NOTEBOOKS;
   }
 }
 
@@ -44,7 +55,10 @@ export function App() {
   const [authError, setAuthError] = useState("");
   const [checkingToken, setCheckingToken] = useState(false);
   const [view, setView] = useState<ViewId>("notes");
-  const [navOpen, setNavOpen] = useState(true);
+  // No navegador estreito a navegacao e uma gaveta: comeca fechada.
+  const [navOpen, setNavOpen] = useState(() =>
+    typeof window === "undefined" ? true : window.innerWidth > 900,
+  );
   const [openEntryId, setOpenEntryId] = useState<string | null>(null);
   const [entityFocus, setEntityFocus] = useState<{ kind: EntityKind; name: string } | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -55,7 +69,12 @@ export function App() {
     notebook?: Notebook;
   } | null>(null);
   const [tagsOpen, setTagsOpen] = useState(false);
-  // A nota aberta tem o seu proprio contador: um evento de outra entrada nao
+  const [composeOpen, setComposeOpen] = useState(false);
+  const [composeAnchor, setComposeAnchor] = useState<ComposeAnchor | null>(null);
+  // A busca pedida pela faixa recolhida so vale uma vez: sem isto, reabrir a
+  // gaveta no celular abriria o campo de busca de novo sem ninguem pedir.
+  const [pendingSearch, setPendingSearch] = useState(false);
+  // A nota aberta tem o seu proprio contador: um evento de outra entrada não
   // pode obrigar a nota visivel a recarregar tudo.
   const [noteRefreshKey, setNoteRefreshKey] = useState(0);
   const openEntryRef = useRef<string | null>(null);
@@ -186,12 +205,9 @@ export function App() {
         const list = result.notebooks ?? [];
         setNotebooks(list);
         setActiveNotebookId((current) => {
+          if (current === ALL_NOTEBOOKS) return current;
           if (list.some((notebook) => notebook.id === current)) return current;
-          return (
-            list.find((notebook) => notebook.is_default)?.id ??
-            list[0]?.id ??
-            DEFAULT_NOTEBOOK_ID
-          );
+          return ALL_NOTEBOOKS;
         });
       })
       .catch(() => undefined);
@@ -215,7 +231,7 @@ export function App() {
       setTokenState(value);
     } catch (err) {
       if (err instanceof ApiError) {
-        setAuthError("Nao foi possivel validar o token. Tente de novo.");
+        setAuthError("Não foi possível validar o token. Tente de novo.");
         return;
       }
       // Falha de rede: entra em modo offline com o token informado.
@@ -241,21 +257,67 @@ export function App() {
     setNoteRefreshKey((key) => key + 1);
   };
 
+  const closeDrawer = () => {
+    if (window.innerWidth <= 900) setNavOpen(false);
+  };
+
   const selectNotebook = (id: string) => {
     setActiveNotebookId(id);
     writeActiveNotebook(id);
     setOpenEntryId(null);
+    closeDrawer();
   };
+
+  // Em "todos os cadernos" a nota nova nasce no padrao: o escopo e uma visao,
+  // nao um caderno de verdade.
+  const targetNotebookId = () =>
+    activeNotebookId === ALL_NOTEBOOKS
+      ? (notebooks.find((notebook) => notebook.is_default)?.id ?? DEFAULT_NOTEBOOK_ID)
+      : activeNotebookId;
 
   const createNote = async () => {
     try {
-      const entry = await api.createEntry("", null, activeNotebookId);
+      const entry = await api.createEntry("", null, targetNotebookId());
       setOpenEntryId(entry.id);
       setView("notes");
+      closeDrawer();
       refresh();
     } catch {
+      notify("Não foi possível criar a nota.", "error");
       refresh();
     }
+  };
+
+  // O popover de nova nota abre colado no botao que o pediu. Guardamos o
+  // retangulo na hora do clique: no celular a gaveta fecha e o botao sai da
+  // tela, mas a posicao continua valida.
+  const openCompose = (event: ReactMouseEvent<HTMLElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    setComposeAnchor({
+      top: rect.top,
+      bottom: rect.bottom,
+      left: rect.left,
+      right: rect.right,
+    });
+    setComposeOpen(true);
+  };
+
+  const createTextNote = () => {
+    setComposeOpen(false);
+    void createNote();
+  };
+
+  const openCreatedEntry = (id: string) => {
+    setComposeOpen(false);
+    setOpenEntryId(id);
+    setView("notes");
+    refresh();
+    closeDrawer();
+  };
+
+  const expandSearch = () => {
+    setNavOpen(true);
+    setPendingSearch(true);
   };
 
   const saveNotebook = async (input: { name: string; color: string }) => {
@@ -296,104 +358,197 @@ export function App() {
   const openFromOtherView = (id: string) => {
     setOpenEntryId(id);
     setView("notes");
+    closeDrawer();
   };
+
+  const openView = (id: ViewId) => {
+    setView(id);
+    closeDrawer();
+  };
+
+  const footerItems = [
+    {
+      key: "insights",
+      label: "Insights",
+      active: view === "insights",
+      icon: <InsightsIcon size={17} />,
+      onPress: () => {
+        setEntityFocus(null);
+        openView("insights");
+      },
+    },
+    {
+      key: "writing",
+      label: "Escrita",
+      active: view === "writing",
+      icon: <WritingIcon size={17} />,
+      onPress: () => openView("writing"),
+    },
+    {
+      key: "settings",
+      label: "Configurações",
+      active: view === "settings",
+      icon: <SettingsIcon size={17} />,
+      onPress: () => openView("settings"),
+    },
+    {
+      key: "logout",
+      label: "Sair",
+      active: false,
+      icon: <ExitIcon size={17} />,
+      onPress: () => {
+        clearToken();
+        setTokenState("");
+      },
+    },
+  ];
 
   return (
     <div className={navOpen ? "app" : "app app--collapsed"}>
+      <header className="mobile-bar">
+        <button
+          type="button"
+          className="icon-button"
+          onClick={() => setNavOpen(true)}
+          aria-label="Abrir menu"
+          title="Abrir menu"
+        >
+          <MenuIcon size={18} />
+        </button>
+        <span className="mobile-bar-title">
+          {activeNotebookId === ALL_NOTEBOOKS
+            ? "Todos os cadernos"
+            : (notebooks.find((notebook) => notebook.id === activeNotebookId)?.name ??
+              "Notas ao acaso")}
+        </span>
+        <button
+          type="button"
+          className="button button--primary button--small"
+          onClick={openCompose}
+          aria-label="Nova nota"
+        >
+          <PlusIcon size={15} />
+          Nova nota
+        </button>
+      </header>
+      {navOpen && (
+        <button
+          type="button"
+          className="sidebar-backdrop"
+          onClick={() => setNavOpen(false)}
+          aria-label="Fechar menu"
+        />
+      )}
       <OfflineBanner />
-      <aside className="sidebar" aria-label="Navegacao principal">
-        <div className="sidebar-top">
-          <div className="brand">dyarium</div>
-          <button
-            type="button"
-            className="sidebar-toggle"
-            onClick={() => setNavOpen((value) => !value)}
-            aria-label={navOpen ? "Recolher menu" : "Expandir menu"}
-            aria-expanded={navOpen}
-          >
-            <ChevronIcon size={16} />
-          </button>
-        </div>
-
-        {/* O menu e a lista de notas: nao ha "Notas" aqui, porque a lista e as
-            notas. As demais telas viram icones pequenos no rodape. */}
-        {navOpen && (
+      <aside className="sidebar" aria-label="Navegação principal">
+        {navOpen ? (
           <>
-            <NotebookSwitcher
-              notebooks={notebooks}
-              activeId={activeNotebookId}
-              onSelect={selectNotebook}
-              onCreate={() => setNotebookDialog({ mode: "create" })}
-              onRename={(notebook) => setNotebookDialog({ mode: "rename", notebook })}
-              onDelete={(notebook) => void deleteNotebook(notebook)}
-            />
+            <div className="sidebar-top">
+              <NotebookSwitcher
+                notebooks={notebooks}
+                activeId={activeNotebookId}
+                onSelect={selectNotebook}
+                onCreate={() => setNotebookDialog({ mode: "create" })}
+                onRename={(notebook) => setNotebookDialog({ mode: "rename", notebook })}
+                onDelete={(notebook) => void deleteNotebook(notebook)}
+              />
+              <button
+                type="button"
+                className="sidebar-toggle"
+                onClick={() => setNavOpen(false)}
+                aria-label="Recolher menu"
+                title="Recolher menu"
+              >
+                <ChevronIcon size={16} />
+              </button>
+            </div>
+
+            {/* O menu e a lista de notas: não ha "Notas" aqui, porque a lista e
+                as notas. As demais telas viram icones pequenos no rodape. */}
             <NoteList
               refreshKey={refreshKey}
               activeId={openEntryId}
               failures={failures}
               notebookId={activeNotebookId}
               notebooks={notebooks}
+              autoSearch={pendingSearch}
+              onSearchOpened={() => setPendingSearch(false)}
               onOpen={(id) => {
                 setOpenEntryId(id);
                 setView("notes");
+                closeDrawer();
               }}
-              onCreate={() => void createNote()}
+              onCreate={openCompose}
               onManageTags={() => setTagsOpen(true)}
             />
           </>
+        ) : (
+          <div className="side-rail">
+            <button
+              type="button"
+              className="rail-action rail-action--new"
+              onClick={openCompose}
+              aria-label="Nova nota"
+              title="Nova nota"
+            >
+              <PlusIcon size={18} />
+            </button>
+            <button
+              type="button"
+              className="rail-action"
+              onClick={expandSearch}
+              aria-label="Buscar nas notas"
+              title="Buscar"
+            >
+              <SearchIcon size={17} />
+            </button>
+            <button
+              type="button"
+              className="rail-action rail-expand"
+              onClick={() => setNavOpen(true)}
+              aria-label="Expandir menu"
+              title="Expandir menu"
+            >
+              <ChevronIcon size={16} />
+            </button>
+            <nav className="rail-foot" aria-label="Telas do dyarium">
+              {footerItems.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={item.active ? "foot-item foot-item--active" : "foot-item"}
+                  onClick={item.onPress}
+                  aria-label={item.label}
+                  aria-pressed={item.key === "logout" ? undefined : item.active}
+                  title={item.label}
+                >
+                  {item.icon}
+                </button>
+              ))}
+            </nav>
+          </div>
         )}
 
-        <nav className="sidebar-foot">
-          <button
-            type="button"
-            className={view === "insights" ? "foot-icon foot-icon--active" : "foot-icon"}
-            onClick={() => {
-              setView("insights");
-              setEntityFocus(null);
-            }}
-            aria-label="Insights"
-            aria-pressed={view === "insights"}
-            title="Insights"
-          >
-            <InsightsIcon size={17} />
-          </button>
-          <button
-            type="button"
-            className={view === "writing" ? "foot-icon foot-icon--active" : "foot-icon"}
-            onClick={() => setView("writing")}
-            aria-label="Escrita"
-            aria-pressed={view === "writing"}
-            title="Escrita"
-          >
-            <WritingIcon size={17} />
-          </button>
-          <span className="foot-sep" />
-          <button
-            type="button"
-            className={view === "settings" ? "foot-icon foot-icon--active" : "foot-icon"}
-            onClick={() => setView("settings")}
-            aria-label="Configuracao"
-            aria-pressed={view === "settings"}
-            title="Configuracao"
-          >
-            <SettingsIcon size={17} />
-          </button>
-          <button
-            type="button"
-            className="foot-icon"
-            onClick={() => {
-              clearToken();
-              setTokenState("");
-            }}
-            aria-label="Sair"
-            title="Sair"
-          >
-            <ExitIcon size={17} />
-          </button>
-        </nav>
+        {navOpen && (
+          <nav className="sidebar-foot" aria-label="Telas do dyarium">
+            {footerItems.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                className={item.active ? "foot-item foot-item--active" : "foot-item"}
+                onClick={item.onPress}
+                aria-label={item.label}
+                aria-pressed={item.key === "logout" ? undefined : item.active}
+                title={item.label}
+              >
+                {item.icon}
+              </button>
+            ))}
+          </nav>
+        )}
       </aside>
 
-      <main className="workspace" aria-label="Conteudo">
+      <main className="workspace" aria-label="Conteúdo">
         <ErrorBoundary>
           {view === "notes" ? (
             <div className="editor-pane">
@@ -418,8 +573,25 @@ export function App() {
                 />
               ) : (
                 <div className="empty-editor">
-                  <h2>Suas notas</h2>
-                  <p className="muted">Escolha uma nota na esquerda, grave um audio ou crie uma nota escrita.</p>
+                  <div className="empty-inner">
+                    <h2>Um lugar para as suas notas</h2>
+                    <p className="muted">
+                      Escolha uma nota na lista, ou comece uma nova. Áudios viram texto,
+                      imagens entram no corpo e a análise encontra pessoas, lugares e temas.
+                    </p>
+                    <div className="empty-actions">
+                      <button type="button" className="button button--primary" onClick={openCompose}>
+                        Nova nota
+                      </button>
+                      <button
+                        type="button"
+                        className="button button--ghost"
+                        onClick={() => setView("insights")}
+                      >
+                        Ver insights
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
@@ -452,6 +624,15 @@ export function App() {
         open={tagsOpen}
         onClose={() => setTagsOpen(false)}
         onChanged={refresh}
+      />
+
+      <ComposeDialog
+        open={composeOpen}
+        anchor={composeAnchor}
+        notebookId={activeNotebookId === ALL_NOTEBOOKS ? undefined : activeNotebookId}
+        onClose={() => setComposeOpen(false)}
+        onCreateText={createTextNote}
+        onCreated={openCreatedEntry}
       />
     </div>
   );

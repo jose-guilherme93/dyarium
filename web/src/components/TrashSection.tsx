@@ -3,7 +3,7 @@
  *
  * Apagar e logico: a nota fica aqui por uma janela de retencao (7 dias por
  * padrao) e so depois o job de limpeza remove o audio cifrado de vez. Por isso
- * este painel existe: sem ele, apagar uma nota e nao ter como voltar — que era o
+ * este painel existe: sem ele, apagar uma nota e não ter como voltar — que era o
  * pior jeito de perder trabalho num diario.
  */
 
@@ -59,19 +59,24 @@ export function TrashSection({ refreshKey = 0 }: TrashSectionProps) {
   };
 
   // A contagem vem do servidor, e o painel so e carregado quando aberto: a
-  // lixeira nao e lugar de passagem.
+  // lixeira não e lugar de passagem.
   return (
     <div className="card">
       <div className="card-head">
         <h2>Lixeira</h2>
         <p className="hint">
-          Nota apagada nao some na hora: fica aqui por {RETENTION_DAYS} dias, com audio e texto intactos. Depois
+          Nota apagada não some na hora: fica aqui por {RETENTION_DAYS} dias, com audio e texto intactos. Depois
           disso o servidor apaga de verdade.
         </p>
       </div>
 
       <div className="field-control">
-        <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
+        <button
+          type="button"
+          className="button button--ghost button--small"
+          onClick={() => setOpen((value) => !value)}
+          aria-expanded={open}
+        >
           {open ? "Fechar lixeira" : "Abrir lixeira"}
         </button>
       </div>
@@ -94,6 +99,7 @@ export function TrashSection({ refreshKey = 0 }: TrashSectionProps) {
                 </div>
                 <button
                   type="button"
+                  className="button button--ghost button--small"
                   disabled={busyId === entry.id}
                   onClick={() => void restore(entry)}
                   aria-label={`Restaurar ${titleOf(entry)}`}

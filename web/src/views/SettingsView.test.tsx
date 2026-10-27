@@ -51,7 +51,7 @@ beforeEach(() => {
   });
 });
 
-describe("SettingsView analise local", () => {
+describe("SettingsView análise local", () => {
   it("mostra o estado do Ollama e configura em um clique", async () => {
     render(<SettingsView />);
 
@@ -63,7 +63,7 @@ describe("SettingsView analise local", () => {
     expect(api.putSettings).not.toHaveBeenCalled();
   });
 
-  it("avisa quando o Ollama nao esta no ar", async () => {
+  it("avisa quando o Ollama não esta no ar", async () => {
     vi.mocked(api.getLocalAnalysis).mockResolvedValue({
       available: false,
       base_url: "http://ollama:11434/v1",
@@ -73,13 +73,13 @@ describe("SettingsView analise local", () => {
 
     render(<SettingsView />);
 
-    expect(await screen.findByText(/Ollama nao encontrado em http:\/\/ollama:11434\/v1/)).toBeTruthy();
+    expect(await screen.findByText(/Ollama não encontrado em http:\/\/ollama:11434\/v1/)).toBeTruthy();
   });
 
   it("oferece o OpenCode Zen com a base e o modelo certos", async () => {
     render(<SettingsView />);
 
-    const select = await screen.findByLabelText("Provedor da analise");
+    const select = await screen.findByLabelText("Provedor da análise");
     fireEvent.change(select, { target: { value: "opencodeZen" } });
 
     await waitFor(() =>

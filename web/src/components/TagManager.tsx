@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { tagColor } from "../lib/tags";
+import { useEscape } from "../lib/useEscape";
 import type { Tag } from "../types";
 
 interface TagManagerProps {
@@ -29,6 +30,8 @@ export function TagManager({ open, onClose, onChanged }: TagManagerProps) {
   useEffect(() => {
     if (open) void load();
   }, [open, load]);
+
+  useEscape(open, onClose);
 
   if (!open) return null;
 

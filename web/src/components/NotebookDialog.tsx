@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { NOTEBOOK_COLORS } from "../lib/notebooks";
+import { useEscape } from "../lib/useEscape";
 
 interface NotebookDialogProps {
   open: boolean;
@@ -27,6 +28,8 @@ export function NotebookDialog({
     setName(initialName);
     setColor(initialColor);
   }, [open, initialName, initialColor]);
+
+  useEscape(open, onClose);
 
   if (!open) return null;
 

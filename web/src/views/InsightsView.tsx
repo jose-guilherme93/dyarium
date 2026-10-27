@@ -32,14 +32,20 @@ export function InsightsView({ refreshKey, onOpen, focus }: InsightsViewProps) {
 
   return (
     <div className="insights-view">
-      <div className="tabs" role="tablist">
+      <header className="page-head">
+        <div>
+          <h1>Insights</h1>
+          <p>Pessoas, lugares, temas e humor que a análise encontrou nas suas notas.</p>
+        </div>
+      </header>
+      <div className="segmented" role="tablist" aria-label="Tipo de insight">
         {TABS.map((item) => (
           <button
             key={item.id}
             type="button"
             role="tab"
             aria-selected={tab === item.id}
-            className={tab === item.id ? "tab tab--active" : "tab"}
+            className={tab === item.id ? "segmented-option segmented-option--on" : "segmented-option"}
             onClick={() => {
               setTab(item.id);
               setSelected(null);

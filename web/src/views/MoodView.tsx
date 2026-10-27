@@ -30,15 +30,18 @@ export function MoodView({ refreshKey }: MoodViewProps) {
 
   return (
     <section className="view">
-      <div className="view-header">
-        <h1>Humor</h1>
-      </div>
       {error && <p className="error">{error}</p>}
       {points.length === 0 ? (
-        <p className="muted">Sem analises de sentimento ainda.</p>
+        <div className="empty-state">
+          <p>Sem análise de sentimento ainda.</p>
+          <p>O humor aparece depois que as notas passam pela análise.</p>
+        </div>
       ) : (
         <>
-          <p className="muted">Sentimento medio: {average.toFixed(2)}</p>
+          <p className="muted mood-summary">
+            Tom médio das {points.length} {points.length === 1 ? "análise" : "análises"}:{" "}
+            <strong>{average.toFixed(2)}</strong>
+          </p>
           <ul className="mood-list">
             {points.map((point) => (
               <li key={point.date}>
@@ -50,7 +53,7 @@ export function MoodView({ refreshKey }: MoodViewProps) {
                   />
                 </span>
                 <span className="muted">
-                  {point.sentiment.toFixed(2)}, {point.entries} entradas
+                  {point.sentiment.toFixed(2)}, {point.entries} {point.entries === 1 ? "nota" : "notas"}
                 </span>
               </li>
             ))}

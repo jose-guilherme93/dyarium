@@ -192,7 +192,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const text = await res.text();
   if (!res.ok) {
     const body = text ? JSON.parse(text) : {};
-    // 409 e conflito de edicao, nao erro: o chamador precisa saber qual campo
+    // 409 e conflito de edicao, não erro: o chamador precisa saber qual campo
     // brigou para oferecer a escolha ao usuario.
     if (res.status === 409) {
       throw new ConflictError(body?.error?.message ?? "a nota mudou no outro lugar", body?.conflict ?? []);
@@ -211,6 +211,8 @@ export interface EntryFilters {
   notebook_id?: string;
   /** Teto de entradas (o servidor limita a 5000). */
   limit?: number;
+  /** Offset da pagina anterior (`next_cursor` da resposta). */
+  cursor?: string;
   /** `true` so as arquivadas, `false` so as da lista de trabalho. */
   archived?: boolean;
 }
@@ -251,6 +253,9 @@ function entriesPath(filters?: EntryFilters): string {
   if (filters?.limit) {
     params.set("limit", String(filters.limit));
   }
+  if (filters?.cursor) {
+    params.set("cursor", filters.cursor);
+  }
   // Sem filtro o servidor traz as duas listas. O dashboard abre na lista de
   // trabalho; as arquivadas ficam na aba delas.
   if (filters?.archived !== undefined) {
@@ -267,7 +272,7 @@ const analysisMisses = new Set<string>();
 
 async function requestAnalysis(id: string): Promise<Analysis> {
   if (analysisMisses.has(id)) {
-    throw new ApiError("Sem analise ainda.", 404, "not_found");
+    throw new ApiError("Sem análise ainda.", 404, "not_found");
   }
   try {
     return await request<Analysis>(`/entries/${id}/analysis`);
@@ -280,7 +285,24 @@ async function requestAnalysis(id: string): Promise<Analysis> {
 }
 
 export const api = {
-  listEntries: (filters?: EntryFilters) => request<{ entries: Entry[] }>(entriesPath(filters)),
+  listEntries: (filters?: EntryFilters) =>
+    request<{ entries: Entry[]; next_cursor?: string }>(entriesPath(filters)),
+  /** Todas as paginas, para a lista não parar em silêncio no limite do servidor. */
+  listAllEntries: async (filters?: EntryFilters) => {
+    const entries: Entry[] = [];
+    let cursor: string | undefined;
+    // Um teto de seguranca: 20 paginas de 1000 ja cobrem qualquer biblioteca
+    // pessoal e evitam um laco infinito se o servidor repetir o cursor.
+    for (let page = 0; page < 20; page += 1) {
+      const result = await request<{ entries: Entry[]; next_cursor?: string }>(
+        entriesPath({ ...filters, limit: 1000, cursor }),
+      );
+      entries.push(...(result.entries ?? []));
+      cursor = result.next_cursor;
+      if (!cursor) break;
+    }
+    return { entries };
+  },
   listEntriesCached: (filters?: EntryFilters) => cachedGet<{ entries: Entry[] }>(entriesPath(filters)),
   createEntry: (title: string, parentId?: string | null, notebookId?: string) =>
     request<Entry>("/entries", {
@@ -292,10 +314,10 @@ export const api = {
       }),
     }),
   getEntry: (id: string) => request<Entry>(`/entries/${id}`),
-  /** Ultima copia em cache da entrada, para a primeira pintura. */
+  /** Última copia em cache da entrada, para a primeira pintura. */
   getEntryCached: (id: string) => cachedGet<Entry>(`/entries/${id}`),
   getTranscript: (id: string) => request<Transcript>(`/entries/${id}/transcript`),
-  /** Uma pagina de segmentos; usada so ao expandir a transcricao. */
+  /** Uma pagina de segmentos; usada so ao expandir a transcrição. */
   listSegments: (entryId: string, attachmentId: string, cursor?: string) => {
     const params = new URLSearchParams({ attachment_id: attachmentId, limit: "500" });
     if (cursor) {
@@ -307,7 +329,7 @@ export const api = {
   },
   getAnalysis: (id: string) => requestAnalysis(id),
   getAnalysisCached: (id: string) => cachedGet<Analysis>(`/entries/${id}/analysis`),
-  /** Esquece o 404 em cache depois de uma analise nova. */
+  /** Esquece o 404 em cache depois de uma análise nova. */
   invalidateAnalysis: (id: string) => {
     analysisMisses.delete(id);
   },
@@ -320,7 +342,19 @@ export const api = {
   },
   deleteEntry: (id: string) => request<void>(`/entries/${id}`, { method: "DELETE" }),
   /** Lixeira: entradas apagadas, com `deleted_at`, da mais recente para a mais antiga. */
-  listDeletedEntries: () => request<{ entries: Entry[] }>("/entries?deleted=1&limit=200"),
+  listDeletedEntries: async () => {
+    const entries: Entry[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 20; page += 1) {
+      const query = new URLSearchParams({ deleted: "1", limit: "500" });
+      if (cursor) query.set("cursor", cursor);
+      const result = await request<{ entries: Entry[]; next_cursor?: string }>(`/entries?${query}`);
+      entries.push(...(result.entries ?? []));
+      cursor = result.next_cursor;
+      if (!cursor) break;
+    }
+    return { entries };
+  },
   /** Desfaz a remocao logica. Idempotente. */
   restoreEntry: (id: string) => request<Entry>(`/entries/${id}/restore`, { method: "POST" }),
   /**

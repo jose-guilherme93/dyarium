@@ -14,7 +14,7 @@ export function TokenGate({ onSubmit, error, checking = false }: TokenGateProps)
     <div className="token-gate">
       <div className="token-card">
         <h1>dyarium</h1>
-        <p>Informe o token de acesso para continuar.</p>
+        <p>Um diário que fica no seu servidor. Informe o token para entrar.</p>
         <form
           onSubmit={(event) => {
             event.preventDefault();
@@ -23,15 +23,18 @@ export function TokenGate({ onSubmit, error, checking = false }: TokenGateProps)
             }
           }}
         >
+          <label htmlFor="token-input">Token de acesso</label>
           <input
+            id="token-input"
             type="password"
             aria-label="Token de acesso"
-            placeholder="Token"
+            placeholder="Cole o token aqui"
+            autoComplete="current-password"
             value={value}
             disabled={checking}
             onChange={(event) => setValue(event.target.value)}
           />
-          <button type="submit" disabled={checking}>
+          <button type="submit" className="button button--primary" disabled={checking}>
             {checking ? "Verificando..." : "Entrar"}
           </button>
         </form>

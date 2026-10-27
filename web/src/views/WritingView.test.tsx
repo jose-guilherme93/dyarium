@@ -209,7 +209,7 @@ describe("WritingView", () => {
     vi.unstubAllGlobals();
   });
 
-  it("mostra as metricas e os graficos enviados pelo app", async () => {
+  it("mostra as métricas e os graficos enviados pelo app", async () => {
     mockApi([SNAPSHOT]);
     render(<WritingView refreshKey={0} />);
 
@@ -242,10 +242,10 @@ describe("WritingView", () => {
     expect(screen.getByText("Resumo 70.")).toBeInTheDocument();
   });
 
-  it("avisa quando nenhum aparelho enviou metricas", async () => {
+  it("avisa quando nenhum aparelho enviou métricas", async () => {
     mockApi([]);
     render(<WritingView refreshKey={0} />);
 
-    await waitFor(() => expect(screen.getByText("Nenhuma metrica recebida ainda.")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Nenhuma métrica recebida ainda.")).toBeInTheDocument());
   });
 });

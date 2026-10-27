@@ -157,6 +157,46 @@ export function ArchiveIcon({ size = 18 }: IconProps) {
   );
 }
 
+/** Etiqueta: abre o filtro por tags da lista. */
+export function TagIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M4 4h7l9 9-7 7-9-9V4Z" />
+      <circle cx="8" cy="8" r="1.4" />
+    </svg>
+  );
+}
+
+/** Menu sanduiche: abre a navegacao no navegador estreito. */
+export function MenuIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M4 7h16M4 12h16M4 17h16" />
+    </svg>
+  );
+}
+
+/** Lapis: renomear um caderno sem sugerir "configurações". */
+export function PencilIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M4 20h4L19 9a2 2 0 0 0-3-3L5 17v3Z" />
+      <path d="m14 7 3 3" />
+    </svg>
+  );
+}
+
+/** Cadernos empilhados: o escopo "todos os cadernos". */
+export function AllNotebooksIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M12 3 3 8l9 5 9-5-9-5Z" />
+      <path d="m3 12 9 5 9-5" />
+      <path d="m3 16 9 5 9-5" />
+    </svg>
+  );
+}
+
 /** Markdown: "<>" com barra. Abre a visao de texto cru da nota. */
 export function CodeIcon({ size = 18 }: IconProps) {
   return (

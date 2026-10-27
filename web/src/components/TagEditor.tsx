@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
-import { tagColor, withAlpha } from "../lib/tags";
+import { tagColor } from "../lib/tags";
 import { CloseIcon } from "./icons";
 
 interface TagEditorProps {
@@ -71,15 +71,8 @@ export function TagEditor({ entryId, onChanged }: TagEditorProps) {
       {tags.map((tag) => {
         const color = tagColor(tag, colors[tag.toLowerCase()]);
         return (
-        <span
-          key={tag}
-          className="tag-chip"
-          style={{
-            backgroundColor: withAlpha(color, 0.72),
-            color: "#211e1a",
-            borderColor: withAlpha(color, 0.9),
-          }}
-        >
+        <span key={tag} className="tag-chip">
+          <span className="tag-chip-dot" style={{ backgroundColor: color }} aria-hidden />
           {tag}
           <button
             type="button"

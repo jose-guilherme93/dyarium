@@ -1,18 +1,32 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { MouseEvent as ReactMouseEvent } from "react";
 import { api } from "../api";
-import { formatDateTime } from "../lib/format";
-import { tagColor, withAlpha } from "../lib/tags";
+import { ALL_NOTEBOOKS } from "../lib/notebooks";
+import { formatDuration, formatShortDate } from "../lib/format";
+import { tagColor } from "../lib/tags";
+import { useEscape } from "../lib/useEscape";
 import type { Entry, Notebook } from "../types";
-import { ArchiveIcon, CloseIcon, PlusIcon, SearchIcon } from "./icons";
+import {
+  ArchiveIcon,
+  CloseIcon,
+  MicIcon,
+  PlusIcon,
+  SearchIcon,
+  TagIcon,
+} from "./icons";
 
 interface NoteListProps {
   refreshKey: number;
   activeId: string | null;
   failures: Record<string, string>;
+  /** Caderno do escopo, ou ALL_NOTEBOOKS para a biblioteca inteira. */
   notebookId: string;
   notebooks: Notebook[];
+  /** A faixa recolhida pediu a busca: abre o campo assim que a lista montar. */
+  autoSearch?: boolean;
+  onSearchOpened?: () => void;
   onOpen: (id: string) => void;
-  onCreate: () => void;
+  onCreate: (event: ReactMouseEvent<HTMLButtonElement>) => void;
   onManageTags: () => void;
 }
 
@@ -28,13 +42,11 @@ function noteDate(entry: Entry): string {
 }
 
 function matches(entry: Entry, query: string): boolean {
-  return `${displayTitle(entry)} ${entry.original_filename} ${(entry.tags ?? []).join(" ")}`
+  return `${displayTitle(entry)} ${entry.original_filename ?? ""} ${entry.preview ?? ""} ${(
+    entry.tags ?? []
+  ).join(" ")}`
     .toLowerCase()
     .includes(query);
-}
-
-function byDate(a: Entry, b: Entry): number {
-  return noteDate(a) < noteDate(b) ? 1 : -1;
 }
 
 function tagCounts(entries: Entry[], selected: string[]): { name: string; count: number }[] {
@@ -64,15 +76,17 @@ function tagCounts(entries: Entry[], selected: string[]): { name: string; count:
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-// NoteList e a lista de notas do caderno ativo. A busca e global (todos os
-// cadernos); as tags filtram o caderno aberto com E entre si. Subnotas foram
-// desativadas: a lista e plana.
+// NoteList e a lista de notas do escopo escolhido no seletor de cadernos. A
+// busca e as tags filtram esse escopo; as arquivadas tem o seu proprio modo.
+// As tags ficam num popover para a lista receber quase toda a altura da coluna.
 export function NoteList({
   refreshKey,
   activeId,
   failures,
   notebookId,
   notebooks,
+  autoSearch = false,
+  onSearchOpened,
   onOpen,
   onCreate,
   onManageTags,
@@ -83,19 +97,16 @@ export function NoteList({
   const [error, setError] = useState("");
   const [archived, setArchived] = useState(false);
   const [searchingOpen, setSearchingOpen] = useState(false);
-  // A lista abre em "Recentes" (todos os cadernos, por updated_at). O outro lado
-  // do toggle mostra o caderno atual na ordem temporal (recorded_at).
-  const [viewMode, setViewMode] = useState<"recent" | "notebook">("recent");
+  const [tagsOpen, setTagsOpen] = useState(false);
+  const tagMenu = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(async () => {
-    // Carrega as duas listas (ativas e arquivadas) de uma vez: a busca global
-    // inclui arquivadas e o toggle so muda a visao.
-    const cached = await api.listEntriesCached({ limit: 2000 });
+    const cached = await api.listEntriesCached({ limit: 1000 });
     if (cached) {
       setEntries(cached.entries ?? []);
     }
     try {
-      const result = await api.listEntries({ limit: 2000 });
+      const result = await api.listAllEntries();
       setEntries(result.entries ?? []);
       setError("");
     } catch (err) {
@@ -112,50 +123,68 @@ export function NoteList({
   useEffect(() => {
     setSelectedTags([]);
     setQuery("");
-  }, [notebookId, viewMode]);
+    setTagsOpen(false);
+  }, [notebookId]);
 
+  useEffect(() => {
+    if (autoSearch) {
+      setSearchingOpen(true);
+      onSearchOpened?.();
+    }
+  }, [autoSearch, onSearchOpened]);
+
+  useEffect(() => {
+    if (!tagsOpen) return;
+    const onPointer = (event: MouseEvent) => {
+      if (tagMenu.current && !tagMenu.current.contains(event.target as Node)) {
+        setTagsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onPointer);
+    return () => document.removeEventListener("mousedown", onPointer);
+  }, [tagsOpen]);
+
+  useEscape(tagsOpen, () => setTagsOpen(false));
+
+  // A nota aberta ganha uma terceira linha com as tags; quando ela esta no fim
+  // da lista, essa linha ficava cortada pela borda. Rolar o minimo necessario
+  // quando a linha da nota ativa aparece mantem a nota inteira visivel sem
+  // puxar a lista para o topo a cada recarga.
+  const scrollActiveIntoView = useCallback((node: HTMLButtonElement | null) => {
+    node?.scrollIntoView?.({ block: "nearest" });
+  }, []);
+
+  const allNotebooks = notebookId === ALL_NOTEBOOKS;
   const notebookById = useMemo(
     () => new Map(notebooks.map((notebook) => [notebook.id, notebook])),
     [notebooks],
   );
 
-  const term = query.trim().toLowerCase();
-  const activeAcross = useMemo(
-    () => entries.filter((entry) => !entry.archived),
-    [entries],
-  );
-  const inNotebook = useMemo(
+  // Escopo: caderno (ou tudo) + a aba de arquivadas.
+  const inScope = useMemo(
     () =>
       entries.filter(
         (entry) =>
-          (entry.notebook_id ?? "") === notebookId && Boolean(entry.archived) === archived,
+          (allNotebooks || (entry.notebook_id ?? "") === notebookId) &&
+          Boolean(entry.archived) === archived,
       ),
-    [entries, notebookId, archived],
+    [entries, notebookId, allNotebooks, archived],
   );
-  const scoped = viewMode === "recent" ? activeAcross : inNotebook;
+
+  const term = query.trim().toLowerCase();
   const withTags = useMemo(() => {
-    if (selectedTags.length === 0) return scoped;
-    return scoped.filter((entry) => {
+    if (selectedTags.length === 0) return inScope;
+    return inScope.filter((entry) => {
       const present = new Set((entry.tags ?? []).map((tag) => tag.toLowerCase()));
       return selectedTags.every((tag) => present.has(tag.toLowerCase()));
     });
-  }, [scoped, selectedTags]);
+  }, [inScope, selectedTags]);
   const visible = useMemo(() => {
     const filtered = term ? withTags.filter((entry) => matches(entry, term)) : withTags;
-    return [...filtered].sort(
-      viewMode === "recent"
-        ? (a, b) => (a.updated_at < b.updated_at ? 1 : -1)
-        : byDate,
-    );
-  }, [withTags, term, viewMode]);
-  const counts = useMemo(
-    () =>
-      tagCounts(
-        viewMode === "recent" ? activeAcross : inNotebook,
-        selectedTags,
-      ),
-    [viewMode, activeAcross, inNotebook, selectedTags],
-  );
+    return [...filtered].sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
+  }, [withTags, term]);
+
+  const counts = useMemo(() => tagCounts(inScope, selectedTags), [inScope, selectedTags]);
 
   const searching = searchingOpen || term !== "";
   const closeSearch = () => {
@@ -171,72 +200,69 @@ export function NoteList({
     );
   };
 
-  const changeMode = (mode: "recent" | "notebook") => {
-    setViewMode(mode);
-    if (mode === "recent") setArchived(false);
-  };
-
-  const row = (entry: Entry, showNotebook: boolean) => (
-    <li key={entry.id}>
-      <div className={entry.id === activeId ? "tree-row tree-row--active" : "tree-row"}>
-        <button type="button" className="tree-main" onClick={() => onOpen(entry.id)}>
-          <span className="tree-title">{displayTitle(entry)}</span>
-          <span className="tree-date">
-            {formatDateTime(noteDate(entry))}
-            {showNotebook && (
-              <span className="tree-notebook">
-                {notebookById.get(entry.notebook_id ?? "")?.name ?? "Notas ao acaso"}
-              </span>
-            )}
-            {failures[entry.id] && <span className="tree-failed">falhou</span>}
-          </span>
-          {(entry.tags ?? []).length > 0 && (
-            <span className="tree-tags">
-              {(entry.tags ?? []).slice(0, 2).map((tag) => {
-                const color = tagColor(tag);
-                return (
-                  <span
-                    key={tag}
-                    className="tree-tag"
-                    style={{ backgroundColor: withAlpha(color, 0.72), color: "#211e1a" }}
-                  >
+  const row = (entry: Entry) => {
+    const isAudio = entry.source !== "text";
+    const notebook = notebookById.get(entry.notebook_id ?? "");
+    const tags = entry.tags ?? [];
+    return (
+      <li key={entry.id}>
+        <div className={entry.id === activeId ? "note-row note-row--active" : "note-row"}>
+          <button
+            type="button"
+            className="note-row-open"
+            ref={entry.id === activeId ? scrollActiveIntoView : undefined}
+            onClick={() => onOpen(entry.id)}
+          >
+            <span className="note-row-head">
+              {allNotebooks && notebook && (
+                <span
+                  className="note-row-dot"
+                  style={{ backgroundColor: notebook.color || "var(--color-muted)" }}
+                  role="img"
+                  aria-label={`Caderno ${notebook.name}`}
+                  title={notebook.name}
+                />
+              )}
+              <span className="note-row-title">{displayTitle(entry)}</span>
+            </span>
+            <span className="note-row-line">
+              {isAudio && (
+                <span className="note-row-kind" title="Áudio">
+                  <MicIcon size={11} />
+                  {entry.duration_seconds > 0
+                    ? formatDuration(entry.duration_seconds)
+                    : "áudio"}
+                </span>
+              )}
+              {entry.preview && <span className="note-row-preview">{entry.preview}</span>}
+              {(failures[entry.id] || entry.status === "failed") && (
+                <span className="note-row-failed">falhou</span>
+              )}
+              <span className="note-row-date">{formatShortDate(noteDate(entry))}</span>
+            </span>
+            {tags.length > 0 && entry.id === activeId && (
+              <span className="note-row-tags">
+                {tags.slice(0, 4).map((tag) => (
+                  <span key={tag} className="mini-tag">
+                    <span
+                      className="mini-tag-dot"
+                      style={{ backgroundColor: tagColor(tag) }}
+                      aria-hidden
+                    />
                     {tag}
                   </span>
-                );
-              })}
-              {(entry.tags ?? []).length > 2 && (
-                <span className="tree-tag-more">+{(entry.tags ?? []).length - 2}</span>
-              )}
-            </span>
-          )}
-        </button>
-      </div>
-    </li>
-  );
+                ))}
+                {tags.length > 4 && <span className="mini-tag-more">+{tags.length - 4}</span>}
+              </span>
+            )}
+          </button>
+        </div>
+      </li>
+    );
+  };
 
   return (
     <div className="list">
-      <div className="view-toggle" role="tablist" aria-label="Visão da lista">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={viewMode === "recent"}
-          className={viewMode === "recent" ? "view-toggle-option view-toggle-option--on" : "view-toggle-option"}
-          onClick={() => changeMode("recent")}
-        >
-          Recentes
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={viewMode === "notebook"}
-          className={viewMode === "notebook" ? "view-toggle-option view-toggle-option--on" : "view-toggle-option"}
-          onClick={() => changeMode("notebook")}
-        >
-          Caderno
-        </button>
-      </div>
-
       <div className="list-head">
         {searching ? (
           <label className="list-search">
@@ -251,16 +277,8 @@ export function NoteList({
                   closeSearch();
                 }
               }}
-              placeholder={
-                viewMode === "recent"
-                  ? "Buscar em todos os cadernos"
-                  : "Buscar neste caderno"
-              }
-              aria-label={
-                viewMode === "recent"
-                  ? "Buscar em todos os cadernos"
-                  : "Buscar neste caderno"
-              }
+              placeholder="Buscar nas notas"
+              aria-label="Buscar nas notas"
             />
             <button
               type="button"
@@ -273,85 +291,153 @@ export function NoteList({
             </button>
           </label>
         ) : (
-          <button
-            type="button"
-            className="icon-button"
-            onClick={() => setSearchingOpen(true)}
-            aria-label="Buscar em todos os cadernos"
-            title="Buscar em todos os cadernos"
-          >
-            <SearchIcon size={16} />
-          </button>
+          <>
+            <div className="list-tools">
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => setSearchingOpen(true)}
+                aria-label="Buscar nas notas"
+                title="Buscar"
+              >
+                <SearchIcon size={16} />
+              </button>
+              <button
+                type="button"
+                className={archived ? "icon-button icon-button--active" : "icon-button"}
+                onClick={() => setArchived((value) => !value)}
+                aria-pressed={archived}
+                aria-label={archived ? "Voltar para as notas" : "Ver notas arquivadas"}
+                title={archived ? "Voltar para as notas" : "Arquivadas"}
+              >
+                <ArchiveIcon size={16} />
+              </button>
+              <div className="tag-menu" ref={tagMenu}>
+                <button
+                  type="button"
+                  className={
+                    selectedTags.length > 0
+                      ? "icon-button icon-button--active"
+                      : "icon-button"
+                  }
+                  onClick={() => setTagsOpen((value) => !value)}
+                  aria-expanded={tagsOpen}
+                  aria-label="Filtrar por tags"
+                  title="Filtrar por tags"
+                >
+                  <TagIcon size={16} />
+                </button>
+                {tagsOpen && (
+                  <div className="tag-popover" role="dialog" aria-label="Filtrar por tags">
+                    <div className="tag-popover-head">
+                      <span>Tags</span>
+                      <button
+                        type="button"
+                        className="tag-manage"
+                        onClick={() => {
+                          setTagsOpen(false);
+                          onManageTags();
+                        }}
+                      >
+                        Gerenciar
+                      </button>
+                    </div>
+                    {counts.length === 0 ? (
+                      <p className="tag-popover-empty">Nenhuma tag ainda.</p>
+                    ) : (
+                      <div className="tag-filter">
+                        <button
+                          type="button"
+                          className={
+                            selectedTags.length === 0
+                              ? "tag-filter-all tag-filter-all--on"
+                              : "tag-filter-all"
+                          }
+                          onClick={() => setSelectedTags([])}
+                        >
+                          Todas
+                        </button>
+                        {counts.map((tag) => {
+                          const selected = selectedTags.some(
+                            (item) => item.toLowerCase() === tag.name.toLowerCase(),
+                          );
+                          return (
+                            <button
+                              key={tag.name.toLowerCase()}
+                              type="button"
+                              className={
+                                selected
+                                  ? "tag-filter-chip tag-filter-chip--on"
+                                  : "tag-filter-chip"
+                              }
+                              aria-pressed={selected}
+                              onClick={() => toggleTag(tag.name)}
+                            >
+                              <span
+                                className="tag-filter-dot"
+                                style={{ backgroundColor: tagColor(tag.name) }}
+                                aria-hidden
+                              />
+                              {tag.name}
+                              <span className="tag-filter-count">{tag.count}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+            <button
+              type="button"
+              className="icon-button list-new"
+              onClick={onCreate}
+              aria-label="Nova nota"
+              title="Nova nota"
+            >
+              <PlusIcon size={16} />
+            </button>
+          </>
         )}
-        {viewMode === "notebook" && (
-          <button
-            type="button"
-            className={archived ? "icon-button icon-button--active" : "icon-button"}
-            onClick={() => setArchived((value) => !value)}
-            aria-pressed={archived}
-            aria-label={archived ? "Ver notas da lista de trabalho" : "Ver notas arquivadas"}
-            title={archived ? "Lista de trabalho" : "Ver arquivadas"}
-          >
-            <ArchiveIcon size={16} />
-          </button>
-        )}
-        <button
-          type="button"
-          className="icon-button"
-          onClick={onCreate}
-          aria-label="Nova nota"
-          title="Nova nota"
-        >
-          <PlusIcon size={16} />
-        </button>
       </div>
+
+      {selectedTags.length > 0 && (
+        <div className="active-filters" aria-label="Filtros ativos">
+          {selectedTags.map((tag) => (
+            <button
+              key={tag}
+              type="button"
+              className="active-filter"
+              onClick={() => toggleTag(tag)}
+              aria-label={`Remover filtro ${tag}`}
+              title={`Remover filtro ${tag}`}
+            >
+              <span
+                className="mini-tag-dot"
+                style={{ backgroundColor: tagColor(tag) }}
+                aria-hidden
+              />
+              {tag}
+              <CloseIcon size={11} />
+            </button>
+          ))}
+          <button
+            type="button"
+            className="active-filters-clear"
+            onClick={() => setSelectedTags([])}
+          >
+            Limpar
+          </button>
+        </div>
+      )}
 
       {error && <p className="error list-error">{error}</p>}
 
-      <div className="tag-filter" aria-label="Filtrar por tags">
-        <button
-          type="button"
-          className={selectedTags.length === 0 ? "tag-filter-all tag-filter-all--on" : "tag-filter-all"}
-          onClick={() => setSelectedTags([])}
-        >
-          Todas
-        </button>
-        {counts.map((tag) => {
-          const color = tagColor(tag.name);
-          const selected = selectedTags.some(
-            (item) => item.toLowerCase() === tag.name.toLowerCase(),
-          );
-          return (
-            <button
-              key={tag.name.toLowerCase()}
-              type="button"
-              className="tag-filter-chip"
-              aria-pressed={selected}
-              onClick={() => toggleTag(tag.name)}
-              style={{
-                backgroundColor: withAlpha(color, selected ? 0.92 : 0.62),
-                borderColor: selected ? "#211e1a" : withAlpha(color, 0.9),
-                color: "#211e1a",
-              }}
-            >
-              {tag.name}
-              <span className="tag-filter-count">{tag.count}</span>
-            </button>
-          );
-        })}
-        <button type="button" className="tag-filter-manage" onClick={onManageTags}>
-          Gerenciar tags
-        </button>
-      </div>
-
       <div className="list-scroll">
-        {(viewMode === "notebook" || term) && (
+        {(term || archived) && (
           <h3 className="list-section-label">
-            {term
-              ? "Resultados"
-              : archived
-                ? "Arquivadas"
-                : "Neste caderno"}
+            {term ? "Resultados" : archived ? "Arquivadas" : ""}
           </h3>
         )}
         {visible.length === 0 ? (
@@ -361,7 +447,7 @@ export function NoteList({
                 <p>Nada encontrado.</p>
                 <p>Tente outro termo ou uma tag.</p>
               </>
-            ) : viewMode === "notebook" && archived ? (
+            ) : archived ? (
               <>
                 <p>Nenhuma nota arquivada.</p>
                 <p>Arquivar tira a nota da lista, sem apagar.</p>
@@ -369,19 +455,17 @@ export function NoteList({
             ) : selectedTags.length > 0 ? (
               <>
                 <p>Nenhuma nota com essas tags.</p>
-                <p>Limpe o filtro para ver a lista inteira.</p>
+                <p>Limpe o filtro para ver o escopo inteiro.</p>
               </>
             ) : (
               <>
                 <p>Nenhuma nota ainda.</p>
-                <p>Use o "+" para criar a primeira.</p>
+                <p>Use o + acima para criar a primeira.</p>
               </>
             )}
           </div>
         ) : (
-          <ul className="tree">
-            {visible.map((entry) => row(entry, viewMode === "recent"))}
-          </ul>
+          <ul className="tree">{visible.map(row)}</ul>
         )}
       </div>
     </div>

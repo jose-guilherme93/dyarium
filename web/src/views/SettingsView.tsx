@@ -44,7 +44,7 @@ const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
   custom: { label: "Personalizado", baseUrl: "", model: "", kind: "openai" },
 };
 
-// A analise fala o formato /chat/completions. No OpenCode, Claude, GPT, Gemini
+// A análise fala o formato /chat/completions. No OpenCode, Claude, GPT, Gemini
 // e Grok usam outros formatos (Anthropic, Responses, Google), entao so entram
 // na lista os modelos que o cliente sabe chamar.
 const ZEN_MODELS = [
@@ -105,7 +105,7 @@ function providerFromSettings(kind: string, baseUrl: string): string {
   return "custom";
 }
 
-/** Modelos do OpenCode vem de uma lista curada: o /models deles nao diz o formato de cada um. */
+/** Modelos do OpenCode vem de uma lista curada: o /models deles não diz o formato de cada um. */
 function canSearchModels(provider: string): boolean {
   return provider !== "opencodeZen" && provider !== "opencodeGo";
 }
@@ -196,7 +196,7 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
     return () => source.close();
   }, [loadModels]);
 
-  const save = async (patch: Record<string, unknown>, message = "Configuracao salva") => {
+  const save = async (patch: Record<string, unknown>, message = "Configuração salva") => {
     try {
       await api.putSettings(patch);
       await loadSettings();
@@ -229,7 +229,7 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
   }, [settings?.analyze_base_url, searchable, fetchModels]);
 
   // Enquanto o modelo baixa, o painel acompanha pelo mesmo endpoint que iniciou
-  // o download; quando termina, recarrega as configuracoes para refletir o modelo.
+  // o download; quando termina, recarrega as configurações para refletir o modelo.
   const pulling = Boolean(local?.pull && !local.pull.done && !local.pull.error);
   useEffect(() => {
     if (!pulling) {
@@ -263,7 +263,7 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
         result.status === "ready" ? "success" : "info",
       );
     } catch (err) {
-      notify(err instanceof Error ? err.message : "nao foi possivel configurar o Ollama", "error");
+      notify(err instanceof Error ? err.message : "não foi possível configurar o Ollama", "error");
     } finally {
       setLocalBusy(false);
     }
@@ -284,9 +284,12 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
 
   return (
     <section className="settings-page">
-      <div className="view-header">
-        <h1>Configuracao</h1>
-      </div>
+      <header className="page-head">
+        <div>
+          <h1>Configurações</h1>
+          <p>Transcrição, análise por IA e o que fica guardado no servidor.</p>
+        </div>
+      </header>
       {error && <p className="error">{error}</p>}
 
       {!settings && <p className="muted">Carregando...</p>}
@@ -295,8 +298,8 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
         <>
           <div className="card">
             <div className="card-head">
-              <h2>Modelos de transcricao</h2>
-              <p className="hint">Modelos ggml do whisper. O modelo ativo vale para as proximas transcricoes.</p>
+              <h2>Modelos de transcrição</h2>
+              <p className="hint">Modelos ggml do whisper. O modelo ativo vale para as próximas transcrições.</p>
             </div>
             <ul className="model-list">
               {models.map((model) => {
@@ -320,8 +323,13 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
                       {model.downloaded ? `(${Math.round(model.local_bytes / 1048576)} MB baixados)` : "(ausente)"}
                     </span>
                     {!model.downloaded && (
-                      <button type="button" onClick={() => void download(model.name)} disabled={p && !p.done}>
-                        Baixar
+                      <button
+                        type="button"
+                        className="button button--ghost button--small"
+                        onClick={() => void download(model.name)}
+                        disabled={p && !p.done}
+                      >
+                        {p && !p.done ? "Baixando..." : "Baixar"}
                       </button>
                     )}
                     {p && !p.done && (
@@ -338,13 +346,13 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
 
           <div className="card">
             <div className="card-head">
-              <h2>Transcricao</h2>
+              <h2>Transcrição</h2>
               <p className="hint">Como o audio vira texto.</p>
             </div>
             <div className="field">
               <span className="field-label">Provedor</span>
               <select
-                aria-label="Provedor de transcricao"
+                aria-label="Provedor de transcrição"
                 value={settings.transcribe_provider}
                 onChange={(event) => void save({ transcribe_provider: event.target.value })}
               >
@@ -369,12 +377,13 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
                     <input
                       type="password"
                       aria-label="Chave da Deepgram"
-                      placeholder={settings.deepgram_api_key_set ? "definida (deixe vazio para manter)" : "nao definida"}
+                      placeholder={settings.deepgram_api_key_set ? "definida (deixe vazio para manter)" : "não definida"}
                       value={deepgramKey}
                       onChange={(event) => setDeepgramKey(event.target.value)}
                     />
                     <button
                       type="button"
+                      className="button button--ghost button--small"
                       onClick={() => {
                         if (deepgramKey.trim() !== "") {
                           void save({ deepgram_api_key: deepgramKey }, "Chave da Deepgram salva");
@@ -391,26 +400,26 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
             <div className="field">
               <span className="field-label">Idioma</span>
               <select
-                aria-label="Idioma da transcricao"
+                aria-label="Idioma da transcrição"
                 value={settings.whisper_language}
                 onChange={(event) => void save({ whisper_language: event.target.value })}
               >
                 <option value="">Detectar automaticamente</option>
-                <option value="pt">Portugues</option>
-                <option value="en">Ingles</option>
+                <option value="pt">Português</option>
+                <option value="en">Inglês</option>
                 <option value="es">Espanhol</option>
-                <option value="fr">Frances</option>
-                <option value="de">Alemao</option>
+                <option value="fr">Francês</option>
+                <option value="de">Alemão</option>
                 <option value="it">Italiano</option>
-                <option value="ja">Japones</option>
-                <option value="zh">Chines</option>
+                <option value="ja">Japonês</option>
+                <option value="zh">Chinês</option>
                 <option value="ru">Russo</option>
-                <option value="ar">Arabe</option>
+                <option value="ar">Árabe</option>
                 <option value="hi">Hindi</option>
               </select>
             </div>
             <div className="field">
-              <span className="field-label">Corte de silencio</span>
+              <span className="field-label">Corte de silêncio</span>
               <Toggle
                 checked={settings.trim_silence}
                 onChange={(value) => void save({ trim_silence: value })}
@@ -423,12 +432,13 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
                 <input
                   type="number"
                   min={0}
-                  aria-label="Limite de RAM da transcricao em MB"
+                  aria-label="Limite de RAM da transcrição em MB"
                   value={ceiling}
                   onChange={(event) => setCeiling(event.target.value)}
                 />
                 <button
                   type="button"
+                  className="button button--ghost button--small"
                   onClick={() => void save({ max_whisper_rss_mb: Math.max(0, Math.floor(Number(ceiling) || 0)) })}
                 >
                   Salvar
@@ -440,14 +450,14 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
 
           <div className="card">
             <div className="card-head">
-              <h2>Analise por IA</h2>
+              <h2>Análise por IA</h2>
               <p className="hint">
                 Escolha o provedor, cole a chave e selecione o modelo. A lista de modelos e buscada do provedor;
                 use Personalizado para informar a base manualmente.
               </p>
             </div>
             <div className="field">
-              <span className="field-label">Ativar analise</span>
+              <span className="field-label">Ativar análise</span>
               <Toggle
                 checked={settings.analyze_enabled}
                 onChange={(value) => void save({ analyze_enabled: value })}
@@ -457,7 +467,7 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
             <div className="field">
               <span className="field-label">Provedor</span>
               <select
-                aria-label="Provedor da analise"
+                aria-label="Provedor da análise"
                 value={provider}
                 onChange={(event) => {
                   const value = event.target.value;
@@ -471,7 +481,7 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
                         analyze_provider: preset.kind,
                         analyze_base_url: preset.baseUrl,
                         analyze_model: preset.model,
-                        // Escolher o provedor ja e a decisao de ligar a analise.
+                        // Escolher o provedor ja e a decisao de ligar a análise.
                         analyze_enabled: true,
                       },
                       "Provedor atualizado",
@@ -518,7 +528,7 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
                       ? local.pull && !local.pull.done && !local.pull.error
                         ? `Baixando ${local.pull.model} (${local.pull.percent}%)...`
                         : `Ollama no ar em ${local.base_url}, com ${local.models.length} modelo(s) instalado(s).`
-                      : `Ollama nao encontrado em ${local.base_url}. Suba o servico local (make ai) e tente de novo.`
+                      : `Ollama não encontrado em ${local.base_url}. Suba o servico local (make ai) e tente de novo.`
                     : "Verificando o Ollama local..."}
                 </span>
                 {local?.pull?.error && <span className="error">{local.pull.error}</span>}
@@ -532,7 +542,7 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
                 <div className="field-control">
                   <input
                     type="password"
-                    aria-label="Chave da API de analise"
+                    aria-label="Chave da API de análise"
                     placeholder={
                       settings.analyze_api_key_set
                         ? "definida (deixe vazio para manter)"
@@ -545,6 +555,7 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
                   />
                   <button
                     type="button"
+                    className="button button--ghost button--small"
                     onClick={() => {
                       void (async () => {
                         if (apiKey.trim() !== "") {
@@ -580,7 +591,7 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
               <span className="field-label">Modelo</span>
               <div className="field-control">
                 <select
-                  aria-label="Modelo da analise"
+                  aria-label="Modelo da análise"
                   value={settings.analyze_model}
                   onChange={(event) => void save({ analyze_model: event.target.value }, "Modelo atualizado")}
                 >
@@ -592,7 +603,7 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
                   ))}
                 </select>
                 {searchable && (
-                  <button type="button" onClick={() => void fetchModels()}>
+                  <button type="button" className="button button--ghost button--small" onClick={() => void fetchModels()}>
                     Buscar modelos
                   </button>
                 )}
@@ -607,7 +618,7 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
               <input
                 key={settings.analyze_base_url}
                 type="text"
-                aria-label="Base URL da analise"
+                aria-label="Base URL da análise"
                 defaultValue={settings.analyze_base_url}
                 onBlur={(event) => void save({ analyze_base_url: event.target.value })}
               />
@@ -617,15 +628,19 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
               <div className="field-control">
                 <input
                   type="text"
-                  aria-label="Temas da analise"
+                  aria-label="Temas da análise"
                   value={themes}
                   onChange={(event) => setThemes(event.target.value)}
                 />
-                <button type="button" onClick={() => void save({ analysis_themes: themes }, "Temas salvos")}>
+                <button
+                  type="button"
+                  className="button button--ghost button--small"
+                  onClick={() => void save({ analysis_themes: themes }, "Temas salvos")}
+                >
                   Salvar
                 </button>
               </div>
-              <span className="hint">Temas preferidos na analise, separados por virgulas.</span>
+              <span className="hint">Temas preferidos na análise, separados por vírgulas.</span>
             </div>
           </div>
 

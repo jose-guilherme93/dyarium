@@ -210,7 +210,7 @@
 /* Note font choice */
 .note-font--serif .bn-editor,
 .note-font--serif .transcript {
-  font-family: var(--font-serif);
+  font-family: "Newsreader", "Iowan Old Style", Georgia, serif;
 }
 
 .note-font--mono .bn-editor,
@@ -1295,12 +1295,20 @@
 .tag-chip {
   display: inline-flex;
   align-items: center;
-  gap: calc(var(--space));
+  gap: calc(var(--space) * 1.25);
   padding: 2px calc(var(--space) * 2);
+  border: 1px solid var(--color-border);
   border-radius: 999px;
-  background: var(--color-accent-soft);
-  color: var(--color-accent);
+  background: transparent;
+  color: var(--color-text);
   font-size: 12px;
+}
+
+.tag-chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
 }
 
 .tag-remove {
@@ -1363,6 +1371,10 @@
 /* A barra do topo ocupa a largura toda; os 3 pontinhos ficam no canto. */
 
 .note-doc > .note-topbar {
+  max-width: 720px;
+}
+
+.note--wide .note-doc > .note-topbar {
   max-width: none;
 }
 
@@ -1800,16 +1812,31 @@
   margin: 0 0 calc(var(--space) * 3);
 }
 
-.history-added {
-  color: var(--ok);
-  margin: 0;
-  overflow-wrap: anywhere;
+.history-counts {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--space) * 2);
+  font-size: 12px;
 }
 
-.history-removed {
+.history-counts .history-added {
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.history-counts .history-removed {
   color: var(--color-danger);
-  margin: 0;
-  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+
+.history-excerpt {
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-top: 2px;
+  color: var(--color-muted);
+  font-size: 11.5px;
 }
 
 /* ============ arvore de notas (Trilium-like) ============ */
@@ -1932,16 +1959,16 @@
 /* ============ painel esquerdo unico (estilo Notion/Trilium) ============ */
 
 .app {
-  grid-template-columns: 280px 1fr;
+  grid-template-columns: 300px 1fr;
 }
 
 .app--collapsed {
-  grid-template-columns: 56px 1fr;
+  grid-template-columns: 64px 1fr;
 }
 
 .sidebar {
-  padding: calc(var(--space) * 4);
-  gap: calc(var(--space) * 3);
+  padding: calc(var(--space) * 3) calc(var(--space) * 3) calc(var(--space) * 2);
+  gap: calc(var(--space) * 2);
   overflow: hidden;
   min-height: 0;
 }
@@ -1999,38 +2026,43 @@
 
 .sidebar-foot {
   display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 2px;
+  flex-direction: column;
+  gap: 1px;
   border-top: 1px solid var(--color-border);
-  padding-top: calc(var(--space) * 1.5);
+  padding-top: calc(var(--space) * 2);
 }
 
 .foot-sep {
-  width: 1px;
-  height: 18px;
-  margin: 0 calc(var(--space) * 1.5);
+  height: 1px;
+  margin: calc(var(--space) * 1.5) calc(var(--space) * 2);
   background: var(--color-border);
 }
 
-.foot-icon {
-  display: inline-flex;
+.foot-item {
+  display: flex;
   align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
+  gap: calc(var(--space) * 2.5);
+  width: 100%;
+  padding: calc(var(--space) * 1.5) calc(var(--space) * 2);
   border-radius: var(--radius-sm);
   color: var(--color-muted);
+  font-size: 13.5px;
+  text-align: left;
 }
 
-.foot-icon:hover {
+.foot-item svg {
+  flex: none;
+}
+
+.foot-item:hover {
   background: var(--color-surface-2);
   color: var(--color-text);
 }
 
-.foot-icon--active {
+.foot-item--active {
   background: var(--color-accent-soft);
   color: var(--color-accent);
+  font-weight: 600;
 }
 
 .app--collapsed .sidebar {
@@ -2050,9 +2082,19 @@
   padding-inline: calc(var(--space));
 }
 
-.app--collapsed .sidebar-foot,
-.app--collapsed .list-head {
+.app--collapsed .sidebar-foot {
   flex-direction: column;
+  align-items: center;
+}
+
+.app--collapsed .foot-item {
+  justify-content: center;
+  width: 36px;
+  padding-inline: 0;
+}
+
+.app--collapsed .foot-item span {
+  display: none;
 }
 
 /* Recolhido nao ha lista: o rodape desce para o lugar de sempre, em vez de
@@ -2064,7 +2106,7 @@
 .app--collapsed .foot-sep {
   width: 18px;
   height: 1px;
-  margin: calc(var(--space)) 0;
+  margin: calc(var(--space) * 1.5) 0;
 }
 
 /* ---------- escrita (metricas do app) ---------- */
@@ -2572,37 +2614,61 @@
 
 /* ---------- filtro de tags ---------- */
 
-.tag-filter {
+.tag-filter-block {
   display: flex;
-  align-items: center;
-  gap: calc(var(--space) * 1.5);
-  padding: calc(var(--space) * 1.5) 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-  mask-image: linear-gradient(to right, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
-  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+  flex-direction: column;
+  gap: calc(var(--space));
+  padding: calc(var(--space) * 1.5) 0 calc(var(--space));
 }
 
-.tag-filter::-webkit-scrollbar {
-  display: none;
+.tag-filter-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: calc(var(--space) * 2);
+  padding: 0 calc(var(--space));
+  color: var(--color-muted);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.tag-manage {
+  color: var(--color-muted);
+  font-size: 11px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.tag-manage:hover {
+  color: var(--color-accent);
+}
+
+.tag-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--space) * 1.5);
+  padding: calc(var(--space)) calc(var(--space));
 }
 
 .tag-filter-all,
 .tag-filter-chip,
-.tag-filter-manage {
+.tag-filter-more {
   flex: none;
   display: inline-flex;
   align-items: center;
-  gap: calc(var(--space));
-  padding: 3px calc(var(--space) * 2);
+  gap: calc(var(--space) * 1.25);
+  padding: 3px calc(var(--space) * 2.25);
   border: 1px solid var(--color-border);
   border-radius: 999px;
+  background: transparent;
+  color: var(--color-text);
   font-size: 12px;
+  line-height: 1.5;
   white-space: nowrap;
 }
 
 .tag-filter-all {
-  background: var(--color-surface);
   color: var(--color-muted);
 }
 
@@ -2612,36 +2678,49 @@
   color: var(--color-bg);
 }
 
-.tag-filter-chip {
-  border-width: 1px;
+.tag-filter-chip:hover {
+  border-color: var(--color-accent);
+}
+
+.tag-filter-chip--on {
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.tag-filter-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
 }
 
 .tag-filter-count {
   font-size: 10px;
-  opacity: 0.7;
+  color: var(--color-muted);
   font-variant-numeric: tabular-nums;
 }
 
-.tag-filter-manage {
-  background: transparent;
-  color: var(--color-muted);
+.tag-filter-chip--on .tag-filter-count {
+  color: inherit;
+  opacity: 0.75;
 }
 
-.tag-filter-manage:hover {
-  border-color: var(--color-accent);
+.tag-filter-more {
   color: var(--color-accent);
+  border-style: dashed;
 }
 
 /* ---------- lista: recentes, tags e caderno ---------- */
 
 .list-section-label {
   margin: calc(var(--space) * 3) 0 calc(var(--space) * 1.5);
-  padding: 0 calc(var(--space));
+  padding: 0 calc(var(--space) * 1.5);
   font-family: var(--font-sans);
-  font-size: 10px;
+  font-size: 11.5px;
   font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  letter-spacing: 0.01em;
   color: var(--color-muted);
 }
 
@@ -2906,4 +2985,1496 @@
 .view-toggle-option--on {
   background: var(--color-surface-2);
   color: var(--color-text);
+}
+
+/* ============================================================
+   Passagem de acabamento (out/2026): lista, menus, paginas
+   ============================================================ */
+
+/* ---------- lista de notas: linha com previa, como o app ---------- */
+
+.list-head .icon-button {
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-muted);
+}
+
+.list-head .icon-button:hover {
+  background: var(--color-surface-2);
+  color: var(--color-text);
+}
+
+.list-head .icon-button--active {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+.list-new {
+  margin-left: auto;
+}
+
+.tree {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.note-row {
+  border-left: 2px solid transparent;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.note-row:hover {
+  background: var(--color-surface-2);
+}
+
+.note-row--active {
+  background: var(--color-surface-2);
+  border-left-color: var(--color-accent);
+}
+
+.note-row-open {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  min-width: 0;
+  padding: calc(var(--space) * 2) calc(var(--space) * 2.5);
+  text-align: left;
+}
+
+.note-row-title {
+  font-family: var(--font-serif);
+  font-size: 15.5px;
+  line-height: 1.28;
+  color: var(--color-text);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.note-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--space) * 2);
+  color: var(--color-muted);
+  font-size: 11.5px;
+}
+
+.note-row-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.note-row-notebook::before {
+  content: "·";
+  margin-right: calc(var(--space) * 1.5);
+  color: var(--color-border);
+}
+
+.note-row-failed {
+  color: var(--color-danger);
+}
+
+.note-row-preview {
+  color: var(--color-muted);
+  font-size: 12.5px;
+  line-height: 1.45;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.note-row-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--space) * 1.5);
+  margin-top: 1px;
+}
+
+.mini-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px 1px 5px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-muted);
+  font-size: 10.5px;
+  line-height: 1.6;
+}
+
+.mini-tag-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.mini-tag-more {
+  color: var(--color-muted);
+  font-size: 10.5px;
+}
+
+/* ---------- estado vazio do editor ---------- */
+
+.empty-editor {
+  max-width: 540px;
+  margin: 16vh auto 0;
+  padding: 0 calc(var(--space) * 4);
+  text-align: center;
+}
+
+.empty-inner h2 {
+  font-family: var(--font-serif);
+  font-size: 32px;
+  line-height: 1.15;
+  margin: 0 0 calc(var(--space) * 3);
+}
+
+.empty-inner p {
+  font-size: 14.5px;
+  line-height: 1.65;
+  margin: 0 auto;
+  max-width: 44ch;
+}
+
+.empty-actions {
+  display: flex;
+  justify-content: center;
+  gap: calc(var(--space) * 2);
+  margin-top: calc(var(--space) * 6);
+}
+
+/* ---------- botoes ---------- */
+
+.button--primary {
+  background: var(--color-text);
+  border-color: var(--color-text);
+  color: var(--color-bg);
+}
+
+.button--primary:hover {
+  opacity: 0.9;
+}
+
+.button--ghost:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+:where(.button, .icon-button, .foot-item, .note-row-open, .tag-filter-chip, .tag-filter-all, .notebook-menu-main, .menu-item):focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* ---------- nota: painel de propriedades como coluna ---------- */
+
+.note {
+  display: flex;
+  min-width: 0;
+}
+
+.note-doc {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.note-aside {
+  position: relative;
+  inset: auto;
+  flex: 0 0 344px;
+  width: 344px;
+  border-radius: 0;
+  border-left: 1px solid var(--color-border);
+  background: var(--color-surface);
+  box-shadow: none;
+}
+
+.head-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 calc(var(--space) * 0.5);
+  background: var(--color-border);
+}
+
+.note-head-actions {
+  gap: 2px;
+}
+
+.note-archived {
+  color: var(--color-muted);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
+@media (max-width: 1180px) {
+  .note-aside {
+    position: absolute;
+    inset: 0 0 0 auto;
+    width: min(344px, 88%);
+    z-index: 30;
+    box-shadow: -18px 0 40px rgba(0, 0, 0, 0.16);
+    border-radius: calc(var(--space) * 2) 0 0 0;
+  }
+}
+
+/* ---------- menus ---------- */
+
+.menu {
+  min-width: 210px;
+  padding: calc(var(--space) * 1.5);
+  background: var(--color-bg);
+  border-radius: calc(var(--space) * 2.5);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.16), 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.menu-label {
+  font-size: 11.5px;
+  letter-spacing: 0.03em;
+  padding: calc(var(--space) * 2) calc(var(--space) * 2.5) calc(var(--space));
+}
+
+.menu-item {
+  padding: calc(var(--space) * 1.75) calc(var(--space) * 2.5);
+  border-radius: calc(var(--space) * 1.5);
+  font-size: 13.5px;
+}
+
+.menu-item:disabled {
+  opacity: 0.45;
+}
+
+.notebook-menu {
+  padding: calc(var(--space) * 1.5);
+  border-radius: calc(var(--space) * 2.5);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.16), 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.notebook-menu-rule {
+  height: 1px;
+  margin: calc(var(--space)) calc(var(--space) * 1.5);
+  background: var(--color-border);
+  list-style: none;
+}
+
+.notebook-menu-main {
+  gap: calc(var(--space) * 2);
+  padding: calc(var(--space) * 1.5) calc(var(--space) * 2);
+}
+
+.notebook-menu-main--on {
+  background: var(--color-surface-2);
+}
+
+/* ---------- paginas: cabecalho e abas ---------- */
+
+.page-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: calc(var(--space) * 4);
+  margin-bottom: calc(var(--space) * 7);
+}
+
+.page-head h1 {
+  font-family: var(--font-serif);
+  font-size: 34px;
+  line-height: 1.1;
+  margin: 0 0 calc(var(--space) * 1.5);
+}
+
+.page-head p {
+  color: var(--color-muted);
+  font-size: 13.5px;
+  max-width: 56ch;
+  margin: 0;
+}
+
+.segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  margin-bottom: calc(var(--space) * 5);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+}
+
+.segmented button {
+  padding: calc(var(--space) * 1.5) calc(var(--space) * 3.5);
+  border-radius: 999px;
+  color: var(--color-muted);
+  font-size: 13px;
+}
+
+.segmented button:hover {
+  color: var(--color-text);
+}
+
+.segmented button[aria-selected="true"] {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.view-header h1 {
+  font-size: 30px;
+}
+
+.entry-item {
+  padding: calc(var(--space) * 3) calc(var(--space) * 3.5);
+  border-radius: calc(var(--space) * 2);
+}
+
+.entry-item:hover {
+  border-color: var(--color-accent);
+}
+
+.link-button {
+  color: var(--color-accent);
+  font-size: 13px;
+}
+
+/* ---------- tela de acesso ---------- */
+
+.token-card {
+  width: min(380px, calc(100vw - 48px));
+  padding: calc(var(--space) * 9) calc(var(--space) * 8);
+  border-radius: calc(var(--space) * 3);
+  background: var(--color-bg);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.08);
+}
+
+.token-card h1 {
+  font-size: 30px;
+  margin-bottom: calc(var(--space) * 2);
+}
+
+.token-card p {
+  color: var(--color-muted);
+  font-size: 13.5px;
+  margin: 0;
+}
+
+.token-card label {
+  display: block;
+  margin-top: calc(var(--space) * 5);
+  font-size: 11.5px;
+  color: var(--color-muted);
+}
+
+.token-card form {
+  flex-direction: column;
+  margin-top: calc(var(--space) * 1.5);
+}
+
+.token-card input {
+  padding: calc(var(--space) * 2.5) calc(var(--space) * 3);
+}
+
+.token-card .button {
+  width: 100%;
+  padding: calc(var(--space) * 2.5);
+}
+
+/* Barra da nota: acoes sem caixa, agrupadas por assunto. */
+.note-head-actions .icon-button {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  color: var(--color-muted);
+}
+
+.note-head-actions .icon-button:hover {
+  background: var(--color-surface-2);
+  color: var(--color-text);
+}
+
+.note-head-actions .icon-button--active {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+.note-head-actions .head-sep {
+  margin: 0 calc(var(--space));
+}
+
+.note-status--failed {
+  color: var(--color-danger);
+}
+
+/* Link para nota: dialogo centrado, com contexto de cada nota. */
+.note-picker {
+  align-items: center;
+  padding: calc(var(--space) * 6);
+}
+
+.note-picker-card {
+  width: min(560px, 100%);
+  max-height: min(72vh, 620px);
+  padding: calc(var(--space) * 5);
+  gap: calc(var(--space) * 3);
+  border-radius: calc(var(--space) * 3);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.22);
+}
+
+.note-picker-head {
+  align-items: flex-start;
+}
+
+.note-picker-head h3 {
+  font-size: 20px;
+  margin-bottom: calc(var(--space));
+}
+
+.note-picker-head p {
+  margin: 0;
+  font-size: 12.5px;
+}
+
+.note-picker-card input {
+  padding: calc(var(--space) * 2.25) calc(var(--space) * 3);
+  background: var(--color-surface);
+  border-radius: calc(var(--space) * 2);
+}
+
+.note-picker-card input:focus {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.note-picker-list {
+  gap: 1px;
+}
+
+.note-picker-list li button {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: calc(var(--space) * 2.25) calc(var(--space) * 2.5);
+  border-radius: calc(var(--space) * 1.5);
+}
+
+.note-picker-title {
+  font-family: var(--font-serif);
+  font-size: 15px;
+}
+
+.note-picker-meta {
+  color: var(--color-muted);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.note-picker-list li button:hover {
+  background: var(--color-surface-2);
+  color: var(--color-text);
+}
+
+.note-picker-empty {
+  padding: calc(var(--space) * 3);
+  font-size: 13px;
+}
+
+/* Configuracoes: coluna centrada e acoes secundarias como botoes. */
+.settings-page {
+  max-width: 880px;
+  margin-inline: auto;
+}
+
+.settings-page .card {
+  background: var(--color-surface);
+  border-radius: calc(var(--space) * 2.5);
+  padding: calc(var(--space) * 6);
+}
+
+.settings-page .card + .card {
+  margin-top: calc(var(--space) * 5);
+}
+
+.settings-page .card-head h2 {
+  font-size: 20px;
+}
+
+.card .model-item {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  padding: calc(var(--space) * 2.25) 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.model-list .model-item:first-child {
+  border-top: none;
+}
+
+.model-name {
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 2);
+}
+
+/* Paginas de leitura: a mesma coluna centrada das configuracoes. */
+.insights-view,
+.page > .view {
+  margin-inline: auto;
+  width: 100%;
+}
+
+/* ---------- navegador estreito: gaveta e barra superior ---------- */
+
+.mobile-bar {
+  display: none;
+}
+
+.sidebar-backdrop {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .app,
+  .app--collapsed {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .mobile-bar {
+    display: flex;
+    position: fixed;
+    inset: 0 0 auto 0;
+    z-index: 65;
+    align-items: center;
+    gap: calc(var(--space) * 2);
+    height: 52px;
+    padding: 0 calc(var(--space) * 3);
+    background: var(--color-surface);
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .mobile-bar .icon-button {
+    border-color: transparent;
+  }
+
+  .mobile-bar-title {
+    flex: 1;
+    min-width: 0;
+    font-family: var(--font-serif);
+    font-size: 15px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .workspace {
+    padding-top: 52px;
+  }
+
+  .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 80;
+    width: min(320px, 88vw);
+    transform: translateX(-100%);
+    transition: transform 0.18s ease;
+    box-shadow: 24px 0 60px rgba(0, 0, 0, 0.18);
+  }
+
+  .app:not(.app--collapsed) .sidebar {
+    transform: none;
+  }
+
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 70;
+    background: rgba(0, 0, 0, 0.32);
+  }
+
+  .app--collapsed .sidebar-backdrop {
+    display: none;
+  }
+
+  .page {
+    padding: calc(var(--space) * 5) calc(var(--space) * 4);
+  }
+
+  .page-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: calc(var(--space) * 3);
+  }
+
+  .page-head h1 {
+    font-size: 28px;
+  }
+
+  .segmented {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .note-doc {
+    padding: calc(var(--space) * 5) calc(var(--space) * 4) calc(var(--space) * 16);
+  }
+
+  .note-title {
+    font-size: 30px;
+  }
+
+  .note-aside {
+    width: min(320px, 92vw);
+  }
+
+  .note-head-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar {
+    transition: none;
+  }
+}
+
+/* Acoes primarias: no escuro o acento claro pede texto escuro. */
+.primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--space) * 1.5);
+  padding: calc(var(--space) * 2) calc(var(--space) * 3.5);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  background: var(--color-accent);
+  color: var(--color-bg);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.primary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+@media (prefers-color-scheme: dark) {
+  .button--primary {
+    background: var(--color-accent);
+    border-color: var(--color-accent);
+    color: var(--color-bg);
+  }
+}
+
+/* O Chrome desenha um "x" proprio no input type=search; o nosso ja existe. */
+.list-search input::-webkit-search-cancel-button,
+.note-picker-card input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+
+/* ---------- imagem da nota (estilo Notion) ---------- */
+
+/* Audio no corpo, como no app: ocupa a coluna de texto e fica entre os
+   paragrafos em que o marcador aparece. */
+.doc-audio {
+  width: 100%;
+  margin: calc(var(--space) * 3) 0;
+}
+
+.doc-audio--pending {
+  padding: calc(var(--space) * 3);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius);
+  color: var(--color-muted);
+  font-size: 13px;
+}
+
+/* O BlockNote desenha uma caixa azul em volta do no selecionado. Na imagem ela
+   virava um retangulo do tamanho da coluna, mesmo com a foto pela metade; some
+   por completo. A selecao aparece pelas acoes e pela alca. */
+.note .react-renderer.node-image.ProseMirror-selectednode:after,
+.note .bn-block-content[data-content-type="image"].ProseMirror-selectednode > :after {
+  content: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+.doc-figure {
+  position: relative;
+  margin: calc(var(--space) * 4) auto;
+  max-width: 100%;
+}
+
+.doc-image-wrap {
+  position: relative;
+  border-radius: calc(var(--space) * 1.5);
+  background: var(--color-surface);
+  isolation: isolate;
+}
+
+.doc-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: none;
+  border-radius: calc(var(--space) * 1.5);
+}
+
+/* A imagem fica absoluta dentro de uma moldura com proporcao fixa: o esqueleto
+   ocupa o mesmo retangulo e o texto nao pula quando a foto termina de carregar. */
+.doc-image-wrap > .doc-image,
+.doc-image-blur {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: calc(var(--space) * 1.5);
+  clip-path: inset(0 round calc(var(--space) * 1.5));
+}
+
+.doc-image {
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+
+.doc-image--loaded {
+  opacity: 1;
+}
+
+/* Miniatura local borrada enquanto o upload/recompressao termina. */
+.doc-image-blur {
+  filter: blur(18px);
+  transform: scale(1.04);
+  opacity: 0.9;
+}
+
+.doc-image-skeleton {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: calc(var(--space) * 1.5);
+  background: var(--color-surface-2);
+}
+
+/* Com a miniatura local ja na tela, o veu e so o suficiente para o giro
+   aparecer: a foto borrada precisa ficar visivel, nao escondida atras de um
+   bloco chapado. */
+.doc-image-skeleton--preview {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.image-spinner {
+  width: 30px;
+  height: 30px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  background: var(--color-bg);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.16);
+  animation: image-spin 0.75s linear infinite;
+}
+
+@keyframes image-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.doc-image-error {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--space) * 2);
+  padding: calc(var(--space) * 4);
+  border: 1px dashed var(--color-border);
+  border-radius: calc(var(--space) * 1.5);
+  background: var(--color-surface);
+  color: var(--color-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.doc-image-error-remove {
+  color: var(--color-danger);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.doc-image-error-remove:hover {
+  text-decoration: underline;
+}
+
+/* Alca de redimensionamento, como a do Notion: aparece no hover/foco. */
+.doc-image-handle {
+  position: absolute;
+  top: 50%;
+  right: -6px;
+  width: 10px;
+  height: 46px;
+  transform: translateY(-50%);
+  border: 2px solid var(--color-bg);
+  border-radius: 999px;
+  background: var(--color-text);
+  cursor: ew-resize;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  touch-action: none;
+}
+
+.doc-image-wrap:hover .doc-image-handle,
+.doc-figure:focus-within .doc-image-handle,
+.doc-figure--active .doc-image-handle {
+  opacity: 1;
+}
+
+.doc-image-size {
+  position: absolute;
+  top: -10px;
+  right: 0;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--color-text);
+  color: var(--color-bg);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.doc-image-actions {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.doc-image-wrap:hover .doc-image-actions,
+.doc-figure:focus-within .doc-image-actions,
+.doc-figure--active .doc-image-actions {
+  opacity: 1;
+}
+
+.doc-image-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.14);
+}
+
+.doc-image-button:hover {
+  background: var(--color-surface-2);
+}
+
+.doc-image-menu {
+  position: absolute;
+  top: 34px;
+  right: 0;
+  z-index: 25;
+  min-width: 184px;
+  padding: calc(var(--space) * 1.5);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border: 1px solid var(--color-border);
+  border-radius: calc(var(--space) * 2.5);
+  background: var(--color-bg);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.18);
+}
+
+.doc-image-menu-label {
+  padding: calc(var(--space) * 1.5) calc(var(--space) * 2.5) calc(var(--space) * 0.5);
+  color: var(--color-muted);
+  font-size: 11px;
+}
+
+.doc-image-menu-item {
+  display: flex;
+  width: 100%;
+  padding: calc(var(--space) * 1.75) calc(var(--space) * 2.5);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: 13px;
+  text-align: left;
+  text-decoration: none;
+}
+
+.doc-image-menu-item:hover {
+  background: var(--color-surface-2);
+}
+
+.doc-image-menu-item--danger {
+  color: var(--color-danger);
+}
+
+.doc-image-menu-rule {
+  height: 1px;
+  margin: calc(var(--space)) calc(var(--space) * 1.5);
+  background: var(--color-border);
+}
+
+/* Legenda centrada, discreta ate o hover, como a do Notion. */
+.doc-image-caption {
+  width: 100%;
+  margin-top: calc(var(--space) * 1.5);
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-muted);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: center;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.doc-figure:hover .doc-image-caption,
+.doc-figure:focus-within .doc-image-caption,
+.doc-image-caption:not(:placeholder-shown) {
+  opacity: 1;
+}
+
+.doc-image-caption:focus {
+  color: var(--color-text);
+  outline: none;
+}
+
+.doc-image-caption::placeholder {
+  color: var(--color-muted);
+  opacity: 0.65;
+}
+
+/* ============================================================
+   Coluna compacta (out/2026): a lista de notas ocupa a altura,
+   com duas faixas finas de acoes em volta. Sem a marca no topo,
+   sem tags sempre abertas e sem rotulos no rodape.
+   ============================================================ */
+
+.sidebar {
+  padding: calc(var(--space) * 3) calc(var(--space) * 2.5) calc(var(--space) * 2);
+  gap: calc(var(--space) * 2);
+}
+
+.sidebar-top {
+  gap: calc(var(--space) / 2);
+  flex: none;
+}
+
+.notebook-switcher {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  gap: 0;
+}
+
+.notebook-current {
+  font-size: 15px;
+  padding: calc(var(--space) * 1.5) calc(var(--space) * 1.75);
+}
+
+.notebook-menu-new {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 2);
+  width: 100%;
+  margin-top: calc(var(--space));
+  padding: calc(var(--space) * 1.5) calc(var(--space) * 1.5);
+  border-radius: var(--radius-sm);
+  color: var(--color-muted);
+  font-size: 13px;
+  text-align: left;
+}
+
+.notebook-menu-new:hover {
+  background: var(--color-surface-2);
+  color: var(--color-text);
+}
+
+.sidebar-toggle {
+  width: 28px;
+  height: 28px;
+  flex: none;
+}
+
+.list-head {
+  gap: calc(var(--space) / 2);
+  padding: 0;
+  flex: none;
+}
+
+.list-head .icon-button {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-muted);
+}
+
+.list-tools {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) / 2);
+}
+
+/* O "+" fica na ponta direita, separado dos tres controles da esquerda: e a
+   acao primaria da coluna e nao deve competir com busca/arquivo/tags. */
+.list-head .icon-button.list-new {
+  margin-left: auto;
+}
+
+/* O "+" e a unica acao primaria da coluna: abre o modal de texto ou audio. */
+.list-head .icon-button.list-new,
+.list-head .icon-button.list-new:hover {
+  background: var(--color-accent);
+  color: var(--color-bg);
+  border-radius: 50%;
+}
+
+.list-head .icon-button.list-new:hover {
+  opacity: 0.9;
+}
+
+/* ---------- tags sob demanda ---------- */
+
+/* O popover abre a partir da faixa de acoes (e nao do icone, que agora fica a
+   esquerda) para caber inteiro dentro da coluna. */
+.list-head {
+  position: relative;
+}
+
+.tag-menu {
+  display: flex;
+}
+
+.tag-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 25;
+  width: 244px;
+  max-height: 320px;
+  overflow: auto;
+  padding: calc(var(--space) * 2.5);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16);
+}
+
+.tag-popover-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: calc(var(--space) * 2);
+  padding: 0 calc(var(--space)) calc(var(--space) * 2);
+  color: var(--color-muted);
+  font-size: 11px;
+}
+
+.tag-popover .tag-filter {
+  gap: calc(var(--space) * 1.5);
+}
+
+.tag-popover-empty {
+  margin: 0;
+  padding: calc(var(--space));
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.active-filters {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space));
+  flex: none;
+  overflow-x: auto;
+  padding-bottom: calc(var(--space) / 2);
+}
+
+.active-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space));
+  flex: none;
+  height: 24px;
+  padding: 0 calc(var(--space) * 1.75);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface-2);
+  color: var(--color-text);
+  font-size: 11px;
+}
+
+.active-filters-clear {
+  flex: none;
+  padding: 0 calc(var(--space));
+  color: var(--color-muted);
+  font-size: 11px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.active-filters-clear:hover {
+  color: var(--color-accent);
+}
+
+/* ---------- linha de nota em duas linhas ---------- */
+
+.tree {
+  gap: 1px;
+}
+
+/* Respiro no fim da lista para a ultima linha nao encostar no rodape. */
+.list-scroll {
+  padding-bottom: calc(var(--space) * 2);
+}
+
+.note-row-open {
+  gap: 2px;
+  padding: calc(var(--space) * 1.5) calc(var(--space) * 2);
+  scroll-margin-block: calc(var(--space) * 1.5);
+}
+
+.note-row-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 1.5);
+  min-width: 0;
+}
+
+.note-row-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+}
+
+.note-row-title {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14.5px;
+  line-height: 1.4;
+}
+
+.note-row-line {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 1.5);
+  min-width: 0;
+  color: var(--color-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.note-row-kind {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.note-row-preview {
+  flex: 1;
+  min-width: 0;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+}
+
+.note-row-failed {
+  flex: none;
+}
+
+.note-row-date {
+  flex: none;
+  margin-left: auto;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.note-row-tags {
+  gap: calc(var(--space));
+  margin-top: 1px;
+}
+
+.mini-tag {
+  font-size: 10px;
+}
+
+/* ---------- rodape em uma linha de icones ---------- */
+
+.sidebar-foot {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--space));
+  flex: none;
+  border-top: 1px solid var(--color-border);
+  padding-top: calc(var(--space) * 1.5);
+}
+
+.foot-item {
+  width: 34px;
+  height: 30px;
+  justify-content: center;
+  padding: 0;
+  gap: 0;
+  flex: none;
+}
+
+.foot-sep {
+  display: none;
+}
+
+/* ---------- faixa recolhida ---------- */
+
+.side-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--space) / 2);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.rail-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 34px;
+  flex: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-muted);
+}
+
+.rail-action:hover {
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.rail-action--new,
+.rail-action--new:hover {
+  background: var(--color-accent);
+  color: var(--color-bg);
+}
+
+.rail-action--new {
+  margin-bottom: calc(var(--space));
+}
+
+.rail-action--new:hover {
+  opacity: 0.9;
+}
+
+.rail-expand svg {
+  transform: rotate(-90deg);
+}
+
+.rail-foot {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--space) / 2);
+}
+
+.rail-foot .foot-item {
+  width: 36px;
+  height: 34px;
+}
+
+/* ---------- popover de nova nota ---------- */
+
+/* Fundo invisivel: o popover nao escurece a tela, so fecha ao clicar fora.
+   Fica acima da gaveta e da barra do celular (z 80) para o menu aparecer
+   colado no botao mesmo com a navegacao aberta. */
+.compose-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+}
+
+.compose-popover {
+  position: fixed;
+  z-index: 91;
+  overflow: auto;
+  padding: calc(var(--space) * 3.5);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.18);
+}
+
+.compose-title {
+  margin: 0 0 calc(var(--space) * 2);
+  font-size: 16px;
+}
+
+.compose-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.compose-option {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 2.5);
+  width: 100%;
+  padding: calc(var(--space) * 2);
+  border-radius: var(--radius-sm);
+  text-align: left;
+}
+
+.compose-option:hover,
+.compose-option:focus-visible {
+  background: var(--color-surface-2);
+}
+
+.compose-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+.compose-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.compose-label {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.compose-desc {
+  color: var(--color-muted);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.compose-hint {
+  margin: 0 0 calc(var(--space) * 3);
+  color: var(--color-muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+/* O rodape do passo de audio fecha o popover. */
+.compose-card .modal-actions {
+  margin-top: calc(var(--space) * 3.5);
+}
+
+.compose-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 2);
+  margin-bottom: calc(var(--space) * 2);
+}
+
+.compose-head .modal-title {
+  margin: 0;
+  font-size: 15px;
+}
+
+/* O gravador e a acao principal deste passo: ocupa a largura toda, sem uma
+   caixa em volta que duplicava a borda do proprio botao. */
+.compose-card .recorder {
+  width: 100%;
+}
+
+.compose-card .recorder-start {
+  width: 100%;
+  justify-content: center;
+  padding: calc(var(--space) * 3);
+  border-color: transparent;
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.compose-card .recorder-start:hover {
+  border-color: var(--color-accent);
+}
+
+.compose-card .recorder--live {
+  justify-content: flex-start;
+  padding: calc(var(--space) * 3);
+}
+
+.compose-file {
+  width: 100%;
+}
+
+.compose-or {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 2);
+  margin: calc(var(--space) * 3) 0;
+  color: var(--color-muted);
+  font-size: 11px;
+}
+
+.compose-or::before,
+.compose-or::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--color-border);
+}
+
+.compose-error {
+  margin: calc(var(--space) * 2) 0 0;
+}
+
+.compose-option:focus-visible,
+.rail-action:focus-visible,
+.active-filter:focus-visible,
+.active-filters-clear:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }

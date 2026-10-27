@@ -15,6 +15,8 @@ export interface Entry {
   created_at: string;
   updated_at: string;
   tags?: string[];
+  /** Primeiras linhas do corpo ou da transcrição, ja em prosa. */
+  preview?: string;
   metrics?: Metrics;
   audios?: Audio[];
   /** Versao de cada campo editavel (so no detalhe da entrada). */
@@ -147,7 +149,7 @@ export interface Note {
   content_markdown?: string;
   /** Versao do corpo: o cliente manda a que leu e o servidor recusa se mudou. */
   body_version?: string;
-  /** Corpo em JSON do BlockNote: so em nota ainda nao convertida. */
+  /** Corpo em JSON do BlockNote: so em nota ainda não convertida. */
   document?: unknown;
   created_at: string;
   updated_at: string;
@@ -221,7 +223,7 @@ export interface EntryProgress {
   error?: string;
 }
 
-/** Download de modelo do Ollama em andamento (ou o ultimo), para o painel acompanhar. */
+/** Download de modelo do Ollama em andamento (ou o último), para o painel acompanhar. */
 export interface LocalAnalysisPull {
   model: string;
   percent: number;
@@ -261,7 +263,7 @@ export interface ServerEvent {
 }
 
 /**
- * Metricas de escrita: o app calcula tudo offline e envia o documento pronto
+ * Métricas de escrita: o app calcula tudo offline e envia o documento pronto
  * (contrato versionado em docs/api.md). O painel so desenha o que recebe.
  */
 export interface MetricsWordCount {
