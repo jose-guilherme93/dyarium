@@ -95,8 +95,9 @@ import { directoryBytes, sessionDirectory } from '@/services/files';
 import { pickImage } from '@/services/image';
 import { rememberImageRatio } from '@/services/imageRatios';
 import {
-  analyzeRecording,
   analysisThreads,
+  analysisWasStopped,
+  analyzeRecording,
   localAnalysisAvailable,
   stopAnalysis,
 } from '@/services/localAnalysis';
@@ -1294,7 +1295,7 @@ export default function NoteScreen() {
             provider: 'llama.cpp',
             model: model.id,
             attempt: attempt + 1,
-            outcome: stopRequestedRef.current ? 'stopped' : 'error',
+            outcome: stopRequestedRef.current || analysisWasStopped() ? 'stopped' : 'error',
             errorClass: 'engine',
             startedAt: attemptStarted.toISOString(),
             finishedAt: new Date().toISOString(),
@@ -1314,7 +1315,7 @@ export default function NoteScreen() {
           );
         }
       }
-      if (stopRequestedRef.current) {
+      if (stopRequestedRef.current || analysisWasStopped()) {
         setAnalysisError('Análise interrompida.');
         return;
       }

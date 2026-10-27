@@ -182,6 +182,11 @@ export async function releaseAnalysisContext(): Promise<void> {
 /** A geracao atual foi parada pelo usuario? */
 let stopped = false;
 
+/** A ultima geracao foi parada? (botao da tela ou do centro de atividade) */
+export function analysisWasStopped(): boolean {
+  return stopped;
+}
+
 /** Interrompe a geracao em andamento, se houver. */
 export async function stopAnalysis(): Promise<void> {
   stopped = true;
