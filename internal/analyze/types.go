@@ -39,17 +39,55 @@ type KeyMoment struct {
 	Text    string `json:"text"`
 }
 
-// Result is the rich enrichment of a transcript.
-type Result struct {
-	Sentiment  Sentiment   `json:"sentiment"`
-	Emotions   []Emotion   `json:"emotions"`
-	People     []Person    `json:"people"`
-	Places     []Place     `json:"places"`
-	Themes     []Theme     `json:"themes"`
+// Section is one analyzable part of a note: a heading section of the written
+// text or the audio transcript. A long note is analyzed section by section, so
+// the result is an analysis of each part and of the whole — not one label for
+// five thousand words.
+type Section struct {
+	// Heading is the section title (a markdown heading) or the kind of content,
+	// e.g. "Transcrição do áudio". Empty for text before the first heading.
+	Heading string
+	Text    string
+	// Kind is "text" or "transcript"; transcript sections keep their segments so
+	// key moments can carry an audio offset.
+	Kind     string
+	Segments []Segment
+}
+
+// SectionAnalysis is what the model read in one section, kept with the note
+// analysis so the insights can be read part by part.
+type SectionAnalysis struct {
+	Heading    string      `json:"heading"`
+	Kind       string      `json:"kind"`
+	Reading    string      `json:"reading"`
 	Summary    string      `json:"summary"`
+	Sentiment  Sentiment   `json:"sentiment"`
+	Themes     []Theme     `json:"themes"`
 	KeyMoments []KeyMoment `json:"key_moments"`
 	Questions  []string    `json:"questions"`
 	Decisions  []string    `json:"decisions"`
+}
+
+// Result is the rich enrichment of a note.
+type Result struct {
+	// Comprehension is the model estimate (0-100) of how well the text it read
+	// represents the speech. The revision pass overrides it with its own
+	// estimate when it runs.
+	Comprehension int       `json:"comprehension"`
+	Sentiment     Sentiment `json:"sentiment"`
+	Emotions      []Emotion `json:"emotions"`
+	People        []Person  `json:"people"`
+	Places        []Place   `json:"places"`
+	Themes        []Theme   `json:"themes"`
+	Summary       string    `json:"summary"`
+	// Reading is the actual analysis: a few sentences on what the note says,
+	// what it means and what repeats. Proportional to the text, not a label.
+	Reading    string      `json:"reading"`
+	KeyMoments []KeyMoment `json:"key_moments"`
+	Questions  []string    `json:"questions"`
+	Decisions  []string    `json:"decisions"`
+	// Sections holds the per-section reading, in reading order.
+	Sections []SectionAnalysis `json:"sections,omitempty"`
 
 	Model string `json:"-"`
 	Raw   string `json:"-"`

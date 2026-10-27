@@ -4,10 +4,26 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
+	"time"
 )
+
+// keptRevision is a revision read before a transcript is replaced. It is
+// reattached to the new segment when the text at the same index did not change,
+// so editing one segment or re-uploading the transcript from the app does not
+// throw away the revisions of every other segment.
+type keptRevision struct {
+	original string
+	text     string
+	model    string
+	version  int
+	literal  bool
+	created  time.Time
+}
 
 // SaveTranscript replaces any existing transcript for the given audio and
 // stores the new transcript with its segments, all in a single transaction.
+// Revisions survive when the segment text is unchanged.
 func (s *Store) SaveTranscript(ctx context.Context, t Transcript, segs []Segment) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -15,6 +31,10 @@ func (s *Store) SaveTranscript(ctx context.Context, t Transcript, segs []Segment
 	}
 	defer tx.Rollback()
 
+	kept, err := revisionsByIndex(ctx, tx, t.EntryID, t.AttachmentID)
+	if err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM transcripts WHERE entry_id = ? AND attachment_id IS ?`, t.EntryID, nullString(t.AttachmentID)); err != nil {
 		return fmt.Errorf("store: clear transcripts: %w", err)
@@ -27,17 +47,221 @@ func (s *Store) SaveTranscript(ctx context.Context, t Transcript, segs []Segment
 	}
 	for i, seg := range segs {
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO segments (id, transcript_id, idx, start_ms, end_ms, text, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			seg.ID, t.ID, i, seg.StartMS, seg.EndMS, seg.Text, ts(t.CreatedAt)); err != nil {
+			INSERT INTO segments (id, transcript_id, idx, start_ms, end_ms, text, user_edited, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			seg.ID, t.ID, i, seg.StartMS, seg.EndMS, seg.Text, boolInt(seg.UserEdited), ts(t.CreatedAt)); err != nil {
 			return fmt.Errorf("store: insert segment: %w", err)
 		}
+		if previous, ok := kept[i]; ok && previous.original == seg.Text && previous.text != "" {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO transcript_revisions (segment_id, transcript_id, text, model, prompt_version, literal, created_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?)`,
+				seg.ID, t.ID, previous.text, previous.model, previous.version, boolInt(previous.literal), ts(previous.created)); err != nil {
+				return fmt.Errorf("store: keep revision: %w", err)
+			}
+		}
+	}
+	if err := refreshRevisedText(ctx, tx, t.ID); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
 
+// revisionsByIndex reads the revisions of the transcript that is about to be
+// replaced, keyed by segment index.
+func revisionsByIndex(ctx context.Context, tx *sql.Tx, entryID, attachmentID string) (map[int]keptRevision, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT s.idx, s.text, r.text, r.model, r.prompt_version, r.literal, r.created_at
+		FROM segments s
+		JOIN transcript_revisions r ON r.segment_id = s.id
+		JOIN transcripts t ON t.id = s.transcript_id
+		WHERE t.entry_id = ? AND t.attachment_id IS ?
+			AND t.id = (SELECT id FROM transcripts WHERE entry_id = ? AND attachment_id IS ?
+				ORDER BY created_at DESC LIMIT 1)`,
+		entryID, nullString(attachmentID), entryID, nullString(attachmentID))
+	if err != nil {
+		return nil, fmt.Errorf("store: read kept revisions: %w", err)
+	}
+	defer rows.Close()
+	out := map[int]keptRevision{}
+	for rows.Next() {
+		var idx int
+		var k keptRevision
+		var created string
+		var literal int
+		if err := rows.Scan(&idx, &k.original, &k.text, &k.model, &k.version, &literal, &created); err != nil {
+			return nil, fmt.Errorf("store: scan kept revision: %w", err)
+		}
+		k.literal = literal == 1
+		k.created = parseTS(created)
+		out[idx] = k
+	}
+	return out, rows.Err()
+}
+
+// refreshRevisedText rebuilds the joined revision stored on the transcript row
+// (used by the list preview) from the per-segment revisions.
+func refreshRevisedText(ctx context.Context, tx *sql.Tx, transcriptID string) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT COALESCE(r.text, s.text), COALESCE(r.model, ''), COALESCE(r.prompt_version, 0),
+			COALESCE(r.literal, 0), CASE WHEN r.text IS NULL THEN 0 ELSE 1 END
+		FROM segments s
+		LEFT JOIN transcript_revisions r ON r.segment_id = s.id
+		WHERE s.transcript_id = ?
+		ORDER BY s.idx`, transcriptID)
+	if err != nil {
+		return fmt.Errorf("store: read revisions: %w", err)
+	}
+	defer rows.Close()
+	var parts []string
+	model := ""
+	version := 0
+	literal := 0
+	revisedCount := 0
+	for rows.Next() {
+		var text string
+		var segModel string
+		var segVersion, segLiteral int
+		var revised int
+		if err := rows.Scan(&text, &segModel, &segVersion, &segLiteral, &revised); err != nil {
+			return fmt.Errorf("store: scan revision: %w", err)
+		}
+		parts = append(parts, text)
+		revisedCount += revised
+		if revised == 1 && model == "" {
+			model = segModel
+			version = segVersion
+			literal = segLiteral
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	// Sem nenhuma revisao o derivado nao existe: revised_text fica vazio para a
+	// leitura cair no texto cru (e a lista nao duplicar a mesma string).
+	if revisedCount == 0 {
+		parts = nil
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE transcripts SET revised_text = ?, revised_model = ?, revised_prompt_version = ?,
+			revised_literal = ?
+		WHERE id = ?`, strings.Join(parts, "\n"), model, version, literal, transcriptID); err != nil {
+		return fmt.Errorf("store: update revised text: %w", err)
+	}
+	return nil
+}
+
+// LinkLooseTranscripts attaches a transcript stored without an audio (the app
+// sent it before the upload existed, or an old build left it loose) to the
+// entry's only original audio. With several audios the link is ambiguous, so
+// nothing changes. Idempotent; runs at boot.
+func (s *Store) LinkLooseTranscripts(ctx context.Context) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE transcripts SET attachment_id = (
+			SELECT a.id FROM attachments a
+			WHERE a.entry_id = transcripts.entry_id AND a.kind = ?
+		)
+		WHERE attachment_id IS NULL
+			AND (SELECT COUNT(*) FROM attachments a
+				WHERE a.entry_id = transcripts.entry_id AND a.kind = ?) = 1`,
+		AttachmentOriginal, AttachmentOriginal)
+	if err != nil {
+		return 0, fmt.Errorf("store: link loose transcripts: %w", err)
+	}
+	return res.RowsAffected()
+}
+
+// SaveRevisions replaces the revisions of a transcript with the given set. A
+// transcript whose revisions are all rejected (or cleared) keeps the raw text
+// as the visible one: revised_text becomes empty.
+func (s *Store) SaveRevisions(ctx context.Context, transcriptID string, revs []TranscriptRevision, comprehension, rejected int) error {
+	if err := s.BeginRevision(ctx, transcriptID); err != nil {
+		return err
+	}
+	if err := s.SaveRevisionWindow(ctx, transcriptID, revs, rejected); err != nil {
+		return err
+	}
+	return s.FinishRevision(ctx, transcriptID, comprehension, rejected)
+}
+
+// BeginRevision clears the previous revision before a new pass. It runs before
+// the first window on purpose: the pass only restarts when the stored revision
+// is stale (another model, prompt, mode or text), so the old one is not worth
+// keeping. A pass that dies before the first accepted window leaves the
+// transcript honestly marked as "not revised" instead of mixing two passes.
+func (s *Store) BeginRevision(ctx context.Context, transcriptID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin revision tx: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM transcript_revisions WHERE transcript_id = ?`, transcriptID); err != nil {
+		return fmt.Errorf("store: clear revisions: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE transcripts SET revised_text = '', revised_model = '', revised_prompt_version = 0,
+			revised_literal = 0, revised_comprehension = -1, revised_rejected = 0
+		WHERE id = ?`, transcriptID); err != nil {
+		return fmt.Errorf("store: reset revision: %w", err)
+	}
+	return tx.Commit()
+}
+
+// SaveRevisionWindow stores the revision of one window and rebuilds the joined
+// text, so the reader sees the revision grow while the model still works on the
+// rest. revs carries every reviewed segment of the window, including the ones
+// that came back unchanged: a row means "reviewed", a missing row means "not
+// reviewed yet". rejected is cumulative across the pass.
+func (s *Store) SaveRevisionWindow(ctx context.Context, transcriptID string, revs []TranscriptRevision, rejected int) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin revision window tx: %w", err)
+	}
+	defer tx.Rollback()
+	for _, rev := range revs {
+		if strings.TrimSpace(rev.Text) == "" || rev.SegmentID == "" {
+			continue
+		}
+		created := rev.CreatedAt
+		if created.IsZero() {
+			created = time.Now().UTC()
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO transcript_revisions (segment_id, transcript_id, text, model, prompt_version, literal, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT (segment_id) DO UPDATE SET
+				text = excluded.text, model = excluded.model,
+				prompt_version = excluded.prompt_version, literal = excluded.literal,
+				created_at = excluded.created_at`,
+			rev.SegmentID, transcriptID, rev.Text, rev.Model, rev.PromptVersion, boolInt(rev.Literal), ts(created)); err != nil {
+			return fmt.Errorf("store: insert revision: %w", err)
+		}
+	}
+	if err := refreshRevisedText(ctx, tx, transcriptID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE transcripts SET revised_rejected = ? WHERE id = ?`, rejected, transcriptID); err != nil {
+		return fmt.Errorf("store: update revised rejected: %w", err)
+	}
+	return tx.Commit()
+}
+
+// FinishRevision closes the pass with the comprehension estimate and the final
+// rejected count.
+func (s *Store) FinishRevision(ctx context.Context, transcriptID string, comprehension, rejected int) error {
+	if _, err := s.db.ExecContext(ctx, `
+		UPDATE transcripts SET revised_comprehension = ?, revised_rejected = ?
+		WHERE id = ?`, comprehension, rejected, transcriptID); err != nil {
+		return fmt.Errorf("store: finish revision: %w", err)
+	}
+	return nil
+}
+
 const transcriptColumns = `id, entry_id, COALESCE(attachment_id,''), model, COALESCE(language,''),
-	text, trim_silence, duration_seconds, created_at`
+	text, trim_silence, duration_seconds, COALESCE(revised_text,''), COALESCE(revised_model,''),
+	revised_prompt_version, revised_literal, revised_comprehension, revised_rejected, created_at`
 
 func scanTranscript(row interface {
 	Scan(dest ...any) error
@@ -45,11 +269,15 @@ func scanTranscript(row interface {
 	var t Transcript
 	var createdAt string
 	var trim int
+	var literal int
 	if err := row.Scan(&t.ID, &t.EntryID, &t.AttachmentID, &t.Model, &t.Language,
-		&t.Text, &trim, &t.DurationSeconds, &createdAt); err != nil {
+		&t.Text, &trim, &t.DurationSeconds, &t.RevisedText, &t.RevisedModel,
+		&t.RevisedPromptVersion, &literal, &t.RevisedComprehension, &t.RevisedRejected,
+		&createdAt); err != nil {
 		return Transcript{}, err
 	}
 	t.TrimSilence = trim == 1
+	t.RevisedLiteral = literal == 1
 	t.CreatedAt = parseTS(createdAt)
 	return t, nil
 }
@@ -127,8 +355,11 @@ func (s *Store) ListSegmentsPage(ctx context.Context, transcriptID string, offse
 		limit = 200
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, transcript_id, idx, start_ms, end_ms, text, created_at
-		FROM segments WHERE transcript_id = ? ORDER BY idx LIMIT ? OFFSET ?`,
+		SELECT s.id, s.transcript_id, s.idx, s.start_ms, s.end_ms, s.text,
+			COALESCE(r.text,''), s.user_edited, s.created_at
+		FROM segments s
+		LEFT JOIN transcript_revisions r ON r.segment_id = s.id
+		WHERE s.transcript_id = ? ORDER BY s.idx LIMIT ? OFFSET ?`,
 		transcriptID, limit+1, offset)
 	if err != nil {
 		return nil, false, fmt.Errorf("store: list segment page: %w", err)
@@ -138,9 +369,12 @@ func (s *Store) ListSegmentsPage(ctx context.Context, transcriptID string, offse
 	for rows.Next() {
 		var seg Segment
 		var createdAt string
-		if err := rows.Scan(&seg.ID, &seg.TranscriptID, &seg.Idx, &seg.StartMS, &seg.EndMS, &seg.Text, &createdAt); err != nil {
+		var edited int
+		if err := rows.Scan(&seg.ID, &seg.TranscriptID, &seg.Idx, &seg.StartMS, &seg.EndMS, &seg.Text,
+			&seg.Revised, &edited, &createdAt); err != nil {
 			return nil, false, err
 		}
+		seg.UserEdited = edited == 1
 		seg.CreatedAt = parseTS(createdAt)
 		out = append(out, seg)
 	}
@@ -157,8 +391,11 @@ func (s *Store) ListSegmentsPage(ctx context.Context, transcriptID string, offse
 // ListSegments returns the segments of a transcript ordered by index.
 func (s *Store) ListSegments(ctx context.Context, transcriptID string) ([]Segment, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, transcript_id, idx, start_ms, end_ms, text, created_at
-		FROM segments WHERE transcript_id = ? ORDER BY idx`, transcriptID)
+		SELECT s.id, s.transcript_id, s.idx, s.start_ms, s.end_ms, s.text,
+			COALESCE(r.text,''), s.user_edited, s.created_at
+		FROM segments s
+		LEFT JOIN transcript_revisions r ON r.segment_id = s.id
+		WHERE s.transcript_id = ? ORDER BY s.idx`, transcriptID)
 	if err != nil {
 		return nil, fmt.Errorf("store: list segments: %w", err)
 	}
@@ -167,12 +404,13 @@ func (s *Store) ListSegments(ctx context.Context, transcriptID string) ([]Segmen
 	for rows.Next() {
 		var seg Segment
 		var createdAt string
-		var speaker sql.NullString
-		if err := rows.Scan(&seg.ID, &seg.TranscriptID, &seg.Idx, &seg.StartMS, &seg.EndMS, &seg.Text, &createdAt); err != nil {
+		var edited int
+		if err := rows.Scan(&seg.ID, &seg.TranscriptID, &seg.Idx, &seg.StartMS, &seg.EndMS, &seg.Text,
+			&seg.Revised, &edited, &createdAt); err != nil {
 			return nil, fmt.Errorf("store: scan segment: %w", err)
 		}
+		seg.UserEdited = edited == 1
 		seg.CreatedAt = parseTS(createdAt)
-		_ = speaker
 		out = append(out, seg)
 	}
 	return out, rows.Err()

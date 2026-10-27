@@ -268,9 +268,10 @@ func (s *Store) ListEntriesFilteredNotebook(ctx context.Context, limit, offset i
 			COALESCE((SELECT body_updated_at FROM notes n WHERE n.entry_id = e.id ORDER BY n.created_at DESC LIMIT 1), ''),
 			COALESCE((SELECT id FROM attachments a WHERE a.entry_id = e.id AND a.kind = ?
 				ORDER BY a.created_at ASC LIMIT 1), ''),
-			COALESCE(NULLIF((SELECT n.content_markdown FROM notes n WHERE n.entry_id = e.id
+			COALESCE((SELECT n.content_markdown FROM notes n WHERE n.entry_id = e.id
 				ORDER BY n.created_at DESC LIMIT 1), ''),
-				(SELECT t.text FROM transcripts t WHERE t.entry_id = e.id
+			COALESCE((SELECT COALESCE(NULLIF(t.revised_text,''), t.text) FROM transcripts t
+				WHERE t.entry_id = e.id
 				ORDER BY t.created_at DESC LIMIT 1), '')
 		FROM entries e WHERE e.deleted_at IS NULL`
 	args := []any{AttachmentOriginal}
@@ -312,7 +313,8 @@ func (s *Store) ListEntriesFilteredNotebook(ctx context.Context, limit, offset i
 		var createdAt, updatedAt string
 		if err := rows.Scan(&e.ID, &e.Title, &e.Status, &e.Source, &e.ParentID, &e.NotebookID, &e.OriginalFilename,
 			&e.ContentType, &e.SizeBytes, &e.DurationSeconds, &e.SHA256, &recordedAt, &createdAt, &updatedAt,
-			&archived, &titleVersion, &recordedVersion, &bodyVersion, &e.PrimaryAttachmentID, &e.Preview); err != nil {
+			&archived, &titleVersion, &recordedVersion, &bodyVersion, &e.PrimaryAttachmentID,
+			&e.Preview, &e.SpokenPreview); err != nil {
 			return nil, fmt.Errorf("store: scan entry: %w", err)
 		}
 		if recordedAt.Valid {

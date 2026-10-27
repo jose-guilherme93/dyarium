@@ -89,6 +89,7 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("GET /api/v1/entries/{id}/transcript", s.handleGetTranscript)
 	protected.HandleFunc("GET /api/v1/entries/{id}/segments", s.handleListSegments)
 	protected.HandleFunc("PUT /api/v1/entries/{id}/transcript", s.handlePutTranscript)
+	protected.HandleFunc("PUT /api/v1/entries/{id}/transcript/revisions", s.handlePutTranscriptRevisions)
 	protected.HandleFunc("POST /api/v1/entries/{id}/retranscribe", s.handleRetranscribe)
 	protected.HandleFunc("POST /api/v1/entries/{id}/cancel", s.handleCancelEntry)
 	protected.HandleFunc("GET /api/v1/entries/{id}/analysis", s.handleGetAnalysis)

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"regexp"
 	"strings"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/joseti/dyarium/internal/ingest"
 	"github.com/joseti/dyarium/internal/jobs"
 	"github.com/joseti/dyarium/internal/preview"
+	"github.com/joseti/dyarium/internal/review"
 	"github.com/joseti/dyarium/internal/store"
 	"github.com/joseti/dyarium/internal/transcribe"
 )
@@ -49,34 +51,18 @@ func (s telegramSink) IngestAudio(ctx context.Context, source, filename, content
 // analyzeConfigFromSettings merges the environment defaults with the values
 // stored in the database, so the dashboard can configure paid APIs.
 func analyzeConfigFromSettings(ctx context.Context, st *store.Store, cfg config.Config) analyze.Config {
-	result := analyze.Config{
+	base := analyze.Config{
 		Enabled:  cfg.AnalyzeEnabled,
 		Provider: cfg.AnalyzeProvider,
 		BaseURL:  cfg.AnalyzeBaseURL,
 		APIKey:   cfg.AnalyzeAPIKey,
 		Model:    cfg.AnalyzeModel,
 	}
-	if settings, err := st.ListSettings(ctx); err == nil {
-		if v, ok := settings["analyze_enabled"]; ok {
-			result.Enabled = v == "true"
-		}
-		if v, ok := settings["analyze_provider"]; ok && v != "" {
-			result.Provider = v
-		}
-		if v, ok := settings["analyze_base_url"]; ok && v != "" {
-			result.BaseURL = v
-		}
-		if v, ok := settings["analyze_api_key"]; ok {
-			result.APIKey = v
-		}
-		if v, ok := settings["analyze_model"]; ok && v != "" {
-			result.Model = v
-		}
-		if v, ok := settings["analysis_themes"]; ok && strings.TrimSpace(v) != "" {
-			result.Themes = analyze.ParseThemes(v)
-		}
+	settings, err := st.ListSettings(ctx)
+	if err != nil {
+		return base
 	}
-	return result
+	return analyze.ConfigFromSettings(base, settings)
 }
 
 // transcribeHandler runs the transcription pipeline and, on success, either
@@ -201,14 +187,35 @@ func analyzeHandler(st *store.Store, cfg config.Config, bus *events.Bus, logger 
 		}
 
 		client := analyze.New(analysisCfg)
-		result, err := analyze.NewPipeline(client).Run(ctx, input.Segments, func(stage string, done, total int) {
+		metrics := analysisMetrics{
+			Comprehension:  -1,
+			StutterRate:    review.PerHundred(input.Speech.Stutter, input.Speech.Words),
+			HesitationRate: review.PerHundred(input.Speech.Hesitation, input.Speech.Words),
+		}
+		reviewEnabled, literal := reviewSettings(ctx, st)
+		if reviewEnabled && len(input.StoreSegments) > 0 {
+			if err := reviseTranscript(ctx, st, client, analysisCfg.Model, payload.EntryID, &input, literal, &metrics, bus); err != nil {
+				// A revisao e opcional: se ela falhar, a analise roda no texto cru.
+				logger.Warn("worker: revisao da transcricao", "entry_id", payload.EntryID, "erro", err)
+			}
+		}
+		progress := func(stage string, done, total int) {
 			bus.Publish("job.progress", map[string]any{
 				"entry_id": payload.EntryID,
 				"stage":    stage,
 				"done":     done,
 				"total":    total,
 			})
-		})
+		}
+		// A nota e lida secao por secao (titulos do texto escrito + transcricao)
+		// e depois sintetizada: uma nota longa nao cabe num rotulo so.
+		pipeline := analyze.NewPipeline(client)
+		var result analyze.Result
+		if sections := input.analysisSections(); len(sections) > 0 {
+			result, err = pipeline.RunSections(ctx, input.Title, sections, progress)
+		} else {
+			result, err = pipeline.Run(ctx, input.Segments, progress)
+		}
 		run.FinishedAt = time.Now().UTC()
 		run.DurationMS = run.FinishedAt.Sub(started).Milliseconds()
 		run.PromptTokens, run.CompletionTokens = client.Usage()
@@ -234,7 +241,11 @@ func analyzeHandler(st *store.Store, cfg config.Config, bus *events.Bus, logger 
 			logger.Error("worker: analise falhou", "entry_id", payload.EntryID, "erro", err)
 			return err
 		}
-		analysis, links := buildAnalysis(payload.EntryID, result)
+		if metrics.Comprehension < 0 {
+			metrics.Comprehension = result.Comprehension
+			metrics.Source = "analysis"
+		}
+		analysis, links := buildAnalysis(payload.EntryID, result, metrics)
 		if err := st.SaveRichAnalysis(ctx, analysis, links); err != nil {
 			run.Outcome = "error"
 			run.ErrorClass = "storage"
@@ -307,7 +318,7 @@ func analyzeSegments(text string, segments []store.Segment) []analyze.Segment {
 		out = append(out, analyze.Segment{
 			StartMS: int(seg.StartMS),
 			EndMS:   int(seg.EndMS),
-			Text:    seg.Text,
+			Text:    visibleText(seg),
 		})
 	}
 	if len(out) == 0 && strings.TrimSpace(text) != "" {
@@ -320,11 +331,62 @@ func analyzeSegments(text string, segments []store.Segment) []analyze.Segment {
 // record needs. Character counts are runes and never include the prefixes the
 // prompt adds.
 type analysisInputResult struct {
-	Segments        []analyze.Segment
+	// Segments is the transcript of the audios, with timestamps (the revision
+	// feeds the analysis through it).
+	Segments []analyze.Segment
+	// TextSections is the written note split by its headings. The analysis
+	// reads each one separately.
+	TextSections []analyze.Section
+	// StoreSegments is set only when the input is the transcript of a single
+	// audio. It is what lets the revision map every segment back to a line.
+	StoreSegments   []store.Segment
+	TranscriptID    string
+	Title           string
 	Language        string
 	TextChars       int
 	TranscriptChars int
 	Images          int
+	// Speech is the disfluency measurement of the raw audio text.
+	Speech review.Counts
+}
+
+// analysisSections is what the pipeline reads: every written section plus the
+// transcript (revised, when the revision ran). Segments carries the revised
+// text, so this has to be built after the revision pass.
+func (in analysisInputResult) analysisSections() []analyze.Section {
+	sections := make([]analyze.Section, 0, len(in.TextSections)+1)
+	sections = append(sections, in.TextSections...)
+	text := strings.TrimSpace(joinSegments(in.Segments))
+	if text != "" {
+		sections = append(sections, analyze.Section{
+			Heading:  "Transcrição do áudio",
+			Kind:     "transcript",
+			Text:     text,
+			Segments: in.Segments,
+		})
+	}
+	return sections
+}
+
+// joinSegments is the transcript text as the model reads it.
+func joinSegments(segments []analyze.Segment) string {
+	lines := make([]string, 0, len(segments))
+	for _, segment := range segments {
+		text := strings.TrimSpace(segment.Text)
+		if text != "" {
+			lines = append(lines, text)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// visibleText is the text the analysis should read: the revision when it exists
+// (it is the readable version), the raw whisper text otherwise.
+func visibleText(seg store.Segment) string {
+	if strings.TrimSpace(seg.Revised) != "" {
+		return seg.Revised
+	}
+	return seg.Text
 }
 
 // analysisInput builds the analysis input from every kind of content the entry
@@ -344,8 +406,17 @@ func analysisInput(ctx context.Context, st *store.Store, entryID string) (analys
 		}
 	}
 	audioText := transcriptText(transcripts)
-	bodyText, noteErr := noteBodyText(ctx, st, entryID)
+	// A taxa de gagueira e hesitacao sai do texto cru, nunca do revisado.
+	speech := review.Speak(audioText)
+	title := ""
+	if entry, err := st.GetEntry(ctx, entryID); err == nil {
+		title = entry.Title
+	}
+	textSections, noteErr := noteSections(ctx, st, entryID)
 	linksText := entryLinksText(ctx, st, entryID)
+	if text := strings.TrimSpace(linksText); text != "" {
+		textSections = append(textSections, analyze.Section{Heading: "Links", Kind: "text", Text: text})
+	}
 
 	images := 0
 	if attachments, err := st.ListAttachments(ctx, entryID); err == nil {
@@ -356,31 +427,28 @@ func analysisInput(ctx context.Context, st *store.Store, entryID string) (analys
 		}
 	}
 
-	// Somente um audio, sem texto escrito nem links: mantem os segmentos.
-	if transcriptErr == nil && len(transcripts) == 1 &&
-		strings.TrimSpace(bodyText) == "" && strings.TrimSpace(linksText) == "" {
-		if _, segments, err := st.GetTranscriptByAttachment(ctx, transcripts[0].AttachmentID); err == nil {
-			return analysisInputResult{
-				Segments:        analyzeSegments(transcripts[0].Text, segments),
-				Language:        language,
-				TranscriptChars: len([]rune(strings.TrimSpace(transcripts[0].Text))),
-				Images:          images,
-			}, nil
+	// A transcricao entra como segmentos (com a marcacao de tempo) para a
+	// revisao mapear cada linha e para os momentos-chave terem o instante.
+	segments := []analyze.Segment(nil)
+	storeSegments := []store.Segment(nil)
+	transcriptID := ""
+	if transcriptErr == nil && len(transcripts) == 1 {
+		if _, list, err := st.GetTranscriptByAttachment(ctx, transcripts[0].AttachmentID); err == nil {
+			storeSegments = list
+			transcriptID = transcripts[0].ID
+			segments = analyzeSegments(transcripts[0].Text, list)
 		}
 	}
+	if segments == nil && strings.TrimSpace(audioText) != "" {
+		segments = []analyze.Segment{{Text: audioText}}
+	}
 
-	parts := make([]string, 0, 3)
-	if text := strings.TrimSpace(bodyText); text != "" {
-		parts = append(parts, "Texto escrito:\n"+text)
+	textChars := 0
+	for _, section := range textSections {
+		textChars += len([]rune(section.Text))
 	}
-	if text := strings.TrimSpace(audioText); text != "" {
-		parts = append(parts, "Transcricao do audio:\n"+text)
-	}
-	if text := strings.TrimSpace(linksText); text != "" {
-		parts = append(parts, "Links da nota:\n"+text)
-	}
-	if len(parts) == 0 {
-		partial := analysisInputResult{Images: images}
+	if len(textSections) == 0 && strings.TrimSpace(joinSegments(segments)) == "" {
+		partial := analysisInputResult{Images: images, Speech: speech, Title: title}
 		if transcriptErr != nil {
 			return partial, fmt.Errorf("worker: transcript: %w", transcriptErr)
 		}
@@ -390,12 +458,65 @@ func analysisInput(ctx context.Context, st *store.Store, entryID string) (analys
 		return partial, errors.New("transcricao indisponivel")
 	}
 	return analysisInputResult{
-		Segments:        []analyze.Segment{{Text: strings.Join(parts, "\n\n")}},
+		Segments:        segments,
+		TextSections:    textSections,
+		StoreSegments:   storeSegments,
+		TranscriptID:    transcriptID,
+		Title:           title,
 		Language:        language,
-		TextChars:       len([]rune(strings.TrimSpace(bodyText))),
+		TextChars:       textChars,
 		TranscriptChars: len([]rune(strings.TrimSpace(audioText))),
 		Images:          images,
+		Speech:          speech,
 	}, nil
+}
+
+// noteSections splits the written note by its headings, keeping each section as
+// its own analysis unit. A note without headings is one section.
+func noteSections(ctx context.Context, st *store.Store, entryID string) ([]analyze.Section, error) {
+	notes, err := st.ListNotes(ctx, entryID)
+	if err != nil {
+		return nil, err
+	}
+	if len(notes) == 0 {
+		return nil, nil
+	}
+	note := notes[0]
+	if markdown := strings.TrimSpace(note.ContentMarkdown); markdown != "" {
+		return splitMarkdownSections(markdown), nil
+	}
+	if text := strings.TrimSpace(extractText(note.Document)); text != "" {
+		return []analyze.Section{{Kind: "text", Text: text}}, nil
+	}
+	return nil, nil
+}
+
+var markdownHeading = regexp.MustCompile(`^(#{1,6})\s+(.*)$`)
+
+// splitMarkdownSections cuts the written text on its markdown headings. Text
+// before the first heading is a section with an empty heading.
+func splitMarkdownSections(markdown string) []analyze.Section {
+	sections := make([]analyze.Section, 0, 4)
+	heading := ""
+	lines := make([]string, 0, 32)
+	flush := func() {
+		text := preview.Plain(strings.Join(lines, "\n"))
+		lines = lines[:0]
+		if strings.TrimSpace(text) == "" {
+			return
+		}
+		sections = append(sections, analyze.Section{Heading: heading, Kind: "text", Text: text})
+	}
+	for _, line := range strings.Split(markdown, "\n") {
+		if match := markdownHeading.FindStringSubmatch(line); match != nil {
+			flush()
+			heading = strings.TrimSpace(match[2])
+			continue
+		}
+		lines = append(lines, line)
+	}
+	flush()
+	return sections
 }
 
 // transcriptText joins every audio transcript of the entry.
@@ -486,7 +607,149 @@ func extractText(raw string) string {
 // buildAnalysis converts a rich result into the stored analysis row plus the
 // entity links. The legacy columns keep the previous JSON shape so the current
 // dashboard keeps working.
-func buildAnalysis(entryID string, result analyze.Result) (store.Analysis, []store.EntityLink) {
+// analysisMetrics are the numbers the analysis stores besides the model result.
+type analysisMetrics struct {
+	Comprehension   int
+	Source          string
+	StutterRate     float64
+	HesitationRate  float64
+	RevisedSegments int
+}
+
+// reviewSettings reads the per-deployment revision preference. Both default to
+// off: the analysis works without the revision, only less cleanly.
+func reviewSettings(ctx context.Context, st *store.Store) (enabled, literal bool) {
+	settings, err := st.ListSettings(ctx)
+	if err != nil {
+		return false, false
+	}
+	return settings["review_enabled"] == "true", settings["literal_transcript"] == "true"
+}
+
+// revisionIsCurrent tells whether the stored revision already matches the
+// current model, prompt version and literal option. User-edited segments are
+// outside the revision and never make it stale.
+func revisionIsCurrent(t store.Transcript, segments []store.Segment, model string, literal bool) bool {
+	if t.RevisedModel != model || t.RevisedPromptVersion != review.PromptVersion || t.RevisedLiteral != literal {
+		return false
+	}
+	for _, seg := range segments {
+		if seg.UserEdited {
+			continue
+		}
+		if strings.TrimSpace(seg.Revised) == "" {
+			return false
+		}
+	}
+	return true
+}
+
+// reviseTranscript runs the revision pass and stores it. The texts applied to
+// the analysis input are the accepted ones; rejected segments keep the raw
+// whisper text. It is a no-op when the stored revision is already current.
+func reviseTranscript(ctx context.Context, st *store.Store, client *analyze.Client, model, entryID string,
+	input *analysisInputResult, literal bool, metrics *analysisMetrics, bus *events.Bus) error {
+	transcript, err := st.LatestTranscript(ctx, entryID)
+	if err != nil {
+		return err
+	}
+	if revisionIsCurrent(transcript, input.StoreSegments, model, literal) {
+		metrics.Comprehension = transcript.RevisedComprehension
+		metrics.Source = "review"
+		metrics.RevisedSegments = countChanged(transcript, input.StoreSegments)
+		return nil
+	}
+	// A revisao parte sempre do texto cru do whisper, nunca do derivado.
+	raw := make([]analyze.Segment, len(input.StoreSegments))
+	for i, seg := range input.StoreSegments {
+		raw[i] = analyze.Segment{StartMS: int(seg.StartMS), EndMS: int(seg.EndMS), Text: seg.Text}
+	}
+	// A revisao e gravada e publicada por janela: o painel mostra o texto se
+	// montando em vez de esperar a transcricao inteira.
+	if err := st.BeginRevision(ctx, transcript.ID); err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	windowSize := review.ServerWindow
+	totalWindows := (len(raw) + windowSize - 1) / windowSize
+	revision, err := analyze.NewPipeline(client).Revise(ctx, raw, analyze.ReviseOptions{
+		Literal: literal,
+		Title:   input.Title,
+		OnWindow: func(start, end int, texts []string, rejected int) error {
+			revs := make([]store.TranscriptRevision, 0, end-start)
+			changed := make([]map[string]any, 0, end-start)
+			for i := start; i < end; i++ {
+				seg := input.StoreSegments[i]
+				if seg.UserEdited {
+					continue
+				}
+				text := strings.TrimSpace(seg.Text)
+				if texts[i-start] != "" {
+					text = texts[i-start]
+					changed = append(changed, map[string]any{"idx": seg.Idx, "text": texts[i-start]})
+				}
+				revs = append(revs, store.TranscriptRevision{
+					SegmentID:     seg.ID,
+					Text:          text,
+					Model:         model,
+					PromptVersion: review.PromptVersion,
+					Literal:       literal,
+					CreatedAt:     now,
+				})
+			}
+			if saveErr := st.SaveRevisionWindow(ctx, transcript.ID, revs, rejected); saveErr != nil {
+				return saveErr
+			}
+			bus.Publish("transcript.revised", map[string]any{
+				"entry_id":      entryID,
+				"attachment_id": transcript.AttachmentID,
+				"segments":      changed,
+				"done":          (end + windowSize - 1) / windowSize,
+				"total":         totalWindows,
+				"rejected":      rejected,
+			})
+			return nil
+		},
+	}, func(stage string, done, total int) {
+		bus.Publish("job.progress", map[string]any{
+			"entry_id": entryID,
+			"stage":    stage,
+			"done":     done,
+			"total":    total,
+		})
+	})
+	if err != nil {
+		return err
+	}
+	if err := st.FinishRevision(ctx, transcript.ID, revision.Comprehension, revision.Rejected+revision.Failed); err != nil {
+		return err
+	}
+	changed := 0
+	for i, seg := range input.StoreSegments {
+		if seg.UserEdited || revision.Texts[i] == "" {
+			continue
+		}
+		input.Segments[i].Text = revision.Texts[i]
+		changed++
+	}
+	metrics.Comprehension = revision.Comprehension
+	metrics.Source = "review"
+	metrics.RevisedSegments = changed
+	return nil
+}
+
+// countChanged counts segments whose stored revision differs from the original.
+func countChanged(t store.Transcript, segments []store.Segment) int {
+	changed := 0
+	for _, seg := range segments {
+		if !seg.UserEdited && strings.TrimSpace(seg.Revised) != "" && seg.Revised != seg.Text {
+			changed++
+		}
+	}
+	return changed
+}
+
+func buildAnalysis(entryID string, result analyze.Result, metrics analysisMetrics) (store.Analysis, []store.EntityLink) {
 	emotions := make(map[string]float64, len(result.Emotions))
 	for _, e := range result.Emotions {
 		emotions[e.Name] = e.Intensity
@@ -520,17 +783,22 @@ func buildAnalysis(entryID string, result analyze.Result) (store.Analysis, []sto
 	}
 
 	return store.Analysis{
-		ID:             id.New(),
-		EntryID:        entryID,
-		Model:          result.Model,
-		Sentiment:      result.Sentiment.Score,
-		SentimentLabel: result.Sentiment.Label,
-		Emotions:       string(emotionsJSON),
-		People:         string(peopleJSON),
-		Places:         string(placesJSON),
-		Summary:        result.Summary,
-		Raw:            result.Raw,
-		Data:           string(dataJSON),
-		CreatedAt:      time.Now().UTC(),
+		ID:                  id.New(),
+		EntryID:             entryID,
+		Model:               result.Model,
+		Sentiment:           result.Sentiment.Score,
+		SentimentLabel:      result.Sentiment.Label,
+		Emotions:            string(emotionsJSON),
+		People:              string(peopleJSON),
+		Places:              string(placesJSON),
+		Summary:             result.Summary,
+		Raw:                 result.Raw,
+		Data:                string(dataJSON),
+		Comprehension:       metrics.Comprehension,
+		ComprehensionSource: metrics.Source,
+		StutterRate:         metrics.StutterRate,
+		HesitationRate:      metrics.HesitationRate,
+		RevisedSegments:     metrics.RevisedSegments,
+		CreatedAt:           time.Now().UTC(),
 	}, links
 }

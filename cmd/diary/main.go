@@ -113,6 +113,13 @@ func serve() error {
 	} else if fixed > 0 {
 		logger.Info("store: notas com transcricao local marcadas como transcritas", "quantidade", fixed)
 	}
+	// Transcricao solta (salva antes do audio existir) volta a apontar para o
+	// audio da nota: sem isso o dashboard mostra a nota transcrita sem texto.
+	if linked, err := st.LinkLooseTranscripts(ctx); err != nil {
+		logger.Error("store: ligar transcricoes soltas", "erro", err)
+	} else if linked > 0 {
+		logger.Info("store: transcricoes ligadas ao audio", "quantidade", linked)
+	}
 	if err := seedSettings(ctx, st, cfg); err != nil {
 		return err
 	}

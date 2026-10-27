@@ -14,6 +14,7 @@ import (
 	"github.com/joseti/dyarium/internal/id"
 	"github.com/joseti/dyarium/internal/jobs"
 	"github.com/joseti/dyarium/internal/preview"
+	"github.com/joseti/dyarium/internal/review"
 	"github.com/joseti/dyarium/internal/store"
 )
 
@@ -183,7 +184,13 @@ func entriesJSON(entries []store.Entry, tagNames map[string][]string) []map[stri
 		// A lista mostra duas linhas do corpo (ou da transcricao). O texto chega
 		// em markdown cru do banco e vira prosa aqui, para a interface nao exibir
 		// `![...]` nem `#`.
-		if text := preview.Short(e.Preview, preview.DefaultLimit); text != "" {
+		text := preview.Short(e.Preview, preview.DefaultLimit)
+		if text == "" {
+			// Corpo so com marcador de audio/imagem nao tem prosa: a previa e a
+			// transcricao, que e o que a pessoa le naquela nota.
+			text = preview.Short(e.SpokenPreview, preview.DefaultLimit)
+		}
+		if text != "" {
 			item["preview"] = text
 		}
 		out = append(out, item)
@@ -328,7 +335,7 @@ func (s *Server) handleGetEntry(w http.ResponseWriter, r *http.Request) {
 		body["tags"] = names
 	}
 	if audios, err := s.deps.Store.ListAudios(ctx, entry.ID); err == nil {
-		body["audios"] = s.audiosJSON(ctx, audios)
+		body["audios"] = s.audiosJSON(ctx, entry.ID, audios)
 	}
 	if m, ok, err := s.deps.Store.GetMetrics(ctx, entry.ID); err == nil && ok {
 		body["metrics"] = map[string]any{
@@ -480,6 +487,9 @@ type putTranscriptRequest struct {
 		StartMS int64  `json:"start_ms"`
 		EndMS   int64  `json:"end_ms"`
 		Text    string `json:"text"`
+		// Edited marks a segment the user rewrote by hand. The revision never
+		// touches it, and a new sync keeps the flag.
+		Edited bool `json:"edited"`
 	} `json:"segments"`
 }
 
@@ -523,11 +533,12 @@ func (s *Server) handlePutTranscript(w http.ResponseWriter, r *http.Request) {
 	segments := make([]store.Segment, 0, len(req.Segments))
 	for _, seg := range req.Segments {
 		segments = append(segments, store.Segment{
-			ID:        id.New(),
-			StartMS:   seg.StartMS,
-			EndMS:     seg.EndMS,
-			Text:      seg.Text,
-			CreatedAt: now,
+			ID:         id.New(),
+			StartMS:    seg.StartMS,
+			EndMS:      seg.EndMS,
+			Text:       seg.Text,
+			UserEdited: seg.Edited,
+			CreatedAt:  now,
 		})
 	}
 	transcript := store.Transcript{
@@ -543,10 +554,155 @@ func (s *Server) handlePutTranscript(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
-	_ = s.deps.Store.UpdateEntryStatus(ctx, entryID, store.EntryTranscribed)
-	s.deps.Events.Publish("entry.status", map[string]string{"entry_id": entryID, "status": store.EntryTranscribed})
+	// O app reenvia a transcricao ao abrir a nota. Rebaixar uma nota ja
+	// analisada para "transcrito" escondia o resultado pronto no painel.
+	status := store.EntryTranscribed
+	if entry, err := s.deps.Store.GetEntry(ctx, entryID); err == nil && entry.Status == store.EntryReady {
+		status = store.EntryReady
+	}
+	_ = s.deps.Store.UpdateEntryStatus(ctx, entryID, status)
+	s.deps.Events.Publish("entry.status", map[string]string{"entry_id": entryID, "status": status})
 	s.deps.Events.Publish("transcript.ready", map[string]string{"entry_id": entryID})
 	writeJSON(w, http.StatusOK, map[string]string{"model": "local"})
+}
+
+type putRevisionsRequest struct {
+	AttachmentID  string `json:"attachment_id"`
+	Model         string `json:"model"`
+	PromptVersion int    `json:"prompt_version"`
+	Literal       bool   `json:"literal"`
+	Comprehension int    `json:"comprehension"`
+	// Rejected is how many segments the device could not review (the model
+	// answered in an unusable shape or the guardrails refused it). It travels
+	// with the revision so the panel can tell "nothing to fix" from "not
+	// applied".
+	Rejected int `json:"rejected"`
+	// ReviewedThrough is the index of the first segment this pass did not reach
+	// yet. Windows are reviewed in order, so everything below it was reviewed —
+	// even the segments that came back unchanged — and everything from it on
+	// stays raw. Zero means "the whole transcript was reviewed".
+	ReviewedThrough *int `json:"reviewed_through"`
+	Segments        []struct {
+		Idx  int    `json:"idx"`
+		Text string `json:"text"`
+	} `json:"segments"`
+}
+
+// maxRevisionRunes caps one revised segment. A model answer longer than this is
+// clearly not a correction of the original line.
+const maxRevisionRunes = 4000
+
+// handlePutTranscriptRevisions stores the revision produced on the device. The
+// server validates every line with the same guardrails as its own pass, so a
+// client cannot push a rewritten transcript. User-edited segments are skipped:
+// the user's writing always wins.
+func (s *Server) handlePutTranscriptRevisions(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	entryID := r.PathValue("id")
+	if _, err := s.deps.Store.GetEntry(ctx, entryID); err != nil {
+		writeError(w, http.StatusNotFound, "not_found", "entrada inexistente")
+		return
+	}
+	var req putRevisionsRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_body", "corpo invalido")
+		return
+	}
+	if req.PromptVersion <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid_body", "prompt_version invalido")
+		return
+	}
+	model := strings.TrimSpace(req.Model)
+	if model == "" {
+		writeError(w, http.StatusBadRequest, "invalid_body", "modelo vazio")
+		return
+	}
+	var transcript store.Transcript
+	var err error
+	if attachmentID := strings.TrimSpace(req.AttachmentID); attachmentID != "" {
+		transcript, err = s.deps.Store.TranscriptByAttachment(ctx, attachmentID)
+		if err == nil && transcript.EntryID != entryID {
+			err = sql.ErrNoRows
+		}
+	} else {
+		transcript, err = s.deps.Store.LatestTranscript(ctx, entryID)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "not_found", "transcricao indisponivel")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	segments, err := s.deps.Store.ListSegments(ctx, transcript.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	byIndex := make(map[int]store.Segment, len(segments))
+	for _, seg := range segments {
+		byIndex[seg.Idx] = seg
+	}
+	through := len(segments)
+	if req.ReviewedThrough != nil {
+		through = *req.ReviewedThrough
+	}
+	if through < 0 {
+		through = 0
+	}
+	if through > len(segments) {
+		through = len(segments)
+	}
+	now := time.Now().UTC()
+	revs := make([]store.TranscriptRevision, 0, len(req.Segments))
+	changed, refused := 0, 0
+	for _, item := range req.Segments {
+		seg, ok := byIndex[item.Idx]
+		if !ok || seg.UserEdited || seg.Idx >= through {
+			continue
+		}
+		text := strings.TrimSpace(item.Text)
+		if text == "" {
+			text = seg.Text
+		}
+		if len([]rune(text)) > maxRevisionRunes {
+			refused++
+			continue
+		}
+		if text != seg.Text {
+			if ok, _ := review.Accept(seg.Text, text); !ok {
+				refused++
+				continue
+			}
+			changed++
+		}
+		// Uma linha por trecho alcancado, mesmo sem mudanca: a linha e o que
+		// marca "revisado", e sem ela o painel nao distingue "nao mudou nada"
+		// de "nao chegou a revisar".
+		revs = append(revs, store.TranscriptRevision{
+			SegmentID:     seg.ID,
+			Text:          text,
+			Model:         model,
+			PromptVersion: req.PromptVersion,
+			Literal:       req.Literal,
+			CreatedAt:     now,
+		})
+	}
+	comprehension := req.Comprehension
+	if comprehension < 0 || comprehension > 100 {
+		comprehension = -1
+	}
+	rejected := req.Rejected
+	if rejected < 0 {
+		rejected = 0
+	}
+	rejected += refused
+	if err := s.deps.Store.SaveRevisions(ctx, transcript.ID, revs, comprehension, rejected); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"revised_segments": changed, "rejected": rejected})
 }
 
 // transcriptJSON renders a transcript with its segments.
@@ -554,13 +710,40 @@ func transcriptJSON(t store.Transcript, segs []store.Segment) map[string]any {
 	body := transcriptSummaryJSON(t)
 	segments := make([]map[string]any, 0, len(segs))
 	for _, seg := range segs {
-		segments = append(segments, map[string]any{
+		item := map[string]any{
+			"idx":      seg.Idx,
 			"start_ms": seg.StartMS,
 			"end_ms":   seg.EndMS,
 			"text":     seg.Text,
-		})
+			"edited":   seg.UserEdited,
+		}
+		// revised so aparece quando difere do original: o painel marca so o
+		// trecho que a IA mudou de verdade.
+		if seg.Revised != "" && seg.Revised != seg.Text {
+			item["revised"] = seg.Revised
+		}
+		segments = append(segments, item)
 	}
 	body["segments"] = segments
+	changed := 0
+	for _, seg := range segs {
+		if seg.Revised != "" && seg.Revised != seg.Text && !seg.UserEdited {
+			changed++
+		}
+	}
+	// changed distingue "revisou e alterou" de "revisou e nao mudou nada";
+	// revised_rejected e revised_pending distinguem os dois de "nao chegou a
+	// revisar". Pending e derivado: um trecho sem linha em transcript_revisions
+	// ainda nao foi alcancado pela passada.
+	body["revised_changed"] = changed
+	pending := 0
+	for _, seg := range segs {
+		if seg.UserEdited || seg.Revised != "" {
+			continue
+		}
+		pending++
+	}
+	body["revised_pending"] = pending
 	return body
 }
 
@@ -568,12 +751,24 @@ func transcriptJSON(t store.Transcript, segs []store.Segment) map[string]any {
 // payload uses it: segments are usually large and only needed when the user
 // expands the transcript, which fetches them page by page.
 func transcriptSummaryJSON(t store.Transcript) map[string]any {
+	// text e o que o usuario le: o revisado quando existe, o cru do whisper
+	// quando nao. O original continua nos segmentos e nunca e sobrescrito.
+	text := t.Text
+	if strings.TrimSpace(t.RevisedText) != "" {
+		text = t.RevisedText
+	}
 	return map[string]any{
-		"model":            t.Model,
-		"language":         t.Language,
-		"text":             t.Text,
-		"trim_silence":     t.TrimSilence,
-		"duration_seconds": t.DurationSeconds,
+		"model":                  t.Model,
+		"language":               t.Language,
+		"text":                   text,
+		"trim_silence":           t.TrimSilence,
+		"duration_seconds":       t.DurationSeconds,
+		"revised":                t.RevisedPromptVersion > 0,
+		"revised_model":          t.RevisedModel,
+		"revised_prompt_version": t.RevisedPromptVersion,
+		"revised_literal":        t.RevisedLiteral,
+		"revised_comprehension":  t.RevisedComprehension,
+		"revised_rejected":       t.RevisedRejected,
 	}
 }
 
@@ -626,11 +821,17 @@ func (s *Server) handleListSegments(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(segs))
 	for _, seg := range segs {
-		out = append(out, map[string]any{
+		item := map[string]any{
+			"idx":      seg.Idx,
 			"start_ms": seg.StartMS,
 			"end_ms":   seg.EndMS,
 			"text":     seg.Text,
-		})
+			"edited":   seg.UserEdited,
+		}
+		if seg.Revised != "" && seg.Revised != seg.Text {
+			item["revised"] = seg.Revised
+		}
+		out = append(out, item)
 	}
 	body := map[string]any{"segments": out}
 	if more {
@@ -641,7 +842,16 @@ func (s *Server) handleListSegments(w http.ResponseWriter, r *http.Request) {
 
 // audiosJSON renders the audio attachments of an entry, each with its own
 // transcript when available.
-func (s *Server) audiosJSON(ctx context.Context, audios []store.Attachment) []map[string]any {
+func (s *Server) audiosJSON(ctx context.Context, entryID string, audios []store.Attachment) []map[string]any {
+	// Uma nota com um unico audio: se a transcricao existe mas ficou solta (sem
+	// attachment), ela e a deste audio. Sem isso o painel mostrava a nota
+	// transcrita e nenhum texto.
+	var loose store.Transcript
+	if len(audios) == 1 {
+		if t, err := s.deps.Store.LatestTranscript(ctx, entryID); err == nil {
+			loose = t
+		}
+	}
 	out := make([]map[string]any, 0, len(audios))
 	for _, a := range audios {
 		item := map[string]any{
@@ -653,6 +863,16 @@ func (s *Server) audiosJSON(ctx context.Context, audios []store.Attachment) []ma
 		}
 		if t, err := s.deps.Store.TranscriptByAttachment(ctx, a.ID); err == nil {
 			item["transcript"] = transcriptSummaryJSON(t)
+		} else {
+			if !errors.Is(err, sql.ErrNoRows) && s.deps.Logger != nil {
+				// Sem transcricao, o painel do audio fica vazio. Nao engolir o
+				// erro: um schema desalinhado ja escondeu todas as transcricoes.
+				s.deps.Logger.Warn("api: ler transcricao do audio", "entry_id", entryID,
+					"attachment_id", a.ID, "erro", err)
+			}
+			if loose.ID != "" {
+				item["transcript"] = transcriptSummaryJSON(loose)
+			}
 		}
 		out = append(out, item)
 	}

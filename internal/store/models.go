@@ -83,9 +83,13 @@ type Entry struct {
 	// PrimaryAttachmentID is the first original audio of the entry. It lets the
 	// list response point the app at the audio without fetching every stack.
 	PrimaryAttachmentID string
-	// Preview is the stored body (or transcript) of the entry, filled only by
-	// the list query. The API turns it into plain text for the list.
+	// Preview is the stored body of the entry, filled only by the list query.
+	// The API turns it into plain text for the list.
 	Preview string
+	// SpokenPreview is the transcript text of the entry, filled only by the
+	// list query. When the body has no prose (an app note whose body is just the
+	// audio marker), the list shows the transcript instead.
+	SpokenPreview string
 
 	// Versoes dos campos editaveis, como o cliente leu (so preenchidas nas
 	// leituras que as trazem). Sao os valores **exatos** gravados no banco: o
@@ -134,6 +138,20 @@ type Transcript struct {
 	Text            string
 	TrimSilence     bool
 	DurationSeconds float64
+	// RevisedText is the joined AI revision of the segments. Empty when the
+	// transcript was never revised; Text keeps the raw whisper output.
+	RevisedText          string
+	RevisedModel         string
+	RevisedPromptVersion int
+	RevisedLiteral       bool
+	// RevisedComprehension is the revision pass estimate (0-100) kept with the
+	// derived text; -1 when absent. Re-analysing a current revision reuses it.
+	RevisedComprehension int
+	// RevisedRejected counts segments the revision pass could not use: the model
+	// answered in an unusable shape, the window failed, or the acceptance
+	// guardrails refused it. Zero means "every segment was reviewed"; a segment
+	// that came back identical is reviewed, not rejected.
+	RevisedRejected int
 	CreatedAt       time.Time
 }
 
@@ -145,7 +163,24 @@ type Segment struct {
 	StartMS      int64
 	EndMS        int64
 	Text         string
-	CreatedAt    time.Time
+	// Revised is the AI revision of this segment. Empty when the segment was
+	// not revised (revision off, window rejected, or user-edited text).
+	Revised string
+	// UserEdited marks a segment written by the user. The revision never
+	// touches it and a new sync keeps the flag.
+	UserEdited bool
+	CreatedAt  time.Time
+}
+
+// TranscriptRevision is the AI revision of one segment. It never replaces the
+// original: the reader shows Revised by default and the panel reveals Text.
+type TranscriptRevision struct {
+	SegmentID     string
+	Text          string
+	Model         string
+	PromptVersion int
+	Literal       bool
+	CreatedAt     time.Time
 }
 
 // AudioMetrics holds ffmpeg/ffprobe measurements.
@@ -235,7 +270,15 @@ type Analysis struct {
 	Summary        string
 	Raw            string
 	Data           string
-	CreatedAt      time.Time
+	// Comprehension is the 0-100 estimate of how well the raw transcript
+	// represents the speech. -1 means it was not measured.
+	Comprehension       int
+	ComprehensionSource string
+	// Rates are per 100 words of the raw audio text.
+	StutterRate     float64
+	HesitationRate  float64
+	RevisedSegments int
+	CreatedAt       time.Time
 }
 
 // Entity kinds.

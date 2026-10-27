@@ -3,9 +3,11 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/joseti/dyarium/internal/analyze"
 	"github.com/joseti/dyarium/internal/jobs"
@@ -56,6 +58,8 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		"analyze_model":        analyzeModel,
 		"analyze_api_key_set":  settings["analyze_api_key"] != "",
 		"analysis_themes":      analysisThemes,
+		"review_enabled":       settings["review_enabled"] == "true",
+		"literal_transcript":   settings["literal_transcript"] == "true",
 	})
 }
 
@@ -108,6 +112,15 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if !set(key, str) {
+				return
+			}
+		case "review_enabled", "literal_transcript":
+			b, err := toBool(value)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid_value", key+" deve ser booleano")
+				return
+			}
+			if !set(key, strconv.FormatBool(b)) {
 				return
 			}
 		case "analyze_enabled":
@@ -177,6 +190,12 @@ func (s *Server) handleGetAnalysis(w http.ResponseWriter, r *http.Request) {
 		"people":          rawJSON(a.People),
 		"places":          rawJSON(a.Places),
 		"summary":         a.Summary,
+		// Compreensao logica da transcricao (0 a 100); -1 quando nao medida.
+		"comprehension":        a.Comprehension,
+		"comprehension_source": a.ComprehensionSource,
+		"stutter_rate":         a.StutterRate,
+		"hesitation_rate":      a.HesitationRate,
+		"revised_segments":     a.RevisedSegments,
 	}
 	if data := strings.TrimSpace(a.Data); data != "" && json.Valid([]byte(data)) {
 		var rich analyze.Result
@@ -185,6 +204,8 @@ func (s *Server) handleGetAnalysis(w http.ResponseWriter, r *http.Request) {
 			body["people_detail"] = rich.People
 			body["places_detail"] = rich.Places
 			body["themes"] = rich.Themes
+			body["reading"] = rich.Reading
+			body["sections"] = rich.Sections
 			body["key_moments"] = rich.KeyMoments
 			body["questions"] = rich.Questions
 			body["decisions"] = rich.Decisions
@@ -215,6 +236,13 @@ func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "entrada inexistente")
 		return
 	}
+	// Antes de prometer a analise, confirma que o provedor responde. Sem isso o
+	// usuario descobria a chave/modelo quebrados depois de a nota falhar, e o
+	// clique virava uma promessa que nao se cumpria.
+	if err := s.pingProvider(ctx); err != nil {
+		writeError(w, http.StatusBadGateway, "ai_unavailable", analyze.FriendlyError(err))
+		return
+	}
 	if _, err := s.deps.Queue.Enqueue(ctx, jobs.TypeAnalyze, analyzeKey(id, s.deps.Config.AnalyzeModel), jobs.AnalyzePayload{EntryID: id}); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
@@ -222,6 +250,40 @@ func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	_ = s.deps.Store.UpdateEntryStatus(ctx, id, store.EntryAnalyzing)
 	s.deps.Events.Publish("entry.status", map[string]string{"entry_id": id, "status": store.EntryAnalyzing})
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": store.EntryAnalyzing})
+}
+
+// analyzeClient builds the provider client from the saved settings, the same
+// merge the worker uses. Testar o cliente do boot testaria outra configuracao.
+func (s *Server) analyzeClient(ctx context.Context) *analyze.Client {
+	base := analyze.Config{
+		Enabled:  s.deps.Config.AnalyzeEnabled,
+		Provider: s.deps.Config.AnalyzeProvider,
+		BaseURL:  s.deps.Config.AnalyzeBaseURL,
+		APIKey:   s.deps.Config.AnalyzeAPIKey,
+		Model:    s.deps.Config.AnalyzeModel,
+	}
+	settings, err := s.deps.Store.ListSettings(ctx)
+	if err != nil {
+		settings = nil
+	}
+	return analyze.New(analyze.ConfigFromSettings(base, settings))
+}
+
+// pingProvider faz uma chamada minima ao provedor de IA. Falha na chave, no
+// endpoint ou no modelo aparece na hora, no clique, e nao depois.
+func (s *Server) pingProvider(ctx context.Context) error {
+	pingCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
+	err := s.analyzeClient(pingCtx).Ping(pingCtx)
+	if err != nil && errors.Is(err, analyze.ErrDisabled) {
+		return nil
+	}
+	if err != nil && s.deps.Logger != nil {
+		// Detalhe do provedor so no log do servidor; o usuario recebe a mensagem
+		// amigavel.
+		s.deps.Logger.Warn("ia: ping ao provedor falhou", "erro", err)
+	}
+	return err
 }
 
 func (s *Server) analyzeEnabled(ctx context.Context) bool {

@@ -43,9 +43,91 @@ func (s *Store) Migrate(ctx context.Context) error {
 			return err
 		}
 	}
+	// Uma versao gravada no meio de uma mudanca de schema (build intermediario)
+	// pode ter deixado colunas de fora. Reconciliar no boot evita que uma
+	// leitura de transcricao quebre em silencio e o dashboard fique sem texto.
+	if err := s.ensureRevisionSchema(ctx); err != nil {
+		return err
+	}
 	// Cores de tag antigas (ou criadas por clientes que so mandam o nome) usam a
 	// mesma paleta deterministica do app e do dashboard.
 	return s.backfillTagColors(ctx)
+}
+
+// ensureRevisionSchema cria o que a revisao da transcricao precisa quando a
+// migracao 0018 foi gravada por um build anterior, antes de todas as colunas
+// existirem. Idempotente: num banco em dia nao faz nada.
+func (s *Store) ensureRevisionSchema(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS transcript_revisions (
+			segment_id     TEXT PRIMARY KEY REFERENCES segments (id) ON DELETE CASCADE,
+			transcript_id  TEXT NOT NULL REFERENCES transcripts (id) ON DELETE CASCADE,
+			text           TEXT NOT NULL,
+			model          TEXT NOT NULL,
+			prompt_version INTEGER NOT NULL DEFAULT 0,
+			literal        INTEGER NOT NULL DEFAULT 0,
+			created_at     TEXT NOT NULL
+		)`); err != nil {
+		return fmt.Errorf("store: ensure transcript_revisions: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `
+		CREATE INDEX IF NOT EXISTS idx_transcript_revisions_transcript
+			ON transcript_revisions (transcript_id)`); err != nil {
+		return fmt.Errorf("store: ensure revision index: %w", err)
+	}
+	columns := []struct {
+		table      string
+		column     string
+		definition string
+	}{
+		{"transcripts", "revised_text", "TEXT NOT NULL DEFAULT ''"},
+		{"transcripts", "revised_model", "TEXT NOT NULL DEFAULT ''"},
+		{"transcripts", "revised_prompt_version", "INTEGER NOT NULL DEFAULT 0"},
+		{"transcripts", "revised_literal", "INTEGER NOT NULL DEFAULT 0"},
+		{"transcripts", "revised_comprehension", "INTEGER NOT NULL DEFAULT -1"},
+		{"transcripts", "revised_rejected", "INTEGER NOT NULL DEFAULT 0"},
+		{"segments", "user_edited", "INTEGER NOT NULL DEFAULT 0"},
+		{"analyses", "comprehension", "INTEGER NOT NULL DEFAULT -1"},
+		{"analyses", "comprehension_source", "TEXT NOT NULL DEFAULT ''"},
+		{"analyses", "stutter_rate", "REAL NOT NULL DEFAULT 0"},
+		{"analyses", "hesitation_rate", "REAL NOT NULL DEFAULT 0"},
+		{"analyses", "revised_segments", "INTEGER NOT NULL DEFAULT 0"},
+	}
+	for _, c := range columns {
+		exists, err := s.tableHasColumn(ctx, c.table, c.column)
+		if err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx,
+			fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", c.table, c.column, c.definition)); err != nil {
+			return fmt.Errorf("store: ensure %s.%s: %w", c.table, c.column, err)
+		}
+	}
+	return nil
+}
+
+// tableHasColumn reports whether a table already has the column.
+func (s *Store) tableHasColumn(ctx context.Context, table, column string) (bool, error) {
+	rows, err := s.db.QueryContext(ctx, "PRAGMA table_info("+table+")")
+	if err != nil {
+		return false, fmt.Errorf("store: table info %s: %w", table, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, notNull, pk int
+		var name, columnType string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return false, fmt.Errorf("store: scan table info %s: %w", table, err)
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 type migration struct {
