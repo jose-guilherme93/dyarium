@@ -61,6 +61,19 @@ export function isAnalysisModelInstalled(id: string): boolean {
   return installedAnalysisModels().some((model) => model.id === id);
 }
 
+/**
+ * Modelo que a proxima analise vai usar: o escolhido quando esta baixado, senao
+ * o primeiro instalado. Null quando nao ha nenhum — o chamador diz o porque em
+ * vez de nao fazer nada.
+ */
+export function resolveAnalysisModel(preferred: string): AnalysisModelInfo | null {
+  const installed = installedAnalysisModels().map((model) => model.id);
+  const selected = analysisModelById(preferred);
+  if (selected && installed.includes(selected.id)) return selected;
+  if (installed.length === 0) return null;
+  return analysisModelById(installed[0]) ?? null;
+}
+
 export function installedAnalysisModelsBytes(): number {
   return installedAnalysisModels().reduce((sum, model) => sum + model.bytes, 0);
 }

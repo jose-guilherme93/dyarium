@@ -17,6 +17,7 @@ import { CONTENT_TYPE, FILE_EXTENSION, uploadFileIO } from './files';
 import { pushNotebooks } from './notebookSync';
 import { applySyncConflict, applySyncResult } from '@/core/noteSync';
 
+import { notifyActivity, notifyActivityDone } from './notifications';
 import { conflictFields, syncNote, type SyncNoteResult } from './noteSync';
 import { loadServerConfig } from './secure';
 import { pushTranscript } from './transcriptSync';
@@ -43,6 +44,11 @@ export async function runUploadQueueOnce(): Promise<void> {
   if (running) return;
   running = true;
   let lock: string | null = null;
+  // Progresso do lote: o usuario que importou oito audios precisa ver a
+  // posicao, nao so um spinner.
+  let batch = 0;
+  let sent = 0;
+  const processed = new Set<string>();
   try {
     // Trava no banco: evita que o worker em primeiro plano e o background task
     // processem a fila ao mesmo tempo.
@@ -54,6 +60,8 @@ export async function runUploadQueueOnce(): Promise<void> {
     // offline, e o servidor recusa notebook_id inexistente.
     await pushNotebooks().catch(() => undefined);
     const api = new DyariumApi(config, doFetch);
+    const initial = await listRecordings();
+    batch = initial.filter((r) => r.status === 'queued' || r.status === 'uploading').length;
     // Notas ja enviadas cujo corpo mudou. Cada uma e tentada uma vez por rodada:
     // se falhar (sem rede), o flag continua e a proxima rodada tenta de novo.
     const attemptedNotes = new Set<string>();
@@ -62,7 +70,9 @@ export async function runUploadQueueOnce(): Promise<void> {
       const next = pickNextToUpload(recordings, new Date());
       if (next) {
         if (isTextNote(next)) {
+          processed.add(next.id);
           await uploadTextOne(api, next);
+          sent += 1;
           continue;
         }
         if (!next.filePath || !next.sizeBytes) {
@@ -72,7 +82,17 @@ export async function runUploadQueueOnce(): Promise<void> {
           emitRecording(failed);
           continue;
         }
+        processed.add(next.id);
         await uploadOne(api, next);
+        sent += 1;
+        if (batch > 0) {
+          void notifyActivity({
+            stage: 'importing',
+            noteTitle: next.title,
+            index: Math.min(sent, batch),
+            total: batch,
+          });
+        }
         continue;
       }
       const dirtyNote = recordings.find((r) => needsNoteSync(r) && !attemptedNotes.has(r.id));
@@ -83,6 +103,11 @@ export async function runUploadQueueOnce(): Promise<void> {
   } finally {
     if (lock) await releaseLock('upload-queue', lock).catch(() => undefined);
     running = false;
+    if (sent > 0) {
+      const after = await listRecordings().catch(() => []);
+      const failed = after.filter((r) => processed.has(r.id) && r.status === 'failed').length;
+      void notifyActivityDone(sent, batch, failed);
+    }
   }
 }
 

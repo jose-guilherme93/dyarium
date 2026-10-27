@@ -25,6 +25,8 @@ import {
   type ActivityAction,
 } from './activity';
 import { analysisModelFilePath } from './analysisModels';
+import { startForegroundTask, stopForegroundTask } from '../../modules/foreground-task';
+import { notifyActivity, notifyIfHidden } from './notifications';
 
 export interface TokenData {
   token: string;
@@ -84,6 +86,8 @@ export interface AnalysisRunResult {
 export interface AnalysisRunOptions {
   lowPower?: boolean;
   maxTokens?: number;
+  /** Schema JSON pedido ao modelo; padrao: o da analise. */
+  schema?: Record<string, unknown>;
   onToken?(token: string): void;
   /** Recarrega o modelo antes de gerar (contexto limpo de ponta a ponta). */
   fresh?: boolean;
@@ -183,6 +187,32 @@ export async function stopAnalysis(): Promise<void> {
   }
 }
 
+/**
+ * Corpo da completion enviado ao llama.rn. O schema vem do chamador: a revisao
+ * precisa do formato com `segments`, a analise do formato com sentiment/pessoas.
+ * Fixa-lo aqui fazia a revisao pedir o schema da analise, e toda janela voltava
+ * inutilizavel — sem aviso, e o texto ficava igual ao do whisper.
+ */
+export function completionRequest(
+  messages: ReturnType<typeof buildAnalysisMessages>,
+  options: AnalysisRunOptions = {},
+) {
+  return {
+    messages,
+    response_format: {
+      type: 'json_schema',
+      json_schema: { strict: true, schema: options.schema ?? ANALYSIS_SCHEMA },
+    },
+    // 600 da folga para o JSON fechar; 400 cortava respostas com 3+ temas.
+    n_predict: options.maxTokens ?? 600,
+    temperature: 0,
+    top_k: 40,
+    top_p: 0.95,
+    stop: STOP_WORDS,
+    enable_thinking: false,
+  };
+}
+
 /** Analisa um texto com o modelo carregado. */
 export async function runAnalysis(
   model: AnalysisModelInfo,
@@ -206,20 +236,7 @@ export async function runAnalysis(
 
   const started = Date.now();
   const result = await loaded.context.completion(
-    {
-      messages,
-      response_format: {
-        type: 'json_schema',
-        json_schema: { strict: true, schema: ANALYSIS_SCHEMA },
-      },
-      // 600 da folga para o JSON fechar; 400 cortava respostas com 3+ temas.
-      n_predict: options.maxTokens ?? 600,
-      temperature: 0,
-      top_k: 40,
-      top_p: 0.95,
-      stop: STOP_WORDS,
-      enable_thinking: false,
-    },
+    completionRequest(messages, options),
     options.onToken
       ? (data) => {
           if (data.token) options.onToken?.(data.token);
@@ -262,6 +279,10 @@ export async function analyzeRecording(
     detail: 'Preparando modelo',
     action: options.failureAction,
   });
+  // Mantem o processo vivo com a tela apagada; o texto da notificacao e a
+  // etapa, sem conteudo da nota.
+  startForegroundTask('Analisando', content.title || 'Nota', -1);
+  void notifyActivity({ stage: 'analyzing', noteTitle: content.title });
 
   try {
     const run = await runAnalysis(
@@ -290,6 +311,7 @@ export async function analyzeRecording(
     updateActivity(activity, { detail: 'Concluindo análise' });
     const parsed = parseAnalysisJson(run.text);
     finishActivity(activity, 'Análise pronta');
+    void notifyIfHidden('Análise pronta', content.title || 'Nota');
     return {
       content,
       run,
@@ -298,5 +320,7 @@ export async function analyzeRecording(
   } catch (error) {
     failActivity(activity, 'Não foi possível analisar');
     throw error;
+  } finally {
+    stopForegroundTask();
   }
 }

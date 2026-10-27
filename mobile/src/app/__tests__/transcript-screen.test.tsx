@@ -88,6 +88,14 @@ jest.mock('@/state/useTranscriptionProgress', () => ({
   useTranscriptionProgress: () => 0,
 }));
 
+jest.mock('@/state/SettingsContext', () => ({
+  useSettings: () => ({
+    reviewTranscript: false,
+    literalTranscript: false,
+    setLiteralTranscript: jest.fn(async () => undefined),
+  }),
+}));
+
 describe('tela da transcricao', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -128,6 +136,31 @@ describe('tela da transcricao', () => {
     await renderScreen();
 
     expect(screen.getByLabelText('Posição do áudio')).toBeTruthy();
+  });
+
+  it('mostra o texto revisado e revela o original do whisper', async () => {
+    const revised = {
+      ...mockNote,
+      transcriptSegments: [
+        { start_ms: 0, end_ms: 5_000, text: 'bom dia', revised: 'Bom dia.' },
+        { start_ms: 5_000, end_ms: 12_000, text: 'hoje e quinta' },
+      ],
+    };
+    const library = jest.requireMock('@/state/LibraryContext') as {
+      useLibrary: () => { recordings: unknown[] };
+    };
+    const original = library.useLibrary;
+    library.useLibrary = () => ({ recordings: [revised] });
+    try {
+      await renderScreen();
+      expect(screen.getByText('Bom dia.')).toBeTruthy();
+      expect(screen.queryByText(/Original do whisper/)).toBeNull();
+
+      fireEvent.press(screen.getByLabelText('Ver o texto original do whisper'));
+      expect(screen.getByText(/Original do whisper: bom dia/)).toBeTruthy();
+    } finally {
+      library.useLibrary = original;
+    }
   });
 
   it('tocar no play aponta a fonte e toca do ponto atual', async () => {

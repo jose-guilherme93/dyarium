@@ -79,6 +79,8 @@ export interface Recording {
   transcriptOrigin?: TranscriptOrigin;
   /** Segmentos da transcricao (cache local, para nao refazer fetch ao abrir). */
   transcriptSegments?: TranscriptSegment[];
+  /** Revisao por IA ja aplicada a transcricao, quando houver. */
+  transcriptReview?: TranscriptReview;
   /** Ate onde a transcricao local ja chegou, em ms do audio original. */
   transcriptCheckpointMs?: number;
   /** Ultima pilha de audios lida do servidor (cache local para abrir sem esperar). */
@@ -136,7 +138,38 @@ export type TranscriptOrigin = 'local' | 'server';
 export interface TranscriptSegment {
   start_ms: number;
   end_ms: number;
+  /** Texto original do whisper; nunca sobrescrito pela revisao. */
   text: string;
+  /** Revisao da IA, so quando difere de `text`. O leitor mostra este. */
+  revised?: string;
+  /** Trecho escrito a mao: a revisao nunca toca nele. */
+  edited?: boolean;
+}
+
+/**
+ * Estado da revisao por IA da transcricao. A chave (modelo + versao do prompt +
+ * literal) decide se uma nova analise precisa revisar de novo.
+ */
+export interface TranscriptReview {
+  model: string;
+  promptVersion: number;
+  literal: boolean;
+  /** Estimativa 0-100 da compreensao logica do texto cru; -1 quando ausente. */
+  comprehension: number;
+  /** Hash do texto cru revisado; muda quando um trecho muda. */
+  hash?: string;
+  /**
+   * Trechos que ficaram sem revisao: a janela falhou ou a trava recusou a
+   * resposta do modelo. Sem isso, "revisou e nao mudou nada" e "nao revisou"
+   * ficam iguais na tela.
+   */
+  rejected?: number;
+  /** Indice do primeiro trecho que a passada ainda nao alcancou. */
+  reviewedThrough?: number;
+  /** Trechos que ficaram sem revisao, para o "revisar de novo" mirar neles. */
+  rejectedIdx?: number[];
+  /** Quando a passada terminou; ausente enquanto ela pode continuar de onde parou. */
+  finishedAt?: string;
 }
 
 /** De onde veio a nota: gravada no app, importada de outro app ou escrita. */

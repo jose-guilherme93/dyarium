@@ -67,6 +67,12 @@ interface SettingsValue {
   /** Aviso de transcricao e analise desligadas dispensado de vez. */
   transcriptionPromptDismissed: boolean;
   dismissTranscriptionPrompt(): Promise<void>;
+  /** Revisar a transcricao com a IA local antes de analisar. */
+  reviewTranscript: boolean;
+  setReviewTranscript(value: boolean): Promise<void>;
+  /** Manter hesitacoes e gagueira no texto revisado. */
+  literalTranscript: boolean;
+  setLiteralTranscript(value: boolean): Promise<void>;
   /** Modelo de transcricao escolhido. */
   transcriptionModel: string;
   setTranscriptionModel(id: string): Promise<void>;
@@ -132,6 +138,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [typography, setTypographyState] = useState<NoteTypography>(DEFAULT_TYPOGRAPHY);
   const [localTranscription, setLocalTranscriptionState] = useState(true);
   const [transcriptionPromptDismissed, setTranscriptionPromptDismissed] = useState(false);
+  const [reviewTranscript, setReviewTranscriptState] = useState(false);
+  const [literalTranscript, setLiteralTranscriptState] = useState(false);
   const [transcriptionModel, setTranscriptionModelState] = useState(
     DEFAULT_TRANSCRIPTION_MODEL,
   );
@@ -175,6 +183,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         setTypographyState(normalizeTypography(prefs.typography));
         setLocalTranscriptionState(prefs.localTranscription !== false);
         setTranscriptionPromptDismissed(prefs.transcriptionPromptDismissed === true);
+        setReviewTranscriptState(prefs.reviewTranscript === true);
+        setLiteralTranscriptState(prefs.literalTranscript === true);
         setTranscriptionModelState(prefs.transcriptionModel ?? DEFAULT_TRANSCRIPTION_MODEL);
         setTranscriptionLanguageState(prefs.transcriptionLanguage === 'auto' ? 'auto' : 'pt');
         setAnalysisModelState(prefs.analysisModel ?? DEFAULT_ANALYSIS_MODEL);
@@ -251,6 +261,22 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     setTranscriptionPromptDismissed(true);
     await persistPrefs({ transcriptionPromptDismissed: true });
   }, [persistPrefs]);
+
+  const setReviewTranscript = useCallback(
+    async (value: boolean) => {
+      setReviewTranscriptState(value);
+      await persistPrefs({ reviewTranscript: value });
+    },
+    [persistPrefs],
+  );
+
+  const setLiteralTranscript = useCallback(
+    async (value: boolean) => {
+      setLiteralTranscriptState(value);
+      await persistPrefs({ literalTranscript: value });
+    },
+    [persistPrefs],
+  );
 
   const setTranscriptionModel = useCallback(
     async (id: string) => {
@@ -403,6 +429,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setLocalTranscription,
       transcriptionPromptDismissed,
       dismissTranscriptionPrompt,
+      reviewTranscript,
+      setReviewTranscript,
+      literalTranscript,
+      setLiteralTranscript,
       transcriptionModel,
       setTranscriptionModel,
       transcriptionLanguage,
@@ -446,6 +476,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setLocalTranscription,
       transcriptionPromptDismissed,
       dismissTranscriptionPrompt,
+      reviewTranscript,
+      setReviewTranscript,
+      literalTranscript,
+      setLiteralTranscript,
       transcriptionModel,
       setTranscriptionModel,
       transcriptionLanguage,

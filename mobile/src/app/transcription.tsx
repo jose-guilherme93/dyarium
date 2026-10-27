@@ -13,6 +13,7 @@ import { Press } from '@/components/Press';
 import { Card } from '@/components/Card';
 import { AnalysisModelsSection } from '@/components/AnalysisModelsSection';
 import { Screen } from '@/components/Screen';
+import { localAnalysisEnabled } from '@/core/features';
 import { formatBytes } from '@/core/format';
 import {
   TRANSCRIPTION_LANGUAGES,
@@ -42,6 +43,10 @@ export default function TranscriptionScreen() {
     setTranscriptionModel,
     transcriptionLanguage,
     setTranscriptionLanguage,
+    reviewTranscript,
+    setReviewTranscript,
+    literalTranscript,
+    setLiteralTranscript,
   } = useSettings();
 
   const available = localTranscriptionAvailable();
@@ -214,6 +219,47 @@ export default function TranscriptionScreen() {
         <Text style={styles.cardHint}>
           {bytes > 0 ? `Usando ${formatBytes(bytes)} no aparelho.` : 'Nenhum modelo baixado.'}
         </Text>
+
+        {localAnalysisEnabled() ? (
+          <>
+            <Text style={styles.sectionLabel}>Transcrição revisada</Text>
+            <Card style={styles.card}>
+              <View style={styles.toggleRow}>
+                <View style={styles.rowText}>
+                  <Text style={styles.cardTitle}>Revisar transcrição com IA</Text>
+                  <Text style={styles.cardHint}>
+                    Corrige concordância, pontuação e siglas antes de analisar, usando o modelo
+                    local. Desligada, a análise continua, mas perde precisão sobre a fala. Vale só
+                    neste aparelho: o dashboard tem a própria opção.
+                  </Text>
+                </View>
+                <Switch
+                  value={reviewTranscript}
+                  onValueChange={(value) => void setReviewTranscript(value)}
+                  trackColor={{ true: colors.accent }}
+                  accessibilityLabel="Revisar transcrição com IA"
+                />
+              </View>
+              {reviewTranscript ? (
+                <View style={styles.toggleRow}>
+                  <View style={styles.rowText}>
+                    <Text style={styles.cardTitle}>Transcrição literal</Text>
+                    <Text style={styles.cardHint}>
+                      Mantém hesitações e repetições de gagueira. Desligada, só o que não tem
+                      significado sai; marcadores como tipo e né ficam sempre, junto das gírias.
+                    </Text>
+                  </View>
+                  <Switch
+                    value={literalTranscript}
+                    onValueChange={(value) => void setLiteralTranscript(value)}
+                    trackColor={{ true: colors.accent }}
+                    accessibilityLabel="Transcrição literal"
+                  />
+                </View>
+              ) : null}
+            </Card>
+          </>
+        ) : null}
 
         <AnalysisModelsSection />
       </ScrollView>

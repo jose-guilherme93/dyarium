@@ -16,6 +16,7 @@ import type {
   RecordingSource,
   RecordingStatus,
   TranscriptOrigin,
+  TranscriptReview,
   TranscriptSegment,
   TranscriptStatus,
 } from '@/core/types';
@@ -45,6 +46,7 @@ interface Row {
   transcript_language: string | null;
   transcript_status: string | null;
   transcript_segments: string | null;
+  transcript_review: string | null;
   transcript_checkpoint_ms: string | null;
   has_transcript: string | null;
   transcript_origin: string | null;
@@ -350,6 +352,15 @@ const MIGRATIONS: Migration[] = [
       await addColumn(db, 'recordings', 'archived_dirty');
     },
   },
+  {
+    version: 21,
+    run: async (db) => {
+      // Revisao da transcricao por IA: modelo, versao do prompt, modo literal e
+      // a estimativa de compreensao. Os textos por trecho vivem no JSON de
+      // transcript_segments (`revised`), ao lado do original do whisper.
+      await addColumn(db, 'recordings', 'transcript_review');
+    },
+  },
 ];
 
 async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
@@ -433,6 +444,18 @@ function parseSegments(raw: string | null): TranscriptSegment[] | undefined {
   try {
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? (parsed as TranscriptSegment[]) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Estado da revisao por IA, em JSON; ausente quando nunca houve revisao. */
+function parseReview(raw: string | null): TranscriptReview | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return undefined;
+    return parsed as TranscriptReview;
   } catch {
     return undefined;
   }
@@ -563,6 +586,11 @@ function rowToRecording(row: Row): Recording {
   const serverAudios = lazyParsed(row.server_audios, parseServerAudios);
   Object.defineProperties(recording, {
     transcriptSegments: { enumerable: true, configurable: true, get: segments },
+    transcriptReview: {
+      enumerable: true,
+      configurable: true,
+      get: () => parseReview(row.transcript_review),
+    },
     attachments: { enumerable: true, configurable: true, get: attachments },
     serverAudios: { enumerable: true, configurable: true, get: serverAudios },
   });
@@ -578,13 +606,13 @@ export async function upsertRecording(r: Recording): Promise<void> {
       status, upload_id, offset, attempts, next_attempt_at, last_error, terminal, entry_id, note_id,
       server_attachment_id,
       transcript, transcript_language, transcript_status, transcript_segments,
-      transcript_checkpoint_ms,
+      transcript_review, transcript_checkpoint_ms,
       has_transcript, transcript_origin,
       source, text, content_type, file_name, duplicate, archived,
       notebook_id, tags, notebook_dirty, tags_dirty, archived_dirty,
       note_dirty, attachments,
       title_version, recorded_at_version, body_version, sync_conflict, server_audios, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
       recorded_at = excluded.recorded_at,
@@ -652,6 +680,7 @@ export async function upsertRecording(r: Recording): Promise<void> {
       r.transcriptLanguage ?? null,
       r.transcriptStatus ?? null,
       r.transcriptSegments ? JSON.stringify(r.transcriptSegments) : null,
+      r.transcriptReview ? JSON.stringify(r.transcriptReview) : null,
       r.transcriptCheckpointMs ?? null,
       r.hasTranscript ? 1 : null,
       r.transcriptOrigin ?? null,

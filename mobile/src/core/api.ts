@@ -59,6 +59,19 @@ export interface PutTranscriptBody {
   segments: TranscriptSegment[];
 }
 
+export interface PutTranscriptRevisionsBody {
+  attachment_id?: string;
+  model: string;
+  prompt_version: number;
+  literal: boolean;
+  comprehension: number;
+  /** Trechos que o modelo nao conseguiu revisar; o painel mostra o numero. */
+  rejected?: number;
+  /** Indice do primeiro trecho que a passada ainda nao alcancou. */
+  reviewed_through?: number;
+  segments: { idx: number; text: string }[];
+}
+
 export interface CreateTextEntryBody {
   /** Id temporal do app (ULID): o servidor usa-o para a nota manter a posicao. */
   id?: string;
@@ -164,10 +177,21 @@ export interface CompleteUploadResponse {
 export interface TranscriptResponse {
   model: string;
   language: string;
+  /** Texto visivel: o revisado quando existe, o cru do whisper quando nao. */
   text: string;
   trim_silence?: boolean;
   duration_seconds?: number;
   segments: TranscriptSegment[];
+  /** Revisao ja aplicada no servidor, quando houver. */
+  revised?: boolean;
+  revised_model?: string;
+  revised_prompt_version?: number;
+  revised_literal?: boolean;
+  revised_comprehension?: number;
+  /** Trechos sem revisao porque o modelo nao conseguiu responder. */
+  revised_rejected?: number;
+  /** Trechos que a passada ainda nao alcancou; 0 quando terminou. */
+  revised_pending?: number;
 }
 
 export interface VersionResponse {
@@ -261,6 +285,13 @@ export interface ServerAnalysis {
   people: string[] | null;
   places: string[] | null;
   summary: string;
+  /** Compreensao logica (0 a 100); -1 ou ausente quando nao medida. */
+  comprehension?: number;
+  comprehension_source?: string;
+  /** Series de fala por 100 palavras do texto cru. */
+  stutter_rate?: number;
+  hesitation_rate?: number;
+  revised_segments?: number;
   /** Campos ricos, quando a analise foi feita com o pipeline novo. */
   themes?: AnalysisTheme[] | null;
   key_moments?: AnalysisMoment[] | null;
@@ -605,6 +636,22 @@ export class DyariumApi {
       headers: this.authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(body),
     });
+    if (!res.ok) throw await this.parseError(res);
+  }
+
+  /** Envia a revisao feita no aparelho para o dashboard ler o mesmo texto. */
+  async putTranscriptRevisions(
+    entryId: string,
+    body: PutTranscriptRevisionsBody,
+  ): Promise<void> {
+    const res = await this.fetchImpl(
+      this.url(`/api/v1/entries/${entryId}/transcript/revisions`),
+      {
+        method: 'PUT',
+        headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(body),
+      },
+    );
     if (!res.ok) throw await this.parseError(res);
   }
 

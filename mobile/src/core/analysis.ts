@@ -28,6 +28,12 @@ export interface NoteAnalysisView {
   moments: NoteAnalysisMoment[];
   questions: string[];
   decisions: string[];
+  /** 0-100; null quando nao medida. */
+  comprehension: number | null;
+  /** "review" quando veio da revisao, "analysis" para a estimativa do modelo. */
+  comprehensionSource: string;
+  stutterRate: number;
+  hesitationRate: number;
 }
 
 function cleanList(items: (string | null | undefined)[] | null | undefined): string[] {
@@ -149,6 +155,8 @@ export function simplifiedAnalysis(text: string): ServerAnalysis {
     key_moments: null,
     questions: null,
     decisions: null,
+    comprehension: -1,
+    comprehension_source: 'analysis',
   };
 }
 
@@ -172,6 +180,8 @@ export function toServerAnalysis(parsed: ParsedAnalysis, model: string): ServerA
     key_moments: null,
     questions: null,
     decisions: null,
+    comprehension: parsed.comprehension ?? -1,
+    comprehension_source: 'analysis',
   };
 }
 
@@ -195,6 +205,10 @@ export function toNoteAnalysis(
     .filter((moment) => moment.text !== '');
   const questions = cleanList(analysis.questions);
   const decisions = cleanList(analysis.decisions);
+  const comprehension =
+    typeof analysis.comprehension === 'number' && analysis.comprehension >= 0
+      ? Math.round(analysis.comprehension)
+      : null;
 
   if (
     summary === '' &&
@@ -204,7 +218,8 @@ export function toNoteAnalysis(
     places.length === 0 &&
     moments.length === 0 &&
     questions.length === 0 &&
-    decisions.length === 0
+    decisions.length === 0 &&
+    comprehension === null
   ) {
     return null;
   }
@@ -225,5 +240,15 @@ export function toNoteAnalysis(
     moments,
     questions,
     decisions,
+    comprehension,
+    comprehensionSource: (analysis.comprehension_source ?? '').trim(),
+    stutterRate:
+      typeof analysis.stutter_rate === 'number' && analysis.stutter_rate > 0
+        ? analysis.stutter_rate
+        : 0,
+    hesitationRate:
+      typeof analysis.hesitation_rate === 'number' && analysis.hesitation_rate > 0
+        ? analysis.hesitation_rate
+        : 0,
   };
 }

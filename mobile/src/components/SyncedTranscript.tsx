@@ -149,7 +149,7 @@ export function SyncedTranscript({
             accessibilityLabel={`Ouvir a partir de ${formatDuration(segment.start_ms)}`}
           >
             <Text style={[styles.line, index === active && styles.lineActive]}>
-              {segment.text}
+              {segment.revised ?? segment.text}
             </Text>
           </Press>
         );

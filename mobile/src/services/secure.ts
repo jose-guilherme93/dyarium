@@ -80,6 +80,10 @@ export interface Prefs {
   localTranscription?: boolean;
   /** Aviso de transcricao e analise desligadas ja dispensado pelo usuario. */
   transcriptionPromptDismissed?: boolean;
+  /** Revisar a transcricao com a IA local antes de analisar. */
+  reviewTranscript?: boolean;
+  /** Manter hesitacoes e gagueira no texto revisado. */
+  literalTranscript?: boolean;
   /** Id do modelo de transcricao escolhido. */
   transcriptionModel?: string;
   /** Idioma da transcricao (pt fixo ou detectar). */
@@ -110,6 +114,8 @@ const PREFS_KEY = 'dyarium.prefs';
 const DEFAULT_PREFS: Prefs = {
   swipeAction: 'delete',
   transcriptionPromptDismissed: false,
+  reviewTranscript: false,
+  literalTranscript: false,
 };
 
 export async function loadPrefs(): Promise<Prefs> {
@@ -125,6 +131,8 @@ export async function loadPrefs(): Promise<Prefs> {
       localTranscription:
         typeof parsed.localTranscription === 'boolean' ? parsed.localTranscription : undefined,
       transcriptionPromptDismissed: parsed.transcriptionPromptDismissed === true,
+      reviewTranscript: parsed.reviewTranscript === true,
+      literalTranscript: parsed.literalTranscript === true,
       transcriptionModel:
         typeof parsed.transcriptionModel === 'string'
           ? parsed.transcriptionModel

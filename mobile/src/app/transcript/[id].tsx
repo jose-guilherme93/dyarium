@@ -5,26 +5,33 @@ import { back } from '@/services/appNavigation';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
+  Switch,
   View,
 } from 'react-native';
 import { Text, TextInput } from '@/components/AppText';
 import { AudioWaveform } from '@/components/AudioWaveform';
 import { Press } from '@/components/Press';
+import { ReviewStatus } from '@/components/ReviewStatus';
 
 import { DyariumApi, type FetchLike, type TranscriptSegment } from '@/core/api';
+import { localAnalysisEnabled as localAnalysisAvailable } from '@/core/features';
 import { formatDuration } from '@/core/format';
 import { audioRefFromPath } from '@/core/noteAudio';
+import { reviewHash, visibleTranscript } from '@/core/transcriptReview';
 import { breakSentences } from '@/core/richText';
 import { activeSegmentIndex } from '@/core/transcript';
 import { useRenderCount } from '@/dev/perf';
 import { resolveAudioSource } from '@/services/attachments';
 import { releaseAudioFocus } from '@/services/audioFocus';
+import { resolveAnalysisModel } from '@/services/analysisModels';
 import { getRecording, upsertRecording } from '@/services/db';
 import { loadServerConfig } from '@/services/secure';
+import { reviewRecording } from '@/services/transcriptReview';
 import { pushTranscript } from '@/services/transcriptSync';
 import { emitRecording } from '@/services/uploaderLoop';
 import { useLibrary } from '@/state/LibraryContext';
 import { usePlayAt, usePlayback } from '@/state/PlaybackContext';
+import { useSettings } from '@/state/SettingsContext';
 import { useTranscriptionProgress } from '@/state/useTranscriptionProgress';
 import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
 import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
@@ -63,8 +70,11 @@ const SegmentRow = memo(function SegmentRow({
 }: SegmentRowProps) {
   const styles = useThemedStyles(baseStyles);
   const { colors } = useTheme();
+  const [showOriginal, setShowOriginal] = useState(false);
 
-  const text = useMemo(() => breakSentences(segment.text), [segment.text]);
+  // O leitor mostra a revisao; o original do whisper fica a um toque.
+  const visible = segment.revised ?? segment.text;
+  const text = useMemo(() => breakSentences(visible), [visible]);
   return (
     <View style={[styles.segment, active && styles.segmentActive]}>
       <Press
@@ -101,7 +111,25 @@ const SegmentRow = memo(function SegmentRow({
         <>
           <Press style={styles.segmentBody} onPress={() => onSeek(index)}>
             <Text style={[styles.segmentText, active && styles.segmentTextActive]}>{text}</Text>
+            {showOriginal && segment.revised ? (
+              <Text style={styles.segmentOriginal}>
+                Original do whisper: {breakSentences(segment.text)}
+              </Text>
+            ) : null}
           </Press>
+          {segment.revised ? (
+            <Press
+              onPress={() => setShowOriginal((value) => !value)}
+              accessibilityLabel="Ver o texto original do whisper"
+              hitSlop={8}
+            >
+              <Ionicons
+                name={showOriginal ? 'sparkles' : 'sparkles-outline'}
+                size={15}
+                color={colors.accent}
+              />
+            </Press>
+          ) : null}
           <Press
             onPress={() => onStartEdit(index)}
             accessibilityLabel="Editar trecho"
@@ -125,6 +153,13 @@ export default function TranscriptScreen() {
 
   const { id, edit } = useLocalSearchParams<{ id: string; edit?: string }>();
   const { recordings } = useLibrary();
+  const {
+    reviewTranscript: reviewEnabled,
+    literalTranscript,
+    setLiteralTranscript,
+    analysisModel,
+    analysisLowPower,
+  } = useSettings();
   const note = recordings.find((r) => r.id === id);
   const noteId = note?.id;
   const entryId = note?.entryId;
@@ -153,14 +188,18 @@ export default function TranscriptScreen() {
       if (!current) return;
       const list = [...(current.transcriptSegments ?? [])];
       if (!list[index]) return;
-      list[index] = { ...list[index], text: value.trim() };
+      // Escrita do usuario vence: o trecho sai da revisao e fica marcado para
+      // o servidor nunca revisar por cima.
+      list[index] = {
+        ...list[index],
+        text: value.trim(),
+        revised: undefined,
+        edited: true,
+      };
       const updated = {
         ...current,
         transcriptSegments: list,
-        transcript: list
-          .map((segment) => segment.text)
-          .join(' ')
-          .trim(),
+        transcript: visibleTranscript(list),
         updatedAt: new Date().toISOString(),
       };
       await upsertRecording(updated);
@@ -172,6 +211,29 @@ export default function TranscriptScreen() {
   );
 
   const segments = hasCache && cachedSegments ? cachedSegments : fetched;
+
+  // Por que o chip de revisao esta vazio: um toque responde, em uma linha.
+  const reviewReason = !reviewEnabled
+    ? 'Revisão desligada nas configurações.'
+    : !localAnalysisAvailable()
+      ? 'Este build não tem o motor de análise local.'
+      : !resolveAnalysisModel(analysisModel)
+        ? 'Nenhum modelo de análise instalado.'
+        : 'Ainda não revisada.';
+
+  // Revisa so o que ficou sem revisao; o resto do texto nao e tocado.
+  const retryRejected = useCallback(async () => {
+    if (!note) return;
+    const pending = note.transcriptReview?.rejectedIdx ?? [];
+    const model = resolveAnalysisModel(analysisModel);
+    if (pending.length === 0 || !model) return;
+    await reviewRecording(note, model, {
+      literal: literalTranscript,
+      lowPower: analysisLowPower,
+      title: note.title,
+      only: pending,
+    });
+  }, [note, analysisModel, literalTranscript, analysisLowPower]);
   const transcriptionPercent = useTranscriptionProgress(noteId);
   const transcribing = note?.transcriptStatus === 'pending';
 
@@ -251,6 +313,27 @@ export default function TranscriptScreen() {
             await upsertRecording({
               ...current,
               transcriptSegments: transcript.segments,
+              transcriptReview:
+                transcript.revised_prompt_version && transcript.revised_prompt_version > 0
+                  ? {
+                      model: transcript.revised_model ?? '',
+                      promptVersion: transcript.revised_prompt_version,
+                      literal: transcript.revised_literal === true,
+                      comprehension: transcript.revised_comprehension ?? -1,
+                      hash: reviewHash(transcript.segments ?? []),
+                      rejected: transcript.revised_rejected ?? 0,
+                      reviewedThrough: Math.max(
+                        0,
+                        (transcript.segments?.length ?? 0) - (transcript.revised_pending ?? 0),
+                      ),
+                      // Sem trechos pendentes a passada terminou; com pendentes
+                      // o chip mostra "em andamento" em vez de "nada a mudar".
+                      finishedAt:
+                        (transcript.revised_pending ?? 0) === 0
+                          ? new Date().toISOString()
+                          : undefined,
+                    }
+                  : current.transcriptReview,
               updatedAt: new Date().toISOString(),
             });
           }
@@ -352,6 +435,15 @@ export default function TranscriptScreen() {
         <View style={styles.spacer} />
       </View>
 
+      {segments.length > 0 ? (
+        <ReviewStatus
+          segments={segments}
+          review={note?.transcriptReview}
+          reason={reviewReason}
+          onRetryRejected={note?.transcriptReview?.rejectedIdx?.length ? retryRejected : undefined}
+        />
+      ) : null}
+
       {audioRef ? (
         <View style={styles.player}>
           <View style={styles.playerRow}>
@@ -382,6 +474,21 @@ export default function TranscriptScreen() {
                 if (uri) playAt(uri, seconds);
               });
             }}
+          />
+        </View>
+      ) : null}
+
+      {reviewEnabled && segments.length > 0 ? (
+        <View style={styles.literalRow}>
+          <View style={styles.literalText}>
+            <Text style={styles.literalTitle}>Transcrição literal</Text>
+            <Text style={styles.literalHint}>Mantém hesitações e gagueira.</Text>
+          </View>
+          <Switch
+            value={literalTranscript}
+            onValueChange={(value) => void setLiteralTranscript(value)}
+            trackColor={{ true: colors.accent }}
+            accessibilityLabel="Transcrição literal"
           />
         </View>
       ) : null}
@@ -471,6 +578,26 @@ const baseStyles = defineStyles({
   segmentBody: { flex: 1 },
   segmentText: { color: baseColors.textSecondary, fontSize: fontSize.md, lineHeight: 22 },
   segmentTextActive: { color: baseColors.text },
+  segmentOriginal: {
+    color: baseColors.textTertiary,
+    fontSize: fontSize.sm,
+    lineHeight: 19,
+    marginTop: 2,
+  },
+  literalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    marginHorizontal: spacing.xl,
+    marginBottom: spacing.sm,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.sm,
+    backgroundColor: baseColors.surface,
+  },
+  literalText: { flex: 1, gap: 2 },
+  literalTitle: { color: baseColors.textSecondary, fontSize: fontSize.sm, fontWeight: '600' },
+  literalHint: { color: baseColors.textTertiary, fontSize: fontSize.xs, lineHeight: 16 },
   editWrap: { flex: 1, gap: spacing.sm },
   editInput: {
     color: baseColors.text,

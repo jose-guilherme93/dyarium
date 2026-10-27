@@ -19,8 +19,10 @@ import {
   updateLocalNotebook,
 } from '@/services/notebooks';
 import { pushNotebooks } from '@/services/notebookSync';
+import { resumeInterruptedTranscriptions } from '@/services/localTranscription';
 import { noteIsOpen } from '@/services/noteVisibility';
 import { pullServerEntries } from '@/services/pull';
+import { pushPendingTranscriptsOnce } from '@/services/transcriptSync';
 import { fetchTranscriptsOnce } from '@/services/transcripts';
 import { emitRecording, observeUploads, runUploadQueueOnce } from '@/services/uploaderLoop';
 
@@ -202,6 +204,14 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
 
   // Traz notas do servidor para o app (best-effort). Se nada novo chegou, nao
   // mexe na lista local.
+  // Transcricao feita no aparelho (inclusive por versao anterior do app, ou
+  // envio que falhou offline) sobe para o servidor. Sem isso o dashboard
+  // mostrava a nota transcrita sem texto.
+  const pushTranscripts = useCallback(() => {
+    if (noteIsOpen()) return;
+    void pushPendingTranscriptsOnce().catch(() => undefined);
+  }, []);
+
   const pullServer = useCallback(() => {
     if (noteIsOpen()) return;
     bumpRender('pullserver.called');
@@ -221,10 +231,13 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     const timer = setTimeout(() => {
       kick();
       pullTranscripts();
+      pushTranscripts();
       pullServer();
+      // O que ficou pela metade antes de o app morrer continua de onde parou.
+      void resumeInterruptedTranscriptions().catch(() => undefined);
     }, 2000);
     return () => clearTimeout(timer);
-  }, [ready, config, kick, pullTranscripts, pullServer]);
+  }, [ready, config, kick, pullTranscripts, pushTranscripts, pullServer]);
 
   useEffect(() => {
     if (!hasPending) return undefined;
@@ -251,11 +264,12 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       if (state === 'active') {
         kick();
         pullTranscripts();
+        pushTranscripts();
         pullServer();
       }
     });
     return () => subscription.remove();
-  }, [kick, pullTranscripts, pullServer]);
+  }, [kick, pullTranscripts, pushTranscripts, pullServer]);
 
   // Nota editada no dashboard aparece no app sem precisar reabrir: com o app em
   // primeiro plano, busca as versoes novas a cada intervalo. Fora de foco, o

@@ -5,6 +5,7 @@
  */
 
 import { ApiError, DyariumApi, type FetchLike } from '@/core/api';
+import { reviewHash } from '@/core/transcriptReview';
 import { needsTranscript, type Recording } from '@/core/types';
 
 import { notify } from './notifications';
@@ -41,6 +42,18 @@ export async function fetchTranscriptsOnce(): Promise<void> {
           transcriptLanguage: transcript.language,
           transcriptStatus: 'ready',
           transcriptSegments: transcript.segments,
+          // Revisao feita no servidor: o aparelho reaproveita em vez de gastar
+          // bateria revisando de novo.
+          transcriptReview:
+            transcript.revised_prompt_version && transcript.revised_prompt_version > 0
+              ? {
+                  model: transcript.revised_model ?? '',
+                  promptVersion: transcript.revised_prompt_version,
+                  literal: transcript.revised_literal === true,
+                  comprehension: transcript.revised_comprehension ?? -1,
+                  hash: reviewHash(transcript.segments ?? []),
+                }
+              : recording.transcriptReview,
           updatedAt: new Date().toISOString(),
         };
         await upsertRecording(updated);

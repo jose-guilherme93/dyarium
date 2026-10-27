@@ -247,6 +247,19 @@ function AnalysisContent({ analysis }: { analysis: NoteAnalysisView }) {
 
       {analysis.summary ? <Text style={styles.analysisSummary}>{analysis.summary}</Text> : null}
 
+      {analysis.comprehension !== null ? (
+        <Text style={styles.analysisMeta}>
+          Compreensão lógica: {analysis.comprehension}/100
+          {analysis.comprehensionSource === 'analysis' ? ' (sem revisão)' : ''}
+        </Text>
+      ) : null}
+      {analysis.stutterRate > 0 || analysis.hesitationRate > 0 ? (
+        <Text style={styles.analysisMeta}>
+          Fala: gagueira {analysis.stutterRate.toFixed(1)} e hesitação{' '}
+          {analysis.hesitationRate.toFixed(1)} por 100 palavras
+        </Text>
+      ) : null}
+
       {analysis.emotions.length > 0 ? (
         <View style={styles.analysisBlock}>
           <Text style={styles.analysisBlockTitle}>Emoções</Text>

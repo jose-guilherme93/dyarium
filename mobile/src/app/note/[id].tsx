@@ -38,7 +38,7 @@ import { SyncedTranscript } from '@/components/SyncedTranscript';
 import { simplifiedAnalysis, toNoteAnalysis, toServerAnalysis } from '@/core/analysis';
 import type { AnalysisOutcome, AnalysisRun } from '@/core/analysisRuns';
 import type { ServerAnalysis } from '@/core/api';
-import { analysisModelById } from '@/core/analysisModels';
+import { analysisModelById, type AnalysisModelInfo } from '@/core/analysisModels';
 import { analysisContentHash } from '@/core/analysisPrompt';
 import { localAnalysisEnabled } from '@/core/features';
 import { newId } from '@/core/id';
@@ -58,7 +58,14 @@ import { noteBodyWithAudio, audioRefFromPath } from '@/core/noteAudio';
 import { sameNoteContent } from '@/core/noteDocument';
 import { noteStats, type NoteStats } from '@/core/noteStats';
 import { markdownToPlain } from '@/core/richText';
-import type { TranscriptSegment } from '@/core/types';
+import type { Recording, TranscriptSegment } from '@/core/types';
+import {
+  changedSegments,
+  perHundred,
+  rawTranscript,
+  reviewIsCurrent,
+  speechCounts,
+} from '@/core/transcriptReview';
 import { clearNoteConflict, keepMine } from '@/core/noteSync';
 import { BUILD_STAMP, mark, useRenderCount } from '@/dev/perf';
 
@@ -72,6 +79,7 @@ import {
 } from '@/services/attachments';
 import { setPendingInsert } from '@/services/noteInsert';
 import { fetchNoteAnalysis } from '@/services/analysis';
+import { reviewRecording } from '@/services/transcriptReview';
 import { installedAnalysisModels, isAnalysisModelInstalled } from '@/services/analysisModels';
 import {
   getCachedAnalysis,
@@ -187,6 +195,8 @@ export default function NoteScreen() {
     setAnalysisLowPower,
     transcriptionPromptDismissed,
     dismissTranscriptionPrompt,
+    reviewTranscript: reviewTranscriptEnabled,
+    literalTranscript,
   } = useSettings();
   // Enquanto esta tela esta viva, a sincronizacao de fundo espera: a nota e
   // local e nao pode disputar SQLite/rede com o que o usuario esta fazendo.
@@ -1000,16 +1010,22 @@ export default function NoteScreen() {
   // existir): garante que o servidor receba o texto ligado ao audio certo.
   // `pushTranscript` compara o texto e nao reenvia quando ja esta igual.
   useEffect(() => {
-    if (
-      !noteId ||
-      !note?.entryId ||
-      !note.hasTranscript ||
-      note.transcriptOrigin !== 'local'
-    ) {
-      return;
-    }
+    if (!noteId || !note?.entryId) return;
+    // Qualquer transcricao guardada no aparelho e candidata: a nota pode ter
+    // sido transcrita numa versao antiga, antes de existir a marca de origem.
+    if (note.transcriptOrigin === 'server') return;
+    const hasText =
+      (note.transcript ?? '').trim() !== '' ||
+      (note.transcriptSegments?.length ?? 0) > 0;
+    if (!hasText) return;
     void pushTranscript(noteId);
-  }, [noteId, note?.entryId, note?.hasTranscript, note?.transcriptOrigin]);
+  }, [
+    noteId,
+    note?.entryId,
+    note?.transcriptOrigin,
+    note?.transcript,
+    note?.transcriptSegments?.length,
+  ]);
 
   const refreshAnalysis = useCallback(async () => {
     const target = note;
@@ -1040,6 +1056,33 @@ export default function NoteScreen() {
       setAnalysisChecked(true);
     }
   }, [note, title, cachedAnalysis?.origin]);
+
+  /**
+   * Revisa a transcricao com a IA local antes da analise, quando ligado. O
+   * texto cru do whisper fica em cada trecho; `revised` e o que a analise le.
+   * Best-effort: sem modelo ou sem transcricao, a nota analisa o texto cru.
+   */
+  const ensureTranscriptReview = useCallback(
+    async (current: Recording, model: AnalysisModelInfo): Promise<Recording> => {
+      const segments = current.transcriptSegments ?? [];
+      if (segments.length === 0) return current;
+      if (!reviewTranscriptEnabled || !localAnalysisAvailable()) return current;
+      if (!isAnalysisModelInstalled(model.id)) return current;
+      if (
+        reviewIsCurrent(current.transcriptReview, literalTranscript, segments)
+      ) {
+        return current;
+      }
+      // A revisao grava e sincroniza janela a janela: o texto troca na tela
+      // antes do fim da passada, e o que ja foi feito nao se perde.
+      return reviewRecording(current, model, {
+        literal: literalTranscript,
+        lowPower: analysisLowPower,
+        title: titleRef.current.trim() || current.title,
+      });
+    },
+    [reviewTranscriptEnabled, literalTranscript, analysisLowPower],
+  );
 
   // Analise sob demanda no aparelho: nada de rede e nada de texto saindo daqui.
   const handleAnalyzeLocal = useCallback(async () => {
@@ -1103,7 +1146,17 @@ export default function NoteScreen() {
       // Le a transcricao mais nova do banco; a copia em memoria pode estar
       // atrasada. Se a nota veio do servidor com varios audios, junta o texto
       // de todos eles.
-      const fresh = await getRecording(target.id).catch(() => null);
+      let fresh = await getRecording(target.id).catch(() => null);
+      // A revisao roda antes: e o texto revisado que a analise le. Sem revisao
+      // ligada, ou sem modelo, `fresh` segue como esta.
+      try {
+        if (fresh) fresh = await ensureTranscriptReview(fresh, model);
+      } catch (error) {
+        console.warn(
+          '[review] falhou',
+          error instanceof Error ? error.message : 'erro desconhecido',
+        );
+      }
       const audioTranscripts = (fresh?.serverAudios ?? [])
         .map((audio) => audio.transcript?.text?.trim() ?? '')
         .filter(Boolean)
@@ -1161,6 +1214,19 @@ export default function NoteScreen() {
             emotions: result.parsed?.emotions.length ?? 0,
           });
           const candidate = result.parsed ? toServerAnalysis(result.parsed, model.id) : null;
+          if (candidate && fresh) {
+            const segments = fresh.transcriptSegments ?? [];
+            const review = fresh.transcriptReview;
+            if (review && review.comprehension >= 0) {
+              candidate.comprehension = review.comprehension;
+              candidate.comprehension_source = 'review';
+              candidate.revised_segments = changedSegments(segments);
+            }
+            // As series de fala saem do texto cru, independente da revisao.
+            const counts = speechCounts(rawTranscript(segments, fresh.transcript));
+            candidate.stutter_rate = perHundred(counts.stutter, counts.words);
+            candidate.hesitation_rate = perHundred(counts.hesitation, counts.words);
+          }
           const accepted = candidate ? toNoteAnalysis(candidate) !== null : false;
           if (accepted && candidate) analysis = candidate;
           const outcome: AnalysisOutcome = accepted ? 'ok' : 'invalid_json';
@@ -1297,6 +1363,7 @@ export default function NoteScreen() {
     cachedAnalysis,
     setAnalysisModel,
     title,
+    ensureTranscriptReview,
   ]);
 
   const handleStopAnalysis = useCallback(() => {
@@ -1372,7 +1439,26 @@ export default function NoteScreen() {
       return;
     }
     await maybeTranscribeLocally(noteId);
-  }, [noteId, transcriptionPromptDismissed]);
+    // Transcricao nova com a revisao ligada: ja sai revisada, sem o usuario
+    // precisar abrir a analise.
+    if (reviewTranscriptEnabled) {
+      try {
+        const current = await getRecording(noteId);
+        const model = analysisModelById(analysisModel);
+        if (current && model && isAnalysisModelInstalled(model.id)) {
+          await ensureTranscriptReview(current, model);
+        }
+      } catch {
+        // best-effort: a analise revisa depois
+      }
+    }
+  }, [
+    noteId,
+    transcriptionPromptDismissed,
+    reviewTranscriptEnabled,
+    analysisModel,
+    ensureTranscriptReview,
+  ]);
 
   const handleStopTranscribe = useCallback(() => {
     if (!noteId) return;

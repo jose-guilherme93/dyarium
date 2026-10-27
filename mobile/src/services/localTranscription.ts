@@ -24,7 +24,7 @@ import {
 } from '../../modules/foreground-task';
 import { cancelActivity, failActivity, finishActivity, startActivity, updateActivity } from './activity';
 import { getRecording, listRecordings, upsertRecording } from './db';
-import { ensureNotificationPermission, notify } from './notifications';
+import { ensureNotificationPermission, notifyIfHidden } from './notifications';
 import { emitRecording } from './uploaderLoop';
 import { loadPrefs } from './secure';
 import { modelFilePath } from './transcriptionModels';
@@ -49,9 +49,6 @@ const PERSIST_THROTTLE_MS = 1200;
 
 const contexts = new Map<string, WhisperContext>();
 const running = new Set<string>();
-// Gravacoes ja tentadas nesta sessao: evita re-disparar/entrar em loop. Um novo
-// disparo so acontece reabrindo o app.
-const attempted = new Set<string>();
 
 // Progresso (0..100) por gravacao, em memoria: a UI acompanha sem gravar no banco.
 const progressValues = new Map<string, number>();
@@ -144,7 +141,11 @@ function setProgress(id: string, percent: number): void {
   if (foregroundOn) {
     // A barra de notificacoes e o unico lugar onde o progresso aparece com o
     // app em segundo plano; o texto acompanha a mesma porcentagem da nota.
-    updateForegroundTask('Transcrevendo nota', `${Math.round(next)}% concluído`, Math.round(next));
+    updateForegroundTask(
+      'Transcrevendo',
+      `${Math.round(next)}% concluído`,
+      Math.round(next),
+    );
   }
 }
 
@@ -298,7 +299,7 @@ function lastSegmentEnd(segments: TranscriptSegment[]): number {
  * cada trecho (progressivo) e marca `hasTranscript` ao final.
  */
 export async function transcribeLocally(id: string): Promise<void> {
-  if (running.has(id) || attempted.has(id)) return;
+  if (running.has(id)) return;
   const recording = await getRecording(id);
   if (!recording?.filePath) return;
   if (recording.hasTranscript && recording.transcriptStatus === 'ready') return;
@@ -314,7 +315,6 @@ export async function transcribeLocally(id: string): Promise<void> {
 
   setRunning(id, true);
   cancelled.delete(id);
-  attempted.add(id);
   if (__DEV__) console.log('[perf] transcricao.comecou', { id, ms: Date.now() });
 
   const priorSegments = recording.transcriptSegments ?? [];
@@ -337,7 +337,7 @@ export async function transcribeLocally(id: string): Promise<void> {
   });
   // Mantem o processo vivo e mostra o progresso na barra de notificacoes.
   // Duas threads deixam o app utilizavel mesmo com a nota aberta.
-  startForegroundTask('Transcrevendo nota', '0% concluído', 0);
+  startForegroundTask('Transcrevendo', recording.title || 'Nota', 0);
   foregroundOn = true;
   const wavPath = wavPathFor(id);
   const chunkPath = chunkPathFor(id);
@@ -483,7 +483,6 @@ export async function transcribeLocally(id: string): Promise<void> {
  * salvo continua valendo, entao a retomada nao recomeca o audio inteiro.
  */
 export async function retryTranscription(id: string): Promise<void> {
-  attempted.delete(id);
   await transcribeLocally(id);
 }
 
@@ -500,9 +499,31 @@ async function notifyTranscriptionDone(): Promise<void> {
     // sem banco: notifica generico
   }
   if (pending === 0) {
-    await notify('Tudo transcrito', 'Todas as notas com áudio têm transcrição.');
+    await notifyIfHidden('Tudo transcrito', 'Todas as notas com áudio têm transcrição.');
   } else {
-    await notify('Nota transcrita', 'A transcrição ficou pronta.');
+    await notifyIfHidden('Nota transcrita', 'A transcrição ficou pronta.');
+  }
+}
+
+/**
+ * Retoma no boot o que ficou pela metade: gravacoes cuja transcricao local
+ * parou no meio (app morto, bateria, tela fechada). O checkpoint salvo diz onde
+ * continuar, entao a passada nao recomeca do zero.
+ */
+export async function resumeInterruptedTranscriptions(): Promise<void> {
+  if (!(await willTranscribeLocally())) return;
+  let list: Recording[] = [];
+  try {
+    list = await listRecordings();
+  } catch {
+    return;
+  }
+  for (const recording of list) {
+    if (!recording.filePath || recording.hasTranscript) continue;
+    if (recording.transcriptStatus !== 'pending') continue;
+    if (recording.transcriptOrigin !== 'local') continue;
+    if (running.has(recording.id)) continue;
+    await transcribeLocally(recording.id);
   }
 }
 

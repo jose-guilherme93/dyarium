@@ -108,6 +108,8 @@ describe('toServerAnalysis', () => {
       key_moments: null,
       questions: null,
       decisions: null,
+      comprehension: -1,
+      comprehension_source: 'analysis',
     });
   });
 
