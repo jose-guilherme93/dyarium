@@ -19,6 +19,20 @@ O projeto tem tres superficies: o binario Go (`cmd/`, `internal/`), o dashboard
 - Nao edite codigo gerado (`web/dist/`, `web/node_modules/`, migrations ja
   aplicadas, `models/`). Migrations sao append-only.
 
+## Interface: mostre, nao escreva
+
+Regra de UX do produto, nao sugestao. Vale para o app, o dashboard e as notificacoes.
+
+- Estado se mostra com **icone, numero e medidor**. Nenhuma frase explicando o que o usuario
+  ja ve.
+- Explicacao mora atras de um toque (folha, tooltip, `accessibilityLabel`), nunca em
+  paragrafo na tela.
+- Texto visivel so para: nome de nota, rotulo de uma a tres palavras, numero e erro
+  acionavel.
+- Notificacao tem no maximo duas linhas curtas: o numero na frente, o nome da nota atras.
+- A aparencia distingue os estados de verdade: preenchido = feito, contorno = nao feito,
+  aviso = ficou de fora. "Nao mudou nada" e "nao rodou" nunca podem parecer a mesma coisa.
+
 ## Versoes e releases
 
 - A versao do produto e unica e segue semver, comecando em `0.1.0`. So chega a
