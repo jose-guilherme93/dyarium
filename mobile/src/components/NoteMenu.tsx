@@ -7,10 +7,10 @@ import {
   ScrollView,
   StyleSheet,
   Switch,
-  Text,
   useWindowDimensions,
   View,
 } from 'react-native';
+import { Text } from '@/components/AppText';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Press } from '@/components/Press';
 
@@ -184,7 +184,7 @@ interface NoteMenuProps {
 }
 
 const FAMILY_OPTIONS: { value: NoteFontFamily; label: string }[] = [
-  { value: 'system', label: 'Sistema' },
+  { value: 'system', label: 'Inter' },
   { value: 'serif', label: 'Serifada' },
   { value: 'mono', label: 'Mono' },
 ];

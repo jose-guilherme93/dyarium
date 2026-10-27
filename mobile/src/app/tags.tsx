@@ -4,10 +4,9 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
   FlatList,
-  Text,
-  TextInput,
   View,
 } from 'react-native';
+import { Text, TextInput } from '@/components/AppText';
 import { Press } from '@/components/Press';
 
 import { FastModal } from '@/components/FastModal';

@@ -7,9 +7,9 @@ import {
   RefreshControl,
   ScrollView,
   Switch,
-  Text,
   View,
 } from 'react-native';
+import { Text } from '@/components/AppText';
 import { Press } from '@/components/Press';
 
 import { Button } from '@/components/Button';

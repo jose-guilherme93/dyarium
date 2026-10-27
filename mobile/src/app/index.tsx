@@ -7,9 +7,9 @@ import {
   RefreshControl,
   Share,
   StyleSheet,
-  Text,
   View,
 } from 'react-native';
+import { Text } from '@/components/AppText';
 import { Press } from '@/components/Press';
 import { Swipeable } from 'react-native-gesture-handler';
 

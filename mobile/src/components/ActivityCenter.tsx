@@ -1,6 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  ScrollView,
+  StyleSheet,
+  View,
+} from 'react-native';
+import { Text } from '@/components/AppText';
 
 import { BottomSheet } from '@/components/BottomSheet';
 import { Press } from '@/components/Press';

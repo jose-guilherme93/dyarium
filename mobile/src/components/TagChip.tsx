@@ -1,5 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
-import { StyleSheet, Text, View } from 'react-native';
+import {
+  StyleSheet,
+  View,
+} from 'react-native';
+import { Text } from '@/components/AppText';
 import { Press } from '@/components/Press';
 
 import { tagColor, withAlpha } from '@/core/tags';

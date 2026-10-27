@@ -2,7 +2,12 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Battery from 'expo-battery';
 import * as Device from 'expo-device';
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  StyleSheet,
+  View,
+} from 'react-native';
+import { Text } from '@/components/AppText';
 import { Press } from '@/components/Press';
 
 import { Card } from '@/components/Card';

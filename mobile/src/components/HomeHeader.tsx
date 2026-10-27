@@ -1,5 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Text, TextInput, View } from 'react-native';
+import {
+  View,
+} from 'react-native';
+import { Text, TextInput } from '@/components/AppText';
 
 import { HomeActivityButton } from '@/components/HomeActivityButton';
 import { Press } from '@/components/Press';

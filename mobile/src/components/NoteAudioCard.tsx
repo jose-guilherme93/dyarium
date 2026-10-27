@@ -9,7 +9,11 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import type { AudioPlayer } from 'expo-audio';
-import { ActivityIndicator, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  View,
+} from 'react-native';
+import { Text } from '@/components/AppText';
 
 import { AudioTransport } from '@/components/AudioTransport';
 import { AudioWaveform } from '@/components/AudioWaveform';

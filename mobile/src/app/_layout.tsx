@@ -1,5 +1,6 @@
 import { Stack } from 'expo-router';
 import { setAudioModeAsync } from 'expo-audio';
+import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import * as SystemUI from 'expo-system-ui';
@@ -19,6 +20,22 @@ import { useWritingReminders } from '@/state/useWritingReminders';
 import { useTheme, ThemeProvider } from '@/theme/ThemeContext';
 
 SplashScreen.preventAutoHideAsync().catch(() => undefined);
+
+/**
+ * Inter e a familia do app inteiro. Os arquivos ficam no bundle: carregar da
+ * rede deixaria o primeiro frame com a fonte do sistema e trocaria o texto
+ * depois. A splash so sai quando as fontes estao prontas (ou falharam, para
+ * nao prender o app num build sem o arquivo).
+ */
+const FONT_SOURCES = {
+  Inter_300Light: require('../../assets/fonts/Inter-Light.ttf'),
+  Inter_400Regular: require('../../assets/fonts/Inter-Regular.ttf'),
+  Inter_400Regular_Italic: require('../../assets/fonts/Inter-Italic.ttf'),
+  Inter_500Medium: require('../../assets/fonts/Inter-Medium.ttf'),
+  Inter_600SemiBold: require('../../assets/fonts/Inter-SemiBold.ttf'),
+  Inter_700Bold: require('../../assets/fonts/Inter-Bold.ttf'),
+  Inter_800ExtraBold: require('../../assets/fonts/Inter-ExtraBold.ttf'),
+} as const;
 
 /** Agenda os lembretes de escrita (precisa dos providers de biblioteca/config). */
 function Reminders() {
@@ -71,10 +88,18 @@ function ThemedRoot() {
 
 export default function RootLayout() {
   useRenderCount('RootLayout');
+  const [fontsLoaded, fontError] = useFonts(FONT_SOURCES);
+  useEffect(() => {
+    if (fontError) {
+      console.warn('[dyarium] falha ao carregar a fonte do app');
+    }
+    if (fontsLoaded || fontError) {
+      void SplashScreen.hideAsync().catch(() => undefined);
+    }
+  }, [fontError, fontsLoaded]);
   useEffect(() => {
     // A tela nao espera o cofre (SecureStore): as preferencias chegam em
     // segundo plano e a interface continua util com os padroes enquanto isso.
-    void SplashScreen.hideAsync().catch(() => undefined);
     // Configura a sessao de audio cedo para o player nao falhar no Android.
     void setAudioModeAsync({ playsInSilentMode: true }).catch(() => undefined);
     configureNotifications();
@@ -85,6 +110,10 @@ export default function RootLayout() {
     // rodando: limpar aqui evita o aviso fantasma de "Transcrevendo nota".
     stopForegroundTask();
   }, []);
+
+  if (!fontsLoaded && !fontError) {
+    return null;
+  }
 
   return (
     <SafeAreaProvider>

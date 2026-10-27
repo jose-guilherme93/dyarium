@@ -60,7 +60,8 @@ describe('css', () => {
 
 describe('nativo', () => {
   it('mapeia a familia para o React Native', () => {
-    expect(fontFamilyNative('system')).toBeUndefined();
+    expect(fontFamilyNative('system')).toBe('Inter_400Regular');
+    expect(fontFamilyNative('system', 'bold')).toBe('Inter_700Bold');
     expect(fontFamilyNative('serif')).toBe('serif');
     expect(fontFamilyNative('mono')).toBe('monospace');
   });

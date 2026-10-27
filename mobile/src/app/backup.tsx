@@ -1,7 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
 import { back } from '@/services/appNavigation';
 import { useEffect, useState } from 'react';
-import { Alert, ScrollView, Text, View } from 'react-native';
+import {
+  Alert,
+  ScrollView,
+  View,
+} from 'react-native';
+import { Text } from '@/components/AppText';
 import { Press } from '@/components/Press';
 
 import { Button } from '@/components/Button';

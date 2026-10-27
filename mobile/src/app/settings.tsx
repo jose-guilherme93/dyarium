@@ -1,6 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
 import { back, push } from '@/services/appNavigation';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  ScrollView,
+  StyleSheet,
+  View,
+} from 'react-native';
+import { Text } from '@/components/AppText';
 import { Press } from '@/components/Press';
 
 import { Card } from '@/components/Card';

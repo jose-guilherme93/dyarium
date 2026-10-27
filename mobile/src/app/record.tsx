@@ -3,7 +3,10 @@ import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams } from 'expo-router';
 import { back, replace } from '@/services/appNavigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Text, View } from 'react-native';
+import {
+  View,
+} from 'react-native';
+import { Text } from '@/components/AppText';
 import { Press } from '@/components/Press';
 
 import { LiveWaveform } from '@/components/LiveWaveform';

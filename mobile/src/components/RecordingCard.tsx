@@ -1,6 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
 import { memo, useMemo } from 'react';
-import { StyleSheet, Text, View, type GestureResponderEvent } from 'react-native';
+import {
+  StyleSheet,
+  View,
+  type GestureResponderEvent,
+} from 'react-native';
+import { Text } from '@/components/AppText';
 import { Press } from '@/components/Press';
 
 import { TagChip } from '@/components/TagChip';

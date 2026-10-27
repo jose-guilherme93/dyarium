@@ -1,9 +1,8 @@
 import { useState } from 'react';
 import {
-  Text,
-  TextInput,
   View,
 } from 'react-native';
+import { Text, TextInput } from '@/components/AppText';
 import { Press } from '@/components/Press';
 
 import { FastModal } from '@/components/FastModal';

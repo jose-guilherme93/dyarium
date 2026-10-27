@@ -2,10 +2,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ScrollView,
-  Text,
-  TextInput,
   View,
 } from 'react-native';
+import { Text, TextInput } from '@/components/AppText';
 import { Press } from '@/components/Press';
 
 import { BottomSheet } from '@/components/BottomSheet';

@@ -1,6 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { back, push } from '@/services/appNavigation';
-import { FlatList, Text, View } from 'react-native';
+import {
+  FlatList,
+  View,
+} from 'react-native';
+import { Text } from '@/components/AppText';
 import { Press } from '@/components/Press';
 
 import { RecordingCard } from '@/components/RecordingCard';

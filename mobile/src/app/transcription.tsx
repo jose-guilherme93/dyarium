@@ -2,7 +2,12 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Device from 'expo-device';
 import { back } from '@/services/appNavigation';
 import { useState } from 'react';
-import { ScrollView, Switch, Text, View } from 'react-native';
+import {
+  ScrollView,
+  Switch,
+  View,
+} from 'react-native';
+import { Text } from '@/components/AppText';
 import { Press } from '@/components/Press';
 
 import { Card } from '@/components/Card';

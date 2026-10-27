@@ -6,7 +6,10 @@
  */
 
 import { useEffect, useState } from 'react';
-import { Text, View } from 'react-native';
+import {
+  View,
+} from 'react-native';
+import { Text } from '@/components/AppText';
 
 import { formatClock } from '@/core/format';
 import { baseColors, fontSize, spacing } from '@/theme/tokens';

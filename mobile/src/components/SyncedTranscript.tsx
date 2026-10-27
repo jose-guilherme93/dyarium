@@ -18,10 +18,10 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ScrollView,
-  Text,
   View,
   type LayoutChangeEvent,
 } from 'react-native';
+import { Text } from '@/components/AppText';
 
 import { Press } from '@/components/Press';
 import { formatDuration } from '@/core/format';

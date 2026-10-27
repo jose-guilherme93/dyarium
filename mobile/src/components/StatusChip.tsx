@@ -1,4 +1,8 @@
-import { StyleSheet, Text, View } from 'react-native';
+import {
+  StyleSheet,
+  View,
+} from 'react-native';
+import { Text } from '@/components/AppText';
 
 import type { RecordingStatus } from '@/core/types';
 import { fontSize, radius, spacing, type ThemeColors } from '@/theme/tokens';

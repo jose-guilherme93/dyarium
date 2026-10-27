@@ -13,7 +13,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useAudioPlayerStatus, type AudioPlayer } from 'expo-audio';
 import { useEffect, useRef, useState } from 'react';
-import { Text, View } from 'react-native';
+import {
+  View,
+} from 'react-native';
+import { Text } from '@/components/AppText';
 
 import { AudioWaveform } from '@/components/AudioWaveform';
 import { Press } from '@/components/Press';

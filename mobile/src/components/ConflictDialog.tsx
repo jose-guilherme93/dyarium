@@ -8,7 +8,11 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import { Modal, Text, View } from 'react-native';
+import {
+  Modal,
+  View,
+} from 'react-native';
+import { Text } from '@/components/AppText';
 import { Press } from '@/components/Press';
 
 import type { ConflictField, Recording } from '@/core/types';

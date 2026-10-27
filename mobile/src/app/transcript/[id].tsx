@@ -3,7 +3,11 @@ import { useAudioPlayerStatus } from 'expo-audio';
 import { useLocalSearchParams } from 'expo-router';
 import { back } from '@/services/appNavigation';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, Text, TextInput, View } from 'react-native';
+import {
+  FlatList,
+  View,
+} from 'react-native';
+import { Text, TextInput } from '@/components/AppText';
 import { AudioWaveform } from '@/components/AudioWaveform';
 import { Press } from '@/components/Press';
 

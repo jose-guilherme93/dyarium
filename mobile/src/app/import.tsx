@@ -6,10 +6,9 @@ import {
   ActivityIndicator,
   ScrollView,
   StyleSheet,
-  Text,
-  TextInput,
   View,
 } from 'react-native';
+import { Text, TextInput } from '@/components/AppText';
 import { Press } from '@/components/Press';
 
 import { Button } from '@/components/Button';

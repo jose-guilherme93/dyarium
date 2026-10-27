@@ -23,6 +23,33 @@ export const DEFAULT_TYPOGRAPHY: NoteTypography = {
 export const NOTE_LINE_HEIGHT = 1.6;
 export const NOTE_LETTER_SPACING = 0.1;
 
+/**
+ * Familias Inter carregadas pelo `_layout`. O React Native nao escolhe o peso
+ * de uma fonte customizada pelo `fontWeight` em todas as plataformas, entao
+ * cada peso tem o proprio arquivo e o nome da familia o identifica.
+ */
+export const INTER_FAMILIES = {
+  light: 'Inter_300Light',
+  regular: 'Inter_400Regular',
+  medium: 'Inter_500Medium',
+  semibold: 'Inter_600SemiBold',
+  bold: 'Inter_700Bold',
+  extrabold: 'Inter_800ExtraBold',
+} as const;
+
+/** Familia Inter para um peso numerico vindo de qualquer estilo da tela. */
+export function interFamilyForWeight(weight: string | number | undefined): string {
+  const value = typeof weight === 'number' ? weight : Number(weight);
+  if (value >= 800) return INTER_FAMILIES.extrabold;
+  if (value >= 700) return INTER_FAMILIES.bold;
+  if (value >= 600) return INTER_FAMILIES.semibold;
+  if (value >= 500) return INTER_FAMILIES.medium;
+  if (value > 0 && value < 400) return INTER_FAMILIES.light;
+  return INTER_FAMILIES.regular;
+}
+
+export const INTER_ITALIC_FAMILY = 'Inter_400Regular_Italic';
+
 export function noteLineHeight(size: number): number {
   return Math.round(size * NOTE_LINE_HEIGHT);
 }
@@ -31,7 +58,7 @@ export const MIN_FONT_SIZE = 14;
 export const MAX_FONT_SIZE = 26;
 
 const FAMILIES: Record<NoteFontFamily, string> = {
-  system: '-apple-system, system-ui, sans-serif',
+  system: `"Inter", -apple-system, system-ui, sans-serif`,
   serif: 'Georgia, "Times New Roman", serif',
   mono: 'ui-monospace, Menlo, monospace',
 };
@@ -57,13 +84,20 @@ export function fontWeightCss(weight: NoteFontWeight): number {
 }
 
 /** Familia equivalente no React Native: as pilhas que o sistema entende. */
-const NATIVE_FAMILIES: Record<NoteFontFamily, string | undefined> = {
-  system: undefined,
+const NATIVE_FAMILIES: Record<Exclude<NoteFontFamily, 'system'>, string> = {
   serif: 'serif',
   mono: 'monospace',
 };
 
-export function fontFamilyNative(family: NoteFontFamily): string | undefined {
+/**
+ * Familia nativa do editor. `system` agora e a Inter, a mesma da interface; o
+ * peso entra pela familia porque cada peso e um arquivo separado.
+ */
+export function fontFamilyNative(
+  family: NoteFontFamily,
+  weight: NoteFontWeight = 'regular',
+): string | undefined {
+  if (family === 'system') return interFamilyForWeight(WEIGHTS[weight]);
   return NATIVE_FAMILIES[family] ?? undefined;
 }
 

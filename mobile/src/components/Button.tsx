@@ -1,4 +1,10 @@
-import { ActivityIndicator, StyleSheet, Text, type StyleProp, type ViewStyle } from 'react-native';
+import {
+  ActivityIndicator,
+  StyleSheet,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
+import { Text } from '@/components/AppText';
 import { Press } from '@/components/Press';
 
 import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
