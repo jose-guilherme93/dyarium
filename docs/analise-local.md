@@ -12,6 +12,11 @@ mantendo um historico de meses e anos.
 - Se o servidor ja tem transcricao ou analise, o app importa em vez de gerar.
 - Se o app gerou primeiro, o servidor recebe apenas o JSON derivado, nunca texto
   bruto, para nao regerar.
+- Transcricao em andamento (`transcriptStatus: pending`) nao sobe. O servidor so
+  recebe o texto quando a passada termina (`ready`); um texto parcial no
+  dashboard parecia final e deixava a nota cortada se o app fechasse antes do
+  fim. Uma versao local com menos de 80% do texto que ja esta no servidor tambem
+  nao substitui a completa.
 - A analise e enxuta: metricas e tags, com uma leitura curta. Sem resumo longo.
 - Tags sao tipadas: pessoa, lugar, tema e evento.
 - O historico usa a data da nota, nao a data da analise.
@@ -102,6 +107,34 @@ com o botao **Analisar no aparelho**. O botao:
 Antes do upload a analise e chaveada pelo id local da nota; quando o `entryId`
 chega, a linha e movida para a chave definitiva. Nenhum texto bruto, audio ou
 transcricao sai do aparelho nesse caminho.
+
+## Revisao da transcricao
+
+Antes de analisar, o app pode limpar a transcricao com o mesmo modelo local. O
+whisper escuta o audio; a revisao so corrige a lingua (ortografia, concordancia,
+pontuacao, reticencias, siglas ambiguas) e preserva o jeito de falar. A ligacao
+fica em **Ajustes > Transcricao e modelos**, desligada por padrao, e e separada
+da opcao do dashboard.
+
+- O texto original de cada trecho continua em `text`; o derivado fica em
+  `revised` no mesmo JSON de segmentos. O leitor mostra o revisado e o
+  **Transcricao completa** revela o original num toque no icone.
+- Janelas de 2 trechos nos modelos mais leves do catalogo e de 3 nos demais, com
+  o trecho anterior como contexto. Contagem diferente, JSON invalido ou guardrail
+  recusado mantem o trecho como estava; as outras janelas seguem.
+- As travas sao as mesmas do servidor (`internal/review`): numeros preservados,
+  tamanho entre 0,7x e 1,4x (a explicacao de sigla ganha espaco proprio), no
+  maximo uma explicacao entre parenteses por trecho e similaridade minima.
+- "Transcricao literal" mantem hesitacoes ("ee", "hum") e gagueira; desligada,
+  so o que nao tem significado sai. "tipo", "ne" e girias ficam sempre.
+- Trecho editado a mao ganha `edited` e sai da revisao para sempre: a escrita do
+  usuario vence a IA, inclusive depois de um sync.
+- A ficha da analise ganha **compreensao logica** (0-100, estimada sobre o texto
+  cru) e as taxas de gagueira e hesitacao por 100 palavras. Sem a revisao, a
+  analise devolve a propria estimativa e a ficha a marca como "sem revisao".
+- A revisao sobe ao servidor pelo `PUT /entries/{id}/transcript/revisions`; se o
+  servidor ja revisou a nota, o aparelho reaproveita (mesma versao de prompt,
+  modo e texto) em vez de gastar bateria.
 
 ## Build verificado
 

@@ -91,9 +91,14 @@ Transcricao de um audio de uma entrada, versionada por modelo/parametros.
 | attachment_id | TEXT FK -> Attachment.id | audio transcrito |
 | model | TEXT | modelo ggml usado |
 | language | TEXT | idioma detectado/forcado |
-| text | TEXT | texto integral concatenado |
+| text | TEXT | texto integral do whisper, nunca sobrescrito |
 | trim_silence | INTEGER | 0/1 no momento da transcricao |
 | duration_seconds | REAL | duracao do audio derivado |
+| revised_text | TEXT | juncao do derivado; vazio quando nao ha revisao |
+| revised_model | TEXT | modelo que revisou |
+| revised_prompt_version | INTEGER | versao do prompt/regras |
+| revised_literal | INTEGER | 0/1: revisao no modo literal |
+| revised_comprehension | INTEGER | 0-100; -1 quando nao medida |
 | created_at | TEXT | |
 
 Indices: `entry_id`, (`entry_id`, `model`), unico parcial pela combinacao ativa.
@@ -109,11 +114,28 @@ Segmentos de transcricao com marcas de tempo referentes ao audio ORIGINAL.
 | idx | INTEGER | ordem |
 | start_ms | INTEGER | inicio no audio original |
 | end_ms | INTEGER | fim no audio original |
-| text | TEXT | |
+| text | TEXT | original do whisper |
 | speaker | TEXT | opcional (reservado) |
+| user_edited | INTEGER | 0/1: trecho escrito a mao; a revisao nunca toca |
 | created_at | TEXT | |
 
 Indices: `transcript_id`, (`transcript_id`, `idx`).
+
+## TranscriptRevision
+
+Revisao por IA de um segmento, guardada ao lado do original (nunca no lugar dele).
+
+| Campo | Tipo | Notas |
+|---|---|---|
+| segment_id | TEXT PK FK -> Segment.id | um derivado por trecho |
+| transcript_id | TEXT FK -> Transcript.id | |
+| text | TEXT | texto revisado (pode ser igual ao original) |
+| model | TEXT | |
+| prompt_version | INTEGER | chave de cache da revisao |
+| literal | INTEGER | 0/1 |
+| created_at | TEXT | |
+
+Indices: `transcript_id`. Um trecho sem linha aqui nao foi revisado (ou foi escrito a mao).
 
 Quando o corte de silencio esta ligado, os tempos sao remapeados para o audio original, de
 modo que os segmentos sempre referenciam a linha do tempo completa.
@@ -135,6 +157,11 @@ Resultado do enriquecimento por IA, versionado por modelo.
 | summary | TEXT | resumo curto |
 | raw | TEXT | resposta bruta do provedor |
 | data | TEXT | JSON completo da analise rica |
+| comprehension | INTEGER | compreensao logica 0-100; -1 quando nao medida |
+| comprehension_source | TEXT | review (passada de revisao) ou analysis |
+| stutter_rate | REAL | gagueira por 100 palavras do texto cru |
+| hesitation_rate | REAL | hesitacao por 100 palavras do texto cru |
+| revised_segments | INTEGER | quantos trechos a revisao mudou |
 | created_at | TEXT | |
 
 Indices: `entry_id`, (`entry_id`, `model`).

@@ -35,6 +35,10 @@ metricas e dashboard funcionam offline. Somente a analise de texto por IA e opci
   momentos-chave, resumo, perguntas e decisoes. Transcricoes longas sao analisadas em
   janelas com merge e meta-resumo. Pessoas, lugares e temas viram entidades consultaveis
   e o sentimento alimenta uma linha do tempo de humor.
+- Revisao opcional da transcricao por IA antes da analise: corrige lingua sem
+  reescrever o conteudo, guarda o derivado por trecho ao lado do original e
+  mede compreensao logica, gagueira e hesitacao. Ligada por preferencia em cada
+  superficie (servidor e app).
 - Dashboard SPA: lista, entrada aberta, painel de analise, humor, busca e configuracao.
 - Backup continuo opcional com Litestream para S3.
 - Modulo Telegram opcional, desligado por padrao, para envio de audio.

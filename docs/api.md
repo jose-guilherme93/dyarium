@@ -251,7 +251,10 @@ uma lista; uma nota pode ter varios. Cada item traz `id`, `content_type`,
 `size_bytes`, `duration_seconds`, `created_at` e, quando transcrito, `transcript`.
 
 O `transcript` aqui e **resumido**: `model`, `language`, `text`, `trim_silence` e
-`duration_seconds`, **sem `segments`**. Os segmentos sao grandes e so fazem falta
+`duration_seconds`, **sem `segments`**. Quando a entrada tem um unico audio e a transcricao
+ficou sem `attachment_id` (salva antes de o audio existir, ou por uma versao antiga do app),
+o payload mostra essa transcricao no audio — o mesmo texto de `GET /entries/{id}/transcript`.
+No boot, o servidor liga a transcricao solta ao unico audio da entrada. Os segmentos sao grandes e so fazem falta
 quando o usuario expande a transcricao; use `GET /entries/{id}/segments` para
 busca-los em paginas. `GET /entries/{id}/transcript` continua devolvendo a
 transcricao inteira com `segments`.
@@ -280,7 +283,15 @@ silencio). O audio original permanece intacto.
 ## Transcricao
 
 ### GET /api/v1/entries/{id}/transcript
-Retorna a transcricao atual, com `segments` (inicio, fim, texto) e metadados do modelo.
+Retorna a transcricao atual, com `segments` e metadados do modelo.
+
+- `text` e o que o usuario le: a revisao da IA quando existe, o texto cru do whisper
+  quando nao. O original nunca e sobrescrito.
+- Cada segmento traz `idx`, `start_ms`, `end_ms`, `text` (original do whisper), `edited`
+  (escrito a mao) e, **so quando difere do original**, `revised` (a revisao daquele trecho).
+- A transcricao traz ainda `revised` (booleano), `revised_model`, `revised_prompt_version`,
+  `revised_literal` e `revised_comprehension` (0-100, `-1` quando nao medida), que o app usa
+  para reaproveitar a revisao do servidor em vez de refazer no aparelho.
 
 ### PUT /api/v1/entries/{id}/transcript
 Guarda a transcricao feita no aparelho (transcricao local). O servidor passa a usa-la em
@@ -301,13 +312,50 @@ vez de transcrever, e o dashboard mostra o texto. Corpo:
   transcricao do servidor falhar depois disso (por exemplo, sem `ffmpeg`), o texto salvo
   prevalece e a entrada **nao** volta para `failed`; no boot, o servidor repara entradas
   que ficaram `failed` com transcricao local, sem tocar em falhas de analise.
+- `text` deve ser o **cru do whisper** (a juncao dos segmentos), nunca o revisado: a revisao
+  sobe pelo endpoint abaixo e o original fica intacto. Cada segmento aceita `edited: true`
+  para marcar um trecho escrito a mao; a revisao nunca toca nele e o sync seguinte preserva a
+  marca. Reenviar uma transcricao nao apaga as revisoes dos trechos cujo texto nao mudou.
+
+### PUT /api/v1/entries/{id}/transcript/revisions
+Guarda a revisao da transcricao feita no aparelho (ou por outro cliente). Corpo:
+```json
+{
+  "attachment_id": "at_...",
+  "model": "qwen3-1.7b",
+  "prompt_version": 1,
+  "literal": false,
+  "comprehension": 78,
+  "rejected": 2,
+  "reviewed_through": 34,
+  "segments": [{ "idx": 0, "text": "A sede do PT (Partido dos Trabalhadores)." }]
+}
+```
+- `idx` e o indice do segmento na transcricao; indices desconhecidos e trechos
+  `edited` sao ignorados.
+- `reviewed_through` (opcional) e o indice do primeiro trecho que a passada ainda nao
+  alcancou: o app envia a revisao janela a janela e o servidor grava so ate ali. Ausente
+  significa "a transcricao inteira".
+- `rejected` (opcional) conta os trechos que ficaram sem revisao porque a resposta do modelo
+  nao serviu. Sem ele, "revisou e nao mudou nada" e "nao conseguiu revisar" ficavam iguais.
+- O servidor aplica as mesmas travas da revisao propria (`internal/review`): numero novo ou
+  trocado, tamanho fora da faixa ou mais de uma explicacao entre parenteses descartam aquele
+  trecho e somam em `rejected`. A resposta traz `revised_segments` (trechos alterados) e
+  `rejected` (recusados: do cliente mais as travas do servidor).
+- O payload da transcricao expoe `revised_changed` (trechos alterados),
+  `revised_rejected` (sem revisao) e `revised_pending` (trechos que a passada ainda nao
+  alcancou, derivado dos segmentos sem linha em `transcript_revisions`).
+- 404 quando a transcricao ainda nao existe; 400 para corpo invalido.
+- Uma nova transcricao (retranscrever, `POST /entries/{id}/retranscribe`) descarta as revisoes
+  dos trechos cujo texto mudou; as dos trechos identicos continuam valendo.
 
 ### GET /api/v1/entries/{id}/segments
 Lista os segmentos com paginacao, para leitura incremental. Parametros:
 `attachment_id` (opcional; sem ele usa a transcricao mais recente da entrada),
 `limit` (padrao 200, teto 1000) e `cursor` (o `next_cursor` da pagina anterior).
-Resposta: `{ "segments": [{ "start_ms", "end_ms", "text" }], "next_cursor": "..." }`.
-`next_cursor` so aparece quando existe outra pagina.
+Resposta: `{ "segments": [{ "idx", "start_ms", "end_ms", "text", "edited", "revised" }],
+"next_cursor": "..." }`. `next_cursor` so aparece quando existe outra pagina. `text` e o
+original do whisper; `revised` so aparece quando a IA mudou o trecho.
 
 ## Midia
 
@@ -331,7 +379,43 @@ pode ser cacheada por muito tempo; `HEAD` responde apenas os metadados e `Range`
 nao decifra o arquivo inteiro.
 
 ### DELETE /api/v1/attachments/{id}
-Remove o anexo e o objeto cifrado. Resposta 204.
+Remove o anexo e o objeto cifrado. Resposta 204. Quando o anexo e um audio, a
+transcricao e os segmentos caem junto (FK em cascata) e a duracao da nota passa a
+somar apenas os audios que sobraram. E o que o menu do player chama em "Apagar
+audio"; remover o marcador do corpo (no app) so tira o audio da nota, sem apagar o
+anexo.
+
+## Processos concluidos
+
+### GET /api/v1/activities
+Lista as transcricoes e analises que terminaram, da mais recente para a mais antiga.
+E o que o sino do dashboard mostra; clicar em um item abre a nota. Query `limit`
+opcional (padrao 30, maximo 100). Falhas e notas apagadas ficam de fora.
+
+```json
+{
+  "activities": [
+    {
+      "id": "run_01J8Z...",
+      "entry_id": "en_01J8Z000000000000000000A",
+      "kind": "analysis",
+      "title": "Nota de exemplo",
+      "finished_at": "2026-10-27T17:48:09Z"
+    },
+    {
+      "id": "tr_01J8Z...",
+      "entry_id": "en_01J8Z000000000000000000A",
+      "kind": "transcription",
+      "title": "Nota de exemplo",
+      "finished_at": "2026-10-27T17:33:24Z"
+    }
+  ]
+}
+```
+
+`kind` e `transcription` ou `analysis`. A lista vem do estado persistido no servidor
+(transcricoes gravadas e execucoes de analise com `outcome: "ok"`), entao um processo
+que terminou com o dashboard fechado aparece ao abrir de novo.
 
 ## Analise
 
@@ -349,6 +433,17 @@ e os campos ricos lidos de `data`:
   "people": ["Maria"],
   "places": ["Recife"],
   "summary": "Falou da familia e da saudade de Recife.",
+  "reading": "A nota liga a mudanca de cidade a uma perda que ainda nao foi nomeada...",
+  "sections": [
+    {
+      "heading": "Primeiro dia",
+      "kind": "text",
+      "reading": "O primeiro dia aparece como reconhecimento e estranhamento ao mesmo tempo.",
+      "summary": "Chegada a Recife.",
+      "sentiment": { "score": 0.2, "label": "neutro" },
+      "themes": [{ "name": "viagem", "confidence": 0.7 }]
+    }
+  ],
   "emotions_detail": [{ "name": "alegria", "intensity": 0.8 }],
   "people_detail": [{ "name": "Maria", "count": 3, "relation": "irma", "sentiment": 0.5 }],
   "places_detail": [{ "name": "Recife", "count": 2 }],
@@ -356,17 +451,48 @@ e os campos ricos lidos de `data`:
   "key_moments": [{ "start_ms": 123000, "text": "..." }],
   "questions": ["..."],
   "decisions": ["..."],
+  "comprehension": 78,
+  "comprehension_source": "review",
+  "stutter_rate": 1.2,
+  "hesitation_rate": 3.4,
+  "revised_segments": 12,
   "data": { "sentiment": { "score": 0.5, "label": "positivo" }, "...": "..." }
 }
 ```
+- `comprehension` (0-100) e a estimativa de quanto a transcricao representa a fala com
+  logica, sintaxe e concordancia. `-1` quando nao foi medida. `comprehension_source` diz de
+  onde veio: `review` (a passada de revisao leu o texto cru) ou `analysis` (estimativa do
+  proprio modelo de analise, quando a revisao esta desligada).
+- `stutter_rate` e `hesitation_rate` sao as series de gagueira e hesitacao por 100 palavras
+  do texto cru; `revised_segments` conta quantos trechos a revisao mudou.
+- `summary` e `reading` sao texto curto, nao relatorio: o resumo e uma frase e a leitura no
+  maximo duas (280 caracteres, uma linha), cortados pelo servidor mesmo que o modelo
+  devolva mais. As metricas — sentimento, emocoes, pessoas, lugares, temas, momentos-chave
+  e compreensao — sao o que a analise entrega; `sections` traz a leitura de cada parte
+  (titulos do texto escrito e a transcricao), cada uma com o mesmo limite.
 - Entradas analisadas antes da analise rica nao tem `data`; nesse caso apenas os campos
   legados sao retornados.
 
 ### POST /api/v1/entries/{id}/analyze
-Enfileira um job `analyze`. Retorna 409 se a analise estiver desligada na configuracao.
-O worker analisa a transcricao em janelas quando ela e longa, mescla os resultados e faz um
-meta-resumo quando ha mais de uma janela. Pessoas, lugares e temas viram entidades
-consultaveis.
+Antes de enfileirar, o servidor faz um **ping** ao provedor de IA com a configuracao salva
+(chave, endpoint e modelo) e so entao cria o job `analyze`. Se o provedor nao responder, a
+resposta e `502` com `{ "error": { "code": "ai_unavailable", "message": "..." } }` e a nota
+**nao** muda de estado nem entra na fila: o clique nunca vira uma promessa quebrada.
+Retorna 409 se a analise estiver desligada na configuracao.
+
+O ping e uma completion minima, sem formato de resposta (pedir `json_object` sem a palavra
+"json" no prompt faz o provedor recusar com 400). Uma resposta vazia ainda conta como
+provedor saudavel: modelos de raciocinio podem gastar o teto de tokens pensando.
+O worker analisa cada secao da nota (titulos do texto escrito + transcricao), mescla as
+metricas e sintetiza a nota. Pessoas, lugares e temas viram entidades consultaveis. Com a revisao ligada (`review_enabled`), a analise le o texto revisado; a
+passada de revisao roda antes e publica o progresso com `stage: "reviewing"`. Reexecutar a
+analise nao revisa de novo quando a revisao guardada ja corresponde ao modelo, a versao do
+prompt e ao modo literal.
+
+Modelos de raciocinio gastam parte do teto de tokens pensando e podem devolver
+`finish_reason: "length"` com conteudo vazio. Quando isso acontece, o cliente dobra o
+`max_tokens` e tenta de novo (ate 8000) em vez de repetir com o mesmo teto — repetir igual
+produzia a mesma nota falhando cinco vezes.
 
 ### GET /api/v1/analysis/runs/summary
 Agregado das execucoes de analise do worker, para o diagnostico do app
@@ -657,6 +783,11 @@ Retorna as configuracoes atuais (por exemplo, `trim_silence`, modelo de transcri
 de analise e `analysis_themes`). `analysis_themes` e a lista de temas preferidos separada
 por virgulas; quando vazia, o servidor devolve a lista padrao.
 
+`review_enabled` liga a revisao da transcricao por IA antes da analise (padrao desligado;
+sem ela a analise continua, so perde precisao). `literal_transcript` mantem hesitacoes e
+gagueira no texto revisado. As duas sao por instancia: o app tem preferencias separadas, e
+ligar em um lado nao liga no outro.
+
 `analyze_provider` escolhe o formato da API de analise:
 - `openai` (padrao): endpoint compativel com OpenAI (`/chat/completions`) autenticado por
   chave (`analyze_api_key`).
@@ -690,7 +821,11 @@ Fluxo Server-Sent Events. Filtro opcional `entry_id`. Reconexao via `Last-Event-
 
 Eventos previstos:
 - `entry.status`: `{ "entry_id": "...", "status": "transcribing" }`
-- `job.progress`: `{ "job_id": "...", "entry_id": "...", "progress": 0.42, "stage": "..." }`
+- `job.progress`: `{ "entry_id": "...", "stage": "reviewing", "done": 4, "total": 12 }`
+- `transcript.revised`: `{ "entry_id": "...", "attachment_id": "...",
+  "segments": [{ "idx": 12, "text": "texto revisado" }], "done": 4, "total": 12,
+  "rejected": 1 }` — publicado a cada janela revisada, com os trechos que mudaram. E o que
+  deixa app e dashboard mostrarem o texto se montando sem esperar a passada inteira.
 - `transcript.ready`: `{ "entry_id": "...", "segment_count": 123 }`
 - `analysis.ready`: `{ "entry_id": "..." }`
 - `entry.failed`: `{ "entry_id": "...", "reason": "..." }`
@@ -698,6 +833,5 @@ Eventos previstos:
 
 Cada evento tem `id` (monotonico) e `event` (nome). O cliente retoma do ultimo `id` recebido.
 
-Nota: o SSE e especificado aqui, mas a implementacao fica para uma fase posterior ao
-ambiente de desenvolvimento. A Fase 2 entrega `GET /healthz`, `/api/v1/version`, a
-autenticacao Bearer e o shell do dashboard.
+O dashboard consome o fluxo desde `web/src/useEvents.ts`; o app passa a consumir no mesmo
+formato (proxima fase) e hoje reconcilia por polling.

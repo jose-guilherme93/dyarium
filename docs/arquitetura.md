@@ -408,9 +408,66 @@ Campos do job: tipo, payload, tentativas, max_attempts, `available_at` (para bac
 `lease_expires_at` e o id do worker que detem o lease. Um job com lease expirado volta a
 `queued` (recuperacao de worker morto).
 
+## Revisao da transcricao
+
+O whisper grava o texto cru em `segments.text` e nunca o sobrescreve. A revisao da IA e um
+derivado por trecho (`transcript_revisions`), publicado **janela a janela**: cada janela
+aceita e gravada e vira o evento `transcript.revised` antes da passada terminar. O leitor
+(app ou dashboard) troca aquele trecho na hora; a analise so comeca quando a revisao
+termina.
+
+Tres estados precisam ser distinguiveis no payload e na tela, porque a diferenca entre eles
+era invisivel antes:
+
+- `revised_changed > 0`: a IA reescreveu algum trecho.
+- `revised_changed == 0` e `revised_pending == 0`: a passada rodou e nao havia o que corrigir.
+- `revised_rejected > 0`: parte dos trechos ficou sem revisao (resposta em formato
+  inaceitavel ou trava de aceitacao). `revised_pending > 0` marca uma passada interrompida,
+  que retoma do primeiro trecho que faltou.
+
+O mesmo vale para o aparelho: a revisao local grava o estado em `transcript_review` (contagem
+de recusados, trecho alcancado e `finishedAt`) e so e considerada atual quando a passada
+terminou. O esquema JSON pedido ao modelo local vem do chamador (`options.schema`); fixar o
+schema da analise na chamada fazia toda janela da revisao voltar inutilizavel, em silencio.
+
 Idempotencia: cada job deriva uma chave logica (por exemplo, `transcribe:{entry_id}` e
 `analyze:{entry_id}:{model}`). Um job ja concluido para a mesma chave nao e reexecutado, e
 a gravacao dos resultados e feita em transacao, com upsert por chave natural.
+
+## Analise por secao
+
+A nota e lida em partes: cada titulo do texto escrito e a transcricao do audio viram uma
+secao (`analysisInput` monta `TextSections` + a secao da fala). O pipeline analisa cada
+secao com o texto inteiro dela e depois faz uma sintese da nota, que liga as leituras — por
+isso `Result.Sections` existe ao lado de `summary`/`reading`. Uma secao maior que o limite
+de uma chamada e dividida em janelas (entre paragrafos ou palavras), nunca truncada.
+
+O que a analise entrega sao metricas: sentimento, emocoes, pessoas, lugares, temas,
+momentos-chave e compreensao. A prosa e legenda disso, e o servidor a corta em codigo
+(`limitProse`): resumo com uma frase e leitura com no maximo duas, em uma linha. Nao adianta
+pedir pouco no prompt e aceitar um relatorio na resposta.
+
+O orcamento de tokens de cada resposta vem do tamanho do texto (`answerBudget`), com o teto
+do provedor como unico limite; `finish_reason: "length"` faz o cliente dobrar o teto e
+tentar de novo. Modelos de raciocinio nao sao o padrao da interface: eles gastam o
+orcamento pensando e sao marcados com "raciocínio" na lista de modelos.
+
+## Notificacoes de processos concluidos
+
+O sino da lista de notas le `GET /api/v1/activities`, que junta as transcricoes
+gravadas e as execucoes de analise com `outcome: "ok"`. Nao e um estado efemero do
+navegador: a lista sobrevive a fechar a aba e mostra o que terminou antes de ela abrir.
+O navegador guarda apenas o instante da ultima leitura (para o selo de nao lidas), e cada
+item abre a nota correspondente.
+
+## Apagar audio
+
+Remover o marcador do corpo e uma operacao do documento: o audio sai da nota e
+continua no servidor. Apagar de verdade e o `DELETE /api/v1/attachments/{id}`,
+oferecido no menu do player em qualquer audio (inclusive os que estao na pilha
+do topo, sem marcador). A remocao leva a transcricao, os segmentos e a revisao
+junto, e recalcula a duracao da entrada. Sem essa separacao, um audio removido do
+corpo reaparecia na pilha do dashboard sem nenhuma forma de apagar.
 
 ## Decisoes e justificativas
 
