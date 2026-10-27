@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { NotificationsMenu } from "./NotificationsMenu";
 import { api } from "../api";
 import type { Activity } from "../types";
@@ -26,6 +26,7 @@ function activity(overrides: Partial<Activity> = {}): Activity {
 beforeEach(() => {
   localStorage.clear();
   vi.clearAllMocks();
+  document.title = "";
 });
 
 describe("NotificationsMenu", () => {
@@ -60,6 +61,22 @@ describe("NotificationsMenu", () => {
 
     expect(onOpen).toHaveBeenCalledWith("e1");
     expect(Number(localStorage.getItem(SEEN_KEY))).toBeGreaterThan(seen);
+  });
+
+  it("avisa na aba quantos processos terminaram", async () => {
+    const seen = Date.now() - 30 * 60 * 1000;
+    localStorage.setItem(SEEN_KEY, String(seen));
+    vi.mocked(api.listActivities).mockResolvedValue({
+      activities: [
+        activity({ id: "a1", finished_at: new Date().toISOString() }),
+        activity({ id: "a2", finished_at: new Date().toISOString() }),
+      ],
+    });
+
+    render(<NotificationsMenu refreshKey={0} onOpen={() => {}} />);
+
+    await screen.findByLabelText("Notificações, 2 não lidas");
+    await waitFor(() => expect(document.title).toBe("(2) dyarium"));
   });
 
   it("na primeira visita nao transforma o historico inteiro em nao lido", async () => {

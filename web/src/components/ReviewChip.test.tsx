@@ -50,6 +50,30 @@ describe("estado da revisão no dashboard", () => {
     expect(container.querySelector(".review-chip")).toBeNull();
   });
 
+  it("usa a contagem do servidor e mostra os trechos ainda não alcançados", () => {
+    const { container } = render(
+      <ReviewChip
+        transcript={transcript({ revised_changed: 9, revised_pending: 4 })}
+        segments={SEGMENTS}
+      />,
+    );
+    // A pagina carrega so dois segmentos; o numero real vem do servidor.
+    expect(screen.getByText("9")).toBeTruthy();
+    expect(container.querySelector(".review-chip__muted")?.textContent).toBe("4");
+  });
+
+  it("distingue passada interrompida de revisão concluída", () => {
+    render(
+      <ReviewChip
+        transcript={transcript({ revised_changed: 2, revised_pending: 3, revised_finished: false })}
+        segments={SEGMENTS}
+      />,
+    );
+    expect(
+      screen.getByLabelText("Revisão interrompida. 3 trechos ainda sem revisão."),
+    ).toBeTruthy();
+  });
+
   it("mostra quantos trechos ficaram sem revisão", () => {
     const { container } = render(
       <ReviewChip transcript={transcript({ revised_rejected: 3 })} segments={SEGMENTS} />,

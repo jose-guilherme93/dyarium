@@ -840,19 +840,27 @@ export function NoteEditor({
         <span className="muted">({Number(analysis.sentiment ?? 0).toFixed(2)})</span>
       </p>
       {typeof analysis.comprehension === "number" && analysis.comprehension >= 0 && (
-        <p className="insight-comprehension">
-          Compreensão lógica: <strong>{analysis.comprehension}/100</strong>{" "}
-          <span className="muted">
-            {analysis.comprehension_source === "review"
-              ? `estimativa do texto transcrito; ${analysis.revised_segments ?? 0} trecho(s) melhorado(s) pela IA`
-              : "estimativa do modelo sobre o texto lido, sem revisão da transcrição"}
-          </span>
+        <p
+          className="insight-comprehension"
+          title={
+            analysis.comprehension_source === "review"
+              ? `Compreensão lógica estimada do texto revisado (0 a 100); ${analysis.revised_segments ?? 0} trechos melhorados pela IA.`
+              : "Compreensão lógica estimada pelo modelo sobre o texto lido (0 a 100); a transcrição não foi revisada."
+          }
+        >
+          Compreensão <strong>{analysis.comprehension}/100</strong>
+          {analysis.comprehension_source !== "review" && (
+            <span className="muted"> · sem revisão</span>
+          )}
         </p>
       )}
       {((analysis.stutter_rate ?? 0) > 0 || (analysis.hesitation_rate ?? 0) > 0) && (
-        <p className="muted insight-disfluency">
-          Fala: gagueira {Number(analysis.stutter_rate ?? 0).toFixed(1)} e hesitação{" "}
-          {Number(analysis.hesitation_rate ?? 0).toFixed(1)} por 100 palavras
+        <p
+          className="muted insight-disfluency"
+          title="Ocorrências por 100 palavras do texto cru do áudio."
+        >
+          Gagueira {Number(analysis.stutter_rate ?? 0).toFixed(1)} · Hesitação{" "}
+          {Number(analysis.hesitation_rate ?? 0).toFixed(1)}
         </p>
       )}
       {/* A prosa e legenda das metricas: duas frases no maximo. O resumo so

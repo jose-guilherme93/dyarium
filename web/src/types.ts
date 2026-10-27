@@ -58,6 +58,8 @@ export interface Segment {
   revised?: string;
   /** Segment written by the user; the revision never touches it. */
   edited?: boolean;
+  /** A passada de revisao chegou neste trecho, mesmo sem mudar o texto. */
+  reviewed?: boolean;
 }
 
 export interface Transcript {
@@ -65,6 +67,8 @@ export interface Transcript {
   language: string;
   /** The text the user reads: the revision when it exists, the raw one otherwise. */
   text: string;
+  /** Texto cru do whisper, preservado mesmo quando ha revisao. */
+  raw_text?: string;
   trim_silence: boolean;
   duration_seconds: number;
   /** Whether this transcript already has an AI revision. */
@@ -75,8 +79,14 @@ export interface Transcript {
   revised_comprehension?: number;
   /** Trechos que ficaram sem revisao (resposta recusada ou janela perdida). */
   revised_rejected?: number;
+  /** Trechos alterados pela revisao, contados no servidor. */
+  revised_changed?: number;
   /** Trechos que a passada ainda nao alcancou; 0 quando terminou. */
   revised_pending?: number;
+  /** Indice do primeiro trecho que a passada ainda nao alcancou. */
+  revised_through?: number;
+  /** A passada chegou ao fim (mesmo com recusas no caminho). */
+  revised_finished?: boolean;
   /** Ausente no payload da entrada; carregado sob demanda ao expandir. */
   segments?: Segment[];
 }

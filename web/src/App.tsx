@@ -104,6 +104,13 @@ export function App() {
         api.invalidateAnalysis(id);
       }
       switch (event.name) {
+        // Revisao por janela: so a nota aberta precisa recarregar. O feed de
+        // atividades nao muda aqui (a passada ainda nao terminou).
+        case "transcript.revised":
+          if (id && id === openEntryRef.current) {
+            setNoteRefreshKey((key) => key + 1);
+          }
+          break;
         case "entry.status":
         case "transcript.ready":
         case "analysis.ready":

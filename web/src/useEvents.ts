@@ -6,6 +6,7 @@ const EVENT_NAMES = [
   "entry.status",
   "job.progress",
   "transcript.ready",
+  "transcript.revised",
   "analysis.ready",
   "entry.failed",
 ];

@@ -46,6 +46,10 @@ export function AudioTrack({
   const [segments, setSegments] = useState<Segment[]>(audio.transcript?.segments ?? []);
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [loading, setLoading] = useState(false);
+  // O texto da transcricao muda janela a janela enquanto a IA revisa. Com o
+  // painel aberto, os segmentos precisam ser relidos; sem isso a revisao so
+  // aparecia depois de recarregar a pagina.
+  const transcriptTextRef = useRef(audio.transcript?.text ?? "");
   // Index of the segment whose original text is revealed. Only segments the
   // revision actually changed carry the icon.
   const [originalAt, setOriginalAt] = useState<number | null>(null);
@@ -90,6 +94,36 @@ export function AudioTrack({
       active = false;
     };
   }, [showFull, entryId, audio.id, segments.length, text]);
+
+  // Revisao chegou com o painel aberto: relê a primeira pagina de segmentos
+  // (o texto visivel mudou) para o antes/depois e o chip acompanharem.
+  useEffect(() => {
+    const current = transcript?.text ?? "";
+    if (!showFull || !entryId || segments.length === 0 || transcriptTextRef.current === current) {
+      transcriptTextRef.current = current;
+      return;
+    }
+    transcriptTextRef.current = current;
+    let active = true;
+    setLoading(true);
+    setOriginalAt(null);
+    api
+      .listSegments(entryId, audio.id)
+      .then((page) => {
+        if (!active) return;
+        setSegments(page.segments ?? []);
+        setCursor(page.next_cursor);
+      })
+      .catch(() => {
+        // mantem os segmentos que ja estavam na tela
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [transcript?.text, showFull, entryId, audio.id, segments.length]);
 
   const loadMore = () => {
     if (!entryId || !cursor || loading) return;

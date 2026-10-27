@@ -136,6 +136,17 @@ export function NotificationsMenu({ refreshKey, onOpen }: NotificationsMenuProps
       ? 0
       : activities.filter((activity) => (Date.parse(activity.finished_at) || 0) > seenAt).length;
 
+  // A aba avisa que um processo terminou, sem depender de permissao de
+  // notificacao do navegador. O numero e o mesmo do sino e some quando a
+  // lista e lida.
+  const baseTitle = useRef(
+    typeof document === "undefined" ? "dyarium" : document.title || "dyarium",
+  );
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    document.title = unread > 0 ? `(${unread > 9 ? "9+" : unread}) ${baseTitle.current}` : baseTitle.current;
+  }, [unread]);
+
   const openActivity = (activity: Activity) => {
     close();
     onOpen(activity.entry_id);
