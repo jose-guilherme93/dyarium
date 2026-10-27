@@ -243,7 +243,9 @@ func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "ai_unavailable", analyze.FriendlyError(err))
 		return
 	}
-	if _, err := s.deps.Queue.Enqueue(ctx, jobs.TypeAnalyze, analyzeKey(id, s.deps.Config.AnalyzeModel), jobs.AnalyzePayload{EntryID: id}); err != nil {
+	// A chave e a mesma da analise automatica: um clique enquanto o worker ja
+	// analisa nao pode abrir uma segunda passada concorrente na mesma nota.
+	if _, err := s.deps.Queue.Enqueue(ctx, jobs.TypeAnalyze, jobs.AnalyzeKey(id), jobs.AnalyzePayload{EntryID: id}); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
@@ -292,8 +294,4 @@ func (s *Server) analyzeEnabled(ctx context.Context) bool {
 		return s.deps.Config.AnalyzeEnabled
 	}
 	return v == "true"
-}
-
-func analyzeKey(entryID, model string) string {
-	return "analyze:" + entryID + ":" + model
 }

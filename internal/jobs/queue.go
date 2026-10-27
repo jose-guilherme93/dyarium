@@ -59,6 +59,13 @@ type Queue struct {
 // NewQueue builds a Queue over the given database handle.
 func NewQueue(db *sql.DB) *Queue { return &Queue{db: db} }
 
+// AnalyzeKey is the idempotency key of an entry analysis. The automatic run
+// after transcription and the manual "Analisar" click use the same key, so a
+// click during the automatic pass cannot start a second analysis on the note.
+func AnalyzeKey(entryID string) string {
+	return "analyze:" + entryID
+}
+
 // Enqueue inserts a job available immediately. If a job with the same
 // idempotency key already exists, it is left untouched and its id is returned.
 func (q *Queue) Enqueue(ctx context.Context, jobType, idempotencyKey string, payload any) (string, error) {

@@ -179,3 +179,11 @@ func TestCancelEntry(t *testing.T) {
 		t.Fatalf("queued = %d, esperava 0", queued)
 	}
 }
+
+// A analise automatica e o clique manual precisam usar a mesma chave: uma
+// chave diferente abria duas passadas concorrentes na mesma nota.
+func TestAnalyzeKeyIsTheSameForAutomaticAndManualRuns(t *testing.T) {
+	if got := jobs.AnalyzeKey("en1"); got != "analyze:en1" {
+		t.Fatalf("AnalyzeKey = %q", got)
+	}
+}
