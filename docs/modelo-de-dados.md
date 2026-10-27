@@ -99,6 +99,9 @@ Transcricao de um audio de uma entrada, versionada por modelo/parametros.
 | revised_prompt_version | INTEGER | versao do prompt/regras |
 | revised_literal | INTEGER | 0/1: revisao no modo literal |
 | revised_comprehension | INTEGER | 0-100; -1 quando nao medida |
+| revised_rejected | INTEGER | trechos alcancados que ficaram sem revisao |
+| revised_through | INTEGER | indice do primeiro trecho nao alcancado |
+| revised_finished | INTEGER | 0/1: a passada chegou ao fim (mesmo com recusas) |
 | created_at | TEXT | |
 
 Indices: `entry_id`, (`entry_id`, `model`), unico parcial pela combinacao ativa.

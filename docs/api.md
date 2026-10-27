@@ -286,12 +286,19 @@ silencio). O audio original permanece intacto.
 Retorna a transcricao atual, com `segments` e metadados do modelo.
 
 - `text` e o que o usuario le: a revisao da IA quando existe, o texto cru do whisper
-  quando nao. O original nunca e sobrescrito.
+  quando nao. O original nunca e sobrescrito; `raw_text` o expoe para o app comparar antes
+  de um sync e nao apagar uma revisao que so existe no servidor.
 - Cada segmento traz `idx`, `start_ms`, `end_ms`, `text` (original do whisper), `edited`
   (escrito a mao) e, **so quando difere do original**, `revised` (a revisao daquele trecho).
 - A transcricao traz ainda `revised` (booleano), `revised_model`, `revised_prompt_version`,
   `revised_literal` e `revised_comprehension` (0-100, `-1` quando nao medida), que o app usa
   para reaproveitar a revisao do servidor em vez de refazer no aparelho.
+- `revised_through` e o indice do primeiro trecho que a passada ainda nao alcancou;
+  `revised_finished` diz se ela chegou ao fim. Uma passada terminada com recusas tem
+  `revised_finished: true` e `revised_rejected > 0`; so uma passada interrompida tem
+  `revised_finished: false`.
+- Cada segmento traz `reviewed`: a passada chegou naquele trecho, mesmo quando o texto
+  ficou igual. E o que permite separar trecho recusado de trecho ainda nao alcancado.
 
 ### PUT /api/v1/entries/{id}/transcript
 Guarda a transcricao feita no aparelho (transcricao local). O servidor passa a usa-la em
@@ -315,7 +322,9 @@ vez de transcrever, e o dashboard mostra o texto. Corpo:
 - `text` deve ser o **cru do whisper** (a juncao dos segmentos), nunca o revisado: a revisao
   sobe pelo endpoint abaixo e o original fica intacto. Cada segmento aceita `edited: true`
   para marcar um trecho escrito a mao; a revisao nunca toca nele e o sync seguinte preserva a
-  marca. Reenviar uma transcricao nao apaga as revisoes dos trechos cujo texto nao mudou.
+  marca. Reenviar uma transcricao nao apaga as revisoes dos trechos cujo texto nao mudou;
+  quando o texto inteiro e o mesmo, a compreensao, os recusados e o alcance da passada
+  tambem sobrevivem.
 
 ### PUT /api/v1/entries/{id}/transcript/revisions
 Guarda a revisao da transcricao feita no aparelho (ou por outro cliente). Corpo:
@@ -343,8 +352,9 @@ Guarda a revisao da transcricao feita no aparelho (ou por outro cliente). Corpo:
   trecho e somam em `rejected`. A resposta traz `revised_segments` (trechos alterados) e
   `rejected` (recusados: do cliente mais as travas do servidor).
 - O payload da transcricao expoe `revised_changed` (trechos alterados),
-  `revised_rejected` (sem revisao) e `revised_pending` (trechos que a passada ainda nao
-  alcancou, derivado dos segmentos sem linha em `transcript_revisions`).
+  `revised_rejected` (trechos alcancados que ficaram sem revisao), `revised_through`,
+  `revised_finished` e `revised_pending` (trechos nao editados que a passada ainda nao
+  alcancou). `revised_pending` nao conta recusados: eles foram alcancados.
 - 404 quando a transcricao ainda nao existe; 400 para corpo invalido.
 - Uma nova transcricao (retranscrever, `POST /entries/{id}/retranscribe`) descarta as revisoes
   dos trechos cujo texto mudou; as dos trechos identicos continuam valendo.
@@ -380,8 +390,9 @@ nao decifra o arquivo inteiro.
 
 ### DELETE /api/v1/attachments/{id}
 Remove o anexo e o objeto cifrado. Resposta 204. Quando o anexo e um audio, a
-transcricao e os segmentos caem junto (FK em cascata) e a duracao da nota passa a
-somar apenas os audios que sobraram. E o que o menu do player chama em "Apagar
+transcricao e os segmentos caem junto (FK em cascata), a analise da nota e apagada
+(ela leu um texto que deixou de existir) e a duracao da nota passa a somar apenas
+os audios que sobraram. E o que o menu do player chama em "Apagar
 audio"; remover o marcador do corpo (no app) so tira o audio da nota, sem apagar o
 anexo.
 
@@ -391,6 +402,8 @@ anexo.
 Lista as transcricoes e analises que terminaram, da mais recente para a mais antiga.
 E o que o sino do dashboard mostra; clicar em um item abre a nota. Query `limit`
 opcional (padrao 30, maximo 100). Falhas e notas apagadas ficam de fora.
+O dashboard usa a mesma lista no titulo da aba: o numero entre parenteses e o total de
+processos concluidos ainda nao lidos, e some quando a lista e aberta.
 
 ```json
 {

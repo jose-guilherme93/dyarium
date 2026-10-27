@@ -421,17 +421,27 @@ era invisivel antes:
 
 - `revised_changed > 0`: a IA reescreveu algum trecho.
 - `revised_changed == 0` e `revised_pending == 0`: a passada rodou e nao havia o que corrigir.
-- `revised_rejected > 0`: parte dos trechos ficou sem revisao (resposta em formato
-  inaceitavel ou trava de aceitacao). `revised_pending > 0` marca uma passada interrompida,
-  que retoma do primeiro trecho que faltou.
+- `revised_rejected > 0`: parte dos trechos foi alcancada mas ficou sem revisao (resposta
+  em formato inaceitavel ou trava de aceitacao). `revised_finished` continua verdadeiro.
+- `revised_finished == false` (e `revised_pending > 0`) marca uma passada interrompida, que
+  retoma de `revised_through`. O estado e gravado no servidor; sem ele, uma passada
+  terminada com recusas parecia interminavel no app.
 
 O mesmo vale para o aparelho: a revisao local grava o estado em `transcript_review` (contagem
 de recusados, trecho alcancado e `finishedAt`) e so e considerada atual quando a passada
-terminou. O esquema JSON pedido ao modelo local vem do chamador (`options.schema`); fixar o
+terminou. Uma passada interrompida retoma no boot; a compreensao ja medida e os indices
+recusados continuam valendo. Uma revisao importada do servidor preserva o estado da passada,
+para o chip nao ficar preso em "revisando" e para o aparelho nao refazer o trabalho.
+
+Transcricao vinda do servidor e marcada com `transcriptOrigin: 'server'` e nunca e reenviada
+como se tivesse sido transcrita no aparelho. Sem essa marca, cada abertura do app substituia
+a linha em `transcripts`, criava uma notificacao falsa no sino e apagava a compreensao da
+revisao. O esquema JSON pedido ao modelo local vem do chamador (`options.schema`); fixar o
 schema da analise na chamada fazia toda janela da revisao voltar inutilizavel, em silencio.
 
 Idempotencia: cada job deriva uma chave logica (por exemplo, `transcribe:{entry_id}` e
-`analyze:{entry_id}:{model}`). Um job ja concluido para a mesma chave nao e reexecutado, e
+`analyze:{entry_id}`). A analise automatica e o clique manual usam a mesma chave: sem isso,
+um clique durante a analise automatica abria uma segunda passada concorrente na nota. Um job ja concluido para a mesma chave nao e reexecutado, e
 a gravacao dos resultados e feita em transacao, com upsert por chave natural.
 
 ## Analise por secao

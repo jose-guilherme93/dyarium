@@ -97,8 +97,12 @@ com o botao **Analisar no aparelho**. O botao:
 - se as duas tentativas falharem e a nota nao tiver mudado, a analise anterior
   e mantida; se nao houver anterior, a nota ainda sai analisada por uma leitura
   simplificada (tom estimado por palavras da nota), marcada na ficha;
-- cada analise local guarda um hash do conteudo; se a nota mudar, a ficha avisa
-  que a analise e de uma versao anterior;
+- cada analise local guarda um hash de `titulo + texto + transcricao`; se qualquer
+  um mudar (inclusive uma revisao nova da transcricao), a ficha avisa que a
+  analise e de uma versao anterior;
+- o aparelho corta a entrada no limite que cabe no contexto local. A ficha mostra
+  quantos caracteres foram realmente lidos e marca **cortado** quando o texto
+  passou do limite; nunca diz que analisou o que nao leu;
 - grava o JSON derivado no SQLite local (`analyses`, origem `local`);
 - deixa a analise local vencer a do servidor (first-wins): a leitura de fundo
   do servidor nao sobrescreve o resultado feito no aparelho;
@@ -134,7 +138,20 @@ da opcao do dashboard.
   analise devolve a propria estimativa e a ficha a marca como "sem revisao".
 - A revisao sobe ao servidor pelo `PUT /entries/{id}/transcript/revisions`; se o
   servidor ja revisou a nota, o aparelho reaproveita (mesma versao de prompt,
-  modo e texto) em vez de gastar bateria.
+  modo e texto) em vez de gastar bateria. O pulo traz tambem o estado da passada
+  (fim, alcance e recusados), senao o chip ficava preso em "revisando".
+- O chip usa o estado da passada para distinguir "revisando agora" de "passada
+  interrompida": uma passada parada aparece com icone de pausa e o botao de
+  continuar de onde parou (inclusive a que foi cancelada no servidor).
+- Uma passada interrompida (app morto no meio) retoma no boot do primeiro trecho
+  que faltou. A compreensao ja medida e os indices recusados continuam valendo,
+  para a media final nao refletir so as ultimas janelas.
+- Transcricao que veio do servidor e marcada com `transcriptOrigin: 'server'` e
+  nao e reenviada como se tivesse sido transcrita no aparelho.
+- Antes de analisar, o app confere de novo a transcricao no servidor quando ela
+  veio de la: uma revisao feita depois do primeiro pull (outro aparelho, o
+  dashboard) entra no texto analisado. Edicao manual pendente vence e nao e
+  sobrescrita.
 
 ## Build verificado
 
