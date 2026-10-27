@@ -32,6 +32,8 @@ const settings: Settings = {
   analyze_model: "qwen2.5:0.5b",
   analyze_api_key_set: false,
   analysis_themes: "",
+  review_enabled: false,
+  literal_transcript: false,
 };
 
 beforeEach(() => {
@@ -76,6 +78,31 @@ describe("SettingsView análise local", () => {
     expect(await screen.findByText(/Ollama não encontrado em http:\/\/ollama:11434\/v1/)).toBeTruthy();
   });
 
+  it("liga a revisao da transcricao e mostra a opcao literal", async () => {
+    let reviewEnabled = false;
+    vi.mocked(api.getSettings).mockImplementation(async () => ({
+      ...settings,
+      review_enabled: reviewEnabled,
+    }));
+    vi.mocked(api.putSettings).mockImplementation(async () => {
+      reviewEnabled = true;
+      return { status: "ok" };
+    });
+
+    render(<SettingsView />);
+
+    const toggle = await screen.findByLabelText("Revisar a transcrição com IA");
+    fireEvent.click(toggle);
+
+    await waitFor(() =>
+      expect(api.putSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ review_enabled: true }),
+      ),
+    );
+    // A sub-opcao so aparece quando a revisao esta ligada.
+    expect(await screen.findByLabelText("Transcrição literal")).toBeTruthy();
+  });
+
   it("oferece o OpenCode Zen com a base e o modelo certos", async () => {
     render(<SettingsView />);
 
@@ -87,7 +114,8 @@ describe("SettingsView análise local", () => {
         expect.objectContaining({
           analyze_provider: "openai",
           analyze_base_url: "https://opencode.ai/inference/openai/v1",
-          analyze_model: "deepseek-v4.1-flash-free",
+          // O padrao nao e modelo de raciocinio: responde direto.
+          analyze_model: "glm-5.3-flash-free",
           analyze_enabled: true,
         }),
       ),

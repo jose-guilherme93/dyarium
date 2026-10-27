@@ -24,13 +24,14 @@ const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
   opencodeZen: {
     label: "OpenCode Zen (chave)",
     baseUrl: "https://opencode.ai/inference/openai/v1",
-    model: "deepseek-v4.1-flash-free",
+    model: "glm-5.3-flash-free",
     kind: "openai",
   },
   opencodeGo: {
     label: "OpenCode Go (assinatura)",
     baseUrl: "https://opencode.ai/inference/go/openai/v1",
-    model: "deepseek-v4.1-flash",
+    // Nao e modelo de raciocinio: responde direto, sem gastar o teto pensando.
+    model: "glm-5.3-flash",
     kind: "openai",
   },
   opencodeLocal: {
@@ -47,25 +48,43 @@ const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
 // A análise fala o formato /chat/completions. No OpenCode, Claude, GPT, Gemini
 // e Grok usam outros formatos (Anthropic, Responses, Google), entao so entram
 // na lista os modelos que o cliente sabe chamar.
-const ZEN_MODELS = [
+// Modelos que pensam antes de responder. Nao servem de padrao para analisar
+// notas: gastam o teto de tokens raciocinando e demoram mais. A interface os
+// marca para o usuario escolher com o custo na frente.
+const REASONING_MODELS = new Set([
   "deepseek-v4.1-flash-free",
+  "deepseek-v4.1-flash",
+  "deepseek-v4-pro",
+  "glm-5.3",
+  "longcat-2.0",
+  "qwen3.8-max",
+  "minimax-m3",
+  "hy3",
+]);
+
+function isReasoningModel(model: string): boolean {
+  return REASONING_MODELS.has(model);
+}
+
+const ZEN_MODELS = [
   "glm-5.3-flash-free",
-  "space-bunny-free",
   "glm-5.3-flash",
+  "kimi-k2.7-code",
+  "space-bunny-free",
+  "deepseek-v4.1-flash-free",
   "deepseek-v4.1-flash",
   "qwen3.8-max",
-  "kimi-k2.7-code",
   "minimax-m3",
 ];
 
 const GO_MODELS = [
+  "glm-5.3-flash",
+  "kimi-k2.7-code",
+  "space-bunny",
   "deepseek-v4.1-flash",
   "deepseek-v4-pro",
-  "glm-5.3-flash",
   "glm-5.3",
-  "kimi-k2.7-code",
   "longcat-2.0",
-  "space-bunny",
   "hy3",
 ];
 
@@ -465,6 +484,36 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
               />
             </div>
             <div className="field">
+              <span className="field-label">Revisar a transcrição com IA</span>
+              <Toggle
+                checked={settings.review_enabled}
+                onChange={(value) => void save({ review_enabled: value })}
+                label={settings.review_enabled ? "Ligada" : "Desligada"}
+                ariaLabel="Revisar a transcrição com IA"
+              />
+              <span className="hint">
+                Corrige concordância, pontuação e siglas antes de analisar. Desligada, a análise
+                continua funcionando, mas perde precisão sobre o que foi falado. Vale só para este
+                dashboard: a escolha no app é separada.
+              </span>
+            </div>
+            {settings.review_enabled && (
+              <div className="field">
+                <span className="field-label">Transcrição literal</span>
+                <Toggle
+                  checked={settings.literal_transcript}
+                  onChange={(value) => void save({ literal_transcript: value })}
+                  label={settings.literal_transcript ? "Ligada" : "Desligada"}
+                  ariaLabel="Transcrição literal"
+                />
+                <span className="hint">
+                  Mantém hesitações ("éé", "hum") e repetições de gagueira, para quem quer acompanhar
+                  como fala. Desligada, a revisão remove só o que não tem significado; "tipo", "né"
+                  e gírias ficam sempre.
+                </span>
+              </div>
+            )}
+            <div className="field">
               <span className="field-label">Provedor</span>
               <select
                 aria-label="Provedor da análise"
@@ -598,7 +647,7 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
                   {settings.analyze_model === "" && <option value="">(nenhum)</option>}
                   {modelOptions.map((model) => (
                     <option key={model} value={model}>
-                      {model}
+                      {isReasoningModel(model) ? `${model} · raciocínio` : model}
                     </option>
                   ))}
                 </select>
@@ -609,6 +658,12 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
                 )}
               </div>
               {modelsNote && <span className="hint">{modelsNote}</span>}
+              {isReasoningModel(settings.analyze_model) && (
+                <span className="hint">
+                  Modelo de raciocínio: pensa antes de responder, demora mais e gasta mais tokens.
+                  Um modelo comum entrega a mesma análise mais rápido.
+                </span>
+              )}
               {!searchable && (
                 <span className="hint">Lista curada de modelos compativeis; a lista completa esta no console.</span>
               )}

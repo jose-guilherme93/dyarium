@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { api } from "../api";
+import { NotificationsMenu } from "./NotificationsMenu";
 import { ALL_NOTEBOOKS } from "../lib/notebooks";
 import { formatDuration, formatShortDate } from "../lib/format";
 import { tagColor } from "../lib/tags";
@@ -388,6 +389,7 @@ export function NoteList({
                   </div>
                 )}
               </div>
+              <NotificationsMenu refreshKey={refreshKey} onOpen={onOpen} />
             </div>
             <button
               type="button"

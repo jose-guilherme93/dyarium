@@ -82,6 +82,7 @@ vi.mock("../api", () => ({
   api: {
     listAllEntries: vi.fn(async () => ({ entries: ENTRIES })),
     listEntriesCached: vi.fn(async () => undefined),
+    listActivities: vi.fn(async () => ({ activities: [] })),
   },
 }));
 

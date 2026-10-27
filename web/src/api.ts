@@ -2,6 +2,7 @@ import { cacheGet, cacheSet } from "./lib/idb";
 import { shrinkImage } from "./lib/image";
 import { setOffline } from "./lib/offline";
 import type {
+  Activity,
   Analysis,
   Attachment,
   EntityDetail,
@@ -448,6 +449,8 @@ export const api = {
     return request<{ mood: MoodPoint[] }>(`/mood${query ? `?${query}` : ""}`);
   },
   getMetrics: () => request<MetricsResponse>("/metrics"),
+  /** Processos concluidos (transcricoes e analises), do mais recente ao antigo. */
+  listActivities: () => request<{ activities: Activity[] }>("/activities"),
   listAttachments: (entryId: string) =>
     request<{ attachments: Attachment[] }>(`/entries/${entryId}/attachments`),
   listAttachmentsCached: (entryId: string) =>
