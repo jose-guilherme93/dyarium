@@ -195,3 +195,62 @@ func TestRunSectionsWindowsALongSection(t *testing.T) {
 		t.Fatalf("chamadas = %d, queria a secao em janelas + a sintese", calls)
 	}
 }
+
+// Momento com tempo so vem da fala. A secao escrita nao tem audio; aceitar o
+// start_ms que o modelo inventou fazia o painel mostrar um instante falso.
+func TestRunSectionsKeepsMomentsOnlyFromTheTranscript(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Messages []struct {
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("corpo: %v", err)
+			return
+		}
+		user := body.Messages[len(body.Messages)-1].Content
+		var answer map[string]any
+		if strings.Contains(user, `"secoes"`) {
+			answer = map[string]any{
+				"summary":   "sintese",
+				"reading":   "leitura",
+				"sentiment": map[string]any{"score": 0, "label": "neutro"},
+				"themes":    []any{},
+			}
+		} else {
+			moment := map[string]any{"start_ms": 42000, "text": "momento"}
+			if strings.Contains(user, "escrito") {
+				moment = map[string]any{"start_ms": 9000, "text": "inventado"}
+			}
+			answer = map[string]any{
+				"comprehension": 80,
+				"sentiment":     map[string]any{"score": 0, "label": "neutro"},
+				"summary":       "resumo",
+				"reading":       "leitura",
+				"key_moments":   []any{moment},
+			}
+		}
+		content, _ := json.Marshal(answer)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": string(content)}}},
+		})
+	}))
+	defer server.Close()
+	client := New(Config{Enabled: true, BaseURL: server.URL, Model: "modelo"})
+	sections := []Section{
+		{Heading: "Escrita", Kind: "text", Text: "trecho escrito"},
+		{Heading: "Transcricao", Kind: "transcript", Text: "[00:42] momento falado"},
+	}
+
+	result, err := NewPipeline(client).RunSections(context.Background(), "diario", sections, nil)
+	if err != nil {
+		t.Fatalf("RunSections: %v", err)
+	}
+	if len(result.KeyMoments) != 1 || result.KeyMoments[0].StartMS != 42000 {
+		t.Fatalf("momentos = %+v, queria so o da transcricao", result.KeyMoments)
+	}
+	if result.Sections[0].KeyMoments != nil {
+		t.Fatalf("secao escrita ganhou momento: %+v", result.Sections[0].KeyMoments)
+	}
+}

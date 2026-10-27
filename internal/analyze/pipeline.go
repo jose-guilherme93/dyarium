@@ -109,6 +109,12 @@ func (p *Pipeline) RunSections(ctx context.Context, title string, sections []Sec
 		if err != nil {
 			return Result{}, err
 		}
+		// Momento com tempo so faz sentido na fala. Uma secao escrita nao tem
+		// audio: o modelo inventaria `start_ms`, e o painel mostraria um
+		// instante que nao existe.
+		if section.Kind != "transcript" {
+			result.KeyMoments = nil
+		}
 		analyses = append(analyses, SectionAnalysis{
 			Heading:    section.Heading,
 			Kind:       section.Kind,
@@ -282,6 +288,13 @@ func joinParts(parts []textPart) string {
 		lines = append(lines, p.text)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// FormatOffset renders a millisecond offset as [mm:ss], the timestamp format
+// the analysis prompt reads. It is exported so the worker can build the
+// transcript section with the same format the windowed pipeline uses.
+func FormatOffset(ms int) string {
+	return mmss(ms)
 }
 
 func mmss(ms int) string {

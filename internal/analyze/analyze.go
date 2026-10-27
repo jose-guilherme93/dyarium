@@ -751,8 +751,9 @@ Responda SOMENTE com um objeto JSON valido, sem markdown, no formato:
  "questions": ["<pergunta do autor>"],
  "decisions": ["<decisao do autor>"]}
 "reading" tem no maximo 2 frases e 280 caracteres: interprete o que o trecho revela, apoiado em algo dito,
-sem paragrafo. O que importa sao as metricas da secao: sentimento, emocoes, pessoas, lugares, temas e momentos.
-Prefira os temas: ` + strings.Join(themes, ", ") + `. Escreva em ` + language + `.`
+sem paragrafo. Use os tempos [mm:ss] presentes no texto para calcular "start_ms"; se a secao nao tiver
+tempos, devolva "key_moments" vazio. O que importa sao as metricas da secao: sentimento, emocoes, pessoas,
+lugares, temas e momentos. Prefira os temas: ` + strings.Join(themes, ", ") + `. Escreva em ` + language + `.`
 	return prompt
 }
 
