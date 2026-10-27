@@ -220,8 +220,10 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   // mostrava a nota transcrita sem texto.
   const pushTranscripts = useCallback(() => {
     if (noteIsOpen()) return;
-    void pushPendingTranscriptsOnce().catch(() => undefined);
-  }, []);
+    // O envio pode adotar a transcricao refeita no servidor: recarrega a lista
+    // para o texto certo aparecer sem esperar o proximo ciclo.
+    void pushPendingTranscriptsOnce().then(refresh).catch(() => undefined);
+  }, [refresh]);
 
   // Uma revisao interrompida (app morto no meio) retoma no boot, como a
   // transcricao. Sem isso o chip ficava em "revisando" para sempre e o texto

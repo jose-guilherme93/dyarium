@@ -5,9 +5,9 @@
  */
 
 import { DyariumApi, type FetchLike } from '@/core/api';
-import { rawTranscript } from '@/core/transcriptReview';
+import { mergeServerTranscript, rawTranscript } from '@/core/transcriptReview';
 
-import { getRecording, listRecordings } from './db';
+import { getRecording, listRecordings, upsertRecording } from './db';
 import { loadServerConfig } from './secure';
 
 const doFetch = globalThis.fetch as unknown as FetchLike;
@@ -46,6 +46,7 @@ export async function pushTranscript(id: string): Promise<boolean> {
     let attachmentId = recording.serverAttachmentId;
     let serverText: string | undefined;
     let serverRaw: string | undefined;
+    let serverModel: string | undefined;
     try {
       const entry = await api.getEntry(recording.entryId);
       const audios = entry.audios ?? [];
@@ -70,10 +71,32 @@ export async function pushTranscript(id: string): Promise<boolean> {
         const transcript = audios.find((audio) => audio.id === attachmentId)?.transcript;
         serverText = transcript?.text?.trim();
         serverRaw = transcript?.raw_text?.trim();
+        serverModel = transcript?.model;
       }
     } catch {
       // Sem leitura da entrada seguimos com o id conhecido (ou deixamos o
       // servidor associar quando houver um unico audio).
+    }
+    // O servidor tem uma transcricao feita por ele e o aparelho tem uma copia
+    // local (a passada que nao devia ter acontecido, ou um "Refazer
+    // transcricao" no dashboard). A versao do servidor vence; reenviar a local
+    // apagaria o texto novo. Edicao manual continua acima de tudo.
+    if (
+      recording.transcriptOrigin !== 'server' &&
+      serverModel !== undefined &&
+      serverModel !== 'local' &&
+      !segments.some((segment) => segment.edited)
+    ) {
+      try {
+        const full = await api.getTranscript(recording.entryId);
+        const adopted = mergeServerTranscript(recording, full, { adopt: true });
+        if (adopted) {
+          await upsertRecording(adopted);
+        }
+      } catch {
+        // Sem a transcricao completa agora: nao reenvia por cima da do servidor.
+      }
+      return true;
     }
     // Ja esta no servidor com o mesmo texto visivel (cru ou revisado): nao
     // reenvia a transcricao, mas a revisao ainda pode faltar la. Uma versao

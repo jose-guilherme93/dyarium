@@ -21,6 +21,8 @@ export interface ServerAudio {
     /** Texto cru do whisper, quando o servidor o expoe. */
     raw_text?: string;
     language?: string;
+    /** Quem produziu: o caminho do modelo no servidor ou `local` (o app). */
+    model?: string;
     segments?: TranscriptSegment[];
   };
 }

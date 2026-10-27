@@ -361,7 +361,7 @@ describe('reviewNeedsResume', () => {
 });
 
 describe('mergeServerTranscript', () => {
-  const local: Recording = {
+  const localBase: Recording = {
     id: 'rec_server',
     title: 'do servidor',
     recordedAt: '2026-10-20T10:00:00.000Z',
@@ -403,7 +403,7 @@ describe('mergeServerTranscript', () => {
   };
 
   it('aplica revisao feita no servidor depois do primeiro pull', () => {
-    const merged = mergeServerTranscript(local, payload);
+    const merged = mergeServerTranscript(localBase, payload);
     expect(merged?.transcript).toBe('A sede do PT.');
     expect(merged?.transcriptOrigin).toBe('server');
     expect(merged?.transcriptSegments).toHaveLength(2);
@@ -418,27 +418,64 @@ describe('mergeServerTranscript', () => {
 
   it('nao desfaz edicao manual pendente', () => {
     const edited: Recording = {
-      ...local,
-      transcriptSegments: [{ ...local.transcriptSegments![0], edited: true }],
+      ...localBase,
+      transcriptSegments: [{ ...localBase.transcriptSegments![0], edited: true }],
     };
     expect(mergeServerTranscript(edited, payload)).toBeNull();
   });
 
   it('nao reescreve a nota quando a passada e a mesma', () => {
-    const first = mergeServerTranscript(local, payload);
+    const first = mergeServerTranscript(localBase, payload);
     expect(first).not.toBeNull();
     expect(mergeServerTranscript(first!, payload)).toBeNull();
   });
 
+  it('adota a transcricao refeita pelo servidor por cima da copia local', () => {
+    const local: Recording = { ...localBase, transcriptOrigin: 'local' };
+    const adopted = mergeServerTranscript(
+      local,
+      {
+        model: '/models/ggml-small.bin',
+        text: 'texto do servidor',
+        language: 'pt',
+        segments: [{ start_ms: 0, end_ms: 1000, text: 'texto do servidor' }],
+      },
+      { adopt: true },
+    );
+    expect(adopted?.transcript).toBe('texto do servidor');
+    expect(adopted?.transcriptOrigin).toBe('server');
+    expect(adopted?.hasTranscript).toBe(true);
+    expect(adopted?.transcriptReview).toBeUndefined();
+  });
+
+  it('nao adota quando o texto do servidor veio do proprio app', () => {
+    const local: Recording = {
+      ...localBase,
+      transcriptOrigin: 'local',
+      transcriptSegments: [{ start_ms: 0, end_ms: 1000, text: 'texto local' }],
+    };
+    expect(
+      mergeServerTranscript(
+        local,
+        {
+          model: 'local',
+          text: 'texto local',
+          segments: [{ start_ms: 0, end_ms: 1000, text: 'texto local' }],
+        },
+        { adopt: true },
+      ),
+    ).toBeNull();
+  });
+
   it('aplica retranscricao do servidor e descarta a revisao do texto antigo', () => {
     const withLocalReview: Recording = {
-      ...local,
+      ...localBase,
       transcriptReview: {
         model: 'modelo-local',
         promptVersion: REVIEW_PROMPT_VERSION,
         literal: false,
         comprehension: 70,
-        hash: reviewHash(local.transcriptSegments!),
+        hash: reviewHash(localBase.transcriptSegments!),
         finishedAt: '2026-10-20T10:05:00.000Z',
       },
     };
@@ -453,13 +490,13 @@ describe('mergeServerTranscript', () => {
 
   it('nao rebaixa revisao local quando o servidor nao tem nenhuma', () => {
     const withLocalReview: Recording = {
-      ...local,
+      ...localBase,
       transcriptReview: {
         model: 'modelo-local',
         promptVersion: REVIEW_PROMPT_VERSION,
         literal: false,
         comprehension: 70,
-        hash: reviewHash(local.transcriptSegments!),
+        hash: reviewHash(localBase.transcriptSegments!),
         finishedAt: '2026-10-20T10:05:00.000Z',
       },
     };

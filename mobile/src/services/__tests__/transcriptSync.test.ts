@@ -6,12 +6,15 @@ const mockGetRecording = jest.fn<Promise<Recording | null>, [string]>();
 const mockListRecordings = jest.fn<Promise<Recording[]>, []>();
 const mockLoadServerConfig = jest.fn();
 const mockGetEntry = jest.fn();
+const mockGetTranscript = jest.fn();
+const mockUpsertRecording = jest.fn<Promise<void>, [Recording]>();
 const mockPutTranscript = jest.fn().mockResolvedValue(undefined);
 const mockPutRevisions = jest.fn().mockResolvedValue(undefined);
 
 jest.mock('../db', () => ({
   getRecording: (...args: [string]) => mockGetRecording(...args),
   listRecordings: () => mockListRecordings(),
+  upsertRecording: (...args: [Recording]) => mockUpsertRecording(...args),
 }));
 
 jest.mock('../secure', () => ({
@@ -28,6 +31,9 @@ jest.mock('@/core/api', () => ({
     }
     putTranscriptRevisions(...args: unknown[]): Promise<void> {
       return mockPutRevisions(...args);
+    }
+    getTranscript(...args: unknown[]): Promise<unknown> {
+      return mockGetTranscript(...args);
     }
   },
 }));
@@ -110,6 +116,64 @@ describe('pushTranscript', () => {
 
     expect(mockPutTranscript).not.toHaveBeenCalled();
     expect(mockPutRevisions).toHaveBeenCalled();
+  });
+
+  it('adota a transcricao refeita no servidor em vez de reenviar a local', async () => {
+    const local: Recording = {
+      ...recording,
+      transcriptOrigin: 'local',
+      transcript: 'texto local ruim',
+      transcriptSegments: [{ start_ms: 0, end_ms: 1000, text: 'texto local ruim' }],
+      transcriptReview: undefined,
+    };
+    mockGetRecording.mockResolvedValue(local);
+    mockGetEntry.mockResolvedValue({
+      audios: [
+        {
+          id: 'a1',
+          transcript: {
+            model: '/models/ggml-small.bin',
+            text: 'texto do servidor',
+            raw_text: 'texto do servidor',
+          },
+        },
+      ],
+    });
+    mockGetTranscript.mockResolvedValue({
+      model: '/models/ggml-small.bin',
+      language: 'pt',
+      text: 'texto do servidor',
+      segments: [{ start_ms: 0, end_ms: 1000, text: 'texto do servidor' }],
+    });
+
+    await pushTranscript('rec_1');
+
+    expect(mockPutTranscript).not.toHaveBeenCalled();
+    expect(mockPutRevisions).not.toHaveBeenCalled();
+    const saved = mockUpsertRecording.mock.calls[0][0];
+    expect(saved.transcript).toBe('texto do servidor');
+    expect(saved.transcriptOrigin).toBe('server');
+    expect(saved.transcriptSegments?.[0].text).toBe('texto do servidor');
+  });
+
+  it('nao reenvia por cima do servidor quando a copia completa falha', async () => {
+    const local: Recording = {
+      ...recording,
+      transcriptOrigin: 'local',
+      transcriptSegments: [{ start_ms: 0, end_ms: 1000, text: 'texto local' }],
+      transcript: 'texto local',
+      transcriptReview: undefined,
+    };
+    mockGetRecording.mockResolvedValue(local);
+    mockGetEntry.mockResolvedValue({
+      audios: [{ id: 'a1', transcript: { model: '/models/ggml.bin', text: 'servidor' } }],
+    });
+    mockGetTranscript.mockRejectedValue(new Error('offline'));
+
+    await pushTranscript('rec_1');
+
+    expect(mockPutTranscript).not.toHaveBeenCalled();
+    expect(mockUpsertRecording).not.toHaveBeenCalled();
   });
 
   it('manda o texto cru (nunca o revisado) e marca o trecho editado', async () => {

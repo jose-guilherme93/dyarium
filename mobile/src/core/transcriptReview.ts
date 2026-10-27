@@ -424,6 +424,8 @@ export function reviewFromServer(
 export interface ServerTranscriptPayload extends ServerReview {
   text?: string;
   language?: string;
+  /** Quem produziu a transcricao: o caminho do modelo no servidor ou `local`. */
+  model?: string;
   segments?: TranscriptSegment[];
 }
 
@@ -453,6 +455,7 @@ function sameReviewState(a: TranscriptReview, b: TranscriptReview): boolean {
 export function mergeServerTranscript(
   recording: Recording,
   transcript: ServerTranscriptPayload,
+  options: { adopt?: boolean } = {},
 ): Recording | null {
   const segments = transcript.segments ?? [];
   if (segments.length === 0) return null;
@@ -463,6 +466,23 @@ export function mergeServerTranscript(
   const sameText =
     localSegments.length === segments.length &&
     localSegments.every((segment, index) => segment.text === segments[index].text);
+  // Transcricao feita pelo servidor por cima da copia local (por exemplo,
+  // "Refazer transcricao" no dashboard): ela vence, senao o proximo envio
+  // apagaria o texto novo com o antigo.
+  const serverMade = Boolean(transcript.model && transcript.model !== 'local');
+  if (!review && options.adopt && serverMade) {
+    return {
+      ...recording,
+      transcript: transcript.text ?? visibleTranscript(segments),
+      transcriptLanguage: transcript.language ?? recording.transcriptLanguage,
+      transcriptOrigin: 'server',
+      transcriptStatus: 'ready',
+      hasTranscript: true,
+      transcriptSegments: segments,
+      transcriptReview: undefined,
+      updatedAt: new Date().toISOString(),
+    };
+  }
   if (!review) {
     // Sem revisao no servidor e o mesmo texto: a revisao local continua
     // valendo e vai subir pela fila de sync. Com texto diferente houve
