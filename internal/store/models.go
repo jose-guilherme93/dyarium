@@ -152,7 +152,23 @@ type Transcript struct {
 	// guardrails refused it. Zero means "every segment was reviewed"; a segment
 	// that came back identical is reviewed, not rejected.
 	RevisedRejected int
-	CreatedAt       time.Time
+	// RevisedThrough is the index of the first segment the pass did not reach.
+	// Zero means "nothing reached yet"; SegmentCount means "the whole
+	// transcript". It tells an interrupted pass from one that finished with
+	// rejections.
+	RevisedThrough int
+	// RevisedFinished is true when the pass reached the end of the transcript,
+	// even if some segments were rejected.
+	RevisedFinished bool
+	// SegmentCount is how many segments the transcript has. It is read with the
+	// row so the summary can report pending segments without loading them.
+	SegmentCount int
+	// RevisedChanged counts segments whose revision differs from the original.
+	// Computed with the row for the same reason.
+	RevisedChanged int
+	// RevisedPending counts non-edited segments the pass did not reach.
+	RevisedPending int
+	CreatedAt      time.Time
 }
 
 // Segment is a transcribed span mapped to the original audio timeline.

@@ -435,7 +435,7 @@ func TestAnalysisInputReadsRevisedTranscript(t *testing.T) {
 	if err := st.SaveRevisions(ctx, "tr_revised", []store.TranscriptRevision{{
 		SegmentID: "seg_rev", Text: "A sede do PT.", Model: "llm", PromptVersion: review.PromptVersion,
 		CreatedAt: now,
-	}}, 77, 0); err != nil {
+	}}, 77, 0, 1, "llm", review.PromptVersion, false); err != nil {
 		t.Fatalf("save revisions: %v", err)
 	}
 
@@ -448,6 +448,10 @@ func TestAnalysisInputReadsRevisedTranscript(t *testing.T) {
 	}
 	if input.Segments[0].StartMS != 500 || input.Segments[0].EndMS != 1500 {
 		t.Fatalf("tempos perdidos: %+v", input.Segments[0])
+	}
+	sections := input.analysisSections()
+	if len(sections) == 0 || !strings.Contains(sections[len(sections)-1].Text, "[00:00] A sede do PT.") {
+		t.Fatalf("secao da transcricao sem horario: %+v", sections)
 	}
 	if input.Speech.Hesitation != 0 {
 		t.Fatalf("fala contada sobre o revisado: %+v", input.Speech)

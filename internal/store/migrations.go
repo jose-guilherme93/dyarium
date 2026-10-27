@@ -86,6 +86,8 @@ func (s *Store) ensureRevisionSchema(ctx context.Context) error {
 		{"transcripts", "revised_literal", "INTEGER NOT NULL DEFAULT 0"},
 		{"transcripts", "revised_comprehension", "INTEGER NOT NULL DEFAULT -1"},
 		{"transcripts", "revised_rejected", "INTEGER NOT NULL DEFAULT 0"},
+		{"transcripts", "revised_through", "INTEGER NOT NULL DEFAULT 0"},
+		{"transcripts", "revised_finished", "INTEGER NOT NULL DEFAULT 0"},
 		{"segments", "user_edited", "INTEGER NOT NULL DEFAULT 0"},
 		{"analyses", "comprehension", "INTEGER NOT NULL DEFAULT -1"},
 		{"analyses", "comprehension_source", "TEXT NOT NULL DEFAULT ''"},

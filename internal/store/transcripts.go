@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -35,14 +36,39 @@ func (s *Store) SaveTranscript(ctx context.Context, t Transcript, segs []Segment
 	if err != nil {
 		return err
 	}
+	// O app reenvia a transcricao ao abrir a nota. Quando o texto e o mesmo, a
+	// passada de revisao continua valendo por inteiro: as linhas por trecho ja
+	// sao preservadas abaixo, e a compreensao/recusados/estado da passada
+	// tambem precisam sobreviver. Sem isso uma nota revisada virava
+	// "sem revisao" e a analise perdia a estimativa medida.
+	previous, err := previousTranscriptState(ctx, tx, t.EntryID, t.AttachmentID)
+	if err != nil {
+		return err
+	}
+	carry := previous != nil && sameOrEditedSegments(previous.texts, segs)
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM transcripts WHERE entry_id = ? AND attachment_id IS ?`, t.EntryID, nullString(t.AttachmentID)); err != nil {
 		return fmt.Errorf("store: clear transcripts: %w", err)
 	}
+	comprehension, rejected, through, finished := -1, 0, 0, 0
+	revisedModel, revisedVersion, revisedLiteral := "", 0, 0
+	if carry {
+		comprehension = previous.comprehension
+		rejected = previous.rejected
+		through = previous.through
+		finished = boolInt(previous.finished)
+		revisedModel = previous.model
+		revisedVersion = previous.version
+		revisedLiteral = boolInt(previous.literal)
+	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO transcripts (id, entry_id, attachment_id, model, language, text, trim_silence, duration_seconds, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.ID, t.EntryID, nullString(t.AttachmentID), t.Model, t.Language, t.Text, boolInt(t.TrimSilence), t.DurationSeconds, ts(t.CreatedAt)); err != nil {
+		INSERT INTO transcripts (id, entry_id, attachment_id, model, language, text, trim_silence,
+			duration_seconds, revised_comprehension, revised_rejected, revised_through,
+			revised_finished, revised_model, revised_prompt_version, revised_literal, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.ID, t.EntryID, nullString(t.AttachmentID), t.Model, t.Language, t.Text, boolInt(t.TrimSilence),
+		t.DurationSeconds, comprehension, rejected, through, finished, revisedModel,
+		revisedVersion, revisedLiteral, ts(t.CreatedAt)); err != nil {
 		return fmt.Errorf("store: insert transcript: %w", err)
 	}
 	for i, seg := range segs {
@@ -52,11 +78,11 @@ func (s *Store) SaveTranscript(ctx context.Context, t Transcript, segs []Segment
 			seg.ID, t.ID, i, seg.StartMS, seg.EndMS, seg.Text, boolInt(seg.UserEdited), ts(t.CreatedAt)); err != nil {
 			return fmt.Errorf("store: insert segment: %w", err)
 		}
-		if previous, ok := kept[i]; ok && previous.original == seg.Text && previous.text != "" {
+		if prev, ok := kept[i]; ok && !seg.UserEdited && prev.original == seg.Text && prev.text != "" {
 			if _, err := tx.ExecContext(ctx, `
 				INSERT INTO transcript_revisions (segment_id, transcript_id, text, model, prompt_version, literal, created_at)
 				VALUES (?, ?, ?, ?, ?, ?, ?)`,
-				seg.ID, t.ID, previous.text, previous.model, previous.version, boolInt(previous.literal), ts(previous.created)); err != nil {
+				seg.ID, t.ID, prev.text, prev.model, prev.version, boolInt(prev.literal), ts(prev.created)); err != nil {
 				return fmt.Errorf("store: keep revision: %w", err)
 			}
 		}
@@ -65,6 +91,84 @@ func (s *Store) SaveTranscript(ctx context.Context, t Transcript, segs []Segment
 		return err
 	}
 	return tx.Commit()
+}
+
+// previousTranscript is the revision metadata of the transcript about to be
+// replaced. texts keeps the original segment text so a resync with the same
+// content can tell "same transcript" from "retranscribed".
+type previousTranscript struct {
+	comprehension int
+	rejected      int
+	through       int
+	finished      bool
+	model         string
+	version       int
+	literal       bool
+	texts         []string
+}
+
+// previousTranscriptState reads the metadata and the segment texts of the
+// transcript that SaveTranscript is about to replace. A nil result means the
+// entry has no transcript for this audio yet.
+func previousTranscriptState(ctx context.Context, tx *sql.Tx, entryID, attachmentID string) (*previousTranscript, error) {
+	var state previousTranscript
+	var finished, literal int
+	err := tx.QueryRowContext(ctx, `
+		SELECT revised_comprehension, revised_rejected, revised_through, revised_finished,
+			COALESCE(revised_model,''), revised_prompt_version, revised_literal
+		FROM transcripts WHERE entry_id = ? AND attachment_id IS ?
+		ORDER BY created_at DESC LIMIT 1`,
+		entryID, nullString(attachmentID)).Scan(
+		&state.comprehension, &state.rejected, &state.through, &finished,
+		&state.model, &state.version, &literal)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("store: read previous transcript: %w", err)
+	}
+	state.finished = finished == 1
+	state.literal = literal == 1
+	rows, err := tx.QueryContext(ctx, `
+		SELECT s.text FROM segments s
+		JOIN transcripts t ON t.id = s.transcript_id
+		WHERE t.entry_id = ? AND t.attachment_id IS ?
+		ORDER BY s.idx`,
+		entryID, nullString(attachmentID))
+	if err != nil {
+		return nil, fmt.Errorf("store: read previous transcript texts: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var text string
+		if err := rows.Scan(&text); err != nil {
+			return nil, fmt.Errorf("store: scan previous transcript text: %w", err)
+		}
+		state.texts = append(state.texts, text)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return &state, nil
+}
+
+// sameOrEditedSegments reports whether the new transcript is the old one with
+// possible hand edits. A retranscription (different text, not edited) starts a
+// new revision; a sync with an edited segment keeps the pass metadata, because
+// the audio and the measured comprehension did not change.
+func sameOrEditedSegments(previous []string, segs []Segment) bool {
+	if len(previous) != len(segs) {
+		return false
+	}
+	for i, seg := range segs {
+		if previous[i] == seg.Text {
+			continue
+		}
+		if !seg.UserEdited {
+			return false
+		}
+	}
+	return true
 }
 
 // revisionsByIndex reads the revisions of the transcript that is about to be
@@ -138,9 +242,15 @@ func refreshRevisedText(ctx context.Context, tx *sql.Tx, transcriptID string) er
 		return err
 	}
 	// Sem nenhuma revisao o derivado nao existe: revised_text fica vazio para a
-	// leitura cair no texto cru (e a lista nao duplicar a mesma string).
+	// leitura cair no texto cru (e a lista nao duplicar a mesma string). O
+	// modelo/versao/modo tambem ficam como estao: num resync eles vieram da
+	// linha anterior, e uma passada zerada por BeginRevision ja os limpou.
 	if revisedCount == 0 {
-		parts = nil
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE transcripts SET revised_text = '' WHERE id = ?`, transcriptID); err != nil {
+			return fmt.Errorf("store: clear revised text: %w", err)
+		}
+		return nil
 	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE transcripts SET revised_text = ?, revised_model = ?, revised_prompt_version = ?,
@@ -174,14 +284,14 @@ func (s *Store) LinkLooseTranscripts(ctx context.Context) (int64, error) {
 // SaveRevisions replaces the revisions of a transcript with the given set. A
 // transcript whose revisions are all rejected (or cleared) keeps the raw text
 // as the visible one: revised_text becomes empty.
-func (s *Store) SaveRevisions(ctx context.Context, transcriptID string, revs []TranscriptRevision, comprehension, rejected int) error {
+func (s *Store) SaveRevisions(ctx context.Context, transcriptID string, revs []TranscriptRevision, comprehension, rejected, through int, model string, version int, literal bool) error {
 	if err := s.BeginRevision(ctx, transcriptID); err != nil {
 		return err
 	}
-	if err := s.SaveRevisionWindow(ctx, transcriptID, revs, rejected); err != nil {
+	if err := s.SaveRevisionWindow(ctx, transcriptID, revs, rejected, through); err != nil {
 		return err
 	}
-	return s.FinishRevision(ctx, transcriptID, comprehension, rejected)
+	return s.FinishRevision(ctx, transcriptID, comprehension, rejected, through, model, version, literal)
 }
 
 // BeginRevision clears the previous revision before a new pass. It runs before
@@ -201,7 +311,8 @@ func (s *Store) BeginRevision(ctx context.Context, transcriptID string) error {
 	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE transcripts SET revised_text = '', revised_model = '', revised_prompt_version = 0,
-			revised_literal = 0, revised_comprehension = -1, revised_rejected = 0
+			revised_literal = 0, revised_comprehension = -1, revised_rejected = 0,
+			revised_through = 0, revised_finished = 0
 		WHERE id = ?`, transcriptID); err != nil {
 		return fmt.Errorf("store: reset revision: %w", err)
 	}
@@ -213,7 +324,7 @@ func (s *Store) BeginRevision(ctx context.Context, transcriptID string) error {
 // rest. revs carries every reviewed segment of the window, including the ones
 // that came back unchanged: a row means "reviewed", a missing row means "not
 // reviewed yet". rejected is cumulative across the pass.
-func (s *Store) SaveRevisionWindow(ctx context.Context, transcriptID string, revs []TranscriptRevision, rejected int) error {
+func (s *Store) SaveRevisionWindow(ctx context.Context, transcriptID string, revs []TranscriptRevision, rejected, through int) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: begin revision window tx: %w", err)
@@ -241,19 +352,40 @@ func (s *Store) SaveRevisionWindow(ctx context.Context, transcriptID string, rev
 	if err := refreshRevisedText(ctx, tx, transcriptID); err != nil {
 		return err
 	}
+	if through < 0 {
+		through = 0
+	}
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE transcripts SET revised_rejected = ? WHERE id = ?`, rejected, transcriptID); err != nil {
-		return fmt.Errorf("store: update revised rejected: %w", err)
+		`UPDATE transcripts SET revised_rejected = ?, revised_through = MAX(revised_through, ?)
+		WHERE id = ?`, rejected, through, transcriptID); err != nil {
+		return fmt.Errorf("store: update revised progress: %w", err)
 	}
 	return tx.Commit()
 }
 
-// FinishRevision closes the pass with the comprehension estimate and the final
-// rejected count.
-func (s *Store) FinishRevision(ctx context.Context, transcriptID string, comprehension, rejected int) error {
+// FinishRevision closes the pass with the comprehension estimate, the final
+// rejected count and how far it reached. finished is derived from the segment
+// count: a pass that reaches the end is finished even when it rejected some
+// segments along the way. That distinction is what keeps "sem revisão" from
+// looking like "ainda revisando".
+func (s *Store) FinishRevision(ctx context.Context, transcriptID string, comprehension, rejected, through int, model string, version int, literal bool) error {
+	if through < 0 {
+		through = 0
+	}
+	// A passada grava o modelo/versao/modo mesmo quando todas as janelas foram
+	// recusadas e nao sobrou nenhuma linha de revisao. Sem isso o painel nao
+	// tinha como mostrar "0 alterados, N sem revisao": parecia nunca revisado.
 	if _, err := s.db.ExecContext(ctx, `
-		UPDATE transcripts SET revised_comprehension = ?, revised_rejected = ?
-		WHERE id = ?`, comprehension, rejected, transcriptID); err != nil {
+		UPDATE transcripts SET revised_comprehension = ?, revised_rejected = ?,
+			revised_through = MAX(revised_through, ?),
+			revised_finished = CASE WHEN ? >= (SELECT COUNT(*) FROM segments WHERE transcript_id = ?)
+				THEN 1 ELSE 0 END,
+			revised_model = CASE WHEN ? <> '' THEN ? ELSE revised_model END,
+			revised_prompt_version = CASE WHEN ? > 0 THEN ? ELSE revised_prompt_version END,
+			revised_literal = ?
+		WHERE id = ?`,
+		comprehension, rejected, through, through, transcriptID,
+		model, model, version, version, boolInt(literal), transcriptID); err != nil {
 		return fmt.Errorf("store: finish revision: %w", err)
 	}
 	return nil
@@ -261,7 +393,14 @@ func (s *Store) FinishRevision(ctx context.Context, transcriptID string, compreh
 
 const transcriptColumns = `id, entry_id, COALESCE(attachment_id,''), model, COALESCE(language,''),
 	text, trim_silence, duration_seconds, COALESCE(revised_text,''), COALESCE(revised_model,''),
-	revised_prompt_version, revised_literal, revised_comprehension, revised_rejected, created_at`
+	revised_prompt_version, revised_literal, revised_comprehension, revised_rejected,
+	revised_through, revised_finished,
+	(SELECT COUNT(*) FROM segments s WHERE s.transcript_id = transcripts.id),
+	(SELECT COUNT(*) FROM segments s JOIN transcript_revisions r ON r.segment_id = s.id
+		WHERE s.transcript_id = transcripts.id AND s.user_edited = 0 AND r.text <> s.text),
+	(SELECT COUNT(*) FROM segments s WHERE s.transcript_id = transcripts.id
+		AND s.user_edited = 0 AND s.idx >= transcripts.revised_through),
+	created_at`
 
 func scanTranscript(row interface {
 	Scan(dest ...any) error
@@ -270,14 +409,17 @@ func scanTranscript(row interface {
 	var createdAt string
 	var trim int
 	var literal int
+	var finished int
 	if err := row.Scan(&t.ID, &t.EntryID, &t.AttachmentID, &t.Model, &t.Language,
 		&t.Text, &trim, &t.DurationSeconds, &t.RevisedText, &t.RevisedModel,
 		&t.RevisedPromptVersion, &literal, &t.RevisedComprehension, &t.RevisedRejected,
+		&t.RevisedThrough, &finished, &t.SegmentCount, &t.RevisedChanged, &t.RevisedPending,
 		&createdAt); err != nil {
 		return Transcript{}, err
 	}
 	t.TrimSilence = trim == 1
 	t.RevisedLiteral = literal == 1
+	t.RevisedFinished = finished == 1
 	t.CreatedAt = parseTS(createdAt)
 	return t, nil
 }

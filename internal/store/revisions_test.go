@@ -39,7 +39,7 @@ func TestSaveRevisionsReadsRevisedText(t *testing.T) {
 		{SegmentID: "s2", Text: "b", Model: "llm", PromptVersion: 1, CreatedAt: time.Now().UTC()},
 		{SegmentID: "s3", Text: "c", Model: "llm", PromptVersion: 1, CreatedAt: time.Now().UTC()},
 	}
-	if err := s.SaveRevisions(ctx, transcriptID, revs, 82, 0); err != nil {
+	if err := s.SaveRevisions(ctx, transcriptID, revs, 82, 0, 3, "llm", 1, false); err != nil {
 		t.Fatalf("save revisions: %v", err)
 	}
 
@@ -71,7 +71,7 @@ func TestSaveTranscriptKeepsRevisionsWhenTextIsUnchanged(t *testing.T) {
 		{SegmentID: "s1", Text: "A, revisado.", Model: "llm", PromptVersion: 1, CreatedAt: now},
 		{SegmentID: "s2", Text: "b", Model: "llm", PromptVersion: 1, CreatedAt: now},
 		{SegmentID: "s3", Text: "c", Model: "llm", PromptVersion: 1, CreatedAt: now},
-	}, 82, 0); err != nil {
+	}, 82, 0, 3, "llm", 1, false); err != nil {
 		t.Fatalf("save revisions: %v", err)
 	}
 
@@ -96,6 +96,47 @@ func TestSaveTranscriptKeepsRevisionsWhenTextIsUnchanged(t *testing.T) {
 	if segments[0].Revised != "A, revisado." {
 		t.Fatalf("trecho revisado perdido: %+v", segments[0])
 	}
+	if transcript.RevisedComprehension != 82 {
+		t.Fatalf("compreensao perdida no resync: %d", transcript.RevisedComprehension)
+	}
+	if !transcript.RevisedFinished || transcript.RevisedThrough != 3 {
+		t.Fatalf("estado da passada perdido: through=%d finished=%v",
+			transcript.RevisedThrough, transcript.RevisedFinished)
+	}
+}
+
+// Retranscrever de verdade (texto diferente) comeca uma passada nova: a
+// compreensao antiga nao pode ser reaproveitada para outro texto.
+func TestSaveTranscriptResetsRevisionStateWhenTextChanges(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	transcriptID := saveRevisionTranscript(t, s)
+	now := time.Now().UTC()
+	if err := s.SaveRevisions(ctx, transcriptID, []TranscriptRevision{
+		{SegmentID: "s1", Text: "A, revisado.", Model: "llm", PromptVersion: 1, CreatedAt: now},
+		{SegmentID: "s2", Text: "b", Model: "llm", PromptVersion: 1, CreatedAt: now},
+		{SegmentID: "s3", Text: "c", Model: "llm", PromptVersion: 1, CreatedAt: now},
+	}, 82, 0, 3, "llm", 1, false); err != nil {
+		t.Fatalf("save revisions: %v", err)
+	}
+
+	if err := s.SaveTranscript(ctx, Transcript{
+		ID: "t_rev4", EntryID: "e_rev", Model: "whisper", Text: "a b c diferente", CreatedAt: now,
+	}, []Segment{
+		{ID: "d1", StartMS: 0, EndMS: 1000, Text: "a", CreatedAt: now},
+		{ID: "d2", StartMS: 1000, EndMS: 2000, Text: "b", CreatedAt: now},
+		{ID: "d3", StartMS: 2000, EndMS: 3000, Text: "c diferente", CreatedAt: now},
+	}); err != nil {
+		t.Fatalf("save transcript: %v", err)
+	}
+
+	transcript, _, err := s.GetTranscript(ctx, "e_rev")
+	if err != nil {
+		t.Fatalf("get transcript: %v", err)
+	}
+	if transcript.RevisedComprehension != -1 || transcript.RevisedFinished || transcript.RevisedThrough != 0 {
+		t.Fatalf("passada antiga reaproveitada: %+v", transcript)
+	}
 }
 
 // Editar um trecho a mao descarta so a revisao dele: a escrita do usuario vence.
@@ -108,7 +149,7 @@ func TestSaveTranscriptDropsRevisionOfEditedSegment(t *testing.T) {
 		{SegmentID: "s1", Text: "A, revisado.", Model: "llm", PromptVersion: 1, CreatedAt: now},
 		{SegmentID: "s2", Text: "b", Model: "llm", PromptVersion: 1, CreatedAt: now},
 		{SegmentID: "s3", Text: "c", Model: "llm", PromptVersion: 1, CreatedAt: now},
-	}, 82, 0); err != nil {
+	}, 82, 0, 3, "llm", 1, false); err != nil {
 		t.Fatalf("save revisions: %v", err)
 	}
 
@@ -131,6 +172,9 @@ func TestSaveTranscriptDropsRevisionOfEditedSegment(t *testing.T) {
 	}
 	if segments[1].Revised != "" {
 		t.Fatalf("trecho editado nao deveria manter revisao: %+v", segments[1])
+	}
+	if transcript.RevisedComprehension != 82 || !transcript.RevisedFinished || transcript.RevisedThrough != 3 {
+		t.Fatalf("editar um trecho apagou a passada: %+v", transcript)
 	}
 	if !segments[1].UserEdited {
 		t.Fatalf("flag de edicao perdida: %+v", segments[1])
@@ -228,7 +272,7 @@ func TestSaveRevisionWindowStreamsBeforeThePassEnds(t *testing.T) {
 	if err := s.SaveRevisionWindow(ctx, transcriptID, []TranscriptRevision{
 		{SegmentID: "s1", Text: "A, revisado.", Model: "llm", PromptVersion: 1, CreatedAt: now},
 		{SegmentID: "s2", Text: "b", Model: "llm", PromptVersion: 1, CreatedAt: now},
-	}, 0); err != nil {
+	}, 0, 2); err != nil {
 		t.Fatalf("save window: %v", err)
 	}
 
@@ -251,10 +295,10 @@ func TestSaveRevisionWindowStreamsBeforeThePassEnds(t *testing.T) {
 
 	if err := s.SaveRevisionWindow(ctx, transcriptID, []TranscriptRevision{
 		{SegmentID: "s3", Text: "c", Model: "llm", PromptVersion: 1, CreatedAt: now},
-	}, 1); err != nil {
+	}, 1, 3); err != nil {
 		t.Fatalf("save window 2: %v", err)
 	}
-	if err := s.FinishRevision(ctx, transcriptID, 82, 1); err != nil {
+	if err := s.FinishRevision(ctx, transcriptID, 82, 1, 3, "llm", 1, false); err != nil {
 		t.Fatalf("finish revision: %v", err)
 	}
 	transcript, _, err = s.GetTranscript(ctx, "e_rev")
@@ -278,7 +322,7 @@ func TestBeginRevisionClearsThePreviousPass(t *testing.T) {
 	now := time.Now().UTC()
 	if err := s.SaveRevisions(ctx, transcriptID, []TranscriptRevision{
 		{SegmentID: "s1", Text: "A, revisado.", Model: "llm", PromptVersion: 1, CreatedAt: now},
-	}, 82, 0); err != nil {
+	}, 82, 0, 3, "llm", 1, false); err != nil {
 		t.Fatalf("save revisions: %v", err)
 	}
 

@@ -698,7 +698,7 @@ func (s *Server) handlePutTranscriptRevisions(w http.ResponseWriter, r *http.Req
 		rejected = 0
 	}
 	rejected += refused
-	if err := s.deps.Store.SaveRevisions(ctx, transcript.ID, revs, comprehension, rejected); err != nil {
+	if err := s.deps.Store.SaveRevisions(ctx, transcript.ID, revs, comprehension, rejected, through, model, req.PromptVersion, req.Literal); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
@@ -716,6 +716,10 @@ func transcriptJSON(t store.Transcript, segs []store.Segment) map[string]any {
 			"end_ms":   seg.EndMS,
 			"text":     seg.Text,
 			"edited":   seg.UserEdited,
+			// reviewed diz que a passada chegou neste trecho (mesmo quando nao
+			// mudou nada). Sem isso o app nao distingue trecho recusado de
+			// trecho que a passada ainda nao alcancou.
+			"reviewed": seg.Revised != "",
 		}
 		// revised so aparece quando difere do original: o painel marca so o
 		// trecho que a IA mudou de verdade.
@@ -733,12 +737,12 @@ func transcriptJSON(t store.Transcript, segs []store.Segment) map[string]any {
 	}
 	// changed distingue "revisou e alterou" de "revisou e nao mudou nada";
 	// revised_rejected e revised_pending distinguem os dois de "nao chegou a
-	// revisar". Pending e derivado: um trecho sem linha em transcript_revisions
-	// ainda nao foi alcancado pela passada.
+	// revisar". Pending conta so o que a passada nao alcancou: um trecho
+	// recusado foi alcancado e aparece em revised_rejected, nao aqui.
 	body["revised_changed"] = changed
 	pending := 0
 	for _, seg := range segs {
-		if seg.UserEdited || seg.Revised != "" {
+		if seg.UserEdited || seg.Idx < t.RevisedThrough {
 			continue
 		}
 		pending++
@@ -758,18 +762,33 @@ func transcriptSummaryJSON(t store.Transcript) map[string]any {
 		text = t.RevisedText
 	}
 	return map[string]any{
-		"model":                  t.Model,
-		"language":               t.Language,
-		"text":                   text,
+		"model":    t.Model,
+		"language": t.Language,
+		"text":     text,
+		// raw_text e o original do whisper. O app compara com ele antes de
+		// reenviar: se o unico diferenca for a revisao, o envio apagaria a
+		// revisao que o servidor ja tinha feito.
+		"raw_text":               t.Text,
 		"trim_silence":           t.TrimSilence,
 		"duration_seconds":       t.DurationSeconds,
-		"revised":                t.RevisedPromptVersion > 0,
+		"revised":                hasRevision(t),
 		"revised_model":          t.RevisedModel,
 		"revised_prompt_version": t.RevisedPromptVersion,
 		"revised_literal":        t.RevisedLiteral,
 		"revised_comprehension":  t.RevisedComprehension,
 		"revised_rejected":       t.RevisedRejected,
+		"revised_through":        t.RevisedThrough,
+		"revised_finished":       t.RevisedFinished,
+		"revised_changed":        t.RevisedChanged,
+		"revised_pending":        t.RevisedPending,
 	}
+}
+
+// hasRevision reports whether a revision pass ran for the transcript. A pass
+// that rejected every segment has no revision rows, but it still ran and left
+// its counts; `revised` has to cover it, otherwise the panel hides the failure.
+func hasRevision(t store.Transcript) bool {
+	return t.RevisedPromptVersion > 0 || t.RevisedFinished || t.RevisedThrough > 0 || t.RevisedRejected > 0
 }
 
 // handleListSegments serves one page of transcript segments for the full
@@ -827,6 +846,7 @@ func (s *Server) handleListSegments(w http.ResponseWriter, r *http.Request) {
 			"end_ms":   seg.EndMS,
 			"text":     seg.Text,
 			"edited":   seg.UserEdited,
+			"reviewed": seg.Revised != "",
 		}
 		if seg.Revised != "" && seg.Revised != seg.Text {
 			item["revised"] = seg.Revised

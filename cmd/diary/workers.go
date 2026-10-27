@@ -116,7 +116,7 @@ func transcribeHandler(st *store.Store, cfg config.Config, pipeline *transcribe.
 		}
 		bus.Publish("transcript.ready", map[string]string{"entry_id": payload.EntryID})
 		if analyzeConfigFromSettings(ctx, st, cfg).Enabled {
-			if _, err := queue.Enqueue(ctx, jobs.TypeAnalyze, "analyze:"+payload.EntryID, jobs.AnalyzePayload{EntryID: payload.EntryID}); err != nil {
+			if _, err := queue.Enqueue(ctx, jobs.TypeAnalyze, jobs.AnalyzeKey(payload.EntryID), jobs.AnalyzePayload{EntryID: payload.EntryID}); err != nil {
 				logger.Error("worker: enfileirar analise", "erro", err)
 			}
 			// Keep the entry as transcribed until the analyze job actually starts.
@@ -356,7 +356,10 @@ type analysisInputResult struct {
 func (in analysisInputResult) analysisSections() []analyze.Section {
 	sections := make([]analyze.Section, 0, len(in.TextSections)+1)
 	sections = append(sections, in.TextSections...)
-	text := strings.TrimSpace(joinSegments(in.Segments))
+	// A transcricao vai com [mm:ss]: e o que permite ao modelo devolver
+	// start_ms real nos momentos. Sem os tempos, o painel mostrava instantes
+	// inventados.
+	text := strings.TrimSpace(joinSegmentsWithTime(in.Segments))
 	if text != "" {
 		sections = append(sections, analyze.Section{
 			Heading:  "Transcrição do áudio",
@@ -366,6 +369,19 @@ func (in analysisInputResult) analysisSections() []analyze.Section {
 		})
 	}
 	return sections
+}
+
+// joinSegmentsWithTime is the transcript as the model reads it, with the
+// [mm:ss] offset of each segment so key moments carry a real timestamp.
+func joinSegmentsWithTime(segments []analyze.Segment) string {
+	lines := make([]string, 0, len(segments))
+	for _, segment := range segments {
+		text := strings.TrimSpace(segment.Text)
+		if text != "" {
+			lines = append(lines, "["+analyze.FormatOffset(segment.StartMS)+"] "+text)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // joinSegments is the transcript text as the model reads it.
@@ -697,7 +713,7 @@ func reviseTranscript(ctx context.Context, st *store.Store, client *analyze.Clie
 					CreatedAt:     now,
 				})
 			}
-			if saveErr := st.SaveRevisionWindow(ctx, transcript.ID, revs, rejected); saveErr != nil {
+			if saveErr := st.SaveRevisionWindow(ctx, transcript.ID, revs, rejected, end); saveErr != nil {
 				return saveErr
 			}
 			bus.Publish("transcript.revised", map[string]any{
@@ -721,7 +737,8 @@ func reviseTranscript(ctx context.Context, st *store.Store, client *analyze.Clie
 	if err != nil {
 		return err
 	}
-	if err := st.FinishRevision(ctx, transcript.ID, revision.Comprehension, revision.Rejected+revision.Failed); err != nil {
+	if err := st.FinishRevision(ctx, transcript.ID, revision.Comprehension, revision.Rejected+revision.Failed,
+		len(input.StoreSegments), model, review.PromptVersion, literal); err != nil {
 		return err
 	}
 	changed := 0

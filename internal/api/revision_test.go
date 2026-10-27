@@ -231,6 +231,12 @@ func TestPutTranscriptRevisionsMarksWhatWasReached(t *testing.T) {
 	if transcript["revised_rejected"].(float64) != 2 {
 		t.Fatalf("revised_rejected = %v", transcript["revised_rejected"])
 	}
+	if transcript["revised_pending"].(float64) != 1 {
+		t.Fatalf("revised_pending = %v, queria 1 (o segundo trecho nao foi alcancado)", transcript["revised_pending"])
+	}
+	if transcript["revised_finished"] != false {
+		t.Fatalf("passada parcial marcada como terminada: %+v", transcript)
+	}
 	segments := transcript["segments"].([]any)
 	second := segments[1].(map[string]any)
 	if _, ok := second["revised"]; ok {
@@ -267,6 +273,10 @@ func TestTranscriptPayloadDistinguishesNothingToFix(t *testing.T) {
 	if transcript["revised_rejected"].(float64) != 0 {
 		t.Fatalf("revised_rejected = %v, queria 0", transcript["revised_rejected"])
 	}
+	if transcript["revised_pending"].(float64) != 0 || transcript["revised_finished"] != true {
+		t.Fatalf("passada completa mal marcada: pending=%v finished=%v",
+			transcript["revised_pending"], transcript["revised_finished"])
+	}
 	if transcript["text"] != "a sede do pt fica em sao paulo\nforam 3 pessoas" {
 		t.Fatalf("texto = %q", transcript["text"])
 	}
@@ -293,5 +303,104 @@ func TestPutTranscriptKeepsAnalyzedEntryReady(t *testing.T) {
 	}
 	if entry.Status != store.EntryReady {
 		t.Fatalf("status = %s, queria ready", entry.Status)
+	}
+}
+
+// Reenviar a mesma transcricao nao pode apagar a revisao da nota: as linhas por
+// trecho ja eram preservadas, mas a compreensao e o estado da passada sumiam e
+// o painel passava a dizer "sem revisao" numa nota revisada.
+func TestPutTranscriptKeepsRevisionMetadataWhenTextIsUnchanged(t *testing.T) {
+	srv := newTestServer(t)
+	seedTranscriptAudio(t, srv)
+
+	body := `{"attachment_id":"a1","model":"llm","prompt_version":1,"literal":false,
+		"comprehension":81,
+		"segments":[{"idx":0,"text":"A sede do PT fica em São Paulo."},
+		            {"idx":1,"text":"Foram 3 pessoas."}]}`
+	rec, _ := doJSON(t, srv, http.MethodPut, "/api/v1/entries/e1/transcript/revisions", strings.NewReader(body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("put revisions: %d %s", rec.Code, rec.Body.String())
+	}
+
+	again := `{"attachment_id":"a1","language":"pt",
+		"text":"a sede do pt fica em sao paulo\nforam 3 pessoas",
+		"segments":[{"start_ms":0,"end_ms":1000,"text":"a sede do pt fica em sao paulo"},
+		            {"start_ms":1000,"end_ms":2000,"text":"foram 3 pessoas"}]}`
+	rec, _ = doJSON(t, srv, http.MethodPut, "/api/v1/entries/e1/transcript", strings.NewReader(again))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("resync: %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec, transcript := doJSON(t, srv, http.MethodGet, "/api/v1/entries/e1/transcript", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get transcript: %d", rec.Code)
+	}
+	if transcript["revised"] != true {
+		t.Fatalf("revisao perdida no resync: %+v", transcript)
+	}
+	if transcript["revised_comprehension"].(float64) != 81 {
+		t.Fatalf("compreensao perdida no resync: %v", transcript["revised_comprehension"])
+	}
+	if transcript["revised_finished"] != true || transcript["revised_pending"].(float64) != 0 {
+		t.Fatalf("estado perdido no resync: %+v", transcript)
+	}
+}
+
+// O payload da entrada (sem segmentos) tambem precisa do estado honesto: e ele
+// que alimenta o chip do dashboard.
+func TestEntryTranscriptSummaryCarriesRevisionState(t *testing.T) {
+	srv := newTestServer(t)
+	seedTranscriptAudio(t, srv)
+
+	body := `{"attachment_id":"a1","model":"llm","prompt_version":1,"comprehension":75,
+		"segments":[{"idx":0,"text":"A sede do PT fica em São Paulo."},
+		            {"idx":1,"text":"Foram 3 pessoas."}]}`
+	rec, _ := doJSON(t, srv, http.MethodPut, "/api/v1/entries/e1/transcript/revisions", strings.NewReader(body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("put revisions: %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec, entry := doJSON(t, srv, http.MethodGet, "/api/v1/entries/e1", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get entry: %d", rec.Code)
+	}
+	audios := entry["audios"].([]any)
+	transcript := audios[0].(map[string]any)["transcript"].(map[string]any)
+	if transcript["revised_pending"].(float64) != 0 || transcript["revised_changed"].(float64) != 2 {
+		t.Fatalf("resumo sem estado da revisao: %+v", transcript)
+	}
+	if transcript["revised_comprehension"].(float64) != 75 {
+		t.Fatalf("compreensao ausente no resumo: %+v", transcript)
+	}
+}
+
+// Uma passada que recusou todos os trechos nao tem linha de revisao, mas rodou.
+// O payload precisa mostrar os recusados, nao "nunca revisou".
+func TestTranscriptPayloadShowsRejectedPassWithoutRows(t *testing.T) {
+	srv := newTestServer(t)
+	seedTranscriptAudio(t, srv)
+
+	body := `{"attachment_id":"a1","model":"llm","prompt_version":1,"comprehension":40,
+		"rejected":0,"reviewed_through":2,
+		"segments":[{"idx":0,"text":"texto com 999"},
+		            {"idx":1,"text":"foram 4 pessoas"}]}`
+	rec, _ := doJSON(t, srv, http.MethodPut, "/api/v1/entries/e1/transcript/revisions", strings.NewReader(body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("put revisions: %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec, transcript := doJSON(t, srv, http.MethodGet, "/api/v1/entries/e1/transcript", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get transcript: %d", rec.Code)
+	}
+	if transcript["revised"] != true {
+		t.Fatalf("passada recusada sumiu do payload: %+v", transcript)
+	}
+	if transcript["revised_changed"].(float64) != 0 || transcript["revised_rejected"].(float64) != 2 {
+		t.Fatalf("contagens = changed %v, rejected %v",
+			transcript["revised_changed"], transcript["revised_rejected"])
+	}
+	if transcript["revised_pending"].(float64) != 0 || transcript["revised_finished"] != true {
+		t.Fatalf("passada completa mal marcada: %+v", transcript)
 	}
 }
