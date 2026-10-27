@@ -2,14 +2,21 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/joseti/dyarium/internal/config"
+	"github.com/joseti/dyarium/internal/events"
 	"github.com/joseti/dyarium/internal/id"
+	"github.com/joseti/dyarium/internal/jobs"
 	"github.com/joseti/dyarium/internal/store"
+	"github.com/joseti/dyarium/internal/transcribe"
 )
 
 func TestExtractText(t *testing.T) {
@@ -23,20 +30,6 @@ func TestExtractText(t *testing.T) {
 	}
 	if got := extractText(`[{"type":"paragraph","content":[]}]`); got != "" {
 		t.Fatalf("esperava vazio para documento sem texto, got %q", got)
-	}
-}
-
-func TestMarkdownToPlain(t *testing.T) {
-	markdown := "# Titulo\n\n" +
-		"Um **dia** bom, com [link](https://exemplo.com/x) e ![foto](attachment:y).\n\n" +
-		"- item um\n- item dois\n\n" +
-		"> citacao\n\n" +
-		"```go\nfunc main() {}\n```\n\n" +
-		"| a | b |\n| - | - |\n\n" +
-		"Veja [outra nota](note:abc).\n"
-	want := "Titulo Um dia bom, com link (https://exemplo.com/x) e imagem: foto. item um item dois citacao Veja outra nota."
-	if got := markdownToPlain(markdown); got != want {
-		t.Fatalf("markdownToPlain =\n%q\nwant\n%q", got, want)
 	}
 }
 
@@ -235,4 +228,71 @@ func openWriterStore(t *testing.T) *store.Store {
 		t.Fatalf("migrate: %v", err)
 	}
 	return st
+}
+
+// O job de transcricao pode falhar depois de o aparelho ja ter enviado o texto
+// (PUT /transcript). A falha do worker nao pode marcar a nota como "falhou":
+// o texto esta salvo e visivel no dashboard.
+func TestTranscribeFailureKeepsDeviceTranscript(t *testing.T) {
+	ctx := context.Background()
+	st := openWriterStore(t)
+	now := time.Now().UTC()
+	entryID := "entry_device_transcript"
+	if err := st.CreateEntry(ctx, store.Entry{
+		ID:        entryID,
+		Title:     "audio do aparelho",
+		Status:    store.EntryQueued,
+		Source:    "audio",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("create entry: %v", err)
+	}
+	attachmentID := "att_device_transcript"
+	if err := st.CreateAttachment(ctx, store.Attachment{
+		ID:          attachmentID,
+		EntryID:     entryID,
+		Kind:        store.AttachmentOriginal,
+		StorageKey:  "audio",
+		ContentType: "audio/wav",
+		Cipher:      "aes-256-gcm",
+		CreatedAt:   now,
+	}); err != nil {
+		t.Fatalf("create attachment: %v", err)
+	}
+	if err := st.SaveTranscript(ctx, store.Transcript{
+		ID:           "tr_device_transcript",
+		EntryID:      entryID,
+		AttachmentID: attachmentID,
+		Model:        "local",
+		Text:         "texto transcrito no aparelho",
+		CreatedAt:    now,
+	}, nil); err != nil {
+		t.Fatalf("save transcript: %v", err)
+	}
+
+	deps := transcribe.Deps{
+		Decrypt: func(context.Context, store.Attachment) (string, error) {
+			return "", errors.New("ffmpeg nao instalado")
+		},
+	}
+	pipeline := transcribe.NewPipeline(st, deps, t.TempDir(), "modelo")
+	handler := transcribeHandler(st, config.Config{}, pipeline, jobs.NewQueue(st.DB()),
+		events.NewBus(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	payload, err := json.Marshal(jobs.TranscribePayload{EntryID: entryID, AttachmentID: attachmentID})
+	if err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	err = handler(ctx, &jobs.Job{Payload: payload, Attempts: 2, MaxAttempts: 3}, func() error { return nil })
+	if err == nil {
+		t.Fatal("esperava erro do pipeline")
+	}
+	entry, err := st.GetEntry(ctx, entryID)
+	if err != nil {
+		t.Fatalf("get entry: %v", err)
+	}
+	if entry.Status != store.EntryTranscribed {
+		t.Fatalf("status = %q, want %q", entry.Status, store.EntryTranscribed)
+	}
 }

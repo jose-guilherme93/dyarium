@@ -218,6 +218,25 @@ func (s *Store) PurgeEntry(ctx context.Context, id string) error {
 	return tx.Commit()
 }
 
+// RepairDeviceTranscripts clears the "failed" flag of entries that already
+// carry a transcript written on the device. A transcribe job that lost the race
+// used to leave the note as failed even with the text saved; the worker no
+// longer does that, and this one-time repair fixes whatever the old build left.
+// Only `model = 'local'` rows count: an analysis failure keeps its own signal.
+func (s *Store) RepairDeviceTranscripts(ctx context.Context) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE entries SET status = ?
+		WHERE status = ? AND deleted_at IS NULL
+			AND EXISTS (
+				SELECT 1 FROM transcripts t
+				WHERE t.entry_id = entries.id AND t.model = 'local' AND trim(t.text) <> ''
+			)`, EntryTranscribed, EntryFailed)
+	if err != nil {
+		return 0, fmt.Errorf("store: repair device transcripts: %w", err)
+	}
+	return res.RowsAffected()
+}
+
 // ListEntries returns recent entries, newest first.
 func (s *Store) ListEntries(ctx context.Context, limit int) ([]Entry, error) {
 	return s.ListEntriesFilteredNotebook(ctx, limit, 0, "", "", "", nil, "")
@@ -248,7 +267,11 @@ func (s *Store) ListEntriesFilteredNotebook(ctx context.Context, limit, offset i
 			e.title_updated_at, e.recorded_at_updated_at,
 			COALESCE((SELECT body_updated_at FROM notes n WHERE n.entry_id = e.id ORDER BY n.created_at DESC LIMIT 1), ''),
 			COALESCE((SELECT id FROM attachments a WHERE a.entry_id = e.id AND a.kind = ?
-				ORDER BY a.created_at ASC LIMIT 1), '')
+				ORDER BY a.created_at ASC LIMIT 1), ''),
+			COALESCE(NULLIF((SELECT n.content_markdown FROM notes n WHERE n.entry_id = e.id
+				ORDER BY n.created_at DESC LIMIT 1), ''),
+				(SELECT t.text FROM transcripts t WHERE t.entry_id = e.id
+				ORDER BY t.created_at DESC LIMIT 1), '')
 		FROM entries e WHERE e.deleted_at IS NULL`
 	args := []any{AttachmentOriginal}
 	if notebookID = strings.TrimSpace(notebookID); notebookID != "" {
@@ -289,7 +312,7 @@ func (s *Store) ListEntriesFilteredNotebook(ctx context.Context, limit, offset i
 		var createdAt, updatedAt string
 		if err := rows.Scan(&e.ID, &e.Title, &e.Status, &e.Source, &e.ParentID, &e.NotebookID, &e.OriginalFilename,
 			&e.ContentType, &e.SizeBytes, &e.DurationSeconds, &e.SHA256, &recordedAt, &createdAt, &updatedAt,
-			&archived, &titleVersion, &recordedVersion, &bodyVersion, &e.PrimaryAttachmentID); err != nil {
+			&archived, &titleVersion, &recordedVersion, &bodyVersion, &e.PrimaryAttachmentID, &e.Preview); err != nil {
 			return nil, fmt.Errorf("store: scan entry: %w", err)
 		}
 		if recordedAt.Valid {

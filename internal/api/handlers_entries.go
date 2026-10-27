@@ -13,6 +13,7 @@ import (
 	"github.com/joseti/dyarium/internal/entrytitle"
 	"github.com/joseti/dyarium/internal/id"
 	"github.com/joseti/dyarium/internal/jobs"
+	"github.com/joseti/dyarium/internal/preview"
 	"github.com/joseti/dyarium/internal/store"
 )
 
@@ -178,6 +179,12 @@ func entriesJSON(entries []store.Entry, tagNames map[string][]string) []map[stri
 		item := entryJSON(e)
 		if names := tagNames[e.ID]; len(names) > 0 {
 			item["tags"] = names
+		}
+		// A lista mostra duas linhas do corpo (ou da transcricao). O texto chega
+		// em markdown cru do banco e vira prosa aqui, para a interface nao exibir
+		// `![...]` nem `#`.
+		if text := preview.Short(e.Preview, preview.DefaultLimit); text != "" {
+			item["preview"] = text
 		}
 		out = append(out, item)
 	}

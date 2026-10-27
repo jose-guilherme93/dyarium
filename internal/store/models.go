@@ -83,6 +83,9 @@ type Entry struct {
 	// PrimaryAttachmentID is the first original audio of the entry. It lets the
 	// list response point the app at the audio without fetching every stack.
 	PrimaryAttachmentID string
+	// Preview is the stored body (or transcript) of the entry, filled only by
+	// the list query. The API turns it into plain text for the list.
+	Preview string
 
 	// Versoes dos campos editaveis, como o cliente leu (so preenchidas nas
 	// leituras que as trazem). Sao os valores **exatos** gravados no banco: o

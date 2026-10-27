@@ -106,6 +106,13 @@ func serve() error {
 	} else if notes+revs > 0 {
 		logger.Info("store: tokens de anexos removidos", "notas", notes, "revisoes", revs)
 	}
+	// Nota com transcricao feita no aparelho nao pode continuar marcada como
+	// falha: o texto esta salvo, so o job do servidor falhou. Idempotente.
+	if fixed, err := st.RepairDeviceTranscripts(ctx); err != nil {
+		logger.Error("store: reparar transcricoes locais", "erro", err)
+	} else if fixed > 0 {
+		logger.Info("store: notas com transcricao local marcadas como transcritas", "quantidade", fixed)
+	}
 	if err := seedSettings(ctx, st, cfg); err != nil {
 		return err
 	}

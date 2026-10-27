@@ -105,6 +105,11 @@ func TestContractTextNoteRoundTrip(t *testing.T) {
 	if len(listTags) != 2 {
 		t.Fatalf("lista perdeu as tags: %v", listed["tags"])
 	}
+	// A lista mostra as primeiras linhas em prosa: o markdown fica no corpo,
+	// nunca na previa.
+	if listed["preview"] != "Titulo texto do app" {
+		t.Fatalf("preview = %v", listed["preview"])
+	}
 }
 
 // TestContractEntriesPagination garante que uma biblioteca maior que o limite da

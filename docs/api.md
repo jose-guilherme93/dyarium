@@ -140,6 +140,10 @@ Com `deleted=1` lista a **lixeira**: as entradas apagadas (remocao logica) com
 - `primary_attachment_id` (quando a nota tem audio) aponta o primeiro audio
   original. A lista nao carrega a pilha inteira; e por este id que o app resolve o
   player de uma nota puxada do servidor.
+- `preview` (quando ha corpo ou transcricao) traz ate 160 caracteres em prosa: o
+  markdown vira texto, imagens, marcadores de audio e escapes somem e a frase nao
+  e cortada no meio de uma palavra. E so para desenhar a lista; o corpo continua
+  em `notes`.
 
 ## Markdown como formato da nota
 
@@ -293,7 +297,10 @@ vez de transcrever, e o dashboard mostra o texto. Corpo:
   ao audio certo quando a nota tem varios. Sem ele, a transcricao fica solta e some da
   lista de audios do dashboard.
 - A transcricao e gravada com `model` = `local`; uma transcricao anterior daquele audio e
-  substituida. Emite `transcript.ready`.
+  substituida. Emite `transcript.ready` e marca a entrada como `transcribed`. Se o job de
+  transcricao do servidor falhar depois disso (por exemplo, sem `ffmpeg`), o texto salvo
+  prevalece e a entrada **nao** volta para `failed`; no boot, o servidor repara entradas
+  que ficaram `failed` com transcricao local, sem tocar em falhas de analise.
 
 ### GET /api/v1/entries/{id}/segments
 Lista os segmentos com paginacao, para leitura incremental. Parametros:

@@ -209,7 +209,8 @@ texto depois
 `local:<arquivo>` identifica um anexo que ainda esta so no aparelho; depois do
 sync vira `attachment:<id>`. `{w=N}` e a largura da imagem em percentual da nota
 e `{d=N}` e a duracao do audio em segundos. O parser/serializer do app fica em
-`mobile/src/core/noteDocument`; o dashboard continua lendo o markdown.
+`mobile/src/core/noteDocument`; o dashboard le o mesmo markdown e mostra imagem e
+audio como blocos na posicao dos marcadores, preservando-os ao salvar.
 
 | Campo | Tipo | Notas |
 |---|---|---|

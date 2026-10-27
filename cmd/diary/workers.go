@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"regexp"
 	"strings"
 	"time"
 
@@ -17,6 +16,7 @@ import (
 	"github.com/joseti/dyarium/internal/id"
 	"github.com/joseti/dyarium/internal/ingest"
 	"github.com/joseti/dyarium/internal/jobs"
+	"github.com/joseti/dyarium/internal/preview"
 	"github.com/joseti/dyarium/internal/store"
 	"github.com/joseti/dyarium/internal/transcribe"
 )
@@ -114,8 +114,17 @@ func transcribeHandler(st *store.Store, cfg config.Config, pipeline *transcribe.
 			// "falhou" enquanto o worker ainda ia tentar de novo. Um cancelamento
 			// tem caminho proprio e nao deve virar falha.
 			if ctx.Err() == nil && job.Attempts+1 >= job.MaxAttempts {
-				_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryFailed)
-				bus.Publish("entry.failed", map[string]string{"entry_id": payload.EntryID, "reason": err.Error()})
+				// O aparelho pode ter mandado a transcricao (PUT /transcript)
+				// enquanto o worker tentava. Sem esta checagem, o job falho
+				// sobrescrevia o estado e a nota aparecia como "falhou" mesmo
+				// com o texto salvo e legivel no dashboard e no app.
+				if transcript, err := st.LatestTranscript(ctx, payload.EntryID); err == nil && strings.TrimSpace(transcript.Text) != "" {
+					_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryTranscribed)
+					bus.Publish("entry.status", map[string]string{"entry_id": payload.EntryID, "status": store.EntryTranscribed})
+				} else {
+					_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryFailed)
+					bus.Publish("entry.failed", map[string]string{"entry_id": payload.EntryID, "reason": err.Error()})
+				}
 			}
 			return err
 		}
@@ -442,41 +451,9 @@ func noteBodyText(ctx context.Context, st *store.Store, entryID string) (string,
 	}
 	note := notes[0]
 	if strings.TrimSpace(note.ContentMarkdown) != "" {
-		return markdownToPlain(note.ContentMarkdown), nil
+		return preview.Plain(note.ContentMarkdown), nil
 	}
 	return extractText(note.Document), nil
-}
-
-// markdownToPlain is the plain text of a markdown body: the same view the
-// dashboard counts words from (web/src/editor/blocknoteMarkdown.ts), so the
-// analysis reads the same text the user sees. Markdown that carries no prose
-// (fenced code, table rows, a mention to another note) is dropped.
-func markdownToPlain(markdown string) string {
-	plain := markdown
-	for _, rule := range markdownToPlainRules {
-		plain = rule.re.ReplaceAllString(plain, rule.replacement)
-	}
-	return strings.Join(strings.Fields(plain), " ")
-}
-
-var markdownToPlainRules = []struct {
-	re          *regexp.Regexp
-	replacement string
-}{
-	{regexp.MustCompile("(?ms)^```.*?^```[^\\n]*$"), ""},
-	{regexp.MustCompile(`(?m)^\|.*\|$`), ""},
-	// Imagem entra pela legenda/arquivo: e o que um modelo de texto consegue ler
-	// do anexo (o conteudo visual exigiria um modelo com visao).
-	{regexp.MustCompile(`!\[([^\]]*)\]\([^)\s]*\)`), "imagem: ${1}"},
-	// Mencao a outra nota: fica o rotulo (a secao de links traz o titulo).
-	{regexp.MustCompile(`\[([^\]]*)\]\(note:[^)\s]+\)`), "${1}"},
-	// Link externo: rotulo e URL, para a analise saber para onde aponta.
-	{regexp.MustCompile(`\[([^\]]*)\]\(([^)\s]+)\)`), "${1} (${2})"},
-	{regexp.MustCompile(`(?m)^#{1,6}\s+`), ""},
-	{regexp.MustCompile(`(?m)^>\s?`), ""},
-	{regexp.MustCompile(`(?m)^\s*[-*+]\s+`), ""},
-	{regexp.MustCompile(`(?m)^\s*\d+\.\s+`), ""},
-	{regexp.MustCompile("[*_~`]"), ""},
 }
 
 // extractText walks a BlockNote document and concatenates every inline "text".
