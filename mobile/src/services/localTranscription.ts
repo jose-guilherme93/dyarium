@@ -14,7 +14,7 @@ import { Directory, File, FileMode, Paths } from 'expo-file-system';
 
 import { whisperLanguage } from '@/core/transcription';
 import { displayTitle } from '@/core/title';
-import type { Recording, TranscriptSegment } from '@/core/types';
+import { hasFinalTranscript, shouldAutoTranscribe, type Recording, type TranscriptSegment } from '@/core/types';
 
 import { audioDecodeAvailable, decodeToWav } from '../../modules/audio-decode';
 import {
@@ -302,7 +302,8 @@ export async function transcribeLocally(id: string): Promise<void> {
   if (running.has(id)) return;
   const recording = await getRecording(id);
   if (!recording?.filePath) return;
-  if (recording.hasTranscript && recording.transcriptStatus === 'ready') return;
+  // Transcricao terminada, local ou do servidor, nao e refeita sozinha.
+  if (hasFinalTranscript(recording)) return;
 
   const prefs = await loadPrefs();
   const modelId = prefs.transcriptionModel;
@@ -494,7 +495,7 @@ async function notifyTranscriptionDone(): Promise<void> {
   let pending = 0;
   try {
     const list = await listRecordings();
-    pending = list.filter((r) => Boolean(r.filePath) && !r.hasTranscript).length;
+    pending = list.filter((r) => Boolean(r.filePath) && !hasFinalTranscript(r)).length;
   } catch {
     // sem banco: notifica generico
   }
@@ -519,7 +520,7 @@ export async function resumeInterruptedTranscriptions(): Promise<void> {
     return;
   }
   for (const recording of list) {
-    if (!recording.filePath || recording.hasTranscript) continue;
+    if (!recording.filePath || hasFinalTranscript(recording)) continue;
     if (recording.transcriptStatus !== 'pending') continue;
     if (recording.transcriptOrigin !== 'local') continue;
     if (running.has(recording.id)) continue;
@@ -540,7 +541,10 @@ export async function transcribePendingLocally(): Promise<void> {
     return;
   }
   for (const recording of list) {
-    if (!recording.filePath || recording.hasTranscript || running.has(recording.id)) continue;
+    if (running.has(recording.id)) continue;
+    // O acervo inteiro e varrido no boot e em segundo plano: so entra o que e
+    // nosso e ainda nao tem texto. Nota do servidor nunca e refeita aqui.
+    if (!shouldAutoTranscribe(recording)) continue;
     await transcribeLocally(recording.id);
   }
 }
@@ -554,6 +558,7 @@ export async function maybeTranscribeLocally(id: string): Promise<void> {
   if (!(await willTranscribeLocally())) return;
   const recording = await getRecording(id);
   if (!recording?.filePath) return;
-  if (recording.hasTranscript && recording.transcriptStatus === 'ready') return;
+  // Transcricao terminada, local ou do servidor, nao e refeita sozinha.
+  if (hasFinalTranscript(recording)) return;
   await transcribeLocally(id);
 }

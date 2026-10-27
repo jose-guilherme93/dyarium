@@ -100,6 +100,8 @@ describe('fetchTranscriptsOnce', () => {
     const saved = mockUpsertRecording.mock.calls[0][0];
     expect(saved.transcriptOrigin).toBe('server');
     expect(saved.transcriptStatus).toBe('ready');
+    // Marca de transcricao pronta: a fila local nao refaz o texto do servidor.
+    expect(saved.hasTranscript).toBe(true);
     expect(saved.transcriptSegments).toHaveLength(2);
     expect(saved.transcriptReview).toMatchObject({
       model: 'glm-5.3-flash',

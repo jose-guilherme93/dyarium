@@ -58,7 +58,7 @@ import { noteBodyWithAudio, audioRefFromPath } from '@/core/noteAudio';
 import { sameNoteContent } from '@/core/noteDocument';
 import { noteStats, type NoteStats } from '@/core/noteStats';
 import { markdownToPlain } from '@/core/richText';
-import type { Recording, TranscriptSegment } from '@/core/types';
+import { hasFinalTranscript, type Recording, type TranscriptSegment } from '@/core/types';
 import {
   changedSegments,
   perHundred,
@@ -1737,7 +1737,7 @@ export default function NoteScreen() {
   const stackAudios = bodyHasAudio ? [] : stack.audios;
   // Transcricao pedida e ainda sem andamento local (ex.: feita no servidor):
   // o card mostra que esta em fila, em vez de parecer parado.
-  const serverTranscribing = !note.hasTranscript && note.transcriptStatus === 'pending';
+  const serverTranscribing = !hasFinalTranscript(note) && note.transcriptStatus === 'pending';
   const editorPlaceholder = hasAudio ? 'Escreva sobre este áudio...' : 'Comece a escrever...';
   // Em tela estreita o titulo comeca menor; em ambas quebra linha em vez de sumir.
   const titleSize = titleFontSize(title, windowWidth < 380 ? 30 : 34, 24);
@@ -1973,7 +1973,7 @@ export default function NoteScreen() {
             ownAudioRefs={ownAudioRefs}
             transcribingWait={!transcribing && serverTranscribing}
             transcribingPercent={transcribing ? transcriptionPercent : undefined}
-            canTranscribe={Boolean(hasAudio) && !note.hasTranscript}
+            canTranscribe={Boolean(hasAudio) && !hasFinalTranscript(note)}
             onTranscribe={() => void handleTranscribe()}
             onStopTranscribe={handleStopTranscribe}
             onPlayAudio={handlePlayAudio}

@@ -47,6 +47,9 @@ export async function fetchTranscriptsOnce(): Promise<void> {
           // apagava a compreensao da revisao.
           transcriptOrigin: 'server',
           transcriptStatus: 'ready',
+          // Marca explicita de transcricao pronta: e o que impede a fila local
+          // de refazer o texto que veio do servidor.
+          hasTranscript: true,
           transcriptSegments: segments,
           // Revisao feita no servidor: o aparelho reaproveita em vez de gastar
           // bateria revisando de novo. O estado da passada (fim, alcance e

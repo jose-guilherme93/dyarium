@@ -9,7 +9,7 @@ import { isPermanentUploadError } from '@/core/errors';
 import { withUploadedAudio } from '@/core/noteAudio';
 import { markCompleted, markFailed, markFailedTerminal, pickNextToUpload } from '@/core/queue';
 import { mergeTranscript } from '@/core/transcript';
-import { isTextNote, needsNoteSync, type Recording } from '@/core/types';
+import { hasFinalTranscript, isTextNote, needsNoteSync, type Recording } from '@/core/types';
 import { uploadRecording } from '@/core/uploader';
 
 import { acquireLock, getRecording, listRecordings, releaseLock, upsertRecording } from './db';
@@ -197,12 +197,19 @@ async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
     const fresh = (await getRecording(current.id)) ?? current;
     const attachmentId =
       result.attachmentId ?? fresh.serverAttachmentId ?? current.serverAttachmentId;
+    // Quem e o dono da transcricao desta nota? Sem esta marca, a fila local
+    // varria o acervo e transcrevia de novo o que o servidor ja tinha feito so
+    // porque o modelo local apareceu depois.
+    const transcriptOrigin =
+      fresh.transcriptOrigin ??
+      (hasFinalTranscript(fresh) || localTranscribe ? 'local' : 'server');
     // O audio que subiu como conteudo da entrada ja tem id no servidor: troca o
     // marcador `local:` no documento e guarda o mapa, para o sync do corpo nao
     // subir o mesmo audio de novo.
     current = withUploadedAudio(
       {
         ...mergeTranscript(markCompleted(current, result.entryId, new Date()), fresh),
+        transcriptOrigin,
         serverAttachmentId: attachmentId,
         duplicate: result.duplicate ? true : undefined,
         // O upload cria a entrada no servidor; o caderno local e enviado no

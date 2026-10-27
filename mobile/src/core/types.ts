@@ -215,6 +215,32 @@ export function needsTranscript(r: Recording): boolean {
 }
 
 /**
+ * A nota ja tem transcricao terminada, venha ela do aparelho ou do servidor.
+ * `pending` com texto e uma passada parcial: continua valendo, mas nao conta
+ * como terminada (ela retoma do checkpoint).
+ */
+export function hasFinalTranscript(r: Recording): boolean {
+  return r.hasTranscript === true || r.transcriptStatus === 'ready';
+}
+
+/**
+ * A transcricao local pode comecar sozinha nesta nota?
+ *
+ * So quando o audio esta no aparelho, nada terminou e a nota nao pertence ao
+ * servidor. Uma nota que o servidor transcreveu (ou esta transcrevendo) nunca
+ * e refeita no aparelho por iniciativa propria: reabrir o app, baixar um
+ * modelo ou ligar a transcricao local nao pode varrer o acervo. O usuario
+ * ainda pode pedir a transcricao de uma nota especifica.
+ */
+export function shouldAutoTranscribe(r: Recording): boolean {
+  if (!r.filePath || hasFinalTranscript(r)) return false;
+  if (r.transcriptOrigin === 'server') return false;
+  // Ja esta no servidor e nao ha marca de posse local: quem transcreve e ele.
+  if (r.entryId && r.transcriptOrigin !== 'local') return false;
+  return true;
+}
+
+/**
  * Nota ja enviada com edicao local pendente: entra na fila para levar o corpo
  * (titulo/texto/imagens) ao servidor. Nao reenvia audio nem cria outra entrada.
  *

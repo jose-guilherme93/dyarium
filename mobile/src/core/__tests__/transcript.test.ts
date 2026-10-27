@@ -1,5 +1,10 @@
 import { activeSegmentIndex, mergeTranscript } from '../transcript';
-import { needsTranscript, type Recording } from '../types';
+import {
+  hasFinalTranscript,
+  needsTranscript,
+  shouldAutoTranscribe,
+  type Recording,
+} from '../types';
 
 function base(overrides: Partial<Recording> = {}): Recording {
   return {
@@ -96,5 +101,56 @@ describe('mergeTranscript', () => {
   it('trata texto sem status como pronto', () => {
     const merged = mergeTranscript(base({}), base({ transcript: 'oi' }));
     expect(merged.transcriptStatus).toBe('ready');
+  });
+});
+
+/**
+ * O acervo e varrido no boot e em segundo plano. Uma nota que o servidor ja
+ * transcreveu nao pode ser transcrita de novo no aparelho so porque o modelo
+ * local foi baixado depois.
+ */
+describe('hasFinalTranscript', () => {
+  it('conta texto do servidor e texto local como prontos', () => {
+    expect(hasFinalTranscript(base({ transcriptStatus: 'ready' }))).toBe(true);
+    expect(hasFinalTranscript(base({ hasTranscript: true }))).toBe(true);
+    expect(hasFinalTranscript(base({ transcriptStatus: 'pending' }))).toBe(false);
+  });
+});
+
+describe('shouldAutoTranscribe', () => {
+  const audio = { filePath: '/a.aac', status: 'completed' as const };
+
+  it('transcreve o audio nosso que ainda nao tem texto', () => {
+    expect(shouldAutoTranscribe(base({ ...audio }))).toBe(true);
+    expect(shouldAutoTranscribe(base({ ...audio, entryId: 'en1', transcriptOrigin: 'local' }))).toBe(
+      true,
+    );
+  });
+
+  it('nunca refaz nota que o servidor transcreveu', () => {
+    expect(
+      shouldAutoTranscribe(
+        base({ ...audio, entryId: 'en1', transcriptStatus: 'ready', transcriptOrigin: 'server' }),
+      ),
+    ).toBe(false);
+    // Mesmo sem a marca explicita: o texto pronto basta.
+    expect(
+      shouldAutoTranscribe(base({ ...audio, entryId: 'en1', transcriptStatus: 'ready' })),
+    ).toBe(false);
+  });
+
+  it('espera o servidor quando a nota ja esta la sem marca de posse local', () => {
+    expect(shouldAutoTranscribe(base({ ...audio, entryId: 'en1', transcriptStatus: 'pending' }))).toBe(
+      false,
+    );
+    expect(
+      shouldAutoTranscribe(
+        base({ ...audio, entryId: 'en1', transcriptStatus: 'pending', transcriptOrigin: 'server' }),
+      ),
+    ).toBe(false);
+  });
+
+  it('nao mexe em nota sem audio local', () => {
+    expect(shouldAutoTranscribe(base({ entryId: 'en1' }))).toBe(false);
   });
 });

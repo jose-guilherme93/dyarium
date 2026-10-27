@@ -13,7 +13,7 @@ import { formatDuration, formatStamp, noteDateIso } from '@/core/format';
 import { markdownPreview } from '@/core/richText';
 import { displayTitle } from '@/core/title';
 import { checkpointPercent } from '@/core/transcription';
-import type { Recording } from '@/core/types';
+import { hasFinalTranscript, type Recording } from '@/core/types';
 import { useRenderCount } from '@/dev/perf';
 import { useTranscriptionProgress } from '@/state/useTranscriptionProgress';
 import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
@@ -59,7 +59,7 @@ export const RecordingCard = memo(function RecordingCard({
   );
   // Transcricao em andamento: mostra um icone discreto + porcentagem no canto.
   const transcribing =
-    hasAudio && recording.transcriptStatus === 'pending' && !recording.hasTranscript;
+    hasAudio && recording.transcriptStatus === 'pending' && !hasFinalTranscript(recording);
   const livePercent = useTranscriptionProgress(recording.id, transcribing);
   const percent = livePercent > 0 ? Math.round(livePercent) : checkpointPercent(recording);
 
