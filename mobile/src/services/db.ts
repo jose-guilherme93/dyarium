@@ -361,6 +361,30 @@ const MIGRATIONS: Migration[] = [
       await addColumn(db, 'recordings', 'transcript_review');
     },
   },
+  {
+    version: 22,
+    run: async (db) => {
+      // Historico do centro de atividade. Antes ele vivia so em memoria e
+      // sumia a cada abertura; o usuario perdia o que terminou, falhou ou foi
+      // interrompido. As acoes (parar, tentar de novo) continuam em memoria:
+      // so o registro do que aconteceu e persistente.
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS activity_log (
+          id TEXT PRIMARY KEY NOT NULL,
+          kind TEXT NOT NULL,
+          title TEXT NOT NULL,
+          detail TEXT,
+          status TEXT NOT NULL,
+          progress INTEGER,
+          started_at INTEGER NOT NULL,
+          finished_at INTEGER,
+          seen INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_activity_log_started
+          ON activity_log (started_at DESC);
+      `);
+    },
+  },
 ];
 
 async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
@@ -923,6 +947,109 @@ export async function getCachedAnalysis(entryId: string): Promise<CachedAnalysis
     [entryId],
   );
   return row ? toCachedAnalysis(row) : null;
+}
+
+/**
+ * Uma linha do historico do centro de atividade. Sem funcoes: as acoes
+ * (`parar`, `tentar de novo`) so existem enquanto o processo esta vivo.
+ */
+export interface StoredActivityRow {
+  id: string;
+  kind: string;
+  title: string;
+  detail: string | null;
+  status: string;
+  progress: number | null;
+  startedAt: number;
+  finishedAt: number | null;
+  seen: number;
+}
+
+/** Grava (ou atualiza) uma atividade no historico local. */
+export async function saveActivityRow(row: StoredActivityRow): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `INSERT INTO activity_log
+       (id, kind, title, detail, status, progress, started_at, finished_at, seen)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       kind = excluded.kind,
+       title = excluded.title,
+       detail = excluded.detail,
+       status = excluded.status,
+       progress = excluded.progress,
+       started_at = excluded.started_at,
+       finished_at = excluded.finished_at,
+       seen = excluded.seen`,
+    [
+      row.id,
+      row.kind,
+      row.title,
+      row.detail,
+      row.status,
+      row.progress,
+      row.startedAt,
+      row.finishedAt,
+      row.seen,
+    ],
+  );
+}
+
+/** Historico do centro de atividade, do mais recente para o mais antigo. */
+export async function listActivityRows(limit: number): Promise<StoredActivityRow[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<{
+    id: string;
+    kind: string;
+    title: string;
+    detail: string | null;
+    status: string;
+    progress: number | null;
+    started_at: number;
+    finished_at: number | null;
+    seen: number;
+  }>(
+    `SELECT id, kind, title, detail, status, progress, started_at, finished_at, seen
+     FROM activity_log ORDER BY started_at DESC LIMIT ?`,
+    [Math.max(1, Math.round(limit))],
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    kind: row.kind,
+    title: row.title,
+    detail: row.detail,
+    status: row.status,
+    progress: row.progress,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+    seen: row.seen,
+  }));
+}
+
+export async function deleteActivityRow(id: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(`DELETE FROM activity_log WHERE id = ?`, [id]);
+}
+
+export async function deleteFinishedActivityRows(): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(`DELETE FROM activity_log WHERE status <> 'running'`);
+}
+
+export async function markActivityRowsSeen(): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(`UPDATE activity_log SET seen = 1 WHERE status <> 'running'`);
+}
+
+/** Mantem o historico limitado, sem apagar o que ainda esta rodando. */
+export async function pruneActivityRows(keep: number): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `DELETE FROM activity_log WHERE status <> 'running' AND id NOT IN (
+       SELECT id FROM activity_log ORDER BY started_at DESC LIMIT ?
+     )`,
+    [Math.max(1, Math.round(keep))],
+  );
 }
 
 /**

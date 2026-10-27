@@ -18,6 +18,7 @@ import {
 import type { AnalysisModelInfo } from '@/core/analysisModels';
 import type { Recording } from '@/core/types';
 import {
+  cancelActivity,
   failActivity,
   finishActivity,
   startActivity,
@@ -178,8 +179,12 @@ export async function releaseAnalysisContext(): Promise<void> {
   }
 }
 
+/** A geracao atual foi parada pelo usuario? */
+let stopped = false;
+
 /** Interrompe a geracao em andamento, se houver. */
 export async function stopAnalysis(): Promise<void> {
+  stopped = true;
   try {
     await loaded?.context.stopCompletion();
   } catch {
@@ -271,6 +276,7 @@ export async function analyzeRecording(
   const content = analysisNoteContent(recording);
   const activity = `analysis:${recording.id}`;
   let tokens = 0;
+  stopped = false;
 
   startActivity({
     id: activity,
@@ -278,6 +284,7 @@ export async function analyzeRecording(
     title: content.title || 'Sem título',
     detail: 'Preparando modelo',
     action: options.failureAction,
+    stop: { label: 'Parar', run: stopAnalysis },
   });
   // Mantem o processo vivo com a tela apagada; o texto da notificacao e a
   // etapa, sem conteudo da nota.
@@ -318,7 +325,9 @@ export async function analyzeRecording(
       parsed: parsed ? interpretationOrOriginal(parsed, content.text) : null,
     };
   } catch (error) {
-    failActivity(activity, 'Não foi possível analisar');
+    // Parada pelo usuario nao e falha: o botao do centro dispara stopAnalysis.
+    if (stopped) cancelActivity(activity, 'Análise interrompida');
+    else failActivity(activity, 'Não foi possível analisar');
     throw error;
   } finally {
     stopForegroundTask();

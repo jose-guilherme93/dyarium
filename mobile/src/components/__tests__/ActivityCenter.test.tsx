@@ -51,6 +51,21 @@ describe('ActivityCenter', () => {
     expect(screen.getByText('Reunião de segunda')).toBeTruthy();
   });
 
+  it('oferece parar para o que ainda está rodando', () => {
+    const stop = jest.fn();
+    startActivity({
+      id: 'transcricao:2',
+      kind: 'transcription',
+      title: 'Aula de terça',
+      stop: { label: 'Parar', run: stop },
+    });
+
+    render(<ActivityCenter visible onClose={jest.fn()} />);
+
+    fireEvent.press(screen.getByLabelText('Parar: Aula de terça'));
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+
   it('oferece a ação de recuperação quando algo falha', () => {
     const retry = jest.fn();
     startActivity({

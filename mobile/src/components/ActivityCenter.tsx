@@ -76,6 +76,15 @@ function runAction(item: Activity): void {
   }
 }
 
+function runStop(item: Activity): void {
+  if (!item.stop) return;
+  try {
+    void Promise.resolve(item.stop.run()).catch(() => undefined);
+  } catch {
+    // O produtor decide o que fazer com a parada.
+  }
+}
+
 function ActivityRow({ item }: { item: Activity }) {
   const styles = useThemedStyles(baseStyles);
   const { colors } = useTheme();
@@ -103,11 +112,25 @@ function ActivityRow({ item }: { item: Activity }) {
             {item.title}
           </Text>
           {running ? (
-            percent !== undefined ? (
-              <Text style={styles.percent}>{percent}%</Text>
-            ) : (
-              <ActivityIndicator size="small" color={colors.textSecondary} />
-            )
+            <View style={styles.runningEnd}>
+              {percent !== undefined ? (
+                <Text style={styles.percent}>{percent}%</Text>
+              ) : (
+                <ActivityIndicator size="small" color={colors.textSecondary} />
+              )}
+              {/* Parar e uma acao: icone, sem texto. So aparece onde o
+                  produtor sabe interromper sem perder o que ja foi feito. */}
+              {item.stop ? (
+                <Press
+                  onPress={() => runStop(item)}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${item.stop.label}: ${item.title}`}
+                >
+                  <Ionicons name="stop-circle-outline" size={20} color={colors.warning} />
+                </Press>
+              ) : null}
+            </View>
           ) : status ? (
             <Ionicons name={status.icon} size={16} color={status.color} />
           ) : null}
@@ -271,6 +294,7 @@ const baseStyles = defineStyles({
     gap: spacing.sm,
     minHeight: 20,
   },
+  runningEnd: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   rowTitle: { flex: 1, color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
   percent: {
     color: baseColors.textSecondary,

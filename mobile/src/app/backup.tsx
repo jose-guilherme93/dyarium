@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { back } from '@/services/appNavigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
   ScrollView,
@@ -13,6 +13,7 @@ import { Button } from '@/components/Button';
 import { Screen } from '@/components/Screen';
 import { formatBytes, formatDateTime } from '@/core/format';
 import {
+  cancelActivity,
   failActivity,
   finishActivity,
   startActivity,
@@ -105,6 +106,8 @@ export default function BackupScreen() {
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState<{ folder: string; info: BackupInfo | null } | null>(null);
   const [reload, setReload] = useState(0);
+  // Pedido de parada do centro de atividade. O produtor confere entre notas.
+  const stopRequested = useRef(false);
 
   useEffect(() => {
     if (!backupFolder) return undefined;
@@ -141,6 +144,7 @@ export default function BackupScreen() {
     setError(null);
     setMessage(null);
     setProgress(null);
+    stopRequested.current = false;
     startActivity({
       id: BACKUP_ACTIVITY,
       kind: 'backup',
@@ -148,21 +152,36 @@ export default function BackupScreen() {
       detail: 'Preparando cópia',
       progress: 0,
       action: { label: 'Tentar de novo', run: () => handleBackup() },
+      stop: {
+        label: 'Parar',
+        run: () => {
+          stopRequested.current = true;
+          updateActivity(BACKUP_ACTIVITY, { detail: 'Parando após a nota atual' });
+        },
+      },
     });
     try {
-      const summary = await runBackup(backupFolder, (done, total) => {
-        setProgress(`${done}/${total}`);
-        updateActivity(BACKUP_ACTIVITY, {
-          detail: copyDetail(done, total),
-          progress: ratio(done, total),
-        });
-      });
+      const summary = await runBackup(
+        backupFolder,
+        (done, total) => {
+          setProgress(`${done}/${total}`);
+          updateActivity(BACKUP_ACTIVITY, {
+            detail: copyDetail(done, total),
+            progress: ratio(done, total),
+          });
+        },
+        { shouldStop: () => stopRequested.current },
+      );
       finishActivity(BACKUP_ACTIVITY, summaryLine(summary));
       setMessage(`Backup concluído: ${summaryLine(summary)}.`);
       setReload((n) => n + 1);
     } catch (err) {
-      failActivity(BACKUP_ACTIVITY, 'Não foi possível concluir o backup');
-      setError(messageFor(err));
+      if (stopRequested.current) {
+        cancelActivity(BACKUP_ACTIVITY, 'Backup interrompido');
+      } else {
+        failActivity(BACKUP_ACTIVITY, 'Não foi possível concluir o backup');
+        setError(messageFor(err));
+      }
     } finally {
       setBusy(null);
       setProgress(null);
@@ -184,6 +203,7 @@ export default function BackupScreen() {
             setError(null);
             setMessage(null);
             setProgress(null);
+            stopRequested.current = false;
             startActivity({
               id: RESTORE_ACTIVITY,
               kind: 'restore',
@@ -191,14 +211,25 @@ export default function BackupScreen() {
               detail: 'Conferindo backup',
               progress: 0,
               action: { label: 'Tentar de novo', run: () => handleRestore() },
+              stop: {
+                label: 'Parar',
+                run: () => {
+                  stopRequested.current = true;
+                  updateActivity(RESTORE_ACTIVITY, { detail: 'Parando após a nota atual' });
+                },
+              },
             });
-            void runRestore(backupFolder, (done, total) => {
-              setProgress(`${done}/${total}`);
-              updateActivity(RESTORE_ACTIVITY, {
-                detail: restoreDetail(done, total),
-                progress: ratio(done, total),
-              });
-            })
+            void runRestore(
+              backupFolder,
+              (done, total) => {
+                setProgress(`${done}/${total}`);
+                updateActivity(RESTORE_ACTIVITY, {
+                  detail: restoreDetail(done, total),
+                  progress: ratio(done, total),
+                });
+              },
+              { shouldStop: () => stopRequested.current },
+            )
               .then(async (summary) => {
                 // Reafirma as notas no servidor ANTES de sincronizar: uma nota
                 // apagada e trazida de volta pelo backup nao pode ser apagada de
@@ -218,8 +249,12 @@ export default function BackupScreen() {
                 );
               })
               .catch((err) => {
-                failActivity(RESTORE_ACTIVITY, 'Não foi possível restaurar o backup');
-                setError(messageFor(err));
+                if (stopRequested.current) {
+                  cancelActivity(RESTORE_ACTIVITY, 'Restauração interrompida');
+                } else {
+                  failActivity(RESTORE_ACTIVITY, 'Não foi possível restaurar o backup');
+                  setError(messageFor(err));
+                }
               })
               .finally(() => {
                 setBusy(null);

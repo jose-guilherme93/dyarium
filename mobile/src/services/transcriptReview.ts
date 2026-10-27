@@ -26,13 +26,25 @@ import {
   withRevisedTexts,
 } from '@/core/transcriptReview';
 import type { Recording, TranscriptReview, TranscriptSegment } from '@/core/types';
-import { failActivity, finishActivity, startActivity, updateActivity } from './activity';
+import { cancelActivity, failActivity, finishActivity, startActivity, updateActivity } from './activity';
 import { upsertRecording } from './db';
 import { startForegroundTask, stopForegroundTask, updateForegroundTask } from '../../modules/foreground-task';
-import { runAnalysis } from './localAnalysis';
+import { runAnalysis, stopAnalysis } from './localAnalysis';
 import { notifyActivity } from './notifications';
 import { pushTranscript } from './transcriptSync';
 import { emitRecording } from './uploaderLoop';
+
+/** Passadas que o usuario pediu para parar (por id de atividade). */
+const cancelledReviews = new Set<string>();
+
+/**
+ * Para a revisao no fim da janela atual. O texto ja aplicado fica salvo como
+ * passada interrompida, e o centro de atividade mostra "Revisao interrompida".
+ */
+export async function stopReview(activityId: string): Promise<void> {
+  cancelledReviews.add(activityId);
+  await stopAnalysis();
+}
 
 /** Uma janela revisada, pronta para gravar e publicar. */
 export interface ReviewWindow {
@@ -104,6 +116,7 @@ export async function reviewTranscript(
     options.only,
   );
   const activity = options.activityId ?? 'review:transcript';
+  cancelledReviews.delete(activity);
   let current = segments;
   let rejected = Math.max(0, options.rejected ?? 0);
   const rejectedIdx = new Set<number>(options.rejectedIdx ?? []);
@@ -134,11 +147,17 @@ export async function reviewTranscript(
       kind: 'analysis',
       title: options.title?.trim() || 'Revisando transcrição',
       detail: 'Preparando modelo',
+      stop: { label: 'Parar', run: () => stopReview(activity) },
     });
   }
 
+  let stopped = false;
   try {
     for (let index = 0; index < chunks.length; index += 1) {
+      if (cancelledReviews.has(activity)) {
+        stopped = true;
+        break;
+      }
       const chunk = chunks[index];
       updateActivity(activity, { detail: `${reviewedThrough} de ${segments.length}` });
       options.onProgress?.(reviewedThrough, segments.length);
@@ -164,6 +183,12 @@ export async function reviewTranscript(
         // Uma janela que falha nao invalida as outras: os trechos ficam crus e
         // contam como sem revisao.
         parsed = null;
+      }
+      // Parar aborta a geracao: a janela em curso nao vira recusa nem avanca o
+      // ponto de retomada.
+      if (cancelledReviews.has(activity)) {
+        stopped = true;
+        break;
       }
 
       if (!parsed) {
@@ -214,12 +239,15 @@ export async function reviewTranscript(
       rejected,
       rejectedIdx: [...rejectedIdx].sort((a, b) => a - b),
       reviewedThrough,
-      finishedAt: new Date().toISOString(),
+      // Interrompida nao tem fim: o chip mostra a pausa e retoma daqui.
+      finishedAt: stopped ? undefined : new Date().toISOString(),
     };
 
     // Uma passada que nao aceitou nenhuma janela nao terminou bem, e a atividade
     // nao pode dizer "revisada" para o usuario.
-    if (chunks.length === 0) {
+    if (stopped) {
+      cancelActivity(activity, 'Revisão interrompida');
+    } else if (chunks.length === 0) {
       finishActivity(activity, 'Nada a revisar');
     } else if (reviewedThrough === from && rejected > 0) {
       failActivity(activity, 'Revisão recusada pelo modelo');

@@ -6,7 +6,7 @@
 import { Directory, File, Paths } from 'expo-file-system';
 
 import { TRANSCRIPTION_MODELS, modelById, modelUrl } from '@/core/transcription';
-import { failActivity, finishActivity, startActivity, updateActivity } from './activity';
+import { cancelActivity, failActivity, finishActivity, startActivity, updateActivity } from './activity';
 
 const DIR_NAME = 'whisper-models';
 
@@ -72,6 +72,12 @@ export async function downloadModel(
   if (destination.exists) return destination.uri;
 
   const activity = `download:transcription:${id}`;
+  // O centro de atividade para o download na hora; o arquivo parcial nunca e
+  // usado (a integridade e conferida antes de instalar).
+  const controller = new AbortController();
+  const forwardAbort = () => controller.abort();
+  if (options.signal?.aborted) controller.abort();
+  options.signal?.addEventListener('abort', forwardAbort);
   startActivity({
     id: activity,
     kind: 'download',
@@ -79,12 +85,13 @@ export async function downloadModel(
     detail: 'Baixando modelo de transcrição',
     progress: 0,
     action: { label: 'Tentar de novo', run: () => downloadModel(id) },
+    stop: { label: 'Parar', run: () => controller.abort() },
   });
 
   try {
     const file = await File.downloadFileAsync(modelUrl(info), destination, {
       idempotent: true,
-      signal: options.signal,
+      signal: controller.signal,
       onProgress: ({ bytesWritten, totalBytes }) => {
         if (totalBytes <= 0) return;
         const ratio = Math.min(1, bytesWritten / totalBytes);
@@ -95,8 +102,11 @@ export async function downloadModel(
     finishActivity(activity, 'Modelo de transcrição pronto');
     return file.uri;
   } catch (error) {
-    failActivity(activity, 'Não foi possível baixar o modelo');
+    if (controller.signal.aborted) cancelActivity(activity, 'Download interrompido');
+    else failActivity(activity, 'Não foi possível baixar o modelo');
     throw error;
+  } finally {
+    options.signal?.removeEventListener('abort', forwardAbort);
   }
 }
 

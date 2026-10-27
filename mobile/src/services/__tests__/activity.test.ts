@@ -11,6 +11,16 @@ import {
   updateActivity,
 } from '../activity';
 
+// O historico vai para o SQLite; aqui so a memoria importa.
+jest.mock('../db', () => ({
+  saveActivityRow: jest.fn(async () => undefined),
+  listActivityRows: jest.fn(async () => []),
+  deleteActivityRow: jest.fn(async () => undefined),
+  deleteFinishedActivityRows: jest.fn(async () => undefined),
+  markActivityRowsSeen: jest.fn(async () => undefined),
+  pruneActivityRows: jest.fn(async () => undefined),
+}));
+
 afterEach(() => {
   for (const activity of getActivitiesSnapshot()) dismissActivity(activity.id);
 });

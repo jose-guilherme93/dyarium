@@ -59,7 +59,14 @@ export type BackupErrorCode =
   | 'manifest_missing'
   | 'manifest_invalid'
   | 'corrupt'
-  | 'hash_failed';
+  | 'hash_failed'
+  | 'cancelled';
+
+/** Como parar um backup/restauracao em andamento. */
+export interface BackupRunOptions {
+  /** Conferido entre uma nota e outra: parar nunca deixa a nota pela metade. */
+  shouldStop?: () => boolean;
+}
 
 /** Erro com codigo, para a tela mostrar uma mensagem clara. */
 export class BackupError extends Error {
@@ -189,6 +196,7 @@ export async function readManifestSummary(folderUri: string): Promise<BackupInfo
 export async function runBackup(
   folderUri: string,
   onProgress?: BackupProgress,
+  options: BackupRunOptions = {},
 ): Promise<BackupSummary> {
   const recordings = orderForBackup(await listRecordings());
   const notebooks = await listNotebooks();
@@ -199,6 +207,7 @@ export async function runBackup(
   let bytes = 0;
 
   for (let i = 0; i < recordings.length; i += 1) {
+    if (options.shouldStop?.()) throw new BackupError('cancelled');
     const recording = recordings[i];
     const backed: BackupFile[] = [];
     for (const file of noteFiles(recording)) {
@@ -228,7 +237,9 @@ export async function runBackup(
     onProgress?.(i + 1, recordings.length);
   }
 
-  // Manifesto por ultimo: so fica valido quando tudo ja foi escrito.
+  // Manifesto por ultimo: so fica valido quando tudo ja foi escrito. Parar
+  // antes disso mantem o manifesto anterior intacto.
+  if (options.shouldStop?.()) throw new BackupError('cancelled');
   await removeChild(existing, BACKUP_MANIFEST);
   const manifestUri = await Legacy.StorageAccessFramework.createFileAsync(
     folderUri,
@@ -256,6 +267,7 @@ export async function runBackup(
 export async function runRestore(
   folderUri: string,
   onProgress?: BackupProgress,
+  options: BackupRunOptions = {},
 ): Promise<BackupSummary> {
   const existing = await listFolder(folderUri);
   const manifestUri = existing.get(BACKUP_MANIFEST);
@@ -280,6 +292,8 @@ export async function runRestore(
   let bytes = 0;
 
   for (let i = 0; i < total; i += 1) {
+    // So entre notas: uma nota em restauracao termina inteira.
+    if (options.shouldStop?.()) throw new BackupError('cancelled');
     const entry = notes[i];
     const recording = entry.recording;
     const stage = new Directory(stageRoot, recording.id);

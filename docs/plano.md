@@ -204,6 +204,13 @@ Superficie Android em Expo (development build). O nucleo puro fica em `mobile/sr
 - Painel com as metricas do servidor (resumo, humor, tags, status).
 - Armazenamento local: uso no aparelho e liberar espaco (remove o audio local de notas ja
   sincronizadas; o audio continua no servidor).
+- Centro de atividade com historico persistente no SQLite (`activity_log`): o que terminou,
+  falhou ou foi interrompido continua la depois de reabrir o app. Cada item em andamento
+  tem botao de parar quando o produtor sabe interromper sem perder o trabalho ja feito
+  (transcricao para no fim da janela, revisao no fim da janela, analise aborta a geracao,
+  download cancela o arquivo, backup/restauracao param entre uma nota e outra). Uma
+  atividade que ficou `running` no banco morreu com o processo anterior e aparece como
+  **interrompida**, nunca como concluida.
 
 ### Proximos passos
 

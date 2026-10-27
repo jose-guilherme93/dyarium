@@ -361,6 +361,9 @@ export async function transcribeLocally(id: string): Promise<void> {
     detail: checkpoint > 0 ? 'Retomando transcrição' : 'Preparando áudio',
     progress: transcriptionProgress(id),
     action: { label: 'Tentar de novo', run: () => retryTranscription(id) },
+    // O centro de atividade para a passada no fim da janela atual; o
+    // checkpoint salvo continua valendo para retomar depois.
+    stop: { label: 'Parar', run: () => stopTranscription(id) },
   });
 
   try {

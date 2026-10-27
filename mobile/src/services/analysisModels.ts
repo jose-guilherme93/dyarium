@@ -15,7 +15,7 @@ import {
   analysisModelUrl,
   type AnalysisModelInfo,
 } from '@/core/analysisModels';
-import { failActivity, finishActivity, startActivity, updateActivity } from './activity';
+import { cancelActivity, failActivity, finishActivity, startActivity, updateActivity } from './activity';
 
 const DIR_NAME = 'analysis-models';
 
@@ -113,6 +113,10 @@ export async function downloadAnalysisModel(
   }
 
   const activity = `download:analysis:${id}`;
+  const controller = new AbortController();
+  const forwardAbort = () => controller.abort();
+  if (options.signal?.aborted) controller.abort();
+  options.signal?.addEventListener('abort', forwardAbort);
   startActivity({
     id: activity,
     kind: 'download',
@@ -120,12 +124,13 @@ export async function downloadAnalysisModel(
     detail: 'Baixando modelo de análise',
     progress: 0,
     action: { label: 'Tentar de novo', run: () => downloadAnalysisModel(id) },
+    stop: { label: 'Parar', run: () => controller.abort() },
   });
 
   try {
     const file = await File.downloadFileAsync(analysisModelUrl(info), destination, {
       idempotent: true,
-      signal: options.signal,
+      signal: controller.signal,
       onProgress: ({ bytesWritten, totalBytes }) => {
         if (totalBytes <= 0) return;
         const ratio = Math.min(1, bytesWritten / totalBytes);
@@ -141,8 +146,11 @@ export async function downloadAnalysisModel(
     finishActivity(activity, 'Modelo de análise pronto');
     return file.uri;
   } catch (error) {
-    failActivity(activity, 'Não foi possível baixar o modelo');
+    if (controller.signal.aborted) cancelActivity(activity, 'Download interrompido');
+    else failActivity(activity, 'Não foi possível baixar o modelo');
     throw error;
+  } finally {
+    options.signal?.removeEventListener('abort', forwardAbort);
   }
 }
 
