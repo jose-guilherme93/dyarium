@@ -439,6 +439,18 @@ func nullFloat(v *float64) any {
 	return *v
 }
 
+// DeleteAnalyses removes every analysis of an entry. An analysis describes the
+// text it read; when that text stops existing (the audio with its transcript
+// was deleted), keeping the numbers would show a measurement of another
+// version of the note.
+func (s *Store) DeleteAnalyses(ctx context.Context, entryID string) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM analyses WHERE entry_id = ?`, entryID)
+	if err != nil {
+		return 0, fmt.Errorf("store: delete analyses: %w", err)
+	}
+	return res.RowsAffected()
+}
+
 // GetAnalysis returns the most recent analysis of an entry.
 func (s *Store) GetAnalysis(ctx context.Context, entryID string) (Analysis, bool, error) {
 	var a Analysis

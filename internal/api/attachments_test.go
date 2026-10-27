@@ -259,3 +259,56 @@ func TestSegmentsPagination(t *testing.T) {
 		t.Fatalf("texto do entry = %v", transcript["text"])
 	}
 }
+
+// Apagar o audio leva a transcricao junto; a analise que leu essa transcricao
+// precisa cair tambem. Sem isso a nota continuava mostrando "Compreensao 87"
+// de um texto que nao existe mais.
+func TestDeleteAudioInvalidatesAnalysis(t *testing.T) {
+	srv := newTestServer(t)
+	seedTranscriptAudio(t, srv)
+	now := time.Now().UTC()
+	if err := srv.deps.Store.SaveAnalysis(context.Background(), store.Analysis{
+		ID: "an1", EntryID: "e1", Model: "llm", SentimentLabel: "positivo",
+		Summary: "resumo", Comprehension: 87, ComprehensionSource: "review",
+		RevisedSegments: 12, CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("save analysis: %v", err)
+	}
+
+	rec, _ := doJSON(t, srv, http.MethodDelete, "/api/v1/attachments/a1", nil)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("apagar audio: %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec, _ = doJSON(t, srv, http.MethodGet, "/api/v1/entries/e1/analysis", nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("analise sobreviveu ao audio: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// Apagar uma imagem nao mexe na analise: o texto e a transcricao continuam.
+func TestDeleteImageKeepsAnalysis(t *testing.T) {
+	srv := newTestServer(t)
+	seedPlainEntry(t, srv, "e1")
+	now := time.Now().UTC()
+	if err := srv.deps.Store.CreateAttachment(context.Background(), store.Attachment{
+		ID: "img1", EntryID: "e1", Kind: store.AttachmentOriginal, StorageKey: "objects/img1",
+		ContentType: "image/png", SizeBytes: 10, CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("attachment: %v", err)
+	}
+	if err := srv.deps.Store.SaveAnalysis(context.Background(), store.Analysis{
+		ID: "an1", EntryID: "e1", Model: "llm", Summary: "resumo", CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("save analysis: %v", err)
+	}
+
+	rec, _ := doJSON(t, srv, http.MethodDelete, "/api/v1/attachments/img1", nil)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("apagar imagem: %d %s", rec.Code, rec.Body.String())
+	}
+	rec, _ = doJSON(t, srv, http.MethodGet, "/api/v1/entries/e1/analysis", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("analise perdida ao apagar imagem: %d %s", rec.Code, rec.Body.String())
+	}
+}

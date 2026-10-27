@@ -237,6 +237,14 @@ func (s *Server) handleDeleteAttachment(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
+	// A analise leu a transcricao deste audio: sem ele, a compreensao e os
+	// temas descrevem um texto que nao existe mais. Apagar e mais honesto que
+	// mostrar a medida de outra versao da nota.
+	if strings.HasPrefix(att.ContentType, "audio/") {
+		if _, err := s.deps.Store.DeleteAnalyses(ctx, att.EntryID); err != nil && s.deps.Logger != nil {
+			s.deps.Logger.Error("api: invalidar analise", "entry_id", att.EntryID, "erro", err)
+		}
+	}
 	// A transcricao e os segmentos caem junto (FK ON DELETE CASCADE). A duracao
 	// da nota e a soma dos audios que sobraram, nao a do audio que saiu.
 	if err := s.deps.Store.SyncEntryDuration(ctx, att.EntryID); err != nil && s.deps.Logger != nil {
