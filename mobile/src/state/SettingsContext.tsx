@@ -64,6 +64,9 @@ interface SettingsValue {
   /** Transcrever no aparelho (quando ha modelo baixado). */
   localTranscription: boolean;
   setLocalTranscription(value: boolean): Promise<void>;
+  /** Aviso de transcricao e analise desligadas dispensado de vez. */
+  transcriptionPromptDismissed: boolean;
+  dismissTranscriptionPrompt(): Promise<void>;
   /** Modelo de transcricao escolhido. */
   transcriptionModel: string;
   setTranscriptionModel(id: string): Promise<void>;
@@ -128,6 +131,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [importYear, setImportYearState] = useState<number | undefined>(undefined);
   const [typography, setTypographyState] = useState<NoteTypography>(DEFAULT_TYPOGRAPHY);
   const [localTranscription, setLocalTranscriptionState] = useState(true);
+  const [transcriptionPromptDismissed, setTranscriptionPromptDismissed] = useState(false);
   const [transcriptionModel, setTranscriptionModelState] = useState(
     DEFAULT_TRANSCRIPTION_MODEL,
   );
@@ -170,6 +174,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         setImportYearState(prefs.importYear);
         setTypographyState(normalizeTypography(prefs.typography));
         setLocalTranscriptionState(prefs.localTranscription !== false);
+        setTranscriptionPromptDismissed(prefs.transcriptionPromptDismissed === true);
         setTranscriptionModelState(prefs.transcriptionModel ?? DEFAULT_TRANSCRIPTION_MODEL);
         setTranscriptionLanguageState(prefs.transcriptionLanguage === 'auto' ? 'auto' : 'pt');
         setAnalysisModelState(prefs.analysisModel ?? DEFAULT_ANALYSIS_MODEL);
@@ -241,6 +246,11 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     },
     [persistPrefs],
   );
+
+  const dismissTranscriptionPrompt = useCallback(async () => {
+    setTranscriptionPromptDismissed(true);
+    await persistPrefs({ transcriptionPromptDismissed: true });
+  }, [persistPrefs]);
 
   const setTranscriptionModel = useCallback(
     async (id: string) => {
@@ -391,6 +401,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setTypography,
       localTranscription,
       setLocalTranscription,
+      transcriptionPromptDismissed,
+      dismissTranscriptionPrompt,
       transcriptionModel,
       setTranscriptionModel,
       transcriptionLanguage,
@@ -432,6 +444,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setTypography,
       localTranscription,
       setLocalTranscription,
+      transcriptionPromptDismissed,
+      dismissTranscriptionPrompt,
       transcriptionModel,
       setTranscriptionModel,
       transcriptionLanguage,

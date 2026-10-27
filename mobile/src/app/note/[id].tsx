@@ -31,6 +31,7 @@ import { NoteMetaRow } from '@/components/NoteMetaRow';
 import { NoteMenu, type NoteProperty } from '@/components/NoteMenu';
 import { NotebookPicker } from '@/components/NotebookPicker';
 import { TagPicker } from '@/components/TagPicker';
+import { TranscriptionPrompt } from '@/components/TranscriptionPrompt';
 
 import { Screen } from '@/components/Screen';
 import { STATUS_LABELS } from '@/components/StatusChip';
@@ -183,6 +184,8 @@ export default function NoteScreen() {
     setAnalysisModel,
     analysisLowPower,
     setAnalysisLowPower,
+    transcriptionPromptDismissed,
+    dismissTranscriptionPrompt,
   } = useSettings();
   // Enquanto esta tela esta viva, a sincronizacao de fundo espera: a nota e
   // local e nao pode disputar SQLite/rede com o que o usuario esta fazendo.
@@ -299,6 +302,7 @@ export default function NoteScreen() {
   );
   const [notebookPickerOpen, setNotebookPickerOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [transcriptionPromptOpen, setTranscriptionPromptOpen] = useState(false);
   const [menuBytes, setMenuBytes] = useState(0);
   const [menuStats, setMenuStats] = useState<NoteStats | null>(null);
   // Analise ja feita no servidor: o cache aparece na hora e a rede so atualiza.
@@ -1329,14 +1333,17 @@ export default function NoteScreen() {
   const handleTranscribe = useCallback(async () => {
     if (!noteId) return;
     if (!(await willTranscribeLocally())) {
-      Alert.alert(
-        'Transcrição no aparelho',
-        'Ative a transcrição local e baixe um modelo em Ajustes > Transcrição e modelos.',
-      );
+      // Quem ja dispensou o aviso vai direto para a tela onde pode ligar a
+      // transcricao: sem popup repetido, mas sem esconder o caminho.
+      if (transcriptionPromptDismissed) {
+        push('/transcription');
+        return;
+      }
+      setTranscriptionPromptOpen(true);
       return;
     }
     await maybeTranscribeLocally(noteId);
-  }, [noteId]);
+  }, [noteId, transcriptionPromptDismissed]);
 
   const handleStopTranscribe = useCallback(() => {
     if (!noteId) return;
@@ -1936,6 +1943,19 @@ export default function NoteScreen() {
           </Press>
         </FastModal>
       ) : null}
+
+      <TranscriptionPrompt
+        visible={transcriptionPromptOpen}
+        onClose={() => setTranscriptionPromptOpen(false)}
+        onDismiss={() => {
+          setTranscriptionPromptOpen(false);
+          void dismissTranscriptionPrompt();
+        }}
+        onOpenSettings={() => {
+          setTranscriptionPromptOpen(false);
+          push('/transcription');
+        }}
+      />
 
       {viewerSrc != null ? (
         <FastModal visible onRequestClose={closeViewer}>

@@ -142,6 +142,8 @@ jest.mock('@/state/SettingsContext', () => ({
     setAnalysisModel: jest.fn(async () => undefined),
     analysisLowPower: false,
     setAnalysisLowPower: jest.fn(async () => undefined),
+    transcriptionPromptDismissed: false,
+    dismissTranscriptionPrompt: jest.fn(async () => undefined),
     ready: true,
   }),
 }));

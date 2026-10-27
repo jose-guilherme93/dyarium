@@ -78,6 +78,8 @@ export interface Prefs {
   typography?: NoteTypography;
   /** Transcrever no aparelho (desligado volta a usar o servidor). */
   localTranscription?: boolean;
+  /** Aviso de transcricao e analise desligadas ja dispensado pelo usuario. */
+  transcriptionPromptDismissed?: boolean;
   /** Id do modelo de transcricao escolhido. */
   transcriptionModel?: string;
   /** Idioma da transcricao (pt fixo ou detectar). */
@@ -105,7 +107,10 @@ export interface Prefs {
 }
 
 const PREFS_KEY = 'dyarium.prefs';
-const DEFAULT_PREFS: Prefs = { swipeAction: 'delete' };
+const DEFAULT_PREFS: Prefs = {
+  swipeAction: 'delete',
+  transcriptionPromptDismissed: false,
+};
 
 export async function loadPrefs(): Promise<Prefs> {
   try {
@@ -119,6 +124,7 @@ export async function loadPrefs(): Promise<Prefs> {
       typography: parsed.typography ? normalizeTypography(parsed.typography) : undefined,
       localTranscription:
         typeof parsed.localTranscription === 'boolean' ? parsed.localTranscription : undefined,
+      transcriptionPromptDismissed: parsed.transcriptionPromptDismissed === true,
       transcriptionModel:
         typeof parsed.transcriptionModel === 'string'
           ? parsed.transcriptionModel
