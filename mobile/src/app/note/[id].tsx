@@ -56,6 +56,7 @@ import {
 import { DEFAULT_IMAGE_WIDTH } from '@/core/image';
 import { fontFamilyNative } from '@/core/typography';
 import { noteBodyWithAudio, audioRefFromPath } from '@/core/noteAudio';
+import { sameNoteContent } from '@/core/noteDocument';
 import { noteStats, type NoteStats } from '@/core/noteStats';
 import { markdownToPlain } from '@/core/richText';
 import type { TranscriptSegment } from '@/core/types';
@@ -429,6 +430,11 @@ export default function NoteScreen() {
 
   const initializedRef = useRef(false);  const actionDoneRef = useRef(false);
   const dirtyRef = useRef(false);
+  /**
+   * Primeira emissao do editor: ela pode ser so o corpo normalizado da abertura.
+   * Nessa hora comparamos o documento canonico, e nao so o fim das linhas.
+   */
+  const pristineBodyRef = useRef(true);
   const editingRef = useRef(false);
   const leavingRef = useRef(false);
   const bodyRef = useRef(body);
@@ -545,6 +551,16 @@ export default function NoteScreen() {
         // perde.
         bodyRef.current = markdown;
         return;
+      }
+      // A primeira emissao pode trazer outras normalizacoes (audio antigo que
+      // vira no, largura de imagem canonica). Compara o documento inteiro uma
+      // unica vez; depois disso, qualquer diferenca e digitacao.
+      if (pristineBodyRef.current) {
+        pristineBodyRef.current = false;
+        if (sameNoteContent(markdown, bodyRef.current)) {
+          bodyRef.current = markdown;
+          return;
+        }
       }
       dirtyRef.current = true;
       bodyRef.current = markdown;
@@ -884,6 +900,10 @@ export default function NoteScreen() {
       mountedRef.current = true;
       return undefined;
     }
+    // Abrir uma nota nao e edicao. O editor pode reemitir o corpo normalizado
+    // (inclusive o audio antigo que vira no do documento); gravar isso marcaria
+    // a nota como recente e o servidor subiria updated_at sem ninguem editar.
+    if (!dirtyRef.current) return undefined;
     const timer = setTimeout(() => {
       void saveNote({ title: titleRef.current, text: bodyRef.current });
     }, 600);
@@ -906,6 +926,12 @@ export default function NoteScreen() {
       const dirty = dirtyRef.current;
       const status = statusRef.current;
       const timer = setTimeout(() => {
+        // Sem edicao nao ha o que gravar: sair de uma nota recem-aberta nao pode
+        // mudar o updated_at (nem no aparelho nem no servidor).
+        if (!dirty && status !== 'draft') {
+          kickRef.current();
+          return;
+        }
         // Entra na mesma fila dos autosaves: a gravacao de saida e a ultima e
         // nao pode correr em paralelo com uma que ainda esta indo para o banco.
         void saveChainRef.current
@@ -1370,10 +1396,12 @@ export default function NoteScreen() {
     void started
       .then(() => flushEditor())
       .then(() =>
-        saveNote({
-          title: titleRef.current,
-          text: bodyRef.current,
-        }),
+        dirtyRef.current
+          ? saveNote({
+              title: titleRef.current,
+              text: bodyRef.current,
+            })
+          : Promise.resolve(),
       )
       .then(() => Promise.resolve(editorRef.current?.getInsertPosition() ?? null))
       .then((at) => {

@@ -292,6 +292,7 @@ jest.mock('expo-clipboard', () => ({
 describe('tela da nota', () => {
   beforeEach(() => {
     jest.useFakeTimers();
+    jest.clearAllTimers();
     resetNavigationGuard();
     jest.clearAllMocks();
     jest.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -435,6 +436,32 @@ describe('tela da nota', () => {
       await Promise.resolve();
     });
     expect(router.back).toHaveBeenCalled();
+  });
+
+  it('abrir uma nota antiga com audio nao a marca como editada', async () => {
+    mockNote.filePath = 'file:///audio.aac';
+
+    try {
+      const view = await renderNote();
+      await act(async () => {
+        jest.advanceTimersByTime(2000);
+        await Promise.resolve();
+      });
+
+      // O audio virou um no do documento so para exibir; nada mudou de fato.
+      expect(mockUpdateNote).not.toHaveBeenCalled();
+
+      view.unmount();
+      await act(async () => {
+        jest.advanceTimersByTime(50);
+        await Promise.resolve();
+      });
+
+      expect(mockUpdateNote).not.toHaveBeenCalled();
+      expect(mockSubmitNote).not.toHaveBeenCalled();
+    } finally {
+      delete mockNote.filePath;
+    }
   });
 
   it('mantem o audio do corpo visivel enquanto o teclado esta aberto', async () => {

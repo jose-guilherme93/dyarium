@@ -426,6 +426,33 @@ export function insertNoteNode(
 }
 
 /**
+ * O texto mudou de verdade?
+ *
+ * Abrir a nota faz o editor devolver o corpo normalizado (imagem com largura
+ * canonica, audio antigo virando no, espacos de fim de linha). Comparar o
+ * documento depois de passar pelo parser/serializer evita tratar essa
+ * normalizacao como edicao e marcar a nota como recente sem o usuario tocar
+ * em nada.
+ */
+export function sameNoteContent(left: string, right: string): boolean {
+  const normalized = (value: string) =>
+    value
+      .replace(/\r\n/g, '\n')
+      .split('\n')
+      .map((line) => line.replace(/[ \t]+$/, ''))
+      .join('\n')
+      .trimEnd();
+  if (normalized(left) === normalized(right)) {
+    return true;
+  }
+  return (
+    serializeNoteDocument(parseNoteDocument(left)) ===
+    serializeNoteDocument(parseNoteDocument(right))
+  );
+}
+
+
+/**
  * Divide o markdown de um no no deslocamento do texto visivel. Marcadores de
  * enfase/codigo abertos sao fechados de um lado e reabertos do outro; o prefixo
  * de bloco (lista, citacao, titulo) e repetido quando a divisao cai no meio da

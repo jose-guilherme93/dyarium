@@ -10,6 +10,7 @@ import {
   removeFromNoteNodes,
   removeNoteNode,
   replaceAudioRef,
+  sameNoteContent,
   serializeNoteDocument,
   setNoteNodeWidth,
   splitMarkdownAtCursor,
@@ -337,5 +338,18 @@ describe('setNoteNodeWidth', () => {
     expect(setNoteNodeWidth('![foto](local:foto.jpg){w=50}', 'i0', 50)).toBe(
       '![foto](local:foto.jpg){w=50}',
     );
+  });
+});
+
+describe('sameNoteContent', () => {
+  it('ignora normalizacao de espacos e de marcadores', () => {
+    expect(sameNoteContent('A  \nB\n', 'A\nB')).toBe(true);
+    expect(sameNoteContent('![](local:f.jpg)', '![](local:f.jpg){w=100}')).toBe(true);
+    expect(sameNoteContent('!audio[local:a.aac]{d=5.0}', '!audio[local:a.aac]{d=5}')).toBe(true);
+  });
+
+  it('detecta texto editado', () => {
+    expect(sameNoteContent('A\nB', 'A\nC')).toBe(false);
+    expect(sameNoteContent('foto ![x](local:f.jpg)', 'foto')).toBe(false);
   });
 });
