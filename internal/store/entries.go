@@ -356,10 +356,12 @@ func (s *Store) SetEntryPrimaryAudio(ctx context.Context, id, contentType, filen
 	return nil
 }
 
-// UpdateEntryStatus changes the status and bumps updated_at.
+// UpdateEntryStatus changes the status without touching updated_at. Status is
+// processing state (transcribing, analyzing, failed), not an edit: a worker
+// finishing a transcript must not move the note to the top of "recentes".
 func (s *Store) UpdateEntryStatus(ctx context.Context, id, status string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE entries SET status = ?, updated_at = ? WHERE id = ?`, status, ts(time.Now()), id)
+		`UPDATE entries SET status = ? WHERE id = ?`, status, id)
 	if err != nil {
 		return fmt.Errorf("store: update entry status: %w", err)
 	}

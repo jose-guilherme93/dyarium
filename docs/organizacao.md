@@ -26,7 +26,8 @@ contrato HTTP esta em `api.md`; o modelo de dados, em `modelo-de-dados.md`.
   padrao nao pode ser renomeado nem excluido.
 - No caderno aberto ha um toggle grande de duas visoes:
   - **Recentes** (padrao, esquerda): todas as notas ativas, de qualquer caderno,
-    ordenadas por `updated_at` decrescente; cada card mostra o caderno.
+    ordenadas por `updated_at` decrescente; cada card mostra o caderno. Abrir
+    uma nota nao muda a ordem: so uma edicao real conta como atividade.
   - **Caderno** (direita): notas do caderno atual na ordem temporal
     (`recorded_at` decrescente, agrupadas por ano), com arquivadas no fim.
   O toggle troca a lista inteira; nao existe uma secao "Paginas recentes" acima

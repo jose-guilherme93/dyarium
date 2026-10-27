@@ -214,6 +214,9 @@ Resposta 200: `{ "status": "ok", "versions": { "title": "...", "recorded_at": ".
   arquivamento e caderno de novo sem o campo em conflito, para nao ficarem presos.
 - Gravar o **mesmo valor** de titulo ou data nao muda a versao nem `updated_at`: e
   o que impede o sync periodico do app de gerar 409 sem ter havido edicao.
+- Mudar so o `status` de processamento (transcrevendo, transcrito, falhou) nao
+  altera `updated_at`: concluir transcricao ou analise nao move a nota na lista
+  de recentes.
 - `archived` tira a nota da lista de trabalho sem apagar: ela continua existindo
   (e no aparelho), so sai da lista do dia. E um interruptor, entao nao tem versao
   nem conflito.

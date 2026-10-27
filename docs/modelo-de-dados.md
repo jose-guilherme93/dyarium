@@ -28,7 +28,7 @@ Representa um audio enviado e seu ciclo de vida.
 | sha256 | TEXT | SHA-256 do conteudo em claro |
 | recorded_at | TEXT | data do evento (pode diferir da criacao) |
 | created_at | TEXT | |
-| updated_at | TEXT | |
+| updated_at | TEXT | ultima edicao de conteudo/metadados; abrir a nota e mudar so o status nao alteram |
 | deleted_at | TEXT | remocao logica |
 
 Indices: `status`, `recorded_at`, `created_at`, `deleted_at`, `notebook_id`.
