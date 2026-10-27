@@ -171,28 +171,176 @@ function clip(value: string, max: number): string {
   return trimmed.length > max ? trimmed.slice(0, max).trimEnd() : trimmed;
 }
 
+/** Uma secao que o modelo le: titulo do texto ou a transcricao da fala. */
+export interface AnalysisNoteSection {
+  heading: string;
+  /** "text" para uma secao escrita, "transcript" para a fala. */
+  kind: 'text' | 'transcript';
+  text: string;
+}
+
+/** Fatia minima de cada secao quando a nota nao cabe inteira. */
+const MIN_SECTION_CHARS = 400;
+/** Titulo comprido nao pode consumir o orcamento do texto. */
+const MAX_HEADING_CHARS = 80;
+
+/** Corpo em markdown, corpo em texto puro e transcricao sem duplicar. */
+function noteParts(recording: Pick<Recording, 'text' | 'transcript'>): {
+  markdown: string;
+  body: string;
+  transcript: string;
+} {
+  const markdown = (recording.text ?? '').trim();
+  const body = markdownToPlain(markdown).trim();
+  const transcript = (recording.transcript ?? '').trim();
+  const normalizedBody = body.replace(/\s+/g, ' ').trim();
+  const normalizedTranscript = transcript.replace(/\s+/g, ' ').trim();
+  return {
+    markdown,
+    body,
+    transcript: transcript && normalizedTranscript !== normalizedBody ? transcript : '',
+  };
+}
+
+/**
+ * Divide a nota em secoes pelos titulos markdown, com a transcricao no fim.
+ * Usado so quando a nota passa do orcamento: e o que permite dividir o mesmo
+ * espaco entre todas as secoes em vez de cortar o fim da nota.
+ */
+export function analysisNoteSections(
+  recording: Pick<Recording, 'text' | 'transcript'>,
+): AnalysisNoteSection[] {
+  const { markdown, transcript } = noteParts(recording);
+  const sections = splitMarkdownSections(markdown);
+  if (transcript) {
+    sections.push({ heading: 'Transcrição', kind: 'transcript', text: transcript });
+  }
+  return sections;
+}
+
+/**
+ * Quebra o markdown pelos titulos. Le o texto antes de virar prosa: o
+ * `markdownToPlain` apaga o `#`, e depois dele nao ha mais como saber onde
+ * comeca uma secao. `#` no meio da linha e dentro de bloco de codigo nao conta.
+ */
+function splitMarkdownSections(markdown: string): AnalysisNoteSection[] {
+  const sections: AnalysisNoteSection[] = [];
+  let heading = '';
+  let lines: string[] = [];
+  let fenced = false;
+  const flush = () => {
+    const text = markdownToPlain(lines.join('\n')).trim();
+    if (text !== '') {
+      sections.push({ heading, kind: 'text', text });
+    }
+    heading = '';
+    lines = [];
+  };
+  for (const line of markdown.split('\n')) {
+    if (/^\s*```/.test(line)) {
+      fenced = !fenced;
+      lines.push(line);
+      continue;
+    }
+    const match = fenced ? null : /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
+    if (match) {
+      flush();
+      heading = markdownToPlain(match[2]).trim();
+      continue;
+    }
+    lines.push(line);
+  }
+  flush();
+  return sections;
+}
+
 /**
  * Texto que o modelo analisa: titulo, corpo em texto puro e transcricao.
- * A transcricao so entra se for diferente do corpo, para nao duplicar.
+ *
+ * A nota cabe no orcamento? Vai inteira e sem titulos, exatamente como antes:
+ * nenhum custo novo. Nao cabe? O mesmo orcamento e dividido entre as secoes,
+ * proporcional ao tamanho, com um piso para nenhuma sumir. Toda secao e lida
+ * sem chamada extra ao modelo; o texto continua com no maximo
+ * MAX_ANALYSIS_INPUT_CHARS, entao o processamento e a bateria nao aumentam.
  */
 export function analysisNoteContent(
   recording: Pick<Recording, 'title' | 'text' | 'transcript'>,
 ): { title: string; text: string; truncated: boolean } {
   const title = clip(recording.title ?? '', 120);
-  const body = markdownToPlain(recording.text ?? '').trim();
-  const transcript = (recording.transcript ?? '').trim();
-  const parts: string[] = [];
-  if (body) parts.push(body);
-  const normalizedBody = body.replace(/\s+/g, ' ').trim();
-  const normalizedTranscript = transcript.replace(/\s+/g, ' ').trim();
-  if (transcript && normalizedTranscript !== normalizedBody) parts.push(transcript);
-  const combined = parts.join('\n\n');
-  const truncated = combined.length > MAX_ANALYSIS_INPUT_CHARS;
+  const { body, transcript } = noteParts(recording);
+  const combined = [body, transcript].filter(Boolean).join('\n\n');
+  if (combined.length <= MAX_ANALYSIS_INPUT_CHARS) {
+    return { title, text: combined, truncated: false };
+  }
   return {
     title,
-    text: clip(combined, MAX_ANALYSIS_INPUT_CHARS),
-    truncated,
+    text: allocateSections(analysisNoteSections(recording)),
+    truncated: true,
   };
+}
+
+/** Junta as secoes com o titulo na frente; `limits` corta cada uma. */
+function composeSections(sections: AnalysisNoteSection[], limits: number[]): string {
+  return sections
+    .map((section, index) => {
+      const text = clipToWord(section.text, limits[index]);
+      if (section.heading === '') return text;
+      return `## ${clip(section.heading, MAX_HEADING_CHARS)}\n${text}`;
+    })
+    .filter((part) => part.trim() !== '')
+    .join('\n\n');
+}
+
+/** Corta no limite, preferindo o ultimo espaco para nao partir palavra. */
+function clipToWord(value: string, max: number): string {
+  const text = value.trim();
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max);
+  const space = cut.lastIndexOf(' ');
+  return (space > max * 0.6 ? cut.slice(0, space) : cut).trimEnd();
+}
+
+/**
+ * Reparte o mesmo orcamento entre as secoes. O texto final nao passa de
+ * MAX_ANALYSIS_INPUT_CHARS, como o corte antigo: nenhuma chamada extra.
+ */
+function allocateSections(sections: AnalysisNoteSection[]): string {
+  if (sections.length === 0) return '';
+  const overhead = sections.reduce(
+    (total, section) =>
+      total + (section.heading ? Math.min(section.heading.length, MAX_HEADING_CHARS) + 4 : 0),
+    2 * Math.max(0, sections.length - 1),
+  );
+  const budget = Math.max(0, MAX_ANALYSIS_INPUT_CHARS - overhead);
+  const total = sections.reduce((sum, section) => sum + section.text.length, 0);
+  const floor = Math.min(MIN_SECTION_CHARS, Math.floor(budget / sections.length));
+  const limits = sections.map((section) =>
+    Math.max(floor, Math.floor((budget * section.text.length) / Math.max(1, total))),
+  );
+  // A soma dos pisos pode passar do orcamento; tira a sobra das maiores.
+  let excess = limits.reduce((sum, limit) => sum + limit, 0) - budget;
+  while (excess > 0) {
+    let reduced = false;
+    const order = limits
+      .map((limit, index) => ({ limit, index }))
+      .sort((a, b) => b.limit - a.limit);
+    for (const { index } of order) {
+      if (excess <= 0) break;
+      if (limits[index] <= floor) continue;
+      const take = Math.min(excess, limits[index] - floor);
+      limits[index] -= take;
+      excess -= take;
+      reduced = true;
+    }
+    if (!reduced) break;
+  }
+  const text = composeSections(sections, limits);
+  if (text.trim().length >= 200) return text;
+  // Titulos demais para o orcamento: cai no corte simples do texto inteiro.
+  return clipToWord(
+    composeSections(sections, sections.map(() => MAX_ANALYSIS_INPUT_CHARS)),
+    MAX_ANALYSIS_INPUT_CHARS,
+  );
 }
 
 /**
