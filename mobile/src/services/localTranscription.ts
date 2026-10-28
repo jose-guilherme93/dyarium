@@ -438,7 +438,9 @@ export async function transcribeLocally(id: string): Promise<void> {
       transcriptOrigin: 'local',
       transcriptCheckpointMs: checkpoint,
       transcriptSegments: committed,
-      transcript: committed.map((segment) => segment.text).join(' ').trim() || undefined,
+      // Refazer a passada nao apaga o texto que o usuario ja le: ele so e
+      // trocado quando o primeiro trecho novo chega.
+      transcript: committed.map((segment) => segment.text).join(' ').trim() || recording.transcript,
     });
   } catch {
     setRunning(id, false);
@@ -527,7 +529,7 @@ export async function transcribeLocally(id: string): Promise<void> {
           if (now - lastPersist < PERSIST_THROTTLE_MS) return;
           lastPersist = now;
           queuePersist({
-            transcript: textOf([...committed, ...partial]),
+            transcript: textOf([...committed, ...partial]) || recording.transcript,
             transcriptSegments: [...committed, ...partial],
             transcriptStatus: 'pending',
             transcriptOrigin: 'local',
@@ -544,7 +546,7 @@ export async function transcribeLocally(id: string): Promise<void> {
       committed = [...committed, ...toSegments(result.segments, chunkStart)];
       checkpoint = chunkEnd;
       queuePersist({
-        transcript: textOf(committed),
+        transcript: textOf(committed) || recording.transcript,
         transcriptSegments: committed,
         transcriptStatus: 'pending',
         transcriptOrigin: 'local',
@@ -562,7 +564,7 @@ export async function transcribeLocally(id: string): Promise<void> {
     updateActivity(activity, { detail: 'Salvando transcrição' });
     setProgress(id, 100);
     await persist(recording, {
-      transcript: textOf(committed),
+      transcript: textOf(committed) || recording.transcript,
       transcriptLanguage: language || recording.transcriptLanguage,
       transcriptSegments: committed,
       transcriptCheckpointMs: durationMs,
@@ -585,7 +587,7 @@ export async function transcribeLocally(id: string): Promise<void> {
     }
     await chain.catch(() => undefined);
     await persist(recording, {
-      transcript: textOf(committed),
+      transcript: textOf(committed) || recording.transcript,
       transcriptSegments: committed,
       transcriptCheckpointMs: checkpoint,
       transcriptStatus: 'pending',

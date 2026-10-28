@@ -2,18 +2,32 @@ import { AppState } from 'react-native';
 
 import type { Recording } from '@/core/types';
 
-import { maybeTranscribeLocally, transcribePendingLocally } from '../localTranscription';
+import {
+  maybeTranscribeLocally,
+  releaseTranscriptionContexts,
+  transcribeLocally,
+  transcribePendingLocally,
+} from '../localTranscription';
+import { resetHeavyWorkForTests } from '../heavyWork';
 
 const mockListRecordings = jest.fn<Promise<Recording[]>, []>();
 const mockGetRecording = jest.fn<Promise<Recording | null>, [string]>();
 const mockUpsertRecording = jest.fn<Promise<void>, [Recording]>();
 const mockLoadPrefs = jest.fn();
 const mockWillTranscribeLocally = jest.fn<Promise<boolean>, []>();
+const mockLoadWhisper = jest.fn();
+const mockDecode = jest.fn();
 
 jest.mock('expo-file-system', () => ({
-  Directory: class {},
+  Directory: class {
+    exists = true;
+    create() {}
+  },
   File: class {
     exists = true;
+    delete() {
+      this.exists = false;
+    }
   },
   FileMode: {},
   Paths: {},
@@ -21,7 +35,7 @@ jest.mock('expo-file-system', () => ({
 
 jest.mock('../../../modules/audio-decode', () => ({
   audioDecodeAvailable: () => true,
-  decodeToWav: jest.fn(),
+  decodeToWav: (...args: unknown[]) => mockDecode(...args),
 }));
 
 jest.mock('../../../modules/foreground-task', () => ({
@@ -58,7 +72,7 @@ jest.mock('../transcriptSync', () => ({ pushTranscript: jest.fn(async () => true
 // Sem o modulo nativo a transcricao para antes de tocar no audio: o teste
 // observa quais notas sequer foram lidas.
 jest.mock('../whisper', () => ({
-  loadWhisper: () => null,
+  loadWhisper: () => mockLoadWhisper(),
   localTranscriptionAvailable: () => true,
   willTranscribeLocally: () => mockWillTranscribeLocally(),
 }));
@@ -107,7 +121,9 @@ beforeEach(() => {
   jest.clearAllMocks();
   // A fila so inicia trabalho pesado com o app na frente.
   Object.defineProperty(AppState, 'currentState', { value: 'active', configurable: true });
+  resetHeavyWorkForTests();
   mockWillTranscribeLocally.mockResolvedValue(true);
+  mockLoadWhisper.mockReturnValue(null);
   mockLoadPrefs.mockResolvedValue({ transcriptionModel: 'tiny' });
   mockGetRecording.mockImplementation(async (id) => byId[id] ?? null);
   mockListRecordings.mockResolvedValue([serverNote, readyWithoutFlag, localPending, notUploaded]);
@@ -153,6 +169,22 @@ describe('transcribePendingLocally', () => {
     await transcribePendingLocally();
 
     expect(mockListRecordings).not.toHaveBeenCalled();
+  });
+});
+
+describe('transcribeLocally', () => {
+  it('retomar a passada nao apaga o texto que ja estava na nota', async () => {
+    const withText = { ...localPending, transcript: 'texto antigo' };
+    mockGetRecording.mockResolvedValue(withText);
+    mockLoadWhisper.mockReturnValue({});
+    mockDecode.mockRejectedValueOnce(new Error('sem audio'));
+
+    await transcribeLocally('loc');
+
+    const first = mockUpsertRecording.mock.calls[0]?.[0];
+    expect(first?.transcript).toBe('texto antigo');
+    // O timer de ociosidade do contexto nao deve segurar a suite aberta.
+    await releaseTranscriptionContexts();
   });
 });
 
