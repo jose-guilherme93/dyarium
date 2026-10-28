@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.3.1](https://github.com/jose-guilherme93/dyarium/compare/v0.3.0...v0.3.1) (2026-10-28)
+
+
+### Bug Fixes
+
+* **api:** restaura chave mestra e primeiro acesso ([c28ee10](https://github.com/jose-guilherme93/dyarium/commit/c28ee109356a8c1801d135e897593620fd18b2f3))
+* hotfix 0.3.1 de upgrade e primeiro acesso ([ce3e9e5](https://github.com/jose-guilherme93/dyarium/commit/ce3e9e586cae1a5c49d9f778ae938ba7a560eda0))
+* **store:** reconcilia migracoes da linha 0.2.1 ([9f7641a](https://github.com/jose-guilherme93/dyarium/commit/9f7641a8ad6238c21c65729d8c5fc6c658241665))
+* **web:** restaura o wizard de primeiro acesso ([61d6cb4](https://github.com/jose-guilherme93/dyarium/commit/61d6cb4604fc5221d79b315e269269f1b7434035))
+
 ## [0.3.0](https://github.com/jose-guilherme93/dyarium/compare/v0.2.1...v0.3.0) (2026-10-28)
 
 
