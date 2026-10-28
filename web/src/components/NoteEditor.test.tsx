@@ -39,6 +39,7 @@ vi.mock("./TagEditor", () => ({ TagEditor: () => null }));
 vi.mock("../api", () => ({
   attachmentUrl: (id: string) => `/api/v1/attachments/${id}`,
   api: {
+    getSettings: vi.fn(async () => ({ owner_name: "", all_notes_mine: true })),
     getEntry: vi.fn(async () => ({
       id: "e1",
       title: "Nota escrita",

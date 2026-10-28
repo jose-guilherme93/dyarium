@@ -19,6 +19,8 @@ vi.mock("../api", () => ({
 }));
 
 const settings: Settings = {
+  owner_name: "",
+  all_notes_mine: true,
   trim_silence: false,
   max_whisper_rss_mb: 0,
   whisper_model: "models/ggml-small-q5_1.bin",
@@ -119,6 +121,29 @@ describe("SettingsView análise local", () => {
           analyze_enabled: true,
         }),
       ),
+    );
+  });
+});
+
+describe("SettingsView autor", () => {
+  it("salva o nome do dono ao sair do campo", async () => {
+    render(<SettingsView />);
+
+    const input = await screen.findByLabelText("Seu nome");
+    fireEvent.change(input, { target: { value: "Ana" } });
+    fireEvent.blur(input);
+
+    await waitFor(() => expect(api.putSettings).toHaveBeenCalledWith({ owner_name: "Ana" }));
+  });
+
+  it("desliga o padrao de todas as notas serem do dono", async () => {
+    render(<SettingsView />);
+
+    const toggle = await screen.findByLabelText("Todas as notas são minhas");
+    fireEvent.click(toggle);
+
+    await waitFor(() =>
+      expect(api.putSettings).toHaveBeenCalledWith({ all_notes_mine: false }),
     );
   });
 });

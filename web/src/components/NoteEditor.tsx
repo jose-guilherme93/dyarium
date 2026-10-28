@@ -9,7 +9,7 @@ import { createAutosave, type Autosave } from "../lib/autosave";
 import { formatBytes, formatDateTime, formatDuration } from "../lib/format";
 import { patchNoteViewState, readNoteViewState } from "../lib/noteViewState";
 import { useEscape } from "../lib/useEscape";
-import type { Analysis, Attachment, Audio, EntityKind, Entry, Note, Notebook, Revision } from "../types";
+import type { Analysis, Attachment, Audio, AuthorRole, EntityKind, Entry, Note, Notebook, Revision } from "../types";
 import { Spinner, isBusy, statusLabel } from "./Status";
 import { TagEditor } from "./TagEditor";
 import { useToast } from "./Toasts";
@@ -258,6 +258,7 @@ export function NoteEditor({
 }: NoteEditorProps) {
   const { notify } = useToast();
   const [entry, setEntry] = useState<Entry | null>(null);
+  const [allNotesMine, setAllNotesMine] = useState(true);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [images, setImages] = useState<Attachment[]>([]);
   const [revisions, setRevisions] = useState<Revision[]>([]);
@@ -310,6 +311,27 @@ export function NoteEditor({
   const titleRef = useRef<HTMLTextAreaElement | null>(null);
   const notesRef = useRef<NotesEditorHandle | null>(null);
   const mountedRefresh = useRef(refreshKey);
+
+  useEffect(() => {
+    void api
+      .getSettings()
+      .then((settings) => setAllNotesMine(settings.all_notes_mine))
+      .catch(() => undefined);
+  }, []);
+
+  const saveAuthor = useCallback(
+    async (author: AuthorRole) => {
+      if (!entry) return;
+      try {
+        await api.patchEntry(entry.id, { author });
+        setEntry((current) => (current ? { ...current, author } : current));
+        onChanged();
+      } catch (err) {
+        notify(err instanceof Error ? err.message : "Não foi possível salvar o autor.", "error");
+      }
+    },
+    [entry, notify, onChanged],
+  );
 
   // Grow the title textarea to fit its content (the title wraps like Notion).
   useEffect(() => {
@@ -1238,6 +1260,43 @@ export function NoteEditor({
                 </option>
               ))}
             </select>
+          </section>
+
+          <section className="aside-block">
+            <h3>Autor</h3>
+            <div className="author-picker" role="group" aria-label="Autor da nota">
+              {[
+                { id: "self" as const, label: "Eu" },
+                { id: "other" as const, label: "Outros" },
+                { id: "mixed" as const, label: "Eu e outros" },
+              ].map((option) => {
+                const effective = entry.author || (allNotesMine ? "self" : "");
+                const on = effective === option.id;
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    className={on ? "author-option author-option--on" : "author-option"}
+                    aria-pressed={on}
+                    onClick={() => void saveAuthor(option.id)}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="muted author-hint">
+              {entry.author
+                ? "escolha da nota"
+                : allNotesMine
+                  ? "padrão: dono"
+                  : "padrão: sem autor"}
+              {entry.author && (
+                <button type="button" className="link-button" onClick={() => void saveAuthor("")}>
+                  usar padrão
+                </button>
+              )}
+            </p>
           </section>
 
           <section className="aside-block">

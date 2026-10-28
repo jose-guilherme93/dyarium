@@ -132,6 +132,7 @@ function canSearchModels(provider: string): boolean {
 export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
   const { notify } = useToast();
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [ownerName, setOwnerName] = useState("");
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [progress, setProgress] = useState<Record<string, DownloadProgress>>({});
   const [ceiling, setCeiling] = useState("0");
@@ -214,6 +215,10 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
     source.addEventListener("model.download", listener as EventListener);
     return () => source.close();
   }, [loadModels]);
+
+  useEffect(() => {
+    if (settings) setOwnerName(settings.owner_name ?? "");
+  }, [settings]);
 
   const save = async (patch: Record<string, unknown>, message = "Configuração salva") => {
     try {
@@ -464,6 +469,45 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
                 </button>
                 <span className="hint">0 significa sem limite</span>
               </div>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-head">
+              <h2>Autor</h2>
+              <p className="hint">
+                O nome que a IA e o centro do mapa usam. O interruptor vale para notas sem escolha manual;
+                o seletor de cada nota sempre vence.
+              </p>
+            </div>
+            <div className="field">
+              <span className="field-label">Seu nome</span>
+              <input
+                type="text"
+                aria-label="Seu nome"
+                value={ownerName}
+                maxLength={80}
+                placeholder="Você"
+                onChange={(event) => setOwnerName(event.target.value)}
+                onBlur={() => {
+                  const next = ownerName.trim();
+                  if (next !== (settings.owner_name ?? "")) {
+                    void save({ owner_name: next }, "Nome salvo");
+                  }
+                }}
+              />
+            </div>
+            <div className="field">
+              <span className="field-label">Todas as notas são minhas</span>
+              <Toggle
+                checked={settings.all_notes_mine}
+                onChange={(value) => void save({ all_notes_mine: value })}
+                label={settings.all_notes_mine ? "Ligado" : "Desligado"}
+                ariaLabel="Todas as notas são minhas"
+              />
+              <span className="hint">
+                Desligado, uma nota sem escolha manual fica sem autor. O seletor da nota sempre vence.
+              </span>
             </div>
           </div>
 
