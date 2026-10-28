@@ -70,6 +70,7 @@ export function AudioTrack({
     }
   }
 
+
   // Load the first page of segments the first time the transcript expands.
   useEffect(() => {
     if (!showFull || !entryId || segments.length > 0 || text === "" || loading) {
@@ -186,7 +187,9 @@ export function AudioTrack({
                         title="Ouvir a partir daqui"
                       >
                         <span className="timestamp">{formatDuration(segment.start_ms / 1000)}</span>
-                        {revised ?? segment.text}
+                        {index === 0 ? "\u201c" : ""}
+                        {(segment.revised ?? segment.text).replace(/\s+/g, " ").trim()}
+                        {index === segments.length - 1 && !cursor ? "\u201d" : ""}
                       </button>
                       {revised && (
                         <button
@@ -207,7 +210,7 @@ export function AudioTrack({
                   );
                 })
               ) : (
-                <p>{loading ? "Carregando transcrição..." : text}</p>
+                <p>{loading ? "Carregando transcrição..." : `\u201c${text}\u201d`}</p>
               )}
               {cursor && (
                 <button type="button" className="transcript-toggle" onClick={loadMore} disabled={loading}>
@@ -217,7 +220,7 @@ export function AudioTrack({
             </blockquote>
           ) : (
             <blockquote className="transcript transcript--clamped">
-              <p>{text}</p>
+              <p>{`\u201c${text}\u201d`}</p>
             </blockquote>
           )}
           {(text !== "" || segments.length > 0) && (

@@ -361,10 +361,12 @@
 
 .transcript {
   margin: 0;
-  padding-left: calc(var(--space) * 4);
+  padding-left: calc(var(--space) * 2);
   border-left: 3px solid var(--color-border);
   font-style: italic;
   color: var(--color-muted);
+  /* Linhas mais juntas; o espaco entre paragrafos continua no margin da linha. */
+  line-height: 1.45;
 }
 
 .transcript p {
@@ -376,7 +378,7 @@
   flex-wrap: wrap;
   align-items: baseline;
   gap: calc(var(--space) * 1);
-  margin: 0 0 calc(var(--space) * 2);
+  margin: 0 0 var(--space);
 }
 
 .transcript-original-toggle {
@@ -404,7 +406,7 @@
 
 .transcript-line {
   display: inline-flex;
-  gap: calc(var(--space) * 3);
+  gap: calc(var(--space) * 1);
   text-align: left;
   color: inherit;
   font: inherit;
@@ -417,23 +419,42 @@
 }
 
 .transcript-line--active {
-  color: var(--color-text);
-  background: var(--color-accent-soft);
-  border-radius: var(--radius-sm);
-  padding: 2px calc(var(--space) * 2);
-  margin-left: calc(var(--space) * -2);
+  color: inherit;
 }
 
+/* So a minutagem acende: um halo azul marca onde o audio esta agora, sem
+   pintar a linha inteira. */
 .transcript-line--active .timestamp {
   color: var(--color-accent);
+  text-shadow: 0 0 7px var(--color-accent-soft);
+  /* Luz que quase acende e enfraquece a cada segundo. */
+  animation: timestamp-pulse 1s ease-in-out infinite;
+}
+
+@keyframes timestamp-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .transcript-line--active .timestamp {
+    animation: none;
+  }
 }
 
 .timestamp {
   font-style: normal;
   font-variant-numeric: tabular-nums;
   color: var(--color-muted);
-  min-width: 44px;
+  font-size: 0.72em;
+  min-width: 30px;
   display: inline-block;
+  transform: translateY(-1px);
 }
 
 .moments {
@@ -1530,6 +1551,23 @@
 
 .aside-block-head h3 {
   margin: 0;
+}
+
+/* De onde veio a analise: aparelho, este servidor ou uma API. */
+.aside-block-title {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 2);
+}
+
+.analysis-origin {
+  font-size: 11px;
+  line-height: 1;
+  color: var(--color-muted);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  padding: 3px 8px;
+  text-transform: lowercase;
 }
 
 /* Falha da analise dentro do painel: motivo + tentar de novo, sem sair da nota. */

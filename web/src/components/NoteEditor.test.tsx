@@ -232,3 +232,67 @@ describe("NoteEditor apagar audio", () => {
     confirm.mockRestore();
   });
 });
+
+describe("Origem da analise", () => {
+  it("mostra que a analise veio do aparelho", async () => {
+    vi.mocked(api.getAnalysis).mockResolvedValue({
+      origin: "app",
+      model: "gemma-3-270m",
+      sentiment: 0.2,
+      sentiment_label: "positivo",
+      emotions: null,
+      people: null,
+      places: null,
+      summary: "Um dia bom.",
+      comprehension: 80,
+      comprehension_source: "review",
+    });
+
+    render(
+      <NoteEditor
+        entryId="e1"
+        refreshKey={0}
+        onChanged={noop}
+        onDeleted={noop}
+        onOpenEntity={noop}
+        onOpenEntry={noop}
+        notebooks={[]}
+      />,
+    );
+
+    await screen.findByLabelText("Ver markdown");
+    const open = screen.queryByLabelText("Abrir propriedades");
+    if (open) fireEvent.click(open);
+    expect(await screen.findByText("aparelho")).toBeInTheDocument();
+  });
+
+  it("marca a analise de provedor de terceiro como API", async () => {
+    vi.mocked(api.getAnalysis).mockResolvedValue({
+      origin: "api",
+      model: "qwen",
+      sentiment: 0.1,
+      sentiment_label: "neutro",
+      emotions: null,
+      people: null,
+      places: null,
+      summary: "Resumo.",
+    });
+
+    render(
+      <NoteEditor
+        entryId="e1"
+        refreshKey={0}
+        onChanged={noop}
+        onDeleted={noop}
+        onOpenEntity={noop}
+        onOpenEntry={noop}
+        notebooks={[]}
+      />,
+    );
+
+    await screen.findByLabelText("Ver markdown");
+    const open = screen.queryByLabelText("Abrir propriedades");
+    if (open) fireEvent.click(open);
+    expect(await screen.findByText("API")).toBeInTheDocument();
+  });
+});

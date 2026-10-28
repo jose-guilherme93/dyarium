@@ -31,6 +31,22 @@ describe("AudioTrack transcript", () => {
     expect(container.querySelectorAll(".transcript-line")).toHaveLength(0);
   });
 
+  it("mostra a transcricao como texto: entre aspas e em italico", () => {
+    const { container } = render(<AudioTrack audio={audio} />);
+    // Preview compacto: o texto inteiro entre aspas.
+    expect(container.querySelector(".transcript--clamped")?.textContent).toContain(
+      "“um dois tres quatro cinco seis”",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Mostrar transcrição" }));
+    const lines = container.querySelectorAll(".transcript-line");
+    // Um par de aspas para o texto inteiro: abre no primeiro trecho e fecha no
+    // ultimo, sem aspirar cada linha.
+    expect(lines[0].textContent).toContain("“um dois");
+    expect(lines[lines.length - 1].textContent).toContain("cinco seis”");
+    expect(lines[1].textContent).not.toContain("“");
+  });
+
   it("expande a transcrição completa ao clicar", () => {
     const { container } = render(<AudioTrack audio={audio} />);
     fireEvent.click(screen.getByRole("button", { name: "Mostrar transcrição" }));

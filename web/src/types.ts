@@ -92,6 +92,8 @@ export interface Transcript {
 }
 
 export interface Analysis {
+  /** Quem produziu: análise feita no aparelho, neste servidor ou em uma API. */
+  origin?: "app" | "server" | "api";
   model: string;
   sentiment: number;
   sentiment_label: string;

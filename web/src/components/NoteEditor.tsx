@@ -1305,7 +1305,27 @@ export function NoteEditor({
 
           <section className="aside-block">
             <div className="aside-block-head">
-              <h3>Insights</h3>
+              <div className="aside-block-title">
+                <h3>Insights</h3>
+                {analysis?.origin ? (
+                  <span
+                    className="analysis-origin"
+                    title={
+                      analysis.origin === "app"
+                        ? "Análise feita no aparelho e sincronizada."
+                        : analysis.origin === "api"
+                          ? "Análise feita por um provedor de terceiro."
+                          : "Análise feita neste servidor."
+                    }
+                  >
+                    {analysis.origin === "app"
+                      ? "aparelho"
+                      : analysis.origin === "api"
+                        ? "API"
+                        : "servidor"}
+                  </span>
+                ) : null}
+              </div>
               <button type="button" className="primary small" onClick={() => void analyze()} disabled={busy === "analyze" || running}>
                 {busy === "analyze" ? <Spinner /> : <SparkIcon size={14} />} Analisar
               </button>
