@@ -18,6 +18,7 @@ import (
 	"github.com/joseti/dyarium/internal/analyze"
 	"github.com/joseti/dyarium/internal/api"
 	"github.com/joseti/dyarium/internal/audio"
+	"github.com/joseti/dyarium/internal/bootstrap"
 	"github.com/joseti/dyarium/internal/config"
 	"github.com/joseti/dyarium/internal/crypto"
 	"github.com/joseti/dyarium/internal/events"
@@ -80,6 +81,14 @@ func serve() error {
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: parseLevel(cfg.LogLevel)}))
 	slog.SetDefault(logger)
+
+	// O ambiente vence; sem ele, a chave mestra e o token sao lidos (ou
+	// criados) no volume de dados. Sem isto o primeiro boot de uma instancia
+	// sem DIARY_MASTER_KEY morre antes de abrir o banco.
+	cfg, secrets, err := resolveSecrets(cfg)
+	if err != nil {
+		return err
+	}
 
 	key, err := crypto.ParseKey(cfg.MasterKey)
 	if err != nil {
@@ -174,6 +183,15 @@ func serve() error {
 	modelsMgr := models.NewManager(cfg.ModelsDir, cfg.ModelsBaseURL, bus)
 	canceller := jobs.NewCanceller()
 
+	if cfg.AutoDownloadModel {
+		startDefaultModelDownload(cfg, modelsMgr, logger)
+	}
+
+	tokens := api.NewTokenSource(cfg.Token, secrets.SetupRequired)
+	if secrets.SetupRequired {
+		logger.Info("configuracao inicial pendente: acesse /setup para definir o token de acesso")
+	}
+
 	startWorkers(ctx, cfg, st, ingestSvc, queue, pipeline, bus, logger, canceller)
 
 	if cfg.TelegramEnabled {
@@ -198,6 +216,7 @@ func serve() error {
 		Events:    bus,
 		Models:    modelsMgr,
 		Canceller: canceller,
+		Tokens:    tokens,
 	})
 
 	httpServer := &http.Server{
@@ -228,6 +247,19 @@ func serve() error {
 	return httpServer.Shutdown(shutdownCtx)
 }
 
+// resolveSecrets applies the first-run rules to the loaded config: values from
+// the environment always win; otherwise the master key and token come from the
+// data directory, and a fresh instance opens the setup window.
+func resolveSecrets(cfg config.Config) (config.Config, bootstrap.Result, error) {
+	secrets, err := bootstrap.Resolve(cfg.DataDir, cfg.MasterKey, cfg.Token)
+	if err != nil {
+		return cfg, bootstrap.Result{}, err
+	}
+	cfg.MasterKey = secrets.MasterKey
+	cfg.Token = secrets.Token
+	return cfg, secrets, nil
+}
+
 func startWorkers(ctx context.Context, cfg config.Config, st *store.Store, ing *ingest.Service, queue *jobs.Queue, pipeline *transcribe.Pipeline, bus *events.Bus, logger *slog.Logger, canceller *jobs.Canceller) {
 	lease := time.Duration(cfg.JobLeaseSeconds) * time.Second
 	transcribeH := transcribeHandler(st, cfg, pipeline, queue, bus, logger)
@@ -241,6 +273,21 @@ func startWorkers(ctx context.Context, cfg config.Config, st *store.Store, ing *
 		go runner.Run(ctx)
 	}
 	logger.Info("workers iniciados", "quantidade", cfg.WorkerConcurrency)
+}
+
+// startDefaultModelDownload triggers a background download of the configured
+// whisper model when it is missing from the catalog and not yet on disk. This
+// keeps a fresh install usable without a manual step.
+func startDefaultModelDownload(cfg config.Config, mgr *models.Manager, logger *slog.Logger) {
+	name, ok := models.NameForFile(cfg.WhisperModel)
+	if !ok || mgr.Downloaded(name) {
+		return
+	}
+	if err := mgr.StartDownload(name); err != nil {
+		logger.Warn("nao foi possivel baixar o modelo padrao", "modelo", name, "erro", err)
+		return
+	}
+	logger.Info("baixando modelo padrao em segundo plano", "modelo", name)
 }
 
 func seedSettings(ctx context.Context, st *store.Store, cfg config.Config) error {
