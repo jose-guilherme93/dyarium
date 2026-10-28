@@ -15,15 +15,17 @@ export const UPLOAD_TASK = 'dyarium-upload-queue';
 
 TaskManager.defineTask(UPLOAD_TASK, async () => {
   // O WorkManager pode acordar a task com o app na frente. Upload e, acima de
-  // tudo, Whisper disputariam CPU/SQLite com a nota ou a gravacao: nesse caso
-  // a task termina sem trabalho e tenta de novo no proximo ciclo.
+  // tudo, a nota ou a gravacao disputariam CPU/SQLite: nesse caso a task
+  // termina sem trabalho e tenta de novo no proximo ciclo.
   if (AppState.currentState === 'active') return BackgroundTask.BackgroundTaskResult.Success;
   try {
     const { runUploadQueueOnce } = await import('./uploaderLoop');
     await runUploadQueueOnce();
-    // Retoma transcricoes locais pendentes (audio ainda sem transcricao).
-    const { transcribePendingLocally } = await import('./localTranscription');
-    await transcribePendingLocally();
+    // Transcricao local NAO entra aqui: o Android 12+ nao permite abrir o
+    // servico em primeiro plano a partir do trabalho em segundo plano, e sem
+    // ele o sistema encerra o processo no meio da passada. Transcricao e
+    // analise rodam com o app aberto (ou sob um servico que ja esta na frente)
+    // e retomam no boot pelo checkpoint.
     return BackgroundTask.BackgroundTaskResult.Success;
   } catch {
     return BackgroundTask.BackgroundTaskResult.Failed;

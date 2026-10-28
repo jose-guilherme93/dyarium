@@ -2,6 +2,11 @@
  * Tarefa em primeiro plano (Android): mantem o processo vivo durante uma
  * transcricao longa e mostra o progresso na notificacao. Sem o modulo nativo
  * (build antigo), as funcoes viram no-op.
+ *
+ * O fim e adiado por alguns segundos. Entre uma nota e a revisao (ou entre duas
+ * notas da fila) o servico nao chega a morrer: o Android 12+ nao deixa abrir um
+ * servico em primeiro plano a partir do fundo, e essa emenda e o que evita o
+ * processo ser encerrado no meio da cadeia.
  */
 
 import { requireOptionalNativeModule } from 'expo';
@@ -14,6 +19,13 @@ interface ForegroundTaskModule {
 }
 
 const native = requireOptionalNativeModule<ForegroundTaskModule>('ForegroundTask');
+const STOP_GRACE_MS = 4000;
+let stopTimer: ReturnType<typeof setTimeout> | null = null;
+
+function cancelScheduledStop(): void {
+  if (stopTimer) clearTimeout(stopTimer);
+  stopTimer = null;
+}
 
 export function foregroundTaskAvailable(): boolean {
   return native != null;
@@ -27,6 +39,7 @@ export function foregroundTaskAvailable(): boolean {
  */
 export function startForegroundTask(title: string, text: string, percent = -1): void {
   if (!native) return;
+  cancelScheduledStop();
   try {
     const task =
       typeof native.update === 'function'
@@ -48,11 +61,19 @@ export function updateForegroundTask(title: string, text: string, percent: numbe
   }
 }
 
+/**
+ * Encerra a tarefa. A parada real espera alguns segundos para a proxima etapa
+ * da mesma cadeia (transcricao -> revisao -> analise) reaproveitar o servico.
+ */
 export function stopForegroundTask(): void {
   if (!native) return;
-  try {
-    void native.stop().catch(() => undefined);
-  } catch {
-    // servico ja parado
-  }
+  cancelScheduledStop();
+  stopTimer = setTimeout(() => {
+    stopTimer = null;
+    try {
+      void native.stop().catch(() => undefined);
+    } catch {
+      // servico ja parado
+    }
+  }, STOP_GRACE_MS);
 }
