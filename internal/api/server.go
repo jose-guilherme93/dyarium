@@ -37,6 +37,7 @@ type Deps struct {
 	Events    *events.Bus
 	Models    *models.Manager
 	Canceller *jobs.Canceller
+	Tokens    *TokenSource
 }
 
 // Server holds the HTTP handlers and their dependencies.
@@ -58,6 +59,9 @@ func New(deps Deps) *Server {
 	if deps.Events == nil {
 		deps.Events = events.NewBus()
 	}
+	if deps.Tokens == nil {
+		deps.Tokens = NewTokenSource(deps.Config.Token, false)
+	}
 	return &Server{deps: deps}
 }
 
@@ -65,6 +69,8 @@ func New(deps Deps) *Server {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealth)
+	mux.HandleFunc("GET /setup/state", s.handleSetupState)
+	mux.HandleFunc("POST /setup", s.handleSetupClaim)
 
 	protected := http.NewServeMux()
 	protected.HandleFunc("GET /api/v1/version", s.handleVersion)
