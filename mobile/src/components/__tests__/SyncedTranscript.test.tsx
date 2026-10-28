@@ -4,9 +4,9 @@ import { SyncedTranscript } from '@/components/SyncedTranscript';
 import type { TranscriptSegment } from '@/core/types';
 
 const segments: TranscriptSegment[] = [
-  { start_ms: 0, end_ms: 5_000, text: 'bom dia' },
-  { start_ms: 5_000, end_ms: 12_000, text: 'hoje e quinta' },
-  { start_ms: 12_000, end_ms: 20_000, text: 'vou falar do projeto' },
+  { start_ms: 0, end_ms: 5_000, text: 'Bom dia.' },
+  { start_ms: 5_000, end_ms: 12_000, text: 'Hoje e quinta.' },
+  { start_ms: 12_000, end_ms: 20_000, text: 'Vou falar do projeto.' },
 ];
 
 describe('SyncedTranscript', () => {

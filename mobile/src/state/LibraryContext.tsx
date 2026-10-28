@@ -60,6 +60,7 @@ interface LibraryValue {
     text: string;
     recordedAt?: string;
     notebookId?: string;
+    capture?: { sourceId: string; startMs: number };
   }): Promise<Recording>;
   /** Cria um rascunho vazio de nota (nao entra na fila ainda). */
   createDraftNote(notebookId?: string): Promise<Recording>;
@@ -355,6 +356,8 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       text: string;
       recordedAt?: string;
       notebookId?: string;
+      /** Nota/instante de onde um trecho de transcricao foi capturado. */
+      capture?: { sourceId: string; startMs: number };
     }) => {
       const note = {
         ...buildTextNote({
@@ -362,6 +365,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
           title: input.title,
           text: input.text,
           recordedAt: input.recordedAt,
+          capture: input.capture,
           now: new Date(),
         }),
         notebookId: input.notebookId || DEFAULT_NOTEBOOK_ID,

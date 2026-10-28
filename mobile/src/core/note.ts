@@ -13,6 +13,11 @@ export interface TextNoteInput {
   text: string;
   /** Data do evento (ISO). Default: agora. */
   recordedAt?: string;
+  /**
+   * Trecho de transcricao que originou a nota: a nota de origem e o instante
+   * falado. Fica local, para o botao "ouvir o trecho" levar de volta ao ponto.
+   */
+  capture?: { sourceId: string; startMs: number };
   now: Date;
 }
 
@@ -35,6 +40,8 @@ export function buildTextNote(input: TextNoteInput): Recording {
     // O texto ja e o conteudo: nao ha transcricao a esperar.
     transcript: text,
     transcriptStatus: 'ready',
+    captureSourceId: input.capture?.sourceId,
+    captureStartMs: input.capture?.startMs,
     createdAt: iso,
     updatedAt: iso,
   };

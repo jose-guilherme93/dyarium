@@ -17,8 +17,10 @@ jest.mock('expo-audio', () => ({
   useAudioPlayerStatus: () => mockStatus,
 }));
 
+let mockParams: { id: string; edit?: string; at?: string } = { id: 'note-1' };
+
 jest.mock('expo-router', () => ({
-  useLocalSearchParams: () => ({ id: 'note-1' }),
+  useLocalSearchParams: () => mockParams,
 }));
 
 jest.mock('@/services/appNavigation', () => ({
@@ -34,7 +36,7 @@ jest.mock('@/services/audioFocus', () => ({
 }));
 
 jest.mock('@/services/db', () => ({
-  getRecording: jest.fn(async () => null),
+  getRecording: jest.fn(),
   upsertRecording: jest.fn(async () => undefined),
 }));
 
@@ -75,8 +77,26 @@ const mockNote: Recording = {
   ],
 };
 
+const mockGetRecording = jest.fn();
+
+const mockCreateNotebook = jest.fn(async () => ({ id: 'nb-tarefas', name: 'Tarefas e ideias' }));
+const mockCreateTextNote = jest.fn(async () => ({ id: 'note-2' }));
+const mockSetNoteTags = jest.fn(async () => undefined);
+const mockUpdateNote = jest.fn(async () => undefined);
+const mockMoveNoteToNotebook = jest.fn(async () => undefined);
+const mockKick = jest.fn();
+
 jest.mock('@/state/LibraryContext', () => ({
-  useLibrary: () => ({ recordings: [mockNote] }),
+  useLibrary: () => ({
+    recordings: [mockNote],
+    notebooks: [] as { id: string; name: string }[],
+    createNotebook: mockCreateNotebook,
+    createTextNote: mockCreateTextNote,
+    setNoteTags: mockSetNoteTags,
+    updateNote: mockUpdateNote,
+    moveNoteToNotebook: mockMoveNoteToNotebook,
+    kick: mockKick,
+  }),
 }));
 
 jest.mock('@/state/PlaybackContext', () => ({
@@ -99,6 +119,10 @@ jest.mock('@/state/SettingsContext', () => ({
 describe('tela da transcricao', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockGetRecording.mockResolvedValue(mockNote);
+    (jest.requireMock('@/services/db') as { getRecording: typeof mockGetRecording }).getRecording =
+      mockGetRecording;
+    mockParams = { id: 'note-1' };
     mockStatus = { playing: false, currentTime: 0, duration: 120, isLoaded: true };
   });
 
@@ -121,15 +145,141 @@ describe('tela da transcricao', () => {
     expect(mockPlayAt).toHaveBeenCalledWith('file:///nota/audio-1.aac', 5);
   });
 
-  it('tocar no texto do trecho tambem busca aquele ponto, sem reiniciar', async () => {
+  it('tocar no texto abre o popup de edicao do trecho', async () => {
     await renderScreen();
 
+    fireEvent.press(screen.getByLabelText(/Trecho de 00:05/));
+
+    expect(screen.getByDisplayValue('hoje e quinta')).toBeTruthy();
+    expect(screen.getByLabelText('Salvar trecho')).toBeTruthy();
+  });
+
+  it('segurar um trecho cria uma tarefa no caderno Tarefas e ideias', async () => {
+    await renderScreen();
+
+    fireEvent(screen.getByLabelText(/Trecho de 00:05/), 'longPress', {
+      nativeEvent: { pageX: 80, pageY: 300 },
+    });
     await act(async () => {
-      fireEvent.press(screen.getByText('hoje e quinta'));
+      fireEvent.press(screen.getByLabelText('Tarefa'));
+      await Promise.resolve();
+    });
+
+    expect(mockCreateNotebook).toHaveBeenCalledWith({ name: 'Tarefas e ideias' });
+    expect(mockCreateTextNote).toHaveBeenCalledWith(
+      expect.objectContaining({
+        notebookId: 'nb-tarefas',
+        text: '“hoje e quinta”\n\n— Nota com audio, 00:05',
+      }),
+    );
+    expect(mockSetNoteTags).toHaveBeenCalledWith('note-2', ['tarefa']);
+    const db = jest.requireMock('@/services/db') as { upsertRecording: jest.Mock };
+    const stored = db.upsertRecording.mock.calls.at(-1)?.[0];
+    expect(stored.transcriptSegments[1].capture).toBe('task');
+  });
+
+  it('acumula as capturas na mesma nota, sem criar uma por tarefa', async () => {
+    const captureNote = {
+      id: 'note-cap',
+      title: 'capturas desta nota',
+      text: '“trecho antigo”',
+      captureSourceId: 'note-1',
+      tags: ['ideia'],
+      notebookId: 'nb-tarefas',
+    };
+    const library = jest.requireMock('@/state/LibraryContext') as {
+      useLibrary: () => Record<string, unknown>;
+    };
+    const original = library.useLibrary;
+    library.useLibrary = () => ({ ...original(), recordings: [mockNote, captureNote] });
+    try {
+      await renderScreen();
+      fireEvent(screen.getByLabelText(/Trecho de 00:05/), 'longPress', {
+        nativeEvent: { pageX: 80, pageY: 300 },
+      });
+      await act(async () => {
+        fireEvent.press(screen.getByLabelText('Tarefa'));
+        await Promise.resolve();
+      });
+
+      expect(mockCreateTextNote).not.toHaveBeenCalled();
+      expect(mockUpdateNote).toHaveBeenCalledWith('note-cap', {
+        text: expect.stringContaining('“hoje e quinta”'),
+      });
+      expect(mockSetNoteTags).toHaveBeenCalledWith('note-cap', ['ideia', 'tarefa']);
+    } finally {
+      library.useLibrary = original;
+    }
+  });
+
+  it('traz a nota acumulada de volta para o caderno de capturas', async () => {
+    const captureNote = {
+      id: 'note-cap',
+      title: 'capturas',
+      text: '“trecho antigo”',
+      captureSourceId: 'note-1',
+      tags: ['ideia'],
+      notebookId: 'outro-caderno',
+    };
+    const library = jest.requireMock('@/state/LibraryContext') as {
+      useLibrary: () => Record<string, unknown>;
+    };
+    const original = library.useLibrary;
+    library.useLibrary = () => ({ ...original(), recordings: [mockNote, captureNote] });
+    try {
+      await renderScreen();
+      fireEvent(screen.getByLabelText(/Trecho de 00:05/), 'longPress', {
+        nativeEvent: { pageX: 80, pageY: 300 },
+      });
+      await act(async () => {
+        fireEvent.press(screen.getByLabelText('Ideia'));
+        await Promise.resolve();
+      });
+
+      expect(mockMoveNoteToNotebook).toHaveBeenCalledWith('note-cap', 'nb-tarefas');
+    } finally {
+      library.useLibrary = original;
+    }
+  });
+
+  it('mostra o icone do tipo ao lado do trecho ja capturado', async () => {
+    const captured = {
+      ...mockNote,
+      transcriptSegments: [
+        { start_ms: 0, end_ms: 5_000, text: 'bom dia' },
+        { start_ms: 5_000, end_ms: 12_000, text: 'hoje e quinta', capture: 'task' as const },
+      ],
+    };
+    const library = jest.requireMock('@/state/LibraryContext') as {
+      useLibrary: () => Record<string, unknown>;
+    };
+    const original = library.useLibrary;
+    library.useLibrary = () => ({ ...original(), recordings: [captured] });
+    try {
+      await renderScreen();
+      expect(screen.getByLabelText('Tarefa')).toBeTruthy();
+    } finally {
+      library.useLibrary = original;
+    }
+  });
+
+  it('abre no ponto exato quando vem de uma nota capturada', async () => {
+    mockParams = { id: 'note-1', at: '5000' };
+    await renderScreen();
+    await act(async () => {
       await Promise.resolve();
     });
 
     expect(mockPlayAt).toHaveBeenCalledWith('file:///nota/audio-1.aac', 5);
+  });
+
+  it('acende e pulsa a minutagem do trecho que esta tocando', async () => {
+    mockStatus = { playing: true, currentTime: 5, duration: 120, isLoaded: true };
+    await renderScreen();
+
+    expect(screen.getByText('00:05')).toBeTruthy();
+    // 00:00 fica atras do 00:05 na mesma faixa: a ativa e a que pulsa.
+    expect(screen.getByText('00:00')).toBeTruthy();
   });
 
   it('mostra a onda do audio da nota', async () => {
@@ -153,10 +303,10 @@ describe('tela da transcricao', () => {
     library.useLibrary = () => ({ recordings: [revised] });
     try {
       await renderScreen();
-      expect(screen.getByText('Bom dia.')).toBeTruthy();
+      expect(screen.getByText(/Bom dia\./)).toBeTruthy();
       expect(screen.queryByText(/Original do whisper/)).toBeNull();
 
-      fireEvent.press(screen.getByLabelText('Ver o texto original do whisper'));
+      fireEvent.press(screen.getByLabelText('Ver o texto antigo do whisper'));
       expect(screen.getByText(/Original do whisper: bom dia/)).toBeTruthy();
     } finally {
       library.useLibrary = original;

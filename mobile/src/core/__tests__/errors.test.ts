@@ -16,6 +16,7 @@ describe('isPermanentUploadError', () => {
   it('trata 5xx como transitorio', () => {
     expect(isPermanentUploadError(new ApiError(500, 'x', 'y'))).toBe(false);
     expect(isPermanentUploadError(new ApiError(503, 'x', 'y'))).toBe(false);
+    expect(isPermanentUploadError(new ApiError(422, 'invalid_notebook', 'caderno'))).toBe(false);
   });
 
   it('falha de rede (nao-ApiError) e transitoria', () => {

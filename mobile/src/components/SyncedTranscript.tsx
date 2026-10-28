@@ -33,7 +33,7 @@ import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
 import { defineStyles } from '@/theme/themedStyles';
 
 /** Altura de uma linha e quantas ficam visiveis na previa. */
-const LINE = 22;
+const LINE = 20;
 /** Respiro vertical de cada linha (entra na altura real da janela). */
 const LINE_PAD = 1;
 const VISIBLE = 5;
@@ -149,7 +149,9 @@ export function SyncedTranscript({
             accessibilityLabel={`Ouvir a partir de ${formatDuration(segment.start_ms)}`}
           >
             <Text style={[styles.line, index === active && styles.lineActive]}>
+              {index === 0 ? '“' : ''}
               {segment.revised ?? segment.text}
+              {index === segments.length - 1 ? '”' : ''}
             </Text>
           </Press>
         );
@@ -212,6 +214,7 @@ const baseStyles = defineStyles({
     lineHeight: LINE,
     paddingVertical: LINE_PAD,
     color: baseColors.textSecondary,
+    fontStyle: 'italic',
   },
   lineActive: { color: baseColors.text },
   fadeTop: { position: 'absolute', top: 0, left: 0, right: 0, height: 14 },

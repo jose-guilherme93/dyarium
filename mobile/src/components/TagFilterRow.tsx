@@ -6,6 +6,7 @@ import {
 import { Text } from '@/components/AppText';
 import { Press } from '@/components/Press';
 
+import type { NoteOrder } from '@/core/noteOrder';
 import { TagChip } from '@/components/TagChip';
 import { TagStrip } from '@/components/TagStrip';
 import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
@@ -18,15 +19,26 @@ interface TagFilterRowProps {
   onToggle(name: string): void;
   onClear(): void;
   onManage(): void;
+  /** Ordem atual da lista (data de criacao da nota). */
+  order: NoteOrder;
+  onPressOrder(): void;
 }
 
-export function TagFilterRow({ tags, selected, onToggle, onClear, onManage }: TagFilterRowProps) {
+export function TagFilterRow({
+  tags,
+  selected,
+  onToggle,
+  onClear,
+  onManage,
+  order,
+  onPressOrder,
+}: TagFilterRowProps) {
   const styles = useThemedStyles(baseStyles);
   const { colors } = useTheme();
 
   return (
     <View style={styles.row}>
-      <TagStrip>
+      <TagStrip style={styles.strip}>
         <Press
           onPress={onClear}
           accessibilityRole="button"
@@ -56,12 +68,29 @@ export function TagFilterRow({ tags, selected, onToggle, onClear, onManage }: Ta
           <Text style={styles.manageText}>{tags.length > 0 ? 'Tags' : 'Gerenciar tags'}</Text>
         </Press>
       </TagStrip>
+      <Press
+        onPress={onPressOrder}
+        style={styles.order}
+        accessibilityRole="button"
+        accessibilityLabel={
+          order === 'oldest' ? 'Ordenar notas: mais antigas primeiro' : 'Ordenar notas: mais recentes primeiro'
+        }
+        hitSlop={6}
+      >
+        <Ionicons name="swap-vertical" size={16} color={colors.textSecondary} />
+      </Press>
     </View>
   );
 }
 
 const baseStyles = defineStyles({
-  row: { marginBottom: spacing.xs },
+  row: {
+    marginBottom: spacing.xs,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  strip: { flex: 1 },
   all: {
     borderRadius: radius.pill,
     borderWidth: StyleSheet.hairlineWidth,
@@ -84,4 +113,14 @@ const baseStyles = defineStyles({
     paddingVertical: 5,
   },
   manageText: { color: baseColors.textSecondary, fontSize: fontSize.xs, fontWeight: '600' },
+  order: {
+    width: 34,
+    height: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.pill,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: baseColors.borderStrong,
+    backgroundColor: baseColors.surface,
+  },
 });

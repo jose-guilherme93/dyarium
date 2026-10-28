@@ -27,8 +27,8 @@ jest.mock('@/services/audioFocus', () => ({
 }));
 
 const segments: TranscriptSegment[] = [
-  { start_ms: 0, end_ms: 30_000, text: 'primeira frase' },
-  { start_ms: 60_000, end_ms: 90_000, text: 'frase do meio' },
+  { start_ms: 0, end_ms: 30_000, text: 'Primeira frase.' },
+  { start_ms: 60_000, end_ms: 90_000, text: 'Frase do meio.' },
 ];
 
 const WIDTH = 240;

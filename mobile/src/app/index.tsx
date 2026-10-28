@@ -22,6 +22,8 @@ import { RecordingCard } from '@/components/RecordingCard';
 import { Screen } from '@/components/Screen';
 import { STATUS_LABELS } from '@/components/StatusChip';
 import { TagFilterRow } from '@/components/TagFilterRow';
+import { NoteOrderSheet } from '@/components/NoteOrderSheet';
+import { sortByCreation } from '@/core/noteOrder';
 import { formatBytes, formatDateTime, noteDateIso } from '@/core/format';
 import {
   notesInNotebook,
@@ -148,7 +150,8 @@ export default function NotebookScreen() {
     unarchiveNote,
   } = useLibrary();
   const { start: startRecording } = useRecording();
-  const { swipeAction, lastNotebookId, setLastNotebookId } = useSettings();
+  const { swipeAction, lastNotebookId, setLastNotebookId, noteOrder, setNoteOrder } =
+    useSettings();
   useRenderCount('NotebookScreen');
 
   const [query, setQuery] = useState('');
@@ -158,6 +161,7 @@ export default function NotebookScreen() {
   const [newMenuOpen, setNewMenuOpen] = useState(false);
   const [notebookPickerOpen, setNotebookPickerOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
+  const [orderOpen, setOrderOpen] = useState(false);
   // `null` = paginas recentes (todos os cadernos); um id = so aquele caderno.
   const [scopeId, setScopeId] = useState<string | null>(null);
   const [actionsNote, setActionsNote] = useState<Recording | null>(null);
@@ -201,14 +205,17 @@ export default function NotebookScreen() {
 
   const noteList = useMemo(
     () =>
-      scopeNotebook
-        ? notesInNotebook(recordings, {
-            notebookId: scopeNotebook.id,
-            tags: selectedTags,
-            query,
-          })
-        : recentNotes(recordings, { tags: selectedTags, query }),
-    [recordings, scopeNotebook, selectedTags, query],
+      sortByCreation(
+        scopeNotebook
+          ? notesInNotebook(recordings, {
+              notebookId: scopeNotebook.id,
+              tags: selectedTags,
+              query,
+            })
+          : recentNotes(recordings, { tags: selectedTags, query }),
+        noteOrder,
+      ),
+    [recordings, scopeNotebook, selectedTags, query, noteOrder],
   );
   const notebookNames = useMemo(
     () => new Map(notebooks.map((notebook) => [notebook.id, notebook.name])),
@@ -426,6 +433,8 @@ export default function NotebookScreen() {
           onToggle={toggleTag}
           onClear={() => setSelectedTags([])}
           onManage={() => push('/tags')}
+          order={noteOrder}
+          onPressOrder={() => setOrderOpen(true)}
         />
       </View>
 
@@ -531,6 +540,13 @@ export default function NotebookScreen() {
       {activityOpen ? (
         <ActivityCenter visible onClose={() => setActivityOpen(false)} />
       ) : null}
+
+      <NoteOrderSheet
+        visible={orderOpen}
+        order={noteOrder}
+        onChange={(next) => void setNoteOrder(next)}
+        onClose={() => setOrderOpen(false)}
+      />
 
       <NoteActionsSheet
         recording={actionsNote}

@@ -1922,6 +1922,26 @@ export default function NoteScreen() {
           />
         </View>
 
+        {/* Nota que nasceu de um trecho de transcricao: volta ao ponto exato. */}
+        {note.captureSourceId && typeof note.captureStartMs === 'number' ? (
+          <Press
+            style={styles.captureLink}
+            onPress={() =>
+              push({
+                pathname: '/transcript/[id]',
+                params: { id: note.captureSourceId as string, at: String(note.captureStartMs) },
+              })
+            }
+            accessibilityRole="link"
+            accessibilityLabel={`Ouvir o trecho em ${formatDuration(note.captureStartMs)}`}
+          >
+            <Ionicons name="play-circle-outline" size={16} color={colors.accentStrong} />
+            <Text style={styles.captureLinkText}>
+              Ouvir o trecho · {formatDuration(note.captureStartMs)}
+            </Text>
+          </Press>
+        ) : null}
+
         <View>
           {/* Pilha de audios do servidor e corpo da nota. O transporte de cada
               audio vive no card (corpo) ou na linha da pilha; so o audio ativo
@@ -2290,10 +2310,36 @@ const baseStyles = defineStyles({
     textAlignVertical: 'top',
     backgroundColor: 'transparent',
   },
+  captureLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 6,
+    marginTop: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  captureLinkText: {
+    color: baseColors.accentStrong,
+    fontSize: fontSize.sm,
+    fontWeight: '600',
+  },
   noteDate: {
     color: baseColors.textSecondary,
     fontSize: fontSize.sm,
     paddingBottom: spacing.xs,
+  },
+  dateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    minHeight: 28,
+  },
+  doneButton: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: -spacing.xs,
   },
   meta: { color: baseColors.textSecondary, fontSize: fontSize.sm },
   sectionLabel: {

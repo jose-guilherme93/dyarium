@@ -680,6 +680,23 @@ describe('tela da nota', () => {
     ).toBeTruthy();
   });
 
+  it('leva de volta ao trecho que originou uma tarefa ou ideia', async () => {
+    mockNote.captureSourceId = 'note-1';
+    mockNote.captureStartMs = 5_000;
+    try {
+      await renderNote();
+      fireEvent.press(screen.getByLabelText('Ouvir o trecho em 00:05'));
+
+      expect(router.push).toHaveBeenCalledWith({
+        pathname: '/transcript/[id]',
+        params: { id: 'note-1', at: '5000' },
+      });
+    } finally {
+      delete mockNote.captureSourceId;
+      delete mockNote.captureStartMs;
+    }
+  });
+
   it('mostra a pilha inteira de uma nota somente do servidor', async () => {
     mockStackAudios = [
       {

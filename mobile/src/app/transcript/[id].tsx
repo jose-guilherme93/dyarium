@@ -2,32 +2,37 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAudioPlayerStatus } from 'expo-audio';
 import { useLocalSearchParams } from 'expo-router';
 import { back } from '@/services/appNavigation';
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
+  Animated,
+  Easing,
   FlatList,
   Switch,
   View,
+  useWindowDimensions,
+  type GestureResponderEvent,
 } from 'react-native';
 import { Text, TextInput } from '@/components/AppText';
 import { AudioWaveform } from '@/components/AudioWaveform';
+import { FastModal } from '@/components/FastModal';
 import { Press } from '@/components/Press';
-import { ReviewStatus } from '@/components/ReviewStatus';
 
 import { DyariumApi, type FetchLike, type TranscriptSegment } from '@/core/api';
-import { localAnalysisEnabled as localAnalysisAvailable } from '@/core/features';
 import { formatDuration } from '@/core/format';
 import { audioRefFromPath } from '@/core/noteAudio';
 import { reviewFromServer, visibleTranscript } from '@/core/transcriptReview';
-import { breakSentences } from '@/core/richText';
+import {
+  CAPTURE_NOTEBOOK,
+  CAPTURE_OPTIONS,
+  buildCapture,
+  type CaptureKind,
+} from '@/core/transcriptCapture';
 import { activeSegmentIndex } from '@/core/transcript';
 import { useRenderCount } from '@/dev/perf';
 import { resolveAudioSource } from '@/services/attachments';
 import { releaseAudioFocus } from '@/services/audioFocus';
-import { resolveAnalysisModel } from '@/services/analysisModels';
 import { getRecording, upsertRecording } from '@/services/db';
 import { loadServerConfig } from '@/services/secure';
-import { reviewRecording } from '@/services/transcriptReview';
-import { useActivities } from '@/state/useActivities';
 import { pushTranscript } from '@/services/transcriptSync';
 import { emitRecording } from '@/services/uploaderLoop';
 import { useLibrary } from '@/state/LibraryContext';
@@ -40,44 +45,96 @@ import { defineStyles } from '@/theme/themedStyles';
 
 const doFetch = globalThis.fetch as unknown as FetchLike;
 
+/**
+ * Minutagem do trecho que esta tocando: pulsa devagar, como uma luz que quase
+ * acende e enfraquece a cada segundo. Parada, fica na cor normal.
+ */
+function PulsingTimestamp({ active, children }: { active: boolean; children: ReactNode }) {
+  const styles = useThemedStyles(baseStyles);
+  const [pulse] = useState(() => new Animated.Value(1));
+
+  useEffect(() => {
+    if (!active) {
+      pulse.stopAnimation();
+      pulse.setValue(1);
+      return undefined;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, {
+          toValue: 0.35,
+          duration: 500,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulse, {
+          toValue: 1,
+          duration: 500,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [active, pulse]);
+
+  return (
+    <Animated.Text
+      style={[styles.timestampText, active && styles.timestampActive, active && { opacity: pulse }]}
+    >
+      {children}
+    </Animated.Text>
+  );
+}
+
 interface SegmentRowProps {
   segment: TranscriptSegment;
   index: number;
   active: boolean;
-  editing: boolean;
-  draft: string;
+  /** Abre as aspas no primeiro trecho e fecha no ultimo: o texto e um so. */
+  quoteStart: boolean;
+  quoteEnd: boolean;
+  /** Mostra o texto antigo do whisper (um unico interruptor no topo). */
+  showOriginal: boolean;
   onSeek(index: number): void;
-  onStartEdit(index: number): void;
-  onChangeDraft(text: string): void;
-  onCancelEdit(): void;
-  onSubmitEdit(index: number): void;
+  /** Toque no trecho: abre o popup de edicao. */
+  onEdit(index: number): void;
+  /** Pressionar: menu de acoes ao lado do dedo. */
+  onActions(index: number, point: { x: number; y: number }): void;
 }
 
 /**
- * Uma linha da transcricao. Memoizada: a tela re-renderiza ao ritmo do player
- * (~4x/s) e so a linha ativa (ou a que esta sendo editada) deve re-renderizar.
+ * Uma linha da transcricao: minutagem na margem e o trecho ao lado, como
+ * sempre foi. O texto nao e quebrado em palavras: ele flui e quebra so pela
+ * largura, para nao separar artigo de substantivo.
  */
 const SegmentRow = memo(function SegmentRow({
   segment,
   index,
   active,
-  editing,
-  draft,
+  quoteStart,
+  quoteEnd,
+  showOriginal,
   onSeek,
-  onStartEdit,
-  onChangeDraft,
-  onCancelEdit,
-  onSubmitEdit,
+  onEdit,
+  onActions,
 }: SegmentRowProps) {
   const styles = useThemedStyles(baseStyles);
   const { colors } = useTheme();
-  const [showOriginal, setShowOriginal] = useState(false);
+  // O que o trecho virou fica em destaque no fim da linha, no lugar onde antes
+  // morava o icone de IA do trecho: cor por tipo, para reconhecer de longe.
+  const captureTone =
+    segment.capture === 'task'
+      ? { strong: colors.success, soft: colors.successSoft }
+      : segment.capture === 'idea'
+        ? { strong: colors.warning, soft: colors.warningSoft }
+        : { strong: colors.info, soft: colors.infoSoft };
 
-  // O leitor mostra a revisao; o original do whisper fica a um toque.
-  const visible = segment.revised ?? segment.text;
-  const text = useMemo(() => breakSentences(visible), [visible]);
+  // O leitor mostra a revisao; o original do whisper fica no interruptor do topo.
+  const visible = (segment.revised ?? segment.text).replace(/\s+/g, ' ').trim();
   return (
-    <View style={[styles.segment, active && styles.segmentActive]}>
+    <View style={styles.segment}>
       <Press
         style={styles.timestamp}
         onPress={() => onSeek(index)}
@@ -85,82 +142,77 @@ const SegmentRow = memo(function SegmentRow({
         accessibilityRole="button"
         accessibilityLabel={`Ouvir a partir de ${formatDuration(segment.start_ms)}`}
       >
-        <Text style={[styles.timestampText, active && styles.timestampActive]}>
-          {formatDuration(segment.start_ms)}
-        </Text>
+        <PulsingTimestamp active={active}>{formatDuration(segment.start_ms)}</PulsingTimestamp>
       </Press>
-      {editing ? (
-        <View style={styles.editWrap}>
-          <TextInput
-            value={draft}
-            onChangeText={onChangeDraft}
-            multiline
-            autoFocus
-            selectionColor={colors.accent}
-            style={styles.editInput}
+      <Press
+        style={styles.segmentBody}
+        onPress={() => onEdit(index)}
+        onLongPress={(event: GestureResponderEvent) => {
+          const { pageX, pageY } = event.nativeEvent;
+          onActions(index, { x: pageX, y: pageY });
+        }}
+        accessibilityRole="button"
+        accessibilityLabel={`Trecho de ${formatDuration(segment.start_ms)}. Toque para editar, segure para ações.`}
+      >
+        <Text style={styles.segmentText}>
+          {quoteStart ? '“' : ''}
+          {visible}
+          {quoteEnd ? '”' : ''}
+        </Text>
+        {showOriginal && segment.revised ? (
+          <Text style={styles.segmentOriginal}>Original do whisper: {segment.text}</Text>
+        ) : null}
+      </Press>
+      {segment.capture ? (
+        <View
+          style={[styles.captureBadge, { backgroundColor: captureTone.soft }]}
+          accessibilityRole="image"
+          accessibilityLabel={
+            segment.capture === 'task'
+              ? 'Tarefa'
+              : segment.capture === 'idea'
+                ? 'Ideia'
+                : 'Citação'
+          }
+        >
+          <Ionicons
+            name={
+              segment.capture === 'task'
+                ? 'checkbox-outline'
+                : segment.capture === 'idea'
+                  ? 'bulb-outline'
+                  : 'chatbox-ellipses-outline'
+            }
+            size={14}
+            color={captureTone.strong}
           />
-          <View style={styles.editActions}>
-            <Press onPress={onCancelEdit} accessibilityLabel="Cancelar">
-              <Text style={styles.editCancel}>Cancelar</Text>
-            </Press>
-            <Press onPress={() => onSubmitEdit(index)} accessibilityLabel="Salvar trecho">
-              <Text style={styles.editSave}>Salvar</Text>
-            </Press>
-          </View>
         </View>
-      ) : (
-        <>
-          <Press style={styles.segmentBody} onPress={() => onSeek(index)}>
-            <Text style={[styles.segmentText, active && styles.segmentTextActive]}>{text}</Text>
-            {showOriginal && segment.revised ? (
-              <Text style={styles.segmentOriginal}>
-                Original do whisper: {breakSentences(segment.text)}
-              </Text>
-            ) : null}
-          </Press>
-          {segment.revised ? (
-            <Press
-              onPress={() => setShowOriginal((value) => !value)}
-              accessibilityLabel="Ver o texto original do whisper"
-              hitSlop={8}
-            >
-              <Ionicons
-                name={showOriginal ? 'sparkles' : 'sparkles-outline'}
-                size={15}
-                color={colors.accent}
-              />
-            </Press>
-          ) : null}
-          <Press
-            onPress={() => onStartEdit(index)}
-            accessibilityLabel="Editar trecho"
-            hitSlop={8}
-          >
-            <Ionicons name="create-outline" size={16} color={colors.textTertiary} />
-          </Press>
-        </>
-      )}
+      ) : null}
     </View>
   );
 });
 
 /**
  * Transcricao completa do audio, em segmentos com minutagem. O trecho ativo
- * acompanha o play e tocar num trecho pula o audio para ali (como no dashboard).
+ * acompanha o play; a minutagem toca dali e o texto abre a edicao.
  */
 export default function TranscriptScreen() {
   const styles = useThemedStyles(baseStyles);
   const { colors } = useTheme();
 
-  const { id, edit } = useLocalSearchParams<{ id: string; edit?: string }>();
-  const { recordings } = useLibrary();
+  const { id, edit, at } = useLocalSearchParams<{ id: string; edit?: string; at?: string }>();
   const {
-    reviewTranscript: reviewEnabled,
-    literalTranscript,
-    setLiteralTranscript,
-    analysisModel,
-    analysisLowPower,
-  } = useSettings();
+    recordings,
+    notebooks,
+    createNotebook,
+    createTextNote,
+    setNoteTags,
+    updateNote,
+    moveNoteToNotebook,
+    kick,
+  } = useLibrary();
+  const { reviewTranscript: reviewEnabled, literalTranscript, setLiteralTranscript } =
+    useSettings();
   const note = recordings.find((r) => r.id === id);
   const noteId = note?.id;
   const entryId = note?.entryId;
@@ -174,6 +226,17 @@ export default function TranscriptScreen() {
   const [error, setError] = useState<string | null>(null);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [draft, setDraft] = useState('');
+  // Menu de captura aberto: guarda o trecho e onde o dedo estava.
+  // Um unico interruptor: mostra o texto antigo do whisper em todos os trechos
+  // revisados. Fica no topo, discreto, ao lado da duracao total.
+  const [showOriginal, setShowOriginal] = useState(false);
+  const [captureError, setCaptureError] = useState<string | null>(null);
+  const [capture, setCapture] = useState<{
+    segment: TranscriptSegment;
+    index: number;
+    point: { x: number; y: number };
+  } | null>(null);
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const draftRef = useRef('');
   const listRef = useRef<FlatList<TranscriptSegment>>(null);
   const activeIndexRef = useRef(-1);
@@ -216,49 +279,10 @@ export default function TranscriptScreen() {
 
   const segments = hasCache && cachedSegments ? cachedSegments : fetched;
 
-  // Por que o chip de revisao esta vazio: um toque responde, em uma linha.
-  const reviewReason = !reviewEnabled
-    ? 'Revisão desligada nas configurações.'
-    : !localAnalysisAvailable()
-      ? 'Este build não tem o motor de análise local.'
-      : !resolveAnalysisModel(analysisModel)
-        ? 'Nenhum modelo de análise instalado.'
-        : 'Ainda não revisada.';
-
-  // Revisa so o que ficou sem revisao; o resto do texto nao e tocado.
-  const retryRejected = useCallback(async () => {
-    if (!note) return;
-    const pending = note.transcriptReview?.rejectedIdx ?? [];
-    const model = resolveAnalysisModel(analysisModel);
-    if (pending.length === 0 || !model) return;
-    await reviewRecording(note, model, {
-      literal: literalTranscript,
-      lowPower: analysisLowPower,
-      title: note.title,
-      only: pending,
-    });
-  }, [note, analysisModel, literalTranscript, analysisLowPower]);
   const transcriptionPercent = useTranscriptionProgress(noteId);
   const transcribing = note?.transcriptStatus === 'pending';
   // A passada esta rodando agora? A atividade e por gravacao; sem isso o chip
   // tratava uma passada interrompida como se estivesse trabalhando.
-  const activities = useActivities();
-  const reviewing = activities.some(
-    (activity) => activity.id === `review:${note?.id}` && activity.status === 'running',
-  );
-
-  // Continua uma passada interrompida (cancelada no servidor, app morto) do
-  // primeiro trecho que faltou. O que ja foi revisado nao e refeito.
-  const resumeReview = useCallback(async () => {
-    if (!note) return;
-    const model = resolveAnalysisModel(analysisModel);
-    if (!model) return;
-    await reviewRecording(note, model, {
-      literal: literalTranscript,
-      lowPower: analysisLowPower,
-      title: note.title,
-    });
-  }, [note, analysisModel, literalTranscript, analysisLowPower]);
 
   // Toque longo numa linha da previa abre a transcricao ja editando aquele
   // trecho. O parametro chega em ms; casa pelo inicio do segmento, porque o
@@ -317,6 +341,28 @@ export default function TranscriptScreen() {
     uriRef.current = null;
   }, [audioRef]);
 
+  // Veio de uma nota capturada ("ouvir o trecho"): abre no ponto exato e
+  // comeca dali. Roda uma vez, quando os segmentos chegam.
+  const atMs = at ? Number(at) : null;
+  const atOpenedRef = useRef(false);
+  useEffect(() => {
+    if (atOpenedRef.current) return;
+    if (atMs === null || !Number.isFinite(atMs) || segments.length === 0) return;
+    atOpenedRef.current = true;
+    let index = 0;
+    for (let i = 0; i < segments.length; i += 1) {
+      if (segments[i].start_ms <= atMs) index = i;
+      else break;
+    }
+    requestAnimationFrame(() => {
+      listRef.current?.scrollToIndex({ index, animated: false, viewPosition: 0.45 });
+    });
+    void resolveUri().then((uri) => {
+      if (uri) playAt(uri, atMs / 1000);
+    });
+  }, [atMs, segments, resolveUri, playAt]);
+
+
   useEffect(() => {
     // Cache local de uma nota nossa: nao refaz o fetch ao abrir. Nota do
     // servidor e conferida mesmo com cache, para a revisao feita la aparecer
@@ -331,14 +377,21 @@ export default function TranscriptScreen() {
         const api = new DyariumApi(config, doFetch);
         const transcript = await api.getTranscript(entryId);
         if (!alive) return;
-        setFetched(transcript.segments ?? []);
+        // O servidor nao conhece as capturas locais: casa pelo inicio do trecho
+        // para o icone nao sumir quando a transcricao e relida.
+        const prior = noteId ? (await getRecording(noteId))?.transcriptSegments ?? [] : [];
+        const merged = (transcript.segments ?? []).map((segment) => {
+          const local = prior.find((item) => item.start_ms === segment.start_ms);
+          return local?.capture ? { ...segment, capture: local.capture } : segment;
+        });
+        setFetched(merged);
         // Persiste o cache local para as proximas aberturas.
         if (transcript.segments && transcript.segments.length > 0 && noteId) {
           const current = await getRecording(noteId);
           if (current) {
             await upsertRecording({
               ...current,
-              transcriptSegments: transcript.segments,
+              transcriptSegments: merged,
               transcriptOrigin: current.transcriptOrigin === 'local' ? 'local' : 'server',
               transcriptReview:
                 reviewFromServer(transcript, transcript.segments) ?? current.transcriptReview,
@@ -401,6 +454,129 @@ export default function TranscriptScreen() {
     },
     [segments],
   );
+  const handleOpenActions = useCallback(
+    (index: number, point: { x: number; y: number }) => {
+      const seg = segments[index];
+      if (!seg) return;
+      setEditingIndex(null);
+      setCapture({ segment: seg, index, point });
+    },
+    [segments],
+  );
+  /**
+   * Cada tipo vira uma nota no caderno "Tarefas e ideias", com a tag do tipo.
+   * O caderno nasce no primeiro uso e o sync leva os dois.
+   */
+  /** Grava no trecho que ele virou tarefa/ideia/citacao: o icone mora nele. */
+  const markCaptured = useCallback(
+    async (index: number, kind: CaptureKind) => {
+      if (!noteId) return;
+      const current = await getRecording(noteId);
+      if (!current) return;
+      const list = [...(current.transcriptSegments ?? [])];
+      if (!list[index]) return;
+      list[index] = { ...list[index], capture: kind };
+      const updated = {
+        ...current,
+        transcriptSegments: list,
+        updatedAt: new Date().toISOString(),
+      };
+      await upsertRecording(updated);
+      emitRecording(updated);
+    },
+    [noteId],
+  );
+
+  const handleCapture = useCallback(
+    async (kind: CaptureKind) => {
+      const target = capture;
+      if (!target) return;
+      setCaptureError(null);
+      setCapture(null);
+      try {
+        const draftNote = buildCapture(kind, target.segment, {
+          noteTitle: note?.title ?? '',
+          stamp: formatDuration(target.segment.start_ms),
+        });
+        // Uma nota por nota de origem: tudo o que sai dela se acumula no mesmo
+        // lugar, em vez de abrir uma nota nova a cada tarefa ou ideia. Sem a nota
+        // de origem, nao ha como achar a nota acumulada (um `undefined` casaria
+        // com qualquer registro sem referencia).
+        const sourceId = note?.id;
+        const existingNote = sourceId
+          ? recordings.find((item) => item.captureSourceId === sourceId)
+          : undefined;
+        const existingNotebook = notebooks.find(
+          (notebook) =>
+            (notebook.name ?? '').trim().toLowerCase() === CAPTURE_NOTEBOOK.toLowerCase(),
+        );
+        const notebook = existingNotebook ?? (await createNotebook({ name: CAPTURE_NOTEBOOK }));
+        // Nota acumulada que ficou em outro caderno (versao anterior, sync que
+        // moveu) volta para o caderno de capturas em vez de sumir da vista.
+        if (existingNote && existingNote.notebookId !== notebook.id) {
+          await moveNoteToNotebook(existingNote.id, notebook.id);
+        }
+        if (existingNote) {
+          const alreadyThere = (existingNote.text ?? '').includes(draftNote.text);
+          if (!alreadyThere) {
+            const merged = [existingNote.text?.trim(), draftNote.text]
+              .filter(Boolean)
+              .join('\n\n');
+            await updateNote(existingNote.id, { text: merged });
+          }
+          const tags = [...(existingNote.tags ?? [])];
+          if (!tags.some((tag) => tag.toLowerCase() === draftNote.tag.toLowerCase())) {
+            tags.push(draftNote.tag);
+          }
+          await setNoteTags(existingNote.id, tags);
+          kick();
+        } else {
+          const created = await createTextNote({
+            title: draftNote.title,
+            text: draftNote.text,
+            notebookId: notebook.id,
+            // Referencia local: o botao na nota volta para este trecho exato.
+            capture: note
+              ? { sourceId: note.id, startMs: target.segment.start_ms }
+              : undefined,
+          });
+          await setNoteTags(created.id, [draftNote.tag]);
+          if (__DEV__) {
+            console.log('[capture] criada', {
+              id: created.id,
+              notebook: notebook.id,
+              notebookName: notebook.name,
+            });
+          }
+        }
+        await markCaptured(target.index, kind);
+        if (__DEV__) {
+          console.log('[capture] ok', {
+            kind,
+            source: sourceId ?? null,
+            existing: existingNote?.id ?? null,
+          });
+        }
+      } catch (error) {
+        // Falha silenciosa aqui deixava a impressao de que nada aconteceu.
+        console.warn('[capture] falhou', error instanceof Error ? error.message : String(error));
+        setCaptureError('Não foi possível guardar esta captura.');
+      }
+    },
+    [
+      capture,
+      note,
+      notebooks,
+      recordings,
+      createNotebook,
+      createTextNote,
+      setNoteTags,
+      updateNote,
+      kick,
+      moveNoteToNotebook,
+      markCaptured,
+    ],
+  );
   const handleSubmitEdit = useCallback(
     (index: number) => void saveEdit(index, draftRef.current),
     [saveEdit],
@@ -413,24 +589,15 @@ export default function TranscriptScreen() {
         segment={item}
         index={index}
         active={index === activeIndex}
-        editing={index === editingIndex}
-        draft={index === editingIndex ? draft : ''}
+        quoteStart={index === 0}
+        quoteEnd={index === segments.length - 1}
+        showOriginal={showOriginal}
         onSeek={handleSeek}
-        onStartEdit={handleStartEdit}
-        onChangeDraft={setDraft}
-        onCancelEdit={handleCancelEdit}
-        onSubmitEdit={handleSubmitEdit}
+        onEdit={handleStartEdit}
+        onActions={handleOpenActions}
       />
     ),
-    [
-      activeIndex,
-      editingIndex,
-      draft,
-      handleSeek,
-      handleStartEdit,
-      handleCancelEdit,
-      handleSubmitEdit,
-    ],
+    [activeIndex, segments.length, showOriginal, handleSeek, handleStartEdit, handleOpenActions],
   );
 
   return (
@@ -443,16 +610,7 @@ export default function TranscriptScreen() {
         <View style={styles.spacer} />
       </View>
 
-      {segments.length > 0 ? (
-        <ReviewStatus
-          segments={segments}
-          review={note?.transcriptReview}
-          reason={reviewReason}
-          running={reviewing}
-          onResume={note?.transcriptReview && !note.transcriptReview.finishedAt ? resumeReview : undefined}
-          onRetryRejected={note?.transcriptReview?.rejectedIdx?.length ? retryRejected : undefined}
-        />
-      ) : null}
+      {captureError ? <Text style={styles.captureError}>{captureError}</Text> : null}
 
       {audioRef ? (
         <View style={styles.player}>
@@ -473,6 +631,19 @@ export default function TranscriptScreen() {
                 Transcrevendo{transcriptionPercent > 0 ? ` ${Math.round(transcriptionPercent)}%` : '...'}
               </Text>
             ) : null}
+            <Press
+              onPress={() => setShowOriginal((value) => !value)}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityState={{ selected: showOriginal }}
+              accessibilityLabel="Ver o texto antigo do whisper"
+            >
+              <Ionicons
+                name="sparkles-outline"
+                size={16}
+                color={showOriginal ? colors.textSecondary : colors.textTertiary}
+              />
+            </Press>
           </View>
           <AudioWaveform
             seed={note?.id ?? audioRef}
@@ -532,6 +703,69 @@ export default function TranscriptScreen() {
           }}
         />
       )}
+
+      {/* Edicao do trecho: o toque na linha abre este popup, sem icone na
+          lateral nem campo no meio do texto. */}
+      <FastModal visible={editingIndex !== null} onRequestClose={handleCancelEdit}>
+        <View style={styles.editBackdrop}>
+          <Press style={styles.editCard} onPress={() => undefined} feedback={false}>
+            <Text style={styles.editTitle}>Editar trecho</Text>
+            <TextInput
+              value={draft}
+              onChangeText={setDraft}
+              multiline
+              autoFocus
+              selectionColor={colors.accent}
+              style={styles.editInput}
+            />
+            <View style={styles.editActions}>
+              <Press onPress={handleCancelEdit} accessibilityLabel="Cancelar">
+                <Text style={styles.editCancel}>Cancelar</Text>
+              </Press>
+              <Press
+                onPress={() => {
+                  if (editingIndex !== null) handleSubmitEdit(editingIndex);
+                }}
+                accessibilityLabel="Salvar trecho"
+              >
+                <Text style={styles.editSave}>Salvar</Text>
+              </Press>
+            </View>
+          </Press>
+        </View>
+      </FastModal>
+
+      {/* Menu ao lado do dedo: transformar o trecho em tarefa, ideia ou citacao. */}
+      <FastModal visible={capture !== null} onRequestClose={() => setCapture(null)}>
+        <Press style={styles.menuBackdrop} onPress={() => setCapture(null)} feedback={false}>
+          {capture ? (
+            <Press
+              style={[
+                styles.menuCard,
+                {
+                  left: Math.max(12, Math.min(capture.point.x, windowWidth - 196)),
+                  top: Math.max(60, Math.min(capture.point.y, windowHeight - 220)),
+                },
+              ]}
+              onPress={() => undefined}
+              feedback={false}
+            >
+              {CAPTURE_OPTIONS.map((option) => (
+                <Press
+                  key={option.kind}
+                  style={styles.menuItem}
+                  onPress={() => void handleCapture(option.kind)}
+                  accessibilityRole="button"
+                  accessibilityLabel={option.label}
+                >
+                  <Ionicons name={option.icon} size={18} color={colors.text} />
+                  <Text style={styles.menuLabel}>{option.label}</Text>
+                </Press>
+              ))}
+            </Press>
+          ) : null}
+        </Press>
+      </FastModal>
     </View>
   );
 }
@@ -547,6 +781,12 @@ const baseStyles = defineStyles({
     paddingBottom: spacing.md,
   },
   title: { color: baseColors.text, fontSize: fontSize.lg, fontWeight: '700' },
+  captureError: {
+    color: baseColors.danger,
+    fontSize: fontSize.sm,
+    paddingHorizontal: spacing.xl,
+    paddingBottom: spacing.sm,
+  },
   spacer: { width: 24 },
   player: {
     gap: spacing.xs,
@@ -569,24 +809,44 @@ const baseStyles = defineStyles({
   playerTime: { color: baseColors.textSecondary, fontSize: fontSize.sm, fontVariant: ['tabular-nums'] },
   playerSpacer: { flex: 1 },
   progress: { color: baseColors.accent, fontSize: fontSize.sm, fontWeight: '600' },
-  list: { paddingHorizontal: spacing.xl, paddingBottom: spacing.xxxl },
+  list: { paddingHorizontal: spacing.md, paddingBottom: spacing.xxxl },
   segment: {
     flexDirection: 'row',
-    gap: spacing.md,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.sm,
-    borderRadius: 10,
+    alignItems: 'flex-start',
+    gap: spacing.xs,
+    paddingVertical: 3,
   },
-  segmentActive: { backgroundColor: baseColors.accentSoft },
-  timestamp: { width: 44, paddingTop: 3 },
+  captureBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1,
+  },
+  // Minutagem discreta: existe para localizar o audio, nao para competir com
+  // o texto. Por isso a coluna estreita e a fonte menor.
+  timestamp: { width: 32, paddingTop: 4 },
   timestampText: {
     color: baseColors.textTertiary,
-    fontSize: fontSize.xs,
+    fontSize: 10,
     fontVariant: ['tabular-nums'],
   },
-  timestampActive: { color: baseColors.accentStrong },
+  // So a minutagem acende: um halo azul marca onde o audio esta agora, sem
+  // pintar a linha inteira (o texto continua legivel como texto).
+  timestampActive: {
+    color: baseColors.accent,
+    textShadowColor: baseColors.accent,
+    textShadowRadius: 7,
+  },
   segmentBody: { flex: 1 },
-  segmentText: { color: baseColors.textSecondary, fontSize: fontSize.md, lineHeight: 22 },
+  segmentText: {
+    color: baseColors.textSecondary,
+    fontSize: fontSize.md,
+    // Linhas mais juntas; o respiro entre trechos fica no padding da linha.
+    lineHeight: 20,
+    fontStyle: 'italic',
+  },
   segmentTextActive: { color: baseColors.text },
   segmentOriginal: {
     color: baseColors.textTertiary,
@@ -608,6 +868,19 @@ const baseStyles = defineStyles({
   literalText: { flex: 1, gap: 2 },
   literalTitle: { color: baseColors.textSecondary, fontSize: fontSize.sm, fontWeight: '600' },
   literalHint: { color: baseColors.textTertiary, fontSize: fontSize.xs, lineHeight: 16 },
+  editBackdrop: {
+    flex: 1,
+    backgroundColor: baseColors.overlay,
+    justifyContent: 'center',
+    padding: spacing.xl,
+  },
+  editCard: {
+    backgroundColor: baseColors.bgElevated,
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    gap: spacing.md,
+  },
+  editTitle: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '700' },
   editWrap: { flex: 1, gap: spacing.sm },
   editInput: {
     color: baseColors.text,
@@ -620,6 +893,24 @@ const baseStyles = defineStyles({
   editActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: spacing.lg },
   editCancel: { color: baseColors.textSecondary, fontSize: fontSize.sm },
   editSave: { color: baseColors.accent, fontSize: fontSize.sm, fontWeight: '700' },
+  menuBackdrop: { flex: 1 },
+  menuCard: {
+    position: 'absolute',
+    width: 184,
+    backgroundColor: baseColors.bgElevated,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: baseColors.border,
+    paddingVertical: spacing.xs,
+  },
+  menuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  menuLabel: { color: baseColors.text, fontSize: fontSize.sm, fontWeight: '600' },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl },
   emptyText: { color: baseColors.textSecondary, fontSize: fontSize.sm, textAlign: 'center' },
 });

@@ -17,6 +17,8 @@ describe('TagFilterRow', () => {
         onToggle={onToggle}
         onClear={jest.fn()}
         onManage={jest.fn()}
+        order="newest"
+        onPressOrder={jest.fn()}
       />,
     );
 
@@ -37,9 +39,28 @@ describe('TagFilterRow', () => {
         onToggle={jest.fn()}
         onClear={jest.fn()}
         onManage={onManage}
+        order="newest"
+        onPressOrder={jest.fn()}
       />,
     );
     fireEvent.press(screen.getByLabelText('Gerenciar tags'));
     expect(onManage).toHaveBeenCalled();
+  });
+
+  it('abre a ordenacao e anuncia a ordem atual', () => {
+    const onPressOrder = jest.fn();
+    render(
+      <TagFilterRow
+        tags={[]}
+        selected={[]}
+        onToggle={jest.fn()}
+        onClear={jest.fn()}
+        onManage={jest.fn()}
+        order="oldest"
+        onPressOrder={onPressOrder}
+      />,
+    );
+    fireEvent.press(screen.getByLabelText('Ordenar notas: mais antigas primeiro'));
+    expect(onPressOrder).toHaveBeenCalled();
   });
 });
