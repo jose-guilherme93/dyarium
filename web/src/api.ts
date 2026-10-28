@@ -190,6 +190,39 @@ async function getText(url: string, headers: Record<string, string>): Promise<st
   }
 }
 
+/**
+ * Envia uma escrita e devolve tambem o status HTTP. O import do Notion usa o
+ * 200/201 de `POST /entries` para distinguir uma entrada nova de uma que ja
+ * existia sem precisar de uma leitura extra.
+ */
+async function mutate<T>(path: string, init?: RequestInit): Promise<{ data: T; status: number }> {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${getToken()}`,
+    ...(init?.headers as Record<string, string> | undefined),
+  };
+  if (init?.body && !(init.body instanceof Blob)) {
+    headers["Content-Type"] = "application/json";
+  }
+  const url = `/api/v1${path}`;
+  const res = await fetch(url, { ...init, headers });
+  if (res.status === 204) {
+    setOffline(false);
+    return { data: undefined as T, status: res.status };
+  }
+  const text = await res.text();
+  if (!res.ok) {
+    const body = text ? JSON.parse(text) : {};
+    // 409 e conflito de edicao, não erro: o chamador precisa saber qual campo
+    // brigou para oferecer a escolha ao usuario.
+    if (res.status === 409) {
+      throw new ConflictError(body?.error?.message ?? "a nota mudou no outro lugar", body?.conflict ?? []);
+    }
+    throw new ApiError(body?.error?.message ?? res.statusText, res.status, body?.error?.code);
+  }
+  setOffline(false);
+  return { data: (text ? JSON.parse(text) : {}) as T, status: res.status };
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const method = (init?.method ?? "GET").toUpperCase();
   const isGet = method === "GET";
@@ -205,23 +238,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const text = await getText(url, headers);
     return (text ? JSON.parse(text) : {}) as T;
   }
-  const res = await fetch(url, { ...init, headers });
-  if (res.status === 204) {
-    setOffline(false);
-    return undefined as T;
-  }
-  const text = await res.text();
-  if (!res.ok) {
-    const body = text ? JSON.parse(text) : {};
-    // 409 e conflito de edicao, não erro: o chamador precisa saber qual campo
-    // brigou para oferecer a escolha ao usuario.
-    if (res.status === 409) {
-      throw new ConflictError(body?.error?.message ?? "a nota mudou no outro lugar", body?.conflict ?? []);
-    }
-    throw new ApiError(body?.error?.message ?? res.statusText, res.status, body?.error?.code);
-  }
-  setOffline(false);
-  return (text ? JSON.parse(text) : {}) as T;
+  return (await mutate<T>(path, init)).data;
 }
 
 export interface EntryFilters {
@@ -334,6 +351,27 @@ export const api = {
         ...(notebookId ? { notebook_id: notebookId } : {}),
       }),
     }),
+  /**
+   * Cria uma entrada de importacao com id deterministico e a data original.
+   * `created` vem do 201; 200 significa que o id ja existia (reimportacao).
+   */
+  createImportEntry: async (input: {
+    id: string;
+    title: string;
+    notebookId?: string;
+    recordedAt?: string;
+  }): Promise<{ entry: Entry; created: boolean }> => {
+    const { data, status } = await mutate<Entry>("/entries", {
+      method: "POST",
+      body: JSON.stringify({
+        id: input.id,
+        title: input.title,
+        ...(input.notebookId ? { notebook_id: input.notebookId } : {}),
+        ...(input.recordedAt ? { recorded_at: input.recordedAt } : {}),
+      }),
+    });
+    return { entry: data, created: status === 201 };
+  },
   getEntry: (id: string) => request<Entry>(`/entries/${id}`),
   /** Última copia em cache da entrada, para a primeira pintura. */
   getEntryCached: (id: string) => cachedGet<Entry>(`/entries/${id}`),
