@@ -43,6 +43,47 @@ export function clearToken(): void {
   localStorage.removeItem(TOKEN_KEY);
 }
 
+// getSetupState reports whether the first-run setup is still open. It is a
+// public route, so it works before any token exists. Failures are treated as
+// "no setup needed" so the normal token gate is shown instead.
+export async function getSetupState(): Promise<{ required: boolean }> {
+  try {
+    const res = await fetch("/setup/state");
+    if (!res.ok) {
+      return { required: false };
+    }
+    const text = await res.text();
+    const body = text ? JSON.parse(text) : {};
+    return { required: Boolean(body.required) };
+  } catch {
+    return { required: false };
+  }
+}
+
+// claimSetup stores the operator-chosen token and closes the setup window.
+export async function claimSetup(token: string): Promise<void> {
+  const res = await fetch("/setup", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
+  if (res.ok) {
+    return;
+  }
+  const text = await res.text();
+  let body: { error?: { message?: string; code?: string } } | null = null;
+  try {
+    if (text) body = JSON.parse(text);
+  } catch {
+    body = null;
+  }
+  throw new ApiError(
+    body?.error?.message ?? "falha ao configurar",
+    res.status,
+    body?.error?.code,
+  );
+}
+
 // verifyToken checks a bearer token against the API before it is stored. It
 // returns true when the API accepts the token and false when it rejects it
 // (401/403). Network or server failures throw so the caller can decide.
