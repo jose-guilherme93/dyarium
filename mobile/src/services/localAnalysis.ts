@@ -6,6 +6,7 @@
  * local so fica disponivel depois do proximo build.
  */
 
+import * as Device from 'expo-device';
 import { File } from 'expo-file-system';
 
 import {
@@ -15,7 +16,7 @@ import {
   parseAnalysisJson,
   ANALYSIS_SCHEMA,
 } from '@/core/analysisPrompt';
-import type { AnalysisModelInfo } from '@/core/analysisModels';
+import { modelFitsDevice, type AnalysisModelInfo } from '@/core/analysisModels';
 import type { Recording } from '@/core/types';
 import {
   cancelActivity,
@@ -26,6 +27,12 @@ import {
   type ActivityAction,
 } from './activity';
 import { analysisModelFilePath } from './analysisModels';
+import {
+  acquireHeavyWork,
+  registerEngineReleaser,
+  reserveEngine,
+  type HeavyLease,
+} from './heavyWork';
 import { startForegroundTask, stopForegroundTask } from '../../modules/foreground-task';
 import { notifyActivity, notifyIfHidden } from './notifications';
 
@@ -122,6 +129,28 @@ let loaded: {
   threads: number;
 } | null = null;
 
+/**
+ * Depois da ultima geracao o modelo fica residente por um tempo curto. Passar
+ * uma revisao inteira logo depois da analise precisa dele quente; deixar o
+ * modelo parado na memoria para sempre e o que empurra o Android a encerrar o
+ * app em segundo plano.
+ */
+const IDLE_RELEASE_MS = 20_000;
+let idleRelease: ReturnType<typeof setTimeout> | null = null;
+
+function cancelIdleRelease(): void {
+  if (idleRelease) clearTimeout(idleRelease);
+  idleRelease = null;
+}
+
+function scheduleIdleRelease(): void {
+  cancelIdleRelease();
+  idleRelease = setTimeout(() => {
+    idleRelease = null;
+    void releaseAnalysisContext();
+  }, IDLE_RELEASE_MS);
+}
+
 function loadLlama(): LlamaModule | null {
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -142,8 +171,18 @@ export async function loadAnalysisContext(
   options: { lowPower?: boolean; contextSize?: number } = {},
 ): Promise<void> {
   const threads = analysisThreads(options.lowPower);
-  if (loaded?.modelId === model.id && loaded.threads === threads) return;
+  if (loaded?.modelId === model.id && loaded.threads === threads) {
+    cancelIdleRelease();
+    return;
+  }
   await releaseAnalysisContext();
+
+  // Um modelo maior que a RAM do aparelho nao e uma Analise lenta: e o
+  // processo inteiro encerrado pelo Android. A tela de modelos ja avisa; aqui
+  // o limite e efetivo, para nenhum caminho carregar o modelo mesmo assim.
+  if (modelFitsDevice(model, Device.totalMemory) === false) {
+    throw new Error('modelo grande para a memoria do aparelho');
+  }
 
   const llama = loadLlama();
   const filePath = analysisModelFilePath(model.id);
@@ -152,6 +191,11 @@ export async function loadAnalysisContext(
   const file = new File(filePath);
   if (!file.exists) throw new Error('modelo nao baixado');
   if (file.size !== model.sizeBytes) throw new Error('modelo incompleto');
+
+  // Um motor por vez: o whisper (se estava quente) sai antes de o llama
+  // alocar o contexto. Sem isso os dois modelos ficam residentes juntos.
+  await reserveEngine('llama');
+  cancelIdleRelease();
 
   const context = await llama.initLlama({
     model: filePath,
@@ -168,16 +212,29 @@ export async function loadAnalysisContext(
   loaded = { modelId: model.id, context, threads };
 }
 
-export async function releaseAnalysisContext(): Promise<void> {
+let releasing: Promise<void> | null = null;
+
+export function releaseAnalysisContext(): Promise<void> {
+  cancelIdleRelease();
   const current = loaded;
   loaded = null;
-  if (!current) return;
-  try {
-    await current.context.release();
-  } catch {
-    // contexto ja liberado
-  }
+  if (!current) return releasing ?? Promise.resolve();
+  // Guarda a liberacao em andamento: um novo load espera ela terminar em vez
+  // de alocar outro modelo enquanto o anterior ainda esta saindo da memoria.
+  const task = (async () => {
+    try {
+      await current.context.release();
+    } catch {
+      // contexto ja liberado
+    }
+  })();
+  releasing = task;
+  return task.finally(() => {
+    if (releasing === task) releasing = null;
+  });
 }
+
+registerEngineReleaser('llama', releaseAnalysisContext);
 
 /** A geracao atual foi parada pelo usuario? */
 let stopped = false;
@@ -245,14 +302,21 @@ export async function runAnalysis(
   }
 
   const started = Date.now();
-  const result = await loaded.context.completion(
-    completionRequest(messages, options),
-    options.onToken
-      ? (data) => {
-          if (data.token) options.onToken?.(data.token);
-        }
-      : undefined,
-  );
+  let result: CompletionResult;
+  try {
+    result = await loaded.context.completion(
+      completionRequest(messages, options),
+      options.onToken
+        ? (data) => {
+            if (data.token) options.onToken?.(data.token);
+          }
+        : undefined,
+    );
+  } finally {
+    // A proxima janela da revisao (ou a proxima analise) chega antes do prazo e
+    // cancela o timer; parado, o modelo sai da memoria sozinho.
+    scheduleIdleRelease();
+  }
 
   const timings = result.timings;
   return {
@@ -282,6 +346,9 @@ export async function analyzeRecording(
   const activity = `analysis:${recording.id}`;
   let tokens = 0;
   stopped = false;
+  // Espera a vez: uma transcricao/revisao em andamento e pausada (o gancho de
+  // pausa das transcricoes) e o modelo do outro motor e liberado.
+  const lease: HeavyLease = await acquireHeavyWork('analysis');
 
   startActivity({
     id: activity,
@@ -336,5 +403,6 @@ export async function analyzeRecording(
     throw error;
   } finally {
     stopForegroundTask();
+    lease.release();
   }
 }

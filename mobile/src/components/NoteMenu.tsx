@@ -156,6 +156,8 @@ interface NoteMenuProps {
    */
   analysis?: NoteAnalysisView | null;
   /** Analise local habilitada nesta build. */
+  /** De onde veio a analise exibida: aparelho, servidor ou API. */
+  analysisOrigin?: string;
   analysisEnabled?: boolean;
   /** Modelo local instalado e engine disponivel. */
   analysisReady?: boolean;
@@ -371,6 +373,7 @@ export function NoteMenu({
   title,
   properties,
   analysis,
+  analysisOrigin,
   analysisEnabled = false,
   analysisReady = false,
   analysisBusy = false,
@@ -599,7 +602,12 @@ export function NoteMenu({
 
                 {analysis !== undefined ? (
                   <>
-                    <Text style={styles.sectionLabel}>Análise</Text>
+                    <View style={styles.analysisHead}>
+                      <Text style={styles.sectionLabel}>Análise</Text>
+                      {analysisOrigin ? (
+                        <Text style={styles.analysisOrigin}>{analysisOrigin}</Text>
+                      ) : null}
+                    </View>
                     {analysisError && analysis ? (
                       <Text style={styles.analyzeError}>
                         A análise abaixo é a anterior; a nova tentativa falhou.
@@ -896,6 +904,8 @@ const baseStyles = defineStyles({
   },
   propLabel: { color: baseColors.textSecondary, fontSize: fontSize.sm },
   propValue: { color: baseColors.text, fontSize: fontSize.sm, flexShrink: 1, textAlign: 'right' },
+  analysisHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  analysisOrigin: { color: baseColors.textTertiary, fontSize: fontSize.xs },
   muted: { color: baseColors.textSecondary, fontSize: fontSize.sm, lineHeight: 19 },
   analysisActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   analyzeButton: {

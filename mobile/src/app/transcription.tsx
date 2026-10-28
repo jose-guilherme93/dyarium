@@ -37,8 +37,6 @@ export default function TranscriptionScreen() {
   const { colors } = useTheme();
 
   const {
-    localTranscription,
-    setLocalTranscription,
     transcriptionModel,
     setTranscriptionModel,
     transcriptionLanguage,
@@ -104,28 +102,11 @@ export default function TranscriptionScreen() {
           <Card style={styles.notice}>
             <Ionicons name="construct-outline" size={18} color={colors.warning} />
             <Text style={styles.noticeText}>
-              Disponível depois do próximo build: este APK ainda não tem os módulos nativos. Até
-              lá, a transcrição continua pelo servidor.
+              Este build não tem os módulos nativos. A transcrição só roda no servidor, se houver
+              um conectado.
             </Text>
           </Card>
         ) : null}
-
-        <Text style={styles.sectionLabel}>Transcrição</Text>
-        <Card style={styles.card}>
-          <View style={styles.toggleRow}>
-            <View style={styles.rowText}>
-              <Text style={styles.cardTitle}>Transcrever no aparelho</Text>
-              <Text style={styles.cardHint}>
-                Usa o modelo baixado, offline e sem enviar o áudio. Desligado, usa o servidor.
-              </Text>
-            </View>
-            <Switch
-              value={localTranscription}
-              onValueChange={(value) => void setLocalTranscription(value)}
-              trackColor={{ true: colors.accent }}
-            />
-          </View>
-        </Card>
 
         <Text style={styles.sectionLabel}>Idioma</Text>
         <Card style={styles.card}>

@@ -1,11 +1,13 @@
 import type { ServerAnalysis } from '@/core/api';
 
-import { fetchNoteAnalysis } from '../analysis';
+import { fetchNoteAnalysis, pushLocalAnalyses, pushNoteAnalysis } from '../analysis';
 
 const mockGetAnalysis = jest.fn<Promise<ServerAnalysis>, [string]>();
 const mockSaveCachedAnalyses = jest.fn<Promise<void>, [unknown[]]>();
 const mockDeleteCachedServerAnalysis = jest.fn<Promise<void>, [string]>();
 const mockLoadServerConfig = jest.fn();
+const mockPutAnalysis = jest.fn();
+const mockListCachedAnalyses = jest.fn();
 
 jest.mock('@/core/api', () => {
   const actual = jest.requireActual('@/core/api');
@@ -15,11 +17,15 @@ jest.mock('@/core/api', () => {
       getAnalysis(...args: [string]): Promise<ServerAnalysis> {
         return mockGetAnalysis(...args);
       }
+      putAnalysis(...args: unknown[]): Promise<{ stored: boolean; origin?: string }> {
+        return mockPutAnalysis(...args);
+      }
     },
   };
 });
 
 jest.mock('../db', () => ({
+  listCachedAnalyses: async () => mockListCachedAnalyses(),
   saveCachedAnalyses: async (...args: [unknown[]]) => mockSaveCachedAnalyses(...args),
   deleteCachedServerAnalysis: async (...args: [string]) =>
     mockDeleteCachedServerAnalysis(...args),
@@ -77,5 +83,60 @@ describe('fetchNoteAnalysis', () => {
 
     await expect(fetchNoteAnalysis(target)).resolves.toBeNull();
     expect(mockDeleteCachedServerAnalysis).not.toHaveBeenCalled();
+  });
+});
+
+describe('pushNoteAnalysis', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockLoadServerConfig.mockResolvedValue({ baseUrl: 'https://dyarium.test', token: 't' });
+  });
+
+  it('sobe a analise local sem substituir a do servidor', async () => {
+    mockPutAnalysis.mockResolvedValue({ stored: true, origin: 'app' });
+
+    await expect(pushNoteAnalysis('e1', analysis)).resolves.toBe(true);
+    expect(mockPutAnalysis).toHaveBeenCalledWith('e1', { ...analysis, replace: false });
+  });
+
+  it('refazer pede substituicao explicita', async () => {
+    mockPutAnalysis.mockResolvedValue({ stored: true, origin: 'app' });
+
+    await pushNoteAnalysis('e1', analysis, true);
+    expect(mockPutAnalysis).toHaveBeenCalledWith('e1', { ...analysis, replace: true });
+  });
+
+  it('sem servidor nao tenta nada', async () => {
+    mockLoadServerConfig.mockResolvedValue(null);
+
+    await expect(pushNoteAnalysis('e1', analysis)).resolves.toBe(false);
+    expect(mockPutAnalysis).not.toHaveBeenCalled();
+  });
+});
+
+describe('pushLocalAnalyses', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockLoadServerConfig.mockResolvedValue({ baseUrl: 'https://dyarium.test', token: 't' });
+    mockPutAnalysis.mockResolvedValue({ stored: true, origin: 'app' });
+  });
+
+  it('so envia analises locais de notas que ja existem no servidor', async () => {
+    mockListCachedAnalyses.mockResolvedValue([
+      { entryId: 'e1', origin: 'local', analysis },
+      { entryId: 'note_123', origin: 'local', analysis },
+      { entryId: 'e2', origin: 'server', analysis },
+    ]);
+
+    await expect(pushLocalAnalyses()).resolves.toBe(1);
+    expect(mockPutAnalysis).toHaveBeenCalledTimes(1);
+    expect(mockPutAnalysis.mock.calls[0][0]).toBe('e1');
+  });
+
+  it('sem servidor nao faz backfill', async () => {
+    mockLoadServerConfig.mockResolvedValue(null);
+
+    await expect(pushLocalAnalyses()).resolves.toBe(0);
+    expect(mockListCachedAnalyses).not.toHaveBeenCalled();
   });
 });

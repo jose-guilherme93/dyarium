@@ -46,8 +46,13 @@ export interface CreateUploadBody {
   created_at?: string;
   /** Origem: `share` para audio importado. */
   source?: 'upload' | 'share';
-  /** O cliente transcreve no aparelho; o servidor nao enfileira transcricao. */
+  /**
+   * O cliente se responsabiliza pela transcricao (transcreve no aparelho ou
+   * deixa a etapa desligada): o servidor nao enfileira nada.
+   */
   local_transcribe?: boolean;
+  /** O cliente se responsabiliza pela analise: o servidor nao enfileira. */
+  local_analysis?: boolean;
   /** Quando presente, adiciona o audio a uma entrada existente. */
   entry_id?: string;
 }
@@ -284,6 +289,8 @@ export interface AnalysisMoment {
 }
 
 export interface ServerAnalysis {
+  /** Quem produziu: aparelho, este servidor ou um provedor de terceiro. */
+  origin?: 'app' | 'server' | 'api';
   model: string;
   sentiment: number;
   sentiment_label?: string;
@@ -758,6 +765,23 @@ export class DyariumApi {
   }
 
   /** Analise de uma entrada. Lanca ApiError 404 quando ainda nao existe. */
+  /**
+   * Envia a analise feita no aparelho. Sem `replace`, o servidor guarda so se
+   * ainda nao tiver analise: o sync nunca sobrescreve o outro lado.
+   */
+  async putAnalysis(
+    entryId: string,
+    body: ServerAnalysis & { replace?: boolean },
+  ): Promise<{ stored: boolean; origin?: string }> {
+    const res = await this.fetchImpl(this.url(`/api/v1/entries/${entryId}/analysis`), {
+      method: 'PUT',
+      headers: this.authHeaders(),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    return JSON.parse(await res.text());
+  }
+
   async getAnalysis(entryId: string): Promise<ServerAnalysis> {
     const res = await this.fetchImpl(this.url(`/api/v1/entries/${entryId}/analysis`), {
       method: 'GET',

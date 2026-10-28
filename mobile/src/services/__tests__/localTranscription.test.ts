@@ -1,3 +1,5 @@
+import { AppState } from 'react-native';
+
 import type { Recording } from '@/core/types';
 
 import { maybeTranscribeLocally, transcribePendingLocally } from '../localTranscription';
@@ -103,6 +105,8 @@ const byId: Record<string, Recording> = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  // A fila so inicia trabalho pesado com o app na frente.
+  Object.defineProperty(AppState, 'currentState', { value: 'active', configurable: true });
   mockWillTranscribeLocally.mockResolvedValue(true);
   mockLoadPrefs.mockResolvedValue({ transcriptionModel: 'tiny' });
   mockGetRecording.mockImplementation(async (id) => byId[id] ?? null);
@@ -133,6 +137,14 @@ describe('transcribePendingLocally', () => {
     await transcribePendingLocally();
 
     expect(mockGetRecording).not.toHaveBeenCalledWith('srv3');
+  });
+
+  it('nao comeca trabalho pesado com o app em segundo plano', async () => {
+    Object.defineProperty(AppState, 'currentState', { value: 'background', configurable: true });
+
+    await transcribePendingLocally();
+
+    expect(mockGetRecording).not.toHaveBeenCalled();
   });
 
   it('nao faz nada com a transcricao local desligada', async () => {

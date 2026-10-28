@@ -145,8 +145,14 @@ jest.mock('@/state/SettingsContext', () => ({
     setAnalysisModel: jest.fn(async () => undefined),
     analysisLowPower: false,
     setAnalysisLowPower: jest.fn(async () => undefined),
-    transcriptionPromptDismissed: false,
-    dismissTranscriptionPrompt: jest.fn(async () => undefined),
+    transcriptionEnabled: false,
+    setTranscriptionEnabled: jest.fn(async () => undefined),
+    analysisEnabled: false,
+    setAnalysisEnabled: jest.fn(async () => undefined),
+    serverProcessing: false,
+    setServerProcessing: jest.fn(async () => undefined),
+    config: null,
+    transcriptionModel: 'base',
     ready: true,
   }),
 }));
@@ -221,6 +227,8 @@ const mockGetRecording = jest.fn<Promise<Recording | null>, [string]>(async () =
 
 jest.mock('@/services/db', () => ({
   getCachedAnalysis: jest.fn(async () => null),
+  getAppFlag: jest.fn(async () => '1'),
+  setAppFlag: jest.fn(async () => undefined),
   getRecording: (...args: [string]) => mockGetRecording(...args),
   moveCachedAnalysis: jest.fn(async () => undefined),
   saveAnalysisRuns: jest.fn(async () => undefined),
@@ -254,8 +262,12 @@ jest.mock('@/services/localTranscription', () => ({
   isTranscribing: () => false,
   maybeTranscribeLocally: jest.fn(async () => undefined),
   stopTranscription: jest.fn(async () => undefined),
-  willTranscribeLocally: jest.fn(async () => false),
 }));
+
+jest.mock('@/services/whisper', () => ({
+  transcriptionPlace: jest.fn(async () => ({ place: 'disabled', runsOnDevice: false, needsModel: false })),
+}));
+
 
 jest.mock('@/services/noteVisibility', () => ({
   enterNote: jest.fn(),

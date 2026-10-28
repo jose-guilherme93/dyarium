@@ -10,7 +10,9 @@ import { Text } from '@/components/AppText';
 import { Press } from '@/components/Press';
 
 import { Card } from '@/components/Card';
+import { ProcessingToggles } from '@/components/ProcessingToggles';
 import { Screen } from '@/components/Screen';
+import { countTrashedRecordings } from '@/services/db';
 import { useLibrary } from '@/state/LibraryContext';
 import { useSettings } from '@/state/SettingsContext';
 import { THEMES, THEME_OPTIONS, baseColors, fontSize, radius, spacing } from '@/theme/tokens';
@@ -157,6 +159,11 @@ export default function SettingsScreen() {
                 <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
               </Card>
             </Press>
+
+            <Text style={styles.sectionLabel}>Processamento</Text>
+            <Card style={styles.card}>
+              <ProcessingToggles />
+            </Card>
 
             <Text style={styles.sectionLabel}>Servidor</Text>
             <Press onPress={() => push('/server')}>

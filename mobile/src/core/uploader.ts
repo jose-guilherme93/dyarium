@@ -35,6 +35,7 @@ export interface UploadInput {
   durationSeconds?: number;
   /** O cliente transcreve no aparelho; o servidor nao enfileira transcricao. */
   localTranscribe?: boolean;
+  localAnalysis?: boolean;
   /** Se ja existe um upload em andamento, informe id e offset para retomar. */
   uploadId?: string;
   offset?: number;
@@ -84,6 +85,7 @@ export async function uploadRecording(
       created_at: input.createdAt,
       source: input.source,
       local_transcribe: input.localTranscribe,
+      local_analysis: input.localAnalysis,
       entry_id: input.entryId,
     });
     uploadId = created.id;

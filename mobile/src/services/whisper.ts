@@ -6,7 +6,8 @@
  */
 
 import { audioDecodeAvailable } from '../../modules/audio-decode';
-import { loadPrefs } from './secure';
+import { clientOwnsStage, decideProcessing } from '@/core/processing';
+import { loadPrefs, loadServerConfig } from './secure';
 import { isModelInstalled } from './transcriptionModels';
 
 export interface WhisperSegment {
@@ -57,14 +58,32 @@ export function localTranscriptionAvailable(): boolean {
   return Boolean(loadWhisper() && audioDecodeAvailable());
 }
 
+/** Onde a transcricao desta instalacao roda (ou se esta desligada). */
+export async function transcriptionPlace() {
+  const [prefs, server] = await Promise.all([loadPrefs(), loadServerConfig()]);
+  const modelId = prefs.transcriptionModel;
+  return decideProcessing({
+    enabled: prefs.transcriptionEnabled === true,
+    serverProcessing: prefs.serverProcessing === true,
+    hasServer: Boolean(server),
+    deviceCapable: localTranscriptionAvailable(),
+    deviceReady: Boolean(modelId && isModelInstalled(modelId)),
+  });
+}
+
 /**
- * O app vai transcrever no aparelho? (ligado, com modulo nativo e com modelo
- * baixado). Usado no upload para avisar o servidor que nao precisa transcrever.
+ * O app vai transcrever no aparelho agora? So quando a etapa esta ligada,
+ * escolhida para o aparelho e com o modelo baixado. Sem modelo a nota fica
+ * pendente — nunca cai para o servidor sem o usuario pedir.
  */
 export async function willTranscribeLocally(): Promise<boolean> {
-  if (!localTranscriptionAvailable()) return false;
-  const prefs = await loadPrefs();
-  if (prefs.localTranscription === false) return false;
-  const modelId = prefs.transcriptionModel;
-  return Boolean(modelId && isModelInstalled(modelId));
+  return (await transcriptionPlace()).runsOnDevice;
+}
+
+/**
+ * O cliente se responsabiliza pela transcricao? Usado no upload: com o
+ * aparelho responsavel (ou a etapa desligada) o servidor nao enfileira nada.
+ */
+export async function clientOwnsTranscription(): Promise<boolean> {
+  return clientOwnsStage((await transcriptionPlace()).place);
 }

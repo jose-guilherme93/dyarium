@@ -21,15 +21,17 @@ import {
 import { pushNotebooks } from '@/services/notebookSync';
 import { analysisModelById } from '@/core/analysisModels';
 import { reviewNeedsResume } from '@/core/transcriptReview';
+import { pushLocalAnalyses } from '@/services/analysis';
 import { isAnalysisModelInstalled } from '@/services/analysisModels';
 import { localAnalysisAvailable } from '@/services/localAnalysis';
-import { resumeInterruptedTranscriptions } from '@/services/localTranscription';
+import { maybeTranscribeLocally, transcribePendingLocally } from '@/services/localTranscription';
 import { reviewRecording } from '@/services/transcriptReview';
 import { noteIsOpen } from '@/services/noteVisibility';
 import { pullServerEntries } from '@/services/pull';
 import { pushPendingTranscriptsOnce } from '@/services/transcriptSync';
 import { fetchTranscriptsOnce } from '@/services/transcripts';
 import { emitRecording, observeUploads, runUploadQueueOnce } from '@/services/uploaderLoop';
+import { purgeExpiredTrash } from '@/services/trash';
 
 import { useSettings } from './SettingsContext';
 
@@ -230,6 +232,9 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   // nunca terminava de ser limpo.
   const resumeReviews = useCallback(async () => {
     if (!reviewEnabled || noteIsOpen()) return;
+    // Revisao e trabalho pesado: sem o app na frente nao da para abrir o
+    // servico em primeiro plano (Android 12+) e o processo seria encerrado.
+    if (AppState.currentState !== 'active') return;
     if (!localAnalysisAvailable() || !isAnalysisModelInstalled(analysisModel)) return;
     const model = analysisModelById(analysisModel);
     if (!model) return;
@@ -273,8 +278,12 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       pushTranscripts();
       pullServer();
       // O que ficou pela metade antes de o app morrer continua de onde parou.
-      void resumeInterruptedTranscriptions().catch(() => undefined);
+      // A fila local so roda com o app na frente: trabalho pesado iniciado do
+      // fundo nao consegue abrir o servico em primeiro plano no Android 12+.
+      void transcribePendingLocally().catch(() => undefined);
       void resumeReviews().catch(() => undefined);
+      // Analises feitas no aparelho antes da conexao sobem agora (idempotente).
+      void pushLocalAnalyses().catch(() => undefined);
     }, 2000);
     return () => clearTimeout(timer);
   }, [ready, config, kick, pullTranscripts, pushTranscripts, pullServer, resumeReviews]);
@@ -333,6 +342,9 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
         return exists ? prev.map((r) => (r.id === queued.id ? queued : r)) : [queued, ...prev];
       });
       kick();
+      // A transcricao no aparelho comeca aqui, logo depois de a nota existir:
+      // esperar o proximo boot fazia o texto so aparecer minutos depois.
+      void maybeTranscribeLocally(queued.id).catch(() => undefined);
     },
     [kick],
   );

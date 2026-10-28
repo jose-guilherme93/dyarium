@@ -1,4 +1,4 @@
-import { loadPrefs, savePrefs, type Prefs } from '@/services/secure';
+import { loadPrefs } from '@/services/secure';
 
 const mockStore = new Map<string, string>();
 
@@ -17,19 +17,36 @@ describe('preferencias locais', () => {
     mockStore.clear();
   });
 
-  it('guarda que o aviso de transcricao foi dispensado', async () => {
-    const prefs: Prefs = { swipeAction: 'delete', transcriptionPromptDismissed: true };
-
-    await savePrefs(prefs);
-
+  it('instalacao nova nasce com as tres etapas desligadas', async () => {
     await expect(loadPrefs()).resolves.toMatchObject({
-      transcriptionPromptDismissed: true,
+      transcriptionEnabled: false,
+      analysisEnabled: false,
+      serverProcessing: false,
     });
   });
 
-  it('nao dispensa o aviso por padrao', async () => {
+  it('migra a escolha antiga de aparelho sem mandar trabalho ao servidor', async () => {
+    mockStore.set(
+      'dyarium.prefs',
+      JSON.stringify({ swipeAction: 'delete', localTranscription: true }),
+    );
+
     await expect(loadPrefs()).resolves.toMatchObject({
-      transcriptionPromptDismissed: false,
+      transcriptionEnabled: true,
+      analysisEnabled: true,
+      serverProcessing: false,
+    });
+  });
+
+  it('migra a escolha antiga de servidor', async () => {
+    mockStore.set(
+      'dyarium.prefs',
+      JSON.stringify({ swipeAction: 'delete', localTranscription: false }),
+    );
+
+    await expect(loadPrefs()).resolves.toMatchObject({
+      transcriptionEnabled: true,
+      serverProcessing: true,
     });
   });
 });

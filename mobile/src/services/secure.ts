@@ -9,6 +9,7 @@ import {
   DEFAULT_TRANSCRIPTION_MODEL,
   type TranscriptionLanguage,
 } from '@/core/transcription';
+import { normalizeNoteOrder, type NoteOrder } from '@/core/noteOrder';
 import { normalizeTypography, type NoteTypography } from '@/core/typography';
 import type { ServerConfig } from '@/core/types';
 import { normalizeTheme, type ThemeName } from '@/theme/tokens';
@@ -67,7 +68,16 @@ export async function saveDeviceIdentity(identity: DeviceIdentity): Promise<void
 /** Preferencias locais do app (nao sao segredo, mas ficam no mesmo cofre). */
 export type SwipeAction = 'delete' | 'archive';
 
+/**
+ * Versao do blob de preferencias. Sobe quando uma chave muda de sentido: sem
+ * ela nao da para distinguir instalacao nova de instalacao antiga, e a
+ * migracao acabaria desligando o que o usuario ja tinha ligado.
+ */
+export const PREFS_VERSION = 2;
+
 export interface Prefs {
+  /** Versao do formato gravado; ausente = blob anterior aos tres interruptores. */
+  version?: number;
   /** Tema visual do app. */
   theme?: ThemeName;
   /** O que o gesto de arrastar na lista faz. */
@@ -76,10 +86,14 @@ export interface Prefs {
   importYear?: number;
   /** Tipografia do editor de notas. */
   typography?: NoteTypography;
-  /** Transcrever no aparelho (desligado volta a usar o servidor). */
+  /** Transcrever as notas (no aparelho ou no servidor, conforme abaixo). */
+  transcriptionEnabled?: boolean;
+  /** Analisar as notas (no aparelho ou no servidor, conforme abaixo). */
+  analysisEnabled?: boolean;
+  /** Processar no servidor em vez do aparelho. Exige servidor configurado. */
+  serverProcessing?: boolean;
+  /** @deprecated Substituido por `transcriptionEnabled` + `serverProcessing`. */
   localTranscription?: boolean;
-  /** Aviso de transcricao e analise desligadas ja dispensado pelo usuario. */
-  transcriptionPromptDismissed?: boolean;
   /** Revisar a transcricao com a IA local antes de analisar. */
   reviewTranscript?: boolean;
   /** Manter hesitacoes e gagueira no texto revisado. */
@@ -108,29 +122,60 @@ export interface Prefs {
   lastNotebookId?: string;
   /** Ordenar a lista de cadernos alfabeticamente (padrao: criacao). */
   notebooksAlphabetical?: boolean;
+  /** Ordem das notas: criacao mais recente ou mais antiga primeiro. */
+  noteOrder?: NoteOrder;
 }
 
 const PREFS_KEY = 'dyarium.prefs';
 const DEFAULT_PREFS: Prefs = {
+  version: PREFS_VERSION,
   swipeAction: 'delete',
-  transcriptionPromptDismissed: false,
+  transcriptionEnabled: false,
+  analysisEnabled: false,
+  serverProcessing: false,
   reviewTranscript: false,
   literalTranscript: false,
 };
+
+/**
+ * Converte o blob antigo (`localTranscription`) nos tres interruptores.
+ *
+ * A regra preserva o comportamento de quem ja usava: escolha explicita de
+ * aparelho continua no aparelho, escolha de servidor continua no servidor, e
+ * quem nunca escolheu segue a mesma via de antes (servidor quando existe).
+ */
+async function migrateLegacyFlags(parsed: Partial<Prefs>): Promise<Prefs> {
+  const explicitLocal = parsed.localTranscription === true;
+  const explicitServer = parsed.localTranscription === false;
+  let serverProcessing = false;
+  if (explicitServer) serverProcessing = true;
+  else if (!explicitLocal) serverProcessing = Boolean(await loadServerConfig());
+  return {
+    ...DEFAULT_PREFS,
+    transcriptionEnabled: true,
+    analysisEnabled: true,
+    serverProcessing,
+    version: PREFS_VERSION,
+  };
+}
 
 export async function loadPrefs(): Promise<Prefs> {
   try {
     const raw = await SecureStore.getItemAsync(PREFS_KEY);
     if (!raw) return DEFAULT_PREFS;
     const parsed = JSON.parse(raw) as Partial<Prefs>;
+    const legacy = parsed.version !== PREFS_VERSION;
+    const migrated = legacy ? await migrateLegacyFlags(parsed) : null;
     return {
+      version: PREFS_VERSION,
       theme: normalizeTheme(parsed.theme),
       swipeAction: parsed.swipeAction === 'archive' ? 'archive' : 'delete',
       importYear: typeof parsed.importYear === 'number' ? parsed.importYear : undefined,
       typography: parsed.typography ? normalizeTypography(parsed.typography) : undefined,
-      localTranscription:
-        typeof parsed.localTranscription === 'boolean' ? parsed.localTranscription : undefined,
-      transcriptionPromptDismissed: parsed.transcriptionPromptDismissed === true,
+      transcriptionEnabled:
+        migrated?.transcriptionEnabled ?? parsed.transcriptionEnabled === true,
+      analysisEnabled: migrated?.analysisEnabled ?? parsed.analysisEnabled === true,
+      serverProcessing: migrated?.serverProcessing ?? parsed.serverProcessing === true,
       reviewTranscript: parsed.reviewTranscript === true,
       literalTranscript: parsed.literalTranscript === true,
       transcriptionModel:
@@ -167,6 +212,7 @@ export async function loadPrefs(): Promise<Prefs> {
         typeof parsed.notebooksAlphabetical === 'boolean'
           ? parsed.notebooksAlphabetical
           : undefined,
+      noteOrder: normalizeNoteOrder(parsed.noteOrder),
     };
   } catch {
     return DEFAULT_PREFS;
@@ -174,5 +220,10 @@ export async function loadPrefs(): Promise<Prefs> {
 }
 
 export async function savePrefs(prefs: Prefs): Promise<void> {
-  await SecureStore.setItemAsync(PREFS_KEY, JSON.stringify(prefs));
+  // Grava sempre a versao atual: a migracao roda uma vez e nao volta a decidir
+  // pelo usuario nas proximas aberturas.
+  await SecureStore.setItemAsync(
+    PREFS_KEY,
+    JSON.stringify({ ...prefs, version: PREFS_VERSION }),
+  );
 }

@@ -56,6 +56,7 @@ interface Row {
   file_name: string | null;
   duplicate: number | null;
   archived: number | null;
+  deleted_at: string | null;
   notebook_id: string | null;
   tags: string | null;
   notebook_dirty: string | null;
@@ -68,6 +69,8 @@ interface Row {
   body_version: string | null;
   sync_conflict: string | null;
   server_audios: string | null;
+  capture_source_id: string | null;
+  capture_start_ms: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -385,6 +388,46 @@ const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 23,
+    run: async (db) => {
+      // Avisos que o usuario ocultou. Ficam no banco de proposito: o backup
+      // exporta as notas (nao o banco), entao reinstalar o app — mesmo
+      // restaurando backup — faz o aviso de primeira vez aparecer de novo.
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS app_flags (
+          key TEXT PRIMARY KEY NOT NULL,
+          value TEXT NOT NULL
+        );
+      `);
+    },
+  },
+  {
+    version: 24,
+    run: async (db) => {
+      // Nota criada a partir de um trecho de transcricao: referencia local
+      // (nota de origem + instante) para voltar ao ponto exato. Nao sincroniza.
+      if (!(await columnExists(db, 'recordings', 'capture_source_id'))) {
+        await db.execAsync('ALTER TABLE recordings ADD COLUMN capture_source_id TEXT');
+      }
+      if (!(await columnExists(db, 'recordings', 'capture_start_ms'))) {
+        await db.execAsync('ALTER TABLE recordings ADD COLUMN capture_start_ms INTEGER');
+      }
+    },
+  },
+  {
+    version: 25,
+    run: async (db) => {
+      // Apagar e logico: a nota fica na lixeira por 7 dias, com os arquivos
+      // locais, para poder voltar. O mesmo instante vira a data de expiracao.
+      if (!(await columnExists(db, 'recordings', 'deleted_at'))) {
+        await db.execAsync('ALTER TABLE recordings ADD COLUMN deleted_at TEXT');
+      }
+      await db.execAsync(
+        'CREATE INDEX IF NOT EXISTS idx_recordings_deleted_at ON recordings(deleted_at)',
+      );
+    },
+  },
 ];
 
 async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
@@ -427,6 +470,28 @@ function getDb(): Promise<SQLite.SQLiteDatabase> {
     });
   }
   return dbPromise;
+}
+
+/**
+ * Marca local que nao pertence a nenhuma nota (ex.: aviso ja ocultado).
+ * Fora do backup de proposito: reinstalar o app reabre a conversa.
+ */
+export async function getAppFlag(key: string): Promise<string | null> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<{ value: string }>(
+    'SELECT value FROM app_flags WHERE key = ?',
+    [key],
+  );
+  return row?.value ?? null;
+}
+
+export async function setAppFlag(key: string, value: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `INSERT INTO app_flags (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    [key, value],
+  );
 }
 
 /**
@@ -589,6 +654,7 @@ function rowToRecording(row: Row): Recording {
     fileName: row.file_name ?? undefined,
     duplicate: row.duplicate ? true : undefined,
     archived: row.archived ? true : undefined,
+    deletedAt: row.deleted_at ?? undefined,
     notebookId: row.notebook_id ?? DEFAULT_NOTEBOOK_ID,
     tags: parseTags(row.tags),
     notebookDirty: row.notebook_dirty ? true : undefined,
@@ -599,6 +665,8 @@ function rowToRecording(row: Row): Recording {
     recordedAtVersion: row.recorded_at_version ?? undefined,
     bodyVersion: row.body_version ?? undefined,
     syncConflict: parseConflict(row.sync_conflict),
+    captureSourceId: row.capture_source_id ?? undefined,
+    captureStartMs: row.capture_start_ms ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -635,8 +703,9 @@ export async function upsertRecording(r: Recording): Promise<void> {
       source, text, content_type, file_name, duplicate, archived,
       notebook_id, tags, notebook_dirty, tags_dirty, archived_dirty,
       note_dirty, attachments,
-      title_version, recorded_at_version, body_version, sync_conflict, server_audios, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      title_version, recorded_at_version, body_version, sync_conflict, server_audios,
+      capture_source_id, capture_start_ms, created_at, updated_at, deleted_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
       recorded_at = excluded.recorded_at,
@@ -680,6 +749,9 @@ export async function upsertRecording(r: Recording): Promise<void> {
       body_version = excluded.body_version,
       sync_conflict = excluded.sync_conflict,
       server_audios = excluded.server_audios,
+      capture_source_id = excluded.capture_source_id,
+      capture_start_ms = excluded.capture_start_ms,
+      deleted_at = excluded.deleted_at,
       updated_at = excluded.updated_at`,
     [
       r.id,
@@ -726,16 +798,41 @@ export async function upsertRecording(r: Recording): Promise<void> {
       r.bodyVersion ?? null,
       r.syncConflict && r.syncConflict.length > 0 ? JSON.stringify(r.syncConflict) : null,
       r.serverAudios ? JSON.stringify(r.serverAudios) : null,
+      r.captureSourceId ?? null,
+      r.captureStartMs ?? null,
       r.createdAt,
       r.updatedAt,
+      r.deletedAt ?? null,
     ],
   );
 }
 
-export async function listRecordings(): Promise<Recording[]> {
+export async function listRecordings(includeDeleted = false): Promise<Recording[]> {
   const db = await getDb();
-  const rows = await db.getAllAsync<Row>('SELECT * FROM recordings ORDER BY created_at DESC');
+  const rows = await db.getAllAsync<Row>(
+    includeDeleted
+      ? 'SELECT * FROM recordings ORDER BY created_at DESC'
+      : 'SELECT * FROM recordings WHERE deleted_at IS NULL ORDER BY created_at DESC',
+  );
   return rows.map(rowToRecording);
+}
+
+/** Notas na lixeira, da mais recentemente apagada para a mais antiga. */
+export async function listTrashedRecordings(): Promise<Recording[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<Row>(
+    'SELECT * FROM recordings WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC',
+  );
+  return rows.map(rowToRecording);
+}
+
+/** Quantas notas esperam na lixeira (para o atalho nas Opcoes). */
+export async function countTrashedRecordings(): Promise<number> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<{ total: number }>(
+    'SELECT COUNT(*) AS total FROM recordings WHERE deleted_at IS NOT NULL',
+  );
+  return row?.total ?? 0;
 }
 
 export async function getRecording(id: string): Promise<Recording | null> {

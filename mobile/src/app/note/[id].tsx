@@ -30,7 +30,9 @@ import { NoteMetaRow } from '@/components/NoteMetaRow';
 import { NoteMenu, type NoteProperty } from '@/components/NoteMenu';
 import { NotebookPicker } from '@/components/NotebookPicker';
 import { TagPicker } from '@/components/TagPicker';
-import { TranscriptionPrompt } from '@/components/TranscriptionPrompt';
+import { ProcessingSheet } from '@/components/ProcessingSheet';
+import { FLAG_PROCESSING_HINT } from '@/core/flags';
+import { CAPTURE_NOTEBOOK } from '@/core/transcriptCapture';
 
 import { Screen } from '@/components/Screen';
 import { STATUS_LABELS } from '@/components/StatusChip';
@@ -78,7 +80,7 @@ import {
   saveLocalImage,
 } from '@/services/attachments';
 import { setPendingInsert } from '@/services/noteInsert';
-import { fetchNoteAnalysis } from '@/services/analysis';
+import { fetchNoteAnalysis, pushNoteAnalysis } from '@/services/analysis';
 import { reviewRecording } from '@/services/transcriptReview';
 import { refreshServerTranscript } from '@/services/transcripts';
 import { installedAnalysisModels, isAnalysisModelInstalled } from '@/services/analysisModels';
@@ -107,7 +109,8 @@ import {
   stopTranscription,
 } from '@/services/localTranscription';
 import { enterNote, leaveNote } from '@/services/noteVisibility';
-import { willTranscribeLocally } from '@/services/whisper';
+import { getAppFlag } from '@/services/db';
+import { transcriptionPlace } from '@/services/whisper';
 import { fetchTheirs, syncNoteForcing } from '@/services/noteSync';
 import { pushTranscript } from '@/services/transcriptSync';
 import { useLibrary } from '@/state/LibraryContext';
@@ -195,8 +198,9 @@ export default function NoteScreen() {
     setAnalysisModel,
     analysisLowPower,
     setAnalysisLowPower,
-    transcriptionPromptDismissed,
-    dismissTranscriptionPrompt,
+    ready: settingsReady,
+    analysisEnabled,
+    serverProcessing,
     reviewTranscript: reviewTranscriptEnabled,
     literalTranscript,
   } = useSettings();
@@ -208,6 +212,7 @@ export default function NoteScreen() {
   useEffect(() => {
     kickRef.current = library.kick;
   }, [library.kick]);
+
   useEffect(() => {
     enterNote();
     // A fila volta a andar no fim da saida, depois do texto ser gravado (ver o
@@ -318,7 +323,23 @@ export default function NoteScreen() {
   const [imageLoading, setImageLoading] = useState<Record<string, boolean>>({});
   const [notebookPickerOpen, setNotebookPickerOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [transcriptionPromptOpen, setTranscriptionPromptOpen] = useState(false);
+  const [processingOpen, setProcessingOpen] = useState(false);
+  // A folha de processamento se apresenta sozinha uma vez. Depois disso o
+  // icone continua abrindo os interruptores, mas nada aparece sem ser chamado.
+  const offeredRef = useRef(false);
+  useEffect(() => {
+    if (!settingsReady || offeredRef.current) return;
+    offeredRef.current = true;
+    let alive = true;
+    void getAppFlag(FLAG_PROCESSING_HINT)
+      .then((hidden) => {
+        if (alive && !hidden) setProcessingOpen(true);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [settingsReady]);
   const [menuBytes, setMenuBytes] = useState(0);
   const [menuStats, setMenuStats] = useState<NoteStats | null>(null);
   // Analise ja feita no servidor: o cache aparece na hora e a rede so atualiza.
@@ -370,6 +391,17 @@ export default function NoteScreen() {
         : null,
     [cachedAnalysis, analysisKey],
   );
+  // De onde veio a analise exibida: o app assina como "aparelho"; o servidor
+  // distingue o proprio pipeline ("servidor") de um provedor ("API").
+  const analysisOrigin =
+    cachedAnalysis && cachedAnalysis.entryId === analysisKey
+      ? cachedAnalysis.origin === 'local' ||
+        cachedAnalysis.analysis.origin === 'app'
+        ? 'aparelho'
+        : cachedAnalysis.analysis.origin === 'api'
+          ? 'API'
+          : 'servidor'
+      : undefined;
   // A analise guardada e de uma versao anterior do texto? So a local tem hash.
   const analysisSimplified = cachedAnalysis?.analysis.model === 'local-fallback';
   const analysisStale = useMemo(() => {
@@ -1100,10 +1132,18 @@ export default function NoteScreen() {
     [reviewTranscriptEnabled, literalTranscript, analysisLowPower],
   );
 
+  // Analise no aparelho so quando o usuario escolheu o aparelho e ligou a
+  // analise. Com "processar no servidor" a nota espera o resultado do servidor.
+  const localAnalysisAllowed = localAnalysisEnabled() && analysisEnabled && !serverProcessing;
+
   // Analise sob demanda no aparelho: nada de rede e nada de texto saindo daqui.
   const handleAnalyzeLocal = useCallback(async () => {
     const target = note;
     if (!target || analysisBusy) return;
+    if (!localAnalysisAllowed) {
+      setProcessingOpen(true);
+      return;
+    }
     // Diagnostico sem conteudo: so os booleanos que decidem o botao.
     if (__DEV__) {
       console.log('[analysis] press', {
@@ -1380,6 +1420,11 @@ export default function NoteScreen() {
       void saveCachedAnalyses([item]).catch(() => {
         setAnalysisError('Análise feita, mas não foi possível guardar no aparelho.');
       });
+      // A nota ja existe no servidor: leva a analise junto, para o dashboard
+      // ver o mesmo resultado. Sem servidor, fica so no aparelho.
+      if (target.entryId) {
+        void pushNoteAnalysis(target.entryId, analysis).catch(() => undefined);
+      }
     } catch (error) {
       // Sem conteudo no log: so a mensagem tecnica do motor.
       console.warn(
@@ -1405,6 +1450,8 @@ export default function NoteScreen() {
     setAnalysisModel,
     title,
     ensureTranscriptReview,
+    localAnalysisAllowed,
+    setProcessingOpen,
   ]);
 
   const handleStopAnalysis = useCallback(() => {
@@ -1469,14 +1516,16 @@ export default function NoteScreen() {
    */
   const handleTranscribe = useCallback(async () => {
     if (!noteId) return;
-    if (!(await willTranscribeLocally())) {
-      // Quem ja dispensou o aviso vai direto para a tela onde pode ligar a
-      // transcricao: sem popup repetido, mas sem esconder o caminho.
-      if (transcriptionPromptDismissed) {
-        push('/transcription');
-        return;
-      }
-      setTranscriptionPromptOpen(true);
+    const place = await transcriptionPlace();
+    if (place.place === 'device' && place.needsModel) {
+      // Escolhido para o aparelho, mas falta o modelo: um toque leva direto ao
+      // download, sem repetir a folha que o usuario ja respondeu.
+      push('/transcription');
+      return;
+    }
+    if (place.place !== 'device') {
+      // Desligada ou entregue ao servidor: a folha mostra onde mudar.
+      setProcessingOpen(true);
       return;
     }
     await maybeTranscribeLocally(noteId);
@@ -1495,10 +1544,10 @@ export default function NoteScreen() {
     }
   }, [
     noteId,
-    transcriptionPromptDismissed,
     reviewTranscriptEnabled,
     analysisModel,
     ensureTranscriptReview,
+    setProcessingOpen,
   ]);
 
   const handleStopTranscribe = useCallback(() => {
@@ -1809,6 +1858,13 @@ export default function NoteScreen() {
         <View style={styles.headerActions}>
           <Press
             style={styles.circleButton}
+            onPress={() => setProcessingOpen(true)}
+            accessibilityLabel="Processamento"
+          >
+            <Ionicons name="sparkles-outline" size={17} color={colors.text} />
+          </Press>
+          <Press
+            style={styles.circleButton}
             onPress={openMenu}
             accessibilityLabel="Configurações da nota"
           >
@@ -2091,13 +2147,14 @@ export default function NoteScreen() {
           title={title}
         properties={properties}
         analysis={
-          localAnalysisEnabled()
+          localAnalysisAllowed
             ? analysisView
             : note.entryId
               ? (analysisView ?? (analysisChecked ? null : undefined))
               : undefined
         }
-        analysisEnabled={localAnalysisEnabled()}
+        analysisOrigin={analysisOrigin}
+        analysisEnabled={localAnalysisAllowed}
         analysisReady={localAnalysisReady}
         analysisBusy={analysisBusy}
         analysisInput={analysisInput}
@@ -2152,18 +2209,7 @@ export default function NoteScreen() {
         </FastModal>
       ) : null}
 
-      <TranscriptionPrompt
-        visible={transcriptionPromptOpen}
-        onClose={() => setTranscriptionPromptOpen(false)}
-        onDismiss={() => {
-          setTranscriptionPromptOpen(false);
-          void dismissTranscriptionPrompt();
-        }}
-        onOpenSettings={() => {
-          setTranscriptionPromptOpen(false);
-          push('/transcription');
-        }}
-      />
+      <ProcessingSheet visible={processingOpen} onClose={() => setProcessingOpen(false)} />
 
       {viewerSrc != null ? (
         <FastModal visible onRequestClose={closeViewer}>

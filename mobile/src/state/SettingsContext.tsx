@@ -11,6 +11,7 @@ import {
 
 import { DyariumApi, type FetchLike } from '@/core/api';
 import { DEFAULT_ANALYSIS_MODEL } from '@/core/analysisModels';
+import { DEFAULT_NOTE_ORDER, normalizeNoteOrder, type NoteOrder } from '@/core/noteOrder';
 import {
   DEFAULT_TRANSCRIPTION_MODEL,
   type TranscriptionLanguage,
@@ -61,12 +62,15 @@ interface SettingsValue {
   /** Tipografia do editor de notas. */
   typography: NoteTypography;
   setTypography(next: NoteTypography): Promise<void>;
-  /** Transcrever no aparelho (quando ha modelo baixado). */
-  localTranscription: boolean;
-  setLocalTranscription(value: boolean): Promise<void>;
-  /** Aviso de transcricao e analise desligadas dispensado de vez. */
-  transcriptionPromptDismissed: boolean;
-  dismissTranscriptionPrompt(): Promise<void>;
+  /** Transcrever as notas (aparelho ou servidor, conforme `serverProcessing`). */
+  transcriptionEnabled: boolean;
+  setTranscriptionEnabled(value: boolean): Promise<void>;
+  /** Analisar as notas (aparelho ou servidor, conforme `serverProcessing`). */
+  analysisEnabled: boolean;
+  setAnalysisEnabled(value: boolean): Promise<void>;
+  /** Processar no servidor. Sem servidor configurado nao tem efeito. */
+  serverProcessing: boolean;
+  setServerProcessing(value: boolean): Promise<void>;
   /** Revisar a transcricao com a IA local antes de analisar. */
   reviewTranscript: boolean;
   setReviewTranscript(value: boolean): Promise<void>;
@@ -109,6 +113,9 @@ interface SettingsValue {
   /** Ordenar cadernos alfabeticamente em vez da ordem de criacao. */
   notebooksAlphabetical: boolean;
   setNotebooksAlphabetical(value: boolean): Promise<void>;
+  /** Ordem das notas pela data de criacao no app. */
+  noteOrder: NoteOrder;
+  setNoteOrder(order: NoteOrder): Promise<void>;
   /** Testa alcance (healthz) e token (version) sem salvar. */
   test(baseUrl: string, token: string): Promise<ConnectionResult>;
   /** Testa e, se ok, persiste no SecureStore. */
@@ -136,8 +143,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [swipeAction, setSwipeActionState] = useState<SwipeAction>('delete');
   const [importYear, setImportYearState] = useState<number | undefined>(undefined);
   const [typography, setTypographyState] = useState<NoteTypography>(DEFAULT_TYPOGRAPHY);
-  const [localTranscription, setLocalTranscriptionState] = useState(true);
-  const [transcriptionPromptDismissed, setTranscriptionPromptDismissed] = useState(false);
+  const [transcriptionEnabled, setTranscriptionEnabledState] = useState(false);
+  const [analysisEnabled, setAnalysisEnabledState] = useState(false);
+  const [serverProcessing, setServerProcessingState] = useState(false);
   const [reviewTranscript, setReviewTranscriptState] = useState(false);
   const [literalTranscript, setLiteralTranscriptState] = useState(false);
   const [transcriptionModel, setTranscriptionModelState] = useState(
@@ -155,6 +163,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [celebratedStreak, setCelebratedStreakState] = useState(0);
   const [lastNotebookId, setLastNotebookIdState] = useState<string | undefined>(undefined);
   const [notebooksAlphabetical, setNotebooksAlphabeticalState] = useState(false);
+  const [noteOrder, setNoteOrderState] = useState<NoteOrder>(DEFAULT_NOTE_ORDER);
   // Espelho das preferencias atuais, para gravar sempre o conjunto completo.
   const prefsRef = useRef<Prefs>({ swipeAction: 'delete', typography: DEFAULT_TYPOGRAPHY });
 
@@ -181,8 +190,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         setSwipeActionState(prefs.swipeAction);
         setImportYearState(prefs.importYear);
         setTypographyState(normalizeTypography(prefs.typography));
-        setLocalTranscriptionState(prefs.localTranscription !== false);
-        setTranscriptionPromptDismissed(prefs.transcriptionPromptDismissed === true);
+        setTranscriptionEnabledState(prefs.transcriptionEnabled === true);
+        setAnalysisEnabledState(prefs.analysisEnabled === true);
+        setServerProcessingState(prefs.serverProcessing === true);
         setReviewTranscriptState(prefs.reviewTranscript === true);
         setLiteralTranscriptState(prefs.literalTranscript === true);
         setTranscriptionModelState(prefs.transcriptionModel ?? DEFAULT_TRANSCRIPTION_MODEL);
@@ -197,6 +207,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         setCelebratedStreakState(prefs.celebratedStreak ?? 0);
         setLastNotebookIdState(prefs.lastNotebookId);
         setNotebooksAlphabeticalState(prefs.notebooksAlphabetical === true);
+        setNoteOrderState(normalizeNoteOrder(prefs.noteOrder));
       })
       .catch(() => undefined)
       .finally(() => {
@@ -249,18 +260,29 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     [persistPrefs],
   );
 
-  const setLocalTranscription = useCallback(
+  const setTranscriptionEnabled = useCallback(
     async (value: boolean) => {
-      setLocalTranscriptionState(value);
-      await persistPrefs({ localTranscription: value });
+      setTranscriptionEnabledState(value);
+      await persistPrefs({ transcriptionEnabled: value });
     },
     [persistPrefs],
   );
 
-  const dismissTranscriptionPrompt = useCallback(async () => {
-    setTranscriptionPromptDismissed(true);
-    await persistPrefs({ transcriptionPromptDismissed: true });
-  }, [persistPrefs]);
+  const setAnalysisEnabled = useCallback(
+    async (value: boolean) => {
+      setAnalysisEnabledState(value);
+      await persistPrefs({ analysisEnabled: value });
+    },
+    [persistPrefs],
+  );
+
+  const setServerProcessing = useCallback(
+    async (value: boolean) => {
+      setServerProcessingState(value);
+      await persistPrefs({ serverProcessing: value });
+    },
+    [persistPrefs],
+  );
 
   const setReviewTranscript = useCallback(
     async (value: boolean) => {
@@ -376,6 +398,14 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     [persistPrefs],
   );
 
+  const setNoteOrder = useCallback(
+    async (order: NoteOrder) => {
+      setNoteOrderState(order);
+      await persistPrefs({ noteOrder: order });
+    },
+    [persistPrefs],
+  );
+
   const test = useCallback(async (baseUrl: string, token: string): Promise<ConnectionResult> => {
     const url = normalizeUrl(baseUrl);
     if (!url || !token.trim()) {
@@ -411,7 +441,11 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const disconnect = useCallback(async () => {
     await clearServerConfig();
     setConfig(null);
-  }, []);
+    // Sem servidor nao existe processamento remoto: desligar junto evita uma
+    // escolha salva que nao pode mais ser cumprida.
+    setServerProcessingState(false);
+    await persistPrefs({ serverProcessing: false });
+  }, [persistPrefs]);
 
   const value = useMemo<SettingsValue>(
     () => ({
@@ -425,10 +459,12 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setImportYear,
       typography,
       setTypography,
-      localTranscription,
-      setLocalTranscription,
-      transcriptionPromptDismissed,
-      dismissTranscriptionPrompt,
+      transcriptionEnabled,
+      setTranscriptionEnabled,
+      analysisEnabled,
+      setAnalysisEnabled,
+      serverProcessing,
+      setServerProcessing,
       reviewTranscript,
       setReviewTranscript,
       literalTranscript,
@@ -457,6 +493,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setLastNotebookId,
       notebooksAlphabetical,
       setNotebooksAlphabetical,
+      noteOrder,
+      setNoteOrder,
       test,
       save,
       disconnect,
@@ -472,10 +510,12 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setImportYear,
       typography,
       setTypography,
-      localTranscription,
-      setLocalTranscription,
-      transcriptionPromptDismissed,
-      dismissTranscriptionPrompt,
+      transcriptionEnabled,
+      setTranscriptionEnabled,
+      analysisEnabled,
+      setAnalysisEnabled,
+      serverProcessing,
+      setServerProcessing,
       reviewTranscript,
       setReviewTranscript,
       literalTranscript,
@@ -504,6 +544,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setLastNotebookId,
       notebooksAlphabetical,
       setNotebooksAlphabetical,
+      noteOrder,
+      setNoteOrder,
       test,
       save,
       disconnect,

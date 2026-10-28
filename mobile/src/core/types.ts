@@ -101,10 +101,23 @@ export interface Recording {
   duplicate?: boolean;
   /** Nota arquivada: sai da lista principal, mas nao e apagada. */
   archived?: boolean;
+  /**
+   * Nota apagada, esperando o fim da janela da lixeira (7 dias). Enquanto
+   * existir, a nota nao aparece em lista nenhuma; o audio local fica guardado
+   * para a restauracao e so e liberado quando a janela fecha.
+   */
+  deletedAt?: string;
   /** Caderno da nota. O padrao ("Notas ao acaso") cobre notas antigas. */
   notebookId?: string;
   /** Tags da nota, na ordem canonica do servidor. */
   tags?: string[];
+  /**
+   * Nota criada a partir de um trecho de transcricao: guarda a nota de origem
+   * e o instante em que o trecho foi falado, para voltar ao ponto exato.
+   * Nao vai ao servidor; e uma referencia local.
+   */
+  captureSourceId?: string;
+  captureStartMs?: number;
   /** Caderno alterado localmente e ainda nao enviado. */
   notebookDirty?: boolean;
   /** Tags alteradas localmente e ainda nao enviadas. */
@@ -150,6 +163,11 @@ export interface TranscriptSegment {
   edited?: boolean;
   /** A passada de revisao chegou neste trecho (mesmo sem mudar nada). */
   reviewed?: boolean;
+  /**
+   * O trecho foi transformado em tarefa, ideia ou citacao. Fica so no aparelho:
+   * e o que desenha o icone ao lado do texto.
+   */
+  capture?: 'task' | 'idea' | 'quote';
 }
 
 /**

@@ -21,7 +21,8 @@ import { notifyActivity, notifyActivityDone } from './notifications';
 import { conflictFields, syncNote, type SyncNoteResult } from './noteSync';
 import { loadServerConfig } from './secure';
 import { pushTranscript } from './transcriptSync';
-import { willTranscribeLocally } from './whisper';
+import { clientOwnsAnalysis } from './processing';
+import { clientOwnsTranscription } from './whisper';
 
 const doFetch = globalThis.fetch as unknown as FetchLike;
 
@@ -154,8 +155,12 @@ async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
   emitRecording(current);
 
   try {
-    // Se o app vai transcrever no aparelho, avisa o servidor para nao enfileirar.
-    const localTranscribe = await willTranscribeLocally();
+    // Quem se responsabiliza pela transcricao e pela analise? Quando e o
+    // cliente (aparelho ou etapa desligada), o servidor nao enfileira nada.
+    const [localTranscribe, localAnalysis] = await Promise.all([
+      clientOwnsTranscription(),
+      clientOwnsAnalysis(),
+    ]);
     const result = await uploadRecording(
       {
         clientKey: current.id,
@@ -168,6 +173,7 @@ async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
         localPath: current.filePath as string,
         sizeBytes: current.sizeBytes as number,
         localTranscribe,
+        localAnalysis,
         durationSeconds: current.durationMs
           ? Math.max(1, Math.round(current.durationMs / 1000))
           : undefined,
@@ -220,7 +226,10 @@ async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
     );
     await upsertRecording(current);
     emitRecording(current);
-    current = await pushNoteDocument(current);
+    // Rele antes de empurrar o corpo: o usuario pode ter capturado mais um
+    // trecho nesta nota enquanto o upload acontecia, e o texto mais novo e o
+    // que precisa chegar ao servidor.
+    current = await pushNoteDocument((await getRecording(current.id)) ?? current);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'falha no envio';
     current = isPermanentUploadError(error)

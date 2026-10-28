@@ -11,6 +11,7 @@
  */
 
 import { Directory, File, FileMode, Paths } from 'expo-file-system';
+import { AppState } from 'react-native';
 
 import { whisperLanguage } from '@/core/transcription';
 import { displayTitle } from '@/core/title';
@@ -24,6 +25,12 @@ import {
 } from '../../modules/foreground-task';
 import { cancelActivity, failActivity, finishActivity, startActivity, updateActivity } from './activity';
 import { getRecording, listRecordings, upsertRecording } from './db';
+import {
+  acquireHeavyWork,
+  registerEngineReleaser,
+  registerTranscriptionPause,
+  reserveEngine,
+} from './heavyWork';
 import { ensureNotificationPermission, notifyIfHidden } from './notifications';
 import { emitRecording } from './uploaderLoop';
 import { loadPrefs } from './secure';
@@ -46,6 +53,12 @@ export { localTranscriptionAvailable };
 const MAX_THREADS = 2;
 /** Intervalo minimo entre gravacoes parciais (evita re-render a cada trecho). */
 const PERSIST_THROTTLE_MS = 1200;
+/**
+ * Tempo que o modelo do whisper fica quente depois de uma passada. Uma nota
+ * seguinte aproveita o mesmo contexto; parado, ele sai da memoria para o
+ * Android nao encerrar o app em segundo plano.
+ */
+const CONTEXT_IDLE_RELEASE_MS = 20_000;
 
 const contexts = new Map<string, WhisperContext>();
 const running = new Set<string>();
@@ -60,6 +73,21 @@ const cancelled = new Set<string>();
 const activeRuns = new Map<string, { stop: () => Promise<void> }>();
 /** A notificacao de progresso esta na tela (o servico em primeiro plano roda). */
 let foregroundOn = false;
+let contextReleaseTimer: ReturnType<typeof setTimeout> | null = null;
+
+function cancelContextRelease(): void {
+  if (contextReleaseTimer) clearTimeout(contextReleaseTimer);
+  contextReleaseTimer = null;
+}
+
+function scheduleContextRelease(): void {
+  cancelContextRelease();
+  contextReleaseTimer = setTimeout(() => {
+    contextReleaseTimer = null;
+    if (running.size > 0) return;
+    void releaseTranscriptionContexts();
+  }, CONTEXT_IDLE_RELEASE_MS);
+}
 
 /** Acompanha o progresso da transcricao de uma gravacao. */
 export function subscribeTranscriptionProgress(
@@ -124,6 +152,15 @@ export async function stopTranscription(id: string): Promise<void> {
   }
 }
 
+// Analise/revisao pedida pelo usuario tem prioridade: a transcricao em curso
+// para no fim desta janela (o checkpoint fica salvo) em vez de disputar CPU e
+// memoria com o llama.
+registerTranscriptionPause(() => {
+  for (const id of [...running]) void stopTranscription(id);
+});
+
+registerEngineReleaser('whisper', releaseTranscriptionContexts);
+
 /** Id estavel da atividade: parar/retomar a mesma nota nao cria duas linhas. */
 function activityId(id: string): string {
   return `transcription:${id}`;
@@ -149,17 +186,42 @@ function setProgress(id: string, percent: number): void {
   }
 }
 
-/** Libera os contextos do whisper (ao apagar/trocar de modelo). */
-export async function releaseTranscriptionContexts(): Promise<void> {
-  const loaded = [...contexts.values()];
-  contexts.clear();
-  for (const context of loaded) {
-    try {
-      await context.release();
-    } catch {
-      // ja liberado
-    }
+let releasingContexts: Promise<void> | null = null;
+/** Pedido de liberacao que chegou com uma passada em andamento. */
+let releaseRequested = false;
+/** Modelo em uso pela passada atual; nunca e liberado debaixo do whisper. */
+let activeModelId: string | null = null;
+
+/** Libera os contextos do whisper (ao apagar/trocar de modelo ou por ociosidade). */
+export function releaseTranscriptionContexts(): Promise<void> {
+  cancelContextRelease();
+  const active = activeModelId;
+  // Nunca solta um contexto em uso: o modulo nativo nao sobrevive a isso. Ele
+  // fica para o fim da passada, quando `releaseRequested` e aplicado.
+  const keep = active ? contexts.get(active) : undefined;
+  const loaded: WhisperContext[] = [];
+  for (const [modelId, context] of contexts) {
+    if (modelId !== active) loaded.push(context);
   }
+  contexts.clear();
+  if (keep && active) contexts.set(active, keep);
+  if (keep) releaseRequested = true;
+  if (loaded.length === 0) return releasingContexts ?? Promise.resolve();
+  // Um novo carregamento espera a liberacao em andamento: dois modelos do
+  // whisper residentes ao mesmo tempo tambem pesam.
+  const task = (async () => {
+    for (const context of loaded) {
+      try {
+        await context.release();
+      } catch {
+        // ja liberado
+      }
+    }
+  })();
+  releasingContexts = task;
+  return task.finally(() => {
+    if (releasingContexts === task) releasingContexts = null;
+  });
 }
 
 async function getContext(
@@ -168,9 +230,21 @@ async function getContext(
   filePath: string,
 ): Promise<WhisperContext> {
   const existing = contexts.get(modelId);
-  if (existing) return existing;
+  if (existing) {
+    activeModelId = modelId;
+    cancelContextRelease();
+    return existing;
+  }
+  // Trocar de modelo nao pode deixar o anterior residente: no maximo um
+  // contexto de whisper por vez. O modelo em uso so sai no fim da passada.
+  if (contexts.size > 0) await releaseTranscriptionContexts();
+  // O llama (analise/revisao) nao pode estar residente quando o whisper aloca o
+  // modelo: os dois juntos bastam para o Android encerrar o processo.
+  await reserveEngine('whisper');
+  cancelContextRelease();
   const context = await whisper.initWhisper({ filePath });
   contexts.set(modelId, context);
+  activeModelId = modelId;
   return context;
 }
 
@@ -314,8 +388,6 @@ export async function transcribeLocally(id: string): Promise<void> {
   const whisper = loadWhisper();
   if (!whisper || !audioDecodeAvailable()) return;
 
-  setRunning(id, true);
-  cancelled.delete(id);
   if (__DEV__) console.log('[perf] transcricao.comecou', { id, ms: Date.now() });
 
   const priorSegments = recording.transcriptSegments ?? [];
@@ -326,22 +398,68 @@ export async function transcribeLocally(id: string): Promise<void> {
   // novo a partir do checkpoint (no maximo 60 s repetidos, nunca a nota inteira).
   let committed = priorSegments.filter((segment) => segment.start_ms < checkpoint);
   const knownDuration = recording.durationMs ?? 0;
-  setProgress(id, knownDuration > 0 ? Math.min(100, (checkpoint / knownDuration) * 100) : 0);
 
-  void ensureNotificationPermission();
-  await persist(recording, {
-    transcriptStatus: 'pending',
-    transcriptOrigin: 'local',
-    transcriptCheckpointMs: checkpoint,
-    transcriptSegments: committed,
-    transcript: committed.map((segment) => segment.text).join(' ').trim() || undefined,
-  });
+  // A fila garante um motor por vez. Enquanto espera, a nota pode ter sido
+  // transcrita por outro caminho ou o usuario pode ter parado a passada.
+  const lease = await acquireHeavyWork('transcription');
+  let afterWait: Recording | null = null;
+  try {
+    afterWait = await getRecording(id);
+  } catch {
+    lease.release();
+    return;
+  }
+  if (
+    running.has(id) ||
+    cancelled.has(id) ||
+    !afterWait?.filePath ||
+    hasFinalTranscript(afterWait)
+  ) {
+    cancelled.delete(id);
+    lease.release();
+    return;
+  }
+  // A vez chegou com o app ja em segundo plano: nao inicia uma passada nova
+  // sem servico em primeiro plano. O checkpoint fica para a proxima abertura.
+  if (AppState.currentState !== 'active') {
+    cancelled.delete(id);
+    lease.release();
+    return;
+  }
+  cancelled.delete(id);
+  cancelContextRelease();
+  setRunning(id, true);
+  setProgress(id, knownDuration > 0 ? Math.min(100, (checkpoint / knownDuration) * 100) : 0);
+  // Marca a nota como "transcrevendo" so depois de ter a vez: uma nota que
+  // ganhou texto final enquanto esperava nao pode voltar para pending.
+  try {
+    await persist(recording, {
+      transcriptStatus: 'pending',
+      transcriptOrigin: 'local',
+      transcriptCheckpointMs: checkpoint,
+      transcriptSegments: committed,
+      transcript: committed.map((segment) => segment.text).join(' ').trim() || undefined,
+    });
+  } catch {
+    setRunning(id, false);
+    lease.release();
+    return;
+  }
+  // A gravacao do estado pode ter demorado: se o app saiu da frente nesse
+  // meio-tempo, nao tenta abrir o servico em primeiro plano a partir do fundo.
+  if (AppState.currentState !== 'active') {
+    setRunning(id, false);
+    lease.release();
+    return;
+  }
+
   // Mantem o processo vivo e mostra o progresso na barra de notificacoes.
   // Duas threads deixam o app utilizavel mesmo com a nota aberta.
   startForegroundTask('Transcrevendo', recording.title || 'Nota', 0);
   foregroundOn = true;
-  const wavPath = wavPathFor(id);
-  const chunkPath = chunkPathFor(id);
+  // O pedido de permissao pode abrir um dialogo; pedir so depois que o servico
+  // ja esta na frente evita que a abertura concorra com o inicio da passada.
+  void ensureNotificationPermission();
 
   // Fila de gravacoes parciais: garante que o estado final (ready) seja sempre o
   // ultimo gravado. Sem isso, um persist parcial atrasado sobrescrevia para
@@ -366,7 +484,11 @@ export async function transcribeLocally(id: string): Promise<void> {
     stop: { label: 'Parar', run: () => stopTranscription(id) },
   });
 
+  let wavPath = '';
+  let chunkPath = '';
   try {
+    wavPath = wavPathFor(id);
+    chunkPath = chunkPathFor(id);
     await decodeToWav(recording.filePath, wavPath);
     const durationMs = wavDurationMs(wavPath);
     if (durationMs <= 0) {
@@ -470,15 +592,28 @@ export async function transcribeLocally(id: string): Promise<void> {
       transcriptOrigin: 'local',
     });
   } finally {
-    const wav = new File(wavPath);
-    if (wav.exists) wav.delete();
-    const chunk = new File(chunkPath);
-    if (chunk.exists) chunk.delete();
+    if (wavPath) {
+      const wav = new File(wavPath);
+      if (wav.exists) wav.delete();
+    }
+    if (chunkPath) {
+      const chunk = new File(chunkPath);
+      if (chunk.exists) chunk.delete();
+    }
     activeRuns.delete(id);
     cancelled.delete(id);
+    activeModelId = null;
     setRunning(id, false);
     foregroundOn = false;
     stopForegroundTask();
+    if (releaseRequested) {
+      releaseRequested = false;
+      void releaseTranscriptionContexts();
+    } else {
+      // A proxima nota aproveita o modelo quente; sozinho, ele sai depois.
+      scheduleContextRelease();
+    }
+    lease.release();
   }
 }
 
@@ -510,30 +645,10 @@ async function notifyTranscriptionDone(): Promise<void> {
 }
 
 /**
- * Retoma no boot o que ficou pela metade: gravacoes cuja transcricao local
- * parou no meio (app morto, bateria, tela fechada). O checkpoint salvo diz onde
- * continuar, entao a passada nao recomeca do zero.
- */
-export async function resumeInterruptedTranscriptions(): Promise<void> {
-  if (!(await willTranscribeLocally())) return;
-  let list: Recording[] = [];
-  try {
-    list = await listRecordings();
-  } catch {
-    return;
-  }
-  for (const recording of list) {
-    if (!recording.filePath || hasFinalTranscript(recording)) continue;
-    if (recording.transcriptStatus !== 'pending') continue;
-    if (recording.transcriptOrigin !== 'local') continue;
-    if (running.has(recording.id)) continue;
-    await transcribeLocally(recording.id);
-  }
-}
-
-/**
- * Transcreve no aparelho as gravacoes pendentes (audio sem transcricao). Usado
- * como retomada quando o app e acordado em segundo plano.
+ * Transcreve no aparelho as gravacoes pendentes que podem comecar sozinhas
+ * (audio no aparelho, sem texto final, fora do servidor). Roda no boot com o
+ * app aberto; com o app em segundo plano a passada atual termina sob o servico
+ * em primeiro plano, mas a proxima so comeca quando o app volta para a frente.
  */
 export async function transcribePendingLocally(): Promise<void> {
   if (!(await willTranscribeLocally())) return;
@@ -544,9 +659,11 @@ export async function transcribePendingLocally(): Promise<void> {
     return;
   }
   for (const recording of list) {
+    // O Android 12+ nao deixa abrir um servico em primeiro plano a partir do
+    // fundo. Sem ele o processo seria encerrado no meio da passada: melhor
+    // parar aqui e retomar quando o app voltar.
+    if (AppState.currentState !== 'active') break;
     if (running.has(recording.id)) continue;
-    // O acervo inteiro e varrido no boot e em segundo plano: so entra o que e
-    // nosso e ainda nao tem texto. Nota do servidor nunca e refeita aqui.
     if (!shouldAutoTranscribe(recording)) continue;
     await transcribeLocally(recording.id);
   }
