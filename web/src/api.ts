@@ -5,9 +5,11 @@ import type {
   Activity,
   Analysis,
   Attachment,
+  AuthorRole,
   EntityDetail,
   EntitySummary,
   Entry,
+  GraphResponse,
   Link,
   LocalAnalysis,
   LocalAnalysisSetup,
@@ -387,6 +389,7 @@ export const api = {
       recorded_at?: string;
       notebook_id?: string;
       archived?: boolean;
+      author?: AuthorRole;
       versions?: { title?: string; recorded_at?: string };
     },
   ) => request<{ status: string; versions: { title?: string; recorded_at?: string } }>(
@@ -455,6 +458,24 @@ export const api = {
     request<{ entities: EntitySummary[] }>(`/entities${kind ? `?kind=${encodeURIComponent(kind)}` : ""}`),
   getEntity: (kind: string, name: string) =>
     request<EntityDetail>(`/entities/${kind}/${encodeURIComponent(name)}`),
+  /** Renomeia pessoa, lugar, tema ou decisao; o nome antigo vira alias. */
+  renameEntity: (kind: string, name: string, nextName: string) =>
+    request<EntitySummary>(`/entities/${kind}/${encodeURIComponent(name)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name: nextName }),
+    }),
+  /** Troca o icone monocromatico de uma entidade; vazio volta ao do tipo. */
+  setEntityIcon: (kind: string, name: string, icon: string) =>
+    request<EntitySummary>(`/entities/${kind}/${encodeURIComponent(name)}/icon`, {
+      method: "PUT",
+      body: JSON.stringify({ icon }),
+    }),
+  /** "Sou eu": funde a pessoa com o dono e usa o nome das configuracoes. */
+  claimSelf: (name: string) =>
+    request<{ status: string; owner: string }>(
+      `/entities/person/${encodeURIComponent(name)}/self`,
+      { method: "POST" },
+    ),
   getMood: (from?: string, to?: string) => {
     const params = new URLSearchParams();
     if (from) {
@@ -465,6 +486,21 @@ export const api = {
     }
     const query = params.toString();
     return request<{ mood: MoodPoint[] }>(`/mood${query ? `?${query}` : ""}`);
+  },
+  /** Mapa de relacoes: ego de entidades ou uma entidade expandida (`focus`). */
+  getGraph: (options: {
+    notebookId?: string;
+    from?: string;
+    to?: string;
+    focus?: string;
+  } = {}) => {
+    const params = new URLSearchParams();
+    if (options.notebookId) params.set("notebook_id", options.notebookId);
+    if (options.from) params.set("from", options.from);
+    if (options.to) params.set("to", options.to);
+    if (options.focus) params.set("focus", options.focus);
+    const query = params.toString();
+    return request<GraphResponse>(`/graph${query ? `?${query}` : ""}`);
   },
   getMetrics: () => request<MetricsResponse>("/metrics"),
   /** Processos concluidos (transcricoes e analises), do mais recente ao antigo. */

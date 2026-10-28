@@ -16,6 +16,7 @@ import {
   ChevronIcon,
   ExitIcon,
   InsightsIcon,
+  MapIcon,
   MenuIcon,
   PlusIcon,
   SearchIcon,
@@ -24,12 +25,13 @@ import {
 } from "./components/icons";
 import { ALL_NOTEBOOKS, DEFAULT_NOTEBOOK_ID } from "./lib/notebooks";
 import { InsightsView } from "./views/InsightsView";
+import { MapView } from "./views/MapView";
 import { SettingsView } from "./views/SettingsView";
 import { WritingView } from "./views/WritingView";
 import type { EntityKind, Notebook, ServerEvent } from "./types";
 import "./App.css";
 
-type ViewId = "notes" | "insights" | "writing" | "settings";
+type ViewId = "notes" | "map" | "insights" | "writing" | "settings";
 
 const ACTIVE_NOTEBOOK_KEY = "dyarium.notebook";
 
@@ -375,6 +377,13 @@ export function App() {
 
   const footerItems = [
     {
+      key: "map",
+      label: "Mapa",
+      active: view === "map",
+      icon: <MapIcon size={17} />,
+      onPress: () => openView("map"),
+    },
+    {
       key: "insights",
       label: "Insights",
       active: view === "insights",
@@ -601,6 +610,10 @@ export function App() {
                   </div>
                 </div>
               )}
+            </div>
+          ) : view === "map" ? (
+            <div className="page page--map">
+              <MapView refreshKey={refreshKey} onOpen={openFromOtherView} />
             </div>
           ) : view === "insights" ? (
             <div className="page">

@@ -234,3 +234,22 @@ export function WritingIcon({ size = 18 }: IconProps) {
     </svg>
   );
 }
+
+export function FitIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5" />
+    </svg>
+  );
+}
+
+export function MapIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <circle cx="12" cy="6" r="2.2" />
+      <circle cx="5" cy="17" r="2.2" />
+      <circle cx="19" cy="17" r="2.2" />
+      <path d="M10.6 8.1 6.4 14.9M13.4 8.1l4.2 6.8M7.2 17h9.6" />
+    </svg>
+  );
+}

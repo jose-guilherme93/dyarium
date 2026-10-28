@@ -77,6 +77,13 @@
   --danger: #9c3b2e;
   --ok: #2f7d4f;
 
+  /* Mapa de relacoes: cores por tipo de no, todas dessaturadas. */
+  --graph-person: #858c93;
+  --graph-place: #88918a;
+  --graph-theme: #96918a;
+  --graph-decision: #918b92;
+  --graph-note: #948f8a;
+
   /* Nomes usados nos estilos existentes. */
   --color-bg: var(--paper);
   --color-surface: var(--paper-2);
@@ -116,6 +123,11 @@
     --accent-soft: #2b3f55;
     --danger: #ee8a7c;
     --ok: #7fc79a;
+    --graph-person: #9aa1a8;
+    --graph-place: #9aa39c;
+    --graph-theme: #aaa49c;
+    --graph-decision: #a39da4;
+    --graph-note: #a6a19b;
   }
 }
 

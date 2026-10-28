@@ -23,6 +23,11 @@ export interface Entry {
   versions?: EntryVersions;
   /** Nota arquivada: sai da lista de trabalho sem ser apagada. */
   archived?: boolean;
+  /**
+   * Papel do autor: "" segue o padrao do app, self/other/mixed e escolha
+   * explicita da nota. O autor efetivo depende de all_notes_mine.
+   */
+  author?: AuthorRole;
   /** Quando a nota foi apagada (so na listagem da lixeira, `?deleted=1`). */
   deleted_at?: string | null;
 }
@@ -163,11 +168,47 @@ export interface KeyMoment {
   text: string;
 }
 
-export type EntityKind = "person" | "place" | "theme";
+export type EntityKind = "person" | "place" | "theme" | "decision";
+
+/** Papel do autor de uma nota. Vazio segue o padrao do app. */
+export type AuthorRole = "" | "self" | "other" | "mixed";
+
+export interface GraphNode {
+  id: string;
+  kind: "user" | EntityKind | "note";
+  label: string;
+  /** Icone monocromatico escolhido pelo dono; vazio usa o do tipo. */
+  icon?: string;
+  mentions: number;
+  notes: number;
+  sentiment?: number;
+  last_seen?: string | null;
+  /** So nos de nota (modo foco). */
+  date?: string | null;
+  author?: AuthorRole;
+}
+
+export interface GraphEdge {
+  source: string;
+  target: string;
+  kind: "relation" | "cooccurrence" | "mention";
+  weight: number;
+}
+
+export interface GraphResponse {
+  center: GraphNode;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  total_nodes: number;
+  total_edges: number;
+  truncated: boolean;
+}
 
 export interface EntitySummary {
+  id?: string;
   kind: EntityKind;
   name: string;
+  icon?: string;
   entries: number;
   mentions: number;
   sentiment: number;
@@ -266,6 +307,10 @@ export interface Link {
 }
 
 export interface Settings {
+  /** Nome do dono do diario; vazio mostra "Voce". */
+  owner_name: string;
+  /** Todas as notas sao do dono por padrao. Desligado, nota sem escolha nao tem autor. */
+  all_notes_mine: boolean;
   trim_silence: boolean;
   max_whisper_rss_mb: number;
   whisper_model: string;
