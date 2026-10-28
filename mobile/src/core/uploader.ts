@@ -7,6 +7,7 @@
  */
 
 import { ApiError, type DyariumApi } from './api';
+import type { AuthorRole } from './types';
 
 export interface UploadFileIO {
   size(path: string): Promise<number>;
@@ -41,6 +42,8 @@ export interface UploadInput {
   offset?: number;
   /** Adiciona o audio a uma entrada existente em vez de criar outra. */
   entryId?: string;
+  /** Papel do autor da nota; vazio segue o padrao do app. */
+  author?: AuthorRole;
 }
 
 export interface UploadDeps {
@@ -87,6 +90,7 @@ export async function uploadRecording(
       local_transcribe: input.localTranscribe,
       local_analysis: input.localAnalysis,
       entry_id: input.entryId,
+      author: input.author,
     });
     uploadId = created.id;
     offset = created.offset ?? 0;

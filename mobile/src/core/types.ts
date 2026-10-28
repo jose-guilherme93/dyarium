@@ -101,6 +101,10 @@ export interface Recording {
   duplicate?: boolean;
   /** Nota arquivada: sai da lista principal, mas nao e apagada. */
   archived?: boolean;
+  /** Papel do autor escolhido na nota; vazio segue o padrao do app. */
+  author?: AuthorRole;
+  /** Escolha local ainda nao enviada ao servidor. */
+  authorDirty?: boolean;
   /**
    * Nota apagada, esperando o fim da janela da lixeira (7 dias). Enquanto
    * existir, a nota nao aparece em lista nenhuma; o audio local fica guardado
@@ -199,6 +203,9 @@ export interface TranscriptReview {
 /** De onde veio a nota: gravada no app, importada de outro app ou escrita. */
 export type RecordingSource = 'microphone' | 'share' | 'text';
 
+/** Quem gravou a nota. Vazio segue o padrao do app (todas as notas sao do dono). */
+export type AuthorRole = '' | 'self' | 'other' | 'mixed';
+
 /** Configuracao do servidor (o token nunca e persistido fora do SecureStore). */
 export interface ServerConfig {
   baseUrl: string;
@@ -271,7 +278,7 @@ export function needsNoteSync(r: Recording): boolean {
   return (
     Boolean(r.entryId) &&
     r.status === 'completed' &&
-    Boolean(r.noteDirty || r.notebookDirty || r.tagsDirty || r.archivedDirty) &&
+    Boolean(r.noteDirty || r.notebookDirty || r.tagsDirty || r.archivedDirty || r.authorDirty) &&
     !hasNoteConflict(r)
   );
 }

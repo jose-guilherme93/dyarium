@@ -74,6 +74,16 @@ describe('uploadRecording', () => {
     expect(server.createUpload.mock.calls[0][0]).toMatchObject({ entry_id: 'entry-1' });
   });
 
+  it('leva o autor escolhido no aparelho', async () => {
+    const server = new FakeApi(10);
+    await uploadRecording({ ...input, author: 'other' }, {
+      api: server.asApi(),
+      file: memFile(payload(10)),
+    });
+
+    expect(server.createUpload.mock.calls[0][0]).toMatchObject({ author: 'other' });
+  });
+
   it('avisa o servidor quando o cliente cuida da transcricao e da analise', async () => {
     const server = new FakeApi(10);
     await uploadRecording({ ...input, localTranscribe: true, localAnalysis: true }, {

@@ -6,8 +6,9 @@
  * estruturados; o texto livre serve so para o usuario entender o resultado.
  */
 
+import { authorPromptLine } from './author';
 import { markdownToPlain } from './richText';
-import type { Recording } from './types';
+import type { AuthorRole, Recording } from './types';
 
 /** Limite de entrada do spike. Notas maiores entram no fatiamento da fase 1. */
 export const MAX_ANALYSIS_INPUT_CHARS = 6000;
@@ -16,7 +17,7 @@ export const MAX_READING_CHARS = 200;
 export const ANALYSIS_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['sentiment', 'emotions', 'themes', 'people', 'places', 'events', 'reading', 'comprehension'],
+  required: ['sentiment', 'emotions', 'themes', 'people', 'places', 'events', 'decisions', 'reading', 'comprehension'],
   properties: {
     comprehension: {
       type: 'integer',
@@ -114,6 +115,10 @@ export interface AnalysisPromptInput {
   text: string;
   recordedAt?: string;
   truncated?: boolean;
+  /** Papel do autor efetivo da nota (self/other/mixed/vazio). */
+  author?: AuthorRole;
+  /** Nome do dono do diario, quando configurado. */
+  ownerName?: string;
 }
 
 export interface AnalysisChatMessage {
@@ -144,6 +149,7 @@ export interface ParsedAnalysis {
   people: AnalysisPersonOrPlace[];
   places: AnalysisPersonOrPlace[];
   events: AnalysisNamedScore[];
+  decisions: string[];
   reading: string;
 }
 
@@ -158,7 +164,8 @@ Regras:
 - "comprehension" e um inteiro de 0 a 100: o quanto o texto representa a fala com logica, sintaxe e
   concordancia. Voce nao ouve o audio; e uma estimativa sobre o texto. Texto perfeito = 100; incompreensivel = 0.
 - "sentiment.score" vai de -1 a 1; "label" e positivo, neutro ou negativo.
-- "emotions" e "themes" tem no maximo 6 itens; "people" e "places" no maximo 8; "events" no maximo 6.
+- "emotions" e "themes" tem no maximo 6 itens; "people" e "places" no maximo 8; "events" no maximo 6; "decisions" no maximo 5.
+- "decisions" sao frases curtas do que foi decidido na nota, sem repetir a mesma decisao.
 - Nomes de tema e evento em minusculas. Pessoas e lugares com a grafia do texto.
 - "intensity" e "confidence" vao de 0 a 1.
 - Sempre preencha "reading" com uma frase curta sobre a nota. Nunca devolva
@@ -413,7 +420,9 @@ export function buildAnalysisMessages(input: AnalysisPromptInput): AnalysisChatM
   const truncated = input.truncated
     ? '\nAviso: o texto foi cortado por tamanho; analise somente o que esta abaixo.'
     : '';
+  const author = authorPromptLine(input.author, input.ownerName ?? '');
   const user = `Titulo: ${input.title || 'Sem titulo'}${date}${truncated}
+${author}
 
 <nota>
 ${input.text}
@@ -472,6 +481,20 @@ function namedScores(value: unknown, scoreKey: 'intensity' | 'confidence', lower
     if (out.length >= 12) break;
   }
   return out;
+}
+
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of value) {
+    const text = asText(item);
+    const key = text.toLowerCase();
+    if (!text || seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+  }
+  return out.slice(0, 5);
 }
 
 function namedEntities(value: unknown): AnalysisPersonOrPlace[] {
@@ -585,6 +608,7 @@ export function parseAnalysisJson(raw: string): ParsedAnalysis | null {
     people: namedEntities(root.people),
     places: namedEntities(root.places),
     events: namedScores(root.events, 'confidence', true),
+    decisions: stringList(root.decisions),
     reading: clip(asText(root.reading), MAX_READING_CHARS),
   };
 }

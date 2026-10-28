@@ -132,6 +132,7 @@ export function entryToRecording(entry: ServerEntry, note?: ServerNote): Recordi
     transcriptOrigin: 'server',
     text: note?.content_markdown ?? '',
     archived: entry.archived,
+    author: entry.author ?? '',
     notebookId: entry.notebook_id || DEFAULT_NOTEBOOK_ID,
     tags: entry.tags && entry.tags.length > 0 ? entry.tags : undefined,
     titleVersion: entry.versions?.title,
@@ -186,6 +187,10 @@ export function mergeServerNote(
     !local.archivedDirty &&
     typeof entry.archived === 'boolean' &&
     entry.archived !== Boolean(local.archived);
+  // Autor e um papel sem versao: a escolha local pendente vence; sem ela, a
+  // ultima gravacao do servidor entra.
+  const serverAuthor = entry.author ?? '';
+  const authorMoved = !local.authorDirty && serverAuthor !== (local.author ?? '');
   const serverNotebook = entry.notebook_id || DEFAULT_NOTEBOOK_ID;
   const notebookMoved = !local.notebookDirty && serverNotebook !== (local.notebookId || DEFAULT_NOTEBOOK_ID);
   const serverTags = entry.tags ?? [];
@@ -220,6 +225,7 @@ export function mergeServerNote(
     !applyTitle &&
     !applyRecorded &&
     !archivedMoved &&
+    !authorMoved &&
     !notebookMoved &&
     !tagsMoved &&
     !attachmentMoved
@@ -250,6 +256,7 @@ export function mergeServerNote(
       ? { recordedAt: entry.recorded_at ?? entry.created_at, recordedAtVersion: recordedVersion }
       : {}),
     ...(archivedMoved ? { archived: entry.archived } : {}),
+    ...(authorMoved ? { author: serverAuthor, authorDirty: undefined } : {}),
     ...(notebookMoved ? { notebookId: serverNotebook, notebookDirty: undefined } : {}),
     ...(tagsMoved ? { tags: serverTags.length > 0 ? serverTags : undefined, tagsDirty: undefined } : {}),
     // Se o corpo veio do servidor, a pendencia local (texto e conflito) acabou.

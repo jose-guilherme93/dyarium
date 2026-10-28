@@ -7,7 +7,7 @@ import { buildDraftNote, buildTextNote, noteHasContent } from '@/core/note';
 import { attachAudioToNote, audioRefFromPath, canFreeLocalAudio } from '@/core/noteAudio';
 import type { NoteInsertPosition } from '@/core/noteDocument';
 import { markQueued } from '@/core/queue';
-import { isUploadable, needsNoteSync, needsTranscript, type Recording } from '@/core/types';
+import { isUploadable, needsNoteSync, needsTranscript, type AuthorRole, type Recording } from '@/core/types';
 import { bumpRender } from '@/dev/perf';
 import { deleteRecordingRow, getRecording, listRecordings, updateRecordingNote, upsertRecording } from '@/services/db';
 import { deleteServerEntry, restoreServerEntry } from '@/services/entries';
@@ -52,6 +52,8 @@ interface LibraryValue {
   moveNoteToNotebook(id: string, notebookId: string): Promise<void>;
   /** Substitui as tags da nota. */
   setNoteTags(id: string, tags: string[]): Promise<void>;
+  /** Troca o autor da nota (vazio volta ao padrao da instancia). */
+  setNoteAuthor(id: string, author: AuthorRole): Promise<void>;
   /** Coloca uma gravacao recem-finalizada na fila e dispara o envio. */
   enqueue(recording: Recording): Promise<void>;
   /** Cria uma nota somente texto e a coloca na fila. */
@@ -110,6 +112,7 @@ function mergeRecordings(prev: Recording[], next: Recording[]): Recording[] {
       old.updatedAt === item.updatedAt &&
       old.status === item.status &&
       old.notebookId === item.notebookId &&
+      old.author === item.author &&
       (old.tags ?? []).join('\u0000') === (item.tags ?? []).join('\u0000')
     ) {
       if (prev[index] !== old) identical = false;
@@ -645,6 +648,26 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     [kick],
   );
 
+  const setNoteAuthor = useCallback(
+    async (id: string, author: AuthorRole) => {
+      const current = await getRecording(id);
+      if (!current) return;
+      if ((current.author ?? '') === author) return;
+      const updated: Recording = {
+        ...current,
+        author,
+        // O pull respeita a escolha pendente: trocar no aparelho nao volta
+        // atras antes de o servidor confirmar.
+        authorDirty: true,
+        updatedAt: new Date().toISOString(),
+      };
+      await upsertRecording(updated);
+      setRecordings((prev) => prev.map((r) => (r.id === id ? updated : r)));
+      if (current.entryId) kick();
+    },
+    [kick],
+  );
+
   const freeAudioForNote = useCallback(
     async (id: string) => {
       const current =
@@ -704,6 +727,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       removeNotebook,
       moveNoteToNotebook,
       setNoteTags,
+      setNoteAuthor,
       enqueue,
       createTextNote,
       createDraftNote,
@@ -731,6 +755,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       removeNotebook,
       moveNoteToNotebook,
       setNoteTags,
+      setNoteAuthor,
       enqueue,
       createTextNote,
       createDraftNote,

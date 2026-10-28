@@ -32,6 +32,7 @@ import { NotebookPicker } from '@/components/NotebookPicker';
 import { TagPicker } from '@/components/TagPicker';
 import { ProcessingSheet } from '@/components/ProcessingSheet';
 import { FLAG_PROCESSING_HINT } from '@/core/flags';
+import { authorLabel, effectiveAuthor } from '@/core/author';
 import { CAPTURE_NOTEBOOK } from '@/core/transcriptCapture';
 
 import { Screen } from '@/components/Screen';
@@ -60,7 +61,7 @@ import { noteBodyWithAudio, audioRefFromPath } from '@/core/noteAudio';
 import { sameNoteContent } from '@/core/noteDocument';
 import { noteStats, type NoteStats } from '@/core/noteStats';
 import { markdownToPlain } from '@/core/richText';
-import { hasFinalTranscript, type Recording, type TranscriptSegment } from '@/core/types';
+import { hasFinalTranscript, type AuthorRole, type Recording, type TranscriptSegment } from '@/core/types';
 import {
   changedSegments,
   perHundred,
@@ -81,6 +82,11 @@ import {
 } from '@/services/attachments';
 import { setPendingInsert } from '@/services/noteInsert';
 import { fetchNoteAnalysis, pushNoteAnalysis } from '@/services/analysis';
+import {
+  DEFAULT_AUTHOR_SETTINGS,
+  loadAuthorSettings,
+  type AuthorSettings,
+} from '@/services/authorSettings';
 import { reviewRecording } from '@/services/transcriptReview';
 import { refreshServerTranscript } from '@/services/transcripts';
 import { installedAnalysisModels, isAnalysisModelInstalled } from '@/services/analysisModels';
@@ -226,6 +232,7 @@ export default function NoteScreen() {
   );
   const noteTags = useMemo(() => note?.tags ?? [], [note?.tags]);
   const [tagPickerOpen, setTagPickerOpen] = useState(false);
+  const [authorSettings, setAuthorSettings] = useState<AuthorSettings>(DEFAULT_AUTHOR_SETTINGS);
   // A lista de tags conhecidas varre todas as notas. So vale a pena quando o
   // seletor esta aberto: abrir/rolar a nota nao pode pagar essa varredura.
   const knownTags = useMemo(() => {
@@ -243,6 +250,16 @@ export default function NoteScreen() {
     return tags.sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
   }, [library.recordings, tagPickerOpen]);
   const noteId = note?.id;
+  useEffect(() => {
+    let cancelled = false;
+    void loadAuthorSettings().then((value) => {
+      if (!cancelled) setAuthorSettings(value);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const liveTranscriptionPercent = useTranscriptionProgress(noteId);
   const transcribing = useTranscriptionRunning(noteId);
   const transcriptionPercent =
@@ -1802,9 +1819,22 @@ export default function NoteScreen() {
   // arquiva; desmarcar devolve para a lista do caderno.
   const isCaptureNotebook =
     (currentNotebook?.name ?? '').trim().toLowerCase() === CAPTURE_NOTEBOOK.toLowerCase();
+  const noteAuthor = effectiveAuthor(note?.author, authorSettings.allNotesMine);
+  const noteAuthorExplicit = Boolean(note?.author);
+  const noteAuthorHint = noteAuthorExplicit
+    ? 'escolha da nota'
+    : authorSettings.allNotesMine
+      ? 'padrão: dono'
+      : 'padrão: sem autor';
+  const noteAuthorLabel = authorLabel(
+    note?.author,
+    authorSettings.ownerName,
+    authorSettings.allNotesMine,
+  );
   const properties: NoteProperty[] = [
     { label: 'Caderno', value: notebookName },
     { label: 'Gravada em', value: noteDateText },
+    { label: 'Autor', value: noteAuthorLabel },
     note.source === 'share'
       ? { label: 'Importada em', value: formatDateTime(note.createdAt) }
       : { label: 'Criada em', value: formatDateTime(note.createdAt) },
@@ -2195,6 +2225,10 @@ export default function NoteScreen() {
         <NoteMenu
           visible
           title={title}
+          author={noteAuthor}
+          authorExplicit={noteAuthorExplicit}
+          authorHint={noteAuthorHint}
+          onChangeAuthor={(next: AuthorRole) => void library.setNoteAuthor(note.id, next)}
         properties={properties}
         analysis={
           localAnalysisAllowed

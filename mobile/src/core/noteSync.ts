@@ -24,6 +24,7 @@ export interface NoteSyncApi {
       recorded_at?: string;
       notebook_id?: string;
       archived?: boolean;
+      author?: string;
       versions?: { title?: string; recorded_at?: string };
     },
   ): Promise<{ title: string; recorded_at: string }>;
@@ -107,6 +108,7 @@ export async function syncNoteWith(
       title: note.title,
       recorded_at: note.recordedAt,
       ...(note.archivedDirty ? { archived: note.archived ?? false } : {}),
+      ...(note.authorDirty ? { author: note.author ?? '' } : {}),
       versions: baseVersions,
     });
     versions.title = entryVersions.title;
@@ -119,6 +121,7 @@ export async function syncNoteWith(
       title?: string;
       recorded_at?: string;
       archived?: boolean;
+      author?: string;
       versions?: { title?: string; recorded_at?: string };
     } = {
       versions: {
@@ -129,7 +132,13 @@ export async function syncNoteWith(
     if (!conflicted.has("title")) retry.title = note.title;
     if (!conflicted.has("recorded_at")) retry.recorded_at = note.recordedAt;
     if (note.archivedDirty) retry.archived = note.archived ?? false;
-    if (retry.title !== undefined || retry.recorded_at !== undefined || retry.archived !== undefined) {
+    if (note.authorDirty) retry.author = note.author ?? '';
+    if (
+      retry.title !== undefined ||
+      retry.recorded_at !== undefined ||
+      retry.archived !== undefined ||
+      retry.author !== undefined
+    ) {
       const entryVersions = await api.updateEntry(note.entryId, retry);
       // O campo em conflito **nao** adota a versao do servidor: assim o pull
       // seguinte ve a versao nova e traz o valor de la para o app.
@@ -298,6 +307,7 @@ export function applySyncResult(fresh: Recording, sent: Recording, result: SyncN
   // So limpa a pendencia do que foi enviado nesta sincronizacao. Um caderno ou
   // tag marcado depois (ou sem destino) continua de pe para a proxima rodada.
   const archiveSent = Boolean(sent.archivedDirty);
+  const authorSent = Boolean(sent.authorDirty);
   const notebookSent = Boolean(sent.notebookDirty && sent.notebookId);
   const tagsSent = Boolean(sent.tagsDirty);
   return {
@@ -312,6 +322,7 @@ export function applySyncResult(fresh: Recording, sent: Recording, result: SyncN
     notebookDirty: editedDuringSync ? fresh.notebookDirty : notebookSent ? undefined : fresh.notebookDirty,
     tagsDirty: editedDuringSync ? fresh.tagsDirty : tagsSent ? undefined : fresh.tagsDirty,
     archivedDirty: editedDuringSync ? fresh.archivedDirty : archiveSent ? undefined : fresh.archivedDirty,
+    authorDirty: editedDuringSync ? fresh.authorDirty : authorSent ? undefined : fresh.authorDirty,
   };
 }
 

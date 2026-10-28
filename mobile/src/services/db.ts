@@ -56,6 +56,8 @@ interface Row {
   file_name: string | null;
   duplicate: number | null;
   archived: number | null;
+  author: string | null;
+  author_dirty: string | null;
   deleted_at: string | null;
   notebook_id: string | null;
   tags: string | null;
@@ -428,6 +430,19 @@ const MIGRATIONS: Migration[] = [
       );
     },
   },
+  {
+    version: 26,
+    run: async (db) => {
+      // Quem gravou a nota. Vazio segue o padrao da instancia (all_notes_mine).
+      // O app precisa da escolha offline para a analise local e para o upload.
+      if (!(await columnExists(db, 'recordings', 'author'))) {
+        await db.execAsync("ALTER TABLE recordings ADD COLUMN author TEXT NOT NULL DEFAULT ''");
+      }
+      if (!(await columnExists(db, 'recordings', 'author_dirty'))) {
+        await db.execAsync('ALTER TABLE recordings ADD COLUMN author_dirty TEXT');
+      }
+    },
+  },
 ];
 
 async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
@@ -654,6 +669,8 @@ function rowToRecording(row: Row): Recording {
     fileName: row.file_name ?? undefined,
     duplicate: row.duplicate ? true : undefined,
     archived: row.archived ? true : undefined,
+    author: (row.author as Recording['author']) ?? '',
+    authorDirty: row.author_dirty ? true : undefined,
     deletedAt: row.deleted_at ?? undefined,
     notebookId: row.notebook_id ?? DEFAULT_NOTEBOOK_ID,
     tags: parseTags(row.tags),
@@ -704,8 +721,8 @@ export async function upsertRecording(r: Recording): Promise<void> {
       notebook_id, tags, notebook_dirty, tags_dirty, archived_dirty,
       note_dirty, attachments,
       title_version, recorded_at_version, body_version, sync_conflict, server_audios,
-      capture_source_id, capture_start_ms, created_at, updated_at, deleted_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      capture_source_id, capture_start_ms, created_at, updated_at, deleted_at, author, author_dirty
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
       recorded_at = excluded.recorded_at,
@@ -752,6 +769,8 @@ export async function upsertRecording(r: Recording): Promise<void> {
       capture_source_id = excluded.capture_source_id,
       capture_start_ms = excluded.capture_start_ms,
       deleted_at = excluded.deleted_at,
+      author = excluded.author,
+      author_dirty = excluded.author_dirty,
       updated_at = excluded.updated_at`,
     [
       r.id,
@@ -803,6 +822,8 @@ export async function upsertRecording(r: Recording): Promise<void> {
       r.createdAt,
       r.updatedAt,
       r.deletedAt ?? null,
+      r.author ?? '',
+      r.authorDirty ? '1' : null,
     ],
   );
 }

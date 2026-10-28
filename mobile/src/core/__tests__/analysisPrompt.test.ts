@@ -120,6 +120,17 @@ describe('buildAnalysisMessages', () => {
     expect(messages[0].content).toContain('Nunca devolva');
   });
 
+  it('inclui a referencia do autor no prompt', () => {
+    const messages = buildAnalysisMessages({
+      title: 'Nota',
+      text: 'texto',
+      author: 'other',
+      ownerName: 'Ana',
+    });
+    expect(messages[1].content).toContain('Autor do audio: outra pessoa');
+    expect(messages[1].content).toContain('Ana');
+  });
+
   it('inclui titulo, data e conteudo delimitado', () => {
     const messages = buildAnalysisMessages({
       title: 'Um dia',
@@ -196,6 +207,7 @@ describe('interpretationOrOriginal', () => {
     people: [],
     places: [{ name: 'parque' }],
     events: [],
+    decisions: [],
     reading: 'Um dia que comeca cansado e melhora com a caminhada.',
   };
 

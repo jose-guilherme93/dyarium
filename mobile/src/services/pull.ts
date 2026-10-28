@@ -25,6 +25,7 @@ import {
 import type { Recording } from '@/core/types';
 
 import { deleteRecordingRow, listRecordings, upsertRecording } from './db';
+import { refreshAuthorSettings } from './authorSettings';
 import { deleteSessionFiles } from './files';
 import { pullNotebooks } from './notebookSync';
 import { loadServerConfig } from './secure';
@@ -74,6 +75,9 @@ async function pullOnce(): Promise<number> {
   // Cadernos primeiro: a entrada pode apontar para um caderno novo, e a lista
   // local precisa dele para exibir nome/cor.
   await pullNotebooks().catch(() => undefined);
+  // Nome do dono e o padrao das notas viajam juntos: a analise local precisa
+  // deles mesmo sem rede e sem reabrir as configuracoes.
+  await refreshAuthorSettings().catch(() => undefined);
   const api = new DyariumApi(config, doFetch);
   // Pagina ate o fim: antes o pull parava em 2000 notas e as mais antigas
   // nunca chegavam ao aparelho.

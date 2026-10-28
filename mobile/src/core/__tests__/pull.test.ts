@@ -136,6 +136,7 @@ describe('entryToRecording', () => {
   it('traz o arquivamento do servidor', () => {
     expect(entryToRecording({ ...ENTRY, archived: true }).archived).toBe(true);
     expect(entryToRecording({ ...ENTRY, archived: false }).archived).toBe(false);
+    expect(entryToRecording({ ...ENTRY, author: 'other' }).author).toBe('other');
   });
 
   it('traz o primeiro audio do servidor como referencia para o player', () => {
@@ -339,6 +340,24 @@ describe('mergeServerNote', () => {
     expect(merged?.recordedAt).toBe('2026-10-12T10:00:00Z');
     expect(merged?.archived).toBe(true);
     expect(merged?.text).toBe('texto local');
+  });
+
+  it('aplica o autor do servidor quando a nota nao tem escolha pendente', () => {
+    const merged = mergeServerNote(
+      clean(),
+      serverEntry({ author: 'mixed' }),
+      undefined,
+    );
+    expect(merged?.author).toBe('mixed');
+  });
+
+  it('nao sobrescreve uma escolha de autor pendente no aparelho', () => {
+    const merged = mergeServerNote(
+      clean({ author: 'self', authorDirty: true }),
+      serverEntry({ author: 'other' }),
+      undefined,
+    );
+    expect(merged).toBeNull();
   });
 
   it('nota com edicao pendente so perde para o servidor se ele gravou depois', () => {

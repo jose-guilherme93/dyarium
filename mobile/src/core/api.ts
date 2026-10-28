@@ -3,7 +3,8 @@
  * com um transporte falso. Nao ha estado aqui: cada chamada e independente.
  */
 
-import type { ConflictField, ServerAudio, ServerConfig, TranscriptSegment } from './types';
+import type {
+  AuthorRole, ConflictField, ServerAudio, ServerConfig, TranscriptSegment } from './types';
 
 export type { ConflictField, ServerAudio, TranscriptSegment };
 
@@ -55,6 +56,8 @@ export interface CreateUploadBody {
   local_analysis?: boolean;
   /** Quando presente, adiciona o audio a uma entrada existente. */
   entry_id?: string;
+  /** Papel do autor escolhido na nota (self/other/mixed); vazio segue o padrao. */
+  author?: AuthorRole;
 }
 
 export interface PutTranscriptBody {
@@ -86,6 +89,8 @@ export interface CreateTextEntryBody {
   /** Hora de criacao/importacao original; o servidor nao a muda depois. */
   created_at?: string;
   notebook_id?: string;
+  /** Papel do autor escolhido na nota; vazio segue o padrao do app. */
+  author?: AuthorRole;
 }
 
 export interface CreateTextEntryResponse {
@@ -103,6 +108,8 @@ export interface UpdateEntryBody {
   notebook_id?: string;
   /** Arquivada: sai da lista de trabalho sem apagar. */
   archived?: boolean;
+  /** Papel do autor da nota (ultima gravacao vence). */
+  author?: AuthorRole;
   /** Versoes lidas pelo cliente: o servidor recusa o campo que ja mudou. */
   versions?: {
     title?: string;
@@ -250,6 +257,64 @@ export interface MetricsUpload {
 }
 
 /** Entrada do servidor (resumo da lista). */
+/** Tipo de entidade do mapa e da biblioteca. */
+export type EntityKind = 'person' | 'place' | 'theme' | 'decision';
+
+/** No do mapa de relacoes. `note` so aparece no modo foco. */
+export interface GraphNode {
+  id: string;
+  kind: 'user' | EntityKind | 'note';
+  label: string;
+  /** Icone monocromatico escolhido no dashboard; vazio usa o do tipo. */
+  icon?: string;
+  mentions: number;
+  notes: number;
+  sentiment?: number;
+  last_seen?: string | null;
+  date?: string | null;
+  author?: AuthorRole;
+}
+
+export interface GraphEdge {
+  source: string;
+  target: string;
+  kind: 'relation' | 'cooccurrence' | 'mention';
+  weight: number;
+}
+
+export interface GraphResponse {
+  center: GraphNode;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  total_nodes: number;
+  total_edges: number;
+  truncated: boolean;
+}
+
+/** Pessoa, lugar, tema ou decisao agregada pelo servidor. */
+export interface EntitySummary {
+  id?: string;
+  kind: EntityKind;
+  name: string;
+  /** Icone monocromatico; vazio segue o do tipo. */
+  icon?: string;
+  entries: number;
+  mentions: number;
+  sentiment: number;
+  last_seen: string | null;
+}
+
+export interface EntityEntry {
+  id: string;
+  title: string;
+  date: string | null;
+  count: number;
+}
+
+export interface EntityDetail extends EntitySummary {
+  entry_list: EntityEntry[];
+}
+
 export interface ServerEntry {
   id: string;
   title: string;
@@ -268,6 +333,8 @@ export interface ServerEntry {
   tags?: string[];
   /** Nota arquivada: sai da lista de trabalho sem ser apagada. */
   archived?: boolean;
+  /** Papel do autor da nota; vazio segue o padrao do app. */
+  author?: AuthorRole;
   /** Pilha de audios (so no detalhe da entrada), cada um com sua transcricao. */
   audios?: ServerAudio[];
   /** Primeiro audio original da entrada (a listagem traz so o id, nao a pilha). */
@@ -433,6 +500,112 @@ export class DyariumApi {
     });
     if (!res.ok) throw await this.parseError(res);
     return JSON.parse(await res.text());
+  }
+
+  /** Configuracao de autor da instancia (nome do dono e padrao das notas). */
+  async getAuthorSettings(): Promise<{ owner_name: string; all_notes_mine: boolean }> {
+    const res = await this.fetchImpl(this.url('/api/v1/settings'), {
+      method: 'GET',
+      headers: this.authHeaders(),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    const parsed = JSON.parse(await res.text()) as {
+      owner_name?: unknown;
+      all_notes_mine?: unknown;
+    };
+    return {
+      owner_name: typeof parsed.owner_name === 'string' ? parsed.owner_name : '',
+      // Chave ausente numa instancia nova significa o padrao ligado.
+      all_notes_mine: parsed.all_notes_mine !== false,
+    };
+  }
+
+  /**
+   * Mapa de relacoes (o dashboard desenha hoje; o app usa o mesmo contrato).
+   * Sem `focus`, devolve o ego de entidades centrado no dono. O app ainda nao
+   * tem a tela, mas o cliente ja fala o mesmo formato.
+   */
+  async getGraph(options: {
+    notebookId?: string;
+    from?: string;
+    to?: string;
+    focus?: string;
+  } = {}): Promise<GraphResponse> {
+    // Hermes nao traz URLSearchParams completo; montar a query a mao e seguro.
+    const params: string[] = [];
+    if (options.notebookId) params.push(`notebook_id=${encodeURIComponent(options.notebookId)}`);
+    if (options.from) params.push(`from=${encodeURIComponent(options.from)}`);
+    if (options.to) params.push(`to=${encodeURIComponent(options.to)}`);
+    if (options.focus) params.push(`focus=${encodeURIComponent(options.focus)}`);
+    const query = params.join('&');
+    const res = await this.fetchImpl(this.url(`/api/v1/graph${query ? `?${query}` : ''}`), {
+      method: 'GET',
+      headers: this.authHeaders(),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    return JSON.parse(await res.text()) as GraphResponse;
+  }
+
+  /**
+   * Entidades do mapa. O app ainda nao tem a tela, mas o contrato e o mesmo do
+   * dashboard: mesma entidade, mesmos aliases, mesmo icone.
+   */
+  async listEntities(kind?: EntityKind): Promise<EntitySummary[]> {
+    const query = kind ? `?kind=${encodeURIComponent(kind)}` : '';
+    const res = await this.fetchImpl(this.url(`/api/v1/entities${query}`), {
+      method: 'GET',
+      headers: this.authHeaders(),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    const parsed = JSON.parse(await res.text()) as { entities?: EntitySummary[] };
+    return parsed.entities ?? [];
+  }
+
+  async getEntity(kind: EntityKind, name: string): Promise<EntityDetail> {
+    const res = await this.fetchImpl(
+      this.url(`/api/v1/entities/${kind}/${encodeURIComponent(name)}`),
+      { method: 'GET', headers: this.authHeaders() },
+    );
+    if (!res.ok) throw await this.parseError(res);
+    return JSON.parse(await res.text()) as EntityDetail;
+  }
+
+  /** Renomeia; se o nome ja existe no mesmo tipo, as duas entidades mesclam. */
+  async renameEntity(kind: EntityKind, name: string, nextName: string): Promise<EntitySummary> {
+    const res = await this.fetchImpl(
+      this.url(`/api/v1/entities/${kind}/${encodeURIComponent(name)}`),
+      {
+        method: 'PATCH',
+        headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ name: nextName }),
+      },
+    );
+    if (!res.ok) throw await this.parseError(res);
+    return JSON.parse(await res.text()) as EntitySummary;
+  }
+
+  /** "Sou eu": funde a pessoa duplicada no dono do diario. */
+  async claimSelf(name: string): Promise<{ status: string; owner: string }> {
+    const res = await this.fetchImpl(
+      this.url(`/api/v1/entities/person/${encodeURIComponent(name)}/self`),
+      { method: 'POST', headers: this.authHeaders() },
+    );
+    if (!res.ok) throw await this.parseError(res);
+    return JSON.parse(await res.text()) as { status: string; owner: string };
+  }
+
+  /** Troca o icone monocromatico; vazio volta ao icone do tipo. */
+  async setEntityIcon(kind: EntityKind, name: string, icon: string): Promise<EntitySummary> {
+    const res = await this.fetchImpl(
+      this.url(`/api/v1/entities/${kind}/${encodeURIComponent(name)}/icon`),
+      {
+        method: 'PUT',
+        headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ icon }),
+      },
+    );
+    if (!res.ok) throw await this.parseError(res);
+    return JSON.parse(await res.text()) as EntitySummary;
   }
 
   async createUpload(body: CreateUploadBody): Promise<CreateUploadResponse> {

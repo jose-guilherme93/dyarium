@@ -191,7 +191,7 @@ export function toServerAnalysis(parsed: ParsedAnalysis, model: string): ServerA
     themes: parsed.themes.map((theme) => ({ name: theme.name, confidence: theme.value })),
     key_moments: null,
     questions: null,
-    decisions: null,
+    decisions: parsed.decisions,
     comprehension: parsed.comprehension ?? -1,
     comprehension_source: 'analysis',
   };

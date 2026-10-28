@@ -179,6 +179,7 @@ async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
           : undefined,
         uploadId: current.uploadId,
         offset: current.offset,
+        author: current.author ?? '',
       },
       {
         api,

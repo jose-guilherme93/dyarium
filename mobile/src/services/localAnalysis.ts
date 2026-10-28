@@ -17,6 +17,7 @@ import {
   ANALYSIS_SCHEMA,
 } from '@/core/analysisPrompt';
 import { modelFitsDevice, type AnalysisModelInfo } from '@/core/analysisModels';
+import { effectiveAuthor } from '@/core/author';
 import type { Recording } from '@/core/types';
 import {
   cancelActivity,
@@ -27,6 +28,7 @@ import {
   type ActivityAction,
 } from './activity';
 import { analysisModelFilePath } from './analysisModels';
+import { loadAuthorSettings } from './authorSettings';
 import {
   acquireHeavyWork,
   registerEngineReleaser,
@@ -343,6 +345,11 @@ export async function analyzeRecording(
   options: AnalysisRunOptions = {},
 ): Promise<AnalysisNoteResult> {
   const content = analysisNoteContent(recording);
+  const authorSettings = await loadAuthorSettings().catch(() => ({
+    ownerName: '',
+    allNotesMine: true,
+  }));
+  const author = effectiveAuthor(recording.author, authorSettings.allNotesMine);
   const activity = `analysis:${recording.id}`;
   let tokens = 0;
   stopped = false;
@@ -371,6 +378,8 @@ export async function analyzeRecording(
         text: content.text,
         recordedAt: recording.recordedAt,
         truncated: content.truncated,
+        author,
+        ownerName: authorSettings.ownerName,
       }),
       {
         ...options,

@@ -16,6 +16,7 @@ import { Press } from '@/components/Press';
 
 import { FastModal } from '@/components/FastModal';
 import type { NoteAnalysisView } from '@/core/analysis';
+import type { AuthorRole } from '@/core/types';
 import { formatDuration, titleFontSize } from '@/core/format';
 import {
   clampFontSize,
@@ -180,11 +181,24 @@ interface NoteMenuProps {
   analysisError?: string | null;
   onAnalyzeLocal?(): void;
   onStopAnalysis?(): void;
+  /** Autor efetivo da nota; vazio mostra o padrao do app. */
+  author?: AuthorRole;
+  /** A nota tem escolha propria (nao esta seguindo o padrao). */
+  authorExplicit?: boolean;
+  /** Texto curto do padrao: "padrão: dono" ou "padrão: sem autor". */
+  authorHint?: string;
+  onChangeAuthor?(author: AuthorRole): void;
   typography: NoteTypography;
   onChangeTypography(next: NoteTypography): void;
   onClose(): void;
   onShare(): void;
 }
+
+const AUTHOR_OPTIONS: { value: AuthorRole; label: string }[] = [
+  { value: 'self', label: 'Eu' },
+  { value: 'other', label: 'Outros' },
+  { value: 'mixed', label: 'Eu e outros' },
+];
 
 const FAMILY_OPTIONS: { value: NoteFontFamily; label: string }[] = [
   { value: 'system', label: 'Inter' },
@@ -388,6 +402,10 @@ export function NoteMenu({
   analysisError = null,
   onAnalyzeLocal,
   onStopAnalysis,
+  author,
+  authorExplicit = false,
+  authorHint = '',
+  onChangeAuthor,
   typography,
   onChangeTypography,
   onClose,
@@ -760,6 +778,28 @@ export function NoteMenu({
                   onChange={(weight) => onChangeTypography({ ...typography, weight })}
                 />
 
+                {onChangeAuthor ? (
+                  <>
+                    <Text style={styles.sectionLabel}>Autor</Text>
+                    <Segment
+                      value={author ?? ''}
+                      options={AUTHOR_OPTIONS}
+                      onChange={onChangeAuthor}
+                    />
+                    <View style={styles.authorRow}>
+                      <Text style={styles.authorHint}>{authorHint}</Text>
+                      {authorExplicit ? (
+                        <Press
+                          onPress={() => onChangeAuthor('')}
+                          accessibilityLabel="Usar o padrão de autor"
+                        >
+                          <Text style={styles.authorReset}>usar padrão</Text>
+                        </Press>
+                      ) : null}
+                    </View>
+                  </>
+                ) : null}
+
                 <Text style={styles.sectionLabel}>Propriedades</Text>
                 <View style={styles.props}>
                   {properties.map((property) => (
@@ -894,6 +934,23 @@ const baseStyles = defineStyles({
     color: baseColors.text,
     fontSize: fontSize.sm,
     fontVariant: ['tabular-nums'],
+  },
+  authorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.xs,
+    marginTop: spacing.xs,
+  },
+  authorHint: {
+    flex: 1,
+    color: baseColors.textTertiary,
+    fontSize: fontSize.xs,
+  },
+  authorReset: {
+    color: baseColors.accent,
+    fontSize: fontSize.xs,
+    fontWeight: '600',
   },
   props: { gap: spacing.sm },
   propRow: {

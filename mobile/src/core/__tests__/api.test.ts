@@ -75,6 +75,65 @@ describe('DyariumApi', () => {
     expect(out.offset).toBe(4);
   });
 
+  it('fala o contrato do mapa e das entidades', async () => {
+    const entity = {
+      kind: 'person',
+      name: 'José Guilherme',
+      icon: 'heart',
+      entries: 1,
+      mentions: 2,
+      sentiment: 0.4,
+      last_seen: null,
+    };
+    const { api, calls } = makeApi((call) => {
+      if (call.url.includes('/graph')) {
+        return resp(200, {
+          center: { id: 'user', kind: 'user', label: 'joseti', mentions: 0, notes: 0 },
+          nodes: [
+            {
+              id: 'person:1',
+              kind: 'person',
+              label: 'José Guilherme',
+              icon: 'heart',
+              mentions: 2,
+              notes: 1,
+            },
+          ],
+          edges: [],
+          total_nodes: 1,
+          total_edges: 0,
+          truncated: false,
+        });
+      }
+      if (call.url.endsWith('/self')) return resp(200, { status: 'ok', owner: 'joseti' });
+      return resp(200, entity);
+    });
+
+    const graph = await api.getGraph({ focus: 'person:1' });
+    expect(graph.nodes[0].icon).toBe('heart');
+    expect(calls[0].url).toContain('focus=person%3A1');
+
+    await api.renameEntity('person', 'José Guilherme', 'Marianna');
+    expect(calls[1].url).toBe(
+      'http://host:8080/api/v1/entities/person/Jos%C3%A9%20Guilherme',
+    );
+    expect(calls[1].init?.method).toBe('PATCH');
+    expect(JSON.parse(String(calls[1].init?.body)).name).toBe('Marianna');
+
+    await api.claimSelf('José Guilherme');
+    expect(calls[2].init?.method).toBe('POST');
+    expect(calls[2].url).toBe(
+      'http://host:8080/api/v1/entities/person/Jos%C3%A9%20Guilherme/self',
+    );
+
+    await api.setEntityIcon('person', 'José Guilherme', 'heart');
+    expect(calls[3].init?.method).toBe('PUT');
+    expect(calls[3].url).toBe(
+      'http://host:8080/api/v1/entities/person/Jos%C3%A9%20Guilherme/icon',
+    );
+    expect(JSON.parse(String(calls[3].init?.body)).icon).toBe('heart');
+  });
+
   it('mapeia erro do servidor para ApiError com codigo', async () => {
     const { api } = makeApi(() =>
       resp(401, { error: { code: 'unauthorized', message: 'token invalido' } }),
