@@ -795,9 +795,10 @@ describe('corpo da nota em nos', () => {
     expect(onChange).toHaveBeenLastCalledWith('A novo\n\nB novo');
   });
 
-  it('monta o documento inteiro na abertura, sem esqueleto', () => {
-    // Paragrafo longo (cruza 60 linhas) seguido de 40 fotos: tudo entra no
-    // primeiro frame. A nota nunca muda de aparencia depois de aberta.
+  it('abre a nota grande so com as primeiras linhas e revela o resto depois', () => {
+    // Paragrafo longo (cruza 60 linhas) seguido de 40 fotos: no primeiro
+    // frame so o texto monta, o resto fica com esqueleto de texto e carrega
+    // em lotes depois que a nota ja abriu.
     const intro = Array.from({ length: 70 }, (_, i) => `intro ${i}`).join('\n');
     const photos = Array.from({ length: 40 }, (_, i) => `![f](local:f${i}.jpg)`).join('\n');
 
@@ -809,12 +810,15 @@ describe('corpo da nota em nos', () => {
       />,
     );
 
-    // Cada midia divide o texto, entao sao 41 editores (o texto inicial e um
-    // trecho vazio depois de cada foto): todos montam no primeiro frame.
-    expect(screen.getAllByTestId('rich-editor')).toHaveLength(41);
-    expect(screen.getAllByTestId('rich-editor')[0].props.value).toContain('intro 69');
-    expect(screen.getAllByLabelText('Opções da foto')).toHaveLength(40);
+    // Primeiro frame: esqueleto no lugar do que ainda nao carregou.
+    expect(screen.queryByTestId('note-body-skeleton')).toBeTruthy();
+    expect(screen.getByTestId('rich-editor').props.value).toContain('intro 0');
+
+    // Depois que a nota abriu, o resto carrega em lotes e o esqueleto some.
+    act(() => {
+      jest.advanceTimersByTime(2000);
+    });
     expect(screen.queryByTestId('note-body-skeleton')).toBeNull();
-    expect(screen.queryByTestId('note-body-loading')).toBeNull();
+    expect(screen.getAllByLabelText('Opções da foto')).toHaveLength(40);
   });
 });
