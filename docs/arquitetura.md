@@ -553,8 +553,14 @@ corpo reaparecia na pilha do dashboard sem nenhuma forma de apagar.
   ambiente, a chave mestra e gerada e persistida em `/data/master.key` (0600) e a instancia
   entra em modo setup ate o operador definir o token em `/setup` (persistido em
   `/data/token`). Mantem o self-hosting simples sem abrir mao de override por ambiente.
-- Analise por HTTP compativel com OpenAI: funciona com Ollama local ou qualquer provedor,
-  e pode ser desligada sem afetar transcricao e metricas.
+- Analise por HTTP compativel com OpenAI: funciona com Ollama local, llama.cpp embutido ou
+  qualquer provedor, e pode ser desligada sem afetar transcricao e metricas.
+- Dois runtimes locais, escolhidos no dashboard: o Ollama e um servico do compose, sempre no
+  ar mas sem carregar modelo ate uma analise; o llama.cpp e um `llama-server` dentro da
+  imagem, iniciado sob demanda e liberado por inatividade. O segundo nao exige socket do
+  Docker nem um container extra, e funciona so com a imagem e o volume de modelos.
+- Um motor pesado por vez: antes de transcrever, o processo do llama.cpp e encerrado se
+  estiver ocioso; assim whisper e modelo de linguagem nao disputam a RAM de uma VPS pequena.
 - Frontend embutido via `go:embed`: um unico artefato para distribuir.
 - SSE para atualizacoes: unidirecional, simples, funciona atras do proxy de desenvolvimento.
 - Caderno obrigatorio por nota, com o padrao "Notas ao acaso" criado por migracao: separa
@@ -608,4 +614,6 @@ corpo reaparecia na pilha do dashboard sem nenhuma forma de apagar.
 - Tamanho maximo de upload: configuravel por ambiente.
 - Formatos aceitos: wav, mp3, m4a, ogg, flac, aac, adts (configuravel).
 - Concorrencia de workers: padrao 1, dado o pico de memoria do whisper.
+- Analise local no servidor: minimo realista de 2 GB de RAM para transcrever e analisar no
+  mesmo host; em 1 GB, apenas transcricao com `tiny` e analise no aparelho ou hospedada.
 - Corte de silencio na transcricao: booleano em `Settings`, desligado por padrao.

@@ -33,8 +33,15 @@ type Config struct {
 	AnalyzeModel      string
 	// OllamaURL is the local Ollama server the dashboard configures in one
 	// click. It is not a secret and has a safe default (the compose service).
-	OllamaURL          string
-	OllamaModel        string
+	OllamaURL   string
+	OllamaModel string
+	// Embedded llama.cpp: the binary ships in the image and the model is a
+	// GGUF downloaded on demand. It runs only while an analysis is in flight.
+	LlamaServerBin     string
+	LlamaPort          int
+	LlamaThreads       int
+	LlamaIdleSeconds   int
+	LlamaModel         string
 	MaxUploadBytes     int64
 	MaxDurationSeconds int
 	AllowedFormats     []string
@@ -82,6 +89,11 @@ func Load() (Config, error) {
 		AnalyzeModel:       env("DIARY_ANALYZE_MODEL", ""),
 		OllamaURL:          env("DIARY_OLLAMA_URL", "http://ollama:11434"),
 		OllamaModel:        env("DIARY_OLLAMA_MODEL", "qwen2.5:0.5b"),
+		LlamaServerBin:     env("DIARY_LLAMA_SERVER_BIN", "llama-server"),
+		LlamaPort:          envInt("DIARY_LLAMA_PORT", 11435),
+		LlamaThreads:       envInt("DIARY_LLAMA_THREADS", 2),
+		LlamaIdleSeconds:   envInt("DIARY_LLAMA_IDLE_SECONDS", 300),
+		LlamaModel:         env("DIARY_LLAMA_MODEL", "qwen2.5-0.5b-instruct-q4_k_m"),
 		MaxUploadBytes:     envInt64("DIARY_MAX_UPLOAD_BYTES", 2<<30),
 		MaxDurationSeconds: envInt("DIARY_MAX_DURATION_SECONDS", 3000),
 		AllowedFormats:     splitList(env("DIARY_ALLOWED_FORMATS", "wav,mp3,m4a,ogg,flac,aac,adts,webm")),
@@ -104,6 +116,15 @@ func Load() (Config, error) {
 
 	if cfg.WorkerConcurrency < 1 {
 		return Config{}, fmt.Errorf("DIARY_WORKER_CONCURRENCY must be at least 1")
+	}
+	if cfg.LlamaPort < 1 || cfg.LlamaPort > 65535 {
+		return Config{}, fmt.Errorf("DIARY_LLAMA_PORT must be between 1 and 65535")
+	}
+	if cfg.LlamaThreads < 1 {
+		return Config{}, fmt.Errorf("DIARY_LLAMA_THREADS must be at least 1")
+	}
+	if cfg.LlamaIdleSeconds < 0 {
+		return Config{}, fmt.Errorf("DIARY_LLAMA_IDLE_SECONDS must be zero or positive")
 	}
 	return cfg, nil
 }

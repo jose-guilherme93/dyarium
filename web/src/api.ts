@@ -487,11 +487,15 @@ export const api = {
   downloadModel: (name: string) =>
     request<{ status: string }>("/models/download", { method: "POST", body: JSON.stringify({ name }) }),
   listAnalyzeModels: () => request<{ models: string[] }>("/analyze/models"),
-  /** Estado do Ollama local: no ar, modelos instalados e download em curso. */
-  getLocalAnalysis: () => request<LocalAnalysis>("/analyze/local"),
-  /** Um clique: configura o Ollama local e baixa o modelo se faltar. */
-  setupLocalAnalysis: (model: string) =>
-    request<LocalAnalysisSetup>("/analyze/local", { method: "POST", body: JSON.stringify({ model }) }),
+  /** Estado do runtime local: serviço Ollama ou llama.cpp embutido. */
+  getLocalAnalysis: (runtime: "ollama" | "embedded" = "ollama") =>
+    request<LocalAnalysis>(`/analyze/local?runtime=${runtime}`),
+  /** Um clique: configura o runtime local e baixa o modelo se faltar. */
+  setupLocalAnalysis: (runtime: "ollama" | "embedded", model: string) =>
+    request<LocalAnalysisSetup>("/analyze/local", {
+      method: "POST",
+      body: JSON.stringify({ runtime, model }),
+    }),
   listEntities: (kind?: string) =>
     request<{ entities: EntitySummary[] }>(`/entities${kind ? `?kind=${encodeURIComponent(kind)}` : ""}`),
   getEntity: (kind: string, name: string) =>

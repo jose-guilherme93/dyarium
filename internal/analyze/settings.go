@@ -17,6 +17,9 @@ func ConfigFromSettings(base Config, settings map[string]string) Config {
 	if v, ok := settings["analyze_provider"]; ok && v != "" {
 		result.Provider = v
 	}
+	if v, ok := settings["analyze_local_runtime"]; ok {
+		result.LocalRuntime = strings.TrimSpace(v)
+	}
 	if v, ok := settings["analyze_base_url"]; ok && v != "" {
 		result.BaseURL = v
 	}

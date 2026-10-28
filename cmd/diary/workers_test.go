@@ -19,6 +19,7 @@ import (
 	"github.com/joseti/dyarium/internal/events"
 	"github.com/joseti/dyarium/internal/id"
 	"github.com/joseti/dyarium/internal/jobs"
+	"github.com/joseti/dyarium/internal/llm"
 	"github.com/joseti/dyarium/internal/review"
 	"github.com/joseti/dyarium/internal/store"
 	"github.com/joseti/dyarium/internal/transcribe"
@@ -348,8 +349,9 @@ func TestTranscribeFailureKeepsDeviceTranscript(t *testing.T) {
 		},
 	}
 	pipeline := transcribe.NewPipeline(st, deps, t.TempDir(), "modelo")
+	runner := &stopCountingRunner{}
 	handler := transcribeHandler(st, config.Config{}, pipeline, jobs.NewQueue(st.DB()),
-		events.NewBus(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+		events.NewBus(), slog.New(slog.NewTextHandler(io.Discard, nil)), runner)
 
 	payload, err := json.Marshal(jobs.TranscribePayload{EntryID: entryID, AttachmentID: attachmentID})
 	if err != nil {
@@ -358,6 +360,9 @@ func TestTranscribeFailureKeepsDeviceTranscript(t *testing.T) {
 	err = handler(ctx, &jobs.Job{Payload: payload, Attempts: 2, MaxAttempts: 3}, func() error { return nil })
 	if err == nil {
 		t.Fatal("esperava erro do pipeline")
+	}
+	if runner.stops != 1 {
+		t.Fatalf("StopIfIdle chamado %d vezes, quer 1 antes da transcricao", runner.stops)
 	}
 	entry, err := st.GetEntry(ctx, entryID)
 	if err != nil {
@@ -615,5 +620,23 @@ func TestReviseTranscriptPublishesEachWindow(t *testing.T) {
 	}
 	if transcript.RevisedRejected != 0 || transcript.RevisedPromptVersion != review.PromptVersion {
 		t.Fatalf("revisao final = %+v", transcript)
+	}
+}
+
+type stopCountingRunner struct {
+	stops int
+}
+
+func (r *stopCountingRunner) BaseURL() string { return "http://127.0.0.1:11435/v1" }
+func (r *stopCountingRunner) Available() bool { return true }
+func (r *stopCountingRunner) Running() bool   { return false }
+func (r *stopCountingRunner) Acquire(context.Context, string) (func(), error) {
+	return func() {}, nil
+}
+func (r *stopCountingRunner) StopIfIdle() { r.stops++ }
+
+func TestAcquireEmbeddedModelWithoutRuntime(t *testing.T) {
+	if _, err := acquireEmbeddedModel(context.Background(), nil, nil, "modelo"); !errors.Is(err, llm.ErrUnavailable) {
+		t.Fatalf("erro = %v, quer ErrUnavailable", err)
 	}
 }

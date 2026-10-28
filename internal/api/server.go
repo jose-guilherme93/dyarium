@@ -20,6 +20,7 @@ import (
 	"github.com/joseti/dyarium/internal/events"
 	"github.com/joseti/dyarium/internal/ingest"
 	"github.com/joseti/dyarium/internal/jobs"
+	"github.com/joseti/dyarium/internal/llm"
 	"github.com/joseti/dyarium/internal/models"
 	"github.com/joseti/dyarium/internal/store"
 	"github.com/joseti/dyarium/internal/webui"
@@ -27,15 +28,19 @@ import (
 
 // Deps groups the server dependencies.
 type Deps struct {
-	Config    config.Config
-	Store     *store.Store
-	Logger    *slog.Logger
-	Version   Version
-	Ingest    *ingest.Service
-	Queue     *jobs.Queue
-	Analyzer  *analyze.Client
-	Events    *events.Bus
-	Models    *models.Manager
+	Config   config.Config
+	Store    *store.Store
+	Logger   *slog.Logger
+	Version  Version
+	Ingest   *ingest.Service
+	Queue    *jobs.Queue
+	Analyzer *analyze.Client
+	Events   *events.Bus
+	Models   *models.Manager
+	// LocalAI is the embedded llama.cpp runtime; LLMModels is its GGUF store.
+	// Both are nil when the build does not include llama-server.
+	LocalAI   llm.Runner
+	LLMModels llm.Store
 	Canceller *jobs.Canceller
 }
 
@@ -43,7 +48,7 @@ type Deps struct {
 type Server struct {
 	deps    Deps
 	pullsMu sync.Mutex
-	pull    *localPullState
+	pulls   map[string]*localPullState
 }
 
 // Version describes the build metadata reported by the API.
@@ -58,7 +63,7 @@ func New(deps Deps) *Server {
 	if deps.Events == nil {
 		deps.Events = events.NewBus()
 	}
-	return &Server{deps: deps}
+	return &Server{deps: deps, pulls: map[string]*localPullState{}}
 }
 
 // Handler returns the root HTTP handler.

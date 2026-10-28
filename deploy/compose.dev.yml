@@ -4,6 +4,10 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
       target: dev
+      args:
+        # `make dev` usa 0 (Ollama apenas); `make dev-llama` usa 1.
+        WITH_LLAMA: "${WITH_LLAMA:-0}"
+        BUILD_JOBS: "${BUILD_JOBS:-2}"
     environment:
       DIARY_HTTP_ADDR: ":8080"
       DIARY_TOKEN: "${DIARY_TOKEN:-dev-token}"
@@ -38,17 +42,19 @@ services:
     depends_on:
       - api
 
-  # Servico opcional de IA local (Ollama), com limite de recursos.
-  # Suba com `make ai` (sobe o servico e baixa o modelo padrao) ou:
-  #   docker compose -f deploy/compose.dev.yml --profile ai up -d ollama
-  # Depois use Configuracao > Analise por IA > Ollama local, que configura e
-  # baixa o modelo em um clique.
+  # Servico de IA local (Ollama), com limite de recursos. Sobe com `make dev`
+  # e o painel configura em Configuracao > Analise por IA > Ollama local.
+  # Para baixar o modelo padrao sem abrir o painel: `make ai`.
   # Observacao: um modelo grande nao cabe no limite de 900 MB; use um modelo pequeno.
   ollama:
     image: ollama/ollama
-    profiles: ["ai"]
+    restart: unless-stopped
     cpus: "2"
     mem_limit: 900m
+    environment:
+      OLLAMA_MAX_LOADED_MODELS: "1"
+      OLLAMA_NUM_PARALLEL: "1"
+      OLLAMA_KEEP_ALIVE: "5m"
     volumes:
       - ollama-models:/root/.ollama
 

@@ -229,3 +229,38 @@ func TestAnalyzeDisabled(t *testing.T) {
 		t.Fatalf("err = %v, want ErrDisabled", err)
 	}
 }
+
+// O llama.cpp embutido recusa o envelope json_schema da OpenAI, mas aceita o
+// schema direto ao lado do type. Sem isso a analise cairia sempre no formato
+// solto e perderia a saida estruturada.
+func TestEmbeddedRuntimeSendsLlamaSchemaShape(t *testing.T) {
+	var got map[string]any
+	server := analysisServer(t, func(_ *http.Request, body map[string]any) { got = body })
+	defer server.Close()
+
+	client := analyze.New(analyze.Config{
+		Enabled: true, BaseURL: server.URL, Model: "local", LocalRuntime: "embedded",
+	})
+	if _, err := client.Analyze(context.Background(), "texto"); err != nil {
+		t.Fatalf("analyze: %v", err)
+	}
+	format, _ := got["response_format"].(map[string]any)
+	if format["type"] != "json_schema" {
+		t.Fatalf("response_format = %v", format)
+	}
+	if format["json_schema"] != nil {
+		t.Fatalf("llama.cpp nao usa o envelope json_schema: %v", format)
+	}
+	if format["schema"] == nil {
+		t.Fatalf("schema ausente: %v", format)
+	}
+}
+
+func TestConfigFromSettingsReadsLocalRuntime(t *testing.T) {
+	got := analyze.ConfigFromSettings(analyze.Config{}, map[string]string{
+		"analyze_local_runtime": "embedded",
+	})
+	if got.LocalRuntime != "embedded" {
+		t.Fatalf("local runtime = %q", got.LocalRuntime)
+	}
+}
