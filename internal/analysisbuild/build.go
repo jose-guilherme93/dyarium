@@ -5,6 +5,7 @@ package analysisbuild
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/joseti/dyarium/internal/analyze"
@@ -42,7 +43,7 @@ func Build(entryID string, result analyze.Result, metrics Metrics) (store.Analys
 	placesJSON, _ := json.Marshal(places)
 	dataJSON, _ := json.Marshal(result)
 
-	links := make([]store.EntityLink, 0, len(result.People)+len(result.Places)+len(result.Themes))
+	links := make([]store.EntityLink, 0, len(result.People)+len(result.Places)+len(result.Themes)+len(result.Decisions))
 	for _, p := range result.People {
 		sentiment := p.Sentiment
 		links = append(links, store.EntityLink{
@@ -55,6 +56,18 @@ func Build(entryID string, result analyze.Result, metrics Metrics) (store.Analys
 	}
 	for _, t := range result.Themes {
 		links = append(links, store.EntityLink{Kind: store.EntityTheme, Name: t.Name, Count: 1})
+	}
+	// Decisoes entram como no de decisao, iguais a tema/pessoa. O texto e a
+	// identidade: repetir a mesma decisao na nota nao cria duas bolas.
+	seenDecisions := make(map[string]bool, len(result.Decisions))
+	for _, decision := range result.Decisions {
+		name := strings.TrimSpace(decision)
+		key := strings.ToLower(name)
+		if name == "" || seenDecisions[key] {
+			continue
+		}
+		seenDecisions[key] = true
+		links = append(links, store.EntityLink{Kind: store.EntityDecision, Name: name, Count: 1})
 	}
 
 	return store.Analysis{

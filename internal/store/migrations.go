@@ -51,7 +51,12 @@ func (s *Store) Migrate(ctx context.Context) error {
 	}
 	// Cores de tag antigas (ou criadas por clientes que so mandam o nome) usam a
 	// mesma paleta deterministica do app e do dashboard.
-	return s.backfillTagColors(ctx)
+	if err := s.backfillTagColors(ctx); err != nil {
+		return err
+	}
+	// Decisoes ja estavam no contrato da analise, mas so viraram entidades
+	// depois do mapa; a biblioteca antiga ganha os nos uma vez.
+	return s.backfillDecisionEntities(ctx)
 }
 
 // ensureRevisionSchema cria o que a revisao da transcricao precisa quando a
