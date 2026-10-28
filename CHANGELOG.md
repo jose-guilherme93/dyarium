@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.4.0](https://github.com/jose-guilherme93/dyarium/compare/v0.3.1...v0.4.0) (2026-10-28)
+
+
+### Features
+
+* adiciona análise local embutida com llama.cpp ([58f21f8](https://github.com/jose-guilherme93/dyarium/commit/58f21f816279d8669ae58f6a18b15df67a152474))
+* **web:** importar export do Notion para as notas ([11609b7](https://github.com/jose-guilherme93/dyarium/commit/11609b794c1875e19e13c2e8c8533d9ac786f3bc))
+* **web:** ler export HTML do Notion ([6185c58](https://github.com/jose-guilherme93/dyarium/commit/6185c583a59df5bf8f215871948f92dd89a20681))
+* **web:** tela de importacao do Notion ([fd05a00](https://github.com/jose-guilherme93/dyarium/commit/fd05a00cce9d108885b97ef7d2d136cf0742dc00))
+
 ## [0.3.1](https://github.com/jose-guilherme93/dyarium/compare/v0.3.0...v0.3.1) (2026-10-28)
 
 
