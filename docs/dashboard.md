@@ -51,14 +51,27 @@ Layout responsivo:
 - Visual: linha simples e pontos; sem gradientes nem preenchimentos chamativos.
 - Estado vazio quando nao ha analises suficientes.
 
-### 5. Busca
+### 5. Mapa de relacoes
+- Centro fixo no dono do diario (`owner_name`; "Você" quando vazio), com pessoas,
+  lugares e temas em volta. O tamanho do no e relativo ao maior da visao atual; a
+  aresta engorda com o peso (notas em comum ou mencoes).
+- Filtros por tipo (pessoas, lugares, temas, decisoes), caderno, periodo e busca. Clicar
+  abre o detalhe com mencoes, notas e momentos-chave; "Expandir" abre o grafo local da
+  entidade (notas e entidades daquelas notas). "Renomear" corrige a grafia e o nome antigo
+  vira alias para as proximas analises.
+- Canvas com forca local (sem dependencia nova), zoom/pan, arrastar e "Ajustar a tela".
+  O grafo inclui todas as notas, inclusive as de autor "outros"; o autor nao filtra o
+  mapa.
+
+### 6. Busca
 - Campo de busca textual sobre a transcricao.
 - Resultados agrupados por entrada, com destaque do termo e link para o trecho.
 - Filtros por data, tag e humor.
 
-### 6. Configuracao
+### 7. Configuracao
 - Transcricao: modelo, corte de silencio (`trim_silence`).
 - Analise: ligada/desligada, base URL compativel com OpenAI, modelo.
+- Autor: nome do dono e "todas as notas sao minhas" (padrao dos audios sem escolha).
 - Aparencia: tema claro/escuro/automatico.
 - Observacao: nesta fase (ambiente de desenvolvimento) entrega-se o shell do dashboard;
   as telas acima sao implementadas nas fases seguintes. A tela de configuracao consome

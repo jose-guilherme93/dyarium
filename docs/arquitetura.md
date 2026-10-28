@@ -533,6 +533,22 @@ corpo reaparecia na pilha do dashboard sem nenhuma forma de apagar.
   (1 no modo de economia) e para quando a nota perde o foco: antes eram 4 threads rodando
   em segundo plano, e entrar/sair de qualquer tela custava dezenas de segundos.
 
+- Autor da nota e um rotulo (`self`, `other`, `mixed` ou vazio), nao uma entidade: o
+  diario e privado e de um dono so; "outros" cobre citacao, discurso e audio importado
+  sem inventar uma pessoa. O autor efetivo e a escolha da nota ou o padrao da instancia
+  (`all_notes_mine`), e so muda como a IA le a primeira pessoa. O nome do dono
+  (`owner_name`) e a identidade do diario, usada no prompt e no centro do mapa.
+- Mapa de relacoes derivado, nunca uma tabela paralela: `GET /graph` agrega `entities` e
+  `entry_entities` (mencoes e co-ocorrencia por nota) e, no foco, as notas e seus links.
+  Decisoes sao entidades `decision`, como temas e pessoas. Renomear guarda o nome antigo
+  em `entity_aliases`, entao a proxima analise que ainda usar a grafia antiga cai na mesma
+  entidade em vez de criar uma duplicata. Quando a pessoa e o proprio dono, "sou eu" apaga
+  a entidade duplicada e guarda a grafia em `owner_aliases`; o centro do mapa e a unica
+  representacao do diarista e a leitura resolve o nome para `owner_name`.
+  O cliente desenha em canvas com forca local e tamanho relativo ao maior no da visao;
+  o servidor nao manda layout nem posicao. O mapa inclui todas as notas, inclusive as de
+  autor "outros": o diario e do dono, mesmo quando a fala e de outra pessoa.
+
 ## Limites e configuracoes relevantes
 
 - Duracao maxima de audio: 50 minutos (configuravel por ambiente).

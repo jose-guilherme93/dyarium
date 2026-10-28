@@ -39,7 +39,8 @@ Cria um upload. Corpo:
   "source": "share",
   "client_key": "ck_...",
   "entry_id": "en_...",
-  "local_transcribe": false
+  "local_transcribe": false,
+  "author": "self"
 }
 ```
 Resposta 201:
@@ -81,6 +82,10 @@ Resposta 201:
   depois de transcrever. Serve para "transcrever no servidor, analisar no aparelho" e
   para "nao analisar". Sem a marca, o servidor segue a configuracao de analise da
   instancia.
+- `author` (opcional): papel do autor da nota criada por este upload (`self`, `other` ou
+  `mixed`). Vazio ou ausente segue o padrao da instancia (`all_notes_mine`). Valor
+  desconhecido responde 400 `invalid_author`. O autor nao altera o audio; so a leitura da
+  primeira pessoa pela IA.
 - `offset` na resposta e o offset ja confirmado (0 em uploads novos).
 
 ### PUT /api/v1/uploads/{id}
@@ -137,8 +142,8 @@ Com `deleted=1` lista a **lixeira**: as entradas apagadas (remocao logica) com
 - Paginacao: `limit` (padrao 100, teto 5000) e `cursor` (o `next_cursor` da pagina
   anterior). A resposta traz `next_cursor` enquanto houver outra pagina; o app
   percorre todas para reconciliar a biblioteca inteira, sem parar no teto.
-- Cada entrada traz `archived` e `versions` com a versao atual de `title`, `recorded_at` e
-  `body`. E o que o cliente guarda para mandar de volta na gravacao: assim o
+- Cada entrada traz `author` (papel explicito da nota: `self`, `other`, `mixed` ou vazio),
+  `archived` e `versions` com a versao atual de `title`, `recorded_at` e `body`. E o que o cliente guarda para mandar de volta na gravacao: assim o
   servidor consegue recusar (409) o que ja foi editado em outro lugar, e o app
   pergunta ao usuario em vez de sobrescrever. As versoes sao devolvidas
   **exatamente** como estao gravadas: reformatar aqui faria a gravacao seguinte
@@ -211,6 +216,7 @@ Atualiza campos editaveis com versao por campo.
   "recorded_at": "...",
   "notebook_id": "nb_...",
   "archived": true,
+  "author": "mixed",
   "versions": { "title": "...", "recorded_at": "..." }
 }
 ```
@@ -230,13 +236,17 @@ Resposta 200: `{ "status": "ok", "versions": { "title": "...", "recorded_at": ".
 - `archived` tira a nota da lista de trabalho sem apagar: ela continua existindo
   (e no aparelho), so sai da lista do dia. E um interruptor, entao nao tem versao
   nem conflito.
+- `author` troca o papel do autor (`self`, `other`, `mixed` ou vazio para voltar ao
+  padrao da instancia). Como `archived`, e a ultima gravacao que vence, sem versao.
+  Valor desconhecido responde 400 `invalid_author`.
 - 400 quando o corpo nao traz nenhum campo.
 - Nao altera o audio.
 
 ### POST /api/v1/entries
 Cria uma nota escrita (sem audio). Corpo:
 ```json
-{ "title": "...", "id": "note_...", "created_at": "...", "recorded_at": "...", "notebook_id": "..." }
+{ "title": "...", "id": "note_...", "created_at": "...", "recorded_at": "...",
+  "notebook_id": "...", "author": "other" }
 ```
 A entrada nasce com `source: "text"` e `status: "ready"`; o corpo **nao** vai
 aqui: ele e gravado como nota em markdown por `POST /api/v1/entries/{id}/notes`,
@@ -305,6 +315,11 @@ Retorna a transcricao atual, com `segments` e metadados do modelo.
   `revised_finished: false`.
 - Cada segmento traz `reviewed`: a passada chegou naquele trecho, mesmo quando o texto
   ficou igual. E o que permite separar trecho recusado de trecho ainda nao alcancado.
+- Grafias antigas de entidades mescladas sao resolvidas na leitura: `text`, `segments[].text`
+  e `segments[].revised` mostram o nome atual da entidade sobrevivente. O texto gravado e o
+  audio continuam exatamente como foram transcritos; a troca e so na resposta.
+- O mesmo vale para `GET /entries/{id}/segments` (as paginas do painel) e para a previa da
+  lista quando ela vem da transcricao.
 
 ### PUT /api/v1/entries/{id}/transcript
 Guarda a transcricao feita no aparelho (transcricao local). O servidor passa a usa-la em
@@ -496,6 +511,10 @@ e os campos ricos lidos de `data`:
   (pipeline deste servidor, inclusive Ollama local) ou `api` (provedor hospedado, para
   onde o texto saiu).
 
+Nomes de pessoas, lugares, temas e decisoes na resposta da analise sao resolvidos pela
+tabela de entidades (e pelos aliases de nomes antigos): renomear uma pessoa muda a
+exibicao em todas as notas, sem reescrever o audio nem a transcricao.
+
 ### PUT /api/v1/entries/{id}/analysis
 Guarda a analise feita no aparelho, no mesmo formato do GET (o app envia exatamente o que
 ja guardou). Campos aceitos: `model`, `sentiment`, `sentiment_label`, `emotions`, `people`,
@@ -586,19 +605,59 @@ Configura a analise para usar o Ollama local em uma requisicao. Corpo:
 
 ### GET /api/v1/entities
 Lista as entidades extraidas, ordenadas por mencoes. Filtro opcional `kind` (`person`,
-`place` ou `theme`; outro valor retorna 400).
+`place`, `theme` ou `decision`; outro valor retorna 400).
 ```json
-{ "entities": [ { "kind": "person", "name": "Maria", "entries": 2, "mentions": 5,
-  "sentiment": 0.4, "last_seen": "2026-10-10T21:05:00Z" } ] }
+{ "entities": [ { "id": "01J...", "kind": "person", "name": "Maria", "icon": "",
+  "entries": 2, "mentions": 5, "sentiment": 0.4, "last_seen": "2026-10-10T21:05:00Z" } ] }
 ```
 
 ### GET /api/v1/entities/{kind}/{name}
-Retorna a entidade (mesmos campos) mais a lista de entradas que a mencionam. 404 se nao
-existir.
+Retorna a entidade (mesmos campos) mais a lista de entradas que a mencionam. Nomes antigos
+de uma entidade renomeada continuam resolvendo pelo alias. 404 se nao existir.
 ```json
-{ "kind": "person", "name": "Maria", "entries": 2, "mentions": 5, "sentiment": 0.4,
-  "last_seen": "...", "entry_list": [ { "id": "en_...", "title": "...", "date": "...", "count": 3 } ] }
+{ "kind": "person", "name": "Maria", "icon": "heart", "entries": 2, "mentions": 5,
+  "sentiment": 0.4, "last_seen": "...",
+  "entry_list": [ { "id": "en_...", "title": "...", "date": "...", "count": 3 } ] }
 ```
+
+### PATCH /api/v1/entities/{kind}/{name}
+Renomeia uma pessoa, lugar, tema ou decisao. Corpo:
+```json
+{ "name": "Marianna" }
+```
+- O nome antigo vira alias: uma analise futura que ainda diga "Mariana" cai na mesma
+  entidade, sem criar uma segunda. O nome atual tambem resolve pelo alias em
+  `GET /entities/{kind}/{name}`.
+- Se o novo nome ja existir para o mesmo tipo, as duas entidades sao **mescladas**: as
+  notas e mencoes passam para a sobrevivente, e o nome antigo vira alias dela.
+- 400 `invalid_name` para nome vazio/longo, 404 quando o nome antigo nao existe.
+- Para juntar duas grafias da mesma pessoa, lugar, tema ou decisao, basta renomear para o
+  nome canonico da entidade que deve sobreviver: a mesclagem soma notas/mencoes e o nome
+  antigo vira alias. O dashboard oferece essa escolha como "Mesclar em" no painel de
+  renomear, com a lista do mesmo tipo. A decisao fica salva no alias: analises futuras com
+  a grafia antiga caem na sobrevivente, sem repetir a mesclagem.
+
+### PUT /api/v1/entities/{kind}/{name}/icon
+Escolhe o icone monocromatico desenhado dentro da bola. Corpo:
+```json
+{ "icon": "heart" }
+```
+- A chave vem da paleta compartilhada (`person`, `home`, `hash`, `check`, `heart`, `star`,
+  `book`, `briefcase`, `music`, `health`, `money`, `food`, `car`, `plane`, `tree`, `sun`,
+  `moon`, `flag`, `globe`, `camera`, `document`). Vazio volta ao icone do tipo.
+- 400 `invalid_icon` para chave fora da paleta/kind invalido; 404 se a entidade nao existe.
+- Retorna a entidade com `icon` ja atualizado. O mapa recebe a chave em `nodes[].icon`.
+
+### POST /api/v1/entities/person/{name}/self
+Marca uma pessoa como **o dono do diario** ("sou eu"). Usado quando a IA tratou uma
+grafia do nome do dono como outra pessoa.
+- A entidade e removida: ela deixa de ser um no separado do mapa. O nome atual e todos os
+  aliases dela passam a ser grafias do dono.
+- Toda analise, antiga ou nova, resolve essas grafias para o `owner_name` das
+  configuracoes na leitura (nomes estruturados e prosa); o audio, a transcricao e o corpo
+  da nota continuam intactos.
+- Uma analise futura que ainda extraia a grafia antiga nao recria a pessoa.
+- Resposta: `{"status":"ok","owner":"<nome do dono>"}`. 404 se a pessoa nao existir.
 
 ### GET /api/v1/mood
 Serie temporal do sentimento por dia. Filtros opcionais `from` e `to` (RFC 3339 ou
@@ -606,6 +665,47 @@ Serie temporal do sentimento por dia. Filtros opcionais `from` e `to` (RFC 3339 
 ```json
 { "mood": [ { "date": "2026-10-10", "sentiment": 0.4, "entries": 2 } ] }
 ```
+
+## Mapa de relacoes
+
+### GET /api/v1/graph
+Mapa centrado no dono do diario. Sem `focus`, devolve o ego de entidades: o centro e o
+dono, cada pessoa/lugar/tema aparece uma vez e as arestas ligam o centro a entidade
+(peso = numero de notas que a mencionam) ou duas entidades que dividem uma nota
+(co-ocorrencia, peso = notas em comum). O autor da nota **nao** filtra o mapa: todas as
+notas do diario entram; o papel do autor so muda a leitura da primeira pessoa pela IA.
+
+Filtros opcionais: `notebook_id`, `from` e `to` (RFC 3339 ou `YYYY-MM-DD`; `to` inclui o
+dia inteiro) e `focus` (id de um no, por exemplo `person:01J...`). `focus` devolve a
+entidade, as notas dela (ate 100), as entidades dessas notas e as arestas
+`note -> entidade`; o centro aparece ligado so a entidade focada, nunca as notas.
+
+```json
+{
+  "center": { "id": "user", "kind": "user", "label": "João" },
+  "nodes": [
+    { "id": "person:01J...", "kind": "person", "label": "Maria", "icon": "heart",
+      "mentions": 42, "notes": 7, "sentiment": 0.4, "last_seen": "2026-10-10T21:05:00Z" }
+  ],
+  "edges": [
+    { "source": "user", "target": "person:01J...", "kind": "relation", "weight": 7 },
+    { "source": "person:01J...", "target": "theme:01K...", "kind": "cooccurrence", "weight": 3 }
+  ],
+  "total_nodes": 120,
+  "total_edges": 850,
+  "truncated": false
+}
+```
+
+- Nos de entidade: `mentions` (soma das mencoes) define o raio; `notes` e o peso da
+  aresta do centro; `sentiment` so e preenchido para pessoas. Decisoes entram como
+  `kind: "decision"`, com o texto da decisao como nome.
+- No modo `focus`, cada nota vira um no `note:<entry_id>` com `title`, `date` e `author`
+  (papel explicito) e as arestas `mention`.
+- Tetos: 250 entidades e 1500 arestas; 100 notas e 1500 arestas no foco. As arestas de
+  co-ocorrencia sao limitadas as mais fortes por no. `truncated` avisa quando algo ficou
+  de fora; `total_nodes`/`total_edges` trazem o total antes do corte.
+- `404` quando `focus` aponta para uma entidade que nao existe (ou nao aparece no filtro).
 
 ## Metricas de escrita
 
@@ -818,6 +918,13 @@ Remove o link. Resposta 204.
 Retorna as configuracoes atuais (por exemplo, `trim_silence`, modelo de transcricao, modo
 de analise e `analysis_themes`). `analysis_themes` e a lista de temas preferidos separada
 por virgulas; quando vazia, o servidor devolve a lista padrao.
+
+`owner_name` e o nome do dono do diario (texto, no maximo 80 caracteres; vazio mostra
+"Você"). Ele aparece no centro do mapa e no prompt da analise. Grafias antigas marcadas
+com "sou eu" no mapa resolvem para esse nome na leitura, mesmo depois de trocar o
+`owner_name`. `all_notes_mine` (padrao
+ligado) resolve o autor das notas sem escolha manual: ligado, o autor efetivo e o dono;
+desligado, a nota fica sem autor. A escolha da nota (`author`) sempre vence.
 
 `review_enabled` liga a revisao da transcricao por IA antes da analise (padrao desligado;
 sem ela a analise continua, so perde precisao). `literal_transcript` mantem hesitacoes e

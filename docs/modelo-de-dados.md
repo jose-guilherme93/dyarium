@@ -27,6 +27,7 @@ Representa um audio enviado e seu ciclo de vida.
 | duration_seconds | REAL | medido com ffprobe |
 | sha256 | TEXT | SHA-256 do conteudo em claro |
 | recorded_at | TEXT | data do evento (pode diferir da criacao) |
+| author | TEXT | papel do autor: `self`, `other`, `mixed` ou vazio (segue o padrao) |
 | created_at | TEXT | |
 | updated_at | TEXT | ultima edicao de conteudo/metadados; abrir a nota e mudar so o status nao alteram |
 | deleted_at | TEXT | remocao logica |
@@ -36,6 +37,24 @@ Indices: `status`, `recorded_at`, `created_at`, `deleted_at`, `notebook_id`.
 `parent_id` existia para a arvore de subnotas. Com cadernos e tags, subnotas
 deixaram de ser necessarias: o web nao cria mais subnotas e a lista e plana. Os
 dados existentes continuam no banco; a remocao da coluna fica para depois.
+
+Os nomes em `analyses.people/places` e em `analyses.data` sao uma copia da leitura do
+modelo; a API resolve pessoa/lugar/tema/decisao pela tabela `entities` e pelos aliases
+antes de exibir, para um rename valer em todas as notas. A tabela `entities` e a unica
+lista de pessoas; `entry_entities` e o vinculo N:N e `entity_aliases` guarda apenas
+grafias antigas apontando para a mesma entidade.
+
+Autor efetivo: a escolha `author` da nota vence; vazia, `self` quando a configuracao
+`all_notes_mine` esta ligada e vazio quando esta desligada. O nome do dono
+(`owner_name`) nao e um campo da nota: e a identidade do diario, usada no prompt e no
+centro do mapa. O mapa nao tem tabela propria; le `entities`, `entry_entities` e
+`entries` e agrega na consulta.
+
+`owner_aliases` guarda as grafias que o dono confirmou serem ele mesmo ("sou eu" no mapa).
+Ao marcar, a pessoa duplicada sai de `entities` e o nome/aliases dela entram nessa tabela;
+a leitura resolve tudo para o `owner_name` atual, inclusive a prosa das analises. A tabela
+nao e um segundo cadastro de pessoas: e so uma lista de grafias da mesma identidade que ja
+existe em `settings`.
 
 ## Notebook
 
@@ -177,16 +196,45 @@ apenas `data`.
 
 ## Entity
 
-Pessoa, lugar ou tema extraido das analises, normalizado por (`kind`, `name`).
+Pessoa, lugar, tema ou decisao extraida das analises, normalizada por (`kind`, `name`).
 
 | Campo | Tipo | Notas |
 |---|---|---|
 | id | TEXT PK | |
-| kind | TEXT | person, place ou theme |
+| kind | TEXT | person, place, theme ou decision |
 | name | TEXT | nome como exibido |
+| icon | TEXT | chave de um icone monocromatico da paleta do mapa; vazio usa o do tipo |
 | created_at | TEXT | |
 
-Indices: unico (`kind`, `name`).
+Indices: unico (`kind`, `name`). A paleta de icones e validada pelo servidor e desenhada
+pelo cliente; o banco guarda apenas a chave.
+
+## EntityAlias
+
+Nome antigo de uma entidade renomeada. O lookup de analises novas e de
+`GET /entities/{kind}/{name}` resolve por nome canonico (sem caixa) e depois por alias.
+
+| Campo | Tipo | Notas |
+|---|---|---|
+| id | TEXT PK | |
+| entity_id | TEXT FK -> Entity.id | entidade sobrevivente |
+| kind | TEXT | copia do tipo para o lookup |
+| name | TEXT | nome antigo, unico por tipo (COLLATE NOCASE) |
+| created_at | TEXT | |
+
+Indices: unico (`kind`, `name`); `entity_id`. Ao mesclar duas entidades, os aliases e os
+vinculos passam para a sobrevivente.
+
+## OwnerAlias
+
+Grafias que o dono confirmou serem ele mesmo ("sou eu" no mapa). Nao e um cadastro
+paralelo de pessoas: a pessoa duplicada sai de `entities` e aqui fica so o nome antigo,
+que a leitura resolve para o `owner_name` das configuracoes.
+
+| Campo | Tipo | Notas |
+|---|---|---|
+| name | TEXT PK | grafia antiga, sem caixa (COLLATE NOCASE) |
+| created_at | TEXT | |
 
 ## EntryEntity
 
@@ -379,6 +427,7 @@ Estado do upload resumivel.
 | recorded_at | TEXT | data do evento |
 | entry_created_at | TEXT | criacao/importacao original; vira `Entry.created_at` uma vez |
 | entry_source | TEXT | origem da nota (`upload`, `share`, `microphone`, `text`, `telegram`) |
+| author | TEXT | autor escolhido no aparelho; vira `Entry.author` na criacao |
 | client_key | TEXT | idempotencia da criacao do upload |
 | entry_id | TEXT FK -> Entry.id | quando o audio vai para uma nota existente |
 | received_bytes | INTEGER | confirmado |
