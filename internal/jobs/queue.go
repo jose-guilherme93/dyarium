@@ -10,7 +10,7 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/jose-guilherme93/dyarium/internal/id"
+	"github.com/joseti/dyarium/internal/id"
 )
 
 // Status enumerates job states.
@@ -59,9 +59,25 @@ type Queue struct {
 // NewQueue builds a Queue over the given database handle.
 func NewQueue(db *sql.DB) *Queue { return &Queue{db: db} }
 
-// Enqueue inserts a job. If a job with the same idempotency key already exists,
-// it is left untouched and its id is returned.
+// AnalyzeKey is the idempotency key of an entry analysis. The automatic run
+// after transcription and the manual "Analisar" click use the same key, so a
+// click during the automatic pass cannot start a second analysis on the note.
+func AnalyzeKey(entryID string) string {
+	return "analyze:" + entryID
+}
+
+// Enqueue inserts a job available immediately. If a job with the same
+// idempotency key already exists, it is left untouched and its id is returned.
 func (q *Queue) Enqueue(ctx context.Context, jobType, idempotencyKey string, payload any) (string, error) {
+	return q.EnqueueAfter(ctx, jobType, idempotencyKey, payload, 0)
+}
+
+// EnqueueAfter schedules a job to become available after `delay`. It differs
+// from Enqueue in one point: when a job with the same key already exists, its
+// availability is moved to the new time (the delay is part of the request), so
+// a repeated call postpones the work instead of running it right away. A job
+// that is already running or leased is never touched.
+func (q *Queue) EnqueueAfter(ctx context.Context, jobType, idempotencyKey string, payload any, delay time.Duration) (string, error) {
 	var raw []byte
 	if payload != nil {
 		b, err := json.Marshal(payload)
@@ -70,6 +86,12 @@ func (q *Queue) Enqueue(ctx context.Context, jobType, idempotencyKey string, pay
 		}
 		raw = b
 	}
+	if delay < 0 {
+		delay = 0
+	}
+	now := time.Now().UTC()
+	availableAt := ts(now.Add(delay))
+
 	var existing string
 	var existingStatus string
 	err := q.db.QueryRowContext(ctx,
@@ -78,11 +100,10 @@ func (q *Queue) Enqueue(ctx context.Context, jobType, idempotencyKey string, pay
 		// If the job is not currently running, (re)queue it so a manual trigger
 		// takes effect immediately, even after a failure/backoff.
 		if existingStatus != string(StatusRunning) && existingStatus != string(StatusLeased) {
-			now := ts(time.Now())
 			if _, uerr := q.db.ExecContext(ctx, `
 				UPDATE jobs SET status = ?, attempts = 0, available_at = ?, last_error = '',
 					worker_id = '', lease_expires_at = NULL, updated_at = ?
-				WHERE id = ?`, string(StatusQueued), now, now, existing); uerr != nil {
+				WHERE id = ?`, string(StatusQueued), availableAt, ts(now), existing); uerr != nil {
 				return "", fmt.Errorf("jobs: requeue: %w", uerr)
 			}
 		}
@@ -92,14 +113,13 @@ func (q *Queue) Enqueue(ctx context.Context, jobType, idempotencyKey string, pay
 		return "", fmt.Errorf("jobs: lookup: %w", err)
 	}
 
-	now := time.Now().UTC()
 	jobID := id.New()
 	_, err = q.db.ExecContext(ctx, `
 		INSERT INTO jobs (id, type, idempotency_key, payload, status, attempts, max_attempts,
 			available_at, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`,
 		jobID, jobType, idempotencyKey, raw, string(StatusQueued), 5,
-		ts(now), ts(now), ts(now))
+		availableAt, ts(now), ts(now))
 	if err != nil {
 		return "", fmt.Errorf("jobs: insert: %w", err)
 	}
@@ -122,9 +142,9 @@ func (q *Queue) Claim(ctx context.Context, workerID string, lease time.Duration)
 			available_at, lease_expires_at, COALESCE(worker_id,''), COALESCE(last_error,''),
 			created_at, updated_at
 		FROM jobs
-		WHERE status = ? AND available_at <= ?
+		WHERE status IN (?, ?) AND available_at <= ?
 		ORDER BY available_at ASC LIMIT 1`,
-		string(StatusQueued), ts(now)).Scan(
+		string(StatusQueued), string(StatusRetrying), ts(now)).Scan(
 		&j.ID, &j.Type, &j.IdempotencyKey, &payload, &j.Status, &j.Attempts, &j.MaxAttempts,
 		&availableAt, &leaseExpires, &j.WorkerID, &j.LastError, &createdAt, &updatedAt)
 	if err == sql.ErrNoRows {
@@ -137,8 +157,9 @@ func (q *Queue) Claim(ctx context.Context, workerID string, lease time.Duration)
 	expires := now.Add(lease)
 	res, err := q.db.ExecContext(ctx, `
 		UPDATE jobs SET status = ?, worker_id = ?, lease_expires_at = ?, updated_at = ?
-		WHERE id = ? AND status = ?`,
-		string(StatusRunning), workerID, ts(expires), ts(now), j.ID, string(StatusQueued))
+		WHERE id = ? AND status IN (?, ?)`,
+		string(StatusRunning), workerID, ts(expires), ts(now), j.ID,
+		string(StatusQueued), string(StatusRetrying))
 	if err != nil {
 		return nil, fmt.Errorf("jobs: claim update: %w", err)
 	}
@@ -214,6 +235,25 @@ func (q *Queue) Fail(ctx context.Context, jobID string, cause error, baseDelay t
 	return nil
 }
 
+// ExpireStaleRetries marks retries that have been waiting longer than maxAge as
+// dead. Before the claim fix, a job that failed once stayed "retrying" forever;
+// replaying every old failure right after an update would flood the worker (and
+// any paid provider). Recent retries are left alone.
+func (q *Queue) ExpireStaleRetries(ctx context.Context, maxAge time.Duration) (int, error) {
+	cutoff := time.Now().UTC().Add(-maxAge)
+	res, err := q.db.ExecContext(ctx, `
+		UPDATE jobs SET status = ?, updated_at = ?,
+			last_error = CASE WHEN COALESCE(last_error,'') = '' THEN 'retry expirado'
+				ELSE last_error || ' (retry expirado)' END
+		WHERE status = ? AND updated_at < ?`,
+		string(StatusDead), ts(time.Now().UTC()), string(StatusRetrying), ts(cutoff))
+	if err != nil {
+		return 0, fmt.Errorf("jobs: expire stale retries: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
 // RequeueExpired returns jobs whose lease expired to the queue.
 func (q *Queue) RequeueExpired(ctx context.Context) error {
 	now := time.Now().UTC()
@@ -241,12 +281,16 @@ func (q *Queue) CountByStatus(ctx context.Context, status Status) (int, error) {
 // CancelEntry marks the active jobs of an entry as cancelled and returns their
 // ids so their running contexts can be cancelled.
 func (q *Queue) CancelEntry(ctx context.Context, entryID string) ([]string, error) {
+	// O payload diz a qual entrada o job pertence. As chaves de idempotencia
+	// nao servem: a transcricao usa o id do audio e a analise leva o modelo no
+	// fim, entao procurar por "transcribe:{entry}" nunca casava.
 	rows, err := q.db.QueryContext(ctx, `
 		SELECT id FROM jobs
-		WHERE idempotency_key IN (?, ?)
-		  AND status IN (?, ?, ?, ?)`,
-		"transcribe:"+entryID, "analyze:"+entryID,
-		string(StatusQueued), string(StatusLeased), string(StatusRunning), string(StatusRetrying))
+		WHERE status IN (?, ?, ?, ?)
+		  AND (json_extract(payload, '$.entry_id') = ?
+		       OR idempotency_key IN (?, ?))`,
+		string(StatusQueued), string(StatusLeased), string(StatusRunning), string(StatusRetrying),
+		entryID, "transcribe:"+entryID, "analyze:"+entryID)
 	if err != nil {
 		return nil, fmt.Errorf("jobs: cancel select: %w", err)
 	}

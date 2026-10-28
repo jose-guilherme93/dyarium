@@ -38,6 +38,28 @@ export function formatDateTime(value?: string | null): string {
   });
 }
 
+/**
+ * Data curta da linha de nota ("19 out" ou "19 out 2019"). O ano so aparece
+ * quando a nota nao e deste ano; o espaco da lista e curto demais para repetir
+ * o ano em todas as linhas.
+ */
+export function formatShortDate(value?: string | null): string {
+  if (!value) {
+    return "";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  const label = date
+    .toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })
+    .replace(" de ", " ")
+    .replace(".", "");
+  return date.getFullYear() === new Date().getFullYear()
+    ? label
+    : `${label} ${date.getFullYear()}`;
+}
+
 // dayLabel groups notes in the list ("Hoje", "Ontem" or a date).
 export function dayLabel(value?: string | null): string {
   if (!value) {
@@ -69,4 +91,20 @@ export function dayKey(value?: string | null): string {
     return "sem-data";
   }
   return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
+/** Tamanho legivel para o painel da nota ("95 KB"), sem "0.09 MB". */
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return "0 bytes";
+  }
+  if (bytes < 1024) {
+    return `${Math.round(bytes)} bytes`;
+  }
+  const kb = bytes / 1024;
+  if (kb < 1024) {
+    return `${Math.round(kb)} KB`;
+  }
+  const mb = kb / 1024;
+  return `${mb.toFixed(mb < 10 ? 1 : 0).replace(".", ",")} MB`;
 }

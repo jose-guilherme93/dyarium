@@ -45,6 +45,45 @@ function toRanked(map: Map<string, number>): RankedItem[] {
     .sort((a, b) => b.value - a.value);
 }
 
+export interface AnalysisSource {
+  entryId: string;
+  title: string;
+  recordedAt: string;
+  analysis: ServerAnalysis;
+}
+
+export interface AnalysisInsight {
+  entryId: string;
+  title: string;
+  recordedAt: string;
+  summary: string;
+  themes: string[];
+  sentimentLabel: string;
+}
+
+/**
+ * Prepara os insights que o servidor ja produziu para o bloco "Escrita" do
+ * painel: os mais recentes primeiro, sem notas vazias, com temas legiveis.
+ */
+export function toAnalysisInsights(items: AnalysisSource[], limit = 6): AnalysisInsight[] {
+  return [...items]
+    .sort((a, b) => Date.parse(b.recordedAt) - Date.parse(a.recordedAt))
+    .filter((item) => {
+      const summary = item.analysis.summary.trim();
+      const themes = item.analysis.themes ?? [];
+      return summary !== '' || themes.length > 0;
+    })
+    .slice(0, limit)
+    .map((item) => ({
+      entryId: item.entryId,
+      title: item.title.trim() || 'Nota',
+      recordedAt: item.recordedAt,
+      summary: item.analysis.summary.trim(),
+      themes: (item.analysis.themes ?? []).map((theme) => theme.name.trim()).filter(Boolean),
+      sentimentLabel: item.analysis.sentiment_label ?? '',
+    }));
+}
+
 export function summarize(entries: ServerEntry[], analyses: ServerAnalysis[]): DashboardSummary {
   const statusMap = new Map<string, number>();
   let totalDurationSeconds = 0;

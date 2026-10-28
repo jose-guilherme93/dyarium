@@ -35,6 +35,10 @@ metricas e dashboard funcionam offline. Somente a analise de texto por IA e opci
   momentos-chave, resumo, perguntas e decisoes. Transcricoes longas sao analisadas em
   janelas com merge e meta-resumo. Pessoas, lugares e temas viram entidades consultaveis
   e o sentimento alimenta uma linha do tempo de humor.
+- Revisao opcional da transcricao por IA antes da analise: corrige lingua sem
+  reescrever o conteudo, guarda o derivado por trecho ao lado do original e
+  mede compreensao logica, gagueira e hesitacao. Ligada por preferencia em cada
+  superficie (servidor e app).
 - Dashboard SPA: lista, entrada aberta, painel de analise, humor, busca e configuracao.
 - Backup continuo opcional com Litestream para S3.
 - Modulo Telegram opcional, desligado por padrao, para envio de audio.
@@ -90,15 +94,123 @@ Superficie Android em Expo (development build). O nucleo puro fica em `mobile/sr
 - Importacao de audios compartilhados por outros apps (share sheet): ate 50 por vez, com
   revisao (titulo, ano do lote, ordem dia/mes, 24h/AM-PM, duracao e playback). O audio
   original e preservado; dedupe por SHA-256 no servidor.
-- App de notas (texto e audio): tela da nota sempre editavel, autosave, editor rico
-  (negrito/italico/lista via WebView), contador de palavras e gravar audio embutido.
-  Nota so de texto entra na fila e e enviada como conteudo (endpoint do servidor pendente).
+- App de notas (texto e audio): a nota e uma **lista ordenada de nos** (texto,
+  imagem, audio), nao um texto com anexos. O texto da nota e **um editor rico
+  so** (negrito, italico, tachado, codigo, titulos, listas, citacao e links) e
+  cada foto/audio e um componente nativo no lugar: so as midias que cortam o
+  texto dividem o editor. Um editor por paragrafo fazia o campo ser desmontado
+  e remontado a cada troca de paragrafo (com o custo e o lag do documento
+  inteiro), e o Enter criava um editor novo. A insercao no cursor divide o
+  no de texto na posicao exata: a foto e a gravacao entram **entre dois trechos**,
+  e o player de audio fica no corpo, nao acima dele. A foto e um no com largura
+  em percentual da nota: o usuario escolhe o tamanho (largura total, metade ou
+  miniatura) e pode redimensionar e remover depois; a largura viaja no markdown.
+  Os audios podem ser removidos do corpo; os textos vizinhos voltam a ficar
+  juntos. O markdown continua sendo o
+  formato salvo (`![foto](ref){w=50}`, `!audio[ref]{d=12.5}`), com parser e
+  serializer puros em `core/noteDocument`. O texto de um no e o conteudo que o
+  editor mostra; o separador que fecha a linha antes da midia fica no
+  `breakAfter` do no, entao o markdown volta igual e as linhas em branco que o
+  usuario digita no fim do texto nao somem. So uma nota gigante e cortada
+  (8000 caracteres) e as partes voltam coladas. O texto e editado no
+  editor nativo do proprio app, sempre montado: o toque, o cursor e o Enter sao
+  os do Android (nenhuma copia em JavaScript, nenhuma matematica de cursor,
+  nenhuma camada de previa entre o dedo e o campo). Um editor por trecho de
+  texto, e so as midias cortam o texto: uma nota sem midia tem um unico campo.
+  A leitura do HTML de um trecho e uma por vez, para o texto escrito nao se
+  perder. A barra de acoes fica
+  grudada no topo do teclado; o titulo encolhe a fonte quando fica longo; os tres
+  pontinhos abrem compartilhar e a ficha de propriedades (gravada em, criada em,
+  importada em, origem, palavras, caracteres, tamanho, status), como no
+  dashboard. Abaixo do titulo aparece a data do evento (`recordedAt`), nao a data
+  da importacao. O corpo e **100% nativo**: nao ha WebView no app, o que elimina
+  cold start, recarga do documento e tremor na digitacao. Nota so de texto entra
+  na fila e e enviada como conteudo
+  (`POST /api/v1/entries` + corpo markdown em `POST /api/v1/entries/{id}/notes`).
+  O corpo so conta como enviado depois da segunda chamada; o `noteDirty` e
+  gravado antes, entao matar o app entre as duas nao perde o texto. Cada
+  metadado (caderno, tags, arquivamento) tem pendencia propria, e o pull percorre
+  `next_cursor` ate o fim da biblioteca.
+- Audio na nota, em um player so: o card do corpo tem um unico play/pause, tempo
+  e onda; tocar ou arrastar a onda pula para o trecho. A onda tem 88 barras e
+  48 dp de altura, com a fala perto do topo e a pausa no traco minimo, o mesmo
+  contraste da waveform da gravacao. O seek e aplicado quando a fonte fica
+  pronta: o ADTS monta a tabela de posicoes durante a preparacao, e
+  buscar antes disso fazia a posicao voltar ao zero. O gravador usa AAC ADTS; o
+  patch do `expo-audio` liga a busca por taxa constante, porque o ADTS nao tem
+  tabela de posicoes e, sem isso, todo seek cai no inicio do arquivo. Abaixo do
+  audio fica a previa da transcricao em cinco linhas, que acompanha a fala;
+  tocar numa linha toca dali, o toque longo abre a transcricao completa editando
+  aquele trecho, e arrastar a janela pausa o acompanhamento por tres segundos. A
+  transcricao em andamento aparece no proprio audio, com progresso, tanto a
+  local quanto a pedida ao servidor. Nao existe player duplicado no topo nem
+  segundo botao de play no card.
+- Gravacao comeca no toque: o microfone abre no mesmo gesto e a tela de gravacao
+  entra na frente; criar o registro no SQLite e resolver a posicao do cursor
+  acontecem depois, sem segurar o audio. A waveform e uma fita de 88 barras
+  alimentada pelo medidor em dB (~28 amostras/s), com o desenho em um unico
+  `Path` SVG refeito a cada amostra e o movimento por `translateX` a 60 fps na
+  thread de UI (sem render do JS); a cada barra completada a amostra entra na
+  ponta. A altura sai da faixa que a propria gravacao observa (ruido de fundo
+  no piso, pico da fala no topo), entao a fala chega ao topo mesmo em aparelho
+  que mede baixo; o silencio fica no traco minimo.
+  A tela mostra a hora, o dia da semana e a data por extenso. A barra de acoes
+  acima do teclado rola na horizontal e leva a gravacao de audio, a foto, o
+  link e a formatacao.
+- Home compacta: paginas recentes por padrao, sem alternador de modo nem barra
+  de busca fixa. O caderno vira um icone no topo que abre uma folha com as
+  paginas recentes, os cadernos e o atalho para criar ou gerenciar. A busca so
+  aparece ao tocar na lupa, e cada nota e uma linha de largura total com divisor,
+  sem cartao e sem margem externa (estilo OneNote).
+- Menu da nota (tres pontinhos) como folha que sobe do rodape e para em metade
+  da tela: compartilhar, analise, tipografia e propriedades rolam dentro dela.
+  Puxar para cima em qualquer ponto da folha recolhida expande para quase a tela
+  inteira; depois de expandida, a lista rola, puxar para baixo no topo recolhe e
+  o cabecalho recolhe de qualquer posicao. Nao ha botao de fechar no canto: o
+  fundo fecha e nao pisca feedback, que fica reservado a botoes e acoes. O
+  teclado fecha ao abrir, para a folha nao nascer atras dele.
+- Centro de atividade na home, ao lado da nuvem: transcricao, analise local,
+  backup/restauracao e download de modelo publicam inicio, progresso e fim num
+  store em memoria. A folha mostra a fase real (trecho transcrito, tokens
+  gerados, notas copiadas) e guarda as concluidas recentes ate serem limpas. Uma
+  falha ou interrupcao oferece uma acao de recuperacao: tentar de novo
+  (transcricao, backup, restauracao e download) ou abrir a nota (analise). O
+  estado da fila de envio continua no icone da nuvem.
+- Abertura sob demanda: a home pinta o cabecalho e um esqueleto da lista antes
+  de o SQLite responder; a nota pinta cabecalho, titulo e um preview textual
+  antes de montar o editor nativo, e so depois carrega segmentos, anexos, pilha
+  de audios e imagens. O JSON pesado de cada nota so e parseado quando a nota
+  abre. Metricas de escrita e varredura de armazenamento saem do boot e rodam
+  apenas nas telas que as mostram (Painel/Diagnostico/Armazenamento); o cofre de
+  preferencias nao segura mais a primeira tela.
+- Transcricao no aparelho (opcional, nas Opcoes): usa `whisper.rn` (whisper.cpp) com modelos
+  ggml baixados em runtime (Tiny..Large v3 Turbo), recomendado pela RAM; o audio AAC e
+  decodificado para 16 kHz por um modulo nativo local (sem ffmpeg) e transcrito offline, com o texto
+  aparecendo por trecho. Cada nota tem um flag de transcricao e a origem (`local`/`server`);
+  quem transcreve primeiro informa o outro e nao ha retranscricao. Exige novo development build.
+- Nota local-first de verdade: a edicao e sempre persistida no SQLite antes de qualquer
+  rede; edicao de nota ja enviada (texto ou imagem) marca um flag e entra na fila de sync,
+  que reenvia ao voltar a conexao. Imagens sao salvas no aparelho e exibidas no editor pelo
+  proprio arquivo (`file://`), sem base64 nem download a cada abertura; um mapa de anexos
+  evita reenviar a mesma imagem. Na importacao a foto e reduzida (maior lado ate 2048 px) e
+  recomprimida em JPEG de alta qualidade (`expo-image-manipulator`), o que remove o atraso
+  de abrir a nota (o editor nao decodifica mais a foto em resolucao cheia). Imagem que ainda
+  nao esta no aparelho nao segura a abertura: o editor monta com as locais, baixa o resto
+  em segundo plano e a imagem entra quando chega. A pilha de audios do servidor
+  tambem fica em cache no SQLite e e revalidada em background.
 - Biblioteca por ano, busca local, pull-to-refresh, swipe para apagar/arquivar e opcoes.
 - Status de sincronizacao no cabecalho e tela de fila; notificacao quando a transcricao
   fica pronta; compartilhar o texto da nota.
 - Painel com as metricas do servidor (resumo, humor, tags, status).
 - Armazenamento local: uso no aparelho e liberar espaco (remove o audio local de notas ja
   sincronizadas; o audio continua no servidor).
+- Centro de atividade com historico persistente no SQLite (`activity_log`): o que terminou,
+  falhou ou foi interrompido continua la depois de reabrir o app. Cada item em andamento
+  tem botao de parar quando o produtor sabe interromper sem perder o trabalho ja feito
+  (transcricao para no fim da janela, revisao no fim da janela, analise aborta a geracao,
+  download cancela o arquivo, backup/restauracao param entre uma nota e outra). Uma
+  atividade que ficou `running` no banco morreu com o processo anterior e aparece como
+  **interrompida**, nunca como concluida.
 
 ### Proximos passos
 
@@ -113,8 +225,6 @@ Superficie Android em Expo (development build). O nucleo puro fica em `mobile/sr
    vai para o Drive do usuario, nao do dono do projeto.
 4. **Cifra em repouso no aparelho (pendente)**: AES-256-GCM com chave no SecureStore;
    requer lib nativa de cripto.
-5. **Endpoint de nota de texto no servidor** (`POST /api/v1/entries`), para o texto tambem
-   entrar no backup do servidor.
 
 ### Notas de confiabilidade
 
@@ -123,6 +233,49 @@ Superficie Android em Expo (development build). O nucleo puro fica em `mobile/sr
 - Armazenamento local em `recordings/<id>/` (diretorio de documentos, nao apagado pelo SO).
 - `android.allowBackup=false` (sem backup automatico do SO); o backup sera explicito
   (zip local primeiro; Drive depois).
+
+## 0.3: processamento explicito
+
+Objetivo: nunca deixar duvida sobre onde a transcricao e a analise acontecem.
+
+Decidido e implementado nesta rodada:
+
+- App e web sao pares, cada um com banco proprio. O sync leva o que ja foi feito; nada e
+  reprocessado automaticamente. Colisao: o primeiro a chegar no banco de destino vence.
+  Refazer e manual e propaga.
+- Tres interruptores em Opcoes > Processamento (transcricao, analise, processar no
+  servidor). Instalacao nova nasce com os tres desligados; instalacao antiga preserva a
+  escolha que tinha (`localTranscription`).
+- Folha do icone de IA na nota: mesmos tres interruptores, apresentacao automatica uma vez,
+  "ocultar" gravado em `app_flags` (fora de backup; reinstalar reabre).
+- Sem servidor: as etapas travam no aparelho (ou desligadas), sem banner nem cobranca.
+- Upload leva `local_transcribe` e `local_analysis`; o servidor nao enfileira o que e do
+  cliente.
+- `PUT /entries/{id}/analysis` guarda a analise feita no aparelho (origem `app`), com
+  first-arrival e refazer explicito (`replace`), e o app faz backfill na conexao.
+- Origem da analise com tres valores (`app`, `server`, `api`): o servidor classifica
+  provedor local/hospedado, e o app e o dashboard mostram o rotulo.
+- Transcricao no aparelho comeca ao enfileirar a gravacao, nao so no boot.
+
+- Transcricao lida como texto: italico e aspas nos dois lados, minutagem discreta; no
+  app, toque abre o popup de edicao e o toque longo captura o trecho como tarefa, ideia
+  ou citacao numa nota do caderno "Tarefas e ideias".
+- No caderno "Tarefas e ideias", a nota ganha um **check de feito** ao lado da data:
+  marcar arquiva a captura (sai da lista do caderno, entra em Arquivadas); desmarcar
+  devolve para a lista.
+- Opcoes > Notas: **Arquivadas** agrupadas por caderno, com desarquivar em um toque, e
+  **Lixeira** com o que foi apagado.
+- Apagar e logico tambem no aparelho: a nota e o audio ficam 7 dias na lixeira local e
+  podem ser restaurados; o servidor usa a mesma janela. Passado o prazo, o boot libera
+  os arquivos e a linha. Rascunho vazio continua sendo descartado direto.
+
+Pendente para fechar o 0.3:
+
+- Selo de origem **da transcricao** por audio no app e no dashboard (a analise ja mostra).
+- Origem do artefato com tres valores (`aplicativo`, `site web`, `API`) e selo por nota.
+- Acoes em lote no dashboard ("Transcrever N" / "Analisar N"), serializadas e cancelaveis.
+- Bugs de interface: player duplicado e seek, rolagem automatica da transcricao, menu da
+  nota em folha de 50%, barra de acoes rolavel com estado dos botoes.
 
 ## Distribuicao e releases
 

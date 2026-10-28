@@ -5,7 +5,6 @@
  * nota de texto. Puro e testavel.
  */
 
-import { formatTitle } from './title';
 import type { Recording } from './types';
 
 export interface TextNoteInput {
@@ -14,6 +13,11 @@ export interface TextNoteInput {
   text: string;
   /** Data do evento (ISO). Default: agora. */
   recordedAt?: string;
+  /**
+   * Trecho de transcricao que originou a nota: a nota de origem e o instante
+   * falado. Fica local, para o botao "ouvir o trecho" levar de volta ao ponto.
+   */
+  capture?: { sourceId: string; startMs: number };
   now: Date;
 }
 
@@ -36,6 +40,8 @@ export function buildTextNote(input: TextNoteInput): Recording {
     // O texto ja e o conteudo: nao ha transcricao a esperar.
     transcript: text,
     transcriptStatus: 'ready',
+    captureSourceId: input.capture?.sourceId,
+    captureStartMs: input.capture?.startMs,
     createdAt: iso,
     updatedAt: iso,
   };
@@ -46,7 +52,7 @@ export function buildDraftNote(input: { id: string; now: Date }): Recording {
   const iso = input.now.toISOString();
   return {
     id: input.id,
-    title: formatTitle(input.now),
+    title: '',
     recordedAt: iso,
     dir: '',
     segmentCount: 0,
@@ -63,4 +69,17 @@ export function buildDraftNote(input: { id: string; now: Date }): Recording {
 /** Uma nota tem conteudo quando tem audio ou texto nao vazio. */
 export function noteHasContent(note: Recording): boolean {
   return Boolean(note.filePath) || Boolean(note.text && note.text.trim().length > 0);
+}
+
+/**
+ * Rascunho ainda em branco (sem audio, sem texto e sem titulo): existe no banco,
+ * mas nao aparece na lista — o usuario nao deve ver "nota vazia" antes de escrever.
+ */
+export function isBlankDraft(note: Recording): boolean {
+  return (
+    note.status === 'draft' &&
+    !note.filePath &&
+    !(note.title ?? '').trim() &&
+    !(note.text ?? '').trim()
+  );
 }

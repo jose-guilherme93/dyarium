@@ -18,14 +18,19 @@ VERSION ?= dev
 MODELS_DIR ?= models
 MODELS ?= small-q5_1 medium-q5_0
 MODELS_BASE_URL ?= https://huggingface.co/ggerganov/whisper.cpp/resolve/main
+OLLAMA_MODEL ?= qwen2.5:0.5b
 WEB_PORT ?= 5173
 API_PORT ?= 8080
+# Porta HTTPS do tailscale serve para o dyarium. NUNCA use a 443: ela e do
+# Traefik. O dashboard e a API ficam no mesmo endereco; o proxy do dashboard
+# encaminha /api/v1 para o servidor.
+TAILSCALE_WEB_PORT ?= 8445
 
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
 
-.PHONY: help dev dev-opencode down build test test-go test-web lint lint-go lint-web fmt bench-transcricao models tailscale tailscale-off clean mobile-dev mobile-test mobile-lint
+.PHONY: help dev dev-opencode down build test test-go test-web lint lint-go lint-web fmt dedupe bench-transcricao models tailscale tailscale-off clean mobile-dev mobile-test mobile-lint ai
 
 help: ## Lista os alvos disponiveis
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -65,6 +70,9 @@ lint-web:
 fmt: ## Formata o codigo Go
 	gofmt -w .
 
+dedupe: ## Mescla as notas duplicadas do mesmo audio (DRY=1 simula)
+	$(GO) run ./cmd/diary dedupe $(if $(DRY),--dry-run,)
+
 mobile-dev: ## Sobe o app Expo apontando para a tailnet (abre no celular)
 	bash scripts/mobile-dev.sh
 
@@ -86,12 +94,16 @@ models: ## Baixa os modelos ggml para MODELS_DIR
 		curl -fL --retry 3 -o "$$file" "$(MODELS_BASE_URL)/ggml-$$m.bin"; \
 	done
 
-tailscale: ## Expoe a porta de desenvolvimento na tailnet via tailscale serve
-	tailscale serve --bg http://127.0.0.1:$(WEB_PORT)
+tailscale: ## Expoe dashboard e API no mesmo endereco da tailnet via HTTPS
+	tailscale serve --bg --https=$(TAILSCALE_WEB_PORT) http://127.0.0.1:$(WEB_PORT)
 	@tailscale serve status || true
 
-tailscale-off: ## Remove a exposicao da tailnet
-	tailscale serve reset
+tailscale-off: ## Remove so a exposicao do dyarium na tailnet (preserva os outros servicos)
+	tailscale serve --https=$(TAILSCALE_WEB_PORT) off || true
+
+ai: ## Sobe o Ollama local e baixa o modelo padrao da analise
+	DIARY_API_PORT=$(API_PORT) DIARY_WEB_PORT=$(WEB_PORT) $(COMPOSE) -f $(DEV_FILE) --profile ai up -d ollama
+	$(COMPOSE) -f $(DEV_FILE) --profile ai exec -T ollama ollama pull $(OLLAMA_MODEL)
 
 clean: ## Remove artefatos locais
 	rm -rf web/dist bin tmp

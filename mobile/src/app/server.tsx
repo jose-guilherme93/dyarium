@@ -1,15 +1,15 @@
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { back } from '@/services/appNavigation';
 import { useCallback, useEffect, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
-  Text,
   View,
 } from 'react-native';
+import { Text } from '@/components/AppText';
+import { Press } from '@/components/Press';
 
 import { Button } from '@/components/Button';
 import { Card } from '@/components/Card';
@@ -18,17 +18,22 @@ import { Screen } from '@/components/Screen';
 import type { ServerConfig } from '@/core/types';
 import { discoverServer } from '@/services/discovery';
 import { useSettings, type ConnectionResult } from '@/state/SettingsContext';
-import { colors, fontSize, radius, spacing } from '@/theme/tokens';
+import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 export default function ServerScreen() {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const { config, ready, save, disconnect } = useSettings();
 
   return (
     <Screen>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.back} accessibilityLabel="Voltar">
+        <Press onPress={() => back()} style={styles.back} accessibilityLabel="Voltar">
           <Ionicons name="chevron-back" size={24} color={colors.text} />
-        </Pressable>
+        </Press>
         <Text style={styles.title}>Servidor</Text>
         <View style={styles.back} />
       </View>
@@ -46,6 +51,9 @@ interface ServerFormProps {
 }
 
 function ServerForm({ config, save, disconnect }: ServerFormProps) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const [baseUrl, setBaseUrl] = useState(config?.baseUrl ?? '');
   const [token, setToken] = useState(config?.token ?? '');
   const [busy, setBusy] = useState(false);
@@ -62,7 +70,7 @@ function ServerForm({ config, save, disconnect }: ServerFormProps) {
       setBaseUrl(found);
       setDiscovery(`Servidor encontrado em ${found}`);
     } else {
-      setDiscovery('Nao encontrei o servidor automaticamente. Informe a URL abaixo.');
+      setDiscovery('Não encontrei o servidor automaticamente. Informe a URL abaixo.');
     }
   }, []);
 
@@ -177,7 +185,7 @@ function ServerForm({ config, save, disconnect }: ServerFormProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   flex: { flex: 1 },
   header: {
     flexDirection: 'row',
@@ -187,10 +195,10 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
   },
   back: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  title: { color: colors.text, fontSize: fontSize.lg, fontWeight: '700' },
+  title: { color: baseColors.text, fontSize: fontSize.lg, fontWeight: '700' },
   content: { padding: spacing.xl, gap: spacing.lg },
-  lead: { color: colors.textSecondary, fontSize: fontSize.md, lineHeight: 22 },
-  discovery: { color: colors.textSecondary, fontSize: fontSize.sm },
+  lead: { color: baseColors.textSecondary, fontSize: fontSize.md, lineHeight: 22 },
+  discovery: { color: baseColors.textSecondary, fontSize: fontSize.sm },
   form: { gap: spacing.lg },
   message: {
     flexDirection: 'row',
@@ -202,5 +210,5 @@ const styles = StyleSheet.create({
   },
   messageText: { flex: 1, fontSize: fontSize.sm, fontWeight: '600' },
   tip: { flexDirection: 'row', gap: spacing.md, alignItems: 'flex-start' },
-  tipText: { flex: 1, color: colors.textSecondary, fontSize: fontSize.sm, lineHeight: 20 },
+  tipText: { flex: 1, color: baseColors.textSecondary, fontSize: fontSize.sm, lineHeight: 20 },
 });

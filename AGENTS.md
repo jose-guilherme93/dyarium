@@ -9,13 +9,8 @@ O projeto tem tres superficies: o binario Go (`cmd/`, `internal/`), o dashboard
 
 ## Como trabalhar
 
-- **Toda tarefa comeca em um worktree proprio**, fora do checkout principal:
-  ```
-  /home/joseti/projects/dyarium.worktrees/<slug>
-  ```
-  Criado com `git worktree add -b <tipo>/<slug> <caminho>` a partir de `main`.
-- **Nunca trabalhe no checkout principal** (`/home/joseti/projects/dyarium`)
-  nem mexa nos outros worktrees. Um worktree por tarefa.
+- **Trabalhe direto no checkout e na branch `develop`**, sem worktree. Um
+  worktree por tarefa so quando o mantenedor pedir explicitamente.
 - Antes de mudar algo, leia `docs/` e os arquivos envolvidos. Trate mudancas nao
   commitadas que voce nao criou como trabalho de terceiros: investigue, nao apague.
 - **Nunca faca commit, push ou rebase sem pedido explicito.** Quando pedido, use
@@ -23,6 +18,20 @@ O projeto tem tres superficies: o binario Go (`cmd/`, `internal/`), o dashboard
 - Nunca use `git add -A`/`git add .` as cegas; revise o que vai entrar.
 - Nao edite codigo gerado (`web/dist/`, `web/node_modules/`, migrations ja
   aplicadas, `models/`). Migrations sao append-only.
+
+## Interface: mostre, nao escreva
+
+Regra de UX do produto, nao sugestao. Vale para o app, o dashboard e as notificacoes.
+
+- Estado se mostra com **icone, numero e medidor**. Nenhuma frase explicando o que o usuario
+  ja ve.
+- Explicacao mora atras de um toque (folha, tooltip, `accessibilityLabel`), nunca em
+  paragrafo na tela.
+- Texto visivel so para: nome de nota, rotulo de uma a tres palavras, numero e erro
+  acionavel.
+- Notificacao tem no maximo duas linhas curtas: o numero na frente, o nome da nota atras.
+- A aparencia distingue os estados de verdade: preenchido = feito, contorno = nao feito,
+  aviso = ficou de fora. "Nao mudou nada" e "nao rodou" nunca podem parecer a mesma coisa.
 
 ## Versoes e releases
 
@@ -54,6 +63,10 @@ O projeto tem tres superficies: o binario Go (`cmd/`, `internal/`), o dashboard
 - **Segredo nenhum no repositorio.** Token, chave mestra, chaves S3, tokens de
   bot, dominios, IPs e nomes de tailnet reais ficam fora do codigo e dos testes.
   Tudo por variavel de ambiente; `.env.example` sem valores reais.
+- **Ferramentas locais de depuracao ficam fora do repositorio.** Scripts que
+  apontam para o aparelho/emulador (`scripts/adb-*.sh`, `scripts/qr-pair.py`)
+  contem IP e porta reais e sao ignorados pelo git. Nunca force a entrada deles
+  com `git add -f`; se precisar compartilhar o procedimento, documente sem o IP.
 - **Segredos de runtime:** quando `DIARY_MASTER_KEY` e `DIARY_TOKEN` nao vem do
   ambiente, a chave mestra e o token sao gerados no primeiro boot e persistidos
   em `/data` (`master.key` e `token`, modo 0600). Nunca logue o valor; no maximo

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jose-guilherme93/dyarium/internal/jobs"
-	"github.com/jose-guilherme93/dyarium/internal/store"
+	"github.com/joseti/dyarium/internal/jobs"
+	"github.com/joseti/dyarium/internal/store"
 )
 
 func newQueue(t *testing.T) *jobs.Queue {
@@ -93,6 +93,40 @@ func TestClaimLeaseAndBackoff(t *testing.T) {
 	}
 }
 
+func TestRetryingJobIsClaimedAfterBackoff(t *testing.T) {
+	q := newQueue(t)
+	ctx := context.Background()
+	id, err := q.Enqueue(ctx, jobs.TypeTranscribe, "retry-1", jobs.TranscribePayload{EntryID: "en1"})
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	job, err := q.Claim(ctx, "worker-1", time.Minute)
+	if err != nil || job == nil {
+		t.Fatalf("claim: job=%v err=%v", job, err)
+	}
+	// Falha com backoff curto: o job fica "retrying" e indisponivel na hora.
+	if err := q.Fail(ctx, id, errTest, 300*time.Millisecond); err != nil {
+		t.Fatalf("fail: %v", err)
+	}
+	if again, _ := q.Claim(ctx, "worker-1", time.Minute); again != nil {
+		t.Fatal("job em backoff nao deveria ser reivindicado")
+	}
+
+	// backoff(300ms, 1) soma ate 75ms de jitter: espere alem do pior caso.
+	time.Sleep(450 * time.Millisecond)
+
+	again, err := q.Claim(ctx, "worker-1", time.Minute)
+	if err != nil {
+		t.Fatalf("claim depois do backoff: %v", err)
+	}
+	if again == nil {
+		t.Fatal("job em retrying nao foi reivindicado de novo")
+	}
+	if again.ID != id || again.Attempts != 1 {
+		t.Fatalf("job = %+v, want id %s com 1 tentativa", again, id)
+	}
+}
+
 func TestRequeueExpiredLease(t *testing.T) {
 	q := newQueue(t)
 	ctx := context.Background()
@@ -122,10 +156,11 @@ var errTest = testError{}
 func TestCancelEntry(t *testing.T) {
 	q := newQueue(t)
 	ctx := context.Background()
-	if _, err := q.Enqueue(ctx, jobs.TypeTranscribe, "transcribe:en1", jobs.TranscribePayload{EntryID: "en1"}); err != nil {
+	// As chaves reais: a transcricao usa o id do audio, a analise leva o modelo.
+	if _, err := q.Enqueue(ctx, jobs.TypeTranscribe, "transcribe:att-9", jobs.TranscribePayload{EntryID: "en1", AttachmentID: "att-9"}); err != nil {
 		t.Fatalf("enqueue transcribe: %v", err)
 	}
-	if _, err := q.Enqueue(ctx, jobs.TypeAnalyze, "analyze:en1", jobs.AnalyzePayload{EntryID: "en1"}); err != nil {
+	if _, err := q.Enqueue(ctx, jobs.TypeAnalyze, "analyze:en1:modelo", jobs.AnalyzePayload{EntryID: "en1"}); err != nil {
 		t.Fatalf("enqueue analyze: %v", err)
 	}
 	ids, err := q.CancelEntry(ctx, "en1")
@@ -142,5 +177,13 @@ func TestCancelEntry(t *testing.T) {
 	queued, _ := q.CountByStatus(ctx, jobs.StatusQueued)
 	if queued != 0 {
 		t.Fatalf("queued = %d, esperava 0", queued)
+	}
+}
+
+// A analise automatica e o clique manual precisam usar a mesma chave: uma
+// chave diferente abria duas passadas concorrentes na mesma nota.
+func TestAnalyzeKeyIsTheSameForAutomaticAndManualRuns(t *testing.T) {
+	if got := jobs.AnalyzeKey("en1"); got != "analyze:en1" {
+		t.Fatalf("AnalyzeKey = %q", got)
 	}
 }

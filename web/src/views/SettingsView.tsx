@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, getToken } from "../api";
 import { Toggle } from "../components/Toggle";
+import { TrashSection } from "../components/TrashSection";
 import { useToast } from "../components/Toasts";
-import type { ModelInfo, Settings } from "../types";
+import type { LocalAnalysis, ModelInfo, Settings } from "../types";
 
 interface DownloadProgress {
   received: number;
@@ -20,6 +21,19 @@ interface ProviderPreset {
 }
 
 const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
+  opencodeZen: {
+    label: "OpenCode Zen (chave)",
+    baseUrl: "https://opencode.ai/inference/openai/v1",
+    model: "glm-5.3-flash-free",
+    kind: "openai",
+  },
+  opencodeGo: {
+    label: "OpenCode Go (assinatura)",
+    baseUrl: "https://opencode.ai/inference/go/openai/v1",
+    // Nao e modelo de raciocinio: responde direto, sem gastar o teto pensando.
+    model: "glm-5.3-flash",
+    kind: "openai",
+  },
   opencodeLocal: {
     label: "opencode local (login)",
     baseUrl: "http://127.0.0.1:49374",
@@ -31,6 +45,49 @@ const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
   custom: { label: "Personalizado", baseUrl: "", model: "", kind: "openai" },
 };
 
+// A análise fala o formato /chat/completions. No OpenCode, Claude, GPT, Gemini
+// e Grok usam outros formatos (Anthropic, Responses, Google), entao so entram
+// na lista os modelos que o cliente sabe chamar.
+// Modelos que pensam antes de responder. Nao servem de padrao para analisar
+// notas: gastam o teto de tokens raciocinando e demoram mais. A interface os
+// marca para o usuario escolher com o custo na frente.
+const REASONING_MODELS = new Set([
+  "deepseek-v4.1-flash-free",
+  "deepseek-v4.1-flash",
+  "deepseek-v4-pro",
+  "glm-5.3",
+  "longcat-2.0",
+  "qwen3.8-max",
+  "minimax-m3",
+  "hy3",
+]);
+
+function isReasoningModel(model: string): boolean {
+  return REASONING_MODELS.has(model);
+}
+
+const ZEN_MODELS = [
+  "glm-5.3-flash-free",
+  "glm-5.3-flash",
+  "kimi-k2.7-code",
+  "space-bunny-free",
+  "deepseek-v4.1-flash-free",
+  "deepseek-v4.1-flash",
+  "qwen3.8-max",
+  "minimax-m3",
+];
+
+const GO_MODELS = [
+  "glm-5.3-flash",
+  "kimi-k2.7-code",
+  "space-bunny",
+  "deepseek-v4.1-flash",
+  "deepseek-v4-pro",
+  "glm-5.3",
+  "longcat-2.0",
+  "hy3",
+];
+
 const OPENCODE_MODELS = [
   "opencode-go/qwen3.8-flash",
   "opencode-go/glm-5.3-flash",
@@ -40,6 +97,8 @@ const OPENCODE_MODELS = [
 ];
 
 const FALLBACK_MODELS: Record<string, string[]> = {
+  opencodeZen: ZEN_MODELS,
+  opencodeGo: GO_MODELS,
   opencodeLocal: OPENCODE_MODELS,
   deepseek: ["deepseek-chat", "deepseek-reasoner"],
   ollama: [],
@@ -50,6 +109,12 @@ function providerFromSettings(kind: string, baseUrl: string): string {
   if (kind === "opencode") {
     return "opencodeLocal";
   }
+  if (baseUrl.includes("opencode.ai/inference/go/")) {
+    return "opencodeGo";
+  }
+  if (baseUrl.includes("opencode.ai/inference/")) {
+    return "opencodeZen";
+  }
   if (baseUrl.includes("deepseek")) {
     return "deepseek";
   }
@@ -59,9 +124,15 @@ function providerFromSettings(kind: string, baseUrl: string): string {
   return "custom";
 }
 
-export function SettingsView() {
+/** Modelos do OpenCode vem de uma lista curada: o /models deles não diz o formato de cada um. */
+function canSearchModels(provider: string): boolean {
+  return provider !== "opencodeZen" && provider !== "opencodeGo";
+}
+
+export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
   const { notify } = useToast();
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [ownerName, setOwnerName] = useState("");
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [progress, setProgress] = useState<Record<string, DownloadProgress>>({});
   const [ceiling, setCeiling] = useState("0");
@@ -71,14 +142,20 @@ export function SettingsView() {
   const [provider, setProvider] = useState("custom");
   const [providerModels, setProviderModels] = useState<string[]>([]);
   const [modelsNote, setModelsNote] = useState("");
+  const [local, setLocal] = useState<LocalAnalysis | null>(null);
+  const [localBusy, setLocalBusy] = useState(false);
   const [error, setError] = useState("");
 
+  const searchable = canSearchModels(provider);
   const modelOptions = useMemo(() => {
-    const fallback = FALLBACK_MODELS[provider] ?? [];
-    const list = providerModels.length > 0 ? providerModels : fallback;
+    const fallback = provider === "ollama"
+      ? (local?.models?.length ? local.models : local?.model ? [local.model] : [])
+      : FALLBACK_MODELS[provider] ?? [];
+    const remote = provider !== "ollama" && searchable ? providerModels : [];
+    const list = remote.length > 0 ? remote : fallback;
     const current = settings?.analyze_model ?? "";
     return [...new Set([...list, current])].filter((model) => model !== "");
-  }, [provider, providerModels, settings?.analyze_model]);
+  }, [provider, providerModels, settings?.analyze_model, local, searchable]);
 
   const loadSettings = useCallback(async () => {
     const value = await api.getSettings();
@@ -93,10 +170,25 @@ export function SettingsView() {
     setModels(result.models ?? []);
   }, []);
 
+  const loadLocal = useCallback(async () => {
+    try {
+      setLocal(await api.getLocalAnalysis());
+    } catch {
+      setLocal(null);
+    }
+  }, []);
+
   useEffect(() => {
     loadSettings().catch((err: unknown) => setError(err instanceof Error ? err.message : "falha ao carregar"));
     loadModels().catch((err: unknown) => setError(err instanceof Error ? err.message : "falha ao carregar"));
-  }, [loadSettings, loadModels]);
+    void loadLocal();
+  }, [loadSettings, loadModels, loadLocal]);
+
+  useEffect(() => {
+    if (provider === "ollama") {
+      void loadLocal();
+    }
+  }, [provider, loadLocal]);
 
   useEffect(() => {
     const token = getToken();
@@ -124,7 +216,11 @@ export function SettingsView() {
     return () => source.close();
   }, [loadModels]);
 
-  const save = async (patch: Record<string, unknown>, message = "Configuracao salva") => {
+  useEffect(() => {
+    if (settings) setOwnerName(settings.owner_name ?? "");
+  }, [settings]);
+
+  const save = async (patch: Record<string, unknown>, message = "Configuração salva") => {
     try {
       await api.putSettings(patch);
       await loadSettings();
@@ -151,10 +247,51 @@ export function SettingsView() {
   }, []);
 
   useEffect(() => {
-    if (settings?.analyze_base_url) {
+    if (settings?.analyze_base_url && searchable) {
       void fetchModels();
     }
-  }, [settings?.analyze_base_url, fetchModels]);
+  }, [settings?.analyze_base_url, searchable, fetchModels]);
+
+  // Enquanto o modelo baixa, o painel acompanha pelo mesmo endpoint que iniciou
+  // o download; quando termina, recarrega as configurações para refletir o modelo.
+  const pulling = Boolean(local?.pull && !local.pull.done && !local.pull.error);
+  useEffect(() => {
+    if (!pulling) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      void loadLocal();
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [pulling, loadLocal]);
+
+  const pullDone = Boolean(local?.pull?.done && !local.pull?.error);
+  useEffect(() => {
+    if (pullDone) {
+      void loadSettings();
+    }
+  }, [pullDone, loadSettings]);
+
+  /** Um clique: configura o Ollama local e baixa o modelo se ainda faltar. */
+  const installLocal = async () => {
+    const model = settings?.analyze_model?.trim() || local?.model || "";
+    setLocalBusy(true);
+    try {
+      const result = await api.setupLocalAnalysis(model);
+      setProvider("ollama");
+      await Promise.all([loadSettings(), loadLocal()]);
+      notify(
+        result.status === "ready"
+          ? "Ollama configurado"
+          : `Baixando ${result.model} em segundo plano`,
+        result.status === "ready" ? "success" : "info",
+      );
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "não foi possível configurar o Ollama", "error");
+    } finally {
+      setLocalBusy(false);
+    }
+  };
 
   const download = async (name: string) => {
     try {
@@ -171,9 +308,12 @@ export function SettingsView() {
 
   return (
     <section className="settings-page">
-      <div className="view-header">
-        <h1>Configuracao</h1>
-      </div>
+      <header className="page-head">
+        <div>
+          <h1>Configurações</h1>
+          <p>Transcrição, análise por IA e o que fica guardado no servidor.</p>
+        </div>
+      </header>
       {error && <p className="error">{error}</p>}
 
       {!settings && <p className="muted">Carregando...</p>}
@@ -182,8 +322,8 @@ export function SettingsView() {
         <>
           <div className="card">
             <div className="card-head">
-              <h2>Modelos de transcricao</h2>
-              <p className="hint">Modelos ggml do whisper. O modelo ativo vale para as proximas transcricoes.</p>
+              <h2>Modelos de transcrição</h2>
+              <p className="hint">Modelos ggml do whisper. O modelo ativo vale para as próximas transcrições.</p>
             </div>
             <ul className="model-list">
               {models.map((model) => {
@@ -203,12 +343,17 @@ export function SettingsView() {
                       <span>{model.name}</span>
                     </label>
                     <span className="muted">
-                      ~{model.size_mb} MB ·{" "}
-                      {model.downloaded ? `baixado (${Math.round(model.local_bytes / 1048576)} MB)` : "ausente"}
+                      ~{model.size_mb} MB{" "}
+                      {model.downloaded ? `(${Math.round(model.local_bytes / 1048576)} MB baixados)` : "(ausente)"}
                     </span>
                     {!model.downloaded && (
-                      <button type="button" onClick={() => void download(model.name)} disabled={p && !p.done}>
-                        Baixar
+                      <button
+                        type="button"
+                        className="button button--ghost button--small"
+                        onClick={() => void download(model.name)}
+                        disabled={p && !p.done}
+                      >
+                        {p && !p.done ? "Baixando..." : "Baixar"}
                       </button>
                     )}
                     {p && !p.done && (
@@ -225,13 +370,13 @@ export function SettingsView() {
 
           <div className="card">
             <div className="card-head">
-              <h2>Transcricao</h2>
+              <h2>Transcrição</h2>
               <p className="hint">Como o audio vira texto.</p>
             </div>
             <div className="field">
               <span className="field-label">Provedor</span>
               <select
-                aria-label="Provedor de transcricao"
+                aria-label="Provedor de transcrição"
                 value={settings.transcribe_provider}
                 onChange={(event) => void save({ transcribe_provider: event.target.value })}
               >
@@ -256,12 +401,13 @@ export function SettingsView() {
                     <input
                       type="password"
                       aria-label="Chave da Deepgram"
-                      placeholder={settings.deepgram_api_key_set ? "definida (deixe vazio para manter)" : "nao definida"}
+                      placeholder={settings.deepgram_api_key_set ? "definida (deixe vazio para manter)" : "não definida"}
                       value={deepgramKey}
                       onChange={(event) => setDeepgramKey(event.target.value)}
                     />
                     <button
                       type="button"
+                      className="button button--ghost button--small"
                       onClick={() => {
                         if (deepgramKey.trim() !== "") {
                           void save({ deepgram_api_key: deepgramKey }, "Chave da Deepgram salva");
@@ -278,26 +424,26 @@ export function SettingsView() {
             <div className="field">
               <span className="field-label">Idioma</span>
               <select
-                aria-label="Idioma da transcricao"
+                aria-label="Idioma da transcrição"
                 value={settings.whisper_language}
                 onChange={(event) => void save({ whisper_language: event.target.value })}
               >
                 <option value="">Detectar automaticamente</option>
-                <option value="pt">Portugues</option>
-                <option value="en">Ingles</option>
+                <option value="pt">Português</option>
+                <option value="en">Inglês</option>
                 <option value="es">Espanhol</option>
-                <option value="fr">Frances</option>
-                <option value="de">Alemao</option>
+                <option value="fr">Francês</option>
+                <option value="de">Alemão</option>
                 <option value="it">Italiano</option>
-                <option value="ja">Japones</option>
-                <option value="zh">Chines</option>
+                <option value="ja">Japonês</option>
+                <option value="zh">Chinês</option>
                 <option value="ru">Russo</option>
-                <option value="ar">Arabe</option>
+                <option value="ar">Árabe</option>
                 <option value="hi">Hindi</option>
               </select>
             </div>
             <div className="field">
-              <span className="field-label">Corte de silencio</span>
+              <span className="field-label">Corte de silêncio</span>
               <Toggle
                 checked={settings.trim_silence}
                 onChange={(value) => void save({ trim_silence: value })}
@@ -310,12 +456,13 @@ export function SettingsView() {
                 <input
                   type="number"
                   min={0}
-                  aria-label="Limite de RAM da transcricao em MB"
+                  aria-label="Limite de RAM da transcrição em MB"
                   value={ceiling}
                   onChange={(event) => setCeiling(event.target.value)}
                 />
                 <button
                   type="button"
+                  className="button button--ghost button--small"
                   onClick={() => void save({ max_whisper_rss_mb: Math.max(0, Math.floor(Number(ceiling) || 0)) })}
                 >
                   Salvar
@@ -327,14 +474,53 @@ export function SettingsView() {
 
           <div className="card">
             <div className="card-head">
-              <h2>Analise por IA</h2>
+              <h2>Autor</h2>
+              <p className="hint">
+                O nome que a IA e o centro do mapa usam. O interruptor vale para notas sem escolha manual;
+                o seletor de cada nota sempre vence.
+              </p>
+            </div>
+            <div className="field">
+              <span className="field-label">Seu nome</span>
+              <input
+                type="text"
+                aria-label="Seu nome"
+                value={ownerName}
+                maxLength={80}
+                placeholder="Você"
+                onChange={(event) => setOwnerName(event.target.value)}
+                onBlur={() => {
+                  const next = ownerName.trim();
+                  if (next !== (settings.owner_name ?? "")) {
+                    void save({ owner_name: next }, "Nome salvo");
+                  }
+                }}
+              />
+            </div>
+            <div className="field">
+              <span className="field-label">Todas as notas são minhas</span>
+              <Toggle
+                checked={settings.all_notes_mine}
+                onChange={(value) => void save({ all_notes_mine: value })}
+                label={settings.all_notes_mine ? "Ligado" : "Desligado"}
+                ariaLabel="Todas as notas são minhas"
+              />
+              <span className="hint">
+                Desligado, uma nota sem escolha manual fica sem autor. O seletor da nota sempre vence.
+              </span>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-head">
+              <h2>Análise por IA</h2>
               <p className="hint">
                 Escolha o provedor, cole a chave e selecione o modelo. A lista de modelos e buscada do provedor;
                 use Personalizado para informar a base manualmente.
               </p>
             </div>
             <div className="field">
-              <span className="field-label">Ativar analise</span>
+              <span className="field-label">Ativar análise</span>
               <Toggle
                 checked={settings.analyze_enabled}
                 onChange={(value) => void save({ analyze_enabled: value })}
@@ -342,17 +528,55 @@ export function SettingsView() {
               />
             </div>
             <div className="field">
+              <span className="field-label">Revisar a transcrição com IA</span>
+              <Toggle
+                checked={settings.review_enabled}
+                onChange={(value) => void save({ review_enabled: value })}
+                label={settings.review_enabled ? "Ligada" : "Desligada"}
+                ariaLabel="Revisar a transcrição com IA"
+              />
+              <span className="hint">
+                Corrige concordância, pontuação e siglas antes de analisar. Desligada, a análise
+                continua funcionando, mas perde precisão sobre o que foi falado. Vale só para este
+                dashboard: a escolha no app é separada.
+              </span>
+            </div>
+            {settings.review_enabled && (
+              <div className="field">
+                <span className="field-label">Transcrição literal</span>
+                <Toggle
+                  checked={settings.literal_transcript}
+                  onChange={(value) => void save({ literal_transcript: value })}
+                  label={settings.literal_transcript ? "Ligada" : "Desligada"}
+                  ariaLabel="Transcrição literal"
+                />
+                <span className="hint">
+                  Mantém hesitações ("éé", "hum") e repetições de gagueira, para quem quer acompanhar
+                  como fala. Desligada, a revisão remove só o que não tem significado; "tipo", "né"
+                  e gírias ficam sempre.
+                </span>
+              </div>
+            )}
+            <div className="field">
               <span className="field-label">Provedor</span>
               <select
-                aria-label="Provedor da analise"
+                aria-label="Provedor da análise"
                 value={provider}
                 onChange={(event) => {
                   const value = event.target.value;
                   setProvider(value);
+                  setProviderModels([]);
+                  setModelsNote("");
                   const preset = PROVIDER_PRESETS[value];
                   if (preset && value !== "custom") {
                     void save(
-                      { analyze_provider: preset.kind, analyze_base_url: preset.baseUrl, analyze_model: preset.model },
+                      {
+                        analyze_provider: preset.kind,
+                        analyze_base_url: preset.baseUrl,
+                        analyze_model: preset.model,
+                        // Escolher o provedor ja e a decisao de ligar a análise.
+                        analyze_enabled: true,
+                      },
                       "Provedor atualizado",
                     );
                   } else if (value === "custom") {
@@ -367,71 +591,133 @@ export function SettingsView() {
                 ))}
               </select>
             </div>
-            <div className="field">
-              <span className="field-label">{provider === "opencodeLocal" ? "Senha do opencode" : "Chave da API"}</span>
-              <div className="field-control">
-                <input
-                  type="password"
-                  aria-label="Chave da API de analise"
-                  placeholder={
-                    settings.analyze_api_key_set
-                      ? "definida (deixe vazio para manter)"
-                      : provider === "opencodeLocal"
-                        ? "senha de ~/.config/opencode/service.json"
-                        : "cole a chave do provedor"
-                  }
-                  value={apiKey}
-                  onChange={(event) => setApiKey(event.target.value)}
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    void (async () => {
-                      if (apiKey.trim() !== "") {
-                        await save({ analyze_api_key: apiKey }, "Chave salva");
-                        setApiKey("");
-                      }
-                      await fetchModels();
-                    })();
-                  }}
-                >
-                  Salvar chave
-                </button>
-              </div>
-              {provider === "opencodeLocal" && (
+            {provider === "ollama" && (
+              <div className="field">
+                <span className="field-label">Ollama local</span>
+                <div className="field-control">
+                  <button
+                    type="button"
+                    className="primary"
+                    onClick={() => void installLocal()}
+                    disabled={localBusy}
+                  >
+                    {localBusy ? "Configurando..." : "Instalar e usar o Ollama local"}
+                  </button>
+                  {local?.pull && !local.pull.done && !local.pull.error && (
+                    <span
+                      className="ram-track"
+                      role="progressbar"
+                      aria-valuenow={local.pull.percent}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                    >
+                      <span className="ram-fill" style={{ width: `${local.pull.percent}%` }} />
+                    </span>
+                  )}
+                </div>
                 <span className="hint">
-                  Usa o opencode ja logado na sua maquina. Informe a URL do servidor do opencode e a senha de
-                  ~/.config/opencode/service.json. O modelo usa o formato provedor/modelo.
+                  {local
+                    ? local.available
+                      ? local.pull && !local.pull.done && !local.pull.error
+                        ? `Baixando ${local.pull.model} (${local.pull.percent}%)...`
+                        : `Ollama no ar em ${local.base_url}, com ${local.models.length} modelo(s) instalado(s).`
+                      : `Ollama não encontrado em ${local.base_url}. Suba o servico local (make ai) e tente de novo.`
+                    : "Verificando o Ollama local..."}
                 </span>
-              )}
-            </div>
+                {local?.pull?.error && <span className="error">{local.pull.error}</span>}
+              </div>
+            )}
+            {provider !== "ollama" && (
+              <div className="field">
+                <span className="field-label">
+                  {provider === "opencodeLocal" ? "Senha do opencode" : "Chave da API"}
+                </span>
+                <div className="field-control">
+                  <input
+                    type="password"
+                    aria-label="Chave da API de análise"
+                    placeholder={
+                      settings.analyze_api_key_set
+                        ? "definida (deixe vazio para manter)"
+                        : provider === "opencodeLocal"
+                          ? "senha de ~/.config/opencode/service.json"
+                          : "cole a chave do provedor"
+                    }
+                    value={apiKey}
+                    onChange={(event) => setApiKey(event.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="button button--ghost button--small"
+                    onClick={() => {
+                      void (async () => {
+                        if (apiKey.trim() !== "") {
+                          await save({ analyze_api_key: apiKey }, "Chave salva");
+                          setApiKey("");
+                        }
+                        if (searchable) {
+                          await fetchModels();
+                        }
+                      })();
+                    }}
+                  >
+                    Salvar chave
+                  </button>
+                </div>
+                {provider === "opencodeLocal" && (
+                  <span className="hint">
+                    Usa o opencode ja logado na sua maquina. Informe a URL do servidor do opencode e a senha de
+                    ~/.config/opencode/service.json. O modelo usa o formato provedor/modelo.
+                  </span>
+                )}
+                {(provider === "opencodeZen" || provider === "opencodeGo") && (
+                  <span className="hint">
+                    Chave do OpenCode Console (opencode.ai/console).{" "}
+                    {provider === "opencodeZen"
+                      ? "Ha modelos gratuitos na lista."
+                      : "A assinatura Go inclui os modelos listados."}
+                  </span>
+                )}
+              </div>
+            )}
             <div className="field">
               <span className="field-label">Modelo</span>
               <div className="field-control">
                 <select
-                  aria-label="Modelo da analise"
+                  aria-label="Modelo da análise"
                   value={settings.analyze_model}
                   onChange={(event) => void save({ analyze_model: event.target.value }, "Modelo atualizado")}
                 >
                   {settings.analyze_model === "" && <option value="">(nenhum)</option>}
                   {modelOptions.map((model) => (
                     <option key={model} value={model}>
-                      {model}
+                      {isReasoningModel(model) ? `${model} · raciocínio` : model}
                     </option>
                   ))}
                 </select>
-                <button type="button" onClick={() => void fetchModels()}>
-                  Buscar modelos
-                </button>
+                {searchable && (
+                  <button type="button" className="button button--ghost button--small" onClick={() => void fetchModels()}>
+                    Buscar modelos
+                  </button>
+                )}
               </div>
               {modelsNote && <span className="hint">{modelsNote}</span>}
+              {isReasoningModel(settings.analyze_model) && (
+                <span className="hint">
+                  Modelo de raciocínio: pensa antes de responder, demora mais e gasta mais tokens.
+                  Um modelo comum entrega a mesma análise mais rápido.
+                </span>
+              )}
+              {!searchable && (
+                <span className="hint">Lista curada de modelos compativeis; a lista completa esta no console.</span>
+              )}
             </div>
             <div className="field">
               <span className="field-label">Base URL</span>
               <input
                 key={settings.analyze_base_url}
                 type="text"
-                aria-label="Base URL da analise"
+                aria-label="Base URL da análise"
                 defaultValue={settings.analyze_base_url}
                 onBlur={(event) => void save({ analyze_base_url: event.target.value })}
               />
@@ -441,17 +727,23 @@ export function SettingsView() {
               <div className="field-control">
                 <input
                   type="text"
-                  aria-label="Temas da analise"
+                  aria-label="Temas da análise"
                   value={themes}
                   onChange={(event) => setThemes(event.target.value)}
                 />
-                <button type="button" onClick={() => void save({ analysis_themes: themes }, "Temas salvos")}>
+                <button
+                  type="button"
+                  className="button button--ghost button--small"
+                  onClick={() => void save({ analysis_themes: themes }, "Temas salvos")}
+                >
                   Salvar
                 </button>
               </div>
-              <span className="hint">Temas preferidos na analise, separados por virgulas.</span>
+              <span className="hint">Temas preferidos na análise, separados por vírgulas.</span>
             </div>
           </div>
+
+          <TrashSection refreshKey={refreshKey} />
         </>
       )}
     </section>

@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { formatDuration } from "../lib/format";
-import { CheckIcon, MoreIcon, PauseIcon, PlayIcon } from "./icons";
+import { CheckIcon, MoreIcon, PauseIcon, PlayIcon, TrashIcon } from "./icons";
 
 interface AudioPlayerProps {
   src: string;
@@ -8,6 +8,10 @@ interface AudioPlayerProps {
   onTime?: (seconds: number) => void;
   /** Reports whether the audio is currently playing. */
   onPlaying?: (playing: boolean) => void;
+  /** Position restored from the previous visit, in seconds. */
+  initialTime?: number;
+  /** Removes this audio (the note body and the stored attachment). */
+  onDelete?: () => void;
 }
 
 export interface AudioPlayerHandle {
@@ -18,7 +22,7 @@ const RATES = [0.75, 1, 1.25, 1.5, 2];
 
 // AudioPlayer is a compact player for a note's original audio.
 export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(function AudioPlayer(
-  { src, onTime, onPlaying }: AudioPlayerProps,
+  { src, onTime, onPlaying, initialTime = 0, onDelete }: AudioPlayerProps,
   handle,
 ) {
   const ref = useRef<HTMLAudioElement | null>(null);
@@ -99,6 +103,13 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
         onLoadedMetadata={(event) => {
           const value = event.currentTarget.duration;
           setDuration(Number.isFinite(value) ? value : 0);
+          if (initialTime > 0) {
+            const element = event.currentTarget;
+            // Seek instead of playing: restoring the position should not make
+            // audio start by itself when the note opens.
+            element.currentTime = Math.min(initialTime, Math.max(0, element.duration - 0.25));
+            setCurrent(element.currentTime);
+          }
         }}
       />
       <button type="button" className="player-toggle" onClick={toggle} aria-label={playing ? "Pausar" : "Reproduzir"}>
@@ -113,7 +124,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
         step={0.1}
         value={current}
         onChange={(event) => seek(Number(event.target.value))}
-        aria-label="Progresso do audio"
+        aria-label="Progresso do áudio"
         style={{ background: `linear-gradient(to right, var(--color-accent) ${percent}%, var(--color-border) ${percent}%)` }}
       />
       <span className="player-time">{formatDuration(duration)}</span>
@@ -122,7 +133,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
           type="button"
           className="icon-button"
           onClick={() => setMenuOpen((value) => !value)}
-          aria-label="Opcoes do audio"
+          aria-label="Opções do áudio"
           aria-expanded={menuOpen}
         >
           <MoreIcon size={16} />
@@ -148,6 +159,23 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
                   {value === rate && <CheckIcon size={14} />}
                 </button>
               ))}
+              {onDelete && (
+                <>
+                  <div className="menu-divider" />
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="menu-item menu-item--danger"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      onDelete();
+                    }}
+                  >
+                    <span>Apagar áudio</span>
+                    <TrashIcon size={14} />
+                  </button>
+                </>
+              )}
             </div>
           </>
         )}

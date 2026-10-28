@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jose-guilherme93/dyarium/internal/id"
-	"github.com/jose-guilherme93/dyarium/internal/store"
+	"github.com/joseti/dyarium/internal/id"
+	"github.com/joseti/dyarium/internal/store"
 )
 
 func (s *Server) handleListTags(w http.ResponseWriter, r *http.Request) {
@@ -42,6 +42,10 @@ func (s *Server) handleCreateTag(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		writeError(w, http.StatusBadRequest, "invalid_name", "nome obrigatorio")
+		return
+	}
+	if !validColor(req.Color) {
+		writeError(w, http.StatusBadRequest, "invalid_color", "cor invalida")
 		return
 	}
 	tag := store.Tag{ID: id.New(), Name: name, Color: req.Color, CreatedAt: time.Now().UTC()}

@@ -4,13 +4,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
 
-	"github.com/jose-guilherme93/dyarium/internal/ingest"
-	"github.com/jose-guilherme93/dyarium/internal/store"
+	"github.com/joseti/dyarium/internal/ingest"
+	"github.com/joseti/dyarium/internal/store"
 )
 
 // maxImageBytes bounds an uploaded image attachment.
@@ -33,48 +32,74 @@ func (s *Server) serveAttachment(w http.ResponseWriter, r *http.Request, att sto
 		contentType = "application/octet-stream"
 	}
 	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Cache-Control", "private, max-age=3600")
-	if att.SizeBytes > 0 {
-		w.Header().Set("Content-Length", strconv.FormatInt(att.SizeBytes, 10))
+	// An attachment id always points at the same immutable ciphertext. A long
+	// cache is safe: rotating the token changes the URL, and a re-upload creates
+	// a new id.
+	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
+	w.Header().Set("Accept-Ranges", "bytes")
+	etag := `"` + att.ID + `"`
+	if att.SHA256 != "" {
+		etag = `"` + att.SHA256 + `"`
 	}
-	w.WriteHeader(http.StatusOK)
-	if _, err := s.deps.Ingest.DecryptAttachment(r.Context(), att, w); err != nil && s.deps.Logger != nil {
+	w.Header().Set("ETag", etag)
+	if r.Header.Get("Range") == "" && etagMatches(r.Header.Get("If-None-Match"), etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+
+	size := att.SizeBytes
+	if size <= 0 {
+		if r.Method == http.MethodHead {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		if _, err := s.deps.Ingest.DecryptAttachment(r.Context(), att, w); err != nil && s.deps.Logger != nil {
+			s.deps.Logger.Error("api: transmitir anexo", "erro", err)
+		}
+		return
+	}
+
+	start, end, partial := parseRange(r.Header.Get("Range"), size)
+	if partial {
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, size))
+		w.Header().Set("Content-Length", strconv.FormatInt(end-start+1, 10))
+		w.WriteHeader(http.StatusPartialContent)
+	} else {
+		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+		w.WriteHeader(http.StatusOK)
+	}
+	// HEAD asks for metadata only: never decrypt the object to discard the body.
+	if r.Method == http.MethodHead {
+		return
+	}
+
+	var err error
+	if partial {
+		// Decrypt only the requested window instead of the whole object.
+		_, err = s.deps.Ingest.DecryptAttachmentRange(r.Context(), att, start, end, w)
+	} else {
+		_, err = s.deps.Ingest.DecryptAttachment(r.Context(), att, w)
+	}
+	if err != nil && s.deps.Logger != nil {
 		s.deps.Logger.Error("api: transmitir anexo", "erro", err)
 	}
 }
 
-// windowWriter discards decrypted bytes outside [start, end], so a byte range
-// can be served even though the ciphertext must be decrypted from the start.
-type windowWriter struct {
-	dst   io.Writer
-	start int64
-	end   int64
-	pos   int64
-}
-
-func (w *windowWriter) Write(p []byte) (int, error) {
-	n := int64(len(p))
-	from := w.pos
-	to := w.pos + n - 1
-	w.pos += n
-	if from > w.end {
-		return len(p), nil
+// etagMatches reports whether an If-None-Match header value matches etag. An
+// absent header (or absent ETag) never matches: otherwise every response
+// without a validator would be turned into a 304.
+func etagMatches(header, etag string) bool {
+	if header == "" || etag == "" {
+		return false
 	}
-	lo := from
-	if lo < w.start {
-		lo = w.start
+	for _, candidate := range strings.Split(header, ",") {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "*" || candidate == etag || strings.TrimPrefix(candidate, "W/") == etag {
+			return true
+		}
 	}
-	hi := to
-	if hi > w.end {
-		hi = w.end
-	}
-	if lo > hi {
-		return len(p), nil
-	}
-	if _, err := w.dst.Write(p[lo-from : hi-from+1]); err != nil {
-		return len(p), err
-	}
-	return len(p), nil
+	return false
 }
 
 // parseRange parses a single-range "bytes=start-end" header. It returns the
@@ -123,8 +148,9 @@ func parseRange(header string, size int64) (int64, int64, bool) {
 	return start, end, true
 }
 
-// handleGetEntryAudio streams the decrypted original audio so the dashboard can
-// play it, with byte-range support for seeking. Plaintext never touches disk.
+// handleGetEntryAudio streams the decrypted audio of an entry (its first audio)
+// so the dashboard can play it. Prefer GET /attachments/{id} for a specific
+// audio. Plaintext never touches disk.
 func (s *Server) handleGetEntryAudio(w http.ResponseWriter, r *http.Request) {
 	att, err := s.deps.Store.GetAttachmentByKind(r.Context(), r.PathValue("id"), store.AttachmentOriginal)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -135,41 +161,7 @@ func (s *Server) handleGetEntryAudio(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
-
-	contentType := att.ContentType
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Cache-Control", "private, max-age=3600")
-	w.Header().Set("Accept-Ranges", "bytes")
-
-	size := att.SizeBytes
-	if size <= 0 {
-		w.WriteHeader(http.StatusOK)
-		if _, err := s.deps.Ingest.DecryptAttachment(r.Context(), att, w); err != nil && s.deps.Logger != nil {
-			s.deps.Logger.Error("api: transmitir audio", "erro", err)
-		}
-		return
-	}
-
-	start, end, partial := parseRange(r.Header.Get("Range"), size)
-	if partial {
-		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, size))
-		w.Header().Set("Content-Length", strconv.FormatInt(end-start+1, 10))
-		w.WriteHeader(http.StatusPartialContent)
-	} else {
-		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
-		w.WriteHeader(http.StatusOK)
-	}
-
-	var dst io.Writer = w
-	if partial {
-		dst = &windowWriter{dst: w, start: start, end: end}
-	}
-	if _, err := s.deps.Ingest.DecryptAttachment(r.Context(), att, dst); err != nil && s.deps.Logger != nil {
-		s.deps.Logger.Error("api: transmitir audio", "erro", err)
-	}
+	s.serveAttachment(w, r, att)
 }
 
 // handleListAttachments returns the non-audio attachments (images) of an entry.
@@ -244,6 +236,19 @@ func (s *Server) handleDeleteAttachment(w http.ResponseWriter, r *http.Request) 
 	if err := s.deps.Store.DeleteAttachment(ctx, att.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
+	}
+	// A analise leu a transcricao deste audio: sem ele, a compreensao e os
+	// temas descrevem um texto que nao existe mais. Apagar e mais honesto que
+	// mostrar a medida de outra versao da nota.
+	if strings.HasPrefix(att.ContentType, "audio/") {
+		if _, err := s.deps.Store.DeleteAnalyses(ctx, att.EntryID); err != nil && s.deps.Logger != nil {
+			s.deps.Logger.Error("api: invalidar analise", "entry_id", att.EntryID, "erro", err)
+		}
+	}
+	// A transcricao e os segmentos caem junto (FK ON DELETE CASCADE). A duracao
+	// da nota e a soma dos audios que sobraram, nao a do audio que saiu.
+	if err := s.deps.Store.SyncEntryDuration(ctx, att.EntryID); err != nil && s.deps.Logger != nil {
+		s.deps.Logger.Error("api: sincronizar duracao da entrada", "entry_id", att.EntryID, "erro", err)
 	}
 	if err := s.deps.Ingest.DeleteAttachmentObject(att); err != nil && s.deps.Logger != nil {
 		s.deps.Logger.Error("api: remover objeto de anexo", "erro", err)

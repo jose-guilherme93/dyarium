@@ -12,6 +12,7 @@
 import { Directory, File, FileMode, Paths } from 'expo-file-system';
 
 import type { ConcatIO } from '@/core/concat';
+import { storageFileKind } from '@/core/storage';
 import type { UploadFileIO } from '@/core/uploader';
 
 const ROOT_NAME = 'recordings';
@@ -20,8 +21,12 @@ const AUDIO_DIR_NAME = 'Audio';
 export const CONTENT_TYPE = 'audio/aac';
 export const FILE_EXTENSION = '.aac';
 
+function rootDirectory(): Directory {
+  return new Directory(Paths.document, ROOT_NAME);
+}
+
 function root(): Directory {
-  const dir = new Directory(Paths.document, ROOT_NAME);
+  const dir = rootDirectory();
   if (!dir.exists) dir.create({ intermediates: true, idempotent: true });
   return dir;
 }
@@ -42,6 +47,11 @@ export function segmentFileName(index: number): string {
 
 export function outputFileName(): string {
   return `recording${FILE_EXTENSION}`;
+}
+
+/** Nome unico de um audio anexado a uma nota (varias gravacoes no mesmo corpo). */
+export function audioFileName(sessionId: string): string {
+  return `audio-${sessionId}${FILE_EXTENSION}`;
 }
 
 export function outputFileUri(sessionId: string): string {
@@ -166,10 +176,94 @@ export async function storeSegment(
   return destination.uri;
 }
 
+/** Tamanho somado dos arquivos de uma pasta (bytes). Entradas ilegiveis sao ignoradas. */
+export function directoryBytes(dir: Directory): number {
+  if (!dir.exists) return 0;
+  let total = 0;
+  for (const entry of dir.list()) {
+    try {
+      total += new File(entry.uri).size;
+    } catch {
+      // entrada ilegivel: ignora
+    }
+  }
+  return total;
+}
+
 export function deleteSessionFiles(sessionId: string): void {
   if (!sessionId) return;
   const dir = new Directory(root(), sessionId);
   if (dir.exists) dir.delete();
+}
+
+/** Diretorio da sessao sem cria-lo (para varreduras de armazenamento). */
+export function existingSessionDirectory(sessionId: string): Directory | null {
+  if (!sessionId) return null;
+  const dir = new Directory(rootDirectory(), sessionId);
+  return dir.exists ? dir : null;
+}
+
+/** Arquivos da pasta da nota, sem criar nada quando a pasta nao existe. */
+export function sessionFiles(sessionId: string): File[] {
+  const dir = existingSessionDirectory(sessionId);
+  if (!dir) return [];
+  return dir.list().filter((entry): entry is File => entry instanceof File);
+}
+
+export interface FreedAudio {
+  files: number;
+  bytes: number;
+}
+
+/**
+ * Remove somente os arquivos de audio da pasta da nota. Imagens, transcricao e
+ * outros arquivos ficam. Se a pasta ficar vazia, ela tambem e removida.
+ */
+export function deleteSessionAudioFiles(sessionId: string): FreedAudio {
+  const dir = existingSessionDirectory(sessionId);
+  if (!dir) return { files: 0, bytes: 0 };
+  let files = 0;
+  let bytes = 0;
+  for (const entry of dir.list()) {
+    if (!(entry instanceof File)) continue;
+    if (storageFileKind(entry.name) !== 'audio') continue;
+    try {
+      const size = entry.size;
+      entry.delete();
+      files += 1;
+      bytes += size;
+    } catch {
+      // arquivo em uso ou ja removido: segue para os proximos
+    }
+  }
+  if (files > 0) {
+    try {
+      if (dir.list().length === 0) dir.delete();
+    } catch {
+      // pasta com arquivo em uso: deixa para a proxima
+    }
+  }
+  return { files, bytes };
+}
+
+/**
+ * Move o audio concatenado da sessao de origem para o diretorio da nota destino,
+ * removendo os arquivos temporarios da origem. Usado quando uma gravacao avulsa
+ * e anexada a uma nota existente. Devolve o novo uri, ou null.
+ */
+export async function moveAudio(
+  fromSessionId: string,
+  toSessionId: string,
+  fileName: string = outputFileName(),
+): Promise<string | null> {
+  if (!fromSessionId || !toSessionId || fromSessionId === toSessionId) return null;
+  const source = new File(sessionDirectory(fromSessionId), outputFileName());
+  if (!source.exists) return null;
+  const destination = new File(sessionDirectory(toSessionId), fileName);
+  if (destination.exists) destination.delete();
+  await source.move(destination);
+  deleteSessionFiles(fromSessionId);
+  return destination.uri;
 }
 
 /** IO injetavel para a concatenacao (ver core/concat.ts). */

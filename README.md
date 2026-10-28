@@ -117,6 +117,7 @@ Nenhuma variavel e obrigatoria. As principais:
 | `DIARY_WHISPER_LANGUAGE` | vazio | Idioma (ex.: `pt`); vazio detecta sozinho |
 | `DIARY_MAX_UPLOAD_BYTES` | 2147483648 | Tamanho maximo de upload |
 | `DIARY_MAX_DURATION_SECONDS` | 3000 | Duracao maxima (50 min) |
+| `DIARY_DELETED_RETENTION_HOURS` | 168 | Quanto tempo uma nota apagada fica recuperavel (lixeira) antes da limpeza |
 | `DIARY_LOG_LEVEL` | `info` | `debug`, `info`, `warn` ou `error` |
 
 A lista completa esta em `.env.example`. O compose de desenvolvimento fica em
@@ -147,6 +148,17 @@ make lint
 ```
 
 Mais detalhes em `CONTRIBUTING.md` e `AGENTS.md`.
+
+## Manutencao
+
+Notas que sao duplicatas do mesmo audio (de versoes anteriores) podem ser
+mescladas por um comando: ele mantem a nota mais completa (transcricao, nota,
+analise) e move os dados das outras para ela.
+
+```
+make dedupe DRY=1   # simulacao
+make dedupe         # aplica
+```
 
 ## Versoes
 

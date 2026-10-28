@@ -3,7 +3,6 @@ import {
   requestRecordingPermissionsAsync,
   setAudioModeAsync,
   useAudioRecorder,
-  useAudioRecorderState,
   type RecordingOptions,
 } from 'expo-audio';
 import {
@@ -19,12 +18,14 @@ import {
 
 import { concatenateSegments } from '@/core/concat';
 import { newId } from '@/core/id';
+import { METER_SILENCE_DB } from '@/core/waveform';
 import { markRecorded } from '@/core/queue';
 import { formatTitle, toRecordedAt } from '@/core/title';
 import type { Recording } from '@/core/types';
+import { bumpRender, mark } from '@/dev/perf';
 import { listRecordings, upsertRecording } from '@/services/db';
 import { concatIO, outputFileUri, sessionDirUri, storeSegment } from '@/services/files';
-import { ensureNotificationPermission } from '@/services/notifications';
+import { notificationPermissionGranted } from '@/services/notifications';
 
 import { useLibrary } from './LibraryContext';
 
@@ -50,10 +51,14 @@ const RECORDING_OPTIONS: RecordingOptions = {
 
 interface RecordingValue {
   active: Recording | null;
-  elapsedMs: number;
-  level: number;
   error: string | null;
   busy: boolean;
+  /** Preparando o microfone (permissao/audio mode/arquivo). */
+  starting: boolean;
+  /** Gravacao pausada (o tempo da pausa nao conta). */
+  paused: boolean;
+  pause(): void;
+  unpause(): void;
   start(): Promise<void>;
   /**
    * Finaliza a gravacao. Por padrao enfileira; com `enqueue: false` devolve a
@@ -64,32 +69,53 @@ interface RecordingValue {
   resume(id: string): Promise<void>;
   /** Finaliza (concatena) uma gravacao interrompida e a coloca na fila. */
   finalizeInterrupted(id: string): Promise<void>;
+  /**
+   * Nivel do microfone em dB (aprox. -160..0) lido na hora. E a waveform que
+   * amostra, no ritmo dela, sem passar pelo estado do React (nada de render
+   * por amostra).
+   */
+  readMetering(): number;
+}
+
+/**
+ * Medidas ao vivo da gravacao (tempo e nivel).
+ *
+ * Separadas do contexto principal de proposito: elas mudam varias vezes por
+ * segundo. A home e as outras telas so precisam de `start`/`stop`, entao nao
+ * podem re-renderizar a lista inteira a cada amostra do microfone.
+ */
+interface RecordingLiveValue {
+  elapsedMs: number;
 }
 
 const RecordingContext = createContext<RecordingValue | null>(null);
-
-function normalizeLevel(metering?: number): number {
-  if (metering === undefined || Number.isNaN(metering)) return 0;
-  // metering vem em dB (aprox. -160..0); mapeia para 0..1
-  const clamped = Math.max(-60, Math.min(0, metering));
-  return (clamped + 60) / 60;
-}
+const RecordingLiveContext = createContext<RecordingLiveValue | null>(null);
 
 export function RecordingProvider({ children }: { children: ReactNode }) {
   const library = useLibrary();
+  bumpRender('RecordingProvider');
   const recorder = useAudioRecorder(RECORDING_OPTIONS);
-  const recorderState = useAudioRecorderState(recorder, 200);
+  /** Nivel do microfone (dB) sob demanda: a waveform amostra no ritmo dela. */
+  const readMetering = useCallback(
+    () => recorder.getStatus().metering ?? METER_SILENCE_DB,
+    [recorder],
+  );
 
   const [active, setActive] = useState<Recording | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [paused, setPaused] = useState(false);
 
   const activeRef = useRef<Recording | null>(null);
   const startedAtRef = useRef<number>(0);
   const segmentIndexRef = useRef<number>(0);
   const rotatingRef = useRef(false);
   const startingRef = useRef(false);
+  const pausedRef = useRef(false);
+  const pausedAtRef = useRef(0);
+  const accumulatedPauseRef = useRef(0);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const rotateRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -126,8 +152,13 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
     rotateRef.current = null;
   }, []);
 
+  const elapsed = useCallback(() => {
+    const reference = pausedRef.current ? pausedAtRef.current : Date.now();
+    return Math.max(0, reference - startedAtRef.current - accumulatedPauseRef.current);
+  }, []);
+
   const rotate = useCallback(async () => {
-    if (rotatingRef.current || !activeRef.current) return;
+    if (rotatingRef.current || !activeRef.current || pausedRef.current) return;
     rotatingRef.current = true;
     try {
       await recorder.stop();
@@ -156,7 +187,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
       }
     } catch (error) {
       console.warn('[dyarium] rotate error', String(error));
-      setError('Falha ao rotacionar o segmento de gravacao.');
+      setError('Falha ao rotacionar o segmento de gravação.');
     } finally {
       rotatingRef.current = false;
     }
@@ -164,30 +195,62 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
 
   const startTimers = useCallback(() => {
     clearTimers();
+    // O visor mostra segundos: 500 ms e suficiente e reduz os renders da tela
+    // durante a gravacao.
     tickRef.current = setInterval(() => {
-      setElapsedMs(Date.now() - startedAtRef.current);
+      setElapsedMs(elapsed());
     }, 500);
     rotateRef.current = setInterval(() => {
       void rotate();
     }, SEGMENT_MS);
-  }, [clearTimers, rotate]);
+  }, [clearTimers, elapsed, rotate]);
 
   const beginSession = useCallback(
-    async (session: Recording, startIndex: number) => {
+    async (session: Recording, startIndex: number, backgroundRecording = true) => {
+      const modeAt = Date.now();
       await setAudioModeAsync({
         playsInSilentMode: true,
         allowsRecording: true,
-        allowsBackgroundRecording: true,
+        // Sem POST_NOTIFICATIONS o Android recusa o foreground service da
+        // gravacao. Quem chama decide: com permissao grava em segundo plano;
+        // sem ela, grava em primeiro plano em vez de falhar.
+        allowsBackgroundRecording: backgroundRecording,
       });
+      mark('record.mode_ms', Date.now() - modeAt);
+      // Prepara e comeca a gravar ANTES de marcar a sessao como ativa. Se o
+      // microfone falhar (ocupado por outro app, permissao revogada), a sessao
+      // nao pode ficar presa: o proximo toque em gravar tem de tentar de novo.
+      const prepareAt = Date.now();
+      try {
+        await recorder.prepareToRecordAsync(RECORDING_OPTIONS);
+        recorder.record();
+      } catch (error) {
+        await recorder.stop().catch(() => undefined);
+        throw error;
+      }
+      mark('record.prepare_ms', Date.now() - prepareAt);
+      // A sessao fica ativa na tela no mesmo quadro em que o microfone abre:
+      // cronometro e waveform aparecem sem esperar o banco.
       activeRef.current = session;
       setActive(session);
       segmentIndexRef.current = startIndex;
       startedAtRef.current = Date.now();
+      pausedRef.current = false;
+      pausedAtRef.current = 0;
+      accumulatedPauseRef.current = 0;
+      setPaused(false);
       setElapsedMs(0);
-      await upsertRecording(session);
-      await recorder.prepareToRecordAsync(RECORDING_OPTIONS);
-      recorder.record();
       startTimers();
+      // O registro entra logo atras, antes de qualquer outro trabalho. Se a
+      // escrita falhar, a gravacao continua e o stop grava a sessao de novo.
+      const dbAt = Date.now();
+      try {
+        await upsertRecording(session);
+      } catch {
+        // Sem a linha, a recuperacao de sessao nao ve esta gravacao; o audio
+        // ja esta no disco e o stop persiste o estado final.
+      }
+      mark('record.db_ms', Date.now() - dbAt);
     },
     [recorder, startTimers],
   );
@@ -195,14 +258,21 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
   const start = useCallback(async () => {
     if (startingRef.current || activeRef.current) return;
     startingRef.current = true;
+    setStarting(true);
     setError(null);
     try {
+      const permissionAt = Date.now();
       const permission = await requestRecordingPermissionsAsync();
+      mark('record.permission_ms', Date.now() - permissionAt);
       if (!permission.granted) {
-        setError('Permissao de microfone negada.');
+        setError('Permissão de microfone negada.');
         return;
       }
-      await ensureNotificationPermission();
+      // O dialogo de notificacao nunca segura o inicio: sem a permissao a
+      // gravacao roda em primeiro plano e o pedido fica para depois.
+      const notifyAt = Date.now();
+      const canRecordInBackground = await notificationPermissionGranted();
+      mark('record.notify_ms', Date.now() - notifyAt);
       const now = new Date();
       const id = newId('rec_');
       const session: Recording = {
@@ -217,12 +287,13 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
         createdAt: now.toISOString(),
         updatedAt: now.toISOString(),
       };
-      await beginSession(session, 0);
+      await beginSession(session, 0, canRecordInBackground);
     } catch (error) {
       console.warn('[dyarium] start error', String(error));
-      setError('Nao foi possivel iniciar a gravacao.');
+      setError('Não foi possível iniciar a gravação.');
     } finally {
       startingRef.current = false;
+      setStarting(false);
     }
   }, [beginSession]);
 
@@ -241,7 +312,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
       );
       if (stored) segmentIndexRef.current += 1;
 
-      const durationMs = Date.now() - startedAtRef.current;
+      const durationMs = elapsed();
       const outUri = outputFileUri(session.id);
       const size = await concatenateSegments(sessionDirUri(session.id), outUri, concatIO);
 
@@ -249,7 +320,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
         activeRef.current = null;
         setActive(null);
         setElapsedMs(0);
-        setError('Nenhum audio foi capturado. Verifique o microfone e tente de novo.');
+        setError('Nenhum áudio foi capturado. Verifique o microfone e tente de novo.');
         return null;
       }
 
@@ -271,25 +342,52 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
       return finished;
     } catch (error) {
       console.warn('[dyarium] stop error', String(error));
-      setError('Falha ao finalizar a gravacao.');
+      setError('Falha ao finalizar a gravação.');
       return null;
     } finally {
       setBusy(false);
     }
-  }, [recorder, library, clearTimers]);
+  }, [recorder, library, clearTimers, elapsed]);
+
+  const pause = useCallback(() => {
+    if (!activeRef.current || pausedRef.current) return;
+    try {
+      recorder.pause();
+      pausedAtRef.current = Date.now();
+      pausedRef.current = true;
+      setPaused(true);
+      setElapsedMs(elapsed());
+    } catch {
+      setError('Não foi possível pausar a gravação.');
+    }
+  }, [recorder, elapsed]);
+
+  const unpause = useCallback(() => {
+    if (!activeRef.current || !pausedRef.current) return;
+    try {
+      accumulatedPauseRef.current += Date.now() - pausedAtRef.current;
+      pausedAtRef.current = 0;
+      pausedRef.current = false;
+      setPaused(false);
+      recorder.record();
+    } catch {
+      setError('Não foi possível retomar a gravação.');
+    }
+  }, [recorder]);
 
   const resume = useCallback(
     async (id: string) => {
       if (startingRef.current || activeRef.current) return;
       startingRef.current = true;
+      setStarting(true);
       setError(null);
       try {
         const permission = await requestRecordingPermissionsAsync();
         if (!permission.granted) {
-          setError('Permissao de microfone negada.');
+          setError('Permissão de microfone negada.');
           return;
         }
-        await ensureNotificationPermission();
+        const canRecordInBackground = await notificationPermissionGranted();
         const list = await listRecordings();
         const found = list.find((r) => r.id === id);
         if (!found) return;
@@ -298,12 +396,13 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
           status: 'recording',
           updatedAt: new Date().toISOString(),
         };
-        await beginSession(session, found.segmentCount);
+        await beginSession(session, found.segmentCount, canRecordInBackground);
       } catch (error) {
         console.warn('[dyarium] resume error', String(error));
-        setError('Nao foi possivel retomar a gravacao.');
+        setError('Não foi possível retomar a gravação.');
       } finally {
         startingRef.current = false;
+        setStarting(false);
       }
     },
     [beginSession],
@@ -326,7 +425,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
         await upsertRecording(finished);
         await library.enqueue(finished);
       } catch {
-        setError('Falha ao finalizar a gravacao interrompida.');
+        setError('Falha ao finalizar a gravação interrompida.');
       }
     },
     [library],
@@ -337,33 +436,60 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
   const value = useMemo<RecordingValue>(
     () => ({
       active,
-      elapsedMs,
-      level: normalizeLevel(recorderState.metering),
       error,
       busy,
+      starting,
+      paused,
+      pause,
+      unpause,
       start,
       stop,
       resume,
       finalizeInterrupted,
+      readMetering,
     }),
     [
       active,
-      elapsedMs,
-      recorderState.metering,
       error,
       busy,
+      starting,
+      paused,
+      pause,
+      unpause,
       start,
       stop,
       resume,
       finalizeInterrupted,
+      readMetering,
     ],
   );
 
-  return <RecordingContext.Provider value={value}>{children}</RecordingContext.Provider>;
+  const live = useMemo<RecordingLiveValue>(() => ({ elapsedMs }), [elapsedMs]);
+
+  useEffect(() => {
+    bumpRender('recording.value');
+  }, [value]);
+
+  useEffect(() => {
+    bumpRender('recording.live');
+  }, [live]);
+
+  return (
+    <RecordingContext.Provider value={value}>
+      <RecordingLiveContext.Provider value={live}>{children}</RecordingLiveContext.Provider>
+    </RecordingContext.Provider>
+  );
 }
 
 export function useRecording(): RecordingValue {
   const value = useContext(RecordingContext);
   if (!value) throw new Error('useRecording deve ser usado dentro de RecordingProvider');
+  return value;
+}
+
+/** Tempo e nivel ao vivo: apenas a tela de gravacao usa isso. */
+export function useRecordingLive(): RecordingLiveValue {
+  const value = useContext(RecordingLiveContext);
+  if (!value) throw new Error('useRecordingLive deve ser usado dentro de RecordingProvider');
   return value;
 }

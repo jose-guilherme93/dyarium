@@ -1,21 +1,49 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { router } from 'expo-router';
-import { useCallback, useRef, useState } from 'react';
-import { Pressable, RefreshControl, SectionList, StyleSheet, Text, TextInput, View } from 'react-native';
+import { push } from '@/services/appNavigation';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  FlatList,
+  RefreshControl,
+  Share,
+  StyleSheet,
+  View,
+} from 'react-native';
+import { Text } from '@/components/AppText';
+import { Press } from '@/components/Press';
 import { Swipeable } from 'react-native-gesture-handler';
 
-import { RecordButton } from '@/components/RecordButton';
+import { ActivityCenter } from '@/components/ActivityCenter';
+import { HomeHeader } from '@/components/HomeHeader';
+import { NoteActionsSheet } from '@/components/NoteActionsSheet';
+import type { NoteProperty } from '@/components/NoteMenu';
+import { NotebookPicker } from '@/components/NotebookPicker';
 import { RecordingCard } from '@/components/RecordingCard';
 import { Screen } from '@/components/Screen';
-import { Waveform } from '@/components/Waveform';
-import { formatDuration } from '@/core/format';
-import { groupRecordingsByYear, type RecordingSection } from '@/core/group';
-import type { Recording } from '@/core/types';
+import { STATUS_LABELS } from '@/components/StatusChip';
+import { TagFilterRow } from '@/components/TagFilterRow';
+import { NoteOrderSheet } from '@/components/NoteOrderSheet';
+import { sortByCreation } from '@/core/noteOrder';
+import { formatBytes, formatDateTime, noteDateIso } from '@/core/format';
+import {
+  notesInNotebook,
+  recentNotes,
+  recordingNotebookId,
+  tagCountsForFilter,
+} from '@/core/notebookFilter';
+import { DEFAULT_NOTEBOOK_ID } from '@/core/notebooks';
+import { noteStats } from '@/core/noteStats';
+import { markdownToPlain } from '@/core/richText';
+import { displayTitle } from '@/core/title';
+import { needsNoteSync, type Recording } from '@/core/types';
+import { useRenderCount } from '@/dev/perf';
+import { directoryBytes, sessionDirectory } from '@/services/files';
 import { useLibrary } from '@/state/LibraryContext';
 import { useRecording } from '@/state/RecordingContext';
 import { useSettings } from '@/state/SettingsContext';
-import { colors, fontSize, radius, spacing } from '@/theme/tokens';
+import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 const PENDING_STATUSES = ['recorded', 'queued', 'uploading', 'failed'];
 
@@ -28,13 +56,16 @@ interface SwipeRowProps {
 }
 
 function SwipeRow({ children, label, icon, color, onAction }: SwipeRowProps) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const ref = useRef<Swipeable>(null);
   return (
     <Swipeable
       ref={ref}
       overshootRight={false}
       renderRightActions={() => (
-        <Pressable
+        <Press
           style={[styles.swipeAction, { backgroundColor: color }]}
           onPress={() => {
             ref.current?.close();
@@ -42,9 +73,9 @@ function SwipeRow({ children, label, icon, color, onAction }: SwipeRowProps) {
           }}
           accessibilityLabel={label}
         >
-          <Ionicons name={icon} size={22} color="#FFFFFF" />
+          <Ionicons name={icon} size={22} color={colors.onAccent} />
           <Text style={styles.swipeLabel}>{label}</Text>
-        </Pressable>
+        </Press>
       )}
     >
       {children}
@@ -52,17 +83,118 @@ function SwipeRow({ children, label, icon, color, onAction }: SwipeRowProps) {
   );
 }
 
-export default function RecordScreen() {
-  const { recordings, retry, remove, kick, refresh, createDraftNote, archiveNote, unarchiveNote } =
-    useLibrary();
-  const { active, elapsedMs, level, error, busy, start, stop } = useRecording();
-  const { swipeAction } = useSettings();
+interface NoteRowProps {
+  item: Recording;
+  swipeDelete: boolean;
+  notebookLabel?: string;
+  onOpen(id: string): void;
+  onLongPress(item: Recording, anchor: { x: number; y: number }): void;
+  onRemove(id: string): void;
+  onArchive(id: string): void;
+  onUnarchive(id: string): void;
+}
+
+// Linha memoizada: a home re-renderiza quando a fila muda; sem isto, todas as
+// linhas (com Swipeable) eram recriadas a cada mudanca.
+const NoteRow = memo(function NoteRow({
+  item,
+  swipeDelete,
+  notebookLabel,
+  onOpen,
+  onLongPress,
+  onRemove,
+  onArchive,
+  onUnarchive,
+}: NoteRowProps) {
+  const { colors } = useTheme();
+
+  return (
+    <SwipeRow
+      label={swipeDelete ? 'Apagar' : item.archived ? 'Desarquivar' : 'Arquivar'}
+      icon={swipeDelete ? 'trash-outline' : 'archive-outline'}
+      color={swipeDelete ? colors.danger : colors.warning}
+      onAction={() =>
+        swipeDelete ? onRemove(item.id) : item.archived ? onUnarchive(item.id) : onArchive(item.id)
+      }
+    >
+      <RecordingCard
+        recording={item}
+        dense
+        notebookLabel={notebookLabel}
+        onOpen={onOpen}
+        onLongPress={onLongPress}
+      />
+    </SwipeRow>
+  );
+});
+
+// Identidade estavel: evita re-render dos cards a cada atualizacao da lista.
+function keyExtractor(item: Recording) {
+  return item.id;
+}
+
+export default function NotebookScreen() {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
+  const {
+    recordings,
+    notebooks,
+    ready,
+    remove,
+    kick,
+    refresh,
+    pull,
+    createDraftNote,
+    archiveNote,
+    unarchiveNote,
+  } = useLibrary();
+  const { start: startRecording } = useRecording();
+  const { swipeAction, lastNotebookId, setLastNotebookId, noteOrder, setNoteOrder } =
+    useSettings();
+  useRenderCount('NotebookScreen');
 
   const [query, setQuery] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [newMenuOpen, setNewMenuOpen] = useState(false);
+  const [notebookPickerOpen, setNotebookPickerOpen] = useState(false);
+  const [activityOpen, setActivityOpen] = useState(false);
+  const [orderOpen, setOrderOpen] = useState(false);
+  // `null` = paginas recentes (todos os cadernos); um id = so aquele caderno.
+  const [scopeId, setScopeId] = useState<string | null>(null);
+  const [actionsNote, setActionsNote] = useState<Recording | null>(null);
+  const [actionsProps, setActionsProps] = useState<NoteProperty[]>([]);
+  const [actionsAnchor, setActionsAnchor] = useState<{ x: number; y: number } | null>(null);
 
-  const recording = Boolean(active);
-  const pending = recordings.filter((r) => PENDING_STATUSES.includes(r.status)).length;
+  const scopeNotebook = scopeId
+    ? notebooks.find((notebook) => notebook.id === scopeId)
+    : undefined;
+  // O caderno do escopo tambem e o destino de novas notas; sem escopo, vale o
+  // ultimo escolhido e, por fim, o padrao.
+  const targetNotebook =
+    scopeNotebook ??
+    notebooks.find((notebook) => notebook.id === lastNotebookId) ??
+    notebooks.find((notebook) => notebook.isDefault) ??
+    notebooks[0];
+  // Handlers da lista nao podem depender de `notebooks`: cada refresh do banco
+  // troca a identidade da lista, e isso recriava `openActions` e re-renderizava
+  // todos os cards. As refs guardam a versao mais nova sem mudar os handlers.
+  const notebooksRef = useRef(notebooks);
+  const targetNotebookRef = useRef(targetNotebook);
+  useEffect(() => {
+    notebooksRef.current = notebooks;
+  }, [notebooks]);
+  useEffect(() => {
+    targetNotebookRef.current = targetNotebook;
+  }, [targetNotebook]);
+
+  const notebookId = targetNotebook?.id ?? DEFAULT_NOTEBOOK_ID;
+
+  const pending = recordings.filter(
+    (r) => PENDING_STATUSES.includes(r.status) || needsNoteSync(r),
+  ).length;
   const interrupted = recordings.filter((r) => r.status === 'interrupted').length;
 
   const syncState: 'ok' | 'syncing' | 'error' = recordings.some((r) => r.status === 'failed')
@@ -70,310 +202,510 @@ export default function RecordScreen() {
     : pending > 0
       ? 'syncing'
       : 'ok';
-  const syncIcon =
-    syncState === 'error'
-      ? 'cloud-offline-outline'
-      : syncState === 'syncing'
-        ? 'cloud-upload-outline'
-        : 'cloud-done-outline';
-  const syncColor =
-    syncState === 'error'
-      ? colors.danger
-      : syncState === 'syncing'
-        ? colors.textSecondary
-        : colors.textTertiary;
 
-  const term = query.trim().toLowerCase();
-  const matches = (r: Recording) =>
-    !term ||
-    r.title.toLowerCase().includes(term) ||
-    (r.text ?? '').toLowerCase().includes(term) ||
-    (r.transcript ?? '').toLowerCase().includes(term);
-
-  const activeNotes = recordings.filter((r) => !r.archived && matches(r));
-  const archivedNotes = recordings.filter((r) => r.archived && matches(r));
-  const sections: RecordingSection[] = groupRecordingsByYear(activeNotes);
-  if (archivedNotes.length > 0) {
-    sections.push({ year: 0, title: 'Arquivadas', data: archivedNotes });
-  }
+  const noteList = useMemo(
+    () =>
+      sortByCreation(
+        scopeNotebook
+          ? notesInNotebook(recordings, {
+              notebookId: scopeNotebook.id,
+              tags: selectedTags,
+              query,
+            })
+          : recentNotes(recordings, { tags: selectedTags, query }),
+        noteOrder,
+      ),
+    [recordings, scopeNotebook, selectedTags, query, noteOrder],
+  );
+  const notebookNames = useMemo(
+    () => new Map(notebooks.map((notebook) => [notebook.id, notebook.name])),
+    [notebooks],
+  );
+  const tagCounts = useMemo(
+    () => tagCountsForFilter(recordings, scopeNotebook?.id ?? null, selectedTags),
+    [recordings, scopeNotebook, selectedTags],
+  );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
       await refresh();
       kick();
+      pull();
     } finally {
       setRefreshing(false);
     }
-  }, [refresh, kick]);
+  }, [refresh, kick, pull]);
 
-  const handlePress = async () => {
-    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
-    if (recording) await stop();
-    else await start();
-  };
+  // Cada opcao do menu cria a nota e ja abre no modo certo, para o usuario
+  // escrever/gravar/anexar sem passos extras dentro da nota.
+  const startNote = useCallback(
+    async (action: 'text' | 'image' | 'link') => {
+      setNewMenuOpen(false);
+      const note = await createDraftNote(notebookId);
+      push({ pathname: '/note/[id]', params: { id: note.id, action } });
+    },
+    [createDraftNote, notebookId],
+  );
 
-  const handleAdd = async () => {
-    const note = await createDraftNote();
-    router.push({ pathname: '/note/[id]', params: { id: note.id } });
-  };
+  const startAudio = useCallback(async () => {
+    setNewMenuOpen(false);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
+    // O microfone abre no toque, antes da nota ser criada: a tela de gravacao
+    // entra na frente enquanto o rascunho e resolvido por tras.
+    void startRecording();
+    const note = await createDraftNote(notebookId);
+    push({ pathname: '/record', params: { noteId: note.id, from: 'home' } });
+  }, [createDraftNote, notebookId, startRecording]);
 
-  const renderItem = (item: Recording) => {
-    const swipeDelete = swipeAction === 'delete';
-    return (
-      <SwipeRow
-        label={swipeDelete ? 'Apagar' : 'Arquivar'}
-        icon={swipeDelete ? 'trash-outline' : 'archive-outline'}
-        color={swipeDelete ? colors.danger : colors.warning}
-        onAction={() => (swipeDelete ? void remove(item.id) : void archiveNote(item.id))}
-      >
-        <RecordingCard
-          recording={item}
-          onRetry={() => void retry(item.id)}
-          onDelete={() => void remove(item.id)}
-          onOpen={() => router.push({ pathname: '/note/[id]', params: { id: item.id } })}
-          onArchive={() =>
-            item.archived ? void unarchiveNote(item.id) : void archiveNote(item.id)
-          }
-        />
-      </SwipeRow>
+  const openNote = useCallback(
+    (noteId: string) => push({ pathname: '/note/[id]', params: { id: noteId } }),
+    [],
+  );
+  const removeNote = useCallback((noteId: string) => void remove(noteId), [remove]);
+
+  const openActions = useCallback((item: Recording, anchor: { x: number; y: number }) => {
+    // Uma conversao para texto puro alimenta palavras, caracteres e tamanho.
+    const stats = noteStats(item.text ?? '');
+    const bytes = directoryBytes(sessionDirectory(item.id)) + stats.bodyBytes;
+    const notebook =
+      notebooksRef.current.find((entry) => entry.id === (item.notebookId || DEFAULT_NOTEBOOK_ID)) ??
+      targetNotebookRef.current;
+    setActionsAnchor(anchor);
+    setActionsNote(item);
+    setActionsProps([
+      { label: 'Caderno', value: notebook?.name ?? 'Notas ao acaso' },
+      { label: 'Gravada em', value: formatDateTime(noteDateIso(item)) },
+      item.source === 'share'
+        ? { label: 'Importada em', value: formatDateTime(item.createdAt) }
+        : { label: 'Criada em', value: formatDateTime(item.createdAt) },
+      ...(item.tags && item.tags.length > 0
+        ? [{ label: 'Tags', value: item.tags.join(', ') }]
+        : []),
+      {
+        label: 'Origem',
+        value: item.filePath ? (item.source === 'share' ? 'Áudio importado' : 'Áudio') : 'Texto',
+      },
+      { label: 'Palavras', value: String(stats.words) },
+      { label: 'Caracteres', value: String(stats.chars) },
+      { label: 'Tamanho', value: formatBytes(bytes) },
+      { label: 'Status', value: STATUS_LABELS[item.status] },
+    ]);
+  }, []);
+
+  const closeActions = useCallback(() => setActionsNote(null), []);
+
+  const shareActions = useCallback(() => {
+    const item = actionsNote;
+    setActionsNote(null);
+    if (!item) return;
+    const parts = [displayTitle(item)];
+    const plain = markdownToPlain(item.text ?? '').trim();
+    if (plain) parts.push('', plain);
+    if (item.transcript && item.transcript.trim() && item.transcript !== item.text) {
+      parts.push('', item.transcript.trim());
+    }
+    void Share.share({ message: parts.join('\n') }).catch(() => undefined);
+  }, [actionsNote]);
+
+  const archiveActions = useCallback(() => {
+    const item = actionsNote;
+    setActionsNote(null);
+    if (!item) return;
+    void (item.archived ? unarchiveNote(item.id) : archiveNote(item.id));
+  }, [actionsNote, archiveNote, unarchiveNote]);
+
+  const deleteActions = useCallback(() => {
+    const item = actionsNote;
+    setActionsNote(null);
+    if (!item) return;
+    void remove(item.id);
+  }, [actionsNote, remove]);
+  const archive = useCallback((noteId: string) => void archiveNote(noteId), [archiveNote]);
+  const unarchive = useCallback((noteId: string) => void unarchiveNote(noteId), [unarchiveNote]);
+  const swipeDelete = swipeAction === 'delete';
+
+  const toggleTag = useCallback((name: string) => {
+    setSelectedTags((prev) =>
+      prev.some((tag) => tag.toLowerCase() === name.toLowerCase())
+        ? prev.filter((tag) => tag.toLowerCase() !== name.toLowerCase())
+        : [...prev, name],
     );
-  };
+  }, []);
+
+  const toggleSearch = useCallback(() => {
+    if (searchOpen) {
+      setSearchOpen(false);
+      setQuery('');
+      return;
+    }
+    setSearchOpen(true);
+  }, [searchOpen]);
+
+  const selectScope = useCallback(
+    (id: string | null) => {
+      setScopeId(id);
+      setNotebookPickerOpen(false);
+      setQuery('');
+      setSelectedTags([]);
+      if (id) void setLastNotebookId(id);
+    },
+    [setLastNotebookId],
+  );
+
+  const renderNote = useCallback(
+    ({ item }: { item: Recording }) => (
+      <NoteRow
+        item={item}
+        swipeDelete={swipeDelete}
+        notebookLabel={
+          scopeNotebook
+            ? undefined
+            : (notebookNames.get(recordingNotebookId(item)) ?? 'Notas ao acaso')
+        }
+        onOpen={openNote}
+        onLongPress={openActions}
+        onRemove={removeNote}
+        onArchive={archive}
+        onUnarchive={unarchive}
+      />
+    ),
+    [
+      swipeDelete,
+      scopeNotebook,
+      notebookNames,
+      openNote,
+      openActions,
+      removeNote,
+      archive,
+      unarchive,
+    ],
+  );
+
+  const header = (
+    <HomeHeader
+      notebook={scopeNotebook}
+      syncState={syncState}
+      searchOpen={searchOpen}
+      query={query}
+      searchPlaceholder={
+        scopeNotebook ? 'Buscar neste caderno' : 'Buscar em todos os cadernos'
+      }
+      onToggleSearch={toggleSearch}
+      onChangeQuery={setQuery}
+      onOpenNotebooks={() => setNotebookPickerOpen(true)}
+      onOpenSync={() => push('/sync')}
+      onOpenActivity={() => setActivityOpen(true)}
+      onOpenSettings={() => push('/settings')}
+    />
+  );
+
+  if (!ready) {
+    // O cabecalho aparece no primeiro frame; so a lista espera o SQLite.
+    return (
+      <Screen style={styles.screen}>
+        {header}
+        <NoteListSkeleton />
+      </Screen>
+    );
+  }
 
   return (
     <Screen style={styles.screen}>
-      <View style={styles.header}>
-        <View style={styles.headerText}>
-          <Text style={styles.largeTitle}>Notas</Text>
-          <Text style={styles.headerSub}>
-            {recordings.length === 0
-              ? 'Nada por aqui ainda'
-              : `${activeNotes.length} nota${activeNotes.length === 1 ? '' : 's'}${
-                  pending > 0 ? ` · ${pending} na fila` : ''
-                }`}
+      {header}
+
+      {interrupted > 0 ? (
+        <Press style={styles.alert} onPress={() => push('/recovery')}>
+          <Ionicons name="warning" size={18} color={colors.warning} />
+          <Text style={styles.alertText}>
+            {interrupted === 1
+              ? 'Uma gravação foi interrompida'
+              : `${interrupted} gravações interrompidas`}
           </Text>
-        </View>
-        <View style={styles.headerActions}>
-          <Pressable
-            style={styles.iconButton}
-            onPress={() => router.push('/sync')}
-            accessibilityLabel="Sincronizacao"
-          >
-            <Ionicons name={syncIcon} size={22} color={syncColor} />
-          </Pressable>
-          <Pressable
-            style={styles.iconButton}
-            onPress={() => router.push('/settings')}
-            accessibilityLabel="Opcoes"
-          >
-            <Ionicons name="settings-outline" size={22} color={colors.text} />
-          </Pressable>
-          <Pressable
-            style={styles.iconButton}
-            onPress={() => void handleAdd()}
-            accessibilityLabel="Nova nota"
-          >
-            <Ionicons name="add" size={26} color={colors.text} />
-          </Pressable>
-        </View>
+          <Ionicons name="chevron-forward" size={16} color={colors.warning} />
+        </Press>
+      ) : null}
+
+      <View style={styles.padded}>
+        <TagFilterRow
+          tags={tagCounts}
+          selected={selectedTags}
+          onToggle={toggleTag}
+          onClear={() => setSelectedTags([])}
+          onManage={() => push('/tags')}
+          order={noteOrder}
+          onPressOrder={() => setOrderOpen(true)}
+        />
       </View>
 
-      {recording ? (
-        <View style={styles.recordingView}>
-          <Text style={styles.timer}>{formatDuration(elapsedMs)}</Text>
-          <Waveform active level={level} height={84} color={colors.textSecondary} />
-          <Text style={styles.recHint}>Gravando com a tela bloqueada</Text>
-          {error ? <Text style={styles.error}>{error}</Text> : null}
-        </View>
-      ) : (
-        <>
-          <View style={styles.searchWrap}>
-            <Ionicons name="search" size={16} color={colors.textTertiary} />
-            <TextInput
-              value={query}
-              onChangeText={setQuery}
-              placeholder="Buscar notas"
-              placeholderTextColor={colors.textTertiary}
-              selectionColor={colors.accent}
-              style={styles.searchInput}
-            />
-            {query ? (
-              <Pressable onPress={() => setQuery('')} accessibilityLabel="Limpar busca">
-                <Ionicons name="close-circle" size={16} color={colors.textTertiary} />
-              </Pressable>
-            ) : null}
-          </View>
-
-          {interrupted > 0 ? (
-            <Pressable style={styles.alert} onPress={() => router.push('/recovery')}>
-              <Ionicons name="warning" size={18} color={colors.warning} />
-              <Text style={styles.alertText}>
-                {interrupted === 1
-                  ? 'Uma gravacao foi interrompida'
-                  : `${interrupted} gravacoes interrompidas`}
-              </Text>
-              <Ionicons name="chevron-forward" size={16} color={colors.warning} />
-            </Pressable>
-          ) : null}
-
-          {pending > 0 ? (
-            <Pressable style={styles.queueBar} onPress={kick}>
-              <Ionicons name="cloud-upload-outline" size={16} color={colors.accent} />
-              <Text style={styles.queueText}>{pending} na fila · Enviar agora</Text>
-              <Ionicons name="chevron-forward" size={14} color={colors.accent} />
-            </Pressable>
-          ) : null}
-
-          <SectionList
-            sections={sections}
-            keyExtractor={(item) => item.id}
-            contentContainerStyle={styles.list}
-            ItemSeparatorComponent={() => <View style={styles.separator} />}
-            stickySectionHeadersEnabled={false}
-            showsVerticalScrollIndicator={false}
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={onRefresh}
-                tintColor={colors.textSecondary}
-              />
-            }
-            renderSectionHeader={({ section }) => (
-              <Text style={styles.sectionHeader}>{section.title}</Text>
-            )}
-            renderItem={({ item }) => renderItem(item)}
-            ListEmptyComponent={
-              <View style={styles.empty}>
-                <View style={styles.emptyIcon}>
-                  <Ionicons name="document-text-outline" size={30} color={colors.textTertiary} />
-                </View>
-                <Text style={styles.emptyTitle}>Nenhuma nota</Text>
-                <Text style={styles.emptyText}>
-                  Toque em + para escrever uma nota ou no botao vermelho para gravar audio.
-                </Text>
-              </View>
-            }
+      <FlatList
+        data={noteList}
+        keyExtractor={keyExtractor}
+        contentContainerStyle={styles.list}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={colors.textSecondary}
           />
-        </>
-      )}
+        }
+        renderItem={renderNote}
+        ListEmptyComponent={
+          <View style={styles.empty}>
+            <View style={styles.emptyIcon}>
+              <Ionicons
+                name={
+                  query || selectedTags.length > 0
+                    ? 'funnel-outline'
+                    : scopeNotebook
+                      ? 'book-outline'
+                      : 'time-outline'
+                }
+                size={30}
+                color={colors.textTertiary}
+              />
+            </View>
+            <Text style={styles.emptyTitle}>
+              {query || selectedTags.length > 0
+                ? 'Nenhuma nota com esse filtro'
+                : scopeNotebook
+                  ? 'Nenhuma nota neste caderno'
+                  : 'Nenhuma nota ainda'}
+            </Text>
+            <Text style={styles.emptyText}>
+              {query || selectedTags.length > 0
+                ? scopeNotebook
+                  ? 'Limpe a busca ou as tags para ver o caderno inteiro.'
+                  : 'Limpe a busca ou as tags para ver todas as notas.'
+                : scopeNotebook
+                  ? 'Toque em + para criar a primeira nota deste caderno.'
+                  : 'Toque em + para criar uma nota de texto, imagem, áudio ou link.'}
+            </Text>
+          </View>
+        }
+      />
 
-      <View style={styles.bottomBar}>
-        <RecordButton recording={recording} busy={busy} onPress={handlePress} />
-        <Text style={styles.bottomHint}>{recording ? 'Toque para parar' : 'Toque para gravar'}</Text>
+      {newMenuOpen ? (
+        <Press
+          style={styles.fabBackdrop}
+          onPress={() => setNewMenuOpen(false)}
+          feedback={false}
+          accessibilityLabel="Fechar menu"
+        />
+      ) : null}
+
+      <View style={styles.fabWrap} pointerEvents="box-none">
+        {newMenuOpen ? (
+          <View style={styles.fabMenu}>
+            <NewMenuItem icon="link-outline" label="Link" onPress={() => void startNote('link')} />
+            <NewMenuItem
+              icon="image-outline"
+              label="Imagem"
+              onPress={() => void startNote('image')}
+            />
+            <NewMenuItem icon="mic-outline" label="Áudio" onPress={() => void startAudio()} />
+            <NewMenuItem
+              icon="document-text-outline"
+              label="Texto"
+              onPress={() => void startNote('text')}
+            />
+          </View>
+        ) : null}
+        <Press
+          style={styles.fab}
+          onPress={() => setNewMenuOpen((value) => !value)}
+          accessibilityLabel={newMenuOpen ? 'Fechar menu' : 'Nova nota'}
+        >
+          <Ionicons name={newMenuOpen ? 'close' : 'add'} size={28} color={colors.onAccent} />
+        </Press>
       </View>
+
+      <NotebookPicker
+        visible={notebookPickerOpen}
+        notebooks={notebooks}
+        currentId={scopeNotebook?.id}
+        recentSelected={!scopeNotebook}
+        title="Cadernos"
+        onClose={() => setNotebookPickerOpen(false)}
+        onSelectRecent={() => selectScope(null)}
+        onManage={() => {
+          setNotebookPickerOpen(false);
+          push('/notebooks');
+        }}
+        onSelect={selectScope}
+      />
+
+      {activityOpen ? (
+        <ActivityCenter visible onClose={() => setActivityOpen(false)} />
+      ) : null}
+
+      <NoteOrderSheet
+        visible={orderOpen}
+        order={noteOrder}
+        onChange={(next) => void setNoteOrder(next)}
+        onClose={() => setOrderOpen(false)}
+      />
+
+      <NoteActionsSheet
+        recording={actionsNote}
+        properties={actionsProps}
+        anchor={actionsAnchor}
+        onClose={closeActions}
+        onShare={shareActions}
+        onArchive={archiveActions}
+        onDelete={deleteActions}
+      />
     </Screen>
   );
 }
 
-const styles = StyleSheet.create({
+function NewMenuItem({
+  icon,
+  label,
+  onPress,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  onPress: () => void;
+}) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
+  return (
+    <Press style={styles.fabItem} onPress={onPress} accessibilityLabel={label}>
+      <Text style={styles.fabItemLabel}>{label}</Text>
+      <View style={styles.fabItemIcon}>
+        <Ionicons name={icon} size={18} color={colors.text} />
+      </View>
+    </Press>
+  );
+}
+
+/** Esqueleto da lista: o app abre antes do SQLite terminar de ler. */
+function NoteListSkeleton() {
+  const styles = useThemedStyles(baseStyles);
+
+  return (
+    <View
+      style={styles.skeleton}
+      testID="home-loading"
+      pointerEvents="none"
+      accessibilityLabel="Carregando notas"
+    >
+      {[0, 1, 2, 3, 4, 5].map((index) => (
+        <View key={index} style={styles.skeletonRow}>
+          <View style={styles.skeletonTitle} />
+          <View style={styles.skeletonSub} />
+        </View>
+      ))}
+    </View>
+  );
+}
+
+const baseStyles = defineStyles({
   screen: { paddingHorizontal: 0 },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.xl,
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.lg,
-  },
-  headerText: { gap: 2 },
-  headerActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  iconButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  largeTitle: { color: colors.text, fontSize: 34, fontWeight: '700', letterSpacing: 0.3 },
-  headerSub: { color: colors.textSecondary, fontSize: fontSize.sm },
-  searchWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  padded: { paddingHorizontal: spacing.sm },
+  list: { paddingBottom: 96 },
+  skeleton: { paddingHorizontal: spacing.lg, paddingTop: spacing.md },
+  skeletonRow: {
     gap: spacing.sm,
-    marginHorizontal: spacing.xl,
-    marginBottom: spacing.md,
-    backgroundColor: colors.surface,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.lg,
-    height: 40,
+    paddingVertical: spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: baseColors.border,
   },
-  searchInput: { flex: 1, color: colors.text, fontSize: fontSize.sm, paddingVertical: 0 },
-  recordingView: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.xl,
-    paddingHorizontal: spacing.xl,
+  skeletonTitle: {
+    width: '55%',
+    height: 15,
+    borderRadius: 4,
+    backgroundColor: baseColors.surface,
   },
-  timer: {
-    color: colors.text,
-    fontSize: fontSize.display,
-    fontWeight: '300',
-    fontVariant: ['tabular-nums'],
-    letterSpacing: 1,
-  },
-  recHint: { color: colors.textSecondary, fontSize: fontSize.sm },
-  error: { color: colors.danger, fontSize: fontSize.sm, textAlign: 'center' },
-  list: { paddingHorizontal: spacing.xl, paddingBottom: spacing.lg },
-  separator: { height: spacing.sm },
-  sectionHeader: {
-    color: colors.textSecondary,
-    fontSize: fontSize.sm,
-    fontWeight: '700',
-    letterSpacing: 1,
-    marginTop: spacing.lg,
-    marginBottom: spacing.sm,
+  skeletonSub: {
+    width: '82%',
+    height: 11,
+    borderRadius: 4,
+    backgroundColor: baseColors.surface,
+    opacity: 0.7,
   },
   swipeAction: {
     width: 88,
     justifyContent: 'center',
     alignItems: 'center',
     gap: 4,
-    borderRadius: 14,
-    marginLeft: spacing.sm,
   },
-  swipeLabel: { color: '#FFFFFF', fontSize: fontSize.xs, fontWeight: '700' },
+  swipeLabel: { color: baseColors.onAccent, fontSize: fontSize.xs, fontWeight: '700' },
   alert: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.md,
-    marginHorizontal: spacing.xl,
-    marginBottom: spacing.md,
-    backgroundColor: colors.warningSoft,
-    borderRadius: 14,
-    padding: spacing.md,
-  },
-  alertText: { flex: 1, color: colors.warning, fontSize: fontSize.sm, fontWeight: '600' },
-  queueBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
     gap: spacing.sm,
-    marginHorizontal: spacing.xl,
-    marginBottom: spacing.md,
-    backgroundColor: colors.accentSoft,
-    borderRadius: 14,
-    padding: spacing.md,
+    marginHorizontal: spacing.sm,
+    marginBottom: spacing.sm,
+    backgroundColor: baseColors.warningSoft,
+    borderRadius: radius.sm,
+    padding: spacing.sm,
   },
-  queueText: { flex: 1, color: colors.accent, fontSize: fontSize.sm, fontWeight: '600' },
+  alertText: { flex: 1, color: baseColors.warning, fontSize: fontSize.sm, fontWeight: '600' },
   empty: { alignItems: 'center', gap: spacing.md, paddingTop: spacing.xxxl },
   emptyIcon: {
     width: 68,
     height: 68,
     borderRadius: 34,
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  emptyTitle: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
+  emptyTitle: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
   emptyText: {
-    color: colors.textSecondary,
+    color: baseColors.textSecondary,
     fontSize: fontSize.sm,
     textAlign: 'center',
     paddingHorizontal: spacing.xl,
     lineHeight: 20,
   },
-  bottomBar: {
+  fabBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+  },
+  fabWrap: {
+    position: 'absolute',
+    right: spacing.xl,
+    bottom: spacing.xl,
+    alignItems: 'flex-end',
+    gap: spacing.md,
+  },
+  fabMenu: { alignItems: 'flex-end', gap: spacing.sm },
+  fabItem: {
+    flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
-    paddingTop: spacing.lg,
-    paddingBottom: spacing.lg,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
-    backgroundColor: colors.bg,
+    backgroundColor: baseColors.surface,
+    borderRadius: radius.pill,
+    paddingLeft: spacing.lg,
+    paddingRight: spacing.sm,
+    paddingVertical: spacing.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: baseColors.borderStrong,
   },
-  bottomHint: { color: colors.textTertiary, fontSize: fontSize.xs },
+  fabItemLabel: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
+  fabItemIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: baseColors.surfaceElevated,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  fab: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: baseColors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 });

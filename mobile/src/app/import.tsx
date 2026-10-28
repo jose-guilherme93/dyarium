@@ -1,18 +1,18 @@
 import { Ionicons } from '@expo/vector-icons';
 import { createAudioPlayer, type AudioPlayer } from 'expo-audio';
-import { router } from 'expo-router';
+import { replace } from '@/services/appNavigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Pressable,
   ScrollView,
   StyleSheet,
-  Text,
-  TextInput,
   View,
 } from 'react-native';
+import { Text, TextInput } from '@/components/AppText';
+import { Press } from '@/components/Press';
 
 import { Button } from '@/components/Button';
+import { NotebookPicker } from '@/components/NotebookPicker';
 import { Screen } from '@/components/Screen';
 import { formatBytes, formatDuration } from '@/core/format';
 import {
@@ -22,12 +22,15 @@ import {
   resolveRecordedAt,
   type ImportDraft,
 } from '@/core/import';
+import { DEFAULT_NOTEBOOK_ID } from '@/core/notebooks';
 import type { Recording } from '@/core/types';
 import { deleteSessionFiles } from '@/services/files';
 import { prepareSharedAudios } from '@/services/share';
 import { useLibrary } from '@/state/LibraryContext';
 import { useSettings } from '@/state/SettingsContext';
-import { colors, fontSize, radius, spacing } from '@/theme/tokens';
+import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 interface ReviewItem {
   draft: ImportDraft;
@@ -58,6 +61,9 @@ function ItemCard({
   onTogglePlay,
   onRemove,
 }: ItemCardProps) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const { draft } = item;
 
   const durationLabel = item.durationMs ? formatDuration(item.durationMs) : '--:--';
@@ -73,7 +79,7 @@ function ItemCard({
   return (
     <View style={styles.card}>
       <View style={styles.cardHead}>
-        <Pressable
+        <Press
           style={[styles.play, !draft.supported && styles.playDisabled]}
           onPress={onTogglePlay}
           disabled={!draft.supported || !draft.filePath}
@@ -85,22 +91,22 @@ function ItemCard({
             color={draft.supported ? colors.text : colors.textTertiary}
             style={isPlaying ? undefined : { marginLeft: 2 }}
           />
-        </Pressable>
+        </Press>
         <View style={styles.cardHeadText}>
           <Text style={styles.original} numberOfLines={1}>
             {draft.originalName}
           </Text>
           <Text style={styles.meta}>{meta}</Text>
         </View>
-        <Pressable style={styles.remove} onPress={onRemove} accessibilityLabel="Remover">
+        <Press style={styles.remove} onPress={onRemove} accessibilityLabel="Remover">
           <Ionicons name="close" size={20} color={colors.textSecondary} />
-        </Pressable>
+        </Press>
       </View>
 
       {draft.supported ? (
         <View style={styles.fields}>
           <View style={styles.field}>
-            <Text style={styles.fieldLabel}>Titulo</Text>
+            <Text style={styles.fieldLabel}>Título</Text>
             <TextInput
               value={item.title}
               onChangeText={onTitleChange}
@@ -153,9 +159,17 @@ function probeDuration(player: AudioPlayer, uri: string): Promise<number | null>
 }
 
 export default function ImportReviewScreen() {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const library = useLibrary();
-  const { importYear, setImportYear } = useSettings();
+  const { importYear, setImportYear, lastNotebookId } = useSettings();
   const [items, setItems] = useState<ReviewItem[] | null>(null);
+  const [notebookId, setNotebookId] = useState(lastNotebookId ?? DEFAULT_NOTEBOOK_ID);
+  const [notebookPickerOpen, setNotebookPickerOpen] = useState(false);
+  const targetNotebookId = library.notebooks.some((notebook) => notebook.id === notebookId)
+    ? notebookId
+    : (library.notebooks.find((notebook) => notebook.isDefault)?.id ?? DEFAULT_NOTEBOOK_ID);
   const [ignored, setIgnored] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -272,7 +286,7 @@ export default function ImportReviewScreen() {
         void probeDurations(drafts);
       })
       .catch(() => {
-        if (alive) setError('Nao foi possivel ler o audio compartilhado.');
+        if (alive) setError('Não foi possível ler o áudio compartilhado.');
       });
     return () => {
       alive = false;
@@ -363,18 +377,18 @@ export default function ImportReviewScreen() {
           recordedAt: parsed.toISOString(),
           durationMs: item.durationMs ?? item.draft.durationMs,
         };
-        recordings.push(draftToRecording(draft, now));
+        recordings.push({ ...draftToRecording(draft, now), notebookId: targetNotebookId });
       }
       committedRef.current = true;
       for (const recording of recordings) {
         await library.enqueue(recording);
       }
-      router.replace('/');
+      replace('/');
     } catch {
-      setError('Nao foi possivel enfileirar os audios.');
+      setError('Não foi possível enfileirar os áudios.');
       setSending(false);
     }
-  }, [library, sending]);
+  }, [library, sending, targetNotebookId]);
 
   const supportedCount = items?.filter((it) => it.draft.supported).length ?? 0;
   const loading = items === null;
@@ -382,35 +396,51 @@ export default function ImportReviewScreen() {
   return (
     <Screen>
       <View style={styles.header}>
-        <Pressable onPress={() => router.replace('/')} style={styles.back} accessibilityLabel="Voltar">
+        <Press onPress={() => replace('/')} style={styles.back} accessibilityLabel="Voltar">
           <Ionicons name="chevron-back" size={24} color={colors.text} />
-        </Pressable>
-        <Text style={styles.headerTitle}>Revisar importacao</Text>
+        </Press>
+        <Text style={styles.headerTitle}>Revisar importação</Text>
         <View style={styles.back} />
       </View>
 
       {loading ? (
         <View style={styles.center}>
           <ActivityIndicator size="large" color={colors.textSecondary} />
-          <Text style={styles.hint}>Lendo o audio...</Text>
+          <Text style={styles.hint}>Lendo o áudio...</Text>
         </View>
       ) : (
         <>
           <ScrollView contentContainerStyle={styles.list} showsVerticalScrollIndicator={false}>
             <Text style={styles.lead}>
-              Confira o que vai ser enviado. O audio original e preservado; so o titulo e a data
+              Confira o que vai ser enviado. O áudio original é preservado; só o título e a data
               podem mudar.
             </Text>
 
+            <View style={styles.controlRow}>
+              <Text style={styles.controlLabel}>Caderno</Text>
+              <Press
+                style={styles.segment}
+                onPress={() => setNotebookPickerOpen(true)}
+                accessibilityRole="button"
+                accessibilityLabel="Escolher caderno"
+              >
+                <Text style={styles.segmentText} numberOfLines={1}>
+                  {library.notebooks.find((item) => item.id === targetNotebookId)?.name ??
+                    'Notas ao acaso'}
+                </Text>
+                <Ionicons name="chevron-down" size={14} color={colors.textSecondary} />
+              </Press>
+            </View>
+
             <View style={styles.control}>
-              <Text style={styles.controlLabel}>Ano das gravacoes</Text>
+              <Text style={styles.controlLabel}>Ano das gravações</Text>
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.yearRow}
               >
                 {YEARS.map((value) => (
-                  <Pressable
+                  <Press
                     key={value}
                     onPress={() => chooseYear(value)}
                     style={[styles.yearChip, year === value && styles.yearChipActive]}
@@ -419,46 +449,46 @@ export default function ImportReviewScreen() {
                     <Text style={[styles.yearText, year === value && styles.yearTextActive]}>
                       {value}
                     </Text>
-                  </Pressable>
+                  </Press>
                 ))}
               </ScrollView>
             </View>
 
             <View style={styles.controlRow}>
-              <Text style={styles.controlLabel}>Ordem dia/mes</Text>
+              <Text style={styles.controlLabel}>Ordem dia/mês</Text>
               <View style={styles.segment}>
-                <Pressable
+                <Press
                   onPress={() => chooseInvert(false)}
                   style={[styles.segmentItem, !invert && styles.segmentItemActive]}
                   accessibilityRole="button"
                 >
                   <Text style={[styles.segmentText, !invert && styles.segmentTextActive]}>
-                    Dia/Mes
+                    Dia/Mês
                   </Text>
-                </Pressable>
-                <Pressable
+                </Press>
+                <Press
                   onPress={() => chooseInvert(true)}
                   style={[styles.segmentItem, invert && styles.segmentItemActive]}
                   accessibilityRole="button"
                 >
                   <Text style={[styles.segmentText, invert && styles.segmentTextActive]}>
-                    Mes/Dia
+                    Mês/Dia
                   </Text>
-                </Pressable>
+                </Press>
               </View>
             </View>
 
             <View style={styles.controlRow}>
               <Text style={styles.controlLabel}>Formato de hora</Text>
               <View style={styles.segment}>
-                <Pressable
+                <Press
                   onPress={() => setTimeFormat(true)}
                   style={[styles.segmentItem, use24h && styles.segmentItemActive]}
                   accessibilityRole="button"
                 >
                   <Text style={[styles.segmentText, use24h && styles.segmentTextActive]}>24h</Text>
-                </Pressable>
-                <Pressable
+                </Press>
+                <Press
                   onPress={() => setTimeFormat(false)}
                   style={[styles.segmentItem, !use24h && styles.segmentItemActive]}
                   accessibilityRole="button"
@@ -466,7 +496,7 @@ export default function ImportReviewScreen() {
                   <Text style={[styles.segmentText, !use24h && styles.segmentTextActive]}>
                     AM/PM
                   </Text>
-                </Pressable>
+                </Press>
               </View>
             </View>
 
@@ -474,7 +504,7 @@ export default function ImportReviewScreen() {
               <View style={styles.alert}>
                 <Ionicons name="information-circle-outline" size={18} color={colors.warning} />
                 <Text style={styles.alertText}>
-                  {ignored} audio(s) acima de 50 foram ignorados.
+                  {ignored} áudio(s) acima de 50 foram ignorados.
                 </Text>
               </View>
             ) : null}
@@ -495,7 +525,7 @@ export default function ImportReviewScreen() {
             ) : (
               <View style={styles.center}>
                 <Ionicons name="musical-notes-outline" size={30} color={colors.textTertiary} />
-                <Text style={styles.emptyText}>Nenhum audio para importar.</Text>
+                <Text style={styles.emptyText}>Nenhum áudio para importar.</Text>
               </View>
             )}
 
@@ -512,11 +542,22 @@ export default function ImportReviewScreen() {
           </View>
         </>
       )}
+
+      <NotebookPicker
+        visible={notebookPickerOpen}
+        notebooks={library.notebooks}
+        currentId={targetNotebookId}
+        onClose={() => setNotebookPickerOpen(false)}
+        onSelect={(id) => {
+          setNotebookId(id);
+          setNotebookPickerOpen(false);
+        }}
+      />
     </Screen>
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -525,11 +566,11 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
   },
   back: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { color: colors.text, fontSize: fontSize.lg, fontWeight: '700' },
+  headerTitle: { color: baseColors.text, fontSize: fontSize.lg, fontWeight: '700' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.md },
-  hint: { color: colors.textSecondary, fontSize: fontSize.sm },
+  hint: { color: baseColors.textSecondary, fontSize: fontSize.sm },
   list: { padding: spacing.xl, gap: spacing.lg },
-  lead: { color: colors.textSecondary, fontSize: fontSize.md, lineHeight: 22 },
+  lead: { color: baseColors.textSecondary, fontSize: fontSize.md, lineHeight: 22 },
   control: { gap: spacing.sm },
   controlRow: {
     flexDirection: 'row',
@@ -538,7 +579,7 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   controlLabel: {
-    color: colors.textSecondary,
+    color: baseColors.textSecondary,
     fontSize: fontSize.xs,
     fontWeight: '600',
     textTransform: 'uppercase',
@@ -549,14 +590,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
     borderRadius: radius.pill,
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
   },
-  yearChipActive: { backgroundColor: colors.accent },
-  yearText: { color: colors.textSecondary, fontSize: fontSize.sm, fontWeight: '600' },
-  yearTextActive: { color: '#FFFFFF' },
+  yearChipActive: { backgroundColor: baseColors.accent },
+  yearText: { color: baseColors.textSecondary, fontSize: fontSize.sm, fontWeight: '600' },
+  yearTextActive: { color: baseColors.onAccent },
   segment: {
     flexDirection: 'row',
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     borderRadius: radius.pill,
     padding: 3,
     gap: 3,
@@ -566,20 +607,20 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     borderRadius: radius.pill,
   },
-  segmentItemActive: { backgroundColor: colors.accent },
-  segmentText: { color: colors.textSecondary, fontSize: fontSize.sm, fontWeight: '600' },
-  segmentTextActive: { color: '#FFFFFF' },
+  segmentItemActive: { backgroundColor: baseColors.accent },
+  segmentText: { color: baseColors.textSecondary, fontSize: fontSize.sm, fontWeight: '600' },
+  segmentTextActive: { color: baseColors.onAccent },
   alert: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
-    backgroundColor: colors.warningSoft,
+    backgroundColor: baseColors.warningSoft,
     borderRadius: radius.md,
     padding: spacing.md,
   },
-  alertText: { flex: 1, color: colors.warning, fontSize: fontSize.sm, fontWeight: '600' },
+  alertText: { flex: 1, color: baseColors.warning, fontSize: fontSize.sm, fontWeight: '600' },
   card: {
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     borderRadius: radius.md,
     padding: spacing.lg,
     gap: spacing.lg,
@@ -589,30 +630,30 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: colors.surfaceElevated,
+    backgroundColor: baseColors.surfaceElevated,
     alignItems: 'center',
     justifyContent: 'center',
   },
   playDisabled: { opacity: 0.5 },
   cardHeadText: { flex: 1, gap: 3 },
-  original: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
-  meta: { color: colors.textSecondary, fontSize: fontSize.xs },
+  original: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
+  meta: { color: baseColors.textSecondary, fontSize: fontSize.xs },
   remove: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   fields: { gap: spacing.md },
   field: { gap: spacing.sm },
   fieldLabel: {
-    color: colors.textSecondary,
+    color: baseColors.textSecondary,
     fontSize: fontSize.xs,
     fontWeight: '600',
     textTransform: 'uppercase',
     letterSpacing: 0.6,
   },
   input: {
-    backgroundColor: colors.bgElevated,
+    backgroundColor: baseColors.bgElevated,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.borderStrong,
+    borderColor: baseColors.borderStrong,
     borderRadius: radius.md,
-    color: colors.text,
+    color: baseColors.text,
     fontSize: fontSize.md,
     paddingHorizontal: spacing.lg,
     height: 48,
@@ -621,17 +662,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
-    backgroundColor: colors.warningSoft,
+    backgroundColor: baseColors.warningSoft,
     borderRadius: radius.md,
     padding: spacing.md,
   },
-  rejectText: { flex: 1, color: colors.warning, fontSize: fontSize.sm },
-  emptyText: { color: colors.textSecondary, fontSize: fontSize.sm },
-  error: { color: colors.danger, fontSize: fontSize.sm, textAlign: 'center' },
+  rejectText: { flex: 1, color: baseColors.warning, fontSize: fontSize.sm },
+  emptyText: { color: baseColors.textSecondary, fontSize: fontSize.sm },
+  error: { color: baseColors.danger, fontSize: fontSize.sm, textAlign: 'center' },
   footer: {
     padding: spacing.xl,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
-    backgroundColor: colors.bg,
+    borderTopColor: baseColors.border,
+    backgroundColor: baseColors.bg,
   },
 });

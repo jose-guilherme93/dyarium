@@ -1,22 +1,105 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/jose-guilherme93/dyarium/internal/store"
+	"github.com/joseti/dyarium/internal/store"
 )
 
 func entitySummaryJSON(s store.EntitySummary) map[string]any {
 	return map[string]any{
+		"id":        s.ID,
 		"kind":      s.Kind,
 		"name":      s.Name,
+		"icon":      s.Icon,
 		"entries":   s.Entries,
 		"mentions":  s.Mentions,
 		"sentiment": s.Sentiment,
 		"last_seen": nullTime(s.LastSeen),
 	}
+}
+
+// handleGraph returns the relationship map centered on the diarist. The
+// default view is the ego network of entities; `focus` opens one entity with
+// its notes. The center label comes from the owner name, never from the notes:
+// the map is the diarist's, even when a note was recorded by someone else.
+func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	query := r.URL.Query()
+	notebookID := strings.TrimSpace(query.Get("notebook_id"))
+	if notebookID != "" {
+		if err := s.deps.Store.NotebookExists(ctx, notebookID); err != nil {
+			if errors.Is(err, store.ErrNotebookNotFound) {
+				writeError(w, http.StatusNotFound, "notebook_not_found", "caderno inexistente")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			return
+		}
+	}
+	settings, err := s.deps.Store.ListSettings(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	owner := strings.TrimSpace(settings["owner_name"])
+	if owner == "" {
+		owner = "Você"
+	}
+	data, err := s.deps.Store.Graph(ctx, store.GraphOptions{
+		NotebookID: notebookID,
+		From:       parseDateParam(query.Get("from"), false),
+		To:         parseDateParam(query.Get("to"), true),
+		Focus:      query.Get("focus"),
+	})
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "entidade inexistente")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	nodes := make([]map[string]any, 0, len(data.Nodes))
+	for _, node := range data.Nodes {
+		item := map[string]any{
+			"id":       node.ID,
+			"kind":     node.Kind,
+			"label":    node.Label,
+			"mentions": node.Mentions,
+			"notes":    node.Notes,
+		}
+		switch node.Kind {
+		case store.GraphNote:
+			item["date"] = nullTime(node.Date)
+			item["author"] = node.Author
+		default:
+			item["sentiment"] = node.Sentiment
+			item["last_seen"] = nullTime(node.LastSeen)
+			item["icon"] = node.Icon
+		}
+		nodes = append(nodes, item)
+	}
+	edges := make([]map[string]any, 0, len(data.Edges))
+	for _, edge := range data.Edges {
+		edges = append(edges, map[string]any{
+			"source": edge.Source,
+			"target": edge.Target,
+			"kind":   edge.Kind,
+			"weight": edge.Weight,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"center":      map[string]any{"id": "user", "kind": "user", "label": owner},
+		"nodes":       nodes,
+		"edges":       edges,
+		"total_nodes": data.TotalNodes,
+		"total_edges": data.TotalEdges,
+		"truncated":   data.Truncated,
+	})
 }
 
 func nullTime(t time.Time) any {
@@ -28,8 +111,8 @@ func nullTime(t time.Time) any {
 
 func (s *Server) handleListEntities(w http.ResponseWriter, r *http.Request) {
 	kind := r.URL.Query().Get("kind")
-	if kind != "" && kind != store.EntityPerson && kind != store.EntityPlace && kind != store.EntityTheme {
-		writeError(w, http.StatusBadRequest, "invalid_kind", "kind deve ser person, place ou theme")
+	if kind != "" && !store.ValidEntityKind(kind) {
+		writeError(w, http.StatusBadRequest, "invalid_kind", "kind deve ser person, place, theme ou decision")
 		return
 	}
 	entities, err := s.deps.Store.ListEntities(r.Context(), kind)
@@ -46,8 +129,8 @@ func (s *Server) handleListEntities(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetEntity(w http.ResponseWriter, r *http.Request) {
 	kind := r.PathValue("kind")
-	if kind != store.EntityPerson && kind != store.EntityPlace && kind != store.EntityTheme {
-		writeError(w, http.StatusBadRequest, "invalid_kind", "kind deve ser person, place ou theme")
+	if !store.ValidEntityKind(kind) {
+		writeError(w, http.StatusBadRequest, "invalid_kind", "kind deve ser person, place, theme ou decision")
 		return
 	}
 	summary, entries, ok, err := s.deps.Store.GetEntity(r.Context(), kind, r.PathValue("name"))
@@ -71,6 +154,90 @@ func (s *Server) handleGetEntity(w http.ResponseWriter, r *http.Request) {
 	body := entitySummaryJSON(summary)
 	body["entry_list"] = list
 	writeJSON(w, http.StatusOK, body)
+}
+
+// handleRenameEntity changes the display name of a person, place, theme or
+// decision. The old name becomes an alias, so the next analysis still resolves
+// to the same entity; when the new name already exists, the two are merged.
+func (s *Server) handleRenameEntity(w http.ResponseWriter, r *http.Request) {
+	kind := r.PathValue("kind")
+	if !store.ValidEntityKind(kind) {
+		writeError(w, http.StatusBadRequest, "invalid_kind", "kind deve ser person, place, theme ou decision")
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_body", "corpo invalido")
+		return
+	}
+	summary, err := s.deps.Store.RenameEntity(r.Context(), kind, r.PathValue("name"), req.Name)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "entidade inexistente")
+		return
+	}
+	if errors.Is(err, store.ErrInvalidEntity) {
+		writeError(w, http.StatusBadRequest, "invalid_name", "nome invalido")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, entitySummaryJSON(summary))
+}
+
+// handleClaimSelf folds a person into the diarist. The person stops being a
+// node; its name and aliases become owner spellings, so every analysis resolves
+// them to the owner name from settings. Used by the "sou eu" check on the map.
+func (s *Server) handleClaimSelf(w http.ResponseWriter, r *http.Request) {
+	owner, err := s.deps.Store.ClaimPersonAsOwner(r.Context(), r.PathValue("name"))
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "pessoa inexistente")
+		return
+	}
+	if errors.Is(err, store.ErrInvalidEntity) {
+		writeError(w, http.StatusBadRequest, "invalid_name", "nome invalido")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "owner": owner})
+}
+
+// handleSetEntityIcon stores the monochrome glyph the map draws inside one
+// entity. Empty returns to the icon of the kind. The key list is shared with
+// the clients and validated here so the database never keeps an unknown glyph.
+func (s *Server) handleSetEntityIcon(w http.ResponseWriter, r *http.Request) {
+	kind := r.PathValue("kind")
+	if !store.ValidEntityKind(kind) {
+		writeError(w, http.StatusBadRequest, "invalid_kind", "kind deve ser person, place, theme ou decision")
+		return
+	}
+	var req struct {
+		Icon string `json:"icon"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_body", "corpo invalido")
+		return
+	}
+	summary, err := s.deps.Store.SetEntityIcon(r.Context(), kind, r.PathValue("name"), req.Icon)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "entidade inexistente")
+		return
+	}
+	if errors.Is(err, store.ErrInvalidEntity) {
+		writeError(w, http.StatusBadRequest, "invalid_icon", "icone invalido")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, entitySummaryJSON(summary))
 }
 
 func (s *Server) handleMood(w http.ResponseWriter, r *http.Request) {

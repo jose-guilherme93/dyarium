@@ -118,6 +118,105 @@ func Decrypt(r io.Reader, key []byte, dst io.Writer) (int64, error) {
 	}
 }
 
+// DecryptRange decrypts the inclusive plaintext window [start, end] of a
+// ciphertext stream into dst. Records are independent, so it only seeks past
+// the record headers before start (without decrypting them) and stops as soon
+// as the window is covered. It is what makes HTTP Range requests cheap instead
+// of decrypting the whole object.
+func DecryptRange(r io.ReadSeeker, key []byte, start, end int64, dst io.Writer) (int64, error) {
+	if start < 0 || end < start {
+		return 0, ErrMalformed
+	}
+	aead, err := newAEAD(key)
+	if err != nil {
+		return 0, err
+	}
+	prefix, err := ReadHeader(r)
+	if err != nil {
+		return 0, err
+	}
+	overhead := int64(aead.Overhead())
+	var counter uint32
+	var pos int64 // first plaintext byte of the next record
+	var lenBuf [4]byte
+	for {
+		if pos > start {
+			// The caller asked for an offset before the first record.
+			return 0, ErrMalformed
+		}
+		recordStart, err := r.Seek(0, io.SeekCurrent)
+		if err != nil {
+			return 0, err
+		}
+		if _, err := io.ReadFull(r, lenBuf[:]); err != nil {
+			// start == total plaintext size: an empty window at EOF is valid,
+			// but a window that begins past the stream is not.
+			if err == io.EOF && start == pos {
+				return 0, nil
+			}
+			return 0, ErrMalformed
+		}
+		n := int64(binary.BigEndian.Uint32(lenBuf[:]))
+		plainLen := n - overhead
+		if plainLen < 0 {
+			return 0, ErrMalformed
+		}
+		if pos+plainLen <= start {
+			// Whole record is before the window: skip its ciphertext.
+			pos += plainLen
+			counter++
+			if _, err := r.Seek(recordStart+4+n, io.SeekStart); err != nil {
+				return 0, err
+			}
+			continue
+		}
+		// This record contains the first requested byte: rewind and decrypt
+		// from here until the window is covered.
+		if _, err := r.Seek(recordStart, io.SeekStart); err != nil {
+			return 0, err
+		}
+		break
+	}
+
+	var wrote int64
+	for pos <= end {
+		if _, err := io.ReadFull(r, lenBuf[:]); err != nil {
+			if err == io.EOF {
+				return wrote, nil
+			}
+			return wrote, ErrMalformed
+		}
+		n := int64(binary.BigEndian.Uint32(lenBuf[:]))
+		sealed := make([]byte, n)
+		if _, err := io.ReadFull(r, sealed); err != nil {
+			return wrote, ErrMalformed
+		}
+		plain, err := aead.Open(nil, newNonce(prefix, counter), sealed, nil)
+		if err != nil {
+			return wrote, err
+		}
+		counter++
+		recordEnd := pos + int64(len(plain)) - 1
+		lo := pos
+		if start > lo {
+			lo = start
+		}
+		hi := recordEnd
+		if end < hi {
+			hi = end
+		}
+		if lo <= hi {
+			chunk := plain[lo-pos : hi-pos+1]
+			if _, err := dst.Write(chunk); err != nil {
+				return wrote, err
+			}
+			wrote += int64(len(chunk))
+		}
+		pos = recordEnd + 1
+	}
+	return wrote, nil
+}
+
 // DecryptHash decrypts r and returns the plaintext size and its SHA-256, so that
 // an upload can be validated without ever writing plaintext to disk.
 func DecryptHash(r io.Reader, key []byte) (int64, [32]byte, error) {

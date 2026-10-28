@@ -33,6 +33,7 @@
         "android.permission.MODIFY_AUDIO_SETTINGS",
         "android.permission.POST_NOTIFICATIONS",
         "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
         "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
         "android.permission.FOREGROUND_SERVICE_MICROPHONE"
       ],
@@ -65,10 +66,12 @@
         "expo-build-properties",
         {
           "android": {
-            "usesCleartextTraffic": true
+            "usesCleartextTraffic": true,
+            "buildArchs": ["arm64-v8a"]
           }
         }
       ],
+      "./plugins/withKeyboardLayout",
       [
         "expo-audio",
         {
@@ -92,6 +95,20 @@
           "imageWidth": 120
         }
       ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "O dyarium precisa das suas fotos para anexar imagens as notas."
+        }
+      ],
+      [
+        "llama.rn",
+        {
+          "enableOpenCLAndHexagon": false,
+          "forceCxx20": true
+        }
+      ],
+      "./plugins/withLlamaBaseLib",
       "expo-asset"
     ],
     "experiments": {

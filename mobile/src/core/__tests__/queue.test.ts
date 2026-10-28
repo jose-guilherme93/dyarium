@@ -2,13 +2,14 @@ import {
   isDue,
   markCompleted,
   markFailed,
+  markFailedTerminal,
   markProgress,
   markQueued,
   markRecorded,
   markUploading,
   pickNextToUpload,
 } from '../queue';
-import type { Recording } from '../types';
+import { isUploadable, type Recording } from '../types';
 
 function base(overrides: Partial<Recording> = {}): Recording {
   return {
@@ -63,6 +64,25 @@ describe('transicoes da fila', () => {
     expect(failed.attempts).toBe(1);
     expect(failed.lastError).toBe('rede');
     expect(failed.nextAttemptAt).toBe('2026-10-10T22:00:02.000Z'); // base 2s
+  });
+
+  it('markFailedTerminal nao reagenda nem retenta sozinho', () => {
+    const dead = markFailedTerminal(base(), 'formato nao suportado', NOW);
+    expect(dead.status).toBe('failed');
+    expect(dead.terminal).toBe(true);
+    expect(dead.nextAttemptAt).toBeUndefined();
+    expect(dead.lastError).toBe('formato nao suportado');
+    expect(isUploadable(dead)).toBe(false);
+    expect(isDue(dead, new Date('2027-01-01T00:00:00.000Z'))).toBe(false);
+    expect(pickNextToUpload([dead], NOW)).toBeUndefined();
+  });
+
+  it('retry manual (markQueued) limpa a falha terminal', () => {
+    const dead = markFailedTerminal(base(), 'formato nao suportado', NOW);
+    const requeued = markQueued(dead, NOW);
+    expect(requeued.terminal).toBeUndefined();
+    expect(requeued.status).toBe('queued');
+    expect(isUploadable(requeued)).toBe(true);
   });
 });
 

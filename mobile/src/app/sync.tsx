@@ -1,28 +1,38 @@
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { back } from '@/services/appNavigation';
+import {
+  ScrollView,
+  View,
+} from 'react-native';
+import { Text } from '@/components/AppText';
+import { Press } from '@/components/Press';
 
 import { Button } from '@/components/Button';
 import { Screen } from '@/components/Screen';
-import { STATUS_META } from '@/components/StatusChip';
-import { isUploadable, type Recording } from '@/core/types';
+import { statusMeta } from '@/components/StatusChip';
+import { isUploadable, needsNoteSync, type Recording } from '@/core/types';
 import { useLibrary } from '@/state/LibraryContext';
-import { colors, fontSize, radius, spacing } from '@/theme/tokens';
+import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 export default function SyncScreen() {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   const { recordings, retry, kick } = useLibrary();
 
-  const pending = recordings.filter((r) => isUploadable(r));
+  const pending = recordings.filter((r) => isUploadable(r) || needsNoteSync(r));
   const failed = recordings.filter((r) => r.status === 'failed').length;
   const completed = recordings.filter((r) => r.status === 'completed').length;
 
   return (
     <Screen>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.iconButton} accessibilityLabel="Voltar">
+        <Press onPress={() => back()} style={styles.iconButton} accessibilityLabel="Voltar">
           <Ionicons name="chevron-back" size={24} color={colors.text} />
-        </Pressable>
-        <Text style={styles.headerTitle}>Sincronizacao</Text>
+        </Press>
+        <Text style={styles.headerTitle}>Sincronização</Text>
         <View style={styles.iconButton} />
       </View>
 
@@ -46,8 +56,8 @@ export default function SyncScreen() {
         </View>
 
         <Text style={styles.hint}>
-          O envio continua em segundo plano quando o app fica em segundo plano ou e fechado. Toque
-          em Enviar agora para forcar.
+          O envio continua em segundo plano quando o app fica em segundo plano ou é fechado. Toque
+          em Enviar agora para forçar.
         </Text>
 
         {pending.length > 0 ? (
@@ -72,7 +82,10 @@ export default function SyncScreen() {
 }
 
 function SyncRow({ recording, onRetry }: { recording: Recording; onRetry: () => void }) {
-  const meta = STATUS_META[recording.status];
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
+  const meta = statusMeta(recording.status, colors);
   return (
     <View style={styles.row}>
       <View style={[styles.dot, { backgroundColor: meta.color }]} />
@@ -80,18 +93,18 @@ function SyncRow({ recording, onRetry }: { recording: Recording; onRetry: () => 
         <Text style={styles.rowTitle} numberOfLines={1}>
           {recording.title}
         </Text>
-        <Text style={styles.rowSub}>{meta.label}</Text>
+        <Text style={styles.rowSub}>{needsNoteSync(recording) ? 'Aguardando envio' : meta.label}</Text>
       </View>
       {recording.status === 'failed' ? (
-        <Pressable onPress={onRetry} accessibilityLabel="Reenviar" hitSlop={8}>
+        <Press onPress={onRetry} accessibilityLabel="Reenviar" hitSlop={8}>
           <Ionicons name="refresh" size={20} color={colors.warning} />
-        </Pressable>
+        </Press>
       ) : null}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -100,33 +113,33 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
   },
   iconButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { color: colors.text, fontSize: fontSize.lg, fontWeight: '700' },
+  headerTitle: { color: baseColors.text, fontSize: fontSize.lg, fontWeight: '700' },
   content: { padding: spacing.xl, gap: spacing.lg },
   summary: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.lg,
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     borderRadius: radius.md,
     padding: spacing.lg,
   },
   summaryText: { flex: 1, gap: 2 },
-  summaryTitle: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
-  summarySub: { color: colors.textSecondary, fontSize: fontSize.sm },
-  hint: { color: colors.textSecondary, fontSize: fontSize.sm, lineHeight: 20 },
+  summaryTitle: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
+  summarySub: { color: baseColors.textSecondary, fontSize: fontSize.sm },
+  hint: { color: baseColors.textSecondary, fontSize: fontSize.sm, lineHeight: 20 },
   list: { gap: spacing.sm },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     borderRadius: radius.md,
     padding: spacing.md,
   },
   dot: { width: 8, height: 8, borderRadius: 4 },
   rowText: { flex: 1, gap: 2 },
-  rowTitle: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
-  rowSub: { color: colors.textSecondary, fontSize: fontSize.xs },
+  rowTitle: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
+  rowSub: { color: baseColors.textSecondary, fontSize: fontSize.xs },
   empty: { alignItems: 'center', gap: spacing.md, paddingTop: spacing.xl },
-  emptyText: { color: colors.textSecondary, fontSize: fontSize.sm },
+  emptyText: { color: baseColors.textSecondary, fontSize: fontSize.sm },
 });

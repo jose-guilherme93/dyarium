@@ -29,6 +29,20 @@ services:
       retries: 3
       start_period: 30s
 
+  # Analise de IA local (opcional, sem chave). O painel configura em um clique
+  # (Configuracao > Analise por IA > Ollama local) e baixa o modelo.
+  # Uso: docker compose --profile ai up -d ollama
+  # Num modelo grande nao cabe no limite de 900 MB; use um modelo pequeno.
+  ollama:
+    image: ollama/ollama
+    profiles: ["ai"]
+    restart: unless-stopped
+    cpus: "2"
+    mem_limit: 900m
+    volumes:
+      - ollama-models:/root/.ollama
+
 volumes:
   dyarium-data:
   dyarium-models:
+  ollama-models:

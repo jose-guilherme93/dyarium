@@ -83,6 +83,167 @@ func (p *Pipeline) Run(ctx context.Context, segments []Segment, progress func(st
 	return limitResult(merged), nil
 }
 
+// RunSections analyzes the note section by section and then synthesizes the
+// whole. Sections come from the written text's headings plus the audio
+// transcript, so a long note is read in parts and the result carries an analysis
+// per part — not one label for everything.
+func (p *Pipeline) RunSections(ctx context.Context, title string, sections []Section, progress func(stage string, done, total int)) (Result, error) {
+	if !p.client.Enabled() {
+		return Result{}, ErrDisabled
+	}
+	if len(sections) == 0 {
+		return Result{}, errors.New("analyze: nota sem conteudo")
+	}
+	report := func(stage string, done, total int) {
+		if progress != nil {
+			progress(stage, done, total)
+		}
+	}
+	total := len(sections) + 1
+	report("analyzing", 0, total)
+	analyses := make([]SectionAnalysis, 0, len(sections))
+	results := make([]Result, 0, len(sections))
+	weights := make([]int, 0, len(sections))
+	for i, section := range sections {
+		result, err := p.analyzeSection(ctx, title, section)
+		if err != nil {
+			return Result{}, err
+		}
+		// Momento com tempo so faz sentido na fala. Uma secao escrita nao tem
+		// audio: o modelo inventaria `start_ms`, e o painel mostraria um
+		// instante que nao existe.
+		if section.Kind != "transcript" {
+			result.KeyMoments = nil
+		}
+		analyses = append(analyses, SectionAnalysis{
+			Heading:    section.Heading,
+			Kind:       section.Kind,
+			Reading:    result.Reading,
+			Summary:    result.Summary,
+			Sentiment:  result.Sentiment,
+			Themes:     result.Themes,
+			KeyMoments: result.KeyMoments,
+			Questions:  result.Questions,
+			Decisions:  result.Decisions,
+		})
+		results = append(results, result)
+		weights = append(weights, max(1, len([]rune(section.Text))))
+		report("analyzing", i+1, total)
+	}
+
+	merged := mergeResults(results, weights)
+	merged.Sections = analyses
+	// A sintese e o que liga as secoes. Se ela falhar, a analise das secoes ja
+	// esta pronta e e entregue: o usuario nao perde o trabalho.
+	report("summarizing", len(sections), total)
+	if synthesis, err := p.client.Synthesize(ctx, title, analyses); err == nil {
+		if s := strings.TrimSpace(synthesis.Summary); s != "" {
+			merged.Summary = synthesis.Summary
+		}
+		if s := strings.TrimSpace(synthesis.Reading); s != "" {
+			merged.Reading = synthesis.Reading
+		}
+		if synthesis.Sentiment.Label != "" {
+			merged.Sentiment = synthesis.Sentiment
+		}
+		if len(synthesis.Themes) > 0 {
+			merged.Themes = synthesis.Themes
+		}
+	}
+	report("summarizing", total, total)
+	return limitResult(merged), nil
+}
+
+// analyzeSection keeps a single section within one call; a section longer than
+// the single-pass limit is windowed and merged.
+func (p *Pipeline) analyzeSection(ctx context.Context, title string, section Section) (Result, error) {
+	if len([]rune(section.Text)) <= singlePassLimit {
+		return p.client.AnalyzeSection(ctx, title, section)
+	}
+	texts := []string{section.Text}
+	if len(section.Segments) > 0 {
+		windows := buildWindows(section.Segments)
+		texts = texts[:0]
+		for _, w := range windows {
+			texts = append(texts, w.text)
+		}
+	} else {
+		texts = buildTextWindows(section.Text, windowTarget)
+	}
+	results := make([]Result, 0, len(texts))
+	weights := make([]int, 0, len(texts))
+	for _, text := range texts {
+		if strings.TrimSpace(text) == "" {
+			continue
+		}
+		result, err := p.client.AnalyzeSection(ctx, title, Section{
+			Heading: section.Heading,
+			Kind:    section.Kind,
+			Text:    text,
+		})
+		if err != nil {
+			return Result{}, err
+		}
+		results = append(results, result)
+		weights = append(weights, max(1, len([]rune(text))))
+	}
+	if len(results) == 0 {
+		return Result{}, errors.New("analyze: secao vazia")
+	}
+	return mergeResults(results, weights), nil
+}
+
+// buildTextWindows cuts a long written section on paragraph boundaries, and a
+// paragraph bigger than the target is split into pieces: a section is never
+// truncated, only windowed.
+func buildTextWindows(text string, target int) []string {
+	if target <= 0 {
+		target = windowTarget
+	}
+	var out []string
+	var current strings.Builder
+	appendText := func(part string) {
+		if current.Len() > 0 && current.Len()+len(part) > target {
+			out = append(out, current.String())
+			current.Reset()
+		}
+		if current.Len() > 0 {
+			current.WriteString("\n\n")
+		}
+		current.WriteString(part)
+	}
+	for _, paragraph := range strings.Split(text, "\n\n") {
+		paragraph = strings.TrimSpace(paragraph)
+		if paragraph == "" {
+			continue
+		}
+		if len(paragraph) <= target {
+			appendText(paragraph)
+			continue
+		}
+		// Paragrafo unico maior que a janela: corta entre palavras.
+		words := strings.Fields(paragraph)
+		var piece strings.Builder
+		for _, word := range words {
+			if piece.Len() > 0 && piece.Len()+len(word)+1 > target {
+				appendText(piece.String())
+				piece.Reset()
+			}
+			if piece.Len() > 0 {
+				piece.WriteString(" ")
+			}
+			piece.WriteString(word)
+		}
+		if piece.Len() > 0 {
+			appendText(piece.String())
+		}
+	}
+	if current.Len() > 0 {
+		out = append(out, current.String())
+	}
+	return out
+}
+
 // buildWindows annotates each segment with its [mm:ss] offset and groups them
 // into windows. Segments are never split across windows.
 func buildWindows(segments []Segment) []window {
@@ -127,6 +288,13 @@ func joinParts(parts []textPart) string {
 		lines = append(lines, p.text)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// FormatOffset renders a millisecond offset as [mm:ss], the timestamp format
+// the analysis prompt reads. It is exported so the worker can build the
+// transcript section with the same format the windowed pipeline uses.
+func FormatOffset(ms int) string {
+	return mmss(ms)
 }
 
 func mmss(ms int) string {
@@ -316,11 +484,22 @@ func mergeResults(results []Result, weights []int) Result {
 			}
 		}
 	}
+	if out.Reading == "" {
+		readings := make([]string, 0, len(results))
+		for _, r := range results {
+			if s := strings.TrimSpace(r.Reading); s != "" {
+				readings = append(readings, s)
+			}
+		}
+		out.Reading = strings.Join(readings, "\n\n")
+	}
 	return out
 }
 
-// limitResult enforces the per-entry limits and normalizes ordering.
+// limitResult enforces the per-entry limits, keeps the prose short and
+// normalizes ordering.
 func limitResult(r Result) Result {
+	r = limitProse(r)
 	if r.Sentiment.Label == "" {
 		r.Sentiment.Label = sentimentLabel(r.Sentiment.Score)
 	}

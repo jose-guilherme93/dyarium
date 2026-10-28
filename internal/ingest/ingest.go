@@ -6,7 +6,9 @@ package ingest
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,10 +16,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jose-guilherme93/dyarium/internal/audio"
-	"github.com/jose-guilherme93/dyarium/internal/crypto"
-	"github.com/jose-guilherme93/dyarium/internal/id"
-	"github.com/jose-guilherme93/dyarium/internal/store"
+	"github.com/joseti/dyarium/internal/audio"
+	"github.com/joseti/dyarium/internal/crypto"
+	"github.com/joseti/dyarium/internal/entrytitle"
+	"github.com/joseti/dyarium/internal/id"
+	"github.com/joseti/dyarium/internal/store"
 )
 
 // Config holds the upload limits.
@@ -53,8 +56,25 @@ type Meta struct {
 	// entry created at Complete.
 	Title      string
 	RecordedAt *time.Time
+	// CreatedAt is the original creation time of the note (import time for an
+	// imported audio). Nil means "use the upload completion time".
+	CreatedAt *time.Time
+	// Source records where the note came from (e.g. "share" for imported audio).
+	Source string
 	// ClientKey makes Start idempotent: repeating it returns the same upload.
 	ClientKey string
+	// EntryID, when set, adds this audio to an existing entry instead of
+	// creating a new one (used to give a note more than one audio).
+	EntryID string
+	// Author is the explicit author role chosen for the note (self/other/mixed).
+	// Empty follows the app default.
+	Author string
+	// LocalTranscribe means the client will transcribe this audio on the device;
+	// the server must not enqueue its own transcription.
+	LocalTranscribe bool
+	// LocalAnalysis means the client owns the analysis; the server must not
+	// enqueue analyze for this entry.
+	LocalAnalysis bool
 }
 
 // Error carries an HTTP status so handlers can map failures precisely.
@@ -101,6 +121,20 @@ func (s *Service) Start(ctx context.Context, meta Meta) (store.Upload, error) {
 	if !s.allowsFormat(format) {
 		return store.Upload{}, newError(422, "unsupported_format", "formato nao suportado: "+format)
 	}
+	entryID := strings.TrimSpace(meta.EntryID)
+	if entryID != "" && !id.Valid(entryID) {
+		return store.Upload{}, newError(400, "invalid_id", "entry_id invalido")
+	}
+	source := strings.TrimSpace(meta.Source)
+	switch source {
+	case "", "upload", "share", "microphone", "text", "telegram":
+	default:
+		return store.Upload{}, newError(400, "invalid_source", "origem invalida")
+	}
+	author := strings.TrimSpace(meta.Author)
+	if !store.ValidAuthor(author) {
+		return store.Upload{}, newError(400, "invalid_author", "author deve ser self, other, mixed ou vazio")
+	}
 
 	prefix, err := crypto.NewPrefix()
 	if err != nil {
@@ -126,20 +160,26 @@ func (s *Service) Start(ctx context.Context, meta Meta) (store.Upload, error) {
 
 	now := time.Now().UTC()
 	u := store.Upload{
-		ID:          uploadID,
-		Status:      "open",
-		Filename:    meta.Filename,
-		ContentType: meta.ContentType,
-		SizeBytes:   meta.SizeBytes,
-		SHA256:      sha,
-		Title:       strings.TrimSpace(meta.Title),
-		RecordedAt:  meta.RecordedAt,
-		ClientKey:   clientKey,
-		StorageKey:  storageKey,
-		Prefix:      prefix[:],
-		NextCounter: 0,
-		CreatedAt:   now,
-		ExpiresAt:   now.Add(24 * time.Hour),
+		ID:              uploadID,
+		Status:          "open",
+		Filename:        meta.Filename,
+		ContentType:     meta.ContentType,
+		SizeBytes:       meta.SizeBytes,
+		SHA256:          sha,
+		Title:           strings.TrimSpace(meta.Title),
+		RecordedAt:      meta.RecordedAt,
+		ClientKey:       clientKey,
+		EntryID:         entryID,
+		LocalTranscribe: meta.LocalTranscribe,
+		LocalAnalysis:   meta.LocalAnalysis,
+		EntryCreatedAt:  meta.CreatedAt,
+		EntrySource:     source,
+		Author:          author,
+		StorageKey:      storageKey,
+		Prefix:          prefix[:],
+		NextCounter:     0,
+		CreatedAt:       now,
+		ExpiresAt:       now.Add(24 * time.Hour),
 	}
 	if err := s.store.CreateUpload(ctx, u); err != nil {
 		return store.Upload{}, err
@@ -192,23 +232,35 @@ func (s *Service) Append(ctx context.Context, uploadID string, offset int64, bod
 	return offset + written, nil
 }
 
-// CompleteResult reports the outcome of Complete. Duplicate is true when an
-// active entry with the same sha256 already existed; Entry is then the
-// pre-existing entry and no new entry or object is kept.
+// CompleteResult is the outcome of finishing an upload.
 type CompleteResult struct {
-	Entry     store.Entry
-	Duplicate bool
+	Entry      store.Entry
+	Attachment store.Attachment
+	// Created reports whether a new entry was created, as opposed to an audio
+	// added to an existing entry.
+	Created bool
+	// Repeated reports whether the upload was already completed (same content
+	// already imported, or a previous complete whose response was lost). When
+	// true, no new work happened and the caller must not re-enqueue anything.
+	Repeated bool
+	// LocalTranscribe means the client transcribes this audio on the device, so
+	// the server must not enqueue the transcribe job.
+	LocalTranscribe bool
+	// LocalAnalysis means the client owns the analysis, so the server must not
+	// enqueue analyze for this entry.
+	LocalAnalysis bool
 }
 
-// Complete validates size, format and SHA-256, then creates the entry. Because
-// the audio is immutable, its sha256 is its identity: when the hash matches an
-// existing active entry, no new entry is created. Instead the freshly received
-// ciphertext is discarded and the existing entry is returned as a duplicate, so
-// reimporting the same audio never duplicates it.
+// Complete validates size, format and SHA-256, then creates the entry (or adds
+// the audio to an existing entry) and returns the result. It is idempotent: a
+// repeat after a lost response returns the same attachment and entry.
 func (s *Service) Complete(ctx context.Context, uploadID string) (CompleteResult, error) {
 	u, err := s.Get(ctx, uploadID)
 	if err != nil {
 		return CompleteResult{}, err
+	}
+	if u.Status == "completed" {
+		return s.completedResult(ctx, u)
 	}
 	if u.Status != "open" {
 		return CompleteResult{}, newError(409, "not_open", "upload nao esta aberto")
@@ -249,23 +301,6 @@ func (s *Service) Complete(ctx context.Context, uploadID string) (CompleteResult
 		return CompleteResult{}, newError(422, "integrity", "sha256 do conteudo diverge do informado")
 	}
 
-	// Dedupe: se ja existe uma entrada ativa com o mesmo conteudo, nao cria
-	// outra; descarta o objeto recem-recebido e devolve a entrada existente.
-	if existing, ok, err := s.store.GetActiveEntryBySHA256(ctx, sum); err != nil {
-		return CompleteResult{}, err
-	} else if ok {
-		if err := f.Close(); err != nil {
-			return CompleteResult{}, fmt.Errorf("ingest: close object: %w", err)
-		}
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return CompleteResult{}, fmt.Errorf("ingest: remove duplicate object: %w", err)
-		}
-		if err := s.store.SetUploadStatus(ctx, uploadID, "duplicate"); err != nil {
-			return CompleteResult{}, err
-		}
-		return CompleteResult{Entry: existing, Duplicate: true}, nil
-	}
-
 	var durationSeconds float64
 	if s.prober != nil {
 		d, err := s.prober.DurationSeconds(ctx, tmpPath)
@@ -277,50 +312,149 @@ func (s *Service) Complete(ctx context.Context, uploadID string) (CompleteResult
 		}
 	}
 
+	// Identidade do audio pelo conteudo: a mesma gravacao nunca vira dois audios
+	// da mesma nota. Ao criar uma nota nova (sem EntryID), reaproveita a nota que
+	// ja contem esse audio em vez de duplicar.
+	if existing, ok, err := s.store.FindOriginalAudio(ctx, sum); err != nil {
+		return CompleteResult{}, fmt.Errorf("ingest: identidade do audio: %w", err)
+	} else if ok && (u.EntryID == "" || existing.EntryID == u.EntryID) {
+		entry, err := s.store.GetEntry(ctx, existing.EntryID)
+		if err != nil {
+			return CompleteResult{}, newError(404, "not_found", "entrada inexistente")
+		}
+		if err := s.store.SetUploadCompleted(ctx, uploadID, existing.ID); err != nil {
+			return CompleteResult{}, err
+		}
+		os.Remove(path) // o conteudo ja existe; descarta o objeto redundante
+		return CompleteResult{Entry: entry, Attachment: existing, Repeated: true}, nil
+	}
+
 	now := time.Now().UTC()
-	title := strings.TrimSpace(u.Title)
-	if title == "" {
-		title = defaultTitle(u.Filename, now)
+	createdAt := now
+	if u.EntryCreatedAt != nil {
+		createdAt = u.EntryCreatedAt.UTC()
 	}
-	recordedAt := u.RecordedAt
-	if recordedAt == nil {
-		recordedAt = &now
+	source := "upload"
+	if u.EntrySource != "" {
+		source = u.EntrySource
 	}
-	entry := store.Entry{
-		ID:               id.New(),
-		Title:            title,
-		Status:           store.EntryStored,
-		Source:           "upload",
-		OriginalFilename: u.Filename,
-		ContentType:      u.ContentType,
-		SizeBytes:        u.SizeBytes,
-		DurationSeconds:  durationSeconds,
-		SHA256:           sum,
-		RecordedAt:       recordedAt,
-		CreatedAt:        now,
-		UpdatedAt:        now,
-	}
-	if err := s.store.CreateEntry(ctx, entry); err != nil {
+	var entry store.Entry
+	created := false
+	switch existing, err := s.store.GetEntry(ctx, u.EntryID); {
+	case u.EntryID == "":
+		// Sem id do cliente: o servidor cria a entrada.
+		title := strings.TrimSpace(u.Title)
+		if title == "" {
+			title = entrytitle.Name(entrytitle.Audio)
+		}
+		entry = store.Entry{
+			ID:               id.New(),
+			Title:            title,
+			Status:           store.EntryStored,
+			Source:           source,
+			OriginalFilename: u.Filename,
+			ContentType:      u.ContentType,
+			SizeBytes:        u.SizeBytes,
+			DurationSeconds:  durationSeconds,
+			SHA256:           sum,
+			RecordedAt:       u.RecordedAt,
+			CreatedAt:        createdAt,
+			UpdatedAt:        now,
+			Author:           u.Author,
+		}
+		if err := s.store.CreateEntry(ctx, entry); err != nil {
+			return CompleteResult{}, err
+		}
+		created = true
+	case errors.Is(err, sql.ErrNoRows):
+		// O cliente gerou o id da nota (o app cria offline): cria a entrada com
+		// esse mesmo id, para o id valer igual nos dois ambientes.
+		title := strings.TrimSpace(u.Title)
+		if title == "" {
+			title = entrytitle.Name(entrytitle.Audio)
+		}
+		entry = store.Entry{
+			ID:               u.EntryID,
+			Title:            title,
+			Status:           store.EntryStored,
+			Source:           source,
+			OriginalFilename: u.Filename,
+			ContentType:      u.ContentType,
+			SizeBytes:        u.SizeBytes,
+			DurationSeconds:  durationSeconds,
+			SHA256:           sum,
+			RecordedAt:       u.RecordedAt,
+			CreatedAt:        createdAt,
+			UpdatedAt:        now,
+			Author:           u.Author,
+		}
+		if err := s.store.CreateEntry(ctx, entry); err != nil {
+			return CompleteResult{}, err
+		}
+		created = true
+	case err != nil:
 		return CompleteResult{}, err
+	default:
+		// A entrada ja existe: este audio entra na pilha dela.
+		entry = existing
 	}
+
 	attachment := store.Attachment{
-		ID:          id.New(),
-		EntryID:     entry.ID,
-		Kind:        store.AttachmentOriginal,
-		StorageKey:  u.StorageKey,
-		ContentType: u.ContentType,
-		SizeBytes:   u.SizeBytes,
-		SHA256:      u.SHA256,
-		Cipher:      "aes-256-gcm",
-		CreatedAt:   now,
+		ID:              id.New(),
+		EntryID:         entry.ID,
+		Kind:            store.AttachmentOriginal,
+		StorageKey:      u.StorageKey,
+		ContentType:     u.ContentType,
+		SizeBytes:       u.SizeBytes,
+		SHA256:          sum,
+		Cipher:          "aes-256-gcm",
+		DurationSeconds: durationSeconds,
+		CreatedAt:       now,
 	}
 	if err := s.store.CreateAttachment(ctx, attachment); err != nil {
 		return CompleteResult{}, err
 	}
-	if err := s.store.SetUploadStatus(ctx, uploadID, "completed"); err != nil {
+	if !created {
+		if err := s.store.SetEntryPrimaryAudio(ctx, entry.ID, u.ContentType, u.Filename); err != nil {
+			return CompleteResult{}, err
+		}
+		if err := s.store.SyncEntryDuration(ctx, entry.ID); err != nil {
+			return CompleteResult{}, err
+		}
+	}
+	if err := s.store.SetUploadCompleted(ctx, uploadID, attachment.ID); err != nil {
 		return CompleteResult{}, err
 	}
-	return CompleteResult{Entry: entry}, nil
+	return CompleteResult{
+		Entry:           entry,
+		Attachment:      attachment,
+		Created:         created,
+		LocalTranscribe: u.LocalTranscribe,
+		LocalAnalysis:   u.LocalAnalysis,
+	}, nil
+}
+
+// completedResult returns the outcome stored by a previous Complete, so a repeat
+// after a lost response is idempotent.
+func (s *Service) completedResult(ctx context.Context, u store.Upload) (CompleteResult, error) {
+	if u.ResultAttachmentID == "" {
+		return CompleteResult{}, newError(409, "not_open", "upload nao esta aberto")
+	}
+	att, err := s.store.GetAttachment(ctx, u.ResultAttachmentID)
+	if err != nil {
+		return CompleteResult{}, fmt.Errorf("ingest: anexo do upload concluido: %w", err)
+	}
+	entry, err := s.store.GetEntry(ctx, att.EntryID)
+	if err != nil {
+		return CompleteResult{}, newError(404, "not_found", "entrada inexistente")
+	}
+	return CompleteResult{
+		Entry:           entry,
+		Attachment:      att,
+		Repeated:        true,
+		LocalTranscribe: u.LocalTranscribe,
+		LocalAnalysis:   u.LocalAnalysis,
+	}, nil
 }
 
 // DecryptToTemp decrypts the original audio of an entry into a restricted temp
@@ -419,6 +553,26 @@ func (s *Service) DecryptAttachment(ctx context.Context, att store.Attachment, d
 	return n, nil
 }
 
+// DecryptAttachmentRange decrypts only the inclusive plaintext window
+// [start, end] of an attachment. It exists so a Range request does not pay for
+// the whole file.
+func (s *Service) DecryptAttachmentRange(ctx context.Context, att store.Attachment, start, end int64, dst io.Writer) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	path := filepath.Join(s.dataDir, att.StorageKey)
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, fmt.Errorf("ingest: open object: %w", err)
+	}
+	defer f.Close()
+	n, err := crypto.DecryptRange(f, s.key, start, end, dst)
+	if err != nil {
+		return n, fmt.Errorf("ingest: decrypt range: %w", err)
+	}
+	return n, nil
+}
+
 // DeleteAttachmentObject removes the ciphertext file of an attachment.
 func (s *Service) DeleteAttachmentObject(att store.Attachment) error {
 	path := filepath.Join(s.dataDir, att.StorageKey)
@@ -464,14 +618,13 @@ func (s *Service) IngestStream(ctx context.Context, source, filename, contentTyp
 	now := time.Now().UTC()
 	entry := store.Entry{
 		ID:               entryID,
-		Title:            defaultTitle(filename, now),
+		Title:            entrytitle.Name(entrytitle.Audio),
 		Status:           store.EntryStored,
 		Source:           source,
 		OriginalFilename: filename,
 		ContentType:      contentType,
 		SizeBytes:        size,
 		SHA256:           sum,
-		RecordedAt:       &now,
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}
@@ -509,17 +662,6 @@ func (s *Service) allowsFormat(format string) bool {
 
 func formatOf(filename string) string {
 	return strings.ToLower(strings.TrimPrefix(filepath.Ext(filename), "."))
-}
-
-// defaultTitle derives a non-empty title for an entry: the original file name
-// (without directory and extension) when available, otherwise the recorded day
-// and time. Toda entrada precisa de um titulo e de um dia no calendario.
-func defaultTitle(filename string, at time.Time) string {
-	base := strings.TrimSpace(strings.TrimSuffix(filepath.Base(filename), filepath.Ext(filename)))
-	if base != "" {
-		return base
-	}
-	return at.Format("02/01/2006 15:04")
 }
 
 // Key exposes the master key for the transcription pipeline.

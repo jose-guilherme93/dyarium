@@ -8,4 +8,11 @@ const config = getDefaultConfig(__dirname);
 
 config.resolver.assetExts.push('wasm');
 
+// whisper.rn usa `safe-buffer`, que depende do `buffer` do Node. Mapeia para o
+// polyfill para o Metro resolver no Android/iOS.
+config.resolver.extraNodeModules = {
+  ...config.resolver.extraNodeModules,
+  buffer: require.resolve('buffer/'),
+};
+
 module.exports = config;

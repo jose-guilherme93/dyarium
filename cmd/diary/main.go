@@ -15,19 +15,18 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jose-guilherme93/dyarium/internal/analyze"
-	"github.com/jose-guilherme93/dyarium/internal/api"
-	"github.com/jose-guilherme93/dyarium/internal/audio"
-	"github.com/jose-guilherme93/dyarium/internal/bootstrap"
-	"github.com/jose-guilherme93/dyarium/internal/config"
-	"github.com/jose-guilherme93/dyarium/internal/crypto"
-	"github.com/jose-guilherme93/dyarium/internal/events"
-	"github.com/jose-guilherme93/dyarium/internal/ingest"
-	"github.com/jose-guilherme93/dyarium/internal/jobs"
-	"github.com/jose-guilherme93/dyarium/internal/models"
-	"github.com/jose-guilherme93/dyarium/internal/store"
-	"github.com/jose-guilherme93/dyarium/internal/telegram"
-	"github.com/jose-guilherme93/dyarium/internal/transcribe"
+	"github.com/joseti/dyarium/internal/analyze"
+	"github.com/joseti/dyarium/internal/api"
+	"github.com/joseti/dyarium/internal/audio"
+	"github.com/joseti/dyarium/internal/config"
+	"github.com/joseti/dyarium/internal/crypto"
+	"github.com/joseti/dyarium/internal/events"
+	"github.com/joseti/dyarium/internal/ingest"
+	"github.com/joseti/dyarium/internal/jobs"
+	"github.com/joseti/dyarium/internal/models"
+	"github.com/joseti/dyarium/internal/store"
+	"github.com/joseti/dyarium/internal/telegram"
+	"github.com/joseti/dyarium/internal/transcribe"
 )
 
 // Build metadata, overridden at link time via -ldflags "-X main.version=...".
@@ -48,6 +47,11 @@ func main() {
 			fmt.Fprintln(os.Stderr, "erro:", err)
 			os.Exit(1)
 		}
+	case "dedupe":
+		if err := dedupe(len(os.Args) > 2 && os.Args[2] == "--dry-run"); err != nil {
+			fmt.Fprintln(os.Stderr, "erro:", err)
+			os.Exit(1)
+		}
 	case "version":
 		fmt.Printf("dyarium %s (commit %s, built %s)\n", version, commit, date)
 	case "help", "-h", "--help":
@@ -64,6 +68,7 @@ func usage() {
 
 subcomandos:
   serve     inicia a API HTTP, os workers e o dashboard
+  dedupe    mescla as notas duplicadas do mesmo audio (--dry-run)
   version   imprime a versao e sai
 `)
 }
@@ -75,13 +80,6 @@ func serve() error {
 	}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: parseLevel(cfg.LogLevel)}))
 	slog.SetDefault(logger)
-
-	secrets, err := bootstrap.Resolve(cfg.DataDir, cfg.MasterKey, cfg.Token)
-	if err != nil {
-		return err
-	}
-	cfg.MasterKey = secrets.MasterKey
-	cfg.Token = secrets.Token
 
 	key, err := crypto.ParseKey(cfg.MasterKey)
 	if err != nil {
@@ -100,6 +98,28 @@ func serve() error {
 	if err := st.Migrate(ctx); err != nil {
 		return err
 	}
+	// Reparo de dados da rodada anterior: o dashboard antigo gravou a URL do
+	// anexo (com o token) como HTML no corpo. Converte para `attachment:<id>` e
+	// remove o token de corpos e revisoes. Idempotente.
+	if notes, revs, err := st.ScrubAttachmentTokens(ctx); err != nil {
+		logger.Error("store: limpar tokens de anexos", "erro", err)
+	} else if notes+revs > 0 {
+		logger.Info("store: tokens de anexos removidos", "notas", notes, "revisoes", revs)
+	}
+	// Nota com transcricao feita no aparelho nao pode continuar marcada como
+	// falha: o texto esta salvo, so o job do servidor falhou. Idempotente.
+	if fixed, err := st.RepairDeviceTranscripts(ctx); err != nil {
+		logger.Error("store: reparar transcricoes locais", "erro", err)
+	} else if fixed > 0 {
+		logger.Info("store: notas com transcricao local marcadas como transcritas", "quantidade", fixed)
+	}
+	// Transcricao solta (salva antes do audio existir) volta a apontar para o
+	// audio da nota: sem isso o dashboard mostra a nota transcrita sem texto.
+	if linked, err := st.LinkLooseTranscripts(ctx); err != nil {
+		logger.Error("store: ligar transcricoes soltas", "erro", err)
+	} else if linked > 0 {
+		logger.Info("store: transcricoes ligadas ao audio", "quantidade", linked)
+	}
 	if err := seedSettings(ctx, st, cfg); err != nil {
 		return err
 	}
@@ -112,6 +132,11 @@ func serve() error {
 	}, st, key, cfg.DataDir, prober)
 
 	queue := jobs.NewQueue(st.DB())
+	if expired, err := queue.ExpireStaleRetries(ctx, 24*time.Hour); err != nil {
+		logger.Error("fila: expirar retries antigos", "erro", err)
+	} else if expired > 0 {
+		logger.Info("fila: retries antigos expirados", "quantidade", expired)
+	}
 	analyzer := analyze.New(analyze.Config{
 		Enabled: cfg.AnalyzeEnabled,
 		BaseURL: cfg.AnalyzeBaseURL,
@@ -149,16 +174,7 @@ func serve() error {
 	modelsMgr := models.NewManager(cfg.ModelsDir, cfg.ModelsBaseURL, bus)
 	canceller := jobs.NewCanceller()
 
-	if cfg.AutoDownloadModel {
-		startDefaultModelDownload(cfg, modelsMgr, logger)
-	}
-
-	tokens := api.NewTokenSource(cfg.Token, secrets.SetupRequired)
-	if secrets.SetupRequired {
-		logger.Info("configuracao inicial pendente: acesse /setup para definir o token de acesso")
-	}
-
-	startWorkers(ctx, cfg, st, queue, pipeline, bus, logger, canceller)
+	startWorkers(ctx, cfg, st, ingestSvc, queue, pipeline, bus, logger, canceller)
 
 	if cfg.TelegramEnabled {
 		bot := telegram.New(telegram.Config{Enabled: true, BotToken: cfg.TelegramBotToken, APIBase: cfg.TelegramAPIBase})
@@ -182,7 +198,6 @@ func serve() error {
 		Events:    bus,
 		Models:    modelsMgr,
 		Canceller: canceller,
-		Tokens:    tokens,
 	})
 
 	httpServer := &http.Server{
@@ -213,32 +228,19 @@ func serve() error {
 	return httpServer.Shutdown(shutdownCtx)
 }
 
-func startWorkers(ctx context.Context, cfg config.Config, st *store.Store, queue *jobs.Queue, pipeline *transcribe.Pipeline, bus *events.Bus, logger *slog.Logger, canceller *jobs.Canceller) {
+func startWorkers(ctx context.Context, cfg config.Config, st *store.Store, ing *ingest.Service, queue *jobs.Queue, pipeline *transcribe.Pipeline, bus *events.Bus, logger *slog.Logger, canceller *jobs.Canceller) {
 	lease := time.Duration(cfg.JobLeaseSeconds) * time.Second
 	transcribeH := transcribeHandler(st, cfg, pipeline, queue, bus, logger)
 	analyzeH := analyzeHandler(st, cfg, bus, logger)
+	cleanupH := cleanupHandler(st, ing, logger)
 	for i := 0; i < cfg.WorkerConcurrency; i++ {
 		runner := jobs.NewRunner(queue, fmt.Sprintf("worker-%d", i+1), lease, 2*time.Second, logger, canceller)
 		runner.Register(jobs.TypeTranscribe, transcribeH)
 		runner.Register(jobs.TypeAnalyze, analyzeH)
+		runner.Register(jobs.TypeCleanup, cleanupH)
 		go runner.Run(ctx)
 	}
 	logger.Info("workers iniciados", "quantidade", cfg.WorkerConcurrency)
-}
-
-// startDefaultModelDownload triggers a background download of the configured
-// whisper model when it is missing from the catalog and not yet on disk. This
-// keeps a fresh install usable without a manual step.
-func startDefaultModelDownload(cfg config.Config, mgr *models.Manager, logger *slog.Logger) {
-	name, ok := models.NameForFile(cfg.WhisperModel)
-	if !ok || mgr.Downloaded(name) {
-		return
-	}
-	if err := mgr.StartDownload(name); err != nil {
-		logger.Warn("nao foi possivel baixar o modelo padrao", "modelo", name, "erro", err)
-		return
-	}
-	logger.Info("baixando modelo padrao em segundo plano", "modelo", name)
 }
 
 func seedSettings(ctx context.Context, st *store.Store, cfg config.Config) error {

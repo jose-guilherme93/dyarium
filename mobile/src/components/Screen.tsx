@@ -3,7 +3,9 @@ import type { ReactNode } from 'react';
 import { StyleSheet, View, type ViewStyle } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { gradients } from '@/theme/tokens';
+import { baseColors } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 interface ScreenProps {
   children: ReactNode;
@@ -12,6 +14,9 @@ interface ScreenProps {
 }
 
 export function Screen({ children, style, edges = ['top', 'bottom'] }: ScreenProps) {
+  const styles = useThemedStyles(baseStyles);
+  const { gradients } = useTheme();
+
   return (
     <View style={styles.root}>
       <LinearGradient colors={gradients.app} style={StyleSheet.absoluteFill} />
@@ -22,7 +27,7 @@ export function Screen({ children, style, edges = ['top', 'bottom'] }: ScreenPro
   );
 }
 
-const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0A0A0F' },
+const baseStyles = defineStyles({
+  root: { flex: 1, backgroundColor: baseColors.bg },
   safe: { flex: 1 },
 });

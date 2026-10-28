@@ -6,30 +6,35 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Config holds all runtime configuration. Values come exclusively from the
 // environment so that no secret, domain or IP is ever hardcoded.
 type Config struct {
-	HTTPAddr           string
-	Token              string
-	MasterKey          string
-	DBPath             string
-	DataDir            string
-	ModelsDir          string
-	ModelsBaseURL      string
-	WhisperBin         string
-	WhisperModel       string
-	WhisperLanguage    string
-	AutoDownloadModel  bool
-	DeepgramBaseURL    string
-	FFmpegBin          string
-	FFprobeBin         string
-	AnalyzeEnabled     bool
-	AnalyzeProvider    string
-	AnalyzeBaseURL     string
-	AnalyzeAPIKey      string
-	AnalyzeModel       string
+	HTTPAddr          string
+	Token             string
+	MasterKey         string
+	DBPath            string
+	DataDir           string
+	ModelsDir         string
+	ModelsBaseURL     string
+	WhisperBin        string
+	WhisperModel      string
+	WhisperLanguage   string
+	AutoDownloadModel bool
+	DeepgramBaseURL   string
+	FFmpegBin         string
+	FFprobeBin        string
+	AnalyzeEnabled    bool
+	AnalyzeProvider   string
+	AnalyzeBaseURL    string
+	AnalyzeAPIKey     string
+	AnalyzeModel      string
+	// OllamaURL is the local Ollama server the dashboard configures in one
+	// click. It is not a secret and has a safe default (the compose service).
+	OllamaURL          string
+	OllamaModel        string
 	MaxUploadBytes     int64
 	MaxDurationSeconds int
 	AllowedFormats     []string
@@ -37,6 +42,10 @@ type Config struct {
 	TrimSilence        bool
 	WorkerConcurrency  int
 	JobLeaseSeconds    int
+	// DeletedRetention é por quanto tempo uma entrada apagada (exclusão lógica)
+	// continua recuperável antes de o job de limpeza destruir os objetos. É a
+	// janela em que "restaurar backup" traz a nota de volta sem perder mídia.
+	DeletedRetention   time.Duration
 	LogLevel           string
 	TelegramEnabled    bool
 	TelegramBotToken   string
@@ -71,6 +80,8 @@ func Load() (Config, error) {
 		AnalyzeBaseURL:     env("DIARY_ANALYZE_BASE_URL", "http://localhost:11434/v1"),
 		AnalyzeAPIKey:      env("DIARY_ANALYZE_API_KEY", ""),
 		AnalyzeModel:       env("DIARY_ANALYZE_MODEL", ""),
+		OllamaURL:          env("DIARY_OLLAMA_URL", "http://ollama:11434"),
+		OllamaModel:        env("DIARY_OLLAMA_MODEL", "qwen2.5:0.5b"),
 		MaxUploadBytes:     envInt64("DIARY_MAX_UPLOAD_BYTES", 2<<30),
 		MaxDurationSeconds: envInt("DIARY_MAX_DURATION_SECONDS", 3000),
 		AllowedFormats:     splitList(env("DIARY_ALLOWED_FORMATS", "wav,mp3,m4a,ogg,flac,aac,adts,webm")),
@@ -78,6 +89,7 @@ func Load() (Config, error) {
 		TrimSilence:        envBool("DIARY_TRIM_SILENCE", false),
 		WorkerConcurrency:  envInt("DIARY_WORKER_CONCURRENCY", 1),
 		JobLeaseSeconds:    envInt("DIARY_JOB_LEASE_SECONDS", 120),
+		DeletedRetention:   time.Duration(envInt("DIARY_DELETED_RETENTION_HOURS", 168)) * time.Hour,
 		LogLevel:           env("DIARY_LOG_LEVEL", "info"),
 		TelegramEnabled:    envBool("DIARY_TELEGRAM_ENABLED", false),
 		TelegramBotToken:   env("DIARY_TELEGRAM_BOT_TOKEN", ""),

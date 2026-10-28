@@ -1,10 +1,24 @@
-import { ApiError, DyariumApi, type FetchLike, type HttpResponse } from '../api';
+import { ApiError, ConflictError, DyariumApi, type FetchLike, type HttpResponse } from '../api';
 
 function resp(status: number, body: unknown): HttpResponse {
   return {
     ok: status >= 200 && status < 300,
     status,
     text: async () => JSON.stringify(body),
+  };
+}
+
+/** Resposta cujo corpo so pode ser lido uma vez, como uma Response real. */
+function respOnce(status: number, body: unknown): HttpResponse {
+  let read = false;
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    text: async () => {
+      if (read) throw new Error('Body is unusable: Body has already been read');
+      read = true;
+      return JSON.stringify(body);
+    },
   };
 }
 
@@ -61,6 +75,65 @@ describe('DyariumApi', () => {
     expect(out.offset).toBe(4);
   });
 
+  it('fala o contrato do mapa e das entidades', async () => {
+    const entity = {
+      kind: 'person',
+      name: 'José Guilherme',
+      icon: 'heart',
+      entries: 1,
+      mentions: 2,
+      sentiment: 0.4,
+      last_seen: null,
+    };
+    const { api, calls } = makeApi((call) => {
+      if (call.url.includes('/graph')) {
+        return resp(200, {
+          center: { id: 'user', kind: 'user', label: 'joseti', mentions: 0, notes: 0 },
+          nodes: [
+            {
+              id: 'person:1',
+              kind: 'person',
+              label: 'José Guilherme',
+              icon: 'heart',
+              mentions: 2,
+              notes: 1,
+            },
+          ],
+          edges: [],
+          total_nodes: 1,
+          total_edges: 0,
+          truncated: false,
+        });
+      }
+      if (call.url.endsWith('/self')) return resp(200, { status: 'ok', owner: 'joseti' });
+      return resp(200, entity);
+    });
+
+    const graph = await api.getGraph({ focus: 'person:1' });
+    expect(graph.nodes[0].icon).toBe('heart');
+    expect(calls[0].url).toContain('focus=person%3A1');
+
+    await api.renameEntity('person', 'José Guilherme', 'Marianna');
+    expect(calls[1].url).toBe(
+      'http://host:8080/api/v1/entities/person/Jos%C3%A9%20Guilherme',
+    );
+    expect(calls[1].init?.method).toBe('PATCH');
+    expect(JSON.parse(String(calls[1].init?.body)).name).toBe('Marianna');
+
+    await api.claimSelf('José Guilherme');
+    expect(calls[2].init?.method).toBe('POST');
+    expect(calls[2].url).toBe(
+      'http://host:8080/api/v1/entities/person/Jos%C3%A9%20Guilherme/self',
+    );
+
+    await api.setEntityIcon('person', 'José Guilherme', 'heart');
+    expect(calls[3].init?.method).toBe('PUT');
+    expect(calls[3].url).toBe(
+      'http://host:8080/api/v1/entities/person/Jos%C3%A9%20Guilherme/icon',
+    );
+    expect(JSON.parse(String(calls[3].init?.body)).icon).toBe('heart');
+  });
+
   it('mapeia erro do servidor para ApiError com codigo', async () => {
     const { api } = makeApi(() =>
       resp(401, { error: { code: 'unauthorized', message: 'token invalido' } }),
@@ -82,18 +155,63 @@ describe('DyariumApi', () => {
     expect((err as ApiError).offset).toBe(8);
   });
 
-  it('createTextEntry envia POST /entries com o texto', async () => {
-    const { api, calls } = makeApi(() => resp(201, { entry_id: 'en1', status: 'queued' }));
+  it('createTextEntry envia POST /entries com id, titulo e data', async () => {
+    const { api, calls } = makeApi(() => resp(201, { id: 'en1', status: 'ready' }));
     const out = await api.createTextEntry({
-      client_key: 'note_1',
+      id: 'note_1',
       title: 'Minha nota',
       recorded_at: '2026-10-10T21:00:00.000Z',
-      text: 'texto da nota',
+      created_at: '2026-10-10T22:00:00.000Z',
     });
     expect(calls[0].url).toBe('http://host:8080/api/v1/entries');
     expect(calls[0].init?.method).toBe('POST');
     expect(calls[0].init?.headers?.['Content-Type']).toBe('application/json');
-    expect(JSON.parse(String(calls[0].init?.body)).text).toBe('texto da nota');
-    expect(out.entry_id).toBe('en1');
+    const body = JSON.parse(String(calls[0].init?.body));
+    expect(body).toEqual({
+      id: 'note_1',
+      title: 'Minha nota',
+      recorded_at: '2026-10-10T21:00:00.000Z',
+      created_at: '2026-10-10T22:00:00.000Z',
+    });
+    expect(out.id).toBe('en1');
+  });
+
+  it('409 de conflito traz campos e versoes lendo o corpo uma vez', async () => {
+    const { api } = makeApi(() =>
+      respOnce(409, {
+        error: { code: 'conflict', message: 'a nota mudou no outro lugar' },
+        conflict: ['title', 'recorded_at'],
+        versions: { title: 'v2-titulo', recorded_at: 'v2-data' },
+      }),
+    );
+
+    const err = await api
+      .updateEntry('en1', { title: 'meu', versions: { title: 'v1', recorded_at: 'v1' } })
+      .catch((error) => error);
+
+    expect(err).toBeInstanceOf(ConflictError);
+    expect((err as ConflictError).fields).toEqual(['title', 'recorded_at']);
+    expect((err as ConflictError).versions).toEqual({
+      title: 'v2-titulo',
+      recorded_at: 'v2-data',
+    });
+  });
+
+  it('pagina a lista de entradas com cursor e devolve next_cursor', async () => {
+    const { api, calls } = makeApi(() =>
+      resp(200, {
+        entries: [{ id: 'en1' }],
+        next_cursor: '500',
+      }),
+    );
+
+    const page = await api.listEntriesPage(500);
+
+    expect(calls[0].url).toBe('http://host:8080/api/v1/entries?limit=500');
+    expect(page.entries).toHaveLength(1);
+    expect(page.next_cursor).toBe('500');
+
+    await api.listEntriesPage(500, '500');
+    expect(calls[1].url).toBe('http://host:8080/api/v1/entries?limit=500&cursor=500');
   });
 });

@@ -1,4 +1,10 @@
 # Configuracao do pnpm para este pacote.
 # unrs-resolver (usado pelo eslint) compila um binario nativo; permitimos o build.
 allowBuilds:
+  llama.rn: true
   unrs-resolver: true
+minimumReleaseAgeExclude:
+  - '@10play/tentap-editor@1.1.0'
+patchedDependencies:
+  expo-audio@57.0.5: patches/expo-audio@57.0.5.patch
+  react-native-enriched-html@1.1.1: patches/react-native-enriched-html@1.1.1.patch

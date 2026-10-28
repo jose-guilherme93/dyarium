@@ -1,4 +1,14 @@
-import { formatBytes, formatDuration } from '../format';
+import {
+  formatBytes,
+  formatClock,
+  formatDateTime,
+  formatDuration,
+  formatStamp,
+  noteDateIso,
+  noteDateLabel,
+  titleFontSize,
+  utf8ByteLength,
+} from '../format';
 
 describe('formatBytes', () => {
   it('formata bytes, KB, MB e GB', () => {
@@ -25,5 +35,95 @@ describe('formatDuration', () => {
   it('nao quebra com valores invalidos', () => {
     expect(formatDuration(-5)).toBe('00:00');
     expect(formatDuration(NaN)).toBe('00:00');
+  });
+});
+
+describe('utf8ByteLength', () => {
+  it('conta bytes ascii e multibyte', () => {
+    expect(utf8ByteLength('abc')).toBe(3);
+    expect(utf8ByteLength('cafe')).toBe(4);
+    expect(utf8ByteLength('café')).toBe(5);
+    expect(utf8ByteLength('')).toBe(0);
+  });
+});
+
+describe('titleFontSize', () => {
+  it('mantem a fonte base para titulo curto', () => {
+    expect(titleFontSize('Curto')).toBe(34);
+  });
+
+  it('diminui em titulo longo e respeita o piso legivel', () => {
+    expect(titleFontSize('x'.repeat(80))).toBeLessThan(34);
+    expect(titleFontSize('x'.repeat(80))).toBeGreaterThanOrEqual(24);
+    expect(titleFontSize('x'.repeat(500))).toBe(24);
+  });
+});
+
+describe('noteDateIso', () => {
+  it('prefere a data do evento e cai para a criacao', () => {
+    expect(noteDateIso({ recordedAt: '2023-12-31T23:00:00.000Z' })).toBe(
+      '2023-12-31T23:00:00.000Z',
+    );
+    expect(noteDateIso({ recordedAt: 'invalida', createdAt: '2026-10-19T10:00:00.000Z' })).toBe(
+      '2026-10-19T10:00:00.000Z',
+    );
+    expect(noteDateIso({ createdAt: '2026-10-19T10:00:00.000Z' })).toBe(
+      '2026-10-19T10:00:00.000Z',
+    );
+    expect(noteDateIso({})).toBe('');
+  });
+});
+
+describe('noteDateLabel', () => {
+  // Sem fuso no valor: o rotulo mostra a hora local, e um `Z` faria o teste
+  // depender do fuso do CI (UTC) em vez do comportamento.
+  const note = { recordedAt: '2026-10-19T10:30:00' };
+
+  it('mostra a data do evento quando o titulo e outro', () => {
+    expect(noteDateLabel('Dia de chuva', note)).toBe('19/10/2026 10:30');
+  });
+
+  it('esconde quando o titulo ja e a data padrao do audio', () => {
+    expect(noteDateLabel('19/10/2026 10:30', note)).toBeNull();
+  });
+
+  it('devolve null sem data', () => {
+    expect(noteDateLabel('Nota', {})).toBeNull();
+  });
+});
+
+describe('formatDateTime', () => {
+  it('formata DD/MM/AAAA HH:mm', () => {
+    expect(formatDateTime('2026-10-10T22:05:00')).toBe('10/10/2026 22:05');
+  });
+
+  it('devolve vazio para data invalida', () => {
+    expect(formatDateTime('nao-e-data')).toBe('');
+  });
+});
+
+describe('formatStamp', () => {
+  const now = new Date(2026, 9, 16, 12, 0);
+  it('hoje mostra so a hora', () => {
+    expect(formatStamp(new Date(2026, 9, 16, 9, 5).toISOString(), now)).toBe('09:05');
+  });
+  it('mesmo ano mostra dia/mes e hora', () => {
+    expect(formatStamp(new Date(2026, 9, 10, 22, 5).toISOString(), now)).toBe('10/10 22:05');
+  });
+  it('outro ano mostra a data completa', () => {
+    expect(formatStamp(new Date(2025, 0, 3, 9, 7).toISOString(), now)).toBe('03/01/2025');
+  });
+});
+
+describe('formatClock', () => {
+  it('mostra dia da semana, data por extenso e hora 24 h', () => {
+    expect(formatClock(new Date(2026, 9, 22, 9, 5))).toEqual({
+      date: 'quinta-feira, 22 de outubro',
+      time: '09:05',
+    });
+  });
+
+  it('preenche a hora com zero a esquerda', () => {
+    expect(formatClock(new Date(2026, 0, 4, 0, 0)).time).toBe('00:00');
   });
 });

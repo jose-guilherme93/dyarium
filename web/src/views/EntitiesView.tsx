@@ -71,12 +71,22 @@ export function EntitiesView({ kind, title, selected, onSelect, onOpen, refreshK
   if (selected) {
     return (
       <section className="view">
-        <div className="view-header">
-          <button type="button" className="link-button" onClick={() => onSelect(null)}>
-            Voltar
-          </button>
-          <h1>{selected}</h1>
-        </div>
+        <header className="page-head">
+          <div>
+            <button type="button" className="link-button" onClick={() => onSelect(null)}>
+              Voltar aos insights
+            </button>
+            <h1>{selected}</h1>
+            {detail && (
+              <p>
+                {detail.mentions} {detail.mentions === 1 ? "menção" : "menções"} em {detail.entries}{" "}
+                {detail.entries === 1 ? "nota" : "notas"} · tom{" "}
+                {Number(detail.sentiment ?? 0).toFixed(2)} · visto por último em{" "}
+                {formatDate(detail.last_seen)}
+              </p>
+            )}
+          </div>
+        </header>
         {error && <p className="error">{error}</p>}
         {!detail && !error && (
           <p className="muted">
@@ -85,12 +95,8 @@ export function EntitiesView({ kind, title, selected, onSelect, onOpen, refreshK
         )}
         {detail && (
           <>
-            <p className="muted">
-              {detail.mentions} mencoes em {detail.entries} entrada(s) · sentimento{" "}
-              {Number(detail.sentiment ?? 0).toFixed(2)} · visto por ultimo em {formatDate(detail.last_seen)}
-            </p>
             {detail.entry_list.length === 0 ? (
-              <p className="muted">Nenhuma entrada.</p>
+              <p className="muted">Nenhuma nota menciona {selected}.</p>
             ) : (
               <ul className="entry-list">
                 {detail.entry_list.map((entry) => (
@@ -98,7 +104,8 @@ export function EntitiesView({ kind, title, selected, onSelect, onOpen, refreshK
                     <button type="button" className="entry-item" onClick={() => onOpen(entry.id)}>
                       <span className="entry-title">{entry.title || "Entrada"}</span>
                       <span className="entry-meta">
-                        {formatDate(entry.date)} · {entry.count} mencao(oes)
+                        {formatDate(entry.date)} · {entry.count}{" "}
+                        {entry.count === 1 ? "menção" : "menções"}
                       </span>
                     </button>
                   </li>
@@ -114,9 +121,11 @@ export function EntitiesView({ kind, title, selected, onSelect, onOpen, refreshK
   return (
     <section className="view">
       {title && (
-        <div className="view-header">
-          <h1>{title}</h1>
-        </div>
+        <header className="page-head">
+          <div>
+            <h1>{title}</h1>
+          </div>
+        </header>
       )}
       {error && <p className="error">{error}</p>}
       {loading && entities.length === 0 ? (
@@ -126,7 +135,7 @@ export function EntitiesView({ kind, title, selected, onSelect, onOpen, refreshK
       ) : entities.length === 0 ? (
         <div className="empty-state">
           <p>Nada por aqui ainda.</p>
-          <p>As entidades aparecem depois que uma entrada e analisada pela IA.</p>
+          <p>As entidades aparecem depois que uma nota passa pela análise.</p>
         </div>
       ) : (
         <ul className="entry-list">
@@ -135,7 +144,8 @@ export function EntitiesView({ kind, title, selected, onSelect, onOpen, refreshK
               <button type="button" className="entry-item" onClick={() => onSelect(entity.name)}>
                 <span className="entry-title">{entity.name}</span>
                 <span className="entry-meta">
-                  {entity.mentions} mencao(oes) em {entity.entries} entrada(s) · sentimento{" "}
+                  {entity.mentions} {entity.mentions === 1 ? "menção" : "menções"} em{" "}
+                  {entity.entries} {entity.entries === 1 ? "nota" : "notas"} · tom{" "}
                   {Number(entity.sentiment ?? 0).toFixed(2)}
                 </span>
               </button>

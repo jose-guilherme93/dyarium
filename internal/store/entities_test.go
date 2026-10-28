@@ -128,21 +128,21 @@ func TestListEntriesFiltered(t *testing.T) {
 		t.Fatalf("save e2: %v", err)
 	}
 
-	byPerson, err := s.ListEntriesFiltered(ctx, 10, "maria", "", "")
+	byPerson, err := s.ListEntriesFiltered(ctx, 10, "maria", "", "", nil)
 	if err != nil {
 		t.Fatalf("filter person: %v", err)
 	}
 	if len(byPerson) != 1 || byPerson[0].ID != "e1" {
 		t.Fatalf("filtro por pessoa = %+v", byPerson)
 	}
-	byPlace, err := s.ListEntriesFiltered(ctx, 10, "", "Recife", "")
+	byPlace, err := s.ListEntriesFiltered(ctx, 10, "", "Recife", "", nil)
 	if err != nil {
 		t.Fatalf("filter place: %v", err)
 	}
 	if len(byPlace) != 1 || byPlace[0].ID != "e1" {
 		t.Fatalf("filtro por lugar = %+v", byPlace)
 	}
-	none, err := s.ListEntriesFiltered(ctx, 10, "ninguem", "", "")
+	none, err := s.ListEntriesFiltered(ctx, 10, "ninguem", "", "", nil)
 	if err != nil {
 		t.Fatalf("filter none: %v", err)
 	}

@@ -28,9 +28,9 @@ export function markRecorded(
   };
 }
 
-/** Marca como enfileirada para envio. */
+/** Marca como enfileirada para envio (tambem limpa falha terminal/manual). */
 export function markQueued(r: Recording, now = new Date()): Recording {
-  return { ...r, status: 'queued', updatedAt: nowIso(now) };
+  return { ...r, status: 'queued', terminal: undefined, updatedAt: nowIso(now) };
 }
 
 /** Upload iniciado (ou retomado): guarda o id e o offset confirmado. */
@@ -56,6 +56,7 @@ export function markCompleted(r: Recording, entryId: string, now = new Date()): 
     entryId,
     offset: r.sizeBytes ?? r.offset,
     lastError: undefined,
+    terminal: undefined,
     nextAttemptAt: undefined,
     updatedAt: nowIso(now),
   };
@@ -70,13 +71,31 @@ export function markFailed(r: Recording, error: string, now = new Date()): Recor
     status: 'failed',
     attempts,
     lastError: error,
+    terminal: undefined,
     nextAttemptAt: new Date(now.getTime() + delay).toISOString(),
+    updatedAt: nowIso(now),
+  };
+}
+
+/**
+ * Falha permanente: nao agenda nova tentativa. O item sai da fila ate o usuario
+ * pedir reenvio manualmente (que passa por `markQueued` e limpa o estado).
+ */
+export function markFailedTerminal(r: Recording, error: string, now = new Date()): Recording {
+  return {
+    ...r,
+    status: 'failed',
+    attempts: r.attempts + 1,
+    lastError: error,
+    terminal: true,
+    nextAttemptAt: undefined,
     updatedAt: nowIso(now),
   };
 }
 
 /** Uma gravacao esta pronta para (re)tentar agora? */
 export function isDue(r: Recording, now = new Date()): boolean {
+  if (r.terminal) return false; // falha permanente: so retry manual
   if (r.status === 'uploading') return true; // retomar
   if (r.status !== 'queued' && r.status !== 'failed' && r.status !== 'recorded') return false;
   if (!r.nextAttemptAt) return true;

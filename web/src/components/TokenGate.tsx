@@ -1,43 +1,48 @@
-import { useState, type FormEvent } from "react";
+import { useState } from "react";
 
 interface TokenGateProps {
   onSubmit: (token: string) => void;
+  error?: string;
+  checking?: boolean;
 }
 
-// TokenGate asks for the bearer token once and stores it locally.
-export function TokenGate({ onSubmit }: TokenGateProps) {
+// TokenGate asks for the bearer token once. The parent validates it against the
+// API before letting the user in, so a wrong token keeps the gate open.
+export function TokenGate({ onSubmit, error, checking = false }: TokenGateProps) {
   const [value, setValue] = useState("");
-
   return (
     <div className="token-gate">
       <div className="token-card">
-        <div>
-          <h1 className="token-card__brand">dyarium</h1>
-          <p className="token-card__lead">Informe o token de acesso para continuar.</p>
-        </div>
+        <h1>dyarium</h1>
+        <p>Um diário que fica no seu servidor. Informe o token para entrar.</p>
         <form
-          onSubmit={(event: FormEvent) => {
+          onSubmit={(event) => {
             event.preventDefault();
-            if (value.trim()) {
+            if (value.trim() && !checking) {
               onSubmit(value.trim());
             }
           }}
         >
-          <div className="token-field">
-            <label htmlFor="login-token">Token de acesso</label>
-            <input
-              id="login-token"
-              type="password"
-              autoComplete="current-password"
-              placeholder="Token"
-              value={value}
-              onChange={(event) => setValue(event.target.value)}
-            />
-          </div>
-          <button type="submit" className="token-submit">
-            Entrar
+          <label htmlFor="token-input">Token de acesso</label>
+          <input
+            id="token-input"
+            type="password"
+            aria-label="Token de acesso"
+            placeholder="Cole o token aqui"
+            autoComplete="current-password"
+            value={value}
+            disabled={checking}
+            onChange={(event) => setValue(event.target.value)}
+          />
+          <button type="submit" className="button button--primary" disabled={checking}>
+            {checking ? "Verificando..." : "Entrar"}
           </button>
         </form>
+        {error && (
+          <p className="error" role="alert">
+            {error}
+          </p>
+        )}
       </div>
     </div>
   );

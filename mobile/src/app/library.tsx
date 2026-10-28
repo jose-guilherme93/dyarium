@@ -1,25 +1,35 @@
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
-import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { back, push } from '@/services/appNavigation';
+import {
+  FlatList,
+  View,
+} from 'react-native';
+import { Text } from '@/components/AppText';
+import { Press } from '@/components/Press';
 
 import { RecordingCard } from '@/components/RecordingCard';
 import { Screen } from '@/components/Screen';
 import { formatBytes } from '@/core/format';
 import { useLibrary } from '@/state/LibraryContext';
-import { colors, fontSize, spacing } from '@/theme/tokens';
+import { baseColors, fontSize, spacing } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 export default function LibraryScreen() {
-  const { recordings, retry, remove } = useLibrary();
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
+  const { recordings } = useLibrary();
   const total = recordings.reduce((sum, r) => sum + (r.sizeBytes ?? 0), 0);
 
   return (
     <Screen>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.back} accessibilityLabel="Voltar">
+        <Press onPress={() => back()} style={styles.back} accessibilityLabel="Voltar">
           <Ionicons name="chevron-back" size={24} color={colors.text} />
-        </Pressable>
+        </Press>
         <View style={styles.headerText}>
-          <Text style={styles.title}>Minhas gravacoes</Text>
+          <Text style={styles.title}>Minhas gravações</Text>
           <Text style={styles.subtitle}>
             {recordings.length === 0
               ? 'Nada por aqui ainda'
@@ -38,8 +48,7 @@ export default function LibraryScreen() {
         renderItem={({ item }) => (
           <RecordingCard
             recording={item}
-            onRetry={() => void retry(item.id)}
-            onDelete={() => void remove(item.id)}
+            onOpen={(id) => push({ pathname: '/note/[id]', params: { id } })}
           />
         )}
         ListEmptyComponent={
@@ -47,9 +56,9 @@ export default function LibraryScreen() {
             <View style={styles.emptyIcon}>
               <Ionicons name="mic-outline" size={32} color={colors.textTertiary} />
             </View>
-            <Text style={styles.emptyTitle}>Sem gravacoes</Text>
+            <Text style={styles.emptyTitle}>Sem gravações</Text>
             <Text style={styles.emptyText}>
-              Toque no botao na tela inicial para gravar sua primeira nota.
+              Toque no botão na tela inicial para gravar sua primeira nota.
             </Text>
           </View>
         }
@@ -58,7 +67,7 @@ export default function LibraryScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -68,8 +77,8 @@ const styles = StyleSheet.create({
   },
   back: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   headerText: { alignItems: 'center' },
-  title: { color: colors.text, fontSize: fontSize.lg, fontWeight: '700' },
-  subtitle: { color: colors.textTertiary, fontSize: fontSize.xs, marginTop: 2 },
+  title: { color: baseColors.text, fontSize: fontSize.lg, fontWeight: '700' },
+  subtitle: { color: baseColors.textTertiary, fontSize: fontSize.xs, marginTop: 2 },
   list: { padding: spacing.xl, paddingTop: spacing.sm },
   separator: { height: spacing.md },
   empty: { alignItems: 'center', gap: spacing.md, paddingTop: spacing.xxxl },
@@ -77,13 +86,13 @@ const styles = StyleSheet.create({
     width: 72,
     height: 72,
     borderRadius: 36,
-    backgroundColor: colors.surface,
+    backgroundColor: baseColors.surface,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  emptyTitle: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
+  emptyTitle: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
   emptyText: {
-    color: colors.textTertiary,
+    color: baseColors.textTertiary,
     fontSize: fontSize.sm,
     textAlign: 'center',
     paddingHorizontal: spacing.xl,

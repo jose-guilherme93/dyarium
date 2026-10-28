@@ -7,6 +7,7 @@
  */
 
 import { ApiError, type DyariumApi } from './api';
+import type { AuthorRole } from './types';
 
 export interface UploadFileIO {
   size(path: string): Promise<number>;
@@ -26,14 +27,23 @@ export interface UploadInput {
   contentType: string;
   title: string;
   recordedAt: string;
+  /** Hora de criacao/importacao original da nota (imutavel no servidor). */
+  createdAt: string;
+  /** `share` quando o audio veio de outro app. */
+  source?: 'upload' | 'share';
   localPath: string;
   sizeBytes: number;
   durationSeconds?: number;
-  /** Texto da nota associado ao audio (opcional). */
-  text?: string;
+  /** O cliente transcreve no aparelho; o servidor nao enfileira transcricao. */
+  localTranscribe?: boolean;
+  localAnalysis?: boolean;
   /** Se ja existe um upload em andamento, informe id e offset para retomar. */
   uploadId?: string;
   offset?: number;
+  /** Adiciona o audio a uma entrada existente em vez de criar outra. */
+  entryId?: string;
+  /** Papel do autor da nota; vazio segue o padrao do app. */
+  author?: AuthorRole;
 }
 
 export interface UploadDeps {
@@ -46,6 +56,8 @@ export interface UploadDeps {
 export interface UploadResult {
   uploadId: string;
   entryId: string;
+  /** Id do anexo de audio original no servidor. */
+  attachmentId?: string;
   sizeBytes: number;
   /** true quando o servidor encontraram um audio identico (dedupe). */
   duplicate?: boolean;
@@ -73,7 +85,12 @@ export async function uploadRecording(
       duration_seconds: input.durationSeconds,
       title: input.title,
       recorded_at: input.recordedAt,
-      text: input.text,
+      created_at: input.createdAt,
+      source: input.source,
+      local_transcribe: input.localTranscribe,
+      local_analysis: input.localAnalysis,
+      entry_id: input.entryId,
+      author: input.author,
     });
     uploadId = created.id;
     offset = created.offset ?? 0;
@@ -104,5 +121,11 @@ export async function uploadRecording(
   }
 
   const done = await deps.api.completeUpload(uploadId);
-  return { uploadId, entryId: done.entry_id, sizeBytes: total, duplicate: done.duplicate };
+  return {
+    uploadId,
+    entryId: done.entry_id,
+    attachmentId: done.attachment_id,
+    sizeBytes: total,
+    duplicate: done.duplicate,
+  };
 }

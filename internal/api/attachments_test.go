@@ -4,13 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/jose-guilherme93/dyarium/internal/store"
+	"github.com/joseti/dyarium/internal/store"
 )
 
 func seedPlainEntry(t *testing.T, srv *Server, id string) {
@@ -135,5 +137,178 @@ func TestEntryAudioStream(t *testing.T) {
 	srv.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK || !bytes.Equal(rec.Body.Bytes(), audio) {
 		t.Fatalf("audio: status %d body %q", rec.Code, rec.Body.String())
+	}
+}
+
+// Range requests must return exactly the requested window without decrypting
+// the whole object, and the response must be cacheable for a long time because
+// an attachment id never changes content.
+func TestAttachmentRangeAndConditional(t *testing.T) {
+	srv := newTestServer(t)
+	seedPlainEntry(t, srv, "e1")
+	data := bytes.Repeat([]byte("0123456789"), 300000) // ~3 MiB, several records
+
+	att, err := srv.deps.Ingest.PutAttachment(context.Background(), "e1", "image", "image/png", bytes.NewReader(data), 10<<20)
+	if err != nil {
+		t.Fatalf("put attachment: %v", err)
+	}
+	path := "/api/v1/attachments/" + att.ID
+
+	for _, rg := range [][2]int{{0, 0}, {123, 456}, {len(data) - 10, len(data) - 1}, {1 << 20, (1 << 20) + 25}} {
+		req := authedRequest(http.MethodGet, path, nil)
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", rg[0], rg[1]))
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusPartialContent {
+			t.Fatalf("range %v: status %d", rg, rec.Code)
+		}
+		if !bytes.Equal(rec.Body.Bytes(), data[rg[0]:rg[1]+1]) {
+			t.Fatalf("range %v: corpo difere (%d bytes)", rg, rec.Body.Len())
+		}
+		if cc := rec.Header().Get("Cache-Control"); !strings.Contains(cc, "immutable") {
+			t.Fatalf("cache-control = %q", cc)
+		}
+	}
+
+	req := authedRequest(http.MethodGet, path, nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("full get: status %d", rec.Code)
+	}
+	etag := rec.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("sem ETag")
+	}
+	req = authedRequest(http.MethodGet, path, nil)
+	req.Header.Set("If-None-Match", etag)
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotModified || rec.Body.Len() != 0 {
+		t.Fatalf("condicional: status %d body %d", rec.Code, rec.Body.Len())
+	}
+
+	// HEAD returns metadata only, without decrypting the body.
+	req = authedRequest(http.MethodHead, path, nil)
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("head: status %d", rec.Code)
+	}
+	if rec.Body.Len() != 0 {
+		t.Fatalf("head body = %d bytes", rec.Body.Len())
+	}
+	if got := rec.Header().Get("Content-Length"); got != fmt.Sprint(len(data)) {
+		t.Fatalf("head content-length = %q, want %d", got, len(data))
+	}
+}
+
+func TestSegmentsPagination(t *testing.T) {
+	srv := newTestServer(t)
+	seedPlainEntry(t, srv, "e1")
+	ctx := context.Background()
+	now := time.Now().UTC()
+	if err := srv.deps.Store.CreateAttachment(ctx, store.Attachment{
+		ID: "a1", EntryID: "e1", Kind: store.AttachmentOriginal, StorageKey: "objects/a1",
+		ContentType: "audio/wav", SizeBytes: 10, Cipher: "aes-256-gcm", DurationSeconds: 12, CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("attachment: %v", err)
+	}
+	segs := []store.Segment{
+		{ID: "s1", StartMS: 0, EndMS: 1000, Text: "um"},
+		{ID: "s2", StartMS: 1000, EndMS: 2000, Text: "dois"},
+		{ID: "s3", StartMS: 2000, EndMS: 3000, Text: "tres"},
+	}
+	if err := srv.deps.Store.SaveTranscript(ctx, store.Transcript{
+		ID: "t1", EntryID: "e1", AttachmentID: "a1", Model: "local", Text: "um dois tres", CreatedAt: now,
+	}, segs); err != nil {
+		t.Fatalf("save transcript: %v", err)
+	}
+
+	rec, page := doJSON(t, srv, http.MethodGet, "/api/v1/entries/e1/segments?attachment_id=a1&limit=2", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("page 1: %d %s", rec.Code, rec.Body.String())
+	}
+	if got, _ := page["segments"].([]any); len(got) != 2 {
+		t.Fatalf("page 1 segments = %v", page["segments"])
+	}
+	cursor, _ := page["next_cursor"].(string)
+	if cursor == "" {
+		t.Fatalf("sem next_cursor: %v", page)
+	}
+	_, next := doJSON(t, srv, http.MethodGet, "/api/v1/entries/e1/segments?attachment_id=a1&limit=2&cursor="+cursor, nil)
+	if got, _ := next["segments"].([]any); len(got) != 1 {
+		t.Fatalf("page 2 segments = %v", next["segments"])
+	}
+	if _, ok := next["next_cursor"]; ok {
+		t.Fatalf("ultima pagina nao deveria ter cursor: %v", next)
+	}
+
+	// The full entry payload carries the transcript text but not the segments.
+	_, entry := doJSON(t, srv, http.MethodGet, "/api/v1/entries/e1", nil)
+	audios, _ := entry["audios"].([]any)
+	if len(audios) != 1 {
+		t.Fatalf("audios = %v", entry["audios"])
+	}
+	audio, _ := audios[0].(map[string]any)
+	transcript, _ := audio["transcript"].(map[string]any)
+	if _, ok := transcript["segments"]; ok {
+		t.Fatalf("entry nao deveria carregar segmentos: %v", transcript)
+	}
+	if transcript["text"] != "um dois tres" {
+		t.Fatalf("texto do entry = %v", transcript["text"])
+	}
+}
+
+// Apagar o audio leva a transcricao junto; a analise que leu essa transcricao
+// precisa cair tambem. Sem isso a nota continuava mostrando "Compreensao 87"
+// de um texto que nao existe mais.
+func TestDeleteAudioInvalidatesAnalysis(t *testing.T) {
+	srv := newTestServer(t)
+	seedTranscriptAudio(t, srv)
+	now := time.Now().UTC()
+	if err := srv.deps.Store.SaveAnalysis(context.Background(), store.Analysis{
+		ID: "an1", EntryID: "e1", Model: "llm", SentimentLabel: "positivo",
+		Summary: "resumo", Comprehension: 87, ComprehensionSource: "review",
+		RevisedSegments: 12, CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("save analysis: %v", err)
+	}
+
+	rec, _ := doJSON(t, srv, http.MethodDelete, "/api/v1/attachments/a1", nil)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("apagar audio: %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec, _ = doJSON(t, srv, http.MethodGet, "/api/v1/entries/e1/analysis", nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("analise sobreviveu ao audio: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// Apagar uma imagem nao mexe na analise: o texto e a transcricao continuam.
+func TestDeleteImageKeepsAnalysis(t *testing.T) {
+	srv := newTestServer(t)
+	seedPlainEntry(t, srv, "e1")
+	now := time.Now().UTC()
+	if err := srv.deps.Store.CreateAttachment(context.Background(), store.Attachment{
+		ID: "img1", EntryID: "e1", Kind: store.AttachmentOriginal, StorageKey: "objects/img1",
+		ContentType: "image/png", SizeBytes: 10, CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("attachment: %v", err)
+	}
+	if err := srv.deps.Store.SaveAnalysis(context.Background(), store.Analysis{
+		ID: "an1", EntryID: "e1", Model: "llm", Summary: "resumo", CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("save analysis: %v", err)
+	}
+
+	rec, _ := doJSON(t, srv, http.MethodDelete, "/api/v1/attachments/img1", nil)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("apagar imagem: %d %s", rec.Code, rec.Body.String())
+	}
+	rec, _ = doJSON(t, srv, http.MethodGet, "/api/v1/entries/e1/analysis", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("analise perdida ao apagar imagem: %d %s", rec.Code, rec.Body.String())
 	}
 }

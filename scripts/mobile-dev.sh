@@ -24,4 +24,9 @@ else
 	echo "Tailscale nao encontrado; usando o modo LAN padrao."
 fi
 
+# O perfil `development` do EAS liga a analise local (eas.json). O Metro rodando
+# daqui precisa da mesma variavel; sem ela o bundle carrega a flag desligada e o
+# app deixa de analisar a nota no aparelho. Um valor explicito do ambiente vence.
+export EXPO_PUBLIC_LOCAL_ANALYSIS="${EXPO_PUBLIC_LOCAL_ANALYSIS:-1}"
+
 exec npx expo start --lan "$@"

@@ -1,74 +1,72 @@
 import {
-  applyMarkdownFormat,
+  breakSentences,
+  countChars,
   countWords,
-  htmlToMarkdown,
-  markdownToHtml,
+  extractImageUrls,
+  markdownPreview,
   markdownToPlain,
 } from '../richText';
 
-describe('markdownToHtml', () => {
-  it('converte negrito, italico e lista', () => {
-    expect(markdownToHtml('**oi**')).toBe('<div><b>oi</b></div>');
-    expect(markdownToHtml('_oi_')).toBe('<div><i>oi</i></div>');
-    expect(markdownToHtml('- a\n- b')).toBe('<ul><li>a</li><li>b</li></ul>');
-    expect(markdownToHtml('a\n\nb')).toBe('<div>a</div><div><br></div><div>b</div>');
+describe('extractImageUrls', () => {
+  it('extrai as URLs das imagens na ordem', () => {
+    expect(extractImageUrls('a ![x](u1) b ![y](u2)')).toEqual(['u1', 'u2']);
   });
 
-  it('escapa HTML do usuario', () => {
-    expect(markdownToHtml('<b>x</b>')).toBe('<div>&lt;b&gt;x&lt;/b&gt;</div>');
+  it('devolve vazio quando nao ha imagem', () => {
+    expect(extractImageUrls('so texto e [link](u)')).toEqual([]);
   });
 });
 
-describe('htmlToMarkdown', () => {
-  it('converte de volta para markdown', () => {
-    expect(htmlToMarkdown('<div><b>oi</b></div>')).toBe('**oi**');
-    expect(htmlToMarkdown('<div><i>oi</i></div>')).toBe('_oi_');
-    expect(htmlToMarkdown('<ul><li>a</li><li>b</li></ul>')).toBe('- a\n- b');
-    expect(htmlToMarkdown('<div>a</div><div>b</div>')).toBe('a\nb');
-  });
-
-  it('faz round-trip de markdown simples', () => {
-    for (const md of ['**negrito**', '_italico_', 'linha um\nlinha dois', '- a\n- b']) {
-      expect(htmlToMarkdown(markdownToHtml(md))).toBe(md);
-    }
-  });
-});
-
-describe('applyMarkdownFormat', () => {
-  it('envolve a selecao em negrito e mantem a selecao', () => {
-    const result = applyMarkdownFormat('texto aqui', { start: 0, end: 5 }, 'bold');
-    expect(result.text).toBe('**texto** aqui');
-    expect(result.selection).toEqual({ start: 2, end: 7 });
-  });
-
-  it('usa um placeholder quando nao ha selecao', () => {
-    const result = applyMarkdownFormat('', { start: 0, end: 0 }, 'bold');
-    expect(result.text).toBe('**texto**');
-  });
-
-  it('aplica italico', () => {
-    const result = applyMarkdownFormat('abc', { start: 0, end: 3 }, 'italic');
-    expect(result.text).toBe('_abc_');
-  });
-
-  it('prefixa a linha com marcador de lista', () => {
-    const result = applyMarkdownFormat('linha', { start: 0, end: 0 }, 'list');
-    expect(result.text).toBe('- linha');
-    expect(result.selection).toEqual({ start: 2, end: 2 });
-  });
-
-  it('aplica lista na linha do meio', () => {
-    const text = 'um\ndois\ntres';
-    const result = applyMarkdownFormat(text, { start: 4, end: 4 }, 'list');
-    expect(result.text).toBe('um\n- dois\ntres');
-  });
-});
-
-describe('countWords / markdownToPlain', () => {
+describe('countWords / countChars / markdownToPlain', () => {
   it('conta palavras ignorando marcadores', () => {
     expect(markdownToPlain('**ola** mundo _tudo_')).toBe('ola mundo tudo');
     expect(countWords('**ola** mundo _tudo_')).toBe(3);
     expect(countWords('   ')).toBe(0);
     expect(countWords('- a\n- b')).toBe(2);
+  });
+
+  it('conta caracteres do texto puro (com espacos)', () => {
+    expect(countChars('**ola** mundo')).toBe(9);
+    expect(countChars('')).toBe(0);
+  });
+
+  it('nao conta a URL da imagem nem o codigo do markdown da foto', () => {
+    expect(markdownToPlain('antes ![foto](attachment:abc) depois')).toBe('antes  depois');
+    expect(markdownToPlain('antes ![foto](attachment:abc){w=50} depois')).toBe('antes  depois');
+    expect(countWords('antes ![foto](attachment:abc){w=50} depois')).toBe(2);
+    expect(countWords('antes ![foto](attachment:abc) depois')).toBe(2);
+    expect(markdownToPlain('antes !audio[attachment:abc]{d=3} depois')).toBe('antes  depois');
+    expect(countWords('antes !audio[attachment:abc]{d=3} depois')).toBe(2);
+    expect(markdownToPlain('veja [a nota](note:abc)')).toBe('veja ');
+    expect(markdownToPlain('veja [isso](https://exemplo.com/x)')).toBe('veja isso');
+  });
+});
+
+describe('markdownPreview', () => {
+  it('mostra o texto puro da nota', () => {
+    expect(markdownPreview('**ola** mundo')).toBe('ola mundo');
+    expect(markdownPreview('')).toBe('');
+    expect(markdownPreview(undefined)).toBe('');
+  });
+
+  it('corta antes de converter: nao parseia a nota inteira', () => {
+    const preview = markdownPreview(`${'palavra '.repeat(500)}fim`, 40);
+    expect(preview.length).toBeLessThanOrEqual(40);
+    expect(preview.startsWith('palavra')).toBe(true);
+  });
+
+  it('junta as linhas numa unica linha', () => {
+    expect(markdownPreview('linha um\nlinha dois')).toBe('linha um linha dois');
+  });
+});
+
+describe('breakSentences', () => {
+  it('quebra a linha a cada fim de frase', () => {
+    expect(breakSentences('eu fiz. entao vamos la')).toBe('eu fiz.\nentao vamos la');
+    expect(breakSentences('certo! vamos? sim.')).toBe('certo!\nvamos?\nsim.');
+  });
+
+  it('nao quebra numeros decimais', () => {
+    expect(breakSentences('custa 3.5 reais')).toBe('custa 3.5 reais');
   });
 });

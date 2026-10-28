@@ -29,6 +29,321 @@ deploy               Dockerfile e compose de desenvolvimento.
 Cada pacote `internal` expoe interfaces pequenas e concretiza as dependencias externas
 (SQLite, ffmpeg, HTTP) na borda, para permitir testes com dublês.
 
+## Formato do corpo da nota
+
+O corpo da nota e **markdown** (`notes.content_markdown`), o mesmo texto nos tres
+lugares: app, dashboard e servidor. O JSON de blocos do BlockNote foi removido do
+contrato: cada editor falava um formato e a traducao entre eles era onde as coisas
+se perdiam (linha em branco entre paragrafos, numeracao, aninhamento, imagem com
+referencia local).
+
+Consequencias que valem registrar:
+
+- **Ultima edicao vence.** Titulo, data do evento e corpo tem versao propria no
+  servidor, mas os clientes oficiais usam last-write-wins para o texto: o app grava
+  o corpo sem versao de base e o dashboard reenvia sem versao quando recebe `409`.
+  O pull do app sempre aplica a versao do servidor quando ela e mais nova que a
+  ultima edicao local; nota com edicao pendente so perde o campo que o servidor
+  gravou depois (compara a versao do campo com o horario da edicao local). O
+  endpoint continua devolvendo `409` com o campo que brigou para clientes que
+  queiram oferecer a escolha, mas o produto nao interrompe mais o usuario com um
+  dialogo: a ultima gravacao vale.
+- **O que o markdown nao sabe, o editor nao oferece.** Cor de texto, cor de fundo e
+  sublinhado sairam do schema do editor: dariam para formatar algo que nao sobrevive
+  a gravacao.
+- **O que o app nao desenha, ele preserva.** Tabela, divisoria e mencao a outra
+  nota entram no editor do celular como texto markdown editavel e voltam iguais
+  ao salvar; o editor rico desenha o que tem comando nativo (enfase, listas,
+  titulos, citacao, link, codigo e imagem).
+- **Largura da imagem** viaja em `{w=50}` (percentual da largura da nota), que o
+  markdown nao tem padrao para isso.
+- **O corpo e uma lista de nos, nao um texto com anexos.** O documento e
+  `[texto, imagem, texto, audio, texto, ...]`; texto e rich text, imagem e audio
+  sao nos do documento. O markdown continua canonico, com marcadores explicitos:
+  `![alt](local:...){w=50}` para imagem e `!audio[local:...]{d=12.5}` para audio.
+  O parser/serializer fica em `mobile/src/core/noteDocument`, e puro e testado no
+  nucleo. Inserir no cursor divide o no de texto na posicao exata; por isso a foto
+  e o audio entram entre dois trechos, nao no fim. Remover uma midia junta os dois
+  trechos de texto vizinhos. Nota antiga que ainda tem o audio da propria entrada
+  em `filePath` ganha o no correspondente na primeira abertura; a pilha adicional
+  criada no dashboard continua no topo, sem virar marcador no corpo. Liberar
+  espaco local so apaga audio quando todos os nos ja tem anexo conhecido e a nota
+  nao tem edicao pendente: sem isso, o arquivo local seria a unica copia.
+
+## Abertura de nota e cache
+
+Abrir uma nota e uma operacao de leitura local; a rede so revalida. O que sustenta
+isso:
+
+- **Cliente local-first.** O app le titulo, corpo, transcricao e pilha de audios do
+  SQLite na hora. O dashboard pinta a ultima copia do IndexedDB (e da memoria) e
+  revalida em background com `If-None-Match`. Reabrir a mesma nota nao espera rede.
+- **Custo por identidade da nota.** A biblioteca reutiliza o objeto `Recording`
+  quando a nota nao mudou e cria outro a cada edicao. Sobre isso ficam caches
+  `WeakMap`: texto normalizado de busca e chaves de tag (`core/notebookFilter`),
+  titulo de nota sem titulo (`core/title`), corpo com o audio legado ja migrado
+  (`core/noteAudio`) e os fatos do Painel (`core/writing`). Digitar na busca,
+  filtrar por tag, rolar a lista e reabrir a nota leem o valor ja calculado; a
+  edicao invalida so aquela nota. As contagens do menu saem de uma conversao so
+  (`core/noteStats`), e a lista de cadernos e resumida numa passada
+  (`notebookStats`).
+- **Revalidacao sem bloquear.** A resposta revalidada substitui a copia local
+  quando chega; um evento SSE invalida apenas a entrada a que se refere, nunca a
+  nota aberta por causa de outra nota.
+- **Payload enxuto.** `GET /entries/{id}` carrega o texto da transcricao e nao os
+  segmentos; a transcricao completa vem paginada por
+  `GET /entries/{id}/segments`. JSON tem `ETag` e gzip, e responde `304` quando o
+  cliente ja tem a versao.
+- **Midia cacheavel e barata.** Anexos sao imutaveis por id
+  (`Cache-Control: immutable` + `ETag`), `HEAD` nao decifra e `Range` decifra so o
+  trecho pedido, pulando os registros AES-GCM anteriores. Imagens importadas sao
+  reduzidas para 2048 px no maior lado (app e dashboard) antes de subir.
+- **Editor unico.** O dashboard mantem no maximo o editor da nota atual. Ao
+  desmontar, scroll, painel de propriedades, modo markdown, transcricoes
+  expandidas e posicao do audio ficam num store em memoria por entrada e sao
+  reaplicados na volta.
+- **Editor por nos, nativo.** Cada no de texto tem o seu `EnrichedTextInput` e
+  cada imagem/audio e um componente nativo no lugar. Negrito, italico, tachado,
+  codigo, titulos, listas, citacao e links sao desenhados enquanto o usuario
+  digita. A insercao no cursor chama `core/noteDocument`: o no de texto e dividido
+  e o no novo entra entre as duas metades. O custo por tecla fica limitado ao no
+  ativo, sem trocar de motor de edicao. **O texto da nota e um no so**: um
+  editor por paragrafo fazia o campo ser desmontado e remontado a cada troca
+  de paragrafo (com o custo e o lag do documento inteiro), e o Enter criava um
+  editor novo. As midias que cortam o texto sao os unicos pontos de divisao.
+  So uma nota gigante e cortada (8000 caracteres), em fronteira de palavra (ate
+  no meio de uma linha, sem quebra nenhuma), e as partes voltam coladas no
+  markdown - o texto do usuario nao muda. O texto de um no e o **conteudo** que
+  o editor mostra; as quebras que fecham a linha antes de uma midia ficam no
+  `breakAfter` do no, fora do conteudo (misturadas com ele, as quebras que o
+  usuario digita no fim do texto sumiam). Toda midia deixa um trecho de texto
+  (mesmo vazio) do lado direito: e o campo onde se digita abaixo de uma foto
+  ou audio, inclusive depois de reabrir a nota. A insercao e a remocao mexem
+  **na lista de nos**, sem reparsear o markdown: um id recalculado por um novo
+  parse apontava para outro trecho e fazia a foto mudar de lugar (e o texto
+  parecer perdido). A imagem e um no proprio: ocupa uma largura em percentual
+  da nota, que viaja no markdown (`{w=50}`); um unico botao de informacao no
+  canto abre o menu com os tres tamanhos e, por ultimo, remover a foto. Todo
+  trecho de texto e o editor rico
+  nativo, montado desde a abertura: nao ha estado de leitura, nem previa, nem
+  remontagem no toque. Um editor por trecho e barato porque so as midias
+  cortam o texto, e o toque, o cursor e o Enter sao os do Android. O
+  titulo, a data e as tags aparecem no primeiro frame, e o corpo monta junto:
+  nao ha esqueleto no lugar dele nem troca de etapa, e nada de carregamento
+  cobre o texto depois que a nota abriu. O markdown continua sendo o
+  formato salvo: o HTML vira markdown num debounce curto e no blur/saida. Fotos e
+  audios entram na hora pelo arquivo local e sobem no sync ao sair da nota; a
+  referencia `local:`/`attachment:` fica no markdown, sem caminho de aparelho.
+- **Editor rico sempre montado, sem previa.** Todo trecho de texto e um
+  `EnrichedTextInput` desde a abertura, e o texto aparece formatado em todos
+  os estados. Nao existe renderizador de leitura: o que dividia a cena em
+  "previa" e "campo" era caro (duas geometrias para o mesmo texto, cursor
+  calculado por posicao de toque e `setSelection`) e podia mostrar o que o
+  usuario nao pediu. O corpo nao monta dezenas de campos porque um trecho de
+  texto so termina onde existe uma midia; a nota inteira e um campo quando nao
+  ha foto nem audio.
+- **Eventos sincronos no Android.** O editor muda de tamanho a cada tecla (o
+  texto cresce) e, com o evento assincrono, a atualizacao chega depois do
+  quadro: o campo pisca e a digitacao engasga. O `EnrichedTextInput` recebe
+  `androidExperimentalSynchronousEvents`, que e a opcao da propria biblioteca
+  para esse caso.
+- **HTML no formato interno do editor.** `core/noteHtml` entrega ao editor
+  rico o formato que ele reconhece como proprio (`<html>...</html>`). Fora desse
+  formato, a biblioteca trata o conteudo como HTML externo e roda o
+  normalizador (um parse de HTML5 completo, via Gumbo) no editor. No formato
+  interno, o parse e o da propria biblioteca, e a ida e volta do markdown
+  continua igual (`htmlToMarkdown` tira a casca).
+- **O HTML segue o que a biblioteca devolve.** Dentro do formato interno, a
+  biblioteca quebra o HTML em uma linha por tag e usa um `<br>` solto na linha
+  em branco. O app entrega o mesmo formato (uma quebra entre os blocos e
+  `<br>` na linha em branco) e a conversao tira essas quebras: elas sao
+  formatacao do HTML, nao texto. Sem isso, cada linha em branco do markdown
+  voltava dobrada a cada gravacao e o texto da nota crescia sozinho. Do mesmo
+  jeito, a conversao tira **uma** quebra do fim (a da tag que fecha o texto) e
+  nao todas: as que sobram sao as que o usuario digitou.
+- **Teclado e cursor.** A janela usa `adjustNothing` (plugin
+  `withKeyboardLayout`): o app reserva a altura do teclado na barra de acoes e
+  **nao rola a nota**. Quem cuida do cursor e o Android; rolar para o "inicio
+  do trecho" (medido pelo bloco, nao pelo cursor) fazia a nota pular para o
+  topo a cada toque perto do teclado. Fechar a nota tira o foco do editor
+  antes de desmontar a view: desmontar um campo com o teclado aberto travava
+  a thread de UI na transicao (tela preta/ANR).
+- **Teclado nos modais.** Como a janela nao encolhe, todo modal com campo de
+  texto precisa reservar o teclado por conta propria. `FastModal` envolve o
+  conteudo num `KeyboardAvoidingView` (behavior `padding`), entao o seletor de
+  tags, o campo de link e os formularios sobem acima do teclado em vez de
+  ficarem atras dele.
+- **Folhas do rodape.** Quem sobe do rodape (`BottomSheet`) anima so
+  `translateY` e a opacidade do fundo, no driver nativo: nenhuma medida de
+  conteudo entra na entrada, entao a altura nao "corta" durante a animacao. O
+  seletor de tags tem altura fixa para a lista e para a faixa de selecionadas:
+  filtrar, receber o banco do servidor ou marcar a primeira tag nao muda o
+  tamanho do cartao no meio da interacao. A folha da nota separa o transform
+  (nativo) da altura animada (JS) em dois `Animated.View`, porque misturar os
+  dois drivers no mesmo no obriga a entrada a rodar na thread de JS. O arrasto
+  dessa folha e um gesto nativo do `react-native-gesture-handler` (com um
+  `GestureHandlerRootView` proprio, ja que ela vive num `Modal`): o cabecalho
+  sempre puxa a folha nos dois sentidos e o corpo inteiro arrasta quando esta
+  recolhido. O `PanResponder` do JS perdia o toque para os botoes e para a
+  rolagem, o que deixava a folha reagindo so numa faixa estreita. Expandida, o
+  corpo rola e so puxa a folha para baixo quando a lista esta no topo. Abaixo do
+  tamanho recolhido a folha acompanha o dedo e, ao soltar, fecha descendo (o
+  inverso da entrada, com o fundo escurecido sumindo junto) ou volta para a
+  posicao recolhida.
+- **Toque nos botoes.** Todo alvo tocavel passa por `Press`, com o ripple
+  recortado pela forma do alvo. O raio vem do proprio estilo quando declarado;
+  quando nao, a forma sai da geometria medida (alvo quadrado pequeno vira
+  circulo e o resto ganha um canto suave), entao telas novas ja entram certas
+  sem configuracao. O ripple nativo do Android fica so para `borderless`,
+  porque a mascara nativa e sempre retangular. No iOS, onde nao ha ripple, o
+  alvo escurece enquanto esta pressionado.
+- **Audio com onda e seek por trecho.** O audio da nota mostra uma onda
+  desenhada por `AudioWaveform`: a parte tocada usa a cor de destaque e o resto
+  fica no tom neutro; tocar ou arrastar em qualquer ponto pula para ali (parado,
+  ja toca dali). A posicao do toque sai do `pageX` menos a origem medida da
+  onda, e nao do `locationX`: o evento pode chegar com coordenadas relativas a
+  uma barra filha, o que jogava o seek para o comeco. A altura das barras vem de
+  `core/waveform`, que combina a densidade de fala dos segmentos da transcricao
+  com um ruido estavel por referencia do audio (o app nao decodifica PCM, entao
+  a onda nao vem do sinal) - a mesma referencia gera sempre a mesma onda. A
+  onda tem 88 barras (o dobro das 48 originais) e 48 dp de altura: a fala
+  mantem o relevo das silabas (barras altas com valas curtas) e a pausa fica
+  no traco minimo de 2,5 dp, o mesmo contraste da waveform da gravacao. A
+  minutagem de cada trecho, na transcricao completa, e um alvo de toque. Todo
+  seek passa pelo `playAt` do player unico: se a fonte ja e a atual o player so
+  pula; se mudou, o `replace` aponta a fonte e o seek e pedido **depois** de ela
+  ficar pronta (poll do `currentStatus`), nunca no meio do buffering. O motivo
+  real do "sempre reinicia" era o formato: o AAC **ADTS** nao tem tabela de
+  posicoes, o ExoPlayer o trata como fluxo nao buscavel e manda qualquer seek
+  para o inicio. O patch em `mobile/patches/expo-audio@57.0.5.patch` liga a
+  busca por taxa constante do ADTS (`AdtsExtractor`), que e exata para o audio
+  CBR gravado pelo app; depois disso o seek cai no trecho pedido, inclusive num
+  audio que ja terminou. O patch tambem remove o `publication` do
+  `expo-module.config.json`: sem isso o Expo consome o AAR pre-construido do
+  modulo e o Kotlin patcheado nem chega a ser compilado. Buscar antes de a fonte
+  ficar pronta tambem nao resolvia: o ADTS monta a tabela de posicoes durante a
+  preparacao, e um seek pedido no meio do buffering era aceito e descartado na
+  abertura (a posicao voltava a 0). A fonte so conta como pronta pelo status
+  (`currentStatus.isLoaded`): a propriedade `isLoaded` e falsa quando o audio
+  **terminou**.
+- **Onda da gravacao em duas camadas.** A tela de gravacao le o medidor do
+  microfone (dB, ~28 amostras por segundo) e entrega o nivel numa fila
+  compartilhada. A onda inteira e **um unico `Path` SVG**, redesenhado so quando
+  uma amostra entra (~17 vezes por segundo); o **movimento** e um `translateX`
+  do container, recalculado por quadro na thread de UI (Reanimated, 60 fps). Uma
+  view por barra custava dezenas de estilos por amostra e refazer o path a cada
+  quadro custava uma atualizacao grande por quadro; separados, o quadro so mexe
+  no translado. Nao ha `setState` por amostra: o relogio da tela fica num
+  componente proprio e a tela de gravacao nao re-renderiza a cada meio segundo.
+  O dB nao vira altura por uma escala fixa: cada aparelho mede em um nivel
+  diferente (ha telefone em que a fala fica perto de -20 e outro em que mal
+  passa de -45), e uma escala fixa deixava a fala do segundo com um terco da
+  altura. A onda observa a propria gravacao: o piso e o ruido de fundo (desce na
+  hora, sobe 0,5 dB/s) e o topo e o pico da fala (sobe na hora, cai 3 dB/s), com
+  faixa entre 10 e 36 dB. Assim a fala chega ao topo em qualquer aparelho, o
+  silencio fica no traco minimo e um ruido constante nao vira barra. O envelope
+  de ataque imediato e queda de 36 dB/s suaviza a cauda entre as amostras. A fita
+  desenha uma barra a mais que a area visivel; quando o deslocamento fecha uma
+  barra, a amostra entra na ponta e a fita volta a zero no mesmo quadro, sem
+  salto. O passo fica em `components/liveWaveAnimation` (`stepLiveWave` e
+  `wavePath`), testado sem Reanimated.
+- **O texto e editado no editor nativo.** Todo trecho de texto e o proprio
+  `EnrichedTextInput` do app, montado desde a abertura: o toque, o cursor, a
+  selecao, o Enter e a digitacao sao os do Android. Nao ha previa no meio do
+  caminho, nem matematica de cursor, nem "condicoes" para o campo se comportar
+  como um campo. O que o usuario ve em todos os estados e o campo de verdade,
+  com o mesmo HTML que sera salvo. O editor e a nota nao trocam de aparencia
+  depois de abertos: nenhum esqueleto, previa ou indicador entra na frente do
+  texto enquanto algo carrega.
+- **Uma leitura por trecho, por vez.** O editor nativo responde a um pedido de
+  HTML por vez. Duas leituras do mesmo trecho ao mesmo tempo fazem uma delas
+  falhar ("Component unmounted") - e o texto que o usuario escreveu nesse
+  trecho ia embora. As leituras ficam em fila por trecho.
+- **Um editor por trecho de texto, sempre montado.** So as midias cortam o
+  texto, entao uma nota sem foto nem audio tem um unico campo nativo, e uma
+  nota com tres audios tem quatro. Nao ha janela de visibilidade nem troca de
+  campo no toque: como o texto da nota e um no so, o editor nao e remontado
+  quando o cursor muda de linha; e o campo do Android que acompanha o cursor.
+- **A nota so rola quando o cursor some.** A rolagem para o cursor e feita
+  depois que o teclado abre e apenas se o cursor estiver fora da area visivel:
+  antes, qualquer toque rolava o paragrafo inteiro para o topo da tela e o
+  usuario perdia o texto que estava lendo.
+- **Pausa do player fora do desmonte.** `player.pause()` do `expo-audio` e uma
+  chamada sincrona que, no Android, termina em `AudioModule.runOnMain` ->
+  `runBlocking(main)`. Executada durante o desmonte da nota, ela cai no dispatch
+  de eventos do Fabric na thread principal e espera essa mesma thread: o app
+  fica "nao responde" por 5 s (ANR reproduzido no emulador, com a pilha
+  `EventBeatManager.tick -> AudioModule.runOnMain`). A pausa da saida e adiada
+  para o proximo tick do JS (`usePauseOnUnmount`), onde `runOnMain` agenda na
+  thread principal ja livre. Vale para qualquer chamada sincrona do
+  `expo-audio` em cleanup de tela.
+- **Diagnostico de digitacao.** O log de desenvolvimento separa o trabalho do
+  app do quadro perdido: `[perf] typing` traz `js_ms` (o que o app fez),
+  `frame_ms` (o tempo ate o proximo quadro), `chars` (o tamanho do no editado)
+  e `rich` (quantos editores nativos estao montados). E o que distingue "o JS
+  travou" de "a view nativa do editor e lenta".
+  `[perf] note.rehydrate` marca o corpo remontando (que tira o editor do
+  lugar).
+- **Patch no editor rico.** `react-native-enriched-html` recalcula o estado de
+  estilo do cursor a cada tecla e, no Android, emitia o evento de estado
+  **mesmo quando o estado nao tinha mudado**: cada emissao monta um payload
+  com todos os estilos, copia esse payload e despacha para o JS - dezenas de
+  mapas nativos por tecla, na thread de UI. A comparacao que_exists no
+  upstream ("nao emita se o payload for o mesmo") compara os *objetos* de
+  mapa, que nunca sao iguais, entao nunca segurava o evento. O iOS da
+  biblioteca ja faz o certo (so emite quando algo mudou); o Android nao.
+  O mesmo arquivo tinha um segundo defeito: o span de paragrafo vazio
+  (`EmptySpan`) era uma **classe local**, entao cada chamada criava uma classe
+  nova e os spans anteriores nunca eram removidos - um span de paragrafo a
+  mais a cada tecla, e o layout do texto ficava mais lento a cada tecla.
+  O patch tambem faz o evento de **selecao** ser assincrono: o editor o
+  despachava de forma sincrona (por causa de
+  `androidExperimentalSynchronousEvents`), entao cada toque e cada tecla
+  faziam a thread de UI esperar o JS - era o quadro perdido ao mover o cursor.
+  `mobile/patches/react-native-enriched-html@1.1.1.patch` corrige os tres no
+  Android. Como o patch e de codigo nativo, ele exige **rebuild** do
+  development build (reload do Metro nao basta).
+  Medido no aparelho antes do patch (nota de 11.852 chars, 56 nos): a tecla
+  custava de 132 ms a 1.772 ms, crescendo a cada tecla, com `js_ms = 0` (o JS
+  estava ocioso: o custo era todo nativo) e o corpo levando ~2 s para assentar.
+- **Editor unico, 100% nativo.** O corpo da nota e uma lista de nos
+  (`core/noteDocument`): texto rico, imagem e audio. Nao ha WebView no corpo:
+  o texto rico vive em `EnrichedTextInput`, um campo nativo por no de texto, e a
+  imagem e o audio sao componentes nativos no lugar. Isso elimina o cold start
+  da WebView, o recarregamento do documento e o piscar da tela quando o texto
+  muda. Todo trecho de texto e o campo rico, montado desde a abertura, com o
+  texto formatado em todos os estados (negrito, titulo, lista, codigo, citacao,
+  link): nao ha renderizador de leitura nem previa. O markdown continua sendo o
+  formato salvo: o HTML vira markdown num debounce curto e no blur/saida, e
+  nunca e mostrado. Fotos e audios entram na hora pelo arquivo local e sobem no
+  sync ao sair da nota; a referencia `local:`/`attachment:` fica no markdown,
+  sem caminho de aparelho.
+- **Decisao: corpo nativo, sem WebView.** A alternativa era o texto rico numa
+  WebView `contenteditable`, com o audio como card nativo entre os trechos. A
+  alternativa foi descartada: ela nao servia ao requisito (texto rico, fotos e
+  audios entre os trechos, markdown escondido e abertura rapida) e trazia cold
+  start, recarga do documento e tremor na digitacao. O que existia da
+  alternativa foi removido do app: `core/noteRuns`, `core/noteWebHtml`,
+  `core/webviewBridge` e o seletor de editor em Opcoes nao existem mais.
+
+## Temas e leitura
+
+O app tem tres paletas: claro, escuro (cinza do Notion) e preto (AMOLED, o
+padrao historico). A escolha fica em `Prefs`, no SecureStore; trocar de tema
+atualiza a tela aberta sem recriar a navegacao nem o estado das notas.
+
+- **Leitores da paleta ativa.** `colors` e `gradients` devolvem os valores da
+  paleta selecionada. As telas e os componentes memoizados assinam `useTheme()`;
+  os estilos estaticos usam `createThemedStyles`, que troca apenas as
+  propriedades de cor da paleta base (AMOLED) pela ativa e memoriza a variante
+  por tema. Layout, tamanhos, sombras e comportamento nao mudam.
+- **Mesma nota, outra luz.** O editor e o HTML rico recebem a paleta atual
+  (texto, links, codigo e citacao). O tema nao altera o markdown, o cursor nem
+  o documento.
+- **Ritmo de leitura do Notion.** O texto da nota usa 16 px, entrelinha 1,6 e
+  espacamento de letras de 0,1 px (quando a plataforma do editor suporta), para
+  o texto corrido nao ficar compacto.
+
 ## Fluxo de dados
 
 1. Cliente inicia um upload: `POST /uploads` com metadados e o SHA-256 esperado do arquivo.
@@ -93,9 +408,76 @@ Campos do job: tipo, payload, tentativas, max_attempts, `available_at` (para bac
 `lease_expires_at` e o id do worker que detem o lease. Um job com lease expirado volta a
 `queued` (recuperacao de worker morto).
 
+## Revisao da transcricao
+
+O whisper grava o texto cru em `segments.text` e nunca o sobrescreve. A revisao da IA e um
+derivado por trecho (`transcript_revisions`), publicado **janela a janela**: cada janela
+aceita e gravada e vira o evento `transcript.revised` antes da passada terminar. O leitor
+(app ou dashboard) troca aquele trecho na hora; a analise so comeca quando a revisao
+termina.
+
+Tres estados precisam ser distinguiveis no payload e na tela, porque a diferenca entre eles
+era invisivel antes:
+
+- `revised_changed > 0`: a IA reescreveu algum trecho.
+- `revised_changed == 0` e `revised_pending == 0`: a passada rodou e nao havia o que corrigir.
+- `revised_rejected > 0`: parte dos trechos foi alcancada mas ficou sem revisao (resposta
+  em formato inaceitavel ou trava de aceitacao). `revised_finished` continua verdadeiro.
+- `revised_finished == false` (e `revised_pending > 0`) marca uma passada interrompida, que
+  retoma de `revised_through`. O estado e gravado no servidor; sem ele, uma passada
+  terminada com recusas parecia interminavel no app.
+
+O mesmo vale para o aparelho: a revisao local grava o estado em `transcript_review` (contagem
+de recusados, trecho alcancado e `finishedAt`) e so e considerada atual quando a passada
+terminou. Uma passada interrompida retoma no boot; a compreensao ja medida e os indices
+recusados continuam valendo. Uma revisao importada do servidor preserva o estado da passada,
+para o chip nao ficar preso em "revisando" e para o aparelho nao refazer o trabalho.
+
+Transcricao vinda do servidor e marcada com `transcriptOrigin: 'server'` e nunca e reenviada
+como se tivesse sido transcrita no aparelho. Sem essa marca, cada abertura do app substituia
+a linha em `transcripts`, criava uma notificacao falsa no sino e apagava a compreensao da
+revisao. O esquema JSON pedido ao modelo local vem do chamador (`options.schema`); fixar o
+schema da analise na chamada fazia toda janela da revisao voltar inutilizavel, em silencio.
+
 Idempotencia: cada job deriva uma chave logica (por exemplo, `transcribe:{entry_id}` e
-`analyze:{entry_id}:{model}`). Um job ja concluido para a mesma chave nao e reexecutado, e
+`analyze:{entry_id}`). A analise automatica e o clique manual usam a mesma chave: sem isso,
+um clique durante a analise automatica abria uma segunda passada concorrente na nota. Um job ja concluido para a mesma chave nao e reexecutado, e
 a gravacao dos resultados e feita em transacao, com upsert por chave natural.
+
+## Analise por secao
+
+A nota e lida em partes: cada titulo do texto escrito e a transcricao do audio viram uma
+secao (`analysisInput` monta `TextSections` + a secao da fala). O pipeline analisa cada
+secao com o texto inteiro dela e depois faz uma sintese da nota, que liga as leituras — por
+isso `Result.Sections` existe ao lado de `summary`/`reading`. Uma secao maior que o limite
+de uma chamada e dividida em janelas (entre paragrafos ou palavras), nunca truncada.
+
+O que a analise entrega sao metricas: sentimento, emocoes, pessoas, lugares, temas,
+momentos-chave e compreensao. A prosa e legenda disso, e o servidor a corta em codigo
+(`limitProse`): resumo com uma frase e leitura com no maximo duas, em uma linha. Nao adianta
+pedir pouco no prompt e aceitar um relatorio na resposta.
+
+O orcamento de tokens de cada resposta vem do tamanho do texto (`answerBudget`), com o teto
+do provedor como unico limite; `finish_reason: "length"` faz o cliente dobrar o teto e
+tentar de novo. Modelos de raciocinio nao sao o padrao da interface: eles gastam o
+orcamento pensando e sao marcados com "raciocínio" na lista de modelos.
+
+## Notificacoes de processos concluidos
+
+O sino da lista de notas le `GET /api/v1/activities`, que junta as transcricoes
+gravadas e as execucoes de analise com `outcome: "ok"`. Nao e um estado efemero do
+navegador: a lista sobrevive a fechar a aba e mostra o que terminou antes de ela abrir.
+O navegador guarda apenas o instante da ultima leitura (para o selo de nao lidas), e cada
+item abre a nota correspondente.
+
+## Apagar audio
+
+Remover o marcador do corpo e uma operacao do documento: o audio sai da nota e
+continua no servidor. Apagar de verdade e o `DELETE /api/v1/attachments/{id}`,
+oferecido no menu do player em qualquer audio (inclusive os que estao na pilha
+do topo, sem marcador). A remocao leva a transcricao, os segmentos e a revisao
+junto, e recalcula a duracao da entrada. Sem essa separacao, um audio removido do
+corpo reaparecia na pilha do dashboard sem nenhuma forma de apagar.
 
 ## Decisoes e justificativas
 
@@ -124,10 +506,54 @@ a gravacao dos resultados e feita em transacao, com upsert por chave natural.
   e pode ser desligada sem afetar transcricao e metricas.
 - Frontend embutido via `go:embed`: um unico artefato para distribuir.
 - SSE para atualizacoes: unidirecional, simples, funciona atras do proxy de desenvolvimento.
+- Caderno obrigatorio por nota, com o padrao "Notas ao acaso" criado por migracao: separa
+  trabalho, estudo e outros conjuntos sem permitir nota orfa. O app abre no ultimo caderno
+  (preferencia local), o web usa a mesma ideia na sidebar. As notas sao ordenadas pela data
+  real (`recorded_at`), nao pela data de importacao.
+- Tags como eixo transversal (N:N) e cadernos como colecao (1:N): as duas coisas respondem
+  perguntas diferentes. A cor pastel e deterministica a partir do nome, para a tag criada
+  offline ja aparecer igual no servidor e no dashboard.
+- Subnotas desativadas: a arvore `parent_id` nao e mais criada nem exibida; os dados
+  existentes ficam no banco ate uma remocao futura. Cadernos e tags cobrem a organizacao
+  que as subnotas tentavam resolver.
+- Editor da nota: o corpo e uma lista ordenada de nos (`core/noteDocument`).
+  Texto, imagem e audio sao o mesmo tipo de coisa: um no do documento. Cada no de
+  texto tem o seu editor rico nativo; a insercao no cursor divide o no na posicao
+  visivel exata, fechando e reabrindo enfase/codigo quando necessario. O HTML do
+  no vira markdown no debounce (800 ms), no blur e no `flush`; `core/noteHtml`
+  preserva enfase, listas, titulos, citacao, link e codigo. O audio guarda a
+  referencia (`local:`/`attachment:`), a duracao no marcador e a transcricao no
+  cache da pilha; o player e um card entre os paragrafos, nao um campo da nota.
+- Abertura sem trabalho de fundo: enquanto a nota esta aberta, upload/rede e pulls esperam
+  (`noteIsOpen`), a pilha de audios so revalida depois da transicao, o audio nao e
+  decodificado ate o play/seek e a busca de anexos nao lista o diretorio inteiro (checa as
+  extensoes conhecidas direto). A transcricao local usa no maximo 2 threads (o app continua
+  respondendo), mostra a porcentagem no card do audio e na notificacao (barra de progresso)
+  e o progresso so notifica quando o percentual inteiro muda. A analise local usa 2 threads
+  (1 no modo de economia) e para quando a nota perde o foco: antes eram 4 threads rodando
+  em segundo plano, e entrar/sair de qualquer tela custava dezenas de segundos.
+
+- Autor da nota e um rotulo (`self`, `other`, `mixed` ou vazio), nao uma entidade: o
+  diario e privado e de um dono so; "outros" cobre citacao, discurso e audio importado
+  sem inventar uma pessoa. O autor efetivo e a escolha da nota ou o padrao da instancia
+  (`all_notes_mine`), e so muda como a IA le a primeira pessoa. O nome do dono
+  (`owner_name`) e a identidade do diario, usada no prompt e no centro do mapa.
+- Mapa de relacoes derivado, nunca uma tabela paralela: `GET /graph` agrega `entities` e
+  `entry_entities` (mencoes e co-ocorrencia por nota) e, no foco, as notas e seus links.
+  Decisoes sao entidades `decision`, como temas e pessoas. Renomear guarda o nome antigo
+  em `entity_aliases`, entao a proxima analise que ainda usar a grafia antiga cai na mesma
+  entidade em vez de criar uma duplicata. Quando a pessoa e o proprio dono, "sou eu" apaga
+  a entidade duplicada e guarda a grafia em `owner_aliases`; o centro do mapa e a unica
+  representacao do diarista e a leitura resolve o nome para `owner_name`.
+  O cliente desenha em canvas com forca local e tamanho relativo ao maior no da visao;
+  o servidor nao manda layout nem posicao. O mapa inclui todas as notas, inclusive as de
+  autor "outros": o diario e do dono, mesmo quando a fala e de outra pessoa.
 
 ## Limites e configuracoes relevantes
 
 - Duracao maxima de audio: 50 minutos (configuravel por ambiente).
+- O app grava um audio por nota. Nota ja sincronizada (ou com audio local) nao aceita um
+  segundo audio pelo celular; a pilha do servidor e somente leitura no app.
 - Tamanho maximo de upload: configuravel por ambiente.
 - Formatos aceitos: wav, mp3, m4a, ogg, flac, aac, adts (configuravel).
 - Concorrencia de workers: padrao 1, dado o pico de memoria do whisper.

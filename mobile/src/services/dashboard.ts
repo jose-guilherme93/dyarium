@@ -12,6 +12,7 @@ import {
 } from '@/core/api';
 
 import { loadServerConfig } from './secure';
+import { saveCachedAnalyses } from './db';
 
 const doFetch = globalThis.fetch as unknown as FetchLike;
 
@@ -42,6 +43,17 @@ export async function loadDashboard(analysisLimit = 20): Promise<DashboardData |
   const analyses = results.filter(
     (item): item is { entry: ServerEntry; analysis: ServerAnalysis } => item !== null,
   );
+
+  // Ja foram feitas no servidor: guarda no aparelho para o painel mostrar mesmo
+  // sem rede (e para nao pedir a mesma analise de novo).
+  await saveCachedAnalyses(
+    analyses.map(({ entry, analysis }) => ({
+      entryId: entry.id,
+      title: entry.title || entry.original_filename || 'Nota',
+      recordedAt: entry.recorded_at ?? entry.created_at,
+      analysis,
+    })),
+  ).catch(() => undefined);
 
   return { entries, tags, analyses };
 }

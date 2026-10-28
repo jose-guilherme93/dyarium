@@ -1,6 +1,13 @@
-import { StyleSheet, Text, TextInput, View, type TextInputProps } from 'react-native';
+import {
+  StyleSheet,
+  View,
+  type TextInputProps,
+} from 'react-native';
+import { Text, TextInput } from '@/components/AppText';
 
-import { colors, fontSize, radius, spacing } from '@/theme/tokens';
+import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
+import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
+import { defineStyles } from '@/theme/themedStyles';
 
 interface FieldProps extends TextInputProps {
   label: string;
@@ -8,6 +15,9 @@ interface FieldProps extends TextInputProps {
 }
 
 export function Field({ label, hint, style, ...props }: FieldProps) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+
   return (
     <View style={styles.wrap}>
       <Text style={styles.label}>{label}</Text>
@@ -22,25 +32,25 @@ export function Field({ label, hint, style, ...props }: FieldProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const baseStyles = defineStyles({
   wrap: { gap: spacing.sm },
   label: {
-    color: colors.textSecondary,
+    color: baseColors.textSecondary,
     fontSize: fontSize.sm,
     fontWeight: '600',
     textTransform: 'uppercase',
     letterSpacing: 0.6,
   },
   input: {
-    backgroundColor: colors.bgElevated,
+    backgroundColor: baseColors.bgElevated,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.borderStrong,
+    borderColor: baseColors.borderStrong,
     borderRadius: radius.md,
-    color: colors.text,
+    color: baseColors.text,
     fontSize: fontSize.md,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
     height: 52,
   },
-  hint: { color: colors.textTertiary, fontSize: fontSize.xs },
+  hint: { color: baseColors.textTertiary, fontSize: fontSize.xs },
 });

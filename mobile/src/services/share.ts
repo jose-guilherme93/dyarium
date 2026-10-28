@@ -12,6 +12,7 @@ import {
   MAX_SHARED_FILES,
   analyzeShareAudio,
   buildShareFileName,
+  normalizeSharedUri,
   type ImportDraft,
   type ShareAudioPayload,
 } from '@/core/import';
@@ -32,7 +33,7 @@ function toPayload(payload: {
 }): ShareAudioPayload | null {
   if (!payload.contentUri) return null;
   return {
-    uri: payload.contentUri,
+    uri: normalizeSharedUri(payload.contentUri),
     mimeType: payload.contentMimeType,
     name: payload.originalName,
     size: payload.contentSize,
@@ -86,11 +87,11 @@ export async function prepareSharedAudios(now = new Date()): Promise<PreparedSha
           draft.fileName = buildShareFileName(analysis.title, analysis.extension);
         } else {
           draft.supported = false;
-          draft.reason = 'Nao foi possivel ler o audio.';
+          draft.reason = 'Não foi possível ler o áudio.';
         }
       } catch {
         draft.supported = false;
-        draft.reason = 'Nao foi possivel copiar o audio.';
+        draft.reason = 'Não foi possível copiar o áudio.';
       }
     }
 

@@ -1,5 +1,5 @@
 import type { ServerAnalysis, ServerEntry } from '../api';
-import { summarize } from '../dashboard';
+import { summarize, toAnalysisInsights } from '../dashboard';
 
 function entry(partial: Partial<ServerEntry>): ServerEntry {
   return {
@@ -74,5 +74,50 @@ describe('summarize', () => {
       { label: 'Beto', value: 1 },
     ]);
     expect(summary.places[0]).toEqual({ label: 'Casa', value: 2 });
+  });
+});
+
+describe('toAnalysisInsights', () => {
+  const source = (over: Partial<Parameters<typeof toAnalysisInsights>[0][number]>) => ({
+    entryId: 'e1',
+    title: 'Nota',
+    recordedAt: '2026-01-01T00:00:00Z',
+    analysis: analysis({ summary: 'resumo' }),
+    ...over,
+  });
+
+  it('lista da nota mais recente para a mais antiga e limita', () => {
+    const items = Array.from({ length: 8 }, (_, index) =>
+      source({
+        entryId: `e${index}`,
+        title: `nota ${index}`,
+        recordedAt: `2026-01-0${index + 1}T00:00:00Z`,
+      }),
+    );
+    const insights = toAnalysisInsights(items, 6);
+    expect(insights).toHaveLength(6);
+    expect(insights[0].entryId).toBe('e7');
+    expect(insights[5].entryId).toBe('e2');
+  });
+
+  it('extrai os temas e ignora analise sem resumo nem tema', () => {
+    const insights = toAnalysisInsights([
+      source({
+        entryId: 'a',
+        title: 'Com tema',
+        analysis: analysis({
+          summary: '',
+          themes: [{ name: 'familia', confidence: 0.9 }],
+        }),
+      }),
+      source({ entryId: 'b', title: 'Vazia', analysis: analysis({ summary: '   ' }) }),
+    ]);
+    expect(insights).toHaveLength(1);
+    expect(insights[0].themes).toEqual(['familia']);
+  });
+
+  it('usa um titulo de reserva quando a nota nao tem nome', () => {
+    const [insight] = toAnalysisInsights([source({ title: '   ' })]);
+    expect(insight.title).toBe('Nota');
   });
 });

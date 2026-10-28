@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jose-guilherme93/dyarium/internal/ingest"
-	"github.com/jose-guilherme93/dyarium/internal/jobs"
-	"github.com/jose-guilherme93/dyarium/internal/store"
+	"github.com/joseti/dyarium/internal/ingest"
+	"github.com/joseti/dyarium/internal/jobs"
+	"github.com/joseti/dyarium/internal/store"
 )
 
 type createUploadRequest struct {
@@ -20,7 +20,22 @@ type createUploadRequest struct {
 	SHA256      string `json:"sha256"`
 	Title       string `json:"title"`
 	RecordedAt  string `json:"recorded_at"`
-	ClientKey   string `json:"client_key"`
+	// CreatedAt is the original creation/import time of the note. It is stored
+	// on the entry and never changes afterwards.
+	CreatedAt string `json:"created_at"`
+	// Source records where the note came from (e.g. "share" for imported audio).
+	Source    string `json:"source"`
+	ClientKey string `json:"client_key"`
+	// EntryID, when set, adds the audio to an existing entry.
+	EntryID string `json:"entry_id"`
+	// LocalTranscribe means the client will transcribe on the device, so the
+	// server must not enqueue its own transcription.
+	LocalTranscribe bool `json:"local_transcribe"`
+	// LocalAnalysis means the client owns the analysis (device or off), so the
+	// server must not enqueue analyze for this entry.
+	LocalAnalysis bool `json:"local_analysis"`
+	// Author is the explicit role chosen on the device (self/other/mixed).
+	Author string `json:"author"`
 }
 
 func (s *Server) handleCreateUpload(w http.ResponseWriter, r *http.Request) {
@@ -35,14 +50,29 @@ func (s *Server) handleCreateUpload(w http.ResponseWriter, r *http.Request) {
 			recordedAt = &t
 		}
 	}
+	var createdAt *time.Time
+	if raw := strings.TrimSpace(req.CreatedAt); raw != "" {
+		t, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_created_at", "created_at invalido")
+			return
+		}
+		createdAt = &t
+	}
 	up, err := s.deps.Ingest.Start(r.Context(), ingest.Meta{
-		Filename:    req.Filename,
-		ContentType: req.ContentType,
-		SizeBytes:   req.SizeBytes,
-		SHA256:      req.SHA256,
-		Title:       req.Title,
-		RecordedAt:  recordedAt,
-		ClientKey:   req.ClientKey,
+		Filename:        req.Filename,
+		ContentType:     req.ContentType,
+		SizeBytes:       req.SizeBytes,
+		SHA256:          req.SHA256,
+		Title:           req.Title,
+		RecordedAt:      recordedAt,
+		CreatedAt:       createdAt,
+		Source:          req.Source,
+		ClientKey:       req.ClientKey,
+		EntryID:         req.EntryID,
+		LocalTranscribe: req.LocalTranscribe,
+		LocalAnalysis:   req.LocalAnalysis,
+		Author:          req.Author,
 	})
 	if err != nil {
 		s.writeIngestError(w, err)
@@ -104,30 +134,29 @@ func (s *Server) handlePutUpload(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCompleteUpload(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	res, err := s.deps.Ingest.Complete(ctx, r.PathValue("id"))
+	result, err := s.deps.Ingest.Complete(ctx, r.PathValue("id"))
 	if err != nil {
 		s.writeIngestError(w, err)
 		return
 	}
-	entry := res.Entry
-	if res.Duplicate {
-		// Conteudo ja existia: nenhuma entrada nova foi criada. O app vincula o
-		// item local a entrada existente e nao ha transcricao nova a enfileirar.
-		writeJSON(w, http.StatusCreated, map[string]any{
-			"entry_id":  entry.ID,
-			"status":    entry.Status,
-			"duplicate": true,
-		})
-		return
+	// Um complete repetido (resposta perdida) nao refaz o trabalho nem
+	// reenfileira a transcricao; devolve o estado atual. Quando o cliente
+	// transcreve no aparelho (`local_transcribe`), o servidor nao enfileira:
+	// espera o texto chegar por PUT /entries/{id}/transcript.
+	status := result.Entry.Status
+	if !result.Repeated && !result.LocalTranscribe {
+		if _, err := s.deps.Queue.Enqueue(ctx, jobs.TypeTranscribe, "transcribe:"+result.Attachment.ID,
+			jobs.TranscribePayload{EntryID: result.Entry.ID, AttachmentID: result.Attachment.ID}); err != nil {
+			s.deps.Logger.Error("falha: enfileirar transcricao", "erro", err)
+		}
+		_ = s.deps.Store.UpdateEntryStatus(ctx, result.Entry.ID, store.EntryQueued)
+		s.deps.Events.Publish("entry.status", map[string]string{"entry_id": result.Entry.ID, "status": store.EntryQueued})
+		status = store.EntryQueued
 	}
-	if _, err := s.deps.Queue.Enqueue(ctx, jobs.TypeTranscribe, "transcribe:"+entry.ID, jobs.TranscribePayload{EntryID: entry.ID}); err != nil {
-		s.deps.Logger.Error("filtrar: enfileirar transcricao", "erro", err)
-	}
-	_ = s.deps.Store.UpdateEntryStatus(ctx, entry.ID, store.EntryQueued)
-	s.deps.Events.Publish("entry.status", map[string]string{"entry_id": entry.ID, "status": store.EntryQueued})
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"entry_id": entry.ID,
-		"status":   store.EntryQueued,
+		"entry_id":      result.Entry.ID,
+		"attachment_id": result.Attachment.ID,
+		"status":        status,
 	})
 }
 
