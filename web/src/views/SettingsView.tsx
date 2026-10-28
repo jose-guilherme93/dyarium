@@ -42,6 +42,12 @@ const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
   },
   deepseek: { label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat", kind: "openai" },
   ollama: { label: "Ollama local", baseUrl: "http://ollama:11434/v1", model: "qwen2.5:0.5b", kind: "openai" },
+  llamaLocal: {
+    label: "llama.cpp embutido",
+    baseUrl: "",
+    model: "qwen2.5-0.5b-instruct-q4_k_m",
+    kind: "openai",
+  },
   custom: { label: "Personalizado", baseUrl: "", model: "", kind: "openai" },
 };
 
@@ -101,11 +107,18 @@ const FALLBACK_MODELS: Record<string, string[]> = {
   opencodeGo: GO_MODELS,
   opencodeLocal: OPENCODE_MODELS,
   deepseek: ["deepseek-chat", "deepseek-reasoner"],
+  llamaLocal: [],
   ollama: [],
   custom: [],
 };
 
-function providerFromSettings(kind: string, baseUrl: string): string {
+function providerFromSettings(kind: string, baseUrl: string, localRuntime: string): string {
+  if (localRuntime === "embedded") {
+    return "llamaLocal";
+  }
+  if (localRuntime === "ollama") {
+    return "ollama";
+  }
   if (kind === "opencode") {
     return "opencodeLocal";
   }
@@ -126,7 +139,18 @@ function providerFromSettings(kind: string, baseUrl: string): string {
 
 /** Modelos do OpenCode vem de uma lista curada: o /models deles não diz o formato de cada um. */
 function canSearchModels(provider: string): boolean {
-  return provider !== "opencodeZen" && provider !== "opencodeGo";
+  return provider !== "opencodeZen" && provider !== "opencodeGo" && provider !== "ollama" && provider !== "llamaLocal";
+}
+
+/** Runtime local de um provedor, ou vazio quando a análise usa a nuvem. */
+function localRuntimeOf(provider: string): "ollama" | "embedded" | null {
+  if (provider === "llamaLocal") {
+    return "embedded";
+  }
+  if (provider === "ollama") {
+    return "ollama";
+  }
+  return null;
 }
 
 export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
@@ -147,22 +171,24 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
   const [error, setError] = useState("");
 
   const searchable = canSearchModels(provider);
+  const localRuntime = localRuntimeOf(provider);
+  const currentLocal = localRuntime && local?.runtime === localRuntime ? local : null;
   const modelOptions = useMemo(() => {
-    const fallback = provider === "ollama"
-      ? (local?.models?.length ? local.models : local?.model ? [local.model] : [])
+    const fallback = localRuntime
+      ? (currentLocal?.models?.length ? currentLocal.models : currentLocal?.model ? [currentLocal.model] : [])
       : FALLBACK_MODELS[provider] ?? [];
-    const remote = provider !== "ollama" && searchable ? providerModels : [];
+    const remote = !localRuntime && searchable ? providerModels : [];
     const list = remote.length > 0 ? remote : fallback;
     const current = settings?.analyze_model ?? "";
     return [...new Set([...list, current])].filter((model) => model !== "");
-  }, [provider, providerModels, settings?.analyze_model, local, searchable]);
+  }, [provider, providerModels, settings?.analyze_model, currentLocal, searchable, localRuntime]);
 
   const loadSettings = useCallback(async () => {
     const value = await api.getSettings();
     setSettings(value);
     setCeiling(String(value.max_whisper_rss_mb));
     setThemes(value.analysis_themes ?? "");
-    setProvider(providerFromSettings(value.analyze_provider, value.analyze_base_url));
+    setProvider(providerFromSettings(value.analyze_provider, value.analyze_base_url, value.analyze_local_runtime ?? ""));
   }, []);
 
   const loadModels = useCallback(async () => {
@@ -170,9 +196,9 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
     setModels(result.models ?? []);
   }, []);
 
-  const loadLocal = useCallback(async () => {
+  const loadLocal = useCallback(async (runtime: "ollama" | "embedded") => {
     try {
-      setLocal(await api.getLocalAnalysis());
+      setLocal(await api.getLocalAnalysis(runtime));
     } catch {
       setLocal(null);
     }
@@ -181,14 +207,14 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
   useEffect(() => {
     loadSettings().catch((err: unknown) => setError(err instanceof Error ? err.message : "falha ao carregar"));
     loadModels().catch((err: unknown) => setError(err instanceof Error ? err.message : "falha ao carregar"));
-    void loadLocal();
+    void loadLocal("ollama");
   }, [loadSettings, loadModels, loadLocal]);
 
   useEffect(() => {
-    if (provider === "ollama") {
-      void loadLocal();
+    if (localRuntime) {
+      void loadLocal(localRuntime);
     }
-  }, [provider, loadLocal]);
+  }, [localRuntime, loadLocal]);
 
   useEffect(() => {
     const token = getToken();
@@ -254,44 +280,72 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
 
   // Enquanto o modelo baixa, o painel acompanha pelo mesmo endpoint que iniciou
   // o download; quando termina, recarrega as configurações para refletir o modelo.
-  const pulling = Boolean(local?.pull && !local.pull.done && !local.pull.error);
+  const pulling = Boolean(currentLocal?.pull && !currentLocal.pull.done && !currentLocal.pull.error);
   useEffect(() => {
-    if (!pulling) {
+    if (!pulling || !localRuntime) {
       return;
     }
     const timer = window.setInterval(() => {
-      void loadLocal();
+      void loadLocal(localRuntime);
     }, 1500);
     return () => window.clearInterval(timer);
-  }, [pulling, loadLocal]);
+  }, [pulling, loadLocal, localRuntime]);
 
-  const pullDone = Boolean(local?.pull?.done && !local.pull?.error);
+  const pullDone = Boolean(currentLocal?.pull?.done && !currentLocal.pull?.error);
   useEffect(() => {
-    if (pullDone) {
-      void loadSettings();
+    if (pullDone && localRuntime) {
+      void Promise.all([loadSettings(), loadLocal(localRuntime)]);
     }
-  }, [pullDone, loadSettings]);
+  }, [pullDone, loadSettings, loadLocal, localRuntime]);
 
-  /** Um clique: configura o Ollama local e baixa o modelo se ainda faltar. */
-  const installLocal = async () => {
-    const model = settings?.analyze_model?.trim() || local?.model || "";
+  /** Um clique: configura o runtime local e baixa o modelo se ainda faltar. */
+  const installLocal = async (runtime: "ollama" | "embedded", model?: string) => {
+    const preset = runtime === "embedded" ? PROVIDER_PRESETS.llamaLocal : PROVIDER_PRESETS.ollama;
+    const saved = localRuntime === runtime ? settings?.analyze_model?.trim() : "";
+    const current = local?.runtime === runtime ? local : null;
+    const target = model || saved || current?.model || preset.model;
     setLocalBusy(true);
     try {
-      const result = await api.setupLocalAnalysis(model);
-      setProvider("ollama");
-      await Promise.all([loadSettings(), loadLocal()]);
+      const result = await api.setupLocalAnalysis(runtime, target);
+      setProvider(runtime === "embedded" ? "llamaLocal" : "ollama");
+      await Promise.all([loadSettings(), loadLocal(runtime)]);
       notify(
         result.status === "ready"
-          ? "Ollama configurado"
+          ? runtime === "embedded"
+            ? "llama.cpp configurado"
+            : "Ollama configurado"
           : `Baixando ${result.model} em segundo plano`,
         result.status === "ready" ? "success" : "info",
       );
     } catch (err) {
-      notify(err instanceof Error ? err.message : "não foi possível configurar o Ollama", "error");
+      // O seletor ja mudou na tela; volta para o provedor que esta salvo.
+      await loadSettings();
+      notify(err instanceof Error ? err.message : "não foi possível configurar a análise local", "error");
     } finally {
       setLocalBusy(false);
     }
   };
+
+  const localHint = (() => {
+    if (!currentLocal) {
+      return provider === "llamaLocal" ? "Verificando o llama.cpp..." : "Verificando o Ollama local...";
+    }
+    if (provider === "llamaLocal") {
+      if (!currentLocal.available) {
+        return "llama.cpp não está disponível nesta imagem; use o Ollama local ou um provedor.";
+      }
+      if (!currentLocal.downloaded) {
+        return currentLocal.size_mb ? `Modelo local ausente (~${currentLocal.size_mb} MB).` : "Modelo local ausente.";
+      }
+      return currentLocal.running
+        ? "llama.cpp pronto e rodando."
+        : "llama.cpp pronto; carrega na primeira análise.";
+    }
+    if (currentLocal.available) {
+      return `Ollama no ar em ${currentLocal.base_url}, com ${currentLocal.models.length} modelo(s) instalado(s).`;
+    }
+    return `Ollama não encontrado em ${currentLocal.base_url}. Confira se o serviço ollama está no ar.`;
+  })();
 
   const download = async (name: string) => {
     try {
@@ -568,19 +622,29 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
                   setProviderModels([]);
                   setModelsNote("");
                   const preset = PROVIDER_PRESETS[value];
-                  if (preset && value !== "custom") {
+                  if (value === "ollama" || value === "llamaLocal") {
+                    // O runtime local ja se configura e baixa o modelo em um
+                    // clique; nao salvar a base URL antes de o servico responder.
+                    void installLocal(value === "llamaLocal" ? "embedded" : "ollama");
+                  } else if (preset && value !== "custom") {
                     void save(
                       {
                         analyze_provider: preset.kind,
                         analyze_base_url: preset.baseUrl,
                         analyze_model: preset.model,
+                        // Sair do runtime local: a base URL e o runtime antigos
+                        // nao podem continuar valendo.
+                        analyze_local_runtime: "",
                         // Escolher o provedor ja e a decisao de ligar a análise.
                         analyze_enabled: true,
                       },
                       "Provedor atualizado",
                     );
                   } else if (value === "custom") {
-                    void save({ analyze_provider: "openai" }, "Provedor atualizado");
+                    void save(
+                      { analyze_provider: "openai", analyze_local_runtime: "" },
+                      "Provedor atualizado",
+                    );
                   }
                 }}
               >
@@ -591,43 +655,41 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
                 ))}
               </select>
             </div>
-            {provider === "ollama" && (
+            {localRuntime && (
               <div className="field">
-                <span className="field-label">Ollama local</span>
+                <span className="field-label">
+                  {provider === "llamaLocal" ? "llama.cpp embutido" : "Ollama local"}
+                </span>
                 <div className="field-control">
                   <button
                     type="button"
                     className="primary"
-                    onClick={() => void installLocal()}
+                    onClick={() => void installLocal(localRuntime)}
                     disabled={localBusy}
                   >
-                    {localBusy ? "Configurando..." : "Instalar e usar o Ollama local"}
+                    {localBusy ? "Configurando..." : "Usar análise local"}
                   </button>
-                  {local?.pull && !local.pull.done && !local.pull.error && (
+                  {currentLocal?.pull && !currentLocal.pull.done && !currentLocal.pull.error && (
                     <span
                       className="ram-track"
                       role="progressbar"
-                      aria-valuenow={local.pull.percent}
+                      aria-valuenow={currentLocal.pull.percent}
                       aria-valuemin={0}
                       aria-valuemax={100}
                     >
-                      <span className="ram-fill" style={{ width: `${local.pull.percent}%` }} />
+                      <span className="ram-fill" style={{ width: `${currentLocal.pull.percent}%` }} />
                     </span>
                   )}
                 </div>
                 <span className="hint">
-                  {local
-                    ? local.available
-                      ? local.pull && !local.pull.done && !local.pull.error
-                        ? `Baixando ${local.pull.model} (${local.pull.percent}%)...`
-                        : `Ollama no ar em ${local.base_url}, com ${local.models.length} modelo(s) instalado(s).`
-                      : `Ollama não encontrado em ${local.base_url}. Suba o servico local (make ai) e tente de novo.`
-                    : "Verificando o Ollama local..."}
+                  {currentLocal?.pull && !currentLocal.pull.done && !currentLocal.pull.error
+                    ? `Baixando ${currentLocal.pull.model} (${currentLocal.pull.percent}%)...`
+                    : localHint}
                 </span>
-                {local?.pull?.error && <span className="error">{local.pull.error}</span>}
+                {currentLocal?.pull?.error && <span className="error">{currentLocal.pull.error}</span>}
               </div>
             )}
-            {provider !== "ollama" && (
+            {!localRuntime && (
               <div className="field">
                 <span className="field-label">
                   {provider === "opencodeLocal" ? "Senha do opencode" : "Chave da API"}
@@ -708,8 +770,15 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
                   Um modelo comum entrega a mesma análise mais rápido.
                 </span>
               )}
-              {!searchable && (
+              {!searchable && !localRuntime && (
                 <span className="hint">Lista curada de modelos compativeis; a lista completa esta no console.</span>
+              )}
+              {localRuntime && (
+                <span className="hint">
+                  {provider === "llamaLocal"
+                    ? "Modelo GGUF executado pelo proprio servidor."
+                    : "Modelo instalado no servico Ollama."}
+                </span>
               )}
             </div>
             <div className="field">

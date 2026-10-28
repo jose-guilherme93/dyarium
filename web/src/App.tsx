@@ -9,6 +9,7 @@ import { NoteList } from "./components/NoteList";
 import { NoteEditor } from "./components/NoteEditor";
 import { NotebookDialog } from "./components/NotebookDialog";
 import { NotebookSwitcher } from "./components/NotebookSwitcher";
+import { NotionImportDialog } from "./components/NotionImportDialog";
 import { OfflineBanner } from "./components/OfflineBanner";
 import { TagManager } from "./components/TagManager";
 import { ComposeDialog, type ComposeAnchor } from "./components/ComposeDialog";
@@ -25,6 +26,7 @@ import {
   WritingIcon,
 } from "./components/icons";
 import { ALL_NOTEBOOKS, DEFAULT_NOTEBOOK_ID } from "./lib/notebooks";
+import type { NotionImportResult } from "./lib/notionImport";
 import { InsightsView } from "./views/InsightsView";
 import { MapView } from "./views/MapView";
 import { SettingsView } from "./views/SettingsView";
@@ -75,6 +77,7 @@ export function App() {
   const [tagsOpen, setTagsOpen] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
   const [composeAnchor, setComposeAnchor] = useState<ComposeAnchor | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
   // A busca pedida pela faixa recolhida so vale uma vez: sem isto, reabrir a
   // gaveta no celular abriria o campo de busca de novo sem ninguem pedir.
   const [pendingSearch, setPendingSearch] = useState(false);
@@ -349,6 +352,28 @@ export function App() {
 
   const openCreatedEntry = (id: string) => {
     setComposeOpen(false);
+    setOpenEntryId(id);
+    setView("notes");
+    refresh();
+    closeDrawer();
+  };
+
+  const openNotionImport = () => {
+    setComposeOpen(false);
+    setImportOpen(true);
+  };
+
+  const finishNotionImport = (result: NotionImportResult) => {
+    // Caderno vazio e removido ao fim: nao seleciona um id que ja nao existe.
+    if (!result.notebookRemoved) {
+      setActiveNotebookId(result.notebookId);
+      writeActiveNotebook(result.notebookId);
+    }
+    refresh();
+  };
+
+  const openNotionEntry = (id: string) => {
+    setImportOpen(false);
     setOpenEntryId(id);
     setView("notes");
     refresh();
@@ -633,6 +658,13 @@ export function App() {
                       <button
                         type="button"
                         className="button button--ghost"
+                        onClick={openNotionImport}
+                      >
+                        Importar do Notion
+                      </button>
+                      <button
+                        type="button"
+                        className="button button--ghost"
                         onClick={() => setView("insights")}
                       >
                         Ver insights
@@ -683,8 +715,20 @@ export function App() {
         notebookId={activeNotebookId === ALL_NOTEBOOKS ? undefined : activeNotebookId}
         onClose={() => setComposeOpen(false)}
         onCreateText={createTextNote}
+        onImport={openNotionImport}
         onCreated={openCreatedEntry}
       />
+
+      {importOpen && (
+        <NotionImportDialog
+          open
+          notebooks={notebooks}
+          currentNotebookId={targetNotebookId()}
+          onClose={() => setImportOpen(false)}
+          onFinished={finishNotionImport}
+          onOpenEntry={openNotionEntry}
+        />
+      )}
     </div>
   );
 }

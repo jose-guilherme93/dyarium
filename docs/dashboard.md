@@ -77,6 +77,34 @@ Layout responsivo:
   as telas acima sao implementadas nas fases seguintes. A tela de configuracao consome
   `GET/PUT /api/v1/settings`.
 
+### 8. Importação do Notion
+- Ação "Notion" no menu de nova nota. Recebe o export HTML do Notion como `.zip` ou
+  como pasta descompactada; o CSV e o Markdown do Notion não são lidos.
+- Uma página HTML vira uma nota. A página de lista/database do export é ignorada.
+- O título vem de `h1.page-title` (ou do nome do arquivo). O corpo preserva a ordem do
+  Notion: descrição, conteúdo útil das propriedades (na ordem da tabela) e corpo.
+  Imagens do corpo ficam no ponto em que aparecem; imagens da propriedade `Media`
+  entram no topo, junto com os links de propriedades como `Post URL`.
+- A data original vem da propriedade escolhida na revisão (`Criado em`, `Data
+  original` etc.) e vai para `recorded_at`. A data de importação fica em `created_at`
+  e só aparece em Detalhes. Datas sem ano usam o ano da exportação, ajustável.
+- Tags da propriedade `Tags` viram tags. As demais propriedades ficam no relatório
+  de limitações.
+- Comentários de página e de bloco do export HTML entram como citação no corpo,
+  com o autor; os da página ficam no começo da nota e os de bloco no lugar do
+  bloco. A propriedade `Comments` (métrica) continua fora. Reimportar acrescenta
+  às notas já existentes só os comentários que faltam, no começo, com um
+  interruptor para desligar; o corpo delas não é reescrito.
+- O botão "Criar caderno Notion" (um clique) cria o caderno de mesmo nome na
+  importação, ou reutiliza o que já existir. Todas as notas ficam nele. Se nada for
+  importado, o caderno vazio é removido.
+- Reimportar o mesmo export é idempotente: o id da entrada é o id da página do
+  Notion. Nota já existente não tem o corpo sobrescrito; se estiver em outro
+  caderno, é movida para o caderno escolhido.
+- Limitações mostradas na tela: ícone e capa da página, cores, colunas, synced blocks,
+  sumário automático, arquivos/PDF/vídeo/áudio anexados, imagens externas (http) e
+  propriedades de metadados não entram. Imagens locais (do export) viram anexos.
+
 ## Comportamento reativo
 
 - Atualizacoes em tempo real por SSE (`/api/v1/events`), com retomada por `Last-Event-ID`.

@@ -31,9 +31,13 @@ type Config struct {
 	// Provider selects the API shape: "openai" (default) or "opencode" (local
 	// OpenCode server, using the user's OpenCode login instead of an API key).
 	Provider string
-	BaseURL  string
-	APIKey   string
-	Model    string
+	// LocalRuntime is "embedded" when the endpoint is the llama.cpp server
+	// started by this binary, "ollama" for the compose service, or empty for a
+	// hosted provider. It changes the structured-output shape llama.cpp expects.
+	LocalRuntime string
+	BaseURL      string
+	APIKey       string
+	Model        string
 	// Language is the transcript language code (e.g. "pt", "en"). The model is
 	// asked to answer in this language. Empty means "same as the transcript".
 	Language string
@@ -182,6 +186,8 @@ func FriendlyError(err error) string {
 		return "nao ha texto para analisar nesta nota"
 	case strings.Contains(message, "json invalido"):
 		return "a IA respondeu em um formato inesperado"
+	case strings.Contains(message, "llm:"):
+		return "a analise local ainda nao esta pronta; baixe o modelo na configuracao"
 	case strings.Contains(message, "resposta sem conteudo"):
 		return "a IA nao devolveu texto; tente analisar de novo"
 	case strings.Contains(message, "connection refused"), strings.Contains(message, "dial tcp"),
@@ -201,6 +207,11 @@ func Retryable(err error) bool {
 		return false
 	}
 	message := err.Error()
+	if strings.Contains(message, "llm:") {
+		// Missing llama-server binary or GGUF model: retrying will not download
+		// it. The dashboard already tells the user what to do.
+		return false
+	}
 	for _, code := range []int{400, 401, 402, 403, 404, 422} {
 		if strings.Contains(message, fmt.Sprintf("status %d", code)) {
 			return false
@@ -234,6 +245,8 @@ func ErrorClass(err error) string {
 	case strings.Contains(message, "decode content"), strings.Contains(message, "decode summary"),
 		strings.Contains(message, "json invalido"):
 		return "invalid_json"
+	case strings.Contains(message, "llm:"):
+		return "local"
 	case strings.Contains(message, "timeout"), strings.Contains(message, "deadline"):
 		return "timeout"
 	case strings.Contains(message, "connection refused"), strings.Contains(message, "dial tcp"),
@@ -260,6 +273,10 @@ type chatMessage struct {
 type respFormat struct {
 	Type       string          `json:"type"`
 	JSONSchema *jsonSchemaSpec `json:"json_schema,omitempty"`
+	// Schema is the shape llama.cpp accepts for schema-constrained sampling.
+	// It is a flat "schema" alongside the type, unlike OpenAI's json_schema
+	// wrapper. Only the embedded runtime uses it.
+	Schema json.RawMessage `json:"schema,omitempty"`
 }
 
 type jsonSchemaSpec struct {
@@ -549,6 +566,15 @@ func (c *Client) postChat(ctx context.Context, system, user string, maxTokens in
 	}
 	switch format {
 	case formatSchema:
+		if c.cfg.LocalRuntime == "embedded" {
+			// llama-server constrains sampling with the raw schema next to the
+			// type; it rejects the OpenAI json_schema wrapper with 400.
+			body.ResponseFormat = &respFormat{
+				Type:   "json_schema",
+				Schema: json.RawMessage(schema),
+			}
+			break
+		}
 		body.ResponseFormat = &respFormat{
 			Type: "json_schema",
 			JSONSchema: &jsonSchemaSpec{

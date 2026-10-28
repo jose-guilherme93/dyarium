@@ -59,6 +59,24 @@ export function PlusIcon({ size = 18 }: IconProps) {
   );
 }
 
+export function CommentIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M21 12a8 8 0 0 1-8 8H6l-3 2v-5a8 8 0 0 1 8-8h2a8 8 0 0 1 8 3z" />
+    </svg>
+  );
+}
+
+export function ImportIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M12 3v12" />
+      <path d="m7 10 5 5 5-5" />
+      <path d="M5 21h14" />
+    </svg>
+  );
+}
+
 export function ImageIcon({ size = 18 }: IconProps) {
   return (
     <svg {...svgProps(size)}>

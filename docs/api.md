@@ -508,8 +508,8 @@ e os campos ricos lidos de `data`:
 - Entradas analisadas antes da analise rica nao tem `data`; nesse caso apenas os campos
   legados sao retornados.
 - `origin` diz quem produziu a analise: `app` (feita no aparelho e enviada), `server`
-  (pipeline deste servidor, inclusive Ollama local) ou `api` (provedor hospedado, para
-  onde o texto saiu).
+  (pipeline deste servidor, inclusive Ollama local ou llama.cpp embutido) ou `api` (provedor
+  hospedado, para onde o texto saiu).
 
 Nomes de pessoas, lugares, temas e decisoes na resposta da analise sao resolvidos pela
 tabela de entidades (e pelos aliases de nomes antigos): renomear uma pessoa muda a
@@ -573,33 +573,66 @@ so medidas.
   `mobile/src/core/analysisRuns.ts`.
 
 ### GET /api/v1/analyze/local
-Estado do Ollama local (o provedor sem chave, configurado em um clique). Faz uma consulta
-curta ao servidor `DIARY_OLLAMA_URL` (padrao `http://ollama:11434`):
+Estado de um runtime local (o provedor sem chave, configurado em um clique). O parametro
+`runtime` aceita `ollama` (padrao) ou `embedded`:
+
+```http
+GET /api/v1/analyze/local?runtime=ollama
+```
+
+Ollama: faz uma consulta curta ao servidor `DIARY_OLLAMA_URL` (padrao
+`http://ollama:11434`):
 ```json
 {
+  "runtime": "ollama",
   "available": true,
   "base_url": "http://ollama:11434/v1",
   "models": ["qwen2.5:0.5b"],
   "model": "qwen2.5:0.5b",
+  "downloaded": true,
   "pull": { "model": "qwen2.5:0.5b", "percent": 42, "done": false }
 }
 ```
-- `available` falso quando o Ollama nao responde (o painel mostra como subir o servico).
+- `available` falso quando o Ollama nao responde (o painel mostra que o servico esta fora).
 - `pull` so aparece quando ha (ou houve) um download iniciado por este endpoint.
 
-### POST /api/v1/analyze/local
-Configura a analise para usar o Ollama local em uma requisicao. Corpo:
+llama.cpp embutido:
 ```json
-{ "model": "qwen2.5:0.5b" }
+{
+  "runtime": "embedded",
+  "available": true,
+  "base_url": "http://127.0.0.1:11435/v1",
+  "models": ["qwen2.5-0.5b-instruct-q4_k_m"],
+  "model": "qwen2.5-0.5b-instruct-q4_k_m",
+  "downloaded": true,
+  "running": false,
+  "size_mb": 469,
+  "pull": { "model": "qwen2.5-0.5b-instruct-q4_k_m", "percent": 100, "done": true }
+}
 ```
-- Salva `analyze_enabled=true`, `analyze_provider=openai`, `analyze_base_url=<ollama>/v1`
-  e `analyze_model` **juntos** (transacao), para a analise nunca ficar apontando para um
-  provedor pela metade.
+- `available` diz se o binario `llama-server` existe nesta imagem; `downloaded` diz se o
+  GGUF esta no volume de modelos; `running` diz se o processo esta no ar agora.
+- O processo so sobe na primeira analise (ou no ping) e e liberado depois de
+  `DIARY_LLAMA_IDLE_SECONDS` sem uso. Nada fica residente entre analises.
+- `503 local_unavailable` tambem e o codigo do `POST` quando o binario ou o modelo nao
+  existem.
+
+### POST /api/v1/analyze/local
+Configura a analise para usar um runtime local em uma requisicao. Corpo:
+```json
+{ "runtime": "ollama", "model": "qwen2.5:0.5b" }
+```
+- `runtime` e opcional e vale `ollama` quando ausente; `embedded` usa o catalogo de GGUF.
+- Salva `analyze_enabled=true`, `analyze_provider=openai`, `analyze_base_url=<runtime>/v1`,
+  `analyze_model` e `analyze_local_runtime` **juntos** (transacao), para a analise nunca
+  ficar apontando para um provedor pela metade.
 - Se o modelo ainda nao estiver instalado, dispara o download em segundo plano (o `GET`
   acima informa o progresso) e responde `{"status":"downloading", ...}`; modelo instalado
   responde `{"status":"ready", ...}`.
-- `503 local_unavailable` quando o Ollama nao responde; nesse caso nada e salvo.
-- Nao aceita chave: o Ollama local nao tem uma.
+- `503 local_unavailable` quando o Ollama nao responde, quando o binario embutido nao esta
+  na imagem ou quando o runtime nao esta disponivel; nesses casos nada e salvo. Modelo
+  ausente no runtime embutido dispara o download, como no Ollama.
+- Nao aceita chave: nem o Ollama local nem o llama.cpp embutido tem uma.
 
 ## Entidades e humor
 
@@ -948,7 +981,8 @@ Provedores hospedados do OpenCode usam `analyze_provider=openai` com a chave do 
 - Modelos Claude, GPT, Gemini e Grok do OpenCode usam outros formatos de API e nao entram
   nessa lista.
 - O Ollama local nao usa chave: `POST /api/v1/analyze/local` configura URL e modelo e baixa
-  o modelo quando falta.
+  o modelo quando falta. O llama.cpp embutido usa a mesma rota com
+  `{"runtime":"embedded"}` e dispensa o servico do compose.
 
 Nota de rede: quando o dyarium roda em container e o OpenCode roda no host, o container
 precisa alcancar a URL informada (o OpenCode escuta em `127.0.0.1` por padrao).

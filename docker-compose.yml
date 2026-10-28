@@ -29,16 +29,25 @@ services:
       retries: 3
       start_period: 30s
 
-  # Analise de IA local (opcional, sem chave). O painel configura em um clique
-  # (Configuracao > Analise por IA > Ollama local) e baixa o modelo.
-  # Uso: docker compose --profile ai up -d ollama
-  # Num modelo grande nao cabe no limite de 900 MB; use um modelo pequeno.
+  # Analise de IA local (sem chave). Sobe junto com o dyarium para que o botao
+  # "Ollama local" funcione sem comando extra; o modelo so e carregado quando a
+  # analise roda e sai da memoria depois de alguns minutos parado.
+  #
+  # Memoria: o servico ocioso consome ~150-250 MB e o modelo padrao
+  # (qwen2.5:0.5b) ~600 MB durante a geracao. Com 1 GB de RAM nao cabe junto da
+  # transcricao; o minimo realista e 2 GB. Modelo grande nao cabe em 900 MB.
+  # Para nao subir o Ollama, use `docker compose up -d dyarium` (sem o servico)
+  # ou o runtime embutido nas configuracoes do dashboard.
   ollama:
     image: ollama/ollama
-    profiles: ["ai"]
     restart: unless-stopped
     cpus: "2"
     mem_limit: 900m
+    environment:
+      # Um modelo por vez e sem paralelismo: o alvo e uma VPS pequena.
+      OLLAMA_MAX_LOADED_MODELS: "1"
+      OLLAMA_NUM_PARALLEL: "1"
+      OLLAMA_KEEP_ALIVE: "5m"
     volumes:
       - ollama-models:/root/.ollama
 

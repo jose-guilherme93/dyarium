@@ -52,23 +52,24 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		allNotesMine = "true"
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"owner_name":           settings["owner_name"],
-		"all_notes_mine":       allNotesMine == "true",
-		"trim_silence":         settings["trim_silence"] == "true",
-		"max_whisper_rss_mb":   toInt(settings["max_whisper_rss_mb"]),
-		"whisper_model":        whisperModel,
-		"whisper_language":     settings["whisper_language"],
-		"transcribe_provider":  defaultString(settings["transcribe_provider"], "whisper"),
-		"deepgram_model":       defaultString(settings["deepgram_model"], "nova-2"),
-		"deepgram_api_key_set": settings["deepgram_api_key"] != "",
-		"analyze_enabled":      analyzeEnabled == "true",
-		"analyze_provider":     analyzeProvider,
-		"analyze_base_url":     analyzeBaseURL,
-		"analyze_model":        analyzeModel,
-		"analyze_api_key_set":  settings["analyze_api_key"] != "",
-		"analysis_themes":      analysisThemes,
-		"review_enabled":       settings["review_enabled"] == "true",
-		"literal_transcript":   settings["literal_transcript"] == "true",
+		"owner_name":            settings["owner_name"],
+		"all_notes_mine":        allNotesMine == "true",
+		"trim_silence":          settings["trim_silence"] == "true",
+		"max_whisper_rss_mb":    toInt(settings["max_whisper_rss_mb"]),
+		"whisper_model":         whisperModel,
+		"whisper_language":      settings["whisper_language"],
+		"transcribe_provider":   defaultString(settings["transcribe_provider"], "whisper"),
+		"deepgram_model":        defaultString(settings["deepgram_model"], "nova-2"),
+		"deepgram_api_key_set":  settings["deepgram_api_key"] != "",
+		"analyze_enabled":       analyzeEnabled == "true",
+		"analyze_provider":      analyzeProvider,
+		"analyze_local_runtime": settings["analyze_local_runtime"],
+		"analyze_base_url":      analyzeBaseURL,
+		"analyze_model":         analyzeModel,
+		"analyze_api_key_set":   settings["analyze_api_key"] != "",
+		"analysis_themes":       analysisThemes,
+		"review_enabled":        settings["review_enabled"] == "true",
+		"literal_transcript":    settings["literal_transcript"] == "true",
 	})
 }
 
@@ -134,6 +135,15 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if !set(key, strconv.Itoa(n)) {
+				return
+			}
+		case "analyze_local_runtime":
+			str, ok := value.(string)
+			if !ok || (str != "" && str != "ollama" && str != "embedded") {
+				writeError(w, http.StatusBadRequest, "invalid_value", "analyze_local_runtime deve ser ollama, embedded ou vazio")
+				return
+			}
+			if !set(key, str) {
 				return
 			}
 		case "whisper_model", "whisper_language", "analyze_provider", "analyze_base_url", "analyze_model",
@@ -382,15 +392,24 @@ func (s *Server) analyzeClient(ctx context.Context) *analyze.Client {
 	if err != nil {
 		settings = nil
 	}
-	return analyze.New(analyze.ConfigFromSettings(base, settings))
+	cfg := analyze.ConfigFromSettings(base, settings)
+	s.applyLocalRuntime(&cfg)
+	return analyze.New(cfg)
 }
 
 // pingProvider faz uma chamada minima ao provedor de IA. Falha na chave, no
 // endpoint ou no modelo aparece na hora, no clique, e nao depois.
 func (s *Server) pingProvider(ctx context.Context) error {
-	pingCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	// Starting the embedded llama.cpp server can take longer than a hosted
+	// provider health check; the context has to cover the model load.
+	pingCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
-	err := s.analyzeClient(pingCtx).Ping(pingCtx)
+	release, err := s.acquireConfiguredLocalAI(pingCtx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	err = s.analyzeClient(pingCtx).Ping(pingCtx)
 	if err != nil && errors.Is(err, analyze.ErrDisabled) {
 		return nil
 	}

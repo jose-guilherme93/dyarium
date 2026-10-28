@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, uploadFile } from "../api";
 import { useEscape } from "../lib/useEscape";
-import { MicIcon, WritingIcon } from "./icons";
+import { ImportIcon, MicIcon, WritingIcon } from "./icons";
 import { Recorder } from "./Recorder";
 
 /** Retangulo do botao que abriu o popover, em coordenadas de viewport. */
@@ -23,6 +23,7 @@ interface ComposeDialogProps {
   notebookId?: string;
   onClose: () => void;
   onCreateText: () => void;
+  onImport: () => void;
   onCreated: (entryId: string) => void;
 }
 
@@ -44,6 +45,7 @@ export function ComposeDialog({
   notebookId,
   onClose,
   onCreateText,
+  onImport,
   onCreated,
 }: ComposeDialogProps) {
   const [stage, setStage] = useState<"choose" | "audio">("choose");
@@ -154,6 +156,15 @@ export function ComposeDialog({
                 <span className="compose-copy">
                   <span className="compose-label">Áudio</span>
                   <span className="compose-desc">Gravar ou enviar um arquivo</span>
+                </span>
+              </button>
+              <button type="button" className="compose-option" onClick={onImport}>
+                <span className="compose-icon">
+                  <ImportIcon size={16} />
+                </span>
+                <span className="compose-copy">
+                  <span className="compose-label">Notion</span>
+                  <span className="compose-desc">Importar exportação HTML</span>
                 </span>
               </button>
             </div>

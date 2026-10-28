@@ -82,6 +82,7 @@ jobs:
             VERSION=${{ steps.meta.outputs.tag }}
             COMMIT=${{ github.sha }}
             DATE=${{ steps.meta.outputs.date }}
+            BUILD_JOBS=4
           provenance: true
           sbom: true
 

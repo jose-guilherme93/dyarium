@@ -17,6 +17,7 @@ import (
 	"github.com/joseti/dyarium/internal/events"
 	"github.com/joseti/dyarium/internal/ingest"
 	"github.com/joseti/dyarium/internal/jobs"
+	"github.com/joseti/dyarium/internal/llm"
 	"github.com/joseti/dyarium/internal/preview"
 	"github.com/joseti/dyarium/internal/review"
 	"github.com/joseti/dyarium/internal/store"
@@ -68,11 +69,16 @@ func analyzeConfigFromSettings(ctx context.Context, st *store.Store, cfg config.
 
 // transcribeHandler runs the transcription pipeline and, on success, either
 // enqueues analysis or marks the entry ready.
-func transcribeHandler(st *store.Store, cfg config.Config, pipeline *transcribe.Pipeline, queue *jobs.Queue, bus *events.Bus, logger *slog.Logger) jobs.Handler {
+func transcribeHandler(st *store.Store, cfg config.Config, pipeline *transcribe.Pipeline, queue *jobs.Queue, bus *events.Bus, logger *slog.Logger, localAI llm.Runner) jobs.Handler {
 	return func(ctx context.Context, job *jobs.Job, heartbeat func() error) error {
 		var payload jobs.TranscribePayload
 		if err := jobs.DecodePayload(job, &payload); err != nil {
 			return err
+		}
+		// Whisper e o modelo de linguagem nao podem ficar residentes juntos numa
+		// VPS pequena. Se nenhuma analise esta em curso, o llama.cpp sai antes.
+		if localAI != nil {
+			localAI.StopIfIdle()
 		}
 		_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryTranscribing)
 		bus.Publish("entry.status", map[string]string{"entry_id": payload.EntryID, "status": store.EntryTranscribing})
@@ -147,8 +153,21 @@ func serverOwnsAnalysis(ctx context.Context, st *store.Store, cfg config.Config,
 	return !local
 }
 
+// acquireEmbeddedModel starts the embedded llama.cpp server for one analysis
+// and returns the release that lets the idle loop stop it afterwards.
+func acquireEmbeddedModel(ctx context.Context, localAI llm.Runner, models llm.Store, model string) (func(), error) {
+	if localAI == nil || models == nil {
+		return nil, fmt.Errorf("%w: runtime embutido indisponivel", llm.ErrUnavailable)
+	}
+	path, ok := models.Path(model)
+	if !ok {
+		return nil, fmt.Errorf("%w: modelo %s fora do catalogo", llm.ErrUnavailable, model)
+	}
+	return localAI.Acquire(ctx, path)
+}
+
 // analyzeHandler enriches a transcript and stores the analysis.
-func analyzeHandler(st *store.Store, cfg config.Config, bus *events.Bus, logger *slog.Logger) jobs.Handler {
+func analyzeHandler(st *store.Store, cfg config.Config, bus *events.Bus, logger *slog.Logger, localAI llm.Runner, llmModels llm.Store) jobs.Handler {
 	return func(ctx context.Context, job *jobs.Job, _ func() error) error {
 		var payload jobs.AnalyzePayload
 		if err := jobs.DecodePayload(job, &payload); err != nil {
@@ -157,6 +176,22 @@ func analyzeHandler(st *store.Store, cfg config.Config, bus *events.Bus, logger 
 		analysisCfg := analyzeConfigFromSettings(ctx, st, cfg)
 		if !analysisCfg.Enabled {
 			return analyze.ErrDisabled
+		}
+		if analysisCfg.LocalRuntime == "embedded" {
+			release, err := acquireEmbeddedModel(ctx, localAI, llmModels, analysisCfg.Model)
+			if err != nil {
+				if ctx.Err() == nil && shouldGiveUpAnalysis(job.Attempts, job.MaxAttempts, err) {
+					_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryFailed)
+					bus.Publish("entry.failed", map[string]string{
+						"entry_id": payload.EntryID,
+						"reason":   analyze.FriendlyError(err),
+					})
+				}
+				logger.Error("worker: iniciar analise local", "entry_id", payload.EntryID, "erro", err)
+				return err
+			}
+			defer release()
+			analysisCfg.BaseURL = localAI.BaseURL()
 		}
 
 		started := time.Now().UTC()

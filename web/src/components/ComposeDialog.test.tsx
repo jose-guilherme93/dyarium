@@ -12,6 +12,7 @@ vi.mock("../api", () => ({
 
 function renderDialog(notebookId?: string, anchor?: ComposeAnchor) {
   const onCreateText = vi.fn();
+  const onImport = vi.fn();
   const onCreated = vi.fn();
   render(
     <ComposeDialog
@@ -20,10 +21,11 @@ function renderDialog(notebookId?: string, anchor?: ComposeAnchor) {
       notebookId={notebookId}
       onClose={() => undefined}
       onCreateText={onCreateText}
+      onImport={onImport}
       onCreated={onCreated}
     />,
   );
-  return { onCreateText, onCreated };
+  return { onCreateText, onImport, onCreated };
 }
 
 beforeEach(() => {
@@ -41,6 +43,13 @@ describe("ComposeDialog", () => {
     const { onCreateText } = renderDialog();
     fireEvent.click(screen.getByRole("button", { name: /Texto/ }));
     expect(onCreateText).toHaveBeenCalledTimes(1);
+  });
+
+  it("abre a importacao do Notion sem criar nota", () => {
+    const { onImport, onCreateText } = renderDialog();
+    fireEvent.click(screen.getByRole("button", { name: /Notion/ }));
+    expect(onImport).toHaveBeenCalledTimes(1);
+    expect(onCreateText).not.toHaveBeenCalled();
   });
 
   it("troca para o passo de audio sem criar nada", () => {

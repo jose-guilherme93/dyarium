@@ -24,6 +24,7 @@ import (
 	"github.com/joseti/dyarium/internal/events"
 	"github.com/joseti/dyarium/internal/ingest"
 	"github.com/joseti/dyarium/internal/jobs"
+	"github.com/joseti/dyarium/internal/llm"
 	"github.com/joseti/dyarium/internal/models"
 	"github.com/joseti/dyarium/internal/store"
 	"github.com/joseti/dyarium/internal/telegram"
@@ -181,6 +182,10 @@ func serve() error {
 	pipeline := transcribe.NewPipeline(st, transcribe.RealDeps(ingestSvc, prober, whisper, runtime), checkpointDir, cfg.WhisperModel)
 
 	modelsMgr := models.NewManager(cfg.ModelsDir, cfg.ModelsBaseURL, bus)
+	llmMgr := llm.NewManager(cfg.ModelsDir)
+	llamaServer := llm.NewServer(cfg.LlamaServerBin, cfg.LlamaPort, cfg.LlamaThreads,
+		time.Duration(cfg.LlamaIdleSeconds)*time.Second, logger)
+	defer llamaServer.Close()
 	canceller := jobs.NewCanceller()
 
 	if cfg.AutoDownloadModel {
@@ -192,7 +197,7 @@ func serve() error {
 		logger.Info("configuracao inicial pendente: acesse /setup para definir o token de acesso")
 	}
 
-	startWorkers(ctx, cfg, st, ingestSvc, queue, pipeline, bus, logger, canceller)
+	startWorkers(ctx, cfg, st, ingestSvc, queue, pipeline, bus, logger, canceller, llamaServer, llmMgr)
 
 	if cfg.TelegramEnabled {
 		bot := telegram.New(telegram.Config{Enabled: true, BotToken: cfg.TelegramBotToken, APIBase: cfg.TelegramAPIBase})
@@ -215,6 +220,8 @@ func serve() error {
 		Analyzer:  analyzer,
 		Events:    bus,
 		Models:    modelsMgr,
+		LocalAI:   llamaServer,
+		LLMModels: llmMgr,
 		Canceller: canceller,
 		Tokens:    tokens,
 	})
@@ -260,10 +267,10 @@ func resolveSecrets(cfg config.Config) (config.Config, bootstrap.Result, error) 
 	return cfg, secrets, nil
 }
 
-func startWorkers(ctx context.Context, cfg config.Config, st *store.Store, ing *ingest.Service, queue *jobs.Queue, pipeline *transcribe.Pipeline, bus *events.Bus, logger *slog.Logger, canceller *jobs.Canceller) {
+func startWorkers(ctx context.Context, cfg config.Config, st *store.Store, ing *ingest.Service, queue *jobs.Queue, pipeline *transcribe.Pipeline, bus *events.Bus, logger *slog.Logger, canceller *jobs.Canceller, localAI llm.Runner, llmModels llm.Store) {
 	lease := time.Duration(cfg.JobLeaseSeconds) * time.Second
-	transcribeH := transcribeHandler(st, cfg, pipeline, queue, bus, logger)
-	analyzeH := analyzeHandler(st, cfg, bus, logger)
+	transcribeH := transcribeHandler(st, cfg, pipeline, queue, bus, logger, localAI)
+	analyzeH := analyzeHandler(st, cfg, bus, logger, localAI, llmModels)
 	cleanupH := cleanupHandler(st, ing, logger)
 	for i := 0; i < cfg.WorkerConcurrency; i++ {
 		runner := jobs.NewRunner(queue, fmt.Sprintf("worker-%d", i+1), lease, 2*time.Second, logger, canceller)

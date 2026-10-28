@@ -60,4 +60,38 @@ describe("GET cache", () => {
     expect(cached?.id).toBe("e-cache-1");
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("createImportEntry distingue entrada nova (201) de existente (200)", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: "e-import-1", title: "Nota" }), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: "e-import-1", title: "Nota" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const first = await api.createImportEntry({
+      id: "e-import-1",
+      title: "Nota",
+      recordedAt: "2025-11-17T18:57:00.000Z",
+    });
+    const second = await api.createImportEntry({ id: "e-import-1", title: "Nota" });
+    expect(first.created).toBe(true);
+    expect(second.created).toBe(false);
+    const body = JSON.parse((fetchMock.mock.calls[0]![1] as RequestInit).body as string);
+    expect(body).toMatchObject({
+      id: "e-import-1",
+      title: "Nota",
+      recorded_at: "2025-11-17T18:57:00.000Z",
+    });
+    expect(body).not.toHaveProperty("created_at");
+  });
 });

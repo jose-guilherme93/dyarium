@@ -320,6 +320,8 @@ export interface Settings {
   deepgram_api_key_set: boolean;
   analyze_enabled: boolean;
   analyze_provider: string;
+  /** "ollama", "embedded" ou vazio (provedor externo). */
+  analyze_local_runtime: string;
   analyze_base_url: string;
   analyze_model: string;
   analyze_api_key_set: boolean;
@@ -338,7 +340,7 @@ export interface EntryProgress {
   error?: string;
 }
 
-/** Download de modelo do Ollama em andamento (ou o último), para o painel acompanhar. */
+/** Download de modelo local em andamento (ou o último), para o painel acompanhar. */
 export interface LocalAnalysisPull {
   model: string;
   percent: number;
@@ -346,21 +348,29 @@ export interface LocalAnalysisPull {
   error?: string;
 }
 
-/** Estado do Ollama local: no ar, modelos instalados e o download em curso. */
+/** Estado de um runtime local: Ollama no serviço ou llama.cpp embutido. */
 export interface LocalAnalysis {
+  runtime: "ollama" | "embedded";
   available: boolean;
   base_url: string;
   models: string[];
   model: string;
+  /** No runtime embutido: o GGUF está no disco. */
+  downloaded?: boolean;
+  /** No runtime embutido: o llama-server está rodando agora. */
+  running?: boolean;
+  size_mb?: number;
   pull?: LocalAnalysisPull;
 }
 
-/** Resultado do "usar Ollama local" em um clique. */
+/** Resultado do "usar análise local" em um clique. */
 export interface LocalAnalysisSetup {
+  runtime: "ollama" | "embedded";
   status: "ready" | "downloading";
   model: string;
   base_url: string;
   installed: boolean;
+  size_mb?: number;
 }
 
 export interface ModelInfo {  name: string;

@@ -344,6 +344,57 @@ atualiza a tela aberta sem recriar a navegacao nem o estado das notas.
   espacamento de letras de 0,1 px (quando a plataforma do editor suporta), para
   o texto corrido nao ficar compacto.
 
+## Importacao do Notion
+
+O import do Notion roda **no navegador, no dashboard**, e nao cria contrato novo
+de API. Ele le o export HTML (zip ou pasta), converte cada pagina em markdown e
+usa os endpoints que ja existem: `POST /entries` (com id de cliente e
+`recorded_at`), `POST /entries/{id}/attachments`, `PUT /entries/{id}/tags` e
+`POST /entries/{id}/notes`.
+
+Decisoes que sustentam isso:
+
+- **Um documento ordenado, sem separacao de anexos.** O Notion desenha titulo,
+  tabela de propriedades e corpo em sequencia. O dyarium so tem o corpo. O import
+  monta a sequencia unica: descricao, conteudo util das propriedades (na ordem da
+  tabela) e corpo. Imagem de propriedade (`Media`) e link de propriedade
+  (`Post URL`) entram no topo, na ordem em que aparecem na tabela; imagens do
+  corpo ficam exatamente no ponto do bloco. Isso preserva a posicao relativa sem
+  inventar uma secao de anexos que o Notion nao tem.
+- **Data original e data de importacao sao campos diferentes.** A propriedade
+  escolhida na revisao (`Criado em`, `Data original` etc.) vira `recorded_at`, que
+  e a data que a lista, a leitura e o calendario mostram. O import nao manda
+  `created_at`: o servidor grava a hora da importacao, que aparece em Detalhes.
+  O atributo `datetime` do `<time>` manda; o texto em pt-BR/en-US e o fallback.
+  Data sem ano usa o ano da exportacao, nunca o ano da importacao.
+- **Id deterministico.** O id da pagina do Notion (32 hex do `<article>` ou do
+  nome do arquivo) vira o id da entrada. Reimportar o mesmo export nao duplica,
+  nota existente nao e sobrescrita (so completada se estiver sem nota) e links
+  entre paginas viram `[titulo](note:<id>)`.
+- **Caderno Notion.** A tela oferece um clique para criar/reutilizar o caderno
+  "Notion" e colocar todas as notas dele. O caderno e criado no inicio do
+  processamento (para as notas ja nascerem dentro dele), mas so aparece na barra
+  lateral quando a importacao termina; se nada for importado, o caderno vazio e
+  removido. Notas ja existentes que estao em outro caderno sao movidas, sem
+  sobrescrever o corpo.
+- **Comentarios viram citacao.** Quando o export HTML inclui comentarios (a opcao
+  "Include comments" do Notion), os comentarios de bloco entram como citacao na
+  posicao do bloco e os de pagina no comeco da nota. A citacao leva o autor e o
+  texto; o HTML gerado pelo Notion nao e documentado, entao a deteccao e por
+  classes (`comment`, `comments`, `comment-thread`, `notion-comment`) e
+  `data-comment-id`, e o `ul.toggle` com `span.user` que o export atual usa
+  (summary "Comentarios da pagina"), sem confundir o token de sintaxe de codigo.
+  Numa reimportacao, as notas existentes ganham so as citacoes que ainda nao
+  estao nelas (o corpo atual e preservado e a versao do corpo protege contra
+  edicao concorrente).
+- **Sem rede externa.** Imagem externa (http) nao e baixada, arquivo/PDF/video
+  anexado nao e importado e o HTML nunca e renderizado: o parser so produz
+  markdown. Icone e capa, cores, colunas, synced blocks, sumario e propriedades de
+  metadados ficam no relatorio de limitacoes.
+- **Dependencia.** O unico pacote novo e `fflate` (MIT, cerca de 8 kB gzip),
+  usado para ler o zip do Notion no navegador; a pasta descompactada usa so a API
+  de arquivos do navegador.
+
 ## Fluxo de dados
 
 1. Cliente inicia um upload: `POST /uploads` com metadados e o SHA-256 esperado do arquivo.
@@ -502,8 +553,14 @@ corpo reaparecia na pilha do dashboard sem nenhuma forma de apagar.
   ambiente, a chave mestra e gerada e persistida em `/data/master.key` (0600) e a instancia
   entra em modo setup ate o operador definir o token em `/setup` (persistido em
   `/data/token`). Mantem o self-hosting simples sem abrir mao de override por ambiente.
-- Analise por HTTP compativel com OpenAI: funciona com Ollama local ou qualquer provedor,
-  e pode ser desligada sem afetar transcricao e metricas.
+- Analise por HTTP compativel com OpenAI: funciona com Ollama local, llama.cpp embutido ou
+  qualquer provedor, e pode ser desligada sem afetar transcricao e metricas.
+- Dois runtimes locais, escolhidos no dashboard: o Ollama e um servico do compose, sempre no
+  ar mas sem carregar modelo ate uma analise; o llama.cpp e um `llama-server` dentro da
+  imagem, iniciado sob demanda e liberado por inatividade. O segundo nao exige socket do
+  Docker nem um container extra, e funciona so com a imagem e o volume de modelos.
+- Um motor pesado por vez: antes de transcrever, o processo do llama.cpp e encerrado se
+  estiver ocioso; assim whisper e modelo de linguagem nao disputam a RAM de uma VPS pequena.
 - Frontend embutido via `go:embed`: um unico artefato para distribuir.
 - SSE para atualizacoes: unidirecional, simples, funciona atras do proxy de desenvolvimento.
 - Caderno obrigatorio por nota, com o padrao "Notas ao acaso" criado por migracao: separa
@@ -557,4 +614,6 @@ corpo reaparecia na pilha do dashboard sem nenhuma forma de apagar.
 - Tamanho maximo de upload: configuravel por ambiente.
 - Formatos aceitos: wav, mp3, m4a, ogg, flac, aac, adts (configuravel).
 - Concorrencia de workers: padrao 1, dado o pico de memoria do whisper.
+- Analise local no servidor: minimo realista de 2 GB de RAM para transcrever e analisar no
+  mesmo host; em 1 GB, apenas transcricao com `tiny` e analise no aparelho ou hospedada.
 - Corte de silencio na transcricao: booleano em `Settings`, desligado por padrao.

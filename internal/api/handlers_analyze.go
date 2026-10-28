@@ -31,7 +31,11 @@ func (s *Server) analyzeClientConfig(ctx context.Context) analyze.Config {
 		if v := settings["analyze_model"]; v != "" {
 			cfg.Model = v
 		}
+		if v := settings["analyze_local_runtime"]; v != "" {
+			cfg.LocalRuntime = v
+		}
 	}
+	s.applyLocalRuntime(&cfg)
 	return cfg
 }
 
@@ -43,8 +47,20 @@ func (s *Server) handleListAnalyzeModels(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "no_base_url", "configure a base URL da analise")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	timeout := 20 * time.Second
+	if cfg.LocalRuntime == localRuntimeEmbedded {
+		timeout = 90 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
+	if cfg.LocalRuntime == localRuntimeEmbedded {
+		release, err := s.acquireLocalAI(ctx, cfg.Model)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "local_unavailable", analyze.FriendlyError(err))
+			return
+		}
+		defer release()
+	}
 	models, err := analyze.New(cfg).ListModels(ctx)
 	if err != nil {
 		if s.deps.Logger != nil {
