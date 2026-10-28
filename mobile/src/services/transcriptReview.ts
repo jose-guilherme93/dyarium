@@ -29,6 +29,7 @@ import type { Recording, TranscriptReview, TranscriptSegment } from '@/core/type
 import { cancelActivity, failActivity, finishActivity, startActivity, updateActivity } from './activity';
 import { upsertRecording } from './db';
 import { startForegroundTask, stopForegroundTask, updateForegroundTask } from '../../modules/foreground-task';
+import { acquireHeavyWork } from './heavyWork';
 import { runAnalysis, stopAnalysis } from './localAnalysis';
 import { notifyActivity } from './notifications';
 import { pushTranscript } from './transcriptSync';
@@ -305,77 +306,85 @@ export async function reviewRecording(
   );
   const resume = options.only ? null : reviewResumeFrom(stored, options.literal, segments);
 
+  // Uma passada de revisao por vez. Entrar na fila antes de abrir a
+  // notificacao evita mostrar "Revisando" enquanto uma transcricao ainda roda;
+  // a transcricao e pausada no fim da janela atual.
+  const lease = await acquireHeavyWork('review');
   // A revisao segura o processo com a tela apagada; o texto da notificacao e
   // a posicao na passada, nunca o texto da nota.
   startForegroundTask('Revisando', options.title || recording.title || 'Nota', 0);
-  let outcome: ReviewOutcome;
   try {
-    outcome = await reviewTranscript(segments, model, {
-      literal: options.literal,
-      lowPower: options.lowPower,
-      title: options.title,
-      from: resume?.from,
-      rejected: resume?.rejected,
-      rejectedIdx: options.only ? undefined : samePass ? stored?.rejectedIdx : undefined,
-      only: options.only,
-      through: samePass ? stored?.reviewedThrough : undefined,
-      priorComprehension: samePass ? stored?.comprehension : undefined,
-      activityId: `review:${recording.id}`,
-      onWindow: async (window) => {
-        const partial: Recording = {
-          ...recording,
-          transcriptSegments: window.segments,
-          transcriptReview: {
-            model: model.id,
-            promptVersion: REVIEW_PROMPT_VERSION,
-            literal: options.literal,
-            comprehension: window.comprehension,
-            hash,
-            rejected: window.rejected,
-            rejectedIdx: window.rejectedIdx,
-            reviewedThrough: window.reviewedThrough,
-          },
-          transcript: visibleTranscript(window.segments) || recording.transcript,
-          updatedAt: new Date().toISOString(),
-        };
-        await upsertRecording(partial);
-        emitRecording(partial);
-        options.onWindow?.(partial);
-        void notifyActivity({
-          stage: 'reviewing',
-          noteTitle: options.title || recording.title,
-          index: window.reviewedThrough,
-          total: window.total,
-        });
-        updateForegroundTask(
-          'Revisando',
-          `${window.reviewedThrough} de ${window.total}`,
-          Math.round((window.reviewedThrough / Math.max(1, window.total)) * 100),
-        );
-        // O dashboard le o mesmo texto revisado; a falha de rede nao desfaz nada.
-        void pushTranscript(recording.id).catch(() => undefined);
-      },
-    });
-  } finally {
-    stopForegroundTask();
-  }
+    let outcome: ReviewOutcome;
+    try {
+      outcome = await reviewTranscript(segments, model, {
+        literal: options.literal,
+        lowPower: options.lowPower,
+        title: options.title,
+        from: resume?.from,
+        rejected: resume?.rejected,
+        rejectedIdx: options.only ? undefined : samePass ? stored?.rejectedIdx : undefined,
+        only: options.only,
+        through: samePass ? stored?.reviewedThrough : undefined,
+        priorComprehension: samePass ? stored?.comprehension : undefined,
+        activityId: `review:${recording.id}`,
+        onWindow: async (window) => {
+          const partial: Recording = {
+            ...recording,
+            transcriptSegments: window.segments,
+            transcriptReview: {
+              model: model.id,
+              promptVersion: REVIEW_PROMPT_VERSION,
+              literal: options.literal,
+              comprehension: window.comprehension,
+              hash,
+              rejected: window.rejected,
+              rejectedIdx: window.rejectedIdx,
+              reviewedThrough: window.reviewedThrough,
+            },
+            transcript: visibleTranscript(window.segments) || recording.transcript,
+            updatedAt: new Date().toISOString(),
+          };
+          await upsertRecording(partial);
+          emitRecording(partial);
+          options.onWindow?.(partial);
+          void notifyActivity({
+            stage: 'reviewing',
+            noteTitle: options.title || recording.title,
+            index: window.reviewedThrough,
+            total: window.total,
+          });
+          updateForegroundTask(
+            'Revisando',
+            `${window.reviewedThrough} de ${window.total}`,
+            Math.round((window.reviewedThrough / Math.max(1, window.total)) * 100),
+          );
+          // O dashboard le o mesmo texto revisado; a falha de rede nao desfaz nada.
+          void pushTranscript(recording.id).catch(() => undefined);
+        },
+      });
+    } finally {
+      stopForegroundTask();
+    }
 
-  // Revisar so os recusados nao pode substituir a nota de compreensao da
-  // transcricao inteira por uma media calculada apenas nesses trechos.
-  const review =
-    options.only && stored && stored.comprehension >= 0
-      ? { ...outcome.review, comprehension: stored.comprehension }
-      : outcome.review;
-  const next: Recording = {
-    ...recording,
-    transcriptSegments: outcome.segments,
-    transcriptReview: review,
-    transcript: visibleTranscript(outcome.segments) || recording.transcript,
-    updatedAt: new Date().toISOString(),
-  };
-  await upsertRecording(next);
-  emitRecording(next);
-  options.onWindow?.(next);
-  void pushTranscript(recording.id).catch(() => undefined);
-  return next;
+    // Revisar so os recusados nao pode substituir a nota de compreensao da
+    // transcricao inteira por uma media calculada apenas nesses trechos.
+    const review =
+      options.only && stored && stored.comprehension >= 0
+        ? { ...outcome.review, comprehension: stored.comprehension }
+        : outcome.review;
+    const next: Recording = {
+      ...recording,
+      transcriptSegments: outcome.segments,
+      transcriptReview: review,
+      transcript: visibleTranscript(outcome.segments) || recording.transcript,
+      updatedAt: new Date().toISOString(),
+    };
+    await upsertRecording(next);
+    emitRecording(next);
+    options.onWindow?.(next);
+    void pushTranscript(recording.id).catch(() => undefined);
+    return next;
+  } finally {
+    lease.release();
+  }
 }
