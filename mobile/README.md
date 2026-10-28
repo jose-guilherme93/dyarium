@@ -124,20 +124,31 @@ texto, guarda local, enfileira e envia para o servidor self-hosted.
   em 24h ou AM/PM, formato, duracao e playback) antes de enviar. O ano do lote cobre nomes
   sem ano; a ordem pode ser invertida. O audio original e preservado; reimportar o mesmo
   conteudo nao duplica a entrada (dedupe por SHA-256 no servidor).
-- **Transcricao no aparelho** (nas Opcoes): lista de modelos do whisper.cpp (Tiny, Base, Small,
-  Medium, Large v3 Turbo) do mais leve ao mais preciso, com o **recomendado para a RAM do
-  aparelho** e download sob demanda (nunca entram no build). Com um modelo baixado e o toggle
-  ligado, a nota de audio e transcrita **offline**, com o texto aparecendo por trecho
-  ("Transcrevendo..." com a **porcentagem** e loading no card do audio e barra de progresso
-  na notificacao). A transcricao usa no maximo 2 threads, para a interface continuar
-  respondendo. Quem transcreve primeiro informa o
-  outro: ao subir o audio o app avisa o servidor (`local_transcribe`) e, ao terminar,
-  **empurra o texto** (`PUT /entries/{id}/transcript`), entao o servidor nao transcreve de
-  novo e o dashboard mostra o texto. Precisa de development build (`whisper.rn` + um modulo
-  nativo local que decodifica o AAC para WAV 16 kHz). Sem modelo ou com o toggle desligado,
-  o icone de transcrever abre um aviso com **Abrir ajustes** (vai direto para essa tela) e
-  um **X** que dispensa o aviso de vez; depois disso o toque vai direto para as Opcoes, sem
-  popup repetido.
+- **Processamento explicito** (Opcoes > Processamento e folha do icone de IA na nota): tres
+  interruptores — transcrever, analisar e **processar no servidor**. App e web sao pares com
+  bancos proprios: o lado escolhido comeca o trabalho e o outro recebe pronto pelo sync,
+  nunca reprocessando. Sem servidor as etapas travam no aparelho; sem modelo a nota fica
+  pendente (nunca cai para o servidor sem escolha). Instalacao nova nasce com os tres
+  desligados e o app nao cobra: a folha aparece uma vez, "ocultar" fica em `app_flags`
+  (fora de backup) e o icone continua disponivel.
+- **Transcricao no aparelho**: lista de modelos do whisper.cpp (Tiny, Base, Small, Medium,
+  Large v3 Turbo) do mais leve ao mais preciso, com o **recomendado para a RAM do aparelho**
+  e download sob demanda (nunca entram no build). Com um modelo baixado, a nota de audio e
+  transcrita **offline** logo depois da gravacao, com o texto aparecendo por trecho
+  ("Transcrevendo..." com a **porcentagem**, loading no card do audio e barra de progresso
+  na notificacao). Usa no maximo 2 threads. Ao subir o audio o app avisa o servidor
+  (`local_transcribe`, `local_analysis`) e, ao terminar, **empurra o texto**
+  (`PUT /entries/{id}/transcript`), entao o servidor nao transcreve de novo e o dashboard
+  mostra o texto. Precisa de development build (`whisper.rn` + um modulo nativo local que
+  decodifica o AAC para WAV 16 kHz).
+- **Transcricao como texto**: os trechos aparecem em italico e entre aspas, com a
+  minutagem discreta na margem, entao a leitura flui como um texto escrito. Tocar no
+  trecho abre o popup de edicao (nao ha mais icone de lapis na linha); segurar abre um
+  menu ao lado do dedo com **Tarefa**, **Ideia** e **Citacao**. Tudo o que sai de uma
+  mesma nota se acumula numa **unica** nota do caderno **Tarefas e ideias** (criado no
+  primeiro uso), com uma tag por tipo para reconhecer depois; cada captura entra como um
+  bloco com a origem e a minutagem, e o icone do tipo fica no trecho. O texto antigo do whisper fica num unico icone de IA
+  no topo (ao lado da duracao total), e nao mais em cada linha.
 - **Status de sincronizacao** no cabecalho (nuvem discreta): abre a tela de Sincronizacao com
   o que esta na fila/falhou e "Enviar agora". O envio continua em segundo plano
   (WorkManager) quando o app fica em segundo plano.
@@ -188,10 +199,17 @@ texto, guarda local, enfileira e envia para o servidor self-hosted.
   desfaz a exclusao logica da entrada (`POST /entries/{id}/restore`) e, se o servidor ja nao a
   conhece mais, recria com o mesmo id e reenvia titulo/corpo. E o que impede a nota restaurada
   de ser apagada de novo pelo servidor.
+- **Arquivadas** (nas Opcoes): lista as notas arquivadas **separadas por caderno**, com
+  desarquivar em um toque. No caderno "Tarefas e ideias", o check ao lado da data da nota
+  marca a captura como feita e a manda para la; desmarcar devolve.
+- **Lixeira** (nas Opcoes): apagar e logico por **7 dias**. A nota e o audio ficam no
+  aparelho nesse periodo e voltam inteiros pelo botao de restaurar; o servidor tem a mesma
+  janela (`POST /entries/{id}/restore`). Passado o prazo, a limpeza do boot libera os
+  arquivos e a linha. Rascunho vazio e descartado direto, sem passar pela lixeira.
 - **Sincronizacao de exclusoes por lixeira**: o app so apaga uma nota local quando o servidor
   **confirma** que ela foi apagada (`GET /entries?deleted=1`) e a exclusao e mais nova que a
   ultima mudanca local. Uma entrada que simplesmente sumiu (servidor novo, banco restaurado)
-  nunca apaga o aparelho.
+  nunca apaga o aparelho; o que o servidor confirma entra na lixeira local pelo mesmo prazo.
 - A biblioteca organiza as notas **por ano** (mais novo no topo), pela data do evento, para
   que notas antigas importadas apareçam no ano a que pertencem.
 - **Notas somente texto** entram na mesma fila e sao enviadas como conteudo textual (o texto

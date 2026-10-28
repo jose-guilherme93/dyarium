@@ -234,6 +234,49 @@ Superficie Android em Expo (development build). O nucleo puro fica em `mobile/sr
 - `android.allowBackup=false` (sem backup automatico do SO); o backup sera explicito
   (zip local primeiro; Drive depois).
 
+## 0.3: processamento explicito
+
+Objetivo: nunca deixar duvida sobre onde a transcricao e a analise acontecem.
+
+Decidido e implementado nesta rodada:
+
+- App e web sao pares, cada um com banco proprio. O sync leva o que ja foi feito; nada e
+  reprocessado automaticamente. Colisao: o primeiro a chegar no banco de destino vence.
+  Refazer e manual e propaga.
+- Tres interruptores em Opcoes > Processamento (transcricao, analise, processar no
+  servidor). Instalacao nova nasce com os tres desligados; instalacao antiga preserva a
+  escolha que tinha (`localTranscription`).
+- Folha do icone de IA na nota: mesmos tres interruptores, apresentacao automatica uma vez,
+  "ocultar" gravado em `app_flags` (fora de backup; reinstalar reabre).
+- Sem servidor: as etapas travam no aparelho (ou desligadas), sem banner nem cobranca.
+- Upload leva `local_transcribe` e `local_analysis`; o servidor nao enfileira o que e do
+  cliente.
+- `PUT /entries/{id}/analysis` guarda a analise feita no aparelho (origem `app`), com
+  first-arrival e refazer explicito (`replace`), e o app faz backfill na conexao.
+- Origem da analise com tres valores (`app`, `server`, `api`): o servidor classifica
+  provedor local/hospedado, e o app e o dashboard mostram o rotulo.
+- Transcricao no aparelho comeca ao enfileirar a gravacao, nao so no boot.
+
+- Transcricao lida como texto: italico e aspas nos dois lados, minutagem discreta; no
+  app, toque abre o popup de edicao e o toque longo captura o trecho como tarefa, ideia
+  ou citacao numa nota do caderno "Tarefas e ideias".
+- No caderno "Tarefas e ideias", a nota ganha um **check de feito** ao lado da data:
+  marcar arquiva a captura (sai da lista do caderno, entra em Arquivadas); desmarcar
+  devolve para a lista.
+- Opcoes > Notas: **Arquivadas** agrupadas por caderno, com desarquivar em um toque, e
+  **Lixeira** com o que foi apagado.
+- Apagar e logico tambem no aparelho: a nota e o audio ficam 7 dias na lixeira local e
+  podem ser restaurados; o servidor usa a mesma janela. Passado o prazo, o boot libera
+  os arquivos e a linha. Rascunho vazio continua sendo descartado direto.
+
+Pendente para fechar o 0.3:
+
+- Selo de origem **da transcricao** por audio no app e no dashboard (a analise ja mostra).
+- Origem do artefato com tres valores (`aplicativo`, `site web`, `API`) e selo por nota.
+- Acoes em lote no dashboard ("Transcrever N" / "Analisar N"), serializadas e cancelaveis.
+- Bugs de interface: player duplicado e seek, rolagem automatica da transcricao, menu da
+  nota em folha de 50%, barra de acoes rolavel com estado dos botoes.
+
 ## Distribuicao e releases
 
 - Versao unica do produto (semver), comecando em 0.1.0 e calculada pelo release-please a
