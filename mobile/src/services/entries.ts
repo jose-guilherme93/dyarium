@@ -15,3 +15,11 @@ export async function deleteServerEntry(entryId: string): Promise<void> {
   const api = new DyariumApi(config, doFetch);
   await api.deleteEntry(entryId);
 }
+
+/** Desfaz a exclusao logica no servidor (volta da lixeira). Best-effort. */
+export async function restoreServerEntry(entryId: string): Promise<void> {
+  const config = await loadServerConfig();
+  if (!config) return;
+  const api = new DyariumApi(config, doFetch);
+  await api.restoreEntry(entryId);
+}

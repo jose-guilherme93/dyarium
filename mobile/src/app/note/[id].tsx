@@ -1798,6 +1798,10 @@ export default function NoteScreen() {
       (notebook) => notebook.id === (note.notebookId ?? DEFAULT_NOTEBOOK_ID),
     ) ?? library.notebooks.find((notebook) => notebook.isDefault);
   const notebookName = currentNotebook?.name ?? 'Notas ao acaso';
+  // Caderno de capturas: a nota ganha o check de "feito" ao lado da data. Marcar
+  // arquiva; desmarcar devolve para a lista do caderno.
+  const isCaptureNotebook =
+    (currentNotebook?.name ?? '').trim().toLowerCase() === CAPTURE_NOTEBOOK.toLowerCase();
   const properties: NoteProperty[] = [
     { label: 'Caderno', value: notebookName },
     { label: 'Gravada em', value: noteDateText },
@@ -1909,7 +1913,30 @@ export default function NoteScreen() {
               },
             ]}
           />
-          {noteDateShown ? <Text style={styles.noteDate}>{noteDateShown}</Text> : null}
+          <View style={styles.dateRow}>
+            {noteDateShown ? <Text style={styles.noteDate}>{noteDateShown}</Text> : <View />}
+            {isCaptureNotebook ? (
+              <Press
+                style={styles.doneButton}
+                onPress={() => {
+                  void Haptics.selectionAsync().catch(() => undefined);
+                  void (note.archived
+                    ? library.unarchiveNote(note.id)
+                    : library.archiveNote(note.id));
+                }}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: Boolean(note.archived) }}
+                accessibilityLabel={note.archived ? 'Reabrir captura' : 'Concluir captura'}
+                hitSlop={6}
+              >
+                <Ionicons
+                  name={note.archived ? 'checkmark-circle' : 'ellipse-outline'}
+                  size={22}
+                  color={note.archived ? colors.success : colors.textTertiary}
+                />
+              </Press>
+            ) : null}
+          </View>
           <NoteMetaRow
             note={note}
             onAddTag={() => setTagPickerOpen(true)}

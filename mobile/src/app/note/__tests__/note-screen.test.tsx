@@ -13,6 +13,8 @@ const mockUpdateNote = jest.fn(async () => undefined);
 const mockSubmitNote = jest.fn(async () => undefined);
 const mockRefresh = jest.fn(async () => undefined);
 const mockKick = jest.fn();
+const mockArchiveNote = jest.fn(async () => undefined);
+const mockUnarchiveNote = jest.fn(async () => undefined);
 const mockPickImage = jest.fn();
 const mockSaveLocalImage = jest.fn();
 const mockLocalImageUri = jest.fn();
@@ -128,6 +130,8 @@ jest.mock('@/state/LibraryContext', () => ({
     setNoteTags: jest.fn(),
     moveNoteToNotebook: jest.fn(),
     retry: jest.fn(),
+    archiveNote: mockArchiveNote,
+    unarchiveNote: mockUnarchiveNote,
   }),
 }));
 
@@ -384,6 +388,46 @@ describe('tela da nota', () => {
 
     // O corpo ja vem com o texto da nota (o markdown vira o formato do editor).
     expect(screen.getByDisplayValue('primeira linha')).toBeTruthy();
+  });
+
+  it('marca a captura como feita pelo check ao lado da data', async () => {
+    const library = jest.requireMock('@/state/LibraryContext') as {
+      useLibrary: () => Record<string, unknown>;
+    };
+    const original = library.useLibrary;
+    const capture = { ...mockNote, notebookId: 'tarefas' };
+    library.useLibrary = () => ({
+      ...original(),
+      recordings: [capture],
+      notebooks: [
+        {
+          id: 'tarefas',
+          name: 'Tarefas e ideias',
+          color: '',
+          isDefault: false,
+          createdAt: capture.createdAt,
+          updatedAt: capture.updatedAt,
+          dirty: false,
+          synced: true,
+        },
+      ],
+    });
+    try {
+      await renderNote();
+      await act(async () => {
+        fireEvent.press(screen.getByLabelText('Concluir captura'));
+        await Promise.resolve();
+      });
+      expect(mockArchiveNote).toHaveBeenCalledWith('note-1');
+    } finally {
+      library.useLibrary = original;
+    }
+  });
+
+  it('nao mostra o check em nota de outro caderno', async () => {
+    await renderNote();
+    expect(screen.queryByLabelText('Concluir captura')).toBeNull();
+    expect(screen.queryByLabelText('Reabrir captura')).toBeNull();
   });
 
   it('aplica a tipografia no titulo sem remontar a nota', async () => {

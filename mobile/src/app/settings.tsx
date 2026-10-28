@@ -1,5 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from 'expo-router';
 import { back, push } from '@/services/appNavigation';
+import { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   ScrollView,
@@ -27,6 +29,23 @@ export default function SettingsScreen() {
     useSettings();
   const { ready, recordings } = useLibrary();
   const archived = recordings.filter((r) => r.archived).length;
+  const [trashCount, setTrashCount] = useState(0);
+
+  // A lixeira vive fora da lista da biblioteca; a contagem e lida ao abrir as
+  // Opcoes para o atalho mostrar o numero certo sem carregar as notas.
+  useFocusEffect(
+    useCallback(() => {
+      let alive = true;
+      void countTrashedRecordings()
+        .then((total) => {
+          if (alive) setTrashCount(total);
+        })
+        .catch(() => undefined);
+      return () => {
+        alive = false;
+      };
+    }, []),
+  );
 
   // As configuracoes chegam do SecureStore sem bloquear a abertura da tela.
   // Enquanto isso, o indicador diz que o app esta trabalhando em vez de deixar
@@ -51,6 +70,31 @@ export default function SettingsScreen() {
           <ActivityIndicator size="large" color={colors.textSecondary} />
         ) : (
           <>
+            <Text style={styles.sectionLabel}>Notas</Text>
+            <Press onPress={() => push('/archived')}>
+              <Card style={styles.row}>
+                <Ionicons name="file-tray-full-outline" size={20} color={colors.info} />
+                <View style={styles.rowText}>
+                  <Text style={styles.cardTitle}>Arquivadas</Text>
+                  <Text style={styles.cardHint}>Por caderno.</Text>
+                </View>
+                <Text style={styles.rowCount}>{archived}</Text>
+                <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
+              </Card>
+            </Press>
+
+            <Press onPress={() => push('/trash')}>
+              <Card style={styles.row}>
+                <Ionicons name="trash-outline" size={20} color={colors.warning} />
+                <View style={styles.rowText}>
+                  <Text style={styles.cardTitle}>Lixeira</Text>
+                  <Text style={styles.cardHint}>7 dias.</Text>
+                </View>
+                <Text style={styles.rowCount}>{trashCount}</Text>
+                <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
+              </Card>
+            </Press>
+
             <Text style={styles.sectionLabel}>Lista</Text>
             <Card style={styles.card}>
               <Text style={styles.cardTitle}>Arrastar para o lado</Text>
@@ -194,12 +238,6 @@ export default function SettingsScreen() {
                 <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
               </Card>
             </Press>
-
-            {archived > 0 ? (
-              <Text style={styles.cardHint}>
-                {archived} nota(s) arquivada(s) ficam no fim da lista.
-              </Text>
-            ) : null}
           </>
         )}
       </ScrollView>
@@ -262,4 +300,5 @@ const baseStyles = defineStyles({
   segmentTextActive: { color: baseColors.onAccent },
   row: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   rowText: { flex: 1, gap: 2 },
+  rowCount: { color: baseColors.textTertiary, fontSize: fontSize.sm, fontWeight: '700' },
 });

@@ -15,9 +15,16 @@ import { LibraryProvider, useLibrary } from '../LibraryContext';
  */
 
 const mockListRecordings = jest.fn();
+const mockUpsertRecording = jest.fn<Promise<void>, [Recording]>(async () => undefined);
+const mockGetRecording = jest.fn<Promise<Recording | null>, [string]>();
+const mockListTrashed = jest.fn<Promise<Recording[]>, []>(async () => []);
 
 jest.mock('@/services/db', () => ({
   listRecordings: (...args: unknown[]) => mockListRecordings(...args),
+  listTrashedRecordings: () => mockListTrashed(),
+  upsertRecording: (recording: Recording) => mockUpsertRecording(recording),
+  getRecording: (id: string) => mockGetRecording(id),
+  deleteRecordingRow: jest.fn(async () => undefined),
 }));
 
 jest.mock('@/services/notebooks', () => ({
@@ -34,7 +41,11 @@ jest.mock('@/services/uploaderLoop', () => ({
 }));
 
 jest.mock('@/services/notebookSync', () => ({ pushNotebooks: jest.fn(async () => undefined) }));
-jest.mock('@/services/entries', () => ({ deleteServerEntry: jest.fn(async () => undefined) }));
+jest.mock('@/services/entries', () => ({
+  deleteServerEntry: jest.fn(async () => undefined),
+  restoreServerEntry: jest.fn(async () => undefined),
+}));
+jest.mock('@/services/trash', () => ({ purgeExpiredTrash: jest.fn(async () => 0) }));
 jest.mock('@/services/files', () => ({
   deleteSessionAudioFiles: jest.fn(async () => 0),
   deleteSessionFiles: jest.fn(async () => undefined),
@@ -66,13 +77,18 @@ function note(patch: Partial<Recording>): Recording {
   return { ...base, ...patch };
 }
 
-let latest: { recordings: Recording[]; refresh: () => Promise<Recording[]> } | null = null;
+let latest: {
+  recordings: Recording[];
+  refresh: () => Promise<Recording[]>;
+  remove: (id: string) => Promise<void>;
+  restoreFromTrash: (id: string) => Promise<void>;
+} | null = null;
 
 function Probe() {
-  const { recordings, refresh } = useLibrary();
+  const { recordings, refresh, remove, restoreFromTrash } = useLibrary();
   useEffect(() => {
-    latest = { recordings, refresh };
-  }, [recordings, refresh]);
+    latest = { recordings, refresh, remove, restoreFromTrash };
+  }, [recordings, refresh, remove, restoreFromTrash]);
   return <Text>{recordings.map((item) => item.text).join('|')}</Text>;
 }
 
@@ -110,6 +126,35 @@ describe('LibraryProvider.refresh', () => {
     expect(returned[0]).toBe(first);
     expect(latest!.recordings[0]).toBe(returned[0]);
     expect(screen.getByText('um')).toBeTruthy();
+  });
+
+  it('apaga para a lixeira sem liberar o audio na hora', async () => {
+    const first = note({ id: 'a', text: 'um' });
+    await mount([first]);
+    mockGetRecording.mockResolvedValue(first);
+
+    await act(async () => {
+      await latest!.remove('a');
+    });
+
+    const trashed = mockUpsertRecording.mock.calls.at(-1)?.[0] as Recording;
+    expect(trashed.deletedAt).toBeTruthy();
+    expect(latest!.recordings).toEqual([]);
+  });
+
+  it('restaura a nota apagada e esquece a data da lixeira', async () => {
+    const trashed = note({ id: 'a', text: 'um', deletedAt: '2026-10-27T10:00:00.000Z' });
+    await mount([]);
+    mockGetRecording.mockResolvedValue(trashed);
+    mockListRecordings.mockResolvedValueOnce([note({ id: 'a', text: 'um' })]);
+
+    await act(async () => {
+      await latest!.restoreFromTrash('a');
+    });
+
+    const restored = mockUpsertRecording.mock.calls.at(-1)?.[0] as Recording;
+    expect(restored.deletedAt).toBeUndefined();
+    expect(latest!.recordings.map((item) => item.id)).toEqual(['a']);
   });
 
   it('devolve o objeto novo quando a nota mudou', async () => {

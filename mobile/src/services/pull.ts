@@ -79,14 +79,16 @@ async function pullOnce(): Promise<number> {
   // nunca chegavam ao aparelho.
   const entriesPage = await listAllPages((cursor) => api.listEntriesPage(PULL_PAGE_SIZE, cursor));
   const entries = entriesPage.items;
-  const local = await listRecordings();
+  // Inclui a lixeira local: uma nota apagada aqui nao pode ser recriada pelo
+  // pull enquanto o servidor ainda nao confirmou a exclusao.
+  const local = await listRecordings(true);
 
   let changed = 0;
   const removed = new Set<string>();
 
   // O mesmo audio importado duas vezes vira uma unica entrada no servidor
   // (dedupe por SHA-256), mas o aparelho ficava com duas linhas e dois cartoes.
-  for (const recording of duplicateEntryRecordings(local)) {
+  for (const recording of duplicateEntryRecordings(local.filter((r) => !r.deletedAt))) {
     deleteSessionFiles(recording.id);
     await deleteRecordingRow(recording.id);
     removed.add(recording.id);
@@ -95,7 +97,8 @@ async function pullOnce(): Promise<number> {
 
   // Exclusoes: so o que o servidor confirma como apagado, e so quando a lista
   // veio completa (nao truncada). Se a lixeira nao puder ser lida, nao apagamos
-  // nada: na duvida, o dado fica.
+  // nada: na duvida, o dado fica. A nota entra na lixeira local pelo mesmo
+  // prazo, em vez de sumir de vez.
   const deletedPage = await listAllPages((cursor) =>
     api.listDeletedEntriesPage(PULL_PAGE_SIZE, cursor),
   ).catch(() => null);
@@ -104,10 +107,12 @@ async function pullOnce(): Promise<number> {
     for (const entry of deletedPage.items) {
       if (entry.id) deletedAt.set(entry.id, entry.deleted_at ?? entry.updated_at);
     }
-    for (const recording of recordingsDeletedOnServer(local, deletedAt)) {
-      deleteSessionFiles(recording.id);
-      await deleteRecordingRow(recording.id);
-      removed.add(recording.id);
+    for (const recording of recordingsDeletedOnServer(
+      local.filter((r) => !r.deletedAt),
+      deletedAt,
+    )) {
+      const when = recording.entryId ? deletedAt.get(recording.entryId) : undefined;
+      await upsertRecording({ ...recording, deletedAt: when ?? new Date().toISOString() });
       changed += 1;
     }
   }
@@ -116,10 +121,12 @@ async function pullOnce(): Promise<number> {
   const localByEntry = new Map<string, Recording>();
   for (const recording of local) {
     if (removed.has(recording.id)) continue;
+    // Notas na lixeira entram no `known` para o pull nao criar uma copia ativa,
+    // mas nao sao mescladas: quem manda nelas e a restauracao do usuario.
     known.add(recording.id);
     if (recording.entryId) {
       known.add(recording.entryId);
-      localByEntry.set(recording.entryId, recording);
+      if (!recording.deletedAt) localByEntry.set(recording.entryId, recording);
     }
   }
 

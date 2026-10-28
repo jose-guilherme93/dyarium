@@ -10,7 +10,7 @@ import { markQueued } from '@/core/queue';
 import { isUploadable, needsNoteSync, needsTranscript, type Recording } from '@/core/types';
 import { bumpRender } from '@/dev/perf';
 import { deleteRecordingRow, getRecording, listRecordings, updateRecordingNote, upsertRecording } from '@/services/db';
-import { deleteServerEntry } from '@/services/entries';
+import { deleteServerEntry, restoreServerEntry } from '@/services/entries';
 import { deleteSessionAudioFiles, deleteSessionFiles } from '@/services/files';
 import {
   deleteLocalNotebook,
@@ -82,7 +82,10 @@ interface LibraryValue {
   /** Remove o audio local de uma nota sincronizada; devolve os bytes liberados. */
   freeAudioForNote(id: string): Promise<number>;
   retry(id: string): Promise<void>;
+  /** Manda a nota para a lixeira; ela pode voltar por 7 dias. */
   remove(id: string): Promise<void>;
+  /** Tira a nota da lixeira e a devolve para a lista. */
+  restoreFromTrash(id: string): Promise<void>;
   /** Dispara a fila agora (envio manual). */
   kick(): void;
   /** Traz notas do servidor (pull) e atualiza a lista. */
@@ -174,15 +177,24 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     // Enquanto a nota esta aberta, upload/rede/SQLite esperam: eles competem
     // com a leitura e a digitacao. A fila e persistente e retoma ao sair.
     if (noteIsOpen()) return;
-    // Cadernos pendentes (criados/renomeados/excluidos offline) sobem no mesmo
-    // ciclo da fila; se falhar, a linha continua suja para a proxima tentativa.
-    void pushNotebooks().then(refreshNotebooks).catch(() => undefined);
-    void runUploadQueueOnce().then(refresh).catch(() => undefined);
+    // Cadernos pendentes (criados/renomeados/excluidos offline) sobem **antes**
+    // da fila: uma nota que aponta para um caderno ainda inexistente no servidor
+    // levaria 422 invalid_notebook e ficaria falha para sempre.
+    void pushNotebooks()
+      .then(refreshNotebooks)
+      .catch(() => undefined)
+      .finally(() => {
+        void runUploadQueueOnce().then(refresh).catch(() => undefined);
+      });
   }, [refresh, refreshNotebooks]);
 
   useEffect(() => {
     let alive = true;
-    Promise.all([listRecordings(), listNotebooks()])
+    // A lixeira local so libera audio/linha depois dos 7 dias. A limpeza vem
+    // antes da leitura para a lista ja nascer sem uma nota expirada.
+    purgeExpiredTrash()
+      .catch(() => 0)
+      .then(() => Promise.all([listRecordings(), listNotebooks()]))
       .then(([list, notebookList]) => {
         if (!alive) return;
         setRecordings(list);
@@ -193,6 +205,12 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
         if (alive) setReady(true);
       });
     const unsubscribe = observeUploads((updated) => {
+      // Uma nota apagada enquanto subia nao pode voltar para a lista pelo
+      // evento do uploader: a lixeira e a unica dona dela ate restaurar.
+      if (updated.deletedAt) {
+        setRecordings((prev) => prev.filter((r) => r.id !== updated.id));
+        return;
+      }
       setRecordings((prev) => {
         const exists = prev.some((r) => r.id === updated.id);
         return exists ? prev.map((r) => (r.id === updated.id ? updated : r)) : [updated, ...prev];
@@ -441,18 +459,49 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
 
   const remove = useCallback(
     async (id: string) => {
-      const current = recordingsRef.current.find((r) => r.id === id);
-      if (current) {
-        deleteSessionFiles(current.id);
-        // Apaga tambem no servidor, para nao ressuscitar no proximo pull.
-        if (current.entryId) {
-          void deleteServerEntry(current.entryId).catch(() => undefined);
-        }
-      }
-      await deleteRecordingRow(id);
+      const current =
+        recordingsRef.current.find((r) => r.id === id) ?? (await getRecording(id));
+      if (!current) return;
+      // Apagar e logico: os arquivos ficam no aparelho ate a janela da lixeira
+      // fechar, senao restaurar uma nota devolveria o texto sem o audio.
+      const deletedAt = new Date().toISOString();
+      const trashed: Recording = { ...current, deletedAt, updatedAt: deletedAt };
+      await upsertRecording(trashed);
       setRecordings((prev) => prev.filter((r) => r.id !== id));
+      // O servidor tem a mesma lixeira de 7 dias; a chamada e best-effort para
+      // apagar offline nao impedir a nota de sair da lista local agora.
+      if (current.entryId) {
+        void deleteServerEntry(current.entryId).catch(() => undefined);
+      }
     },
     [],
+  );
+
+  /** Rascunho vazio nunca foi uma nota: sai direto, sem passar pela lixeira. */
+  const discardDraft = useCallback(async (id: string) => {
+    deleteSessionFiles(id);
+    await deleteRecordingRow(id);
+    setRecordings((prev) => prev.filter((r) => r.id !== id));
+  }, []);
+
+  const restoreFromTrash = useCallback(
+    async (id: string) => {
+      const current = await getRecording(id);
+      if (!current?.deletedAt) return;
+      const restored: Recording = {
+        ...current,
+        deletedAt: undefined,
+        updatedAt: new Date().toISOString(),
+      };
+      await upsertRecording(restored);
+      await refresh();
+      // Desfaz a exclusao logica no servidor. Sem isso o proximo pull veria a
+      // entrada na lixeira dele e apagaria a nota de novo.
+      if (current.entryId) {
+        void restoreServerEntry(current.entryId).catch(() => undefined);
+      }
+    },
+    [refresh],
   );
 
   const submitNote = useCallback(
@@ -461,7 +510,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       if (!current) return;
       if (current.status === 'draft') {
         if (!noteHasContent(current)) {
-          await remove(id);
+          await discardDraft(id);
           return;
         }
         // Nota so de texto: o texto ja e o conteudo (nao ha transcricao a esperar).
@@ -484,7 +533,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
         kick();
       }
     },
-    [recordings, enqueue, remove, kick],
+    [recordings, enqueue, discardDraft, kick],
   );
 
   const setArchived = useCallback(async (id: string, archived: boolean) => {
@@ -667,6 +716,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       freeAudioForNote,
       retry,
       remove,
+      restoreFromTrash,
       kick,
       pull: pullServer,
     }),
@@ -693,6 +743,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       freeAudioForNote,
       retry,
       remove,
+      restoreFromTrash,
       kick,
       pullServer,
     ],
