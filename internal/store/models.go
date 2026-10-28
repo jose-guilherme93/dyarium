@@ -46,6 +46,9 @@ type Upload struct {
 	// LocalTranscribe means the client will transcribe this audio on the device;
 	// the server must not enqueue its own transcription.
 	LocalTranscribe bool
+	// LocalAnalysis means the client owns the analysis of this entry (it runs
+	// on the device or is turned off), so the server must not enqueue analyze.
+	LocalAnalysis bool
 	// EntryCreatedAt is the original creation time of the note this audio will
 	// create. It is immutable once the entry exists; nil means "use upload time".
 	EntryCreatedAt *time.Time
@@ -294,7 +297,9 @@ type Analysis struct {
 	StutterRate     float64
 	HesitationRate  float64
 	RevisedSegments int
-	CreatedAt       time.Time
+	// Origin is who produced the analysis: "app", "server" or "api".
+	Origin    string
+	CreatedAt time.Time
 }
 
 // Entity kinds.

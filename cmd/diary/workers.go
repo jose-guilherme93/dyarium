@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/joseti/dyarium/internal/analysisbuild"
 	"github.com/joseti/dyarium/internal/analyze"
 	"github.com/joseti/dyarium/internal/config"
 	"github.com/joseti/dyarium/internal/events"
-	"github.com/joseti/dyarium/internal/id"
 	"github.com/joseti/dyarium/internal/ingest"
 	"github.com/joseti/dyarium/internal/jobs"
 	"github.com/joseti/dyarium/internal/preview"
@@ -115,7 +115,9 @@ func transcribeHandler(st *store.Store, cfg config.Config, pipeline *transcribe.
 			return err
 		}
 		bus.Publish("transcript.ready", map[string]string{"entry_id": payload.EntryID})
-		if analyzeConfigFromSettings(ctx, st, cfg).Enabled {
+		// O cliente pode ter ficado responsavel pela analise (roda no aparelho
+		// ou esta desligada): nesse caso o servidor nao enfileira nada.
+		if serverOwnsAnalysis(ctx, st, cfg, payload.EntryID) {
 			if _, err := queue.Enqueue(ctx, jobs.TypeAnalyze, jobs.AnalyzeKey(payload.EntryID), jobs.AnalyzePayload{EntryID: payload.EntryID}); err != nil {
 				logger.Error("worker: enfileirar analise", "erro", err)
 			}
@@ -126,6 +128,22 @@ func transcribeHandler(st *store.Store, cfg config.Config, pipeline *transcribe.
 		bus.Publish("entry.status", map[string]string{"entry_id": payload.EntryID, "status": store.EntryReady})
 		return nil
 	}
+}
+
+// serverOwnsAnalysis reports whether the server should enqueue the analysis of
+// an entry: the analysis must be enabled and the client must not have claimed
+// the stage (device analysis or analysis turned off).
+func serverOwnsAnalysis(ctx context.Context, st *store.Store, cfg config.Config, entryID string) bool {
+	if !analyzeConfigFromSettings(ctx, st, cfg).Enabled {
+		return false
+	}
+	local, err := st.EntryLocalAnalysis(ctx, entryID)
+	if err != nil {
+		// Sem saber de quem e a etapa, nao processar: trabalho indesejado e pior
+		// que trabalho adiado.
+		return false
+	}
+	return !local
 }
 
 // analyzeHandler enriches a transcript and stores the analysis.
@@ -246,6 +264,8 @@ func analyzeHandler(st *store.Store, cfg config.Config, bus *events.Bus, logger 
 			metrics.Source = "analysis"
 		}
 		analysis, links := buildAnalysis(payload.EntryID, result, metrics)
+		// Onde a analise rodou: no proprio servidor ou em um provedor hospedado.
+		analysis.Origin = analysisCfg.Origin()
 		if err := st.SaveRichAnalysis(ctx, analysis, links); err != nil {
 			run.Outcome = "error"
 			run.ErrorClass = "storage"
@@ -767,55 +787,11 @@ func countChanged(t store.Transcript, segments []store.Segment) int {
 }
 
 func buildAnalysis(entryID string, result analyze.Result, metrics analysisMetrics) (store.Analysis, []store.EntityLink) {
-	emotions := make(map[string]float64, len(result.Emotions))
-	for _, e := range result.Emotions {
-		emotions[e.Name] = e.Intensity
-	}
-	people := make([]string, 0, len(result.People))
-	for _, p := range result.People {
-		people = append(people, p.Name)
-	}
-	places := make([]string, 0, len(result.Places))
-	for _, p := range result.Places {
-		places = append(places, p.Name)
-	}
-	emotionsJSON, _ := json.Marshal(emotions)
-	peopleJSON, _ := json.Marshal(people)
-	placesJSON, _ := json.Marshal(places)
-	dataJSON, _ := json.Marshal(result)
-
-	links := make([]store.EntityLink, 0, len(result.People)+len(result.Places)+len(result.Themes))
-	for _, p := range result.People {
-		sentiment := p.Sentiment
-		links = append(links, store.EntityLink{
-			Kind: store.EntityPerson, Name: p.Name, Count: max(p.Count, 1),
-			Relation: p.Relation, Sentiment: &sentiment,
-		})
-	}
-	for _, p := range result.Places {
-		links = append(links, store.EntityLink{Kind: store.EntityPlace, Name: p.Name, Count: max(p.Count, 1)})
-	}
-	for _, t := range result.Themes {
-		links = append(links, store.EntityLink{Kind: store.EntityTheme, Name: t.Name, Count: 1})
-	}
-
-	return store.Analysis{
-		ID:                  id.New(),
-		EntryID:             entryID,
-		Model:               result.Model,
-		Sentiment:           result.Sentiment.Score,
-		SentimentLabel:      result.Sentiment.Label,
-		Emotions:            string(emotionsJSON),
-		People:              string(peopleJSON),
-		Places:              string(placesJSON),
-		Summary:             result.Summary,
-		Raw:                 result.Raw,
-		Data:                string(dataJSON),
-		Comprehension:       metrics.Comprehension,
-		ComprehensionSource: metrics.Source,
-		StutterRate:         metrics.StutterRate,
-		HesitationRate:      metrics.HesitationRate,
-		RevisedSegments:     metrics.RevisedSegments,
-		CreatedAt:           time.Now().UTC(),
-	}, links
+	return analysisbuild.Build(entryID, result, analysisbuild.Metrics{
+		Comprehension:   metrics.Comprehension,
+		Source:          metrics.Source,
+		StutterRate:     metrics.StutterRate,
+		HesitationRate:  metrics.HesitationRate,
+		RevisedSegments: metrics.RevisedSegments,
+	})
 }

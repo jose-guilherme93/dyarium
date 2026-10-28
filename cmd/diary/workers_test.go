@@ -253,6 +253,54 @@ func openWriterStore(t *testing.T) *store.Store {
 	return st
 }
 
+// O cliente pode reivindicar a analise (roda no aparelho ou esta desligada):
+// nesse caso o servidor nao enfileira analyze depois de transcrever.
+func TestServerOwnsAnalysisRespectsClientClaim(t *testing.T) {
+	ctx := context.Background()
+	st := openWriterStore(t)
+	now := time.Now().UTC()
+	cfg := config.Config{AnalyzeEnabled: true}
+
+	seed := func(id string) {
+		entryID := id
+		if err := st.CreateEntry(ctx, store.Entry{
+			ID: entryID, Title: "nota", Status: store.EntryTranscribed, Source: "upload",
+			CreatedAt: now, UpdatedAt: now,
+		}); err != nil {
+			t.Fatalf("create entry: %v", err)
+		}
+		attachmentID := "a-" + entryID
+		if err := st.CreateAttachment(ctx, store.Attachment{
+			ID: attachmentID, EntryID: entryID, Kind: store.AttachmentOriginal,
+			StorageKey: "objects/" + attachmentID, ContentType: "audio/wav", SizeBytes: 10,
+			Cipher: "aes-256-gcm", DurationSeconds: 10, CreatedAt: now,
+		}); err != nil {
+			t.Fatalf("create attachment: %v", err)
+		}
+		if err := st.CreateUpload(ctx, store.Upload{
+			ID: "up-" + entryID, Status: "completed", Filename: "a.wav",
+			ContentType: "audio/wav", SizeBytes: 10, ResultAttachmentID: attachmentID,
+			LocalAnalysis: entryID == "com-dono", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+		}); err != nil {
+			t.Fatalf("create upload: %v", err)
+		}
+	}
+	seed("com-dono")
+	seed("sem-dono")
+
+	if serverOwnsAnalysis(ctx, st, cfg, "com-dono") {
+		t.Fatal("cliente reivindicou a analise; o servidor nao deveria enfileirar")
+	}
+	if !serverOwnsAnalysis(ctx, st, cfg, "sem-dono") {
+		t.Fatal("servidor deveria ser o dono da analise")
+	}
+
+	// Analise desligada no servidor: ninguem enfileira, mesmo sem reivindicacao.
+	if serverOwnsAnalysis(ctx, st, config.Config{AnalyzeEnabled: false}, "sem-dono") {
+		t.Fatal("analise desligada nao deveria enfileirar")
+	}
+}
+
 // O job de transcricao pode falhar depois de o aparelho ja ter enviado o texto
 // (PUT /transcript). A falha do worker nao pode marcar a nota como "falhou":
 // o texto esta salvo e visivel no dashboard.

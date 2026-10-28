@@ -353,6 +353,15 @@ type execer interface {
 }
 
 // insertAnalysis writes one analysis row.
+// originOrDefault keeps old callers (and rows written before the column) on the
+// historical meaning: the server produced it.
+func originOrDefault(origin string) string {
+	if origin == "" {
+		return "server"
+	}
+	return origin
+}
+
 func insertAnalysis(ctx context.Context, ex execer, a Analysis) error {
 	// Uma analise sem a medida da revisao nao tem compreensao: -1 e "nao
 	// medida", 0 seria lido como "incompreensivel".
@@ -362,11 +371,11 @@ func insertAnalysis(ctx context.Context, ex execer, a Analysis) error {
 	_, err := ex.ExecContext(ctx, `
 		INSERT INTO analyses (id, entry_id, model, sentiment, sentiment_label, emotions, people, places,
 			summary, raw, data, comprehension, comprehension_source, stutter_rate, hesitation_rate,
-			revised_segments, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			revised_segments, origin, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.ID, a.EntryID, a.Model, a.Sentiment, a.SentimentLabel, a.Emotions, a.People, a.Places,
 		a.Summary, a.Raw, a.Data, a.Comprehension, a.ComprehensionSource, a.StutterRate,
-		a.HesitationRate, a.RevisedSegments, ts(a.CreatedAt))
+		a.HesitationRate, a.RevisedSegments, originOrDefault(a.Origin), ts(a.CreatedAt))
 	if err != nil {
 		return fmt.Errorf("store: save analysis: %w", err)
 	}
@@ -459,11 +468,11 @@ func (s *Store) GetAnalysis(ctx context.Context, entryID string) (Analysis, bool
 		SELECT id, entry_id, model, sentiment, COALESCE(sentiment_label,''), COALESCE(emotions,''),
 			COALESCE(people,''), COALESCE(places,''), COALESCE(summary,''), COALESCE(raw,''),
 			COALESCE(data,''), comprehension, COALESCE(comprehension_source,''), stutter_rate,
-			hesitation_rate, revised_segments, created_at
-		FROM analyses WHERE entry_id = ? ORDER BY created_at DESC LIMIT 1`, entryID).Scan(
+			hesitation_rate, revised_segments, COALESCE(origin,'server'), created_at
+		FROM analyses WHERE entry_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`, entryID).Scan(
 		&a.ID, &a.EntryID, &a.Model, &a.Sentiment, &a.SentimentLabel, &a.Emotions, &a.People,
 		&a.Places, &a.Summary, &a.Raw, &a.Data, &a.Comprehension, &a.ComprehensionSource,
-		&a.StutterRate, &a.HesitationRate, &a.RevisedSegments, &createdAt)
+		&a.StutterRate, &a.HesitationRate, &a.RevisedSegments, &a.Origin, &createdAt)
 	if err == sql.ErrNoRows {
 		return Analysis{}, false, nil
 	}

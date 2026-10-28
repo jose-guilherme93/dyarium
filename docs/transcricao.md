@@ -106,12 +106,62 @@ Criterio de aceite do benchmark: o pico reportado deve ser reproduzivel entre ex
 
 ## No aparelho (app)
 
-- Ligar a transcricao local e baixar o modelo **nao** varre o acervo. Uma nota com
-  transcricao pronta — feita no aparelho ou pelo servidor — nunca e transcrita de novo por
-  iniciativa do app; refazer e acao explicita do usuario.
-- A fila automatica (boot e segundo plano) so pega audio que ainda nao tem texto e que nao
-  pertence ao servidor. Quem e o dono fica em `transcriptOrigin` (`local` ou `server`),
-  gravado no envio pelo `local_transcribe` e mantido no pull.
+App e servidor sao **pares**, cada um com o proprio banco. O sync leva o que ja foi feito
+e nada e reprocessado automaticamente; refazer e acao explicita do usuario.
+
+### Quem processa
+
+Tres interruptores em Opcoes > Processamento decidem, e o mesmo conjunto aparece na folha
+do icone de IA dentro da nota:
+
+- **Transcricao**: ligada/desligada.
+- **Analise**: ligada/desligada.
+- **Processar no servidor**: exige servidor configurado. Desligado, o trabalho roda no
+  aparelho.
+
+O lado escolhido e o unico que **comeca** a etapa; o outro apenas recebe o resultado pelo
+sync. Instalacao nova nasce com os tres desligados, e nada e cobrado do usuario: a folha
+se apresenta uma vez e pode ser ocultada para sempre (a marca fica em `app_flags`, fora de
+qualquer backup, entao reinstalar o app reabre a conversa). O icone de IA continua na barra
+da nota e sempre abre os tres interruptores.
+
+Com a etapa desligada ou no aparelho, o upload leva `local_transcribe`/`local_analysis` e o
+servidor nao enfileira nada. Sem modelo baixado a nota fica **pendente** — nunca cai para o
+servidor sem o usuario escolher. Servidor escolhido e offline tambem nao cai para o
+aparelho: a nota espera na fila do servidor.
+
+A transcricao no aparelho comeca logo depois que a gravacao e enfileirada, e nao so no
+proximo boot. A fila automatica (boot, com o app na frente) pega apenas audio sem texto e
+sem dono no servidor.
+
+- Quem e o dono fica em `transcriptOrigin` (`local` ou `server`), gravado no envio pelo
+  `local_transcribe` e mantido no pull.
 - Nota que o servidor transcreveu espera o `GET /transcript` e e marcada como pronta
   (`hasTranscript`); o texto do servidor nunca e refeito no aparelho so porque o modelo
   local apareceu depois.
+
+### Limite de trabalho e memoria
+
+O Android encerra o processo quando a memoria aperta e nao deixa um app em segundo
+plano abrir um servico em primeiro plano. Por isso o trabalho pesado do app tem
+limites internos:
+
+- **Uma passada por vez.** Transcricao, revisao e analise entram na mesma fila
+  (`services/heavyWork.ts`). Analise e revisao pedidas pelo usuario passam na frente de
+  uma transcricao que espera e pausam a que estiver rodando no fim da janela atual; o
+  checkpoint salvo permite retomar.
+- **Um motor por vez.** Antes de o whisper carregar o modelo, o contexto do llama e
+  liberado; antes de o llama carregar, o do whisper e liberado. Os dois residentes ao
+  mesmo tempo eram o caminho mais curto para o processo ser encerrado.
+- **Contexto ocioso sai da memoria.** Depois de 20 s sem trabalho, o modelo nativo e
+  liberado. Uma nota seguinte na fila ainda o reaproveita.
+- **Modelo que nao cabe e recusado.** A analise compara o modelo com a RAM total do
+  aparelho e nao o carrega quando ele passa do minimo do catalogo.
+- **Servico em primeiro plano com wake lock parcial.** A notificacao mantem o processo
+  vivo e a CPU acordada com a tela apagada. Atualizacoes de progresso trocam so a
+  notificacao; nao tentam reabrir o servico a partir do fundo. O fim e adiado alguns
+  segundos para emendar transcricao, revisao e analise sem derrubar o servico.
+- **O WorkManager nao transcreve.** A task de segundo plano so faz upload. Transcricao e
+  analise rodam com o app na frente (ou sob um servico que ja esta na frente) e retomam
+  no boot pelo checkpoint.
+- **Duas threads no maximo** em cada motor, para a interface continuar respondendo.

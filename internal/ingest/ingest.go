@@ -69,6 +69,9 @@ type Meta struct {
 	// LocalTranscribe means the client will transcribe this audio on the device;
 	// the server must not enqueue its own transcription.
 	LocalTranscribe bool
+	// LocalAnalysis means the client owns the analysis; the server must not
+	// enqueue analyze for this entry.
+	LocalAnalysis bool
 }
 
 // Error carries an HTTP status so handlers can map failures precisely.
@@ -161,6 +164,7 @@ func (s *Service) Start(ctx context.Context, meta Meta) (store.Upload, error) {
 		ClientKey:       clientKey,
 		EntryID:         entryID,
 		LocalTranscribe: meta.LocalTranscribe,
+		LocalAnalysis:   meta.LocalAnalysis,
 		EntryCreatedAt:  meta.CreatedAt,
 		EntrySource:     source,
 		StorageKey:      storageKey,
@@ -234,6 +238,9 @@ type CompleteResult struct {
 	// LocalTranscribe means the client transcribes this audio on the device, so
 	// the server must not enqueue the transcribe job.
 	LocalTranscribe bool
+	// LocalAnalysis means the client owns the analysis, so the server must not
+	// enqueue analyze for this entry.
+	LocalAnalysis bool
 }
 
 // Complete validates size, format and SHA-256, then creates the entry (or adds
@@ -413,6 +420,7 @@ func (s *Service) Complete(ctx context.Context, uploadID string) (CompleteResult
 		Attachment:      attachment,
 		Created:         created,
 		LocalTranscribe: u.LocalTranscribe,
+		LocalAnalysis:   u.LocalAnalysis,
 	}, nil
 }
 
@@ -435,6 +443,7 @@ func (s *Service) completedResult(ctx context.Context, u store.Upload) (Complete
 		Attachment:      att,
 		Repeated:        true,
 		LocalTranscribe: u.LocalTranscribe,
+		LocalAnalysis:   u.LocalAnalysis,
 	}, nil
 }
 

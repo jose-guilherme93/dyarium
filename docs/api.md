@@ -72,9 +72,15 @@ Resposta 201:
   400 se o `entry_id` nao for um id valido.
 - `duration_seconds` e aceito no corpo mas ignorado; o servidor mede a duracao com ffprobe
   no complete.
-- `local_transcribe` (bool, opcional): quando `true`, o cliente transcreve o audio no
-  aparelho e o servidor **nao** enfileira a transcricao no complete; o texto chega depois
-  via `PUT /api/v1/entries/{id}/transcript`. Quem transcreve primeiro informa o outro.
+- `local_transcribe` (bool, opcional): quando `true`, o cliente se responsabiliza pela
+  transcricao (transcreve no aparelho ou deixa a etapa desligada) e o servidor **nao**
+  enfileira a transcricao no complete; o texto chega depois via
+  `PUT /api/v1/entries/{id}/transcript`. Quem transcreve primeiro informa o outro.
+- `local_analysis` (bool, opcional): quando `true`, o cliente se responsabiliza pela
+  analise (roda no aparelho ou esta desligada) e o servidor **nao** enfileira `analyze`
+  depois de transcrever. Serve para "transcrever no servidor, analisar no aparelho" e
+  para "nao analisar". Sem a marca, o servidor segue a configuracao de analise da
+  instancia.
 - `offset` na resposta e o offset ja confirmado (0 em uploads novos).
 
 ### PUT /api/v1/uploads/{id}
@@ -439,6 +445,7 @@ e os campos ricos lidos de `data`:
 
 ```json
 {
+  "origin": "server",
   "model": "qwen3.8-flash",
   "sentiment": 0.5,
   "sentiment_label": "positivo",
@@ -485,6 +492,22 @@ e os campos ricos lidos de `data`:
   (titulos do texto escrito e a transcricao), cada uma com o mesmo limite.
 - Entradas analisadas antes da analise rica nao tem `data`; nesse caso apenas os campos
   legados sao retornados.
+- `origin` diz quem produziu a analise: `app` (feita no aparelho e enviada), `server`
+  (pipeline deste servidor, inclusive Ollama local) ou `api` (provedor hospedado, para
+  onde o texto saiu).
+
+### PUT /api/v1/entries/{id}/analysis
+Guarda a analise feita no aparelho, no mesmo formato do GET (o app envia exatamente o que
+ja guardou). Campos aceitos: `model`, `sentiment`, `sentiment_label`, `emotions`, `people`,
+`places`, `summary`, `reading`, `themes`, `key_moments`, `questions`, `decisions`,
+`sections`, `comprehension`, `comprehension_source`, `stutter_rate`, `hesitation_rate`,
+`revised_segments` e `replace`.
+
+- Sem `replace`, a analise so e gravada se a entrada ainda nao tiver uma: o sync nunca
+  sobrescreve o trabalho do outro lado. Resposta `200` com `{ "stored": false,
+  "origin": "server" }` quando ja existia.
+- `replace: true` e o **refazer** explicito do usuario: grava por cima.
+- A origem gravada e sempre `app`; 404 quando a entrada nao existe (nota ainda nao subiu).
 
 ### POST /api/v1/entries/{id}/analyze
 Antes de enfileirar, o servidor faz um **ping** ao provedor de IA com a configuracao salva

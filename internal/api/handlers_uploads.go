@@ -31,6 +31,9 @@ type createUploadRequest struct {
 	// LocalTranscribe means the client will transcribe on the device, so the
 	// server must not enqueue its own transcription.
 	LocalTranscribe bool `json:"local_transcribe"`
+	// LocalAnalysis means the client owns the analysis (device or off), so the
+	// server must not enqueue analyze for this entry.
+	LocalAnalysis bool `json:"local_analysis"`
 }
 
 func (s *Server) handleCreateUpload(w http.ResponseWriter, r *http.Request) {
@@ -66,6 +69,7 @@ func (s *Server) handleCreateUpload(w http.ResponseWriter, r *http.Request) {
 		ClientKey:       req.ClientKey,
 		EntryID:         req.EntryID,
 		LocalTranscribe: req.LocalTranscribe,
+		LocalAnalysis:   req.LocalAnalysis,
 	})
 	if err != nil {
 		s.writeIngestError(w, err)

@@ -183,6 +183,8 @@ func (s *Server) handleGetAnalysis(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body := map[string]any{
+		// Quem produziu: "app", "server" ou "api".
+		"origin":          a.Origin,
 		"model":           a.Model,
 		"sentiment":       a.Sentiment,
 		"sentiment_label": a.SentimentLabel,

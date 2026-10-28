@@ -51,7 +51,22 @@ a analise a ficha mostra tempo, tokens/s (CPU) e bateria; ao terminar, mostra o
 resumo da ultima execucao.
 
 O modelo recomendado e o mais capaz que cabe na RAM total do aparelho. Abaixo
-de 3 GB nao ha recomendacao local.
+de 3 GB nao ha recomendacao local. O limite nao e so um aviso: um modelo abaixo
+do minimo de RAM do catalogo nao e carregado.
+
+### Limites de memoria e concorrencia
+
+- Uma passada pesada por vez: revisao e analise compartilham a fila de
+  `services/heavyWork.ts` com a transcricao.
+- Um motor por vez: antes de carregar o llama, o contexto do whisper e liberado
+  (e o contrario tambem vale). Os dois modelos residentes ao mesmo tempo eram o
+  que mais aproximava o app de ser encerrado pelo Android.
+- Depois de 20 s sem geracao, o contexto do llama e liberado. Janelas
+  consecutivas de uma revisao chegam antes disso e reaproveitam o modelo.
+- A inferencia usa no maximo 2 threads (1 no modo **Menos CPU**), para a
+  interface continuar respondendo durante a geracao.
+- Com o app em segundo plano, o servico em primeiro plano segura um wake lock
+  parcial e a notificacao e atualizada sem reabrir o servico.
 
 O Gemma 4 E2B ficou fora da v1: o Q4_K_M tem cerca de 3,1 GB, o que e agressivo
 demais para um aparelho de 8 GB com o app e o Android disputando memoria.
@@ -79,6 +94,22 @@ EXPO_PUBLIC_LOCAL_ANALYSIS=1 npx expo start
 
 Em build EAS, defina a mesma variavel no perfil. O benchmark continua exigindo
 `EXPO_PUBLIC_ANALYSIS_BENCHMARK=1` no `preview`.
+
+## Quem analisa
+
+A analise segue os mesmos tres interruptores da transcricao (Opcoes > Processamento):
+ligada/desligada e, quando ha servidor, aparelho ou servidor. Com **Processar no servidor**
+ligado, o app nao inicia analise local: a nota espera o resultado do servidor, e o upload
+leva `local_analysis` para o servidor nao enfileirar quando a etapa e do cliente.
+
+Analise desligada nao e erro nem pendencia: a nota simplesmente nao recebe analise, e nada
+na interface cobra isso. O botao do menu so aparece quando a analise roda no aparelho.
+
+Analise feita no aparelho **sobe** para o servidor por
+`PUT /api/v1/entries/{id}/analysis`, com origem `app`. Sem `replace`, o servidor so grava
+se ainda nao tiver analise daquela nota (o sync nunca sobrescreve); refazer no app manda
+`replace: true`. Na primeira conexao o app faz backfill das analises locais das notas que
+ja existem no servidor.
 
 ## Analise manual no aparelho
 
