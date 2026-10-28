@@ -15,6 +15,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "person", label: "Pessoas" },
   { id: "place", label: "Lugares" },
   { id: "theme", label: "Temas" },
+  { id: "decision", label: "Decisões" },
   { id: "mood", label: "Humor" },
 ];
 
