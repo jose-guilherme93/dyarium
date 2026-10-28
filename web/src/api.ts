@@ -140,10 +140,28 @@ async function getText(url: string, headers: Record<string, string>): Promise<st
         writeCache(url, text);
         return text;
       }
-      const text = await res.text();
-      if (!res.ok) {
-        const body = text ? JSON.parse(text) : {};
-        throw new ApiError(body?.error?.message ?? res.statusText, res.status, body?.error?.code);
+      let response = res;
+      // 502/503/504 costumam ser o proxy falando com um servidor que acabou de
+      // reiniciar (deploy ou hot reload). Uma segunda tentativa curta evita
+      // mostrar "bad gateway" em algo que ja voltou.
+      if (response.status === 502 || response.status === 503 || response.status === 504) {
+        await new Promise((resolve) => setTimeout(resolve, 700));
+        response = await fetch(url, { headers: requestHeaders });
+      }
+      const text = await response.text();
+      if (!response.ok) {
+        // O proxy pode devolver HTML no erro; nao deixe isso virar erro de JSON.
+        let body: { error?: { message?: string; code?: string } } | null = null;
+        try {
+          body = text ? JSON.parse(text) : null;
+        } catch {
+          body = null;
+        }
+        throw new ApiError(
+          body?.error?.message ?? response.statusText,
+          response.status,
+          body?.error?.code,
+        );
       }
       setOffline(false);
       writeCache(url, text);
