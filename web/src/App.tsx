@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
-import { api, ApiError, clearToken, getToken, setToken, verifyToken } from "./api";
+import { api, ApiError, clearToken, getSetupState, getToken, setToken, verifyToken } from "./api";
 import { useEvents } from "./useEvents";
 import { TokenGate } from "./components/TokenGate";
+import { SetupGate } from "./components/SetupGate";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { NoteList } from "./components/NoteList";
 import { NoteEditor } from "./components/NoteEditor";
@@ -58,6 +59,7 @@ export function App() {
   const [token, setTokenState] = useState(getToken());
   const [authError, setAuthError] = useState("");
   const [checkingToken, setCheckingToken] = useState(false);
+  const [setupRequired, setSetupRequired] = useState(false);
   const [view, setView] = useState<ViewId>("notes");
   // No navegador estreito a navegacao e uma gaveta: comeca fechada.
   const [navOpen, setNavOpen] = useState(() =>
@@ -180,6 +182,20 @@ export function App() {
   );
   useEvents(handleEvent);
 
+  // O primeiro acesso e publico: sem token, a instancia ainda nao foi
+  // reivindicada. Falha de rede cai no portao de token normal.
+  useEffect(() => {
+    let active = true;
+    getSetupState().then((state) => {
+      if (active && state.required) {
+        setSetupRequired(true);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   // A token already stored may be stale (rotated on the server) or simply
   // wrong; validate it on load and fall back to the gate. A network failure
   // keeps the token so the app can still be used offline with cached data.
@@ -253,6 +269,21 @@ export function App() {
       setCheckingToken(false);
     }
   };
+
+  if (setupRequired) {
+    return (
+      <SetupGate
+        onDone={(value) => {
+          setToken(value);
+          setTokenState(value);
+          setSetupRequired(false);
+          if (window.location.pathname.startsWith("/setup")) {
+            window.history.replaceState({}, "", "/");
+          }
+        }}
+      />
+    );
+  }
 
   if (!token) {
     return (

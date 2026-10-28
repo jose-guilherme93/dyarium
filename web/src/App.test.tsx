@@ -86,3 +86,34 @@ describe("App", () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe("App primeiro acesso", () => {
+  it("mostra o wizard e guarda o token escolhido", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("/setup/state")) {
+          return { ok: true, status: 200, text: async () => JSON.stringify({ required: true }) };
+        }
+        if (url.endsWith("/setup") && init?.method === "POST") {
+          return { ok: true, status: 200, text: async () => JSON.stringify({ status: "ok" }) };
+        }
+        return { ok: true, status: 200, text: async () => JSON.stringify({ entries: [] }) };
+      }),
+    );
+    render(<App />);
+
+    expect(await screen.findByText(/Bem-vindo/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Token de acesso"), {
+      target: { value: "token-forte" },
+    });
+    fireEvent.change(screen.getByLabelText("Confirme o token"), {
+      target: { value: "token-forte" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Criar token e entrar" }));
+
+    await waitFor(() => expect(localStorage.getItem("dyarium.token")).toBe("token-forte"));
+    vi.unstubAllGlobals();
+  });
+});
