@@ -75,7 +75,9 @@ describe('noteDateIso', () => {
 });
 
 describe('noteDateLabel', () => {
-  const note = { recordedAt: '2026-10-19T13:30:00.000Z' };
+  // Sem fuso no valor: o rotulo mostra a hora local, e um `Z` faria o teste
+  // depender do fuso do CI (UTC) em vez do comportamento.
+  const note = { recordedAt: '2026-10-19T10:30:00' };
 
   it('mostra a data do evento quando o titulo e outro', () => {
     expect(noteDateLabel('Dia de chuva', note)).toBe('19/10/2026 10:30');
