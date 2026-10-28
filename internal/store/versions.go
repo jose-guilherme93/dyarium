@@ -59,16 +59,16 @@ func (s *Store) EntryFieldVersions(ctx context.Context, id string) (title, recor
 // version. It returns the versions after the write and the names of the fields
 // that had already changed since the client read them: those are NOT applied, so
 // the caller can ask the user whose version wins instead of silently losing one.
-func (s *Store) UpdateEntryFields(ctx context.Context, id string, title *string, recordedAt *time.Time, notebookID *string, archived *bool, readTitle, readRecorded string) (map[string]string, []string, error) {
-	var storedTitle, storedRecorded, storedNotebook string
+func (s *Store) UpdateEntryFields(ctx context.Context, id string, title *string, recordedAt *time.Time, notebookID *string, archived *bool, author *string, readTitle, readRecorded string) (map[string]string, []string, error) {
+	var storedTitle, storedRecorded, storedNotebook, storedAuthor string
 	var storedRecordedRaw sql.NullString
 	var storedArchived int
 	var storedTitleVersion, storedRecordedVersion sql.NullString
 	err := s.db.QueryRowContext(ctx, `
-		SELECT COALESCE(title,''), recorded_at, COALESCE(notebook_id,''), archived,
+		SELECT COALESCE(title,''), recorded_at, COALESCE(notebook_id,''), archived, COALESCE(author,''),
 			title_updated_at, recorded_at_updated_at
 		FROM entries WHERE id = ?`, id).Scan(
-		&storedTitle, &storedRecordedRaw, &storedNotebook, &storedArchived,
+		&storedTitle, &storedRecordedRaw, &storedNotebook, &storedArchived, &storedAuthor,
 		&storedTitleVersion, &storedRecordedVersion)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil, ErrNotFound
@@ -80,6 +80,13 @@ func (s *Store) UpdateEntryFields(ctx context.Context, id string, title *string,
 	if notebookID != nil {
 		if err := s.NotebookExists(ctx, strings.TrimSpace(*notebookID)); err != nil {
 			return nil, nil, err
+		}
+	}
+	var nextAuthor string
+	if author != nil {
+		nextAuthor = strings.TrimSpace(*author)
+		if !ValidAuthor(nextAuthor) {
+			return nil, nil, ErrInvalidAuthor
 		}
 	}
 	var conflict []string
@@ -101,7 +108,8 @@ func (s *Store) UpdateEntryFields(ctx context.Context, id string, title *string,
 	writeRecorded := recordedAt != nil && ts(*recordedAt) != storedRecorded
 	writeNotebook := notebookID != nil && strings.TrimSpace(*notebookID) != storedNotebook
 	writeArchived := archived != nil && boolInt(*archived) != storedArchived
-	if !writeTitle && !writeRecorded && !writeNotebook && !writeArchived {
+	writeAuthor := author != nil && nextAuthor != storedAuthor
+	if !writeTitle && !writeRecorded && !writeNotebook && !writeArchived && !writeAuthor {
 		return versions, nil, nil
 	}
 
@@ -145,6 +153,15 @@ func (s *Store) UpdateEntryFields(ctx context.Context, id string, title *string,
 			`UPDATE entries SET archived = ?, updated_at = ? WHERE id = ?`,
 			boolInt(*archived), updatedAt, id); err != nil {
 			return nil, nil, fmt.Errorf("store: update archived: %w", err)
+		}
+	}
+	// Autor e um papel, nao texto livre: a ultima escolha vence. A nota pode
+	// voltar ao padrao mandando author vazio.
+	if writeAuthor {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE entries SET author = ?, updated_at = ? WHERE id = ?`,
+			nextAuthor, updatedAt, id); err != nil {
+			return nil, nil, fmt.Errorf("store: update author: %w", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {

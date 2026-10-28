@@ -11,6 +11,9 @@ import (
 // ErrNotFound is returned when a requested row does not exist.
 var ErrNotFound = errors.New("store: nao encontrado")
 
+// ErrInvalidAuthor is returned when a note author is not self/other/mixed/empty.
+var ErrInvalidAuthor = errors.New("store: autor invalido")
+
 // ListSettings returns all settings as a key/value map.
 func (s *Store) ListSettings(ctx context.Context) (map[string]string, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT key, value FROM settings`)

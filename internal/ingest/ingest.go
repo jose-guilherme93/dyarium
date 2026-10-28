@@ -66,6 +66,9 @@ type Meta struct {
 	// EntryID, when set, adds this audio to an existing entry instead of
 	// creating a new one (used to give a note more than one audio).
 	EntryID string
+	// Author is the explicit author role chosen for the note (self/other/mixed).
+	// Empty follows the app default.
+	Author string
 	// LocalTranscribe means the client will transcribe this audio on the device;
 	// the server must not enqueue its own transcription.
 	LocalTranscribe bool
@@ -128,6 +131,10 @@ func (s *Service) Start(ctx context.Context, meta Meta) (store.Upload, error) {
 	default:
 		return store.Upload{}, newError(400, "invalid_source", "origem invalida")
 	}
+	author := strings.TrimSpace(meta.Author)
+	if !store.ValidAuthor(author) {
+		return store.Upload{}, newError(400, "invalid_author", "author deve ser self, other, mixed ou vazio")
+	}
 
 	prefix, err := crypto.NewPrefix()
 	if err != nil {
@@ -167,6 +174,7 @@ func (s *Service) Start(ctx context.Context, meta Meta) (store.Upload, error) {
 		LocalAnalysis:   meta.LocalAnalysis,
 		EntryCreatedAt:  meta.CreatedAt,
 		EntrySource:     source,
+		Author:          author,
 		StorageKey:      storageKey,
 		Prefix:          prefix[:],
 		NextCounter:     0,
@@ -352,6 +360,7 @@ func (s *Service) Complete(ctx context.Context, uploadID string) (CompleteResult
 			RecordedAt:       u.RecordedAt,
 			CreatedAt:        createdAt,
 			UpdatedAt:        now,
+			Author:           u.Author,
 		}
 		if err := s.store.CreateEntry(ctx, entry); err != nil {
 			return CompleteResult{}, err
@@ -377,6 +386,7 @@ func (s *Service) Complete(ctx context.Context, uploadID string) (CompleteResult
 			RecordedAt:       u.RecordedAt,
 			CreatedAt:        createdAt,
 			UpdatedAt:        now,
+			Author:           u.Author,
 		}
 		if err := s.store.CreateEntry(ctx, entry); err != nil {
 			return CompleteResult{}, err

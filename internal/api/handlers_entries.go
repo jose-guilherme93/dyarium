@@ -48,6 +48,9 @@ func entryJSON(e store.Entry) map[string]any {
 		"created_at":        e.CreatedAt,
 		"updated_at":        e.UpdatedAt,
 		"archived":          e.Archived,
+		// Papel escolhido para a nota (self/other/mixed). Vazio segue o padrao
+		// do app (owner_name/all_notes_mine), que o cliente tambem recebe.
+		"author": e.Author,
 		// Versao de cada campo editavel, para o cliente mandar de volta na
 		// gravacao e o servidor recusar o que ja mudou em outro lugar.
 		"versions": entryVersions(e),
@@ -169,12 +172,15 @@ func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
-	body := pageJSON(entriesJSON(entries, tagNames), len(entries))
+	// A previa pode vir da transcricao: grafias antigas de uma entidade
+	// mesclada aparecem com o nome atual, como no painel da transcricao.
+	aliasPairs, _ := s.deps.Store.EntityAliasPairs(r.Context())
+	body := pageJSON(entriesJSON(entries, tagNames, aliasPairs), len(entries))
 	writeJSON(w, http.StatusOK, body)
 }
 
 // entriesJSON converte as entradas e anexa os nomes das tags num lugar so.
-func entriesJSON(entries []store.Entry, tagNames map[string][]string) []map[string]any {
+func entriesJSON(entries []store.Entry, tagNames map[string][]string, aliasPairs []store.EntityNamePair) []map[string]any {
 	out := make([]map[string]any, 0, len(entries))
 	for _, e := range entries {
 		item := entryJSON(e)
@@ -189,6 +195,9 @@ func entriesJSON(entries []store.Entry, tagNames map[string][]string) []map[stri
 			// Corpo so com marcador de audio/imagem nao tem prosa: a previa e a
 			// transcricao, que e o que a pessoa le naquela nota.
 			text = preview.Short(e.SpokenPreview, preview.DefaultLimit)
+			if text != "" {
+				text = canonicalizeAnalysisText(text, aliasPairs)
+			}
 		}
 		if text != "" {
 			item["preview"] = text
@@ -222,9 +231,17 @@ func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 		// time (offline note, imported entry). Without it the app had to PATCH
 		// the date right after creating the note.
 		RecordedAt string `json:"recorded_at"`
+		// Author is the explicit role of the note (self/other/mixed). Empty
+		// means "follow the app default".
+		Author string `json:"author"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_body", "corpo invalido")
+		return
+	}
+	author := strings.TrimSpace(req.Author)
+	if !store.ValidAuthor(author) {
+		writeError(w, http.StatusBadRequest, "invalid_author", "author deve ser self, other, mixed ou vazio")
 		return
 	}
 	notebookID := strings.TrimSpace(req.NotebookID)
@@ -281,6 +298,7 @@ func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 		RecordedAt: recordedAt,
 		CreatedAt:  createdAt,
 		UpdatedAt:  now,
+		Author:     author,
 	}
 	if clientID := strings.TrimSpace(req.ID); clientID != "" {
 		if !id.Valid(clientID) {
@@ -361,6 +379,9 @@ type patchEntryRequest struct {
 	// Archived tira a nota da lista de trabalho sem apagar. E um interruptor, nao
 	// texto: nao tem versao nem conflito.
 	Archived *bool `json:"archived"`
+	// Author troca o papel da nota (self/other/mixed). Vazio volta ao padrao do
+	// app. Como os outros interruptores, a ultima gravacao vence.
+	Author *string `json:"author"`
 	// Versions are the versions of title/recorded_at the client last read.
 	// Fields whose version moved on are not written; they come back as a
 	// conflict so the user decides instead of the last write winning blindly.
@@ -385,8 +406,12 @@ func (s *Server) handlePatchEntry(w http.ResponseWriter, r *http.Request) {
 			recordedAt = &t
 		}
 	}
-	if req.Title == nil && recordedAt == nil && req.NotebookID == nil && req.Archived == nil {
+	if req.Title == nil && recordedAt == nil && req.NotebookID == nil && req.Archived == nil && req.Author == nil {
 		writeError(w, http.StatusBadRequest, "empty_patch", "nada para atualizar")
+		return
+	}
+	if req.Author != nil && !store.ValidAuthor(strings.TrimSpace(*req.Author)) {
+		writeError(w, http.StatusBadRequest, "invalid_author", "author deve ser self, other, mixed ou vazio")
 		return
 	}
 	if req.NotebookID != nil && strings.TrimSpace(*req.NotebookID) == "" {
@@ -394,9 +419,13 @@ func (s *Server) handlePatchEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	versions, conflict, err := s.deps.Store.UpdateEntryFields(r.Context(), id, req.Title, recordedAt,
-		req.NotebookID, req.Archived, req.Versions.Title, req.Versions.RecordedAt)
+		req.NotebookID, req.Archived, req.Author, req.Versions.Title, req.Versions.RecordedAt)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", "entrada inexistente")
+		return
+	}
+	if errors.Is(err, store.ErrInvalidAuthor) {
+		writeError(w, http.StatusBadRequest, "invalid_author", "author deve ser self, other, mixed ou vazio")
 		return
 	}
 	if errors.Is(err, store.ErrNotebookNotFound) {
@@ -476,7 +505,12 @@ func (s *Server) handleGetTranscript(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, transcriptJSON(t, segs))
+	// A leitura resolve grafias antigas para a entidade sobrevivente; o texto
+	// gravado (e o audio) continua exatamente como foi transcrito.
+	aliasPairs, _ := s.deps.Store.EntityAliasPairs(ctx)
+	body := transcriptJSON(t, segs)
+	canonicalizeTranscriptBody(body, aliasPairs)
+	writeJSON(w, http.StatusOK, body)
 }
 
 type putTranscriptRequest struct {
@@ -751,6 +785,38 @@ func transcriptJSON(t store.Transcript, segs []store.Segment) map[string]any {
 	return body
 }
 
+// canonicalizeTranscriptSummary aplica os aliases de entidade ao texto visivel
+// da transcricao. O banco guarda a fala crua; so a resposta da API muda.
+func canonicalizeTranscriptSummary(body map[string]any, pairs []store.EntityNamePair) {
+	if len(pairs) == 0 {
+		return
+	}
+	if text, ok := body["text"].(string); ok {
+		body["text"] = canonicalizeAnalysisText(text, pairs)
+	}
+}
+
+// canonicalizeTranscriptBody also touches the segments: the panel shows the
+// original and the revised line, and both should resolve a merged spelling.
+func canonicalizeTranscriptBody(body map[string]any, pairs []store.EntityNamePair) {
+	canonicalizeTranscriptSummary(body, pairs)
+	if len(pairs) == 0 {
+		return
+	}
+	segments, ok := body["segments"].([]map[string]any)
+	if !ok {
+		return
+	}
+	for _, item := range segments {
+		if text, ok := item["text"].(string); ok {
+			item["text"] = canonicalizeAnalysisText(text, pairs)
+		}
+		if revised, ok := item["revised"].(string); ok {
+			item["revised"] = canonicalizeAnalysisText(revised, pairs)
+		}
+	}
+}
+
 // transcriptSummaryJSON is the transcript without its segments. The full entry
 // payload uses it: segments are usually large and only needed when the user
 // expands the transcript, which fetches them page by page.
@@ -838,18 +904,20 @@ func (s *Server) handleListSegments(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
+	// As paginas da transcricao tambem mostram a grafia atual da entidade.
+	aliasPairs, _ := s.deps.Store.EntityAliasPairs(ctx)
 	out := make([]map[string]any, 0, len(segs))
 	for _, seg := range segs {
 		item := map[string]any{
 			"idx":      seg.Idx,
 			"start_ms": seg.StartMS,
 			"end_ms":   seg.EndMS,
-			"text":     seg.Text,
+			"text":     canonicalizeAnalysisText(seg.Text, aliasPairs),
 			"edited":   seg.UserEdited,
 			"reviewed": seg.Revised != "",
 		}
 		if seg.Revised != "" && seg.Revised != seg.Text {
-			item["revised"] = seg.Revised
+			item["revised"] = canonicalizeAnalysisText(seg.Revised, aliasPairs)
 		}
 		out = append(out, item)
 	}
@@ -863,6 +931,9 @@ func (s *Server) handleListSegments(w http.ResponseWriter, r *http.Request) {
 // audiosJSON renders the audio attachments of an entry, each with its own
 // transcript when available.
 func (s *Server) audiosJSON(ctx context.Context, entryID string, audios []store.Attachment) []map[string]any {
+	// Grafias antigas de entidades mescladas aparecem com o nome atual tambem
+	// no resumo da transcricao de cada audio.
+	aliasPairs, _ := s.deps.Store.EntityAliasPairs(ctx)
 	// Uma nota com um unico audio: se a transcricao existe mas ficou solta (sem
 	// attachment), ela e a deste audio. Sem isso o painel mostrava a nota
 	// transcrita e nenhum texto.
@@ -882,7 +953,9 @@ func (s *Server) audiosJSON(ctx context.Context, entryID string, audios []store.
 			"created_at":       a.CreatedAt,
 		}
 		if t, err := s.deps.Store.TranscriptByAttachment(ctx, a.ID); err == nil {
-			item["transcript"] = transcriptSummaryJSON(t)
+			summary := transcriptSummaryJSON(t)
+			canonicalizeTranscriptSummary(summary, aliasPairs)
+			item["transcript"] = summary
 		} else {
 			if !errors.Is(err, sql.ErrNoRows) && s.deps.Logger != nil {
 				// Sem transcricao, o painel do audio fica vazio. Nao engolir o
@@ -891,7 +964,9 @@ func (s *Server) audiosJSON(ctx context.Context, entryID string, audios []store.
 					"attachment_id", a.ID, "erro", err)
 			}
 			if loose.ID != "" {
-				item["transcript"] = transcriptSummaryJSON(loose)
+				summary := transcriptSummaryJSON(loose)
+				canonicalizeTranscriptSummary(summary, aliasPairs)
+				item["transcript"] = summary
 			}
 		}
 		out = append(out, item)

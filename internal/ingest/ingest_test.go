@@ -82,7 +82,7 @@ func TestCompletePreservesEntryCreatedAtAndSource(t *testing.T) {
 	}
 
 	newTitle := "titulo editado"
-	if _, conflict, err := st.UpdateEntryFields(ctx, result.Entry.ID, &newTitle, nil, nil, nil, "", ""); err != nil {
+	if _, conflict, err := st.UpdateEntryFields(ctx, result.Entry.ID, &newTitle, nil, nil, nil, nil, "", ""); err != nil {
 		t.Fatalf("update: %v", err)
 	} else if len(conflict) > 0 {
 		t.Fatalf("update conflict: %v", conflict)
@@ -245,6 +245,7 @@ func TestCompleteAppliesClientMetadata(t *testing.T) {
 		Title:      "10/10/2026 18:05",
 		RecordedAt: &recorded,
 		ClientKey:  "ck_2",
+		Author:     "other",
 	})
 	if err != nil {
 		t.Fatalf("start: %v", err)
@@ -263,6 +264,9 @@ func TestCompleteAppliesClientMetadata(t *testing.T) {
 	if entry.RecordedAt == nil || !entry.RecordedAt.Equal(recorded) {
 		t.Fatalf("recorded_at = %v", entry.RecordedAt)
 	}
+	if entry.Author != "other" {
+		t.Fatalf("author = %q", entry.Author)
+	}
 	// Confirma a persistencia.
 	stored, err := st.GetEntry(ctx, entry.ID)
 	if err != nil {
@@ -273,6 +277,9 @@ func TestCompleteAppliesClientMetadata(t *testing.T) {
 	}
 	if stored.RecordedAt == nil || !stored.RecordedAt.Equal(recorded) {
 		t.Fatalf("recorded_at persistido = %v", stored.RecordedAt)
+	}
+	if stored.Author != "other" {
+		t.Fatalf("author persistido = %q", stored.Author)
 	}
 }
 

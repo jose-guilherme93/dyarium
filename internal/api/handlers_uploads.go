@@ -34,6 +34,8 @@ type createUploadRequest struct {
 	// LocalAnalysis means the client owns the analysis (device or off), so the
 	// server must not enqueue analyze for this entry.
 	LocalAnalysis bool `json:"local_analysis"`
+	// Author is the explicit role chosen on the device (self/other/mixed).
+	Author string `json:"author"`
 }
 
 func (s *Server) handleCreateUpload(w http.ResponseWriter, r *http.Request) {
@@ -70,6 +72,7 @@ func (s *Server) handleCreateUpload(w http.ResponseWriter, r *http.Request) {
 		EntryID:         req.EntryID,
 		LocalTranscribe: req.LocalTranscribe,
 		LocalAnalysis:   req.LocalAnalysis,
+		Author:          req.Author,
 	})
 	if err != nil {
 		s.writeIngestError(w, err)

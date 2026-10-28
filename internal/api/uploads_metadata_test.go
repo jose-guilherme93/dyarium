@@ -24,6 +24,16 @@ func TestCreateUploadMetadata(t *testing.T) {
 			want:    http.StatusBadRequest,
 		},
 		{
+			name:    "autor invalido",
+			payload: `{"filename":"a.wav","content_type":"audio/wav","size_bytes":1,"author":"bogus"}`,
+			want:    http.StatusBadRequest,
+		},
+		{
+			name:    "autor valido",
+			payload: `{"filename":"a.wav","content_type":"audio/wav","size_bytes":1,"author":"mixed"}`,
+			want:    http.StatusCreated,
+		},
+		{
 			name:    "share com data original",
 			payload: `{"filename":"a.wav","content_type":"audio/wav","size_bytes":1,"created_at":"2023-10-19T13:30:00Z","source":"share"}`,
 			want:    http.StatusCreated,

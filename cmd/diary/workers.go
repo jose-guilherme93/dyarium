@@ -52,11 +52,12 @@ func (s telegramSink) IngestAudio(ctx context.Context, source, filename, content
 // stored in the database, so the dashboard can configure paid APIs.
 func analyzeConfigFromSettings(ctx context.Context, st *store.Store, cfg config.Config) analyze.Config {
 	base := analyze.Config{
-		Enabled:  cfg.AnalyzeEnabled,
-		Provider: cfg.AnalyzeProvider,
-		BaseURL:  cfg.AnalyzeBaseURL,
-		APIKey:   cfg.AnalyzeAPIKey,
-		Model:    cfg.AnalyzeModel,
+		Enabled:      cfg.AnalyzeEnabled,
+		Provider:     cfg.AnalyzeProvider,
+		BaseURL:      cfg.AnalyzeBaseURL,
+		APIKey:       cfg.AnalyzeAPIKey,
+		Model:        cfg.AnalyzeModel,
+		AllNotesMine: true,
 	}
 	settings, err := st.ListSettings(ctx)
 	if err != nil {
@@ -203,6 +204,9 @@ func analyzeHandler(st *store.Store, cfg config.Config, bus *events.Bus, logger 
 		if input.Language != "" {
 			analysisCfg.Language = input.Language
 		}
+		// A nota manda; sem escolha explicita, o padrao do app decide (dono ou
+		// sem autor). O prompt e o unico consumidor do rotulo.
+		analysisCfg.Author = store.EffectiveAuthor(input.Author, analysisCfg.AllNotesMine)
 
 		client := analyze.New(analysisCfg)
 		metrics := analysisMetrics{
@@ -359,9 +363,12 @@ type analysisInputResult struct {
 	TextSections []analyze.Section
 	// StoreSegments is set only when the input is the transcript of a single
 	// audio. It is what lets the revision map every segment back to a line.
-	StoreSegments   []store.Segment
-	TranscriptID    string
-	Title           string
+	StoreSegments []store.Segment
+	TranscriptID  string
+	Title         string
+	// Author is the explicit role of the note (self/other/mixed/empty). The
+	// worker resolves it against the app default before building the prompt.
+	Author          string
 	Language        string
 	TextChars       int
 	TranscriptChars int
@@ -445,8 +452,10 @@ func analysisInput(ctx context.Context, st *store.Store, entryID string) (analys
 	// A taxa de gagueira e hesitacao sai do texto cru, nunca do revisado.
 	speech := review.Speak(audioText)
 	title := ""
+	author := ""
 	if entry, err := st.GetEntry(ctx, entryID); err == nil {
 		title = entry.Title
+		author = entry.Author
 	}
 	textSections, noteErr := noteSections(ctx, st, entryID)
 	linksText := entryLinksText(ctx, st, entryID)
@@ -484,7 +493,7 @@ func analysisInput(ctx context.Context, st *store.Store, entryID string) (analys
 		textChars += len([]rune(section.Text))
 	}
 	if len(textSections) == 0 && strings.TrimSpace(joinSegments(segments)) == "" {
-		partial := analysisInputResult{Images: images, Speech: speech, Title: title}
+		partial := analysisInputResult{Images: images, Speech: speech, Title: title, Author: author}
 		if transcriptErr != nil {
 			return partial, fmt.Errorf("worker: transcript: %w", transcriptErr)
 		}
@@ -499,6 +508,7 @@ func analysisInput(ctx context.Context, st *store.Store, entryID string) (analys
 		StoreSegments:   storeSegments,
 		TranscriptID:    transcriptID,
 		Title:           title,
+		Author:          author,
 		Language:        language,
 		TextChars:       textChars,
 		TranscriptChars: len([]rune(strings.TrimSpace(audioText))),

@@ -402,7 +402,17 @@ func (s *Store) SaveRichAnalysis(ctx context.Context, a Analysis, links []Entity
 	if _, err := tx.ExecContext(ctx, `DELETE FROM entry_entities WHERE entry_id = ?`, a.EntryID); err != nil {
 		return fmt.Errorf("store: clear entry entities: %w", err)
 	}
+	// O dono nao vira no de pessoa: "sou eu" e o centro do mapa. Grafias ja
+	// marcadas como o dono sao descartadas aqui para uma analise futura nao
+	// recriar a pessoa duplicada.
+	ownerKeys, err := ownerPersonKeys(ctx, tx)
+	if err != nil {
+		return err
+	}
 	for _, link := range links {
+		if link.Kind == EntityPerson && ownerKeys[strings.ToLower(strings.TrimSpace(link.Name))] {
+			continue
+		}
 		entityID, err := upsertEntity(ctx, tx, link.Kind, link.Name, a.CreatedAt)
 		if err != nil {
 			return err
@@ -419,17 +429,62 @@ func (s *Store) SaveRichAnalysis(ctx context.Context, a Analysis, links []Entity
 	return tx.Commit()
 }
 
+// ownerPersonKeys lists the owner display name and every "sou eu" alias,
+// normalized for a case-insensitive comparison.
+func ownerPersonKeys(ctx context.Context, tx *sql.Tx) (map[string]bool, error) {
+	owner, err := ownerDisplayName(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	keys := map[string]bool{strings.ToLower(owner): true}
+	rows, err := tx.QueryContext(ctx, `SELECT name FROM owner_aliases`)
+	if err != nil {
+		return nil, fmt.Errorf("store: owner person keys: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var alias string
+		if err := rows.Scan(&alias); err != nil {
+			return nil, fmt.Errorf("store: scan owner person key: %w", err)
+		}
+		keys[strings.ToLower(strings.TrimSpace(alias))] = true
+	}
+	return keys, rows.Err()
+}
+
+// upsertEntity resolves a name to the canonical entity of that kind. The lookup
+// is case-insensitive and follows renames through entity_aliases, so an analysis
+// that says "Mariana" after the user renamed her to "Marianna" lands on the same
+// entity instead of creating a duplicate.
 func upsertEntity(ctx context.Context, ex execer, kind, name string, now time.Time) (string, error) {
-	if _, err := ex.ExecContext(ctx,
-		`INSERT INTO entities (id, kind, name, created_at) VALUES (?, ?, ?, ?)
-		 ON CONFLICT (kind, name) DO UPDATE SET name = excluded.name`,
-		newID(), kind, name, ts(now)); err != nil {
-		return "", fmt.Errorf("store: upsert entity: %w", err)
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", ErrInvalidEntity
 	}
 	var id string
-	if err := ex.QueryRowContext(ctx,
-		`SELECT id FROM entities WHERE kind = ? AND name = ?`, kind, name).Scan(&id); err != nil {
+	err := ex.QueryRowContext(ctx,
+		`SELECT id FROM entities WHERE kind = ? AND lower(name) = lower(?) ORDER BY created_at LIMIT 1`,
+		kind, name).Scan(&id)
+	if err == nil {
+		return id, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
 		return "", fmt.Errorf("store: find entity: %w", err)
+	}
+	err = ex.QueryRowContext(ctx,
+		`SELECT entity_id FROM entity_aliases WHERE kind = ? AND lower(name) = lower(?) ORDER BY created_at LIMIT 1`,
+		kind, name).Scan(&id)
+	if err == nil {
+		return id, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("store: find entity alias: %w", err)
+	}
+	id = newID()
+	if _, err := ex.ExecContext(ctx,
+		`INSERT INTO entities (id, kind, name, created_at) VALUES (?, ?, ?, ?)`,
+		id, kind, name, ts(now)); err != nil {
+		return "", fmt.Errorf("store: create entity: %w", err)
 	}
 	return id, nil
 }

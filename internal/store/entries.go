@@ -24,13 +24,13 @@ func (s *Store) CreateUpload(ctx context.Context, u Upload) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO uploads (id, status, filename, content_type, size_bytes, sha256,
 			title, recorded_at, client_key, entry_id, result_attachment_id, local_transcribe,
-			local_analysis, entry_created_at, entry_source,
+			local_analysis, entry_created_at, entry_source, author,
 			received_bytes, storage_key, prefix, next_counter, created_at, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		u.ID, u.Status, u.Filename, u.ContentType, u.SizeBytes, nullString(u.SHA256),
 		nullString(u.Title), nullTS(u.RecordedAt), nullString(u.ClientKey), nullString(u.EntryID),
 		nullString(u.ResultAttachmentID), boolInt(u.LocalTranscribe), boolInt(u.LocalAnalysis),
-		nullTS(u.EntryCreatedAt), nullString(u.EntrySource),
+		nullTS(u.EntryCreatedAt), nullString(u.EntrySource), u.Author,
 		u.ReceivedBytes, u.StorageKey, u.Prefix, u.NextCounter, ts(u.CreatedAt), ts(u.ExpiresAt))
 	if err != nil {
 		return fmt.Errorf("store: create upload: %w", err)
@@ -85,12 +85,12 @@ func (s *Store) getUpload(ctx context.Context, where string, arg any) (Upload, e
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, status, filename, content_type, size_bytes, sha256,
 			title, recorded_at, client_key, entry_id, result_attachment_id, local_transcribe,
-			local_analysis, entry_created_at, entry_source,
+			local_analysis, entry_created_at, entry_source, author,
 			received_bytes, storage_key, prefix, next_counter, created_at, expires_at
 		FROM uploads `+where, arg).Scan(
 		&u.ID, &u.Status, &u.Filename, &u.ContentType, &u.SizeBytes, &sha,
 		&title, &recordedAt, &clientKey, &entryID, &resultAttachmentID, &localTranscribe,
-		&localAnalysis, &entryCreatedAt, &entrySource,
+		&localAnalysis, &entryCreatedAt, &entrySource, &u.Author,
 		&u.ReceivedBytes, &u.StorageKey, &u.Prefix, &u.NextCounter, &createdAt, &expiresAt)
 	if err != nil {
 		return Upload{}, err
@@ -151,11 +151,11 @@ func (s *Store) CreateEntry(ctx context.Context, e Entry) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO entries (id, title, status, source, parent_id, notebook_id, original_filename, content_type,
 			size_bytes, duration_seconds, sha256, recorded_at, created_at, updated_at, deleted_at,
-			title_updated_at, recorded_at_updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			title_updated_at, recorded_at_updated_at, author)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.ID, e.Title, e.Status, e.Source, nullString(e.ParentID), notebookID, e.OriginalFilename, e.ContentType,
 		e.SizeBytes, e.DurationSeconds, e.SHA256, nullTS(e.RecordedAt), ts(e.CreatedAt), ts(e.UpdatedAt),
-		nullTS(e.DeletedAt), stamp, stamp)
+		nullTS(e.DeletedAt), stamp, stamp, e.Author)
 	if err != nil {
 		return fmt.Errorf("store: create entry: %w", err)
 	}
@@ -172,14 +172,14 @@ func (s *Store) GetEntry(ctx context.Context, id string) (Entry, error) {
 		SELECT id, COALESCE(title,''), status, source, COALESCE(parent_id,''), COALESCE(notebook_id,''),
 			COALESCE(original_filename,''), COALESCE(content_type,''), size_bytes, duration_seconds, COALESCE(sha256,''),
 			recorded_at, created_at, updated_at, deleted_at, archived,
-			title_updated_at, recorded_at_updated_at,
+			title_updated_at, recorded_at_updated_at, COALESCE(author,''),
 			COALESCE((SELECT body_updated_at FROM notes n WHERE n.entry_id = entries.id ORDER BY n.created_at DESC LIMIT 1), ''),
 			COALESCE((SELECT id FROM attachments a WHERE a.entry_id = entries.id AND a.kind = ?
 				ORDER BY a.created_at ASC LIMIT 1), '')
 		FROM entries WHERE id = ? AND deleted_at IS NULL`, AttachmentOriginal, id).Scan(
 		&e.ID, &e.Title, &e.Status, &e.Source, &e.ParentID, &e.NotebookID, &e.OriginalFilename, &e.ContentType,
 		&e.SizeBytes, &e.DurationSeconds, &e.SHA256, &recordedAt, &createdAt, &updatedAt, &deletedAt, &archived,
-		&titleVersion, &recordedVersion, &bodyVersion, &e.PrimaryAttachmentID)
+		&titleVersion, &recordedVersion, &e.Author, &bodyVersion, &e.PrimaryAttachmentID)
 	if err != nil {
 		return Entry{}, err
 	}
@@ -280,7 +280,7 @@ func (s *Store) ListEntriesFilteredNotebook(ctx context.Context, limit, offset i
 	query := `
 		SELECT e.id, COALESCE(e.title,''), e.status, e.source, COALESCE(e.parent_id,''), COALESCE(e.notebook_id,''),
 			COALESCE(e.original_filename,''), COALESCE(e.content_type,''), e.size_bytes, e.duration_seconds, COALESCE(e.sha256,''),
-			e.recorded_at, e.created_at, e.updated_at, e.archived,
+			e.recorded_at, e.created_at, e.updated_at, e.archived, COALESCE(e.author,''),
 			e.title_updated_at, e.recorded_at_updated_at,
 			COALESCE((SELECT body_updated_at FROM notes n WHERE n.entry_id = e.id ORDER BY n.created_at DESC LIMIT 1), ''),
 			COALESCE((SELECT id FROM attachments a WHERE a.entry_id = e.id AND a.kind = ?
@@ -330,7 +330,7 @@ func (s *Store) ListEntriesFilteredNotebook(ctx context.Context, limit, offset i
 		var createdAt, updatedAt string
 		if err := rows.Scan(&e.ID, &e.Title, &e.Status, &e.Source, &e.ParentID, &e.NotebookID, &e.OriginalFilename,
 			&e.ContentType, &e.SizeBytes, &e.DurationSeconds, &e.SHA256, &recordedAt, &createdAt, &updatedAt,
-			&archived, &titleVersion, &recordedVersion, &bodyVersion, &e.PrimaryAttachmentID,
+			&archived, &e.Author, &titleVersion, &recordedVersion, &bodyVersion, &e.PrimaryAttachmentID,
 			&e.Preview, &e.SpokenPreview); err != nil {
 			return nil, fmt.Errorf("store: scan entry: %w", err)
 		}

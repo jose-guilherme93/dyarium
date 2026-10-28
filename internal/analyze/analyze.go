@@ -40,6 +40,15 @@ type Config struct {
 	// Themes is the preferred theme list sent to the model. Empty means
 	// DefaultThemes.
 	Themes []string
+	// Author is the effective author role of the note being analyzed:
+	// self, other, mixed or empty (unknown). The prompt uses it to interpret
+	// first person and the relation of the people mentioned.
+	Author string
+	// OwnerName is the name the diarist chose, used only to make the prompt
+	// concrete. Empty is fine.
+	OwnerName string
+	// AllNotesMine is the app default used when a note has no explicit author.
+	AllNotesMine bool
 }
 
 // languageName maps a language code to a pt-BR name used in the prompt.
@@ -701,11 +710,39 @@ func (c *Client) systemPrompt() string {
 		themes = DefaultThemes
 	}
 	prompt := strings.Replace(systemPromptTemplate, "{themes}", strings.Join(themes, ", "), 1)
+	prompt = strings.Replace(prompt, "{author}", c.authorLine(), 1)
 	return strings.Replace(prompt, "{language}", languageName(c.cfg.Language), 1)
+}
+
+// authorLine is the only place the model learns who recorded the note. When the
+// role is empty it says so instead of guessing: a private diary can hold a
+// quoted speech or an imported audio that is not the diarist's.
+func (c *Client) authorLine() string {
+	name := strings.TrimSpace(c.cfg.OwnerName)
+	switch c.cfg.Author {
+	case "self":
+		if name != "" {
+			return "Quem gravou este audio foi o proprio autor do diario (" + name + "); a primeira pessoa no texto e ele."
+		}
+		return "Quem gravou este audio foi o proprio autor do diario; a primeira pessoa no texto e ele."
+	case "other":
+		if name != "" {
+			return "Quem gravou este audio foi outra pessoa, nao o autor do diario (" + name + "); nao trate a primeira pessoa do texto como o autor."
+		}
+		return "Quem gravou este audio foi outra pessoa, nao o autor do diario; nao trate a primeira pessoa do texto como o autor."
+	case "mixed":
+		if name != "" {
+			return "Este audio tem o autor do diario (" + name + ") e outras pessoas; so atribua a primeira pessoa ao autor quando o texto deixar claro."
+		}
+		return "Este audio tem o autor do diario e outras pessoas; so atribua a primeira pessoa ao autor quando o texto deixar claro."
+	default:
+		return "Nao se sabe quem gravou este audio; nao assuma que a primeira pessoa do texto e o autor do diario."
+	}
 }
 
 const systemPromptTemplate = `Voce analisa uma nota de diario pessoal: o texto que a pessoa escreveu e/ou a
 transcricao do audio. Leia o material inteiro antes de responder; nao resuma so o comeco.
+{author}
 Responda SOMENTE com um objeto JSON valido, sem texto antes ou depois e sem markdown.
 Use exatamente este formato:
 {"comprehension": <0 a 100>,
@@ -732,12 +769,13 @@ Texto curto: cada campo textual e uma linha, sem paragrafo.`
 
 // sectionSystemPrompt scopes the analysis to one part of the note. Each section
 // gets its own reading, so a long note is not one label for everything.
-func sectionSystemPrompt(themes []string, language, heading string) string {
+func sectionSystemPrompt(themes []string, language, heading, author string) string {
 	if len(themes) == 0 {
 		themes = DefaultThemes
 	}
 	prompt := `Voce analisa UMA secao de uma nota de diario pessoal. Leia o trecho inteiro; nao pare no comeco.
 A secao se chama "` + heading + `" (vazia significa o texto antes do primeiro titulo).
+` + author + `
 Responda SOMENTE com um objeto JSON valido, sem markdown, no formato:
 {"comprehension": <0 a 100>,
  "sentiment": {"score": <-1 a 1>, "label": "positivo|neutro|negativo"},
@@ -793,7 +831,7 @@ func (c *Client) AnalyzeSection(ctx context.Context, title string, section Secti
 	if len(themes) == 0 {
 		themes = DefaultThemes
 	}
-	system := sectionSystemPrompt(themes, languageName(c.cfg.Language), section.Heading)
+	system := sectionSystemPrompt(themes, languageName(c.cfg.Language), section.Heading, c.authorLine())
 	user := text
 	if t := strings.TrimSpace(title); t != "" {
 		user = "Titulo da nota: " + t + "\n\n" + text

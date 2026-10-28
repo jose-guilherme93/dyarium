@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"strings"
 	"time"
 )
 
@@ -25,6 +26,38 @@ const (
 	AttachmentOriginal   = "original"
 	AttachmentDerived16k = "derived_16k"
 )
+
+// Entry author roles. An empty Author means "follow the app default": the
+// owner when AllNotesAreMine is on, no author when it is off. A note's explicit
+// role always wins over the default.
+const (
+	AuthorSelf  = "self"
+	AuthorOther = "other"
+	AuthorMixed = "mixed"
+)
+
+// ValidAuthor reports whether value is one of the roles a note may store.
+// Empty is valid and means "follow the default".
+func ValidAuthor(value string) bool {
+	switch value {
+	case "", AuthorSelf, AuthorOther, AuthorMixed:
+		return true
+	default:
+		return false
+	}
+}
+
+// EffectiveAuthor resolves the author an analysis reads. The explicit role of
+// the note wins; without one, the app default decides.
+func EffectiveAuthor(explicit string, allNotesMine bool) string {
+	if explicit = strings.TrimSpace(explicit); explicit != "" {
+		return explicit
+	}
+	if allNotesMine {
+		return AuthorSelf
+	}
+	return ""
+}
 
 // Upload is an in-progress resumable upload.
 type Upload struct {
@@ -53,7 +86,9 @@ type Upload struct {
 	// create. It is immutable once the entry exists; nil means "use upload time".
 	EntryCreatedAt *time.Time
 	// EntrySource is the origin of the note (e.g. "share" for imported audio).
-	EntrySource   string
+	EntrySource string
+	// Author is the author role chosen on the device before the upload.
+	Author        string
 	ReceivedBytes int64
 	StorageKey    string
 	Prefix        []byte
@@ -83,6 +118,9 @@ type Entry struct {
 	DeletedAt        *time.Time
 	// Archived: a nota saiu da lista de trabalho, mas nao foi apagada.
 	Archived bool
+	// Author is the explicit role chosen for the note: self, other, mixed or
+	// empty ("follow the app default").
+	Author string
 	// PrimaryAttachmentID is the first original audio of the entry. It lets the
 	// list response point the app at the audio without fetching every stack.
 	PrimaryAttachmentID string
@@ -304,10 +342,22 @@ type Analysis struct {
 
 // Entity kinds.
 const (
-	EntityPerson = "person"
-	EntityPlace  = "place"
-	EntityTheme  = "theme"
+	EntityPerson   = "person"
+	EntityPlace    = "place"
+	EntityTheme    = "theme"
+	EntityDecision = "decision"
 )
+
+// ValidEntityKind reports whether kind is an entity the map and the entity
+// endpoints understand.
+func ValidEntityKind(kind string) bool {
+	switch kind {
+	case EntityPerson, EntityPlace, EntityTheme, EntityDecision:
+		return true
+	default:
+		return false
+	}
+}
 
 // Entity is a normalized person, place or theme extracted from analyses.
 type Entity struct {
@@ -328,8 +378,10 @@ type EntityLink struct {
 
 // EntitySummary aggregates one entity across entries.
 type EntitySummary struct {
+	ID        string
 	Kind      string
 	Name      string
+	Icon      string
 	Entries   int
 	Mentions  int
 	Sentiment float64

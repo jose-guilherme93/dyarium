@@ -29,5 +29,14 @@ func ConfigFromSettings(base Config, settings map[string]string) Config {
 	if v, ok := settings["analysis_themes"]; ok && strings.TrimSpace(v) != "" {
 		result.Themes = ParseThemes(v)
 	}
+	if v, ok := settings["owner_name"]; ok {
+		result.OwnerName = strings.TrimSpace(v)
+	}
+	if v, ok := settings["all_notes_mine"]; ok {
+		result.AllNotesMine = v == "true"
+	} else {
+		// Ausente e o padrao de uma instancia nova: todas as notas sao do dono.
+		result.AllNotesMine = true
+	}
 	return result
 }
