@@ -66,6 +66,10 @@ export interface NoteBodyProps {
    * `attachment:`). So ele tem transcricao completa e recebe o progresso.
    */
   ownAudioRefs?: string[];
+  /** Transcricao da propria nota: fallback quando a referencia do no nao casa. */
+  ownTranscript?: string;
+  /** Segmentos da propria nota: mesmo fallback da transcricao. */
+  ownSegments?: TranscriptSegment[];
   /** Transcricao pedida e ainda sem andamento (ex.: feita no servidor). */
   transcribingWait?: boolean;
   /** Progresso (0..100) da transcricao local da nota, enquanto ela roda. */

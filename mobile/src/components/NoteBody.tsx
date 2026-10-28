@@ -135,6 +135,8 @@ const NativeNoteBody = memo(
       audioPlayer,
       audioStartMs,
       ownAudioRefs = EMPTY_REFS,
+      ownTranscript,
+      ownSegments,
       transcribingWait,
       transcribingPercent,
       canTranscribe,
@@ -721,12 +723,18 @@ const NativeNoteBody = memo(
       }
 
       const own = ownAudioRefs.includes(node.ref);
+      // O no pode ter uma referencia que nao casa com o mapa (audio antigo,
+      // `local:` virou `attachment:` em outro aparelho). Para o audio da
+      // propria nota, a transcricao guardada nela e a mesma: usa como fallback
+      // em vez de deixar a previa sumir.
+      const transcript = audioTranscripts[node.ref] ?? (own ? ownTranscript : undefined);
+      const segments = audioSegments[node.ref] ?? (own ? ownSegments : undefined);
       return (
         <NoteAudioCard
           key={node.id}
           node={node}
-          transcript={audioTranscripts[node.ref]}
-          segments={audioSegments[node.ref]}
+          transcript={transcript}
+          segments={segments}
           active={activeAudioRef === node.ref}
           player={activeAudioRef === node.ref ? audioPlayer : null}
           startMs={activeAudioRef === node.ref ? audioStartMs : null}

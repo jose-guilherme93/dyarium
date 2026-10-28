@@ -62,6 +62,20 @@ describe('NoteAudioCard', () => {
     expect(screen.getByLabelText('Tocar')).toBeTruthy();
   });
 
+  it('tocando, mantem a previa em texto quando nao ha segmentos', () => {
+    render(
+      <NoteAudioCard
+        node={node}
+        active
+        player={player as never}
+        transcript="texto transcrito"
+        onOpenTranscript={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId('audio-transcript').props.children).toBe('texto transcrito');
+  });
+
   it('tocar numa linha da transcricao busca aquele trecho e toca', async () => {
     render(<NoteAudioCard node={node} active player={player as never} segments={segments} />);
 

@@ -72,6 +72,24 @@ describe('AudioTransport', () => {
     expect(player.play).toHaveBeenCalled();
   });
 
+  it('sem segmentos, mostra a previa em texto da transcricao', () => {
+    const onOpenTranscript = jest.fn();
+    render(
+      <AudioTransport
+        player={player as never}
+        seed="audio-1"
+        durationMs={120_000}
+        transcript="texto transcrito"
+        onOpenTranscript={onOpenTranscript}
+      />,
+    );
+
+    const preview = screen.getByTestId('audio-transcript');
+    expect(preview.props.children).toBe('texto transcrito');
+    fireEvent.press(screen.getByLabelText('Abrir transcrição completa'));
+    expect(onOpenTranscript).toHaveBeenCalledTimes(1);
+  });
+
   it('toque numa linha da transcricao busca o trecho e toca', async () => {
     render(
       <AudioTransport

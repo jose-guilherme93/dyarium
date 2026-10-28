@@ -2022,6 +2022,7 @@ export default function NoteScreen() {
                         durationMs={Math.round(audio.duration_seconds * 1000)}
                         startMs={activeAudioStartMs}
                         segments={stackSegments}
+                        transcript={audio.transcript?.text}
                       />
                     ) : (
                       <>
@@ -2075,6 +2076,8 @@ export default function NoteScreen() {
             audioPlayer={player}
             audioStartMs={activeAudioStartMs}
             ownAudioRefs={ownAudioRefs}
+            ownTranscript={note.transcript}
+            ownSegments={note.transcriptSegments}
             transcribingWait={!transcribing && serverTranscribing}
             transcribingPercent={transcribing ? transcriptionPercent : undefined}
             canTranscribe={Boolean(hasAudio) && !hasFinalTranscript(note)}

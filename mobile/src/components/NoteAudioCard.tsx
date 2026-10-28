@@ -124,6 +124,7 @@ export function NoteAudioCard({
           durationMs={node.durationMs}
           startMs={startMs}
           segments={segments}
+          transcript={transcript}
           onOpenTranscript={onOpenTranscript}
           onEditTranscript={onEditTranscript}
         />

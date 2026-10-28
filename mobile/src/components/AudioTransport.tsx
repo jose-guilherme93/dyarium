@@ -42,6 +42,8 @@ interface AudioTransportProps {
   /** Posicao inicial (quando o toque veio de um trecho da transcricao). */
   startMs?: number | null;
   segments?: TranscriptSegment[];
+  /** Texto da transcricao quando ainda nao ha segmentos para a previa. */
+  transcript?: string;
   onOpenTranscript?: () => void;
   onEditTranscript?: (startMs: number) => void;
 }
@@ -52,6 +54,7 @@ export function AudioTransport({
   durationMs,
   startMs,
   segments,
+  transcript,
   onOpenTranscript,
   onEditTranscript,
 }: AudioTransportProps) {
@@ -128,6 +131,23 @@ export function AudioTransport({
           onSeek={(start) => seek(start / 1000, true)}
           onEdit={onEditTranscript}
         />
+      ) : transcript ? (
+        // Sem segmentos, a previa em texto continua abaixo do transporte. Ela
+        // nunca some so porque o audio comecou a tocar.
+        onOpenTranscript ? (
+          <Press
+            onPress={onOpenTranscript}
+            accessibilityLabel="Abrir transcrição completa"
+          >
+            <Text style={styles.transcript} numberOfLines={3} testID="audio-transcript">
+              {transcript}
+            </Text>
+          </Press>
+        ) : (
+          <Text style={styles.transcript} numberOfLines={3} testID="audio-transcript">
+            {transcript}
+          </Text>
+        )
       ) : null}
     </View>
   );
@@ -137,4 +157,5 @@ const baseStyles = defineStyles({
   transport: { gap: spacing.xs },
   row: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   time: { color: baseColors.text, fontSize: 13, fontVariant: ['tabular-nums'] },
+  transcript: { color: baseColors.textSecondary, fontSize: 13, lineHeight: 19 },
 });

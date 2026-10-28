@@ -479,6 +479,20 @@ describe('corpo da nota em nos', () => {
     expect(screen.getByText('Transcrevendo 83%')).toBeTruthy();
   });
 
+  it('usa a transcricao da nota quando a referencia do audio nao esta no mapa', () => {
+    render(
+      <NoteBody
+        value={'A\n!audio[local:a.aac]{d=3}'}
+        onChangeMarkdown={jest.fn()}
+        ownAudioRefs={['local:a.aac']}
+        ownTranscript="texto transcrito"
+        typography={typography}
+      />,
+    );
+
+    expect(screen.getByTestId('audio-transcript').props.children).toBe('texto transcrito');
+  });
+
   it('oferece transcrever o audio quando ha modelo e falta transcricao', () => {
     const onTranscribe = jest.fn();
     render(
