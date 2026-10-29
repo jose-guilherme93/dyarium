@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.5.0](https://github.com/jose-guilherme93/dyarium/compare/v0.4.0...v0.5.0) (2026-10-29)
+
+
+### Features
+
+* **analise:** leitura por bloco e contrato compartilhado ([37e6372](https://github.com/jose-guilherme93/dyarium/commit/37e637217970c6b5f9166410aecf1e7c662e5b36))
+* **api:** analise local, worker do navegador e entidades ([6d554b5](https://github.com/jose-guilherme93/dyarium/commit/6d554b5ccda77b758382247e5b492e06716b5656))
+* **mobile:** analise local e novo layout da nota ([71a181a](https://github.com/jose-guilherme93/dyarium/commit/71a181a9aad970cb58d8be36435befd6fc5f9147))
+* **web:** processamento local, nota fixa e carregamento ([8173983](https://github.com/jose-guilherme93/dyarium/commit/8173983c144995898a38d6998f3476d3cfc57f38))
+
+
+### Bug Fixes
+
+* **mobile:** mantem a numeracao de listas separadas por linha em branco ([ceeed81](https://github.com/jose-guilherme93/dyarium/commit/ceeed81fcf9740f0ad7b7d5df04ceb9e4ddb7cbc))
+* **web:** le o nucleo mobile sem o tsconfig do Expo ([7c0883a](https://github.com/jose-guilherme93/dyarium/commit/7c0883a7c4d52f7fe58bcdaf417f4e05e4dfc1c5))
+
 ## [0.4.0](https://github.com/jose-guilherme93/dyarium/compare/v0.3.1...v0.4.0) (2026-10-28)
 
 
