@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/jose-guilherme93/dyarium/compare/v0.5.0...v0.5.1) (2026-10-29)
+
+
+### Bug Fixes
+
+* **deploy:** copia a configuracao do pnpm no build web ([64f30ed](https://github.com/jose-guilherme93/dyarium/commit/64f30edb6bcefa3aa97c6c2a22f729c96853c839))
+
 ## [0.5.0](https://github.com/jose-guilherme93/dyarium/compare/v0.4.0...v0.5.0) (2026-10-29)
 
 
