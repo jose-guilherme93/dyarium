@@ -26,6 +26,8 @@ import type { Recording } from '@/core/types';
 
 import { deleteRecordingRow, listRecordings, upsertRecording } from './db';
 import { refreshAuthorSettings } from './authorSettings';
+import { syncServerAnalyses } from './analysis';
+import { syncServerTranscripts } from './transcripts';
 import { deleteSessionFiles } from './files';
 import { pullNotebooks } from './notebookSync';
 import { loadServerConfig } from './secure';
@@ -168,6 +170,12 @@ async function pullOnce(): Promise<number> {
     await upsertRecording(entryToRecording(entry, note));
     changed += 1;
   }
+
+  // Transcricoes e analises novas do servidor: `transcript_at` e `analysis_at`
+  // sao os sinais. Guarda no banco e avisa a nota aberta; nao e o caminho de
+  // exibicao.
+  await syncServerTranscripts(entries, local).catch(() => undefined);
+  await syncServerAnalyses(entries).catch(() => undefined);
 
   return changed;
 }

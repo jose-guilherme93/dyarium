@@ -162,20 +162,31 @@ Superficie Android em Expo (development build). O nucleo puro fica em `mobile/sr
   paginas recentes, os cadernos e o atalho para criar ou gerenciar. A busca so
   aparece ao tocar na lupa, e cada nota e uma linha de largura total com divisor,
   sem cartao e sem margem externa (estilo OneNote).
-- Menu da nota (tres pontinhos) como folha que sobe do rodape e para em metade
-  da tela: compartilhar, analise, tipografia e propriedades rolam dentro dela.
-  Puxar para cima em qualquer ponto da folha recolhida expande para quase a tela
-  inteira; depois de expandida, a lista rola, puxar para baixo no topo recolhe e
-  o cabecalho recolhe de qualquer posicao. Nao ha botao de fechar no canto: o
-  fundo fecha e nao pisca feedback, que fica reservado a botoes e acoes. O
-  teclado fecha ao abrir, para a folha nao nascer atras dele.
+- Duas telas separadas na nota, as duas inteiras (nao ha mais folha que sobe do
+  rodape):
+  - **Tres pontinhos**: configuracoes da nota (compartilhar, fonte, tamanho,
+    peso, autor e propriedades), com cabecalho e rolagem proprios. As
+    propriedades sao calculadas ao abrir.
+  - **Botao de IA (sparkles)**: tela da analise. Tudo o que e IA vive ali:
+    conteudo (tom, emocoes, temas, pessoas, lugares, eventos, decisoes,
+    tarefas, ideias, epifanias, momentos e cobertura), botoes "Analisar nota" e
+    "Analisar no servidor", andamento, modelo atual e "Trocar modelo". O
+    processamento (transcrever/analisar/servidor) abre a partir de uma linha
+    dentro da mesma tela.
+  - O centro de atividade leva direto para a tela de analise da nota concluida.
 - Centro de atividade na home, ao lado da nuvem: transcricao, analise local,
   backup/restauracao e download de modelo publicam inicio, progresso e fim num
   store em memoria. A folha mostra a fase real (trecho transcrito, tokens
   gerados, notas copiadas) e guarda as concluidas recentes ate serem limpas. Uma
   falha ou interrupcao oferece uma acao de recuperacao: tentar de novo
-  (transcricao, backup, restauracao e download) ou abrir a nota (analise). O
-  estado da fila de envio continua no icone da nuvem.
+  (transcricao, backup, restauracao e download) ou abrir a nota (analise). Uma
+  tarefa **concluida** com destino vira um atalho: transcricao abre a tela da
+  transcricao, analise abre a nota ja com a ficha aberta, download abre os
+  modelos, backup abre a tela de backup. O estado da fila de envio continua no
+  icone da nuvem.
+- Trabalho pesado na nota aparece no proprio card: icone dinamico e porcentagem
+  no canto (transcricao, revisao ou analise), lido do centro de atividade. Uma
+  analise que espera a vez mostra "Na fila" na ficha e o icone no card.
 - Abertura sob demanda: a home pinta o cabecalho e um esqueleto da lista antes
   de o SQLite responder; a nota pinta cabecalho, titulo e um preview textual
   antes de montar o editor nativo, e so depois carrega segmentos, anexos, pilha

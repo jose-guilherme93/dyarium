@@ -216,6 +216,9 @@ jest.mock('@/services/attachments', () => ({
 
 jest.mock('@/services/analysis', () => ({
   fetchNoteAnalysis: jest.fn(async () => null),
+  hasServerConfig: jest.fn(async () => false),
+  pushNoteAnalysis: jest.fn(async () => true),
+  requestServerAnalysis: jest.fn(async () => ({ status: 'analyzing' })),
 }));
 
 jest.mock('@/services/analysisModels', () => ({
@@ -257,7 +260,8 @@ jest.mock('@/services/imageRatios', () => ({
 }));
 
 jest.mock('@/services/localAnalysis', () => ({
-  analyzeRecording: jest.fn(),
+  analyzeNote: jest.fn(),
+  analysisThreads: () => 2,
   localAnalysisAvailable: () => false,
   stopAnalysis: jest.fn(),
 }));

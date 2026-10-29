@@ -8,6 +8,7 @@
  */
 
 import { Directory, File, Paths } from 'expo-file-system';
+import { Platform } from 'react-native';
 
 import {
   ANALYSIS_MODELS,
@@ -19,6 +20,15 @@ import { cancelActivity, failActivity, finishActivity, startActivity, updateActi
 
 const DIR_NAME = 'analysis-models';
 
+/**
+ * O `expo-file-system` nao existe no navegador: `new Directory(Paths.document)`
+ * estoura e derruba a tela que pergunta por modelos. No web nao existe modelo
+ * no aparelho, entao a resposta e sempre "nenhum".
+ */
+function localModels(): boolean {
+  return Platform.OS !== 'web';
+}
+
 export function analysisModelsDirectory(): Directory {
   const dir = new Directory(Paths.document, DIR_NAME);
   if (!dir.exists) dir.create({ intermediates: true, idempotent: true });
@@ -28,7 +38,7 @@ export function analysisModelsDirectory(): Directory {
 /** Caminho `file://` do arquivo de um modelo (exista ou nao). */
 export function analysisModelFilePath(id: string): string | null {
   const model = analysisModelById(id);
-  if (!model) return null;
+  if (!model || !localModels()) return null;
   return new File(analysisModelsDirectory(), model.fileName).uri;
 }
 
@@ -39,6 +49,7 @@ export interface InstalledAnalysisModel {
 
 /** Modelos de analise ja baixados no aparelho. */
 export function installedAnalysisModels(): InstalledAnalysisModel[] {
+  if (!localModels()) return [];
   const entries = analysisModelsDirectory().list();
   const out: InstalledAnalysisModel[] = [];
   for (const info of ANALYSIS_MODELS) {
@@ -102,6 +113,7 @@ export async function downloadAnalysisModel(
 ): Promise<string> {
   const info = analysisModelById(id);
   if (!info) throw new Error('modelo desconhecido');
+  if (!localModels()) throw new Error('modelo local nao existe no navegador');
 
   const destination = new File(analysisModelsDirectory(), info.fileName);
   if (destination.exists && destination.size === info.sizeBytes) return destination.uri;
@@ -156,7 +168,7 @@ export async function downloadAnalysisModel(
 
 export function deleteAnalysisModel(id: string): void {
   const info: AnalysisModelInfo | undefined = analysisModelById(id);
-  if (!info) return;
+  if (!info || !localModels()) return;
   const file = new File(analysisModelsDirectory(), info.fileName);
   if (file.exists) file.delete();
 }

@@ -1,6 +1,6 @@
 import type { Recording } from '@/core/types';
 
-import { fetchTranscriptsOnce, refreshServerTranscript } from '../transcripts';
+import { fetchTranscriptsOnce, refreshServerTranscript, syncServerTranscripts } from '../transcripts';
 
 const mockListRecordings = jest.fn<Promise<Recording[]>, []>();
 const mockGetRecording = jest.fn<Promise<Recording | null>, [string]>();
@@ -9,11 +9,15 @@ const mockGetTranscript = jest.fn();
 const mockLoadServerConfig = jest.fn();
 const mockEmitRecording = jest.fn();
 const mockNotify = jest.fn();
+const mockGetTranscriptSyncAt = jest.fn<Promise<string | null>, [string]>();
+const mockSetTranscriptSyncAt = jest.fn<Promise<void>, [string, string]>();
 
 jest.mock('../db', () => ({
   listRecordings: () => mockListRecordings(),
   getRecording: (...args: [string]) => mockGetRecording(...args),
   upsertRecording: (...args: [Recording]) => mockUpsertRecording(...args),
+  getTranscriptSyncAt: (...args: [string]) => mockGetTranscriptSyncAt(...args),
+  setTranscriptSyncAt: (...args: [string, string]) => mockSetTranscriptSyncAt(...args),
 }));
 
 jest.mock('../secure', () => ({
@@ -207,5 +211,67 @@ describe('refreshServerTranscript', () => {
   it('nao busca transcricao de nota que ainda nao esta pronta', async () => {
     expect(await refreshServerTranscript(recording)).toBeNull();
     expect(mockGetTranscript).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('syncServerTranscripts', () => {
+  const serverEntry = {
+    id: 'e1',
+    title: 'do servidor',
+    status: 'ready',
+    source: 'audio',
+    original_filename: 'a.m4a',
+    content_type: 'audio/mp4',
+    size_bytes: 1,
+    duration_seconds: 1,
+    recorded_at: '2026-10-20T10:00:00.000Z',
+    created_at: '2026-10-20T10:00:00.000Z',
+    updated_at: '2026-10-20T10:00:00.000Z',
+    transcript_at: '2026-10-20T11:00:00.000Z',
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockLoadServerConfig.mockResolvedValue({ baseUrl: 'https://dyarium.test', token: 't' });
+    mockGetTranscriptSyncAt.mockResolvedValue(null);
+    mockSetTranscriptSyncAt.mockResolvedValue(undefined);
+    mockUpsertRecording.mockResolvedValue(undefined);
+  });
+
+  it('adota a transcricao que ainda nao existe no aparelho e marca o sinal', async () => {
+    mockGetTranscript.mockResolvedValue({
+      model: 'whisper',
+      language: 'pt',
+      text: 'texto do servidor',
+      segments: [{ start_ms: 0, end_ms: 1000, text: 'texto do servidor' }],
+    });
+
+    await expect(syncServerTranscripts([serverEntry], [recording])).resolves.toBe(1);
+    expect(mockUpsertRecording).toHaveBeenCalledWith(
+      expect.objectContaining({ transcriptOrigin: 'server', hasTranscript: true }),
+    );
+    expect(mockSetTranscriptSyncAt).toHaveBeenCalledWith('e1', serverEntry.transcript_at);
+  });
+
+  it('nao busca de novo quando o sinal e o mesmo', async () => {
+    mockGetTranscriptSyncAt.mockResolvedValue(serverEntry.transcript_at);
+
+    await expect(syncServerTranscripts([serverEntry], [recording])).resolves.toBe(0);
+    expect(mockGetTranscript).not.toHaveBeenCalled();
+  });
+
+  it('nao sobrescreve transcricao feita no aparelho', async () => {
+    await syncServerTranscripts(
+      [serverEntry],
+      [{ ...recording, transcript: 'minha', transcriptOrigin: 'local', hasTranscript: true }],
+    );
+    expect(mockGetTranscript).not.toHaveBeenCalled();
+  });
+
+  it('falha de rede mantem o sinal para o proximo pull', async () => {
+    mockGetTranscript.mockRejectedValue(new Error('network'));
+    await syncServerTranscripts([serverEntry], [recording]);
+    expect(mockSetTranscriptSyncAt).not.toHaveBeenCalled();
   });
 });

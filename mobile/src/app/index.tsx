@@ -14,6 +14,8 @@ import { Press } from '@/components/Press';
 import { Swipeable } from 'react-native-gesture-handler';
 
 import { ActivityCenter } from '@/components/ActivityCenter';
+import { activityDestination } from '@/services/activity';
+import { useActivities } from '@/state/useActivities';
 import { HomeHeader } from '@/components/HomeHeader';
 import { NoteActionsSheet } from '@/components/NoteActionsSheet';
 import type { NoteProperty } from '@/components/NoteMenu';
@@ -92,6 +94,7 @@ interface NoteRowProps {
   onRemove(id: string): void;
   onArchive(id: string): void;
   onUnarchive(id: string): void;
+  busy?: { kind: 'transcription' | 'analysis'; percent?: number; queued?: boolean } | null;
 }
 
 // Linha memoizada: a home re-renderiza quando a fila muda; sem isto, todas as
@@ -105,6 +108,7 @@ const NoteRow = memo(function NoteRow({
   onRemove,
   onArchive,
   onUnarchive,
+  busy = null,
 }: NoteRowProps) {
   const { colors } = useTheme();
 
@@ -121,6 +125,7 @@ const NoteRow = memo(function NoteRow({
         recording={item}
         dense
         notebookLabel={notebookLabel}
+        busy={busy}
         onOpen={onOpen}
         onLongPress={onLongPress}
       />
@@ -153,6 +158,31 @@ export default function NotebookScreen() {
   const { swipeAction, lastNotebookId, setLastNotebookId, noteOrder, setNoteOrder } =
     useSettings();
   useRenderCount('NotebookScreen');
+  // Trabalho pesado em andamento por nota: o card mostra icone e porcentagem.
+  const activities = useActivities();
+  const busyByNote = useMemo(() => {
+    const map = new Map<
+      string,
+      { kind: 'transcription' | 'analysis'; percent?: number; queued?: boolean }
+    >();
+    for (const activity of activities) {
+      if (activity.status !== 'running') continue;
+      if (activity.kind !== 'transcription' && activity.kind !== 'analysis') continue;
+      const destination = activityDestination(activity);
+      if (!destination?.noteId) continue;
+      const current = map.get(destination.noteId);
+      const next = {
+        kind: activity.kind,
+        percent: activity.progress,
+        queued: activity.progress === undefined,
+      };
+      // O trabalho mais recente da nota aparece; os demais seguem no centro.
+      if (!current || (next.percent ?? 0) >= (current.percent ?? 0)) {
+        map.set(destination.noteId, next);
+      }
+    }
+    return map;
+  }, [activities]);
 
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
@@ -368,6 +398,7 @@ export default function NotebookScreen() {
         onRemove={removeNote}
         onArchive={archive}
         onUnarchive={unarchive}
+        busy={busyByNote.get(item.id) ?? null}
       />
     ),
     [
@@ -376,6 +407,7 @@ export default function NotebookScreen() {
       notebookNames,
       openNote,
       openActions,
+      busyByNote,
       removeNote,
       archive,
       unarchive,

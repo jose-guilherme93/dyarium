@@ -1,15 +1,31 @@
 /**
- * Busca no servidor a analise que ja existe de uma nota e guarda no aparelho.
- * Nao dispara analise nenhuma: le o que o servidor ja produziu (GET). Sem rede
- * ou sem analise, devolve null e o cache local continua valendo.
+ * Analise vinda do servidor: busca quando ha atualizacao, guarda no banco e
+ * avisa a tela. Nunca e o caminho de exibicao — a ficha le sempre o cache do
+ * aparelho, que e atualizado por este modulo.
+ *
+ * Duas entradas:
+ * - `syncServerAnalyses` roda junto do pull: compara o `analysis_at` que veio
+ *   na lista de entradas com o ultimo valor ja buscado e importa o que mudou.
+ * - `requestServerAnalysis` dispara uma analise remota a pedido do usuario.
+ *   O pedido leva so o id da entrada; o texto ja esta no servidor.
  */
 
-import { ApiError, DyariumApi, type FetchLike, type ServerAnalysis } from '@/core/api';
+import {
+  ApiError,
+  DyariumApi,
+  type FetchLike,
+  type ServerAnalysis,
+  type ServerEntry,
+} from '@/core/api';
 
+import { emitAnalysis } from './analysisFeed';
 import {
   deleteCachedServerAnalysis,
+  getAnalysisSyncAt,
+  getCachedAnalysis,
   listCachedAnalyses,
   saveCachedAnalyses,
+  setAnalysisSyncAt,
 } from './db';
 import { loadServerConfig } from './secure';
 
@@ -21,6 +37,10 @@ export interface NoteAnalysisTarget {
   recordedAt: string;
 }
 
+/**
+ * Uma analise do servidor, guardada no aparelho. Devolve null quando ainda nao
+ * existe (404) ou quando a rede falhou; quem chamou decide se tenta de novo.
+ */
 export async function fetchNoteAnalysis(
   target: NoteAnalysisTarget,
 ): Promise<ServerAnalysis | null> {
@@ -38,8 +58,10 @@ export async function fetchNoteAnalysis(
           title: target.title,
           recordedAt: target.recordedAt,
           analysis,
+          origin: 'server',
         },
       ]);
+      emitAnalysis(target.entryId);
     } catch {
       // Cache local e best-effort: a analise ainda pode ser mostrada agora.
     }
@@ -51,10 +73,81 @@ export async function fetchNoteAnalysis(
     // cair junto; senao a nota mostra a medida de um texto que nao existe.
     if (error instanceof ApiError && error.status === 404) {
       await deleteCachedServerAnalysis(target.entryId).catch(() => undefined);
+      emitAnalysis(target.entryId);
     }
     // Falta de rede e esperada: quem chamou decide mostrar o cache que tiver.
     return null;
   }
+}
+
+/**
+ * Importa as analises que mudaram desde o ultimo pull. A lista de entradas ja
+ * traz `analysis_at`; so as entradas cujo valor mudou sao buscadas. Best-effort
+ * e idempotente: falha de rede deixa para o proximo pull.
+ */
+export async function syncServerAnalyses(entries: ServerEntry[]): Promise<number> {
+  const config = await loadServerConfig();
+  if (!config) return 0;
+  const api = new DyariumApi(config, doFetch);
+  let imported = 0;
+
+  for (const entry of entries) {
+    if (!entry.id || !entry.analysis_at) continue;
+    const sourceAt = entry.analysis_at;
+    if ((await getAnalysisSyncAt(entry.id)) === sourceAt) continue;
+
+    // Analise feita no aparelho vence: nao vale gastar rede nem sobrescrever.
+    const cached = await getCachedAnalysis(entry.id).catch(() => null);
+    if (cached?.origin === 'local') {
+      await setAnalysisSyncAt(entry.id, sourceAt);
+      continue;
+    }
+
+    try {
+      const analysis = await api.getAnalysis(entry.id);
+      await saveCachedAnalyses([
+        {
+          entryId: entry.id,
+          title: entry.title,
+          recordedAt: entry.recorded_at ?? entry.created_at,
+          analysis,
+          origin: 'server',
+        },
+      ]);
+      await setAnalysisSyncAt(entry.id, sourceAt);
+      emitAnalysis(entry.id);
+      imported += 1;
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        // A atualizacao era de uma analise que ja nao existe.
+        await deleteCachedServerAnalysis(entry.id).catch(() => undefined);
+        await setAnalysisSyncAt(entry.id, sourceAt);
+        emitAnalysis(entry.id);
+      }
+      // Rede/5xx: o marcador fica como esta e o proximo pull tenta de novo.
+    }
+  }
+  return imported;
+}
+
+/**
+ * Pede ao servidor que analise a nota. O servidor faz o ping do provedor antes
+ * de enfileirar (409 quando a analise esta desligada, 502 quando o provedor nao
+ * responde). Nada do conteudo da nota sai neste pedido.
+ */
+export async function requestServerAnalysis(entryId: string): Promise<{ status: string }> {
+  const config = await loadServerConfig();
+  if (!config) throw new ApiError(0, 'no_server', 'servidor nao configurado');
+  const api = new DyariumApi(config, doFetch);
+  return api.requestAnalysis(entryId);
+}
+
+/**
+ * So a configuracao local de servidor (sem rede). Usado pela ficha para decidir
+ * se o botao remoto aparece.
+ */
+export async function hasServerConfig(): Promise<boolean> {
+  return (await loadServerConfig()) !== null;
 }
 
 /**

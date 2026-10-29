@@ -53,4 +53,17 @@ describe('patch do editor rico', () => {
     expect(patch).toContain('BREAK_STRATEGY_SIMPLE');
     expect(patch.match(/BREAK_STRATEGY_SIMPLE/g)?.length).toBe(4);
   });
+
+  it('nao deixa o texto grande preso na altura de uma linha', () => {
+    const patch = readFileSync(PATCH, 'utf8');
+
+    // A primeira medicao pode chegar antes da fonte: com fontSize zero todo o
+    // texto cabe numa linha e o editor fica com altura de uma linha. Antes do
+    // stateWrapper tambem nao ha layout para atualizar; gravar a medida nessa
+    // hora deixava o store fora de sincronia. O contador do no precisa comecar
+    // em zero para a primeira atualizacao de estado disparar o relayout.
+    expect(patch).toContain('propsFontSize <= 0');
+    expect(patch).toContain('view.stateWrapper ?: return');
+    expect(patch).toContain('forceHeightRecalculationCounter_{0}');
+  });
 });

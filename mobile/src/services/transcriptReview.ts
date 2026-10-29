@@ -160,7 +160,10 @@ export async function reviewTranscript(
         break;
       }
       const chunk = chunks[index];
-      updateActivity(activity, { detail: `${reviewedThrough} de ${segments.length}` });
+      updateActivity(activity, {
+        detail: `${reviewedThrough} de ${segments.length}`,
+        progress: segments.length > 0 ? (reviewedThrough / segments.length) * 100 : 0,
+      });
       options.onProgress?.(reviewedThrough, segments.length);
 
       let parsed: ReturnType<typeof parseReviewJson> = null;

@@ -4,11 +4,21 @@
  */
 
 import { Directory, File, Paths } from 'expo-file-system';
+import { Platform } from 'react-native';
 
 import { TRANSCRIPTION_MODELS, modelById, modelUrl } from '@/core/transcription';
 import { cancelActivity, failActivity, finishActivity, startActivity, updateActivity } from './activity';
 
 const DIR_NAME = 'whisper-models';
+
+/**
+ * O `expo-file-system` nao existe no navegador: `new Directory(Paths.document)`
+ * estoura e derruba a tela que pergunta por modelos. No web nao existe modelo
+ * no aparelho, entao a resposta e sempre "nenhum".
+ */
+function localModels(): boolean {
+  return Platform.OS !== 'web';
+}
 
 export function modelsDirectory(): Directory {
   const dir = new Directory(Paths.document, DIR_NAME);
@@ -19,7 +29,7 @@ export function modelsDirectory(): Directory {
 /** Caminho `file://` do arquivo de um modelo (exista ou nao). */
 export function modelFilePath(id: string): string | null {
   const model = modelById(id);
-  if (!model) return null;
+  if (!model || !localModels()) return null;
   return new File(modelsDirectory(), model.fileName).uri;
 }
 
@@ -30,6 +40,7 @@ export interface InstalledModel {
 
 /** Modelos ja baixados no aparelho. */
 export function installedModels(): InstalledModel[] {
+  if (!localModels()) return [];
   const entries = modelsDirectory().list();
   const out: InstalledModel[] = [];
   for (const info of TRANSCRIPTION_MODELS) {
@@ -67,6 +78,7 @@ export async function downloadModel(
 ): Promise<string> {
   const info = modelById(id);
   if (!info) throw new Error('modelo desconhecido');
+  if (!localModels()) throw new Error('modelo local nao existe no navegador');
   const dir = modelsDirectory();
   const destination = new File(dir, info.fileName);
   if (destination.exists) return destination.uri;
@@ -112,7 +124,7 @@ export async function downloadModel(
 
 export function deleteModel(id: string): void {
   const info = modelById(id);
-  if (!info) return;
+  if (!info || !localModels()) return;
   const file = new File(modelsDirectory(), info.fileName);
   if (file.exists) file.delete();
 }

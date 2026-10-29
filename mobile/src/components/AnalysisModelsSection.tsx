@@ -12,12 +12,14 @@ import { Press } from '@/components/Press';
 
 import { Card } from '@/components/Card';
 import {
+  ANALYSIS_MODEL_FAMILIES,
   ANALYSIS_MODELS,
   analysisModelById,
+  analysisVariantFor,
   modelFitsDevice,
   recommendAnalysisModel,
+  type AnalysisModelVariant,
 } from '@/core/analysisModels';
-import { analysisNoteContent } from '@/core/analysisPrompt';
 import { localAnalysisEnabled } from '@/core/features';
 import { formatBytes } from '@/core/format';
 import type { Recording } from '@/core/types';
@@ -28,7 +30,7 @@ import {
   installedAnalysisModelsBytes,
 } from '@/services/analysisModels';
 import {
-  analyzeRecording,
+  analyzeNote,
   loadAnalysisContext,
   localAnalysisAvailable,
   releaseAnalysisContext,
@@ -45,6 +47,10 @@ interface BenchmarkRow {
   title: string;
   wallMs: number;
   valid: boolean;
+  blocks: number;
+  read: number;
+  rejected: number;
+  dropped: number;
   reading: string;
   promptPerSecond: number;
   predictedPerSecond: number;
@@ -119,11 +125,29 @@ function EnabledAnalysisModelsSection() {
   const [downloading, setDownloading] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  // Quant escolhida em cada familia: a tela mostra uma linha por modelo, com o
+  // interruptor rapida/qualidade no lugar de duas entradas na lista.
+  const [variants, setVariants] = useState<Record<string, AnalysisModelVariant>>({});
 
   const selected = useMemo(
     () => analysisModelById(analysisModel) ?? recommended ?? ANALYSIS_MODELS[0],
     [analysisModel, recommended],
   );
+
+  // Um id antigo (modelo que saiu do catalogo) nao pode continuar salvo: a
+  // tela mostraria o recomendado como se estivesse em uso e o botao da nota
+  // diria que nao ha modelo. Migra para o recomendado ou o primeiro da lista.
+  useEffect(() => {
+    if (analysisModelById(analysisModel)) return;
+    const next = recommended ?? ANALYSIS_MODELS[0];
+    if (next) void setAnalysisModel(next.id).catch(() => undefined);
+  }, [analysisModel, recommended, setAnalysisModel]);
+
+  const variantFor = (familyId: string): AnalysisModelVariant => {
+    const family = ANALYSIS_MODEL_FAMILIES.find((item) => item.id === familyId);
+    if (!family) return 'quality';
+    return variants[familyId] ?? analysisVariantFor(family, analysisModel);
+  };
 
   const refresh = () => {
     setInstalled(installedAnalysisModels().map((model) => model.id));
@@ -131,6 +155,9 @@ function EnabledAnalysisModelsSection() {
   };
 
   const handleDownload = async (id: string) => {
+    // Um download por vez: dois arquivos grandes concorrendo no mesmo link
+    // enchem o buffer e ainda disputam a RAM com o app.
+    if (downloading) return;
     setError(null);
     setDownloading(id);
     setProgress(0);
@@ -148,9 +175,12 @@ function EnabledAnalysisModelsSection() {
   const handleDelete = async (id: string) => {
     await releaseAnalysisContext();
     deleteAnalysisModel(id);
+    // Lista fresca: a copia de `installed` deste render ainda tem o arquivo
+    // apagado e poderia escolher ele como proximo modelo.
+    const remaining = installedAnalysisModels().map((model) => model.id);
     refresh();
     if (id === analysisModel) {
-      const next = installed.find((item) => item !== id) ?? recommended?.id ?? ANALYSIS_MODELS[0]?.id;
+      const next = remaining[0] ?? recommended?.id ?? ANALYSIS_MODELS[0]?.id;
       if (next) await setAnalysisModel(next);
     }
   };
@@ -185,17 +215,19 @@ function EnabledAnalysisModelsSection() {
         </Card>
       ) : null}
 
-      {ANALYSIS_MODELS.map((model) => {
+      {ANALYSIS_MODEL_FAMILIES.map((family) => {
+        const variant = variantFor(family.id);
+        const model = family[variant];
         const isInstalled = installed.includes(model.id);
         const isSelected = selected?.id === model.id;
         const isDownloading = downloading === model.id;
         return (
-          <Card key={model.id} style={styles.modelCard}>
+          <Card key={family.id} style={styles.modelCard}>
             <Press
               style={styles.modelMain}
               onPress={() => isInstalled && void setAnalysisModel(model.id)}
               disabled={!isInstalled}
-              accessibilityLabel={model.label}
+              accessibilityLabel={`${family.label}, ${variant === 'fast' ? 'rápida' : 'qualidade'}`}
             >
               <Ionicons
                 name={isSelected && isInstalled ? 'radio-button-on' : 'radio-button-off'}
@@ -204,26 +236,58 @@ function EnabledAnalysisModelsSection() {
               />
               <View style={styles.rowText}>
                 <View style={styles.modelTitleRow}>
-                  <Text style={styles.cardTitle}>{model.label}</Text>
-                  {recommended?.id === model.id ? (
+                  <Text style={styles.cardTitle}>{family.label}</Text>
+                  {recommended?.family === family.id ? (
                     <View style={styles.badge}>
                       <Text style={styles.badgeText}>Recomendado</Text>
                     </View>
                   ) : null}
                 </View>
                 <Text style={styles.cardHint}>
-                  {model.fileName.replace('.gguf', '')} · {formatBytes(model.sizeBytes)} ·{' '}
-                  {formatBytes(model.minRamBytes)} de RAM
+                  {formatBytes(model.sizeBytes)} · {formatBytes(model.minRamBytes)} de RAM ·{' '}
+                  {model.license}
                   {isInstalled ? ' · baixado' : ''}
                 </Text>
                 {modelFitsDevice(model, Device.totalMemory) === false ? (
                   <Text style={styles.ramWarning}>
-                    Este aparelho tem {formatBytes(Device.totalMemory ?? 0)}; o modelo pode ser
-                    encerrado pelo sistema.
+                    Este aparelho tem {formatBytes(Device.totalMemory ?? 0)}; esta versão pode ser
+                    encerrada pelo sistema.
                   </Text>
+                ) : null}
+                {family.id === 'lfm2.5-230m' && variant === 'fast' ? (
+                  <Text style={styles.cardHint}>Último recurso: reconhece menos itens.</Text>
                 ) : null}
               </View>
             </Press>
+
+            <View style={styles.variantRow}>
+              {(['fast', 'quality'] as const).map((option) => {
+                const active = option === variant;
+                const installedOption = installed.includes(family[option].id);
+                return (
+                  <Press
+                    key={option}
+                    style={[
+                      styles.variantItem,
+                      active && styles.variantItemActive,
+                      downloading !== null && styles.variantItemDisabled,
+                    ]}
+                    onPress={() =>
+                      setVariants((current) => ({ ...current, [family.id]: option }))
+                    }
+                    disabled={downloading !== null}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: active, disabled: downloading !== null }}
+                    accessibilityLabel={`${family.label}, ${option === 'fast' ? 'rápida' : 'qualidade'}${installedOption ? ', baixada' : ''}`}
+                  >
+                    <Text style={[styles.variantText, active && styles.variantTextActive]}>
+                      {option === 'fast' ? 'Rápida' : 'Qualidade'}
+                    </Text>
+                    {installedOption ? <View style={styles.variantDot} /> : null}
+                  </Press>
+                );
+              })}
+            </View>
 
             {isDownloading ? (
               <View style={styles.progressWrap}>
@@ -238,14 +302,16 @@ function EnabledAnalysisModelsSection() {
                   <Press
                     style={styles.useButton}
                     onPress={() => void setAnalysisModel(model.id)}
-                    accessibilityLabel={`Usar ${model.label}`}
+                    accessibilityLabel={`Usar ${family.label}, ${variant === 'fast' ? 'rápida' : 'qualidade'}`}
                   >
                     <Text style={styles.useText}>Usar</Text>
                   </Press>
-                ) : null}
+                ) : (
+                  <Text style={styles.useText}>Em uso</Text>
+                )}
                 <Press
                   onPress={() => void handleDelete(model.id)}
-                  accessibilityLabel={`Apagar ${model.label}`}
+                  accessibilityLabel={`Apagar ${family.label}, ${variant === 'fast' ? 'rápida' : 'qualidade'}`}
                   hitSlop={8}
                 >
                   <Ionicons name="trash-outline" size={20} color={colors.danger} />
@@ -255,7 +321,7 @@ function EnabledAnalysisModelsSection() {
               <Press
                 style={styles.downloadButton}
                 onPress={() => void handleDownload(model.id)}
-                accessibilityLabel={`Baixar e usar ${model.label}`}
+                accessibilityLabel={`Baixar e usar ${family.label}, ${variant === 'fast' ? 'rápida' : 'qualidade'}`}
               >
                 <Ionicons name="download-outline" size={16} color={colors.text} />
                 <Text style={styles.downloadText}>Baixar e usar</Text>
@@ -267,7 +333,8 @@ function EnabledAnalysisModelsSection() {
 
       {error ? <Text style={styles.error}>{error}</Text> : null}
       <Text style={styles.cardHint}>
-        {bytes > 0 ? `Usando ${formatBytes(bytes)} no aparelho.` : 'Nenhum modelo de análise baixado.'}
+        {bytes > 0 ? `Usando ${formatBytes(bytes)} no aparelho. ` : 'Nenhum modelo de análise baixado. '}
+        LFM2.5 usa a LFM Open License v1.0; Qwen3.5 usa Apache-2.0.
       </Text>
 
       {showBenchmark ? (
@@ -303,7 +370,10 @@ function BenchmarkPanel({
   const sample = useMemo(
     () =>
       recordings
-        .filter((recording) => analysisNoteContent(recording).text.length > 0)
+        .filter(
+          (recording) =>
+            (recording.text ?? '').trim().length > 0 || (recording.transcript ?? '').trim().length > 0,
+        )
         .slice(0, BENCHMARK_NOTES),
     [recordings],
   );
@@ -324,15 +394,36 @@ function BenchmarkPanel({
       for (let index = 0; index < sample.length; index += 1) {
         const recording = sample[index];
         setProgress(`analisando ${index + 1} de ${sample.length}`);
-        const result = await analyzeRecording(recording, model);
+        const result = await analyzeNote(
+          {
+            id: recording.id,
+            text: recording.text ?? '',
+            transcript: recording.transcript ?? '',
+            transcriptSegments: recording.transcriptSegments,
+            author: recording.author,
+          },
+          model,
+          {
+            entryKey: `bench:${recording.id}`,
+            title: recording.title || 'Nota',
+            persist: false,
+          },
+        );
         out.push({
           title: recording.title || 'Nota',
-          wallMs: result.run.wallMs,
-          valid: result.parsed !== null,
-          reading: result.parsed?.reading ?? '',
-          promptPerSecond: result.run.timings?.promptPerSecond ?? 0,
-          predictedPerSecond: result.run.timings?.predictedPerSecond ?? 0,
-          raw: result.run.text,
+          wallMs: result.wallMs,
+          valid: result.doc.blocksRead > 0,
+          blocks: result.doc.blocksTotal,
+          read: result.doc.blocksRead,
+          rejected: result.rejected,
+          dropped: result.droppedItems,
+          reading: result.doc.sentence,
+          promptPerSecond:
+            result.promptTokens > 0 && result.wallMs > 0
+              ? (result.promptTokens * 1000) / result.wallMs
+              : 0,
+          predictedPerSecond: result.predictedPerSecond,
+          raw: `${result.doc.toneLabel} (${result.doc.tone}) · ${result.doc.people.length} pessoas · ${result.doc.places.length} lugares · ${result.doc.events.length} eventos · ${result.doc.themes.length} temas · ${result.doc.decisions.length} decisões · ${result.doc.tasks.length} tarefas · ${result.doc.ideas.length} ideias · ${result.doc.moments.length} momentos`,
         });
         setRows([...out]);
       }
@@ -394,7 +485,9 @@ function BenchmarkPanel({
               {row.title}
             </Text>
             <Text style={styles.cardHint}>
-              {(row.wallMs / 1000).toFixed(1)} s · {row.valid ? 'JSON válido' : 'JSON inválido'} ·{' '}
+              {(row.wallMs / 1000).toFixed(1)} s · {row.valid ? `${row.read}/${row.blocks} blocos` : 'nada lido'}
+              {row.rejected > 0 ? ` · ${row.rejected} recusados` : ''}
+              {row.dropped > 0 ? ` · ${row.dropped} descartados` : ''} ·{' '}
               {row.promptPerSecond.toFixed(0)} tok/s prompt · {row.predictedPerSecond.toFixed(1)}{' '}
               tok/s geração
             </Text>
@@ -425,10 +518,31 @@ const baseStyles = defineStyles({
   notice: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
   noticeText: { flex: 1, color: baseColors.textSecondary, fontSize: fontSize.sm, lineHeight: 20 },
   rowText: { flex: 1, gap: 2 },
-  modelCard: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
-  modelMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  modelCard: { gap: spacing.sm },
+  modelMain: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   modelTitleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  modelActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  modelActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: spacing.md },
+  variantRow: {
+    flexDirection: 'row',
+    backgroundColor: baseColors.bgElevated,
+    borderRadius: radius.sm,
+    padding: 2,
+    gap: 2,
+  },
+  variantItem: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: 6,
+    borderRadius: radius.sm - 2,
+  },
+  variantItemActive: { backgroundColor: baseColors.surfaceElevated },
+  variantItemDisabled: { opacity: 0.5 },
+  variantText: { color: baseColors.textSecondary, fontSize: fontSize.xs, fontWeight: '600' },
+  variantTextActive: { color: baseColors.text },
+  variantDot: { width: 5, height: 5, borderRadius: radius.pill, backgroundColor: baseColors.accent },
   badge: {
     backgroundColor: baseColors.accentSoft,
     borderRadius: radius.pill,
@@ -439,6 +553,8 @@ const baseStyles = defineStyles({
   downloadButton: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'stretch',
     gap: 4,
     backgroundColor: baseColors.surfaceElevated,
     borderRadius: radius.pill,
@@ -453,9 +569,9 @@ const baseStyles = defineStyles({
     paddingVertical: spacing.sm,
   },
   useText: { color: baseColors.accent, fontSize: fontSize.sm, fontWeight: '600' },
-  progressWrap: { alignItems: 'flex-end', gap: 4, width: 72 },
+  progressWrap: { gap: 4 },
   progressTrack: {
-    width: 72,
+    width: '100%',
     height: 3,
     borderRadius: 2,
     backgroundColor: baseColors.surfaceElevated,

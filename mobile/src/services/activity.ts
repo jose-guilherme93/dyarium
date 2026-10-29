@@ -242,6 +242,34 @@ export function dismissActivity(id: string): void {
   }
 }
 
+/** Para onde uma atividade concluida leva o usuario. */
+export interface ActivityDestination {
+  screen: 'note' | 'transcript' | 'backup' | 'models';
+  /** Nota da atividade (para nota e transcricao). */
+  noteId?: string;
+}
+
+/**
+ * Destino de uma atividade. O id carrega o tipo e a nota (`analysis:<nota>`,
+ * `transcription:<nota>`, `review:<nota>`), entao o destino sobrevive ao
+ * restart do app sem coluna nova no banco.
+ */
+export function activityDestination(item: Activity): ActivityDestination | null {
+  const separator = item.id.indexOf(':');
+  const prefix = separator >= 0 ? item.id.slice(0, separator) : item.id;
+  const rest = separator >= 0 ? item.id.slice(separator + 1) : '';
+  if (item.kind === 'transcription' && prefix === 'transcription' && rest !== '') {
+    return { screen: 'transcript', noteId: rest };
+  }
+  if (item.kind === 'analysis') {
+    if (prefix === 'review' && rest !== '') return { screen: 'transcript', noteId: rest };
+    if (prefix === 'analysis' && rest !== '') return { screen: 'note', noteId: rest };
+  }
+  if (item.kind === 'backup' || item.kind === 'restore') return { screen: 'backup' };
+  if (item.kind === 'download') return { screen: 'models' };
+  return null;
+}
+
 export function getActivitiesSnapshot(): Activity[] {
   return snapshot;
 }

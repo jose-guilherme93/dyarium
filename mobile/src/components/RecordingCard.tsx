@@ -30,6 +30,8 @@ interface RecordingCardProps {
   notebookLabel?: string;
   /** Linha compacta da home, sem cartao arredondado e com divisor. */
   dense?: boolean;
+  /** Trabalho pesado rodando nesta nota: icone + porcentagem no canto. */
+  busy?: { kind: 'transcription' | 'analysis'; percent?: number; queued?: boolean } | null;
 }
 
 /**
@@ -44,6 +46,7 @@ export const RecordingCard = memo(function RecordingCard({
   onLongPress,
   notebookLabel,
   dense = false,
+  busy = null,
 }: RecordingCardProps) {
   const styles = useThemedStyles(baseStyles);
   const { colors } = useTheme();
@@ -62,6 +65,20 @@ export const RecordingCard = memo(function RecordingCard({
     hasAudio && recording.transcriptStatus === 'pending' && !hasFinalTranscript(recording);
   const livePercent = useTranscriptionProgress(recording.id, transcribing);
   const percent = livePercent > 0 ? Math.round(livePercent) : checkpointPercent(recording);
+  const badge =
+    busy ?? (transcribing ? { kind: 'transcription' as const, percent } : null);
+  const badgeLabel = badge?.queued
+    ? 'Na fila'
+    : badge?.kind === 'analysis'
+      ? 'Analisando'
+      : 'Transcrevendo';
+  const badgeColor = badge?.kind === 'analysis' ? colors.info : colors.accentStrong;
+  const badgeSoft = badge?.kind === 'analysis' ? colors.infoSoft : colors.accentSoft;
+  const badgeIcon = badge?.queued
+    ? 'hourglass-outline'
+    : badge?.kind === 'analysis'
+      ? 'sparkles-outline'
+      : 'sync-outline';
 
   return (
     <View style={[styles.wrap, dense ? styles.wrapDense : null]}>
@@ -77,10 +94,19 @@ export const RecordingCard = memo(function RecordingCard({
           <Text style={styles.title} numberOfLines={1}>
             {displayTitle(recording)}
           </Text>
-          {transcribing ? (
-            <View style={styles.transcribing} accessibilityLabel={`Transcrevendo ${percent}%`}>
-              <Ionicons name="sync-outline" size={11} color={colors.accentStrong} />
-              <Text style={styles.transcribingText}>{percent}%</Text>
+          {badge ? (
+            <View
+              style={[styles.transcribing, { backgroundColor: badgeSoft }]}
+              accessibilityLabel={`${badgeLabel}${
+                badge.percent !== undefined ? ` ${Math.round(badge.percent)}%` : ''
+              }`}
+            >
+              <Ionicons name={badgeIcon} size={11} color={badgeColor} />
+              {badge.percent !== undefined ? (
+                <Text style={[styles.transcribingText, { color: badgeColor }]}>
+                  {Math.round(badge.percent)}%
+                </Text>
+              ) : null}
             </View>
           ) : null}
         </View>

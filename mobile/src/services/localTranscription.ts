@@ -51,8 +51,13 @@ export { localTranscriptionAvailable };
 // trava enquanto a nota transcreve. Duas threads transcrevem um pouco mais
 // devagar, mas o app continua respondendo (digitar, rolar, tocar audio).
 const MAX_THREADS = 2;
-/** Intervalo minimo entre gravacoes parciais (evita re-render a cada trecho). */
-const PERSIST_THROTTLE_MS = 1200;
+/**
+ * Intervalo minimo entre gravacoes parciais (evita re-render a cada trecho).
+ * A nota aberta nao pode perder digitacao enquanto o texto progride: cada
+ * gravacao atualiza a biblioteca e re-renderiza a tela, entao 3 s e o menor
+ * intervalo que ainda parece progressivo sem atrapalhar quem escreve.
+ */
+const PERSIST_THROTTLE_MS = 3000;
 /**
  * Tempo que o modelo do whisper fica quente depois de uma passada. Uma nota
  * seguinte aproveita o mesmo contexto; parado, ele sai da memoria para o
