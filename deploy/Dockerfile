@@ -12,7 +12,7 @@ WORKDIR /web
 ENV NODE_OPTIONS=--max-old-space-size=1024 \
     UV_THREADPOOL_SIZE=2
 RUN npm install -g pnpm@12.6.0
-COPY web/package.json web/pnpm-lock.yaml ./
+COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY web/ ./
 # O worker do navegador importa o nucleo puro de analise do app (mesmo
