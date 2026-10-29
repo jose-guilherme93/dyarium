@@ -349,7 +349,7 @@ func budgetCeiling(start int) int {
 const analysisSchemaJSON = `{
   "type": "object",
   "additionalProperties": false,
-  "required": ["comprehension", "sentiment", "emotions", "people", "places", "themes", "summary", "reading", "key_moments", "questions", "decisions"],
+  "required": ["comprehension", "sentiment", "emotions", "people", "places", "themes", "summary", "reading", "key_moments", "questions", "decisions", "tasks", "ideas", "events", "epiphanies"],
   "properties": {
     "comprehension": {"type": "integer"},
     "sentiment": {"type": "object", "additionalProperties": false, "required": ["score", "label"],
@@ -368,7 +368,11 @@ const analysisSchemaJSON = `{
     "key_moments": {"type": "array", "items": {"type": "object", "additionalProperties": false,
       "required": ["start_ms", "text"], "properties": {"start_ms": {"type": "integer"}, "text": {"type": "string"}}}},
     "questions": {"type": "array", "items": {"type": "string"}},
-    "decisions": {"type": "array", "items": {"type": "string"}}
+    "decisions": {"type": "array", "items": {"type": "string"}},
+    "tasks": {"type": "array", "items": {"type": "string"}},
+    "ideas": {"type": "array", "items": {"type": "string"}},
+    "events": {"type": "array", "items": {"type": "string"}},
+    "epiphanies": {"type": "array", "items": {"type": "string"}}
   }
 }`
 
@@ -781,7 +785,11 @@ Use exatamente este formato:
  "reading": "<no maximo 2 frases curtas sobre o que o texto revela>",
  "key_moments": [{"start_ms": <tempo em milissegundos>, "text": "<trecho marcante>"}],
  "questions": ["<pergunta que o autor fez>"],
- "decisions": ["<decisao que o autor tomou>"]}
+ "decisions": ["<decisao que o autor tomou>"],
+ "tasks": ["<tarefa ou pendencia que o autor precisa fazer>"],
+ "ideas": ["<ideia ou proposta do autor>"],
+ "events": ["<acontecimento objetivo: enterro, viagem, mudanca>"],
+ "epiphanies": ["<percepcao ou conclusao que muda o entendimento do autor>"]}
 "comprehension" e uma estimativa textual de 0 a 100 de quanto o texto representa a fala com logica, sintaxe e
 concordancia: 100 para um texto perfeito, 0 para um texto incompreensivel. Voce nao ouve o audio.
 "reading" tem no maximo 2 frases e 280 caracteres: diga o que o texto revela (tensao, repeticao, o que fica
@@ -789,7 +797,9 @@ em aberto), sem paragrafo e sem rotulo generico ("tom negativo", "texto pessoal"
 metricas: sentimento, emocoes, pessoas, lugares, temas e momentos-chave. Nao escreva relatorio.
 Regras: seja fiel ao texto e nao invente pessoas, lugares ou fatos; preencha "relation" e "sentiment" de pessoas
 somente quando for inferivel; use os tempos [mm:ss] presentes no texto para calcular "start_ms"; prefira os temas:
-{themes}; liste ate 8 momentos-chave quando o texto for longo; perguntas e decisoes devem ser curtas, ate 8 cada.
+{themes}; liste ate 8 momentos-chave quando o texto for longo; perguntas, decisoes, tarefas, ideias, eventos e epifanias devem ser curtos, ate 8 cada; cada item entra em uma lista so
+(decisao e escolha feita, tarefa e obrigacao, ideia e proposta, epifania e a percepcao que muda o entendimento,
+evento e o acontecimento objetivo).
 Escreva todo o conteudo textual (resumo, analise, nomes de emocoes, relacoes, perguntas e decisoes) em {language}.
 Texto curto: cada campo textual e uma linha, sem paragrafo.`
 
@@ -813,7 +823,11 @@ Responda SOMENTE com um objeto JSON valido, sem markdown, no formato:
  "reading": "<no maximo 2 frases curtas sobre o que a secao revela>",
  "key_moments": [{"start_ms": <ms>, "text": "<trecho marcante>"}],
  "questions": ["<pergunta do autor>"],
- "decisions": ["<decisao do autor>"]}
+ "decisions": ["<decisao do autor>"],
+ "tasks": ["<tarefa do autor>"],
+ "ideas": ["<ideia do autor>"],
+ "events": ["<acontecimento objetivo>"],
+ "epiphanies": ["<percepcao que muda o entendimento do autor>"]}
 "reading" tem no maximo 2 frases e 280 caracteres: interprete o que o trecho revela, apoiado em algo dito,
 sem paragrafo. Use os tempos [mm:ss] presentes no texto para calcular "start_ms"; se a secao nao tiver
 tempos, devolva "key_moments" vazio. O que importa sao as metricas da secao: sentimento, emocoes, pessoas,
@@ -859,7 +873,7 @@ func (c *Client) AnalyzeSection(ctx context.Context, title string, section Secti
 	}
 	system := sectionSystemPrompt(themes, languageName(c.cfg.Language), section.Heading, c.authorLine())
 	user := text
-	if t := strings.TrimSpace(title); t != "" {
+	if t := CleanText(title); t != "" {
 		user = "Titulo da nota: " + t + "\n\n" + text
 	}
 	content, err := c.do(ctx, system, user, answerBudget(text))
@@ -884,7 +898,7 @@ func (c *Client) Synthesize(ctx context.Context, title string, sections []Sectio
 	if len(sections) == 0 {
 		return Result{}, errors.New("analyze: nenhuma secao para sintetizar")
 	}
-	payload := map[string]any{"titulo": strings.TrimSpace(title), "secoes": sections}
+	payload := map[string]any{"titulo": CleanText(title), "secoes": sections}
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return Result{}, err

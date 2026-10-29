@@ -1,4 +1,5 @@
 import {
+  activityDestination,
   cancelActivity,
   clearFinishedActivities,
   dismissActivity,
@@ -125,5 +126,45 @@ describe('atividades do aparelho', () => {
     expect(getActivitiesSnapshot()).toEqual([
       expect.objectContaining({ id: 'download', status: 'running' }),
     ]);
+  });
+});
+
+
+describe('destino da atividade concluida', () => {
+  const base = {
+    title: 'Nota',
+    status: 'done' as const,
+    startedAt: 1,
+    seen: false,
+  };
+
+  it('transcricao leva para a tela da transcricao', () => {
+    expect(
+      activityDestination({ ...base, id: 'transcription:rec_1', kind: 'transcription' }),
+    ).toEqual({ screen: 'transcript', noteId: 'rec_1' });
+  });
+
+  it('analise leva para a nota; revisao leva para a transcricao', () => {
+    expect(activityDestination({ ...base, id: 'analysis:rec_1', kind: 'analysis' })).toEqual({
+      screen: 'note',
+      noteId: 'rec_1',
+    });
+    expect(activityDestination({ ...base, id: 'review:rec_1', kind: 'analysis' })).toEqual({
+      screen: 'transcript',
+      noteId: 'rec_1',
+    });
+  });
+
+  it('download e backup tem destino proprio', () => {
+    expect(
+      activityDestination({ ...base, id: 'download:analysis:x', kind: 'download' }),
+    ).toEqual({ screen: 'models' });
+    expect(activityDestination({ ...base, id: 'backup', kind: 'backup' })).toEqual({
+      screen: 'backup',
+    });
+  });
+
+  it('id sem nota nao inventa destino de nota', () => {
+    expect(activityDestination({ ...base, id: 'analysis:', kind: 'analysis' })).toBeNull();
   });
 });

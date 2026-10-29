@@ -39,7 +39,22 @@ type Runner struct {
 	handlers  map[string]Handler
 	poll      time.Duration
 	canceller *Canceller
+	// heavyPaused tells whether an optional browser worker is processing the
+	// queue. When true this runner only claims cleanup jobs, so the machine
+	// that is already doing the work is the only one spending CPU on models.
+	heavyPaused func() bool
 }
+
+// PauseHeavy installs the gate that keeps this runner away from transcribe and
+// analyze while a browser worker is present.
+func (r *Runner) PauseHeavy(paused func() bool) { r.heavyPaused = paused }
+
+// heavyTypes are the jobs a browser worker may claim. Cleanup is never one of
+// them.
+var heavyTypes = []string{TypeTranscribe, TypeAnalyze}
+
+// serverOnlyTypes are the jobs the server always keeps, even paused.
+var serverOnlyTypes = []string{TypeCleanup}
 
 // NewRunner builds a Runner.
 func NewRunner(q *Queue, workerID string, lease, baseDelay time.Duration, logger *slog.Logger, canceller *Canceller) *Runner {
@@ -67,7 +82,11 @@ func (r *Runner) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			job, err := r.queue.Claim(ctx, r.workerID, r.lease)
+			types := []string(nil)
+			if r.heavyPaused != nil && r.heavyPaused() {
+				types = serverOnlyTypes
+			}
+			job, err := r.queue.ClaimTypes(ctx, r.workerID, r.lease, types)
 			if err != nil {
 				r.logger.Error("fila: falha ao reservar job", "erro", err)
 				continue

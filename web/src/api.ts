@@ -7,6 +7,7 @@ import type {
   Attachment,
   AuthorRole,
   EntityDetail,
+  EntityMention,
   EntitySummary,
   Entry,
   GraphResponse,
@@ -541,6 +542,11 @@ export const api = {
     request<{ entities: EntitySummary[] }>(`/entities${kind ? `?kind=${encodeURIComponent(kind)}` : ""}`),
   getEntity: (kind: string, name: string) =>
     request<EntityDetail>(`/entities/${kind}/${encodeURIComponent(name)}`),
+  /** Trechos da transcricao ou do texto que provam a entidade no mapa. */
+  getEntityMentions: (kind: string, name: string) =>
+    request<{ mentions: EntityMention[] }>(
+      `/entities/${kind}/${encodeURIComponent(name)}/mentions`,
+    ),
   /** Renomeia pessoa, lugar, tema ou decisao; o nome antigo vira alias. */
   renameEntity: (kind: string, name: string, nextName: string) =>
     request<EntitySummary>(`/entities/${kind}/${encodeURIComponent(name)}`, {

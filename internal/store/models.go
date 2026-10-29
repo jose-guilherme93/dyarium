@@ -124,6 +124,13 @@ type Entry struct {
 	// PrimaryAttachmentID is the first original audio of the entry. It lets the
 	// list response point the app at the audio without fetching every stack.
 	PrimaryAttachmentID string
+	// TranscriptAt is when the entry's newest transcript was stored on the
+	// server. Same role as AnalysisAt: the app fetches once per update.
+	TranscriptAt string
+	// AnalysisAt is when the entry's newest analysis was stored on the server.
+	// It is the update signal the app uses to know when to fetch the analysis
+	// once, instead of asking on every screen open.
+	AnalysisAt string
 	// Preview is the stored body of the entry, filled only by the list query.
 	// The API turns it into plain text for the list.
 	Preview string
@@ -335,9 +342,13 @@ type Analysis struct {
 	StutterRate     float64
 	HesitationRate  float64
 	RevisedSegments int
-	// Origin is who produced the analysis: "app", "server" or "api".
-	Origin    string
-	CreatedAt time.Time
+	// Origin is who produced the analysis: "app", "server", "browser" or "api".
+	Origin string
+	// Device identifies where a browser analysis ran. Anonymous id plus a
+	// short label (browser, system, GPU); empty for server and app rows.
+	DeviceID   string
+	DeviceName string
+	CreatedAt  time.Time
 }
 
 // Entity kinds.

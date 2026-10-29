@@ -15,6 +15,10 @@ RUN npm install -g pnpm@12.6.0
 COPY web/package.json web/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY web/ ./
+# O worker do navegador importa o nucleo puro de analise do app (mesmo
+# contrato, sem copia). No repositorio ele esta em mobile/src/core; este COPY
+# reproduz o caminho relativo esperado pelo Vite dentro da imagem.
+COPY mobile/src/core /mobile/src/core
 RUN pnpm build
 
 # ---- Backend: build the Go binary with the dashboard embedded ------------

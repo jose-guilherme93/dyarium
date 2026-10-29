@@ -175,11 +175,16 @@ func (s *Store) GetEntry(ctx context.Context, id string) (Entry, error) {
 			title_updated_at, recorded_at_updated_at, COALESCE(author,''),
 			COALESCE((SELECT body_updated_at FROM notes n WHERE n.entry_id = entries.id ORDER BY n.created_at DESC LIMIT 1), ''),
 			COALESCE((SELECT id FROM attachments a WHERE a.entry_id = entries.id AND a.kind = ?
-				ORDER BY a.created_at ASC LIMIT 1), '')
+				ORDER BY a.created_at ASC LIMIT 1), ''),
+			COALESCE((SELECT a.created_at FROM analyses a WHERE a.entry_id = entries.id
+				ORDER BY a.created_at DESC, a.rowid DESC LIMIT 1), ''),
+			COALESCE((SELECT t.created_at FROM transcripts t WHERE t.entry_id = entries.id
+				ORDER BY t.created_at DESC LIMIT 1), '')
 		FROM entries WHERE id = ? AND deleted_at IS NULL`, AttachmentOriginal, id).Scan(
 		&e.ID, &e.Title, &e.Status, &e.Source, &e.ParentID, &e.NotebookID, &e.OriginalFilename, &e.ContentType,
 		&e.SizeBytes, &e.DurationSeconds, &e.SHA256, &recordedAt, &createdAt, &updatedAt, &deletedAt, &archived,
-		&titleVersion, &recordedVersion, &e.Author, &bodyVersion, &e.PrimaryAttachmentID)
+		&titleVersion, &recordedVersion, &e.Author, &bodyVersion, &e.PrimaryAttachmentID,
+		&e.AnalysisAt, &e.TranscriptAt)
 	if err != nil {
 		return Entry{}, err
 	}
@@ -289,6 +294,10 @@ func (s *Store) ListEntriesFilteredNotebook(ctx context.Context, limit, offset i
 				ORDER BY n.created_at DESC LIMIT 1), ''),
 			COALESCE((SELECT COALESCE(NULLIF(t.revised_text,''), t.text) FROM transcripts t
 				WHERE t.entry_id = e.id
+				ORDER BY t.created_at DESC LIMIT 1), ''),
+			COALESCE((SELECT a.created_at FROM analyses a WHERE a.entry_id = e.id
+				ORDER BY a.created_at DESC, a.rowid DESC LIMIT 1), ''),
+			COALESCE((SELECT t.created_at FROM transcripts t WHERE t.entry_id = e.id
 				ORDER BY t.created_at DESC LIMIT 1), '')
 		FROM entries e WHERE e.deleted_at IS NULL`
 	args := []any{AttachmentOriginal}
@@ -331,7 +340,7 @@ func (s *Store) ListEntriesFilteredNotebook(ctx context.Context, limit, offset i
 		if err := rows.Scan(&e.ID, &e.Title, &e.Status, &e.Source, &e.ParentID, &e.NotebookID, &e.OriginalFilename,
 			&e.ContentType, &e.SizeBytes, &e.DurationSeconds, &e.SHA256, &recordedAt, &createdAt, &updatedAt,
 			&archived, &e.Author, &titleVersion, &recordedVersion, &bodyVersion, &e.PrimaryAttachmentID,
-			&e.Preview, &e.SpokenPreview); err != nil {
+			&e.Preview, &e.SpokenPreview, &e.AnalysisAt, &e.TranscriptAt); err != nil {
 			return nil, fmt.Errorf("store: scan entry: %w", err)
 		}
 		if recordedAt.Valid {

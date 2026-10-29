@@ -187,6 +187,9 @@ func serve() error {
 		time.Duration(cfg.LlamaIdleSeconds)*time.Second, logger)
 	defer llamaServer.Close()
 	canceller := jobs.NewCanceller()
+	// Presenca dos workers opcionais do dashboard. Sem nenhum navegador
+	// registrado, o comportamento e exatamente o de hoje.
+	presence := jobs.NewPresence(jobs.WorkerTTL)
 
 	if cfg.AutoDownloadModel {
 		startDefaultModelDownload(cfg, modelsMgr, logger)
@@ -197,7 +200,7 @@ func serve() error {
 		logger.Info("configuracao inicial pendente: acesse /setup para definir o token de acesso")
 	}
 
-	startWorkers(ctx, cfg, st, ingestSvc, queue, pipeline, bus, logger, canceller, llamaServer, llmMgr)
+	startWorkers(ctx, cfg, st, ingestSvc, queue, pipeline, bus, logger, canceller, llamaServer, llmMgr, presence)
 
 	if cfg.TelegramEnabled {
 		bot := telegram.New(telegram.Config{Enabled: true, BotToken: cfg.TelegramBotToken, APIBase: cfg.TelegramAPIBase})
@@ -224,6 +227,7 @@ func serve() error {
 		LLMModels: llmMgr,
 		Canceller: canceller,
 		Tokens:    tokens,
+		Presence:  presence,
 	})
 
 	httpServer := &http.Server{
@@ -267,7 +271,7 @@ func resolveSecrets(cfg config.Config) (config.Config, bootstrap.Result, error) 
 	return cfg, secrets, nil
 }
 
-func startWorkers(ctx context.Context, cfg config.Config, st *store.Store, ing *ingest.Service, queue *jobs.Queue, pipeline *transcribe.Pipeline, bus *events.Bus, logger *slog.Logger, canceller *jobs.Canceller, localAI llm.Runner, llmModels llm.Store) {
+func startWorkers(ctx context.Context, cfg config.Config, st *store.Store, ing *ingest.Service, queue *jobs.Queue, pipeline *transcribe.Pipeline, bus *events.Bus, logger *slog.Logger, canceller *jobs.Canceller, localAI llm.Runner, llmModels llm.Store, presence *jobs.Presence) {
 	lease := time.Duration(cfg.JobLeaseSeconds) * time.Second
 	transcribeH := transcribeHandler(st, cfg, pipeline, queue, bus, logger, localAI)
 	analyzeH := analyzeHandler(st, cfg, bus, logger, localAI, llmModels)
@@ -277,6 +281,11 @@ func startWorkers(ctx context.Context, cfg config.Config, st *store.Store, ing *
 		runner.Register(jobs.TypeTranscribe, transcribeH)
 		runner.Register(jobs.TypeAnalyze, analyzeH)
 		runner.Register(jobs.TypeCleanup, cleanupH)
+		// Com um navegador assumindo a fila, o servidor so cuida da limpeza.
+		// Quando o navegador some, a presenca expira e o servidor volta sozinho.
+		if presence != nil {
+			runner.PauseHeavy(presence.Preferred)
+		}
 		go runner.Run(ctx)
 	}
 	logger.Info("workers iniciados", "quantidade", cfg.WorkerConcurrency)

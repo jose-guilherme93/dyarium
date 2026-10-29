@@ -54,6 +54,12 @@ func entryJSON(e store.Entry) map[string]any {
 		// Versao de cada campo editavel, para o cliente mandar de volta na
 		// gravacao e o servidor recusar o que ja mudou em outro lugar.
 		"versions": entryVersions(e),
+		// Quando a analise mais nova foi gravada. Vazio quando nao ha analise.
+		// O app usa como sinal de atualizacao: busca uma vez e guarda.
+		"analysis_at": e.AnalysisAt,
+		// O mesmo para a transcricao: uma revisao feita no servidor tem hora
+		// propria e o app so busca quando ela muda.
+		"transcript_at": e.TranscriptAt,
 	}
 	if e.DeletedAt != nil {
 		body["deleted_at"] = e.DeletedAt

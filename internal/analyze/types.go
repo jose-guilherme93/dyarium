@@ -66,6 +66,22 @@ type SectionAnalysis struct {
 	KeyMoments []KeyMoment `json:"key_moments"`
 	Questions  []string    `json:"questions"`
 	Decisions  []string    `json:"decisions"`
+	Tasks      []string    `json:"tasks"`
+	Ideas      []string    `json:"ideas"`
+	Events     []string    `json:"events"`
+	Epiphanies []string    `json:"epiphanies"`
+}
+
+// Coverage says how much of the note the analysis actually read. The app reads
+// the note block by block and can stop partway; the document is the same, only
+// the coverage changes.
+type Coverage struct {
+	BlocksRead  int  `json:"blocks_read"`
+	BlocksTotal int  `json:"blocks_total"`
+	CharsRead   int  `json:"chars_read"`
+	CharsTotal  int  `json:"chars_total"`
+	AudioMS     int  `json:"audio_ms"`
+	Partial     bool `json:"partial"`
 }
 
 // Result is the rich enrichment of a note.
@@ -86,6 +102,19 @@ type Result struct {
 	KeyMoments []KeyMoment `json:"key_moments"`
 	Questions  []string    `json:"questions"`
 	Decisions  []string    `json:"decisions"`
+	Tasks      []string    `json:"tasks"`
+	Ideas      []string    `json:"ideas"`
+	Events     []string    `json:"events"`
+	// Epiphanies are perceptions that change the author's understanding.
+	Epiphanies []string `json:"epiphanies"`
+	// Coverage is set by the app analysis, which reads the note block by block.
+	Coverage *Coverage `json:"coverage,omitempty"`
+	// SchemaVersion is the contract revision that produced the document; 2 adds
+	// tasks, ideas, events and coverage. Zero means an analysis older than it.
+	SchemaVersion int `json:"schema_version,omitempty"`
+	// SentenceSource says whether the one sentence came from the model or was
+	// derived from the fields by the app. Empty when the client did not say.
+	SentenceSource string `json:"sentence_source,omitempty"`
 	// Sections holds the per-section reading, in reading order.
 	Sections []SectionAnalysis `json:"sections,omitempty"`
 

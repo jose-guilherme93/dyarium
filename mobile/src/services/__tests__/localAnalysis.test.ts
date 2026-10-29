@@ -1,4 +1,4 @@
-import { ANALYSIS_SCHEMA } from '@/core/analysisPrompt';
+import { CHUNK_SCHEMA } from '@/core/analysisChunk';
 import { REVIEW_SCHEMA } from '@/core/transcriptReview';
 
 import { analysisThreads, completionRequest } from '../localAnalysis';
@@ -29,8 +29,15 @@ describe('schema pedido ao modelo local', () => {
     expect(request.response_format.json_schema.schema.required).toContain('segments');
   });
 
-  it('cai no schema da analise quando o chamador nao pede outro', () => {
+  it('cai no schema do bloco quando o chamador nao pede outro', () => {
     const request = completionRequest([{ role: 'user', content: '{}' }]);
-    expect(request.response_format.json_schema.schema).toBe(ANALYSIS_SCHEMA);
+    expect(request.response_format.json_schema.schema).toBe(CHUNK_SCHEMA);
+  });
+
+  it('usa a amostragem recomendada pelo modelo, sem travar no ganancioso', () => {
+    const request = completionRequest([{ role: 'user', content: '{}' }]);
+    expect(request.temperature).toBe(0.1);
+    expect(request.top_k).toBe(50);
+    expect(request.penalty_repeat).toBe(1.05);
   });
 });

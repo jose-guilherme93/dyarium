@@ -371,11 +371,12 @@ func insertAnalysis(ctx context.Context, ex execer, a Analysis) error {
 	_, err := ex.ExecContext(ctx, `
 		INSERT INTO analyses (id, entry_id, model, sentiment, sentiment_label, emotions, people, places,
 			summary, raw, data, comprehension, comprehension_source, stutter_rate, hesitation_rate,
-			revised_segments, origin, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			revised_segments, origin, device_id, device_name, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.ID, a.EntryID, a.Model, a.Sentiment, a.SentimentLabel, a.Emotions, a.People, a.Places,
 		a.Summary, a.Raw, a.Data, a.Comprehension, a.ComprehensionSource, a.StutterRate,
-		a.HesitationRate, a.RevisedSegments, originOrDefault(a.Origin), ts(a.CreatedAt))
+		a.HesitationRate, a.RevisedSegments, originOrDefault(a.Origin),
+		strings.TrimSpace(a.DeviceID), strings.TrimSpace(a.DeviceName), ts(a.CreatedAt))
 	if err != nil {
 		return fmt.Errorf("store: save analysis: %w", err)
 	}
@@ -523,11 +524,13 @@ func (s *Store) GetAnalysis(ctx context.Context, entryID string) (Analysis, bool
 		SELECT id, entry_id, model, sentiment, COALESCE(sentiment_label,''), COALESCE(emotions,''),
 			COALESCE(people,''), COALESCE(places,''), COALESCE(summary,''), COALESCE(raw,''),
 			COALESCE(data,''), comprehension, COALESCE(comprehension_source,''), stutter_rate,
-			hesitation_rate, revised_segments, COALESCE(origin,'server'), created_at
+			hesitation_rate, revised_segments, COALESCE(origin,'server'),
+			COALESCE(device_id,''), COALESCE(device_name,''), created_at
 		FROM analyses WHERE entry_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`, entryID).Scan(
 		&a.ID, &a.EntryID, &a.Model, &a.Sentiment, &a.SentimentLabel, &a.Emotions, &a.People,
 		&a.Places, &a.Summary, &a.Raw, &a.Data, &a.Comprehension, &a.ComprehensionSource,
-		&a.StutterRate, &a.HesitationRate, &a.RevisedSegments, &a.Origin, &createdAt)
+		&a.StutterRate, &a.HesitationRate, &a.RevisedSegments, &a.Origin,
+		&a.DeviceID, &a.DeviceName, &createdAt)
 	if err == sql.ErrNoRows {
 		return Analysis{}, false, nil
 	}

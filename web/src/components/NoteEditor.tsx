@@ -12,10 +12,21 @@ import { useEscape } from "../lib/useEscape";
 import type { Analysis, Attachment, Audio, AuthorRole, EntityKind, Entry, Note, Notebook, Revision } from "../types";
 import { Spinner, isBusy, statusLabel } from "./Status";
 import { TagEditor } from "./TagEditor";
+import { ListSkeleton } from "./Skeleton";
+import { ProcessOnPc } from "./ProcessOnPc";
+import { AnalysisStatus } from "./AnalysisStatus";
+import {
+  beginWorkerEntry,
+  cancelWorkerEntry,
+  getWorkerState,
+  replaceWorkerEntry,
+  subscribeWorker,
+} from "../lib/browserWorker";
 import { useToast } from "./Toasts";
 import {
   ArchiveIcon,
   CheckIcon,
+  ChevronIcon,
   CloseIcon,
   CodeIcon,
   ImageIcon,
@@ -36,6 +47,8 @@ interface NoteEditorProps {
   onOpenEntity: (kind: EntityKind, name: string) => void;
   onOpenEntry: (id: string) => void;
   notebooks: Notebook[];
+  /** Abre o processamento (laboratorio) e deixa Voltar trazer a nota de volta. */
+  onOpenLab?: () => void;
 }
 
 const FONTS = [
@@ -69,30 +82,6 @@ function withoutAudioMarker(markdown: string, attachmentId: string): string {
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trimEnd();
-}
-
-function processingText(
-  progress: { stage: string; done: number; total: number } | undefined,
-  status?: string,
-): string {
-  if (progress?.stage === "analyzing") {
-    return progress.total > 1
-      ? `Analisando... trecho ${Math.min(progress.done + 1, progress.total)} de ${progress.total}`
-      : "Analisando...";
-  }
-  if (progress?.stage === "summarizing") {
-    return "Gerando o resumo final...";
-  }
-  switch (status) {
-    case "queued":
-      return "Na fila...";
-    case "transcribing":
-      return "Transcrevendo o áudio...";
-    case "analyzing":
-      return "Analisando...";
-    default:
-      return "Processando...";
-  }
 }
 
 /** Revisao guardada no formato antigo (JSON de blocos), e não markdown. */
@@ -255,6 +244,7 @@ export function NoteEditor({
   onOpenEntity,
   onOpenEntry,
   notebooks,
+  onOpenLab,
 }: NoteEditorProps) {
   const { notify } = useToast();
   const [entry, setEntry] = useState<Entry | null>(null);
@@ -262,6 +252,8 @@ export function NoteEditor({
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [images, setImages] = useState<Attachment[]>([]);
   const [revisions, setRevisions] = useState<Revision[]>([]);
+  const [revisionsLoading, setRevisionsLoading] = useState(false);
+  const [revisionsMore, setRevisionsMore] = useState(false);
   const [noteId, setNoteId] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [initialBody, setInitialBody] = useState<PartialBlock[] | undefined>(undefined);
@@ -270,7 +262,25 @@ export function NoteEditor({
   const [saving, setSaving] = useState<"idle" | "saving" | "saved">("idle");
   const [error, setError] = useState("");
   const [asideOpen, setAsideOpen] = useState(() => readNoteViewState(entryId).asideOpen);
+  // Mantem a coluna montada durante a animacao de saida; sem isso ela some
+  // de uma vez e a transicao nunca aparece.
+  const [asideMounted, setAsideMounted] = useState(asideOpen);
+  // O worker local precisa baixar (ou carregar) os modelos antes de processar.
+  // Enquanto isso, Analisar fica indisponivel para a nota nao escapar para o
+  // servidor quando o usuario pediu processamento neste PC.
+  const [workerState, setWorkerState] = useState(getWorkerState());
+  const workerPreparing = workerState?.phase === "preparing";
   const [optionsOpen, setOptionsOpen] = useState(false);
+  useEffect(() => {
+    if (asideOpen) {
+      setAsideMounted(true);
+      return;
+    }
+    const timer = window.setTimeout(() => setAsideMounted(false), 150);
+    return () => window.clearTimeout(timer);
+  }, [asideOpen]);
+
+  useEffect(() => subscribeWorker(setWorkerState), []);
   const [expandedAudios, setExpandedAudios] = useState<string[]>(() => readNoteViewState(entryId).expandedAudios);
   const viewStateRef = useRef(readNoteViewState(entryId));
   const docRef = useRef<HTMLDivElement | null>(null);
@@ -460,6 +470,16 @@ export function NoteEditor({
     void loadLight();
   }, [refreshKey, loadLight]);
 
+  // Enquanto a nota roda, o status vem do servidor. Os eventos SSE avisam na
+  // hora; este relogio cobre um evento perdido (ou o worker do navegador, que
+  // nao publica progresso no servidor) e tira o painel de "Analisando".
+  const entryStatus = entry?.status;
+  useEffect(() => {
+    if (!isBusy(entryStatus) && busy === null) return;
+    const timer = window.setInterval(() => void loadLight(), 5000);
+    return () => window.clearInterval(timer);
+  }, [entryStatus, busy, loadLight]);
+
   // Load the note's revision history when the properties panel is open.
   useEffect(() => {
     if (!asideOpen || !noteId) {
@@ -468,6 +488,7 @@ export function NoteEditor({
       return;
     }
     let active = true;
+    setRevisionsLoading(true);
     api
       .listRevisions(noteId)
       .then((result) => {
@@ -481,6 +502,9 @@ export function NoteEditor({
           setRevisions([]);
           setRevisionsCursor(undefined);
         }
+      })
+      .finally(() => {
+        if (active) setRevisionsLoading(false);
       });
     return () => {
       active = false;
@@ -488,9 +512,10 @@ export function NoteEditor({
   }, [asideOpen, noteId]);
 
   const loadMoreRevisions = useCallback(() => {
-    if (!noteId || !revisionsCursor) {
+    if (!noteId || !revisionsCursor || revisionsMore) {
       return;
     }
+    setRevisionsMore(true);
     api
       .listRevisions(noteId, revisionsCursor)
       .then((result) => {
@@ -499,8 +524,9 @@ export function NoteEditor({
       })
       .catch(() => {
         // keep what is already on screen
-      });
-  }, [noteId, revisionsCursor]);
+      })
+      .finally(() => setRevisionsMore(false));
+  }, [noteId, revisionsCursor, revisionsMore]);
 
   // Preserve the ephemeral UI state across unmounting (view switch or note
   // switch). Content itself is cached; these are the bits React would lose.
@@ -714,6 +740,9 @@ export function NoteEditor({
     } catch (err) {
       setError(err instanceof Error ? err.message : "falha");
       notify("Não foi possível retranscrever", "error");
+    } finally {
+      // O trabalho continua no servidor (ou neste PC); quem mostra o andamento
+      // e o status da nota. Sem soltar o botao, o painel ficava girando.
       setBusy(null);
     }
   };
@@ -722,15 +751,24 @@ export function NoteEditor({
     setBusy("analyze");
     setError("");
     setAsideOpen(true);
+    // Com o worker ligado, a nota aberta e o pedido: ele nao pega mais nada da
+    // fila por conta propria. Sem ele, isto nao faz nada.
+    let local = false;
     try {
+      local = await beginWorkerEntry(entryId);
+      if (local) replaceWorkerEntry(entryId);
       await api.analyze(entryId);
       notify("Análise iniciada", "info");
     } catch (err) {
+      if (local) await cancelWorkerEntry(entryId);
       if (err instanceof Error && err.message.includes("desligada")) {
         notify("A análise esta desligada. Ative em Configuração.", "error");
       } else {
         notify(err instanceof Error ? err.message : "falha ao analisar", "error");
       }
+    } finally {
+      // A nota passa a "analisando" pelo status do servidor. Manter o botao
+      // ocupado aqui deixava o painel em "Analisando..." para sempre.
       setBusy(null);
     }
   };
@@ -847,14 +885,7 @@ export function NoteEditor({
   }
 
   const insights = processing ? (
-    <div className="analysis-loading">
-      <div className="analysis-loading-head">
-        <Spinner />
-        <span>{processingText(progress, status)}</span>
-      </div>
-      <div className="skeleton skeleton-line" />
-      <div className="skeleton skeleton-line" style={{ width: "85%" }} />
-    </div>
+    <AnalysisStatus entryId={entryId} progress={progress} status={status} />
   ) : analysis ? (
     <div className="insights">
       <p>
@@ -890,6 +921,11 @@ export function NoteEditor({
       {(analysis.reading || analysis.summary) && (
         <p className="insight-reading">{analysis.reading || analysis.summary}</p>
       )}
+      {analysis.origin === "browser" && analysis.device_name && (
+        <p className="hint insight-device" title="Aparelho que processou esta análise.">
+          {analysis.device_name}
+        </p>
+      )}
 
       {analysis.sections && analysis.sections.length > 1 && (
         <div className="analysis-block">
@@ -914,7 +950,7 @@ export function NoteEditor({
       {analysis.themes && analysis.themes.length > 0 && (
         <div className="analysis-block">
           <h4>Temas</h4>
-          <ul className="chips">
+          <ul className="chips stagger-in">
             {analysis.themes.map((theme) => (
               <li key={theme.name}>
                 <button type="button" className="chip-button" onClick={() => onOpenEntity("theme", theme.name)}>
@@ -929,7 +965,7 @@ export function NoteEditor({
       {analysis.people_detail && analysis.people_detail.length > 0 && (
         <div className="analysis-block">
           <h4>Pessoas</h4>
-          <ul className="chips">
+          <ul className="chips stagger-in">
             {analysis.people_detail.map((person) => (
               <li key={person.name}>
                 <button type="button" className="chip-button" onClick={() => onOpenEntity("person", person.name)}>
@@ -944,7 +980,7 @@ export function NoteEditor({
       {analysis.places_detail && analysis.places_detail.length > 0 && (
         <div className="analysis-block">
           <h4>Lugares</h4>
-          <ul className="chips">
+          <ul className="chips stagger-in">
             {analysis.places_detail.map((place) => (
               <li key={place.name}>
                 <button type="button" className="chip-button" onClick={() => onOpenEntity("place", place.name)}>
@@ -978,15 +1014,11 @@ export function NoteEditor({
     <div
       className={`note note-font--${font}${fullWidth ? " note--wide" : ""}${asideOpen ? " note--aside-open" : ""}`}
     >
-      <div
-        className="note-doc"
-        ref={docRef}
-        onScroll={(event) => {
-          viewStateRef.current.scrollTop = event.currentTarget.scrollTop;
-          patchNoteViewState(entryId, { scrollTop: event.currentTarget.scrollTop });
-        }}
-      >
-        <div className="note-topbar">
+      <div className="note-main">
+        {/* Header fixo: os icones ficam acima do titulo e o texto rola por
+            baixo, como no Trilium. Sem isto a barra sumia junto com a nota. */}
+        <header className="note-header">
+          <div className="note-topbar">
           <span className="save-state muted" aria-live="polite">
             {saving === "saving" ? "salvando" : saving === "saved" ? "salvo" : ""}
           </span>
@@ -1136,8 +1168,17 @@ export function NoteEditor({
               )}
             </div>
           </div>
-        </div>
+          </div>
+        </header>
 
+        <div
+          className="note-doc"
+          ref={docRef}
+          onScroll={(event) => {
+            viewStateRef.current.scrollTop = event.currentTarget.scrollTop;
+            patchNoteViewState(entryId, { scrollTop: event.currentTarget.scrollTop });
+          }}
+        >
         <textarea
           ref={titleRef}
           className="note-title"
@@ -1217,12 +1258,16 @@ export function NoteEditor({
               />
             ))}
         </div>
+        </div>
       </div>
 
-      {asideOpen && (
-        <aside className="note-aside" aria-label="Propriedades e insights">
+      {asideMounted && (
+        <aside
+          className={asideOpen ? "note-aside" : "note-aside note-aside--closing"}
+          aria-label="Propriedades e insights"
+        >
           <div className="aside-actions">
-            <strong className="aside-title">Propriedades</strong>
+            <strong className="aside-title">Nota</strong>
             <div className="aside-actions-buttons">
               <button
                 type="button"
@@ -1235,6 +1280,78 @@ export function NoteEditor({
               </button>
             </div>
           </div>
+
+          <section className="aside-block">
+            <div className="aside-block-head">
+              <div className="aside-block-title">
+                <h3>Insights</h3>
+                {analysis?.origin ? (
+                  <span
+                    className="analysis-origin"
+                    title={
+                      analysis.origin === "app"
+                        ? "Análise feita no aparelho e sincronizada."
+                        : analysis.origin === "api"
+                          ? "Análise feita por um provedor de terceiro."
+                          : analysis.origin === "browser"
+                            ? `Análise feita neste computador${analysis.device_name ? ` (${analysis.device_name})` : ""}, sem provedor externo.`
+                            : "Análise feita neste servidor."
+                    }
+                  >
+                    {analysis.origin === "app"
+                      ? "aparelho"
+                      : analysis.origin === "api"
+                        ? "API"
+                        : analysis.origin === "browser"
+                          ? "neste PC"
+                          : "servidor"}
+                  </span>
+                ) : null}
+              </div>
+              <div className="aside-insights-actions">
+                <ProcessOnPc hasAnalysis={analysis !== null} />
+                <button
+                  type="button"
+                  className="primary small"
+                  onClick={() => void analyze()}
+                  disabled={busy === "analyze" || running || workerPreparing}
+                  title={
+                    workerPreparing
+                      ? "Baixando os modelos para processar neste PC. Analisar libera quando estiverem prontos."
+                      : undefined
+                  }
+                >
+                  {busy === "analyze" || workerPreparing ? (
+                    <Spinner />
+                  ) : (
+                    <SparkIcon size={14} />
+                  )}{" "}
+                  Analisar
+                </button>
+                {onOpenLab && (
+                  <button
+                    type="button"
+                    className="icon-button aside-lab-link"
+                    onClick={onOpenLab}
+                    aria-label="Abrir processamento"
+                    title="Processamento neste PC"
+                  >
+                    <ChevronIcon size={15} />
+                  </button>
+                )}
+              </div>
+            </div>
+            {failureReason && !processing && !analysis ? (
+              <div className="analysis-failure">
+                <p className="error">{failureReason}</p>
+                <button type="button" className="primary small" onClick={() => void analyze()} disabled={busy === "analyze"}>
+                  Tentar de novo
+                </button>
+              </div>
+            ) : (
+              insights
+            )}
+          </section>
 
           <section className="aside-block">
             <h3>Caderno</h3>
@@ -1325,10 +1442,12 @@ export function NoteEditor({
           <section className="aside-block">
             <h3>Histórico</h3>
             <p className="muted history-created">Criada em {formatDateTime(entry.created_at)}</p>
-            {history.length === 0 ? (
+            {revisionsLoading ? (
+              <ListSkeleton rows={2} compact />
+            ) : history.length === 0 ? (
               <p className="muted">Sem alterações registradas.</p>
             ) : (
-              <ul className="history">
+              <ul className="history stagger-in">
                 {history.map((item, index) => (
                   <li key={index}>
                     <span className="history-when">{formatDay(item.day)}</span>
@@ -1356,50 +1475,18 @@ export function NoteEditor({
               </ul>
             )}
             {revisionsCursor && (
-              <button type="button" className="transcript-toggle" onClick={loadMoreRevisions}>
-                Carregar mais
+              <button
+                type="button"
+                className="transcript-toggle"
+                onClick={loadMoreRevisions}
+                disabled={revisionsMore}
+              >
+                {revisionsMore ? <Spinner /> : null}
+                {revisionsMore ? "Carregando" : "Carregar mais"}
               </button>
             )}
           </section>
 
-          <section className="aside-block">
-            <div className="aside-block-head">
-              <div className="aside-block-title">
-                <h3>Insights</h3>
-                {analysis?.origin ? (
-                  <span
-                    className="analysis-origin"
-                    title={
-                      analysis.origin === "app"
-                        ? "Análise feita no aparelho e sincronizada."
-                        : analysis.origin === "api"
-                          ? "Análise feita por um provedor de terceiro."
-                          : "Análise feita neste servidor."
-                    }
-                  >
-                    {analysis.origin === "app"
-                      ? "aparelho"
-                      : analysis.origin === "api"
-                        ? "API"
-                        : "servidor"}
-                  </span>
-                ) : null}
-              </div>
-              <button type="button" className="primary small" onClick={() => void analyze()} disabled={busy === "analyze" || running}>
-                {busy === "analyze" ? <Spinner /> : <SparkIcon size={14} />} Analisar
-              </button>
-            </div>
-            {failureReason && !processing && !analysis ? (
-              <div className="analysis-failure">
-                <p className="error">{failureReason}</p>
-                <button type="button" className="primary small" onClick={() => void analyze()} disabled={busy === "analyze"}>
-                  Tentar de novo
-                </button>
-              </div>
-            ) : (
-              insights
-            )}
-          </section>
         </aside>
       )}
 

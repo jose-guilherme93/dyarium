@@ -4,12 +4,17 @@
  * mantemos pendente e tentamos de novo depois.
  */
 
-import { ApiError, DyariumApi, type FetchLike } from '@/core/api';
+import { ApiError, DyariumApi, type FetchLike, type ServerEntry } from '@/core/api';
 import { mergeServerTranscript, reviewFromServer } from '@/core/transcriptReview';
 import { needsTranscript, type Recording } from '@/core/types';
 
 import { notify } from './notifications';
-import { listRecordings, upsertRecording } from './db';
+import {
+  listRecordings,
+  setTranscriptSyncAt,
+  getTranscriptSyncAt,
+  upsertRecording,
+} from './db';
 import { loadServerConfig } from './secure';
 import { emitRecording } from './uploaderLoop';
 
@@ -78,6 +83,68 @@ export async function fetchTranscriptsOnce(): Promise<void> {
   } finally {
     running = false;
   }
+}
+
+/**
+ * Traz as transcricoes que mudaram no servidor desde o ultimo pull. O sinal e
+ * `transcript_at` da lista de entradas; a busca acontece uma vez por mudanca.
+ * Uma nota sem transcricao local recebe a do servidor; uma nota ja pronta
+ * reaproveita as revisoes pelo mesmo merge usado antes.
+ */
+export async function syncServerTranscripts(
+  entries: ServerEntry[],
+  recordings: Recording[],
+): Promise<number> {
+  const config = await loadServerConfig();
+  if (!config) return 0;
+  const api = new DyariumApi(config, doFetch);
+  const byEntry = new Map<string, Recording>();
+  for (const recording of recordings) {
+    if (!recording.entryId || recording.deletedAt) continue;
+    byEntry.set(recording.entryId, recording);
+  }
+
+  let changed = 0;
+  for (const entry of entries) {
+    if (!entry.id || !entry.transcript_at) continue;
+    const sourceAt = entry.transcript_at;
+    if ((await getTranscriptSyncAt(entry.id)) === sourceAt) continue;
+    const recording = byEntry.get(entry.id);
+    if (!recording) {
+      await setTranscriptSyncAt(entry.id, sourceAt);
+      continue;
+    }
+    try {
+      if (recording.transcriptStatus === 'ready') {
+        const merged = await refreshServerTranscript(recording);
+        if (merged) changed += 1;
+      } else if (recording.transcriptOrigin !== 'local') {
+        // Nota ainda sem transcricao local: adota a do servidor com a mesma
+        // marca de origem, para nao reenviar como se tivesse sido feita aqui.
+        const transcript = await api.getTranscript(entry.id);
+        const segments = transcript.segments ?? [];
+        const updated: Recording = {
+          ...recording,
+          transcript: transcript.text,
+          transcriptLanguage: transcript.language,
+          transcriptOrigin: 'server',
+          transcriptStatus: 'ready',
+          hasTranscript: true,
+          transcriptSegments: segments,
+          transcriptReview:
+            reviewFromServer(transcript, segments) ?? recording.transcriptReview,
+          updatedAt: new Date().toISOString(),
+        };
+        await upsertRecording(updated);
+        emitRecording(updated);
+        changed += 1;
+      }
+      await setTranscriptSyncAt(entry.id, sourceAt);
+    } catch {
+      // Rede/5xx: o marcador fica como esta e o proximo pull tenta de novo.
+    }
+  }
+  return changed;
 }
 
 /**

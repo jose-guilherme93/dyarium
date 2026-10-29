@@ -3,6 +3,26 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { NoteEditor } from "./NoteEditor";
 import { api } from "../api";
 
+// O worker do navegador fica desligado por padrao; um teste liga o "preparando"
+// para ver o botao Analisar bloqueado durante o download dos modelos.
+const workerState = vi.hoisted(() => ({
+  current: null as null | { phase: string },
+}));
+
+vi.mock("../lib/browserWorker", () => ({
+  getWorkerState: () => workerState.current,
+  subscribeWorker: (listener: (state: unknown) => void) => {
+    listener(workerState.current);
+    return () => undefined;
+  },
+  beginWorkerEntry: async () => false,
+  cancelWorkerEntry: async () => undefined,
+  replaceWorkerEntry: () => undefined,
+  handOffWorker: async () => undefined,
+  startWorker: async () => undefined,
+  stopWorker: async () => undefined,
+}));
+
 // The rich editor is replaced by a button that reports a body change in
 // markdown (the format the note speaks), so the test exercises the note's save
 // orchestration without rendering BlockNote.
@@ -82,6 +102,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  workerState.current = null;
 });
 
 describe("NoteEditor autosave", () => {
@@ -265,6 +286,86 @@ describe("Origem da analise", () => {
     const open = screen.queryByLabelText("Abrir propriedades");
     if (open) fireEvent.click(open);
     expect(await screen.findByText("aparelho")).toBeInTheDocument();
+  });
+
+  it("bloqueia Analisar enquanto os modelos do PC estao carregando", async () => {
+    workerState.current = { phase: "preparing" };
+    render(
+      <NoteEditor
+        entryId="e1"
+        refreshKey={0}
+        onChanged={noop}
+        onDeleted={noop}
+        onOpenEntity={noop}
+        onOpenEntry={noop}
+        notebooks={[]}
+      />,
+    );
+
+    await screen.findByLabelText("Ver markdown");
+    const open = screen.queryByLabelText("Abrir propriedades");
+    if (open) fireEvent.click(open);
+    expect(await screen.findByRole("button", { name: /Analisar/ })).toBeDisabled();
+  });
+
+  it("mostra o aparelho que processou a analise no navegador", async () => {
+    vi.mocked(api.getAnalysis).mockResolvedValue({
+      origin: "browser",
+      model: "lfm2.5-230m-q5",
+      device_name: "Edge 156 · Windows · Intel HD Graphics 620",
+      sentiment: 0.1,
+      sentiment_label: "neutro",
+      emotions: null,
+      people: null,
+      places: null,
+      summary: "Resumo.",
+    });
+
+    render(
+      <NoteEditor
+        entryId="e1"
+        refreshKey={0}
+        onChanged={noop}
+        onDeleted={noop}
+        onOpenEntity={noop}
+        onOpenEntry={noop}
+        notebooks={[]}
+      />,
+    );
+
+    await screen.findByLabelText("Ver markdown");
+    const open = screen.queryByLabelText("Abrir propriedades");
+    if (open) fireEvent.click(open);
+    expect(
+      await screen.findByText("Edge 156 · Windows · Intel HD Graphics 620"),
+    ).toBeInTheDocument();
+  });
+
+  it("libera o botao Analisar depois de enfileirar a nota", async () => {
+    vi.mocked(api.getAnalysis).mockRejectedValue(new Error("sem analise"));
+    render(
+      <NoteEditor
+        entryId="e1"
+        refreshKey={0}
+        onChanged={noop}
+        onDeleted={noop}
+        onOpenEntity={noop}
+        onOpenEntry={noop}
+        notebooks={[]}
+      />,
+    );
+
+    await screen.findByLabelText("Ver markdown");
+    const open = screen.queryByLabelText("Abrir propriedades");
+    if (open) fireEvent.click(open);
+    const analyze = await screen.findByRole("button", { name: /Analisar/ });
+    fireEvent.click(analyze);
+
+    await waitFor(() => expect(api.analyze).toHaveBeenCalledWith("e1"));
+    // O trabalho continua no servidor (ou neste PC); o botao precisa voltar ao
+    // normal em vez de girar para sempre.
+    await waitFor(() => expect(screen.getByRole("button", { name: /Analisar/ })).not.toBeDisabled());
+    expect(screen.queryByText(/Analisando/)).not.toBeInTheDocument();
   });
 
   it("marca a analise de provedor de terceiro como API", async () => {

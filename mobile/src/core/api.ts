@@ -343,6 +343,13 @@ export interface ServerEntry {
   versions?: { title?: string; recorded_at?: string; body?: string };
   /** Presente apenas na listagem da lixeira (`?deleted=1`). */
   deleted_at?: string | null;
+  /**
+   * Quando a analise mais nova foi gravada no servidor. E o sinal de
+   * atualizacao: o app busca a analise uma vez quando este valor muda.
+   */
+  analysis_at?: string;
+  /** O mesmo sinal para a transcricao (inclusive uma revisao feita no servidor). */
+  transcript_at?: string;
 }
 
 export interface AnalysisTheme {
@@ -364,6 +371,9 @@ export interface ServerAnalysis {
   emotions: Record<string, number> | null;
   people: string[] | null;
   places: string[] | null;
+  /** Pessoas com a contagem de mencoes (o servidor devolve em `people_detail`). */
+  people_detail?: AnalysisPersonDetail[] | null;
+  places_detail?: AnalysisPlaceDetail[] | null;
   summary: string;
   /** Leitura curta da IA: o que o texto revela, no maximo duas frases. */
   reading?: string | null;
@@ -381,6 +391,42 @@ export interface ServerAnalysis {
   key_moments?: AnalysisMoment[] | null;
   questions?: string[] | null;
   decisions?: string[] | null;
+  /** Tarefas, ideias e acontecimentos objetivos extraidos por bloco. */
+  tasks?: string[] | null;
+  ideas?: string[] | null;
+  events?: string[] | null;
+  /** Percepcoes que mudam o entendimento do autor. */
+  epiphanies?: string[] | null;
+  /** Versao do contrato do documento; 2 e o contrato por bloco. */
+  schema_version?: number;
+  /** Versao do prompt do bloco que produziu uma analise local. */
+  prompt_version?: number;
+  /** De onde veio a frase: do modelo ou derivada dos campos pelo codigo. */
+  sentence_source?: 'model' | 'derived';
+  /** Cobertura da leitura por bloco. */
+  coverage?: AnalysisCoverage | null;
+}
+
+export interface AnalysisPersonDetail {
+  name: string;
+  count?: number;
+  relation?: string;
+  sentiment?: number;
+}
+
+export interface AnalysisPlaceDetail {
+  name: string;
+  count?: number;
+}
+
+export interface AnalysisCoverage {
+  blocks_read: number;
+  blocks_total: number;
+  chars_read?: number;
+  chars_total?: number;
+  /** Duracao de audio coberta pela transcricao lida, em ms. */
+  audio_ms?: number;
+  partial?: boolean;
 }
 
 export interface ServerAnalysisSection {
@@ -958,6 +1004,20 @@ export class DyariumApi {
   async getAnalysis(entryId: string): Promise<ServerAnalysis> {
     const res = await this.fetchImpl(this.url(`/api/v1/entries/${entryId}/analysis`), {
       method: 'GET',
+      headers: this.authHeaders(),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    return JSON.parse(await res.text());
+  }
+
+  /**
+   * Pede ao servidor que analise a entrada. O servidor valida a configuracao
+   * do provedor antes de enfileirar e responde 202; nada do conteudo da nota
+   * viaja neste pedido alem do id que o servidor ja tem.
+   */
+  async requestAnalysis(entryId: string): Promise<{ status: string }> {
+    const res = await this.fetchImpl(this.url(`/api/v1/entries/${entryId}/analyze`), {
+      method: 'POST',
       headers: this.authHeaders(),
     });
     if (!res.ok) throw await this.parseError(res);

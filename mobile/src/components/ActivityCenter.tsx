@@ -11,12 +11,14 @@ import { Text } from '@/components/AppText';
 import { BottomSheet } from '@/components/BottomSheet';
 import { Press } from '@/components/Press';
 import {
+  activityDestination,
   clearFinishedActivities,
   markActivitiesSeen,
   type Activity,
   type ActivityKind,
   type ActivityStatus,
 } from '@/services/activity';
+import { push } from '@/services/appNavigation';
 import { useActivities } from '@/state/useActivities';
 import { baseColors, fontSize, radius, spacing, type ThemeColors } from '@/theme/tokens';
 import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
@@ -85,7 +87,13 @@ function runStop(item: Activity): void {
   }
 }
 
-function ActivityRow({ item }: { item: Activity }) {
+function ActivityRow({
+  item,
+  onOpen,
+}: {
+  item: Activity;
+  onOpen?(item: Activity): void;
+}) {
   const styles = useThemedStyles(baseStyles);
   const { colors } = useTheme();
 
@@ -99,9 +107,11 @@ function ActivityRow({ item }: { item: Activity }) {
     !running && (item.status === 'error' || item.status === 'cancelled')
       ? item.action
       : undefined;
+  // Tarefa concluida com destino: o toque leva para o resultado.
+  const destination = !running && item.status === 'done' ? activityDestination(item) : null;
 
-  return (
-    <View style={styles.row}>
+  const body = (
+    <>
       <View style={[styles.kindIcon, { backgroundColor: palette.soft }]}>
         <Ionicons name={meta.icon} size={17} color={palette.color} />
       </View>
@@ -132,7 +142,12 @@ function ActivityRow({ item }: { item: Activity }) {
               ) : null}
             </View>
           ) : status ? (
-            <Ionicons name={status.icon} size={16} color={status.color} />
+            <>
+              <Ionicons name={status.icon} size={16} color={status.color} />
+              {destination ? (
+                <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
+              ) : null}
+            </>
           ) : null}
         </View>
 
@@ -163,7 +178,19 @@ function ActivityRow({ item }: { item: Activity }) {
           </Press>
         ) : null}
       </View>
-    </View>
+    </>
+  );
+
+  if (!destination) return <View style={styles.row}>{body}</View>;
+  return (
+    <Press
+      style={styles.row}
+      onPress={() => onOpen?.(item)}
+      accessibilityRole="button"
+      accessibilityLabel={`Abrir ${item.title}`}
+    >
+      {body}
+    </Press>
   );
 }
 
@@ -189,6 +216,25 @@ export function ActivityCenter({ visible, onClose }: ActivityCenterProps) {
   useEffect(() => {
     if (visible && unread) markActivitiesSeen();
   }, [visible, unread]);
+
+  const openActivity = (item: Activity) => {
+    const destination = activityDestination(item);
+    if (!destination) return;
+    onClose();
+    if (destination.screen === 'note' && destination.noteId) {
+      push({ pathname: '/note/[id]', params: { id: destination.noteId, analysis: '1' } });
+      return;
+    }
+    if (destination.screen === 'transcript' && destination.noteId) {
+      push({ pathname: '/transcript/[id]', params: { id: destination.noteId } });
+      return;
+    }
+    if (destination.screen === 'backup') {
+      push('/backup');
+      return;
+    }
+    push('/transcription');
+  };
 
   return (
     <BottomSheet visible={visible} onClose={onClose} cardStyle={styles.card}>
@@ -230,12 +276,12 @@ export function ActivityCenter({ visible, onClose }: ActivityCenterProps) {
           <>
             {running.length > 0 ? <SectionLabel>Em andamento</SectionLabel> : null}
             {running.map((item) => (
-              <ActivityRow key={item.id} item={item} />
+              <ActivityRow key={item.id} item={item} onOpen={openActivity} />
             ))}
 
             {finished.length > 0 ? <SectionLabel>Recentes</SectionLabel> : null}
             {finished.map((item) => (
-              <ActivityRow key={item.id} item={item} />
+              <ActivityRow key={item.id} item={item} onOpen={openActivity} />
             ))}
           </>
         )}

@@ -1,5 +1,5 @@
 diff --git a/android/src/main/java/com/swmansion/enriched/text/EnrichedTextView.kt b/android/src/main/java/com/swmansion/enriched/text/EnrichedTextView.kt
-index 53a0a503a199ae5215fe44b3717b825fc6ff011d..84e745ba46ec4d600592f573300a67e0f942134b 100644
+index 53a0a50..84e745b 100644
 --- a/android/src/main/java/com/swmansion/enriched/text/EnrichedTextView.kt
 +++ b/android/src/main/java/com/swmansion/enriched/text/EnrichedTextView.kt
 @@ -77,7 +77,12 @@ class EnrichedTextView : AppCompatTextView {
@@ -17,7 +17,7 @@ index 53a0a503a199ae5215fe44b3717b825fc6ff011d..84e745ba46ec4d600592f573300a67e0
  
      setPadding(0, 0, 0, 0)
 diff --git a/android/src/main/java/com/swmansion/enriched/text/MeasurementStore.kt b/android/src/main/java/com/swmansion/enriched/text/MeasurementStore.kt
-index b82c75212ae7606cbc8fb4bf22b81634297204e5..912dec72a9573d1bcf0e44a57b182ab5209848bf 100644
+index b82c752..912dec7 100644
 --- a/android/src/main/java/com/swmansion/enriched/text/MeasurementStore.kt
 +++ b/android/src/main/java/com/swmansion/enriched/text/MeasurementStore.kt
 @@ -47,7 +47,12 @@ object MeasurementStore {
@@ -35,7 +35,7 @@ index b82c75212ae7606cbc8fb4bf22b81634297204e5..912dec72a9573d1bcf0e44a57b182ab5
  
      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
 diff --git a/android/src/main/java/com/swmansion/enriched/textinput/EnrichedTextInputView.kt b/android/src/main/java/com/swmansion/enriched/textinput/EnrichedTextInputView.kt
-index 023cc20fc17b2018d2bc9c888ba7b550669eb820..c07303f3f1d143802020b702bb4e77d68d3a62b3 100644
+index 023cc20..c07303f 100644
 --- a/android/src/main/java/com/swmansion/enriched/textinput/EnrichedTextInputView.kt
 +++ b/android/src/main/java/com/swmansion/enriched/textinput/EnrichedTextInputView.kt
 @@ -219,7 +219,12 @@ class EnrichedTextInputView :
@@ -52,8 +52,37 @@ index 023cc20fc17b2018d2bc9c888ba7b550669eb820..c07303f3f1d143802020b702bb4e77d6
      }
  
      setPadding(0, 0, 0, 0)
+diff --git a/android/src/main/java/com/swmansion/enriched/textinput/EnrichedTextInputViewLayoutManager.kt b/android/src/main/java/com/swmansion/enriched/textinput/EnrichedTextInputViewLayoutManager.kt
+index 40894f8..2f0acf0 100644
+--- a/android/src/main/java/com/swmansion/enriched/textinput/EnrichedTextInputViewLayoutManager.kt
++++ b/android/src/main/java/com/swmansion/enriched/textinput/EnrichedTextInputViewLayoutManager.kt
+@@ -8,17 +8,21 @@ class EnrichedTextInputViewLayoutManager(
+   private var forceHeightRecalculationCounter: Int = 0
+ 
+   fun invalidateLayout() {
++    // Before the view is attached there is no shadow node state to update:
++    // caching a measurement now leaves the store out of sync with the layout
++    // that will actually be drawn (the text can be clipped to one line).
++    val stateWrapper = view.stateWrapper ?: return
++
+     val text = view.text
+     val paint = view.paint
+ 
+     val needUpdate = MeasurementStore.store(view.id, text, paint)
+     if (!needUpdate) return
+ 
+-    val counter = forceHeightRecalculationCounter
+     forceHeightRecalculationCounter++
+     val state = Arguments.createMap()
+-    state.putInt("forceHeightRecalculationCounter", counter)
+-    view.stateWrapper?.updateState(state)
++    state.putInt("forceHeightRecalculationCounter", forceHeightRecalculationCounter)
++    stateWrapper.updateState(state)
+   }
+ 
+   fun releaseMeasurementStore() {
 diff --git a/android/src/main/java/com/swmansion/enriched/textinput/MeasurementStore.kt b/android/src/main/java/com/swmansion/enriched/textinput/MeasurementStore.kt
-index 09363e08a4bf3adb3e4690860116f454bd3c1e2b..389dbf08e88395f227c57c3672cda31074560653 100644
+index 09363e0..c157d27 100644
 --- a/android/src/main/java/com/swmansion/enriched/textinput/MeasurementStore.kt
 +++ b/android/src/main/java/com/swmansion/enriched/textinput/MeasurementStore.kt
 @@ -88,7 +88,12 @@ object MeasurementStore {
@@ -70,8 +99,38 @@ index 09363e08a4bf3adb3e4690860116f454bd3c1e2b..389dbf08e88395f227c57c3672cda310
      }
  
      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+@@ -130,7 +135,10 @@ object MeasurementStore {
+     props: ReadableMap?,
+   ): Float {
+     val propsFontSize = props?.getDouble("fontSize")?.toFloat()
+-    if (propsFontSize == null) return defaultView.textSize
++    // A zero font is not "small text": it is a prop that has not arrived yet.
++    // Measuring with it makes every character fit on one line, so the editor
++    // gets a one-line height and the long text is clipped.
++    if (propsFontSize == null || propsFontSize <= 0) return defaultView.textSize
+ 
+     return ceil(pixelFromSpOrDp(propsFontSize, allowFontScalingFromProps(props)))
+   }
+diff --git a/android/src/main/java/com/swmansion/enriched/textinput/utils/EnrichedSelection.kt b/android/src/main/java/com/swmansion/enriched/textinput/utils/EnrichedSelection.kt
+index 6584087..4640c9b 100644
+--- a/android/src/main/java/com/swmansion/enriched/textinput/utils/EnrichedSelection.kt
++++ b/android/src/main/java/com/swmansion/enriched/textinput/utils/EnrichedSelection.kt
+@@ -253,7 +253,12 @@ class EnrichedSelection(
+         text,
+         visibleStart,
+         visibleEnd,
+-        view.experimentalSynchronousEvents,
++        // Cursor movement is a UI event, not a layout update: a synchronous
++        // dispatch makes the UI thread wait for JS on every tap and on every
++        // keystroke (the caret moves with the selection), and the frame drops
++        // on the tap. Asynchronous delivery is enough: the app only reads the
++        // cursor when it needs to insert something.
++        false,
+       ),
+     )
+   }
 diff --git a/android/src/main/java/com/swmansion/enriched/textinput/utils/EnrichedSpanState.kt b/android/src/main/java/com/swmansion/enriched/textinput/utils/EnrichedSpanState.kt
-index ec4e27285fafc28a90fbbcf01aa952162de8a3ec..3c2c3ea6566d7861d456fc06e07013d764028b02 100644
+index ec4e272..3c2c3ea 100644
 --- a/android/src/main/java/com/swmansion/enriched/textinput/utils/EnrichedSpanState.kt
 +++ b/android/src/main/java/com/swmansion/enriched/textinput/utils/EnrichedSpanState.kt
 @@ -136,6 +136,7 @@ class EnrichedSpanState(
@@ -111,7 +170,7 @@ index ec4e27285fafc28a90fbbcf01aa952162de8a3ec..3c2c3ea6566d7861d456fc06e07013d7
      }
  
 diff --git a/android/src/main/java/com/swmansion/enriched/textinput/watchers/EnrichedSpanWatcher.kt b/android/src/main/java/com/swmansion/enriched/textinput/watchers/EnrichedSpanWatcher.kt
-index b3d7b0936be6e36159d60664041d2008f4779e23..716989b3bff60c688b399407d5454f09951f49d6 100644
+index b3d7b09..716989b 100644
 --- a/android/src/main/java/com/swmansion/enriched/textinput/watchers/EnrichedSpanWatcher.kt
 +++ b/android/src/main/java/com/swmansion/enriched/textinput/watchers/EnrichedSpanWatcher.kt
 @@ -18,6 +18,13 @@ import com.swmansion.enriched.textinput.utils.getSafeSpanBoundaries
@@ -149,21 +208,19 @@ index b3d7b0936be6e36159d60664041d2008f4779e23..716989b3bff60c688b399407d5454f09
      }
    }
  
-
-diff --git a/android/src/main/java/com/swmansion/enriched/textinput/utils/EnrichedSelection.kt b/android/src/main/java/com/swmansion/enriched/textinput/utils/EnrichedSelection.kt
---- a/android/src/main/java/com/swmansion/enriched/textinput/utils/EnrichedSelection.kt
-+++ b/android/src/main/java/com/swmansion/enriched/textinput/utils/EnrichedSelection.kt
-@@ -253,7 +253,12 @@ class EnrichedSelection(
-         text,
-         visibleStart,
-         visibleEnd,
--        view.experimentalSynchronousEvents,
-+        // Cursor movement is a UI event, not a layout update: a synchronous
-+        // dispatch makes the UI thread wait for JS on every tap and on every
-+        // keystroke (the caret moves with the selection), and the frame drops
-+        // on the tap. Asynchronous delivery is enough: the app only reads the
-+        // cursor when it needs to insert something.
-+        false,
-       ),
-     )
-   }
+diff --git a/android/src/main/new_arch/react/renderer/components/ReactNativeEnrichedSpec/EnrichedTextInputShadowNode.h b/android/src/main/new_arch/react/renderer/components/ReactNativeEnrichedSpec/EnrichedTextInputShadowNode.h
+index 79aa013..e464b93 100644
+--- a/android/src/main/new_arch/react/renderer/components/ReactNativeEnrichedSpec/EnrichedTextInputShadowNode.h
++++ b/android/src/main/new_arch/react/renderer/components/ReactNativeEnrichedSpec/EnrichedTextInputShadowNode.h
+@@ -47,7 +47,10 @@ public:
+                  const LayoutConstraints &layoutConstraints) const override;
+ 
+ private:
+-  int forceHeightRecalculationCounter_;
++  // Starts at the same value as the state counter. Leaving it uninitialized
++  // made the first state update look like "no change" on some launches, so the
++  // layout kept the initial (one-line) height after the text was set.
++  int forceHeightRecalculationCounter_{0};
+   std::shared_ptr<EnrichedTextInputMeasurementManager> measurementsManager_;
+ };
+ } // namespace facebook::react

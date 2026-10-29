@@ -184,6 +184,84 @@ describe("SettingsView análise local", () => {
   });
 });
 
+describe("SettingsView chaves de provedores", () => {
+  it("mostra o atalho para criar a chave do OpenRouter", async () => {
+    vi.mocked(api.getSettings).mockResolvedValue({
+      ...settings,
+      analyze_provider: "openai",
+      analyze_local_runtime: "",
+      analyze_base_url: "https://openrouter.ai/api/v1",
+      analyze_model: "google/gemini-2.5-flash",
+    });
+
+    render(<SettingsView />);
+
+    const link = await screen.findByRole("link", { name: "Criar chave" });
+    expect(link.getAttribute("href")).toBe("https://openrouter.ai/keys");
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(screen.getByPlaceholderText("sk-or-v1-...")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Modelos" }).getAttribute("href")).toBe(
+      "https://openrouter.ai/models",
+    );
+  });
+
+  it("escolhe o OpenRouter com base e modelo prontos", async () => {
+    render(<SettingsView />);
+
+    const select = await screen.findByLabelText("Provedor da análise");
+    fireEvent.change(select, { target: { value: "openrouter" } });
+
+    await waitFor(() =>
+      expect(api.putSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          analyze_provider: "openai",
+          analyze_base_url: "https://openrouter.ai/api/v1",
+          analyze_model: "google/gemini-2.5-flash",
+          analyze_local_runtime: "",
+          analyze_enabled: true,
+        }),
+      ),
+    );
+  });
+
+  it("monta a chave da Deepgram com o modelo e o link", async () => {
+    let current: Settings = { ...settings, transcribe_provider: "deepgram" };
+    vi.mocked(api.getSettings).mockImplementation(async () => current);
+    vi.mocked(api.putSettings).mockImplementation(async (patch) => {
+      current = { ...current, ...(patch as unknown as Partial<Settings>) };
+      return { status: "ok" };
+    });
+
+    render(<SettingsView />);
+
+    const link = await screen.findByRole("link", { name: "Criar chave na Deepgram" });
+    expect(link.getAttribute("href")).toBe("https://console.deepgram.com/");
+
+    fireEvent.change(screen.getByLabelText("Modelo Deepgram"), { target: { value: "nova-3" } });
+    await waitFor(() => expect(api.putSettings).toHaveBeenCalledWith({ deepgram_model: "nova-3" }));
+
+    fireEvent.change(screen.getByLabelText("Chave da Deepgram"), { target: { value: "dg-key" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar chave da Deepgram" }));
+    await waitFor(() => expect(api.putSettings).toHaveBeenCalledWith({ deepgram_api_key: "dg-key" }));
+  });
+
+  it("mostra a chave guardada como definida, sem revelar o valor", async () => {
+    vi.mocked(api.getSettings).mockResolvedValue({
+      ...settings,
+      analyze_provider: "openai",
+      analyze_local_runtime: "",
+      analyze_base_url: "https://openrouter.ai/api/v1",
+      analyze_model: "google/gemini-2.5-flash",
+      analyze_api_key_set: true,
+    });
+
+    render(<SettingsView />);
+
+    expect(await screen.findByText("definida")).toBeTruthy();
+    expect((screen.getByLabelText("Chave da API de análise") as HTMLInputElement).value).toBe("");
+  });
+});
+
 describe("SettingsView autor", () => {
   it("salva o nome do dono ao sair do campo", async () => {
     render(<SettingsView />);

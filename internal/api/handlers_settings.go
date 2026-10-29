@@ -234,8 +234,11 @@ func (s *Server) handleGetAnalysis(w http.ResponseWriter, r *http.Request) {
 	aliasPairs, _ := s.deps.Store.EntityAliasPairs(r.Context())
 	summary := canonicalizeAnalysisText(a.Summary, aliasPairs)
 	body := map[string]any{
-		// Quem produziu: "app", "server" ou "api".
-		"origin":          a.Origin,
+		// Quem produziu: "app", "server", "browser" ou "api".
+		"origin": a.Origin,
+		// Aparelho que processou quando a origem e "browser" (vazio nas outras).
+		"device_id":       a.DeviceID,
+		"device_name":     a.DeviceName,
 		"model":           a.Model,
 		"sentiment":       a.Sentiment,
 		"sentiment_label": a.SentimentLabel,
@@ -297,6 +300,19 @@ func (s *Server) handleGetAnalysis(w http.ResponseWriter, r *http.Request) {
 			body["key_moments"] = rich.KeyMoments
 			body["questions"] = rich.Questions
 			body["decisions"] = rich.Decisions
+			body["tasks"] = rich.Tasks
+			body["ideas"] = rich.Ideas
+			body["events"] = rich.Events
+			body["epiphanies"] = rich.Epiphanies
+			if rich.Coverage != nil {
+				body["coverage"] = rich.Coverage
+			}
+			if rich.SchemaVersion > 0 {
+				body["schema_version"] = rich.SchemaVersion
+			}
+			if rich.SentenceSource != "" {
+				body["sentence_source"] = rich.SentenceSource
+			}
 			body["data"] = json.RawMessage(data)
 		}
 	}
@@ -350,7 +366,7 @@ func rawJSON(s string) any {
 
 func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	if !s.analyzeEnabled(ctx) {
+	if !s.analyzeEnabled(ctx) && !s.deps.Presence.Preferred() {
 		writeError(w, http.StatusConflict, "analyze_disabled", "analise desligada")
 		return
 	}
@@ -361,10 +377,13 @@ func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	}
 	// Antes de prometer a analise, confirma que o provedor responde. Sem isso o
 	// usuario descobria a chave/modelo quebrados depois de a nota falhar, e o
-	// clique virava uma promessa que nao se cumpria.
-	if err := s.pingProvider(ctx); err != nil {
-		writeError(w, http.StatusBadGateway, "ai_unavailable", analyze.FriendlyError(err))
-		return
+	// clique virava uma promessa que nao se cumpria. Com um worker do navegador
+	// ativo nao ha provedor para testar: quem responde e o PC do usuario.
+	if !s.deps.Presence.Preferred() {
+		if err := s.pingProvider(ctx); err != nil {
+			writeError(w, http.StatusBadGateway, "ai_unavailable", analyze.FriendlyError(err))
+			return
+		}
 	}
 	// A chave e a mesma da analise automatica: um clique enquanto o worker ja
 	// analisa nao pode abrir uma segunda passada concorrente na mesma nota.

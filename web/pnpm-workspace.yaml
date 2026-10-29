@@ -1,0 +1,7 @@
+# pnpm 12 trata build scripts ignorados como erro. Nenhum dos dois e usado no
+# navegador: onnxruntime-node so serve ao runtime Node do transformers.js e o
+# postinstall do protobufjs e opcional. Declarar "false" mantem o install
+# reproduzivel sem rodar codigo nativo desnecessario.
+allowBuilds:
+  onnxruntime-node: false
+  protobufjs: false

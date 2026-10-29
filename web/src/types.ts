@@ -98,7 +98,10 @@ export interface Transcript {
 
 export interface Analysis {
   /** Quem produziu: análise feita no aparelho, neste servidor ou em uma API. */
-  origin?: "app" | "server" | "api";
+  origin?: "app" | "server" | "api" | "browser";
+  /** Aparelho que processou, quando a origem é "browser". */
+  device_id?: string;
+  device_name?: string;
   model: string;
   sentiment: number;
   sentiment_label: string;
@@ -224,6 +227,21 @@ export interface EntityEntry {
 
 export interface EntityDetail extends EntitySummary {
   entry_list: EntityEntry[];
+}
+
+/** Trecho onde uma entidade foi encontrada: audio com tempo ou frase escrita. */
+export interface EntityMention {
+  entry_id: string;
+  title: string;
+  date: string | null;
+  source: "transcript" | "text";
+  text: string;
+  /** Grafia que casou no trecho (nome atual ou antigo). */
+  term: string;
+  start_ms?: number;
+  end_ms?: number;
+  /** Leitura da analise da nota, o comentario sobre o trecho. */
+  comment?: string;
 }
 
 export interface MoodPoint {

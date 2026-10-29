@@ -143,6 +143,28 @@ func (s *Store) GetEntity(ctx context.Context, kind, name string) (EntitySummary
 	return summary, entries, true, rows.Err()
 }
 
+// EntityAliases returns the old spellings registered for an entity after a
+// rename or merge. The current name is not included; callers already have it.
+func (s *Store) EntityAliases(ctx context.Context, entityID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT name FROM entity_aliases WHERE entity_id = ? ORDER BY created_at`, entityID)
+	if err != nil {
+		return nil, fmt.Errorf("store: entity aliases: %w", err)
+	}
+	defer rows.Close()
+	var aliases []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("store: scan entity alias: %w", err)
+		}
+		if name != "" {
+			aliases = append(aliases, name)
+		}
+	}
+	return aliases, rows.Err()
+}
+
 // MoodSeries returns the daily average sentiment, optionally bounded by from
 // and to (zero values mean unbounded).
 func (s *Store) MoodSeries(ctx context.Context, from, to time.Time) ([]MoodPoint, error) {

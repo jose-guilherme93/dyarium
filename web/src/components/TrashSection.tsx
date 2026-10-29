@@ -11,6 +11,8 @@ import { useCallback, useEffect, useState } from "react";
 
 import { api } from "../api";
 import { formatDateTime } from "../lib/format";
+import { ListSkeleton } from "./Skeleton";
+import { Spinner } from "./Status";
 import type { Entry } from "../types";
 import { useToast } from "./Toasts";
 
@@ -28,14 +30,18 @@ export function TrashSection({ refreshKey = 0 }: TrashSectionProps) {
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
+    setLoading(true);
     try {
       const result = await api.listDeletedEntries();
       setEntries(result.entries ?? []);
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "falha ao carregar a lixeira");
+    } finally {
+      setLoading(false);
     }
   }, []);
 
@@ -84,10 +90,12 @@ export function TrashSection({ refreshKey = 0 }: TrashSectionProps) {
       {error && <p className="error">{error}</p>}
 
       {open &&
-        (entries.length === 0 ? (
+        (loading ? (
+          <ListSkeleton rows={3} compact />
+        ) : entries.length === 0 ? (
           <p className="muted">Lixeira vazia.</p>
         ) : (
-          <ul className="trash-list">
+          <ul className="trash-list stagger-in">
             {entries.map((entry) => (
               <li key={entry.id} className="trash-item">
                 <div className="trash-info">
@@ -104,7 +112,8 @@ export function TrashSection({ refreshKey = 0 }: TrashSectionProps) {
                   onClick={() => void restore(entry)}
                   aria-label={`Restaurar ${titleOf(entry)}`}
                 >
-                  {busyId === entry.id ? "Restaurando..." : "Restaurar"}
+                  {busyId === entry.id ? <Spinner /> : null}
+                  {busyId === entry.id ? "Restaurando" : "Restaurar"}
                 </button>
               </li>
             ))}

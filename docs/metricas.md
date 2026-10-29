@@ -224,7 +224,7 @@ servidor e no SQLite do app (schema equivalente). Campos:
 ```text
 id, entry_id, analysis_id (nulo), attachment_id (nulo),
 runtime (local|server), provider (llama.cpp|openai|opencode|ollama), model,
-attempt, outcome (ok|invalid_json|error|stopped|fallback),
+attempt, outcome (ok|partial|invalid_json|error|stopped|fallback),
 error_class (generico, sem conteudo), started_at, finished_at, duration_ms,
 input_text_chars, input_transcript_chars, input_images,
 prompt_tokens, completion_tokens, tokens_per_second, threads,
@@ -233,8 +233,10 @@ battery_delta_pct (nulo; so local)
 
 - Sucesso = tentativa com resultado parseado e persistido. `invalid_json`,
   `error` e `stopped` sao falhas; `fallback` conta em "% simplificadas" e nunca
-  como sucesso. A taxa e calculada por tentativa e por nota (resultado final);
-  latencia so sobre sucessos.
+  como sucesso. `partial` e a passada que leu alguns blocos e parou: conta como
+  sucesso (a analise existe e pode continuar) e a cobertura fica no documento.
+  A taxa e calculada por tentativa e por nota (resultado final); latencia so
+  sobre sucessos e parciais.
 - Identidade do modelo: `runtime`, `provider` e `model` separados. Agrupar por
   provider + modelo na exibicao; nunca comparar um GGUF local com uma API como se
   fossem o mesmo modelo.

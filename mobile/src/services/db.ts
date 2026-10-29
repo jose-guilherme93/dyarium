@@ -8,6 +8,7 @@ import { Directory, File, Paths } from 'expo-file-system';
 import { Platform } from 'react-native';
 
 import type { ServerAnalysis, ServerAudio } from '@/core/api';
+import type { ChunkExtraction } from '@/core/analysisChunk';
 import type { AnalysisOutcome, AnalysisRun, AnalysisRuntime } from '@/core/analysisRuns';
 import { DEFAULT_NOTEBOOK_ID } from '@/core/notebooks';
 import type {
@@ -441,6 +442,57 @@ const MIGRATIONS: Migration[] = [
       if (!(await columnExists(db, 'recordings', 'author_dirty'))) {
         await db.execAsync('ALTER TABLE recordings ADD COLUMN author_dirty TEXT');
       }
+    },
+  },
+  {
+    version: 27,
+    run: async (db) => {
+      // Analise por bloco: cada paragrafo (ou frase entre pausas) e lido em uma
+      // chamada curta e o resultado fica guardado. Refazer a analise so le os
+      // blocos que mudaram, e uma passada interrompida continua de onde parou.
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS analysis_chunks (
+          entry_id TEXT NOT NULL,
+          block_index INTEGER NOT NULL,
+          block_hash TEXT NOT NULL,
+          prompt_version INTEGER NOT NULL DEFAULT 0,
+          model TEXT NOT NULL,
+          status TEXT NOT NULL,
+          dropped INTEGER NOT NULL DEFAULT 0,
+          payload TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (entry_id, block_index)
+        );
+        CREATE INDEX IF NOT EXISTS idx_analysis_chunks_entry ON analysis_chunks(entry_id);
+      `);
+    },
+  },
+  {
+    version: 28,
+    run: async (db) => {
+      // Sinal de atualizacao da analise vinda do servidor: guarda o
+      // `analysis_at` que ja foi buscado. Sem isso, a ficha pediria a analise
+      // de novo a cada abertura so para exibir; com ele, busca uma vez por
+      // atualizacao e mostra sempre a copia do banco.
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS analysis_sync (
+          entry_id TEXT PRIMARY KEY NOT NULL,
+          source_at TEXT NOT NULL
+        );
+      `);
+    },
+  },
+  {
+    version: 29,
+    run: async (db) => {
+      // O mesmo sinal para a transcricao: uma revisao feita no dashboard tem
+      // hora propria e o aparelho so busca quando ela muda.
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS transcript_sync (
+          entry_id TEXT PRIMARY KEY NOT NULL,
+          source_at TEXT NOT NULL
+        );
+      `);
     },
   },
 ];
@@ -1065,6 +1117,139 @@ export async function getCachedAnalysis(entryId: string): Promise<CachedAnalysis
     [entryId],
   );
   return row ? toCachedAnalysis(row) : null;
+}
+
+/** Resultado da leitura de um bloco, guardado para retomada e cache. */
+export interface StoredAnalysisChunk {
+  entryId: string;
+  blockIndex: number;
+  blockHash: string;
+  promptVersion: number;
+  model: string;
+  /** `ok` quando o modelo respondeu e a ancora aceitou; `rejected` quando nao. */
+  status: 'ok' | 'rejected';
+  /** Itens que o codigo descartou por nao existirem no bloco. */
+  dropped: number;
+  extraction: ChunkExtraction;
+}
+
+interface AnalysisChunkRow {
+  entry_id: string;
+  block_index: number;
+  block_hash: string;
+  prompt_version: number;
+  model: string;
+  status: string;
+  dropped: number;
+  payload: string;
+}
+
+/** Blocos ja lidos de uma nota, inclusive os recusados. */
+export async function listAnalysisChunks(entryId: string): Promise<StoredAnalysisChunk[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<AnalysisChunkRow>(
+    `SELECT entry_id, block_index, block_hash, prompt_version, model, status, dropped, payload
+     FROM analysis_chunks WHERE entry_id = ? ORDER BY block_index`,
+    [entryId],
+  );
+  const out: StoredAnalysisChunk[] = [];
+  for (const row of rows) {
+    try {
+      out.push({
+        entryId: row.entry_id,
+        blockIndex: row.block_index,
+        blockHash: row.block_hash,
+        promptVersion: row.prompt_version,
+        model: row.model,
+        status: row.status === 'ok' ? 'ok' : 'rejected',
+        dropped: row.dropped,
+        extraction: JSON.parse(row.payload) as ChunkExtraction,
+      });
+    } catch {
+      // Linha corrompida: o bloco sera lido de novo.
+    }
+  }
+  return out;
+}
+
+/** Grava os blocos lidos. Upsert por indice: o hash decide se ainda vale. */
+export async function saveAnalysisChunks(chunks: StoredAnalysisChunk[]): Promise<void> {
+  if (chunks.length === 0) return;
+  const db = await getDb();
+  const updatedAt = new Date().toISOString();
+  for (const chunk of chunks) {
+    await db.runAsync(
+      `INSERT INTO analysis_chunks (
+         entry_id, block_index, block_hash, prompt_version, model, status, dropped, payload, updated_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(entry_id, block_index) DO UPDATE SET
+         block_hash = excluded.block_hash,
+         prompt_version = excluded.prompt_version,
+         model = excluded.model,
+         status = excluded.status,
+         dropped = excluded.dropped,
+         payload = excluded.payload,
+         updated_at = excluded.updated_at`,
+      [
+        chunk.entryId,
+        chunk.blockIndex,
+        chunk.blockHash,
+        chunk.promptVersion,
+        chunk.model,
+        chunk.status,
+        chunk.dropped,
+        JSON.stringify(chunk.extraction),
+        updatedAt,
+      ],
+    );
+  }
+}
+
+/** Apaga os blocos de uma nota: usado no "analisar de novo" (recomeco). */
+export async function deleteAnalysisChunks(entryId: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync('DELETE FROM analysis_chunks WHERE entry_id = ?', [entryId]);
+}
+
+/** Ultimo `analysis_at` do servidor ja buscado para a entrada. */
+export async function getAnalysisSyncAt(entryId: string): Promise<string | null> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<{ source_at: string }>(
+    'SELECT source_at FROM analysis_sync WHERE entry_id = ?',
+    [entryId],
+  );
+  return row?.source_at ?? null;
+}
+
+/** Ultimo `transcript_at` do servidor ja trazido para a entrada. */
+export async function getTranscriptSyncAt(entryId: string): Promise<string | null> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<{ source_at: string }>(
+    'SELECT source_at FROM transcript_sync WHERE entry_id = ?',
+    [entryId],
+  );
+  return row?.source_at ?? null;
+}
+
+/** Marca a atualizacao da transcricao como ja trazida para o banco. */
+export async function setTranscriptSyncAt(entryId: string, sourceAt: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `INSERT INTO transcript_sync (entry_id, source_at) VALUES (?, ?)
+     ON CONFLICT(entry_id) DO UPDATE SET source_at = excluded.source_at`,
+    [entryId, sourceAt],
+  );
+}
+
+/** Marca a atualizacao da analise do servidor como ja trazida para o banco. */
+export async function setAnalysisSyncAt(entryId: string, sourceAt: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `INSERT INTO analysis_sync (entry_id, source_at) VALUES (?, ?)
+     ON CONFLICT(entry_id) DO UPDATE SET source_at = excluded.source_at`,
+    [entryId, sourceAt],
+  );
 }
 
 /**

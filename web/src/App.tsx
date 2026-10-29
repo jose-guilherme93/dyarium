@@ -11,13 +11,14 @@ import { NotebookDialog } from "./components/NotebookDialog";
 import { NotebookSwitcher } from "./components/NotebookSwitcher";
 import { NotionImportDialog } from "./components/NotionImportDialog";
 import { OfflineBanner } from "./components/OfflineBanner";
+import { WorkerKeepAlive } from "./components/WorkerKeepAlive";
 import { TagManager } from "./components/TagManager";
 import { ComposeDialog, type ComposeAnchor } from "./components/ComposeDialog";
 import { useToast } from "./components/Toasts";
 import {
   ChevronIcon,
+  CpuIcon,
   ExitIcon,
-  InsightsIcon,
   MapIcon,
   MenuIcon,
   PlusIcon,
@@ -27,14 +28,14 @@ import {
 } from "./components/icons";
 import { ALL_NOTEBOOKS, DEFAULT_NOTEBOOK_ID } from "./lib/notebooks";
 import type { NotionImportResult } from "./lib/notionImport";
-import { InsightsView } from "./views/InsightsView";
 import { MapView } from "./views/MapView";
+import { LabView } from "./views/LabView";
 import { SettingsView } from "./views/SettingsView";
 import { WritingView } from "./views/WritingView";
 import type { EntityKind, Notebook, ServerEvent } from "./types";
 import "./App.css";
 
-type ViewId = "notes" | "map" | "insights" | "writing" | "settings";
+type ViewId = "notes" | "map" | "writing" | "settings" | "lab";
 
 const ACTIVE_NOTEBOOK_KEY = "dyarium.notebook";
 
@@ -60,12 +61,18 @@ export function App() {
   const [authError, setAuthError] = useState("");
   const [checkingToken, setCheckingToken] = useState(false);
   const [setupRequired, setSetupRequired] = useState(false);
-  const [view, setView] = useState<ViewId>("notes");
+  const [view, setView] = useState<ViewId>(() =>
+    typeof window !== "undefined" && window.location.pathname === "/lab" ? "lab" : "notes",
+  );
   // No navegador estreito a navegacao e uma gaveta: comeca fechada.
   const [navOpen, setNavOpen] = useState(() =>
     typeof window === "undefined" ? true : window.innerWidth > 900,
   );
   const [openEntryId, setOpenEntryId] = useState<string | null>(null);
+  // Voltar de uma tela aberta por dentro de outra (processamento a partir da
+  // nota, por exemplo) precisa devolver para onde o usuario estava, e nao para
+  // a primeira tela do menu.
+  const [returnView, setReturnView] = useState<ViewId | null>(null);
   const [entityFocus, setEntityFocus] = useState<{ kind: EntityKind; name: string } | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [notebooks, setNotebooks] = useState<Notebook[]>([]);
@@ -89,6 +96,15 @@ export function App() {
     openEntryRef.current = openEntryId;
   }, [openEntryId]);
   const [failures, setFailures] = useState<Record<string, string>>({});
+  // /lab e uma pagina de verdade: recarregar a aba continua no processamento,
+  // e o endereco fica estavel para deixar a aba aberta no PC.
+  useEffect(() => {
+    const path = view === "lab" ? "/lab" : "/";
+    if (window.location.pathname !== path) {
+      window.history.replaceState(null, "", path);
+    }
+  }, [view]);
+
   const [entryProgress, setEntryProgress] = useState<Record<string, { stage: string; done: number; total: number }>>({});
   const { notify } = useToast();
   const refreshTimer = useRef<number | null>(null);
@@ -427,8 +443,17 @@ export function App() {
   };
 
   const openView = (id: ViewId) => {
+    // Entrar pelo menu abre a tela no estado padrao; um foco vindo de uma nota
+    // so vale para a abertura imediata do mapa.
+    setEntityFocus(null);
+    setReturnView(view === id ? null : view);
     setView(id);
     closeDrawer();
+  };
+  const goBack = () => {
+    const target = returnView ?? "notes";
+    setReturnView(null);
+    setView(target);
   };
 
   const footerItems = [
@@ -440,21 +465,18 @@ export function App() {
       onPress: () => openView("map"),
     },
     {
-      key: "insights",
-      label: "Insights",
-      active: view === "insights",
-      icon: <InsightsIcon size={17} />,
-      onPress: () => {
-        setEntityFocus(null);
-        openView("insights");
-      },
-    },
-    {
       key: "writing",
       label: "Escrita",
       active: view === "writing",
       icon: <WritingIcon size={17} />,
       onPress: () => openView("writing"),
+    },
+    {
+      key: "lab",
+      label: "Processamento",
+      active: view === "lab",
+      icon: <CpuIcon size={17} />,
+      onPress: () => openView("lab"),
     },
     {
       key: "settings",
@@ -477,6 +499,7 @@ export function App() {
 
   return (
     <div className={navOpen ? "app" : "app app--collapsed"}>
+      <WorkerKeepAlive />
       <header className="mobile-bar">
         <button
           type="button"
@@ -552,6 +575,12 @@ export function App() {
               }}
               onCreate={openCompose}
               onManageTags={() => setTagsOpen(true)}
+              onMutated={(removed) => {
+                if (openEntryId && removed.includes(openEntryId)) {
+                  setOpenEntryId(null);
+                }
+                refresh();
+              }}
             />
           </>
         ) : (
@@ -638,10 +667,11 @@ export function App() {
                   }}
                   onOpenEntity={(kind, name) => {
                     setEntityFocus({ kind, name });
-                    setView("insights");
+                    setView("map");
                   }}
                   onOpenEntry={(id) => setOpenEntryId(id)}
                   notebooks={notebooks}
+                  onOpenLab={() => openView("lab")}
                 />
               ) : (
                 <div className="empty-editor">
@@ -665,9 +695,9 @@ export function App() {
                       <button
                         type="button"
                         className="button button--ghost"
-                        onClick={() => setView("insights")}
+                        onClick={() => openView("map")}
                       >
-                        Ver insights
+                        Ver mapa
                       </button>
                     </div>
                   </div>
@@ -676,19 +706,24 @@ export function App() {
             </div>
           ) : view === "map" ? (
             <div className="page page--map">
-              <MapView refreshKey={refreshKey} onOpen={openFromOtherView} />
-            </div>
-          ) : view === "insights" ? (
-            <div className="page">
-              <InsightsView refreshKey={refreshKey} onOpen={openFromOtherView} focus={entityFocus} />
+              <MapView
+                refreshKey={refreshKey}
+                onOpen={openFromOtherView}
+                focus={entityFocus}
+                onFocusApplied={() => setEntityFocus(null)}
+              />
             </div>
           ) : view === "writing" ? (
             <div className="page">
               <WritingView refreshKey={refreshKey} />
             </div>
+          ) : view === "lab" ? (
+            <div className="page">
+              <LabView onBack={goBack} />
+            </div>
           ) : (
             <div className="page">
-              <SettingsView refreshKey={refreshKey} />
+              <SettingsView refreshKey={refreshKey} onBack={goBack} />
             </div>
           )}
         </ErrorBoundary>

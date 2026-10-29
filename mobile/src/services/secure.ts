@@ -4,6 +4,7 @@
  */
 
 import * as SecureStore from 'expo-secure-store';
+import { Platform } from 'react-native';
 
 import {
   DEFAULT_TRANSCRIPTION_MODEL,
@@ -16,9 +17,58 @@ import { normalizeTheme, type ThemeName } from '@/theme/tokens';
 
 const KEY = 'dyarium.server.config';
 
+/**
+ * O `expo-secure-store` nao tem implementacao web: no navegador a leitura
+ * estoura e a gravacao falha calada. La o valor fica na `localStorage` desta
+ * origem — fora de log, URL e backup, mas legivel por script da mesma origem,
+ * que e o melhor que a plataforma oferece sem servidor.
+ */
+interface WebStore {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+  removeItem(key: string): void;
+}
+
+function webStore(): WebStore | null {
+  return (globalThis as { localStorage?: WebStore }).localStorage ?? null;
+}
+
+async function readValue(key: string): Promise<string | null> {
+  if (Platform.OS !== 'web') return SecureStore.getItemAsync(key);
+  try {
+    return webStore()?.getItem(key) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeValue(key: string, value: string): Promise<void> {
+  if (Platform.OS !== 'web') {
+    await SecureStore.setItemAsync(key, value);
+    return;
+  }
+  try {
+    webStore()?.setItem(key, value);
+  } catch {
+    // storage cheio ou bloqueado: a preferencia vale so nesta sessao
+  }
+}
+
+async function deleteValue(key: string): Promise<void> {
+  if (Platform.OS !== 'web') {
+    await SecureStore.deleteItemAsync(key);
+    return;
+  }
+  try {
+    webStore()?.removeItem(key);
+  } catch {
+    // nada a apagar
+  }
+}
+
 export async function loadServerConfig(): Promise<ServerConfig | null> {
   try {
-    const raw = await SecureStore.getItemAsync(KEY);
+    const raw = await readValue(KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as ServerConfig;
     if (typeof parsed.baseUrl === 'string' && typeof parsed.token === 'string') {
@@ -32,11 +82,11 @@ export async function loadServerConfig(): Promise<ServerConfig | null> {
 }
 
 export async function saveServerConfig(config: ServerConfig): Promise<void> {
-  await SecureStore.setItemAsync(KEY, JSON.stringify(config));
+  await writeValue(KEY, JSON.stringify(config));
 }
 
 export async function clearServerConfig(): Promise<void> {
-  await SecureStore.deleteItemAsync(KEY);
+  await deleteValue(KEY);
 }
 
 const DEVICE_KEY = 'dyarium.device';
@@ -49,7 +99,7 @@ export interface DeviceIdentity {
 
 export async function loadDeviceIdentity(): Promise<DeviceIdentity | null> {
   try {
-    const raw = await SecureStore.getItemAsync(DEVICE_KEY);
+    const raw = await readValue(DEVICE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<DeviceIdentity>;
     if (typeof parsed.id === 'string' && parsed.id) {
@@ -62,7 +112,7 @@ export async function loadDeviceIdentity(): Promise<DeviceIdentity | null> {
 }
 
 export async function saveDeviceIdentity(identity: DeviceIdentity): Promise<void> {
-  await SecureStore.setItemAsync(DEVICE_KEY, JSON.stringify(identity));
+  await writeValue(DEVICE_KEY, JSON.stringify(identity));
 }
 
 /** Preferencias locais do app (nao sao segredo, mas ficam no mesmo cofre). */
@@ -161,7 +211,7 @@ async function migrateLegacyFlags(parsed: Partial<Prefs>): Promise<Prefs> {
 
 export async function loadPrefs(): Promise<Prefs> {
   try {
-    const raw = await SecureStore.getItemAsync(PREFS_KEY);
+    const raw = await readValue(PREFS_KEY);
     if (!raw) return DEFAULT_PREFS;
     const parsed = JSON.parse(raw) as Partial<Prefs>;
     const legacy = parsed.version !== PREFS_VERSION;
@@ -222,7 +272,7 @@ export async function loadPrefs(): Promise<Prefs> {
 export async function savePrefs(prefs: Prefs): Promise<void> {
   // Grava sempre a versao atual: a migracao roda uma vez e nao volta a decidir
   // pelo usuario nas proximas aberturas.
-  await SecureStore.setItemAsync(
+  await writeValue(
     PREFS_KEY,
     JSON.stringify({ ...prefs, version: PREFS_VERSION }),
   );
