@@ -98,25 +98,41 @@ export function markdownToHtml(markdown: string, options: MarkdownToHtmlOptions 
       continue;
     }
 
-    if (/^\s*[-*+]\s+/.test(line)) {
+    const unordered = /^\s*[-*+]\s+/.test(line);
+    const ordered = /^\s*\d+\.\s+/.test(line);
+    if (unordered || ordered) {
+      const marker = ordered ? /^\s*\d+\.\s+/ : /^\s*[-*+]\s+/;
       const items: string[] = [];
-      while (index < lines.length && /^\s*[-*+]\s+/.test(lines[index])) {
-        items.push(inline(lines[index].replace(/^\s*[-*+]\s+/, '')));
-        index += 1;
+      const firstNumber = ordered ? Number(/^\s*(\d+)\./.exec(line)?.[1] ?? 1) : 1;
+      // Uma linha em branco entre dois itens e permitida no markdown (lista
+      // "solta"): o Notion e outros editores exportam assim. Sem juntar, cada
+      // item virava uma lista propria e o editor numerava todos como 1.
+      while (index < lines.length) {
+        if (marker.test(lines[index])) {
+          items.push(inline(lines[index].replace(marker, '')));
+          index += 1;
+          continue;
+        }
+        if (lines[index].trim() === '') {
+          let next = index + 1;
+          while (next < lines.length && lines[next].trim() === '') next += 1;
+          if (next < lines.length && marker.test(lines[next])) {
+            index = next;
+            continue;
+          }
+        }
+        break;
       }
       index -= 1;
-      out.push(`<ul>${items.map((item) => `<li>${item}</li>`).join('')}</ul>`);
-      continue;
-    }
-
-    if (/^\s*\d+\.\s+/.test(line)) {
-      const items: string[] = [];
-      while (index < lines.length && /^\s*\d+\.\s+/.test(lines[index])) {
-        items.push(inline(lines[index].replace(/^\s*\d+\.\s+/, '')));
-        index += 1;
-      }
-      index -= 1;
-      out.push(`<ol>${items.map((item) => `<li>${item}</li>`).join('')}</ol>`);
+      const start =
+        ordered && Number.isFinite(firstNumber) && firstNumber > 1
+          ? ` start="${firstNumber}"`
+          : '';
+      out.push(
+        ordered
+          ? `<ol${start}>${items.map((item) => `<li>${item}</li>`).join('')}</ol>`
+          : `<ul>${items.map((item) => `<li>${item}</li>`).join('')}</ul>`,
+      );
       continue;
     }
 
@@ -213,17 +229,23 @@ export function htmlToMarkdown(html: string, options: HtmlToMarkdownOptions = {}
     return `${quote}\n`;
   });
 
-  value = value.replace(/<(ul|ol)\b[^>]*>([\s\S]*?)<\/\1>/gi, (_all, tag: string, inner: string) => {
-    const items = [...inner.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)].map((match) => match[1]);
-    const ordered = tag.toLowerCase() === 'ol';
-    const lines = items.map((item, index) => {
-      const text = plain(item).replace(/\s*\n\s*/g, ' ').trim();
-      return `${ordered ? `${index + 1}. ` : '- '}${text}`;
-    });
-    // A lista fecha a linha; a linha em branco depois dela vem do paragrafo
-    // vazio que o editor devolve.
-    return `${lines.join('\n')}\n`;
-  });
+  value = value.replace(
+    /<(ul|ol)\b([^>]*)>([\s\S]*?)<\/\1>/gi,
+    (_all, tag: string, attrs: string, inner: string) => {
+      const items = [...inner.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)].map((match) => match[1]);
+      const ordered = tag.toLowerCase() === 'ol';
+      // O primeiro numero da lista vem no atributo `start`; sem ele, comeca em 1.
+      const startAttr = /\bstart\s*=\s*["']?(\d+)/i.exec(attrs);
+      const start = ordered ? Math.max(1, Number(startAttr?.[1] ?? 1)) : 1;
+      const lines = items.map((item, index) => {
+        const text = plain(item).replace(/\s*\n\s*/g, ' ').trim();
+        return `${ordered ? `${start + index}. ` : '- '}${text}`;
+      });
+      // A lista fecha a linha; a linha em branco depois dela vem do paragrafo
+      // vazio que o editor devolve.
+      return `${lines.join('\n')}\n`;
+    },
+  );
 
   value = value
     .replace(/<br\s*\/?>/gi, '\n')

@@ -40,6 +40,37 @@ describe('markdownToHtml', () => {
     expect(html).toContain('<a href="https://exemplo.test">site</a>');
   });
 
+  it('junta itens numerados separados por linha em branco', () => {
+    const html = markdownToHtml('1. um\n\n2. dois\n\n3. tres');
+
+    // O Notion exporta a lista com uma linha em branco entre os itens. Se cada
+    // uma virasse uma lista propria, o editor numeraria todas como 1.
+    expect(html.match(/<ol/g)).toHaveLength(1);
+    expect(html).toContain('<ol><li>um</li><li>dois</li><li>tres</li></ol>');
+    expect(htmlToMarkdown(html)).toBe('1. um\n2. dois\n3. tres');
+  });
+
+  it('junta itens com marcadores separados por linha em branco', () => {
+    const html = markdownToHtml('- um\n\n- dois\n\n- tres');
+
+    expect(html.match(/<ul/g)).toHaveLength(1);
+    expect(htmlToMarkdown(html)).toBe('- um\n- dois\n- tres');
+  });
+
+  it('nao junta lista numerada com lista de marcadores', () => {
+    const html = markdownToHtml('1. um\n\n- outro');
+
+    expect(html).toContain('<ol><li>um</li></ol>');
+    expect(html).toContain('<ul><li>outro</li></ul>');
+  });
+
+  it('preserva o numero inicial da lista', () => {
+    const html = markdownToHtml('3. tres\n4. quatro');
+
+    expect(html).toContain('<ol start="3">');
+    expect(htmlToMarkdown(html)).toBe('3. tres\n4. quatro');
+  });
+
   it('preserva bloco de codigo', () => {
     const html = markdownToHtml('```\nconst a = 1;\nconsole.log(a);\n```');
     expect(html).toContain('<codeblock>');
@@ -139,6 +170,12 @@ describe('htmlToMarkdown', () => {
     expect(markdown).toContain('1. um');
     expect(markdown).toContain('> citacao');
     expect(markdown).toContain('[site](https://exemplo.test)');
+  });
+
+  it('le o numero inicial do HTML do editor', () => {
+    expect(htmlToMarkdown('<ol start="4"><li>quatro</li><li>cinco</li></ol>')).toBe(
+      '4. quatro\n5. cinco',
+    );
   });
 
   it('preserva o bloco de codigo', () => {

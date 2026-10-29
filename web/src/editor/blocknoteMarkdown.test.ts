@@ -149,6 +149,18 @@ describe("markdown da nota", () => {
     const again = blocksToNoteMarkdown(editor, blocks);
     expect(again).toContain("| a");
     expect(again).toContain("1. um");
+    expect(again).toContain("2. dois");
+  });
+
+  it("lista numerada separada por linhas em branco volta numerada", () => {
+    const markdown = "1. um\n\n2. dois\n\n3. tres";
+    const blocks = noteMarkdownToBlocks(editor, markdown) as never as { type: string }[];
+
+    expect(blocks.filter((block) => block.type === "numberedListItem")).toHaveLength(3);
+    const again = blocksToNoteMarkdown(editor, blocks);
+    expect(again).toContain("1. um");
+    expect(again).toContain("2. dois");
+    expect(again).toContain("3. tres");
   });
 
   it("menção a outra nota vira link para note:<id> e não some", () => {
