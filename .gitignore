@@ -23,3 +23,6 @@ web/dist/
 
 # Artefatos das ferramentas de sessao (capturas de tela, etc.).
 .openchamber/
+
+# Store local do pnpm (grande e gerado).
+.pnpm-store/
