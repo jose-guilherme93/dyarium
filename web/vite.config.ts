@@ -60,6 +60,10 @@ function ortRuntimeAssets(): Plugin {
 // the API share an origin while developing.
 export default defineConfig({
   plugins: [react(), ortRuntimeAssets()],
+  // O worker importa o nucleo puro de `mobile/src/core`. Sem um tsconfig fixo,
+  // o Vite leria `mobile/tsconfig.json`, que estende `expo/tsconfig.base` e nao
+  // existe no job do web (que instala so as dependencias do web).
+  tsconfig: "./tsconfig.json",
   server: {
     host: true,
     port: 5173,
