@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { NoteList } from "./NoteList";
+import { api } from "../api";
 import { ALL_NOTEBOOKS } from "../lib/notebooks";
 import type { Entry, Notebook } from "../types";
 
@@ -83,6 +84,8 @@ vi.mock("../api", () => ({
     listAllEntries: vi.fn(async () => ({ entries: ENTRIES })),
     listEntriesCached: vi.fn(async () => undefined),
     listActivities: vi.fn(async () => ({ activities: [] })),
+    deleteEntry: vi.fn(async () => undefined),
+    patchEntry: vi.fn(async () => ({ status: "ok", versions: {} })),
   },
 }));
 
@@ -153,5 +156,82 @@ describe("NoteList", () => {
     fireEvent.click(screen.getByRole("button", { name: /^contrato/ }));
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.getByRole("button", { name: "Remover filtro contrato" })).toBeInTheDocument();
+  });
+
+  it("mostra o carregamento no lugar da lista, sem pular de vazio para cheio", async () => {
+    let release: ((value: { entries: Entry[] }) => void) | undefined;
+    vi.mocked(api.listAllEntries).mockImplementationOnce(
+      () => new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+    renderList(ALL_NOTEBOOKS);
+    expect(screen.getByRole("status", { name: "Carregando" })).toBeInTheDocument();
+
+    await waitFor(() => expect(release).toBeDefined());
+    release?.({ entries: ENTRIES });
+    await waitFor(() =>
+      expect(screen.queryByRole("status", { name: "Carregando" })).not.toBeInTheDocument(),
+    );
+    expect(screen.getByText("Viagem de fim de ano")).toBeInTheDocument();
+  });
+
+  it("abre o menu do site no clique direito da nota", async () => {
+    renderList(ALL_NOTEBOOKS);
+    fireEvent.contextMenu(await screen.findByText("Viagem de fim de ano"), {
+      clientX: 40,
+      clientY: 60,
+    });
+
+    const menu = await screen.findByRole("menu", { name: "Ações da nota" });
+    expect(menu).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Abrir" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Selecionar todas" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Arquivar" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Apagar nota" })).toBeInTheDocument();
+  });
+
+  it("seleciona todas as notas visiveis e apaga em lote", async () => {
+    vi.mocked(api.deleteEntry).mockClear();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const mutated = vi.fn();
+    render(
+      <NoteList
+        refreshKey={0}
+        activeId={null}
+        failures={{}}
+        notebookId={ALL_NOTEBOOKS}
+        notebooks={NOTEBOOKS}
+        onOpen={() => undefined}
+        onCreate={() => undefined}
+        onManageTags={() => undefined}
+        onMutated={mutated}
+      />,
+    );
+    fireEvent.contextMenu(await screen.findByText("Viagem de fim de ano"), {
+      clientX: 10,
+      clientY: 10,
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Selecionar todas" }));
+
+    expect(await screen.findByText("2 notas")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Apagar" }));
+
+    await waitFor(() => expect(api.deleteEntry).toHaveBeenCalledTimes(2));
+    expect(api.deleteEntry).toHaveBeenCalledWith("e1");
+    expect(api.deleteEntry).toHaveBeenCalledWith("e3");
+    expect(mutated).toHaveBeenCalledWith(["e1", "e3"]);
+  });
+
+  it("arquiva a nota pelo menu de contexto", async () => {
+    vi.mocked(api.patchEntry).mockClear();
+    renderList(ALL_NOTEBOOKS);
+    fireEvent.contextMenu(await screen.findByText("Viagem de fim de ano"), {
+      clientX: 10,
+      clientY: 10,
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Arquivar" }));
+
+    await waitFor(() => expect(api.patchEntry).toHaveBeenCalledWith("e3", { archived: true }));
   });
 });

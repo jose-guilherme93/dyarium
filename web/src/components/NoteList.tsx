@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { api } from "../api";
+import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 import { NotificationsMenu } from "./NotificationsMenu";
+import { ListSkeleton } from "./Skeleton";
 import { ALL_NOTEBOOKS } from "../lib/notebooks";
 import { formatDuration, formatShortDate } from "../lib/format";
 import { tagColor } from "../lib/tags";
@@ -9,12 +11,14 @@ import { useEscape } from "../lib/useEscape";
 import type { Entry, Notebook } from "../types";
 import {
   ArchiveIcon,
+  CheckIcon,
   CloseIcon,
   MicIcon,
   PlusIcon,
   SearchIcon,
   TagIcon,
 } from "./icons";
+import { useToast } from "./Toasts";
 
 interface NoteListProps {
   refreshKey: number;
@@ -29,6 +33,8 @@ interface NoteListProps {
   onOpen: (id: string) => void;
   onCreate: (event: ReactMouseEvent<HTMLButtonElement>) => void;
   onManageTags: () => void;
+  /** Apagou notas: o dono do estado fecha a nota aberta que sumiu e recarrega. */
+  onMutated?: (removedIds: string[]) => void;
 }
 
 // displayTitle hides the date older automatic titles carried; the date is shown
@@ -91,20 +97,27 @@ export function NoteList({
   onOpen,
   onCreate,
   onManageTags,
+  onMutated,
 }: NoteListProps) {
+  const { notify } = useToast();
   const [entries, setEntries] = useState<Entry[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [query, setQuery] = useState("");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [archived, setArchived] = useState(false);
   const [searchingOpen, setSearchingOpen] = useState(false);
   const [tagsOpen, setTagsOpen] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [menu, setMenu] = useState<{ x: number; y: number; id: string } | null>(null);
+  const [busy, setBusy] = useState(false);
   const tagMenu = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(async () => {
     const cached = await api.listEntriesCached({ limit: 1000 });
     if (cached) {
       setEntries(cached.entries ?? []);
+      setLoaded(true);
     }
     try {
       const result = await api.listAllEntries();
@@ -114,6 +127,8 @@ export function NoteList({
       if (!cached) {
         setError(err instanceof Error ? err.message : "falha ao carregar");
       }
+    } finally {
+      setLoaded(true);
     }
   }, []);
 
@@ -125,7 +140,9 @@ export function NoteList({
     setSelectedTags([]);
     setQuery("");
     setTagsOpen(false);
-  }, [notebookId]);
+    setSelected(new Set());
+    setMenu(null);
+  }, [notebookId, archived]);
 
   useEffect(() => {
     if (autoSearch) {
@@ -187,6 +204,132 @@ export function NoteList({
 
   const counts = useMemo(() => tagCounts(inScope, selectedTags), [inScope, selectedTags]);
 
+  // A selecao so vale para o que esta na tela: some com a busca e o filtro.
+  useEffect(() => {
+    setSelected((current) => {
+      if (current.size === 0) return current;
+      const alive = new Set(visible.map((entry) => entry.id));
+      if ([...current].every((id) => alive.has(id))) return current;
+      return new Set([...current].filter((id) => alive.has(id)));
+    });
+  }, [visible]);
+
+  const selectedEntries = useMemo(
+    () => visible.filter((entry) => selected.has(entry.id)),
+    [visible, selected],
+  );
+
+  const toggleSelected = (id: string) => {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  useEscape(selected.size > 0 && menu === null, () => setSelected(new Set()));
+
+  const archiveEntries = async (targets: Entry[], next: boolean) => {
+    if (targets.length === 0) return;
+    setBusy(true);
+    let changed = 0;
+    for (const entry of targets) {
+      try {
+        await api.patchEntry(entry.id, { archived: next });
+        changed += 1;
+      } catch {
+        // segue com as demais; o aviso no fim diz quantas falharam
+      }
+    }
+    setBusy(false);
+    setSelected(new Set());
+    if (changed > 0) {
+      notify(
+        changed === 1
+          ? next
+            ? "Nota arquivada"
+            : "Nota desarquivada"
+          : `${changed} notas ${next ? "arquivadas" : "desarquivadas"}`,
+        "success",
+      );
+    }
+    if (changed < targets.length) {
+      notify(`Não foi possível arquivar ${targets.length - changed}`, "error");
+    }
+    onMutated?.([]);
+    if (!onMutated) void load();
+  };
+
+  const deleteEntries = async (targets: Entry[]) => {
+    if (targets.length === 0) return;
+    const question =
+      targets.length === 1
+        ? "Apagar esta nota e os áudios? Esta ação não pode ser desfeita."
+        : `Apagar ${targets.length} notas e os áudios? Esta ação não pode ser desfeita.`;
+    if (!window.confirm(question)) return;
+    setBusy(true);
+    const removed: string[] = [];
+    for (const entry of targets) {
+      try {
+        await api.deleteEntry(entry.id);
+        removed.push(entry.id);
+      } catch {
+        // o aviso no fim conta quantas ficaram
+      }
+    }
+    setBusy(false);
+    setSelected(new Set());
+    if (removed.length > 0) {
+      notify(removed.length === 1 ? "Nota apagada" : `${removed.length} notas apagadas`, "success");
+    }
+    if (removed.length < targets.length) {
+      notify(`Não foi possível apagar ${targets.length - removed.length}`, "error");
+    }
+    onMutated?.(removed);
+    if (!onMutated) void load();
+  };
+
+  const menuItems = (entry: Entry): ContextMenuItem[] => {
+    const targets = selected.has(entry.id) && selected.size > 1 ? selectedEntries : [entry];
+    const allSelected = visible.length > 0 && selected.size === visible.length;
+    return [
+      {
+        key: "open",
+        label: "Abrir",
+        onSelect: () => {
+          setSelected(new Set());
+          onOpen(entry.id);
+        },
+      },
+      {
+        key: "select",
+        label: selected.has(entry.id) ? "Desmarcar" : "Selecionar",
+        onSelect: () => toggleSelected(entry.id),
+      },
+      {
+        key: "select-all",
+        label: allSelected ? "Limpar seleção" : "Selecionar todas",
+        disabled: visible.length === 0,
+        onSelect: () =>
+          setSelected(allSelected ? new Set() : new Set(visible.map((item) => item.id))),
+      },
+      {
+        key: "archive",
+        label: entry.archived ? "Desarquivar" : "Arquivar",
+        disabled: busy,
+        onSelect: () => void archiveEntries(targets, !entry.archived),
+      },
+      {
+        key: "delete",
+        label: targets.length > 1 ? `Apagar ${targets.length} notas` : "Apagar nota",
+        danger: true,
+        disabled: busy,
+        onSelect: () => void deleteEntries(targets),
+      },
+    ];
+  };
+
   const searching = searchingOpen || term !== "";
   const closeSearch = () => {
     setSearchingOpen(false);
@@ -205,14 +348,50 @@ export function NoteList({
     const isAudio = entry.source !== "text";
     const notebook = notebookById.get(entry.notebook_id ?? "");
     const tags = entry.tags ?? [];
+    const isSelected = selected.has(entry.id);
+    const className = [
+      "note-row",
+      entry.id === activeId ? "note-row--active" : "",
+      isSelected ? "note-row--selected" : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
     return (
       <li key={entry.id}>
-        <div className={entry.id === activeId ? "note-row note-row--active" : "note-row"}>
+        <div
+          className={className}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            // O clique direito seleciona a nota sem desfazer uma selecao que ja
+            // a contem: as acoes do menu valem para o conjunto.
+            if (!isSelected) setSelected(new Set([entry.id]));
+            setMenu({ x: event.clientX, y: event.clientY, id: entry.id });
+          }}
+        >
           <button
             type="button"
             className="note-row-open"
             ref={entry.id === activeId ? scrollActiveIntoView : undefined}
-            onClick={() => onOpen(entry.id)}
+            aria-selected={isSelected}
+            onClick={(event) => {
+              const additive = event.metaKey || event.ctrlKey || event.shiftKey;
+              if (additive) {
+                toggleSelected(entry.id);
+                return;
+              }
+              if (selected.size > 0) {
+                // Clicar de novo na unica nota selecionada abre; em qualquer
+                // outra, o clique troca a selecao para ela.
+                if (selected.size === 1 && isSelected) {
+                  setSelected(new Set());
+                  onOpen(entry.id);
+                  return;
+                }
+                setSelected(new Set([entry.id]));
+                return;
+              }
+              onOpen(entry.id);
+            }}
           >
             <span className="note-row-head">
               {allNotebooks && notebook && (
@@ -225,6 +404,14 @@ export function NoteList({
                 />
               )}
               <span className="note-row-title">{displayTitle(entry)}</span>
+              {selected.size > 0 && (
+                <span
+                  className={isSelected ? "note-row-check note-row-check--on" : "note-row-check"}
+                  aria-hidden
+                >
+                  {isSelected && <CheckIcon size={11} />}
+                </span>
+              )}
             </span>
             <span className="note-row-line">
               {isAudio && (
@@ -404,6 +591,39 @@ export function NoteList({
         )}
       </div>
 
+      {selected.size > 0 && (
+        <div className="list-selection" role="toolbar" aria-label="Notas selecionadas">
+          <span className="list-selection-count" aria-live="polite">
+            {selected.size} {selected.size === 1 ? "nota" : "notas"}
+          </span>
+          <button
+            type="button"
+            className="button button--ghost button--small"
+            onClick={() => void archiveEntries(selectedEntries, true)}
+            disabled={busy || selectedEntries.length === 0}
+          >
+            Arquivar
+          </button>
+          <button
+            type="button"
+            className="button button--ghost button--small list-selection-delete"
+            onClick={() => void deleteEntries(selectedEntries)}
+            disabled={busy || selectedEntries.length === 0}
+          >
+            Apagar
+          </button>
+          <button
+            type="button"
+            className="icon-button list-selection-clear"
+            onClick={() => setSelected(new Set())}
+            aria-label="Limpar seleção"
+            title="Limpar seleção"
+          >
+            <CloseIcon size={14} />
+          </button>
+        </div>
+      )}
+
       {selectedTags.length > 0 && (
         <div className="active-filters" aria-label="Filtros ativos">
           {selectedTags.map((tag) => (
@@ -442,7 +662,9 @@ export function NoteList({
             {term ? "Resultados" : archived ? "Arquivadas" : ""}
           </h3>
         )}
-        {visible.length === 0 ? (
+        {!loaded && visible.length === 0 ? (
+          <ListSkeleton rows={7} />
+        ) : visible.length === 0 ? (
           <div className="empty-state">
             {term ? (
               <>
@@ -467,9 +689,24 @@ export function NoteList({
             )}
           </div>
         ) : (
-          <ul className="tree">{visible.map(row)}</ul>
+          <ul className="tree stagger-in">{visible.map(row)}</ul>
         )}
       </div>
+
+      {menu !== null &&
+        (() => {
+          const entry = entries.find((item) => item.id === menu.id);
+          if (!entry) return null;
+          return (
+            <ContextMenu
+              x={menu.x}
+              y={menu.y}
+              label="Ações da nota"
+              items={menuItems(entry)}
+              onClose={() => setMenu(null)}
+            />
+          );
+        })()}
     </div>
   );
 }

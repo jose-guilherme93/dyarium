@@ -4,6 +4,7 @@ import { formatShortDate } from "../lib/format";
 import { useEscape } from "../lib/useEscape";
 import type { Activity } from "../types";
 import { BellIcon, MicIcon, SparkIcon } from "./icons";
+import { ListSkeleton } from "./Skeleton";
 
 const SEEN_KEY = "dyarium.notifications.seenAt";
 
@@ -183,11 +184,11 @@ export function NotificationsMenu({ refreshKey, onOpen }: NotificationsMenuProps
             {activities.length > 0 && <span className="muted">{activities.length}</span>}
           </div>
           {!loaded ? (
-            <p className="notifications-empty">Carregando...</p>
+            <ListSkeleton rows={3} compact />
           ) : activities.length === 0 ? (
             <p className="notifications-empty">Nenhum processo concluído.</p>
           ) : (
-            <ul className="notifications-list">
+            <ul className="notifications-list stagger-in">
               {activities.map((activity) => {
                 const isUnread =
                   seenAt !== null && (Date.parse(activity.finished_at) || 0) > seenAt;

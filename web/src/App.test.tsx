@@ -29,6 +29,25 @@ describe("App", () => {
     vi.unstubAllGlobals();
   });
 
+  it("nao oferece mais a tela de insights; ela vive no mapa", async () => {
+    localStorage.setItem("dyarium.token", "token-de-teste");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => ({
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify(String(url).includes("/api/v1/version") ? { version: "test" } : { entries: [] }),
+      })),
+    );
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByRole("navigation")).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Insights" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Mapa" })).toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
+
   it("rejeita token invalido e permanece na tela de acesso", async () => {
     vi.stubGlobal(
       "fetch",

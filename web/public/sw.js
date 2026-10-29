@@ -1,6 +1,6 @@
 // Minimal service worker: keeps the app shell available offline. API reads are
 // cached separately by the app (IndexedDB), so requests to /api are left alone.
-const CACHE = "dyarium-shell-v1";
+const CACHE = "dyarium-shell-v2";
 
 self.addEventListener("install", () => {
   self.skipWaiting();
@@ -23,7 +23,12 @@ self.addEventListener("fetch", (event) => {
     caches.open(CACHE).then(async (cache) => {
       try {
         const response = await fetch(request);
-        if (response.ok && (request.mode === "navigate" || url.pathname.startsWith("/assets/"))) {
+        if (
+          response.ok &&
+          (request.mode === "navigate" ||
+            url.pathname.startsWith("/assets/") ||
+            url.pathname.startsWith("/ort/"))
+        ) {
           cache.put(request, response.clone());
         }
         return response;

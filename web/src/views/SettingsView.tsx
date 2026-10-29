@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, getToken } from "../api";
+import { ChevronIcon } from "../components/icons";
+import { ListSkeleton } from "../components/Skeleton";
 import { Toggle } from "../components/Toggle";
 import { TrashSection } from "../components/TrashSection";
 import { useToast } from "../components/Toasts";
@@ -18,6 +20,10 @@ interface ProviderPreset {
   model: string;
   /** analyze_provider value stored on the server. */
   kind: string;
+  /** Prefixo esperado da chave, mostrado no campo vazio. */
+  keyPlaceholder?: string;
+  /** Atalhos para criar a chave e ver os modelos no console do provedor. */
+  links?: { label: string; href: string }[];
 }
 
 const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
@@ -26,6 +32,11 @@ const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
     baseUrl: "https://opencode.ai/inference/openai/v1",
     model: "glm-5.3-flash-free",
     kind: "openai",
+    keyPlaceholder: "chave do OpenCode Console",
+    links: [
+      { label: "Criar chave", href: "https://opencode.ai/auth" },
+      { label: "Modelos", href: "https://opencode.ai/docs/zen/" },
+    ],
   },
   opencodeGo: {
     label: "OpenCode Go (assinatura)",
@@ -33,27 +44,111 @@ const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
     // Nao e modelo de raciocinio: responde direto, sem gastar o teto pensando.
     model: "glm-5.3-flash",
     kind: "openai",
+    keyPlaceholder: "chave do OpenCode Console",
+    links: [
+      { label: "Criar chave", href: "https://opencode.ai/auth" },
+      { label: "Modelos", href: "https://opencode.ai/docs/go/" },
+    ],
   },
   opencodeLocal: {
     label: "opencode local (login)",
     baseUrl: "http://127.0.0.1:49374",
     model: "opencode-go/qwen3.8-flash",
     kind: "opencode",
+    links: [{ label: "Como conectar", href: "https://opencode.ai/docs/server/" }],
   },
-  deepseek: { label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat", kind: "openai" },
-  ollama: { label: "Ollama local", baseUrl: "http://ollama:11434/v1", model: "qwen2.5:0.5b", kind: "openai" },
+  openrouter: {
+    label: "OpenRouter (chave)",
+    baseUrl: "https://openrouter.ai/api/v1",
+    // Modelo comum e barato: responde sem gastar tokens raciocinando.
+    model: "google/gemini-2.5-flash",
+    kind: "openai",
+    keyPlaceholder: "sk-or-v1-...",
+    links: [
+      { label: "Criar chave", href: "https://openrouter.ai/keys" },
+      { label: "Modelos", href: "https://openrouter.ai/models" },
+    ],
+  },
+  google: {
+    label: "Google Gemini (chave)",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+    model: "gemini-2.5-flash",
+    kind: "openai",
+    keyPlaceholder: "AIza...",
+    links: [
+      { label: "Criar chave", href: "https://aistudio.google.com/app/apikey" },
+      { label: "Modelos", href: "https://ai.google.dev/gemini-api/docs/models" },
+    ],
+  },
+  groq: {
+    label: "Groq (chave)",
+    baseUrl: "https://api.groq.com/openai/v1",
+    model: "llama-3.3-70b-versatile",
+    kind: "openai",
+    keyPlaceholder: "gsk_...",
+    links: [
+      { label: "Criar chave", href: "https://console.groq.com/keys" },
+      { label: "Modelos", href: "https://console.groq.com/docs/models" },
+    ],
+  },
+  deepseek: {
+    label: "DeepSeek (chave)",
+    baseUrl: "https://api.deepseek.com/v1",
+    model: "deepseek-chat",
+    kind: "openai",
+    keyPlaceholder: "sk-...",
+    links: [
+      { label: "Criar chave", href: "https://platform.deepseek.com/api_keys" },
+      { label: "Modelos", href: "https://api-docs.deepseek.com/quick_start/pricing" },
+    ],
+  },
+  mistral: {
+    label: "Mistral (chave)",
+    baseUrl: "https://api.mistral.ai/v1",
+    model: "mistral-small-latest",
+    kind: "openai",
+    links: [
+      { label: "Criar chave", href: "https://console.mistral.ai/api-keys/" },
+      { label: "Modelos", href: "https://docs.mistral.ai/getting-started/models/models_overview/" },
+    ],
+  },
+  xai: {
+    label: "xAI Grok (chave)",
+    baseUrl: "https://api.x.ai/v1",
+    model: "grok-3-mini",
+    kind: "openai",
+    keyPlaceholder: "xai-...",
+    links: [
+      { label: "Criar chave", href: "https://console.x.ai/" },
+      { label: "Modelos", href: "https://docs.x.ai/docs/models" },
+    ],
+  },
+  ollama: {
+    label: "Ollama local",
+    baseUrl: "http://ollama:11434/v1",
+    model: "qwen2.5:0.5b",
+    kind: "openai",
+    links: [{ label: "Modelos", href: "https://ollama.com/library" }],
+  },
   llamaLocal: {
     label: "llama.cpp embutido",
     baseUrl: "",
     model: "qwen2.5-0.5b-instruct-q4_k_m",
     kind: "openai",
+    links: [{ label: "Modelos GGUF", href: "https://huggingface.co/models?library=gguf" }],
   },
   custom: { label: "Personalizado", baseUrl: "", model: "", kind: "openai" },
 };
 
-// A análise fala o formato /chat/completions. No OpenCode, Claude, GPT, Gemini
-// e Grok usam outros formatos (Anthropic, Responses, Google), entao so entram
-// na lista os modelos que o cliente sabe chamar.
+const DEEPGRAM_MODELS = ["nova-3", "nova-2", "nova-1", "enhanced", "base"];
+const DEEPGRAM_KEY_URL = "https://console.deepgram.com/";
+const DEEPGRAM_MODELS_URL = "https://developers.deepgram.com/docs/models-languages-overview";
+const WHISPER_CATALOG_URL = "https://huggingface.co/ggerganov/whisper.cpp/tree/main";
+
+// A análise fala o formato /chat/completions. Google Gemini entra pelo endpoint
+// compatível com OpenAI; provedores com formato próprio (Anthropic, Responses)
+// só aparecem através de um gateway como OpenRouter ou OpenCode. Por isso a
+// lista de modelos é curada onde o /models não diz o formato de cada um.
 // Modelos que pensam antes de responder. Nao servem de padrao para analisar
 // notas: gastam o teto de tokens raciocinando e demoram mais. A interface os
 // marca para o usuario escolher com o custo na frente.
@@ -106,7 +201,17 @@ const FALLBACK_MODELS: Record<string, string[]> = {
   opencodeZen: ZEN_MODELS,
   opencodeGo: GO_MODELS,
   opencodeLocal: OPENCODE_MODELS,
+  openrouter: [
+    "google/gemini-2.5-flash",
+    "openai/gpt-4.1-mini",
+    "anthropic/claude-sonnet-4",
+    "deepseek/deepseek-chat-v3.1",
+  ],
+  google: ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"],
+  groq: ["llama-3.3-70b-versatile", "openai/gpt-oss-120b", "qwen/qwen3-32b"],
   deepseek: ["deepseek-chat", "deepseek-reasoner"],
+  mistral: ["mistral-small-latest", "mistral-large-latest", "open-mistral-nemo"],
+  xai: ["grok-3-mini", "grok-3", "grok-4-fast"],
   llamaLocal: [],
   ollama: [],
   custom: [],
@@ -128,8 +233,23 @@ function providerFromSettings(kind: string, baseUrl: string, localRuntime: strin
   if (baseUrl.includes("opencode.ai/inference/")) {
     return "opencodeZen";
   }
+  if (baseUrl.includes("openrouter.ai")) {
+    return "openrouter";
+  }
+  if (baseUrl.includes("generativelanguage.googleapis.com")) {
+    return "google";
+  }
+  if (baseUrl.includes("api.groq.com")) {
+    return "groq";
+  }
   if (baseUrl.includes("deepseek")) {
     return "deepseek";
+  }
+  if (baseUrl.includes("api.mistral.ai")) {
+    return "mistral";
+  }
+  if (baseUrl.includes("api.x.ai")) {
+    return "xai";
   }
   if (baseUrl.includes("ollama") || baseUrl.includes("11434")) {
     return "ollama";
@@ -153,7 +273,28 @@ function localRuntimeOf(provider: string): "ollama" | "embedded" | null {
   return null;
 }
 
-export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
+/** Estado da chave em uma linha: preenchido quando ja existe uma guardada. */
+function KeyState({ defined }: { defined: boolean }) {
+  return <span className={`key-state${defined ? " key-state--on" : ""}`}>{defined ? "definida" : "ausente"}</span>;
+}
+
+/** Atalhos do console do provedor, abertos em outra aba. */
+function KeyLinks({ links }: { links?: { label: string; href: string }[] }) {
+  if (!links?.length) {
+    return null;
+  }
+  return (
+    <span className="key-links">
+      {links.map((link) => (
+        <a key={link.href} href={link.href} target="_blank" rel="noreferrer">
+          {link.label}
+        </a>
+      ))}
+    </span>
+  );
+}
+
+export function SettingsView({ refreshKey = 0, onBack }: { refreshKey?: number; onBack?: () => void }) {
   const { notify } = useToast();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [ownerName, setOwnerName] = useState("");
@@ -172,7 +313,12 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
 
   const searchable = canSearchModels(provider);
   const localRuntime = localRuntimeOf(provider);
+  const preset = PROVIDER_PRESETS[provider];
   const currentLocal = localRuntime && local?.runtime === localRuntime ? local : null;
+  const deepgramModels = useMemo(() => {
+    const current = settings?.deepgram_model ?? "";
+    return [...new Set([...DEEPGRAM_MODELS, current])].filter((model) => model !== "");
+  }, [settings?.deepgram_model]);
   const modelOptions = useMemo(() => {
     const fallback = localRuntime
       ? (currentLocal?.models?.length ? currentLocal.models : currentLocal?.model ? [currentLocal.model] : [])
@@ -363,6 +509,11 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
   return (
     <section className="settings-page">
       <header className="page-head">
+        {onBack && (
+          <button type="button" className="page-back" onClick={onBack} aria-label="Voltar" title="Voltar">
+            <ChevronIcon size={16} />
+          </button>
+        )}
         <div>
           <h1>Configurações</h1>
           <p>Transcrição, análise por IA e o que fica guardado no servidor.</p>
@@ -370,16 +521,21 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
       </header>
       {error && <p className="error">{error}</p>}
 
-      {!settings && <p className="muted">Carregando...</p>}
+      {!settings && <ListSkeleton rows={4} />}
 
       {settings && (
         <>
           <div className="card">
             <div className="card-head">
               <h2>Modelos de transcrição</h2>
-              <p className="hint">Modelos ggml do whisper. O modelo ativo vale para as próximas transcrições.</p>
+              <p className="hint">
+                Modelos ggml do whisper. O modelo ativo vale para as próximas transcrições.{" "}
+                <a href={WHISPER_CATALOG_URL} target="_blank" rel="noreferrer">
+                  Catálogo
+                </a>
+              </p>
             </div>
-            <ul className="model-list">
+            <ul className="model-list stagger-in">
               {models.map((model) => {
                 const p = progress[model.name];
                 const percent =
@@ -442,20 +598,32 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
               <>
                 <div className="field">
                   <span className="field-label">Modelo Deepgram</span>
-                  <input
-                    type="text"
+                  <select
                     aria-label="Modelo Deepgram"
-                    defaultValue={settings.deepgram_model}
-                    onBlur={(event) => void save({ deepgram_model: event.target.value })}
-                  />
+                    value={settings.deepgram_model}
+                    onChange={(event) => void save({ deepgram_model: event.target.value })}
+                  >
+                    {deepgramModels.map((model) => (
+                      <option key={model} value={model}>
+                        {model}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="key-links">
+                    <a href={DEEPGRAM_MODELS_URL} target="_blank" rel="noreferrer">
+                      Modelos e preços
+                    </a>
+                  </span>
                 </div>
                 <div className="field">
-                  <span className="field-label">Chave da Deepgram</span>
+                  <span className="field-label">
+                    Chave da Deepgram <KeyState defined={settings.deepgram_api_key_set} />
+                  </span>
                   <div className="field-control">
                     <input
                       type="password"
                       aria-label="Chave da Deepgram"
-                      placeholder={settings.deepgram_api_key_set ? "definida (deixe vazio para manter)" : "não definida"}
+                      placeholder={settings.deepgram_api_key_set ? "definida (deixe vazio para manter)" : "cole a chave da Deepgram"}
                       value={deepgramKey}
                       onChange={(event) => setDeepgramKey(event.target.value)}
                     />
@@ -469,9 +637,14 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
                         }
                       }}
                     >
-                      Salvar chave
+                      Salvar chave da Deepgram
                     </button>
                   </div>
+                  <span className="key-links">
+                    <a href={DEEPGRAM_KEY_URL} target="_blank" rel="noreferrer">
+                      Criar chave na Deepgram
+                    </a>
+                  </span>
                 </div>
               </>
             )}
@@ -686,13 +859,15 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
                     ? `Baixando ${currentLocal.pull.model} (${currentLocal.pull.percent}%)...`
                     : localHint}
                 </span>
+                <KeyLinks links={preset?.links} />
                 {currentLocal?.pull?.error && <span className="error">{currentLocal.pull.error}</span>}
               </div>
             )}
             {!localRuntime && (
               <div className="field">
                 <span className="field-label">
-                  {provider === "opencodeLocal" ? "Senha do opencode" : "Chave da API"}
+                  {provider === "opencodeLocal" ? "Senha do opencode" : "Chave da API"}{" "}
+                  <KeyState defined={settings.analyze_api_key_set} />
                 </span>
                 <div className="field-control">
                   <input
@@ -703,7 +878,7 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
                         ? "definida (deixe vazio para manter)"
                         : provider === "opencodeLocal"
                           ? "senha de ~/.config/opencode/service.json"
-                          : "cole a chave do provedor"
+                          : preset?.keyPlaceholder ?? "cole a chave do provedor"
                     }
                     value={apiKey}
                     onChange={(event) => setApiKey(event.target.value)}
@@ -723,21 +898,13 @@ export function SettingsView({ refreshKey = 0 }: { refreshKey?: number }) {
                       })();
                     }}
                   >
-                    Salvar chave
+                    {searchable ? "Salvar e testar" : "Salvar chave"}
                   </button>
                 </div>
+                <KeyLinks links={preset?.links} />
                 {provider === "opencodeLocal" && (
                   <span className="hint">
-                    Usa o opencode ja logado na sua maquina. Informe a URL do servidor do opencode e a senha de
-                    ~/.config/opencode/service.json. O modelo usa o formato provedor/modelo.
-                  </span>
-                )}
-                {(provider === "opencodeZen" || provider === "opencodeGo") && (
-                  <span className="hint">
-                    Chave do OpenCode Console (opencode.ai/console).{" "}
-                    {provider === "opencodeZen"
-                      ? "Ha modelos gratuitos na lista."
-                      : "A assinatura Go inclui os modelos listados."}
+                    Usa o opencode já logado na sua máquina. O modelo usa o formato provedor/modelo.
                   </span>
                 )}
               </div>

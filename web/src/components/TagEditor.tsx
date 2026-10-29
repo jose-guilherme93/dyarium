@@ -18,6 +18,7 @@ export function TagEditor({ entryId, onChanged }: TagEditorProps) {
   const [input, setInput] = useState("");
   const [open, setOpen] = useState(false);
   const [error, setError] = useState("");
+  const [loaded, setLoaded] = useState(false);
   const blurTimer = useRef<number | null>(null);
 
   const load = useCallback(async () => {
@@ -33,6 +34,7 @@ export function TagEditor({ entryId, onChanged }: TagEditorProps) {
         ),
       );
     }
+    setLoaded(true);
   }, [entryId]);
 
   useEffect(() => {
@@ -68,6 +70,9 @@ export function TagEditor({ entryId, onChanged }: TagEditorProps) {
 
   return (
     <div className="tags-row">
+      {!loaded && tags.length === 0 && (
+        <span className="skeleton tag-skeleton" role="status" aria-label="Carregando tags" />
+      )}
       {tags.map((tag) => {
         const color = tagColor(tag, colors[tag.toLowerCase()]);
         return (

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { tagColor } from "../lib/tags";
+import { ListSkeleton } from "./Skeleton";
 import { useEscape } from "../lib/useEscape";
 import type { Tag } from "../types";
 
@@ -16,14 +17,18 @@ export function TagManager({ open, onClose, onChanged }: TagManagerProps) {
   const [editing, setEditing] = useState<Tag | null>(null);
   const [name, setName] = useState("");
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
+    setLoading(true);
     try {
       const result = await api.listTags();
       setTags(result.tags ?? []);
       setError("");
     } catch {
       setError("Sem conexão com o servidor.");
+    } finally {
+      setLoading(false);
     }
   }, []);
 
@@ -98,7 +103,8 @@ export function TagManager({ open, onClose, onChanged }: TagManagerProps) {
           </button>
         </div>
         {error && <p className="error">{error}</p>}
-        <ul className="tag-manager-list">
+        {loading && tags.length === 0 && <ListSkeleton rows={4} compact />}
+        <ul className="tag-manager-list stagger-in">
           {tags.map((tag) => (
             <li key={tag.id} className="tag-manager-row">
               <span className="tag-manager-dot" style={{ backgroundColor: tagColor(tag.name, tag.color) }} />
@@ -153,7 +159,9 @@ export function TagManager({ open, onClose, onChanged }: TagManagerProps) {
               )}
             </li>
           ))}
-          {tags.length === 0 && !error && <li className="empty-state">Nenhuma tag ainda.</li>}
+          {tags.length === 0 && !error && !loading && (
+            <li className="empty-state">Nenhuma tag ainda.</li>
+          )}
         </ul>
       </div>
     </div>

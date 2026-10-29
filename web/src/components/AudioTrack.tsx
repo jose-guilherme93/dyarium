@@ -7,6 +7,7 @@ import type { Audio, Segment } from "../types";
 import { AudioPlayer, type AudioPlayerHandle } from "./AudioPlayer";
 import { ReviewChip } from "./ReviewChip";
 import { SparkIcon } from "./icons";
+import { Spinner } from "./Status";
 
 interface AudioTrackProps {
   audio: Audio;
@@ -210,11 +211,20 @@ export function AudioTrack({
                   );
                 })
               ) : (
-                <p>{loading ? "Carregando transcrição..." : `\u201c${text}\u201d`}</p>
+                <p>
+                  {loading ? (
+                    <>
+                      <Spinner /> Carregando transcrição…
+                    </>
+                  ) : (
+                    `\u201c${text}\u201d`
+                  )}
+                </p>
               )}
               {cursor && (
                 <button type="button" className="transcript-toggle" onClick={loadMore} disabled={loading}>
-                  {loading ? "Carregando..." : "Carregar mais"}
+                  {loading ? <Spinner /> : null}
+                  {loading ? "Carregando" : "Carregar mais"}
                 </button>
               )}
             </blockquote>

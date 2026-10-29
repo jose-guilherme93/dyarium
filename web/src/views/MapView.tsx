@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
-import { FitIcon, PencilIcon, SearchIcon } from "../components/icons";
+import { FitIcon, InsightsIcon, PencilIcon, SearchIcon } from "../components/icons";
 import { Spinner } from "../components/Status";
 import {
   authorLabel,
@@ -10,9 +10,12 @@ import {
   relativeRadius,
 } from "../lib/graph";
 import { drawGraphIcon, iconKeyFor, GRAPH_ICONS } from "../lib/graphIcons";
+import { rippleWaves, RIPPLE_INTERVAL_MS, RIPPLE_TOTAL_MS } from "../lib/ripple";
 import type {
   AuthorRole,
   EntityDetail,
+  EntityKind,
+  EntityMention,
   EntitySummary,
   GraphEdge,
   GraphNode,
@@ -20,13 +23,18 @@ import type {
   Notebook,
   Settings,
 } from "../types";
+import { MoodView } from "./MoodView";
 
 interface MapViewProps {
   refreshKey: number;
   onOpen: (id: string) => void;
+  /** Entidade aberta a partir de uma nota; o mapa seleciona e centraliza. */
+  focus?: { kind: EntityKind; name: string } | null;
+  onFocusApplied?: () => void;
 }
 
 type Period = "all" | "12m" | "30d";
+type InsightTab = EntityKind | "mood";
 
 interface SimNode {
   id: string;
@@ -89,6 +97,14 @@ const PERIODS: { id: Period; label: string }[] = [
   { id: "all", label: "Tudo" },
   { id: "12m", label: "12 meses" },
   { id: "30d", label: "30 dias" },
+];
+
+const INSIGHT_TABS: { id: InsightTab; label: string }[] = [
+  { id: "person", label: "Pessoas" },
+  { id: "place", label: "Lugares" },
+  { id: "theme", label: "Temas" },
+  { id: "decision", label: "Decisões" },
+  { id: "mood", label: "Humor" },
 ];
 
 function periodFrom(period: Period): string | undefined {
@@ -276,14 +292,23 @@ function wrapLabel(
   return lines.slice(0, 2);
 }
 
-function shortLabel(label: string, max = 24): string {
-  const clean = label.trim();
-  return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
-}
-
 function formatDate(value: string | null | undefined): string {
   if (!value) return "sem data";
   return new Date(value).toLocaleDateString("pt-BR");
+}
+
+/** Destaca a grafia que fez o trecho casar com a entidade. */
+function highlightTerm(text: string, term: string) {
+  if (!term) return text;
+  const index = text.toLocaleLowerCase().indexOf(term.toLocaleLowerCase());
+  if (index < 0) return text;
+  return (
+    <>
+      {text.slice(0, index)}
+      <strong className="map-mention-term">{text.slice(index, index + term.length)}</strong>
+      {text.slice(index + term.length)}
+    </>
+  );
 }
 
 function formatMs(ms: number): string {
@@ -293,13 +318,16 @@ function formatMs(ms: number): string {
 
 // MapView draws the relationship map on a canvas. The simulation is local and
 // stops once it settles; the server only sends nodes and edges.
-export function MapView({ refreshKey, onOpen }: MapViewProps) {
+export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewProps) {
   const [data, setData] = useState<GraphResponse | null>(null);
   const [graphVersion, setGraphVersion] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [focusId, setFocusId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [insightTab, setInsightTab] = useState<InsightTab>("person");
+  // Cada clique numa bola reinicia a onda, mesmo quando ela ja esta escolhida.
+  const [pulse, setPulse] = useState(0);
   const [notebooks, setNotebooks] = useState<Notebook[]>([]);
   const [notebookId, setNotebookId] = useState("");
   const [period, setPeriod] = useState<Period>("all");
@@ -315,10 +343,9 @@ export function MapView({ refreshKey, onOpen }: MapViewProps) {
   const [detail, setDetail] = useState<EntityDetail | null>(null);
   const [detailError, setDetailError] = useState("");
   const [detailLoading, setDetailLoading] = useState(false);
-  const [moments, setMoments] = useState<
-    { entryId: string; title: string; startMs: number; text: string }[]
-  >([]);
-  const [momentsLoading, setMomentsLoading] = useState(false);
+  const [mentions, setMentions] = useState<EntityMention[]>([]);
+  const [mentionsLoading, setMentionsLoading] = useState(false);
+  const [mentionsError, setMentionsError] = useState("");
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [claimSelf, setClaimSelf] = useState(false);
@@ -333,11 +360,20 @@ export function MapView({ refreshKey, onOpen }: MapViewProps) {
   const [renameBusy, setRenameBusy] = useState(false);
   const [settings, setSettings] = useState<Settings | null>(null);
 
+  /** Seleciona uma bola e reinicia a onda do destaque. */
+  const selectNode = useCallback((id: string) => {
+    setSelectedId(id);
+    setPulse((value) => value + 1);
+  }, []);
+
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const iconBoxRef = useRef<HTMLDivElement | null>(null);
   // O hover tem canvas proprio: destacar uma bola nao redesenha o mapa todo.
   const hoverCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  // A onda do no selecionado tem canvas proprio: animar nao redesenha o grafo.
+  const rippleCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const rippleRafRef = useRef<number | null>(null);
   const simRef = useRef<{ nodes: SimNode[]; edges: SimEdge[]; pos: Map<string, { x: number; y: number }> } | null>(null);
   const viewRef = useRef<View>({ zoom: 1, panX: 0, panY: 0 });
   const sizeRef = useRef({ w: 0, h: 0 });
@@ -360,6 +396,8 @@ export function MapView({ refreshKey, onOpen }: MapViewProps) {
   const ignoreClickRef = useRef(false);
   const fitRef = useRef(true);
   const manualViewRef = useRef(false);
+  // Um foco vindo de uma nota vale uma vez: nao reseleciona a cada filtro.
+  const appliedFocusRef = useRef<string | null>(null);
 
   const kindSet = useMemo(() => {
     const set = new Set<GraphNode["kind"]>();
@@ -371,6 +409,13 @@ export function MapView({ refreshKey, onOpen }: MapViewProps) {
 
   const filtered = useMemo(() => (data ? filterGraph(data, kindSet) : null), [data, kindSet]);
   const counts = useMemo(() => (data ? kindCounts(data) : {}), [data]);
+  const insightEntities = useMemo(() => {
+    if (!data || insightTab === "mood") return [];
+    return data.nodes
+      .filter((node) => node.kind === insightTab)
+      .slice()
+      .sort((a, b) => b.mentions - a.mentions || a.label.localeCompare(b.label));
+  }, [data, insightTab]);
   const selectedNode = useMemo(() => {
     if (selectedId && selectedId === data?.center.id) return data.center;
     return filtered?.nodes.find((node) => node.id === selectedId) ?? null;
@@ -383,6 +428,35 @@ export function MapView({ refreshKey, onOpen }: MapViewProps) {
     ? (iconOverrides[entityNode.id] ?? entityNode.icon ?? "")
     : "";
   const hasNotes = Boolean(data?.nodes.some((node) => node.kind === "note"));
+  const mentionGroups = useMemo(() => {
+    const groups = new Map<
+      string,
+      { entryId: string; title: string; date: string | null; comment: string; items: EntityMention[] }
+    >();
+    for (const mention of mentions) {
+      let group = groups.get(mention.entry_id);
+      if (!group) {
+        group = {
+          entryId: mention.entry_id,
+          title: mention.title,
+          date: mention.date,
+          comment: mention.comment ?? "",
+          items: [],
+        };
+        groups.set(mention.entry_id, group);
+      }
+      if (!group.comment && mention.comment) {
+        group.comment = mention.comment;
+      }
+      group.items.push(mention);
+    }
+    return [...groups.values()];
+  }, [mentions]);
+  const otherEntries = useMemo(() => {
+    if (!detail) return [];
+    const seen = new Set(mentionGroups.map((group) => group.entryId));
+    return detail.entry_list.filter((entry) => !seen.has(entry.id));
+  }, [detail, mentionGroups]);
 
   // Entidades do mesmo tipo para o "mesclar em" da renomeacao. Serve para
   // qualquer tipo: a IA pode extrair grafias diferentes da mesma pessoa, lugar,
@@ -441,7 +515,7 @@ export function MapView({ refreshKey, onOpen }: MapViewProps) {
         setData(result);
         setError("");
         if (focusId && result.nodes.some((node) => node.id === focusId)) {
-          setSelectedId(focusId);
+          selectNode(focusId);
         }
       })
       .catch((err: unknown) => {
@@ -453,7 +527,7 @@ export function MapView({ refreshKey, onOpen }: MapViewProps) {
     return () => {
       cancelled = true;
     };
-  }, [notebookId, period, focusId, refreshKey, graphVersion]);
+  }, [notebookId, period, focusId, refreshKey, graphVersion, selectNode]);
 
   // Entity detail for the selected node. Notes and the user node already carry
   // everything the panel shows.
@@ -508,57 +582,40 @@ export function MapView({ refreshKey, onOpen }: MapViewProps) {
     };
   }, [iconOpen]);
 
-  // Key moments live in each note's analysis. Read a handful of the entity's
-  // notes when the panel opens; the graph itself never turns a sentence into a
-  // node.
+  // Trechos reais da entidade: a passagem da transcricao (com o tempo) ou a
+  // frase do texto, junto da leitura da analise daquela nota.
+  const entityKind = entityNode?.kind;
+  const entityName = entityNode?.label;
   useEffect(() => {
-    if (!entityNode) {
-      setMoments([]);
-      setMomentsLoading(false);
-      return;
-    }
-    const notes = detail?.entry_list.slice(0, 4) ?? [];
-    if (notes.length === 0) {
-      setMoments([]);
-      setMomentsLoading(false);
+    if (!entityKind || !entityName) {
+      setMentions([]);
+      setMentionsError("");
+      setMentionsLoading(false);
       return;
     }
     let cancelled = false;
-    setMomentsLoading(true);
-    Promise.allSettled(
-      notes.map(async (note) => {
-        const analysis = await api.getAnalysis(note.id);
-        const list = [
-          ...(analysis.key_moments ?? []),
-          ...(analysis.sections ?? []).flatMap((section) => section.key_moments ?? []),
-        ];
-        return list.map((moment) => ({
-          entryId: note.id,
-          title: note.title,
-          startMs: moment.start_ms,
-          text: moment.text,
-        }));
-      }),
-    )
-      .then((results) => {
-        if (cancelled) return;
-        const all = results.flatMap((result) =>
-          result.status === "fulfilled" ? result.value : [],
-        );
-        const unique = new Map<string, (typeof all)[number]>();
-        for (const moment of all) {
-          const key = `${moment.entryId}:${moment.startMs}:${moment.text}`;
-          if (!unique.has(key)) unique.set(key, moment);
+    setMentions([]);
+    setMentionsError("");
+    setMentionsLoading(true);
+    api
+      .getEntityMentions(entityKind, entityName)
+      .then((value) => {
+        if (!cancelled) {
+          setMentions(value.mentions ?? []);
         }
-        setMoments([...unique.values()].slice(0, 6));
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setMentionsError(err instanceof Error ? err.message : "falha ao carregar os trechos");
+        }
       })
       .finally(() => {
-        if (!cancelled) setMomentsLoading(false);
+        if (!cancelled) setMentionsLoading(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [entityNode, detail]);
+  }, [entityKind, entityName]);
 
   // Hover e desenhado numa camada separada. Mover o mouse entre bolas so
   // limpa/repinta algumas linhas; o mapa base nem e tocado. Sem hover, nenhuma
@@ -785,6 +842,15 @@ export function MapView({ refreshKey, onOpen }: MapViewProps) {
         iconSize(node),
         colors.ink,
       );
+      if (active) {
+        // Anel persistente: a bola continua marcada depois que a onda passa.
+        ctx.globalAlpha = 0.85;
+        ctx.beginPath();
+        ctx.arc(node.x, node.y, node.r + 5 / Math.max(0.7, view.zoom), 0, Math.PI * 2);
+        ctx.strokeStyle = colors.accent;
+        ctx.lineWidth = 1.4 / Math.max(0.7, view.zoom);
+        ctx.stroke();
+      }
     }
     if (centerNode) {
       ctx.globalAlpha = isHighlighted(centerNode.id) ? 0.55 : 0.15;
@@ -803,6 +869,14 @@ export function MapView({ refreshKey, onOpen }: MapViewProps) {
       ctx.stroke();
       ctx.globalAlpha = isHighlighted(centerNode.id) ? 1 : 0.2;
       drawGraphIcon(ctx, "person", centerNode.x, centerNode.y, iconSize(centerNode), colors.paper);
+      if (selected === centerNode.id) {
+        ctx.globalAlpha = 0.85;
+        ctx.beginPath();
+        ctx.arc(centerNode.x, centerNode.y, centerNode.r + 12 / view.zoom, 0, Math.PI * 2);
+        ctx.strokeStyle = colors.accent;
+        ctx.lineWidth = 1.4 / Math.max(0.7, view.zoom);
+        ctx.stroke();
+      }
     }
 
     ctx.globalAlpha = 1;
@@ -979,6 +1053,87 @@ export function MapView({ refreshKey, onOpen }: MapViewProps) {
     draw();
   }, [selectedId, query, draw]);
 
+  // Enquanto houver bola selecionada, sai uma rajada de aneis a cada 3 s para
+  // ela chamar atencao no meio do grafo. A camada e propria e so a onda e
+  // redesenhada; o mapa continua parado.
+  useEffect(() => {
+    const canvas = rippleCanvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    if (rippleRafRef.current !== null) {
+      window.cancelAnimationFrame(rippleRafRef.current);
+      rippleRafRef.current = null;
+    }
+    const clear = () => {
+      if (!canvas || !ctx) return;
+      const dpr = window.devicePixelRatio || 1;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, sizeRef.current.w, sizeRef.current.h);
+    };
+    clear();
+    if (!selectedId || !canvas || !ctx) return;
+
+    const paint = (elapsed: number) => {
+      const { w, h } = sizeRef.current;
+      const dpr = window.devicePixelRatio || 1;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      const sim = simRef.current;
+      if (!sim || w <= 0 || h <= 0) return;
+      const node = sim.nodes.find((item) => item.id === selectedId);
+      if (!node) return;
+      const view = viewRef.current;
+      const sx = w / 2 + view.panX + node.x * view.zoom;
+      const sy = h / 2 + view.panY + node.y * view.zoom;
+      const base = Math.max(3, node.r * view.zoom) + 5;
+      const colors = colorsRef.current;
+      for (const wave of rippleWaves(elapsed, base)) {
+        ctx.globalAlpha = wave.alpha;
+        ctx.strokeStyle = colors.accent;
+        ctx.lineWidth = wave.lineWidth;
+        ctx.beginPath();
+        ctx.arc(sx, sy, wave.radius, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    };
+
+    let raf: number | null = null;
+    const burst = () => {
+      if (raf !== null) {
+        window.cancelAnimationFrame(raf);
+        raf = null;
+      }
+      const started = performance.now();
+      const step = (now: number) => {
+        const elapsed = now - started;
+        paint(elapsed);
+        if (elapsed < RIPPLE_TOTAL_MS) {
+          raf = window.requestAnimationFrame(step);
+          rippleRafRef.current = raf;
+        } else {
+          raf = null;
+          rippleRafRef.current = null;
+          // Ultimo quadro: limpa os aneis e deixa so o anel fixo do mapa.
+          paint(RIPPLE_TOTAL_MS);
+        }
+      };
+      raf = window.requestAnimationFrame(step);
+      rippleRafRef.current = raf;
+    };
+
+    burst();
+    const timer = window.setInterval(burst, RIPPLE_INTERVAL_MS);
+    return () => {
+      if (raf !== null) window.cancelAnimationFrame(raf);
+      window.clearInterval(timer);
+      if (rippleRafRef.current !== null) {
+        window.cancelAnimationFrame(rippleRafRef.current);
+        rippleRafRef.current = null;
+      }
+      clear();
+    };
+  }, [selectedId, pulse]);
+
   // One physics pass, shared by the synchronous pre-settle, the drag and the
   // short settle after a node is dropped. It never runs while the map is idle.
   // Opening the map settles before the first frame, so the circles never jump
@@ -1087,6 +1242,23 @@ export function MapView({ refreshKey, onOpen }: MapViewProps) {
     [draw, fitView, simStep],
   );
 
+  /** Seleciona uma entidade e leva a camera ate ela, sem refazer o grafo. */
+  const selectEntity = useCallback(
+    (node: GraphNode) => {
+      if (!visible[node.kind]) {
+        setVisible((current) => ({ ...current, [node.kind]: true }));
+      }
+      selectNode(node.id);
+      const simNode = simRef.current?.nodes.find((item) => item.id === node.id);
+      if (!simNode) return;
+      fitRef.current = false;
+      manualViewRef.current = true;
+      const view = viewRef.current;
+      animateView(-simNode.x * view.zoom, -simNode.y * view.zoom, 450);
+    },
+    [visible, animateView, selectNode],
+  );
+
   // Build the simulation whenever the data or the visible kinds change. Old
   // positions are reused, so a refresh or a filter change does not scramble
   // the map.
@@ -1177,6 +1349,24 @@ export function MapView({ refreshKey, onOpen }: MapViewProps) {
     draw();
   }, [filtered, data, focusId, simStep, draw, fitView]);
 
+  // Uma entidade aberta numa nota chega aqui: o mapa acende e centraliza a
+  // bola correspondente. O foco vale uma vez e e devolvido ao App.
+  useEffect(() => {
+    if (!focus || !data) return;
+    const key = `${focus.kind}:${focus.name.toLocaleLowerCase()}`;
+    if (appliedFocusRef.current === key) return;
+    const node = data.nodes.find(
+      (item) =>
+        item.kind === focus.kind &&
+        item.label.toLocaleLowerCase() === focus.name.toLocaleLowerCase(),
+    );
+    if (!node) return;
+    appliedFocusRef.current = key;
+    setInsightTab(focus.kind);
+    selectEntity(node);
+    onFocusApplied?.();
+  }, [focus, data, selectEntity, onFocusApplied]);
+
   useEffect(() => {
     const wrap = wrapRef.current;
     const canvas = canvasRef.current;
@@ -1193,6 +1383,11 @@ export function MapView({ refreshKey, onOpen }: MapViewProps) {
       if (hoverCanvas) {
         hoverCanvas.width = Math.max(1, Math.round(w * dpr));
         hoverCanvas.height = Math.max(1, Math.round(h * dpr));
+      }
+      const rippleCanvas = rippleCanvasRef.current;
+      if (rippleCanvas) {
+        rippleCanvas.width = Math.max(1, Math.round(w * dpr));
+        rippleCanvas.height = Math.max(1, Math.round(h * dpr));
       }
       if (manualViewRef.current) {
         draw();
@@ -1211,6 +1406,7 @@ export function MapView({ refreshKey, onOpen }: MapViewProps) {
       if (rafRef.current !== null) window.cancelAnimationFrame(rafRef.current);
       if (labelRafRef.current !== null) window.cancelAnimationFrame(labelRafRef.current);
       if (viewAnimRef.current !== null) window.cancelAnimationFrame(viewAnimRef.current);
+      if (rippleRafRef.current !== null) window.cancelAnimationFrame(rippleRafRef.current);
     };
   }, []);
 
@@ -1350,7 +1546,7 @@ export function MapView({ refreshKey, onOpen }: MapViewProps) {
         const isCenter = drag.id === data?.center.id;
         node.fixed = isCenter;
         if (!drag.moved) {
-          setSelectedId(drag.id);
+          selectNode(drag.id);
         } else {
           if (isCenter) {
             // A bola foi solta longe do meio do mundo; a camera desliza ate
@@ -1376,7 +1572,7 @@ export function MapView({ refreshKey, onOpen }: MapViewProps) {
     if (dragRef.current) return;
     const point = graphPoint(event as unknown as React.PointerEvent<HTMLCanvasElement>);
     const node = pickNode(point.x, point.y);
-    if (node) setSelectedId(node.id);
+    if (node) selectNode(node.id);
   };
 
   const handleDoubleClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
@@ -1584,6 +1780,7 @@ export function MapView({ refreshKey, onOpen }: MapViewProps) {
               onDoubleClick={handleDoubleClick}
             />
             <canvas className="map-hover-canvas" ref={hoverCanvasRef} aria-hidden="true" />
+            <canvas className="map-ripple-canvas" ref={rippleCanvasRef} aria-hidden="true" />
           </div>
           {loading && (
             <div className="map-overlay">
@@ -1610,7 +1807,7 @@ export function MapView({ refreshKey, onOpen }: MapViewProps) {
           </div>
         </div>
 
-        {selection && (
+        {selection ? (
           <aside className="map-detail" aria-label="Detalhe do mapa">
             <header className="map-detail-head">
               <span className={`map-kind map-kind--${selection.kind}`}>{kindLabel(selection.kind)}</span>
@@ -1873,45 +2070,142 @@ export function MapView({ refreshKey, onOpen }: MapViewProps) {
                   </p>
                 )}
                 {detailError && <p className="error">{detailError}</p>}
-                {momentsLoading && (
+                {mentionsLoading && (
                   <p className="muted">
                     <Spinner />
                   </p>
                 )}
-                {moments.length > 0 && (
+                {mentionsError && <p className="error">{mentionsError}</p>}
+                {mentionGroups.length > 0 && (
                   <>
-                    <h3 className="map-subhead">Momentos</h3>
-                    <ul className="map-moments">
-                      {moments.map((moment) => (
-                        <li key={`${moment.entryId}:${moment.startMs}:${moment.text}`}>
+                    <h3 className="map-subhead">Trechos</h3>
+                    <ul className="map-mentions stagger-in">
+                      {mentionGroups.map((group) => (
+                        <li key={group.entryId} className="map-mention-group">
                           <button
                             type="button"
-                            className="map-moment"
-                            onClick={() => onOpen(moment.entryId)}
+                            className="map-mention-entry"
+                            onClick={() => onOpen(group.entryId)}
                           >
-                            <span className="map-moment-time">{formatMs(moment.startMs)}</span>
-                            <span className="map-moment-text">{shortLabel(moment.text, 90)}</span>
+                            <span className="map-mention-title">{group.title || "Entrada"}</span>
+                            <span className="map-mention-date">{formatDate(group.date)}</span>
+                          </button>
+                          {group.comment && (
+                            <p className="map-mention-comment">
+                              <span className="map-mention-comment-label">Análise</span>
+                              {group.comment}
+                            </p>
+                          )}
+                          <ul className="map-excerpts stagger-in">
+                            {group.items.map((mention, index) => (
+                              <li key={`${mention.source}:${mention.start_ms ?? "texto"}:${index}`}>
+                                <button
+                                  type="button"
+                                  className="map-excerpt"
+                                  onClick={() => onOpen(mention.entry_id)}
+                                >
+                                  {mention.source === "transcript" ? (
+                                    <span className="map-moment-time">
+                                      {formatMs(mention.start_ms ?? 0)}
+                                    </span>
+                                  ) : (
+                                    <span className="map-excerpt-source">texto</span>
+                                  )}
+                                  <span className="map-excerpt-text">
+                                    {highlightTerm(mention.text, mention.term)}
+                                  </span>
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+                {!mentionsLoading && otherEntries.length > 0 && (
+                  <>
+                    <h3 className="map-subhead">Notas</h3>
+                    <ul className="map-note-list stagger-in">
+                      {otherEntries.slice(0, 12).map((entry) => (
+                        <li key={entry.id}>
+                          <button type="button" className="map-note" onClick={() => onOpen(entry.id)}>
+                            <span className="map-note-title">{entry.title || "Entrada"}</span>
+                            <span className="map-note-meta">
+                              {formatDate(entry.date)} · {entry.count}
+                            </span>
                           </button>
                         </li>
                       ))}
                     </ul>
                   </>
                 )}
-                {detail && detail.entry_list.length > 0 && (
-                  <ul className="map-note-list">
-                    {detail.entry_list.slice(0, 12).map((entry) => (
-                      <li key={entry.id}>
-                        <button type="button" className="map-note" onClick={() => onOpen(entry.id)}>
-                          <span className="map-note-title">{entry.title || "Entrada"}</span>
-                          <span className="map-note-meta">
-                            {formatDate(entry.date)} · {entry.count}
-                          </span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
               </>
+            )}
+          </aside>
+        ) : (
+          <aside className="map-insights" aria-label="Insights do mapa">
+            <header className="map-insights-head">
+              <h2>
+                <InsightsIcon size={15} />
+                Insights
+              </h2>
+              <span className="map-insights-total" title="Entidades no mapa">
+                {(counts.person ?? 0) +
+                  (counts.place ?? 0) +
+                  (counts.theme ?? 0) +
+                  (counts.decision ?? 0)}
+              </span>
+            </header>
+            <div className="map-insights-tabs" role="tablist" aria-label="Tipo de insight">
+              {INSIGHT_TABS.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={insightTab === tab.id}
+                  className={
+                    insightTab === tab.id
+                      ? "map-insights-tab map-insights-tab--on"
+                      : "map-insights-tab"
+                  }
+                  onClick={() => setInsightTab(tab.id)}
+                >
+                  {tab.label}
+                  {tab.id !== "mood" && (
+                    <span className="map-insights-tab-count">{counts[tab.id] ?? 0}</span>
+                  )}
+                </button>
+              ))}
+            </div>
+            {insightTab === "mood" ? (
+              <MoodView refreshKey={refreshKey} />
+            ) : loading && !data ? (
+              <p className="muted">
+                <Spinner />
+              </p>
+            ) : insightEntities.length === 0 ? (
+              <p className="map-insights-empty">
+                0 {INSIGHT_TABS.find((tab) => tab.id === insightTab)?.label.toLocaleLowerCase()}
+              </p>
+            ) : (
+              <ul className="map-insights-list stagger-in">
+                {insightEntities.map((entity) => (
+                  <li key={entity.id}>
+                    <button
+                      type="button"
+                      className="map-insight"
+                      onClick={() => selectEntity(entity)}
+                    >
+                      <span className="map-insight-name">{entity.label}</span>
+                      <span className="map-insight-meta">
+                        {entity.mentions} {entity.mentions === 1 ? "menção" : "menções"} ·{" "}
+                        {entity.notes} {entity.notes === 1 ? "nota" : "notas"}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
             )}
           </aside>
         )}
