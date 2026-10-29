@@ -395,6 +395,26 @@ Decisoes que sustentam isso:
   usado para ler o zip do Notion no navegador; a pasta descompactada usa so a API
   de arquivos do navegador.
 
+## Worker opcional no navegador
+
+O dashboard pode processar uma analise no computador do usuario, quando ele pede.
+Nao e um quarto servico: e mais um worker da fila `jobs`, com presenca em memoria
+(TTL de 60 s), lease de 120 s e heartbeat. O worker nao varre a fila: o botao
+**Analisar** pede uma entrada especifica (`only_entry`) e o worker so a pega. Enquanto
+esse pedido existe, o worker fica com `prefer_client` e os runners do servidor param de
+reservar os jobs pesados (so `cleanup` continua); ao terminar, a preferencia cai e a VPS
+volta a processar. Ligar o modo e ocioso nao enfileira, nao reserva e nao pausa nada.
+
+O servidor nao muda de contrato: o navegador baixa o audio decifrado pelo endpoint
+existente, sobe a transcricao por `PUT /entries/{id}/transcript` e a analise por
+`PUT /entries/{id}/analysis` (com `origin: "browser"`). A fila, o lease e o retry sao
+os mesmos; nao existe fila paralela. O nucleo de analise e importado de
+`mobile/src/core`, entao app e navegador leem a nota com as mesmas regras.
+
+Decisao: a presenca fica em memoria de proposito. Uma linha duravel poderia manter a
+fila parada por uma aba que ja morreu; com TTL curto, o pior caso e o servidor esperar
+um minuto e o lease expirar.
+
 ## Fluxo de dados
 
 1. Cliente inicia um upload: `POST /uploads` com metadados e o SHA-256 esperado do arquivo.

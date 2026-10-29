@@ -434,11 +434,13 @@ func (in analysisInputResult) analysisSections() []analyze.Section {
 }
 
 // joinSegmentsWithTime is the transcript as the model reads it, with the
-// [mm:ss] offset of each segment so key moments carry a real timestamp.
+// [mm:ss] offset of each segment so key moments carry a real timestamp. The
+// text itself goes through the analysis cleaning first: the prefix is the only
+// timestamp the model should see.
 func joinSegmentsWithTime(segments []analyze.Segment) string {
 	lines := make([]string, 0, len(segments))
 	for _, segment := range segments {
-		text := strings.TrimSpace(segment.Text)
+		text := analyze.CleanText(strings.TrimSpace(segment.Text))
 		if text != "" {
 			lines = append(lines, "["+analyze.FormatOffset(segment.StartMS)+"] "+text)
 		}
@@ -581,7 +583,7 @@ func splitMarkdownSections(markdown string) []analyze.Section {
 	heading := ""
 	lines := make([]string, 0, 32)
 	flush := func() {
-		text := preview.Plain(strings.Join(lines, "\n"))
+		text := analyze.CleanText(preview.Plain(strings.Join(lines, "\n")))
 		lines = lines[:0]
 		if strings.TrimSpace(text) == "" {
 			return
@@ -591,7 +593,7 @@ func splitMarkdownSections(markdown string) []analyze.Section {
 	for _, line := range strings.Split(markdown, "\n") {
 		if match := markdownHeading.FindStringSubmatch(line); match != nil {
 			flush()
-			heading = strings.TrimSpace(match[2])
+			heading = analyze.CleanText(strings.TrimSpace(match[2]))
 			continue
 		}
 		lines = append(lines, line)

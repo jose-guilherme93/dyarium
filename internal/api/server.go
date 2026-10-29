@@ -43,6 +43,9 @@ type Deps struct {
 	LLMModels llm.Store
 	Canceller *jobs.Canceller
 	Tokens    *TokenSource
+	// Presence tracks the optional browser workers. Nil means an empty
+	// registry, so the default behavior (server processes everything) holds.
+	Presence *jobs.Presence
 }
 
 // Server holds the HTTP handlers and their dependencies.
@@ -66,6 +69,9 @@ func New(deps Deps) *Server {
 	}
 	if deps.Tokens == nil {
 		deps.Tokens = NewTokenSource(deps.Config.Token, false)
+	}
+	if deps.Presence == nil {
+		deps.Presence = jobs.NewPresence(jobs.WorkerTTL)
 	}
 	return &Server{deps: deps, pulls: map[string]*localPullState{}}
 }
@@ -109,6 +115,7 @@ func (s *Server) Handler() http.Handler {
 
 	protected.HandleFunc("GET /api/v1/entities", s.handleListEntities)
 	protected.HandleFunc("GET /api/v1/entities/{kind}/{name}", s.handleGetEntity)
+	protected.HandleFunc("GET /api/v1/entities/{kind}/{name}/mentions", s.handleEntityMentions)
 	protected.HandleFunc("PATCH /api/v1/entities/{kind}/{name}", s.handleRenameEntity)
 	protected.HandleFunc("POST /api/v1/entities/person/{name}/self", s.handleClaimSelf)
 	protected.HandleFunc("PUT /api/v1/entities/{kind}/{name}/icon", s.handleSetEntityIcon)
@@ -153,6 +160,20 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("GET /api/v1/models", s.handleListModels)
 	protected.HandleFunc("POST /api/v1/models/download", s.handleDownloadModel)
 
+	// Optional browser worker: the dashboard claims transcribe/analyze jobs,
+	// processes them locally and uploads the result. Off unless a worker
+	// registers and asks to process the queue.
+	if s.deps.Config.BrowserWorkerEnabled {
+		protected.HandleFunc("POST /api/v1/worker/register", s.handleWorkerRegister)
+		protected.HandleFunc("POST /api/v1/worker/heartbeat", s.handleWorkerHeartbeat)
+		protected.HandleFunc("POST /api/v1/worker/claim", s.handleWorkerClaim)
+		protected.HandleFunc("POST /api/v1/worker/complete", s.handleWorkerComplete)
+		protected.HandleFunc("POST /api/v1/worker/fail", s.handleWorkerFail)
+		protected.HandleFunc("POST /api/v1/worker/release", s.handleWorkerRelease)
+		protected.HandleFunc("POST /api/v1/worker/unregister", s.handleWorkerUnregister)
+		protected.HandleFunc("GET /api/v1/worker/status", s.handleWorkerStatus)
+	}
+
 	protected.HandleFunc("GET /api/v1/activities", s.handleListActivities)
 
 	protected.HandleFunc("GET /api/v1/events", s.handleEvents)
@@ -196,6 +217,23 @@ func (s *Server) spaHandler() http.Handler {
 			r = r.Clone(r.Context())
 			r.URL.Path = "/"
 			path = "index.html"
+		}
+		// O laboratorio de processamento roda WebAssembly em threads. Isolar so
+		// esta pagina evita quebrar imagens externas no resto do dashboard e
+		// libera SharedArrayBuffer para o llama.cpp.
+		if strings.TrimSuffix(r.URL.Path, "/") == "/lab" {
+			w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
+			w.Header().Set("Cross-Origin-Embedder-Policy", "require-corp")
+		}
+		// O glue do ONNX Runtime e um modulo ESM servido do proprio binario. Sem
+		// o tipo certo o navegador recusa o import() dinamico.
+		if strings.HasPrefix(path, "ort/") {
+			switch {
+			case strings.HasSuffix(path, ".mjs"):
+				w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+			case strings.HasSuffix(path, ".wasm"):
+				w.Header().Set("Content-Type", "application/wasm")
+			}
 		}
 		// Vite puts a content hash in every asset name, so they can be cached
 		// forever. index.html must always be revalidated, and the service worker

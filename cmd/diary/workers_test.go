@@ -196,7 +196,7 @@ func TestAnalysisInputCombinesEveryKindOfContent(t *testing.T) {
 		joined += section.Heading + "\n" + section.Text + "\n"
 	}
 	for _, want := range []string{
-		"texto escrito", "imagem: foto", "https://exemplo.com",
+		"texto escrito", "imagem: foto", "site",
 		"Transcrição do áudio", "fala do audio", "Links", "outra nota",
 	} {
 		if !strings.Contains(joined, want) {

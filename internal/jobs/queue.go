@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"strings"
 	"time"
 
 	"github.com/joseti/dyarium/internal/id"
@@ -129,6 +130,35 @@ func (q *Queue) EnqueueAfter(ctx context.Context, jobType, idempotencyKey string
 // Claim reserves the next available job for the worker, renewing expired leases
 // first. It returns (nil, nil) when there is no work.
 func (q *Queue) Claim(ctx context.Context, workerID string, lease time.Duration) (*Job, error) {
+	return q.ClaimTypes(ctx, workerID, lease, nil)
+}
+
+// ClaimTypes is Claim restricted to the given job types. An empty list means
+// every type, which is what the server runner uses. The browser worker passes
+// only transcribe and analyze: cleanup is server work and must never leave the
+// machine that owns the disk.
+func (q *Queue) ClaimTypes(ctx context.Context, workerID string, lease time.Duration, types []string) (*Job, error) {
+	return q.ClaimFor(ctx, workerID, lease, types, "")
+}
+
+// ClaimFor is ClaimTypes with a preferred entry: when the user asks to analyze
+// one note on the PC, the worker picks that job before older queue work. The
+// preference is only an ordering hint; the lease still guarantees exclusivity.
+func (q *Queue) ClaimFor(ctx context.Context, workerID string, lease time.Duration, types []string, preferredEntryID string) (*Job, error) {
+	return q.claimFor(ctx, workerID, lease, types, preferredEntryID, false)
+}
+
+// ClaimEntry claims only the job of one entry. The browser worker uses it so a
+// local request never turns into automatic queue consumption: the worker sees
+// the note the user asked for, or nothing at all.
+func (q *Queue) ClaimEntry(ctx context.Context, workerID string, lease time.Duration, types []string, entryID string) (*Job, error) {
+	if entryID == "" {
+		return nil, nil
+	}
+	return q.claimFor(ctx, workerID, lease, types, entryID, true)
+}
+
+func (q *Queue) claimFor(ctx context.Context, workerID string, lease time.Duration, types []string, entryID string, exact bool) (*Job, error) {
 	if err := q.RequeueExpired(ctx); err != nil {
 		return nil, err
 	}
@@ -137,14 +167,31 @@ func (q *Queue) Claim(ctx context.Context, workerID string, lease time.Duration)
 	var payload sql.NullString
 	var availableAt, createdAt, updatedAt string
 	var leaseExpires sql.NullString
-	err := q.db.QueryRowContext(ctx, `
+	query := `
 		SELECT id, type, idempotency_key, payload, status, attempts, max_attempts,
 			available_at, lease_expires_at, COALESCE(worker_id,''), COALESCE(last_error,''),
 			created_at, updated_at
 		FROM jobs
-		WHERE status IN (?, ?) AND available_at <= ?
-		ORDER BY available_at ASC LIMIT 1`,
-		string(StatusQueued), string(StatusRetrying), ts(now)).Scan(
+		WHERE status IN (?, ?) AND available_at <= ?`
+	args := []any{string(StatusQueued), string(StatusRetrying), ts(now)}
+	if len(types) > 0 {
+		placeholders := make([]string, len(types))
+		for i, jobType := range types {
+			placeholders[i] = "?"
+			args = append(args, jobType)
+		}
+		query += " AND type IN (" + strings.Join(placeholders, ", ") + ")"
+	}
+	if exact {
+		query += " AND json_extract(payload, '$.entry_id') = ? ORDER BY available_at ASC LIMIT 1"
+		args = append(args, entryID)
+	} else if entryID != "" {
+		query += " ORDER BY CASE WHEN json_extract(payload, '$.entry_id') = ? THEN 0 ELSE 1 END, available_at ASC LIMIT 1"
+		args = append(args, entryID)
+	} else {
+		query += " ORDER BY available_at ASC LIMIT 1"
+	}
+	err := q.db.QueryRowContext(ctx, query, args...).Scan(
 		&j.ID, &j.Type, &j.IdempotencyKey, &payload, &j.Status, &j.Attempts, &j.MaxAttempts,
 		&availableAt, &leaseExpires, &j.WorkerID, &j.LastError, &createdAt, &updatedAt)
 	if err == sql.ErrNoRows {
@@ -179,17 +226,95 @@ func (q *Queue) Claim(ctx context.Context, workerID string, lease time.Duration)
 	return &j, nil
 }
 
-// Heartbeat renews the lease of a running job.
-func (q *Queue) Heartbeat(ctx context.Context, jobID, workerID string, lease time.Duration) error {
+// Get returns a job by id.
+func (q *Queue) Get(ctx context.Context, jobID string) (*Job, error) {
+	var j Job
+	var payload sql.NullString
+	var availableAt, createdAt, updatedAt string
+	var leaseExpires sql.NullString
+	err := q.db.QueryRowContext(ctx, `
+		SELECT id, type, idempotency_key, payload, status, attempts, max_attempts,
+			available_at, lease_expires_at, COALESCE(worker_id,''), COALESCE(last_error,''),
+			created_at, updated_at
+		FROM jobs WHERE id = ?`, jobID).Scan(
+		&j.ID, &j.Type, &j.IdempotencyKey, &payload, &j.Status, &j.Attempts, &j.MaxAttempts,
+		&availableAt, &leaseExpires, &j.WorkerID, &j.LastError, &createdAt, &updatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("jobs: get: %w", err)
+	}
+	j.AvailableAt = parseTS(availableAt)
+	j.CreatedAt = parseTS(createdAt)
+	j.UpdatedAt = parseTS(updatedAt)
+	if leaseExpires.Valid {
+		t := parseTS(leaseExpires.String)
+		j.LeaseExpiresAt = &t
+	}
+	if payload.Valid {
+		j.Payload = []byte(payload.String)
+	}
+	return &j, nil
+}
+
+// Heartbeat renews the lease of a running job. It reports false when the job is
+// no longer leased to this worker: the worker must stop and discard the result,
+// because another worker may already be redoing it.
+func (q *Queue) HeartbeatOwned(ctx context.Context, jobID, workerID string, lease time.Duration) (bool, error) {
 	expires := time.Now().UTC().Add(lease)
-	_, err := q.db.ExecContext(ctx, `
+	res, err := q.db.ExecContext(ctx, `
 		UPDATE jobs SET lease_expires_at = ?, updated_at = ?
 		WHERE id = ? AND worker_id = ? AND status = ?`,
 		ts(expires), ts(time.Now()), jobID, workerID, string(StatusRunning))
 	if err != nil {
-		return fmt.Errorf("jobs: heartbeat: %w", err)
+		return false, fmt.Errorf("jobs: heartbeat: %w", err)
 	}
-	return nil
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// Heartbeat renews the lease of a running job.
+func (q *Queue) Heartbeat(ctx context.Context, jobID, workerID string, lease time.Duration) error {
+	_, err := q.HeartbeatOwned(ctx, jobID, workerID, lease)
+	return err
+}
+
+// CompleteOwned marks a job done only when the caller still owns the lease.
+func (q *Queue) CompleteOwned(ctx context.Context, jobID, workerID string) (bool, error) {
+	res, err := q.db.ExecContext(ctx, `
+		UPDATE jobs SET status = ?, lease_expires_at = NULL, updated_at = ?
+		WHERE id = ? AND worker_id = ? AND status = ?`,
+		string(StatusDone), ts(time.Now()), jobID, workerID, string(StatusRunning))
+	if err != nil {
+		return false, fmt.Errorf("jobs: complete: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// FailOwned records a failed attempt only when the caller still owns the lease.
+// cause must not carry note content or secrets: it is stored in the job row.
+func (q *Queue) FailOwned(ctx context.Context, jobID, workerID string, cause error, baseDelay time.Duration) (bool, error) {
+	owned, err := q.ownedBy(ctx, jobID, workerID)
+	if err != nil || !owned {
+		return false, err
+	}
+	if err := q.Fail(ctx, jobID, cause, baseDelay); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (q *Queue) ownedBy(ctx context.Context, jobID, workerID string) (bool, error) {
+	var n int
+	err := q.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM jobs WHERE id = ? AND worker_id = ? AND status = ?`,
+		jobID, workerID, string(StatusRunning)).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("jobs: check owner: %w", err)
+	}
+	return n > 0, nil
 }
 
 // Complete marks a job as done.
@@ -201,6 +326,23 @@ func (q *Queue) Complete(ctx context.Context, jobID string) error {
 		return fmt.Errorf("jobs: complete: %w", err)
 	}
 	return nil
+}
+
+// ReleaseOwned hands a running job back to the queue immediately, without
+// counting an attempt. The browser uses it when the user decides the note
+// should be processed on the server instead of waiting in a slow tab.
+func (q *Queue) ReleaseOwned(ctx context.Context, jobID, workerID string) (bool, error) {
+	now := time.Now().UTC()
+	res, err := q.db.ExecContext(ctx, `
+		UPDATE jobs SET status = ?, worker_id = '', lease_expires_at = NULL,
+			available_at = ?, updated_at = ?
+		WHERE id = ? AND worker_id = ? AND status = ?`,
+		string(StatusQueued), ts(now), ts(now), jobID, workerID, string(StatusRunning))
+	if err != nil {
+		return false, fmt.Errorf("jobs: release: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }
 
 // Fail records a failed attempt. It reschedules the job with exponential backoff

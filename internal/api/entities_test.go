@@ -66,7 +66,7 @@ func TestCreateTextEntry(t *testing.T) {
 
 func TestEntitiesRequireAuth(t *testing.T) {
 	srv := newTestServer(t)
-	for _, path := range []string{"/api/v1/entities", "/api/v1/mood", "/api/v1/entities/person/Maria"} {
+	for _, path := range []string{"/api/v1/entities", "/api/v1/mood", "/api/v1/entities/person/Maria", "/api/v1/entities/person/Maria/mentions"} {
 		rec := httptest.NewRecorder()
 		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 		if rec.Code != http.StatusUnauthorized {

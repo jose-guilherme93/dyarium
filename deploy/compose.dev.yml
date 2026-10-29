@@ -30,15 +30,18 @@ services:
 
   web:
     image: node:22-bookworm
-    working_dir: /web
+    # O worker do dashboard importa o nucleo puro de analise do app
+    # (mobile/src/core). Por isso o container monta a raiz do repositorio e
+    # roda o Vite em /src/web, mantendo o caminho relativo do checkout.
+    working_dir: /src/web
     command: sh -c "npm install -g pnpm@12.6.0 && pnpm install && pnpm dev --host 0.0.0.0"
     environment:
       VITE_API_URL: "http://api:8080"
     ports:
       - "${DIARY_WEB_PORT:-5173}:5173"
     volumes:
-      - ../web:/web
-      - web-node-modules:/web/node_modules
+      - ..:/src
+      - web-node-modules:/src/web/node_modules
     depends_on:
       - api
 

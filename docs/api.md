@@ -151,6 +151,13 @@ Com `deleted=1` lista a **lixeira**: as entradas apagadas (remocao logica) com
 - `primary_attachment_id` (quando a nota tem audio) aponta o primeiro audio
   original. A lista nao carrega a pilha inteira; e por este id que o app resolve o
   player de uma nota puxada do servidor.
+- `analysis_at` e quando a analise mais nova foi gravada no servidor (vazio quando
+  nao ha analise). E o sinal de atualizacao do app: quando o valor muda, ele busca
+  a analise uma vez e guarda no banco; a ficha mostra sempre a copia local, sem
+  pedir de novo a cada abertura.
+- `transcript_at` faz o mesmo para a transcricao: quando muda (transcricao nova ou
+  revisao feita no dashboard), o app busca uma vez e guarda. Sem o sinal, uma
+  revisao feita depois do primeiro pull nunca chegava ao aparelho.
 - `preview` (quando ha corpo ou transcricao) traz ate 160 caracteres em prosa: o
   markdown vira texto, imagens, marcadores de audio e escapes somem e a frase nao
   e cortada no meio de uma palavra. E so para desenhar a lista; o corpo continua
@@ -461,6 +468,8 @@ e os campos ricos lidos de `data`:
 ```json
 {
   "origin": "server",
+  "device_id": "",
+  "device_name": "",
   "model": "qwen3.8-flash",
   "sentiment": 0.5,
   "sentiment_label": "positivo",
@@ -486,6 +495,20 @@ e os campos ricos lidos de `data`:
   "key_moments": [{ "start_ms": 123000, "text": "..." }],
   "questions": ["..."],
   "decisions": ["..."],
+  "tasks": ["..."],
+  "ideas": ["..."],
+  "events": ["..."],
+  "epiphanies": ["..."],
+  "schema_version": 2,
+  "sentence_source": "model",
+  "coverage": {
+    "blocks_read": 34,
+    "blocks_total": 34,
+    "chars_read": 14500,
+    "chars_total": 14500,
+    "audio_ms": 1320000,
+    "partial": false
+  },
   "comprehension": 78,
   "comprehension_source": "review",
   "stutter_rate": 1.2,
@@ -502,9 +525,24 @@ e os campos ricos lidos de `data`:
   do texto cru; `revised_segments` conta quantos trechos a revisao mudou.
 - `summary` e `reading` sao texto curto, nao relatorio: o resumo e uma frase e a leitura no
   maximo duas (280 caracteres, uma linha), cortados pelo servidor mesmo que o modelo
-  devolva mais. As metricas — sentimento, emocoes, pessoas, lugares, temas, momentos-chave
-  e compreensao — sao o que a analise entrega; `sections` traz a leitura de cada parte
-  (titulos do texto escrito e a transcricao), cada uma com o mesmo limite.
+  devolva mais. As metricas — sentimento, emocoes, pessoas, lugares, temas, momentos-chave,
+  eventos, decisoes, tarefas, ideias e epifanias — sao o que a analise entrega; `sections`
+  traz a leitura de cada parte (titulos do texto escrito e a transcricao), cada uma com o
+  mesmo limite.
+- `tasks`, `ideas`, `events` e `epiphanies` completam o contrato: tarefa e
+  obrigacao/pendencia, ideia e proposta, decisao e escolha feita, epifania e a percepcao ou
+  conclusao que muda o entendimento do autor ("percebi que nunca falei o que sentia");
+  evento e acontecimento objetivo ("enterro da Ana", "viagem para Minas"). Cada item
+  pertence a uma lista so.
+- `schema_version` diz qual contrato produziu o documento. A versao 2 e a analise por
+  bloco: a nota e dividida em paragrafos (texto) e em frases entre pausas (fala), cada
+  bloco devolve o mesmo conjunto de campos e o documento e composto no cliente. A analise
+  antiga, sem o campo, continua valida e e exibida como esta.
+- `coverage` mostra quanto da nota foi lido. `partial: true` (ou `blocks_read` menor que
+  `blocks_total`) significa analise parcial: o app oferece continuar de onde parou. O
+  documento de uma analise parcial e o mesmo de uma completa; o que muda e a cobertura.
+- `sentence_source` diz se a frase unica veio do modelo (`model`) ou foi derivada dos
+  campos pelo codigo (`derived`), quando o modelo nao devolveu uma frase aceitavel.
 - Entradas analisadas antes da analise rica nao tem `data`; nesse caso apenas os campos
   legados sao retornados.
 - `origin` diz quem produziu a analise: `app` (feita no aparelho e enviada), `server`
@@ -518,15 +556,30 @@ exibicao em todas as notas, sem reescrever o audio nem a transcricao.
 ### PUT /api/v1/entries/{id}/analysis
 Guarda a analise feita no aparelho, no mesmo formato do GET (o app envia exatamente o que
 ja guardou). Campos aceitos: `model`, `sentiment`, `sentiment_label`, `emotions`, `people`,
-`places`, `summary`, `reading`, `themes`, `key_moments`, `questions`, `decisions`,
-`sections`, `comprehension`, `comprehension_source`, `stutter_rate`, `hesitation_rate`,
+`places`, `summary`, `reading`, `themes`, `key_moments`, `questions`, `decisions`, `tasks`,
+`ideas`, `events`, `epiphanies`, `coverage`, `schema_version`, `sentence_source`, `sections`,
+`comprehension`, `comprehension_source`, `stutter_rate`, `hesitation_rate`,
 `revised_segments` e `replace`.
+
+- O app envia a analise quando ela esta completa. Parcial fica no aparelho ate o usuario
+  tocar em **Continuar**: como o servidor grava a primeira analise que chega, subir uma
+  parcial congelaria a nota naquela cobertura.
+- `coverage` e opcional; analise de versao anterior nao tem e o servidor nao inventa.
+- `people_detail` e `places_detail` levam a contagem de mencoes medida no aparelho; quando
+  presentes vencem as listas de nomes (`people`/`places`), que os clientes antigos ainda
+  mandam. Sem eles a contagem e 1, como antes.
 
 - Sem `replace`, a analise so e gravada se a entrada ainda nao tiver uma: o sync nunca
   sobrescreve o trabalho do outro lado. Resposta `200` com `{ "stored": false,
   "origin": "server" }` quando ja existia.
 - `replace: true` e o **refazer** explicito do usuario: grava por cima.
-- A origem gravada e sempre `app`; 404 quando a entrada nao existe (nota ainda nao subiu).
+- A origem gravada e `app` (analise feita em um cliente), salvo `origin: "browser"`, que o
+  worker opcional do dashboard envia para registrar que a nota foi processada no PC do
+  usuario.
+- Com `origin: "browser"`, `device_id` e `device_name` identificam o aparelho que processou
+  (id anonimo da instalacao do navegador e um rotulo curto, como
+  `Edge 156 · Windows · Intel HD Graphics 620`). Ficam no GET; nas outras origens sao
+  ignorados e voltam vazios. 404 quando a entrada nao existe (nota ainda nao subiu).
 
 ### POST /api/v1/entries/{id}/analyze
 Antes de enfileirar, o servidor faz um **ping** ao provedor de IA com a configuracao salva
@@ -534,6 +587,10 @@ Antes de enfileirar, o servidor faz um **ping** ao provedor de IA com a configur
 resposta e `502` com `{ "error": { "code": "ai_unavailable", "message": "..." } }` e a nota
 **nao** muda de estado nem entra na fila: o clique nunca vira uma promessa quebrada.
 Retorna 409 se a analise estiver desligada na configuracao.
+
+Com um pedido local em andamento (worker `prefer_client: true`, ver abaixo), o ping e o 409
+por analise desligada nao se aplicam: quem vai responder e o PC do usuario, e o job entra
+na fila para ele. O dashboard liga essa preferencia antes de chamar esta rota.
 
 O ping e uma completion minima, sem formato de resposta (pedir `json_object` sem a palavra
 "json" no prompt faz o provedor recusar com 400). Uma resposta vazia ainda conta como
@@ -548,6 +605,108 @@ Modelos de raciocinio gastam parte do teto de tokens pensando e podem devolver
 `finish_reason: "length"` com conteudo vazio. Quando isso acontece, o cliente dobra o
 `max_tokens` e tenta de novo (ate 8000) em vez de repetir com o mesmo teto — repetir igual
 produzia a mesma nota falhando cinco vezes.
+
+## Worker opcional no navegador
+
+Estas rotas so existem quando `DIARY_BROWSER_WORKER` nao e `false`. O padrao e ligado: sem
+nenhum worker registrado, o comportamento e exatamente o de hoje. O dashboard usa a fila
+existente (`jobs`) com claim, lease, heartbeat, complete e fail; nao ha fila paralela.
+
+A presenca e em memoria, com TTL de 60 s. Enquanto houver um worker `browser` com
+`prefer_client: true` e heartbeat valido, os runners do servidor deixam de pegar
+`transcribe` e `analyze` (so `cleanup` continua com o servidor). O dashboard liga essa
+preferencia **apenas durante um pedido explicito** do botao **Analisar**: o modo local
+ligado e ocioso nao pausa a VPS nem consome a fila. Quando o pedido termina, a preferencia
+volta a `false`; quando a aba fecha, a presenca expira e o servidor segue sozinho.
+
+### POST /api/v1/worker/register
+```json
+{
+  "worker_id": "tab-<uuid>",
+  "kind": "browser",
+  "tier": 3,
+  "prefer_client": false,
+  "models": ["onnx-community/whisper-large-v3-turbo", "lfm2.5-2.6b-q5"],
+  "caps": { "browser": "Edge", "gpu": "AMD Radeon RX 580", "vram_gb": 8 }
+}
+```
+Registra ou atualiza a presenca. `prefer_client: false` e o estado normal do worker:
+baixando modelos ou ocioso, ele aparece no diagnostico mas nao pausa o servidor. O
+dashboard envia `prefer_client: true` so enquanto existe uma nota pedida no botao
+**Analisar**. Resposta:
+```json
+{ "worker": { "id": "tab-...", "tier": 3, "prefer_client": false, "last_seen": "..." },
+  "ttl_seconds": 60, "server_time": "..." }
+```
+
+### POST /api/v1/worker/heartbeat
+```json
+{ "worker_id": "tab-...", "job_id": "job_..." }
+```
+Renova a presenca e o lease do job. `409` com `{ "lost": true }` quando o lease ja nao
+pertence ao worker: o cliente deve descartar o resultado e pedir outro job.
+
+### POST /api/v1/worker/claim
+```json
+{ "worker_id": "tab-...", "lease_seconds": 120, "types": ["transcribe", "analyze"],
+  "entry_id": "en_...", "only_entry": true }
+```
+Reserva o proximo job disponivel. `entry_id` e opcional e, sozinho, apenas ordena: o job
+daquela nota passa na frente dos mais antigos. Com `only_entry: true` a reserva fica
+restrita aquela nota: se ela ainda nao entrou na fila, a resposta e `{ "job": null }` e o
+worker nao pega o trabalho de outra pessoa. O dashboard usa `only_entry` no **Analisar**,
+para que o modo local nunca consuma a fila por conta propria. O servidor ignora qualquer
+tipo fora de `transcribe` e `analyze`; `cleanup` e sempre do servidor. `prefer_client`
+precisa ser `true` (senao `409` `worker_not_ready`). Resposta com o job ou
+`{ "job": null }`:
+```json
+{ "job": { "id": "job_...", "type": "transcribe",
+  "payload": { "entry_id": "en_...", "attachment_id": "at_..." },
+  "attempts": 0, "max_attempts": 5, "lease_seconds": 120 } }
+```
+Ao reservar, a entrada muda para `transcribing`/`analyzing` e o evento `entry.status` sai,
+para o painel mostrar o trabalho acontecendo no PC.
+
+### POST /api/v1/worker/complete
+```json
+{ "worker_id": "tab-...", "job_id": "job_..." }
+```
+Conclui o job, mas so se ele ainda pertence ao worker (`409` com `{ "lost": true }` caso
+contrario). Ao concluir uma transcricao, o servidor enfileira a analise (salvo quando a
+nota tem `local_analysis`). Ao concluir uma analise, a entrada volta para `ready`.
+
+### POST /api/v1/worker/fail
+```json
+{ "worker_id": "tab-...", "job_id": "job_...", "error": "memoria insuficiente" }
+```
+Registra a falha com backoff. `error` vai para o diagnostico: o cliente manda uma mensagem
+curta e generica, nunca texto da nota. Na ultima tentativa a entrada vira `failed` e o
+evento `entry.failed` sai.
+
+### POST /api/v1/worker/release
+```json
+{ "worker_id": "tab-...", "job_id": "job_..." }
+```
+Devolve o job em andamento para a fila sem contar tentativa: o servidor assume a nota
+na hora. E a acao **no servidor** do painel da nota, para quando o PC esta lento demais.
+`409` com `{ "lost": true }` quando o job ja nao pertence ao worker.
+
+### POST /api/v1/worker/unregister
+```json
+{ "worker_id": "tab-..." }
+```
+Remove a presenca na hora e devolve o job em andamento para a fila; o servidor reassume no
+proximo ciclo. A aba manda este aviso com `keepalive` ao recarregar ou fechar.
+
+### GET /api/v1/worker/status
+```json
+{ "workers": [ { "id": "tab-...", "kind": "browser", "tier": 3,
+    "prefer_client": true, "models": ["..."], "current_job": "job_...",
+    "last_seen": "..." } ],
+  "preferred": true, "ttl_seconds": 60,
+  "queue": { "queued": 4, "retrying": 0, "running": 1, "dead": 0 } }
+```
+Usado pelo laboratorio do dashboard para mostrar a fila e quem esta processando.
 
 ### GET /api/v1/analysis/runs/summary
 Agregado das execucoes de analise do worker, para o diagnostico do app
@@ -652,6 +811,25 @@ de uma entidade renomeada continuam resolvendo pelo alias. 404 se nao existir.
   "sentiment": 0.4, "last_seen": "...",
   "entry_list": [ { "id": "en_...", "title": "...", "date": "...", "count": 3 } ] }
 ```
+
+### GET /api/v1/entities/{kind}/{name}/mentions
+Retorna os trechos que provam a entidade no mapa: segmentos da transcricao (com o tempo do
+audio) e frases do texto escrito. Nomes antigos tambem sao procurados via alias. Cada
+trecho carrega a leitura da analise daquela nota em `comment`.
+```json
+{ "mentions": [
+  { "entry_id": "en_...", "title": "...", "date": "...", "source": "transcript",
+    "text": "fui ao recife com maria", "term": "Maria",
+    "start_ms": 65000, "end_ms": 70000, "comment": "Uma tarde no Recife." },
+  { "entry_id": "en_...", "title": "...", "date": "...", "source": "text",
+    "text": "Ontem encontrei Maria no Recife.", "term": "Maria", "comment": "..." }
+] }
+```
+- `source` e `transcript` quando o trecho vem do audio e `text` quando vem do corpo da
+  nota. `start_ms`/`end_ms` so aparecem na transcricao.
+- `term` e a grafia que casou (nome atual ou alias), para o cliente destacar.
+- Le no maximo 12 entradas, 2 trechos da transcricao e 2 do texto por entrada, e 24
+  trechos no total. 404 se a entidade nao existir.
 
 ### PATCH /api/v1/entities/{kind}/{name}
 Renomeia uma pessoa, lugar, tema ou decisao. Corpo:
