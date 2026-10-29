@@ -6,7 +6,17 @@
 
 export type AnalysisRuntime = 'local' | 'server';
 
-export type AnalysisOutcome = 'ok' | 'invalid_json' | 'error' | 'stopped' | 'fallback';
+/**
+ * `partial` e uma passada que leu alguns blocos e parou: a analise existe e o
+ * usuario pode continuar. Nunca conta como falha total.
+ */
+export type AnalysisOutcome =
+  | 'ok'
+  | 'partial'
+  | 'invalid_json'
+  | 'error'
+  | 'stopped'
+  | 'fallback';
 
 /** Uma tentativa de analise. Nunca guarda conteudo, so medidas e resultado. */
 export interface AnalysisRun {
@@ -40,6 +50,7 @@ export interface AnalysisRunModelSummary {
   model: string;
   runs: number;
   ok: number;
+  partial: number;
   failed: number;
   fallback: number;
   successRate: number;
@@ -51,6 +62,7 @@ export interface AnalysisRunModelSummary {
 export interface AnalysisRunSummary {
   runs: number;
   ok: number;
+  partial: number;
   failed: number;
   fallback: number;
   successRate: number;
@@ -68,6 +80,7 @@ interface Bucket {
   model: string;
   runs: number;
   ok: number;
+  partial: number;
   fallback: number;
   completionTokens: number;
   durationMs: number;
@@ -81,8 +94,9 @@ function rate(part: number, total: number): number {
 
 function add(bucket: Bucket, run: AnalysisRun): void {
   bucket.runs += 1;
-  if (run.outcome === 'ok') {
-    bucket.ok += 1;
+  if (run.outcome === 'ok' || run.outcome === 'partial') {
+    if (run.outcome === 'ok') bucket.ok += 1;
+    else bucket.partial += 1;
     bucket.completionTokens += run.completionTokens;
     bucket.durationMs += run.durationMs;
   } else if (run.outcome === 'fallback') {
@@ -101,6 +115,7 @@ function emptyBucket(runtime: AnalysisRuntime, provider: string, model: string):
     model,
     runs: 0,
     ok: 0,
+    partial: 0,
     fallback: 0,
     completionTokens: 0,
     durationMs: 0,
@@ -116,11 +131,12 @@ function toModelSummary(bucket: Bucket): AnalysisRunModelSummary {
     model: bucket.model,
     runs: bucket.runs,
     ok: bucket.ok,
-    failed: bucket.runs - bucket.ok - bucket.fallback,
+    partial: bucket.partial,
+    failed: bucket.runs - bucket.ok - bucket.partial - bucket.fallback,
     fallback: bucket.fallback,
-    successRate: rate(bucket.ok, bucket.runs),
+    successRate: rate(bucket.ok + bucket.partial, bucket.runs),
     simplifiedRate: rate(bucket.fallback, bucket.runs),
-    avgDurationMs: rate(bucket.durationMs, bucket.ok),
+    avgDurationMs: rate(bucket.durationMs, bucket.ok + bucket.partial),
     tokensPerSecond: bucket.durationMs > 0 ? (bucket.completionTokens * 1000) / bucket.durationMs : 0,
   };
 }
@@ -151,6 +167,7 @@ export function summarizeAnalysisRuns(
     .sort((a, b) => b.runs - a.runs || a.model.localeCompare(b.model));
 
   let ok = 0;
+  let partial = 0;
   let fallback = 0;
   let total = 0;
   let completionTokens = 0;
@@ -160,6 +177,7 @@ export function summarizeAnalysisRuns(
   for (const bucket of buckets.values()) {
     total += bucket.runs;
     ok += bucket.ok;
+    partial += bucket.partial;
     fallback += bucket.fallback;
     completionTokens += bucket.completionTokens;
     durationMs += bucket.durationMs;
@@ -170,11 +188,12 @@ export function summarizeAnalysisRuns(
   return {
     runs: total,
     ok,
-    failed: total - ok - fallback,
+    partial,
+    failed: total - ok - partial - fallback,
     fallback,
-    successRate: rate(ok, total),
+    successRate: rate(ok + partial, total),
     simplifiedRate: rate(fallback, total),
-    avgDurationMs: rate(durationMs, ok),
+    avgDurationMs: rate(durationMs, ok + partial),
     tokensPerSecond: durationMs > 0 ? (completionTokens * 1000) / durationMs : 0,
     avgBatteryDeltaPct: batteryCount > 0 ? batterySum / batteryCount : null,
     models,

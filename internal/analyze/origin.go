@@ -12,6 +12,10 @@ const (
 	OriginServer = "server"
 	OriginAPI    = "api"
 	OriginApp    = "app"
+	// OriginBrowser is an analysis made by the optional dashboard worker, on the
+	// user's own computer. The text never reached a provider, but it is not the
+	// phone either: the dashboard can say "neste PC".
+	OriginBrowser = "browser"
 )
 
 // localHosts are hostnames that mean "this machine" (or the container next to

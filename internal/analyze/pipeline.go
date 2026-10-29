@@ -19,6 +19,10 @@ const (
 	maxPlaces     = 20
 	maxQuestions  = 5
 	maxDecisions  = 5
+	maxTasks      = 8
+	maxIdeas      = 8
+	maxEvents     = 8
+	maxEpiphanies = 8
 )
 
 // Pipeline runs the windowed analysis of a transcript, merging the partial
@@ -125,6 +129,10 @@ func (p *Pipeline) RunSections(ctx context.Context, title string, sections []Sec
 			KeyMoments: result.KeyMoments,
 			Questions:  result.Questions,
 			Decisions:  result.Decisions,
+			Tasks:      result.Tasks,
+			Ideas:      result.Ideas,
+			Events:     result.Events,
+			Epiphanies: result.Epiphanies,
 		})
 		results = append(results, result)
 		weights = append(weights, max(1, len([]rune(section.Text))))
@@ -250,7 +258,9 @@ func buildWindows(segments []Segment) []window {
 	var parts []textPart
 	total := 0
 	for _, seg := range segments {
-		text := strings.TrimSpace(seg.Text)
+		// O prefixo de tempo e o unico carimbo que o modelo ve; o texto do
+		// segmento passa pela mesma limpeza da analise.
+		text := CleanText(strings.TrimSpace(seg.Text))
 		if text == "" {
 			continue
 		}
@@ -468,14 +478,22 @@ func mergeResults(results []Result, weights []int) Result {
 	}
 	out.KeyMoments = moments
 
-	// Questions and decisions: concatenate and dedup.
-	var questions, decisions []string
+	// Questions, decisions, tasks, ideas and events: concatenate and dedup.
+	var questions, decisions, tasks, ideas, events, epiphanies []string
 	for _, r := range results {
 		questions = append(questions, r.Questions...)
 		decisions = append(decisions, r.Decisions...)
+		tasks = append(tasks, r.Tasks...)
+		ideas = append(ideas, r.Ideas...)
+		events = append(events, r.Events...)
+		epiphanies = append(epiphanies, r.Epiphanies...)
 	}
 	out.Questions = dedupStrings(questions)
 	out.Decisions = dedupStrings(decisions)
+	out.Tasks = dedupStrings(tasks)
+	out.Ideas = dedupStrings(ideas)
+	out.Events = dedupStrings(events)
+	out.Epiphanies = dedupStrings(epiphanies)
 	if out.Summary == "" {
 		for _, r := range results {
 			if s := strings.TrimSpace(r.Summary); s != "" {
@@ -527,6 +545,13 @@ func limitResult(r Result) Result {
 	}
 	r.Questions = limitStrings(r.Questions, maxQuestions)
 	r.Decisions = limitStrings(r.Decisions, maxDecisions)
+	r.Tasks = limitStrings(r.Tasks, maxTasks)
+	r.Ideas = limitStrings(r.Ideas, maxIdeas)
+	r.Events = limitStrings(r.Events, maxEvents)
+	r.Epiphanies = limitStrings(r.Epiphanies, maxEpiphanies)
+	if r.SchemaVersion == 0 {
+		r.SchemaVersion = 2
+	}
 	return r
 }
 
