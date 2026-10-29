@@ -6,7 +6,7 @@ ARG BUILD_JOBS=2
 ARG WITH_LLAMA=1
 
 # ---- Frontend: build the dashboard static assets -------------------------
-FROM node:22-bookworm AS web
+FROM node:25-bookworm AS web
 WORKDIR /web
 # Mantem o build do Vite dentro dos 1 GiB, como os alvos do Makefile.
 ENV NODE_OPTIONS=--max-old-space-size=1024 \
