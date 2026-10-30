@@ -1,0 +1,58 @@
+{
+  "description": "Contrato de paridade da derivacao de entidades. O mesmo arquivo e lido por internal/analysisbuild/build_parity_test.go e por mobile/src/core/__tests__/graphEntities.test.ts: qualquer regra que divirja de um lado quebra o outro.",
+  "cases": [
+    {
+      "name": "detalhe de pessoas e lugares, com alias do dono e decisao repetida",
+      "owner": ["joão"],
+      "analysis": {
+        "people_detail": [
+          { "name": " Maria ", "count": 3, "relation": "irmã", "sentiment": 0.4 },
+          { "name": "João", "count": 1, "sentiment": -0.2 }
+        ],
+        "places_detail": [
+          { "name": "Recife", "count": 2 },
+          { "name": "   ", "count": 1 }
+        ],
+        "themes": [
+          { "name": "família", "confidence": 0.9 },
+          { "name": "viagem", "confidence": 0.5 }
+        ],
+        "decisions": ["Vou me mudar", "  vou me mudar  ", "Parei o curso", ""]
+      },
+      "links": [
+        { "kind": "person", "name": "Maria", "count": 3, "relation": "irmã", "sentiment": 0.4 },
+        { "kind": "place", "name": "Recife", "count": 2 },
+        { "kind": "theme", "name": "família", "count": 1 },
+        { "kind": "theme", "name": "viagem", "count": 1 },
+        { "kind": "decision", "name": "Vou me mudar", "count": 1 },
+        { "kind": "decision", "name": "Parei o curso", "count": 1 }
+      ]
+    },
+    {
+      "name": "listas simples, sem o detalhe",
+      "owner": [],
+      "analysis": {
+        "people": ["Ana", "   ", "Beto"],
+        "places": ["São Paulo"],
+        "themes": [],
+        "decisions": []
+      },
+      "links": [
+        { "kind": "person", "name": "Ana", "count": 1 },
+        { "kind": "person", "name": "Beto", "count": 1 },
+        { "kind": "place", "name": "São Paulo", "count": 1 }
+      ]
+    },
+    {
+      "name": "analise sem entidades",
+      "owner": [],
+      "analysis": {
+        "people": [],
+        "places": [],
+        "themes": [],
+        "decisions": []
+      },
+      "links": []
+    }
+  ]
+}

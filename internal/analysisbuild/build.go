@@ -45,17 +45,29 @@ func Build(entryID string, result analyze.Result, metrics Metrics) (store.Analys
 
 	links := make([]store.EntityLink, 0, len(result.People)+len(result.Places)+len(result.Themes)+len(result.Decisions))
 	for _, p := range result.People {
+		name := strings.TrimSpace(p.Name)
+		if name == "" {
+			continue
+		}
 		sentiment := p.Sentiment
 		links = append(links, store.EntityLink{
-			Kind: store.EntityPerson, Name: p.Name, Count: max(p.Count, 1),
-			Relation: p.Relation, Sentiment: &sentiment,
+			Kind: store.EntityPerson, Name: name, Count: max(p.Count, 1),
+			Relation: strings.TrimSpace(p.Relation), Sentiment: &sentiment,
 		})
 	}
 	for _, p := range result.Places {
-		links = append(links, store.EntityLink{Kind: store.EntityPlace, Name: p.Name, Count: max(p.Count, 1)})
+		name := strings.TrimSpace(p.Name)
+		if name == "" {
+			continue
+		}
+		links = append(links, store.EntityLink{Kind: store.EntityPlace, Name: name, Count: max(p.Count, 1)})
 	}
 	for _, t := range result.Themes {
-		links = append(links, store.EntityLink{Kind: store.EntityTheme, Name: t.Name, Count: 1})
+		name := strings.TrimSpace(t.Name)
+		if name == "" {
+			continue
+		}
+		links = append(links, store.EntityLink{Kind: store.EntityTheme, Name: name, Count: 1})
 	}
 	// Decisoes entram como no de decisao, iguais a tema/pessoa. O texto e a
 	// identidade: repetir a mesma decisao na nota nao cria duas bolas.
