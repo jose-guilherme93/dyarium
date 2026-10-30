@@ -10,6 +10,10 @@ import { Platform } from 'react-native';
 import type { ServerAnalysis, ServerAudio } from '@/core/api';
 import type { ChunkExtraction } from '@/core/analysisChunk';
 import type { AnalysisOutcome, AnalysisRun, AnalysisRuntime } from '@/core/analysisRuns';
+import { deriveEntityLinks, ownerKey } from '@/core/graphEntities';
+import type { GraphLayout } from '@/core/graphLayout';
+import type { EntityKind, EntityLink, GraphEntity } from '@/core/graphModel';
+import { newId } from '@/core/id';
 import { DEFAULT_NOTEBOOK_ID } from '@/core/notebooks';
 import type {
   ConflictField,
@@ -495,6 +499,75 @@ const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 30,
+    run: async (db) => {
+      // O mapa do aparelho e derivado localmente, mas guarda as mesmas tabelas
+      // normalizadas do servidor: renomear, mesclar, trocar icone e "sou eu"
+      // precisam valer dos dois lados. `entry_entities` usa a mesma chave da
+      // analise local (id da gravacao antes do upload, entry id depois).
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS entities (
+          id TEXT PRIMARY KEY NOT NULL,
+          kind TEXT NOT NULL,
+          name TEXT NOT NULL,
+          icon TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL DEFAULT '',
+          UNIQUE (kind, name)
+        );
+        CREATE INDEX IF NOT EXISTS idx_entities_kind_name ON entities (kind, name);
+
+        CREATE TABLE IF NOT EXISTS entity_aliases (
+          id TEXT PRIMARY KEY NOT NULL,
+          entity_id TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          name TEXT NOT NULL COLLATE NOCASE,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL DEFAULT '',
+          UNIQUE (kind, name)
+        );
+        CREATE INDEX IF NOT EXISTS idx_entity_aliases_entity_id ON entity_aliases (entity_id);
+
+        CREATE TABLE IF NOT EXISTS entry_entities (
+          entry_id TEXT NOT NULL,
+          entity_id TEXT NOT NULL,
+          count INTEGER NOT NULL DEFAULT 1,
+          relation TEXT,
+          sentiment REAL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (entry_id, entity_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_entry_entities_entity ON entry_entities (entity_id);
+
+        CREATE TABLE IF NOT EXISTS owner_aliases (
+          name TEXT NOT NULL COLLATE NOCASE PRIMARY KEY,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL DEFAULT ''
+        );
+
+        CREATE TABLE IF NOT EXISTS graph_layout (
+          key TEXT PRIMARY KEY NOT NULL,
+          data TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS entity_outbox (
+          id TEXT PRIMARY KEY NOT NULL,
+          operation TEXT NOT NULL,
+          entity_id TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          name TEXT NOT NULL,
+          next_name TEXT,
+          icon TEXT,
+          created_at TEXT NOT NULL,
+          attempts INTEGER NOT NULL DEFAULT 0,
+          last_error TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_entity_outbox_created ON entity_outbox (created_at);
+      `);
+    },
+  },
 ];
 
 async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
@@ -537,6 +610,25 @@ function getDb(): Promise<SQLite.SQLiteDatabase> {
     });
   }
   return dbPromise;
+}
+
+/**
+ * Fila unica das escritas do mapa.
+ *
+ * `withTransactionAsync` usa a mesma conexao do banco: duas transacoes
+ * simultaneas (uma analise salvando enquanto a outbox aplica o catalogo)
+ * falhariam com "transaction within a transaction". A fila mantem a ordem e
+ * deixa o resto das gravacoes correr normal.
+ */
+let graphWriteQueue: Promise<unknown> = Promise.resolve();
+
+function withGraphWrite<T>(task: () => Promise<T>): Promise<T> {
+  const run = graphWriteQueue.then(task, task);
+  graphWriteQueue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
 }
 
 /**
@@ -960,7 +1052,29 @@ export async function updateRecordingNote(
 
 export async function deleteRecordingRow(id: string): Promise<void> {
   const db = await getDb();
-  await db.runAsync('DELETE FROM recordings WHERE id = ?', [id]);
+  await withGraphWrite(() =>
+    db.withTransactionAsync(async () => {
+      const row = await db.getFirstAsync<{ entry_id: string | null }>(
+        'SELECT entry_id FROM recordings WHERE id = ?',
+        [id],
+      );
+      await db.runAsync('DELETE FROM recordings WHERE id = ?', [id]);
+      // A nota saiu da biblioteca: as relacoes dela nao podem continuar no mapa,
+      // seja qual for a chave que a analise usava (local ou do servidor). Se
+      // outra linha ainda representa a mesma entrada (duplicata importada), os
+      // vinculos ficam para ela.
+      await db.runAsync('DELETE FROM entry_entities WHERE entry_id = ?', [id]);
+      if (row?.entry_id) {
+        const survivor = await db.getFirstAsync<{ id: string }>(
+          'SELECT id FROM recordings WHERE entry_id = ? LIMIT 1',
+          [row.entry_id],
+        );
+        if (!survivor) {
+          await db.runAsync('DELETE FROM entry_entities WHERE entry_id = ?', [row.entry_id]);
+        }
+      }
+    }),
+  );
 }
 
 export interface StoredMetricsSnapshot {
@@ -1026,31 +1140,48 @@ export async function saveCachedAnalyses(items: CachedAnalysis[]): Promise<void>
   if (items.length === 0) return;
   const db = await getDb();
   const fetchedAt = new Date().toISOString();
-  // Sem transacao exclusiva: a analise local nao pode esperar a fila de
-  // background. Cada upsert e atomico e idempotente por si.
+  // A transacao e comum (nao exclusiva) e passa pela fila do mapa: a analise
+  // local nao espera a fila de background, mas duas escritas do grafo nunca
+  // abrem transacao ao mesmo tempo. Os vinculos de entidade andam junto com a
+  // analise, para o mapa nunca apontar para uma analise que nao existe mais.
+  const owners = await ownerKeysFor(db);
   for (const item of items) {
-    await db.runAsync(
-      `INSERT INTO analyses (
-         entry_id, title, recorded_at, payload, fetched_at, origin, analysis_content_hash
-       )
-       VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(entry_id) DO UPDATE SET
-         title = excluded.title,
-         recorded_at = excluded.recorded_at,
-         payload = excluded.payload,
-         fetched_at = excluded.fetched_at,
-         origin = excluded.origin,
-         analysis_content_hash = excluded.analysis_content_hash
-       WHERE excluded.origin = 'local' OR analyses.origin IS NOT 'local'`,
-      [
-        item.entryId,
-        item.title,
-        item.recordedAt,
-        JSON.stringify(item.analysis),
-        fetchedAt,
-        item.origin ?? 'server',
-        item.contentHash ?? null,
-      ],
+    const payload = JSON.stringify(item.analysis);
+    await withGraphWrite(() =>
+      db.withTransactionAsync(async () => {
+        await db.runAsync(
+          `INSERT INTO analyses (
+             entry_id, title, recorded_at, payload, fetched_at, origin, analysis_content_hash
+           )
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(entry_id) DO UPDATE SET
+             title = excluded.title,
+             recorded_at = excluded.recorded_at,
+             payload = excluded.payload,
+             fetched_at = excluded.fetched_at,
+             origin = excluded.origin,
+             analysis_content_hash = excluded.analysis_content_hash
+           WHERE excluded.origin = 'local' OR analyses.origin IS NOT 'local'`,
+          [
+            item.entryId,
+            item.title,
+            item.recordedAt,
+            payload,
+            fetchedAt,
+            item.origin ?? 'server',
+            item.contentHash ?? null,
+          ],
+        );
+        const kept = await db.getFirstAsync<{ payload: string }>(
+          'SELECT payload FROM analyses WHERE entry_id = ?',
+          [item.entryId],
+        );
+        // A analise local vence: se o upsert foi recusado, os vinculos seguem
+        // os da analise que ficou, nao os da tentativa descartada.
+        if (kept?.payload === payload) {
+          await replaceEntryEntities(db, item.entryId, item.analysis, fetchedAt, owners);
+        }
+      }),
     );
   }
 }
@@ -1103,9 +1234,20 @@ export async function listCachedAnalyses(): Promise<CachedAnalysis[]> {
  */
 export async function deleteCachedServerAnalysis(entryId: string): Promise<void> {
   const db = await getDb();
-  await db.runAsync(
-    `DELETE FROM analyses WHERE entry_id = ? AND origin IS NOT 'local'`,
-    [entryId],
+  await withGraphWrite(() =>
+    db.withTransactionAsync(async () => {
+      await db.runAsync(
+        `DELETE FROM analyses WHERE entry_id = ? AND origin IS NOT 'local'`,
+        [entryId],
+      );
+      // Sem analise nenhuma, nao ha relacao para provar: os vinculos saem junto
+      // para o mapa nao mostrar uma entidade que veio de um texto apagado.
+      const left = await db.getFirstAsync<{ entry_id: string }>(
+        'SELECT entry_id FROM analyses WHERE entry_id = ? LIMIT 1',
+        [entryId],
+      );
+      if (!left) await db.runAsync('DELETE FROM entry_entities WHERE entry_id = ?', [entryId]);
+    }),
   );
 }
 
@@ -1117,6 +1259,160 @@ export async function getCachedAnalysis(entryId: string): Promise<CachedAnalysis
     [entryId],
   );
   return row ? toCachedAnalysis(row) : null;
+}
+
+/** Linha leve do mapa: sem texto, sem transcricao e sem o JSON da analise. */
+export interface GraphRecordingRow {
+  localId: string;
+  entryId?: string;
+  title: string;
+  recordedAt: string;
+  notebookId: string;
+  author?: string;
+  archived: boolean;
+  definitive?: { key: string; origin: string };
+  local?: { key: string; origin: string };
+}
+
+/**
+ * Le so o que o desenho precisa de cada nota: identificacao, caderno e a chave
+ * da analise. Nenhum payload e parseado para abrir o mapa; o tom do Humor e os
+ * trechos sao lidos sob demanda.
+ */
+export async function listGraphRecordings(): Promise<GraphRecordingRow[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<{
+    id: string;
+    entry_id: string | null;
+    title: string;
+    recorded_at: string;
+    notebook_id: string | null;
+    author: string | null;
+    archived: number | null;
+    def_key: string | null;
+    def_origin: string | null;
+    local_key: string | null;
+    local_origin: string | null;
+  }>(`
+    SELECT r.id, r.entry_id, r.title, r.recorded_at,
+      COALESCE(r.notebook_id, '') AS notebook_id,
+      COALESCE(r.author, '') AS author,
+      COALESCE(r.archived, 0) AS archived,
+      ad.entry_id AS def_key, ad.origin AS def_origin,
+      al.entry_id AS local_key, al.origin AS local_origin
+    FROM recordings r
+    LEFT JOIN analyses ad ON ad.entry_id = r.entry_id
+    LEFT JOIN analyses al ON al.entry_id = r.id
+    WHERE r.deleted_at IS NULL
+    ORDER BY r.recorded_at DESC
+  `);
+  return rows.map((row) => ({
+    localId: row.id,
+    entryId: row.entry_id ?? undefined,
+    title: row.title,
+    recordedAt: row.recorded_at,
+    notebookId: row.notebook_id ?? '',
+    author: row.author || undefined,
+    archived: row.archived === 1,
+    definitive: row.def_key
+      ? { key: row.def_key, origin: row.def_origin ?? 'server' }
+      : undefined,
+    local: row.local_key
+      ? { key: row.local_key, origin: row.local_origin ?? 'server' }
+      : undefined,
+  }));
+}
+
+export interface GraphEntryDetail {
+  text?: string;
+  transcript?: string;
+  transcriptSegments?: TranscriptSegment[];
+}
+
+function placeholders(count: number): string {
+  return Array.from({ length: count }, () => '?').join(',');
+}
+
+/** Texto/transcricao/segmentos so das notas que o painel vai mostrar. */
+export async function loadGraphEntryDetails(
+  localIds: string[],
+): Promise<Record<string, GraphEntryDetail>> {
+  const ids = [...new Set(localIds.filter(Boolean))];
+  if (ids.length === 0) return {};
+  const db = await getDb();
+  const out: Record<string, GraphEntryDetail> = {};
+  for (let offset = 0; offset < ids.length; offset += 100) {
+    const chunk = ids.slice(offset, offset + 100);
+    const rows = await db.getAllAsync<{
+      id: string;
+      text: string | null;
+      transcript: string | null;
+      transcript_segments: string | null;
+    }>(
+      `SELECT id, text, transcript, transcript_segments
+       FROM recordings WHERE id IN (${placeholders(chunk.length)})`,
+      chunk,
+    );
+    for (const row of rows) {
+      out[row.id] = {
+        text: row.text ?? undefined,
+        transcript: row.transcript ?? undefined,
+        transcriptSegments: parseSegments(row.transcript_segments),
+      };
+    }
+  }
+  return out;
+}
+
+/** Leitura/resumo da analise das notas do painel, sem parsear o payload. */
+export async function loadAnalysisComments(
+  entryIds: string[],
+): Promise<Record<string, { reading: string; summary: string }>> {
+  const ids = [...new Set(entryIds.filter(Boolean))];
+  if (ids.length === 0) return {};
+  const db = await getDb();
+  const out: Record<string, { reading: string; summary: string }> = {};
+  for (let offset = 0; offset < ids.length; offset += 100) {
+    const chunk = ids.slice(offset, offset + 100);
+    const rows = await db.getAllAsync<{
+      entry_id: string;
+      reading: string | null;
+      summary: string | null;
+    }>(
+      `SELECT entry_id,
+         CASE WHEN json_valid(payload) THEN json_extract(payload, '$.reading') END AS reading,
+         CASE WHEN json_valid(payload) THEN json_extract(payload, '$.summary') END AS summary
+       FROM analyses WHERE entry_id IN (${placeholders(chunk.length)})`,
+      chunk,
+    );
+    for (const row of rows) {
+      out[row.entry_id] = { reading: row.reading ?? '', summary: row.summary ?? '' };
+    }
+  }
+  return out;
+}
+
+/** Tom por nota, lido do payload só quando a aba Humor é aberta. */
+export async function loadAnalysisSentiments(
+  entryIds: string[],
+): Promise<Record<string, number>> {
+  const ids = [...new Set(entryIds.filter(Boolean))];
+  if (ids.length === 0) return {};
+  const db = await getDb();
+  const out: Record<string, number> = {};
+  for (let offset = 0; offset < ids.length; offset += 100) {
+    const chunk = ids.slice(offset, offset + 100);
+    const rows = await db.getAllAsync<{ entry_id: string; sentiment: number | null }>(
+      `SELECT entry_id,
+         CASE WHEN json_valid(payload) THEN json_extract(payload, '$.sentiment') END AS sentiment
+       FROM analyses WHERE entry_id IN (${placeholders(chunk.length)})`,
+      chunk,
+    );
+    for (const row of rows) {
+      if (typeof row.sentiment === 'number') out[row.entry_id] = row.sentiment;
+    }
+  }
+  return out;
 }
 
 /** Resultado da leitura de um bloco, guardado para retomada e cache. */
@@ -1363,24 +1659,31 @@ export async function pruneActivityRows(keep: number): Promise<void> {
 export async function moveCachedAnalysis(fromKey: string, toKey: string): Promise<void> {
   if (fromKey === toKey) return;
   const db = await getDb();
-  await db.withTransactionAsync(async () => {
-    const source = await db.getFirstAsync<{ origin: string | null }>(
-      'SELECT origin FROM analyses WHERE entry_id = ?',
-      [fromKey],
-    );
-    if (!source) return;
-    const target = await db.getFirstAsync<{ origin: string | null }>(
-      'SELECT origin FROM analyses WHERE entry_id = ?',
-      [toKey],
-    );
-    // Destino local ou origem de destino mais forte: mantem o destino.
-    if (target && (target.origin === 'local' || source.origin !== 'local')) {
-      await db.runAsync('DELETE FROM analyses WHERE entry_id = ?', [fromKey]);
-      return;
-    }
-    await db.runAsync('DELETE FROM analyses WHERE entry_id = ?', [toKey]);
-    await db.runAsync('UPDATE analyses SET entry_id = ? WHERE entry_id = ?', [toKey, fromKey]);
-  });
+  await withGraphWrite(() =>
+    db.withTransactionAsync(async () => {
+      const source = await db.getFirstAsync<{ origin: string | null }>(
+        'SELECT origin FROM analyses WHERE entry_id = ?',
+        [fromKey],
+      );
+      if (!source) return;
+      const target = await db.getFirstAsync<{ origin: string | null }>(
+        'SELECT origin FROM analyses WHERE entry_id = ?',
+        [toKey],
+      );
+      // Destino local ou origem de destino mais forte: mantem o destino.
+      if (target && (target.origin === 'local' || source.origin !== 'local')) {
+        await db.runAsync('DELETE FROM analyses WHERE entry_id = ?', [fromKey]);
+        await db.runAsync('DELETE FROM entry_entities WHERE entry_id = ?', [fromKey]);
+        return;
+      }
+      await db.runAsync('DELETE FROM analyses WHERE entry_id = ?', [toKey]);
+      await db.runAsync('UPDATE analyses SET entry_id = ? WHERE entry_id = ?', [toKey, fromKey]);
+      // As relacoes seguem a analise: sem isso o mapa perderia a nota ou
+      // mostraria os vinculos da analise descartada.
+      await db.runAsync('DELETE FROM entry_entities WHERE entry_id = ?', [toKey]);
+      await db.runAsync('UPDATE entry_entities SET entry_id = ? WHERE entry_id = ?', [toKey, fromKey]);
+    }),
+  );
 }
 
 /**
@@ -1508,4 +1811,765 @@ export async function listAnalysisRuns(limit = 1000): Promise<AnalysisRun[]> {
     threads: row.threads ?? undefined,
     batteryDeltaPct: row.battery_delta_pct ?? undefined,
   }));
+}
+
+/**
+ * Entidades e relacoes do mapa.
+ *
+ * A derivacao mora no aparelho, mas o formato e o do servidor: as mesmas quatro
+ * tabelas (`entities`, `entity_aliases`, `entry_entities`, `owner_aliases`).
+ * Assim renomear, mesclar, trocar o icone e "sou eu" valem nos dois lados, e a
+ * analise futura que ainda disser o nome antigo cai na mesma entidade.
+ */
+
+const AUTHOR_SETTINGS_KEY = 'author_settings';
+const ENTITIES_BACKFILL_KEY = 'entities_backfilled_v1';
+const ENTITIES_CURSOR_KEY = 'entities_backfill_cursor';
+
+interface OwnerAliasRow {
+  name: string;
+}
+
+/** Le o nome do dono do cache de configuracoes, sem importar o servico (ciclo). */
+async function readOwnerSettings(db: MigrationDb): Promise<{ ownerName: string }> {
+  const row = await db.getFirstAsync<{ value: string }>(
+    'SELECT value FROM app_flags WHERE key = ?',
+    [AUTHOR_SETTINGS_KEY],
+  );
+  if (!row) return { ownerName: '' };
+  try {
+    const parsed = JSON.parse(row.value) as { ownerName?: unknown };
+    return { ownerName: typeof parsed.ownerName === 'string' ? parsed.ownerName : '' };
+  } catch {
+    return { ownerName: '' };
+  }
+}
+
+/** Chaves do dono, como o servidor monta em `ownerPersonKeys`. */
+async function ownerKeysFor(db: MigrationDb): Promise<Set<string>> {
+  const keys = new Set<string>();
+  const { ownerName } = await readOwnerSettings(db);
+  // O servidor usa "Você" quando o dono ainda nao escolheu um nome; a mesma
+  // chave evita que uma analise crie uma pessoa chamada "Você".
+  keys.add(ownerKey(ownerName.trim() || 'Você'));
+  const rows = await db.getAllAsync<OwnerAliasRow>('SELECT name FROM owner_aliases');
+  for (const row of rows) {
+    const key = ownerKey(row.name);
+    if (key) keys.add(key);
+  }
+  return keys;
+}
+
+/** Nome exibido no centro do mapa. Vazio quando o dono ainda nao escolheu. */
+export async function getOwnerName(): Promise<string> {
+  const db = await getDb();
+  const { ownerName } = await readOwnerSettings(db);
+  return ownerName.trim();
+}
+
+/** Entidade canonica local, no mesmo formato do no do mapa. */
+export async function listLocalEntities(): Promise<GraphEntity[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<{
+    id: string;
+    kind: string;
+    name: string;
+    icon: string;
+    updated_at: string;
+  }>('SELECT id, kind, name, icon, updated_at FROM entities ORDER BY kind, name');
+  return rows.map((row) => ({
+    id: row.id,
+    kind: row.kind as EntityKind,
+    name: row.name,
+    icon: row.icon ?? '',
+    updatedAt: row.updated_at ?? '',
+  }));
+}
+
+/** Ligacoes nota -> entidade, com a chave da analise (local ou do servidor). */
+export async function listEntityLinks(): Promise<EntityLink[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<{
+    entry_id: string;
+    entity_id: string;
+    count: number;
+    relation: string | null;
+    sentiment: number | null;
+  }>('SELECT entry_id, entity_id, count, relation, sentiment FROM entry_entities');
+  return rows.map((row) => ({
+    entryId: row.entry_id,
+    entityId: row.entity_id,
+    count: row.count,
+    relation: row.relation ?? undefined,
+    sentiment: row.sentiment ?? undefined,
+  }));
+}
+
+/** Grafias antigas por entidade, para casar trechos sem perder o nome atual. */
+export async function listEntityAliases(): Promise<Record<string, string[]>> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<{ entity_id: string; name: string }>(
+    'SELECT entity_id, name FROM entity_aliases ORDER BY created_at, name',
+  );
+  const out: Record<string, string[]> = {};
+  for (const row of rows) {
+    (out[row.entity_id] ??= []).push(row.name);
+  }
+  return out;
+}
+
+/** Grafias que o dono marcou como "sou eu". */
+export async function listOwnerAliases(): Promise<string[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<OwnerAliasRow>('SELECT name FROM owner_aliases ORDER BY name');
+  return rows.map((row) => row.name);
+}
+
+/** Resolve um nome para o id canonico, seguindo alias e ignorando caixa. */
+async function resolveEntityId(
+  db: MigrationDb,
+  kind: EntityKind,
+  rawName: string,
+  now: string,
+): Promise<string | null> {
+  const name = rawName.trim();
+  if (!name) return null;
+  const found = await db.getFirstAsync<{ id: string }>(
+    'SELECT id FROM entities WHERE kind = ? AND lower(name) = lower(?) ORDER BY created_at LIMIT 1',
+    [kind, name],
+  );
+  if (found) return found.id;
+  const alias = await db.getFirstAsync<{ entity_id: string }>(
+    'SELECT entity_id FROM entity_aliases WHERE kind = ? AND lower(name) = lower(?) ORDER BY created_at LIMIT 1',
+    [kind, name],
+  );
+  if (alias) return alias.entity_id;
+  const id = newId('ent_');
+  await db.runAsync(
+    `INSERT INTO entities (id, kind, name, icon, created_at, updated_at)
+     VALUES (?, ?, ?, '', ?, ?)`,
+    [id, kind, name, now, now],
+  );
+  return id;
+}
+
+/** Substitui os vinculos de uma nota, como `SaveRichAnalysis` faz no servidor. */
+async function replaceEntryEntities(
+  db: MigrationDb,
+  entryId: string,
+  analysis: ServerAnalysis,
+  now: string,
+  owners: ReadonlySet<string>,
+): Promise<void> {
+  await db.runAsync('DELETE FROM entry_entities WHERE entry_id = ?', [entryId]);
+  for (const link of deriveEntityLinks(analysis, owners)) {
+    const entityId = await resolveEntityId(db, link.kind, link.name, now);
+    if (!entityId) continue;
+    await db.runAsync(
+      `INSERT INTO entry_entities (entry_id, entity_id, count, relation, sentiment, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT (entry_id, entity_id) DO UPDATE SET
+         count = excluded.count,
+         relation = excluded.relation,
+         sentiment = excluded.sentiment`,
+      [
+        entryId,
+        entityId,
+        Math.max(1, link.count),
+        link.relation?.trim() || null,
+        typeof link.sentiment === 'number' ? link.sentiment : null,
+        now,
+      ],
+    );
+  }
+}
+
+/**
+ * Deriva as entidades das analises guardadas antes da versao 30. Roda uma vez,
+ * em lotes, no primeiro mapa aberto; nao atrasa o boot do app.
+ */
+let backfillPromise: Promise<number> | null = null;
+
+/**
+ * Deriva as entidades das analises guardadas antes da versao 30. Roda uma vez,
+ * em lotes, no primeiro mapa aberto; nao atrasa o boot nem segura uma analise
+ * nova por todo o backfill (cada lote e uma transacao).
+ */
+export function ensureEntityDerivation(): Promise<number> {
+  if (backfillPromise) return backfillPromise;
+  backfillPromise = runEntityBackfill().finally(() => {
+    backfillPromise = null;
+  });
+  return backfillPromise;
+}
+
+async function runEntityBackfill(): Promise<number> {
+  const db = await getDb();
+  if ((await getAppFlag(ENTITIES_BACKFILL_KEY)) === 'true') return 0;
+  const owners = await ownerKeysFor(db);
+  let cursor = Number(await getAppFlag(ENTITIES_CURSOR_KEY)) || 0;
+  let processed = 0;
+  for (;;) {
+    const rows = await db.getAllAsync<{
+      rowid: number;
+      entry_id: string;
+      payload: string;
+      fetched_at: string;
+    }>(
+      'SELECT rowid, entry_id, payload, fetched_at FROM analyses WHERE rowid > ? ORDER BY rowid LIMIT 10',
+      [cursor],
+    );
+    if (rows.length === 0) break;
+    const parsed: { entryId: string; analysis: ServerAnalysis; at: string }[] = [];
+    for (const row of rows) {
+      try {
+        parsed.push({
+          entryId: row.entry_id,
+          analysis: JSON.parse(row.payload) as ServerAnalysis,
+          at: row.fetched_at,
+        });
+      } catch {
+        // Payload invalido: a proxima analise da nota refaz os vinculos.
+      }
+    }
+    await withGraphWrite(() =>
+      db.withTransactionAsync(async () => {
+        for (const item of parsed) {
+          await replaceEntryEntities(db, item.entryId, item.analysis, item.at, owners);
+        }
+      }),
+    );
+    processed += parsed.length;
+    cursor = rows[rows.length - 1].rowid;
+    await withGraphWrite(async () => setAppFlag(ENTITIES_CURSOR_KEY, String(cursor)));
+    // Devolve o controle ao JS entre lotes: o mapa ja esta aberto e precisa
+    // continuar respondendo a pinca e ao arrasto enquanto o backfill roda.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  await withGraphWrite(async () => setAppFlag(ENTITIES_BACKFILL_KEY, 'true'));
+  return processed;
+}
+
+/** Reconstroi as relacoes de uma nota apos uma mudanca de alias/entidade. */
+export async function refreshEntryEntities(entryId: string): Promise<void> {
+  await withGraphWrite(async () => {
+    const db = await getDb();
+    const row = await db.getFirstAsync<{ payload: string; fetched_at: string }>(
+      'SELECT payload, fetched_at FROM analyses WHERE entry_id = ?',
+      [entryId],
+    );
+    if (!row) return;
+    try {
+      const analysis = JSON.parse(row.payload) as ServerAnalysis;
+      const owners = await ownerKeysFor(db);
+      await replaceEntryEntities(db, entryId, analysis, row.fetched_at, owners);
+    } catch {
+      // Payload invalido: a proxima analise refaz os vinculos.
+    }
+  });
+}
+
+interface LocalEntityRow {
+  id: string;
+  kind: string;
+  name: string;
+  icon: string;
+  created_at: string;
+  updated_at: string;
+}
+
+function toLocalEntity(row: LocalEntityRow): GraphEntity {
+  return {
+    id: row.id,
+    kind: row.kind as EntityKind,
+    name: row.name,
+    icon: row.icon ?? '',
+    updatedAt: row.updated_at ?? '',
+  };
+}
+
+async function findEntityIdByName(
+  db: MigrationDb,
+  kind: EntityKind,
+  rawName: string,
+): Promise<string | null> {
+  const name = rawName.trim();
+  if (!name) return null;
+  const row = await db.getFirstAsync<{ id: string }>(
+    'SELECT id FROM entities WHERE kind = ? AND lower(name) = lower(?) ORDER BY created_at LIMIT 1',
+    [kind, name],
+  );
+  if (row) return row.id;
+  const alias = await db.getFirstAsync<{ entity_id: string }>(
+    'SELECT entity_id FROM entity_aliases WHERE kind = ? AND lower(name) = lower(?) ORDER BY created_at LIMIT 1',
+    [kind, name],
+  );
+  return alias?.entity_id ?? null;
+}
+
+async function addEntityAlias(
+  db: MigrationDb,
+  kind: EntityKind,
+  name: string,
+  entityId: string,
+  now: string,
+): Promise<void> {
+  const alias = name.trim();
+  if (!alias) return;
+  await db.runAsync(
+    `INSERT INTO entity_aliases (id, entity_id, kind, name, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT (kind, name) DO UPDATE SET entity_id = excluded.entity_id, updated_at = excluded.updated_at`,
+    [newId('eal_'), entityId, kind, alias, now, now],
+  );
+}
+
+async function enqueueEntityOp(
+  db: MigrationDb,
+  operation: 'rename' | 'icon' | 'self',
+  entity: { id: string; kind: EntityKind; name: string },
+  now: string,
+  extra: { nextName?: string; icon?: string } = {},
+): Promise<void> {
+  await db.runAsync(
+    `INSERT INTO entity_outbox (id, operation, entity_id, kind, name, next_name, icon, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      newId('eop_'),
+      operation,
+      entity.id,
+      entity.kind,
+      entity.name,
+      extra.nextName ?? null,
+      extra.icon ?? null,
+      now,
+    ],
+  );
+}
+
+/** Move tudo de uma entidade para outra, como `mergeEntity` no servidor. */
+async function mergeEntitiesInto(
+  db: MigrationDb,
+  sourceId: string,
+  targetId: string,
+  kind: EntityKind,
+  sourceName: string,
+  now: string,
+): Promise<void> {
+  const links = await db.getAllAsync<{
+    entry_id: string;
+    count: number;
+    relation: string | null;
+    sentiment: number | null;
+  }>('SELECT entry_id, count, relation, sentiment FROM entry_entities WHERE entity_id = ?', [
+    sourceId,
+  ]);
+  for (const link of links) {
+    await db.runAsync(
+      `INSERT INTO entry_entities (entry_id, entity_id, count, relation, sentiment, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT (entry_id, entity_id) DO UPDATE SET
+         count = count + excluded.count,
+         relation = COALESCE(entry_entities.relation, excluded.relation),
+         sentiment = COALESCE(entry_entities.sentiment, excluded.sentiment)`,
+      [link.entry_id, targetId, link.count, link.relation, link.sentiment, now],
+    );
+  }
+  await db.runAsync('DELETE FROM entry_entities WHERE entity_id = ?', [sourceId]);
+  const aliases = await db.getAllAsync<{ kind: string; name: string }>(
+    'SELECT kind, name FROM entity_aliases WHERE entity_id = ?',
+    [sourceId],
+  );
+  for (const alias of aliases) {
+    await addEntityAlias(db, alias.kind as EntityKind, alias.name, targetId, now);
+  }
+  await db.runAsync('DELETE FROM entity_aliases WHERE entity_id = ?', [sourceId]);
+  // O icone personalizado sobrevive quando o alvo ainda usa o do tipo.
+  await db.runAsync(
+    `UPDATE entities SET icon = (SELECT icon FROM entities WHERE id = ?)
+     WHERE id = ? AND icon = '' AND (SELECT icon FROM entities WHERE id = ?) <> ''`,
+    [sourceId, targetId, sourceId],
+  );
+  await db.runAsync('DELETE FROM entities WHERE id = ?', [sourceId]);
+  await db.runAsync('UPDATE entities SET updated_at = ? WHERE id = ?', [now, targetId]);
+  await addEntityAlias(db, kind, sourceName, targetId, now);
+}
+
+/**
+ * Renomeia (ou mescla, quando o nome ja existe) uma entidade local. O nome
+ * antigo vira alias, como no servidor. Devolve a entidade sobrevivente.
+ */
+export async function renameLocalEntity(
+  kind: EntityKind,
+  name: string,
+  nextName: string,
+): Promise<GraphEntity> {
+  const trimmed = nextName.trim();
+  if (!trimmed || trimmed.length > 200) throw new Error('nome inválido');
+  return withGraphWrite(async () => {
+    const db = await getDb();
+    const now = new Date().toISOString();
+    let survivorId = '';
+    await db.withTransactionAsync(async () => {
+      const sourceId = await findEntityIdByName(db, kind, name);
+      if (!sourceId) throw new Error('entidade não encontrada');
+      const targetId = await findEntityIdByName(db, kind, trimmed);
+      if (!targetId || targetId === sourceId) {
+        await db.runAsync('UPDATE entities SET name = ?, updated_at = ? WHERE id = ?', [
+          trimmed,
+          now,
+          sourceId,
+        ]);
+        if (name.trim().toLowerCase() !== trimmed.toLowerCase()) {
+          await addEntityAlias(db, kind, name, sourceId, now);
+        }
+        survivorId = sourceId;
+      } else {
+        await mergeEntitiesInto(db, sourceId, targetId, kind, name, now);
+        survivorId = targetId;
+      }
+      const row = await db.getFirstAsync<LocalEntityRow>(
+        'SELECT id, kind, name, icon, created_at, updated_at FROM entities WHERE id = ?',
+        [survivorId],
+      );
+      // O outbox guarda o nome que o servidor conhece (o antigo), nao o novo:
+      // e por ele que o PATCH encontra a entidade no outro lado.
+      if (row) {
+        await enqueueEntityOp(
+          db,
+          'rename',
+          { id: row.id, kind, name: name.trim() },
+          now,
+          { nextName: trimmed },
+        );
+      }
+    });
+    const row = await db.getFirstAsync<LocalEntityRow>(
+      'SELECT id, kind, name, icon, created_at, updated_at FROM entities WHERE id = ?',
+      [survivorId],
+    );
+    if (!row) throw new Error('entidade não encontrada');
+    return toLocalEntity(row);
+  });
+}
+
+/** Troca o icone monocromatico; vazio volta ao icone do tipo. */
+export async function setLocalEntityIcon(
+  kind: EntityKind,
+  name: string,
+  icon: string,
+): Promise<GraphEntity> {
+  return withGraphWrite(async () => {
+    const db = await getDb();
+    const now = new Date().toISOString();
+    const id = await findEntityIdByName(db, kind, name);
+    if (!id) throw new Error('entidade não encontrada');
+    await db.runAsync('UPDATE entities SET icon = ?, updated_at = ? WHERE id = ?', [icon, now, id]);
+    const row = await db.getFirstAsync<LocalEntityRow>(
+      'SELECT id, kind, name, icon, created_at, updated_at FROM entities WHERE id = ?',
+      [id],
+    );
+    if (!row) throw new Error('entidade não encontrada');
+    await enqueueEntityOp(db, 'icon', toLocalEntity(row), now, { icon });
+    return toLocalEntity(row);
+  });
+}
+
+/**
+ * "Sou eu": a pessoa duplicada some do mapa e todas as grafias dela passam a
+ * resolver para o dono. O centro e a unica representacao do diarista.
+ */
+export async function claimLocalSelf(name: string): Promise<string> {
+  const db = await getDb();
+  const now = new Date().toISOString();
+  let owner = '';
+  let affected: string[] = [];
+  await withGraphWrite(() =>
+    db.withTransactionAsync(async () => {
+      const id = await findEntityIdByName(db, 'person', name);
+      if (!id) throw new Error('entidade não encontrada');
+      // So as notas que mencionavam esta pessoa precisam ser redigeradas.
+      const rows = await db.getAllAsync<{ entry_id: string }>(
+        'SELECT DISTINCT entry_id FROM entry_entities WHERE entity_id = ?',
+        [id],
+      );
+      affected = rows.map((row) => row.entry_id);
+      const canonical = await db.getFirstAsync<{ name: string }>(
+        'SELECT name FROM entities WHERE id = ?',
+        [id],
+      );
+      const aliases = await db.getAllAsync<{ name: string }>(
+        'SELECT name FROM entity_aliases WHERE entity_id = ?',
+        [id],
+      );
+      const names = [canonical?.name ?? name, ...aliases.map((alias) => alias.name)].filter(Boolean);
+      for (const alias of names) {
+        await db.runAsync(
+          `INSERT INTO owner_aliases (name, created_at, updated_at) VALUES (?, ?, ?)
+           ON CONFLICT (name) DO UPDATE SET updated_at = excluded.updated_at`,
+          [alias, now, now],
+        );
+      }
+      const row = await db.getFirstAsync<LocalEntityRow>(
+        'SELECT id, kind, name, icon, created_at, updated_at FROM entities WHERE id = ?',
+        [id],
+      );
+      if (row) await enqueueEntityOp(db, 'self', toLocalEntity(row), now);
+      await db.runAsync('DELETE FROM entry_entities WHERE entity_id = ?', [id]);
+      await db.runAsync('DELETE FROM entity_aliases WHERE entity_id = ?', [id]);
+      await db.runAsync('DELETE FROM entities WHERE id = ?', [id]);
+      owner = (await readOwnerSettings(db)).ownerName.trim();
+    }),
+  );
+  // Os nomes agora sao do dono: as analises antigas e as novas nao recriam a
+  // pessoa, e o grafo precisa refletir isso sem esperar a proxima analise.
+  for (const entryId of affected) await refreshEntryEntities(entryId);
+  return owner || 'Você';
+}
+
+export interface EntityOutboxItem {
+  id: string;
+  operation: 'rename' | 'icon' | 'self';
+  entityId: string;
+  kind: EntityKind;
+  name: string;
+  nextName?: string;
+  icon?: string;
+  attempts: number;
+  lastError?: string;
+}
+
+export async function listEntityOutbox(limit = 50): Promise<EntityOutboxItem[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<{
+    id: string;
+    operation: string;
+    entity_id: string;
+    kind: string;
+    name: string;
+    next_name: string | null;
+    icon: string | null;
+    attempts: number;
+    last_error: string | null;
+  }>('SELECT * FROM entity_outbox ORDER BY created_at LIMIT ?', [limit]);
+  return rows.map((row) => ({
+    id: row.id,
+    operation: row.operation as EntityOutboxItem['operation'],
+    entityId: row.entity_id,
+    kind: row.kind as EntityKind,
+    name: row.name,
+    nextName: row.next_name ?? undefined,
+    icon: row.icon ?? undefined,
+    attempts: row.attempts,
+    lastError: row.last_error ?? undefined,
+  }));
+}
+
+export async function deleteEntityOutbox(id: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync('DELETE FROM entity_outbox WHERE id = ?', [id]);
+}
+
+export async function markEntityOutboxAttempt(id: string, error: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    'UPDATE entity_outbox SET attempts = attempts + 1, last_error = ? WHERE id = ?',
+    [error.slice(0, 300), id],
+  );
+}
+
+/** Layout guardado: reabrir o mapa nao refaz a conta para o mesmo conjunto. */
+export async function loadGraphLayout(key: string): Promise<GraphLayout | null> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<{ data: string }>(
+    'SELECT data FROM graph_layout WHERE key = ?',
+    [key],
+  );
+  if (!row) return null;
+  try {
+    const parsed = JSON.parse(row.data) as GraphLayout;
+    if (!parsed.positions || !parsed.bounds || parsed.key !== key) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveGraphLayout(layout: GraphLayout): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `INSERT INTO graph_layout (key, data, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT (key) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`,
+    [layout.key, JSON.stringify(layout), new Date().toISOString()],
+  );
+  await db.runAsync(
+    `DELETE FROM graph_layout WHERE key NOT IN (
+       SELECT key FROM graph_layout ORDER BY updated_at DESC LIMIT 12
+     )`,
+  );
+}
+
+/** Estado de uma entidade vindo de `GET /api/v1/entities`. */
+export interface RemoteEntityState {
+  id: string;
+  kind: EntityKind;
+  name: string;
+  icon: string;
+  updatedAt: string;
+  aliases: string[];
+}
+
+function entityKey(kind: string, name: string): string {
+  return `${kind}\u0000${name.trim().toLowerCase()}`;
+}
+
+/**
+ * Aplica o catalogo do servidor no banco local.
+ *
+ * O nome e a chave de encontro: a entidade local que tem o nome antigo e
+ * fundida na sobrevivente do servidor, e os aliases remotos passam a resolver
+ * as analises futuras. Entidades com operacao pendente na outbox ficam
+ * intocadas: a escrita local ainda vai subir.
+ */
+export async function applyRemoteEntities(
+  remote: RemoteEntityState[],
+  pendingEntityIds: ReadonlySet<string> = new Set(),
+): Promise<void> {
+  if (remote.length === 0) return;
+  await withGraphWrite(async () => {
+    const db = await getDb();
+    const now = new Date().toISOString();
+    await db.withTransactionAsync(async () => {
+      const locals = await db.getAllAsync<LocalEntityRow>(
+        'SELECT id, kind, name, icon, created_at, updated_at FROM entities',
+      );
+      const localById = new Map(locals.map((row) => [row.id, row]));
+      const localByName = new Map(locals.map((row) => [entityKey(row.kind, row.name), row]));
+      const matched = new Set<string>();
+      const localIdForRemote = new Map<string, string>();
+      const targetByAlias = new Map<string, RemoteEntityState>();
+
+      for (const item of remote) {
+        for (const alias of item.aliases) targetByAlias.set(entityKey(item.kind, alias), item);
+      }
+
+      for (const item of remote) {
+        const kind = item.kind;
+        // Nome primeiro: se o servidor mesclou duas entidades, a sobrevivente
+        // pode ter o nome que aqui ainda e de outra bola. Casar pelo nome evita
+        // violar o unico (kind, name) ao renomear.
+        let local = localByName.get(entityKey(kind, item.name)) ?? localById.get(item.id);
+        if (!local) {
+          for (const alias of item.aliases) {
+            const hit = localByName.get(entityKey(kind, alias));
+            if (hit) {
+              local = hit;
+              break;
+            }
+          }
+        }
+        if (!local) {
+          const hit = await db.getFirstAsync<{ entity_id: string }>(
+            'SELECT entity_id FROM entity_aliases WHERE kind = ? AND lower(name) = lower(?) LIMIT 1',
+            [kind, item.name],
+          );
+          if (hit) local = localById.get(hit.entity_id);
+        }
+
+        if (local && pendingEntityIds.has(local.id)) {
+          matched.add(local.id);
+          localIdForRemote.set(item.id, local.id);
+          continue;
+        }
+
+        const updatedAt = item.updatedAt || now;
+        const previousName = local?.name;
+        if (!local) {
+          await db.runAsync(
+            `INSERT INTO entities (id, kind, name, icon, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT (id) DO UPDATE SET
+               kind = excluded.kind, name = excluded.name,
+               icon = excluded.icon, updated_at = excluded.updated_at`,
+            [item.id, kind, item.name, item.icon, updatedAt, updatedAt],
+          );
+          local = {
+            id: item.id,
+            kind,
+            name: item.name,
+            icon: item.icon,
+            created_at: updatedAt,
+            updated_at: updatedAt,
+          };
+        } else {
+          await db.runAsync(
+            'UPDATE entities SET name = ?, icon = ?, updated_at = ? WHERE id = ?',
+            [item.name, item.icon, updatedAt, local.id],
+          );
+        }
+
+        // Aliases remotos substituem os locais desta entidade: o servidor e a
+        // lista completa de grafias que ainda resolvem para ela. O nome
+        // anterior do aparelho fica, para uma renomeacao local nao perder a
+        // grafia.
+        await db.runAsync('DELETE FROM entity_aliases WHERE entity_id = ?', [local.id]);
+        for (const alias of item.aliases) {
+          await addEntityAlias(db, kind, alias, local.id, now);
+        }
+        if (previousName && previousName.toLowerCase() !== item.name.toLowerCase()) {
+          await addEntityAlias(db, kind, previousName, local.id, now);
+        }
+        matched.add(local.id);
+        localIdForRemote.set(item.id, local.id);
+      }
+
+      // Entidade local que o servidor nao lista, mas cujo nome virou alias de
+      // outra: foi mesclada no painel. Funde aqui tambem.
+      for (const local of locals) {
+        if (matched.has(local.id)) continue;
+        if (pendingEntityIds.has(local.id)) continue;
+        const target = targetByAlias.get(entityKey(local.kind, local.name));
+        if (!target) continue;
+        const targetLocalId = localIdForRemote.get(target.id);
+        if (!targetLocalId || targetLocalId === local.id) continue;
+        await mergeEntitiesInto(
+          db,
+          local.id,
+          targetLocalId,
+          local.kind as EntityKind,
+          local.name,
+          now,
+        );
+        matched.add(local.id);
+      }
+    });
+  });
+}
+
+/** Grava as grafias "sou eu" do servidor e remove a pessoa duplicada local. */
+export async function applyRemoteOwnerAliases(names: string[]): Promise<void> {
+  if (names.length === 0) return;
+  await withGraphWrite(async () => {
+    const db = await getDb();
+    const now = new Date().toISOString();
+    await db.withTransactionAsync(async () => {
+      for (const name of names) {
+        const trimmed = name.trim();
+        if (!trimmed) continue;
+        await db.runAsync(
+          `INSERT INTO owner_aliases (name, created_at, updated_at) VALUES (?, ?, ?)
+           ON CONFLICT (name) DO UPDATE SET updated_at = excluded.updated_at`,
+          [trimmed, now, now],
+        );
+        const person = await db.getFirstAsync<{ id: string }>(
+          'SELECT id FROM entities WHERE kind = ? AND lower(name) = lower(?) LIMIT 1',
+          ['person', trimmed],
+        );
+        if (!person) continue;
+        await db.runAsync('DELETE FROM entry_entities WHERE entity_id = ?', [person.id]);
+        await db.runAsync('DELETE FROM entity_aliases WHERE entity_id = ?', [person.id]);
+        await db.runAsync('DELETE FROM entities WHERE id = ?', [person.id]);
+      }
+    });
+  });
 }

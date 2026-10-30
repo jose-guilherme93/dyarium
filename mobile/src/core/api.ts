@@ -302,6 +302,10 @@ export interface EntitySummary {
   mentions: number;
   sentiment: number;
   last_seen: string | null;
+  /** Relogio do servidor para nome/icone/"sou eu"; ausente em versao antiga. */
+  updated_at?: string | null;
+  /** Grafias antigas que ainda resolvem para esta entidade. */
+  aliases?: string[];
 }
 
 export interface EntityEntry {
@@ -597,14 +601,30 @@ export class DyariumApi {
    * dashboard: mesma entidade, mesmos aliases, mesmo icone.
    */
   async listEntities(kind?: EntityKind): Promise<EntitySummary[]> {
+    return (await this.getEntityCatalog(kind)).entities;
+  }
+
+  /**
+   * Catalogo completo: entidades e as grafias "sou eu". O app usa as duas
+   * coisas juntas para nao mostrar como pessoa quem o painel ja fundiu no dono.
+   */
+  async getEntityCatalog(
+    kind?: EntityKind,
+  ): Promise<{ entities: EntitySummary[]; ownerAliases: string[] }> {
     const query = kind ? `?kind=${encodeURIComponent(kind)}` : '';
     const res = await this.fetchImpl(this.url(`/api/v1/entities${query}`), {
       method: 'GET',
       headers: this.authHeaders(),
     });
     if (!res.ok) throw await this.parseError(res);
-    const parsed = JSON.parse(await res.text()) as { entities?: EntitySummary[] };
-    return parsed.entities ?? [];
+    const parsed = JSON.parse(await res.text()) as {
+      entities?: EntitySummary[];
+      owner_aliases?: unknown;
+    };
+    const ownerAliases = Array.isArray(parsed.owner_aliases)
+      ? parsed.owner_aliases.filter((value): value is string => typeof value === 'string')
+      : [];
+    return { entities: parsed.entities ?? [], ownerAliases };
   }
 
   async getEntity(kind: EntityKind, name: string): Promise<EntityDetail> {
