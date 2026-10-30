@@ -38,7 +38,7 @@ import Svg, { Circle, Path, Text as SvgText } from 'react-native-svg';
 import type { GraphData, GraphNodeKind } from '@/core/graphModel';
 import type { GraphLayout } from '@/core/graphLayout';
 import { clamp, fitCamera, panLimits, visibleBand } from '@/core/graphLayout';
-import { pickLabels, type GraphLabel } from '@/core/graphLabels';
+import { LABEL_FONT, LABEL_GAP, pickLabels, type GraphLabel } from '@/core/graphLabels';
 import { iconKeyFor, iconPaths } from '@/core/graphIcons';
 import { graphPaths, neighborIds, selectedEdgesPath } from '@/core/graphPaths';
 import type { GraphColors } from '@/theme/graph';
@@ -56,8 +56,6 @@ const BUTTON_MS = 220;
 const EDGE_MARGIN = 28;
 /** Bola menor que isso no encaixe nao mostra icone (vira poeira). */
 const MIN_ICON_RADIUS = 4;
-/** Raio minimo da bola, em pt de tela, para ganhar nome. */
-const MIN_LABEL_BALL = 4;
 /** Tempo do nome entrando. */
 const LABEL_FADE_MS = 150;
 /** Folga em volta das bolas escolhidas, em pt de tela. */
@@ -97,15 +95,30 @@ function clampWorklet(value: number, min: number, max: number): number {
 const AnimatedText = Animated.createAnimatedComponent(SvgText);
 
 /**
- * Um nome do mapa. Entra com um fade curto quando o conjunto muda; a posicao
- * fica em unidades do grafo, entao o zoom nao mexe nele.
+ * Um nome do mapa. O texto tem tamanho de tela; a posicao vem da bola, em
+ * unidades do grafo, calculada na thread de UI a cada quadro. Assim o nome
+ * acompanha a bola no gesto sem crescer junto com o zoom.
  */
 const MapLabel = memo(function MapLabel({
   label,
+  zoom,
+  panX,
+  panY,
+  originX,
+  originY,
+  centerY,
+  width,
   color,
   selectedColor,
 }: {
   label: GraphLabel;
+  zoom: { value: number };
+  panX: { value: number };
+  panY: { value: number };
+  originX: number;
+  originY: number;
+  centerY: number;
+  width: number;
   color: string;
   selectedColor: string;
 }) {
@@ -113,14 +126,32 @@ const MapLabel = memo(function MapLabel({
   useEffect(() => {
     opacity.value = withTiming(1, { duration: LABEL_FADE_MS });
   }, [opacity]);
-  const animated = useAnimatedProps(() => ({ opacity: opacity.value }));
+  const animated = useAnimatedProps(() => {
+    const z = zoom.value;
+    const sx = width / 2 + panX.value + (label.x - originX) * z;
+    const sy = centerY + panY.value + (label.y - originY) * z;
+    const sr = label.r * z;
+    const textWidth = label.text.length * LABEL_FONT * 0.56;
+    let x = sx;
+    let y = sy;
+    if (label.side === 'below') {
+      y = sy + sr + LABEL_GAP + LABEL_FONT * 0.8;
+    } else if (label.side === 'above') {
+      y = sy - sr - LABEL_GAP - LABEL_FONT * 0.2;
+    } else if (label.side === 'right') {
+      x = sx + sr + LABEL_GAP + textWidth / 2;
+      y = sy + LABEL_FONT * 0.35;
+    } else {
+      x = sx - sr - LABEL_GAP - textWidth / 2;
+      y = sy + LABEL_FONT * 0.35;
+    }
+    return { x, y, opacity: opacity.value };
+  });
   return (
     <AnimatedText
       animatedProps={animated}
-      x={label.x}
-      y={label.y}
       fill={label.selected ? selectedColor : color}
-      fontSize={label.fontSize}
+      fontSize={LABEL_FONT}
       fontWeight={label.selected ? '700' : '500'}
       textAnchor="middle"
     >
@@ -205,21 +236,18 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
   const labelsRef = useRef<GraphLabel[]>([]);
 
   const syncLabels = useCallback(() => {
-    const z = zoom.value;
-    const pan = panX.value;
-    const offsetY = panY.value;
-    const view = {
-      minX: fitted.originX - (width / 2 + pan) / z,
-      maxX: fitted.originX + (width / 2 - pan) / z,
-      minY: fitted.originY + (band.top - band.centerY - offsetY) / z,
-      maxY: fitted.originY + (band.bottom - band.centerY - offsetY) / z,
-    };
     const next = pickLabels(data, layout, {
-      // O texto e desenhado em unidades do grafo: acompanha o zoom.
-      scale: unit,
-      // Quanto mais perto, menor a bola que ainda ganha nome.
-      minBall: MIN_LABEL_BALL / z,
-      view,
+      camera: {
+        zoom: zoom.value,
+        panX: panX.value,
+        panY: panY.value,
+        width,
+        centerY: band.centerY,
+        bandTop: band.top,
+        bandBottom: band.bottom,
+        originX: fitted.originX,
+        originY: fitted.originY,
+      },
       selectedId,
     });
     const previous = labelsRef.current;
@@ -235,7 +263,6 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
   }, [
     data,
     layout,
-    unit,
     width,
     band.top,
     band.bottom,
@@ -278,10 +305,15 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
         FOCUS_MAX_ZOOM,
       );
       const limits = panLimits(layout.bounds, target, width, visibleHeight);
+      // A bola escolhida vai para o meio da faixa: as relacoes se abrem em
+      // volta dela, e o dedo arrasta para ver o resto.
+      const focus = layout.positions[id];
+      const cx = focus.x;
+      const cy = focus.y;
       return {
         zoom: target,
-        panX: clamp(-target * ((minX + maxX) / 2 - fitted.originX), -limits.limitX, limits.limitX),
-        panY: clamp(-target * ((minY + maxY) / 2 - fitted.originY), -limits.limitY, limits.limitY),
+        panX: clamp(-target * (cx - fitted.originX), -limits.limitX, limits.limitX),
+        panY: clamp(-target * (cy - fitted.originY), -limits.limitY, limits.limitY),
       };
     },
     [fitted, selectedNeighbors, layout.positions, layout.bounds, width, visibleHeight],
@@ -720,17 +752,31 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
             pointerEvents="none"
           >
             {scene}
-
-            {labels.map((label) => (
-              <MapLabel
-                key={label.id}
-                label={label}
-                color={colors.label}
-                selectedColor={colors.selected}
-              />
-            ))}
           </Svg>
         </Animated.View>
+
+        <Svg
+          width={width}
+          height={height}
+          style={StyleSheet.absoluteFill}
+          pointerEvents="none"
+        >
+          {labels.map((label) => (
+            <MapLabel
+              key={label.id}
+              label={label}
+              zoom={zoom}
+              panX={panX}
+              panY={panY}
+              originX={fitted.originX}
+              originY={fitted.originY}
+              centerY={band.centerY}
+              width={width}
+              color={colors.label}
+              selectedColor={colors.selected}
+            />
+          ))}
+        </Svg>
       </View>
     </GestureDetector>
   );
