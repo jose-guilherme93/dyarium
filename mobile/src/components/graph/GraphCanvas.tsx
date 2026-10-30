@@ -62,10 +62,10 @@ const MIN_LABEL_BALL = 4;
 const LABEL_FADE_MS = 150;
 /** Folga em volta das bolas escolhidas, em pt de tela. */
 const FOCUS_PADDING = 34;
-/** Teto do zoom de foco: a bola e as vizinhas preenchem a faixa. */
-const FOCUS_MAX_ZOOM = 3.2;
+/** Teto do zoom de foco: a bola e as vizinhas preenchem a faixa sem exagerar. */
+const FOCUS_MAX_ZOOM = 2.2;
 /** Animacao da camera ao trocar de bola. */
-const MOTION_CAMERA = { duration: 420, easing: Easing.inOut(Easing.cubic) } as const;
+const MOTION_CAMERA = { duration: 360, easing: Easing.inOut(Easing.cubic) } as const;
 /** Teto de icones desenhados. */
 const MAX_ICONS = 80;
 

@@ -9,14 +9,16 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  FlatList,
   InteractionManager,
   ScrollView,
   StyleSheet,
   useWindowDimensions,
   View,
+  type ListRenderItemInfo,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -113,6 +115,37 @@ function periodRange(period: string): { from?: string; to?: string } {
 function entityNodeId(kind: EntityKind, id: string): string {
   return `${kind}:${id}`;
 }
+
+/** Linha da visao geral: virtualizada, para descer a folha nao custar nada. */
+const OverviewRow = memo(function OverviewRow({
+  node,
+  color,
+  onPress,
+}: {
+  node: GraphData['nodes'][number];
+  color: string;
+  onPress: (id: string) => void;
+}) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+  return (
+    <Press
+      style={styles.overviewRow}
+      onPress={() => onPress(node.id)}
+      accessibilityRole="button"
+      accessibilityLabel={`${node.label}, ${node.mentions} menções`}
+    >
+      <View style={[styles.overviewIcon, { backgroundColor: color }]}>
+        <GraphIcon kind={node.kind} icon={node.icon} size={16} color={colors.bg} />
+      </View>
+      <Text style={styles.overviewName} numberOfLines={1}>
+        {node.label}
+      </Text>
+      <Text style={styles.overviewMeta}>{node.mentions}</Text>
+      <Ionicons name="chevron-forward" size={14} color={colors.textTertiary} />
+    </Press>
+  );
+});
 
 export default function MapScreen() {
   const styles = useThemedStyles(baseStyles);
@@ -459,6 +492,27 @@ export default function MapScreen() {
     setFocusId(null);
   }, []);
 
+  const overviewNodes = useMemo(
+    () =>
+      data
+        ? [...data.nodes]
+            .filter((node) => node.kind !== 'note')
+            .sort((a, b) => b.mentions - a.mentions || a.label.localeCompare(b.label))
+        : [],
+    [data],
+  );
+
+  const renderOverview = useCallback(
+    ({ item }: ListRenderItemInfo<GraphData['nodes'][number]>) => (
+      <OverviewRow
+        node={item}
+        color={item.kind === 'user' ? theme.neutralSoft : graphColors[item.kind as EntityKind]}
+        onPress={selectNode}
+      />
+    ),
+    [theme.neutralSoft, graphColors, selectNode],
+  );
+
   const toggleKind = useCallback((kind: EntityKind) => {
     setKinds((current) => {
       const next = new Set(current);
@@ -760,55 +814,22 @@ export default function MapScreen() {
               />
             )
           ) : (
-            <ScrollView
+            <FlatList
+              data={overviewNodes}
+              keyExtractor={(node) => node.id}
+              renderItem={renderOverview}
               style={styles.sheetScroll}
-              showsVerticalScrollIndicator={false}
-              scrollEnabled
               contentContainerStyle={styles.overview}
-            >
-              {data && data.nodes.length > 0 ? (
-                [...data.nodes]
-                  .filter((node) => node.kind !== 'note')
-                  .sort((a, b) => b.mentions - a.mentions || a.label.localeCompare(b.label))
-                  .map((node) => (
-                    <Press
-                      key={node.id}
-                      style={styles.overviewRow}
-                      onPress={() => selectNode(node.id)}
-                      accessibilityRole="button"
-                      accessibilityLabel={`${node.label}, ${node.mentions} menções`}
-                    >
-                      <View
-                        style={[
-                          styles.overviewIcon,
-                          {
-                            backgroundColor:
-                              node.kind === 'user'
-                                ? theme.neutralSoft
-                                : graphColors[node.kind as EntityKind],
-                          },
-                        ]}
-                      >
-                        <GraphIcon
-                          kind={node.kind}
-                          icon={node.icon}
-                          size={16}
-                          color={theme.bg}
-                        />
-                      </View>
-                      <Text style={styles.overviewName} numberOfLines={1}>
-                        {node.label}
-                      </Text>
-                      <Text style={styles.overviewMeta}>{node.mentions}</Text>
-                      <Ionicons name="chevron-forward" size={14} color={theme.textTertiary} />
-                    </Press>
-                  ))
-              ) : (
+              showsVerticalScrollIndicator={false}
+              initialNumToRender={12}
+              windowSize={5}
+              removeClippedSubviews
+              ListEmptyComponent={
                 <Text style={styles.empty}>
                   {snapshot?.total ? 'Sem relações' : 'Sem notas'}
                 </Text>
-              )}
-            </ScrollView>
+              }
+            />
           )
         }
       </MapSheet>
