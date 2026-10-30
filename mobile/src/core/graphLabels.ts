@@ -67,7 +67,7 @@ export const LABEL_CHAR = 0.56;
 
 const MARGIN = 6;
 const CELL = 24;
-const MAX_LABELS = 40;
+const MAX_LABELS = 24;
 
 export function labelWidth(text: string): number {
   return text.length * LABEL_FONT * LABEL_CHAR;

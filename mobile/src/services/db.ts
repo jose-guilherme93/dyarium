@@ -654,6 +654,19 @@ export async function setAppFlag(key: string, value: string): Promise<void> {
 }
 
 /**
+ * Ultimo recorte do mapa, em JSON, para o mapa abrir sem ler as tabelas. O
+ * desenho e o mesmo de antes; a leitura fresca roda por tras e so troca o
+ * recorte quando algo mudou de verdade.
+ */
+export async function saveGraphSnapshotCache(key: string, json: string): Promise<void> {
+  await setAppFlag(`graph_snapshot:${key}`, json);
+}
+
+export async function loadGraphSnapshotCache(key: string): Promise<string | null> {
+  return getAppFlag(`graph_snapshot:${key}`);
+}
+
+/**
  * Adquire uma trava nomeada no banco, para nunca haver dois workers (primeiro
  * plano e background task) processando a fila ao mesmo tempo. Devolve um token
  * quando adquirida, ou null quando outra instancia detem a trava (e ela nao

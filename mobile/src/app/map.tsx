@@ -9,7 +9,16 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams } from 'expo-router';
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Profiler,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+} from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -32,7 +41,7 @@ import { GraphIcon } from '@/components/graph/GraphIcon';
 import { MapFilters, type MapPeriod } from '@/components/graph/MapFilters';
 import { MapSheet, SNAP_DETAIL, SNAP_REST, type MapSheetHandle } from '@/components/graph/MapSheet';
 import { MoodPanel } from '@/components/graph/MoodPanel';
-import type { EntityKind, GraphData } from '@/core/graphModel';
+import type { EntityKind, GraphData, GraphNodeKind } from '@/core/graphModel';
 import { kindLabel, splitNodeId } from '@/core/graphModel';
 import type { EntityPanel } from '@/core/graphPanel';
 import {
@@ -44,6 +53,8 @@ import {
   loadMoodSeries,
   noteKeyFromNode,
   panelForEntity,
+  readCachedSnapshot,
+  rememberSnapshot,
   type GraphSnapshot,
 } from '@/services/graphData';
 import type { MoodPoint } from '@/core/graphMood';
@@ -57,6 +68,7 @@ import { syncEntities } from '@/services/entitySync';
 import { back, push } from '@/services/appNavigation';
 import { listNotebooks } from '@/services/notebooks';
 import type { Notebook } from '@/core/notebooks';
+import { mark, useRenderCount } from '@/dev/perf';
 import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
 import { GRAPH_PALETTES } from '@/theme/graph';
 import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
@@ -116,6 +128,20 @@ function entityNodeId(kind: EntityKind, id: string): string {
   return `${kind}:${id}`;
 }
 
+/** Glifo leve para a lista: a fonte e mais barata que um SVG por linha. */
+function overviewGlyph(kind: GraphNodeKind): ComponentProps<typeof Ionicons>['name'] {
+  switch (kind) {
+    case 'place':
+      return 'home';
+    case 'theme':
+      return 'pricetag';
+    case 'decision':
+      return 'checkmark';
+    default:
+      return 'person';
+  }
+}
+
 /** Linha da visao geral: virtualizada, para descer a folha nao custar nada. */
 const OverviewRow = memo(function OverviewRow({
   node,
@@ -136,7 +162,7 @@ const OverviewRow = memo(function OverviewRow({
       accessibilityLabel={`${node.label}, ${node.mentions} menções`}
     >
       <View style={[styles.overviewIcon, { backgroundColor: color }]}>
-        <GraphIcon kind={node.kind} icon={node.icon} size={16} color={colors.bg} />
+        <Ionicons name={overviewGlyph(node.kind)} size={15} color={colors.bg} />
       </View>
       <Text style={styles.overviewName} numberOfLines={1}>
         {node.label}
@@ -148,6 +174,7 @@ const OverviewRow = memo(function OverviewRow({
 });
 
 export default function MapScreen() {
+  useRenderCount('MapScreen');
   const styles = useThemedStyles(baseStyles);
   const { colors: theme, name: themeName } = useTheme();
   const graphColors = GRAPH_PALETTES[themeName];
@@ -174,6 +201,24 @@ export default function MapScreen() {
   const [layoutFor, setLayoutFor] = useState<GraphData | null>(null);
   const [selectedPanel, setSelectedPanel] = useState<EntityPanel | null>(null);
   const [panelLoading, setPanelLoading] = useState(false);
+  // O corpo do detalhe so monta quando a camera pousa: a animacao nunca
+  // divide a thread com a montagem da lista.
+  const [detailReady, setDetailReady] = useState(true);
+  const detailTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** Segura o corpo do detalhe ate a camera pousar. */
+  const armDetail = useCallback(() => {
+    if (detailTimer.current) clearTimeout(detailTimer.current);
+    setDetailReady(false);
+    detailTimer.current = setTimeout(() => setDetailReady(true), 380);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (detailTimer.current) clearTimeout(detailTimer.current);
+    },
+    [],
+  );
   const [mood, setMood] = useState<MoodPoint[]>([]);
   const [moodLoading, setMoodLoading] = useState(false);
 
@@ -244,7 +289,16 @@ export default function MapScreen() {
       setSnapshot(cached.snapshot);
       setLoading(false);
     } else if (!loadedOnce.current) {
-      setLoading(true);
+      // Sem cache de sessao: o ultimo recorte gravado pinta antes de qualquer
+      // leitura. Abrir o mapa nao espera o banco.
+      const disk = await readCachedSnapshot(cacheKey);
+      if (!mounted.current) return;
+      if (disk) {
+        setSnapshot(disk);
+        setLoading(false);
+      } else {
+        setLoading(true);
+      }
     }
     setError(null);
     if (cached && Date.now() - cached.at < SNAPSHOT_FRESH_MS) {
@@ -270,7 +324,11 @@ export default function MapScreen() {
       const previous = cached?.snapshot;
       snapshotCache = { key: cacheKey, at: Date.now(), snapshot: next };
       // Recorte identico: mantem o objeto anterior para o desenho nao refazer.
-      if (!previous || !sameSnapshot(previous, next)) setSnapshot(next);
+      if (!previous || !sameSnapshot(previous, next)) {
+        setSnapshot(next);
+        // Guarda para a proxima abertura; nao segura a tela.
+        rememberSnapshot(cacheKey, next);
+      }
       if (tabRef.current === 'mood') void hydrateMood(next);
       // A selecao/foco que sumiu com o filtro deixa de existir.
       const current = selectedRef.current;
@@ -346,10 +404,11 @@ export default function MapScreen() {
     return () => clearTimeout(timer);
   }, [load]);
 
-  // A derivacao das analises antigas nao bloqueia a abertura: o mapa aparece
-  // com o que ja existe e, se o backfill achou relacoes novas, recarrega. O
-  // atraso deixa o primeiro gesto acontecer antes do trabalho em lotes.
+  // A derivacao das analises antigas so comeca depois que o mapa esta
+  // desenhado: enquanto ele abre, a leitura do layout tem o banco so para ela.
+  const drawn = Boolean(visible);
   useEffect(() => {
+    if (!drawn) return undefined;
     let alive = true;
     // So depois que a tela e o primeiro gesto terminam: o mapa abre sem
     // disputar a thread com a derivacao das analises antigas.
@@ -364,14 +423,14 @@ export default function MapScreen() {
             if (alive && processed > 0) void loadRef.current();
           })
           .catch(() => undefined);
-      }, 1600);
+      }, 2500);
       return () => clearTimeout(timer);
     });
     return () => {
       alive = false;
       interaction.cancel();
     };
-  }, []);
+  }, [drawn]);
 
   useEffect(() => {
     if (!data) return undefined;
@@ -478,9 +537,10 @@ export default function MapScreen() {
           : null;
       setSelectedPanel(instant);
       setPanelLoading(!instant);
+      armDetail();
       if (snapshot) void hydratePanel(snapshot, id);
     },
-    [openNote, snapshot, hydratePanel],
+    [openNote, snapshot, hydratePanel, armDetail],
   );
 
   const resetToMap = useCallback(() => {
@@ -647,7 +707,11 @@ export default function MapScreen() {
   return (
     <View style={styles.screen}>
       {visible ? (
-        <GraphCanvas
+        <Profiler
+          id="graph"
+          onRender={(_id, _phase, actual) => mark('prof.graph_ms', actual)}
+        >
+          <GraphCanvas
           ref={canvasRef}
           data={visible.data}
           layout={visible.layout}
@@ -658,7 +722,8 @@ export default function MapScreen() {
           viewportBottom={Math.round(height * (1 - SNAP_REST))}
           selectedId={selectedId}
           onSelect={selectNode}
-        />
+          />
+        </Profiler>
       ) : null}
 
       <View style={[styles.chrome, { paddingTop: insets.top + spacing.xs }]}>
@@ -786,7 +851,7 @@ export default function MapScreen() {
               )}
             </ScrollView>
           ) : selectedEntity ? (
-            panelLoading || !selectedPanel ? (
+            !detailReady || panelLoading || !selectedPanel ? (
               <View style={styles.panelLoading}>
                 <ActivityIndicator color={theme.accent} />
               </View>

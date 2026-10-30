@@ -30,7 +30,9 @@ import {
   loadAnalysisSentiments,
   loadGraphEntryDetails,
   loadGraphLayout,
+  loadGraphSnapshotCache,
   saveGraphLayout,
+  saveGraphSnapshotCache,
 } from './db';
 import { loadAuthorSettings } from './authorSettings';
 import { DEFAULT_NOTEBOOK_ID } from '@/core/notebooks';
@@ -139,6 +141,26 @@ export async function loadGraphSnapshot(filters: GraphFilters = {}): Promise<Gra
     total: entries.length,
     entryByKey,
   };
+}
+
+/** Ultimo recorte gravado para este filtro, sem tocar nas tabelas. */
+export async function readCachedSnapshot(key: string): Promise<GraphSnapshot | null> {
+  const json = await loadGraphSnapshotCache(key).catch(() => null);
+  if (!json) return null;
+  try {
+    return JSON.parse(json) as GraphSnapshot;
+  } catch {
+    return null;
+  }
+}
+
+/** Guarda o recorte para a proxima abertura (best-effort, nunca no caminho). */
+export function rememberSnapshot(key: string, snapshot: GraphSnapshot): void {
+  try {
+    void saveGraphSnapshotCache(key, JSON.stringify(snapshot)).catch(() => undefined);
+  } catch {
+    // Cache e otimizacao: se o JSON falhar, o mapa segue com a leitura normal.
+  }
 }
 
 /** Monta o grafo (visao do dia a dia ou foco) a partir do snapshot. */

@@ -208,6 +208,10 @@ export function EntityDetail({
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
       keyboardShouldPersistTaps="handled"
+      initialNumToRender={2}
+      maxToRenderPerBatch={3}
+      windowSize={5}
+      removeClippedSubviews
     />
   );
 }

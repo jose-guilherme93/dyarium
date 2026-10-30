@@ -38,9 +38,16 @@ import Svg, { Circle, Path, Text as SvgText } from 'react-native-svg';
 import type { GraphData, GraphNodeKind } from '@/core/graphModel';
 import type { GraphLayout } from '@/core/graphLayout';
 import { clamp, fitCamera, panLimits, visibleBand } from '@/core/graphLayout';
-import { LABEL_FONT, LABEL_GAP, pickLabels, type GraphLabel } from '@/core/graphLabels';
+import {
+  LABEL_FONT,
+  LABEL_GAP,
+  pickLabels,
+  type GraphLabel,
+  type LabelSide,
+} from '@/core/graphLabels';
 import { iconKeyFor, iconPaths } from '@/core/graphIcons';
 import { graphPaths, neighborIds, selectedEdgesPath } from '@/core/graphPaths';
+import { useRenderCount } from '@/dev/perf';
 import type { GraphColors } from '@/theme/graph';
 
 /** Zoom minimo absoluto; o minimo real e sempre o encaixe do conjunto. */
@@ -98,9 +105,17 @@ const AnimatedText = Animated.createAnimatedComponent(SvgText);
  * Um nome do mapa. O texto tem tamanho de tela; a posicao vem da bola, em
  * unidades do grafo, calculada na thread de UI a cada quadro. Assim o nome
  * acompanha a bola no gesto sem crescer junto com o zoom.
+ *
+ * As props sao primitivas de proposito: quando o conjunto muda, so os nomes
+ * que realmente mudaram sao renderizados de novo.
  */
 const MapLabel = memo(function MapLabel({
-  label,
+  text,
+  x,
+  y,
+  r,
+  side,
+  selected,
   zoom,
   panX,
   panY,
@@ -111,7 +126,12 @@ const MapLabel = memo(function MapLabel({
   color,
   selectedColor,
 }: {
-  label: GraphLabel;
+  text: string | null;
+  x: number;
+  y: number;
+  r: number;
+  side: LabelSide;
+  selected: boolean;
   zoom: { value: number };
   panX: { value: number };
   panY: { value: number };
@@ -124,41 +144,50 @@ const MapLabel = memo(function MapLabel({
 }) {
   const opacity = useSharedValue(0);
   useEffect(() => {
-    opacity.value = withTiming(1, { duration: LABEL_FADE_MS });
-  }, [opacity]);
+    if (text) opacity.value = withTiming(1, { duration: LABEL_FADE_MS });
+    else opacity.value = 0;
+  }, [text, opacity]);
   const animated = useAnimatedProps(() => {
+    if (!text) return { opacity: 0, x: -1000, y: -1000 };
     const z = zoom.value;
-    const sx = width / 2 + panX.value + (label.x - originX) * z;
-    const sy = centerY + panY.value + (label.y - originY) * z;
-    const sr = label.r * z;
-    const textWidth = label.text.length * LABEL_FONT * 0.56;
-    let x = sx;
-    let y = sy;
-    if (label.side === 'below') {
-      y = sy + sr + LABEL_GAP + LABEL_FONT * 0.8;
-    } else if (label.side === 'above') {
-      y = sy - sr - LABEL_GAP - LABEL_FONT * 0.2;
-    } else if (label.side === 'right') {
-      x = sx + sr + LABEL_GAP + textWidth / 2;
-      y = sy + LABEL_FONT * 0.35;
-    } else {
-      x = sx - sr - LABEL_GAP - textWidth / 2;
-      y = sy + LABEL_FONT * 0.35;
+    const sx = width / 2 + panX.value + (x - originX) * z;
+    const sy = centerY + panY.value + (y - originY) * z;
+    const sr = r * z;
+    const textWidth = text.length * LABEL_FONT * 0.56;
+    if (side === 'below') {
+      return { x: sx, y: sy + sr + LABEL_GAP + LABEL_FONT * 0.8, opacity: opacity.value };
     }
-    return { x, y, opacity: opacity.value };
+    if (side === 'above') {
+      return { x: sx, y: sy - sr - LABEL_GAP - LABEL_FONT * 0.2, opacity: opacity.value };
+    }
+    if (side === 'right') {
+      return {
+        x: sx + sr + LABEL_GAP + textWidth / 2,
+        y: sy + LABEL_FONT * 0.35,
+        opacity: opacity.value,
+      };
+    }
+    return {
+      x: sx - sr - LABEL_GAP - textWidth / 2,
+      y: sy + LABEL_FONT * 0.35,
+      opacity: opacity.value,
+    };
   });
   return (
     <AnimatedText
       animatedProps={animated}
-      fill={label.selected ? selectedColor : color}
+      fill={selected ? selectedColor : color}
       fontSize={LABEL_FONT}
-      fontWeight={label.selected ? '700' : '500'}
+      fontWeight={selected ? '700' : '500'}
       textAnchor="middle"
     >
-      {label.text}
+      {text ?? ''}
     </AnimatedText>
   );
 });
+
+/** Vagas fixas de nome: entram e saem por props, nunca por montagem. */
+const LABEL_SLOTS = 24;
 
 const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function GraphCanvas(
   {
@@ -174,6 +203,7 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
   },
   ref,
 ) {
+  useRenderCount('GraphCanvas');
   // Faixa util: do topo do conteudo ate a borda da folha.
   const band = useMemo(
     () => visibleBand(height, viewportTop, viewportBottom),
@@ -761,21 +791,29 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
           style={StyleSheet.absoluteFill}
           pointerEvents="none"
         >
-          {labels.map((label) => (
-            <MapLabel
-              key={label.id}
-              label={label}
-              zoom={zoom}
-              panX={panX}
-              panY={panY}
-              originX={fitted.originX}
-              originY={fitted.originY}
-              centerY={band.centerY}
-              width={width}
-              color={colors.label}
-              selectedColor={colors.selected}
-            />
-          ))}
+          {Array.from({ length: LABEL_SLOTS }, (_, index) => {
+            const label = labels[index];
+            return (
+              <MapLabel
+                key={index}
+                text={label?.text ?? null}
+                x={label?.x ?? 0}
+                y={label?.y ?? 0}
+                r={label?.r ?? 0}
+                side={label?.side ?? 'below'}
+                selected={label?.selected ?? false}
+                zoom={zoom}
+                panX={panX}
+                panY={panY}
+                originX={fitted.originX}
+                originY={fitted.originY}
+                centerY={band.centerY}
+                width={width}
+                color={colors.label}
+                selectedColor={colors.selected}
+              />
+            );
+          })}
         </Svg>
       </View>
     </GestureDetector>

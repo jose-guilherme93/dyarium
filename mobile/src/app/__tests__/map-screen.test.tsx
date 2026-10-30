@@ -60,6 +60,8 @@ jest.mock('@/services/graphData', () => ({
   loadEntityPanel: async (snapshot: unknown, id: string) => mockPanel(snapshot, id),
   loadMoodSeries: async () => [],
   noteKeyFromNode: (id: string) => id,
+  readCachedSnapshot: async () => null,
+  rememberSnapshot: () => undefined,
 }));
 
 jest.mock('@/components/graph/GraphCanvas', () => {
@@ -178,7 +180,8 @@ describe('tela do mapa', () => {
     await act(async () => {
       fireEvent.press(screen.getByLabelText('Maria, 2 menções'));
       await Promise.resolve();
-      await Promise.resolve();
+      // O corpo do detalhe espera a camera pousar antes de montar.
+      await new Promise((resolve) => setTimeout(resolve, 420));
     });
 
     expect(screen.getByText('A Maria chegou cedo.')).toBeTruthy();
