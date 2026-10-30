@@ -172,10 +172,19 @@ export function graphFromSnapshot(snapshot: GraphSnapshot, options: GraphOptions
  * Layout com cache no aparelho. A conta e deterministica, entao reaproveitar a
  * posicao nao muda o desenho; so evita refazer o mesmo trabalho ao reabrir.
  */
-/** Layout com cache no aparelho. A conta e deterministica, entao reaproveitar a
+/**
+ * Layout com cache no aparelho. A conta e deterministica, entao reaproveitar a
  * posicao nao muda o desenho; so evita refazer o mesmo trabalho ao reabrir. O
- * cache em memoria evita ate a leitura do SQLite quando a tela volta. */
+ * cache em memoria evita ate a leitura do SQLite quando a tela volta.
+ */
 const layoutMemory = new Map<string, GraphLayout>();
+
+function remember(key: string, layout: GraphLayout): void {
+  // Mantem so os ultimos conjuntos: evita crescer sem limite durante a sessao.
+  if (layoutMemory.size > 12) layoutMemory.clear();
+  layoutMemory.set(key, layout);
+  void saveGraphLayout(layout).catch(() => undefined);
+}
 
 export async function layoutForGraph(
   data: GraphData,
@@ -198,16 +207,16 @@ export async function layoutForGraph(
     }
     return cached;
   }
+  const simStarted = Date.now();
   const layout = layoutGraph(data, { focus });
-  // Mantem so os ultimos conjuntos: evita crescer sem limite durante a sessao.
-  if (layoutMemory.size > 8) layoutMemory.clear();
-  layoutMemory.set(key, layout);
+  remember(key, layout);
   if (__DEV__) {
     console.log(
-      `[map] layout sim ${data.nodes.length} nos ${data.edges.length} arestas ${Date.now() - started}ms`,
+      `[map] layout sim ${data.nodes.length} nos ${data.edges.length} arestas ${
+        Date.now() - simStarted
+      }ms (total ${Date.now() - started}ms)`,
     );
   }
-  void saveGraphLayout(layout).catch(() => undefined);
   return layout;
 }
 

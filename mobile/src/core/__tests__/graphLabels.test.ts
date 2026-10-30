@@ -147,6 +147,32 @@ describe('pickLabels', () => {
     }
   });
 
+  it('na visão de foco, a nota entra antes das entidades', () => {
+    // A nota e a prova da relacao aberta; sem nome ela vira um ponto solto no
+    // meio das linhas pontilhadas.
+    const entities: GraphEntity[] = [
+      { id: 'e1', kind: 'person', name: 'Ana', icon: '', updatedAt: '' },
+      { id: 'e2', kind: 'theme', name: 'saude', icon: '', updatedAt: '' },
+    ];
+    const entries: GraphEntry[] = [
+      { id: 'n1', title: 'Nota grande', recordedAt: now, notebookId: 'nb' },
+    ];
+    const links: EntityLink[] = [
+      { entryId: 'n1', entityId: 'e1', count: 3 },
+      { entryId: 'n1', entityId: 'e2', count: 1 },
+    ];
+    const focus = buildGraph(
+      { entries, entities, links, centerLabel: 'Você' },
+      { focus: 'person:e1' },
+    );
+    const focusLayout = layoutGraph(focus, { focus: 'person:e1' });
+    const labels = pickLabels(focus, focusLayout, {
+      camera: camera(0.6, 800, 600),
+      budget: 2,
+    });
+    expect(labels.map((label) => label.kind)).toEqual(['user', 'note']);
+  });
+
   it('mantém o nome da bola escolhida mesmo sem espaço', () => {
     const chosen = data.nodes[data.nodes.length - 1];
     const labels = pickLabels(data, layout, {

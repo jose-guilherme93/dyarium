@@ -161,6 +161,10 @@ export function pickLabels(
     if (b.id === data.center.id) return 1;
     if (a.id === selectedId) return -1;
     if (b.id === selectedId) return 1;
+    // A nota e a prova da relacao aberta: entra antes das entidades, senao
+    // fica sem nome justo na visao em que ela e o ponto.
+    if (a.kind === 'note' && b.kind !== 'note') return -1;
+    if (b.kind === 'note' && a.kind !== 'note') return 1;
     return b.mentions - a.mentions || a.label.localeCompare(b.label);
   });
 

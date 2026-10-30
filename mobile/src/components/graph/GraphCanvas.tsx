@@ -80,6 +80,11 @@ interface GraphCanvasProps {
   /** Topo da folha: o mapa encaixa entre `viewportTop` e este valor. */
   viewportBottom?: number;
   selectedId: string | null;
+  /**
+   * A visao ja e o foco de uma entidade: tudo o que esta nela e relacao dela,
+   * entao nada fica apagado. A bola escolhida continua com o anel.
+   */
+  focusMode?: boolean;
   onSelect(id: string | null): void;
 }
 
@@ -224,6 +229,7 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
     viewportTop = 0,
     viewportBottom = 0,
     selectedId,
+    focusMode = false,
     onSelect,
   },
   ref,
@@ -411,24 +417,18 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
         }
       }
       let best: { id: string; distance: number } | null = null;
-      let shadow = false;
       for (const node of data.nodes) {
         const position = layout.positions[node.id];
         if (!position) continue;
         const d = Math.hypot(gx - position.x, gy - position.y);
         if (d > position.r + 12 / z) continue;
         if (!best || d < best.distance) best = { id: node.id, distance: d };
-        // Com uma bola aberta, as apagadas sao so sombra: nao recebem toque.
-        if (activeIds && !activeIds.has(node.id)) shadow = true;
       }
-      if (best && activeIds && !activeIds.has(best.id)) return;
-      if (shadow && !best) return;
       onSelect(best?.id ?? null);
     },
     [
       data,
       layout,
-      activeIds,
       width,
       band.centerY,
       fitted.originX,
@@ -567,7 +567,8 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
 
   const center = layout.positions[data.center.id];
   const selectedPosition = selectedId ? layout.positions[selectedId] : undefined;
-  const idleNodeOpacity = selectedId ? 0.16 : 0.82;
+  const dimmed = Boolean(selectedId) && !focusMode;
+  const idleNodeOpacity = dimmed ? 0.16 : 0.82;
   // Espessuras em unidades do grafo: o encaixe e a referencia, o zoom amplia.
   const z = fitted.zoom;
 
@@ -581,21 +582,21 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
           stroke={colors.edge}
           strokeWidth={0.6 / z}
           fill="none"
-          opacity={selectedId ? 0.05 : 0.09}
+          opacity={dimmed ? 0.05 : 0.09}
         />
         <Path
           d={paths.edges.cooccurrenceStrong}
           stroke={colors.edgeStrong}
           strokeWidth={1.05 / z}
           fill="none"
-          opacity={selectedId ? 0.1 : 0.2}
+          opacity={dimmed ? 0.1 : 0.2}
         />
         <Path
           d={paths.edges.relation}
           stroke={colors.edgeStrong}
           strokeWidth={0.9 / z}
           fill="none"
-          opacity={selectedId ? 0.1 : 0.16}
+          opacity={dimmed ? 0.1 : 0.16}
         />
         <Path
           d={paths.edges.mention}
@@ -603,7 +604,7 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
           strokeWidth={1.1 / z}
           strokeDasharray={`${5 / z} ${4 / z}`}
           fill="none"
-          opacity={selectedId ? 0.16 : 0.28}
+          opacity={dimmed ? 0.16 : 0.28}
         />
 
         {(Object.keys(paths.nodes) as GraphNodeKind[]).map((kind) => (
@@ -681,9 +682,7 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
         {iconNodes.map((node) => {
           const scale = node.size / 24;
           const dim =
-            Boolean(selectedId) &&
-            node.id !== data.center.id &&
-            !(activeIds?.has(node.id) ?? false);
+            dimmed && node.id !== data.center.id && !(activeIds?.has(node.id) ?? false);
           return (
             <Path
               key={node.id}
@@ -713,6 +712,7 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
       selectedId,
       data.center.id,
       idleNodeOpacity,
+      dimmed,
       z,
     ],
   );

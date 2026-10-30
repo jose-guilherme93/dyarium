@@ -26,9 +26,7 @@ interface EntityDetailProps {
   panel: EntityPanel;
   colors: GraphColors;
   snap: number;
-  focused: boolean;
   onOpenNote(entryId: string): void;
-  onExpand(): void;
   onRename(): void;
   onIcon(): void;
   onClaimSelf(): void;
@@ -80,9 +78,7 @@ function Action({
 export function EntityDetail({
   panel,
   colors,
-  focused,
   onOpenNote,
-  onExpand,
   onRename,
   onIcon,
   onClaimSelf,
@@ -113,7 +109,6 @@ export function EntityDetail({
       ) : null}
 
       <View style={styles.actions}>
-        {!focused ? <Action icon="expand-outline" label="Expandir" onPress={onExpand} /> : null}
         <Action icon="pencil" label="Renomear" onPress={onRename} />
         <Action icon="color-palette-outline" label="Ícone" onPress={onIcon} />
         {entity.kind === 'person' ? (

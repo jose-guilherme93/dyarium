@@ -5,6 +5,7 @@ import MapScreen from '../map';
 
 const mockLoadSnapshot = jest.fn();
 const mockPanel = jest.fn();
+const mockGraph = jest.fn();
 
 // O Reanimated real nao inicializa no Jest. A folha do mapa usa so a API
 // comum; aqui basta ela responder sem thread de UI.
@@ -53,16 +54,7 @@ jest.mock('@/services/db', () => ({
 
 jest.mock('@/services/graphData', () => ({
   loadGraphSnapshot: (filters: unknown) => mockLoadSnapshot(filters),
-  graphFromSnapshot: () => ({
-    center: { id: 'user', kind: 'user', label: 'João', mentions: 0, notes: 0 },
-    nodes: [
-      { id: 'person:e1', kind: 'person', label: 'Maria', mentions: 2, notes: 1 },
-      { id: 'place:e2', kind: 'place', label: 'Praia', mentions: 1, notes: 1 },
-    ],
-    edges: [],
-    totalNodes: 2,
-    totalEdges: 0,
-  }),
+  graphFromSnapshot: (snapshot: unknown, options: unknown) => mockGraph(snapshot, options),
   kindCounts: () => ({ person: 1, place: 1, theme: 0, decision: 0 }),
   layoutForGraph: async () => ({
     key: 'layout',
@@ -127,6 +119,17 @@ const snapshot = {
   entryByKey: {},
 };
 
+const graph = {
+  center: { id: 'user', kind: 'user', label: 'João', mentions: 0, notes: 0 },
+  nodes: [
+    { id: 'person:e1', kind: 'person', label: 'Maria', mentions: 2, notes: 1 },
+    { id: 'place:e2', kind: 'place', label: 'Praia', mentions: 1, notes: 1 },
+  ],
+  edges: [],
+  totalNodes: 2,
+  totalEdges: 0,
+};
+
 const panel = {
   entity: { id: 'e1', kind: 'person', name: 'Maria', icon: '', updatedAt: '' },
   mentions: 2,
@@ -178,6 +181,7 @@ describe('tela do mapa', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockLoadSnapshot.mockResolvedValue(snapshot);
+    mockGraph.mockReturnValue(graph);
     mockPanel.mockReturnValue(panel);
   });
 
@@ -209,6 +213,22 @@ describe('tela do mapa', () => {
       await Promise.resolve();
     });
     expect(mockClaim).toHaveBeenCalled();
+  });
+
+  it('abrir uma bola deixa so ela e as relacoes dela no desenho', async () => {
+    await renderMap();
+    const focos = () =>
+      mockGraph.mock.calls.map(([, options]) => (options as { focus?: string }).focus);
+    expect(focos().every((focus) => !focus)).toBe(true);
+
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText('Maria, 2 menções'));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // O desenho passa a ser o foco: a entidade e as relacoes dela.
+    expect(focos()).toContain('person:e1');
   });
 
   it('troca para a aba de humor', async () => {

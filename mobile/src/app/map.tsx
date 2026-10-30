@@ -197,8 +197,10 @@ export default function MapScreen() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorBusy, setEditorBusy] = useState(false);
   const [editorError, setEditorError] = useState<string | null>(null);
-  const [layout, setLayout] = useState<GraphLayout | null>(null);
-  const [layoutFor, setLayoutFor] = useState<GraphData | null>(null);
+  // O desenho que esta na tela. Quando o conjunto muda (abrir um no, filtrar),
+  // o anterior fica ate a posicao nova chegar: trocar para um quadro vazio
+  // faria a tela piscar no meio do toque.
+  const [shown, setShown] = useState<{ data: GraphData; layout: GraphLayout } | null>(null);
   const [selectedPanel, setSelectedPanel] = useState<EntityPanel | null>(null);
   const [panelLoading, setPanelLoading] = useState(false);
 
@@ -227,7 +229,17 @@ export default function MapScreen() {
     });
   }, [snapshot, kinds, focusId]);
 
-  const visible = data && layout && layoutFor === data ? { data, layout } : null;
+  // Mapa inteiro, sem foco: os numeros dos filtros falam da biblioteca toda e
+  // nao encolhem quando uma entidade e aberta.
+  const whole = useMemo(
+    () =>
+      snapshot
+        ? graphFromSnapshot(snapshot, { kinds, nodeLimit: 120, edgesPerNode: 6 })
+        : null,
+    [snapshot, kinds],
+  );
+
+  const visible = data ? shown : null;
 
   const hydratePanel = useCallback(async (snap: GraphSnapshot, id: string | null) => {
     const parsed = id ? splitNodeId(id) : null;
@@ -359,7 +371,6 @@ export default function MapScreen() {
             setFocusId(id);
             setSelectedId(id);
             void hydratePanel(next, id);
-            setTimeout(() => sheetRef.current?.snapTo(SNAP_DETAIL), 50);
           }
         }
       }
@@ -393,10 +404,11 @@ export default function MapScreen() {
   useEffect(() => {
     if (!drawn) return undefined;
     let alive = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     // So depois que a tela e o primeiro gesto terminam: o mapa abre sem
     // disputar a thread com a derivacao das analises antigas.
     const interaction = InteractionManager.runAfterInteractions(() => {
-      const timer = setTimeout(() => {
+      timer = setTimeout(() => {
         const started = Date.now();
         void ensureEntityDerivation()
           .then((processed) => {
@@ -407,11 +419,14 @@ export default function MapScreen() {
           })
           .catch(() => undefined);
       }, 2500);
-      return () => clearTimeout(timer);
     });
     return () => {
       alive = false;
+      // O timer nasce dentro da interacao; `cancel()` para a interacao pendente,
+      // mas nao um timer ja agendado. Sem isto, a tela desmontada ainda acordava
+      // 2,5 s depois para derivar analises (e logar) sem ninguem olhando.
       interaction.cancel();
+      if (timer !== undefined) clearTimeout(timer);
     };
   }, [drawn]);
 
@@ -420,8 +435,7 @@ export default function MapScreen() {
     let alive = true;
     void layoutForGraph(data, focusId ?? undefined).then((next) => {
       if (!alive) return;
-      setLayout(next);
-      setLayoutFor(data);
+      setShown({ data, layout: next });
     });
     return () => {
       alive = false;
@@ -480,7 +494,7 @@ export default function MapScreen() {
     return { mentions, notes: notes.size };
   }, [snapshot, selectedEntity]);
 
-  const counts = useMemo(() => (data ? kindCounts(data) : null), [data]);
+  const counts = useMemo(() => (whole ? kindCounts(whole) : null), [whole]);
   const entityTotal = counts ? KINDS.reduce((sum, kind) => sum + counts[kind], 0) : 0;
 
   const openNote = useCallback(
@@ -492,14 +506,25 @@ export default function MapScreen() {
     [snapshot],
   );
 
+  /** Volta ao mapa inteiro: nada escolhido, nada em foco. */
+  const resetToMap = useCallback(() => {
+    panelSeq.current += 1;
+    selectedRef.current = null;
+    setSelectedId(null);
+    setSelectedPanel(null);
+    setPanelLoading(false);
+    setFocusId(null);
+  }, []);
+
+  /**
+   * Abre uma bola: ela vira a raiz da propria visao. Todo o resto sai de cena
+   * e ficam so ela, as relacoes dela e as notas que a citam. Tocar no dono
+   * ("Você") devolve o mapa inteiro.
+   */
   const selectNode = useCallback(
     (id: string | null) => {
       if (!id || id === 'user') {
-        panelSeq.current += 1;
-        selectedRef.current = null;
-        setSelectedId(null);
-        setSelectedPanel(null);
-        setPanelLoading(false);
+        resetToMap();
         return;
       }
       const parsed = splitNodeId(id);
@@ -509,30 +534,18 @@ export default function MapScreen() {
       }
       selectedRef.current = id;
       setSelectedId(id);
+      setFocusId(id);
       tabRef.current = 'detail';
       setTab('detail');
       // A folha fica onde o usuario deixou (50%): ele sobe se quiser ler mais.
       // Os numeros vem do snapshot na hora; so os trechos chegam depois.
-      const parsedId = splitNodeId(id);
-      const instant =
-        snapshot && parsedId && parsedId.kind !== 'note' && parsedId.kind !== 'user'
-          ? panelForEntity(snapshot, parsedId.id)
-          : null;
+      const instant = snapshot && parsed ? panelForEntity(snapshot, parsed.id) : null;
       setSelectedPanel(instant);
       setPanelLoading(!instant);
       if (snapshot) void hydratePanel(snapshot, id);
     },
-    [openNote, snapshot, hydratePanel],
+    [openNote, resetToMap, snapshot, hydratePanel],
   );
-
-  const resetToMap = useCallback(() => {
-    panelSeq.current += 1;
-    selectedRef.current = null;
-    setSelectedId(null);
-    setSelectedPanel(null);
-    setPanelLoading(false);
-    setFocusId(null);
-  }, []);
 
   const overviewNodes = useMemo(
     () =>
@@ -623,8 +636,6 @@ export default function MapScreen() {
     });
   }, [editEntity, selectedEntity]);
 
-  const expandedFromFocus = Boolean(focusId && selectedId && focusId === selectedId);
-
   const sheetHeader = (
     <View style={styles.sheetHeader}>
       <View style={styles.sheetTitleRow}>
@@ -703,6 +714,7 @@ export default function MapScreen() {
           viewportTop={insets.top + (focusId ? 72 : 50)}
           viewportBottom={Math.round(height * (1 - SNAP_REST))}
           selectedId={selectedId}
+          focusMode={Boolean(focusId)}
           onSelect={selectNode}
           />
         </Profiler>
@@ -842,13 +854,7 @@ export default function MapScreen() {
                 panel={selectedPanel}
                 colors={graphColors}
                 snap={snap}
-                focused={expandedFromFocus}
                 onOpenNote={openNote}
-                onExpand={() => {
-                  if (!selectedId) return;
-                  setFocusId(selectedId);
-                  sheetRef.current?.snapTo(SNAP_DETAIL);
-                }}
                 onRename={() => {
                   setEditorError(null);
                   setEditorOpen(true);
