@@ -68,6 +68,30 @@ describe('buildGraph', () => {
     expect(data.edges.filter((edge) => edge.kind === 'cooccurrence')).toHaveLength(2);
   });
 
+  it('liga o dono só aos hubs e deixa a teia ligar o resto', () => {
+    const many = Array.from({ length: 30 }, (_, index) =>
+      entity(`e${index}`, 'theme', `Tema ${index}`),
+    );
+    const manyLinks = many.map((item, index) => link('n1', item.id, index + 1));
+    const data = buildGraph({
+      entries: [entry('n1', '2026-10-20T10:00:00Z')],
+      entities: many,
+      links: manyLinks,
+      centerLabel: 'Você',
+    });
+    const relation = data.edges.filter((edge) => edge.kind === 'relation');
+    // O dono não vira um sol: fala com uma parte e o resto vem pela teia.
+    expect(relation.length).toBeLessThan(data.nodes.length);
+    expect(relation.length).toBeGreaterThanOrEqual(8);
+    const touched = new Set<string>();
+    for (const edge of data.edges) {
+      touched.add(edge.source);
+      touched.add(edge.target);
+    }
+    // Nada flutua solto.
+    for (const node of data.nodes) expect(touched.has(node.id)).toBe(true);
+  });
+
   it('respeita os tipos visíveis', () => {
     const data = buildGraph(
       { entries, entities, links, centerLabel: 'Você' },

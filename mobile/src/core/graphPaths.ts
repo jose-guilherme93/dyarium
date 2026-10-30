@@ -30,10 +30,12 @@ export function edgesPath(
   layout: GraphLayout,
   kind: GraphEdgeKind,
   allowed?: ReadonlySet<string> | null,
+  minWeight = 0,
 ): string {
   const parts: string[] = [];
   for (const edge of data.edges) {
     if (edge.kind !== kind) continue;
+    if (edge.weight < minWeight) continue;
     if (allowed && !(allowed.has(edge.source) && allowed.has(edge.target))) continue;
     const from = layout.positions[edge.source];
     const to = layout.positions[edge.target];
@@ -66,11 +68,13 @@ export function graphPaths(
   layout: GraphLayout,
   allowed?: ReadonlySet<string> | null,
 ): {
-  edges: Record<GraphEdgeKind, string>;
+  edges: Record<GraphEdgeKind, string> & { cooccurrenceStrong: string };
   nodes: Record<GraphNodeKind, string>;
 } {
-  const edges = {} as Record<GraphEdgeKind, string>;
+  const edges = {} as Record<GraphEdgeKind, string> & { cooccurrenceStrong: string };
   for (const kind of EDGE_KINDS) edges[kind] = edgesPath(data, layout, kind, allowed);
+  // As co-ocorrencias repetidas ganham um traco mais forte por cima.
+  edges.cooccurrenceStrong = edgesPath(data, layout, 'cooccurrence', allowed, 2);
   const nodes = {} as Record<GraphNodeKind, string>;
   for (const kind of NODE_KINDS) nodes[kind] = nodesPath(data, layout, kind, allowed);
   return { edges, nodes };

@@ -25,6 +25,9 @@ import type {
 import { isEntityKind, nodeId, splitNodeId, userNode } from './graphModel';
 
 const DEFAULT_EDGES_PER_NODE = 16;
+/** Quantas bolas o dono toca diretamente; o resto chega pela teia. */
+const HUB_MIN = 8;
+const HUB_MAX = 14;
 const DEFAULT_NODE_LIMIT = 250;
 const DEFAULT_NOTE_LIMIT = 100;
 
@@ -40,6 +43,11 @@ interface Aggregate {
   sentimentSum: number;
   sentimentCount: number;
   lastSeen: string;
+}
+
+/** Quantas bolas o dono toca diretamente, cresce devagar com o mapa. */
+function hubCount(total: number): number {
+  return Math.min(HUB_MAX, Math.max(HUB_MIN, Math.round(Math.sqrt(total) * 2)));
 }
 
 /** Notas visiveis pelo filtro de tipo (o mapa inteiro e as de todos os tipos). */
@@ -113,16 +121,37 @@ export function buildGraph(source: GraphSource, options: GraphOptions = {}): Gra
     kept.map((node) => node.id.slice(node.id.indexOf(':') + 1)),
   );
 
-  const edges: GraphEdge[] = kept.map((node) => ({
-    source: 'user',
-    target: node.id,
-    kind: 'relation',
-    weight: node.notes,
-  }));
-
-  edges.push(
-    ...cooccurrenceEdges(links, aggregates, kinds, options.edgesPerNode, keptEntityIds),
+  const cooccurrence = cooccurrenceEdges(
+    links,
+    aggregates,
+    kinds,
+    options.edgesPerNode,
+    keptEntityIds,
   );
+
+  // O dono puxa so os hubs (as mais mencionadas); as outras chegam pela teia
+  // de co-ocorrencia. Sem isso o centro vira um sol e o mapa, um leque de
+  // raios em vez de teia. Bola que ficaria sem nenhuma ligacao ainda ganha a
+  // aresta direta, para nada flutuar solto.
+  const hubs = new Set(
+    kept.slice(0, hubCount(kept.length)).map((node) => node.id),
+  );
+  const linked = new Set<string>();
+  for (const edge of cooccurrence) {
+    linked.add(edge.source);
+    linked.add(edge.target);
+  }
+  const edges: GraphEdge[] = [];
+  for (const node of kept) {
+    if (!hubs.has(node.id) && linked.has(node.id)) continue;
+    edges.push({
+      source: 'user',
+      target: node.id,
+      kind: 'relation',
+      weight: node.notes,
+    });
+  }
+  edges.push(...cooccurrence);
 
   return {
     center: userNode(source.centerLabel),

@@ -54,7 +54,12 @@ describe('graphPaths', () => {
 
   it('separa arestas e nós por tipo', () => {
     const paths = graphPaths(data, layout);
-    expect(Object.keys(paths.edges).sort()).toEqual(['cooccurrence', 'mention', 'relation']);
+    expect(Object.keys(paths.edges).sort()).toEqual([
+      'cooccurrence',
+      'cooccurrenceStrong',
+      'mention',
+      'relation',
+    ]);
     expect(Object.keys(paths.nodes)).toEqual(['person', 'place', 'theme', 'decision', 'note']);
   });
 

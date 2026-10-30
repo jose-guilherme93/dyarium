@@ -629,7 +629,9 @@ corpo reaparecia na pilha do dashboard sem nenhuma forma de apagar.
   (`entities`, `entity_aliases`, `entry_entities`, `owner_aliases`), deriva os vinculos
   ao salvar cada analise e calcula o layout localmente, sem chamar `GET /graph`. O desenho
   usa a mesma relaxacao de forcas do dashboard (repulsao, mola pelas ligacoes e ancora no
-  dono) e o mesmo tamanho relativo por mencoes, entao as duas telas tem a mesma cara; o
+  dono) e o mesmo tamanho relativo por mencoes, entao as duas telas tem a mesma cara. O
+  dono liga so as bolas mais mencionadas e sao elas que puxam o resto pela co-ocorrencia,
+  o que da a teia em vez de um leque de raios; o
   resultado e deterministico e fica em cache no SQLite. A cena inteira e desenhada uma vez
   em SVG e o pan e a pinca transformam o container nativo: nenhum frame reconstroi o
   desenho, e rotulos e icones so sao refeitos quando o gesto termina. O encaixe mostra o
