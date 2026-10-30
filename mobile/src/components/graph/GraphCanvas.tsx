@@ -26,6 +26,7 @@ import {
 import { StyleSheet, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
+  Easing,
   runOnJS,
   useAnimatedProps,
   useAnimatedStyle,
@@ -59,6 +60,12 @@ const MIN_ICON_RADIUS = 4;
 const MIN_LABEL_BALL = 4;
 /** Tempo do nome entrando. */
 const LABEL_FADE_MS = 150;
+/** Folga em volta das bolas escolhidas, em pt de tela. */
+const FOCUS_PADDING = 34;
+/** Teto do zoom de foco: a bola e as vizinhas preenchem a faixa. */
+const FOCUS_MAX_ZOOM = 3.2;
+/** Animacao da camera ao trocar de bola. */
+const MOTION_CAMERA = { duration: 420, easing: Easing.inOut(Easing.cubic) } as const;
 /** Teto de icones desenhados. */
 const MAX_ICONS = 80;
 
@@ -186,6 +193,11 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
     ],
   }));
 
+  const selectedNeighbors = useMemo(
+    () => (selectedId ? neighborIds(data, selectedId) : new Set<string>()),
+    [data, selectedId],
+  );
+
   // Nomes: quais aparecem depende de quanto espaco existe **agora**. A
   // escolha roda no fim do gesto, uma vez, e so troca os textos quando o
   // conjunto muda de verdade.
@@ -236,29 +248,84 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
     selectedId,
   ]);
 
-  // Encaixe a cada mudanca de conjunto (filtro, foco, tamanho ou folha).
+  /**
+   * Camera que enquadra a bola escolhida e as vizinhas. Sem escolha, e o
+   * encaixe do mapa inteiro. O zoom novo cabe as duas pontas: nunca afasta
+   * alem do encaixe e nunca aproxima mais do que o foco precisa.
+   */
+  const cameraFor = useCallback(
+    (id: string | null) => {
+      if (!id) return { zoom: fitted.zoom, panX: 0, panY: 0 };
+      const ids = [id, ...selectedNeighbors];
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (const nodeId of ids) {
+        const position = layout.positions[nodeId];
+        if (!position) continue;
+        minX = Math.min(minX, position.x - position.r);
+        minY = Math.min(minY, position.y - position.r);
+        maxX = Math.max(maxX, position.x + position.r);
+        maxY = Math.max(maxY, position.y + position.r);
+      }
+      if (!Number.isFinite(minX)) return { zoom: fitted.zoom, panX: 0, panY: 0 };
+      const spanX = Math.max(1, maxX - minX);
+      const spanY = Math.max(1, maxY - minY);
+      const target = clamp(
+        Math.min((width - FOCUS_PADDING * 2) / spanX, (visibleHeight - FOCUS_PADDING * 2) / spanY),
+        fitted.zoom,
+        FOCUS_MAX_ZOOM,
+      );
+      const limits = panLimits(layout.bounds, target, width, visibleHeight);
+      return {
+        zoom: target,
+        panX: clamp(-target * ((minX + maxX) / 2 - fitted.originX), -limits.limitX, limits.limitX),
+        panY: clamp(-target * ((minY + maxY) / 2 - fitted.originY), -limits.limitY, limits.limitY),
+      };
+    },
+    [fitted, selectedNeighbors, layout.positions, layout.bounds, width, visibleHeight],
+  );
+
+  // Encaixe quando o conjunto muda (filtro, foco, tamanho ou folha). Uma troca
+  // de bola nao passa por aqui: quem anima a camera nesse caso e o efeito
+  // abaixo, senao o encaixe pulava por cima da animacao.
+  const framed = useRef('');
   useEffect(() => {
     if (width <= 0 || visibleHeight <= 0) return;
+    const frame = `${layout.key}|${width}|${visibleHeight.toFixed(0)}|${fitted.zoom.toFixed(3)}`;
+    if (framed.current === frame) return;
+    framed.current = frame;
     if (__DEV__) {
       console.log(
         `[map] camera ${spanX.toFixed(0)}x${spanY.toFixed(0)} zoom ${fitted.zoom.toFixed(3)} band ${width}x${visibleHeight.toFixed(0)}`,
       );
     }
-    zoom.value = fitted.zoom;
-    panX.value = fitted.panX;
-    panY.value = fitted.panY;
+    const camera = cameraFor(selectedId);
+    zoom.value = camera.zoom;
+    panX.value = camera.panX;
+    panY.value = camera.panY;
     syncLabels();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layout.key, fitted, width, visibleHeight, spanX, spanY, zoom, panX, panY, syncLabels]);
 
-  // A bola escolhida ganha o nome na hora, sem esperar gesto.
+  // Escolher (ou largar) uma bola leva a camera ate ela, animando as bolas.
+  const appliedSelection = useRef<string | null | undefined>(undefined);
   useEffect(() => {
-    syncLabels();
-  }, [selectedId, syncLabels]);
-
-  const selectedNeighbors = useMemo(
-    () => (selectedId ? neighborIds(data, selectedId) : new Set<string>()),
-    [data, selectedId],
-  );
+    if (width <= 0 || visibleHeight <= 0) return;
+    if (appliedSelection.current === selectedId) return;
+    const first = appliedSelection.current === undefined;
+    appliedSelection.current = selectedId;
+    if (first) return;
+    const camera = cameraFor(selectedId);
+    const done = () => {
+      'worklet';
+      runOnJS(syncLabels)();
+    };
+    zoom.value = withTiming(camera.zoom, MOTION_CAMERA, done);
+    panX.value = withTiming(camera.panX, MOTION_CAMERA);
+    panY.value = withTiming(camera.panY, MOTION_CAMERA);
+  }, [selectedId, cameraFor, width, visibleHeight, zoom, panX, panY, syncLabels]);
 
   // O desenho inteiro, uma vez por conjunto: nada aqui depende da camera.
   const paths = useMemo(() => graphPaths(data, layout), [data, layout]);
