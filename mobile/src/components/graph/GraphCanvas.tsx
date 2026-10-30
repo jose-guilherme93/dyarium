@@ -290,12 +290,16 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
   const [labels, setLabels] = useState<GraphLabel[]>([]);
   const labelsRef = useRef<GraphLabel[]>([]);
 
-  const syncLabels = useCallback(() => {
+  // A camera que a escolha dos nomes ve. Vem por parametro de proposito: logo
+  // depois de escrever num shared value, ler `.value` no JS ainda devolve o
+  // valor anterior (a escrita so chega na thread de UI depois), e os nomes
+  // ficariam com a camera velha.
+  const syncLabels = useCallback((cameraZoom: number, cameraPanX: number, cameraPanY: number) => {
     const next = pickLabels(data, layout, {
       camera: {
-        zoom: zoom.value,
-        panX: panX.value,
-        panY: panY.value,
+        zoom: cameraZoom,
+        panX: cameraPanX,
+        panY: cameraPanY,
         width,
         centerY: band.centerY,
         bandTop: band.top,
@@ -324,9 +328,6 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
     band.centerY,
     fitted.originX,
     fitted.originY,
-    zoom,
-    panX,
-    panY,
     selectedId,
   ]);
 
@@ -347,7 +348,7 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
     zoom.value = fitted.zoom;
     panX.value = fitted.panX;
     panY.value = fitted.panY;
-    syncLabels();
+    syncLabels(fitted.zoom, fitted.panX, fitted.panY);
   }, [layout.key, fitted, width, visibleHeight, spanX, spanY, zoom, panX, panY, syncLabels]);
 
   // O desenho inteiro, uma vez por conjunto: nada aqui depende da camera.
@@ -456,7 +457,7 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
         panY.value = clampWorklet(startPanY.value + event.translationY, -limitY, limitY);
       })
       .onEnd(() => {
-        runOnJS(syncLabels)();
+        runOnJS(syncLabels)(zoom.value, panX.value, panY.value);
       });
 
     const pinch = Gesture.Pinch()
@@ -491,7 +492,7 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
         zoom.value = next;
       })
       .onEnd(() => {
-        runOnJS(syncLabels)();
+        runOnJS(syncLabels)(zoom.value, panX.value, panY.value);
       });
 
     // Toque so vence quando nenhum arrasto/pinca aconteceu: Exclusive garante
@@ -527,10 +528,12 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
       const target = clamp(next, fitted.zoom, MAX_ZOOM);
       const ratio = target / zoom.value;
       const limits = panLimits(layout.bounds, target, width, visibleHeight);
+      const nextPanX = clamp(panX.value * ratio, -limits.limitX, limits.limitX);
+      const nextPanY = clamp(panY.value * ratio, -limits.limitY, limits.limitY);
       zoom.value = target;
-      panX.value = clamp(panX.value * ratio, -limits.limitX, limits.limitX);
-      panY.value = clamp(panY.value * ratio, -limits.limitY, limits.limitY);
-      syncLabels();
+      panX.value = nextPanX;
+      panY.value = nextPanY;
+      syncLabels(target, nextPanX, nextPanY);
     },
     [zoom, panX, panY, layout.bounds, width, visibleHeight, fitted.zoom, syncLabels],
   );
@@ -542,12 +545,12 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
       zoomOut: () => animateZoom(zoom.value / 1.6),
       fit() {
         zoom.value = fitted.zoom;
-        panX.value = 0;
-        panY.value = 0;
-        syncLabels();
+        panX.value = fitted.panX;
+        panY.value = fitted.panY;
+        syncLabels(fitted.zoom, fitted.panX, fitted.panY);
       },
     }),
-    [animateZoom, zoom, panX, panY, fitted.zoom, syncLabels],
+    [animateZoom, zoom, panX, panY, fitted, syncLabels],
   );
 
   const kindColor = useMemo<Record<GraphNodeKind, string>>(
