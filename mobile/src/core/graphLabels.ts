@@ -120,57 +120,97 @@ export function pickLabels(
     const selected = node.id === selectedId;
     const forced = selected || pinned.has(node.id);
     if (!forced && position.r < minBall) continue;
+    // Bola fora da area visivel nao precisa de nome.
+    if (view) {
+      if (position.x + position.r < view.minX || position.x - position.r > view.maxX) continue;
+      if (position.y + position.r < view.minY || position.y - position.r > view.maxY) continue;
+    }
 
     const text = shortLabel(node);
     if (!text) continue;
     const width = text.length * fontSize * 0.56;
+    const halfW = width / 2;
+    const halfH = lineHeight / 2;
     const cx = position.x;
+    const cy = position.y;
 
-    // Abaixo da bola, como no mapa do dashboard; sem espaco, tenta acima.
-    const placed = ([1, -1] as const)
-      .map((dir) => {
-        const top =
-          dir > 0
-            ? position.y + position.r + gap
-            : position.y - position.r - gap - lineHeight;
-        return { dir, top, left: cx - width / 2 };
-      })
-      .find((spot) => {
-        const box: Box = {
-          x1: spot.left,
-          y1: spot.top,
-          x2: spot.left + width,
-          y2: spot.top + lineHeight,
-        };
-        // Fora da area visivel no encaixe o nome ficaria atras da folha.
-        if (
-          view &&
-          (box.x1 < view.minX + margin ||
-            box.x2 > view.maxX - margin ||
-            box.y1 < view.minY + margin ||
-            box.y2 > view.maxY - margin)
-        ) {
-          return false;
+    // Abaixo, acima e nos dois lados: o nome ocupa o primeiro vao livre.
+    // Abaixo e o lugar de sempre, como no mapa do dashboard.
+    const spots: { x: number; y: number; box: Box }[] = [
+      {
+        x: cx,
+        y: cy + position.r + gap + fontSize * 0.8,
+        box: {
+          x1: cx - halfW,
+          y1: cy + position.r + gap,
+          x2: cx + halfW,
+          y2: cy + position.r + gap + lineHeight,
+        },
+      },
+      {
+        x: cx,
+        y: cy - position.r - gap - fontSize * 0.2,
+        box: {
+          x1: cx - halfW,
+          y1: cy - position.r - gap - lineHeight,
+          x2: cx + halfW,
+          y2: cy - position.r - gap,
+        },
+      },
+      {
+        x: cx + position.r + gap + halfW,
+        y: cy + fontSize * 0.35,
+        box: {
+          x1: cx + position.r + gap,
+          y1: cy - halfH,
+          x2: cx + position.r + gap + width,
+          y2: cy + halfH,
+        },
+      },
+      {
+        x: cx - position.r - gap - halfW,
+        y: cy + fontSize * 0.35,
+        box: {
+          x1: cx - position.r - gap - width,
+          y1: cy - halfH,
+          x2: cx - position.r - gap,
+          y2: cy + halfH,
+        },
+      },
+    ];
+
+    const placed = spots.find((spot) => {
+      const box = spot.box;
+      // O topo do mapa tem os chips e o pe tem a folha; as laterais cortam o
+      // texto. O nome so entra onde aparece inteiro.
+      if (
+        view &&
+        (box.y1 < view.minY + margin ||
+          box.y2 > view.maxY - margin ||
+          box.x1 < view.minX + margin ||
+          box.x2 > view.maxX - margin)
+      ) {
+        return false;
+      }
+      if (forced) return true;
+      if (balls.some((ball) => overlaps(ball, box))) return false;
+      const minCellX = Math.floor(box.x1 / cell);
+      const maxCellX = Math.floor(box.x2 / cell);
+      const minCellY = Math.floor(box.y1 / cell);
+      const maxCellY = Math.floor(box.y2 / cell);
+      for (let gx = minCellX; gx <= maxCellX; gx += 1) {
+        for (let gy = minCellY; gy <= maxCellY; gy += 1) {
+          if (occupied.has(`${gx}:${gy}`)) return false;
         }
-        if (forced) return true;
-        if (balls.some((ball) => overlaps(ball, box))) return false;
-        const minCellX = Math.floor(box.x1 / cell);
-        const maxCellX = Math.floor(box.x2 / cell);
-        const minCellY = Math.floor(box.y1 / cell);
-        const maxCellY = Math.floor(box.y2 / cell);
-        for (let gx = minCellX; gx <= maxCellX; gx += 1) {
-          for (let gy = minCellY; gy <= maxCellY; gy += 1) {
-            if (occupied.has(`${gx}:${gy}`)) return false;
-          }
-        }
-        return true;
-      });
+      }
+      return true;
+    });
     if (!placed) continue;
 
-    const minCellX = Math.floor(placed.left / cell);
-    const maxCellX = Math.floor((placed.left + width) / cell);
-    const minCellY = Math.floor(placed.top / cell);
-    const maxCellY = Math.floor((placed.top + lineHeight) / cell);
+    const minCellX = Math.floor(placed.box.x1 / cell);
+    const maxCellX = Math.floor(placed.box.x2 / cell);
+    const minCellY = Math.floor(placed.box.y1 / cell);
+    const maxCellY = Math.floor(placed.box.y2 / cell);
     for (let gx = minCellX; gx <= maxCellX; gx += 1) {
       for (let gy = minCellY; gy <= maxCellY; gy += 1) {
         occupied.add(`${gx}:${gy}`);
@@ -180,11 +220,8 @@ export function pickLabels(
     out.push({
       id: node.id,
       text,
-      x: position.x,
-      y:
-        placed.dir > 0
-          ? position.y + position.r + gap + fontSize * 0.8
-          : position.y - position.r - gap - fontSize * 0.2,
+      x: placed.x,
+      y: placed.y,
       fontSize,
       kind: node.kind,
       selected,

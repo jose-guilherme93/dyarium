@@ -41,6 +41,12 @@ describe('pickLabels', () => {
     expect(owner!.y).toBeGreaterThan(layout.positions[data.center.id].y);
   });
 
+  it('preenche o espaço livre: quase toda bola ganha nome', () => {
+    const labels = pickLabels(data, layout, { scale: 1 });
+    // Abaixo, acima e nos lados: o nome ocupa o primeiro vão livre.
+    expect(labels.length).toBeGreaterThanOrEqual(data.nodes.length * 0.7);
+  });
+
   it('não cai em cima de outra bola', () => {
     const labels = pickLabels(data, layout, { scale: 0.6 });
     const font = labels[0].fontSize;
