@@ -53,8 +53,8 @@ const FIT_MAX_ZOOM = 1.4;
 const TAP_SLOP = 14;
 /** Margem da animacao dos botoes de zoom. */
 const BUTTON_MS = 220;
-/** Bola menor que isso na tela nao mostra icone (vira poeira). */
-const MIN_ICON_RADIUS = 6;
+/** Bola menor que isso em unidades do grafo nao mostra icone (vira poeira). */
+const MIN_ICON_RADIUS = 7;
 /** Teto de icones desenhados. */
 const MAX_ICONS = 80;
 
@@ -182,7 +182,8 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
     [data, layout, activeIds],
   );
 
-  // Icones e rotulos dependem da camera, mas so sao refeitos no fim do gesto.
+  // Icones proporcionais a bola, em unidades do grafo: o zoom nao muda nada
+  // aqui, entao o desenho nao e remontado durante o gesto.
   const iconNodes = useMemo(() => {
     const out: {
       id: string;
@@ -195,17 +196,14 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
     const push = (id: string, kind: GraphNodeKind, icon?: string) => {
       const position = layout.positions[id];
       if (!position) return;
-      const screenRadius = position.r * view.zoom;
-      if (out.length > 0 && screenRadius < MIN_ICON_RADIUS) return;
-      // Icone com tamanho legivel na tela, sem estourar a bola.
-      const size = Math.min(clamp(screenRadius * 1.25, 8, 18), screenRadius * 1.5);
+      if (position.r < MIN_ICON_RADIUS) return;
       out.push({
         id,
         kind,
         icon,
         x: position.x,
         y: position.y,
-        size,
+        size: Math.min(position.r * 1.1, 22),
       });
     };
     push(data.center.id, 'user', data.center.icon);
@@ -214,7 +212,7 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
       push(node.id, node.kind, node.icon);
     }
     return out;
-  }, [data, layout, view.zoom]);
+  }, [data, layout]);
 
   const labels = useMemo(
     () =>
@@ -248,6 +246,33 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
       band.bottom,
       selectedId,
     ],
+  );
+
+  // A camada de icones so muda com o conjunto, a selecao ou o tema. Guardar os
+  // elementos prontos faz o React pular a subarvore inteira em cada gesto.
+  const iconLayer = useMemo(
+    () =>
+      iconNodes.map((node) => {
+        const scale = node.size / 24;
+        const dim =
+          Boolean(selectedId) &&
+          node.id !== data.center.id &&
+          !(activeIds?.has(node.id) ?? false);
+        return iconPaths(iconKeyFor(node.kind, node.icon)).map((d, index) => (
+          <Path
+            key={`${node.id}:${index}`}
+            d={d}
+            fill="none"
+            stroke={colors.ink}
+            strokeWidth={1.5 / (scale * fitted.zoom)}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            opacity={dim ? 0.16 : 1}
+            transform={`translate(${node.x - 12 * scale} ${node.y - 12 * scale}) scale(${scale})`}
+          />
+        ));
+      }),
+    [iconNodes, colors.ink, selectedId, activeIds, data.center.id, fitted.zoom],
   );
 
   const selectAt = useCallback(
@@ -440,14 +465,21 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
               stroke={colors.edge}
               strokeWidth={0.6 / z}
               fill="none"
-              opacity={selectedId ? 0.06 : 0.11}
+              opacity={selectedId ? 0.05 : 0.09}
+            />
+            <Path
+              d={paths.edges.cooccurrenceStrong}
+              stroke={colors.edgeStrong}
+              strokeWidth={1.05 / z}
+              fill="none"
+              opacity={selectedId ? 0.1 : 0.2}
             />
             <Path
               d={paths.edges.relation}
               stroke={colors.edgeStrong}
-              strokeWidth={1.1 / z}
+              strokeWidth={0.9 / z}
               fill="none"
-              opacity={selectedId ? 0.12 : 0.2}
+              opacity={selectedId ? 0.1 : 0.16}
             />
             <Path
               d={paths.edges.mention}
@@ -455,7 +487,7 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
               strokeWidth={1.1 / z}
               strokeDasharray={`${5 / z} ${4 / z}`}
               fill="none"
-              opacity={selectedId ? 0.16 : 0.3}
+              opacity={selectedId ? 0.16 : 0.28}
             />
 
             {(Object.keys(paths.nodes) as GraphNodeKind[]).map((kind) => (
@@ -529,26 +561,7 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
               />
             ) : null}
 
-            {iconNodes.map((node) => {
-              const scale = node.size / 24;
-              const dim =
-                Boolean(selectedId) &&
-                node.id !== data.center.id &&
-                !(activeIds?.has(node.id) ?? false);
-              return iconPaths(iconKeyFor(node.kind, node.icon)).map((d, index) => (
-                <Path
-                  key={`${node.id}:${index}`}
-                  d={d}
-                  fill="none"
-                  stroke={colors.ink}
-                  strokeWidth={1.3 / (scale * z)}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  opacity={dim ? 0.16 : 1}
-                  transform={`translate(${node.x - 12 * scale} ${node.y - 12 * scale}) scale(${scale})`}
-                />
-              ));
-            })}
+            {iconLayer}
 
             {labels.map((label) => (
               <SvgText
