@@ -427,6 +427,7 @@ export default function NotebookScreen() {
       onChangeQuery={setQuery}
       onOpenNotebooks={() => setNotebookPickerOpen(true)}
       onOpenSync={() => push('/sync')}
+      onOpenMap={() => push('/map')}
       onOpenActivity={() => setActivityOpen(true)}
       onOpenSettings={() => push('/settings')}
     />

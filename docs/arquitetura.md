@@ -625,6 +625,27 @@ corpo reaparecia na pilha do dashboard sem nenhuma forma de apagar.
   O cliente desenha em canvas com forca local e tamanho relativo ao maior no da visao;
   o servidor nao manda layout nem posicao. O mapa inclui todas as notas, inclusive as de
   autor "outros": o diario e do dono, mesmo quando a fala e de outra pessoa.
+- No aparelho o mapa e independente: o app reproduz as mesmas quatro tabelas
+  (`entities`, `entity_aliases`, `entry_entities`, `owner_aliases`), deriva os vinculos
+  ao salvar cada analise e calcula o layout localmente, sem chamar `GET /graph`. O desenho
+  usa a mesma relaxacao de forcas do dashboard (repulsao, mola pelas ligacoes e ancora no
+  dono) e o mesmo tamanho relativo por mencoes, entao as duas telas tem a mesma cara; o
+  resultado e deterministico e fica em cache no SQLite. A cena inteira e desenhada uma vez
+  em SVG e o pan e a pinca transformam o container nativo: nenhum frame reconstroi o
+  desenho, e rotulos e icones so sao refeitos quando o gesto termina. O encaixe mostra o
+  conjunto inteiro dentro da faixa acima da folha, com o que e periferico pequeno, e o
+  arrasto nunca tira o desenho da area disponivel. A folha tem tres alturas e a altura
+  cheia rola todos os trechos da entidade.
+  Para o desenho nao crescer sem limite, o app desenha no maximo 120 entidades (as mais
+  mencionadas) e 120 notas no foco, como os limites do servidor; o painel de detalhe lista
+  todas as notas e trechos. Abrir o mapa nao parseia payload de analise nem transcricao:
+  so identificacao, caderno e chaves sao lidos; os trechos e o tom do Humor sao carregados
+  sob demanda, e analises antigas sao derivadas em segundo plano, em lotes curtos, sem
+  bloquear o primeiro gesto.
+  Renomear, trocar icone e "sou eu" sao aplicados no SQLite local e enfileirados em
+  `entity_outbox`; o pull empurra a fila e aplica o catalogo de `GET /entities`
+  (`updated_at`, `aliases` e `owner_aliases`), entao as duas pontas convergem sem
+  depender da rede para abrir o mapa.
 
 ## Limites e configuracoes relevantes
 

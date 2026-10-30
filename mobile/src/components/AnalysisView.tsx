@@ -58,12 +58,22 @@ export interface AnalysisViewProps {
   onChangeAnalysisModel?(): void;
   /** Fecha a analise e abre os interruptores de processamento. */
   onOpenProcessing?(): void;
+  /** Abre a entidade no mapa (pessoa, lugar ou tema citado na analise). */
+  onOpenEntity?(kind: 'person' | 'place' | 'theme', name: string): void;
   onClose(): void;
 }
 
 /** Conteudo da analise: metricas e listas, secao por secao. */
-function AnalysisContent({ analysis }: { analysis: NoteAnalysisView }) {
+function AnalysisContent({
+  analysis,
+  onOpenEntity,
+}: {
+  analysis: NoteAnalysisView;
+  onOpenEntity?: AnalysisViewProps['onOpenEntity'];
+}) {
   const styles = useThemedStyles(baseStyles);
+  const open = (kind: 'person' | 'place' | 'theme', name: string) => () =>
+    onOpenEntity?.(kind, name);
 
   return (
     <View style={styles.analysis}>
@@ -162,9 +172,16 @@ function AnalysisContent({ analysis }: { analysis: NoteAnalysisView }) {
           <Text style={styles.analysisBlockTitle}>Temas</Text>
           <View style={styles.chips}>
             {analysis.themes.map((theme, index) => (
-              <Text key={`${theme}-${index}`} style={styles.chip}>
-                {theme}
-              </Text>
+              <Press
+                key={`${theme}-${index}`}
+                style={styles.chipPress}
+                onPress={open('theme', theme)}
+                disabled={!onOpenEntity}
+                accessibilityRole="button"
+                accessibilityLabel={`Abrir ${theme} no mapa`}
+              >
+                <Text style={styles.chip}>{theme}</Text>
+              </Press>
             ))}
           </View>
         </View>
@@ -175,15 +192,20 @@ function AnalysisContent({ analysis }: { analysis: NoteAnalysisView }) {
           <Text style={styles.analysisBlockTitle}>Pessoas</Text>
           <View style={styles.chips}>
             {analysis.peopleDetail.map((person) => (
-              <Text
+              <Press
                 key={person.name}
-                style={styles.chip}
-                accessibilityLabel={`${person.name}, ${person.count} ${
+                style={styles.chipPress}
+                onPress={open('person', person.name)}
+                disabled={!onOpenEntity}
+                accessibilityRole="button"
+                accessibilityLabel={`Abrir ${person.name} no mapa, ${person.count} ${
                   person.count === 1 ? 'menção' : 'menções'
                 }.`}
               >
-                {person.name} {person.count}
-              </Text>
+                <Text style={styles.chip}>
+                  {person.name} {person.count}
+                </Text>
+              </Press>
             ))}
           </View>
         </View>
@@ -194,15 +216,20 @@ function AnalysisContent({ analysis }: { analysis: NoteAnalysisView }) {
           <Text style={styles.analysisBlockTitle}>Lugares</Text>
           <View style={styles.chips}>
             {analysis.placesDetail.map((place) => (
-              <Text
+              <Press
                 key={place.name}
-                style={styles.chip}
-                accessibilityLabel={`${place.name}, ${place.count} ${
+                style={styles.chipPress}
+                onPress={open('place', place.name)}
+                disabled={!onOpenEntity}
+                accessibilityRole="button"
+                accessibilityLabel={`Abrir ${place.name} no mapa, ${place.count} ${
                   place.count === 1 ? 'menção' : 'menções'
                 }.`}
               >
-                {place.name} {place.count}
-              </Text>
+                <Text style={styles.chip}>
+                  {place.name} {place.count}
+                </Text>
+              </Press>
             ))}
           </View>
         </View>
@@ -354,6 +381,7 @@ export function AnalysisView({
   onStopAnalysis,
   onChangeAnalysisModel,
   onOpenProcessing,
+  onOpenEntity,
   onClose,
 }: AnalysisViewProps) {
   const styles = useThemedStyles(baseStyles);
@@ -464,7 +492,7 @@ export function AnalysisView({
           {analysisLoading && !analysis ? (
             <AnalysisSkeleton />
           ) : analysis ? (
-            <AnalysisContent analysis={analysis} />
+            <AnalysisContent analysis={analysis} onOpenEntity={onOpenEntity} />
           ) : (
             <Text style={styles.muted}>Sem análise para esta nota.</Text>
           )}
@@ -752,6 +780,11 @@ const baseStyles = defineStyles({
   analysisSectionTitle: { fontSize: fontSize.sm, fontWeight: '600', color: baseColors.text },
   analysisSummary: { color: baseColors.text, fontSize: fontSize.md, lineHeight: 22 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
+  chipPress: {
+    borderRadius: radius.pill,
+    backgroundColor: baseColors.surfaceElevated,
+    overflow: 'hidden',
+  },
   chip: {
     color: baseColors.textSecondary,
     fontSize: fontSize.xs,
