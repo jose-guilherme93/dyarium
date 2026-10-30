@@ -1,28 +1,22 @@
 /**
- * Rotulos do mapa: recompensa do zoom.
+ * Rotulos do mapa.
  *
- * O desenho e um so, mas o texto e caro: no encaixe aparecem os mais
- * mencionados, e aproximar revela mais bolas. A escolha acontece no fim do
- * gesto, nunca por frame, e usa uma grade de colisao em coordenadas de tela.
+ * Eles fazem parte do desenho: posicao e tamanho em unidades do grafo, como as
+ * bolas. O zoom nao recalcula nada, so amplia a mesma imagem. A escolha de
+ * quem ganha nome acontece uma vez por conjunto, com colisao em espaco de
+ * grafo: o que nao encosta no encaixe tambem nao encosta em zoom nenhum.
  */
 
 import type { GraphData, GraphNode } from './graphModel';
 import type { GraphLayout } from './graphLayout';
 
-export interface Camera {
-  zoom: number;
-  panX: number;
-  panY: number;
-  width: number;
-  height: number;
-  /** Centro do desenho em coordenadas do grafo (padrao: a origem). */
-  originX?: number;
-  originY?: number;
-  /** Centro vertical da faixa visivel (padrao: o meio da tela). */
-  centerY?: number;
-  /** Limites verticais da faixa visivel (padrao: a tela inteira). */
-  bandTop?: number;
-  bandBottom?: number;
+export interface LabelOptions {
+  /** Tamanho de um ponto de tela em unidades do grafo (1 / zoom do encaixe). */
+  scale: number;
+  /** Area visivel no encaixe, em unidades do grafo. */
+  view?: { minX: number; minY: number; maxX: number; maxY: number };
+  selectedId?: string | null;
+  budget?: number;
 }
 
 export interface GraphLabel {
@@ -31,11 +25,11 @@ export interface GraphLabel {
   /** Posicao em coordenadas do grafo. */
   x: number;
   y: number;
-  /** Tamanho em unidades do grafo, para ficar ~11pt na tela. */
+  /** Tamanho em unidades do grafo: acompanha o zoom junto com a bola. */
   fontSize: number;
   kind: GraphNode['kind'];
   selected: boolean;
-  /** Rotulo que nao cede espaco: o dono e a bola escolhida. */
+  /** Rotulo que nao cede espaco: o dono, a bola escolhida e as principais. */
   forced: boolean;
 }
 
@@ -51,18 +45,13 @@ function overlaps(a: Box, b: Box): boolean {
 }
 
 const FONT_SCREEN = 10;
-const LINE_HEIGHT = 13;
-const CELL = 48;
-const MARGIN = 8;
-
-/** Quantos rotulos cada faixa de zoom comporta. */
-export function labelBudget(zoom: number): number {
-  if (zoom < 0.5) return 14;
-  if (zoom < 1) return 20;
-  if (zoom < 1.8) return 28;
-  if (zoom < 2.4) return 36;
-  return 48;
-}
+const LINE_HEIGHT_SCREEN = 13;
+const GAP_SCREEN = 7;
+const CELL_SCREEN = 48;
+const MARGIN_SCREEN = 8;
+const MAX_LABELS = 40;
+/** Bola menor que um quarto da altura do texto fica sem nome: e poeira. */
+const MIN_BALL_FONT = 0.25;
 
 function shortLabel(node: GraphNode): string {
   const text = node.label.trim();
@@ -73,37 +62,32 @@ function shortLabel(node: GraphNode): string {
 export function pickLabels(
   data: GraphData,
   layout: GraphLayout,
-  camera: Camera,
-  selectedId: string | null,
-  budget = labelBudget(camera.zoom),
+  options: LabelOptions,
 ): GraphLabel[] {
+  const scale = options.scale > 0 ? options.scale : 1;
+  const fontSize = FONT_SCREEN * scale;
+  const lineHeight = LINE_HEIGHT_SCREEN * scale;
+  const gap = GAP_SCREEN * scale;
+  const cell = CELL_SCREEN * scale;
+  const budget = options.budget ?? MAX_LABELS;
+  const selectedId = options.selectedId ?? null;
+  const margin = MARGIN_SCREEN * scale;
+  const view = options.view;
+
   const occupied = new Set<string>();
-  // Bolas em coordenadas de tela: um rotulo nunca cai em cima de uma delas.
   const balls: Box[] = [];
-  const out: GraphLabel[] = [];
-
-  const originX = camera.originX ?? 0;
-  const originY = camera.originY ?? 0;
-  const centerY = camera.centerY ?? camera.height / 2;
-  const bandTop = camera.bandTop ?? 0;
-  const bandBottom = camera.bandBottom ?? camera.height;
-
-  const toScreenX = (x: number) =>
-    camera.width / 2 + camera.panX + (x - originX) * camera.zoom;
-  const toScreenY = (y: number) => centerY + camera.panY + (y - originY) * camera.zoom;
-
-  const addBall = (id: string) => {
-    const position = layout.positions[id];
-    if (!position) return;
-    const sr = position.r * camera.zoom;
+  for (const node of [data.center, ...data.nodes]) {
+    const position = layout.positions[node.id];
+    if (!position) continue;
     // Bola pequena demais nao bloqueia rotulo: e poeira, nao referencia.
-    if (sr < 4) return;
-    const sx = toScreenX(position.x);
-    const sy = toScreenY(position.y);
-    balls.push({ x1: sx - sr, y1: sy - sr, x2: sx + sr, y2: sy + sr });
-  };
-  addBall(data.center.id);
-  for (const node of data.nodes) addBall(node.id);
+    if (position.r < fontSize * MIN_BALL_FONT && node.id !== data.center.id) continue;
+    balls.push({
+      x1: position.x - position.r,
+      y1: position.y - position.r,
+      x2: position.x + position.r,
+      y2: position.y + position.r,
+    });
+  }
 
   // O dono e sempre o primeiro rotulo: o centro do mapa precisa de nome mesmo
   // quando as bolas ao redor disputam espaco.
@@ -121,47 +105,52 @@ export function pickLabels(
   // As bolas principais ganham nome sempre: sao a leitura do mapa.
   const pinned = new Set(ordered.slice(0, 4).map((node) => node.id));
 
+  const out: GraphLabel[] = [];
   for (const node of ordered) {
     if (out.length >= budget) break;
     const position = layout.positions[node.id];
     if (!position) continue;
-    const screenRadius = position.r * camera.zoom;
     const selected = node.id === selectedId;
     const forced = selected || pinned.has(node.id);
-    if (!forced && screenRadius < 2.5) continue;
+    if (!forced && position.r < fontSize * MIN_BALL_FONT) continue;
 
     const text = shortLabel(node);
     if (!text) continue;
-    const width = text.length * FONT_SCREEN * 0.56;
-    const height = LINE_HEIGHT;
-    const cx = toScreenX(position.x);
-    const cy = toScreenY(position.y);
+    const width = text.length * fontSize * 0.56;
+    const cx = position.x;
+
     // Abaixo da bola, como no mapa do dashboard; sem espaco, tenta acima.
     const placed = ([1, -1] as const)
       .map((dir) => {
-        const top = dir > 0 ? cy + screenRadius + 7 : cy - screenRadius - 7 - height;
-        const left = cx - width / 2;
-        const inside =
-          left >= MARGIN &&
-          top >= bandTop + MARGIN &&
-          left + width <= camera.width - MARGIN &&
-          top + height <= bandBottom - MARGIN;
-        return { dir, top, left, inside };
+        const top =
+          dir > 0
+            ? position.y + position.r + gap
+            : position.y - position.r - gap - lineHeight;
+        return { dir, top, left: cx - width / 2 };
       })
       .find((spot) => {
-        if (!spot.inside) return false;
-        if (forced) return true;
         const box: Box = {
           x1: spot.left,
           y1: spot.top,
           x2: spot.left + width,
-          y2: spot.top + height,
+          y2: spot.top + lineHeight,
         };
+        // Fora da area visivel no encaixe o nome ficaria atras da folha.
+        if (
+          view &&
+          (box.x1 < view.minX + margin ||
+            box.x2 > view.maxX - margin ||
+            box.y1 < view.minY + margin ||
+            box.y2 > view.maxY - margin)
+        ) {
+          return false;
+        }
+        if (forced) return true;
         if (balls.some((ball) => overlaps(ball, box))) return false;
-        const minCellX = Math.floor(box.x1 / CELL);
-        const maxCellX = Math.floor(box.x2 / CELL);
-        const minCellY = Math.floor(box.y1 / CELL);
-        const maxCellY = Math.floor(box.y2 / CELL);
+        const minCellX = Math.floor(box.x1 / cell);
+        const maxCellX = Math.floor(box.x2 / cell);
+        const minCellY = Math.floor(box.y1 / cell);
+        const maxCellY = Math.floor(box.y2 / cell);
         for (let gx = minCellX; gx <= maxCellX; gx += 1) {
           for (let gy = minCellY; gy <= maxCellY; gy += 1) {
             if (occupied.has(`${gx}:${gy}`)) return false;
@@ -171,27 +160,25 @@ export function pickLabels(
       });
     if (!placed) continue;
 
-    const minCellX = Math.floor(placed.left / CELL);
-    const maxCellX = Math.floor((placed.left + width) / CELL);
-    const minCellY = Math.floor(placed.top / CELL);
-    const maxCellY = Math.floor((placed.top + height) / CELL);
+    const minCellX = Math.floor(placed.left / cell);
+    const maxCellX = Math.floor((placed.left + width) / cell);
+    const minCellY = Math.floor(placed.top / cell);
+    const maxCellY = Math.floor((placed.top + lineHeight) / cell);
     for (let gx = minCellX; gx <= maxCellX; gx += 1) {
       for (let gy = minCellY; gy <= maxCellY; gy += 1) {
         occupied.add(`${gx}:${gy}`);
       }
     }
 
-    const gap = (7 + FONT_SCREEN * 0.8) / camera.zoom;
     out.push({
       id: node.id,
       text,
       x: position.x,
-      // Direcao do encaixe: abaixo ou acima da bola (o `dir` escolhido).
       y:
         placed.dir > 0
-          ? position.y + position.r + gap
-          : position.y - position.r - (7 + FONT_SCREEN * 0.25) / camera.zoom,
-      fontSize: FONT_SCREEN / camera.zoom,
+          ? position.y + position.r + gap + fontSize * 0.8
+          : position.y - position.r - gap - fontSize * 0.2,
+      fontSize,
       kind: node.kind,
       selected,
       forced,

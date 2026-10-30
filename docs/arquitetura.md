@@ -633,11 +633,12 @@ corpo reaparecia na pilha do dashboard sem nenhuma forma de apagar.
   dono liga so as bolas mais mencionadas e sao elas que puxam o resto pela co-ocorrencia,
   o que da a teia em vez de um leque de raios; o
   resultado e deterministico e fica em cache no SQLite. A cena inteira e desenhada uma vez
-  em SVG e o pan e a pinca transformam o container nativo: nenhum frame reconstroi o
-  desenho, e rotulos e icones so sao refeitos quando o gesto termina. O encaixe mostra o
-  conjunto inteiro dentro da faixa acima da folha, com o que e periferico pequeno, e o
-  arrasto nunca tira o desenho da area disponivel. A folha tem tres alturas e a altura
-  cheia rola todos os trechos da entidade.
+  em SVG, com bolas, icones, linhas e nomes em unidades do grafo; o pan e a pinca so
+  aplicam outra matriz ao container nativo. Ampliar e reduzir e zoom em pixels: nenhum
+  estado do React muda, nenhum elemento e remontado, e os nomes acompanham o desenho. O
+  encaixe mostra o conjunto inteiro dentro da faixa acima da folha, com o que e periferico
+  pequeno, e o arrasto nunca tira o desenho da area disponivel. A folha tem tres alturas e
+  a altura cheia rola todos os trechos da entidade.
   Para o desenho nao crescer sem limite, o app desenha no maximo 120 entidades (as mais
   mencionadas) e 120 notas no foco, como os limites do servidor; o painel de detalhe lista
   todas as notas e trechos. Abrir o mapa nao parseia payload de analise nem transcricao:
