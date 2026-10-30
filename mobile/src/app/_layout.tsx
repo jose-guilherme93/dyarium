@@ -79,7 +79,6 @@ function ThemedRoot() {
               <Stack.Screen name="note/[id]" options={{ animation: 'ios_from_right' }} />
               <Stack.Screen name="transcript/[id]" options={{ animation: 'ios_from_right' }} />
               <Stack.Screen name="record" options={{ animation: 'slide_from_bottom' }} />
-              <Stack.Screen name="map" options={{ animation: 'slide_from_bottom' }} />
             </Stack>
           </RecordingProvider>
         </PlaybackProvider>
