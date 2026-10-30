@@ -26,12 +26,10 @@ import {
 import { StyleSheet, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
-  Easing,
   runOnJS,
   useAnimatedProps,
   useAnimatedStyle,
   useSharedValue,
-  withTiming,
 } from 'react-native-reanimated';
 import Svg, { Circle, Path, Text as SvgText } from 'react-native-svg';
 
@@ -57,20 +55,10 @@ const MAX_ZOOM = 3.2;
 const FIT_PADDING = 12;
 const FIT_MAX_ZOOM = 1.4;
 const TAP_SLOP = 14;
-/** Margem da animacao dos botoes de zoom. */
-const BUTTON_MS = 220;
 /** Folga em volta do desenho, em pt de tela, para o nome nao ser cortado. */
 const EDGE_MARGIN = 28;
 /** Bola menor que isso no encaixe nao mostra icone (vira poeira). */
 const MIN_ICON_RADIUS = 4;
-/** Tempo do nome entrando. */
-const LABEL_FADE_MS = 150;
-/** Folga em volta das bolas escolhidas, em pt de tela. */
-const FOCUS_PADDING = 34;
-/** Teto do zoom de foco: a bola e as vizinhas preenchem a faixa sem exagerar. */
-const FOCUS_MAX_ZOOM = 2.2;
-/** Animacao da camera ao trocar de bola. */
-const MOTION_CAMERA = { duration: 360, easing: Easing.inOut(Easing.cubic) } as const;
 /** Teto de icones desenhados. */
 const MAX_ICONS = 80;
 
@@ -142,11 +130,6 @@ const MapLabel = memo(function MapLabel({
   color: string;
   selectedColor: string;
 }) {
-  const opacity = useSharedValue(0);
-  useEffect(() => {
-    if (text) opacity.value = withTiming(1, { duration: LABEL_FADE_MS });
-    else opacity.value = 0;
-  }, [text, opacity]);
   const animated = useAnimatedProps(() => {
     if (!text) return { opacity: 0, x: -1000, y: -1000 };
     const z = zoom.value;
@@ -155,22 +138,22 @@ const MapLabel = memo(function MapLabel({
     const sr = r * z;
     const textWidth = text.length * LABEL_FONT * 0.56;
     if (side === 'below') {
-      return { x: sx, y: sy + sr + LABEL_GAP + LABEL_FONT * 0.8, opacity: opacity.value };
+      return { x: sx, y: sy + sr + LABEL_GAP + LABEL_FONT * 0.8, opacity: 1 };
     }
     if (side === 'above') {
-      return { x: sx, y: sy - sr - LABEL_GAP - LABEL_FONT * 0.2, opacity: opacity.value };
+      return { x: sx, y: sy - sr - LABEL_GAP - LABEL_FONT * 0.2, opacity: 1 };
     }
     if (side === 'right') {
       return {
         x: sx + sr + LABEL_GAP + textWidth / 2,
         y: sy + LABEL_FONT * 0.35,
-        opacity: opacity.value,
+        opacity: 1,
       };
     }
     return {
       x: sx - sr - LABEL_GAP - textWidth / 2,
       y: sy + LABEL_FONT * 0.35,
-      opacity: opacity.value,
+      opacity: 1,
     };
   });
   return (
@@ -305,50 +288,6 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
     selectedId,
   ]);
 
-  /**
-   * Camera que enquadra a bola escolhida e as vizinhas. Sem escolha, e o
-   * encaixe do mapa inteiro. O zoom novo cabe as duas pontas: nunca afasta
-   * alem do encaixe e nunca aproxima mais do que o foco precisa.
-   */
-  const cameraFor = useCallback(
-    (id: string | null) => {
-      if (!id) return { zoom: fitted.zoom, panX: 0, panY: 0 };
-      const ids = [id, ...selectedNeighbors];
-      let minX = Infinity;
-      let minY = Infinity;
-      let maxX = -Infinity;
-      let maxY = -Infinity;
-      for (const nodeId of ids) {
-        const position = layout.positions[nodeId];
-        if (!position) continue;
-        minX = Math.min(minX, position.x - position.r);
-        minY = Math.min(minY, position.y - position.r);
-        maxX = Math.max(maxX, position.x + position.r);
-        maxY = Math.max(maxY, position.y + position.r);
-      }
-      if (!Number.isFinite(minX)) return { zoom: fitted.zoom, panX: 0, panY: 0 };
-      const spanX = Math.max(1, maxX - minX);
-      const spanY = Math.max(1, maxY - minY);
-      const target = clamp(
-        Math.min((width - FOCUS_PADDING * 2) / spanX, (visibleHeight - FOCUS_PADDING * 2) / spanY),
-        fitted.zoom,
-        FOCUS_MAX_ZOOM,
-      );
-      const limits = panLimits(layout.bounds, target, width, visibleHeight);
-      // A bola escolhida vai para o meio da faixa: as relacoes se abrem em
-      // volta dela, e o dedo arrasta para ver o resto.
-      const focus = layout.positions[id];
-      const cx = focus.x;
-      const cy = focus.y;
-      return {
-        zoom: target,
-        panX: clamp(-target * (cx - fitted.originX), -limits.limitX, limits.limitX),
-        panY: clamp(-target * (cy - fitted.originY), -limits.limitY, limits.limitY),
-      };
-    },
-    [fitted, selectedNeighbors, layout.positions, layout.bounds, width, visibleHeight],
-  );
-
   // Encaixe quando o conjunto muda (filtro, foco, tamanho ou folha). Uma troca
   // de bola nao passa por aqui: quem anima a camera nesse caso e o efeito
   // abaixo, senao o encaixe pulava por cima da animacao.
@@ -363,31 +302,11 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
         `[map] camera ${spanX.toFixed(0)}x${spanY.toFixed(0)} zoom ${fitted.zoom.toFixed(3)} band ${width}x${visibleHeight.toFixed(0)}`,
       );
     }
-    const camera = cameraFor(selectedId);
-    zoom.value = camera.zoom;
-    panX.value = camera.panX;
-    panY.value = camera.panY;
+    zoom.value = fitted.zoom;
+    panX.value = fitted.panX;
+    panY.value = fitted.panY;
     syncLabels();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layout.key, fitted, width, visibleHeight, spanX, spanY, zoom, panX, panY, syncLabels]);
-
-  // Escolher (ou largar) uma bola leva a camera ate ela, animando as bolas.
-  const appliedSelection = useRef<string | null | undefined>(undefined);
-  useEffect(() => {
-    if (width <= 0 || visibleHeight <= 0) return;
-    if (appliedSelection.current === selectedId) return;
-    const first = appliedSelection.current === undefined;
-    appliedSelection.current = selectedId;
-    if (first) return;
-    const camera = cameraFor(selectedId);
-    const done = () => {
-      'worklet';
-      runOnJS(syncLabels)();
-    };
-    zoom.value = withTiming(camera.zoom, MOTION_CAMERA, done);
-    panX.value = withTiming(camera.panX, MOTION_CAMERA);
-    panY.value = withTiming(camera.panY, MOTION_CAMERA);
-  }, [selectedId, cameraFor, width, visibleHeight, zoom, panX, panY, syncLabels]);
 
   // O desenho inteiro, uma vez por conjunto: nada aqui depende da camera.
   const paths = useMemo(() => graphPaths(data, layout), [data, layout]);
@@ -566,15 +485,10 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
       const target = clamp(next, fitted.zoom, MAX_ZOOM);
       const ratio = target / zoom.value;
       const limits = panLimits(layout.bounds, target, width, visibleHeight);
-      zoom.value = withTiming(target, { duration: BUTTON_MS }, () => {
-        runOnJS(syncLabels)();
-      });
-      panX.value = withTiming(clamp(panX.value * ratio, -limits.limitX, limits.limitX), {
-        duration: BUTTON_MS,
-      });
-      panY.value = withTiming(clamp(panY.value * ratio, -limits.limitY, limits.limitY), {
-        duration: BUTTON_MS,
-      });
+      zoom.value = target;
+      panX.value = clamp(panX.value * ratio, -limits.limitX, limits.limitX);
+      panY.value = clamp(panY.value * ratio, -limits.limitY, limits.limitY);
+      syncLabels();
     },
     [zoom, panX, panY, layout.bounds, width, visibleHeight, fitted.zoom, syncLabels],
   );
@@ -585,11 +499,10 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
       zoomIn: () => animateZoom(zoom.value * 1.6),
       zoomOut: () => animateZoom(zoom.value / 1.6),
       fit() {
-        zoom.value = withTiming(fitted.zoom, { duration: BUTTON_MS + 40 }, () => {
-          runOnJS(syncLabels)();
-        });
-        panX.value = withTiming(0, { duration: BUTTON_MS + 40 });
-        panY.value = withTiming(0, { duration: BUTTON_MS + 40 });
+        zoom.value = fitted.zoom;
+        panX.value = 0;
+        panY.value = 0;
+        syncLabels();
       },
     }),
     [animateZoom, zoom, panX, panY, fitted.zoom, syncLabels],

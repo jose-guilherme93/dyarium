@@ -2361,6 +2361,10 @@ export default function NoteScreen() {
           setAnalysisOpen(false);
           setProcessingOpen(true);
         }}
+        onOpenEntity={(kind, name) => {
+          setAnalysisOpen(false);
+          push({ pathname: '/map', params: { focusKind: kind, focusName: name } });
+        }}
         onClose={() => setAnalysisOpen(false)}
       />
 

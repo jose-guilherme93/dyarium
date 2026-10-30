@@ -23,6 +23,7 @@ interface HomeHeaderProps {
   onChangeQuery(value: string): void;
   onOpenNotebooks(): void;
   onOpenSync(): void;
+  onOpenMap(): void;
   onOpenActivity(): void;
   onOpenSettings(): void;
 }
@@ -41,6 +42,7 @@ export function HomeHeader({
   onChangeQuery,
   onOpenNotebooks,
   onOpenSync,
+  onOpenMap,
   onOpenActivity,
   onOpenSettings,
 }: HomeHeaderProps) {
@@ -97,6 +99,13 @@ export function HomeHeader({
             ) : null}
           </Press>
           <HomeActivityButton onPress={onOpenActivity} />
+          <Press
+            style={styles.iconButton}
+            onPress={onOpenMap}
+            accessibilityLabel="Mapa de relações"
+          >
+            <Ionicons name="git-network-outline" size={22} color={colors.text} />
+          </Press>
           <Press
             style={styles.iconButton}
             onPress={onToggleSearch}
