@@ -216,6 +216,10 @@ export interface EntitySummary {
   mentions: number;
   sentiment: number;
   last_seen: string | null;
+  /** Relogio do servidor para nome/icone/"sou eu". */
+  updated_at?: string | null;
+  /** Grafias antigas que ainda resolvem para esta entidade. */
+  aliases?: string[];
 }
 
 export interface EntityEntry {

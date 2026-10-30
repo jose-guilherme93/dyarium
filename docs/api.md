@@ -800,8 +800,13 @@ Lista as entidades extraidas, ordenadas por mencoes. Filtro opcional `kind` (`pe
 `place`, `theme` ou `decision`; outro valor retorna 400).
 ```json
 { "entities": [ { "id": "01J...", "kind": "person", "name": "Maria", "icon": "",
-  "entries": 2, "mentions": 5, "sentiment": 0.4, "last_seen": "2026-10-10T21:05:00Z" } ] }
+  "entries": 2, "mentions": 5, "sentiment": 0.4, "last_seen": "2026-10-10T21:05:00Z",
+  "updated_at": "2026-10-10T21:05:00Z", "aliases": ["Mariana"] } ],
+  "owner_aliases": ["Ze"] }
 ```
+`updated_at` e o relogio do servidor para nome, icone e "sou eu"; `aliases` sao as grafias
+antigas que ainda resolvem para a entidade. `owner_aliases` traz as grafias que o dono
+marcou como ele mesmo, para o app tirar a pessoa duplicada do mapa local.
 
 ### GET /api/v1/entities/{kind}/{name}
 Retorna a entidade (mesmos campos) mais a lista de entradas que a mencionam. Nomes antigos

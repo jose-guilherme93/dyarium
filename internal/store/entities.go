@@ -38,7 +38,8 @@ func (s *Store) ListEntities(ctx context.Context, kind string) ([]EntitySummary,
 			COUNT(DISTINCT ee.entry_id),
 			COALESCE(SUM(ee.count), 0),
 			COALESCE(AVG(ee.sentiment), 0),
-			COALESCE(MAX(COALESCE(e.recorded_at, e.created_at)), '')
+			COALESCE(MAX(COALESCE(e.recorded_at, e.created_at)), ''),
+			COALESCE(en.updated_at, '')
 		FROM entities en
 		JOIN entry_entities ee ON ee.entity_id = en.id
 		JOIN entries e ON e.id = ee.entry_id AND e.deleted_at IS NULL
@@ -52,13 +53,64 @@ func (s *Store) ListEntities(ctx context.Context, kind string) ([]EntitySummary,
 	var out []EntitySummary
 	for rows.Next() {
 		var summary EntitySummary
-		var lastSeen string
+		var lastSeen, updatedAt string
 		if err := rows.Scan(&summary.ID, &summary.Kind, &summary.Name, &summary.Icon, &summary.Entries,
-			&summary.Mentions, &summary.Sentiment, &lastSeen); err != nil {
+			&summary.Mentions, &summary.Sentiment, &lastSeen, &updatedAt); err != nil {
 			return nil, fmt.Errorf("store: scan entity: %w", err)
 		}
 		summary.LastSeen = parseTS(lastSeen)
+		summary.UpdatedAt = parseTS(updatedAt)
 		out = append(out, summary)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	aliases, err := s.entityAliasesByID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].Aliases = aliases[out[i].ID]
+	}
+	return out, nil
+}
+
+// ListOwnerAliases returns every spelling the diarist claimed as themselves.
+// The app pulls them together with the entities so "sou eu" made on the
+// dashboard also removes the duplicate person from the phone's map.
+func (s *Store) ListOwnerAliases(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT name FROM owner_aliases ORDER BY name`)
+	if err != nil {
+		return nil, fmt.Errorf("store: list owner aliases: %w", err)
+	}
+	defer rows.Close()
+	out := make([]string, 0)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("store: scan owner alias: %w", err)
+		}
+		out = append(out, name)
+	}
+	return out, rows.Err()
+}
+
+// entityAliasesByID lists every old spelling grouped by entity. The map is read
+// by the entity list so one sync brings names and aliases together.
+func (s *Store) entityAliasesByID(ctx context.Context) (map[string][]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT entity_id, name FROM entity_aliases ORDER BY created_at, name`)
+	if err != nil {
+		return nil, fmt.Errorf("store: entity aliases by id: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string][]string)
+	for rows.Next() {
+		var entityID, name string
+		if err := rows.Scan(&entityID, &name); err != nil {
+			return nil, fmt.Errorf("store: scan entity alias: %w", err)
+		}
+		out[entityID] = append(out[entityID], name)
 	}
 	return out, rows.Err()
 }
@@ -99,19 +151,20 @@ func (s *Store) GetEntity(ctx context.Context, kind, name string) (EntitySummary
 		return EntitySummary{}, nil, false, nil
 	}
 	var summary EntitySummary
-	var lastSeen string
+	var lastSeen, updatedAt string
 	err = s.db.QueryRowContext(ctx, `
 		SELECT en.id, en.kind, en.name, COALESCE(en.icon, ''),
 			COUNT(DISTINCT ee.entry_id),
 			COALESCE(SUM(ee.count), 0),
 			COALESCE(AVG(ee.sentiment), 0),
-			COALESCE(MAX(COALESCE(e.recorded_at, e.created_at)), '')
+			COALESCE(MAX(COALESCE(e.recorded_at, e.created_at)), ''),
+			COALESCE(en.updated_at, '')
 		FROM entities en
 		JOIN entry_entities ee ON ee.entity_id = en.id
 		JOIN entries e ON e.id = ee.entry_id AND e.deleted_at IS NULL
 		WHERE en.id = ?
 		GROUP BY en.id`, id).Scan(
-		&summary.ID, &summary.Kind, &summary.Name, &summary.Icon, &summary.Entries, &summary.Mentions, &summary.Sentiment, &lastSeen)
+		&summary.ID, &summary.Kind, &summary.Name, &summary.Icon, &summary.Entries, &summary.Mentions, &summary.Sentiment, &lastSeen, &updatedAt)
 	if err == sql.ErrNoRows {
 		return EntitySummary{}, nil, false, nil
 	}
@@ -119,6 +172,12 @@ func (s *Store) GetEntity(ctx context.Context, kind, name string) (EntitySummary
 		return EntitySummary{}, nil, false, fmt.Errorf("store: get entity: %w", err)
 	}
 	summary.LastSeen = parseTS(lastSeen)
+	summary.UpdatedAt = parseTS(updatedAt)
+	aliases, err := s.EntityAliases(ctx, id)
+	if err != nil {
+		return EntitySummary{}, nil, false, err
+	}
+	summary.Aliases = aliases
 
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT e.id, COALESCE(e.title,''), COALESCE(e.recorded_at, e.created_at), ee.count

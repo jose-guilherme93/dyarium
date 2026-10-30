@@ -483,8 +483,8 @@ func upsertEntity(ctx context.Context, ex execer, kind, name string, now time.Ti
 	}
 	id = newID()
 	if _, err := ex.ExecContext(ctx,
-		`INSERT INTO entities (id, kind, name, created_at) VALUES (?, ?, ?, ?)`,
-		id, kind, name, ts(now)); err != nil {
+		`INSERT INTO entities (id, kind, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
+		id, kind, name, ts(now), ts(now)); err != nil {
 		return "", fmt.Errorf("store: create entity: %w", err)
 	}
 	return id, nil

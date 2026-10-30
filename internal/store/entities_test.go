@@ -193,3 +193,43 @@ func TestMoodSeries(t *testing.T) {
 		t.Fatalf("filtro from = %+v", points)
 	}
 }
+
+func TestListEntitiesExposesUpdatedAtAndAliases(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	now := time.Now().UTC()
+	seedEntry(t, s, "e1", now)
+	if err := s.SaveRichAnalysis(ctx, Analysis{
+		ID: "a1", EntryID: "e1", Model: "m", Data: `{}`, CreatedAt: now,
+	}, []EntityLink{{Kind: EntityPerson, Name: "Mariana", Count: 2}}); err != nil {
+		t.Fatalf("save rich analysis: %v", err)
+	}
+
+	before, err := s.ListEntities(ctx, EntityPerson)
+	if err != nil || len(before) != 1 {
+		t.Fatalf("list entities: %v %v", before, err)
+	}
+	if before[0].UpdatedAt.IsZero() {
+		t.Fatalf("entidade sem updated_at: %+v", before[0])
+	}
+
+	// O timestamp tem resolucao de segundo: sem esperar, o rename cai no mesmo
+	// instante e o teste nao prova que a escrita avancou o relogio.
+	time.Sleep(1100 * time.Millisecond)
+	if _, err := s.RenameEntity(ctx, EntityPerson, "Mariana", "Marianna"); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	after, err := s.ListEntities(ctx, EntityPerson)
+	if err != nil || len(after) != 1 {
+		t.Fatalf("list after rename: %v %v", after, err)
+	}
+	if after[0].Name != "Marianna" {
+		t.Fatalf("nome: %q", after[0].Name)
+	}
+	if len(after[0].Aliases) != 1 || after[0].Aliases[0] != "Mariana" {
+		t.Fatalf("aliases: %+v", after[0].Aliases)
+	}
+	if !after[0].UpdatedAt.After(before[0].UpdatedAt) {
+		t.Fatalf("updated_at nao avancou: %v -> %v", before[0].UpdatedAt, after[0].UpdatedAt)
+	}
+}

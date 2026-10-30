@@ -95,6 +95,17 @@ func TestListEntitiesAndDetail(t *testing.T) {
 	if first["name"] != "Maria" || first["mentions"].(float64) != 3 {
 		t.Fatalf("entidade = %+v", first)
 	}
+	// O app sincroniza nome, icone e alias pela lista: os campos precisam sair
+	// aqui, nao so no detalhe.
+	if first["updated_at"] == nil {
+		t.Fatalf("entidade sem updated_at: %+v", first)
+	}
+	if _, ok := first["aliases"].([]any); !ok {
+		t.Fatalf("entidade sem aliases: %+v", first)
+	}
+	if _, ok := body["owner_aliases"].([]any); !ok {
+		t.Fatalf("resposta sem owner_aliases: %+v", body)
+	}
 
 	rec, _ = doJSON(t, srv, http.MethodGet, "/api/v1/entities?kind=bogus", nil)
 	if rec.Code != http.StatusBadRequest {

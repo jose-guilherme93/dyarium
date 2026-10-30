@@ -10,15 +10,21 @@ import (
 )
 
 func entitySummaryJSON(s store.EntitySummary) map[string]any {
+	aliases := s.Aliases
+	if aliases == nil {
+		aliases = []string{}
+	}
 	return map[string]any{
-		"id":        s.ID,
-		"kind":      s.Kind,
-		"name":      s.Name,
-		"icon":      s.Icon,
-		"entries":   s.Entries,
-		"mentions":  s.Mentions,
-		"sentiment": s.Sentiment,
-		"last_seen": nullTime(s.LastSeen),
+		"id":         s.ID,
+		"kind":       s.Kind,
+		"name":       s.Name,
+		"icon":       s.Icon,
+		"entries":    s.Entries,
+		"mentions":   s.Mentions,
+		"sentiment":  s.Sentiment,
+		"last_seen":  nullTime(s.LastSeen),
+		"updated_at": nullTime(s.UpdatedAt),
+		"aliases":    aliases,
 	}
 }
 
@@ -120,11 +126,21 @@ func (s *Server) handleListEntities(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
+	// As grafias "sou eu" viajam junto: sem elas o app nao sabe que uma pessoa
+	// reivindicada no painel saiu do mapa e virou o dono.
+	ownerAliases, err := s.deps.Store.ListOwnerAliases(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
 	out := make([]map[string]any, 0, len(entities))
 	for _, e := range entities {
 		out = append(out, entitySummaryJSON(e))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"entities": out})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"entities":      out,
+		"owner_aliases": ownerAliases,
+	})
 }
 
 func (s *Server) handleGetEntity(w http.ResponseWriter, r *http.Request) {

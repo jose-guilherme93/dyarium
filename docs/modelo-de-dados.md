@@ -205,6 +205,7 @@ Pessoa, lugar, tema ou decisao extraida das analises, normalizada por (`kind`, `
 | name | TEXT | nome como exibido |
 | icon | TEXT | chave de um icone monocromatico da paleta do mapa; vazio usa o do tipo |
 | created_at | TEXT | |
+| updated_at | TEXT | ultima mudanca de nome/icone/"sou eu"; o app usa para reconciliar |
 
 Indices: unico (`kind`, `name`). A paleta de icones e validada pelo servidor e desenhada
 pelo cliente; o banco guarda apenas a chave.
@@ -235,6 +236,7 @@ que a leitura resolve para o `owner_name` das configuracoes.
 |---|---|---|
 | name | TEXT PK | grafia antiga, sem caixa (COLLATE NOCASE) |
 | created_at | TEXT | |
+| updated_at | TEXT | ultima vez que a grafia foi confirmada como do dono |
 
 ## EntryEntity
 

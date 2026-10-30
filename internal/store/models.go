@@ -397,6 +397,11 @@ type EntitySummary struct {
 	Mentions  int
 	Sentiment float64
 	LastSeen  time.Time
+	// UpdatedAt e o relogio do servidor para o nome, o icone e o "sou eu".
+	// O app compara com a propria copia para decidir qual escrita vence.
+	UpdatedAt time.Time
+	// Aliases sao as grafias antigas que ainda resolvem para esta entidade.
+	Aliases []string
 }
 
 // EntityEntry is an entry that mentions an entity.
