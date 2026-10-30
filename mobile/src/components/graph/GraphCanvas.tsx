@@ -20,11 +20,14 @@ import {
   useEffect,
   useImperativeHandle,
   useMemo,
+  useRef,
+  useState,
 } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   runOnJS,
+  useAnimatedProps,
   useAnimatedStyle,
   useSharedValue,
   withTiming,
@@ -34,7 +37,7 @@ import Svg, { Circle, Path, Text as SvgText } from 'react-native-svg';
 import type { GraphData, GraphNodeKind } from '@/core/graphModel';
 import type { GraphLayout } from '@/core/graphLayout';
 import { clamp, fitCamera, panLimits, visibleBand } from '@/core/graphLayout';
-import { pickLabels } from '@/core/graphLabels';
+import { pickLabels, type GraphLabel } from '@/core/graphLabels';
 import { iconKeyFor, iconPaths } from '@/core/graphIcons';
 import { graphPaths, neighborIds, selectedEdgesPath } from '@/core/graphPaths';
 import type { GraphColors } from '@/theme/graph';
@@ -52,6 +55,10 @@ const BUTTON_MS = 220;
 const EDGE_MARGIN = 28;
 /** Bola menor que isso no encaixe nao mostra icone (vira poeira). */
 const MIN_ICON_RADIUS = 4;
+/** Raio minimo da bola, em pt de tela, para ganhar nome. */
+const MIN_LABEL_BALL = 4;
+/** Tempo do nome entrando. */
+const LABEL_FADE_MS = 150;
 /** Teto de icones desenhados. */
 const MAX_ICONS = 80;
 
@@ -79,6 +86,41 @@ function clampWorklet(value: number, min: number, max: number): number {
   'worklet';
   return Math.min(max, Math.max(min, value));
 }
+
+const AnimatedText = Animated.createAnimatedComponent(SvgText);
+
+/**
+ * Um nome do mapa. Entra com um fade curto quando o conjunto muda; a posicao
+ * fica em unidades do grafo, entao o zoom nao mexe nele.
+ */
+const MapLabel = memo(function MapLabel({
+  label,
+  color,
+  selectedColor,
+}: {
+  label: GraphLabel;
+  color: string;
+  selectedColor: string;
+}) {
+  const opacity = useSharedValue(0);
+  useEffect(() => {
+    opacity.value = withTiming(1, { duration: LABEL_FADE_MS });
+  }, [opacity]);
+  const animated = useAnimatedProps(() => ({ opacity: opacity.value }));
+  return (
+    <AnimatedText
+      animatedProps={animated}
+      x={label.x}
+      y={label.y}
+      fill={label.selected ? selectedColor : color}
+      fontSize={label.fontSize}
+      fontWeight={label.selected ? '700' : '500'}
+      textAnchor="middle"
+    >
+      {label.text}
+    </AnimatedText>
+  );
+});
 
 const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function GraphCanvas(
   {
@@ -144,6 +186,56 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
     ],
   }));
 
+  // Nomes: quais aparecem depende de quanto espaco existe **agora**. A
+  // escolha roda no fim do gesto, uma vez, e so troca os textos quando o
+  // conjunto muda de verdade.
+  const [labels, setLabels] = useState<GraphLabel[]>([]);
+  const labelsRef = useRef<GraphLabel[]>([]);
+
+  const syncLabels = useCallback(() => {
+    const z = zoom.value;
+    const pan = panX.value;
+    const offsetY = panY.value;
+    const view = {
+      minX: fitted.originX - (width / 2 + pan) / z,
+      maxX: fitted.originX + (width / 2 - pan) / z,
+      minY: fitted.originY + (band.top - band.centerY - offsetY) / z,
+      maxY: fitted.originY + (band.bottom - band.centerY - offsetY) / z,
+    };
+    const next = pickLabels(data, layout, {
+      // O texto e desenhado em unidades do grafo: acompanha o zoom.
+      scale: unit,
+      // Quanto mais perto, menor a bola que ainda ganha nome.
+      minBall: MIN_LABEL_BALL / z,
+      view,
+      selectedId,
+    });
+    const previous = labelsRef.current;
+    const same =
+      previous.length === next.length &&
+      next.every(
+        (label, index) =>
+          label.id === previous[index].id && label.selected === previous[index].selected,
+      );
+    if (same) return;
+    labelsRef.current = next;
+    setLabels(next);
+  }, [
+    data,
+    layout,
+    unit,
+    width,
+    band.top,
+    band.bottom,
+    band.centerY,
+    fitted.originX,
+    fitted.originY,
+    zoom,
+    panX,
+    panY,
+    selectedId,
+  ]);
+
   // Encaixe a cada mudanca de conjunto (filtro, foco, tamanho ou folha).
   useEffect(() => {
     if (width <= 0 || visibleHeight <= 0) return;
@@ -155,7 +247,13 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
     zoom.value = fitted.zoom;
     panX.value = fitted.panX;
     panY.value = fitted.panY;
-  }, [layout.key, fitted, width, visibleHeight, spanX, spanY, zoom, panX, panY]);
+    syncLabels();
+  }, [layout.key, fitted, width, visibleHeight, spanX, spanY, zoom, panX, panY, syncLabels]);
+
+  // A bola escolhida ganha o nome na hora, sem esperar gesto.
+  useEffect(() => {
+    syncLabels();
+  }, [selectedId, syncLabels]);
 
   const selectedNeighbors = useMemo(
     () => (selectedId ? neighborIds(data, selectedId) : new Set<string>()),
@@ -207,24 +305,6 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
     }
     return out;
   }, [data, layout, fitted.zoom, unit]);
-
-  // Area visivel no encaixe, em unidades do grafo: o nome que cairia atras da
-  // folha nao aparece, e o corte nao depende do zoom.
-  const viewRect = useMemo(() => {
-    const halfW = width / 2 / fitted.zoom;
-    const halfH = band.height / 2 / fitted.zoom;
-    return {
-      minX: fitted.originX - halfW,
-      minY: fitted.originY - halfH,
-      maxX: fitted.originX + halfW,
-      maxY: fitted.originY + halfH,
-    };
-  }, [width, band.height, fitted.originX, fitted.originY, fitted.zoom]);
-
-  const labels = useMemo(
-    () => pickLabels(data, layout, { scale: unit, view: viewRect, selectedId }),
-    [data, layout, unit, viewRect, selectedId],
-  );
 
   const selectAt = useCallback(
     (x: number, y: number) => {
@@ -284,6 +364,9 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
         const limitY = Math.max(0, (spanY * zoom.value - visibleHeight) / 2);
         panX.value = clampWorklet(startPanX.value + event.translationX, -limitX, limitX);
         panY.value = clampWorklet(startPanY.value + event.translationY, -limitY, limitY);
+      })
+      .onEnd(() => {
+        runOnJS(syncLabels)();
       });
 
     const pinch = Gesture.Pinch()
@@ -316,6 +399,9 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
           limitY,
         );
         zoom.value = next;
+      })
+      .onEnd(() => {
+        runOnJS(syncLabels)();
       });
 
     // Toque so vence quando nenhum arrasto/pinca aconteceu: Exclusive garante
@@ -342,6 +428,7 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
     spanY,
     fitted.zoom,
     selectAt,
+    syncLabels,
   ]);
 
   /** Zoom pelos botoes, parado no centro da faixa. */
@@ -350,7 +437,9 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
       const target = clamp(next, fitted.zoom, MAX_ZOOM);
       const ratio = target / zoom.value;
       const limits = panLimits(layout.bounds, target, width, visibleHeight);
-      zoom.value = withTiming(target, { duration: BUTTON_MS });
+      zoom.value = withTiming(target, { duration: BUTTON_MS }, () => {
+        runOnJS(syncLabels)();
+      });
       panX.value = withTiming(clamp(panX.value * ratio, -limits.limitX, limits.limitX), {
         duration: BUTTON_MS,
       });
@@ -358,7 +447,7 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
         duration: BUTTON_MS,
       });
     },
-    [zoom, panX, panY, layout.bounds, width, visibleHeight, fitted.zoom],
+    [zoom, panX, panY, layout.bounds, width, visibleHeight, fitted.zoom, syncLabels],
   );
 
   useImperativeHandle(
@@ -367,28 +456,179 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
       zoomIn: () => animateZoom(zoom.value * 1.6),
       zoomOut: () => animateZoom(zoom.value / 1.6),
       fit() {
-        zoom.value = withTiming(fitted.zoom, { duration: BUTTON_MS + 40 });
+        zoom.value = withTiming(fitted.zoom, { duration: BUTTON_MS + 40 }, () => {
+          runOnJS(syncLabels)();
+        });
         panX.value = withTiming(0, { duration: BUTTON_MS + 40 });
         panY.value = withTiming(0, { duration: BUTTON_MS + 40 });
       },
     }),
-    [animateZoom, zoom, panX, panY, fitted.zoom],
+    [animateZoom, zoom, panX, panY, fitted.zoom, syncLabels],
   );
 
-  const kindColor: Record<GraphNodeKind, string> = {
-    user: colors.user,
-    person: colors.person,
-    place: colors.place,
-    theme: colors.theme,
-    decision: colors.decision,
-    note: colors.note,
-  };
+  const kindColor = useMemo<Record<GraphNodeKind, string>>(
+    () => ({
+      user: colors.user,
+      person: colors.person,
+      place: colors.place,
+      theme: colors.theme,
+      decision: colors.decision,
+      note: colors.note,
+    }),
+    [colors],
+  );
 
   const center = layout.positions[data.center.id];
   const selectedPosition = selectedId ? layout.positions[selectedId] : undefined;
   const idleNodeOpacity = selectedId ? 0.16 : 0.82;
   // Espessuras em unidades do grafo: o encaixe e a referencia, o zoom amplia.
   const z = fitted.zoom;
+
+  // O desenho e o mesmo enquanto o conjunto nao muda: um gesto nao remonta
+  // bolas, icones nem linhas. So os nomes podem mudar entre um gesto e outro.
+  const scene = useMemo(
+    () => (
+      <>
+        <Path
+          d={paths.edges.cooccurrence}
+          stroke={colors.edge}
+          strokeWidth={0.6 / z}
+          fill="none"
+          opacity={selectedId ? 0.05 : 0.09}
+        />
+        <Path
+          d={paths.edges.cooccurrenceStrong}
+          stroke={colors.edgeStrong}
+          strokeWidth={1.05 / z}
+          fill="none"
+          opacity={selectedId ? 0.1 : 0.2}
+        />
+        <Path
+          d={paths.edges.relation}
+          stroke={colors.edgeStrong}
+          strokeWidth={0.9 / z}
+          fill="none"
+          opacity={selectedId ? 0.1 : 0.16}
+        />
+        <Path
+          d={paths.edges.mention}
+          stroke={colors.edge}
+          strokeWidth={1.1 / z}
+          strokeDasharray={`${5 / z} ${4 / z}`}
+          fill="none"
+          opacity={selectedId ? 0.16 : 0.28}
+        />
+
+        {(Object.keys(paths.nodes) as GraphNodeKind[]).map((kind) => (
+          <Path
+            key={kind}
+            d={paths.nodes[kind]}
+            fill={kindColor[kind]}
+            opacity={idleNodeOpacity}
+          />
+        ))}
+
+        {highlighted
+          ? (Object.keys(highlighted) as GraphNodeKind[]).map((kind) => (
+              <Path
+                key={`hi-${kind}`}
+                d={highlighted[kind]}
+                fill={kindColor[kind]}
+                opacity={0.95}
+              />
+            ))
+          : null}
+
+        {center ? (
+          <>
+            <Circle
+              cx={center.x}
+              cy={center.y}
+              r={center.r + 6 / z}
+              fill="none"
+              stroke={colors.edgeStrong}
+              strokeWidth={1 / z}
+              opacity={0.5}
+            />
+            <Circle
+              cx={center.x}
+              cy={center.y}
+              r={center.r + 12 / z}
+              fill="none"
+              stroke={colors.edge}
+              strokeWidth={1 / z}
+              opacity={0.4}
+            />
+            <Circle
+              cx={center.x}
+              cy={center.y}
+              r={center.r}
+              fill={colors.user}
+              opacity={selectedId && selectedId !== data.center.id ? 0.5 : 1}
+            />
+          </>
+        ) : null}
+
+        {selectedEdgePath ? (
+          <Path
+            d={selectedEdgePath}
+            stroke={colors.selected}
+            strokeWidth={1.8 / z}
+            fill="none"
+            opacity={0.9}
+          />
+        ) : null}
+
+        {selectedPosition ? (
+          <Circle
+            cx={selectedPosition.x}
+            cy={selectedPosition.y}
+            r={selectedPosition.r + 4 / z}
+            fill="none"
+            stroke={colors.selected}
+            strokeWidth={1.5 / z}
+            opacity={0.9}
+          />
+        ) : null}
+
+        {iconNodes.map((node) => {
+          const scale = node.size / 24;
+          const dim =
+            Boolean(selectedId) &&
+            node.id !== data.center.id &&
+            !(activeIds?.has(node.id) ?? false);
+          return (
+            <Path
+              key={node.id}
+              d={iconPaths(iconKeyFor(node.kind, node.icon)).join(' ')}
+              fill="none"
+              stroke={colors.ink}
+              strokeWidth={1.35 / (scale * z)}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              opacity={dim ? 0.16 : 1}
+              transform={`translate(${node.x - 12 * scale} ${node.y - 12 * scale}) scale(${scale})`}
+            />
+          );
+        })}
+      </>
+    ),
+    [
+      paths,
+      colors,
+      kindColor,
+      highlighted,
+      center,
+      selectedPosition,
+      selectedEdgePath,
+      iconNodes,
+      activeIds,
+      selectedId,
+      data.center.id,
+      idleNodeOpacity,
+      z,
+    ],
+  );
 
   return (
     <GestureDetector gesture={gestures}>
@@ -412,141 +652,15 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
             viewBox={`${box.minX} ${box.minY} ${spanX} ${spanY}`}
             pointerEvents="none"
           >
-            <Path
-              d={paths.edges.cooccurrence}
-              stroke={colors.edge}
-              strokeWidth={0.6 / z}
-              fill="none"
-              opacity={selectedId ? 0.05 : 0.09}
-            />
-            <Path
-              d={paths.edges.cooccurrenceStrong}
-              stroke={colors.edgeStrong}
-              strokeWidth={1.05 / z}
-              fill="none"
-              opacity={selectedId ? 0.1 : 0.2}
-            />
-            <Path
-              d={paths.edges.relation}
-              stroke={colors.edgeStrong}
-              strokeWidth={0.9 / z}
-              fill="none"
-              opacity={selectedId ? 0.1 : 0.16}
-            />
-            <Path
-              d={paths.edges.mention}
-              stroke={colors.edge}
-              strokeWidth={1.1 / z}
-              strokeDasharray={`${5 / z} ${4 / z}`}
-              fill="none"
-              opacity={selectedId ? 0.16 : 0.28}
-            />
-
-            {(Object.keys(paths.nodes) as GraphNodeKind[]).map((kind) => (
-              <Path
-                key={kind}
-                d={paths.nodes[kind]}
-                fill={kindColor[kind]}
-                opacity={idleNodeOpacity}
-              />
-            ))}
-
-            {highlighted
-              ? (Object.keys(highlighted) as GraphNodeKind[]).map((kind) => (
-                  <Path
-                    key={`hi-${kind}`}
-                    d={highlighted[kind]}
-                    fill={kindColor[kind]}
-                    opacity={0.95}
-                  />
-                ))
-              : null}
-
-            {center ? (
-              <>
-                <Circle
-                  cx={center.x}
-                  cy={center.y}
-                  r={center.r + 6 / z}
-                  fill="none"
-                  stroke={colors.edgeStrong}
-                  strokeWidth={1 / z}
-                  opacity={0.5}
-                />
-                <Circle
-                  cx={center.x}
-                  cy={center.y}
-                  r={center.r + 12 / z}
-                  fill="none"
-                  stroke={colors.edge}
-                  strokeWidth={1 / z}
-                  opacity={0.4}
-                />
-                <Circle
-                  cx={center.x}
-                  cy={center.y}
-                  r={center.r}
-                  fill={colors.user}
-                  opacity={selectedId && selectedId !== data.center.id ? 0.5 : 1}
-                />
-              </>
-            ) : null}
-
-            {selectedEdgePath ? (
-              <Path
-                d={selectedEdgePath}
-                stroke={colors.selected}
-                strokeWidth={1.8 / z}
-                fill="none"
-                opacity={0.9}
-              />
-            ) : null}
-
-            {selectedPosition ? (
-              <Circle
-                cx={selectedPosition.x}
-                cy={selectedPosition.y}
-                r={selectedPosition.r + 4 / z}
-                fill="none"
-                stroke={colors.selected}
-                strokeWidth={1.5 / z}
-                opacity={0.9}
-              />
-            ) : null}
-
-            {iconNodes.map((node) => {
-              const scale = node.size / 24;
-              const dim =
-                Boolean(selectedId) &&
-                node.id !== data.center.id &&
-                !(activeIds?.has(node.id) ?? false);
-              return (
-                <Path
-                  key={node.id}
-                  d={iconPaths(iconKeyFor(node.kind, node.icon)).join(' ')}
-                  fill="none"
-                  stroke={colors.ink}
-                  strokeWidth={1.35 / (scale * z)}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  opacity={dim ? 0.16 : 1}
-                  transform={`translate(${node.x - 12 * scale} ${node.y - 12 * scale}) scale(${scale})`}
-                />
-              );
-            })}
+            {scene}
 
             {labels.map((label) => (
-              <SvgText
+              <MapLabel
                 key={label.id}
-                x={label.x}
-                y={label.y}
-                fill={label.selected ? colors.selected : colors.label}
-                fontSize={label.fontSize}
-                fontWeight={label.selected ? '700' : '500'}
-                textAnchor="middle"
-              >
-                {label.text}
-              </SvgText>
+                label={label}
+                color={colors.label}
+                selectedColor={colors.selected}
+              />
             ))}
           </Svg>
         </Animated.View>

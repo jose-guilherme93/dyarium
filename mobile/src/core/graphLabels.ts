@@ -11,9 +11,11 @@ import type { GraphData, GraphNode } from './graphModel';
 import type { GraphLayout } from './graphLayout';
 
 export interface LabelOptions {
-  /** Tamanho de um ponto de tela em unidades do grafo (1 / zoom do encaixe). */
+  /** Tamanho de um ponto de tela em unidades do grafo (1 / zoom). */
   scale: number;
-  /** Area visivel no encaixe, em unidades do grafo. */
+  /** Raio minimo (unidades do grafo) para a bola ganhar nome. */
+  minBall?: number;
+  /** Area visivel agora, em unidades do grafo. */
   view?: { minX: number; minY: number; maxX: number; maxY: number };
   selectedId?: string | null;
   budget?: number;
@@ -47,11 +49,13 @@ function overlaps(a: Box, b: Box): boolean {
 const FONT_SCREEN = 10;
 const LINE_HEIGHT_SCREEN = 13;
 const GAP_SCREEN = 7;
-const CELL_SCREEN = 48;
+const CELL_SCREEN = 28;
 const MARGIN_SCREEN = 8;
 const MAX_LABELS = 40;
 /** Bola menor que um quarto da altura do texto fica sem nome: e poeira. */
 const MIN_BALL_FONT = 0.25;
+/** Raio minimo padrao, em pontos de tela. */
+const MIN_BALL_SCREEN = 4;
 
 function shortLabel(node: GraphNode): string {
   const text = node.label.trim();
@@ -73,14 +77,17 @@ export function pickLabels(
   const selectedId = options.selectedId ?? null;
   const margin = MARGIN_SCREEN * scale;
   const view = options.view;
+  // Quanto mais perto, mais bolas passam do minimo e ganham nome.
+  const minBall = Math.max(options.minBall ?? MIN_BALL_SCREEN * scale, fontSize * MIN_BALL_FONT);
 
   const occupied = new Set<string>();
   const balls: Box[] = [];
   for (const node of [data.center, ...data.nodes]) {
     const position = layout.positions[node.id];
     if (!position) continue;
-    // Bola pequena demais nao bloqueia rotulo: e poeira, nao referencia.
-    if (position.r < fontSize * MIN_BALL_FONT && node.id !== data.center.id) continue;
+    // Bola de poeira nao bloqueia rotulo, mas a que esta no limite ainda pode
+    // receber o proprio nome.
+    if (position.r < minBall / 2 && node.id !== data.center.id) continue;
     balls.push({
       x1: position.x - position.r,
       y1: position.y - position.r,
@@ -112,7 +119,7 @@ export function pickLabels(
     if (!position) continue;
     const selected = node.id === selectedId;
     const forced = selected || pinned.has(node.id);
-    if (!forced && position.r < fontSize * MIN_BALL_FONT) continue;
+    if (!forced && position.r < minBall) continue;
 
     const text = shortLabel(node);
     if (!text) continue;
