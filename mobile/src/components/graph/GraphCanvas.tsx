@@ -23,15 +23,14 @@ import {
   useRef,
   useState,
 } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   runOnJS,
-  useAnimatedProps,
   useAnimatedStyle,
   useSharedValue,
 } from 'react-native-reanimated';
-import Svg, { Circle, Path, Text as SvgText } from 'react-native-svg';
+import Svg, { Circle, Path } from 'react-native-svg';
 
 import type { GraphData, GraphNodeKind } from '@/core/graphModel';
 import type { GraphLayout } from '@/core/graphLayout';
@@ -39,6 +38,8 @@ import { clamp, fitCamera, panLimits, visibleBand } from '@/core/graphLayout';
 import {
   LABEL_FONT,
   LABEL_GAP,
+  LABEL_LINE_HEIGHT,
+  labelWidth,
   pickLabels,
   type GraphLabel,
   type LabelSide,
@@ -87,12 +88,40 @@ function clampWorklet(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-const AnimatedText = Animated.createAnimatedComponent(SvgText);
+/**
+ * Largura fixa de cada vaga de nome. Cobre o rotulo mais longo que o mapa
+ * mostra (26 caracteres), entao o texto nunca quebra nem e cortado.
+ */
+const LABEL_BOX = Math.ceil(labelWidth('x'.repeat(26))) + 4;
+
+const styles = StyleSheet.create({
+  label: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    width: LABEL_BOX,
+    height: LABEL_LINE_HEIGHT,
+    justifyContent: 'center',
+  },
+  labelText: {
+    fontSize: LABEL_FONT,
+    lineHeight: LABEL_LINE_HEIGHT,
+    fontWeight: '500',
+  },
+  labelSelected: { fontWeight: '700' },
+  labelCenter: { textAlign: 'center' },
+  labelLeft: { textAlign: 'right' },
+  labelRight: { textAlign: 'left' },
+});
 
 /**
  * Um nome do mapa. O texto tem tamanho de tela; a posicao vem da bola, em
  * unidades do grafo, calculada na thread de UI a cada quadro. Assim o nome
  * acompanha a bola no gesto sem crescer junto com o zoom.
+ *
+ * E uma view comum, nao um no de SVG: o `react-native-svg` joga fora o bitmap
+ * da cena inteira a cada prop que muda, e um nome por quadro custava um
+ * redesenho de tela cheia por nome. Aqui o gesto so troca a matriz da view.
  *
  * As props sao primitivas de proposito: quando o conjunto muda, so os nomes
  * que realmente mudaram sao renderizados de novo.
@@ -130,42 +159,55 @@ const MapLabel = memo(function MapLabel({
   color: string;
   selectedColor: string;
 }) {
-  const animated = useAnimatedProps(() => {
-    if (!text) return { opacity: 0, x: -1000, y: -1000 };
+  const animated = useAnimatedStyle(() => {
+    if (!text) {
+      // Vaga sem nome: parada fora da tela, sem custo por quadro.
+      return {
+        opacity: 0,
+        transform: [{ translateX: -LABEL_BOX }, { translateY: -LABEL_BOX }],
+      };
+    }
     const z = zoom.value;
     const sx = width / 2 + panX.value + (x - originX) * z;
     const sy = centerY + panY.value + (y - originY) * z;
     const sr = r * z;
-    const textWidth = text.length * LABEL_FONT * 0.56;
-    if (side === 'below') {
-      return { x: sx, y: sy + sr + LABEL_GAP + LABEL_FONT * 0.8, opacity: 1 };
-    }
+    // A caixa e a mesma de `labelBox` em graphLabels: centro (ou borda) na
+    // ancora do nome, com a altura de uma linha.
+    let dx = sx - LABEL_BOX / 2;
+    let dy = sy + sr + LABEL_GAP;
     if (side === 'above') {
-      return { x: sx, y: sy - sr - LABEL_GAP - LABEL_FONT * 0.2, opacity: 1 };
-    }
-    if (side === 'right') {
-      return {
-        x: sx + sr + LABEL_GAP + textWidth / 2,
-        y: sy + LABEL_FONT * 0.35,
-        opacity: 1,
-      };
+      dy = sy - sr - LABEL_GAP - LABEL_LINE_HEIGHT;
+    } else if (side === 'right') {
+      dx = sx + sr + LABEL_GAP;
+      dy = sy - LABEL_LINE_HEIGHT / 2;
+    } else if (side === 'left') {
+      dx = sx - sr - LABEL_GAP - LABEL_BOX;
+      dy = sy - LABEL_LINE_HEIGHT / 2;
     }
     return {
-      x: sx - sr - LABEL_GAP - textWidth / 2,
-      y: sy + LABEL_FONT * 0.35,
       opacity: 1,
+      transform: [{ translateX: dx }, { translateY: dy }],
     };
   });
   return (
-    <AnimatedText
-      animatedProps={animated}
-      fill={selected ? selectedColor : color}
-      fontSize={LABEL_FONT}
-      fontWeight={selected ? '700' : '500'}
-      textAnchor="middle"
-    >
-      {text ?? ''}
-    </AnimatedText>
+    <Animated.View style={[styles.label, animated]}>
+      <Text
+        style={[
+          styles.labelText,
+          side === 'right'
+            ? styles.labelRight
+            : side === 'left'
+              ? styles.labelLeft
+              : styles.labelCenter,
+          { color: selected ? selectedColor : color },
+          selected ? styles.labelSelected : null,
+        ]}
+        numberOfLines={1}
+        allowFontScaling={false}
+      >
+        {text ?? ''}
+      </Text>
+    </Animated.View>
   );
 });
 
@@ -698,12 +740,7 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
           </Svg>
         </Animated.View>
 
-        <Svg
-          width={width}
-          height={height}
-          style={StyleSheet.absoluteFill}
-          pointerEvents="none"
-        >
+        <View style={StyleSheet.absoluteFill} pointerEvents="none">
           {Array.from({ length: LABEL_SLOTS }, (_, index) => {
             const label = labels[index];
             return (
@@ -727,7 +764,7 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
               />
             );
           })}
-        </Svg>
+        </View>
       </View>
     </GestureDetector>
   );

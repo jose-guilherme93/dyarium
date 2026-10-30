@@ -6,6 +6,23 @@ import MapScreen from '../map';
 const mockLoadSnapshot = jest.fn();
 const mockPanel = jest.fn();
 
+// O Reanimated real nao inicializa no Jest. A folha do mapa usa so a API
+// comum; aqui basta ela responder sem thread de UI.
+jest.mock('react-native-reanimated', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { View } = require('react-native');
+  return {
+    __esModule: true,
+    default: { View, createAnimatedComponent: (component: unknown) => component },
+    runOnJS: (fn: unknown) => fn,
+    useSharedValue: (initial: unknown) => ({ value: initial }),
+    useAnimatedStyle: (factory: () => unknown) => factory(),
+    withTiming: (value: unknown) => value,
+    useEvent: () => () => undefined,
+    useHandler: () => ({ context: {}, doDependenciesDiffer: false, useWeb: false }),
+  };
+});
+
 jest.mock('expo-router', () => ({
   useLocalSearchParams: () => ({}),
 }));
