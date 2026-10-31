@@ -6,6 +6,15 @@ import MapScreen from '../map';
 const mockLoadSnapshot = jest.fn();
 const mockPanel = jest.fn();
 const mockGraph = jest.fn();
+const mockLayout = jest.fn(async (_data: unknown, _focus?: string) => ({
+  key: 'layout',
+  bounds: { minX: -100, minY: -100, maxX: 100, maxY: 100 },
+  positions: {
+    user: { x: 0, y: 0, r: 30 },
+    'person:e1': { x: 60, y: 0, r: 10 },
+    'place:e2': { x: -60, y: 0, r: 10 },
+  },
+}));
 
 // O Reanimated real nao inicializa no Jest. A folha do mapa usa so a API
 // comum; aqui basta ela responder sem thread de UI.
@@ -56,15 +65,7 @@ jest.mock('@/services/graphData', () => ({
   loadGraphSnapshot: (filters: unknown) => mockLoadSnapshot(filters),
   graphFromSnapshot: (snapshot: unknown, options: unknown) => mockGraph(snapshot, options),
   kindCounts: () => ({ person: 1, place: 1, theme: 0, decision: 0 }),
-  layoutForGraph: async () => ({
-    key: 'layout',
-    bounds: { minX: -100, minY: -100, maxX: 100, maxY: 100 },
-    positions: {
-      user: { x: 0, y: 0, r: 30 },
-      'person:e1': { x: 60, y: 0, r: 10 },
-      'place:e2': { x: -60, y: 0, r: 10 },
-    },
-  }),
+  layoutForGraph: (data: unknown, focus?: string) => mockLayout(data, focus),
   panelForEntity: (snapshot: unknown, id: string) => mockPanel(snapshot, id),
   loadEntityPanel: async (snapshot: unknown, id: string) => mockPanel(snapshot, id),
   loadMoodSeries: async () => [],
@@ -222,6 +223,23 @@ describe('tela do mapa', () => {
       await Promise.resolve();
     });
     expect(mockClaim).toHaveBeenCalled();
+  });
+
+  it('esconder um tipo e so desenho: nao refaz o grafo nem o layout', async () => {
+    await renderMap();
+    const grafoAntes = mockGraph.mock.calls.length;
+    const layoutAntes = mockLayout.mock.calls.length;
+
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText('Lugar: 1'));
+      await Promise.resolve();
+    });
+
+    // O mesmo conjunto: quem some e so o desenho das bolas de lugar.
+    expect(mockGraph.mock.calls.length).toBe(grafoAntes);
+    expect(mockLayout.mock.calls.length).toBe(layoutAntes);
+    expect(screen.queryByLabelText('Praia, 3 menções')).toBeNull();
+    expect(screen.getByLabelText('Maria, 2 menções')).toBeTruthy();
   });
 
   it('a lista fica em ordem alfabetica, nao por mencoes', async () => {

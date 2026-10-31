@@ -32,7 +32,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import Svg, { Circle, Path } from 'react-native-svg';
 
-import type { GraphData, GraphNodeKind } from '@/core/graphModel';
+import type { EntityKind, GraphData, GraphNodeKind } from '@/core/graphModel';
 import type { GraphLayout } from '@/core/graphLayout';
 import { clamp, fitCamera, panLimits, visibleBand } from '@/core/graphLayout';
 import {
@@ -105,6 +105,8 @@ interface GraphCanvasProps {
    * entao nada fica apagado. A bola escolhida continua com o anel.
    */
   focusMode?: boolean;
+  /** Tipos visiveis. Esconder um tipo nao mexe no layout: so nao o desenha. */
+  kinds: ReadonlySet<EntityKind>;
   onSelect(id: string | null): void;
 }
 
@@ -254,6 +256,7 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
     viewportBottom = 0,
     selectedId,
     focusMode = false,
+    kinds,
     onSelect,
   },
   ref,
@@ -301,17 +304,39 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
   const startPanY = useSharedValue(0);
   const pinchStart = useSharedValue({ zoom: 1, panX: 0, panY: 0, x: 0, y: 0 });
 
+  // Resolucao do desenho: quantos pt de tela valem uma unidade do grafo. Fica
+  // no encaixe (o desenho inteiro cabe na tela) e acompanha o zoom so ate 3x.
+  // Antes o bitmap saia em 1 pt por unidade e era reduzido pelo zoom: 12x mais
+  // pixels para pintar a mesma tela, em toda troca de cena.
+  const [paint, setPaint] = useState(fitted.zoom);
+
   const cameraStyle = useAnimatedStyle(() => ({
     transform: [
       { translateX: panX.value },
       { translateY: panY.value },
-      { scale: zoom.value },
+      { scale: zoom.value / paint },
     ],
   }));
 
+  // Filtro por tipo sem tocar no layout: as bolas escondidas continuam nas
+  // posicoes em que estavam, entao desligar "lugar" nao refaz a fisica nem o
+  // encaixe -- some o desenho delas e mais nada.
+  const shown = useMemo(() => {
+    const nodes = data.nodes.filter(
+      (node) => kinds.has(node.kind as EntityKind) || node.id === selectedId,
+    );
+    if (nodes.length === data.nodes.length) return data;
+    const ids = new Set<string>([data.center.id, ...nodes.map((node) => node.id)]);
+    return {
+      ...data,
+      nodes,
+      edges: data.edges.filter((edge) => ids.has(edge.source) && ids.has(edge.target)),
+    };
+  }, [data, kinds, selectedId]);
+
   const selectedNeighbors = useMemo(
-    () => (selectedId ? neighborIds(data, selectedId) : new Set<string>()),
-    [data, selectedId],
+    () => (selectedId ? neighborIds(shown, selectedId) : new Set<string>()),
+    [shown, selectedId],
   );
 
   // Nomes: quais aparecem depende de quanto espaco existe **agora**. A
@@ -324,8 +349,17 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
   // depois de escrever num shared value, ler `.value` no JS ainda devolve o
   // valor anterior (a escrita so chega na thread de UI depois), e os nomes
   // ficariam com a camera velha.
+  // Ultima camera entregue a escolha de nomes: o filtro por tipo muda o
+  // conjunto, nao a camera, e precisa repintar os nomes com a mesma.
+  const cameraRef = useRef({ zoom: fitted.zoom, panX: fitted.panX, panY: fitted.panY });
+
   const syncLabels = useCallback((cameraZoom: number, cameraPanX: number, cameraPanY: number) => {
-    const next = pickLabels(data, layout, {
+    cameraRef.current = { zoom: cameraZoom, panX: cameraPanX, panY: cameraPanY };
+    // A resolucao acompanha o zoom parado, sem passar do teto: pintar mais
+    // pixels do que a tela mostra so custa tempo.
+    const nextPaint = Math.min(Math.max(cameraZoom, fitted.zoom), fitted.zoom * 3);
+    setPaint((current) => (Math.abs(current - nextPaint) > 0.005 ? nextPaint : current));
+    const next = pickLabels(shown, layout, {
       camera: {
         zoom: cameraZoom,
         panX: cameraPanX,
@@ -350,7 +384,7 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
     labelsRef.current = next;
     setLabels(next);
   }, [
-    data,
+    shown,
     layout,
     width,
     band.top,
@@ -358,8 +392,16 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
     band.centerY,
     fitted.originX,
     fitted.originY,
+    fitted.zoom,
     selectedId,
   ]);
+
+  // Esconder um tipo troca o conjunto de nomes sem mexer na camera: repinta com
+  // a ultima camera conhecida. A escolha nao depende de ler shared value no JS.
+  useEffect(() => {
+    const camera = cameraRef.current;
+    syncLabels(camera.zoom, camera.panX, camera.panY);
+  }, [shown, selectedId, syncLabels]);
 
   // Encaixe quando o conjunto muda (filtro, foco, tamanho ou folha). Uma troca
   // de bola nao passa por aqui: quem anima a camera nesse caso e o efeito
@@ -382,10 +424,10 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
   }, [layout.key, fitted, width, visibleHeight, spanX, spanY, zoom, panX, panY, syncLabels]);
 
   // O desenho inteiro, uma vez por conjunto: nada aqui depende da camera.
-  const paths = useMemo(() => graphPaths(data, layout), [data, layout]);
+  const paths = useMemo(() => graphPaths(shown, layout), [shown, layout]);
   const selectedEdgePath = useMemo(
-    () => (selectedId ? selectedEdgesPath(data, layout, selectedId) : ''),
-    [data, layout, selectedId],
+    () => (selectedId ? selectedEdgesPath(shown, layout, selectedId) : ''),
+    [shown, layout, selectedId],
   );
   // A bola escolhida e as vizinhas ficam vivas; o resto vira sombra.
   const activeIds = useMemo(() => {
@@ -395,8 +437,8 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
     return ids;
   }, [selectedId, selectedNeighbors]);
   const highlighted = useMemo(
-    () => (activeIds ? graphPaths(data, layout, activeIds).nodes : null),
-    [data, layout, activeIds],
+    () => (activeIds ? graphPaths(shown, layout, activeIds).nodes : null),
+    [shown, layout, activeIds],
   );
 
   // Icones proporcionais a bola, em unidades do grafo: o zoom nao muda nada.
@@ -420,12 +462,12 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
       out.push({ id, kind, icon, x: position.x, y: position.y, size });
     };
     push(data.center.id, 'user', data.center.icon);
-    for (const node of data.nodes) {
+    for (const node of shown.nodes) {
       if (out.length >= MAX_ICONS) break;
       push(node.id, node.kind, node.icon);
     }
     return out;
-  }, [data, layout, fitted.zoom, unit]);
+  }, [data.center, shown, layout, fitted.zoom, unit]);
 
   const selectAt = useCallback(
     (x: number, y: number) => {
@@ -441,7 +483,7 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
         }
       }
       let best: { id: string; distance: number } | null = null;
-      for (const node of data.nodes) {
+      for (const node of shown.nodes) {
         const position = layout.positions[node.id];
         if (!position) continue;
         const d = Math.hypot(gx - position.x, gy - position.y);
@@ -451,7 +493,8 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
       onSelect(best?.id ?? null);
     },
     [
-      data,
+      data.center,
+      shown,
       layout,
       width,
       band.centerY,
@@ -745,17 +788,17 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
           style={[
             {
               position: 'absolute',
-              left: (width - spanX) / 2,
-              top: band.centerY - spanY / 2,
-              width: spanX,
-              height: spanY,
+              left: (width - spanX * paint) / 2,
+              top: band.centerY - (spanY * paint) / 2,
+              width: spanX * paint,
+              height: spanY * paint,
             },
             cameraStyle,
           ]}
         >
           <Svg
-            width={spanX}
-            height={spanY}
+            width={spanX * paint}
+            height={spanY * paint}
             viewBox={`${box.minX} ${box.minY} ${spanX} ${spanY}`}
             pointerEvents="none"
           >

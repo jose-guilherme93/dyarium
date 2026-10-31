@@ -94,6 +94,9 @@ const KINDS: EntityKind[] = ['person', 'place', 'theme', 'decision'];
  */
 let snapshotCache: { key: string; at: number; snapshot: GraphSnapshot } | null = null;
 
+/** Altura fixa de uma linha da lista de entidades, em pt. */
+const OVERVIEW_ROW = 46;
+
 /** Idade em que o cache ainda vale sem ir ao banco. */
 const SNAPSHOT_FRESH_MS = 20_000;
 
@@ -223,22 +226,18 @@ export default function MapScreen() {
   const data = useMemo(() => {
     if (!snapshot) return null;
     return graphFromSnapshot(snapshot, {
-      kinds,
       focus: focusId ?? undefined,
       nodeLimit: 120,
       edgesPerNode: 6,
       noteLimit: 120,
     });
-  }, [snapshot, kinds, focusId]);
+  }, [snapshot, focusId]);
 
   // Mapa inteiro, sem foco: os numeros dos filtros falam da biblioteca toda e
   // nao encolhem quando uma entidade e aberta.
   const whole = useMemo(
-    () =>
-      snapshot
-        ? graphFromSnapshot(snapshot, { kinds, nodeLimit: 120, edgesPerNode: 6 })
-        : null,
-    [snapshot, kinds],
+    () => (snapshot ? graphFromSnapshot(snapshot, { nodeLimit: 120, edgesPerNode: 6 }) : null),
+    [snapshot],
   );
 
   const visible = data ? shown : null;
@@ -590,11 +589,12 @@ export default function MapScreen() {
   const overviewNodes = useMemo(
     () =>
       data
-        ? [...data.nodes]
+        ? data.nodes
             .filter((node) => node.kind !== 'note')
+            .filter((node) => kinds.has(node.kind as EntityKind) || node.id === selectedId)
             .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'))
         : [],
-    [data],
+    [data, kinds, selectedId],
   );
 
   const renderOverview = useCallback(
@@ -755,6 +755,7 @@ export default function MapScreen() {
           viewportBottom={Math.round(height * (1 - SNAP_REST))}
           selectedId={selectedId}
           focusMode={Boolean(focusId)}
+          kinds={kinds}
           onSelect={selectNode}
           />
         </Profiler>
@@ -914,8 +915,17 @@ export default function MapScreen() {
               style={styles.sheetScroll}
               contentContainerStyle={styles.overview}
               showsVerticalScrollIndicator={false}
-              initialNumToRender={12}
+              initialNumToRender={10}
+              maxToRenderPerBatch={6}
+              updateCellsBatchingPeriod={40}
               windowSize={5}
+              // Altura fixa da linha: a lista sabe onde cada nome comeca sem
+              // medir nada, entao rolar nao paga layout por linha.
+              getItemLayout={(_, index) => ({
+                length: OVERVIEW_ROW,
+                offset: OVERVIEW_ROW * index,
+                index,
+              })}
               removeClippedSubviews
               ListEmptyComponent={
                 <Text style={styles.empty}>
@@ -1085,7 +1095,7 @@ const baseStyles = defineStyles({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
-    minHeight: 46,
+    height: OVERVIEW_ROW,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: baseColors.border,
   },

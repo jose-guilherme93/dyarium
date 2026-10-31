@@ -11,7 +11,7 @@
 import { render, screen } from '@testing-library/react-native';
 
 import type { GraphLayout } from '@/core/graphLayout';
-import type { GraphData } from '@/core/graphModel';
+import type { EntityKind, GraphData } from '@/core/graphModel';
 import { GRAPH_PALETTES } from '@/theme/graph';
 
 import { GraphCanvas } from '../GraphCanvas';
@@ -109,6 +109,7 @@ function desenha() {
       viewportTop={0}
       viewportBottom={320}
       selectedId={null}
+      kinds={new Set<EntityKind>(['person', 'place', 'theme', 'decision'])}
       onSelect={() => undefined}
     />,
   );
