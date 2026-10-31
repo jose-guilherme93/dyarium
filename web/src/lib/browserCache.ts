@@ -10,3 +10,16 @@ export function browserCacheAvailable(): boolean {
     return false;
   }
 }
+
+/**
+ * O motor guarda os pesos no IndexedDB quando a Cache API/OPFS nao existem.
+ * IndexedDB funciona em HTTP por IP, entao o download deixa de se repetir a
+ * cada recarga mesmo sem contexto seguro.
+ */
+export function modelCacheAvailable(): boolean {
+  try {
+    return typeof indexedDB !== "undefined";
+  } catch {
+    return false;
+  }
+}

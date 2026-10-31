@@ -9,19 +9,28 @@
 import {
   LLM_MODELS,
   WHISPER_MODELS,
+  cpuWhisper,
   planForTier,
   type BrowserPlan,
   type ProcessingTier,
 } from "./browserModels";
-import { chooseTier, type HardwareSnapshot, type HardwareVerdict } from "./hardware";
+import { chooseTier, webGpuUsable, type HardwareSnapshot, type HardwareVerdict } from "./hardware";
 import { loadDeviceIdentity, type DeviceIdentity } from "./deviceIdentity";
 import { probeHardware } from "./hardwareProbe";
 
 const PLAN_KEY = "dyarium.worker.plan";
 const THREADS_KEY = "dyarium.worker.threads";
+const BACKEND_KEY = "dyarium.worker.backend";
 
 /** Quantos nucleos o llama.cpp pode usar na analise. */
 export type ThreadMode = "all" | "half";
+
+/**
+ * Onde a analise roda. `auto` usa a GPU quando o navegador entrega um adaptador
+ * de verdade; `cpu` forca os nucleos mesmo com GPU presente (um offload ruim
+ * deixa um nucleo ocupado e a placa esperando).
+ */
+export type LlmBackend = "auto" | "cpu" | "gpu";
 
 interface SavedPlan {
   tier: ProcessingTier;
@@ -34,7 +43,9 @@ export interface WorkerSetup {
   verdict: HardwareVerdict;
   plan: BrowserPlan;
   caps: ReturnType<typeof splitCaps>;
+  /** A GPU foi escolhida para a analise (e o navegador a entrega). */
   allowGpu: boolean;
+  backend: LlmBackend;
   /** Nucleos entregues ao llama.cpp. */
   threads: number;
   /** Aparelho que vai assinar a analise. */
@@ -73,7 +84,8 @@ export function splitCaps(snapshot: HardwareSnapshot) {
     gpu: snapshot.webgpu.adapter?.description || snapshot.webgl.renderer || "",
     vram_gb: snapshot.memory.vramGB,
     ram_gb: snapshot.memory.deviceMemoryGB ?? snapshot.memory.heapLimitGB,
-    threads: snapshot.cpu.threads,
+    // O servidor mostra a capacidade real; sem isolamento o motor nao abre o pool.
+    threads: multithreadAvailable() ? snapshot.cpu.threads : 1,
     webgpu: snapshot.webgpu.available,
     gflops: snapshot.cpu.gflops,
   };
@@ -93,6 +105,44 @@ export function saveThreadMode(mode: ThreadMode): void {
   } catch {
     // sem localStorage: vale so para esta sessao
   }
+}
+
+export function readBackend(): LlmBackend {
+  try {
+    const saved = localStorage.getItem(BACKEND_KEY);
+    return saved === "cpu" || saved === "gpu" ? saved : "auto";
+  } catch {
+    return "auto";
+  }
+}
+
+export function saveBackend(backend: LlmBackend): void {
+  try {
+    localStorage.setItem(BACKEND_KEY, backend);
+  } catch {
+    // sem localStorage: vale so para esta sessao
+  }
+}
+
+/** A GPU so entra quando existe adaptador utilizavel e o usuario nao negou. */
+export function allowGpuFor(snapshot: HardwareSnapshot, backend: LlmBackend): boolean {
+  return backend !== "cpu" && webGpuUsable(snapshot);
+}
+
+/** Nucleos que realmente entram no motor; sem isolamento o runtime cai para 1. */
+export function effectiveThreads(mode: ThreadMode, cores?: number): number {
+  return multithreadAvailable() ? threadsFor(mode, cores) : 1;
+}
+
+/**
+ * Perfil com o Whisper que cabe na maquina. O ONNX roda em uma thread (o
+ * runtime trava ao abrir o pool dentro do Web Worker), entao o large-v3-turbo
+ * so entra quando ha WebGPU; sem ela, a transcricao usaria o modelo pequeno.
+ */
+export function planForSnapshot(tier: ProcessingTier, snapshot: HardwareSnapshot): BrowserPlan {
+  const base = planForTier(tier);
+  if (webGpuUsable(snapshot)) return base;
+  return { ...base, whisper: cpuWhisper(base.whisper) };
 }
 
 /**
@@ -148,19 +198,29 @@ export async function prepareWorkerSetup(): Promise<WorkerSetup> {
     : Math.min(verdict.tier, 0)) as ProcessingTier;
   // Uma escolha explicita do laboratorio vence a recomendacao.
   const tier = saved?.tier ?? recommended;
-  const base = planForTier(tier);
+  const base = planForSnapshot(tier, snapshot);
+  // Um Whisper grande salvo antes (ou escolhido a mao) nao pode voltar quando a
+  // GPU sumiu: em uma thread ele levaria a nota inteira para horas.
+  const savedWhisper = WHISPER_MODELS.find((model) => model.id === saved?.whisperId);
+  const whisper =
+    savedWhisper &&
+    (webGpuUsable(snapshot) || savedWhisper.id !== "whisper-large-v3-turbo")
+      ? savedWhisper
+      : base.whisper;
   const plan: BrowserPlan = {
     ...base,
-    whisper: WHISPER_MODELS.find((model) => model.id === saved?.whisperId) ?? base.whisper,
+    whisper,
     llm: LLM_MODELS.find((model) => model.id === saved?.llmId) ?? base.llm,
   };
+  const backend = readBackend();
   return {
     snapshot,
     verdict,
     plan,
     caps: splitCaps(snapshot),
-    allowGpu: snapshot.webgpu.available && verdict.gpu?.label !== "GPU de software",
-    threads: threadsFor(readThreadMode(), snapshot.cpu.threads),
+    allowGpu: allowGpuFor(snapshot, backend),
+    backend,
+    threads: effectiveThreads(readThreadMode(), snapshot.cpu.threads),
     device: loadDeviceIdentity(snapshot),
   };
 }

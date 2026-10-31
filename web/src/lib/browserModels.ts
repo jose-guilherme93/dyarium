@@ -245,6 +245,16 @@ export function planForTier(tier: ProcessingTier): BrowserPlan {
   return BROWSER_PLANS.find((plan) => plan.tier === tier) ?? BROWSER_PLANS[0];
 }
 
+/**
+ * O Whisper que cabe em uma CPU. O large-v3-turbo em WebAssembly roda em uma
+ * thread (o ONNX nao abre o pool dentro do worker) e levaria horas; na CPU ele
+ * cede lugar ao small, que ainda cobre portugues.
+ */
+export function cpuWhisper(model: WhisperModel): WhisperModel {
+  if (model.id !== "whisper-large-v3-turbo") return model;
+  return WHISPER_MODELS.find((item) => item.id === "whisper-small") ?? model;
+}
+
 /** Total que sera baixado para o tier, em bytes. */
 export function planDownloadBytes(plan: BrowserPlan): number {
   return plan.whisper.sizeBytes + plan.llm.sizeBytes;

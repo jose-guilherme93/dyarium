@@ -152,6 +152,11 @@ function gpuHaystack(snapshot: HardwareSnapshot): string {
     .join(" ");
 }
 
+/** A GPU realmente acelera? Adaptador de software e pior que a CPU. */
+export function webGpuUsable(snapshot: HardwareSnapshot): boolean {
+  return snapshot.webgpu.available && snapshot.webgpu.reason !== "software";
+}
+
 /** Primeira placa conhecida que casa com o renderer ou com o adaptador. */
 export function knownGpuFor(snapshot: HardwareSnapshot): KnownGpu | null {
   const haystack = gpuHaystack(snapshot);
@@ -208,6 +213,13 @@ export function chooseTier(snapshot: HardwareSnapshot): HardwareVerdict {
       default:
         warnings.push("WebGPU indisponível: a GPU fica de fora e só a CPU processa.");
     }
+  }
+
+  // Sem WebGPU a GPU nao acelera nada, mesmo quando o nome dela esta na tabela.
+  // O Whisper maior em WebAssembly roda em uma thread; o laboratorio troca o
+  // modelo por um menor para a nota nao virar hora.
+  if (gpu && !webGpuUsable(snapshot)) {
+    warnings.push("GPU sem WebGPU: a transcrição fica na CPU, com um modelo menor.");
   }
 
   const vram = snapshot.memory.vramGB ?? gpu?.vramGB ?? null;
@@ -293,7 +305,7 @@ export function webGpuLabel(snapshot: HardwareSnapshot): string {
   }
   switch (snapshot.webgpu.reason) {
     case "insecure":
-      return "não · HTTPS";
+      return "não · exige HTTPS";
     case "no-adapter":
       return "não · driver";
     case "unsupported":

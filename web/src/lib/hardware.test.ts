@@ -5,6 +5,7 @@ import {
   knownGpuFor,
   vramFromAdapter,
   webGpuLabel,
+  webGpuUsable,
   type HardwareSnapshot,
 } from "./hardware";
 import { formatBytes, planDownloadBytes, planForTier } from "./browserModels";
@@ -48,6 +49,14 @@ describe("detectBrowser", () => {
     expect(info.engine).toBe("firefox");
     expect(info.name).toBe("Firefox");
     expect(info.version).toBe("144.0");
+  });
+});
+
+describe("webGpuUsable", () => {
+  it("accepts a real adapter and rejects software or missing WebGPU", () => {
+    expect(webGpuUsable(snapshot())).toBe(true);
+    expect(webGpuUsable(snapshot({ webgpu: { available: true, adapter: null, reason: "software" } }))).toBe(false);
+    expect(webGpuUsable(snapshot({ webgpu: { available: false, adapter: null, reason: "no-adapter" } }))).toBe(false);
   });
 });
 
@@ -170,7 +179,7 @@ describe("download sizes", () => {
 describe("webGpuLabel", () => {
   it("diz que a WebGPU exige HTTPS em vez de um não seco", () => {
     expect(webGpuLabel(snapshot({ webgpu: { available: false, adapter: null, reason: "insecure" } }))).toBe(
-      "não · HTTPS",
+      "não · exige HTTPS",
     );
   });
 

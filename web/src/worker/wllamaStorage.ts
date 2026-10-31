@@ -6,9 +6,9 @@
  * "No supported storage backend found". O mesmo acontece no `crypto.subtle` que o
  * cache manager usa para nomear os arquivos.
  *
- * Quando falta armazenamento persistente, o motor baixa o GGUF e entrega os
- * blobs direto ao wllama: o modo funciona, o modelo vive so na memoria da aba e
- * o download se repete no proximo carregamento.
+ * Quando falta OPFS, o motor usa o cache proprio de shards no IndexedDB
+ * (`loadFromMemory`): o download sobrevive a recarga mesmo em HTTP. O backend
+ * em memoria abaixo existe so para o construtor do wllama aceitar os blobs.
  */
 
 import { CacheManager } from "@wllama/wllama/esm/index.js";
