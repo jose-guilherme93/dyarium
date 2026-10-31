@@ -1,5 +1,11 @@
 import type { GraphEntry } from '../graphModel';
-import { averageMood, buildMoodSeries, localDay } from '../graphMood';
+import {
+  averageMood,
+  buildEntityMood,
+  buildMoodSeries,
+  localDay,
+  moodTrend,
+} from '../graphMood';
 
 function entry(id: string, recordedAt: string, sentiment?: number): GraphEntry {
   return {
@@ -39,6 +45,65 @@ describe('buildMoodSeries', () => {
 
   it('devolve série vazia sem análise', () => {
     expect(buildMoodSeries([entry('a', '2026-10-20T10:00:00')])).toEqual([]);
+  });
+});
+
+describe('buildEntityMood', () => {
+  const entries = [
+    entry('a', '2026-10-20T10:00:00', 0.9),
+    entry('b', '2026-10-21T10:00:00', -0.9),
+    entry('c', '2026-10-22T10:00:00', 0.4),
+  ];
+
+  it('usa o tom do vínculo com a entidade, não o da nota', () => {
+    const series = buildEntityMood(
+      [
+        { entryId: 'a', entityId: 'e1', sentiment: 0.2 },
+        { entryId: 'b', entityId: 'e1', sentiment: -0.6 },
+        { entryId: 'c', entityId: 'e1' },
+        // Vinculo de outra entidade na mesma nota nao entra.
+        { entryId: 'a', entityId: 'e2', sentiment: -1 },
+      ],
+      entries,
+      'e1',
+    );
+    expect(series.map((point) => point.date)).toEqual(['2026-10-20', '2026-10-21']);
+    expect(series[0].sentiment).toBeCloseTo(0.2);
+    expect(series[1].sentiment).toBeCloseTo(-0.6);
+  });
+
+  it('junta duas notas do mesmo dia numa média', () => {
+    const series = buildEntityMood(
+      [
+        { entryId: 'a', entityId: 'e1', sentiment: 0.4 },
+        { entryId: 'd', entityId: 'e1', sentiment: 0 },
+      ],
+      [...entries, entry('d', '2026-10-20T20:00:00', 0.8)],
+      'e1',
+    );
+    expect(series).toHaveLength(1);
+    expect(series[0].notes).toBe(2);
+    expect(series[0].sentiment).toBeCloseTo(0.2);
+  });
+
+  it('devolve vazio quando a entidade não tem tom', () => {
+    expect(buildEntityMood([{ entryId: 'a', entityId: 'e9' }], entries, 'e9')).toEqual([]);
+  });
+});
+
+describe('moodTrend', () => {
+  it('mede do primeiro ao último dia', () => {
+    expect(
+      moodTrend([
+        { date: '2026-10-20', sentiment: -0.2, notes: 1 },
+        { date: '2026-10-21', sentiment: 0.6, notes: 1 },
+      ]),
+    ).toBeCloseTo(0.8);
+  });
+
+  it('sem dois dias não há tendência', () => {
+    expect(moodTrend([])).toBe(0);
+    expect(moodTrend([{ date: '2026-10-20', sentiment: 0.4, notes: 2 }])).toBe(0);
   });
 });
 

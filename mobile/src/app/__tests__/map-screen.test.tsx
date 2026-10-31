@@ -87,7 +87,13 @@ jest.mock('@/components/graph/GraphIcon', () => ({ GraphIcon: () => null }));
 jest.mock('@/components/graph/MoodPanel', () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { Text } = require('react-native');
-  return { MoodPanel: () => <Text>Tom médio</Text> };
+  return {
+    MoodPanel: ({ series, subject }: { series: unknown[]; subject?: string | null }) => (
+      <Text>
+        {subject ? `Tom sobre ${subject}` : 'Tom médio'} ({series.length})
+      </Text>
+    ),
+  };
 });
 
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
@@ -108,7 +114,10 @@ const snapshot = {
     { id: 'e1', kind: 'person', name: 'Maria', icon: '', updatedAt: '' },
     { id: 'e2', kind: 'place', name: 'Praia', icon: '', updatedAt: '' },
   ],
-  links: [{ entryId: 'srv1', entityId: 'e1', count: 2 }],
+  links: [
+    { entryId: 'srv1', entityId: 'e1', count: 2, sentiment: 0.4 },
+    { entryId: 'srv1', entityId: 'e2', count: 3, sentiment: -0.2 },
+  ],
   centerLabel: 'João',
   ownerName: 'João',
   ownerAliases: [],
@@ -123,7 +132,7 @@ const graph = {
   center: { id: 'user', kind: 'user', label: 'João', mentions: 0, notes: 0 },
   nodes: [
     { id: 'person:e1', kind: 'person', label: 'Maria', mentions: 2, notes: 1 },
-    { id: 'place:e2', kind: 'place', label: 'Praia', mentions: 1, notes: 1 },
+    { id: 'place:e2', kind: 'place', label: 'Praia', mentions: 3, notes: 1 },
   ],
   edges: [],
   totalNodes: 2,
@@ -192,7 +201,7 @@ describe('tela do mapa', () => {
     expect(screen.getByLabelText('Pessoa: 1')).toBeTruthy();
     expect(screen.getByLabelText('Lugar: 1')).toBeTruthy();
     expect(screen.getByLabelText('Maria, 2 menções')).toBeTruthy();
-    expect(screen.getByLabelText('Praia, 1 menções')).toBeTruthy();
+    expect(screen.getByLabelText('Praia, 3 menções')).toBeTruthy();
   });
 
   it('abre a bola e mostra os trechos da relação', async () => {
@@ -213,6 +222,34 @@ describe('tela do mapa', () => {
       await Promise.resolve();
     });
     expect(mockClaim).toHaveBeenCalled();
+  });
+
+  it('a lista fica em ordem alfabetica, nao por mencoes', async () => {
+    await renderMap();
+
+    // Praia tem mais mencoes, mas a lista e para procurar: Maria vem antes.
+    const rows = screen.getAllByLabelText(/, \d+ menções$/);
+    expect(rows.map((row) => row.props.accessibilityLabel)).toEqual([
+      'Maria, 2 menções',
+      'Praia, 3 menções',
+    ]);
+  });
+
+  it('no Humor, a serie fala da entidade aberta', async () => {
+    await renderMap();
+
+    await act(async () => {
+      fireEvent.press(screen.getByLabelText('Maria, 2 menções'));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByText('Humor'));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText('Tom sobre Maria (1)')).toBeTruthy();
   });
 
   it('abrir uma bola deixa so ela e as relacoes dela no desenho', async () => {
@@ -239,7 +276,7 @@ describe('tela do mapa', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(screen.getByText('Tom médio')).toBeTruthy();
+    expect(screen.getByText('Tom médio (0)')).toBeTruthy();
   });
 
   it('abre os filtros por período', async () => {

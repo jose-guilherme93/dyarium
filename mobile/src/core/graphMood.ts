@@ -49,6 +49,45 @@ export function buildMoodSeries(entries: GraphEntry[]): MoodPoint[] {
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
+/**
+ * Tom de uma entidade ao longo do tempo: o que o dono sente sobre aquela
+ * pessoa, lugar ou tema, dia a dia. Sai do tom de cada vinculo (nota x
+ * entidade), entao a serie fala da entidade e nao da nota inteira.
+ */
+export function buildEntityMood(
+  links: readonly { entryId: string; entityId: string; sentiment?: number }[],
+  entries: GraphEntry[],
+  entityId: string,
+): MoodPoint[] {
+  const byId = new Map(entries.map((entry) => [entry.id, entry]));
+  const days = new Map<string, { sum: number; notes: number }>();
+  for (const link of links) {
+    if (link.entityId !== entityId) continue;
+    const score = link.sentiment;
+    if (typeof score !== 'number' || Number.isNaN(score)) continue;
+    const entry = byId.get(link.entryId);
+    if (!entry) continue;
+    const day = localDay(entry.recordedAt);
+    const current = days.get(day) ?? { sum: 0, notes: 0 };
+    current.sum += score;
+    current.notes += 1;
+    days.set(day, current);
+  }
+  return [...days.entries()]
+    .map(([date, value]) => ({
+      date,
+      sentiment: value.sum / value.notes,
+      notes: value.notes,
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/** Quanto o tom subiu (ou desceu) do primeiro ao ultimo dia da serie. */
+export function moodTrend(series: MoodPoint[]): number {
+  if (series.length < 2) return 0;
+  return series[series.length - 1].sentiment - series[0].sentiment;
+}
+
 /** Tom medio da serie, ponderado pelas notas. */
 export function averageMood(series: MoodPoint[]): { sentiment: number; notes: number } {
   let sum = 0;

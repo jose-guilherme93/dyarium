@@ -22,6 +22,7 @@ import {
 import {
   ActivityIndicator,
   FlatList,
+  BackHandler,
   InteractionManager,
   ScrollView,
   StyleSheet,
@@ -57,6 +58,7 @@ import {
   rememberSnapshot,
   type GraphSnapshot,
 } from '@/services/graphData';
+import { buildEntityMood } from '@/core/graphMood';
 import type { MoodPoint } from '@/core/graphMood';
 import {
   claimLocalSelf,
@@ -494,6 +496,19 @@ export default function MapScreen() {
     return { mentions, notes: notes.size };
   }, [snapshot, selectedEntity]);
 
+  // Com uma entidade aberta, o Humor fala dela: o tom dos vinculos nota x
+  // entidade, dia a dia. Sem entidade, fala da biblioteca inteira.
+  const entityMood = useMemo(
+    () =>
+      snapshot && selectedEntity
+        ? buildEntityMood(snapshot.links, snapshot.entries, selectedEntity.id)
+        : null,
+    [snapshot, selectedEntity],
+  );
+  const moodSeries = entityMood ?? mood;
+  const moodSubject = selectedEntity?.name ?? null;
+  const moodBusy = entityMood ? false : moodLoading;
+
   const counts = useMemo(() => (whole ? kindCounts(whole) : null), [whole]);
   const entityTotal = counts ? KINDS.reduce((sum, kind) => sum + counts[kind], 0) : 0;
 
@@ -547,12 +562,37 @@ export default function MapScreen() {
     [openNote, resetToMap, snapshot, hydratePanel],
   );
 
+  // Voltar do Android desfaz o estado do mapa antes de sair dele: Humor volta
+  // para Detalhe, a folha desce para o repouso e o foco volta ao mapa inteiro.
+  // So no repouso, com a lista embaixo, e que sai para a biblioteca.
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (tabRef.current === 'mood') {
+        tabRef.current = 'detail';
+        setTab('detail');
+        return true;
+      }
+      if (sheetSnap > SNAP_REST + 0.01) {
+        sheetRef.current?.snapTo(SNAP_REST);
+        return true;
+      }
+      if (focusId) {
+        resetToMap();
+        return true;
+      }
+      return false;
+    });
+    return () => subscription.remove();
+  }, [sheetSnap, focusId, resetToMap]);
+
+  // A lista e para procurar, nao para ranquear: ordem alfabetica e mais simples
+  // de achar um nome do que a ordem por mencoes do desenho.
   const overviewNodes = useMemo(
     () =>
       data
         ? [...data.nodes]
             .filter((node) => node.kind !== 'note')
-            .sort((a, b) => b.mentions - a.mentions || a.label.localeCompare(b.label))
+            .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'))
         : [],
     [data],
   );
@@ -836,12 +876,12 @@ export default function MapScreen() {
               scrollEnabled
               contentContainerStyle={styles.moodScroll}
             >
-              {moodLoading ? (
+              {moodBusy ? (
                 <View style={styles.panelLoading}>
                   <ActivityIndicator color={theme.accent} />
                 </View>
               ) : (
-                <MoodPanel series={mood} colors={graphColors} />
+                <MoodPanel series={moodSeries} colors={graphColors} subject={moodSubject} />
               )}
             </ScrollView>
           ) : selectedEntity ? (

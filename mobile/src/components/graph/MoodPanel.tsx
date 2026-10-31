@@ -12,7 +12,7 @@ import Svg, { Circle, Line, Path, Text as SvgText } from 'react-native-svg';
 
 import { Text } from '@/components/AppText';
 import type { MoodPoint } from '@/core/graphMood';
-import { averageMood } from '@/core/graphMood';
+import { averageMood, moodTrend } from '@/core/graphMood';
 import { formatNoteDate } from '@/core/graphPanel';
 import type { GraphColors } from '@/theme/graph';
 import { baseColors, fontSize, spacing } from '@/theme/tokens';
@@ -22,17 +22,20 @@ import { defineStyles } from '@/theme/themedStyles';
 interface MoodPanelProps {
   series: MoodPoint[];
   colors: GraphColors;
+  /** Entidade da serie: o tom e sobre ela, nao sobre a biblioteca toda. */
+  subject?: string | null;
 }
 
 const CHART_HEIGHT = 168;
 const PADDING_X = 18;
 const PADDING_Y = 20;
 
-export function MoodPanel({ series, colors }: MoodPanelProps) {
+export function MoodPanel({ series, colors, subject }: MoodPanelProps) {
   const styles = useThemedStyles(baseStyles);
   const { colors: theme } = useTheme();
   const [width, setWidth] = useState(0);
   const average = useMemo(() => averageMood(series), [series]);
+  const trend = useMemo(() => moodTrend(series), [series]);
 
   const geometry = useMemo(() => {
     if (width <= 0 || series.length === 0) return null;
@@ -68,8 +71,16 @@ export function MoodPanel({ series, colors }: MoodPanelProps) {
           {tone.toFixed(2)}
         </Text>
         <View style={styles.summaryText}>
-          <Text style={styles.summaryTitle}>Tom médio</Text>
+          <Text style={styles.summaryTitle} numberOfLines={1}>
+            {subject ? `Tom sobre ${subject}` : 'Tom médio'}
+          </Text>
           <Text style={styles.summaryMeta}>
+            {series.length > 1 ? (
+              <Text style={{ color: trend > 0.05 ? colors.moodPositive : trend < -0.05 ? colors.moodNegative : theme.textTertiary }}>
+                {trend >= 0 ? '+' : ''}
+                {trend.toFixed(2)} desde o início ·{' '}
+              </Text>
+            ) : null}
             {average.notes} {average.notes === 1 ? 'nota' : 'notas'} · {series.length}{' '}
             {series.length === 1 ? 'dia' : 'dias'}
           </Text>
