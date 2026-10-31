@@ -108,12 +108,12 @@ export function TrashSection({ refreshKey = 0 }: TrashSectionProps) {
                 <button
                   type="button"
                   className="button button--ghost button--small"
-                  disabled={busyId === entry.id}
+                  disabled={busyId === entry.id || entry.purged === true}
                   onClick={() => void restore(entry)}
                   aria-label={`Restaurar ${titleOf(entry)}`}
                 >
                   {busyId === entry.id ? <Spinner /> : null}
-                  {busyId === entry.id ? "Restaurando" : "Restaurar"}
+                  {entry.purged ? "Expirada" : busyId === entry.id ? "Restaurando" : "Restaurar"}
                 </button>
               </li>
             ))}
@@ -125,6 +125,7 @@ export function TrashSection({ refreshKey = 0 }: TrashSectionProps) {
 
 /** Titulo da nota apagada (ou o nome do arquivo, quando o titulo sumiu). */
 function titleOf(entry: Entry): string {
+  if (entry.purged) return "Conteudo removido";
   const raw = entry.title || entry.original_filename || "Nota";
   return raw.replace(/\s·\s\d{2}\/\d{2}\/\d{4}\s\d{2}:\d{2}$/, "");
 }

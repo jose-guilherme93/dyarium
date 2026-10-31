@@ -30,6 +30,15 @@ export interface Entry {
   author?: AuthorRole;
   /** Quando a nota foi apagada (so na listagem da lixeira, `?deleted=1`). */
   deleted_at?: string | null;
+  /** Tombstone cujo conteudo ja foi purgado; nao pode ser restaurado. */
+  purged?: boolean;
+  /**
+   * Quem criou a nota: `device` (um aparelho com o app) ou `server` (este
+   * ambiente). Proveniencia apenas: nao restringe edicao. Vazio nas linhas
+   * anteriores ao campo.
+   */
+  origin_kind?: 'device' | 'server' | '';
+  origin_instance?: string;
 }
 
 export interface Audio {
