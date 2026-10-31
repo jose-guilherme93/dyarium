@@ -418,6 +418,12 @@ export const api = {
   /** Última copia em cache da entrada, para a primeira pintura. */
   getEntryCached: (id: string) => cachedGet<Entry>(`/entries/${id}`),
   getTranscript: (id: string) => request<Transcript>(`/entries/${id}/transcript`),
+  /** Reescreve uma linha da transcricao; o texto do usuario vence a revisao. */
+  updateTranscriptSegment: (entryId: string, attachmentId: string, idx: number, text: string) =>
+    request<{ status: string }>(`/entries/${entryId}/transcript/segments/${idx}`, {
+      method: "PATCH",
+      body: JSON.stringify({ attachment_id: attachmentId, text }),
+    }),
   /** Uma pagina de segmentos; usada so ao expandir a transcrição. */
   listSegments: (entryId: string, attachmentId: string, cursor?: string) => {
     const params = new URLSearchParams({ attachment_id: attachmentId, limit: "500" });

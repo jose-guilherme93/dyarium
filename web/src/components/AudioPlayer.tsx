@@ -16,6 +16,7 @@ interface AudioPlayerProps {
 
 export interface AudioPlayerHandle {
   seek: (seconds: number) => void;
+  toggle: () => void;
 }
 
 const RATES = [0.75, 1, 1.25, 1.5, 2];
@@ -81,6 +82,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
         void el.play();
       }
     },
+    toggle: () => toggle(),
   }));
 
   const total = Number.isFinite(duration) ? duration : 0;
