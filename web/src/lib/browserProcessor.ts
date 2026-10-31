@@ -16,6 +16,12 @@ import {
 } from "./browserModels";
 import { EngineClient } from "./engineClient";
 import type { DeviceIdentity } from "./deviceIdentity";
+import {
+  clearLiveAnalysis,
+  finishLiveAnalysis,
+  setLiveAnalysis,
+} from "./liveAnalysis";
+import type { Analysis } from "../types";
 import type { AnalysisProgress, BlockDebug } from "../worker/analysis";
 import type { EngineProgress, Transcription } from "../worker/engine";
 import {
@@ -294,6 +300,22 @@ export class BrowserProcessor {
       blockIndex: progress.blockIndex,
       tokensPerSecond: progress.tokensPerSecond,
     });
+    // Cada bloco lido vira documento parcial na ficha da nota. O payload e o
+    // mesmo que sobe ao servidor, so que incompleto: a cobertura diz isso.
+    const entryId = this.state.job?.entryId ?? "";
+    if (entryId !== "" && progress.partial) {
+      setLiveAnalysis(
+        entryId,
+        {
+          ...(progress.partial as unknown as Analysis),
+          origin: "browser",
+          ...(this.device ? { device_id: this.device.id, device_name: this.device.name } : {}),
+        },
+        progress.read,
+        progress.total,
+        progress.stage,
+      );
+    }
   }
 
   async start(
@@ -345,6 +367,8 @@ export class BrowserProcessor {
     });
 
     try {
+      // Configura o motor. Os pesos baixam na primeira nota daquele tipo, para
+      // uma analise de texto nao pagar o download do Whisper antes de comecar.
       await this.engine.load(plan, this.allowGpu, this.threads);
     } catch (error) {
       // Parar durante o download encerra o worker de proposito; isso nao e uma
@@ -503,6 +527,9 @@ export class BrowserProcessor {
       } finally {
         this.currentJobId = "";
         this.updateJob({ stage: "done" });
+        // A passada acabou (ou falhou): a ficha continua com o que ja existe,
+        // mas o medidor de "lendo bloco" some.
+        finishLiveAnalysis(entryId);
         // O pedido foi atendido (ou falhou). Sem outro na fila local, a VPS
         // volta a processar; nada e puxado por conta propria.
         this.dropEntry(entryId);
@@ -517,6 +544,8 @@ export class BrowserProcessor {
     const entryId = job.payload.entry_id ?? "";
     const attachmentId = job.payload.attachment_id ?? "";
     if (!entryId || !attachmentId) throw new Error("job de transcricao incompleto");
+    // Uma transcricao nova invalida a leitura que existia na ficha.
+    clearLiveAnalysis(entryId);
     const bundle = await fetchEntryBundle(entryId);
     this.updateJob({ title: bundle.title, entryId });
     const data = await fetchAudio(attachmentId);
@@ -549,6 +578,9 @@ export class BrowserProcessor {
     const entryId = job.payload.entry_id ?? "";
     if (!entryId) throw new Error("job de analise incompleto");
     if (!this.engine) throw new Error("engine indisponivel");
+    // Reanalise comeca do zero; a ficha antiga sai da frente assim que o
+    // primeiro bloco chegar.
+    clearLiveAnalysis(entryId);
     const bundle = await fetchEntryBundle(entryId);
     this.updateJob({ title: bundle.title, entryId, stage: "reading" });
     const transcript = bundle.transcript;
@@ -579,6 +611,19 @@ export class BrowserProcessor {
       this.state.plan?.llm.id ?? "",
     );
     if (this.lostJob) return;
+    // Fecha a versao viva com o documento completo antes do PUT; o servidor
+    // devolve a analise definitiva logo depois.
+    setLiveAnalysis(
+      entryId,
+      {
+        ...(result.payload as unknown as Analysis),
+        origin: "browser",
+        ...(this.device ? { device_id: this.device.id, device_name: this.device.name } : {}),
+      },
+      result.doc.blocksRead,
+      result.doc.blocksTotal,
+      "done",
+    );
     await saveAnalysis(entryId, result.payload, this.replacementEntryId === entryId, this.device ?? undefined);
     if (this.replacementEntryId === entryId) {
       this.replacementEntryId = "";
@@ -616,9 +661,12 @@ export class BrowserProcessor {
    */
   async abandon(): Promise<void> {
     const jobId = this.currentJobId;
+    const entryId = this.state.job?.entryId ?? "";
     this.running = false;
     this.lostJob = true;
     this.engine?.stop();
+    // O parcial ja lido continua util; so o medidor para.
+    if (entryId !== "") finishLiveAnalysis(entryId);
     if (jobId !== "") {
       await workerApi.release(this.worker, jobId).catch(() => undefined);
       this.currentJobId = "";

@@ -12,6 +12,13 @@ vi.mock("../api", () => ({
 
 const SEEN_KEY = "dyarium.notifications.seenAt";
 
+const worker = vi.hoisted(() => ({ state: null as unknown }));
+
+vi.mock("../lib/browserWorker", () => ({
+  getWorkerState: () => worker.state,
+  subscribeWorker: () => () => {},
+}));
+
 function activity(overrides: Partial<Activity> = {}): Activity {
   return {
     id: "a1",
@@ -26,6 +33,7 @@ function activity(overrides: Partial<Activity> = {}): Activity {
 beforeEach(() => {
   localStorage.clear();
   vi.clearAllMocks();
+  worker.state = null;
   document.title = "";
 });
 
@@ -96,6 +104,33 @@ describe("NotificationsMenu", () => {
     fireEvent.click(bell);
     expect(screen.getByText("Transcrição pronta")).toBeInTheDocument();
     expect(localStorage.getItem(SEEN_KEY)).not.toBeNull();
+  });
+
+  it("mostra a nota, a etapa e o progresso do worker da aba", async () => {
+    worker.state = {
+      phase: "working",
+      engine: null,
+      job: {
+        id: "job-1",
+        type: "analyze",
+        entryId: "e1",
+        title: "Minha nota",
+        stage: "reading",
+        read: 2,
+        total: 5,
+        blockIndex: 1,
+        tokensPerSecond: 12,
+        startedAt: Date.now(),
+      },
+    };
+    vi.mocked(api.listActivities).mockResolvedValue({ activities: [] });
+
+    render(<NotificationsMenu refreshKey={0} onOpen={() => {}} />);
+
+    fireEvent.click(await screen.findByLabelText(/Processando Minha nota/));
+    expect(screen.getByText("Minha nota")).toBeInTheDocument();
+    expect(screen.getByText(/lendo bloco 3 de 5/)).toBeInTheDocument();
+    expect(screen.getByText(/2\/5/)).toBeInTheDocument();
   });
 
   it("mostra o vazio quando nunca terminou nada", async () => {

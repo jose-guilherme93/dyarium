@@ -74,6 +74,8 @@ export interface Segment {
   edited?: boolean;
   /** A passada de revisao chegou neste trecho, mesmo sem mudar o texto. */
   reviewed?: boolean;
+  /** O trecho ja virou tarefa, ideia ou citacao (guardado neste navegador). */
+  capture?: "task" | "idea" | "quote";
 }
 
 export interface Transcript {
@@ -129,6 +131,21 @@ export interface Analysis {
   key_moments?: KeyMoment[] | null;
   questions?: string[] | null;
   decisions?: string[] | null;
+  tasks?: string[] | null;
+  ideas?: string[] | null;
+  events?: string[] | null;
+  epiphanies?: string[] | null;
+  /** "model" quando a frase veio do modelo; "derived" quando o codigo a montou. */
+  sentence_source?: string;
+  /** Cobertura da leitura por bloco; ausente em analises antigas. */
+  coverage?: {
+    blocks_read: number;
+    blocks_total: number;
+    chars_read: number;
+    chars_total: number;
+    audio_ms: number;
+    partial: boolean;
+  } | null;
   /** 0-100 estimate of how well the transcript represents the speech; -1 when absent. */
   comprehension?: number;
   /** "review" when the revision pass measured it, "analysis" for the model estimate. */

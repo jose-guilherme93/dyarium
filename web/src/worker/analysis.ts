@@ -78,6 +78,8 @@ export interface AnalysisProgress {
   blockIndex: number;
   tokens: number;
   tokensPerSecond: number;
+  /** Documento composto ate aqui, no formato do servidor, para a ficha viva. */
+  partial?: Record<string, unknown>;
 }
 
 export interface BlockDebug {
@@ -205,8 +207,23 @@ export async function analyzeNoteInBrowser(
   let rejected = 0;
   let dropped = 0;
   const debug: BlockDebug[] = [];
+  // Compor a cada bloco e barato perto da inferencia, mas em uma nota muito
+  // longa o O(n^2) aparece. O painel recebe o documento no maximo a cada 1,2 s;
+  // o medidor continua andando a cada bloco.
+  let lastPartialAt = 0;
 
-  const report = (stage: AnalysisStage, blockIndex: number) => {
+  const partialNow = (): Record<string, unknown> | undefined => {
+    if (facts.length === 0) return undefined;
+    const now = Date.now();
+    if (lastPartialAt !== 0 && now - lastPartialAt < 1200) return undefined;
+    lastPartialAt = now;
+    return toServerAnalysis(
+      composeAnalysis({ blocks: plan.blocks, facts, model: modelId }),
+      modelId,
+    ) as unknown as Record<string, unknown>;
+  };
+
+  const report = (stage: AnalysisStage, blockIndex: number, partial?: Record<string, unknown>) => {
     options.onProgress?.({
       stage,
       read: facts.length,
@@ -214,6 +231,7 @@ export async function analyzeNoteInBrowser(
       blockIndex,
       tokens: completionTokens,
       tokensPerSecond: predictedMs > 0 ? (completionTokens * 1000) / predictedMs : 0,
+      partial,
     });
   };
 
@@ -223,7 +241,7 @@ export async function analyzeNoteInBrowser(
     if (cached) {
       facts.push({ block, extraction: cached.extraction });
       dropped += cached.dropped;
-      report("reading", block.index);
+      report("reading", block.index, partialNow());
       continue;
     }
 
@@ -306,7 +324,7 @@ export async function analyzeNoteInBrowser(
         dropped: 0,
       });
     }
-    report("reading", block.index);
+    report("reading", block.index, accepted ? partialNow() : undefined);
   }
 
   let doc = composeAnalysis({ blocks: plan.blocks, facts, model: modelId });

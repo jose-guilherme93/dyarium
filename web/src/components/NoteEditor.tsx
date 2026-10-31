@@ -15,7 +15,12 @@ import { TagEditor } from "./TagEditor";
 import { ListSkeleton } from "./Skeleton";
 import { ProcessOnPc } from "./ProcessOnPc";
 import { AnalysisStatus } from "./AnalysisStatus";
-import { NoteRelations } from "./NoteRelations";
+import { InsightsBody } from "./InsightsBody";
+import {
+  getLiveAnalysis,
+  subscribeLiveAnalysis,
+  type LiveAnalysis,
+} from "../lib/liveAnalysis";
 import {
   beginWorkerEntry,
   cancelWorkerEntry,
@@ -57,19 +62,6 @@ const FONTS = [
   { id: "serif", label: "Serifada", preview: '"Newsreader", Georgia, serif' },
   { id: "mono", label: "Monoespaçada", preview: "var(--font-mono)" },
 ];
-
-function sentimentText(label?: string): string {
-  switch (label) {
-    case "positivo":
-      return "Positivo";
-    case "negativo":
-      return "Negativo";
-    case "neutro":
-      return "Neutro";
-    default:
-      return "Sem rotulo";
-  }
-}
 
 /** Tira do markdown o marcador do audio apagado (pilha ou modo cru). */
 function withoutAudioMarker(markdown: string, attachmentId: string): string {
@@ -270,7 +262,14 @@ export function NoteEditor({
   // Enquanto isso, Analisar fica indisponivel para a nota nao escapar para o
   // servidor quando o usuario pediu processamento neste PC.
   const [workerState, setWorkerState] = useState(getWorkerState());
+  const [live, setLive] = useState<LiveAnalysis | null>(() => getLiveAnalysis(entryId));
   const workerPreparing = workerState?.phase === "preparing";
+  useEffect(() => {
+    setLive(getLiveAnalysis(entryId));
+    return subscribeLiveAnalysis((changedEntryId, state) => {
+      if (changedEntryId === entryId) setLive(state);
+    });
+  }, [entryId]);
   const [optionsOpen, setOptionsOpen] = useState(false);
   useEffect(() => {
     if (asideOpen) {
@@ -835,7 +834,8 @@ export function NoteEditor({
   // so a pilha (notas antigas e audios enviados pelo dashboard) fica no topo.
   const bodyAudioIds = useMemo(() => audioAttachmentIds(rawMarkdown), [rawMarkdown]);
   const stackAudios = audios.filter((audio) => !bodyAudioIds.has(audio.id));
-  const processing = running || busy !== null;
+  const localJob = workerState?.job?.entryId === entryId ? workerState.job : null;
+  const processing = localJob !== null || running || busy !== null;
   // Derived numbers walk the whole document. They used to be recomputed on
   // every keystroke and every SSE event; memoizing keeps typing cheap.
   const spokenText = useMemo(
@@ -885,131 +885,33 @@ export function NoteEditor({
     );
   }
 
-  const insights = processing ? (
+  const liveAnalysis = live?.analysis ?? null;
+  const liveBlocks = liveAnalysis?.coverage?.blocks_read ?? 0;
+  const serverBlocks = analysis?.coverage?.blocks_read ?? 0;
+  // Uma analise antiga pode nao ter cobertura; nesse caso a leitura ou as
+  // secoes dizem que ela ja esta completa.
+  const serverComplete =
+    analysis !== null &&
+    (analysis.coverage?.partial === false ||
+      Boolean(analysis.reading) ||
+      Boolean(analysis.sections && analysis.sections.length > 0));
+  // Enquanto o worker desta nota esta ativo, o parcial manda; depois, o
+  // servidor assume assim que estiver completo ou alcancar a cobertura.
+  const showLive = localJob !== null && liveAnalysis !== null;
+  const shownAnalysis =
+    showLive
+      ? liveAnalysis
+      : liveAnalysis !== null && !serverComplete && liveBlocks > serverBlocks
+        ? liveAnalysis
+        : (analysis ?? liveAnalysis);
+
+  const insights = processing && !showLive ? (
     <AnalysisStatus entryId={entryId} progress={progress} status={status} />
-  ) : analysis ? (
-    <div className="insights">
-      {/* As relacoes da nota em volta dela, antes da prosa: o desenho e o
-          indice; os chips abaixo continuam sendo a lista por tipo. */}
-      <NoteRelations analysis={analysis} onOpenEntity={onOpenEntity} />
-      <p>
-        Sentimento: <strong>{sentimentText(analysis.sentiment_label)}</strong>{" "}
-        <span className="muted">({Number(analysis.sentiment ?? 0).toFixed(2)})</span>
-      </p>
-      {typeof analysis.comprehension === "number" && analysis.comprehension >= 0 && (
-        <p
-          className="insight-comprehension"
-          title={
-            analysis.comprehension_source === "review"
-              ? `Compreensão lógica estimada do texto revisado (0 a 100); ${analysis.revised_segments ?? 0} trechos melhorados pela IA.`
-              : "Compreensão lógica estimada pelo modelo sobre o texto lido (0 a 100); a transcrição não foi revisada."
-          }
-        >
-          Compreensão <strong>{analysis.comprehension}/100</strong>
-          {analysis.comprehension_source !== "review" && (
-            <span className="muted"> · sem revisão</span>
-          )}
-        </p>
-      )}
-      {((analysis.stutter_rate ?? 0) > 0 || (analysis.hesitation_rate ?? 0) > 0) && (
-        <p
-          className="muted insight-disfluency"
-          title="Ocorrências por 100 palavras do texto cru do áudio."
-        >
-          Gagueira {Number(analysis.stutter_rate ?? 0).toFixed(1)} · Hesitação{" "}
-          {Number(analysis.hesitation_rate ?? 0).toFixed(1)}
-        </p>
-      )}
-      {/* A prosa e legenda das metricas: duas frases no maximo. O resumo so
-          aparece quando nao ha leitura (analises antigas). */}
-      {(analysis.reading || analysis.summary) && (
-        <p className="insight-reading">{analysis.reading || analysis.summary}</p>
-      )}
-      {analysis.origin === "browser" && analysis.device_name && (
-        <p className="hint insight-device" title="Aparelho que processou esta análise.">
-          {analysis.device_name}
-        </p>
-      )}
-
-      {analysis.sections && analysis.sections.length > 1 && (
-        <div className="analysis-block">
-          <h4>Seções</h4>
-          {analysis.sections.map((section, index) => (
-            <details key={`${section.heading}-${index}`} className="insight-section">
-              <summary>
-                {section.heading || "Nota"}
-                <span className="muted">
-                  {" "}
-                  {sentimentText(section.sentiment?.label ?? "")}
-                </span>
-              </summary>
-              {(section.reading || section.summary) && (
-                <p>{section.reading || section.summary}</p>
-              )}
-            </details>
-          ))}
-        </div>
-      )}
-
-      {analysis.themes && analysis.themes.length > 0 && (
-        <div className="analysis-block">
-          <h4>Temas</h4>
-          <ul className="chips stagger-in">
-            {analysis.themes.map((theme) => (
-              <li key={theme.name}>
-                <button type="button" className="chip-button" onClick={() => onOpenEntity("theme", theme.name)}>
-                  {theme.name}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {analysis.people_detail && analysis.people_detail.length > 0 && (
-        <div className="analysis-block">
-          <h4>Pessoas</h4>
-          <ul className="chips stagger-in">
-            {analysis.people_detail.map((person) => (
-              <li key={person.name}>
-                <button type="button" className="chip-button" onClick={() => onOpenEntity("person", person.name)}>
-                  {person.name}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {analysis.places_detail && analysis.places_detail.length > 0 && (
-        <div className="analysis-block">
-          <h4>Lugares</h4>
-          <ul className="chips stagger-in">
-            {analysis.places_detail.map((place) => (
-              <li key={place.name}>
-                <button type="button" className="chip-button" onClick={() => onOpenEntity("place", place.name)}>
-                  {place.name}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {analysis.key_moments && analysis.key_moments.length > 0 && (
-        <div className="analysis-block">
-          <h4>Momentos</h4>
-          <ul className="moments">
-            {analysis.key_moments.map((moment, index) => (
-              <li key={index}>
-                <span className="timestamp">{formatDuration(moment.start_ms / 1000)}</span>
-                {moment.text}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
+  ) : shownAnalysis ? (
+    <>
+      {showLive && <AnalysisStatus entryId={entryId} progress={progress} status={status} />}
+      <InsightsBody analysis={shownAnalysis} onOpenEntity={onOpenEntity} live={showLive} />
+    </>
   ) : (
     <p className="muted">Sem análise ainda.</p>
   );

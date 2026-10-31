@@ -27,7 +27,7 @@ function clock(ms: number): string {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
-function jobLabel(job: ProcessorJob): string {
+export function jobLabel(job: ProcessorJob): string {
   switch (job.stage) {
     case "audio":
     case "decoding":

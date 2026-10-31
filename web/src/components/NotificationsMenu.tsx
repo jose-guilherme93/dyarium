@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { formatShortDate } from "../lib/format";
+import { getWorkerState, subscribeWorker } from "../lib/browserWorker";
 import { useEscape } from "../lib/useEscape";
 import type { Activity } from "../types";
+import { jobLabel } from "./AnalysisStatus";
 import { BellIcon, MicIcon, SparkIcon } from "./icons";
 import { ListSkeleton } from "./Skeleton";
+import { Spinner } from "./Status";
 
 const SEEN_KEY = "dyarium.notifications.seenAt";
 
@@ -70,7 +73,10 @@ export function NotificationsMenu({ refreshKey, onOpen }: NotificationsMenuProps
   const [activities, setActivities] = useState<Activity[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [seenAt, setSeenAt] = useState<number | null>(() => readSeenAt());
+  const [worker, setWorker] = useState(getWorkerState());
   const root = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => subscribeWorker(setWorker), []);
 
   useEffect(() => {
     let active = true;
@@ -136,6 +142,25 @@ export function NotificationsMenu({ refreshKey, onOpen }: NotificationsMenuProps
     seenAt === null
       ? 0
       : activities.filter((activity) => (Date.parse(activity.finished_at) || 0) > seenAt).length;
+  const active = worker !== null && worker.phase !== "idle" && worker.phase !== "error";
+  const processingNow =
+    worker?.phase === "working" || worker?.phase === "preparing" || worker?.phase === "stopping";
+  const job = worker?.job ?? null;
+  const engine = worker?.engine ?? null;
+  const enginePercent =
+    engine && engine.stage !== "ready" && engine.progress >= 0
+      ? Math.round(Math.min(1, engine.progress) * 100)
+      : -1;
+  const jobPercent = job && job.total > 0 ? Math.min(1, job.read / job.total) : -1;
+  const liveLabel = job
+    ? `${jobLabel(job)}${job.total > 0 ? ` · ${job.read}/${job.total}` : ""}${
+        job.tokensPerSecond > 0 ? ` · ${job.tokensPerSecond.toFixed(1)} tok/s` : ""
+      }`
+    : worker?.phase === "stopping"
+      ? "desligando após esta nota"
+      : engine && engine.stage !== "ready"
+        ? `${engine.detail ?? "carregando modelo"}${enginePercent >= 0 ? ` · ${enginePercent}%` : ""}`
+        : "pronto, sem nota na fila";
 
   // A aba avisa que um processo terminou, sem depender de permissao de
   // notificacao do navegador. O numero e o mesmo do sino e some quando a
@@ -158,17 +183,24 @@ export function NotificationsMenu({ refreshKey, onOpen }: NotificationsMenuProps
       <div className="notifications-menu">
         <button
           type="button"
-          className={unread > 0 ? "icon-button icon-button--active" : "icon-button"}
+          className={`icon-button${unread > 0 ? " icon-button--active" : ""}${
+            active ? " notifications-bell--live" : ""
+          }`}
           onClick={() => (open ? close() : setOpen(true))}
           aria-expanded={open}
           aria-label={
-            unread > 0
-              ? `Notificações, ${unread} não ${unread === 1 ? "lida" : "lidas"}`
-              : "Notificações"
+            active
+              ? job
+                ? `Processando ${job.title || "uma nota"} neste computador`
+                : "Processamento neste computador ativo"
+              : unread > 0
+                ? `Notificações, ${unread} não ${unread === 1 ? "lida" : "lidas"}`
+                : "Notificações"
           }
-          title="Processos concluídos"
+          title={active ? (job ? `Processando: ${job.title || "nota"}` : "Neste PC ativo") : "Processos concluídos"}
         >
           <BellIcon size={16} />
+          {processingNow && <span className="notifications-live-dot" aria-hidden />}
           {unread > 0 && (
             <span className="notifications-badge" aria-hidden>
               {unread > 9 ? "9+" : unread}
@@ -178,7 +210,50 @@ export function NotificationsMenu({ refreshKey, onOpen }: NotificationsMenuProps
       </div>
 
       {open && (
-        <div className="notifications-popover" role="dialog" aria-label="Processos concluídos">
+        <div className="notifications-popover" role="dialog" aria-label="Atividade e processos concluídos">
+          {active && (
+            <div className="notifications-now">
+              <div className="notifications-head">
+                <span>Agora</span>
+                <span className="muted">neste PC</span>
+              </div>
+              {job ? (
+                <button
+                  type="button"
+                  className="notification notification--live"
+                  onClick={() => {
+                    close();
+                    onOpen(job.entryId);
+                  }}
+                  title={job.title}
+                >
+                  <span className="notification-icon" aria-hidden>
+                    {job.type === "transcribe" ? <MicIcon size={14} /> : <SparkIcon size={14} />}
+                  </span>
+                  <span className="notification-body">
+                    <span className="notification-title">{job.title || "Preparando a nota"}</span>
+                    <span className="notification-meta">{liveLabel}</span>
+                    {jobPercent >= 0 && (
+                      <span
+                        className="notification-live-meter"
+                        role="progressbar"
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={Math.round(jobPercent * 100)}
+                      >
+                        <span style={{ width: `${Math.round(jobPercent * 100)}%` }} />
+                      </span>
+                    )}
+                  </span>
+                </button>
+              ) : (
+                <p className="notifications-empty notifications-empty--live">
+                  {engine && engine.stage !== "ready" && <Spinner />}
+                  {liveLabel}
+                </p>
+              )}
+            </div>
+          )}
           <div className="notifications-head">
             <span>Concluídos</span>
             {activities.length > 0 && <span className="muted">{activities.length}</span>}

@@ -84,6 +84,23 @@ describe("analyzeNoteInBrowser", () => {
     expect(result.rejected).toBe(0);
   });
 
+  it("publica o documento parcial assim que o primeiro bloco e lido", async () => {
+    const partials: unknown[] = [];
+    await analyzeNoteInBrowser(note(LONG), "test-model", fakeGenerate(), {
+      onProgress: (progress) => {
+        if (progress.partial) partials.push(progress.partial);
+      },
+    });
+    expect(partials.length).toBeGreaterThan(0);
+    const first = partials[0] as {
+      people: string[];
+      coverage: { blocks_read: number; blocks_total: number };
+    };
+    expect(first.people).toContain("Maria");
+    expect(first.coverage.blocks_read).toBeGreaterThan(0);
+    expect(first.coverage.blocks_total).toBeGreaterThan(0);
+  });
+
   it("keeps a partial document when a block fails", async () => {
     const twoBlocks = `${LONG}\n\nNo dia seguinte voltei ao parque com Maria para caminhar de novo e falar sobre o trabalho, as contas e o que queremos mudar no próximo mês.`;
     const result = await analyzeNoteInBrowser(
