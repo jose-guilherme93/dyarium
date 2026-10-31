@@ -39,15 +39,15 @@ referencia local).
 
 Consequencias que valem registrar:
 
-- **Ultima edicao vence.** Titulo, data do evento e corpo tem versao propria no
-  servidor, mas os clientes oficiais usam last-write-wins para o texto: o app grava
-  o corpo sem versao de base e o dashboard reenvia sem versao quando recebe `409`.
-  O pull do app sempre aplica a versao do servidor quando ela e mais nova que a
-  ultima edicao local; nota com edicao pendente so perde o campo que o servidor
-  gravou depois (compara a versao do campo com o horario da edicao local). O
-  endpoint continua devolvendo `409` com o campo que brigou para clientes que
-  queiram oferecer a escolha, mas o produto nao interrompe mais o usuario com um
-  dialogo: a ultima gravacao vale.
+- **Ultima edicao vence, sem dialogo.** Titulo, data do evento e corpo tem versao
+  propria, e a versao e um carimbo do **relogio hibrido logico** (fisico em ms,
+  contador e no de quem emitiu). O app manda a versao que leu em `X-HLC`; o
+  servidor avanca o proprio relogio ate ela antes de carimbar a gravacao, entao
+  uma edicao feita depois de uma leitura vence a leitura mesmo com o relogio do
+  aparelho atrasado. Nota limpa aceita qualquer versao nova; nota com edicao
+  pendente so perde o campo que foi carimbado depois do carimbo local. O perdedor
+  fica em `note_revisions`; o produto nao interrompe mais o usuario com um
+  dialogo. Versoes antigas em RFC 3339 continuam validas.
 - **O que o markdown nao sabe, o editor nao oferece.** Cor de texto, cor de fundo e
   sublinhado sairam do schema do editor: dariam para formatar algo que nao sobrevive
   a gravacao.
@@ -659,6 +659,15 @@ corpo reaparecia na pilha do dashboard sem nenhuma forma de apagar.
   `entity_outbox`; o pull empurra a fila e aplica o catalogo de `GET /entities`
   (`updated_at`, `aliases` e `owner_aliases`), entao as duas pontas convergem sem
   depender da rede para abrir o mapa.
+
+## Ambientes independentes
+
+O app e o servidor sao pares independentes: cada um tem banco proprio, chave
+propria e funciona sozinho. A conexao e opcional e reconcilia conjuntos por id;
+nao existe espelho nem autoridade de um lado. O contrato normativo (identidade,
+uniao, tombstone permanente, versoes, anexos portateis e falha/retomada) esta em
+`docs/sincronizacao.md`. A identidade do servidor e gerada no primeiro boot em
+`/data/instance.id` e exposta em `GET /api/v1/version`; a URL nunca e identidade.
 
 ## Limites e configuracoes relevantes
 

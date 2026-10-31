@@ -28,6 +28,8 @@ Representa um audio enviado e seu ciclo de vida.
 | sha256 | TEXT | SHA-256 do conteudo em claro |
 | recorded_at | TEXT | data do evento (pode diferir da criacao) |
 | author | TEXT | papel do autor: `self`, `other`, `mixed` ou vazio (segue o padrao) |
+| origin_instance | TEXT | id de quem criou (`dev_...` do aparelho ou `instance_id` do ambiente); vazio nas linhas antigas |
+| origin_kind | TEXT | `device` ou `server`; proveniencia apenas, nao restringe edicao |
 | created_at | TEXT | |
 | updated_at | TEXT | ultima edicao de conteudo/metadados; abrir a nota e mudar so o status nao alteram |
 | deleted_at | TEXT | remocao logica |
@@ -71,6 +73,26 @@ Colecao de notas. Toda nota pertence a exatamente um caderno.
 
 Indices: unico em `name`; unico parcial em `is_default` quando 1. O caderno
 padrao e criado pela migracao 0017 e nao pode ser renomeado nem excluido.
+
+## Tombstone
+
+Prova permanente de uma exclusao, usada pela reconciliacao entre ambientes. A
+linha sobrevive a purga do conteudo: um ambiente offline por mais tempo que a
+retencao ainda precisa aprender que o objeto foi apagado.
+
+| Campo | Tipo | Notas |
+|---|---|---|
+| id | TEXT | id da entrada ou do caderno |
+| kind | TEXT | `entry` ou `notebook` |
+| deleted_at | TEXT | RFC 3339; a exclusao mais nova vence |
+| origin | TEXT | `instance_id` do ambiente ou id do aparelho que apagou |
+| PK | (id, kind) | |
+
+Indice em `(deleted_at, id)`. `GET /api/v1/entries?deleted=1` e
+`GET /api/v1/sync/manifest?kind=deleted` leem daqui, com `LEFT JOIN` na entrada
+para manter o titulo enquanto o conteudo ainda existe. Restaurar remove a linha;
+recriar a mesma entrada com o mesmo id tambem remove (o tombstone antigo nao pode
+valer contra a nota nova).
 
 ## Attachment
 
@@ -299,7 +321,7 @@ audio como blocos na posicao dos marcadores, preservando-os ao salvar.
 | title | TEXT | opcional |
 | document | TEXT | legado do BlockNote (vazio nas notas novas) |
 | content_markdown | TEXT | corpo canonico em markdown |
-| body_updated_at | TEXT | versao do corpo para conflito |
+| body_updated_at | TEXT | versao do corpo para conflito (carimbo HLC opaco; RFC 3339 antigo ainda e aceito) |
 | created_at | TEXT | |
 | updated_at | TEXT | |
 

@@ -21,7 +21,13 @@ Convencoes gerais:
 Responde 200 com `{ "status": "ok", "version": "<versao>" }`. Sem autenticacao.
 
 ### GET /api/v1/version
-Retorna `{ "version": "<versao>", "commit": "<hash>", "built_at": "<RFC3339>" }`.
+Retorna `{ "version": "<versao>", "commit": "<hash>", "built_at": "<RFC3339>", "instance_id": "<hex>", "sync_contract": "1" }`.
+
+- `instance_id` e a identidade estavel do ambiente: gerada no primeiro boot em
+  `/data/instance.id`, sobrevive a reinicio, troca de endereco e troca de token.
+  Dois ambientes nunca compartilham o mesmo id.
+- `sync_contract` e o major do contrato de sincronizacao. O app recusa a conexao
+  quando nao conhece o major; a recusa acontece antes de qualquer escrita.
 
 ## Upload resumivel
 
@@ -116,10 +122,16 @@ Resposta 201:
 { "entry_id": "en_...", "attachment_id": "at_...", "status": "queued" }
 ```
 - `attachment_id` identifica o audio criado (o anexo `original` da entrada).
+- `X-Attachment-Id` (opcional) faz o servidor usar o id do criador em vez de
+  gerar um. O mesmo id passa a valer em todos os ambientes, entao o corpo da nota
+  que referencia `attachment:<id>` e portatil. Repetir o id com o mesmo conteudo e
+  idempotente; conteudo diferente sob o mesmo id responde 409
+  `attachment_id_conflict`.
 - Idempotente: repetir o complete depois de perder a resposta devolve o mesmo
   `entry_id`/`attachment_id` (201), sem criar outro audio nem reenfileirar a transcricao.
 - O mesmo conteudo de audio nunca vira dois audios da mesma nota: se o `sha256` ja existe
   (novo upload da mesma gravacao), devolve o audio existente em vez de duplicar.
+  Quando o cliente informa `X-Attachment-Id`, a deduplicacao nao troca o id pedido.
 - 422: integridade divergente (SHA-256), formato nao aceito ou duracao acima do limite.
 - 404: upload inexistente ou expirado.
 
@@ -130,12 +142,17 @@ Lista entradas. Filtros: `person`, `place` e `theme` (entradas que mencionam a e
 por nome, case-insensitive) e `notebook_id` (notas de um caderno). Retorna resumos com id,
 titulo, status, duracao, data, `notebook_id` e, quando houver, `tags` (nomes).
 Com `deleted=1` lista a **lixeira**: as entradas apagadas (remocao logica) com
-`deleted_at`, da mais recente para a mais antiga.
+`deleted_at`, da mais recente para a mais antiga. A lixeira e permanente: apos a
+retencao, o conteudo (audio, imagens, corpo) e purgado, mas o tombstone continua
+sendo listado. Um ambiente que ficou offline por mais tempo que a janela ainda
+aprende que a nota foi apagada e nao a ressuscita.
 - `notebook_id` desconhecido responde 404 `notebook_not_found`.
 - O app reconcilia exclusoes por esta lista, e nao por ausencia: uma entrada que
   simplesmente sumiu (servidor novo, banco restaurado) nunca apaga a nota local.
 - Entradas apagadas aparecem em `entries` com `status: "deleted"` e o campo
-  `deleted_at` preenchido.
+  `deleted_at` preenchido. Depois que o conteudo e purgado, o tombstone continua
+  na lista com `status: "purged"` e `purged: true`; `restore` nesse estado
+  responde 404, porque nao ha mais o que restaurar.
 - `archived=0` (padrao explicito do app e do dashboard) traz so as notas da lista
   de trabalho; `archived=1` traz so as arquivadas; **sem o filtro traz as duas**,
   para nenhum cliente perder nota por omissao.
@@ -151,6 +168,12 @@ Com `deleted=1` lista a **lixeira**: as entradas apagadas (remocao logica) com
 - `primary_attachment_id` (quando a nota tem audio) aponta o primeiro audio
   original. A lista nao carrega a pilha inteira; e por este id que o app resolve o
   player de uma nota puxada do servidor.
+- `origin_instance` e `origin_kind` dizem quem **criou** a nota: o id do aparelho
+  (`device`) ou o `instance_id` do ambiente (`server`). O app manda
+  `X-Origin-Instance: <id do aparelho>` em toda requisicao autenticada; sem o
+  cabecalho (dashboard/API) o criador e o proprio ambiente. E proveniencia: nao
+  muda permissao e nao impede editar a nota em nenhum ambiente. Linha criada
+  antes do campo vem com os dois vazios.
 - `analysis_at` e quando a analise mais nova foi gravada no servidor (vazio quando
   nao ha analise). E o sinal de atualizacao do app: quando o valor muda, ele busca
   a analise uma vez e guarda no banco; a ficha mostra sempre a copia local, sem
@@ -171,7 +194,14 @@ falam. Cada campo editavel tem **versao propria** (`title`, `recorded_at`,
 atual. Se nao for, responde `409` **sem escrever** e diz qual campo brigou — o
 cliente pergunta ao usuario em vez de sobrescrever em silencio.
 
-- Versoes sao RFC 3339 (UTC, com nanossegundos) devolvidas em `versions`.
+- Versoes sao **opacas**: um carimbo do relogio hibrido logico
+  (`physical-counter-node`, largura fixa, comparavel como string) devolvido em
+  `versions`. O cliente guarda e devolve o token; nao interpreta o valor. Versoes
+  antigas em RFC 3339 continuam aceitas e ordenadas como carimbos sem contador.
+- Gravacoes de `PATCH /entries/{id}` e `PUT /notes/{id}` aceitam o cabecalho
+  opcional `X-HLC` com a ultima versao que o cliente viu. O servidor avanca o
+  relogio ate ela e a gravacao seguinte fica depois, mesmo que o relogio do
+  aparelho esteja atrasado. Cabecalho ausente ou invalido nao muda nada.
 - Cliente que **nao manda versao** (app antigo) continua funcionando: ultimo a
   escrever vence.
 - Os clientes oficiais usam essa politica: o app grava o corpo **sem
@@ -267,6 +297,56 @@ nasce em "Notas ao acaso".
   **na lixeira**, desfaz a remocao e devolve 200 (trazer a nota de volta sem duplicar); senao cria
   com 201.
 - `created_at` (RFC 3339) posiciona a nota na linha do tempo quando ela nasceu offline.
+
+## Sincronizacao entre ambientes
+
+O servidor e o app sao pares independentes. O contrato completo esta em
+`docs/sincronizacao.md`; esta secao descreve a superficie HTTP.
+
+### GET /api/v1/sync/manifest
+Manifesto compacto para reconciliacao. Parametros: `kind` (`entries`, `deleted` ou
+`notebooks`), `limit` (padrao 500, teto 5000) e `cursor`. Autenticado.
+
+```json
+{
+  "contract": "1",
+  "instance_id": "<hex>",
+  "kind": "entries",
+  "items": [
+    {
+      "id": "note_...",
+      "kind": "entry",
+      "title": "...",
+      "created_at": "...",
+      "updated_at": "...",
+      "recorded_at": "...",
+      "content_type": "audio/aac",
+      "source": "upload",
+      "notebook_id": "...",
+      "archived": false,
+      "author": "",
+      "versions": { "title": "...", "recorded_at": "...", "body": "..." },
+      "body_hash": "<sha256 do markdown>",
+      "primary_attachment_id": "at_...",
+      "attachment_ids": ["at_..."],
+      "transcript_at": "...",
+      "analysis_at": "...",
+      "tags": ["..."]
+    }
+  ],
+  "complete": true,
+  "next_cursor": "..."
+}
+```
+
+- `kind=entries` lista as entradas vivas; `kind=deleted` lista os tombstones
+  (inclusive os que ja tiveram o conteudo purgado, com `purged: true`);
+  `kind=notebooks` devolve `items` (cadernos) e `deleted` (tombstones de
+  caderno).
+- O manifesto nao traz corpo nem transcricao: eles sao buscados pelos endpoints
+  normais quando `body_hash`/`versions`/`transcript_at` divergem do estado local.
+- `complete: false` significa lista truncada; o cliente **nao** pode tratar
+  ausencia como exclusao nem aplicar uniao parcial.
 
 ### GET /api/v1/entries/{id}
 Retorna a entrada completa: metadados, `audios`, `tags` e `metrics`. O `audios` e
@@ -408,7 +488,9 @@ Lista os anexos de midia (imagens) da entrada.
 
 ### POST /api/v1/entries/{id}/attachments
 Envia uma imagem. O corpo e os bytes da imagem e o `Content-Type` deve comecar com
-`image/`. Resposta 201 com `{ id, entry_id, kind, content_type, size_bytes, created_at }`.
+`image/`. `X-Attachment-Id` (opcional) usa o id do criador, com a mesma regra de
+idempotencia/conflito do complete do upload. Resposta 201 com
+`{ id, entry_id, kind, content_type, size_bytes, sha256, created_at }`.
 
 ### GET /api/v1/attachments/{id}
 Transmite o anexo decifrado (imagens e audios), com suporte a `Range` para o audio.
