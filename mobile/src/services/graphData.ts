@@ -14,8 +14,12 @@ import type {
   GraphOptions,
 } from '@/core/graphModel';
 import { buildGraph, type GraphSource } from '@/core/graphBuild';
-import type { GraphLayout } from '@/core/graphLayout';
-import { layoutGraph, layoutKey } from '@/core/graphLayout';
+import {
+  layoutGraph,
+  layoutKey,
+  type GraphLayout,
+  type NodePosition,
+} from '@/core/graphLayout';
 import type { EntityPanel } from '@/core/graphPanel';
 import { buildEntityPanel } from '@/core/graphPanel';
 import type { ServerAnalysis } from '@/core/api';
@@ -184,6 +188,29 @@ function remember(key: string, layout: GraphLayout): void {
   if (layoutMemory.size > 12) layoutMemory.clear();
   layoutMemory.set(key, layout);
   void saveGraphLayout(layout).catch(() => undefined);
+}
+
+/**
+ * Layout do foco semeado no desenho que esta na tela. As bolas que ja existiam
+ * ficam onde estavam, entao a fisica tem pouco a assentar: sai no proprio
+ * toque, sem ler o banco nem esperar a simulacao inteira.
+ */
+export function layoutSeeded(
+  data: GraphData,
+  focus: string,
+  seed: Record<string, NodePosition> | null,
+  steps = 60,
+): GraphLayout {
+  const key = layoutKey(data, focus, steps);
+  const memory = layoutMemory.get(key);
+  if (memory) return memory;
+  const started = Date.now();
+  const layout = layoutGraph(data, { focus, seed: seed ?? undefined, steps });
+  if (__DEV__) {
+    console.log(`[map] foco ${data.nodes.length} nos ${Date.now() - started}ms`);
+  }
+  remember(key, layout);
+  return layout;
 }
 
 export async function layoutForGraph(

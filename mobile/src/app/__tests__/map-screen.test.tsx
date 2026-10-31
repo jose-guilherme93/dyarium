@@ -66,6 +66,7 @@ jest.mock('@/services/graphData', () => ({
   graphFromSnapshot: (snapshot: unknown, options: unknown) => mockGraph(snapshot, options),
   kindCounts: () => ({ person: 1, place: 1, theme: 0, decision: 0 }),
   layoutForGraph: (data: unknown, focus?: string) => mockLayout(data, focus),
+  layoutSeeded: (data: unknown, focus?: string) => mockLayout(data, focus),
   panelForEntity: (snapshot: unknown, id: string) => mockPanel(snapshot, id),
   loadEntityPanel: async (snapshot: unknown, id: string) => mockPanel(snapshot, id),
   loadMoodSeries: async () => [],
@@ -278,8 +279,8 @@ describe('tela do mapa', () => {
 
     await act(async () => {
       fireEvent.press(screen.getByLabelText('Maria, 2 menções'));
-      await Promise.resolve();
-      await Promise.resolve();
+      // O desenho troca atras do escurecido; a troca tem um compasso de espera.
+      await new Promise((resolve) => setTimeout(resolve, 200));
     });
 
     // O desenho passa a ser o foco: a entidade e as relacoes dela.

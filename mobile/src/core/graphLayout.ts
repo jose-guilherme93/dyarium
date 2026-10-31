@@ -58,10 +58,11 @@ export function stableHash(value: string): number {
 }
 
 /** Chave do conjunto: ids + mencoes + foco. Qualquer mudanca refaz o layout. */
-export function layoutKey(data: GraphData, focus?: string): string {
+export function layoutKey(data: GraphData, focus?: string, steps?: number): string {
   const parts = data.nodes.map((node) => `${node.id}:${node.mentions}:${node.notes}`);
   parts.sort();
-  return `v10:${BALL_SCALE}|${focus ?? ''}|${parts.join(',')}`;
+  const mode = steps === undefined ? 'full' : `seed${steps}`;
+  return `v10:${BALL_SCALE}|${mode}|${focus ?? ''}|${parts.join(',')}`;
 }
 
 function nodeRadius(node: GraphNode, maxMentions: number): number {
@@ -77,8 +78,18 @@ interface SimNode extends NodePosition {
   fixed: boolean;
 }
 
-/** Sementes deterministicas: espiral de angulo dourado a partir do centro. */
-function seedNodes(data: GraphData, focus?: string): SimNode[] {
+/**
+ * Sementes deterministicas: espiral de angulo dourado a partir do centro.
+ *
+ * Com `seed`, as bolas que ja estavam na tela continuam exatamente onde
+ * estavam: abrir um no mexe so nas que nao existiam ali (as notas), e a
+ * fisica tem pouco o que assentar.
+ */
+function seedNodes(
+  data: GraphData,
+  focus?: string,
+  seed?: Record<string, NodePosition>,
+): SimNode[] {
   let maxMentions = 1;
   for (const node of data.nodes) {
     if (node.kind !== 'note' && node.mentions > maxMentions) maxMentions = node.mentions;
@@ -103,7 +114,11 @@ function seedNodes(data: GraphData, focus?: string): SimNode[] {
   for (const node of data.nodes) {
     let x = 0;
     let y = 0;
-    if (focus && node.id === focus) {
+    const prior = seed?.[node.id];
+    if (prior) {
+      x = prior.x;
+      y = prior.y;
+    } else if (focus && node.id === focus) {
       x = 0;
       y = -90;
     } else if (node.kind === 'note') {
@@ -154,10 +169,10 @@ interface SimLink {
 }
 
 /** Uma passada de fisica, identica ao web: repulsao, mola e ancora. */
-function relax(nodes: SimNode[], links: SimLink[]): void {
+function relax(nodes: SimNode[], links: SimLink[], limit?: number): void {
   // Menos passos em grafos grandes: o resultado ainda assenta, e a abertura
   // deixa de pagar centenas de milhares de pares. O layout fica em cache.
-  const steps = nodes.length > 90 ? 110 : nodes.length > 50 ? 170 : 220;
+  const steps = limit ?? (nodes.length > 90 ? 110 : nodes.length > 50 ? 170 : 220);
   // Repulsao por vizinhanca: a forca cai com o quadrado da distancia, entao
   // so os pares proximos importam. Uma grade uniforme troca o custo O(n^2) por
   // O(n), e o mapa abre em milissegundos mesmo com centenas de bolas.
@@ -255,8 +270,13 @@ function relax(nodes: SimNode[], links: SimLink[]): void {
   }
 }
 
-function forcePositions(data: GraphData, focus?: string): Record<string, NodePosition> {
-  const nodes = seedNodes(data, focus);
+function forcePositions(
+  data: GraphData,
+  focus?: string,
+  seed?: Record<string, NodePosition>,
+  steps?: number,
+): Record<string, NodePosition> {
+  const nodes = seedNodes(data, focus, seed);
   const index = new Map(nodes.map((node, position) => [node.id, position]));
   const links: SimLink[] = [];
   for (const edge of data.edges) {
@@ -265,7 +285,7 @@ function forcePositions(data: GraphData, focus?: string): Record<string, NodePos
     if (a === undefined || b === undefined) continue;
     links.push({ a, b, kind: edge.kind });
   }
-  relax(nodes, links);
+  relax(nodes, links, steps);
   const positions: Record<string, NodePosition> = {};
   for (const node of nodes) {
     positions[node.id] = { x: node.x * LAYOUT_STRETCH_X, y: node.y, r: node.r };
@@ -273,9 +293,21 @@ function forcePositions(data: GraphData, focus?: string): Record<string, NodePos
   return positions;
 }
 
-export function layoutGraph(data: GraphData, options: { focus?: string } = {}): GraphLayout {
-  const positions = forcePositions(data, options.focus);
-  return { positions, bounds: boundsOf(positions), key: layoutKey(data, options.focus) };
+export interface LayoutOptions {
+  focus?: string;
+  /** Posicoes ja na tela: o que existe ali nao se mexe. */
+  seed?: Record<string, NodePosition>;
+  /** Passos de fisica; menos passos quando a semente ja esta perto. */
+  steps?: number;
+}
+
+export function layoutGraph(data: GraphData, options: LayoutOptions = {}): GraphLayout {
+  const positions = forcePositions(data, options.focus, options.seed, options.steps);
+  return {
+    positions,
+    bounds: boundsOf(positions),
+    key: layoutKey(data, options.focus, options.steps),
+  };
 }
 
 function boundsOf(positions: Record<string, NodePosition>): GraphBounds {

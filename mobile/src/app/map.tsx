@@ -30,6 +30,11 @@ import {
   View,
   type ListRenderItemInfo,
 } from 'react-native';
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Text } from '@/components/AppText';
@@ -49,6 +54,7 @@ import {
   graphFromSnapshot,
   kindCounts,
   layoutForGraph,
+  layoutSeeded,
   loadEntityPanel,
   loadGraphSnapshot,
   loadMoodSeries,
@@ -93,6 +99,10 @@ const KINDS: EntityKind[] = ['person', 'place', 'theme', 'decision'];
  * segundos a leitura fresca roda por tras.
  */
 let snapshotCache: { key: string; at: number; snapshot: GraphSnapshot } | null = null;
+
+/** Escurecido do desenho ao trocar de cena, em ms. */
+const VEIL_IN = 110;
+const VEIL_OUT = 220;
 
 /** Altura fixa de uma linha da lista de entidades, em pt. */
 const OVERVIEW_ROW = 46;
@@ -240,7 +250,14 @@ export default function MapScreen() {
     [snapshot],
   );
 
-  const visible = data ? shown : null;
+  // O foco se semeia nas posicoes do desenho que esta na tela: as bolas que ja
+  // estavam ali nao saem do lugar, e a fisica tem pouco a assentar.
+  const focusLayout = useMemo(
+    () =>
+      data && focusId ? layoutSeeded(data, focusId, shown?.layout.positions ?? null) : null,
+    [data, focusId, shown],
+  );
+  const visible = data ? (focusLayout ? { data, layout: focusLayout } : shown) : null;
 
   const hydratePanel = useCallback(async (snap: GraphSnapshot, id: string | null) => {
     const parsed = id ? splitNodeId(id) : null;
@@ -432,16 +449,18 @@ export default function MapScreen() {
   }, [drawn]);
 
   useEffect(() => {
-    if (!data) return undefined;
+    // O foco ja trouxe o layout no proprio toque; o caminho do banco e do mapa
+    // inteiro, que e grande e reaproveitado entre aberturas.
+    if (!data || focusLayout) return undefined;
     let alive = true;
-    void layoutForGraph(data, focusId ?? undefined).then((next) => {
+    void layoutForGraph(data).then((next) => {
       if (!alive) return;
       setShown({ data, layout: next });
     });
     return () => {
       alive = false;
     };
-  }, [data, focusId]);
+  }, [data, focusLayout]);
 
   // Sincronizacao best-effort: nao atrasa o primeiro desenho. Se o servidor
   // estiver fora, o mapa segue com o que o aparelho tem.
@@ -520,6 +539,38 @@ export default function MapScreen() {
     [snapshot],
   );
 
+  // Veu do desenho: escurece a cena antes de trocar e so abre depois que o
+  // desenho novo esta no lugar. Sem isso o mapa velho pisca e a camera salta.
+  const [veil, setVeil] = useState(false);
+  const veilOpacity = useSharedValue(0);
+  const veilTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const veilGuard = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    veilOpacity.value = withTiming(veil ? 1 : 0, { duration: veil ? VEIL_IN : VEIL_OUT });
+  }, [veil, veilOpacity]);
+
+  const veilStyle = useAnimatedStyle(() => ({ opacity: veilOpacity.value }));
+
+  /** Troca o desenho atras do escurecido. A acao roda com o veu fechado. */
+  const switchScene = useCallback((action: () => void) => {
+    setVeil(true);
+    if (veilTimer.current) clearTimeout(veilTimer.current);
+    if (veilGuard.current) clearTimeout(veilGuard.current);
+    veilTimer.current = setTimeout(() => {
+      action();
+      // Se o desenho novo nao chegar, o veu abre sozinho.
+      veilGuard.current = setTimeout(() => setVeil(false), 1500);
+    }, VEIL_IN);
+  }, []);
+
+  const sceneReady = veil && Boolean(visible) && visible?.data === data;
+  useEffect(() => {
+    if (!sceneReady) return undefined;
+    const timer = setTimeout(() => setVeil(false), 60);
+    return () => clearTimeout(timer);
+  }, [sceneReady]);
+
   /** Volta ao mapa inteiro: nada escolhido, nada em foco. */
   const resetToMap = useCallback(() => {
     panelSeq.current += 1;
@@ -527,8 +578,8 @@ export default function MapScreen() {
     setSelectedId(null);
     setSelectedPanel(null);
     setPanelLoading(false);
-    setFocusId(null);
-  }, []);
+    if (focusId) switchScene(() => setFocusId(null));
+  }, [focusId, switchScene]);
 
   /**
    * Abre uma bola: ela vira a raiz da propria visao. Todo o resto sai de cena
@@ -548,7 +599,9 @@ export default function MapScreen() {
       }
       selectedRef.current = id;
       setSelectedId(id);
-      setFocusId(id);
+      // So troca o desenho se a bola ainda nao esta aberta: tocar de novo na
+      // mesma bola nao pode piscar a tela.
+      if (id !== focusId) switchScene(() => setFocusId(id));
       tabRef.current = 'detail';
       setTab('detail');
       // A folha fica onde o usuario deixou (50%): ele sobe se quiser ler mais.
@@ -558,7 +611,7 @@ export default function MapScreen() {
       setPanelLoading(!instant);
       if (snapshot) void hydratePanel(snapshot, id);
     },
-    [openNote, resetToMap, snapshot, hydratePanel],
+    [openNote, resetToMap, snapshot, hydratePanel, focusId, switchScene],
   );
 
   // Voltar do Android desfaz o estado do mapa antes de sair dele: Humor volta
@@ -760,6 +813,15 @@ export default function MapScreen() {
           />
         </Profiler>
       ) : null}
+
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.veil,
+          { bottom: Math.round(height * (1 - SNAP_REST)), backgroundColor: theme.bg },
+          veilStyle,
+        ]}
+      />
 
       <View style={[styles.chrome, { paddingTop: insets.top + spacing.xs }]}>
         <View style={styles.topBar}>
@@ -971,6 +1033,7 @@ export default function MapScreen() {
 
 const baseStyles = defineStyles({
   screen: { flex: 1, backgroundColor: baseColors.bg },
+  veil: { position: 'absolute', left: 0, right: 0, top: 0 },
   chrome: {
     position: 'absolute',
     top: 0,
