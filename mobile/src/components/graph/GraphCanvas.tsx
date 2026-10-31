@@ -61,6 +61,8 @@ const MAX_ZOOM = 3.2;
 const FIT_PADDING = 12;
 const FIT_MAX_ZOOM = 1.4;
 const TAP_SLOP = 14;
+/** Folga do toque em volta da bola, em pt de tela: 44 pt e o alvo minimo. */
+const TAP_RADIUS = 22;
 /** Folga em volta do desenho, em pt de tela, para o nome nao ser cortado. */
 const EDGE_MARGIN = 28;
 /** Bola menor que isso no encaixe nao mostra icone (vira poeira). */
@@ -304,17 +306,11 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
   const startPanY = useSharedValue(0);
   const pinchStart = useSharedValue({ zoom: 1, panX: 0, panY: 0, x: 0, y: 0 });
 
-  // Resolucao do desenho: quantos pt de tela valem uma unidade do grafo. Fica
-  // no encaixe (o desenho inteiro cabe na tela) e acompanha o zoom so ate 3x.
-  // Antes o bitmap saia em 1 pt por unidade e era reduzido pelo zoom: 12x mais
-  // pixels para pintar a mesma tela, em toda troca de cena.
-  const [paint, setPaint] = useState(fitted.zoom);
-
   const cameraStyle = useAnimatedStyle(() => ({
     transform: [
       { translateX: panX.value },
       { translateY: panY.value },
-      { scale: zoom.value / paint },
+      { scale: zoom.value },
     ],
   }));
 
@@ -355,10 +351,6 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
 
   const syncLabels = useCallback((cameraZoom: number, cameraPanX: number, cameraPanY: number) => {
     cameraRef.current = { zoom: cameraZoom, panX: cameraPanX, panY: cameraPanY };
-    // A resolucao acompanha o zoom parado, sem passar do teto: pintar mais
-    // pixels do que a tela mostra so custa tempo.
-    const nextPaint = Math.min(Math.max(cameraZoom, fitted.zoom), fitted.zoom * 3);
-    setPaint((current) => (Math.abs(current - nextPaint) > 0.005 ? nextPaint : current));
     const next = pickLabels(shown, layout, {
       camera: {
         zoom: cameraZoom,
@@ -392,7 +384,6 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
     band.centerY,
     fitted.originX,
     fitted.originY,
-    fitted.zoom,
     selectedId,
   ]);
 
@@ -477,7 +468,7 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
       const center = layout.positions[data.center.id];
       if (center) {
         const d = Math.hypot(gx - center.x, gy - center.y);
-        if (d <= center.r + 12 / z) {
+        if (d <= center.r + TAP_RADIUS / z) {
           onSelect(data.center.id);
           return;
         }
@@ -487,7 +478,7 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
         const position = layout.positions[node.id];
         if (!position) continue;
         const d = Math.hypot(gx - position.x, gy - position.y);
-        if (d > position.r + 12 / z) continue;
+        if (d > position.r + TAP_RADIUS / z) continue;
         if (!best || d < best.distance) best = { id: node.id, distance: d };
       }
       onSelect(best?.id ?? null);
@@ -788,17 +779,17 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
           style={[
             {
               position: 'absolute',
-              left: (width - spanX * paint) / 2,
-              top: band.centerY - (spanY * paint) / 2,
-              width: spanX * paint,
-              height: spanY * paint,
+              left: (width - spanX) / 2,
+              top: band.centerY - spanY / 2,
+              width: spanX,
+              height: spanY,
             },
             cameraStyle,
           ]}
         >
           <Svg
-            width={spanX * paint}
-            height={spanY * paint}
+            width={spanX}
+            height={spanY}
             viewBox={`${box.minX} ${box.minY} ${spanX} ${spanY}`}
             pointerEvents="none"
           >

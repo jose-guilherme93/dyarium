@@ -126,9 +126,18 @@ function runSlide(
   });
 }
 
+/** Escurece (ou abre) o veu do desenho. */
+function fadeVeil(target: SlideValue, open: boolean): void {
+  target.value = withTiming(open ? 1 : 0, { duration: open ? VEIL_IN : VEIL_OUT });
+}
+
 /** Empurrao do desenho ao trocar de cena, em ms: sai e entra. */
 const SLIDE_OUT = 130;
 const SLIDE_IN = 190;
+
+/** Escurecido do desenho ao trocar de cena, em ms: fecha e abre. */
+const VEIL_IN = 110;
+const VEIL_OUT = 220;
 
 /** Altura fixa de uma linha da lista de entidades, em pt. */
 const OVERVIEW_ROW = 46;
@@ -565,23 +574,47 @@ export default function MapScreen() {
     [snapshot],
   );
 
-  // Empurrao do desenho: a cena atual sai por um lado, a troca acontece fora
-  // da tela e a nova entra pelo outro -- o mesmo caminho de abrir uma nota.
+  // Duas trocas de cena, uma por origem:
+  // - a lista e navegacao: o desenho desliza como abrir uma nota;
+  // - o desenho e a propria visao mudando: escurece e volta com os nois novos.
   const slideX = useSharedValue(0);
   const slideStyle = useAnimatedStyle(() => ({ transform: [{ translateX: slideX.value }] }));
+  const veilOpacity = useSharedValue(0);
+  const veilStyle = useAnimatedStyle(() => ({ opacity: veilOpacity.value }));
+  const [veil, setVeil] = useState(false);
+  const veilGuard = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const transition = useRef<'slide' | 'fade'>('fade');
 
-  /**
-   * Troca a cena com o empurrao da navegacao. `direction` 1 abre (sai pela
-   * esquerda, entra pela direita) e -1 volta (sai pela direita, entra pela
-   * esquerda). A troca roda com o desenho fora da tela, entao nenhum salto de
-   * camera aparece.
-   */
+  useEffect(() => {
+    fadeVeil(veilOpacity, veil);
+  }, [veil, veilOpacity]);
+
   const switchScene = useCallback(
     (action: () => void, direction: 1 | -1 = 1) => {
+      transition.current = 'slide';
       runSlide(slideX, width, direction, action);
     },
     [width, slideX],
   );
+
+  /** Troca a cena com o desenho escurecido: some, troca, volta. */
+  const fadeScene = useCallback((action: () => void) => {
+    transition.current = 'fade';
+    setVeil(true);
+    if (veilGuard.current) clearTimeout(veilGuard.current);
+    veilGuard.current = setTimeout(() => {
+      action();
+      // Se o desenho novo nao chegar, o veu abre sozinho.
+      veilGuard.current = setTimeout(() => setVeil(false), 1500);
+    }, VEIL_IN);
+  }, []);
+
+  const sceneReady = veil && Boolean(visible) && visible?.data === data;
+  useEffect(() => {
+    if (!sceneReady) return undefined;
+    const timer = setTimeout(() => setVeil(false), 60);
+    return () => clearTimeout(timer);
+  }, [sceneReady]);
 
   /** Volta ao mapa inteiro: nada escolhido, nada em foco. */
   const resetToMap = useCallback(() => {
@@ -590,20 +623,19 @@ export default function MapScreen() {
     setSelectedId(null);
     setSelectedPanel(null);
     setPanelLoading(false);
-    if (focusId) switchScene(() => setFocusId(null), -1);
-  }, [focusId, switchScene]);
+    if (focusId) {
+      if (transition.current === 'slide') switchScene(() => setFocusId(null), -1);
+      else fadeScene(() => setFocusId(null));
+    }
+  }, [focusId, switchScene, fadeScene]);
 
   /**
    * Abre uma bola: ela vira a raiz da propria visao. Todo o resto sai de cena
    * e ficam so ela, as relacoes dela e as notas que a citam. Tocar no dono
    * ("Você") devolve o mapa inteiro.
    */
-  const selectNode = useCallback(
-    (id: string | null) => {
-      if (!id || id === 'user') {
-        resetToMap();
-        return;
-      }
+  const openEntity = useCallback(
+    (id: string, from: 'graph' | 'list') => {
       const parsed = splitNodeId(id);
       if (parsed?.kind === 'note') {
         openNote(noteKeyFromNode(id));
@@ -613,7 +645,10 @@ export default function MapScreen() {
       setSelectedId(id);
       // So troca o desenho se a bola ainda nao esta aberta: tocar de novo na
       // mesma bola nao pode piscar a tela.
-      if (id !== focusId) switchScene(() => setFocusId(id));
+      if (id !== focusId) {
+        if (from === 'list') switchScene(() => setFocusId(id), 1);
+        else fadeScene(() => setFocusId(id));
+      }
       tabRef.current = 'detail';
       setTab('detail');
       // A folha fica onde o usuario deixou (50%): ele sobe se quiser ler mais.
@@ -623,7 +658,22 @@ export default function MapScreen() {
       setPanelLoading(!instant);
       if (snapshot) void hydratePanel(snapshot, id);
     },
-    [openNote, resetToMap, snapshot, hydratePanel, focusId, switchScene],
+    [openNote, snapshot, hydratePanel, focusId, switchScene, fadeScene],
+  );
+
+  /** Toque no desenho: troca escurecendo. Tocar no dono/vazio volta ao mapa. */
+  const selectNode = useCallback(
+    (id: string | null) => {
+      if (!id || id === 'user') resetToMap();
+      else openEntity(id, 'graph');
+    },
+    [openEntity, resetToMap],
+  );
+
+  /** Toque na lista: e navegacao, entao o desenho desliza. */
+  const selectFromList = useCallback(
+    (id: string) => openEntity(id, 'list'),
+    [openEntity],
   );
 
   // Voltar do Android desfaz o estado do mapa antes de sair dele: Humor volta
@@ -667,10 +717,10 @@ export default function MapScreen() {
       <OverviewRow
         node={item}
         color={item.kind === 'user' ? theme.neutralSoft : graphColors[item.kind as EntityKind]}
-        onPress={selectNode}
+        onPress={selectFromList}
       />
     ),
-    [theme.neutralSoft, graphColors, selectNode],
+    [theme.neutralSoft, graphColors, selectFromList],
   );
 
   const toggleKind = useCallback((kind: EntityKind) => {
@@ -829,6 +879,15 @@ export default function MapScreen() {
           </Animated.View>
         ) : null}
       </View>
+
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.veil,
+          { bottom: Math.round(height * (1 - SNAP_REST)), backgroundColor: theme.bg },
+          veilStyle,
+        ]}
+      />
 
       <View style={[styles.chrome, { paddingTop: insets.top + spacing.xs }]}>
         <View style={styles.topBar}>
@@ -1042,6 +1101,8 @@ const baseStyles = defineStyles({
   screen: { flex: 1, backgroundColor: baseColors.bg },
   graphWindow: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, overflow: 'hidden' },
   graphLayer: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 },
+  // `pointerEvents` no estilo: no Animated.View o prop antigo nao segura o toque.
+  veil: { position: 'absolute', left: 0, right: 0, top: 0, pointerEvents: 'none' },
   chrome: {
     position: 'absolute',
     top: 0,
