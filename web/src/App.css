@@ -1628,6 +1628,84 @@
   margin: 0;
 }
 
+/* Relacoes da nota no painel: a nota no centro e as entidades em volta. A
+   espessura da aresta e o raio do no mostram o peso da relacao. */
+.note-relations {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.note-relations-edge {
+  stroke: var(--color-muted);
+  stroke-linecap: round;
+  opacity: 0.45;
+}
+
+.note-relations-self-halo {
+  fill: var(--graph-note);
+  opacity: 0.14;
+}
+
+.note-relations-self-dot {
+  fill: var(--graph-note);
+}
+
+.note-relations-self-fold {
+  fill: var(--color-surface);
+  opacity: 0.85;
+}
+
+.note-relations-node {
+  cursor: pointer;
+  outline: none;
+}
+
+.note-relations-dot {
+  stroke: var(--color-surface);
+  stroke-width: 1.5;
+}
+
+.note-relations-node--person .note-relations-dot {
+  fill: var(--graph-person);
+}
+
+.note-relations-node--place .note-relations-dot {
+  fill: var(--graph-place);
+}
+
+.note-relations-node--theme .note-relations-dot {
+  fill: var(--graph-theme);
+}
+
+.note-relations-node:hover .note-relations-dot,
+.note-relations-node:focus-visible .note-relations-dot {
+  stroke: var(--color-text);
+  stroke-width: 2;
+}
+
+.note-relations-label {
+  font-family: var(--font-sans);
+  font-size: 10.5px;
+  fill: var(--color-text);
+  paint-order: stroke;
+  stroke: var(--color-surface);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
+.note-relations-node:hover .note-relations-label,
+.note-relations-node:focus-visible .note-relations-label {
+  fill: var(--color-accent);
+}
+
+.note-relations-more {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  fill: var(--color-muted);
+}
+
 /* De onde veio a analise: aparelho, este servidor ou uma API. */
 .aside-block-title {
   display: flex;
@@ -5327,8 +5405,10 @@
   border-radius: 6px;
   background: var(--paper);
   color: var(--ink);
+  /* O campo de editar o nome e um controle, nao o titulo da bola: 17px serif
+     deixava o nome maior que o resto do formulario. */
   font-family: var(--font-serif);
-  font-size: 17px;
+  font-size: 14px;
   line-height: 1.3;
 }
 
@@ -5592,12 +5672,16 @@
   text-align: left;
 }
 
+/* O titulo do trecho pode ocupar duas linhas: uma linha so cortava o nome da
+   nota no meio com reticencias, e o trecho e justamente o contexto que importa. */
 .map-mention-title {
   min-width: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   font-size: 12.5px;
+  line-height: 1.3;
   font-weight: 600;
 }
 

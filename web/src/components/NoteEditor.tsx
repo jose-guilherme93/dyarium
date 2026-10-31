@@ -15,6 +15,7 @@ import { TagEditor } from "./TagEditor";
 import { ListSkeleton } from "./Skeleton";
 import { ProcessOnPc } from "./ProcessOnPc";
 import { AnalysisStatus } from "./AnalysisStatus";
+import { NoteRelations } from "./NoteRelations";
 import {
   beginWorkerEntry,
   cancelWorkerEntry,
@@ -888,6 +889,9 @@ export function NoteEditor({
     <AnalysisStatus entryId={entryId} progress={progress} status={status} />
   ) : analysis ? (
     <div className="insights">
+      {/* As relacoes da nota em volta dela, antes da prosa: o desenho e o
+          indice; os chips abaixo continuam sendo a lista por tipo. */}
+      <NoteRelations analysis={analysis} onOpenEntity={onOpenEntity} />
       <p>
         Sentimento: <strong>{sentimentText(analysis.sentiment_label)}</strong>{" "}
         <span className="muted">({Number(analysis.sentiment ?? 0).toFixed(2)})</span>
