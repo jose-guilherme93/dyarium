@@ -61,12 +61,12 @@ export function stableHash(value: string): number {
 export function layoutKey(data: GraphData, focus?: string): string {
   const parts = data.nodes.map((node) => `${node.id}:${node.mentions}:${node.notes}`);
   parts.sort();
-  return `v9|${focus ?? ''}|${parts.join(',')}`;
+  return `v10:${BALL_SCALE}|${focus ?? ''}|${parts.join(',')}`;
 }
 
 function nodeRadius(node: GraphNode, maxMentions: number): number {
-  if (node.kind === 'note') return 7;
-  return relativeRadius(node.mentions, maxMentions);
+  if (node.kind === 'note') return 7 * BALL_SCALE;
+  return relativeRadius(node.mentions, maxMentions) * BALL_SCALE;
 }
 
 interface SimNode extends NodePosition {
@@ -83,7 +83,8 @@ function seedNodes(data: GraphData, focus?: string): SimNode[] {
   for (const node of data.nodes) {
     if (node.kind !== 'note' && node.mentions > maxMentions) maxMentions = node.mentions;
   }
-  const centerRadius = Math.max(36, relativeRadius(maxMentions, maxMentions) * 1.35);
+  const centerRadius =
+    Math.max(36, relativeRadius(maxMentions, maxMentions) * 1.35) * BALL_SCALE;
   const nodes: SimNode[] = [
     {
       id: data.center.id,
@@ -130,6 +131,21 @@ function seedNodes(data: GraphData, focus?: string): SimNode[] {
   }
   return nodes;
 }
+
+/**
+ * Escala das bolas. O encaixe normaliza o desenho, entao crescer o raio nao
+ * aumenta a nuvem na mesma proporcao: a bola ocupa mais do espaco que ja
+ * existe, ate as bolas quase se encostarem como numa grade de relogio.
+ */
+const BALL_SCALE = 2;
+
+/** Folga entre duas bolas ligadas, em unidades do grafo: o que sobra para o nome. */
+const BALL_GAP: Record<GraphEdgeKind, number> = {
+  relation: 48,
+  cooccurrence: 66,
+  // A nota fica na borda: ela e a prova do foco, nao pode encostar no centro.
+  mention: 104,
+};
 
 interface SimLink {
   a: number;
@@ -204,10 +220,7 @@ function relax(nodes: SimNode[], links: SimLink[]): void {
       const dist = Math.max(1, Math.hypot(dx, dy));
       // Folga entre bolas como no dashboard: as pequenas nao colam no centro e
       // a nuvem abre espaco para os rotulos.
-      const target =
-        a.r +
-        b.r +
-        (link.kind === 'mention' ? 104 : link.kind === 'cooccurrence' ? 66 : 48);
+      const target = a.r + b.r + BALL_GAP[link.kind];
       const force = (dist - target) * (link.kind === 'cooccurrence' ? 0.005 : 0.009);
       const ux = dx / dist;
       const uy = dy / dist;
