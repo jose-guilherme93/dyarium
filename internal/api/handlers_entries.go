@@ -617,6 +617,84 @@ func (s *Server) handlePutTranscript(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"model": "local"})
 }
 
+// handleEditTranscriptSegment lets the dashboard rewrite one line of the
+// transcript. The user's writing wins: the segment is marked as edited, its AI
+// revision is dropped, and the raw text of the other lines (and their
+// revisions) is preserved.
+func (s *Server) handleEditTranscriptSegment(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	entryID := r.PathValue("id")
+	idx, err := strconv.Atoi(r.PathValue("idx"))
+	if err != nil || idx < 0 {
+		writeError(w, http.StatusBadRequest, "invalid_body", "indice de trecho invalido")
+		return
+	}
+	var req struct {
+		AttachmentID string `json:"attachment_id"`
+		Text         string `json:"text"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_body", "corpo invalido")
+		return
+	}
+	text := strings.TrimSpace(req.Text)
+	if text == "" {
+		writeError(w, http.StatusBadRequest, "invalid_body", "texto vazio")
+		return
+	}
+	if len([]rune(text)) > maxRevisionRunes {
+		writeError(w, http.StatusBadRequest, "invalid_body", "trecho grande demais")
+		return
+	}
+
+	var transcript store.Transcript
+	var segments []store.Segment
+	if strings.TrimSpace(req.AttachmentID) != "" {
+		transcript, segments, err = s.deps.Store.GetTranscriptByAttachment(ctx, strings.TrimSpace(req.AttachmentID))
+	} else {
+		transcript, segments, err = s.deps.Store.GetTranscript(ctx, entryID)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "not_found", "transcricao indisponivel")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	found := false
+	for i := range segments {
+		if segments[i].Idx != idx {
+			continue
+		}
+		segments[i].Text = text
+		segments[i].UserEdited = true
+		found = true
+		break
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "not_found", "trecho inexistente")
+		return
+	}
+	raw := make([]string, 0, len(segments))
+	for _, segment := range segments {
+		raw = append(raw, segment.Text)
+	}
+	transcript.Text = strings.Join(raw, "\n")
+	if err := s.deps.Store.SaveTranscript(ctx, transcript, segments); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	status := store.EntryTranscribed
+	if entry, err := s.deps.Store.GetEntry(ctx, entryID); err == nil && entry.Status == store.EntryReady {
+		status = store.EntryReady
+	}
+	_ = s.deps.Store.UpdateEntryStatus(ctx, entryID, status)
+	s.deps.Events.Publish("entry.status", map[string]string{"entry_id": entryID, "status": status})
+	s.deps.Events.Publish("transcript.ready", map[string]string{"entry_id": entryID})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
 type putRevisionsRequest struct {
 	AttachmentID  string `json:"attachment_id"`
 	Model         string `json:"model"`

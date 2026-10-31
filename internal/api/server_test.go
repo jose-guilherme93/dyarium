@@ -64,6 +64,34 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
+// TestDashboardKeepsCrossOriginIsolation garante SharedArrayBuffer fora do
+// /lab: o botao "neste PC" abre o worker na propria nota, e sem isolamento o
+// llama.cpp e o ONNX ficam em uma thread.
+func TestDashboardKeepsCrossOriginIsolation(t *testing.T) {
+	srv := newTestServer(t)
+	handler := srv.Handler()
+
+	cases := []struct {
+		path      string
+		wantEmbed string
+	}{
+		{path: "/", wantEmbed: "credentialless"},
+		{path: "/notas", wantEmbed: "credentialless"},
+		{path: "/lab", wantEmbed: "require-corp"},
+		{path: "/lab/", wantEmbed: "require-corp"},
+	}
+	for _, tc := range cases {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tc.path, nil))
+		if got := rec.Header().Get("Cross-Origin-Opener-Policy"); got != "same-origin" {
+			t.Fatalf("%s: COOP = %q, want same-origin", tc.path, got)
+		}
+		if got := rec.Header().Get("Cross-Origin-Embedder-Policy"); got != tc.wantEmbed {
+			t.Fatalf("%s: COEP = %q, want %q", tc.path, got, tc.wantEmbed)
+		}
+	}
+}
+
 func TestVersionRequiresAuth(t *testing.T) {
 	srv := newTestServer(t)
 	handler := srv.Handler()

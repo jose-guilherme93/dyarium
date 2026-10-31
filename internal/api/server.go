@@ -119,6 +119,7 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("GET /api/v1/entries/{id}/transcript", s.handleGetTranscript)
 	protected.HandleFunc("GET /api/v1/entries/{id}/segments", s.handleListSegments)
 	protected.HandleFunc("PUT /api/v1/entries/{id}/transcript", s.handlePutTranscript)
+	protected.HandleFunc("PATCH /api/v1/entries/{id}/transcript/segments/{idx}", s.handleEditTranscriptSegment)
 	protected.HandleFunc("PUT /api/v1/entries/{id}/transcript/revisions", s.handlePutTranscriptRevisions)
 	protected.HandleFunc("POST /api/v1/entries/{id}/retranscribe", s.handleRetranscribe)
 	protected.HandleFunc("POST /api/v1/entries/{id}/cancel", s.handleCancelEntry)
@@ -277,6 +278,10 @@ func (s *Server) spaHandler() http.Handler {
 	}
 	fileServer := http.FileServer(http.FS(dist))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Guarda a rota antes do fallback para index.html: depois da reescrita,
+		// /lab, /notas e / viram todos "/", e a checagem de isolamento perdia a
+		// pagina real (o /lab nunca recebia COOP/COEP em producao).
+		requestPath := strings.TrimSuffix(r.URL.Path, "/")
 		path := strings.TrimPrefix(r.URL.Path, "/")
 		if path == "" {
 			path = "index.html"
@@ -286,12 +291,16 @@ func (s *Server) spaHandler() http.Handler {
 			r.URL.Path = "/"
 			path = "index.html"
 		}
-		// O laboratorio de processamento roda WebAssembly em threads. Isolar so
-		// esta pagina evita quebrar imagens externas no resto do dashboard e
-		// libera SharedArrayBuffer para o llama.cpp.
-		if strings.TrimSuffix(r.URL.Path, "/") == "/lab" {
-			w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
+		// O processamento local roda WebAssembly em threads, e isso exige
+		// SharedArrayBuffer. O isolamento vale para o dashboard inteiro porque o
+		// botao "neste PC" tambem inicia o worker fora do /lab. `credentialless`
+		// libera o isolamento sem exigir CORP das imagens externas das notas; o
+		// /lab mantem `require-corp`, como sempre rodou.
+		w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
+		if requestPath == "/lab" {
 			w.Header().Set("Cross-Origin-Embedder-Policy", "require-corp")
+		} else {
+			w.Header().Set("Cross-Origin-Embedder-Policy", "credentialless")
 		}
 		// O glue do ONNX Runtime e um modulo ESM servido do proprio binario. Sem
 		// o tipo certo o navegador recusa o import() dinamico.
