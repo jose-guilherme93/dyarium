@@ -24,6 +24,9 @@ function circlePath(x: number, y: number, radius: number): string {
   return `M${round(x - r)},${round(y)}a${r},${r} 0 1,0 ${d},0a${r},${r} 0 1,0 ${-d},0Z`;
 }
 
+/** Quantas grossuras o desenho usa para mostrar a proximidade. */
+export const EDGE_BANDS = 3;
+
 /** Caminho com todas as arestas de um tipo (ou so as que tocam `allowed`). */
 export function edgesPath(
   data: GraphData,
@@ -43,6 +46,36 @@ export function edgesPath(
     parts.push(`M${round(from.x)},${round(from.y)}L${round(to.x)},${round(to.y)}`);
   }
   return parts.join('');
+}
+
+/**
+ * Arestas de um tipo separadas por peso, em faixas de grossura.
+ *
+ * A cor nao diz nada: a grossura e que mostra a proximidade. Peso 1 cai na
+ * faixa fina; a aresta mais forte do tipo, na grossa.
+ */
+export function edgeBands(
+  data: GraphData,
+  layout: GraphLayout,
+  kind: GraphEdgeKind,
+  allowed?: ReadonlySet<string> | null,
+): string[] {
+  const bands: string[][] = Array.from({ length: EDGE_BANDS }, () => []);
+  let max = 1;
+  for (const edge of data.edges) {
+    if (edge.kind === kind && edge.weight > max) max = edge.weight;
+  }
+  for (const edge of data.edges) {
+    if (edge.kind !== kind) continue;
+    if (allowed && !(allowed.has(edge.source) && allowed.has(edge.target))) continue;
+    const from = layout.positions[edge.source];
+    const to = layout.positions[edge.target];
+    if (!from || !to) continue;
+    const share = max <= 1 ? 0 : (edge.weight - 1) / (max - 1);
+    const band = Math.min(EDGE_BANDS - 1, Math.max(0, Math.floor(share * EDGE_BANDS)));
+    bands[band].push(`M${round(from.x)},${round(from.y)}L${round(to.x)},${round(to.y)}`);
+  }
+  return bands.map((parts) => parts.join(''));
 }
 
 /** Caminho com os nos de um tipo (todos ou so os de `allowed`). */
@@ -68,13 +101,11 @@ export function graphPaths(
   layout: GraphLayout,
   allowed?: ReadonlySet<string> | null,
 ): {
-  edges: Record<GraphEdgeKind, string> & { cooccurrenceStrong: string };
+  edges: Record<GraphEdgeKind, string[]>;
   nodes: Record<GraphNodeKind, string>;
 } {
-  const edges = {} as Record<GraphEdgeKind, string> & { cooccurrenceStrong: string };
-  for (const kind of EDGE_KINDS) edges[kind] = edgesPath(data, layout, kind, allowed);
-  // As co-ocorrencias repetidas ganham um traco mais forte por cima.
-  edges.cooccurrenceStrong = edgesPath(data, layout, 'cooccurrence', allowed, 2);
+  const edges = {} as Record<GraphEdgeKind, string[]>;
+  for (const kind of EDGE_KINDS) edges[kind] = edgeBands(data, layout, kind, allowed);
   const nodes = {} as Record<GraphNodeKind, string>;
   for (const kind of NODE_KINDS) nodes[kind] = nodesPath(data, layout, kind, allowed);
   return { edges, nodes };

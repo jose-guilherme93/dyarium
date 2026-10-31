@@ -45,7 +45,12 @@ import {
   type LabelSide,
 } from '@/core/graphLabels';
 import { iconKeyFor, iconPaths } from '@/core/graphIcons';
-import { graphPaths, neighborIds, selectedEdgesPath } from '@/core/graphPaths';
+import {
+  EDGE_BANDS,
+  graphPaths,
+  neighborIds,
+  selectedEdgesPath,
+} from '@/core/graphPaths';
 import { useRenderCount } from '@/dev/perf';
 import type { GraphColors } from '@/theme/graph';
 
@@ -62,6 +67,21 @@ const EDGE_MARGIN = 28;
 const MIN_ICON_RADIUS = 4;
 /** Teto de icones desenhados. */
 const MAX_ICONS = 80;
+/** Ordem de desenho das arestas: da mais fraca para a mais forte. */
+const EDGE_KINDS = ['cooccurrence', 'mention', 'relation'] as const;
+/** Grossura da faixa mais fina e da mais grossa, em unidades do grafo. */
+const EDGE_WIDTH: Record<(typeof EDGE_KINDS)[number], [number, number]> = {
+  cooccurrence: [0.45, 1.1],
+  mention: [0.4, 0.9],
+  relation: [0.6, 1.8],
+};
+
+/** Grossura da faixa: a proximidade entre as duas bolas. */
+function edgeWidth(kind: (typeof EDGE_KINDS)[number], band: number): number {
+  const [thin, thick] = EDGE_WIDTH[kind];
+  if (EDGE_BANDS <= 1) return thin;
+  return thin + ((thick - thin) * band) / (EDGE_BANDS - 1);
+}
 
 export interface GraphCanvasHandle {
   zoomIn(): void;
@@ -112,11 +132,13 @@ const styles = StyleSheet.create({
     fontSize: LABEL_FONT,
     lineHeight: LABEL_LINE_HEIGHT,
     fontWeight: '500',
+    paddingHorizontal: 2,
+    borderRadius: 3,
   },
   labelSelected: { fontWeight: '700' },
-  labelCenter: { textAlign: 'center' },
-  labelLeft: { textAlign: 'right' },
-  labelRight: { textAlign: 'left' },
+  labelCenter: { textAlign: 'center', alignSelf: 'center' },
+  labelLeft: { textAlign: 'right', alignSelf: 'flex-end' },
+  labelRight: { textAlign: 'left', alignSelf: 'flex-start' },
 });
 
 /**
@@ -147,6 +169,7 @@ const MapLabel = memo(function MapLabel({
   width,
   color,
   selectedColor,
+  backdrop,
 }: {
   text: string | null;
   x: number;
@@ -163,6 +186,7 @@ const MapLabel = memo(function MapLabel({
   width: number;
   color: string;
   selectedColor: string;
+  backdrop: string;
 }) {
   const animated = useAnimatedStyle(() => {
     if (!text) {
@@ -204,7 +228,7 @@ const MapLabel = memo(function MapLabel({
             : side === 'left'
               ? styles.labelLeft
               : styles.labelCenter,
-          { color: selected ? selectedColor : color },
+          { color: selected ? selectedColor : color, backgroundColor: backdrop },
           selected ? styles.labelSelected : null,
         ]}
         numberOfLines={1}
@@ -577,35 +601,31 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
   const scene = useMemo(
     () => (
       <>
-        <Path
-          d={paths.edges.cooccurrence}
-          stroke={colors.edge}
-          strokeWidth={0.6 / z}
-          fill="none"
-          opacity={dimmed ? 0.05 : 0.09}
-        />
-        <Path
-          d={paths.edges.cooccurrenceStrong}
-          stroke={colors.edgeStrong}
-          strokeWidth={1.05 / z}
-          fill="none"
-          opacity={dimmed ? 0.1 : 0.2}
-        />
-        <Path
-          d={paths.edges.relation}
-          stroke={colors.edgeStrong}
-          strokeWidth={0.9 / z}
-          fill="none"
-          opacity={dimmed ? 0.1 : 0.16}
-        />
-        <Path
-          d={paths.edges.mention}
-          stroke={colors.edge}
-          strokeWidth={1.1 / z}
-          strokeDasharray={`${5 / z} ${4 / z}`}
-          fill="none"
-          opacity={dimmed ? 0.16 : 0.28}
-        />
+        {/* A cor nao diz nada: a grossura mostra a proximidade. Uma linha por
+            faixa de peso, sempre na cor do texto do tema. */}
+        {EDGE_KINDS.map((kind) =>
+          paths.edges[kind].map((d, band) =>
+            d ? (
+              <Path
+                key={`${kind}-${band}`}
+                d={d}
+                stroke={colors.edge}
+                strokeWidth={edgeWidth(kind, band) / z}
+                strokeDasharray={kind === 'mention' ? `${5 / z} ${4 / z}` : undefined}
+                fill="none"
+                opacity={
+                  kind === 'mention'
+                    ? dimmed
+                      ? 0.18
+                      : 0.3
+                    : dimmed
+                      ? 0.1
+                      : 0.22
+                }
+              />
+            ) : null,
+          ),
+        )}
 
         {(Object.keys(paths.nodes) as GraphNodeKind[]).map((kind) => (
           <Path
@@ -660,8 +680,8 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
         {selectedEdgePath ? (
           <Path
             d={selectedEdgePath}
-            stroke={colors.selected}
-            strokeWidth={1.8 / z}
+            stroke={colors.edge}
+            strokeWidth={2.2 / z}
             fill="none"
             opacity={0.9}
           />
@@ -764,6 +784,7 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
                 width={width}
                 color={colors.label}
                 selectedColor={colors.selected}
+                backdrop={colors.labelBackdrop}
               />
             );
           })}

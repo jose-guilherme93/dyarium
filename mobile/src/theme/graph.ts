@@ -17,6 +17,8 @@ export interface GraphColors {
   user: string;
   /** Cor dos icones desenhados dentro das bolas. */
   ink: string;
+  /** Fundo do nome: a linha passa por tras do texto, nao por cima. */
+  labelBackdrop: string;
   edge: string;
   edgeStrong: string;
   selected: string;
@@ -42,6 +44,7 @@ export const GRAPH_PALETTES: Record<ThemeName, GraphColors> = {
     edge: '#ECEAE3',
     edgeStrong: '#ECEAE3',
     selected: '#9CC0E8',
+    labelBackdrop: '#000000',
     dim: 'rgba(236,234,227,0.06)',
     label: '#ECEAE3',
     labelMuted: '#B7BCC4',
@@ -62,6 +65,7 @@ export const GRAPH_PALETTES: Record<ThemeName, GraphColors> = {
     edge: '#ECEAE3',
     edgeStrong: '#ECEAE3',
     selected: '#9CC0E8',
+    labelBackdrop: '#191919',
     dim: 'rgba(236,234,227,0.05)',
     label: '#ECEAE3',
     labelMuted: '#B7BCC4',
@@ -82,6 +86,7 @@ export const GRAPH_PALETTES: Record<ThemeName, GraphColors> = {
     edge: '#211E1A',
     edgeStrong: '#211E1A',
     selected: '#2C4A63',
+    labelBackdrop: '#FFFFFF',
     dim: 'rgba(33,30,26,0.05)',
     label: '#211E1A',
     labelMuted: '#6B655C',
