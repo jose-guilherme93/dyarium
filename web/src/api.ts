@@ -561,8 +561,14 @@ export const api = {
     }),
   /** "Sou eu": funde a pessoa com o dono e usa o nome das configuracoes. */
   claimSelf: (name: string) =>
-    request<{ status: string; owner: string }>(
+    request<{ status: string; owner: string; edit_id?: string }>(
       `/entities/person/${encodeURIComponent(name)}/self`,
+      { method: "POST" },
+    ),
+  /** Desfaz a ultima edicao de entidade (renomear, mesclar, icone ou "sou eu"). */
+  undoEntityEdit: (id: string) =>
+    request<{ status: string; action?: string; label?: string }>(
+      `/entities/edits/${encodeURIComponent(id)}/undo`,
       { method: "POST" },
     ),
   getMood: (from?: string, to?: string) => {

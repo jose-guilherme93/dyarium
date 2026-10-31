@@ -229,6 +229,8 @@ export interface EntitySummary {
   updated_at?: string | null;
   /** Grafias antigas que ainda resolvem para esta entidade. */
   aliases?: string[];
+  /** Id da edicao que acabou de acontecer, para o "desfazer". */
+  edit_id?: string;
 }
 
 export interface EntityEntry {

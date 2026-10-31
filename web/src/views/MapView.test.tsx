@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MapView } from "./MapView";
 import { api } from "../api";
+import { ToastProvider } from "../components/Toasts";
 import type { GraphResponse, Settings } from "../types";
 
 vi.mock("../api", () => ({
@@ -16,6 +17,8 @@ vi.mock("../api", () => ({
     setEntityIcon: vi.fn(),
     renameEntity: vi.fn(),
     claimSelf: vi.fn(),
+    undoEntityEdit: vi.fn(),
+    listEntities: vi.fn(),
   },
 }));
 
@@ -117,6 +120,8 @@ beforeEach(() => {
   });
   vi.mocked(api.getAnalysis).mockResolvedValue({ key_moments: [], sections: [] } as never);
   vi.mocked(api.getMood).mockResolvedValue({ mood: [] });
+  vi.mocked(api.undoEntityEdit).mockResolvedValue({ status: "ok" });
+  vi.mocked(api.listEntities).mockResolvedValue({ entities: [] });
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -227,6 +232,38 @@ describe("MapView insights", () => {
 
     await waitFor(() => expect(api.getEntity).toHaveBeenCalledWith("place", "Recife"));
     expect(applied).toHaveBeenCalled();
+  });
+
+  it("oferece desfazer depois de renomear", async () => {
+    vi.mocked(api.renameEntity).mockResolvedValueOnce({
+      id: "person:ana",
+      kind: "person",
+      name: "Ana Maria",
+      icon: "",
+      entries: 8,
+      mentions: 12,
+      sentiment: 0.4,
+      last_seen: "2026-05-01T00:00:00Z",
+      edit_id: "edit-1",
+    });
+
+    render(
+      <ToastProvider>
+        <MapView refreshKey={0} onOpen={() => undefined} />
+      </ToastProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole("tab", { name: /Pessoas/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Ana/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Renomear" }));
+
+    const input = screen.getByRole("textbox", { name: "Nome da bola" });
+    fireEvent.change(input, { target: { value: "Ana Maria" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+
+    expect(await screen.findByText("Renomeado.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Desfazer" }));
+    await waitFor(() => expect(api.undoEntityEdit).toHaveBeenCalledWith("edit-1"));
   });
 
   it("desenha a onda na camada do no selecionado", async () => {
