@@ -718,7 +718,7 @@ export function App() {
               <WritingView refreshKey={refreshKey} />
             </div>
           ) : view === "lab" ? (
-            <div className="page">
+            <div className="page page--lab">
               <LabView onBack={goBack} />
             </div>
           ) : (

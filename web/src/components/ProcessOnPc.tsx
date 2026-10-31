@@ -15,7 +15,7 @@ import {
   subscribeWorker,
 } from "../lib/browserWorker";
 import { formatBytes, planDownloadBytes } from "../lib/browserModels";
-import { browserCacheAvailable } from "../lib/browserCache";
+import { modelCacheAvailable } from "../lib/browserCache";
 import { multithreadAvailable, prepareWorkerSetup, type WorkerSetup } from "../lib/workerSetup";
 import { useEscape } from "../lib/useEscape";
 import { CpuIcon } from "./icons";
@@ -144,17 +144,21 @@ export function ProcessOnPc({ hasAnalysis }: ProcessOnPcProps) {
                 {setup.plan.whisper.label} + {setup.plan.llm.label}
               </p>
               <p className="hint">
-                {browserCacheAvailable()
+                {modelCacheAvailable()
                   ? `${formatBytes(size)} na primeira vez; depois fica no cache deste navegador.`
-                  : `${formatBytes(size)} a cada início: sem HTTPS o navegador não guarda o modelo.`}
+                  : `${formatBytes(size)} a cada início: este navegador não guarda o modelo.`}
               </p>
-              <p className="hint" title="Núcleos usados na análise. Sem HTTPS o llama.cpp fica em uma thread, então o valor não se aplica.">
-                {singleThread ? "uma thread" : `${setup.threads} núcleos`}
+              <p
+                className="hint"
+                title="Backend e threads que a análise abre de fato. Com GPU, os núcleos ficam nas operações de apoio; sem isolamento, o llama.cpp fica em uma thread."
+              >
+                {setup.allowGpu ? "GPU" : "CPU"} ·{" "}
+                {singleThread ? "1 thread" : `${setup.threads} threads`}
               </p>
               <p className="hint" title="Este nome fica guardado na análise, para saber que ela rodou localmente neste aparelho.">
                 {setup.device.name}
               </p>
-              <p className="hint">Só a nota que você mandar analisar.</p>
+              <p className="hint">Os modelos baixam na primeira nota de cada tipo. Só a nota que você mandar analisar.</p>
               {hasAnalysis ? <p className="hint">A análise atual será substituída.</p> : null}
             </>
           ) : (
