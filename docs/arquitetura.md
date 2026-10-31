@@ -632,12 +632,22 @@ corpo reaparecia na pilha do dashboard sem nenhuma forma de apagar.
   dono) e o mesmo tamanho relativo por mencoes, entao as duas telas tem a mesma cara. O
   dono liga so as bolas mais mencionadas e sao elas que puxam o resto pela co-ocorrencia,
   o que da a teia em vez de um leque de raios; o
-  resultado e deterministico e fica em cache no SQLite. A cena inteira e desenhada uma vez
-  em SVG, com bolas, icones, linhas e nomes em unidades do grafo; o pan e a pinca so
-  aplicam outra matriz ao container nativo. Ampliar e reduzir e zoom em pixels: nenhum
-  estado do React muda, nenhum elemento e remontado, e os nomes acompanham o desenho. O
+  resultado e deterministico e fica em cache no SQLite. A cena e desenhada uma vez em SVG,
+  com bolas, icones e linhas em unidades do grafo; o pan e a pinca so aplicam outra matriz
+  ao container nativo. Ampliar e reduzir e zoom em pixels: nenhum estado do React muda e
+  nenhum elemento e remontado. Os nomes ficam fora do SVG, em texto de tela de tamanho
+  fixo, posicionados por transform na thread de UI: o `react-native-svg` descarta o bitmap
+  da cena a cada prop que muda, entao um nome por quadro custaria um redesenho de tela
+  cheia por nome. O
   encaixe mostra o conjunto inteiro dentro da faixa acima da folha, com o que e periferico
-  pequeno, e o arrasto nunca tira o desenho da area disponivel. A folha tem tres alturas e
+  pequeno, e o arrasto nunca tira o desenho da area disponivel. Abrir uma bola troca a
+  visao: ela, as relacoes dela e as notas que a citam passam a ser o desenho inteiro, com
+  as arestas de nota pontilhadas, como no foco do `GET /graph`. O tamanho de cada bola e
+  relativo ao maior da visao e o dono fica sempre maior que a entidade aberta, para marcar
+  de onde parte tudo; tocar no dono devolve o mapa inteiro. A ligacao nao tem cor: usa a cor
+  do texto do tema e a grossura mostra a proximidade, em tres faixas de peso. O encaixe
+  aproveita a faixa inteira, entao as bolas quase se encostam, com o dono sempre maior. A
+  folha tem tres alturas e
   a altura cheia rola todos os trechos da entidade.
   Para o desenho nao crescer sem limite, o app desenha no maximo 120 entidades (as mais
   mencionadas) e 120 notas no foco, como os limites do servidor; o painel de detalhe lista
