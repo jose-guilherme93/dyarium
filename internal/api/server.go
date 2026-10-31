@@ -55,11 +55,23 @@ type Server struct {
 	pulls   map[string]*localPullState
 }
 
+// SyncContract is the current major version of the environment sync contract.
+// Bump it only on a semantic change; additive fields keep the same major.
+const SyncContract = "1"
+
 // Version describes the build metadata reported by the API.
 type Version struct {
 	Version string
 	Commit  string
 	BuiltAt string
+	// InstanceID is the stable identity of this environment. It survives
+	// restarts, address changes and token changes; sync peers use it instead of
+	// the URL.
+	InstanceID string
+	// SyncContract is the major version of the sync contract this server speaks.
+	// A client that does not support it must refuse the connection before
+	// writing anything.
+	SyncContract string
 }
 
 // New builds a Server.
@@ -85,6 +97,7 @@ func (s *Server) Handler() http.Handler {
 
 	protected := http.NewServeMux()
 	protected.HandleFunc("GET /api/v1/version", s.handleVersion)
+	protected.HandleFunc("GET /api/v1/sync/manifest", s.handleSyncManifest)
 
 	protected.HandleFunc("POST /api/v1/uploads", s.handleCreateUpload)
 	protected.HandleFunc("PUT /api/v1/uploads/{id}", s.handlePutUpload)
@@ -183,6 +196,58 @@ func (s *Server) Handler() http.Handler {
 	return s.withLogging(s.withResponseCache(mux))
 }
 
+// instanceOrigin identifies this environment in tombstones and versions. Tests
+// that do not set an instance id fall back to the generic name.
+func (s *Server) instanceOrigin() string {
+	if id := strings.TrimSpace(s.deps.Version.InstanceID); id != "" {
+		return id
+	}
+	return "server"
+}
+
+// originHeader names the creator of the objects a request creates. The app sends
+// its device id; the dashboard sends nothing and the environment itself is the
+// creator.
+const originHeader = "X-Origin-Instance"
+
+// requestOrigin resolves who is creating the objects in this request. A
+// malformed header is ignored instead of failing the write: origin is
+// provenance, never a permission.
+func (s *Server) requestOrigin(r *http.Request) store.Origin {
+	instance := strings.TrimSpace(r.Header.Get(originHeader))
+	if instance != "" && validOrigin(instance) {
+		return store.Origin{Instance: instance, Kind: store.OriginKindDevice}
+	}
+	return store.Origin{Instance: s.instanceOrigin(), Kind: store.OriginKindServer}
+}
+
+// validOrigin keeps junk out of the column without constraining real ids
+// (`dev_01J...`, hex instance ids).
+func validOrigin(value string) bool {
+	if len(value) == 0 || len(value) > 64 {
+		return false
+	}
+	for _, ch := range value {
+		switch {
+		case ch >= 'a' && ch <= 'z':
+		case ch >= 'A' && ch <= 'Z':
+		case ch >= '0' && ch <= '9':
+		case ch == '_' || ch == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// observeClock advances the version clock with the stamp the client had read
+// before writing (`X-HLC`). The write then gets a version newer than anything
+// that client saw, so an edit made after a pull wins even when the device clock
+// is behind. An absent or malformed header changes nothing.
+func (s *Server) observeClock(r *http.Request) {
+	s.deps.Store.ObserveClock(r.Header.Get("X-HLC"))
+}
+
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status":  "ok",
@@ -192,9 +257,11 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) handleVersion(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
-		"version":  s.deps.Version.Version,
-		"commit":   s.deps.Version.Commit,
-		"built_at": s.deps.Version.BuiltAt,
+		"version":       s.deps.Version.Version,
+		"commit":        s.deps.Version.Commit,
+		"built_at":      s.deps.Version.BuiltAt,
+		"instance_id":   s.deps.Version.InstanceID,
+		"sync_contract": s.deps.Version.SyncContract,
 	})
 }
 

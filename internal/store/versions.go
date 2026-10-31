@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/joseti/dyarium/internal/hlc"
 )
 
 // Campo editavel da nota, usado para dizer qual lado brigou num conflito.
@@ -16,10 +18,11 @@ const (
 	FieldBody       = "body"
 )
 
-// versionNow is the current version stamp of a field. Nanoseconds matter: two
-// writes in the same second still have to be ordered.
-func versionNow() string {
-	return time.Now().UTC().Format(time.RFC3339Nano)
+// versionNow is the current version stamp of a field, issued by the hybrid
+// logical clock: strictly increasing, so two writes in the same millisecond are
+// still ordered.
+func (s *Store) versionNow() string {
+	return s.clock.Now().String()
 }
 
 // versionAfter reports whether `stored` is newer than the version the client last
@@ -30,15 +33,7 @@ func versionAfter(stored, clientRead string) bool {
 	if clientRead == "" || strings.TrimSpace(stored) == "" {
 		return false
 	}
-	storedAt, err := time.Parse(time.RFC3339, stored)
-	if err != nil {
-		return false
-	}
-	clientAt, err := time.Parse(time.RFC3339, clientRead)
-	if err != nil {
-		return false
-	}
-	return storedAt.After(clientAt)
+	return hlc.After(stored, clientRead)
 }
 
 // EntryFieldVersions returns the current versions of an entry's editable fields.
@@ -113,7 +108,7 @@ func (s *Store) UpdateEntryFields(ctx context.Context, id string, title *string,
 		return versions, nil, nil
 	}
 
-	stamp := versionNow()
+	stamp := s.versionNow()
 	updatedAt := ts(time.Now())
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

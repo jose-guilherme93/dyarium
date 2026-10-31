@@ -163,6 +163,19 @@ func (s *Store) DeleteNotebook(ctx context.Context, id string) error {
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound
 	}
+	// O caderno sai da tabela, mas a exclusao fica provada para sempre: um
+	// ambiente offline ha mais tempo que a retencao ainda precisa saber que ele
+	// deixou de existir.
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO tombstones (id, kind, deleted_at, origin)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT (id, kind) DO UPDATE SET
+			deleted_at = excluded.deleted_at,
+			origin = excluded.origin
+		WHERE excluded.deleted_at >= tombstones.deleted_at`,
+		id, TombstoneNotebook, ts(time.Now().UTC()), "server"); err != nil {
+		return fmt.Errorf("store: delete notebook: %w", err)
+	}
 	return tx.Commit()
 }
 

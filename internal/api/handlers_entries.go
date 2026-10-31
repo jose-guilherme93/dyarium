@@ -48,6 +48,9 @@ func entryJSON(e store.Entry) map[string]any {
 		"created_at":        e.CreatedAt,
 		"updated_at":        e.UpdatedAt,
 		"archived":          e.Archived,
+		// Tombstone cujo conteudo ja foi purgado: aparece na lixeira do
+		// dashboard como registro da exclusao, mas nao pode ser restaurado.
+		"purged": e.Status == store.EntryPurged,
 		// Papel escolhido para a nota (self/other/mixed). Vazio segue o padrao
 		// do app (owner_name/all_notes_mine), que o cliente tambem recebe.
 		"author": e.Author,
@@ -60,6 +63,10 @@ func entryJSON(e store.Entry) map[string]any {
 		// O mesmo para a transcricao: uma revisao feita no servidor tem hora
 		// propria e o app so busca quando ela muda.
 		"transcript_at": e.TranscriptAt,
+		// Quem criou a nota (aparelho ou ambiente). Proveniencia apenas: um
+		// ambiente que recebe a nota continua podendo edita-la.
+		"origin_instance": e.OriginInstance,
+		"origin_kind":     e.OriginKind,
 	}
 	if e.DeletedAt != nil {
 		body["deleted_at"] = e.DeletedAt
@@ -294,17 +301,20 @@ func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 		t := parsed.UTC()
 		recordedAt = &t
 	}
+	origin := s.requestOrigin(r)
 	entry := store.Entry{
-		ID:         id.New(),
-		Title:      title,
-		Status:     store.EntryReady,
-		Source:     "text",
-		ParentID:   parentID,
-		NotebookID: notebookID,
-		RecordedAt: recordedAt,
-		CreatedAt:  createdAt,
-		UpdatedAt:  now,
-		Author:     author,
+		ID:             id.New(),
+		Title:          title,
+		Status:         store.EntryReady,
+		Source:         "text",
+		ParentID:       parentID,
+		NotebookID:     notebookID,
+		RecordedAt:     recordedAt,
+		CreatedAt:      createdAt,
+		UpdatedAt:      now,
+		Author:         author,
+		OriginInstance: origin.Instance,
+		OriginKind:     origin.Kind,
 	}
 	if clientID := strings.TrimSpace(req.ID); clientID != "" {
 		if !id.Valid(clientID) {
@@ -403,6 +413,7 @@ func (s *Server) handlePatchEntry(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_body", "corpo invalido")
 		return
 	}
+	s.observeClock(r)
 	id := r.PathValue("id")
 
 	var recordedAt *time.Time
@@ -456,7 +467,7 @@ func (s *Server) handlePatchEntry(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteEntry(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id := r.PathValue("id")
-	if err := s.deps.Store.SoftDeleteEntry(ctx, id); err != nil {
+	if err := s.deps.Store.SoftDeleteEntryWithOrigin(ctx, id, s.instanceOrigin()); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", "entrada inexistente")
 			return

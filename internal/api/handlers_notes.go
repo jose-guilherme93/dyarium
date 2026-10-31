@@ -33,8 +33,8 @@ func noteJSON(n store.Note) map[string]any {
 		"created_at":       n.CreatedAt,
 		"updated_at":       n.UpdatedAt,
 	}
-	if n.BodyUpdatedAt != nil {
-		body["body_version"] = *n.BodyUpdatedAt
+	if n.BodyVersion != "" {
+		body["body_version"] = n.BodyVersion
 	}
 	return body
 }
@@ -131,6 +131,7 @@ func (s *Server) handleUpdateNote(w http.ResponseWriter, r *http.Request) {
 	// Caminho novo: corpo em markdown, com a versao que o cliente leu. O campo
 	// pode vir vazio: limpar a nota e uma gravacao como outra qualquer.
 	if req.ContentMarkdown != nil {
+		s.observeClock(r)
 		version, conflict, err := s.deps.Store.UpdateNoteBody(r.Context(), id, *req.ContentMarkdown, req.BaseVersion)
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", "nota inexistente")

@@ -469,3 +469,39 @@ func TestCompleteKeepsDifferentAudioSeparate(t *testing.T) {
 		t.Fatal("audios diferentes viraram a mesma nota")
 	}
 }
+
+// O audio enviado pelo app cria a entrada com a origem do aparelho; sem a
+// origem explicita, o criador e o proprio ambiente.
+func TestCompleteRecordsEntryOrigin(t *testing.T) {
+	svc, st, _ := newService(t)
+	ctx := context.Background()
+	plain := bytes.Repeat([]byte("audio-origem-"), 100)
+
+	up, err := svc.Start(ctx, Meta{
+		Filename:    "nota.wav",
+		ContentType: "audio/wav",
+		SizeBytes:   int64(len(plain)),
+		SHA256:      sha256hex(plain),
+		Title:       "Nota do app",
+	})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if _, err := svc.Append(ctx, up.ID, 0, bytes.NewReader(plain)); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	result, err := svc.CompleteWithOrigin(ctx, up.ID, "", store.Origin{
+		Instance: "dev_01J8Z",
+		Kind:     store.OriginKindDevice,
+	})
+	if err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	entry, err := st.GetEntry(ctx, result.Entry.ID)
+	if err != nil {
+		t.Fatalf("get entry: %v", err)
+	}
+	if entry.OriginKind != store.OriginKindDevice || entry.OriginInstance != "dev_01J8Z" {
+		t.Fatalf("origem = %q/%q", entry.OriginInstance, entry.OriginKind)
+	}
+}

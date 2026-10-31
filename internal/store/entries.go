@@ -148,18 +148,39 @@ func (s *Store) CreateEntry(ctx context.Context, e Entry) error {
 	if notebookID == "" {
 		notebookID = DefaultNotebookID
 	}
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO entries (id, title, status, source, parent_id, notebook_id, original_filename, content_type,
-			size_bytes, duration_seconds, sha256, recorded_at, created_at, updated_at, deleted_at,
-			title_updated_at, recorded_at_updated_at, author)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.ID, e.Title, e.Status, e.Source, nullString(e.ParentID), notebookID, e.OriginalFilename, e.ContentType,
-		e.SizeBytes, e.DurationSeconds, e.SHA256, nullTS(e.RecordedAt), ts(e.CreatedAt), ts(e.UpdatedAt),
-		nullTS(e.DeletedAt), stamp, stamp, e.Author)
+	// Origem: quem criou. Sem valor explicito (ingestao antiga, importacao,
+	// telegram), o criador e este ambiente.
+	originInstance := strings.TrimSpace(e.OriginInstance)
+	originKind := strings.TrimSpace(e.OriginKind)
+	if originKind == "" {
+		originKind = OriginKindServer
+		if originInstance == "" {
+			originInstance = s.InstanceID()
+		}
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: create entry: %w", err)
 	}
-	return nil
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO entries (id, title, status, source, parent_id, notebook_id, original_filename, content_type,
+			size_bytes, duration_seconds, sha256, recorded_at, created_at, updated_at, deleted_at,
+			title_updated_at, recorded_at_updated_at, author, origin_instance, origin_kind)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.ID, e.Title, e.Status, e.Source, nullString(e.ParentID), notebookID, e.OriginalFilename, e.ContentType,
+		e.SizeBytes, e.DurationSeconds, e.SHA256, nullTS(e.RecordedAt), ts(e.CreatedAt), ts(e.UpdatedAt),
+		nullTS(e.DeletedAt), stamp, stamp, e.Author, originInstance, originKind); err != nil {
+		return fmt.Errorf("store: create entry: %w", err)
+	}
+	// Recriar uma nota com o mesmo id depois de uma exclusao antiga e a forma
+	// que o app tem de trazer de volta uma nota apagada de outro ambiente. O
+	// tombstone antigo nao pode continuar valendo.
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM tombstones WHERE id = ? AND kind = ?`, e.ID, TombstoneEntry); err != nil {
+		return fmt.Errorf("store: create entry: %w", err)
+	}
+	return tx.Commit()
 }
 
 // GetEntry returns an entry by id.
@@ -173,6 +194,7 @@ func (s *Store) GetEntry(ctx context.Context, id string) (Entry, error) {
 			COALESCE(original_filename,''), COALESCE(content_type,''), size_bytes, duration_seconds, COALESCE(sha256,''),
 			recorded_at, created_at, updated_at, deleted_at, archived,
 			title_updated_at, recorded_at_updated_at, COALESCE(author,''),
+			COALESCE(origin_instance,''), COALESCE(origin_kind,''),
 			COALESCE((SELECT body_updated_at FROM notes n WHERE n.entry_id = entries.id ORDER BY n.created_at DESC LIMIT 1), ''),
 			COALESCE((SELECT id FROM attachments a WHERE a.entry_id = entries.id AND a.kind = ?
 				ORDER BY a.created_at ASC LIMIT 1), ''),
@@ -183,8 +205,8 @@ func (s *Store) GetEntry(ctx context.Context, id string) (Entry, error) {
 		FROM entries WHERE id = ? AND deleted_at IS NULL`, AttachmentOriginal, id).Scan(
 		&e.ID, &e.Title, &e.Status, &e.Source, &e.ParentID, &e.NotebookID, &e.OriginalFilename, &e.ContentType,
 		&e.SizeBytes, &e.DurationSeconds, &e.SHA256, &recordedAt, &createdAt, &updatedAt, &deletedAt, &archived,
-		&titleVersion, &recordedVersion, &e.Author, &bodyVersion, &e.PrimaryAttachmentID,
-		&e.AnalysisAt, &e.TranscriptAt)
+		&titleVersion, &recordedVersion, &e.Author, &e.OriginInstance, &e.OriginKind,
+		&bodyVersion, &e.PrimaryAttachmentID, &e.AnalysisAt, &e.TranscriptAt)
 	if err != nil {
 		return Entry{}, err
 	}
@@ -225,6 +247,10 @@ func (s *Store) EntryIsDeleted(ctx context.Context, id string) (bool, error) {
 // It only purges entries still marked as deleted, which closes the window with a
 // restore that arrives while the cleanup job is running. It is idempotent:
 // purging an entry that no longer exists succeeds.
+//
+// The permanent tombstone is written at soft-delete time and is NOT touched
+// here: an environment that was offline longer than the retention window still
+// has to learn that the note was deleted.
 func (s *Store) PurgeEntry(ctx context.Context, id string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -286,6 +312,7 @@ func (s *Store) ListEntriesFilteredNotebook(ctx context.Context, limit, offset i
 		SELECT e.id, COALESCE(e.title,''), e.status, e.source, COALESCE(e.parent_id,''), COALESCE(e.notebook_id,''),
 			COALESCE(e.original_filename,''), COALESCE(e.content_type,''), e.size_bytes, e.duration_seconds, COALESCE(e.sha256,''),
 			e.recorded_at, e.created_at, e.updated_at, e.archived, COALESCE(e.author,''),
+			COALESCE(e.origin_instance,''), COALESCE(e.origin_kind,''),
 			e.title_updated_at, e.recorded_at_updated_at,
 			COALESCE((SELECT body_updated_at FROM notes n WHERE n.entry_id = e.id ORDER BY n.created_at DESC LIMIT 1), ''),
 			COALESCE((SELECT id FROM attachments a WHERE a.entry_id = e.id AND a.kind = ?
@@ -339,8 +366,9 @@ func (s *Store) ListEntriesFilteredNotebook(ctx context.Context, limit, offset i
 		var createdAt, updatedAt string
 		if err := rows.Scan(&e.ID, &e.Title, &e.Status, &e.Source, &e.ParentID, &e.NotebookID, &e.OriginalFilename,
 			&e.ContentType, &e.SizeBytes, &e.DurationSeconds, &e.SHA256, &recordedAt, &createdAt, &updatedAt,
-			&archived, &e.Author, &titleVersion, &recordedVersion, &bodyVersion, &e.PrimaryAttachmentID,
-			&e.Preview, &e.SpokenPreview, &e.AnalysisAt, &e.TranscriptAt); err != nil {
+			&archived, &e.Author, &e.OriginInstance, &e.OriginKind, &titleVersion, &recordedVersion,
+			&bodyVersion, &e.PrimaryAttachmentID, &e.Preview, &e.SpokenPreview, &e.AnalysisAt,
+			&e.TranscriptAt); err != nil {
 			return nil, fmt.Errorf("store: scan entry: %w", err)
 		}
 		if recordedAt.Valid {
@@ -356,10 +384,12 @@ func (s *Store) ListEntriesFilteredNotebook(ctx context.Context, limit, offset i
 	return out, rows.Err()
 }
 
-// ListDeletedEntries returns soft-deleted entries, most recently deleted first.
+// ListDeletedEntries returns permanent tombstones, most recently deleted first.
 // They are the "tombstones" the app uses to reconcile: a local note is only
 // removed when the server confirms the deletion (never because the entry is
-// merely absent, which would wipe the phone on a fresh or reset server).
+// merely absent, which would wipe the phone on a fresh or reset server). The
+// tombstone survives the purge of the content, so a peer that was offline for
+// longer than the retention window still learns about the deletion.
 func (s *Store) ListDeletedEntries(ctx context.Context, limit, offset int) ([]Entry, error) {
 	if limit <= 0 {
 		limit = 100
@@ -368,9 +398,13 @@ func (s *Store) ListDeletedEntries(ctx context.Context, limit, offset int) ([]En
 		offset = 0
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, COALESCE(title,''), created_at, updated_at, deleted_at
-		FROM entries WHERE deleted_at IS NOT NULL
-		ORDER BY deleted_at DESC, id DESC LIMIT ? OFFSET ?`, limit, offset)
+		SELECT t.id, COALESCE(e.title,''),
+			COALESCE(e.created_at, t.deleted_at), COALESCE(e.updated_at, t.deleted_at),
+			t.deleted_at, (e.id IS NULL)
+		FROM tombstones t
+		LEFT JOIN entries e ON e.id = t.id
+		WHERE t.kind = ?
+		ORDER BY t.deleted_at DESC, t.id DESC LIMIT ? OFFSET ?`, TombstoneEntry, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("store: list deleted entries: %w", err)
 	}
@@ -379,10 +413,15 @@ func (s *Store) ListDeletedEntries(ctx context.Context, limit, offset int) ([]En
 	for rows.Next() {
 		var e Entry
 		var createdAt, updatedAt, deletedAt string
-		if err := rows.Scan(&e.ID, &e.Title, &createdAt, &updatedAt, &deletedAt); err != nil {
+		var purged int
+		if err := rows.Scan(&e.ID, &e.Title, &createdAt, &updatedAt, &deletedAt, &purged); err != nil {
 			return nil, fmt.Errorf("store: scan deleted entry: %w", err)
 		}
-		e.Status = EntryDeleted
+		if purged != 0 {
+			e.Status = EntryPurged
+		} else {
+			e.Status = EntryDeleted
+		}
 		e.CreatedAt = parseTS(createdAt)
 		e.UpdatedAt = parseTS(updatedAt)
 		if t := parseTS(deletedAt); !t.IsZero() {

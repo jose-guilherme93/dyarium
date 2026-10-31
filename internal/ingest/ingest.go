@@ -255,6 +255,25 @@ type CompleteResult struct {
 // the audio to an existing entry) and returns the result. It is idempotent: a
 // repeat after a lost response returns the same attachment and entry.
 func (s *Service) Complete(ctx context.Context, uploadID string) (CompleteResult, error) {
+	return s.CompleteWithOrigin(ctx, uploadID, "", store.Origin{})
+}
+
+// CompleteWithAttachmentID is Complete with a creator-chosen attachment id. The
+// same id can then be used in every environment, so the note body (which
+// references `attachment:<id>`) is portable. An empty id keeps the legacy
+// behavior and lets the server generate one. A repeated id for the same bytes is
+// idempotent; a different content under the same id is a conflict.
+func (s *Service) CompleteWithAttachmentID(ctx context.Context, uploadID, attachmentID string) (CompleteResult, error) {
+	return s.CompleteWithOrigin(ctx, uploadID, attachmentID, store.Origin{})
+}
+
+// CompleteWithOrigin also records who created the entry, when completion
+// creates one. Provenance only; the entry stays fully editable everywhere.
+func (s *Service) CompleteWithOrigin(ctx context.Context, uploadID, attachmentID string, origin store.Origin) (CompleteResult, error) {
+	attachmentID = strings.TrimSpace(attachmentID)
+	if attachmentID != "" && !id.Valid(attachmentID) {
+		return CompleteResult{}, newError(400, "invalid_attachment_id", "attachment_id invalido")
+	}
 	u, err := s.Get(ctx, uploadID)
 	if err != nil {
 		return CompleteResult{}, err
@@ -301,6 +320,31 @@ func (s *Service) Complete(ctx context.Context, uploadID string) (CompleteResult
 		return CompleteResult{}, newError(422, "integrity", "sha256 do conteudo diverge do informado")
 	}
 
+	attID := attachmentID
+	if attID == "" {
+		attID = id.New()
+	} else if existing, err := s.store.GetAttachment(ctx, attID); err == nil {
+		// O mesmo id voltando com o mesmo conteudo e um retry: devolve o que ja
+		// existe. Conteudo diferente sob o mesmo id e conflito, nunca sobrescrita.
+		if existing.SHA256 != sum {
+			return CompleteResult{}, newError(409, "attachment_id_conflict", "attachment_id ja usado com outro conteudo")
+		}
+		if u.EntryID != "" && existing.EntryID != u.EntryID {
+			return CompleteResult{}, newError(409, "attachment_id_conflict", "attachment_id ja usado em outra entrada")
+		}
+		entry, entryErr := s.store.GetEntry(ctx, existing.EntryID)
+		if entryErr != nil {
+			return CompleteResult{}, newError(409, "attachment_id_conflict", "attachment_id pertence a uma entrada apagada")
+		}
+		if err := s.store.SetUploadCompleted(ctx, uploadID, existing.ID); err != nil {
+			return CompleteResult{}, err
+		}
+		os.Remove(path)
+		return CompleteResult{Entry: entry, Attachment: existing, Repeated: true}, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return CompleteResult{}, fmt.Errorf("ingest: consultar attachment id: %w", err)
+	}
+
 	var durationSeconds float64
 	if s.prober != nil {
 		d, err := s.prober.DurationSeconds(ctx, tmpPath)
@@ -317,7 +361,7 @@ func (s *Service) Complete(ctx context.Context, uploadID string) (CompleteResult
 	// ja contem esse audio em vez de duplicar.
 	if existing, ok, err := s.store.FindOriginalAudio(ctx, sum); err != nil {
 		return CompleteResult{}, fmt.Errorf("ingest: identidade do audio: %w", err)
-	} else if ok && (u.EntryID == "" || existing.EntryID == u.EntryID) {
+	} else if attachmentID == "" && ok && (u.EntryID == "" || existing.EntryID == u.EntryID) {
 		entry, err := s.store.GetEntry(ctx, existing.EntryID)
 		if err != nil {
 			return CompleteResult{}, newError(404, "not_found", "entrada inexistente")
@@ -361,6 +405,8 @@ func (s *Service) Complete(ctx context.Context, uploadID string) (CompleteResult
 			CreatedAt:        createdAt,
 			UpdatedAt:        now,
 			Author:           u.Author,
+			OriginInstance:   origin.Instance,
+			OriginKind:       origin.Kind,
 		}
 		if err := s.store.CreateEntry(ctx, entry); err != nil {
 			return CompleteResult{}, err
@@ -387,6 +433,8 @@ func (s *Service) Complete(ctx context.Context, uploadID string) (CompleteResult
 			CreatedAt:        createdAt,
 			UpdatedAt:        now,
 			Author:           u.Author,
+			OriginInstance:   origin.Instance,
+			OriginKind:       origin.Kind,
 		}
 		if err := s.store.CreateEntry(ctx, entry); err != nil {
 			return CompleteResult{}, err
@@ -400,7 +448,7 @@ func (s *Service) Complete(ctx context.Context, uploadID string) (CompleteResult
 	}
 
 	attachment := store.Attachment{
-		ID:              id.New(),
+		ID:              attID,
 		EntryID:         entry.ID,
 		Kind:            store.AttachmentOriginal,
 		StorageKey:      u.StorageKey,
@@ -485,14 +533,39 @@ func (s *Service) DecryptToTemp(ctx context.Context, att store.Attachment) (stri
 // PutAttachment encrypts data into a new attachment of the given kind and links
 // it to the entry. The plaintext is never written to disk.
 func (s *Service) PutAttachment(ctx context.Context, entryID, kind, contentType string, data io.Reader, maxBytes int64) (store.Attachment, error) {
+	return s.PutAttachmentWithID(ctx, entryID, kind, contentType, "", data, maxBytes)
+}
+
+// PutAttachmentWithID is PutAttachment with a creator-chosen id. The same id is
+// used in every environment, so a body that references it stays valid when the
+// note is pushed to another server. Empty keeps the generated id. A repeated id
+// with the same bytes is idempotent; different bytes under the same id is a
+// conflict.
+func (s *Service) PutAttachmentWithID(ctx context.Context, entryID, kind, contentType, attachmentID string, data io.Reader, maxBytes int64) (store.Attachment, error) {
 	if maxBytes <= 0 {
 		maxBytes = s.cfg.MaxUploadBytes
+	}
+	attachmentID = strings.TrimSpace(attachmentID)
+	if attachmentID != "" && !id.Valid(attachmentID) {
+		return store.Attachment{}, newError(400, "invalid_attachment_id", "attachment_id invalido")
+	}
+	attID := attachmentID
+	if attID == "" {
+		attID = id.New()
+	} else if existing, err := s.store.GetAttachment(ctx, attID); err == nil {
+		// Idempotencia por id: o mesmo anexo pedido de novo devolve o que ja
+		// existe. Usar o id de outra entrada e conflito.
+		if existing.EntryID != entryID {
+			return store.Attachment{}, newError(409, "attachment_id_conflict", "attachment_id ja usado em outra entrada")
+		}
+		return existing, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return store.Attachment{}, fmt.Errorf("ingest: consultar attachment id: %w", err)
 	}
 	prefix, err := crypto.NewPrefix()
 	if err != nil {
 		return store.Attachment{}, fmt.Errorf("ingest: prefix: %w", err)
 	}
-	attID := id.New()
 	storageKey := filepath.Join("objects", attID+".enc")
 	path := filepath.Join(s.dataDir, storageKey)
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
@@ -507,7 +580,8 @@ func (s *Service) PutAttachment(ctx context.Context, entryID, kind, contentType 
 		os.Remove(path)
 		return store.Attachment{}, fmt.Errorf("ingest: write header: %w", err)
 	}
-	_, size, err := crypto.Append(f, s.key, prefix, 0, io.LimitReader(data, maxBytes+1))
+	hasher := sha256.New()
+	_, size, err := crypto.Append(f, s.key, prefix, 0, io.TeeReader(io.LimitReader(data, maxBytes+1), hasher))
 	closeErr := f.Close()
 	if err != nil {
 		os.Remove(path)
@@ -528,6 +602,7 @@ func (s *Service) PutAttachment(ctx context.Context, entryID, kind, contentType 
 		StorageKey:  storageKey,
 		ContentType: contentType,
 		SizeBytes:   size,
+		SHA256:      hex.EncodeToString(hasher.Sum(nil)),
 		Cipher:      "aes-256-gcm",
 		CreatedAt:   time.Now().UTC(),
 	}

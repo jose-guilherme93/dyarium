@@ -44,7 +44,7 @@ func newTestServer(t *testing.T) *Server {
 		MaxDurationSeconds: cfg.MaxDurationSeconds,
 		AllowedFormats:     cfg.AllowedFormats,
 	}, st, key, t.TempDir(), nil)
-	return New(Deps{Config: cfg, Store: st, Logger: logger, Version: Version{Version: "test"}, Ingest: ing, Queue: jobs.NewQueue(st.DB())})
+	return New(Deps{Config: cfg, Store: st, Logger: logger, Version: Version{Version: "test", InstanceID: "instancia-de-teste", SyncContract: SyncContract}, Ingest: ing, Queue: jobs.NewQueue(st.DB())})
 }
 
 func TestHealthz(t *testing.T) {
@@ -80,5 +80,15 @@ func TestVersionRequiresAuth(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("with token: status = %d, want 200", rec.Code)
+	}
+	var body map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["instance_id"] != "instancia-de-teste" {
+		t.Fatalf("instance_id = %q", body["instance_id"])
+	}
+	if body["sync_contract"] != SyncContract {
+		t.Fatalf("sync_contract = %q, want %q", body["sync_contract"], SyncContract)
 	}
 }

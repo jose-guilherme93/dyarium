@@ -19,12 +19,17 @@ const (
 	EntryReady        = "ready"
 	EntryFailed       = "failed"
 	EntryDeleted      = "deleted"
+	// EntryPurged is the tombstone of an entry whose content was already
+	// destroyed. It must never be restored, but it still tells peers that the
+	// deletion happened.
+	EntryPurged = "purged"
 )
 
 // Attachment kinds.
 const (
 	AttachmentOriginal   = "original"
 	AttachmentDerived16k = "derived_16k"
+	AttachmentImage      = "image"
 )
 
 // Entry author roles. An empty Author means "follow the app default": the
@@ -97,12 +102,31 @@ type Upload struct {
 	ExpiresAt     time.Time
 }
 
+// Quem criou um objeto. `Kind` e `device` (um aparelho com o app) ou `server`
+// (o proprio ambiente, pelo dashboard ou pela API). Proveniencia apenas: nao
+// muda permissao nem impede edicao em nenhum ambiente.
+const (
+	OriginKindDevice = "device"
+	OriginKindServer = "server"
+)
+
+// Origin identifies who created an object. Empty means the row predates the
+// field and the origin was not recorded.
+type Origin struct {
+	Instance string
+	Kind     string
+}
+
 // Entry is a stored audio and its lifecycle.
 type Entry struct {
 	ID     string
 	Title  string
 	Status string
 	Source string
+	// OriginInstance and OriginKind record who created the entry. Set once on
+	// creation; updates never touch them.
+	OriginInstance string
+	OriginKind     string
 	// ParentID is the parent note in the tree; empty means it is at the root.
 	ParentID string
 	// NotebookID is the notebook that owns the note. Every note has one.
@@ -270,11 +294,12 @@ type Note struct {
 	Document string
 	// ContentMarkdown is the note body in markdown.
 	ContentMarkdown string
-	// BodyUpdatedAt is the version of the body: it changes on every accepted
+	// BodyVersion is the version of the body: it changes on every accepted
 	// write and is what a client compares against to detect a real conflict.
-	BodyUpdatedAt *time.Time
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	// Opaque token issued by the hybrid logical clock, not a timestamp.
+	BodyVersion string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // NoteRevision is a historical version of a note.

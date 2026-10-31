@@ -92,3 +92,28 @@ func TestClaimRejectsShortToken(t *testing.T) {
 		t.Fatal("Claim deveria recusar token curto")
 	}
 }
+
+func TestEnsureInstanceIDIsStable(t *testing.T) {
+	dir := t.TempDir()
+
+	first, err := EnsureInstanceID(dir)
+	if err != nil {
+		t.Fatalf("EnsureInstanceID: %v", err)
+	}
+	if _, err := hex.DecodeString(first); err != nil || len(first) != 32 {
+		t.Fatalf("instance id nao parece hex de 16 bytes: %q", first)
+	}
+	if info, err := os.Stat(filepath.Join(dir, InstanceIDFile)); err != nil {
+		t.Fatalf("instance id nao foi gravado: %v", err)
+	} else if info.Mode().Perm() != 0o600 {
+		t.Fatalf("permissoes do instance id = %o, esperado 600", info.Mode().Perm())
+	}
+
+	second, err := EnsureInstanceID(dir)
+	if err != nil {
+		t.Fatalf("EnsureInstanceID: %v", err)
+	}
+	if second != first {
+		t.Fatalf("instance id mudou entre execucoes: %q != %q", second, first)
+	}
+}

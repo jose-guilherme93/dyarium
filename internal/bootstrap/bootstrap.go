@@ -20,6 +20,10 @@ const (
 	MasterKeyFile = "master.key"
 	// TokenFile holds the bearer token chosen during first-run setup.
 	TokenFile = "token"
+	// InstanceIDFile is the stable, opaque identity of this environment. It is
+	// generated once and never changes, even when the address or the token does.
+	// Sync peers use it to tell one server from another; the URL cannot do that.
+	InstanceIDFile = "instance.id"
 	// MinTokenLength is the shortest accepted access token.
 	MinTokenLength = 8
 )
@@ -65,6 +69,14 @@ func Resolve(dataDir, envMasterKey, envToken string) (Result, error) {
 		return Result{}, fmt.Errorf("gerar token temporario: %w", err)
 	}
 	return Result{MasterKey: key, Token: ephemeral, SetupRequired: true}, nil
+}
+
+// EnsureInstanceID returns the stable identity of this environment, creating it
+// on first boot. It is not a secret: it only has to be unique and stable. The
+// value is generated with crypto/rand and persisted under the data directory so
+// a restart, a new address or a new token never change it.
+func EnsureInstanceID(dataDir string) (string, error) {
+	return ensureSecret(filepath.Join(dataDir, InstanceIDFile), 16)
 }
 
 // Claim persists the operator-chosen token under the data directory.
