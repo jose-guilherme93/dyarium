@@ -27,7 +27,11 @@ jest.mock('react-native-reanimated', () => {
     runOnJS: (fn: unknown) => fn,
     useSharedValue: (initial: unknown) => ({ value: initial }),
     useAnimatedStyle: (factory: () => unknown) => factory(),
-    withTiming: (value: unknown) => value,
+    withTiming: (value: unknown, _options?: unknown, callback?: (done: boolean) => void) => {
+      // O Reanimated de verdade chama o callback no fim; aqui o fim e agora.
+      callback?.(true);
+      return value;
+    },
     useEvent: () => () => undefined,
     useHandler: () => ({ context: {}, doDependenciesDiffer: false, useWeb: false }),
   };

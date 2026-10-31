@@ -31,6 +31,7 @@ import {
   type ListRenderItemInfo,
 } from 'react-native';
 import Animated, {
+  runOnJS,
   useAnimatedStyle,
   useSharedValue,
   withTiming,
@@ -100,9 +101,34 @@ const KINDS: EntityKind[] = ['person', 'place', 'theme', 'decision'];
  */
 let snapshotCache: { key: string; at: number; snapshot: GraphSnapshot } | null = null;
 
-/** Escurecido do desenho ao trocar de cena, em ms. */
-const VEIL_IN = 110;
-const VEIL_OUT = 220;
+type SlideValue = { value: number };
+
+/**
+ * Empurrao da cena: o desenho sai por um lado, a troca acontece fora da tela e
+ * o novo entra pelo outro. `direction` 1 abre; -1 volta.
+ */
+function runSlide(
+  slideX: SlideValue,
+  width: number,
+  direction: 1 | -1,
+  action: () => void,
+): void {
+  // Um empurrao por vez: durante a animacao o deslocamento nao e zero.
+  if (slideX.value !== 0) return;
+  slideX.value = withTiming(-direction * width, { duration: SLIDE_OUT }, (finished) => {
+    if (!finished) {
+      slideX.value = withTiming(0, { duration: SLIDE_IN });
+      return;
+    }
+    runOnJS(action)();
+    slideX.value = direction * width;
+    slideX.value = withTiming(0, { duration: SLIDE_IN });
+  });
+}
+
+/** Empurrao do desenho ao trocar de cena, em ms: sai e entra. */
+const SLIDE_OUT = 130;
+const SLIDE_IN = 190;
 
 /** Altura fixa de uma linha da lista de entidades, em pt. */
 const OVERVIEW_ROW = 46;
@@ -539,37 +565,23 @@ export default function MapScreen() {
     [snapshot],
   );
 
-  // Veu do desenho: escurece a cena antes de trocar e so abre depois que o
-  // desenho novo esta no lugar. Sem isso o mapa velho pisca e a camera salta.
-  const [veil, setVeil] = useState(false);
-  const veilOpacity = useSharedValue(0);
-  const veilTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const veilGuard = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Empurrao do desenho: a cena atual sai por um lado, a troca acontece fora
+  // da tela e a nova entra pelo outro -- o mesmo caminho de abrir uma nota.
+  const slideX = useSharedValue(0);
+  const slideStyle = useAnimatedStyle(() => ({ transform: [{ translateX: slideX.value }] }));
 
-  useEffect(() => {
-    veilOpacity.value = withTiming(veil ? 1 : 0, { duration: veil ? VEIL_IN : VEIL_OUT });
-  }, [veil, veilOpacity]);
-
-  const veilStyle = useAnimatedStyle(() => ({ opacity: veilOpacity.value }));
-
-  /** Troca o desenho atras do escurecido. A acao roda com o veu fechado. */
-  const switchScene = useCallback((action: () => void) => {
-    setVeil(true);
-    if (veilTimer.current) clearTimeout(veilTimer.current);
-    if (veilGuard.current) clearTimeout(veilGuard.current);
-    veilTimer.current = setTimeout(() => {
-      action();
-      // Se o desenho novo nao chegar, o veu abre sozinho.
-      veilGuard.current = setTimeout(() => setVeil(false), 1500);
-    }, VEIL_IN);
-  }, []);
-
-  const sceneReady = veil && Boolean(visible) && visible?.data === data;
-  useEffect(() => {
-    if (!sceneReady) return undefined;
-    const timer = setTimeout(() => setVeil(false), 60);
-    return () => clearTimeout(timer);
-  }, [sceneReady]);
+  /**
+   * Troca a cena com o empurrao da navegacao. `direction` 1 abre (sai pela
+   * esquerda, entra pela direita) e -1 volta (sai pela direita, entra pela
+   * esquerda). A troca roda com o desenho fora da tela, entao nenhum salto de
+   * camera aparece.
+   */
+  const switchScene = useCallback(
+    (action: () => void, direction: 1 | -1 = 1) => {
+      runSlide(slideX, width, direction, action);
+    },
+    [width, slideX],
+  );
 
   /** Volta ao mapa inteiro: nada escolhido, nada em foco. */
   const resetToMap = useCallback(() => {
@@ -578,7 +590,7 @@ export default function MapScreen() {
     setSelectedId(null);
     setSelectedPanel(null);
     setPanelLoading(false);
-    if (focusId) switchScene(() => setFocusId(null));
+    if (focusId) switchScene(() => setFocusId(null), -1);
   }, [focusId, switchScene]);
 
   /**
@@ -792,36 +804,31 @@ export default function MapScreen() {
 
   return (
     <View style={styles.screen}>
-      {visible ? (
-        <Profiler
-          id="graph"
-          onRender={(_id, _phase, actual) => mark('prof.graph_ms', actual)}
-        >
-          <GraphCanvas
-          ref={canvasRef}
-          data={visible.data}
-          layout={visible.layout}
-          colors={graphColors}
-          width={width}
-          height={height}
-          viewportTop={insets.top + (focusId ? 72 : 50)}
-          viewportBottom={Math.round(height * (1 - SNAP_REST))}
-          selectedId={selectedId}
-          focusMode={Boolean(focusId)}
-          kinds={kinds}
-          onSelect={selectNode}
-          />
-        </Profiler>
-      ) : null}
-
-      <Animated.View
-        pointerEvents="none"
-        style={[
-          styles.veil,
-          { bottom: Math.round(height * (1 - SNAP_REST)), backgroundColor: theme.bg },
-          veilStyle,
-        ]}
-      />
+      <View style={styles.graphWindow} pointerEvents="box-none">
+        {visible ? (
+          <Animated.View style={[styles.graphLayer, slideStyle]}>
+            <Profiler
+              id="graph"
+              onRender={(_id, _phase, actual) => mark('prof.graph_ms', actual)}
+            >
+              <GraphCanvas
+                ref={canvasRef}
+                data={visible.data}
+                layout={visible.layout}
+                colors={graphColors}
+                width={width}
+                height={height}
+                viewportTop={insets.top + (focusId ? 72 : 50)}
+                viewportBottom={Math.round(height * (1 - SNAP_REST))}
+                selectedId={selectedId}
+                focusMode={Boolean(focusId)}
+                kinds={kinds}
+                onSelect={selectNode}
+              />
+            </Profiler>
+          </Animated.View>
+        ) : null}
+      </View>
 
       <View style={[styles.chrome, { paddingTop: insets.top + spacing.xs }]}>
         <View style={styles.topBar}>
@@ -1033,7 +1040,8 @@ export default function MapScreen() {
 
 const baseStyles = defineStyles({
   screen: { flex: 1, backgroundColor: baseColors.bg },
-  veil: { position: 'absolute', left: 0, right: 0, top: 0 },
+  graphWindow: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, overflow: 'hidden' },
+  graphLayer: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 },
   chrome: {
     position: 'absolute',
     top: 0,
