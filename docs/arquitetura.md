@@ -622,6 +622,17 @@ corpo reaparecia na pilha do dashboard sem nenhuma forma de apagar.
   entidade em vez de criar uma duplicata. Quando a pessoa e o proprio dono, "sou eu" apaga
   a entidade duplicada e guarda a grafia em `owner_aliases`; o centro do mapa e a unica
   representacao do diarista e a leitura resolve o nome para `owner_name`.
+  A reescrita do texto troca **nome por nome**, nunca gramatica: pronomes, artigos e
+  papeis genericos ("eu", "a gente", "pessoa") resolvem no mapa estruturado, mas nao
+  entram na prosa. Sem isso, marcar a pessoa "eu" como "sou eu" transformava a citacao
+  "eu fiz isso" em "Joseti fiz isso". Grafias com menos de tres letras tambem ficam
+  fora da prosa ("li", "vi" e "ja" sao palavras), e continuam valendo no mapa.
+  Cada edicao de entidade (renomear, mesclar, icone, "sou eu") guarda antes uma foto das
+  linhas afetadas em `entity_edits`; o "Desfazer" do painel restaura entidade, aliases,
+  vinculos e grafias do dono. Mesclar apaga a origem e soma contagens, entao o desfazer
+  precisa da foto, nao de uma operacao inversa. So a edicao mais recente ainda de pe pode
+  ser desfeita, e a restauracao carimba `updated_at` como agora para vencer copias antigas
+  em outros clientes.
   O cliente desenha em canvas com forca local e tamanho relativo ao maior no da visao;
   o servidor nao manda layout nem posicao. O mapa inclui todas as notas, inclusive as de
   autor "outros": o diario e do dono, mesmo quando a fala e de outra pessoa.

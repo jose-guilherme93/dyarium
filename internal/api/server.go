@@ -132,6 +132,7 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("PATCH /api/v1/entities/{kind}/{name}", s.handleRenameEntity)
 	protected.HandleFunc("POST /api/v1/entities/person/{name}/self", s.handleClaimSelf)
 	protected.HandleFunc("PUT /api/v1/entities/{kind}/{name}/icon", s.handleSetEntityIcon)
+	protected.HandleFunc("POST /api/v1/entities/edits/{id}/undo", s.handleUndoEntityEdit)
 	protected.HandleFunc("GET /api/v1/graph", s.handleGraph)
 	protected.HandleFunc("GET /api/v1/mood", s.handleMood)
 	protected.HandleFunc("GET /api/v1/analysis/runs/summary", s.handleAnalysisRunsSummary)

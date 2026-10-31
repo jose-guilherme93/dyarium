@@ -320,14 +320,20 @@ func (s *Server) handleGetAnalysis(w http.ResponseWriter, r *http.Request) {
 }
 
 // canonicalizeAnalysisText replaces old entity spellings in the analysis prose
-// with the current name. It only touches whole words and never the transcript or
-// the note body; the audio and what was said stay exactly as recorded.
+// and in the transcript display with the current name. It only touches whole
+// words and only names (never pronouns): the stored text, the audio and what was
+// said stay exactly as recorded.
 func canonicalizeAnalysisText(text string, pairs []store.EntityNamePair) string {
 	if text == "" || len(pairs) == 0 {
 		return text
 	}
 	for _, pair := range pairs {
 		if pair.Old == "" || strings.EqualFold(pair.Old, pair.New) {
+			continue
+		}
+		// Defesa em profundidade: mesmo que uma lista antiga ainda traga um
+		// pronome, o texto citado nao troca gramatica por nome.
+		if !store.RewritableAlias(pair.Old) {
 			continue
 		}
 		pattern := regexp.MustCompile(`(?i)(^|[^\p{L}\p{N}])` + regexp.QuoteMeta(pair.Old) + `([^\p{L}\p{N}]|$)`)

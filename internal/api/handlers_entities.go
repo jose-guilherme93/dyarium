@@ -188,7 +188,13 @@ func (s *Server) handleRenameEntity(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_body", "corpo invalido")
 		return
 	}
-	summary, err := s.deps.Store.RenameEntity(r.Context(), kind, r.PathValue("name"), req.Name)
+	oldName := strings.TrimSpace(r.PathValue("name"))
+	newName := strings.TrimSpace(req.Name)
+	editID := s.prepareEntityEdit(r, "rename", oldName+" -> "+newName, kind, oldName, newName)
+	summary, err := s.deps.Store.RenameEntity(r.Context(), kind, oldName, req.Name)
+	if err != nil && editID != "" {
+		_ = s.deps.Store.DiscardEntityEdit(r.Context(), editID)
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", "entidade inexistente")
 		return
@@ -201,14 +207,23 @@ func (s *Server) handleRenameEntity(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, entitySummaryJSON(summary))
+	body := entitySummaryJSON(summary)
+	if editID != "" {
+		body["edit_id"] = editID
+	}
+	writeJSON(w, http.StatusOK, body)
 }
 
 // handleClaimSelf folds a person into the diarist. The person stops being a
 // node; its name and aliases become owner spellings, so every analysis resolves
 // them to the owner name from settings. Used by the "sou eu" check on the map.
 func (s *Server) handleClaimSelf(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimSpace(r.PathValue("name"))
+	editID := s.prepareEntityEdit(r, "self", name, store.EntityPerson, name)
 	owner, err := s.deps.Store.ClaimPersonAsOwner(r.Context(), r.PathValue("name"))
+	if err != nil && editID != "" {
+		_ = s.deps.Store.DiscardEntityEdit(r.Context(), editID)
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", "pessoa inexistente")
 		return
@@ -221,7 +236,11 @@ func (s *Server) handleClaimSelf(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "owner": owner})
+	body := map[string]any{"status": "ok", "owner": owner}
+	if editID != "" {
+		body["edit_id"] = editID
+	}
+	writeJSON(w, http.StatusOK, body)
 }
 
 // handleSetEntityIcon stores the monochrome glyph the map draws inside one
@@ -240,7 +259,12 @@ func (s *Server) handleSetEntityIcon(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_body", "corpo invalido")
 		return
 	}
+	name := strings.TrimSpace(r.PathValue("name"))
+	editID := s.prepareEntityEdit(r, "icon", name, kind, name)
 	summary, err := s.deps.Store.SetEntityIcon(r.Context(), kind, r.PathValue("name"), req.Icon)
+	if err != nil && editID != "" {
+		_ = s.deps.Store.DiscardEntityEdit(r.Context(), editID)
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", "entidade inexistente")
 		return
@@ -253,7 +277,44 @@ func (s *Server) handleSetEntityIcon(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, entitySummaryJSON(summary))
+	body := entitySummaryJSON(summary)
+	if editID != "" {
+		body["edit_id"] = editID
+	}
+	writeJSON(w, http.StatusOK, body)
+}
+
+// prepareEntityEdit snapshots what a mutation is about to change. A snapshot
+// failure is logged and does not block the write: the edit only loses undo.
+func (s *Server) prepareEntityEdit(r *http.Request, action, label, kind string, names ...string) string {
+	id, err := s.deps.Store.PrepareEntityEdit(r.Context(), action, label, kind, names...)
+	if err != nil {
+		s.deps.Logger.Error("entidade: guardar desfazer", "erro", err)
+		return ""
+	}
+	return id
+}
+
+// handleUndoEntityEdit restores the state captured before the latest entity
+// edit (rename, merge, icon or "sou eu").
+func (s *Server) handleUndoEntityEdit(w http.ResponseWriter, r *http.Request) {
+	edit, err := s.deps.Store.UndoEntityEdit(r.Context(), r.PathValue("id"))
+	switch {
+	case errors.Is(err, store.ErrEntityEditNotFound):
+		writeError(w, http.StatusNotFound, "not_found", "edicao inexistente")
+		return
+	case errors.Is(err, store.ErrEditNotLatest):
+		writeError(w, http.StatusConflict, "edit_not_latest", "ha uma edicao mais nova")
+		return
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "ok",
+		"action": edit.Action,
+		"label":  edit.Label,
+	})
 }
 
 func (s *Server) handleMood(w http.ResponseWriter, r *http.Request) {

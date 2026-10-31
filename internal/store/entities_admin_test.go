@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -180,5 +181,78 @@ func TestSetEntityIcon(t *testing.T) {
 	}
 	if _, err := s.SetEntityIcon(ctx, EntityPerson, "Ninguem", "heart"); err != ErrNotFound {
 		t.Fatalf("entidade inexistente = %v", err)
+	}
+}
+
+// Marcar a pessoa "eu" como "sou eu" resolve o pronome no mapa, mas nao pode
+// reescrever a prosa: "eu fiz" viraria "Joseti fiz". O alias de nome continua
+// valendo ("wenes" -> "Wennys").
+func TestEntityAliasPairsSkipPronouns(t *testing.T) {
+	ctx := context.Background()
+	s := openStore(t)
+	if err := s.SetSetting(ctx, "owner_name", "Joseti"); err != nil {
+		t.Fatalf("owner name: %v", err)
+	}
+	now := time.Now().UTC()
+	seedEntry(t, s, "e1", now)
+	saveEntities(t, s, "e1",
+		EntityLink{Kind: EntityPerson, Name: "eu", Count: 3},
+		EntityLink{Kind: EntityPerson, Name: "wenes", Count: 2},
+	)
+
+	if _, err := s.ClaimPersonAsOwner(ctx, "eu"); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if _, err := s.RenameEntity(ctx, EntityPerson, "wenes", "Wennys"); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+
+	// Estruturado: o pronome ainda resolve para o dono.
+	names, err := s.EntityNameMap(ctx)
+	if err != nil {
+		t.Fatalf("name map: %v", err)
+	}
+	if got := names[EntityNameKey(EntityPerson, "eu")]; got != "Joseti" {
+		t.Fatalf("nome estruturado de eu = %q", got)
+	}
+
+	pairs, err := s.EntityAliasPairs(ctx)
+	if err != nil {
+		t.Fatalf("alias pairs: %v", err)
+	}
+	foundRename := false
+	for _, pair := range pairs {
+		if strings.EqualFold(pair.Old, "eu") {
+			t.Fatalf("pronome entrou na reescrita da prosa: %+v", pair)
+		}
+		if pair.Old == "wenes" && pair.New == "Wennys" {
+			foundRename = true
+		}
+	}
+	if !foundRename {
+		t.Fatalf("a correcao de nome sumiu da prosa: %+v", pairs)
+	}
+}
+
+func TestRewritableAlias(t *testing.T) {
+	cases := map[string]bool{
+		"eu":             false,
+		"Eu":             false,
+		"você":           false,
+		"ele":            false,
+		"a gente":        false,
+		"pessoa":         false,
+		"autor":          false,
+		"li":             false,
+		"Zé":             false,
+		"Wenes":          true,
+		"wennes":         true,
+		"José Guilherme": true,
+		"d'Ávila":        true,
+	}
+	for name, want := range cases {
+		if got := RewritableAlias(name); got != want {
+			t.Fatalf("RewritableAlias(%q) = %v, want %v", name, got, want)
+		}
 	}
 }

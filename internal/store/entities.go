@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // DefaultOwnerName is the center label when the diarist has not chosen a name.
@@ -350,6 +352,73 @@ type EntityNamePair struct {
 	New string
 }
 
+// rewriteStopwords are grammatical words and generic roles, never names. They
+// are normalized (lowercase, no accents) for the lookup.
+var rewriteStopwords = map[string]bool{
+	"eu": true, "tu": true, "voce": true, "ele": true, "ela": true,
+	"nos": true, "vos": true, "eles": true, "elas": true,
+	"me": true, "te": true, "se": true, "lhe": true, "lhes": true,
+	"mim": true, "comigo": true, "contigo": true, "consigo": true,
+	"conosco": true, "convosco": true,
+	"meu": true, "minha": true, "meus": true, "minhas": true,
+	"teu": true, "tua": true, "teus": true, "tuas": true,
+	"seu": true, "sua": true, "seus": true, "suas": true,
+	"nosso": true, "nossa": true, "nossos": true, "nossas": true,
+	"dele": true, "dela": true, "deles": true, "delas": true,
+	"este": true, "esta": true, "estes": true, "estas": true,
+	"esse": true, "essa": true, "esses": true, "essas": true,
+	"aquele": true, "aquela": true, "aqueles": true, "aquelas": true,
+	"isto": true, "isso": true, "aquilo": true,
+	"alguem": true, "ninguem": true, "outrem": true, "qualquer": true, "gente": true,
+	"pessoa": true, "pessoas": true, "autor": true, "autora": true,
+	"autores": true, "autoras": true, "diarista": true,
+	"narrador": true, "narradora": true,
+	"todo": true, "toda": true, "todos": true, "todas": true,
+	"todo mundo": true, "a gente": true, "eu mesmo": true, "eu mesma": true,
+	"o": true, "a": true, "os": true, "as": true,
+	"um": true, "uma": true, "uns": true, "umas": true,
+	"de": true, "da": true, "do": true, "das": true, "dos": true,
+	"em": true, "no": true, "na": true, "nas": true, "num": true, "numa": true,
+	"por": true, "para": true, "pra": true, "com": true, "sem": true,
+	"que": true, "e": true, "ou": true, "mas": true, "como": true,
+	"quando": true, "onde": true, "porque": true,
+}
+
+var aliasAccents = strings.NewReplacer(
+	"á", "a", "à", "a", "â", "a", "ã", "a", "ä", "a",
+	"é", "e", "è", "e", "ê", "e", "ë", "e",
+	"í", "i", "ì", "i", "î", "i", "ï", "i",
+	"ó", "o", "ò", "o", "ô", "o", "õ", "o", "ö", "o",
+	"ú", "u", "ù", "u", "û", "u", "ü", "u",
+	"ç", "c",
+)
+
+func normalizeAlias(name string) string {
+	value := strings.ToLower(strings.TrimSpace(name))
+	value = aliasAccents.Replace(value)
+	value = strings.Join(strings.Fields(value), " ")
+	return strings.TrimFunc(value, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+	})
+}
+
+// RewritableAlias reports whether an old spelling may be replaced in free text
+// (analysis prose and transcript display).
+//
+// A grafia antiga de um nome pode ser corrigida no texto: "wenes" vira
+// "Wennys". Mas o texto e uma citacao do diario, e trocar gramatica por nome
+// produz "Joseti fiz isso porque Joseti quis". Pronomes, artigos e papeis
+// genericos ficam de fora; nomes de duas letras tambem, porque "li", "vi" e
+// "ja" sao palavras. A resolucao estruturada (EntityNameMap) continua valendo
+// para todos.
+func RewritableAlias(name string) bool {
+	normalized := normalizeAlias(name)
+	if utf8.RuneCountInString(normalized) < 3 {
+		return false
+	}
+	return !rewriteStopwords[normalized]
+}
+
 // EntityAliasPairs lists the renames used to resolve names in free text (the
 // analysis summary/reading). Structured names use EntityNameMap; this is only
 // for prose that mentions a person/place/theme/decision by its old spelling.
@@ -396,6 +465,15 @@ func (s *Store) EntityAliasPairs(ctx context.Context) ([]EntityNamePair, error) 
 	if err := ownerRows.Err(); err != nil {
 		return nil, err
 	}
+	// O texto troca nomes, nunca gramatica: o alias "eu" (o diarista marcado
+	// como "sou eu") nao pode transformar "eu fiz" em "Joseti fiz".
+	kept := out[:0]
+	for _, pair := range out {
+		if RewritableAlias(pair.Old) {
+			kept = append(kept, pair)
+		}
+	}
+	out = kept
 	// Grafias maiores primeiro: "Jose Guilherme" precisa vencer "Jose" no texto.
 	sort.SliceStable(out, func(i, j int) bool {
 		return len([]rune(out[i].Old)) > len([]rune(out[j].Old))

@@ -934,6 +934,8 @@ Renomeia uma pessoa, lugar, tema ou decisao. Corpo:
   antigo vira alias. O dashboard oferece essa escolha como "Mesclar em" no painel de
   renomear, com a lista do mesmo tipo. A decisao fica salva no alias: analises futuras com
   a grafia antiga caem na sobrevivente, sem repetir a mesclagem.
+- A resposta traz `edit_id`: o cliente usa em `POST /entities/edits/{id}/undo` para
+  desfazer a edicao. Vale para renomear/mesclar, icone e "sou eu".
 
 ### PUT /api/v1/entities/{kind}/{name}/icon
 Escolhe o icone monocromatico desenhado dentro da bola. Corpo:
@@ -944,7 +946,8 @@ Escolhe o icone monocromatico desenhado dentro da bola. Corpo:
   `book`, `briefcase`, `music`, `health`, `money`, `food`, `car`, `plane`, `tree`, `sun`,
   `moon`, `flag`, `globe`, `camera`, `document`). Vazio volta ao icone do tipo.
 - 400 `invalid_icon` para chave fora da paleta/kind invalido; 404 se a entidade nao existe.
-- Retorna a entidade com `icon` ja atualizado. O mapa recebe a chave em `nodes[].icon`.
+- Retorna a entidade com `icon` ja atualizado e o `edit_id` da edicao. O mapa recebe a
+  chave em `nodes[].icon`.
 
 ### POST /api/v1/entities/person/{name}/self
 Marca uma pessoa como **o dono do diario** ("sou eu"). Usado quando a IA tratou uma
@@ -955,7 +958,20 @@ grafia do nome do dono como outra pessoa.
   configuracoes na leitura (nomes estruturados e prosa); o audio, a transcricao e o corpo
   da nota continuam intactos.
 - Uma analise futura que ainda extraia a grafia antiga nao recria a pessoa.
-- Resposta: `{"status":"ok","owner":"<nome do dono>"}`. 404 se a pessoa nao existir.
+- Resposta: `{"status":"ok","owner":"<nome do dono>","edit_id":"<id>"}`. 404 se a pessoa
+  nao existir.
+
+### POST /api/v1/entities/edits/{id}/undo
+Desfaz a edicao de entidade mais recente (renomear, mesclar, icone ou "sou eu").
+- O servidor guarda, antes da escrita, as linhas afetadas (entidade, aliases, vinculos e
+  a lista de grafias do dono), porque mesclar apaga a origem e soma os vinculos: desfazer
+  nao e so voltar o nome, e restaurar as contagens originais.
+- So a edicao **mais recente ainda de pe** pode ser desfeita; uma mais nova responde 409
+  `edit_not_latest` (reverter apagaria a mudanca recente).
+- A restauracao marca `updated_at` como agora: o desfazer e uma mudanca nova e vence a
+  copia antiga que outro cliente ainda tenha.
+- Resposta: `{"status":"ok","action":"rename|merge|icon|self","label":"..."}`. 404 para
+  id inexistente ou ja desfeito.
 
 ### GET /api/v1/mood
 Serie temporal do sentimento por dia. Filtros opcionais `from` e `to` (RFC 3339 ou
