@@ -48,6 +48,18 @@ Layout responsivo:
 - Cabecalho: titulo editavel, data, duracao, tags, status.
 - Corpo: transcricao com segmentos e marcas de tempo; reprodução do audio cifrado
   (decifrado sob demanda) com sincronizacao pela marca de tempo do segmento.
+- Cada linha da transcricao completa mostra um lapis discreto a direita no hover (e
+  sempre no toque). O menu do lapis edita o trecho e transforma em **Tarefa**, **Ideia**
+  ou **Citacao**: a captura vira uma nota acumulada no caderno "Tarefas e ideias", com a
+  tag do tipo, igual ao app. O trecho ganha um selo colorido do tipo.
+- O antigo icone de IA dentro da linha saiu. **Ver texto original** (so quando a revisao
+  mudou a linha) agora mora no mesmo menu do lapis; o chip de revisao que ficava acima da
+  transcricao tambem saiu.
+- A transcricao e um texto corrido, com a entrelinha dos paragrafos e sem buraco entre
+  os trechos; o lapis fica na altura da minutagem, a direita.
+- Numa transcricao longa, o player rola para fora. Um botao redondo de play/pause fica
+  preso no meio da altura da tela enquanto o bloco de audio estiver visivel, para pausar
+  sem voltar ao topo.
 - Abas: Transcricao, Analise, Notas, Anexos e Links.
 - Acoes: retranscrever, adicionar tag, exportar texto.
 
@@ -61,8 +73,9 @@ Layout responsivo:
 - A analise feita no navegador guarda e mostra o aparelho que processou (navegador, sistema
   e placa); e o selo **neste PC**, nao uma API de terceiro.
 - O laboratorio mostra por que a WebGPU falta (`não · HTTPS`, `não · driver`,
-  `não · navegador`) e permite escolher quantos nucleos a analise usa: **Todos** por padrao,
-  ou **Metade** para a maquina continuar respondendo.
+  `não · navegador`), permite escolher quantos nucleos a analise usa (**Todos** por
+  padrao, ou **Metade**) e deixa forcar **CPU** quando o offload da GPU deixa a
+  maquina lenta. A tela mostra o backend e os threads que o motor abriu de fato.
 - Sentimento: indicador simples (positivo/neutro/negativo) com valor numerico.
 - Emocoes: lista com rotulos e intensidades.
 - Pessoas e lugares: listas de mencoes.
@@ -148,15 +161,30 @@ Layout responsivo:
 - Pagina propria, tambem acessivel em `/lab`. O modo so existe com esta aba aberta.
 - **Este computador**: navegador, GPU, VRAM, RAM, nucleos, WebGPU, threads e espaco.
   Botoes para medir CPU/GPU, testar a VRAM por alocacao e exportar o relatorio em JSON.
+  A grade e densa: cada fato ocupa uma linha, com a explicacao no `title`.
+- **Em uso**: mostra o backend e os threads que o motor abriu de verdade, nao os que o
+  navegador promete. Com offload de GPU, o selo e **GPU**; a CPU usa **N threads**.
+  Sem isolamento (COOP/COEP) a linha vira **1 thread** e o aviso explica o porquê.
 - **Modelos**: cinco perfis (0 minimo a 4 maximo). Cada perfil mostra o Whisper, o LLM,
-  o tamanho de cada um e o total do download; o usuario confirma antes de baixar.
-  "Trocar modelo" permite forcar uma combinacao no laboratorio.
-- **Processar neste PC**: registra o worker, baixa o que falta com progresso e fica
-  ocioso. A VPS continua processando a fila; so o **Analisar** de uma nota pede que
-  este PC a processe, e apenas ela.
+  o tamanho de cada um e o total do download; o usuario confirma antes de ligar.
+  "Trocar modelo e processador" permite forcar uma combinacao, escolher **CPU** (todos
+  os nucleos) ou **GPU**, e usar metade dos nucleos.
+- **Processar neste PC**: registra o worker e fica ocioso; os pesos baixam na primeira
+  nota de cada tipo (analise de texto nao paga o download do Whisper). A VPS continua
+  processando a fila; so o **Analisar** de uma nota pede que este PC a processe.
 - **Fila**: reservados, em curso, retentativas, parados, notas feitas e falhas nesta
-  maquina. O trabalho atual mostra tipo, titulo, etapa, blocos lidos e tokens/s.
-- **Parar**: encerra depois da nota atual; a presenca expira e o servidor reassume.
+  maquina, num bloco compacto de seis numeros. O trabalho atual mostra tipo, titulo,
+  etapa, blocos lidos e tokens/s.
+- **Desligar**: o interruptor no topo do cartao e a unica acao. Ligado, o PC continua
+  disponivel ate o usuario desligar; desligado no meio de uma nota, termina a passada
+  atual e para. Nao existe "parar depois de uma nota" escondido num botao.
+- **Analise viva**: a ficha da nota mostra o documento composto a cada bloco lido
+  (tom, emocoes, pessoas, lugares, temas, eventos, decisoes, tarefas, ideias,
+  epifanias e momentos), com os chips entrando em cascata curta. O medidor de blocos
+  continua no topo, e a cobertura marca a leitura como parcial ate o fim.
+- **Notificacoes**: enquanto o worker da aba trabalha, o sino fica azul com um ponto
+  pulsando, e a central mostra o nome da nota, a etapa e o progresso. Desligado o
+  processamento, o sino volta ao estado normal e a lista de concluidos continua.
 - Diagnostico: nenhuma frase solta; os numeros ficam na grade e a explicacao de cada
   aviso aparece no `title` do item.
 

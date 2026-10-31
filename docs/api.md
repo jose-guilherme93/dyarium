@@ -434,6 +434,21 @@ vez de transcrever, e o dashboard mostra o texto. Corpo:
   quando o texto inteiro e o mesmo, a compreensao, os recusados e o alcance da passada
   tambem sobrevivem.
 
+### PATCH /api/v1/entries/{id}/transcript/segments/{idx}
+Reescreve **uma** linha da transcricao pelo dashboard. Corpo:
+```json
+{ "attachment_id": "at_...", "text": "o trecho corrigido" }
+```
+- `idx` e o indice estavel do segmento em `GET /entries/{id}/transcript`
+  (`segments[].idx`); `attachment_id` liga a edicao ao audio certo quando a nota tem
+  varios.
+- O texto escrito pelo usuario vence: o segmento fica com `edited: true`, a revisao
+  daquela linha e descartada e a passada de revisao nunca a toca de novo.
+- As outras linhas e as revisoes delas continuam intactas; o `text` cru da
+  transcricao e reconstruido a partir dos segmentos.
+- Emite `transcript.ready` e `entry.status` para as abas abertas recarregarem a
+  nota. `404` quando o indice ou a transcricao nao existem.
+
 ### PUT /api/v1/entries/{id}/transcript/revisions
 Guarda a revisao da transcricao feita no aparelho (ou por outro cliente). Corpo:
 ```json

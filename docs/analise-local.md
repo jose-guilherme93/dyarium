@@ -435,6 +435,14 @@ como hoje.
   oferece) e o mesmo catalogo de GGUFs do app pelo `wllama` (llama.cpp em WASM, com
   offload de GPU quando o runtime suporta). O laboratorio mostra o tamanho de cada
   arquivo e o total antes do download; quem baixa e o navegador, para o cache local.
+  Cada tipo de nota carrega so o motor de que precisa: uma analise de texto nao baixa
+  o Whisper e uma transcricao nao baixa o GGUF. Um motor por vez: o outro e liberado
+  antes de o proximo entrar na memoria.
+- **Backend**: a analise pode rodar em **Automatico**, **CPU** (todos os nucleos) ou
+  **GPU**. Quando o offload de WebGPU falha, o wllama recarrega em CPU com uma
+  instancia nova; antes o mesmo objeto tentava carregar duas vezes e abortava com
+  "Module is already initialized". O laboratorio mostra **GPU**, **CPU · N threads**
+  ou **WASM · 1 thread** conforme o que o motor abriu, e nao conforme o perfil.
 - **Runtime proprio**: o wasm do ONNX Runtime e servido pelo dashboard em `/ort/`, nao
   pelo jsDelivr. Uma aba que executa script de terceiros poderia ler o token e o texto
   das notas; os pesos do Hugging Face sao os unicos downloads externos.
@@ -448,19 +456,28 @@ como hoje.
   texto, JSON e metadados. O audio continua sendo decifrado no servidor para o
   streaming autenticado, exatamente como no player. Nao ha chamada a API de IA.
 - **Ativacao**: o interruptor **neste PC** fica no painel da nota, ao lado de
-  **Analisar** (a unica acao de analise). Ele mede o hardware, mostra o download e liga o
-  worker. Ligar nao enfileira nem reserva nada: sem um clique em **Analisar**, o PC fica
-  ocioso e a VPS segue a fila. Analisar pede a nota aberta (claim restrito aquela entrada)
-  e substitui a analise existente. A seta ao lado abre `/lab`, e **Voltar** devolve a nota.
-- **Andamento**: o painel mostra bloco lido, medidor, tempo e tok/s do worker da aba. Se o
-  PC estiver lento, **no servidor** libera o job (`/worker/release`) e desliga o worker; a
-  VPS assume na hora, sem esperar o lease.
+  **Analisar** (a unica acao de analise), e tambem no topo do `/lab`. Ele mede o hardware,
+  mostra o download e liga o worker. Ligar nao enfileira nem reserva nada: sem um clique
+  em **Analisar**, o PC fica ocioso e a VPS segue a fila. **Ligado, o worker continua
+  ligado ate o usuario desligar**; nao existe parada automatica depois de uma nota.
+  Analisar pede a nota aberta (claim restrito aquela entrada) e substitui a analise
+  existente. A seta ao lado abre `/lab`, e **Voltar** devolve a nota.
+- **Andamento**: cada bloco lido publica o documento parcial na ficha da nota, com os
+  chips entrando em cascata; o medidor, o tempo e o tok/s continuam no topo. O sino de
+  notificacoes fica azul com um ponto pulsando e a central lista a nota, a etapa e o
+  progresso. Se o PC estiver lento, **no servidor** libera o job (`/worker/release`) e
+  desliga o worker; a VPS assume na hora, sem esperar o lease.
 - **Aparelho**: a analise feita aqui guarda `device_id` (anonimo, estavel por instalacao do
   navegador) e `device_name` (navegador, sistema e placa). O painel mostra o nome; nao e
   hostname, que o navegador nao expoe.
 - **Nucleos**: o llama.cpp usa todos os nucleos por padrao (`navigator.hardwareConcurrency`);
   o laboratorio oferece **Metade** para quem precisa da maquina respondendo. Sem
   `SharedArrayBuffer` o motor fica em uma thread de qualquer forma, e a tela diz isso.
+  O isolamento cross-origin vale para o dashboard inteiro: `COOP: same-origin` e, fora
+  do `/lab`, `COEP: credentialless` (no `/lab`, `require-corp`). Assim o botao **neste PC**
+  da nota tambem abre threads, sem exigir CORP das imagens externas das notas.
+  O laboratorio troca `large-v3-turbo` por `whisper-small` quando nao ha WebGPU: o
+  modelo grande em WASM roda em uma thread e levaria horas.
 - **Fila**: o worker usa a fila duravel existente com `worker_id` proprio, lease de
   120 s e heartbeat de 20 s. Presenca de 60 s; quando ela expira, o servidor reassume.
   A preferencia que pausa o servidor dura so o pedido local; entre um clique e outro a
@@ -488,19 +505,25 @@ como hoje.
   SHA-256 de forma incremental e ler 2-5 GB na memoria para conferir derrubaria a
   aba. A integridade imediata vem do HTTPS + revisao fixa; o hash fica para um
   gerenciador de download em streaming.
-- A rota `/lab` manda `COOP`/`COEP`, entao `SharedArrayBuffer` fica disponivel e o
-  llama.cpp usa os nucleos configurados. O ONNX Runtime do Whisper roda com uma thread
-  de proposito: em um Web Worker o pool de threads trava a criacao da sessao. A GPU
-  (WebGPU) e o caminho rapido da transcricao no Edge/Chrome; no Firefox a analise cai
-  para a CPU e a transcricao usa a GPU quando a versao ja expoe WebGPU.
+- O dashboard inteiro manda `COOP`/`COEP` (a checagem usa a rota original, antes do
+  fallback para `index.html`), entao `SharedArrayBuffer` fica disponivel e o llama.cpp
+  usa os nucleos configurados tambem a partir da nota. O ONNX Runtime do Whisper roda
+  com uma thread de proposito: em um Web Worker o pool de threads trava a criacao da
+  sessao. A GPU (WebGPU) e o caminho rapido da transcricao no Edge/Chrome; no Firefox a
+  analise cai para a CPU e a transcricao usa a GPU quando a versao ja expoe WebGPU. Sem
+  WebGPU, o Whisper large-v3-turbo nem entra no plano: a CPU usa o small.
 - O download inicial e grande por desenho: o perfil 4 chega perto de 6 GB. A tela
   informa o total e so comeca depois da confirmacao.
 - Em contexto inseguro (HTTP por IP, como o dev server) nao existem OPFS nem
   `crypto.subtle`: o `wllama` nao encontra backend de cache e aborta com
-  `No supported storage backend found`. Nesse caso o worker baixa o GGUF em
-  streaming e entrega os blobs na memoria: o modo funciona, mas o download se repete
-  a cada inicio. Com HTTPS o modelo fica no OPFS e o download e unico.
-- Sem `SharedArrayBuffer` (HTTP) o llama.cpp fica em uma thread: a recomendacao cai para
-  o perfil minimo e o laboratorio avisa. Numa maquina fraca, prefira o servidor ou rode o
-  dashboard em HTTPS. A WebGPU tambem exige contexto seguro: o laboratorio mostra
-  `não · HTTPS` em vez de `não`, para nao parecer falta de suporte do navegador.
+  `No supported storage backend found`. Nesse caso o worker usa o cache proprio no
+  IndexedDB (`dyarium-models`): os shards do GGUF ficam guardados e o Whisper usa um
+  `customCache` com a mesma interface da Cache API. O download deixa de se repetir a
+  cada inicio mesmo em HTTP; o OPFS continua sendo o caminho mais rapido em HTTPS. Se a
+  quota do IndexedDB estourar (modelos de varios GB), o download daquela sessao continua
+  valido e a proxima tenta de novo.
+- Sem `SharedArrayBuffer` (HTTP) o llama.cpp fica em uma thread e a WebGPU nao existe:
+  a recomendacao cai para o perfil minimo e o laboratorio avisa em vermelho que e
+  preciso abrir o dashboard por HTTPS. O aviso tambem aparece quando o HTTPS esta certo
+  mas o proxy nao repassa `COOP`/`COEP`. A WebGPU usa o rotulo `não · exige HTTPS` para
+  nao parecer falta de suporte do navegador.
