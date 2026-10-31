@@ -24,6 +24,7 @@ import {
 } from '@/core/pull';
 import type { Recording } from '@/core/types';
 
+import { observeVersion } from './clock';
 import { deleteRecordingRow, listRecordings, upsertRecording } from './db';
 import { refreshAuthorSettings } from './authorSettings';
 import { syncServerAnalyses } from './analysis';
@@ -142,6 +143,14 @@ async function pullOnce(): Promise<number> {
 
   for (const entry of entries) {
     if (!entry.id) continue;
+    // O relogio local aprende as versoes antes de o merge decidir: o carimbo de
+    // uma edicao feita agora fica depois de tudo o que o servidor ja mostrou.
+    await observeVersion(
+      entry.versions?.title,
+      entry.versions?.recorded_at,
+      entry.versions?.body,
+      entry.updated_at,
+    );
 
     const existing = localByEntry.get(entry.id);
     if (existing) {

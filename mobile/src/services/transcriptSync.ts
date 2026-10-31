@@ -6,6 +6,7 @@
 
 import { DyariumApi, type FetchLike } from '@/core/api';
 import { mergeServerTranscript, rawTranscript } from '@/core/transcriptReview';
+import type { Recording } from '@/core/types';
 
 import { getRecording, listRecordings, upsertRecording } from './db';
 import { loadServerConfig } from './secure';
@@ -20,6 +21,23 @@ function normalizeText(text: string): string {
 export async function pushTranscript(id: string): Promise<boolean> {
   const recording = await getRecording(id);
   if (!recording?.entryId) return true;
+  const config = await loadServerConfig();
+  if (!config) return true;
+  const api = new DyariumApi(config, doFetch);
+  return pushTranscriptToServer(api, recording, recording.entryId);
+}
+
+/**
+ * Empurra a transcricao para um ambiente especifico. O id da entrada e o
+ * daquele ambiente (pode diferir do primario em notas antigas); o texto, os
+ * segmentos e a revisao sao os mesmos. Serve tanto o fluxo do primario quanto a
+ * reconciliacao entre ambientes.
+ */
+export async function pushTranscriptToServer(
+  api: DyariumApi,
+  recording: Recording,
+  entryId: string,
+): Promise<boolean> {
   // Transcricao pela metade NAO sobe. O dashboard mostrava o texto parcial como
   // se fosse o final e a nota ficava com a transcricao cortada quando o app
   // fechava antes do fim; o texto completo sobe quando o estado vira `ready`.
@@ -37,10 +55,7 @@ export async function pushTranscript(id: string): Promise<boolean> {
   // passada rodou, senao "nada a corrigir" fica igual a "nao revisado".
   const hasRevision = Boolean(review && review.model);
 
-  const config = await loadServerConfig();
-  if (!config) return true;
   try {
-    const api = new DyariumApi(config, doFetch);
     // O servidor liga a transcricao ao audio por `attachment_id`. Sem ele, o
     // texto ficava solto na entrada e o dashboard mostrava audio sem texto.
     let attachmentId = recording.serverAttachmentId;
@@ -48,7 +63,7 @@ export async function pushTranscript(id: string): Promise<boolean> {
     let serverRaw: string | undefined;
     let serverModel: string | undefined;
     try {
-      const entry = await api.getEntry(recording.entryId);
+      const entry = await api.getEntry(entryId);
       const audios = entry.audios ?? [];
       if (!attachmentId) {
         if (audios.length === 1) {
@@ -88,7 +103,7 @@ export async function pushTranscript(id: string): Promise<boolean> {
       !segments.some((segment) => segment.edited)
     ) {
       try {
-        const full = await api.getTranscript(recording.entryId);
+        const full = await api.getTranscript(entryId);
         const adopted = mergeServerTranscript(recording, full, { adopt: true });
         if (adopted) {
           await upsertRecording(adopted);
@@ -115,7 +130,7 @@ export async function pushTranscript(id: string): Promise<boolean> {
       !sameRaw &&
       (serverText === undefined || (serverText !== raw && serverText !== visible));
     if (needsTranscript) {
-      await api.putTranscript(recording.entryId, {
+      await api.putTranscript(entryId, {
         attachment_id: attachmentId,
         language: recording.transcriptLanguage,
         text: raw,
@@ -129,7 +144,7 @@ export async function pushTranscript(id: string): Promise<boolean> {
     }
 
     if (review && hasRevision) {
-      await api.putTranscriptRevisions(recording.entryId, {
+      await api.putTranscriptRevisions(entryId, {
         attachment_id: attachmentId,
         model: review.model,
         prompt_version: review.promptVersion,

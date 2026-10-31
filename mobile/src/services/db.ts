@@ -11,6 +11,7 @@ import type { ServerAnalysis, ServerAudio } from '@/core/api';
 import type { ChunkExtraction } from '@/core/analysisChunk';
 import type { AnalysisOutcome, AnalysisRun, AnalysisRuntime } from '@/core/analysisRuns';
 import { deriveEntityLinks, ownerKey } from '@/core/graphEntities';
+import { formatHlc, nextHlc, observeHlc, parseHlc, type Hlc } from '@/core/hlc';
 import type { GraphLayout } from '@/core/graphLayout';
 import type { EntityKind, EntityLink, GraphEntity } from '@/core/graphModel';
 import { newId } from '@/core/id';
@@ -25,6 +26,8 @@ import type {
   TranscriptSegment,
   TranscriptStatus,
 } from '@/core/types';
+
+import { deviceIdentity, nodeFrom } from './device';
 
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
@@ -80,6 +83,7 @@ interface Row {
   capture_start_ms: number | null;
   created_at: string;
   updated_at: string;
+  updated_hlc: string | null;
 }
 
 type MigrationDb = Pick<
@@ -568,6 +572,146 @@ const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 31,
+    run: async (db) => {
+      // Cada ambiente (aparelho ou servidor) e um par independente. O acervo
+      // local continua sendo um so; o que multiplica e o estado de sync por
+      // ambiente: id remoto, versoes, offset de upload e o ultimo estado
+      // confirmado. Sem estas tabelas, `entry_id` unico nao representa "existe
+      // no servidor A, falta no servidor B".
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS server_instance (
+          id TEXT PRIMARY KEY NOT NULL,
+          base_url TEXT NOT NULL,
+          label TEXT,
+          contract TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          last_sync_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS entry_sync (
+          server_id TEXT NOT NULL,
+          recording_id TEXT NOT NULL,
+          remote_entry_id TEXT,
+          note_id TEXT,
+          title_version TEXT,
+          recorded_at_version TEXT,
+          body_version TEXT,
+          upload_id TEXT,
+          upload_offset INTEGER NOT NULL DEFAULT 0,
+          attachment_refs TEXT,
+          primary_attachment_id TEXT,
+          synced_title TEXT,
+          synced_recorded_at TEXT,
+          synced_body_hash TEXT,
+          synced_notebook_id TEXT,
+          synced_tags TEXT,
+          synced_archived INTEGER,
+          synced_author TEXT,
+          synced_at TEXT,
+          last_error TEXT,
+          deleted_at TEXT,
+          tombstone_pushed_at TEXT,
+          PRIMARY KEY (server_id, recording_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_entry_sync_recording ON entry_sync (recording_id);
+
+        CREATE TABLE IF NOT EXISTS notebook_sync (
+          server_id TEXT NOT NULL,
+          notebook_id TEXT NOT NULL,
+          synced_name TEXT,
+          synced_color TEXT,
+          synced_at TEXT,
+          PRIMARY KEY (server_id, notebook_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS tombstones (
+          id TEXT PRIMARY KEY NOT NULL,
+          kind TEXT NOT NULL,
+          deleted_at TEXT NOT NULL,
+          origin TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_tombstones_deleted_at ON tombstones (deleted_at, id);
+
+        CREATE TABLE IF NOT EXISTS transcript_sync_env (
+          server_id TEXT NOT NULL,
+          entry_id TEXT NOT NULL,
+          source_at TEXT NOT NULL,
+          PRIMARY KEY (server_id, entry_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS analysis_sync_env (
+          server_id TEXT NOT NULL,
+          entry_id TEXT NOT NULL,
+          source_at TEXT NOT NULL,
+          PRIMARY KEY (server_id, entry_id)
+        );
+
+        -- A lixeira local ja era a intencao de exclusao; o tombstone passa a
+        -- sobreviver a purga do conteudo.
+        INSERT OR IGNORE INTO tombstones (id, kind, deleted_at, origin)
+        SELECT id, 'entry', deleted_at, 'local'
+        FROM recordings
+        WHERE deleted_at IS NOT NULL AND deleted_at <> '';
+      `);
+    },
+  },
+  {
+    version: 32,
+    run: async (db) => {
+      // Caderno tambem tem tombstone: sem isso, apagar num ambiente e ele
+      // reaparecer vindo do outro. A tabela por ambiente guarda quando a
+      // exclusao ja foi entregue.
+      await addColumn(db, 'notebook_sync', 'deleted_at');
+      await addColumn(db, 'notebook_sync', 'tombstone_pushed_at');
+    },
+  },
+  {
+    version: 33,
+    run: async (db) => {
+      // O contrato nao tem dialogo de conflito: a ultima gravacao vence e o
+      // servidor guarda a perdedora no historico. Notas que ficaram presas num
+      // conflito antigo voltam para a fila e serao resolvidas pelo push forcado.
+      await db.execAsync(`
+        UPDATE recordings
+        SET note_dirty = 1, sync_conflict = NULL
+        WHERE sync_conflict IS NOT NULL;
+      `);
+    },
+  },
+  {
+    version: 34,
+    run: async (db) => {
+      // Alinha o tombstone local ao servidor: a identidade e (id, kind). Um id
+      // de caderno e um de nota nao podem se anular so porque coincidem.
+      await db.execAsync(`
+        ALTER TABLE tombstones RENAME TO tombstones_v33;
+        CREATE TABLE tombstones (
+          id TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          deleted_at TEXT NOT NULL,
+          origin TEXT NOT NULL,
+          PRIMARY KEY (id, kind)
+        );
+        CREATE INDEX IF NOT EXISTS idx_tombstones_deleted_at ON tombstones (deleted_at, id);
+        INSERT OR IGNORE INTO tombstones (id, kind, deleted_at, origin)
+        SELECT id, kind, deleted_at, origin FROM tombstones_v33;
+        DROP TABLE tombstones_v33;
+      `);
+    },
+  },
+  {
+    version: 35,
+    run: async (db) => {
+      // Versao da nota no relogio hibrido: o instante da ultima mudanca de
+      // conteudo, emitido por quem editou. E o que permite decidir, sem
+      // dialogo e sem confiar no relogio do aparelho, qual edicao e a mais nova.
+      if (!(await columnExists(db, 'recordings', 'updated_hlc'))) {
+        await db.execAsync('ALTER TABLE recordings ADD COLUMN updated_hlc TEXT');
+      }
+    },
+  },
 ];
 
 async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
@@ -598,18 +742,57 @@ export function getDatabase(): Promise<SQLite.SQLiteDatabase> {
 
 function getDb(): Promise<SQLite.SQLiteDatabase> {
   if (!dbPromise) {
-    dbPromise = SQLite.openDatabaseAsync('dyarium.db').then(async (db) => {
-      // O SQLite web (wasm) nao implementa WAL; no aparelho ele e essencial.
-      if (Platform.OS !== 'web') await db.execAsync('PRAGMA journal_mode = WAL;');
-      // Espera a trava liberar em vez de falhar na hora: em desenvolvimento um
-      // reload pode deixar a conexao anterior presa por um instante, o que
-      // antes virava "database is locked" ao iniciar a gravacao.
-      await db.execAsync('PRAGMA busy_timeout = 5000;');
-      await migrate(db);
-      return db;
+    dbPromise = openWithRetry().catch((error) => {
+      // Uma falha ao abrir (reload deixando a conexao anterior presa, WAL
+      // travado por um instante) NAO pode ficar guardada: sem isto, toda
+      // leitura seguinte recebia o mesmo erro e o app abria sem nenhuma nota,
+      // mesmo com os dados intactos no arquivo. A proxima chamada tenta de novo.
+      dbPromise = null;
+      throw error;
     });
   }
   return dbPromise;
+}
+
+const DB_OPEN_ATTEMPTS = 3;
+
+async function openWithRetry(): Promise<SQLite.SQLiteDatabase> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < DB_OPEN_ATTEMPTS; attempt += 1) {
+    try {
+      return await openDatabase();
+    } catch (error) {
+      lastError = error;
+      if (attempt < DB_OPEN_ATTEMPTS - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
+      }
+    }
+  }
+  throw lastError;
+}
+
+async function openDatabase(): Promise<SQLite.SQLiteDatabase> {
+  const db = await SQLite.openDatabaseAsync('dyarium.db');
+  try {
+    // O SQLite web (wasm) nao implementa WAL; no aparelho ele e essencial.
+    // Melhor-esforco: num reload a conexao anterior pode estar viva por um
+    // instante e este PRAGMA pede trava exclusiva. A base ja esta em WAL, entao
+    // falhar aqui nao pode impedir o app de abrir e ler as notas.
+    if (Platform.OS !== 'web') {
+      await db.execAsync('PRAGMA journal_mode = WAL;').catch(() => undefined);
+    }
+    // Espera a trava liberar em vez de falhar na hora: em desenvolvimento um
+    // reload pode deixar a conexao anterior presa por um instante, o que
+    // antes virava "database is locked" ao iniciar a gravacao.
+    await db.execAsync('PRAGMA busy_timeout = 5000;');
+    await migrate(db);
+    return db;
+  } catch (error) {
+    // Nao deixa a conexao aberta segurando o arquivo: a proxima tentativa abriria
+    // a mesma base e o WAL continuaria travado.
+    await db.closeAsync().catch(() => undefined);
+    throw error;
+  }
 }
 
 /**
@@ -651,6 +834,93 @@ export async function setAppFlag(key: string, value: string): Promise<void> {
      ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
     [key, value],
   );
+}
+
+/**
+ * Relogio de versao do aparelho: o relogio hibrido logico que carimba as
+ * edicoes locais e aprende com as versoes que chegam do servidor.
+ *
+ * Vive aqui, ao lado de `app_flags`, porque o carimbo e preciso dentro do
+ * `upsertRecording`. Importar `services/clock` daqui criava um ciclo
+ * `db -> clock -> db`, que o Metro avisa poder entregar valores nao
+ * inicializados. O estado fica no SQLite, nao so na memoria: um reinicio no
+ * meio de uma edicao nao pode reemitir a mesma versao.
+ */
+const HLC_STATE_KEY = 'hlc.clock';
+const HLC_PERSIST_EVERY_MS = 1000;
+
+let clockState: Hlc | null = null;
+let clockLoaded = false;
+let clockPersistedPhysical = 0;
+let clockPersistInFlight = false;
+let clockNodeCache = '';
+
+async function loadClock(): Promise<Hlc | null> {
+  if (clockLoaded) return clockState;
+  clockLoaded = true;
+  try {
+    clockState = parseHlc(await getAppFlag(HLC_STATE_KEY));
+  } catch {
+    clockState = null;
+  }
+  return clockState;
+}
+
+/** Grava o estado no banco, no maximo uma vez por segundo. */
+function persistClock(): void {
+  if (!clockState || clockPersistInFlight) return;
+  if (
+    clockPersistedPhysical > 0 &&
+    clockState.physical - clockPersistedPhysical < HLC_PERSIST_EVERY_MS
+  ) {
+    return;
+  }
+  clockPersistedPhysical = clockState.physical;
+  clockPersistInFlight = true;
+  const value = formatHlc(clockState);
+  void setAppFlag(HLC_STATE_KEY, value)
+    .catch(() => undefined)
+    .finally(() => {
+      clockPersistInFlight = false;
+    });
+}
+
+async function node(): Promise<string> {
+  if (!clockNodeCache) clockNodeCache = nodeFrom((await deviceIdentity()).id);
+  return clockNodeCache;
+}
+
+/** Proxima versao local: sempre depois da ultima emitida ou observada. */
+export async function clockNow(): Promise<string> {
+  const last = await loadClock();
+  clockState = nextHlc(last, Date.now(), await node());
+  persistClock();
+  return formatHlc(clockState);
+}
+
+/**
+ * Avanca o relogio com versoes recebidas (do servidor ou de outro ambiente).
+ * Uma edicao feita depois desta leitura fica necessariamente mais nova, mesmo
+ * que o relogio do aparelho esteja atrasado.
+ */
+export async function observeVersions(
+  ...versions: (string | null | undefined)[]
+): Promise<void> {
+  let last = await loadClock();
+  for (const version of versions) {
+    const parsed = parseHlc(version);
+    if (!parsed) continue;
+    last = observeHlc(last, parsed);
+  }
+  if (last && last !== clockState) {
+    clockState = last;
+    persistClock();
+  }
+}
+
+/** Nome do aparelho nas versoes e na origem dos tombstones. */
+export async function clockNode(): Promise<string> {
+  return node();
 }
 
 /**
@@ -843,6 +1113,7 @@ function rowToRecording(row: Row): Recording {
     captureStartMs: row.capture_start_ms ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    updatedHlc: row.updated_hlc ?? undefined,
   };
 
   // Segmentos, anexos e a pilha de audios so sao usados ao abrir a nota. Na
@@ -866,6 +1137,28 @@ function rowToRecording(row: Row): Recording {
 
 export async function upsertRecording(r: Recording): Promise<void> {
   const db = await getDb();
+  // Ja existe: a versao do relogio so avanca quando o conteudo muda. Atualizar
+  // progresso de upload ou transcricao nao invalida a edicao que esta la.
+  const previous = await db.getFirstAsync<{
+    title: string;
+    recorded_at: string;
+    text: string | null;
+    deleted_at: string | null;
+    updated_hlc: string | null;
+  }>('SELECT title, recorded_at, text, deleted_at, updated_hlc FROM recordings WHERE id = ?', [
+    r.id,
+  ]);
+  const contentMoved =
+    !previous ||
+    previous.title !== r.title ||
+    previous.recorded_at !== r.recordedAt ||
+    (previous.text ?? '') !== (r.text ?? '') ||
+    // Restaurar tambem e uma mudanca: sem carimbo novo, o tombstone de outro
+    // ambiente (mais antigo que a exclusao, mais novo que o conteudo) venceria
+    // e apagaria a nota de novo.
+    (previous.deleted_at ?? '') !== (r.deletedAt ?? '');
+  const updatedHlc =
+    r.updatedHlc ?? (contentMoved ? await clockNow() : previous?.updated_hlc ?? undefined);
   await db.runAsync(
     `INSERT INTO recordings (
       id, title, recorded_at, dir, file_path, segment_count, duration_ms, size_bytes,
@@ -878,8 +1171,9 @@ export async function upsertRecording(r: Recording): Promise<void> {
       notebook_id, tags, notebook_dirty, tags_dirty, archived_dirty,
       note_dirty, attachments,
       title_version, recorded_at_version, body_version, sync_conflict, server_audios,
-      capture_source_id, capture_start_ms, created_at, updated_at, deleted_at, author, author_dirty
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      capture_source_id, capture_start_ms, created_at, updated_at, deleted_at, author, author_dirty,
+      updated_hlc
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
       recorded_at = excluded.recorded_at,
@@ -928,7 +1222,8 @@ export async function upsertRecording(r: Recording): Promise<void> {
       deleted_at = excluded.deleted_at,
       author = excluded.author,
       author_dirty = excluded.author_dirty,
-      updated_at = excluded.updated_at`,
+      updated_at = excluded.updated_at,
+      updated_hlc = excluded.updated_hlc`,
     [
       r.id,
       r.title,
@@ -981,6 +1276,7 @@ export async function upsertRecording(r: Recording): Promise<void> {
       r.deletedAt ?? null,
       r.author ?? '',
       r.authorDirty ? '1' : null,
+      updatedHlc ?? null,
     ],
   );
 }
@@ -1039,12 +1335,16 @@ export async function updateRecordingNote(
   const hasText = patch.text !== undefined ? 1 : 0;
   const title = patch.title ?? '';
   const text = patch.text ?? '';
+  // Esta escrita nao passa pelo `upsertRecording`; o carimbo do relogio tem de
+  // sair aqui tambem, senao a edicao feita no editor nao teria versao propria.
+  const stamp = await clockNow();
   await db.runAsync(
     `UPDATE recordings
      SET title = CASE WHEN ? THEN ? ELSE title END,
          text = CASE WHEN ? THEN ? ELSE text END,
          note_dirty = CASE WHEN status = 'completed' THEN 1 ELSE note_dirty END,
-         updated_at = ?
+         updated_at = ?,
+         updated_hlc = ?
      WHERE id = ? AND (
        (? = 1 AND title <> ?) OR (? = 1 AND COALESCE(text, '') <> ?)
      )`,
@@ -1054,6 +1354,7 @@ export async function updateRecordingNote(
       hasText,
       text,
       new Date().toISOString(),
+      stamp,
       id,
       hasTitle,
       title,
@@ -1548,6 +1849,58 @@ export async function setTranscriptSyncAt(entryId: string, sourceAt: string): Pr
     `INSERT INTO transcript_sync (entry_id, source_at) VALUES (?, ?)
      ON CONFLICT(entry_id) DO UPDATE SET source_at = excluded.source_at`,
     [entryId, sourceAt],
+  );
+}
+
+/** Marcador de transcricao por ambiente (a mesma nota pode ter versoes). */
+export async function getTranscriptSyncAtEnv(
+  serverId: string,
+  entryId: string,
+): Promise<string | null> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<{ source_at: string }>(
+    'SELECT source_at FROM transcript_sync_env WHERE server_id = ? AND entry_id = ?',
+    [serverId, entryId],
+  );
+  return row?.source_at ?? null;
+}
+
+export async function setTranscriptSyncAtEnv(
+  serverId: string,
+  entryId: string,
+  sourceAt: string,
+): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `INSERT INTO transcript_sync_env (server_id, entry_id, source_at) VALUES (?, ?, ?)
+     ON CONFLICT(server_id, entry_id) DO UPDATE SET source_at = excluded.source_at`,
+    [serverId, entryId, sourceAt],
+  );
+}
+
+/** Marcador de analise por ambiente. */
+export async function getAnalysisSyncAtEnv(
+  serverId: string,
+  entryId: string,
+): Promise<string | null> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<{ source_at: string }>(
+    'SELECT source_at FROM analysis_sync_env WHERE server_id = ? AND entry_id = ?',
+    [serverId, entryId],
+  );
+  return row?.source_at ?? null;
+}
+
+export async function setAnalysisSyncAtEnv(
+  serverId: string,
+  entryId: string,
+  sourceAt: string,
+): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `INSERT INTO analysis_sync_env (server_id, entry_id, source_at) VALUES (?, ?, ?)
+     ON CONFLICT(server_id, entry_id) DO UPDATE SET source_at = excluded.source_at`,
+    [serverId, entryId, sourceAt],
   );
 }
 
@@ -2437,6 +2790,21 @@ function entityKey(kind: string, name: string): string {
 }
 
 /**
+ * Escrita que o aparelho tem e aquele ambiente ainda nao: nome ou icone novos.
+ * Quem chama empurra com o PATCH daquele ambiente, usando o nome que ele
+ * conhece como chave.
+ */
+export interface EntityPush {
+  kind: EntityKind;
+  /** Nome que o ambiente conhece; e a chave do PATCH. */
+  name: string;
+  /** Nome que deve ficar; ausente quando so o icone muda. */
+  renameTo?: string;
+  /** Icone que deve ficar; ausente quando so o nome muda. */
+  icon?: string;
+}
+
+/**
  * Aplica o catalogo do servidor no banco local.
  *
  * O nome e a chave de encontro: a entidade local que tem o nome antigo e
@@ -2447,8 +2815,9 @@ function entityKey(kind: string, name: string): string {
 export async function applyRemoteEntities(
   remote: RemoteEntityState[],
   pendingEntityIds: ReadonlySet<string> = new Set(),
-): Promise<void> {
-  if (remote.length === 0) return;
+): Promise<EntityPush[]> {
+  if (remote.length === 0) return [];
+  const pushes: EntityPush[] = [];
   await withGraphWrite(async () => {
     const db = await getDb();
     const now = new Date().toISOString();
@@ -2490,6 +2859,23 @@ export async function applyRemoteEntities(
         }
 
         if (local && pendingEntityIds.has(local.id)) {
+          matched.add(local.id);
+          localIdForRemote.set(item.id, local.id);
+          continue;
+        }
+
+        // A ultima edicao vence tambem aqui: se o aparelho renomeou (ou trocou o
+        // icone) depois da ultima mudanca naquele ambiente, o catalogo de la nao
+        // desfaz a escolha. Ela e empurrada de volta com o nome que o ambiente
+        // conhece.
+        if (local && newerThan(local.updated_at, item.updatedAt)) {
+          const sameName = local.name.trim().toLowerCase() === item.name.trim().toLowerCase();
+          if (!sameName) {
+            pushes.push({ kind, name: item.name, renameTo: local.name });
+          }
+          if (local.icon !== item.icon) {
+            pushes.push({ kind, name: item.name, icon: local.icon });
+          }
           matched.add(local.id);
           localIdForRemote.set(item.id, local.id);
           continue;
@@ -2557,6 +2943,15 @@ export async function applyRemoteEntities(
       }
     });
   });
+  return pushes;
+}
+
+/** `a` e um horario posterior a `b`? Vazio ou ilegivel nao vence. */
+function newerThan(a: string | null | undefined, b: string | null | undefined): boolean {
+  const left = Date.parse(a ?? '');
+  const right = Date.parse(b ?? '');
+  if (Number.isNaN(left) || Number.isNaN(right)) return false;
+  return left > right;
 }
 
 /** Grava as grafias "sou eu" do servidor e remove a pessoa duplicada local. */

@@ -4,7 +4,7 @@
  * mantemos pendente e tentamos de novo depois.
  */
 
-import { ApiError, DyariumApi, type FetchLike, type ServerEntry } from '@/core/api';
+import { ApiError, DyariumApi, type FetchLike, type ServerEntry, type SyncManifestEntry } from '@/core/api';
 import { mergeServerTranscript, reviewFromServer } from '@/core/transcriptReview';
 import { needsTranscript, type Recording } from '@/core/types';
 
@@ -13,6 +13,8 @@ import {
   listRecordings,
   setTranscriptSyncAt,
   getTranscriptSyncAt,
+  getTranscriptSyncAtEnv,
+  setTranscriptSyncAtEnv,
   upsertRecording,
 } from './db';
 import { loadServerConfig } from './secure';
@@ -148,6 +150,64 @@ export async function syncServerTranscripts(
 }
 
 /**
+ * O mesmo pull de transcricoes, para um ambiente especifico. O marcador e por
+ * `(server_id, entry_id)`: a mesma nota pode ter sido transcrita no aparelho,
+ * no primario ou em outro ambiente, e cada um tem sua hora de atualizacao.
+ */
+export async function syncServerTranscriptsFor(
+  api: DyariumApi,
+  serverId: string,
+  entries: SyncManifestEntry[],
+  byEntry: Map<string, Recording>,
+  primary = false,
+): Promise<number> {
+  let changed = 0;
+  for (const entry of entries) {
+    if (!entry.id || !entry.transcript_at) continue;
+    const sourceAt = entry.transcript_at;
+    const last = primary
+      ? await getTranscriptSyncAt(entry.id)
+      : await getTranscriptSyncAtEnv(serverId, entry.id);
+    if (last === sourceAt) continue;
+    const recording = byEntry.get(entry.id);
+    if (!recording) {
+      if (primary) await setTranscriptSyncAt(entry.id, sourceAt);
+      else await setTranscriptSyncAtEnv(serverId, entry.id, sourceAt);
+      continue;
+    }
+    try {
+      if (recording.transcriptStatus === 'ready') {
+        const merged = await refreshServerTranscriptWith(api, recording, entry.id);
+        if (merged) changed += 1;
+      } else if (recording.transcriptOrigin !== 'local') {
+        const transcript = await api.getTranscript(entry.id);
+        const segments = transcript.segments ?? [];
+        const updated: Recording = {
+          ...recording,
+          transcript: transcript.text,
+          transcriptLanguage: transcript.language,
+          transcriptOrigin: 'server',
+          transcriptStatus: 'ready',
+          hasTranscript: true,
+          transcriptSegments: segments,
+          transcriptReview:
+            reviewFromServer(transcript, segments) ?? recording.transcriptReview,
+          updatedAt: new Date().toISOString(),
+        };
+        await upsertRecording(updated);
+        emitRecording(updated);
+        changed += 1;
+      }
+      if (primary) await setTranscriptSyncAt(entry.id, sourceAt);
+      else await setTranscriptSyncAtEnv(serverId, entry.id, sourceAt);
+    } catch {
+      // Rede/5xx: o marcador fica como esta e o proximo ciclo tenta de novo.
+    }
+  }
+  return changed;
+}
+
+/**
  * Confere no servidor se a revisao de uma nota pronta mudou desde o ultimo pull
  * (outro aparelho, o dashboard) e atualiza a copia local. Devolve a gravacao
  * nova, ou `null` quando nada mudou ou quando a copia local vence.
@@ -159,7 +219,15 @@ export async function refreshServerTranscript(recording: Recording): Promise<Rec
   const config = await loadServerConfig();
   if (!config) return null;
   const api = new DyariumApi(config, doFetch);
-  const transcript = await api.getTranscript(recording.entryId);
+  return refreshServerTranscriptWith(api, recording, recording.entryId);
+}
+
+async function refreshServerTranscriptWith(
+  api: DyariumApi,
+  recording: Recording,
+  entryId: string,
+): Promise<Recording | null> {
+  const transcript = await api.getTranscript(entryId);
   const merged = mergeServerTranscript(recording, transcript);
   if (!merged) return null;
   await upsertRecording(merged);

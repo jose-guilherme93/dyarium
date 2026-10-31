@@ -1,6 +1,6 @@
-import { ApiError } from '@/core/api';
+import { ApiError, DyariumApi } from '@/core/api';
 
-import { syncEntities } from '../entitySync';
+import { syncEntities, syncEntitiesFor } from '../entitySync';
 
 const mockRename = jest.fn();
 const mockSetIcon = jest.fn();
@@ -78,7 +78,7 @@ describe('syncEntities', () => {
     });
     mockDeleteOutbox.mockResolvedValue(undefined);
     mockMarkAttempt.mockResolvedValue(undefined);
-    mockApplyEntities.mockResolvedValue(undefined);
+    mockApplyEntities.mockResolvedValue([]);
     mockApplyOwnerAliases.mockResolvedValue(undefined);
     mockOutbox.mockResolvedValue([]);
     mockRename.mockResolvedValue({});
@@ -139,6 +139,24 @@ describe('syncEntities', () => {
     expect(mockMarkAttempt).toHaveBeenCalledWith('op1', 'falha ao sincronizar entidade');
     expect(mockDeleteOutbox).not.toHaveBeenCalled();
     expect(mockCatalog).not.toHaveBeenCalled();
+  });
+
+  it('empurra a diferença local para o ambiente secundário sem apagar a outbox', async () => {
+    mockOutbox.mockResolvedValue([op({ operation: 'rename', nextName: 'Mariana' })]);
+    mockApplyEntities.mockResolvedValueOnce([
+      { kind: 'person', name: 'Mariana', renameTo: 'Mari' },
+      { kind: 'place', name: 'Praia', icon: 'sun' },
+    ]);
+
+    const api = new DyariumApi({ baseUrl: 'https://b.test', token: 't' }, jest.fn());
+    await syncEntitiesFor(api, 'srv-b');
+
+    // A outbox sobe para o secundario mas continua la: o primario e quem confirma.
+    expect(mockRename).toHaveBeenCalledWith('person', 'Maria', 'Mariana');
+    expect(mockDeleteOutbox).not.toHaveBeenCalled();
+    // A renomeacao mais nova do aparelho e a diferenca de icone chegam ao ambiente.
+    expect(mockRename).toHaveBeenCalledWith('person', 'Mariana', 'Mari');
+    expect(mockSetIcon).toHaveBeenCalledWith('place', 'Praia', 'sun');
   });
 
   it('não faz nada sem servidor configurado', async () => {

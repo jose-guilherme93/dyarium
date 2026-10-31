@@ -8,6 +8,7 @@
  */
 
 import type { ServerEntry, ServerNote } from './api';
+import { latestVersion, versionAfter, versionTime } from './hlc';
 import { DEFAULT_NOTEBOOK_ID } from './notebooks';
 import type { Recording, RecordingSource } from './types';
 
@@ -50,9 +51,9 @@ export function recordingsDeletedOnServer(
     if (recording.status !== 'completed' || !recording.entryId) return false;
     const deleted = deletedAt.get(recording.entryId);
     if (!deleted) return false;
-    const deletedTime = Date.parse(deleted);
-    const localTime = Date.parse(recording.updatedAt);
-    if (Number.isNaN(deletedTime) || Number.isNaN(localTime)) return false;
+    const deletedTime = versionTime(deleted);
+    const localTime = versionTime(recording.updatedHlc ?? recording.updatedAt);
+    if (deletedTime === 0 || localTime === 0) return false;
     return deletedTime > localTime;
   });
 }
@@ -140,6 +141,16 @@ export function entryToRecording(entry: ServerEntry, note?: ServerNote): Recordi
     bodyVersion: note?.body_version,
     createdAt: entry.created_at,
     updatedAt: entry.updated_at,
+    // A copia baixada nasce com o instante da ultima mudanca no servidor; uma
+    // edicao local posterior e carimbada pelo relogio do aparelho, que ja
+    // aprendeu esta versao.
+    updatedHlc: latestVersion(
+      entry.updated_at,
+      entry.versions?.body,
+      entry.versions?.title,
+      entry.versions?.recorded_at,
+      note?.body_version,
+    ),
   };
 }
 
@@ -151,12 +162,8 @@ function sameTags(a: string[], b: string[]): boolean {
 }
 
 /** O servidor gravou depois da ultima edicao local? */
-function serverIsNewer(version: string | undefined, localUpdatedAt: string): boolean {
-  if (!version) return false;
-  const server = Date.parse(version);
-  const local = Date.parse(localUpdatedAt);
-  if (Number.isNaN(server) || Number.isNaN(local)) return false;
-  return server > local;
+function serverIsNewer(version: string | undefined, localVersion: string | undefined): boolean {
+  return versionAfter(version, localVersion);
 }
 
 /**
@@ -177,6 +184,9 @@ export function mergeServerNote(
   if (local.status !== 'completed' || !local.entryId || entry.id !== local.entryId) return null;
 
   const dirty = Boolean(local.noteDirty) || (local.syncConflict?.length ?? 0) > 0;
+  // Referencia da edicao local: o carimbo do relogio hibrido quando existe; uma
+  // linha antiga cai no horario local, lido como versao legada.
+  const localVersion = local.updatedHlc ?? local.updatedAt;
   const serverBodyVersion = note?.body_version ?? entry.versions?.body;
   const bodyMoved = Boolean(serverBodyVersion) && serverBodyVersion !== local.bodyVersion;
   const titleVersion = entry.versions?.title;
@@ -213,9 +223,9 @@ export function mergeServerNote(
 
   // A ultima edicao vence: com a nota suja, so o que o servidor gravou depois da
   // ultima edicao local entra. Nota limpa aceita qualquer versao nova.
-  const applyBody = bodyMoved && (!dirty || serverIsNewer(serverBodyVersion, local.updatedAt));
-  const applyTitle = titleMoved && (!dirty || serverIsNewer(titleVersion, local.updatedAt));
-  const applyRecorded = recordedMoved && (!dirty || serverIsNewer(recordedVersion, local.updatedAt));
+  const applyBody = bodyMoved && (!dirty || serverIsNewer(serverBodyVersion, localVersion));
+  const applyTitle = titleMoved && (!dirty || serverIsNewer(titleVersion, localVersion));
+  const applyRecorded = recordedMoved && (!dirty || serverIsNewer(recordedVersion, localVersion));
 
   // Sem o texto nao da para aplicar a versao nova do corpo: espera o proximo
   // pull em vez de gravar uma versao sem o texto correspondente.
@@ -243,6 +253,7 @@ export function mergeServerNote(
     // A faixa de recentes usa updatedAt: uma edicao feita no dashboard precisa
     // aparecer como atividade recente aqui tambem.
     updatedAt: serverIsMoreRecent ? entry.updated_at : local.updatedAt,
+    updatedHlc: latestVersion(local.updatedHlc, serverBodyVersion, titleVersion, recordedVersion, entry.updated_at),
     ...(attachmentMoved ? { serverAttachmentId: primaryAttachment } : {}),
     ...(applyBody
       ? {

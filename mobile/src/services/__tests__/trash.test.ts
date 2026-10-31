@@ -9,10 +9,15 @@ const mockDeleteFiles = jest.fn();
 jest.mock('@/services/db', () => ({
   listTrashedRecordings: () => mockListTrashed(),
   deleteRecordingRow: (id: string) => mockDeleteRow(id),
+  getDatabase: jest.fn(async () => ({ runAsync: jest.fn(async () => undefined) })),
 }));
 
 jest.mock('@/services/files', () => ({
   deleteSessionFiles: (id: string) => mockDeleteFiles(id),
+}));
+
+jest.mock('@/services/clock', () => ({
+  clockNode: jest.fn(async () => 'dev_teste'),
 }));
 
 function note(id: string, deletedAt: string): Recording {

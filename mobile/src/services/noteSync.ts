@@ -22,6 +22,7 @@ import {
   resolveLocalAttachments,
   resolveLocalAudioAttachments,
 } from './attachments';
+import { observeVersion } from './clock';
 import { loadServerConfig } from './secure';
 
 const doFetch = globalThis.fetch as unknown as FetchLike;
@@ -74,12 +75,33 @@ async function withServer<T>(
  * entrada no servidor. Conflito sobe como `ConflictError` (409), sem nada gravado.
  */
 export function syncNote(note: Recording): Promise<SyncNoteResult | undefined> {
-  return withServer(note, (api) => syncNoteWith(api, note, resolveAttachments));
+  return withServer(note, async (api) => {
+    const result = await syncNoteWith(api, note, resolveAttachments);
+    await remember(result);
+    return result;
+  });
 }
 
 /** "Manter o meu": reenvia sem versao, porque a escolha ja foi do usuario. */
 export function syncNoteForcing(note: Recording): Promise<SyncNoteResult | undefined> {
-  return withServer(note, (api) => syncNoteWith(api, note, resolveAttachments, { force: true }));
+  return withServer(note, async (api) => {
+    const result = await syncNoteWith(api, note, resolveAttachments, { force: true });
+    await remember(result);
+    return result;
+  });
+}
+
+/**
+ * O servidor carimbou a gravacao depois de ver a versao local; o relogio do
+ * aparelho avanca para esse carimbo para que a proxima edicao fique depois dele.
+ */
+async function remember(result: SyncNoteResult | undefined): Promise<void> {
+  if (!result) return;
+  await observeVersion(
+    result.versions.title,
+    result.versions.recordedAt,
+    result.versions.body,
+  ).catch(() => undefined);
 }
 
 /** "Ficar com o de la": o que o servidor tem agora, para mostrar antes de trocar. */
