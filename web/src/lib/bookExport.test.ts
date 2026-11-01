@@ -86,12 +86,48 @@ describe("exportação do livro", () => {
     expect(decode(files["word/document.xml"])).toContain('w:pgSz w:w="11906"');
   });
 
+  it("imprime a folha do livro com a tipografia do editor", () => {
+    const html = exportHtml({
+      ...input,
+      book: { ...book, body_px: 18, body_leading: 160 },
+      options: { ...DEFAULT_EXPORT_OPTIONS, preset: "book" },
+    }).html;
+    expect(html).toContain('@font-face { font-family: "Newsreader"');
+    expect(html).toContain('class="chapter-overline"');
+    expect(html).toContain('class="chapter-title"');
+    expect(html).toContain("font-size: 18px");
+    expect(html).toContain("line-height: 1.6");
+    expect(html).toContain("text-indent: 1.4em");
+  });
+
+  it("coloca a capa antes da pagina de titulo", () => {
+    const html = exportHtml({
+      ...input,
+      coverDataUrl: "data:image/jpeg;base64,AAAA",
+      options: { ...DEFAULT_EXPORT_OPTIONS, preset: "book" },
+    }).html;
+    expect(html).toContain('class="cover-page"');
+    expect(html).toContain("@page cover");
+    expect(html.indexOf("cover-page")).toBeLessThan(html.indexOf("title-page"));
+  });
+
+  it("leva a fonte escolhida para o HTML e para o DOCX", () => {
+    const withFont = { ...input, book: { ...book, body_font: "eb-garamond" as const } };
+    const html = exportHtml({ ...withFont, options: { ...DEFAULT_EXPORT_OPTIONS, preset: "book" } }).html;
+    expect(html).toContain('font-family: "EB Garamond"');
+    expect(html).toContain("eb-garamond-roman");
+    const files = unzipSync(
+      buildDocx({ ...withFont, options: { ...DEFAULT_EXPORT_OPTIONS, preset: "book" } }),
+    );
+    expect(decode(files["word/styles.xml"])).toContain('w:ascii="EB Garamond"');
+  });
+
   it("HTML de leitura traz @page, título e ordem dos capítulos", () => {
     const html = exportHtml({
       ...input,
       options: { ...DEFAULT_EXPORT_OPTIONS, preset: "book" },
     }).html;
-    expect(html).toContain("@page { size: 6in 9in");
+    expect(html).toContain("@page { size: 140mm 210mm; margin: 19mm; }");
     expect(html).toContain("O nome do vento");
     expect(html).toContain("Sumário");
     expect(html.indexOf("Parte I")).toBeLessThan(html.indexOf("A ponte"));
