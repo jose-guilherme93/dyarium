@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@blocknote/core": "^0.55.0",
-    "@blocknote/mantine": "^0.55.0",
+    "@blocknote/mantine": "^0.56.0",
     "@blocknote/react": "^0.55.0",
     "@huggingface/transformers": "4.3.2",
     "@wllama/wllama": "3.8.1",
