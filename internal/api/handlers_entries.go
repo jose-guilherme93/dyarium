@@ -48,6 +48,9 @@ func entryJSON(e store.Entry) map[string]any {
 		"created_at":        e.CreatedAt,
 		"updated_at":        e.UpdatedAt,
 		"archived":          e.Archived,
+		// Tombstone cujo conteudo ja foi purgado: aparece na lixeira do
+		// dashboard como registro da exclusao, mas nao pode ser restaurado.
+		"purged": e.Status == store.EntryPurged,
 		// Papel escolhido para a nota (self/other/mixed). Vazio segue o padrao
 		// do app (owner_name/all_notes_mine), que o cliente tambem recebe.
 		"author": e.Author,
@@ -60,6 +63,23 @@ func entryJSON(e store.Entry) map[string]any {
 		// O mesmo para a transcricao: uma revisao feita no servidor tem hora
 		// propria e o app so busca quando ela muda.
 		"transcript_at": e.TranscriptAt,
+		// Quem criou a nota (aparelho ou ambiente). Proveniencia apenas: um
+		// ambiente que recebe a nota continua podendo edita-la.
+		"origin_instance": e.OriginInstance,
+		"origin_kind":     e.OriginKind,
+		// Estrutura do livro. Vazia numa nota comum.
+		"chapter_kind":       e.ChapterKind,
+		"chapter_status":     e.ChapterStatus,
+		"chapter_goal_words": e.ChapterGoalWords,
+		"chapter_synopsis":   e.ChapterSynopsis,
+		"chapter_beats":      e.ChapterBeats,
+		"chapter_notes":      e.ChapterNotes,
+	}
+	if e.ChapterPosition != nil {
+		body["chapter_position"] = *e.ChapterPosition
+	}
+	if e.WordCount > 0 {
+		body["word_count"] = e.WordCount
 	}
 	if e.DeletedAt != nil {
 		body["deleted_at"] = e.DeletedAt
@@ -153,8 +173,11 @@ func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	notebookID := strings.TrimSpace(query.Get("notebook_id"))
+	isBook := false
 	if notebookID != "" {
-		if err := s.deps.Store.NotebookExists(r.Context(), notebookID); err != nil {
+		var err error
+		isBook, err = s.deps.Store.NotebookIsBook(r.Context(), notebookID)
+		if err != nil {
 			if errors.Is(err, store.ErrNotebookNotFound) {
 				writeError(w, http.StatusNotFound, "notebook_not_found", "caderno inexistente")
 				return
@@ -163,11 +186,17 @@ func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	entries, err := s.deps.Store.ListEntriesFilteredNotebook(r.Context(), limit, cursor,
-		query.Get("person"), query.Get("place"), query.Get("theme"), archiveFilter(query), notebookID)
+	entries, err := s.deps.Store.ListEntriesFilteredScope(r.Context(), limit, cursor,
+		query.Get("person"), query.Get("place"), query.Get("theme"), archiveFilter(query),
+		notebookID, truthy(query.Get("exclude_books")))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
+	}
+	if isBook || truthy(query.Get("include_words")) {
+		for i := range entries {
+			entries[i].WordCount = len(strings.Fields(preview.Plain(entries[i].Preview)))
+		}
 	}
 	ids := make([]string, 0, len(entries))
 	for _, e := range entries {
@@ -240,6 +269,9 @@ func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 		// Author is the explicit role of the note (self/other/mixed). Empty
 		// means "follow the app default".
 		Author string `json:"author"`
+		// ChapterKind is accepted only when the notebook is a book. Empty
+		// becomes "chapter": a new chapter is the common case.
+		ChapterKind string `json:"chapter_kind"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_body", "corpo invalido")
@@ -254,12 +286,26 @@ func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 	if notebookID == "" {
 		notebookID = store.DefaultNotebookID
 	}
-	if err := s.deps.Store.NotebookExists(r.Context(), notebookID); err != nil {
+	book, err := s.deps.Store.NotebookIsBook(r.Context(), notebookID)
+	if err != nil {
 		if errors.Is(err, store.ErrNotebookNotFound) {
 			writeError(w, http.StatusUnprocessableEntity, "invalid_notebook", "caderno inexistente")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	chapterKind := strings.TrimSpace(req.ChapterKind)
+	if book {
+		if chapterKind == "" {
+			chapterKind = store.ChapterKindChapter
+		}
+		if !store.ValidChapterKind(chapterKind) {
+			writeError(w, http.StatusUnprocessableEntity, "invalid_chapter", "chapter_kind invalido")
+			return
+		}
+	} else if chapterKind != "" {
+		writeError(w, http.StatusUnprocessableEntity, "not_a_book", "caderno nao e um livro")
 		return
 	}
 	parentID := strings.TrimSpace(req.ParentID)
@@ -294,17 +340,30 @@ func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 		t := parsed.UTC()
 		recordedAt = &t
 	}
+	origin := s.requestOrigin(r)
 	entry := store.Entry{
-		ID:         id.New(),
-		Title:      title,
-		Status:     store.EntryReady,
-		Source:     "text",
-		ParentID:   parentID,
-		NotebookID: notebookID,
-		RecordedAt: recordedAt,
-		CreatedAt:  createdAt,
-		UpdatedAt:  now,
-		Author:     author,
+		ID:             id.New(),
+		Title:          title,
+		Status:         store.EntryReady,
+		Source:         "text",
+		ParentID:       parentID,
+		NotebookID:     notebookID,
+		RecordedAt:     recordedAt,
+		CreatedAt:      createdAt,
+		UpdatedAt:      now,
+		Author:         author,
+		OriginInstance: origin.Instance,
+		OriginKind:     origin.Kind,
+		ChapterKind:    chapterKind,
+	}
+	if book {
+		position, err := s.deps.Store.NextChapterPosition(r.Context(), notebookID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			return
+		}
+		entry.ChapterPosition = &position
+		entry.ChapterStatus = store.ChapterDraft
 	}
 	if clientID := strings.TrimSpace(req.ID); clientID != "" {
 		if !id.Valid(clientID) {
@@ -388,6 +447,13 @@ type patchEntryRequest struct {
 	// Author troca o papel da nota (self/other/mixed). Vazio volta ao padrao do
 	// app. Como os outros interruptores, a ultima gravacao vence.
 	Author *string `json:"author"`
+	// Estrutura e painel do capitulo. So valem dentro de um livro.
+	ChapterKind      *string `json:"chapter_kind"`
+	ChapterStatus    *string `json:"chapter_status"`
+	ChapterGoalWords *int    `json:"chapter_goal_words"`
+	ChapterSynopsis  *string `json:"chapter_synopsis"`
+	ChapterBeats     *string `json:"chapter_beats"`
+	ChapterNotes     *string `json:"chapter_notes"`
 	// Versions are the versions of title/recorded_at the client last read.
 	// Fields whose version moved on are not written; they come back as a
 	// conflict so the user decides instead of the last write winning blindly.
@@ -403,6 +469,7 @@ func (s *Server) handlePatchEntry(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_body", "corpo invalido")
 		return
 	}
+	s.observeClock(r)
 	id := r.PathValue("id")
 
 	var recordedAt *time.Time
@@ -412,7 +479,10 @@ func (s *Server) handlePatchEntry(w http.ResponseWriter, r *http.Request) {
 			recordedAt = &t
 		}
 	}
-	if req.Title == nil && recordedAt == nil && req.NotebookID == nil && req.Archived == nil && req.Author == nil {
+	hasChapterMeta := req.ChapterStatus != nil || req.ChapterGoalWords != nil ||
+		req.ChapterSynopsis != nil || req.ChapterBeats != nil || req.ChapterNotes != nil
+	if req.Title == nil && recordedAt == nil && req.NotebookID == nil && req.Archived == nil &&
+		req.Author == nil && req.ChapterKind == nil && !hasChapterMeta {
 		writeError(w, http.StatusBadRequest, "empty_patch", "nada para atualizar")
 		return
 	}
@@ -424,8 +494,21 @@ func (s *Server) handlePatchEntry(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_notebook", "caderno obrigatorio")
 		return
 	}
+	if req.ChapterKind != nil && !store.ValidChapterKind(strings.TrimSpace(*req.ChapterKind)) {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_chapter", "chapter_kind invalido")
+		return
+	}
+	if req.ChapterStatus != nil && !store.ValidChapterStatus(strings.TrimSpace(*req.ChapterStatus)) {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_chapter", "chapter_status invalido")
+		return
+	}
+	if req.ChapterGoalWords != nil && *req.ChapterGoalWords < 0 {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_chapter", "meta invalida")
+		return
+	}
 	versions, conflict, err := s.deps.Store.UpdateEntryFields(r.Context(), id, req.Title, recordedAt,
-		req.NotebookID, req.Archived, req.Author, req.Versions.Title, req.Versions.RecordedAt)
+		req.NotebookID, req.Archived, req.Author, req.ChapterKind,
+		req.Versions.Title, req.Versions.RecordedAt)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", "entrada inexistente")
 		return
@@ -436,6 +519,18 @@ func (s *Server) handlePatchEntry(w http.ResponseWriter, r *http.Request) {
 	}
 	if errors.Is(err, store.ErrNotebookNotFound) {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_notebook", "caderno inexistente")
+		return
+	}
+	if errors.Is(err, store.ErrNotABook) {
+		writeError(w, http.StatusUnprocessableEntity, "not_a_book", "caderno nao e um livro")
+		return
+	}
+	if errors.Is(err, store.ErrNotABookEntry) {
+		writeError(w, http.StatusUnprocessableEntity, "not_a_book_entry", "capitulo nao pode ser arquivado")
+		return
+	}
+	if errors.Is(err, store.ErrInvalidChapter) {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_chapter", "capitulo invalido")
 		return
 	}
 	if err != nil {
@@ -450,13 +545,28 @@ func (s *Server) handlePatchEntry(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	if hasChapterMeta {
+		if err := s.deps.Store.UpdateChapterMeta(r.Context(), id,
+			req.ChapterStatus, req.ChapterGoalWords, req.ChapterSynopsis, req.ChapterBeats, req.ChapterNotes); err != nil {
+			if errors.Is(err, store.ErrNotABook) {
+				writeError(w, http.StatusUnprocessableEntity, "not_a_book", "caderno nao e um livro")
+				return
+			}
+			if errors.Is(err, store.ErrInvalidChapter) {
+				writeError(w, http.StatusUnprocessableEntity, "invalid_chapter", "capitulo invalido")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "versions": versions})
 }
 
 func (s *Server) handleDeleteEntry(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id := r.PathValue("id")
-	if err := s.deps.Store.SoftDeleteEntry(ctx, id); err != nil {
+	if err := s.deps.Store.SoftDeleteEntryWithOrigin(ctx, id, s.instanceOrigin()); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", "entrada inexistente")
 			return
@@ -604,6 +714,84 @@ func (s *Server) handlePutTranscript(w http.ResponseWriter, r *http.Request) {
 	s.deps.Events.Publish("entry.status", map[string]string{"entry_id": entryID, "status": status})
 	s.deps.Events.Publish("transcript.ready", map[string]string{"entry_id": entryID})
 	writeJSON(w, http.StatusOK, map[string]string{"model": "local"})
+}
+
+// handleEditTranscriptSegment lets the dashboard rewrite one line of the
+// transcript. The user's writing wins: the segment is marked as edited, its AI
+// revision is dropped, and the raw text of the other lines (and their
+// revisions) is preserved.
+func (s *Server) handleEditTranscriptSegment(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	entryID := r.PathValue("id")
+	idx, err := strconv.Atoi(r.PathValue("idx"))
+	if err != nil || idx < 0 {
+		writeError(w, http.StatusBadRequest, "invalid_body", "indice de trecho invalido")
+		return
+	}
+	var req struct {
+		AttachmentID string `json:"attachment_id"`
+		Text         string `json:"text"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_body", "corpo invalido")
+		return
+	}
+	text := strings.TrimSpace(req.Text)
+	if text == "" {
+		writeError(w, http.StatusBadRequest, "invalid_body", "texto vazio")
+		return
+	}
+	if len([]rune(text)) > maxRevisionRunes {
+		writeError(w, http.StatusBadRequest, "invalid_body", "trecho grande demais")
+		return
+	}
+
+	var transcript store.Transcript
+	var segments []store.Segment
+	if strings.TrimSpace(req.AttachmentID) != "" {
+		transcript, segments, err = s.deps.Store.GetTranscriptByAttachment(ctx, strings.TrimSpace(req.AttachmentID))
+	} else {
+		transcript, segments, err = s.deps.Store.GetTranscript(ctx, entryID)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "not_found", "transcricao indisponivel")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	found := false
+	for i := range segments {
+		if segments[i].Idx != idx {
+			continue
+		}
+		segments[i].Text = text
+		segments[i].UserEdited = true
+		found = true
+		break
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "not_found", "trecho inexistente")
+		return
+	}
+	raw := make([]string, 0, len(segments))
+	for _, segment := range segments {
+		raw = append(raw, segment.Text)
+	}
+	transcript.Text = strings.Join(raw, "\n")
+	if err := s.deps.Store.SaveTranscript(ctx, transcript, segments); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	status := store.EntryTranscribed
+	if entry, err := s.deps.Store.GetEntry(ctx, entryID); err == nil && entry.Status == store.EntryReady {
+		status = store.EntryReady
+	}
+	_ = s.deps.Store.UpdateEntryStatus(ctx, entryID, status)
+	s.deps.Events.Publish("entry.status", map[string]string{"entry_id": entryID, "status": status})
+	s.deps.Events.Publish("transcript.ready", map[string]string{"entry_id": entryID})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 type putRevisionsRequest struct {

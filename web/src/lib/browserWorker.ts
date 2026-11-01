@@ -20,6 +20,8 @@ type Listener = (state: ProcessorState | null) => void;
 let processor: BrowserProcessor | null = null;
 let state: ProcessorState | null = null;
 let starting: Promise<void> | null = null;
+/** Perfil do start em andamento, para cancelar o download se o usuario trocar. */
+let pendingPlan: BrowserPlan | null = null;
 let exitHook = false;
 const listeners = new Set<Listener>();
 
@@ -43,10 +45,22 @@ function isActive(phase: ProcessorState["phase"] | undefined): boolean {
   return phase === "preparing" || phase === "waiting" || phase === "working" || phase === "stopping";
 }
 
+function samePlan(current: BrowserPlan | null | undefined, next: BrowserPlan): boolean {
+  return (
+    current !== null &&
+    current !== undefined &&
+    current.tier === next.tier &&
+    current.whisper.id === next.whisper.id &&
+    current.llm.id === next.llm.id
+  );
+}
+
 /**
- * Liga o worker. Se ele ja esta ativo, devolve quando estiver pronto; durante o
- * primeiro download as duas telas (nota e laboratorio) esperam a mesma promessa
- * em vez de criar dois workers concorrentes.
+ * Liga o worker. Se ele ja esta ativo com o mesmo perfil, devolve quando
+ * estiver pronto; durante o primeiro download as duas telas (nota e
+ * laboratorio) esperam a mesma promessa em vez de criar dois workers
+ * concorrentes. Um perfil diferente reinicia o motor: o usuario nao troca de
+ * modelo para a analise continuar no anterior.
  */
 export async function startWorker(
   plan: BrowserPlan,
@@ -55,14 +69,18 @@ export async function startWorker(
   threads = 0,
   device?: DeviceIdentity,
 ): Promise<void> {
+  // Um start anterior pode estar baixando modelos. Se o perfil mudou, cancela
+  // o download antigo em vez de fazer o usuario esperar o modelo errado
+  // terminar inteiro.
+  if (starting && pendingPlan && !samePlan(pendingPlan, plan)) {
+    await handOffWorker();
+  }
+  if (starting) await starting;
   if (processor && isActive(state?.phase)) {
-    if (state?.phase === "preparing" && starting) await starting;
-    return;
+    if (samePlan(state?.plan, plan)) return;
+    await handOffWorker();
   }
-  if (starting) {
-    await starting;
-    return;
-  }
+  pendingPlan = plan;
   starting = (async () => {
     const settings = await loadWorkerSettings();
     const instance = new BrowserProcessor(settings, (next) => {
@@ -91,6 +109,7 @@ export async function startWorker(
     await starting;
   } finally {
     starting = null;
+    pendingPlan = null;
   }
 }
 

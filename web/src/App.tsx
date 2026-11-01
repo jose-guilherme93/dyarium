@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
-import { api, ApiError, clearToken, getSetupState, getToken, setToken, verifyToken } from "./api";
+import {
+  api,
+  ApiError,
+  clearToken,
+  getSetupState,
+  getToken,
+  setToken,
+  tokenIsPersisted,
+  verifyToken,
+} from "./api";
 import { useEvents } from "./useEvents";
 import { TokenGate } from "./components/TokenGate";
 import { SetupGate } from "./components/SetupGate";
@@ -9,6 +18,8 @@ import { NoteList } from "./components/NoteList";
 import { NoteEditor } from "./components/NoteEditor";
 import { NotebookDialog } from "./components/NotebookDialog";
 import { NotebookSwitcher } from "./components/NotebookSwitcher";
+import { BookDialog, type BookForm } from "./components/BookDialog";
+import { BookSidebar } from "./components/BookSidebar";
 import { NotionImportDialog } from "./components/NotionImportDialog";
 import { OfflineBanner } from "./components/OfflineBanner";
 import { WorkerKeepAlive } from "./components/WorkerKeepAlive";
@@ -27,12 +38,14 @@ import {
   WritingIcon,
 } from "./components/icons";
 import { ALL_NOTEBOOKS, DEFAULT_NOTEBOOK_ID } from "./lib/notebooks";
+import { orderedChapters } from "./lib/books";
 import type { NotionImportResult } from "./lib/notionImport";
 import { MapView } from "./views/MapView";
 import { LabView } from "./views/LabView";
 import { SettingsView } from "./views/SettingsView";
 import { WritingView } from "./views/WritingView";
-import type { EntityKind, Notebook, ServerEvent } from "./types";
+import { BookView } from "./views/BookView";
+import type { ChapterKind, EntityKind, Entry, Notebook, ServerEvent } from "./types";
 import "./App.css";
 
 type ViewId = "notes" | "map" | "writing" | "settings" | "lab";
@@ -76,11 +89,15 @@ export function App() {
   const [entityFocus, setEntityFocus] = useState<{ kind: EntityKind; name: string } | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [notebooks, setNotebooks] = useState<Notebook[]>([]);
+  const [bookChapters, setBookChapters] = useState<Entry[]>([]);
+  const [bookChaptersLoading, setBookChaptersLoading] = useState(false);
   const [activeNotebookId, setActiveNotebookId] = useState(() => readActiveNotebook());
   const [notebookDialog, setNotebookDialog] = useState<{
     mode: "create" | "rename";
     notebook?: Notebook;
   } | null>(null);
+  const [bookDialog, setBookDialog] = useState<{ notebook?: Notebook } | null>(null);
+  const [ownerName, setOwnerName] = useState("");
   const [tagsOpen, setTagsOpen] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
   const [composeAnchor, setComposeAnchor] = useState<ComposeAnchor | null>(null);
@@ -196,7 +213,7 @@ export function App() {
     },
     [notify, bumpRefresh],
   );
-  useEvents(handleEvent);
+  useEvents(token, handleEvent);
 
   // O primeiro acesso e publico: sem token, a instancia ainda nao foi
   // reivindicada. Falha de rede cai no portao de token normal.
@@ -260,6 +277,14 @@ export function App() {
     };
   }, [token, refreshKey]);
 
+  useEffect(() => {
+    if (!token) return;
+    void api
+      .getSettings()
+      .then((settings) => setOwnerName(settings.owner_name ?? ""))
+      .catch(() => undefined);
+  }, [token]);
+
   // Validate the token against the API before storing it, so a wrong token
   // keeps the gate open instead of entering an empty (broken) session.
   const handleLogin = async (value: string) => {
@@ -273,6 +298,9 @@ export function App() {
       }
       setToken(value);
       setTokenState(value);
+      if (!tokenIsPersisted()) {
+        notify("O navegador bloqueou o armazenamento. O token vale só até fechar esta aba.", "info");
+      }
     } catch (err) {
       if (err instanceof ApiError) {
         setAuthError("Não foi possível validar o token. Tente de novo.");
@@ -281,10 +309,56 @@ export function App() {
       // Falha de rede: entra em modo offline com o token informado.
       setToken(value);
       setTokenState(value);
+      if (!tokenIsPersisted()) {
+        notify("O navegador bloqueou o armazenamento. O token vale só até fechar esta aba.", "info");
+      }
     } finally {
       setCheckingToken(false);
     }
   };
+
+  const activeNotebook =
+    activeNotebookId === ALL_NOTEBOOKS
+      ? null
+      : (notebooks.find((notebook) => notebook.id === activeNotebookId) ?? null);
+  const isBook = activeNotebook?.kind === "book";
+
+  // A lista de capitulos vive na sidebar, no lugar das notas. O App e o dono
+  // dela para a sidebar e a casa do livro verem a mesma ordem.
+  useEffect(() => {
+    if (!token || !activeNotebook || activeNotebook.kind !== "book") {
+      setBookChapters([]);
+      setBookChaptersLoading(false);
+      return;
+    }
+    let active = true;
+    setBookChaptersLoading(true);
+    void (async () => {
+      const cached =
+        (await api.listEntriesCached({ notebook_id: activeNotebook.id, limit: 1000 })) ??
+        (await api.listEntriesCached({
+          notebook_id: activeNotebook.id,
+          include_words: true,
+          limit: 1000,
+        }));
+      if (active && cached?.entries) setBookChapters(orderedChapters(cached.entries));
+      try {
+        const result = await api.listAllEntries({
+          notebook_id: activeNotebook.id,
+          include_words: true,
+          limit: 1000,
+        });
+        if (active) setBookChapters(orderedChapters(result.entries ?? []));
+      } catch {
+        // Sem rede e com cache: mantem a lista que ja esta na tela.
+      } finally {
+        if (active) setBookChaptersLoading(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [token, activeNotebook?.id, activeNotebook?.kind, refreshKey]);
 
   if (setupRequired) {
     return (
@@ -336,13 +410,86 @@ export function App() {
 
   const createNote = async () => {
     try {
+      if (isBook && activeNotebook) {
+        await createBookChapter("chapter");
+        return;
+      }
       const entry = await api.createEntry("", null, targetNotebookId());
       setOpenEntryId(entry.id);
       setView("notes");
       closeDrawer();
       refresh();
     } catch {
-      notify("Não foi possível criar a nota.", "error");
+      notify(isBook ? "Não foi possível criar o capítulo." : "Não foi possível criar a nota.", "error");
+      refresh();
+    }
+  };
+
+  const createBookChapter = async (kind: ChapterKind) => {
+    if (!activeNotebook) return;
+    try {
+      const created = await api.createEntry("Sem título", null, activeNotebook.id, kind);
+      setBookChapters((current) => orderedChapters([...current, created]));
+      setOpenEntryId(created.id);
+      setView("notes");
+      closeDrawer();
+      refresh();
+    } catch {
+      notify("Não foi possível criar o capítulo.", "error");
+    }
+  };
+
+  // Ctrl+Enter no capitulo abre o proximo logo depois dele. A posicao e
+  // recalculada pela mesma ordem que o arrastar usa, entao a lista continua
+  // sendo uma so.
+  const createBookChapterAfter = async (currentId: string) => {
+    if (!activeNotebook) return;
+    try {
+      const created = await api.createEntry("Sem título", null, activeNotebook.id, "chapter");
+      const list = orderedChapters([...bookChapters, created]).filter(
+        (chapter) => chapter.id !== created.id,
+      );
+      const at = list.findIndex((chapter) => chapter.id === currentId);
+      list.splice(at >= 0 ? at + 1 : list.length, 0, created);
+      const payload = list.map((chapter, index) => ({
+        entry_id: chapter.id,
+        chapter_kind: (chapter.chapter_kind || "chapter") as ChapterKind,
+        chapter_status: chapter.chapter_status || "draft",
+        position: (index + 1) * 1024,
+      }));
+      await api.reorderChapters(activeNotebook.id, payload);
+      setBookChapters(
+        list.map((chapter, index) => ({ ...chapter, chapter_position: (index + 1) * 1024 })),
+      );
+      setOpenEntryId(created.id);
+      refresh();
+    } catch {
+      notify("Não foi possível criar o capítulo.", "error");
+    }
+  };
+
+  const reorderBookChapters = async (sourceId: string, targetId: string) => {
+    if (!activeNotebook || sourceId === targetId) return;
+    const list = orderedChapters(bookChapters);
+    const from = list.findIndex((chapter) => chapter.id === sourceId);
+    const to = list.findIndex((chapter) => chapter.id === targetId);
+    if (from < 0 || to < 0) return;
+    const moved = list.splice(from, 1)[0];
+    list.splice(to, 0, moved);
+    const payload = list.map((chapter, index) => ({
+      entry_id: chapter.id,
+      chapter_kind: (chapter.chapter_kind || "chapter") as ChapterKind,
+      chapter_status: chapter.chapter_status || "draft",
+      position: (index + 1) * 1024,
+    }));
+    try {
+      await api.reorderChapters(activeNotebook.id, payload);
+      setBookChapters(
+        list.map((chapter, index) => ({ ...chapter, chapter_position: (index + 1) * 1024 })),
+      );
+      refresh();
+    } catch {
+      notify("Não foi possível reordenar.", "error");
       refresh();
     }
   };
@@ -419,6 +566,12 @@ export function App() {
 
   const deleteNotebook = async (notebook: Notebook) => {
     if (notebook.is_default) return;
+    // Um livro nao some com um clique: o dialogo pede o titulo e mostra que os
+    // capitulos vao para a Lixeira.
+    if (notebook.kind === "book") {
+      setBookDialog({ notebook });
+      return;
+    }
     const ok = window.confirm(
       notebook.entry_count > 0
         ? `Excluir “${notebook.name}”? As ${notebook.entry_count} nota(s) vão para “Notas ao acaso”.`
@@ -433,6 +586,102 @@ export function App() {
       refresh();
     } catch {
       notify("Não foi possível excluir o caderno.", "error");
+    }
+  };
+
+  const saveBookCover = async (notebook: Notebook, image: Blob) => {
+    try {
+      await api.uploadCover(notebook.id, image);
+      refresh();
+    } catch {
+      notify("Não foi possível salvar a capa.", "error");
+      throw new Error("cap");
+    }
+  };
+
+  const removeBookCover = async (notebook: Notebook) => {
+    try {
+      await api.deleteCover(notebook.id);
+      refresh();
+    } catch {
+      notify("Não foi possível remover a capa.", "error");
+      throw new Error("cap");
+    }
+  };
+
+  const saveBook = async (form: BookForm) => {
+    try {
+      if (bookDialog?.notebook) {
+        await api.updateNotebook(bookDialog.notebook.id, form);
+      } else {
+        const created = await api.createNotebook({ ...form, kind: "book" });
+        selectNotebook(created.id);
+      }
+      setBookDialog(null);
+      refresh();
+    } catch {
+      notify("Não foi possível salvar o livro.", "error");
+    }
+  };
+
+  const activateBook = async (notebook: Notebook, form: BookForm) => {
+    try {
+      await api.updateNotebook(notebook.id, { ...form, kind: "book" });
+      setBookDialog(null);
+      selectNotebook(notebook.id);
+      refresh();
+    } catch {
+      notify("Não foi possível ativar o modo escritor.", "error");
+    }
+  };
+
+  const moveNotesAndActivate = async (notebook: Notebook, form: BookForm) => {
+    try {
+      const defaultID =
+        notebooks.find((item) => item.is_default)?.id ?? DEFAULT_NOTEBOOK_ID;
+      const result = await api.listAllEntries({ notebook_id: notebook.id, limit: 1000 });
+      for (const entry of result.entries ?? []) {
+        await api.patchEntry(entry.id, { notebook_id: defaultID });
+      }
+      await api.updateNotebook(notebook.id, { ...form, kind: "book" });
+      setBookDialog(null);
+      selectNotebook(notebook.id);
+      refresh();
+    } catch {
+      notify("Não foi possível mover as notas.", "error");
+    }
+  };
+
+  const deactivateBook = async (notebook: Notebook) => {
+    const chapters = notebook.chapter_count ?? 0;
+    if (chapters > 0) {
+      const ok = window.confirm(
+        `Converter “${notebook.name}” em caderno comum? Os ${chapters} capítulos continuam como notas; só a estrutura do livro é descartada.`,
+      );
+      if (!ok) return;
+    }
+    try {
+      await api.updateNotebook(notebook.id, {
+        kind: "notes",
+        ...(chapters > 0 ? { confirm_convert: true } : {}),
+      });
+      setBookDialog(null);
+      refresh();
+    } catch {
+      notify("Não foi possível desativar o livro.", "error");
+    }
+  };
+
+  const deleteBook = async (notebook: Notebook, confirmName: string) => {
+    try {
+      await api.deleteNotebook(notebook.id, { trash: true, confirm: confirmName });
+      if (activeNotebookId === notebook.id) {
+        selectNotebook(DEFAULT_NOTEBOOK_ID);
+      }
+      setBookDialog(null);
+      refresh();
+    } catch {
+      notify("Não foi possível excluir o livro.", "error");
     }
   };
 
@@ -466,7 +715,7 @@ export function App() {
     },
     {
       key: "writing",
-      label: "Escrita",
+      label: "Estatísticas",
       active: view === "writing",
       icon: <WritingIcon size={17} />,
       onPress: () => openView("writing"),
@@ -519,11 +768,11 @@ export function App() {
         <button
           type="button"
           className="button button--primary button--small"
-          onClick={openCompose}
-          aria-label="Nova nota"
+          onClick={isBook ? () => void createNote() : openCompose}
+          aria-label={isBook ? "Novo capítulo" : "Nova nota"}
         >
           <PlusIcon size={15} />
-          Nova nota
+          {isBook ? "Capítulo" : "Nova nota"}
         </button>
       </header>
       {navOpen && (
@@ -538,15 +787,11 @@ export function App() {
       <aside className="sidebar" aria-label="Navegação principal">
         {navOpen ? (
           <>
-            <div className="sidebar-top">
-              <NotebookSwitcher
-                notebooks={notebooks}
-                activeId={activeNotebookId}
-                onSelect={selectNotebook}
-                onCreate={() => setNotebookDialog({ mode: "create" })}
-                onRename={(notebook) => setNotebookDialog({ mode: "rename", notebook })}
-                onDelete={(notebook) => void deleteNotebook(notebook)}
-              />
+            <div className="sidebar-brand-row">
+              <div className="brand">
+                dyarium
+                <small>tinta e papel</small>
+              </div>
               <button
                 type="button"
                 className="sidebar-toggle"
@@ -557,9 +802,51 @@ export function App() {
                 <ChevronIcon size={16} />
               </button>
             </div>
+            <div className="sidebar-top">
+              <NotebookSwitcher
+                notebooks={notebooks}
+                activeId={activeNotebookId}
+                onSelect={selectNotebook}
+                onCreate={() => {
+                  closeDrawer();
+                  setNotebookDialog({ mode: "create" });
+                }}
+                onCreateBook={() => {
+                  closeDrawer();
+                  setBookDialog({});
+                }}
+                onBookSettings={(notebook) => {
+                  closeDrawer();
+                  setBookDialog({ notebook });
+                }}
+                onRename={(notebook) => {
+                  closeDrawer();
+                  setNotebookDialog({ mode: "rename", notebook });
+                }}
+                onDelete={(notebook) => {
+                  closeDrawer();
+                  void deleteNotebook(notebook);
+                }}
+              />
+            </div>
 
             {/* O menu e a lista de notas: não ha "Notas" aqui, porque a lista e
                 as notas. As demais telas viram icones pequenos no rodape. */}
+            {isBook && activeNotebook ? (
+              <BookSidebar
+                book={activeNotebook}
+                chapters={bookChapters}
+                loading={bookChaptersLoading}
+                activeChapterId={openEntryId}
+                onOpen={(id) => {
+                  setOpenEntryId(id);
+                  setView("notes");
+                  closeDrawer();
+                }}
+                onCreate={(kind) => void createBookChapter(kind)}
+                onReorder={(source, target) => void reorderBookChapters(source, target)}
+              />
+            ) : (
             <NoteList
               refreshKey={refreshKey}
               activeId={openEntryId}
@@ -574,7 +861,10 @@ export function App() {
                 closeDrawer();
               }}
               onCreate={openCompose}
-              onManageTags={() => setTagsOpen(true)}
+              onManageTags={() => {
+                closeDrawer();
+                setTagsOpen(true);
+              }}
               onMutated={(removed) => {
                 if (openEntryId && removed.includes(openEntryId)) {
                   setOpenEntryId(null);
@@ -582,15 +872,16 @@ export function App() {
                 refresh();
               }}
             />
+            )}
           </>
         ) : (
           <div className="side-rail">
             <button
               type="button"
               className="rail-action rail-action--new"
-              onClick={openCompose}
-              aria-label="Nova nota"
-              title="Nova nota"
+              onClick={isBook ? () => void createNote() : openCompose}
+              aria-label={isBook ? "Novo capítulo" : "Nova nota"}
+              title={isBook ? "Novo capítulo" : "Nova nota"}
             >
               <PlusIcon size={18} />
             </button>
@@ -650,8 +941,26 @@ export function App() {
       </aside>
 
       <main className="workspace" aria-label="Conteúdo">
-        <ErrorBoundary>
-          {view === "notes" ? (
+        <ErrorBoundary resetKey={`${view}:${openEntryId ?? ""}`}>
+          {view === "notes" && isBook && activeNotebook ? (
+            <BookView
+              book={activeNotebook}
+              chapters={bookChapters}
+              loading={bookChaptersLoading}
+              activeChapterId={openEntryId}
+              onOpenChapter={(id) => {
+                setOpenEntryId(id);
+                setView("notes");
+                closeDrawer();
+              }}
+              onCloseChapter={() => setOpenEntryId(null)}
+              onCreateChapter={(kind) => void createBookChapter(kind)}
+              onCreateChapterAfter={(id) => void createBookChapterAfter(id)}
+              onReorderChapter={(source, target) => void reorderBookChapters(source, target)}
+              onChanged={refresh}
+              onOpenSettings={() => setBookDialog({ notebook: activeNotebook })}
+            />
+          ) : view === "notes" ? (
             <div className="editor-pane">
               {openEntryId ? (
                 <NoteEditor
@@ -671,7 +980,6 @@ export function App() {
                   }}
                   onOpenEntry={(id) => setOpenEntryId(id)}
                   notebooks={notebooks}
-                  onOpenLab={() => openView("lab")}
                 />
               ) : (
                 <div className="empty-editor">
@@ -718,7 +1026,7 @@ export function App() {
               <WritingView refreshKey={refreshKey} />
             </div>
           ) : view === "lab" ? (
-            <div className="page">
+            <div className="page page--lab">
               <LabView onBack={goBack} />
             </div>
           ) : (
@@ -736,6 +1044,27 @@ export function App() {
         initialColor={notebookDialog?.notebook?.color ?? ""}
         onClose={() => setNotebookDialog(null)}
         onSave={(input) => void saveNotebook(input)}
+      />
+
+      <BookDialog
+        open={bookDialog !== null}
+        notebook={bookDialog?.notebook}
+        defaultAuthor={ownerName}
+        chapterCount={bookDialog?.notebook?.chapter_count ?? 0}
+        onClose={() => setBookDialog(null)}
+        onSave={(form) => void saveBook(form)}
+        onActivate={(form) => bookDialog?.notebook && void activateBook(bookDialog.notebook, form)}
+        onMoveNotes={(form) =>
+          bookDialog?.notebook && void moveNotesAndActivate(bookDialog.notebook, form)
+        }
+        onDeactivate={() => bookDialog?.notebook && void deactivateBook(bookDialog.notebook)}
+        onDelete={(confirm) => bookDialog?.notebook && void deleteBook(bookDialog.notebook, confirm)}
+        onCoverSave={
+          bookDialog?.notebook ? (image) => saveBookCover(bookDialog.notebook!, image) : undefined
+        }
+        onCoverRemove={
+          bookDialog?.notebook ? () => removeBookCover(bookDialog.notebook!) : undefined
+        }
       />
 
       <TagManager

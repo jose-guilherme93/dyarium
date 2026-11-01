@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { FitIcon, InsightsIcon, PencilIcon, SearchIcon } from "../components/icons";
 import { Spinner } from "../components/Status";
+import { useToast } from "../components/Toasts";
 import {
   authorLabel,
   filterGraph,
@@ -319,6 +320,7 @@ function formatMs(ms: number): string {
 // MapView draws the relationship map on a canvas. The simulation is local and
 // stops once it settles; the server only sends nodes and edges.
 export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewProps) {
+  const { notify } = useToast();
   const [data, setData] = useState<GraphResponse | null>(null);
   const [graphVersion, setGraphVersion] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -509,6 +511,7 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
         notebookId: notebookId || undefined,
         from: periodFrom(period),
         focus: focusId ?? undefined,
+        excludeBooks: true,
       })
       .then((result) => {
         if (cancelled) return;
@@ -1594,18 +1597,43 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
     draw();
   };
 
+  // Desfazer a edicao que acabou de acontecer (renomear, mesclar, icone ou
+  // "sou eu"). O servidor guarda o estado anterior, inclusive os vinculos
+  // somados numa mescla; aqui so recarrega o desenho.
+  const undoEntityEdit = useCallback(
+    async (editId: string) => {
+      try {
+        await api.undoEntityEdit(editId);
+        setGraphVersion((value) => value + 1);
+        notify("Desfeito.", "info");
+      } catch {
+        notify("Não foi possível desfazer.", "error");
+      }
+    },
+    [notify],
+  );
+
   const saveIcon = async (icon: string): Promise<boolean> => {
     if (!entityNode || iconBusy) return false;
     const id = entityNode.id;
     setIconBusy(true);
     setIconError("");
     try {
-      await api.setEntityIcon(entityNode.kind, entityNode.label, icon);
+      const saved = await api.setEntityIcon(entityNode.kind, entityNode.label, icon);
       setIconOverrides((current) => ({ ...current, [id]: icon }));
       const node = simRef.current?.nodes.find((item) => item.id === id);
       if (node) {
         node.icon = icon;
         draw();
+      }
+      const editId = saved.edit_id;
+      if (editId) {
+        notify("Ícone atualizado.", "success", {
+          label: "Desfazer",
+          onClick: () => undoEntityEdit(editId),
+        });
+      } else {
+        notify("Ícone atualizado.", "success");
       }
       return true;
     } catch (err) {
@@ -1647,17 +1675,23 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
     setRenameBusy(true);
     setRenameError("");
     try {
+      let editId = "";
       if (claimingSelf) {
-        await api.claimSelf(entityNode.label);
+        editId = (await api.claimSelf(entityNode.label)).edit_id ?? "";
       } else if (merging) {
-        await api.renameEntity(entityNode.kind, entityNode.label, mergeTarget);
+        editId = (await api.renameEntity(entityNode.kind, entityNode.label, mergeTarget)).edit_id ?? "";
       } else {
-        await api.renameEntity(entityNode.kind, entityNode.label, next);
+        editId = (await api.renameEntity(entityNode.kind, entityNode.label, next)).edit_id ?? "";
       }
       setRenameOpen(false);
       setFocusId(null);
       setSelectedId(null);
       setGraphVersion((value) => value + 1);
+      notify(
+        claimingSelf ? "Sou eu." : merging ? "Mesclado." : "Renomeado.",
+        "success",
+        editId ? { label: "Desfazer", onClick: () => undoEntityEdit(editId) } : undefined,
+      );
     } catch (err) {
       setRenameError(err instanceof Error ? err.message : "não foi possível renomear");
     } finally {

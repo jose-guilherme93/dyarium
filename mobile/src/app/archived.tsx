@@ -10,6 +10,7 @@ import { TagChip } from '@/components/TagChip';
 import { formatStamp, noteDateIso } from '@/core/format';
 import { recordingNotebookId } from '@/core/notebookFilter';
 import { sortByCreation } from '@/core/noteOrder';
+import { bookNotebookIds, noteNotebooks } from '@/core/notebooks';
 import { displayTitle } from '@/core/title';
 import type { Recording } from '@/core/types';
 import { useLibrary } from '@/state/LibraryContext';
@@ -38,9 +39,12 @@ export default function ArchivedScreen() {
   const { noteOrder } = useSettings();
 
   const groups = useMemo<Group[]>(() => {
+    const bookIds = bookNotebookIds(notebooks);
+    const shown = noteNotebooks(notebooks);
     const byNotebook = new Map<string, Recording[]>();
     for (const recording of recordings) {
       if (!recording.archived || recording.deletedAt) continue;
+      if (bookIds.has(recordingNotebookId(recording))) continue;
       const id = recordingNotebookId(recording);
       const list = byNotebook.get(id);
       if (list) list.push(recording);
@@ -48,11 +52,11 @@ export default function ArchivedScreen() {
     }
     // A ordem dos cadernos e a que o usuario ve na tela de cadernos; notas
     // dentro de cada um seguem a ordem escolhida na lista.
-    const order = new Map(notebooks.map((notebook, index) => [notebook.id, index]));
-    const defaultNotebook = notebooks.find((notebook) => notebook.isDefault);
+    const order = new Map(shown.map((notebook, index) => [notebook.id, index]));
+    const defaultNotebook = shown.find((notebook) => notebook.isDefault);
     return [...byNotebook.entries()]
       .map(([id, notes]) => {
-        const notebook = notebooks.find((item) => item.id === id);
+        const notebook = shown.find((item) => item.id === id);
         return {
           id,
           name: notebook?.name ?? defaultNotebook?.name ?? 'Notas ao acaso',

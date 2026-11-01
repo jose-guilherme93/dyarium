@@ -19,12 +19,17 @@ const (
 	EntryReady        = "ready"
 	EntryFailed       = "failed"
 	EntryDeleted      = "deleted"
+	// EntryPurged is the tombstone of an entry whose content was already
+	// destroyed. It must never be restored, but it still tells peers that the
+	// deletion happened.
+	EntryPurged = "purged"
 )
 
 // Attachment kinds.
 const (
 	AttachmentOriginal   = "original"
 	AttachmentDerived16k = "derived_16k"
+	AttachmentImage      = "image"
 )
 
 // Entry author roles. An empty Author means "follow the app default": the
@@ -97,12 +102,31 @@ type Upload struct {
 	ExpiresAt     time.Time
 }
 
+// Quem criou um objeto. `Kind` e `device` (um aparelho com o app) ou `server`
+// (o proprio ambiente, pelo dashboard ou pela API). Proveniencia apenas: nao
+// muda permissao nem impede edicao em nenhum ambiente.
+const (
+	OriginKindDevice = "device"
+	OriginKindServer = "server"
+)
+
+// Origin identifies who created an object. Empty means the row predates the
+// field and the origin was not recorded.
+type Origin struct {
+	Instance string
+	Kind     string
+}
+
 // Entry is a stored audio and its lifecycle.
 type Entry struct {
 	ID     string
 	Title  string
 	Status string
 	Source string
+	// OriginInstance and OriginKind record who created the entry. Set once on
+	// creation; updates never touch them.
+	OriginInstance string
+	OriginKind     string
 	// ParentID is the parent note in the tree; empty means it is at the root.
 	ParentID string
 	// NotebookID is the notebook that owns the note. Every note has one.
@@ -138,6 +162,21 @@ type Entry struct {
 	// list query. When the body has no prose (an app note whose body is just the
 	// audio marker), the list shows the transcript instead.
 	SpokenPreview string
+	// Chapter fields. A chapter is an entry inside a book notebook; an empty
+	// ChapterKind means the entry is a regular note. ChapterPosition orders the
+	// flat chapter list and is never used by a notes notebook.
+	ChapterKind      string
+	ChapterPosition  *float64
+	ChapterStatus    string
+	ChapterGoalWords int
+	ChapterSynopsis  string
+	// ChapterBeats is the chapter plan: one beat per line, outside the prose.
+	ChapterBeats string
+	// ChapterNotes is the chapter research: free text, outside the prose.
+	ChapterNotes string
+	// WordCount is the prose word count, filled only when the caller asks for it
+	// (the book list and the book home).
+	WordCount int
 
 	// Versoes dos campos editaveis, como o cliente leu (so preenchidas nas
 	// leituras que as trazem). Sao os valores **exatos** gravados no banco: o
@@ -270,11 +309,12 @@ type Note struct {
 	Document string
 	// ContentMarkdown is the note body in markdown.
 	ContentMarkdown string
-	// BodyUpdatedAt is the version of the body: it changes on every accepted
+	// BodyVersion is the version of the body: it changes on every accepted
 	// write and is what a client compares against to detect a real conflict.
-	BodyUpdatedAt *time.Time
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	// Opaque token issued by the hybrid logical clock, not a timestamp.
+	BodyVersion string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // NoteRevision is a historical version of a note.
@@ -285,15 +325,113 @@ type NoteRevision struct {
 	CreatedAt time.Time
 }
 
+// Notebook kinds. A notebook is either a regular collection of notes or a
+// book: its entries are chapters and the dashboard opens the writer workspace.
+const (
+	NotebookKindNotes = "notes"
+	NotebookKindBook  = "book"
+)
+
+// Book statuses.
+const (
+	BookDrafting = "drafting"
+	BookRevising = "revising"
+	BookDone     = "done"
+)
+
+// Chapter kinds. A book keeps a flat list; a part is a divider in the same list.
+const (
+	ChapterKindChapter = "chapter"
+	ChapterKindPart    = "part"
+	ChapterKindFront   = "front"
+	ChapterKindBack    = "back"
+)
+
+// Chapter statuses. Empty means "not a chapter"; the book interface maps the
+// three values to draft, revising and done marks.
+const (
+	ChapterDraft    = "draft"
+	ChapterRevising = "revising"
+	ChapterDone     = "done"
+)
+
+// ValidNotebookKind reports whether kind is a known notebook kind.
+func ValidNotebookKind(kind string) bool {
+	return kind == NotebookKindNotes || kind == NotebookKindBook
+}
+
+// ValidBookStatus reports whether status is a known book status.
+func ValidBookStatus(status string) bool {
+	switch status {
+	case BookDrafting, BookRevising, BookDone:
+		return true
+	default:
+		return false
+	}
+}
+
+// ValidChapterKind reports whether kind is a chapter kind a book accepts.
+func ValidChapterKind(kind string) bool {
+	switch kind {
+	case ChapterKindChapter, ChapterKindPart, ChapterKindFront, ChapterKindBack:
+		return true
+	default:
+		return false
+	}
+}
+
+// ValidChapterStatus reports whether status is a known chapter status.
+func ValidChapterStatus(status string) bool {
+	switch status {
+	case "", ChapterDraft, ChapterRevising, ChapterDone:
+		return true
+	default:
+		return false
+	}
+}
+
 // Notebook is a collection of entries. Every entry belongs to exactly one.
+// A notebook with Kind "book" is a book and its entries are chapters.
 type Notebook struct {
-	ID          string
-	Name        string
-	Color       string
-	IsDefault   bool
-	EntryCount  int
-	LastEntryAt *time.Time
-	CreatedAt   time.Time
+	ID         string
+	Name       string
+	Color      string
+	IsDefault  bool
+	Kind       string
+	Subtitle   string
+	Author     string
+	Synopsis   string
+	Language   string
+	GoalWords  int
+	BookStatus string
+	// Page geometry of the book: the editor sheet, the reading preview, the
+	// PDF and the DOCX all use the same measure.
+	PageSize       string
+	PageMarginMM   int
+	BodyPX         int
+	BodyLeading    int
+	BodyFont       string
+	DailyGoalWords int
+	Deadline       string
+	HasCover       bool
+	CoverUpdatedAt *time.Time
+	EntryCount     int
+	ChapterCount   int
+	Words          int
+	LastEntryAt    *time.Time
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+// IsBook reports whether the notebook is a book.
+func (n Notebook) IsBook() bool { return n.Kind == NotebookKindBook }
+
+// BookCover is the cropped cover image of a book. One per notebook; the list of
+// notebooks only carries whether it exists and when it changed.
+type BookCover struct {
+	NotebookID  string
+	ContentType string
+	Image       []byte
 	UpdatedAt   time.Time
 }
 
@@ -397,6 +535,11 @@ type EntitySummary struct {
 	Mentions  int
 	Sentiment float64
 	LastSeen  time.Time
+	// UpdatedAt e o relogio do servidor para o nome, o icone e o "sou eu".
+	// O app compara com a propria copia para decidir qual escrita vence.
+	UpdatedAt time.Time
+	// Aliases sao as grafias antigas que ainda resolvem para esta entidade.
+	Aliases []string
 }
 
 // EntityEntry is an entry that mentions an entity.

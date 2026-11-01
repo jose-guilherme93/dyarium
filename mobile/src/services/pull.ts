@@ -24,11 +24,13 @@ import {
 } from '@/core/pull';
 import type { Recording } from '@/core/types';
 
+import { observeVersion } from './clock';
 import { deleteRecordingRow, listRecordings, upsertRecording } from './db';
 import { refreshAuthorSettings } from './authorSettings';
 import { syncServerAnalyses } from './analysis';
 import { syncServerTranscripts } from './transcripts';
 import { deleteSessionFiles } from './files';
+import { syncEntities } from './entitySync';
 import { pullNotebooks } from './notebookSync';
 import { loadServerConfig } from './secure';
 
@@ -80,6 +82,9 @@ async function pullOnce(): Promise<number> {
   // Nome do dono e o padrao das notas viajam juntos: a analise local precisa
   // deles mesmo sem rede e sem reabrir as configuracoes.
   await refreshAuthorSettings().catch(() => undefined);
+  // Nomes, icones e "sou eu" do mapa: a outbox local sobe e o catalogo do
+  // servidor desce antes das notas, para a lista ja refletir as duas pontas.
+  await syncEntities().catch(() => undefined);
   const api = new DyariumApi(config, doFetch);
   // Pagina ate o fim: antes o pull parava em 2000 notas e as mais antigas
   // nunca chegavam ao aparelho.
@@ -138,6 +143,14 @@ async function pullOnce(): Promise<number> {
 
   for (const entry of entries) {
     if (!entry.id) continue;
+    // O relogio local aprende as versoes antes de o merge decidir: o carimbo de
+    // uma edicao feita agora fica depois de tudo o que o servidor ja mostrou.
+    await observeVersion(
+      entry.versions?.title,
+      entry.versions?.recorded_at,
+      entry.versions?.body,
+      entry.updated_at,
+    );
 
     const existing = localByEntry.get(entry.id);
     if (existing) {

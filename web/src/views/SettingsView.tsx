@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, getToken } from "../api";
+import { BrowserProcessing } from "../components/BrowserProcessing";
 import { ChevronIcon } from "../components/icons";
 import { ListSkeleton } from "../components/Skeleton";
 import { Toggle } from "../components/Toggle";
@@ -392,14 +393,16 @@ export function SettingsView({ refreshKey = 0, onBack }: { refreshKey?: number; 
     if (settings) setOwnerName(settings.owner_name ?? "");
   }, [settings]);
 
-  const save = async (patch: Record<string, unknown>, message = "Configuração salva") => {
+  const save = async (patch: Record<string, unknown>, message = "Configuração salva"): Promise<boolean> => {
     try {
       await api.putSettings(patch);
       await loadSettings();
       setError("");
       notify(message, "success");
+      return true;
     } catch (err) {
       notify(err instanceof Error ? err.message : "falha ao salvar", "error");
+      return false;
     }
   };
 
@@ -631,10 +634,13 @@ export function SettingsView({ refreshKey = 0, onBack }: { refreshKey?: number; 
                       type="button"
                       className="button button--ghost button--small"
                       onClick={() => {
-                        if (deepgramKey.trim() !== "") {
-                          void save({ deepgram_api_key: deepgramKey }, "Chave da Deepgram salva");
-                          setDeepgramKey("");
-                        }
+                        const key = deepgramKey.trim();
+                        if (key === "") return;
+                        // So limpa o campo quando o servidor confirmou; antes, uma
+                        // falha de rede apagava a chave digitada.
+                        void save({ deepgram_api_key: key }, "Chave da Deepgram salva").then((ok) => {
+                          if (ok) setDeepgramKey("");
+                        });
                       }}
                     >
                       Salvar chave da Deepgram
@@ -746,6 +752,7 @@ export function SettingsView({ refreshKey = 0, onBack }: { refreshKey?: number; 
                 use Personalizado para informar a base manualmente.
               </p>
             </div>
+            <BrowserProcessing embedded />
             <div className="field">
               <span className="field-label">Ativar análise</span>
               <Toggle

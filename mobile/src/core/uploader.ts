@@ -42,6 +42,8 @@ export interface UploadInput {
   offset?: number;
   /** Adiciona o audio a uma entrada existente em vez de criar outra. */
   entryId?: string;
+  /** Id portatil do anexo de audio, igual em todos os ambientes. */
+  attachmentId?: string;
   /** Papel do autor da nota; vazio segue o padrao do app. */
   author?: AuthorRole;
 }
@@ -120,7 +122,7 @@ export async function uploadRecording(
     await deps.callbacks?.onProgress?.(offset, total);
   }
 
-  const done = await deps.api.completeUpload(uploadId);
+  const done = await deps.api.completeUpload(uploadId, input.attachmentId);
   return {
     uploadId,
     entryId: done.entry_id,

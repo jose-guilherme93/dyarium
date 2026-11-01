@@ -23,6 +23,7 @@ function setup(overrides: Partial<React.ComponentProps<typeof HomeHeader>> = {})
     onChangeQuery: jest.fn(),
     onOpenNotebooks: jest.fn(),
     onOpenSync: jest.fn(),
+    onOpenMap: jest.fn(),
     onOpenActivity: jest.fn(),
     onOpenSettings: jest.fn(),
     ...overrides,

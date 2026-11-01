@@ -22,6 +22,7 @@ func attachmentJSON(a store.Attachment) map[string]any {
 		"kind":         a.Kind,
 		"content_type": a.ContentType,
 		"size_bytes":   a.SizeBytes,
+		"sha256":       a.SHA256,
 		"created_at":   a.CreatedAt,
 	}
 }
@@ -194,7 +195,7 @@ func (s *Server) handleCreateAttachment(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid_type", "envie uma imagem (Content-Type image/*)")
 		return
 	}
-	att, err := s.deps.Ingest.PutAttachment(ctx, entryID, "image", contentType, r.Body, maxImageBytes)
+	att, err := s.deps.Ingest.PutAttachmentWithID(ctx, entryID, store.AttachmentImage, contentType, r.Header.Get("X-Attachment-Id"), r.Body, maxImageBytes)
 	if err != nil {
 		var ingestErr *ingest.Error
 		if errors.As(err, &ingestErr) {

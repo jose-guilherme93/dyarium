@@ -21,7 +21,13 @@ Convencoes gerais:
 Responde 200 com `{ "status": "ok", "version": "<versao>" }`. Sem autenticacao.
 
 ### GET /api/v1/version
-Retorna `{ "version": "<versao>", "commit": "<hash>", "built_at": "<RFC3339>" }`.
+Retorna `{ "version": "<versao>", "commit": "<hash>", "built_at": "<RFC3339>", "instance_id": "<hex>", "sync_contract": "1" }`.
+
+- `instance_id` e a identidade estavel do ambiente: gerada no primeiro boot em
+  `/data/instance.id`, sobrevive a reinicio, troca de endereco e troca de token.
+  Dois ambientes nunca compartilham o mesmo id.
+- `sync_contract` e o major do contrato de sincronizacao. O app recusa a conexao
+  quando nao conhece o major; a recusa acontece antes de qualquer escrita.
 
 ## Upload resumivel
 
@@ -116,10 +122,16 @@ Resposta 201:
 { "entry_id": "en_...", "attachment_id": "at_...", "status": "queued" }
 ```
 - `attachment_id` identifica o audio criado (o anexo `original` da entrada).
+- `X-Attachment-Id` (opcional) faz o servidor usar o id do criador em vez de
+  gerar um. O mesmo id passa a valer em todos os ambientes, entao o corpo da nota
+  que referencia `attachment:<id>` e portatil. Repetir o id com o mesmo conteudo e
+  idempotente; conteudo diferente sob o mesmo id responde 409
+  `attachment_id_conflict`.
 - Idempotente: repetir o complete depois de perder a resposta devolve o mesmo
   `entry_id`/`attachment_id` (201), sem criar outro audio nem reenfileirar a transcricao.
 - O mesmo conteudo de audio nunca vira dois audios da mesma nota: se o `sha256` ja existe
   (novo upload da mesma gravacao), devolve o audio existente em vez de duplicar.
+  Quando o cliente informa `X-Attachment-Id`, a deduplicacao nao troca o id pedido.
 - 422: integridade divergente (SHA-256), formato nao aceito ou duracao acima do limite.
 - 404: upload inexistente ou expirado.
 
@@ -130,12 +142,17 @@ Lista entradas. Filtros: `person`, `place` e `theme` (entradas que mencionam a e
 por nome, case-insensitive) e `notebook_id` (notas de um caderno). Retorna resumos com id,
 titulo, status, duracao, data, `notebook_id` e, quando houver, `tags` (nomes).
 Com `deleted=1` lista a **lixeira**: as entradas apagadas (remocao logica) com
-`deleted_at`, da mais recente para a mais antiga.
+`deleted_at`, da mais recente para a mais antiga. A lixeira e permanente: apos a
+retencao, o conteudo (audio, imagens, corpo) e purgado, mas o tombstone continua
+sendo listado. Um ambiente que ficou offline por mais tempo que a janela ainda
+aprende que a nota foi apagada e nao a ressuscita.
 - `notebook_id` desconhecido responde 404 `notebook_not_found`.
 - O app reconcilia exclusoes por esta lista, e nao por ausencia: uma entrada que
   simplesmente sumiu (servidor novo, banco restaurado) nunca apaga a nota local.
 - Entradas apagadas aparecem em `entries` com `status: "deleted"` e o campo
-  `deleted_at` preenchido.
+  `deleted_at` preenchido. Depois que o conteudo e purgado, o tombstone continua
+  na lista com `status: "purged"` e `purged: true`; `restore` nesse estado
+  responde 404, porque nao ha mais o que restaurar.
 - `archived=0` (padrao explicito do app e do dashboard) traz so as notas da lista
   de trabalho; `archived=1` traz so as arquivadas; **sem o filtro traz as duas**,
   para nenhum cliente perder nota por omissao.
@@ -151,6 +168,12 @@ Com `deleted=1` lista a **lixeira**: as entradas apagadas (remocao logica) com
 - `primary_attachment_id` (quando a nota tem audio) aponta o primeiro audio
   original. A lista nao carrega a pilha inteira; e por este id que o app resolve o
   player de uma nota puxada do servidor.
+- `origin_instance` e `origin_kind` dizem quem **criou** a nota: o id do aparelho
+  (`device`) ou o `instance_id` do ambiente (`server`). O app manda
+  `X-Origin-Instance: <id do aparelho>` em toda requisicao autenticada; sem o
+  cabecalho (dashboard/API) o criador e o proprio ambiente. E proveniencia: nao
+  muda permissao e nao impede editar a nota em nenhum ambiente. Linha criada
+  antes do campo vem com os dois vazios.
 - `analysis_at` e quando a analise mais nova foi gravada no servidor (vazio quando
   nao ha analise). E o sinal de atualizacao do app: quando o valor muda, ele busca
   a analise uma vez e guarda no banco; a ficha mostra sempre a copia local, sem
@@ -162,6 +185,12 @@ Com `deleted=1` lista a **lixeira**: as entradas apagadas (remocao logica) com
   markdown vira texto, imagens, marcadores de audio e escapes somem e a frase nao
   e cortada no meio de uma palavra. E so para desenhar a lista; o corpo continua
   em `notes`.
+- Em um livro, cada entrada traz `chapter_kind` (`chapter`, `part`, `front` ou
+  `back`), `chapter_position`, `chapter_status` (`draft`, `revising`, `done`),
+  `chapter_goal_words`, `chapter_synopsis`, `chapter_beats` (um beat por linha)
+  e `chapter_notes` (pesquisa do capitulo, fora do corpo). Com `include_words=1`
+  (ou ao listar um livro), traz tambem `word_count`. Em caderno de notas, os
+  campos de capitulo vem vazios.
 
 ## Markdown como formato da nota
 
@@ -171,7 +200,14 @@ falam. Cada campo editavel tem **versao propria** (`title`, `recorded_at`,
 atual. Se nao for, responde `409` **sem escrever** e diz qual campo brigou — o
 cliente pergunta ao usuario em vez de sobrescrever em silencio.
 
-- Versoes sao RFC 3339 (UTC, com nanossegundos) devolvidas em `versions`.
+- Versoes sao **opacas**: um carimbo do relogio hibrido logico
+  (`physical-counter-node`, largura fixa, comparavel como string) devolvido em
+  `versions`. O cliente guarda e devolve o token; nao interpreta o valor. Versoes
+  antigas em RFC 3339 continuam aceitas e ordenadas como carimbos sem contador.
+- Gravacoes de `PATCH /entries/{id}` e `PUT /notes/{id}` aceitam o cabecalho
+  opcional `X-HLC` com a ultima versao que o cliente viu. O servidor avanca o
+  relogio ate ela e a gravacao seguinte fica depois, mesmo que o relogio do
+  aparelho esteja atrasado. Cabecalho ausente ou invalido nao muda nada.
 - Cliente que **nao manda versao** (app antigo) continua funcionando: ultimo a
   escrever vence.
 - Os clientes oficiais usam essa politica: o app grava o corpo **sem
@@ -247,13 +283,21 @@ Resposta 200: `{ "status": "ok", "versions": { "title": "...", "recorded_at": ".
   padrao da instancia). Como `archived`, e a ultima gravacao que vence, sem versao.
   Valor desconhecido responde 400 `invalid_author`.
 - 400 quando o corpo nao traz nenhum campo.
+- Em um livro, `archived` responde 422 `not_a_book_entry`: o livro usa
+  `chapter_status`, nao a lixeira de trabalho do diario. Mover a nota para um
+  livro limpa o arquivamento e atribui a posicao no fim; mover para um caderno
+  de notas limpa `chapter_kind` e `chapter_position`.
+- `chapter_kind` (so em livro) troca o tipo do capitulo; `chapter_status`,
+  `chapter_goal_words`, `chapter_synopsis`, `chapter_beats` e `chapter_notes`
+  alimentam o painel do capitulo. Fora de um livro, `chapter_kind` responde 422
+  `not_a_book`.
 - Nao altera o audio.
 
 ### POST /api/v1/entries
 Cria uma nota escrita (sem audio). Corpo:
 ```json
 { "title": "...", "id": "note_...", "created_at": "...", "recorded_at": "...",
-  "notebook_id": "...", "author": "other" }
+  "notebook_id": "...", "author": "other", "chapter_kind": "chapter" }
 ```
 A entrada nasce com `source: "text"` e `status: "ready"`; o corpo **nao** vai
 aqui: ele e gravado como nota em markdown por `POST /api/v1/entries/{id}/notes`,
@@ -267,6 +311,65 @@ nasce em "Notas ao acaso".
   **na lixeira**, desfaz a remocao e devolve 200 (trazer a nota de volta sem duplicar); senao cria
   com 201.
 - `created_at` (RFC 3339) posiciona a nota na linha do tempo quando ela nasceu offline.
+- Em um livro, `chapter_kind` e opcional (padrao `chapter`); a posicao e
+  `max(position) + 1024`, o status nasce `draft` e `archived` fica 0. Mandar
+  `chapter_kind` em caderno de notas responde 422 `not_a_book`.
+
+## Sincronizacao entre ambientes
+
+O servidor e o app sao pares independentes. O contrato completo esta em
+`docs/sincronizacao.md`; esta secao descreve a superficie HTTP.
+
+### GET /api/v1/sync/manifest
+Manifesto compacto para reconciliacao. Parametros: `kind` (`entries`, `deleted` ou
+`notebooks`), `limit` (padrao 500, teto 5000) e `cursor`. Autenticado.
+
+```json
+{
+  "contract": "1",
+  "instance_id": "<hex>",
+  "kind": "entries",
+  "items": [
+    {
+      "id": "note_...",
+      "kind": "entry",
+      "title": "...",
+      "created_at": "...",
+      "updated_at": "...",
+      "recorded_at": "...",
+      "content_type": "audio/aac",
+      "source": "upload",
+      "notebook_id": "...",
+      "archived": false,
+      "author": "",
+      "versions": { "title": "...", "recorded_at": "...", "body": "..." },
+      "body_hash": "<sha256 do markdown>",
+      "primary_attachment_id": "at_...",
+      "attachment_ids": ["at_..."],
+      "transcript_at": "...",
+      "analysis_at": "...",
+      "chapter_kind": "",
+      "chapter_status": "",
+      "chapter_goal_words": 0,
+      "chapter_synopsis": "",
+      "chapter_beats": "",
+      "chapter_notes": "",
+      "tags": ["..."]
+    }
+  ],
+  "complete": true,
+  "next_cursor": "..."
+}
+```
+
+- `kind=entries` lista as entradas vivas; `kind=deleted` lista os tombstones
+  (inclusive os que ja tiveram o conteudo purgado, com `purged: true`);
+  `kind=notebooks` devolve `items` (cadernos) e `deleted` (tombstones de
+  caderno).
+- O manifesto nao traz corpo nem transcricao: eles sao buscados pelos endpoints
+  normais quando `body_hash`/`versions`/`transcript_at` divergem do estado local.
+- `complete: false` significa lista truncada; o cliente **nao** pode tratar
+  ausencia como exclusao nem aplicar uniao parcial.
 
 ### GET /api/v1/entries/{id}
 Retorna a entrada completa: metadados, `audios`, `tags` e `metrics`. O `audios` e
@@ -354,6 +457,21 @@ vez de transcrever, e o dashboard mostra o texto. Corpo:
   quando o texto inteiro e o mesmo, a compreensao, os recusados e o alcance da passada
   tambem sobrevivem.
 
+### PATCH /api/v1/entries/{id}/transcript/segments/{idx}
+Reescreve **uma** linha da transcricao pelo dashboard. Corpo:
+```json
+{ "attachment_id": "at_...", "text": "o trecho corrigido" }
+```
+- `idx` e o indice estavel do segmento em `GET /entries/{id}/transcript`
+  (`segments[].idx`); `attachment_id` liga a edicao ao audio certo quando a nota tem
+  varios.
+- O texto escrito pelo usuario vence: o segmento fica com `edited: true`, a revisao
+  daquela linha e descartada e a passada de revisao nunca a toca de novo.
+- As outras linhas e as revisoes delas continuam intactas; o `text` cru da
+  transcricao e reconstruido a partir dos segmentos.
+- Emite `transcript.ready` e `entry.status` para as abas abertas recarregarem a
+  nota. `404` quando o indice ou a transcricao nao existem.
+
 ### PUT /api/v1/entries/{id}/transcript/revisions
 Guarda a revisao da transcricao feita no aparelho (ou por outro cliente). Corpo:
 ```json
@@ -408,7 +526,9 @@ Lista os anexos de midia (imagens) da entrada.
 
 ### POST /api/v1/entries/{id}/attachments
 Envia uma imagem. O corpo e os bytes da imagem e o `Content-Type` deve comecar com
-`image/`. Resposta 201 com `{ id, entry_id, kind, content_type, size_bytes, created_at }`.
+`image/`. `X-Attachment-Id` (opcional) usa o id do criador, com a mesma regra de
+idempotencia/conflito do complete do upload. Resposta 201 com
+`{ id, entry_id, kind, content_type, size_bytes, sha256, created_at }`.
 
 ### GET /api/v1/attachments/{id}
 Transmite o anexo decifrado (imagens e audios), com suporte a `Range` para o audio.
@@ -800,8 +920,13 @@ Lista as entidades extraidas, ordenadas por mencoes. Filtro opcional `kind` (`pe
 `place`, `theme` ou `decision`; outro valor retorna 400).
 ```json
 { "entities": [ { "id": "01J...", "kind": "person", "name": "Maria", "icon": "",
-  "entries": 2, "mentions": 5, "sentiment": 0.4, "last_seen": "2026-10-10T21:05:00Z" } ] }
+  "entries": 2, "mentions": 5, "sentiment": 0.4, "last_seen": "2026-10-10T21:05:00Z",
+  "updated_at": "2026-10-10T21:05:00Z", "aliases": ["Mariana"] } ],
+  "owner_aliases": ["Ze"] }
 ```
+`updated_at` e o relogio do servidor para nome, icone e "sou eu"; `aliases` sao as grafias
+antigas que ainda resolvem para a entidade. `owner_aliases` traz as grafias que o dono
+marcou como ele mesmo, para o app tirar a pessoa duplicada do mapa local.
 
 ### GET /api/v1/entities/{kind}/{name}
 Retorna a entidade (mesmos campos) mais a lista de entradas que a mencionam. Nomes antigos
@@ -847,6 +972,8 @@ Renomeia uma pessoa, lugar, tema ou decisao. Corpo:
   antigo vira alias. O dashboard oferece essa escolha como "Mesclar em" no painel de
   renomear, com a lista do mesmo tipo. A decisao fica salva no alias: analises futuras com
   a grafia antiga caem na sobrevivente, sem repetir a mesclagem.
+- A resposta traz `edit_id`: o cliente usa em `POST /entities/edits/{id}/undo` para
+  desfazer a edicao. Vale para renomear/mesclar, icone e "sou eu".
 
 ### PUT /api/v1/entities/{kind}/{name}/icon
 Escolhe o icone monocromatico desenhado dentro da bola. Corpo:
@@ -857,7 +984,8 @@ Escolhe o icone monocromatico desenhado dentro da bola. Corpo:
   `book`, `briefcase`, `music`, `health`, `money`, `food`, `car`, `plane`, `tree`, `sun`,
   `moon`, `flag`, `globe`, `camera`, `document`). Vazio volta ao icone do tipo.
 - 400 `invalid_icon` para chave fora da paleta/kind invalido; 404 se a entidade nao existe.
-- Retorna a entidade com `icon` ja atualizado. O mapa recebe a chave em `nodes[].icon`.
+- Retorna a entidade com `icon` ja atualizado e o `edit_id` da edicao. O mapa recebe a
+  chave em `nodes[].icon`.
 
 ### POST /api/v1/entities/person/{name}/self
 Marca uma pessoa como **o dono do diario** ("sou eu"). Usado quando a IA tratou uma
@@ -868,7 +996,20 @@ grafia do nome do dono como outra pessoa.
   configuracoes na leitura (nomes estruturados e prosa); o audio, a transcricao e o corpo
   da nota continuam intactos.
 - Uma analise futura que ainda extraia a grafia antiga nao recria a pessoa.
-- Resposta: `{"status":"ok","owner":"<nome do dono>"}`. 404 se a pessoa nao existir.
+- Resposta: `{"status":"ok","owner":"<nome do dono>","edit_id":"<id>"}`. 404 se a pessoa
+  nao existir.
+
+### POST /api/v1/entities/edits/{id}/undo
+Desfaz a edicao de entidade mais recente (renomear, mesclar, icone ou "sou eu").
+- O servidor guarda, antes da escrita, as linhas afetadas (entidade, aliases, vinculos e
+  a lista de grafias do dono), porque mesclar apaga a origem e soma os vinculos: desfazer
+  nao e so voltar o nome, e restaurar as contagens originais.
+- So a edicao **mais recente ainda de pe** pode ser desfeita; uma mais nova responde 409
+  `edit_not_latest` (reverter apagaria a mudanca recente).
+- A restauracao marca `updated_at` como agora: o desfazer e uma mudanca nova e vence a
+  copia antiga que outro cliente ainda tenha.
+- Resposta: `{"status":"ok","action":"rename|merge|icon|self","label":"..."}`. 404 para
+  id inexistente ou ja desfeito.
 
 ### GET /api/v1/mood
 Serie temporal do sentimento por dia. Filtros opcionais `from` e `to` (RFC 3339 ou
@@ -1032,29 +1173,142 @@ Cada nota pertence a exatamente um caderno. O caderno padrao `notas-ao-acaso`
 ("Notas ao acaso") e criado pela migracao 0017, nao pode ser renomeado nem
 excluido, e recebe as notas de cadernos excluidos.
 
+Um caderno com `kind: "book"` e um livro: suas entradas sao capitulos e o
+dashboard abre o modo escritor. O modelo e o mesmo da nota (uma `Entry` com
+corpo em markdown); nao existe segunda entidade de conteudo. O caderno padrao
+nunca pode ser livro.
+
 ### GET /api/v1/notebooks
 Lista cadernos em ordem de criacao, com o padrao no fim:
 ```json
-{ "notebooks": [ { "id": "...", "name": "Trabalho", "color": "#C7D8F2",
-  "is_default": false, "entry_count": 12, "last_entry_at": "...",
-  "created_at": "...", "updated_at": "..." } ] }
+{ "notebooks": [ { "id": "nb_...", "name": "O nome do vento", "color": "#C7D8F2",
+  "is_default": false, "kind": "book", "subtitle": "Volume I", "author": "Ana",
+  "synopsis": "...", "language": "pt-BR", "goal_words": 90000,
+  "book_status": "drafting", "page_size": "14x21", "page_margin_mm": 19,
+  "body_px": 18, "body_leading": 160, "body_font": "newsreader",
+  "has_cover": false, "cover_updated_at": null,
+  "daily_goal_words": 500,
+  "deadline": "2026-12-01",
+  "chapter_count": 12, "words": 48320,
+  "entry_count": 12, "created_at": "...", "updated_at": "..." } ] }
 ```
-`entry_count` e `last_entry_at` consideram apenas notas ativas (nao arquivadas,
-nao apagadas); `last_entry_at` usa `recorded_at` (a data real da nota).
+- `kind` e `notes` ou `book`; cadernos antigos ficam `notes`.
+- `book_status` e `drafting`, `revising` ou `done`.
+- `page_size` e um formato de livro: `11x18` (bolso), `14x21` (romance, padrao),
+  `a5`, `5x8` ou `6x9`. `a4` continua aceito para livros antigos e para o
+  manuscrito, nao e oferecido como formato de livro. `page_margin_mm` fica entre
+  10 e 60 (padrao 19); `body_px` entre 12 e 26 (padrao 18); `body_leading` e o
+  percentual da entrelinha entre 100 e 220 (padrao 160). A folha vale para o
+  editor, a leitura e a exportacao do livro.
+- `body_font` e a fonte do corpo: `newsreader` (padrao), `eb-garamond`,
+  `libre-baskerville`, `libre-caslon-text`, `tinos`, `gelasio`, `literata` ou
+  `crimson-pro`. As fontes ficam servidas pelo dashboard; valor desconhecido
+  responde 422 `invalid_font`.
+- `daily_goal_words` e `deadline` (`AAAA-MM-DD`) formam o ritmo do livro; zero e
+  vazio desligam meta diaria e prazo.
+- `entry_count` e `last_entry_at` consideram apenas notas ativas (nao arquivadas,
+  nao apagadas); `last_entry_at` usa `recorded_at` (a data real da nota). Em um
+  livro, `entry_count` conta os capitulos vivos.
+- `chapter_count` e `words` so aparecem em livros. `words` e a soma da prosa dos
+  capitulos, calculada no servidor com a mesma conversao da previa; so e
+  devolvida com `include_words=1` (o dashboard pede). Fora isso, zero/ausente.
 
 ### POST /api/v1/notebooks
-Cria um caderno (`{ "name": "...", "color": "...", "id": "nb_..." }`).
+Cria um caderno ou um livro:
+```json
+{ "id": "nb_opcional", "name": "...", "color": "#C7D8F2", "kind": "book",
+  "subtitle": "Volume I", "author": "Ana", "synopsis": "...",
+  "language": "pt-BR", "goal_words": 90000, "book_status": "drafting",
+  "page_size": "14x21", "page_margin_mm": 19, "body_px": 18,
+  "body_leading": 160, "body_font": "newsreader",
+  "daily_goal_words": 500, "deadline": "2026-12-01" }
+```
 - `id` e opcional: o app cria offline e preserva o mesmo id nos dois lados. Se o
   id ja existir, responde 200 com o caderno existente (idempotente).
-- Nome vazio: 400 `invalid_name`; nome duplicado (case-insensitive): 409 `conflict`.
+- Um livro nasce vazio, entao a regra de ativacao vale por construcao.
+- Nome vazio: 400 `invalid_name`; nome duplicado (case-insensitive): 409
+  `conflict`; `kind` ou `book_status` invalidos: 422; pagina fora da faixa: 422
+  `invalid_page`; prazo fora de `AAAA-MM-DD`: 422 `invalid_deadline`.
 
 ### PATCH /api/v1/notebooks/{id}
-Renomeia e/ou recolore (`{ "name": "...", "color": "..." }`). O padrao responde
-409 `protected`; nome duplicado responde 409 `conflict`.
+Aceita `name`, `color`, `kind` e os metadados do livro (`subtitle`, `author`,
+`synopsis`, `language`, `goal_words`, `book_status`, `page_size`,
+`page_margin_mm`, `body_px`, `body_leading`, `body_font`, `daily_goal_words`,
+`deadline`) com
+`confirm_convert`.
+
+- `kind: "book"` em caderno com entry viva (ativa **ou** arquivada) responde 409
+  `notebook_not_empty` com `{ "entry_count": N }`. Nota so na lixeira nao bloqueia.
+- `kind: "notes"` em livro com capitulos responde 409 `book_has_chapters` com
+  `{ "chapter_count": N }`, a menos que venha `confirm_convert: true`. A conversao
+  mantem os textos como notas e limpa `chapter_kind`, `chapter_position` e os
+  metadados do livro na mesma transacao.
+- Metadados em caderno que nao e livro respondem 422 `not_a_book`.
+- O padrao responde 409 `protected`; nome duplicado 409 `conflict`.
+
+### PUT /api/v1/notebooks/{id}/chapters/order
+Reordena a lista plana e reescreve o tipo/status de cada capitulo:
+```json
+{ "chapters": [
+  { "entry_id": "e1", "chapter_kind": "part", "chapter_status": "draft", "position": 1024 },
+  { "entry_id": "e2", "chapter_kind": "chapter", "chapter_status": "revising", "position": 2048 }
+] }
+```
+A lista precisa conter todos os capitulos vivos do livro (o cliente arrasta a
+lista inteira). A gravacao e uma transacao. Erros: 422 `not_a_book`,
+`chapter_not_in_book` (id de outro livro, apagado ou lista incompleta) e
+`invalid_chapter` (kind/status fora da whitelist ou posicao nao finita).
+
+### GET /api/v1/notebooks/{id}/cover
+Entrega a capa recortada do livro. A imagem e binaria; o `Content-Type` vem do
+upload (JPEG, PNG ou WebP) e o `ETag` muda a cada capa. `404` quando o livro nao
+tem capa. As listas de cadernos trazem apenas `has_cover` e
+`cover_updated_at`, nunca a imagem.
+
+### PUT /api/v1/notebooks/{id}/cover
+Corpo cru com a imagem ja recortada pelo dashboard (ate 8 MiB), `Content-Type`
+`image/jpeg`, `image/png` ou `image/webp`. So aceita livro; caderno comum
+responde 422 `not_a_book`; tipo fora da lista responde 415 `invalid_image`. O
+dashboard recorta a foto na proporcao da folha antes de enviar. A resposta e
+`{ "notebook_id": "...", "cover_updated_at": "...", "size_bytes": N }`.
+
+### DELETE /api/v1/notebooks/{id}/cover
+Remove a capa. Idempotente.
+
+### GET /api/v1/notebooks/{id}/writing
+Ritmo de escrita do livro para o topo do capitulo e a casa do livro:
+```json
+{ "today": 320, "daily_goal": 500, "deadline": "2026-12-01", "goal_words": 90000,
+  "days": [ { "day": "2026-10-26", "words": 0 }, { "day": "2026-11-01", "words": 320 } ] }
+```
+- `days` traz a janela pedida em `?days=N` (padrao 7, maximo 90), do mais antigo
+  para hoje, com zero nos dias sem escrita.
+- `words` e o saldo liquido do dia (o que foi escrito menos o que foi apagado),
+  preso em zero na leitura. O dia e a data do servidor.
+- A gravacao do corpo de um capitulo (`POST`/`PUT` de notes) soma a diferenca de
+  prosa do dia; nota comum nao entra no ritmo.
+
+### GET /api/v1/notebooks/{id}/entities
+Entidades que a analise ja encontrou nos capitulos vivos do livro, sem disparar
+analise:
+```json
+{ "entities": [ { "kind": "person", "name": "Elisa", "mentions": 4, "chapters": 2 } ] }
+```
+As mais mencionadas vem primeiro (limite de 30).
 
 ### DELETE /api/v1/notebooks/{id}
-Exclui o caderno e move as notas para "Notas ao acaso" na mesma transacao.
-204; 409 `protected` para o padrao; 404 se nao existir.
+- Caderno de notas: exclui o caderno e move as notas para "Notas ao acaso" na
+  mesma transacao. 204; 409 `protected` para o padrao; 404 se nao existir.
+- Livro: exige `?mode=trash&confirm=<titulo exato>`. Sem isso, 409
+  `confirm_required`. Com a confirmacao, os capitulos vivos vao para a Lixeira
+  (com tombstones) e o caderno e removido na mesma transacao. Nada e despejado
+  no caderno padrao.
+
+### Escopo do diario
+`GET /entries`, `GET /graph` e `GET /mood` aceitam `exclude_books=1`, que deixa
+capitulos de livros fora do diario, do mapa e do humor. O dashboard usa o filtro
+em "Todos os cadernos", Mapa, humor e Estatisticas. Sem o parametro, o
+comportamento antigo (inclui livros) e preservado para clientes antigos.
 
 ## Tags
 

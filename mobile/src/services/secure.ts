@@ -67,6 +67,15 @@ async function deleteValue(key: string): Promise<void> {
 }
 
 export async function loadServerConfig(): Promise<ServerConfig | null> {
+  const servers = await loadServers();
+  if (servers.length > 0) {
+    const { baseUrl, token } = servers[0];
+    return { baseUrl, token };
+  }
+  return loadLegacyServerConfig();
+}
+
+async function loadLegacyServerConfig(): Promise<ServerConfig | null> {
   try {
     const raw = await readValue(KEY);
     if (!raw) return null;
@@ -79,6 +88,86 @@ export async function loadServerConfig(): Promise<ServerConfig | null> {
     // Sem SecureStore disponivel (ou valor corrompido): segue sem configuracao.
     return null;
   }
+}
+
+/** Um ambiente conectado. O id e o `instance_id` do servidor, nunca a URL. */
+export interface StoredServer extends ServerConfig {
+  id: string;
+  contract: string;
+}
+
+const SERVERS_KEY = 'dyarium.servers';
+
+/**
+ * Lista de ambientes conectados. O primeiro e o primario, usado pelos servicos
+ * que ainda falam com um servidor so (transcricao, analise, metricas). Todos os
+ * ambientes da lista participam da reconciliacao de notas.
+ *
+ * O formato antigo (um unico `dyarium.server.config`) e migrado em memoria e
+ * gravado no formato novo no primeiro handshake, quando o id real e conhecido.
+ */
+export async function loadServers(): Promise<StoredServer[]> {
+  try {
+    const raw = await readValue(SERVERS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as unknown;
+      if (Array.isArray(parsed)) {
+        const out: StoredServer[] = [];
+        for (const value of parsed) {
+          if (!value || typeof value !== 'object') continue;
+          const item = value as Partial<StoredServer>;
+          if (typeof item.baseUrl !== 'string' || typeof item.token !== 'string') continue;
+          out.push({
+            id: typeof item.id === 'string' ? item.id : '',
+            baseUrl: item.baseUrl,
+            token: item.token,
+            label: typeof item.label === 'string' ? item.label : undefined,
+            contract: typeof item.contract === 'string' ? item.contract : '',
+          });
+        }
+        if (out.length > 0) return out;
+      }
+    }
+  } catch {
+    // valor corrompido: cai para o formato antigo
+  }
+  const legacy = await loadLegacyServerConfig();
+  if (!legacy) return [];
+  return [{ id: '', baseUrl: legacy.baseUrl, token: legacy.token, contract: '' }];
+}
+
+export async function saveServers(servers: StoredServer[]): Promise<void> {
+  await writeValue(SERVERS_KEY, JSON.stringify(servers));
+}
+
+/** Insere ou atualiza um ambiente. O mais recente vira o primario. */
+export async function upsertServer(server: StoredServer): Promise<StoredServer[]> {
+  const current = await loadServers();
+  const without = current.filter((item) => {
+    if (server.id && item.id) return item.id !== server.id;
+    return item.baseUrl !== server.baseUrl;
+  });
+  const next = [server, ...without];
+  await saveServers(next);
+  // Mantem o formato antigo alinhado ao primario, para um rollback nao abrir
+  // sem servidor nenhum.
+  await writeValue(KEY, JSON.stringify({ baseUrl: server.baseUrl, token: server.token }));
+  return next;
+}
+
+export async function removeServer(id: string): Promise<StoredServer[]> {
+  const current = await loadServers();
+  const next = current.filter((item) => item.id !== id && item.baseUrl !== id);
+  await saveServers(next);
+  if (next.length === 0) {
+    await deleteValue(KEY);
+  } else {
+    await writeValue(
+      KEY,
+      JSON.stringify({ baseUrl: next[0].baseUrl, token: next[0].token }),
+    );
+  }
+  return next;
 }
 
 export async function saveServerConfig(config: ServerConfig): Promise<void> {

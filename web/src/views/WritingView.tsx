@@ -13,7 +13,7 @@ import type {
 } from "../types";
 
 /**
- * Painel "Escrita": mostra as métricas que o app calcula offline. O celular
+ * Painel "Estatísticas": mostra as métricas que o app calcula offline. O celular
  * envia o documento pronto (contrato em docs/api.md); aqui so desenhamos, sem
  * recalcular nada, para os numeros baterem exatamente com o app.
  */
@@ -296,7 +296,7 @@ export function WritingView({ refreshKey }: { refreshKey: number }) {
       <section className="view">
         <header className="page-head">
           <div>
-            <h1>Escrita</h1>
+            <h1>Estatísticas</h1>
           </div>
         </header>
         <p className="muted">
@@ -310,7 +310,7 @@ export function WritingView({ refreshKey }: { refreshKey: number }) {
     <section className="view">
       <header className="page-head">
         <div>
-          <h1>Escrita</h1>
+          <h1>Estatísticas</h1>
           <p>
             Métricas calculadas no aparelho, sobre as suas notas. O dashboard só desenha os números.
           </p>

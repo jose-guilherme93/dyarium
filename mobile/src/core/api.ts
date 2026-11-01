@@ -8,6 +8,17 @@ import type {
 
 export type { ConflictField, ServerAudio, TranscriptSegment };
 
+/**
+ * Nome do aparelho anexado a toda requisicao autenticada (`X-Origin-Instance`).
+ * E o que deixa o servidor registrar que a nota nasceu no app. Proveniencia
+ * apenas: nao muda permissao nem impede editar a nota em nenhum ambiente.
+ */
+let clientOrigin = '';
+
+export function setClientOrigin(value: string): void {
+  clientOrigin = value.trim();
+}
+
 export interface HttpResponse {
   ok: boolean;
   status: number;
@@ -216,6 +227,51 @@ export interface VersionResponse {
   version: string;
   commit: string;
   built_at: string;
+  /** Identidade estavel do ambiente; ausente em servidor antigo. */
+  instance_id?: string;
+  /** Major do contrato de sync falado pelo servidor. */
+  sync_contract?: string;
+}
+
+/**
+ * Uma linha do manifesto de sync: identidade, ordem, versoes e o que o outro
+ * ambiente precisa para decidir o que baixar. O corpo e a transcricao nao vem
+ * aqui; vem pelos endpoints normais quando o hash/versao difere.
+ */
+export interface SyncManifestEntry {
+  id: string;
+  kind: 'entry' | 'notebook';
+  title?: string;
+  created_at: string;
+  updated_at: string;
+  recorded_at?: string | null;
+  deleted_at?: string | null;
+  content_type?: string;
+  source?: string;
+  notebook_id?: string;
+  archived?: boolean;
+  author?: AuthorRole;
+  versions?: { title?: string; recorded_at?: string; body?: string };
+  body_hash?: string;
+  primary_attachment_id?: string;
+  attachment_ids?: string[];
+  transcript_at?: string;
+  analysis_at?: string;
+  tags?: string[];
+  /** Quem criou a nota: `device` ou `server`. Proveniencia, nao permissao. */
+  origin_kind?: 'device' | 'server' | '';
+  origin_instance?: string;
+}
+
+/** Manifesto paginado de um tipo de objeto em um ambiente. */
+export interface SyncManifestResponse {
+  contract: string;
+  instance_id: string;
+  kind: string;
+  items: SyncManifestEntry[];
+  deleted?: SyncManifestEntry[];
+  complete: boolean;
+  next_cursor?: string;
 }
 
 /** Envelope do snapshot de metricas enviado ao servidor. */
@@ -302,6 +358,10 @@ export interface EntitySummary {
   mentions: number;
   sentiment: number;
   last_seen: string | null;
+  /** Relogio do servidor para nome/icone/"sou eu"; ausente em versao antiga. */
+  updated_at?: string | null;
+  /** Grafias antigas que ainda resolvem para esta entidade. */
+  aliases?: string[];
 }
 
 export interface EntityEntry {
@@ -343,6 +403,11 @@ export interface ServerEntry {
   versions?: { title?: string; recorded_at?: string; body?: string };
   /** Presente apenas na listagem da lixeira (`?deleted=1`). */
   deleted_at?: string | null;
+  /** Tombstone cujo conteudo ja foi purgado; nao pode ser restaurado. */
+  purged?: boolean;
+  /** Quem criou a nota: `device` (o app) ou `server` (o ambiente). */
+  origin_kind?: 'device' | 'server' | '';
+  origin_instance?: string;
   /**
    * Quando a analise mais nova foi gravada no servidor. E o sinal de
    * atualizacao: o app busca a analise uma vez quando este valor muda.
@@ -450,6 +515,7 @@ export interface ServerNotebook {
   name: string;
   color: string;
   is_default: boolean;
+  kind?: 'notes' | 'book';
   entry_count: number;
   last_entry_at?: string;
   created_at: string;
@@ -476,6 +542,7 @@ export interface ServerAttachment {
   kind: string;
   content_type: string;
   size_bytes: number;
+  sha256?: string;
   created_at: string;
 }
 
@@ -500,7 +567,11 @@ export class DyariumApi {
   }
 
   private authHeaders(extra?: Record<string, string>): Record<string, string> {
-    return { Authorization: `Bearer ${this.token}`, ...extra };
+    return {
+      Authorization: `Bearer ${this.token}`,
+      ...(clientOrigin ? { 'X-Origin-Instance': clientOrigin } : {}),
+      ...extra,
+    };
   }
 
   private async readError(res: HttpResponse): Promise<ParsedError> {
@@ -541,6 +612,26 @@ export class DyariumApi {
   /** Valida o token e a versao do servidor. */
   async version(): Promise<VersionResponse> {
     const res = await this.fetchImpl(this.url('/api/v1/version'), {
+      method: 'GET',
+      headers: this.authHeaders(),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    return JSON.parse(await res.text());
+  }
+
+  /**
+   * Manifesto de um tipo de objeto do ambiente: o que existe, com que versao e
+   * o que foi apagado. E a base da reconciliacao por uniao; o conteudo so e
+   * buscado quando o hash/versao realmente difere.
+   */
+  async syncManifest(
+    kind: 'entries' | 'deleted' | 'notebooks',
+    limit = 500,
+    cursor?: string,
+  ): Promise<SyncManifestResponse> {
+    const params = new URLSearchParams({ kind, limit: String(limit) });
+    if (cursor) params.set('cursor', cursor);
+    const res = await this.fetchImpl(this.url(`/api/v1/sync/manifest?${params}`), {
       method: 'GET',
       headers: this.authHeaders(),
     });
@@ -597,14 +688,30 @@ export class DyariumApi {
    * dashboard: mesma entidade, mesmos aliases, mesmo icone.
    */
   async listEntities(kind?: EntityKind): Promise<EntitySummary[]> {
+    return (await this.getEntityCatalog(kind)).entities;
+  }
+
+  /**
+   * Catalogo completo: entidades e as grafias "sou eu". O app usa as duas
+   * coisas juntas para nao mostrar como pessoa quem o painel ja fundiu no dono.
+   */
+  async getEntityCatalog(
+    kind?: EntityKind,
+  ): Promise<{ entities: EntitySummary[]; ownerAliases: string[] }> {
     const query = kind ? `?kind=${encodeURIComponent(kind)}` : '';
     const res = await this.fetchImpl(this.url(`/api/v1/entities${query}`), {
       method: 'GET',
       headers: this.authHeaders(),
     });
     if (!res.ok) throw await this.parseError(res);
-    const parsed = JSON.parse(await res.text()) as { entities?: EntitySummary[] };
-    return parsed.entities ?? [];
+    const parsed = JSON.parse(await res.text()) as {
+      entities?: EntitySummary[];
+      owner_aliases?: unknown;
+    };
+    const ownerAliases = Array.isArray(parsed.owner_aliases)
+      ? parsed.owner_aliases.filter((value): value is string => typeof value === 'string')
+      : [];
+    return { entities: parsed.entities ?? [], ownerAliases };
   }
 
   async getEntity(kind: EntityKind, name: string): Promise<EntityDetail> {
@@ -710,10 +817,13 @@ export class DyariumApi {
    * servidor recusa (409) o campo que ja mudou em outro lugar. Devolve as
    * versoes gravadas, para a proxima gravacao comecar de la.
    */
-  async updateEntry(id: string, body: UpdateEntryBody): Promise<FieldVersions> {
+  async updateEntry(id: string, body: UpdateEntryBody, hlc?: string): Promise<FieldVersions> {
     const res = await this.fetchImpl(this.url(`/api/v1/entries/${id}`), {
       method: 'PATCH',
-      headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+      headers: this.authHeaders({
+        'Content-Type': 'application/json',
+        ...(hlc ? { 'X-HLC': hlc } : {}),
+      }),
       body: JSON.stringify(body),
     });
     if (!res.ok) throw await this.parseErrorWithConflict(res);
@@ -776,10 +886,18 @@ export class DyariumApi {
    * lida: se o servidor ja tiver mudado, ele responde 409 e o `ConflictError`
    * diz qual campo brigou (e nada e gravado).
    */
-  async updateNote(noteId: string, markdown: string, baseVersion?: string): Promise<string> {
+  async updateNote(
+    noteId: string,
+    markdown: string,
+    baseVersion?: string,
+    hlc?: string,
+  ): Promise<string> {
     const res = await this.fetchImpl(this.url(`/api/v1/notes/${noteId}`), {
       method: 'PUT',
-      headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+      headers: this.authHeaders({
+        'Content-Type': 'application/json',
+        ...(hlc ? { 'X-HLC': hlc } : {}),
+      }),
       body: JSON.stringify({
         content_markdown: markdown,
         base_version: baseVersion ?? '',
@@ -816,10 +934,15 @@ export class DyariumApi {
     entryId: string,
     bytes: Uint8Array,
     contentType: string,
+    attachmentId?: string,
   ): Promise<ServerAttachment> {
+    const headers = this.authHeaders({ 'Content-Type': contentType });
+    // Id do criador: o mesmo anexo vale em todos os ambientes, entao o corpo
+    // que referencia `attachment:<id>` nao precisa ser reescrito ao sincronizar.
+    if (attachmentId) headers['X-Attachment-Id'] = attachmentId;
     const res = await this.fetchImpl(this.url(`/api/v1/entries/${entryId}/attachments`), {
       method: 'POST',
-      headers: this.authHeaders({ 'Content-Type': contentType }),
+      headers,
       body: bytes,
     });
     if (!res.ok) throw await this.parseError(res);
@@ -852,10 +975,14 @@ export class DyariumApi {
     return JSON.parse(await res.text());
   }
 
-  async completeUpload(uploadId: string): Promise<CompleteUploadResponse> {
+  async completeUpload(uploadId: string, attachmentId?: string): Promise<CompleteUploadResponse> {
+    const headers = this.authHeaders();
+    // Id do criador do anexo de audio, para o mesmo id valer em todos os
+    // ambientes e o corpo da nota ser portatil.
+    if (attachmentId) headers['X-Attachment-Id'] = attachmentId;
     const res = await this.fetchImpl(this.url(`/api/v1/uploads/${uploadId}/complete`), {
       method: 'POST',
-      headers: this.authHeaders(),
+      headers,
     });
     if (!res.ok) throw await this.parseError(res);
     return JSON.parse(await res.text());

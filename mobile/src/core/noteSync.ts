@@ -27,6 +27,7 @@ export interface NoteSyncApi {
       author?: string;
       versions?: { title?: string; recorded_at?: string };
     },
+    hlc?: string,
   ): Promise<{ title: string; recorded_at: string }>;
   setEntryTags(entryId: string, tags: string[]): Promise<void>;
   listNotes(
@@ -44,6 +45,7 @@ export interface NoteSyncApi {
     noteId: string,
     markdown: string,
     baseVersion?: string,
+    hlc?: string,
   ): Promise<string>;
 }
 
@@ -110,7 +112,7 @@ export async function syncNoteWith(
       ...(note.archivedDirty ? { archived: note.archived ?? false } : {}),
       ...(note.authorDirty ? { author: note.author ?? '' } : {}),
       versions: baseVersions,
-    });
+    }, note.updatedHlc);
     versions.title = entryVersions.title;
     versions.recordedAt = entryVersions.recorded_at;
   } catch (error) {
@@ -139,7 +141,7 @@ export async function syncNoteWith(
       retry.archived !== undefined ||
       retry.author !== undefined
     ) {
-      const entryVersions = await api.updateEntry(note.entryId, retry);
+      const entryVersions = await api.updateEntry(note.entryId, retry, note.updatedHlc);
       // O campo em conflito **nao** adota a versao do servidor: assim o pull
       // seguinte ve a versao nova e traz o valor de la para o app.
       if (!conflicted.has("title")) versions.title = entryVersions.title;
@@ -175,6 +177,7 @@ export async function syncNoteWith(
       resolved.pending,
       versions,
       note.id,
+      note.updatedHlc,
     );
   }
 
@@ -183,7 +186,7 @@ export async function syncNoteWith(
     // de ver/editado substitui o do servidor, sem dialogo de conflito. O servidor
     // guarda a versao substituida em `note_revisions`, entao a comparacao e a
     // recuperacao continuam possiveis.
-    versions.body = await api.updateNote(target.id, markdown);
+    versions.body = await api.updateNote(target.id, markdown, undefined, note.updatedHlc);
   } catch (error) {
     // A nota nao existe mais no servidor (id local velho, nota apagada de la,
     // banco do servidor reiniciado): cria de novo em vez de reprovar para
@@ -198,6 +201,7 @@ export async function syncNoteWith(
       resolved.pending,
       versions,
       note.id,
+      note.updatedHlc,
     );
   }
   return {
@@ -218,6 +222,7 @@ async function createBody(
   pending: string[],
   versions: NoteVersions,
   localID: string,
+  hlc?: string,
 ): Promise<SyncNoteResult> {
   // Id estavel do aparelho: se a resposta se perder, o reenvio devolve a mesma
   // nota em vez de criar uma segunda. O servidor e idempotente por id.
@@ -226,7 +231,7 @@ async function createBody(
   // Reenvio idempotente devolve a nota existente; se o corpo de la ficou para
   // tras (resposta perdida entre create e update), grava o texto atual.
   if (created.content_markdown !== undefined && created.content_markdown !== markdown) {
-    versions.body = await api.updateNote(created.id, markdown);
+    versions.body = await api.updateNote(created.id, markdown, undefined, hlc);
   }
   return {
     noteId: created.id,

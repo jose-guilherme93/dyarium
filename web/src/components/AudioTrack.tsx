@@ -3,11 +3,33 @@ import type { RefObject } from "react";
 import { api, attachmentUrl } from "../api";
 import { formatDuration } from "../lib/format";
 import { rememberAudioTime } from "../lib/noteViewState";
+import { useEscape } from "../lib/useEscape";
+import {
+  CAPTURE_NOTEBOOK,
+  CAPTURE_OPTIONS,
+  markCaptured,
+  readCaptures,
+  saveTranscriptCapture,
+  type CaptureKind,
+} from "../lib/transcriptCapture";
 import type { Audio, Segment } from "../types";
 import { AudioPlayer, type AudioPlayerHandle } from "./AudioPlayer";
-import { ReviewChip } from "./ReviewChip";
-import { SparkIcon } from "./icons";
+import {
+  CheckIcon,
+  CommentIcon,
+  PauseIcon,
+  PencilIcon,
+  PlayIcon,
+  SparkIcon,
+} from "./icons";
 import { Spinner } from "./Status";
+import { useToast } from "./Toasts";
+
+function CaptureIcon({ kind, size = 13 }: { kind: CaptureKind; size?: number }) {
+  if (kind === "task") return <CheckIcon size={size} />;
+  if (kind === "idea") return <SparkIcon size={size} />;
+  return <CommentIcon size={size} />;
+}
 
 interface AudioTrackProps {
   audio: Audio;
@@ -51,10 +73,42 @@ export function AudioTrack({
   // painel aberto, os segmentos precisam ser relidos; sem isso a revisao so
   // aparecia depois de recarregar a pagina.
   const transcriptTextRef = useRef(audio.transcript?.text ?? "");
-  // Index of the segment whose original text is revealed. Only segments the
-  // revision actually changed carry the icon.
+  // Index of the segment whose original text is revealed. So os trechos que a
+  // revisao mudou oferecem a opcao, dentro do menu da linha.
   const [originalAt, setOriginalAt] = useState<number | null>(null);
+  const [menuAt, setMenuAt] = useState<number | null>(null);
+  const [editing, setEditing] = useState<{ index: number; value: string } | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [capturing, setCapturing] = useState(false);
+  const [captures, setCaptures] = useState<Record<string, CaptureKind>>(() =>
+    entryId ? readCaptures(entryId) : {},
+  );
+  const [floatVisible, setFloatVisible] = useState(false);
+  const { notify } = useToast();
   const lineRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const playerWrapRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    setCaptures(entryId ? readCaptures(entryId) : {});
+  }, [entryId]);
+
+  useEscape(menuAt !== null, () => setMenuAt(null));
+
+  // O player rola para fora ao ler uma transcricao longa. Um botao fixo no
+  // meio da tela devolve o play/pause sem obrigar a voltar ao topo.
+  useEffect(() => {
+    const target = playerWrapRef.current;
+    if (!showFull || !target || typeof IntersectionObserver === "undefined") {
+      setFloatVisible(false);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      ([entry]) => setFloatVisible(!entry.isIntersecting),
+      { threshold: 0 },
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [showFull]);
 
   const transcript = audio.transcript ?? null;
   const text = transcript?.text.trim() ?? "";
@@ -150,32 +204,111 @@ export function AudioTrack({
     lineRefs.current[activeSegment]?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [showFull, playing, activeSegment, segments.length]);
 
+  const openMenu = (index: number) => {
+    setEditing(null);
+    setMenuAt((current) => (current === index ? null : index));
+  };
+
+  const startEdit = (index: number) => {
+    const segment = segments[index];
+    if (!segment) return;
+    setMenuAt(null);
+    setOriginalAt(null);
+    setEditing({ index, value: segment.text });
+  };
+
+  const saveEdit = async () => {
+    if (!editing || !entryId || savingEdit) return;
+    const segment = segments[editing.index];
+    const value = editing.value.trim();
+    if (!segment || value === "") return;
+    setSavingEdit(true);
+    try {
+      await api.updateTranscriptSegment(entryId, audio.id, segment.idx ?? editing.index, value);
+      setSegments((current) =>
+        current.map((item, index) =>
+          index === editing.index
+            ? { ...item, text: value, revised: undefined, edited: true }
+            : item,
+        ),
+      );
+      setEditing(null);
+      notify("Trecho salvo", "success");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Não foi possível salvar o trecho", "error");
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const capture = async (kind: CaptureKind) => {
+    if (menuAt === null || !entryId || capturing) return;
+    const segment = segments[menuAt];
+    if (!segment) return;
+    setCapturing(true);
+    try {
+      const source = await api.getEntry(entryId).catch(() => null);
+      await saveTranscriptCapture({
+        sourceEntryId: entryId,
+        sourceTitle: source?.title ?? "",
+        segment,
+        kind,
+      });
+      markCaptured(entryId, segment.start_ms, kind);
+      setCaptures(readCaptures(entryId));
+      setMenuAt(null);
+      const label = CAPTURE_OPTIONS.find((option) => option.kind === kind)?.label ?? "Trecho";
+      notify(`${label} guardada em ${CAPTURE_NOTEBOOK}`, "success");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Não foi possível guardar esta captura", "error");
+    } finally {
+      setCapturing(false);
+    }
+  };
+
   return (
     <div className="audio-block">
-      <AudioPlayer
-        ref={ref}
-        src={attachmentUrl(audio.id)}
-        initialTime={initialTime}
-        onDelete={onDelete}
-        onTime={(seconds) => {
-          setCurrentTime(seconds);
-          if (entryId) {
-            rememberAudioTime(entryId, audio.id, seconds);
-          }
-        }}
-        onPlaying={setPlaying}
-      />
+      <div className="audio-player-wrap" ref={playerWrapRef}>
+        <AudioPlayer
+          ref={ref}
+          src={attachmentUrl(audio.id)}
+          initialTime={initialTime}
+          onDelete={onDelete}
+          onTime={(seconds) => {
+            setCurrentTime(seconds);
+            if (entryId) {
+              rememberAudioTime(entryId, audio.id, seconds);
+            }
+          }}
+          onPlaying={setPlaying}
+        />
+      </div>
+      {showFull && floatVisible && (
+        <span className="audio-play-slot">
+          <button
+            type="button"
+            className="audio-play-float"
+            aria-label={playing ? "Pausar" : "Reproduzir"}
+            title={playing ? "Pausar" : "Reproduzir"}
+            onClick={() => ref.current?.toggle()}
+          >
+            {playing ? <PauseIcon size={18} /> : <PlayIcon size={18} />}
+          </button>
+        </span>
+      )}
       {hasTranscript && transcript && (
         <div className="audio-transcript">
-          {showFull && segments.length > 0 && (
-            <ReviewChip transcript={transcript} segments={segments} />
-          )}
           {showFull ? (
             <blockquote className="transcript">
               {segments.length > 0 ? (
                 segments.map((segment, index) => {
                   const revised = segment.revised;
                   const open = originalAt === index;
+                  const captureKind = captures[String(segment.start_ms)];
+                  const menuOpen = menuAt === index;
+                  const captureLabel = captureKind
+                    ? CAPTURE_OPTIONS.find((option) => option.kind === captureKind)?.label
+                    : "";
                   return (
                     <div key={`${segment.start_ms}-${index}`} className="transcript-row">
                       <button
@@ -192,20 +325,127 @@ export function AudioTrack({
                         {(segment.revised ?? segment.text).replace(/\s+/g, " ").trim()}
                         {index === segments.length - 1 && !cursor ? "\u201d" : ""}
                       </button>
-                      {revised && (
+                      <span className="transcript-side">
+                        {captureKind && (
+                          <span
+                            className={`transcript-capture transcript-capture--${captureKind}`}
+                            title={`${captureLabel} · ${CAPTURE_NOTEBOOK}`}
+                            aria-label={captureLabel}
+                          >
+                            <CaptureIcon kind={captureKind} />
+                          </span>
+                        )}
                         <button
                           type="button"
-                          className="transcript-original-toggle"
-                          aria-label="Ver o texto original do whisper"
-                          aria-expanded={open}
-                          title={open ? "Ocultar o texto original" : "Melhorado por IA: ver o texto original"}
-                          onClick={() => setOriginalAt(open ? null : index)}
+                          className="transcript-edit"
+                          aria-label="Opções do trecho"
+                          aria-haspopup="menu"
+                          aria-expanded={menuOpen}
+                          title="Editar ou transformar este trecho"
+                          onClick={() => openMenu(index)}
                         >
-                          <SparkIcon size={13} />
+                          <PencilIcon size={13} />
                         </button>
+                      </span>
+
+                      {menuOpen && (
+                        <>
+                          <button
+                            type="button"
+                            className="transcript-menu-backdrop"
+                            aria-label="Fechar menu do trecho"
+                            onClick={() => setMenuAt(null)}
+                          />
+                          <div className="transcript-menu" role="menu">
+                            <button
+                              type="button"
+                              className="transcript-menu-item"
+                              role="menuitem"
+                              disabled={!entryId}
+                              onClick={() => startEdit(index)}
+                            >
+                              <PencilIcon size={14} />
+                              Editar trecho
+                            </button>
+                            <div className="transcript-menu-sep" />
+                            {CAPTURE_OPTIONS.map((option) => (
+                              <button
+                                key={option.kind}
+                                type="button"
+                                className="transcript-menu-item"
+                                role="menuitem"
+                                disabled={capturing || !entryId}
+                                onClick={() => void capture(option.kind)}
+                              >
+                                <CaptureIcon kind={option.kind} size={14} />
+                                {option.label}
+                              </button>
+                            ))}
+                            {revised && (
+                              <>
+                                <div className="transcript-menu-sep" />
+                                <button
+                                  type="button"
+                                  className="transcript-menu-item"
+                                  role="menuitem"
+                                  aria-pressed={open}
+                                  onClick={() => {
+                                    setOriginalAt(open ? null : index);
+                                    setMenuAt(null);
+                                  }}
+                                >
+                                  <SparkIcon size={14} />
+                                  {open ? "Ocultar texto original" : "Ver texto original"}
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </>
                       )}
+
                       {open && revised && (
                         <p className="transcript-original">Original do whisper: {segment.text}</p>
+                      )}
+
+                      {editing !== null && editing.index === index && (
+                        <div className="transcript-edit-box">
+                          <textarea
+                            autoFocus
+                            value={editing.value}
+                            aria-label="Editar trecho da transcrição"
+                            onChange={(event) =>
+                              setEditing({ index, value: event.target.value })
+                            }
+                            onKeyDown={(event) => {
+                              if (event.key === "Escape") {
+                                event.preventDefault();
+                                setEditing(null);
+                              }
+                              if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                                event.preventDefault();
+                                void saveEdit();
+                              }
+                            }}
+                          />
+                          <div className="transcript-edit-actions">
+                            <button
+                              type="button"
+                              className="button button--ghost button--small"
+                              onClick={() => setEditing(null)}
+                            >
+                              Cancelar
+                            </button>
+                            <button
+                              type="button"
+                              className="button button--primary button--small"
+                              onClick={() => void saveEdit()}
+                              disabled={savingEdit || editing.value.trim() === ""}
+                            >
+                              {savingEdit ? <Spinner /> : null}
+                              Salvar
+                            </button>
+                          </div>
+                        </div>
                       )}
                     </div>
                   );

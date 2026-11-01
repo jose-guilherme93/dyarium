@@ -54,7 +54,7 @@ vi.mock("./engineClient", () => ({
   },
 }));
 
-import { BrowserProcessor } from "./browserProcessor";
+import { BrowserProcessor, whisperLanguageName } from "./browserProcessor";
 
 async function boot(): Promise<BrowserProcessor> {
   const processor = new BrowserProcessor(
@@ -70,7 +70,6 @@ describe("BrowserProcessor", () => {
     vi.useFakeTimers();
     mocks.claim.mockResolvedValue({ job: null });
   });
-
   afterEach(async () => {
     vi.useRealTimers();
     vi.clearAllMocks();
@@ -113,5 +112,14 @@ describe("BrowserProcessor", () => {
     expect(mocks.claim.mock.calls.length).toBe(calls);
 
     await processor.abandon();
+  });
+});
+
+describe("idioma do worker", () => {
+  it("traduz o codigo das configuracoes para o nome do transformers", () => {
+    expect(whisperLanguageName("pt")).toBe("portuguese");
+    expect(whisperLanguageName("EN")).toBe("english");
+    expect(whisperLanguageName("")).toBeUndefined();
+    expect(whisperLanguageName(undefined)).toBeUndefined();
   });
 });

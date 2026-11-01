@@ -1,0 +1,20 @@
+/* Fontes de livro auto-hospedadas. Licencas em LICENSES.md. */
+@font-face { font-family: "Newsreader"; src: url("/fonts/newsreader-italic-400-700.woff2") format("woff2"); font-style: italic; font-weight: 400 700; font-display: swap; }
+@font-face { font-family: "Newsreader"; src: url("/fonts/newsreader-roman-400-700.woff2") format("woff2"); font-style: normal; font-weight: 400 700; font-display: swap; }
+@font-face { font-family: "EB Garamond"; src: url("/fonts/eb-garamond-italic-400-800.woff2") format("woff2"); font-style: italic; font-weight: 400 800; font-display: swap; }
+@font-face { font-family: "EB Garamond"; src: url("/fonts/eb-garamond-roman-400-800.woff2") format("woff2"); font-style: normal; font-weight: 400 800; font-display: swap; }
+@font-face { font-family: "Libre Baskerville"; src: url("/fonts/libre-baskerville-italic-400.woff2") format("woff2"); font-style: italic; font-weight: 400; font-display: swap; }
+@font-face { font-family: "Libre Baskerville"; src: url("/fonts/libre-baskerville-roman-400.woff2") format("woff2"); font-style: normal; font-weight: 400; font-display: swap; }
+@font-face { font-family: "Libre Baskerville"; src: url("/fonts/libre-baskerville-roman-700.woff2") format("woff2"); font-style: normal; font-weight: 700; font-display: swap; }
+@font-face { font-family: "Libre Caslon Text"; src: url("/fonts/libre-caslon-text-italic-400.woff2") format("woff2"); font-style: italic; font-weight: 400; font-display: swap; }
+@font-face { font-family: "Libre Caslon Text"; src: url("/fonts/libre-caslon-text-roman-400.woff2") format("woff2"); font-style: normal; font-weight: 400; font-display: swap; }
+@font-face { font-family: "Libre Caslon Text"; src: url("/fonts/libre-caslon-text-roman-700.woff2") format("woff2"); font-style: normal; font-weight: 700; font-display: swap; }
+@font-face { font-family: "Tinos"; src: url("/fonts/tinos-italic-400.woff2") format("woff2"); font-style: italic; font-weight: 400; font-display: swap; }
+@font-face { font-family: "Tinos"; src: url("/fonts/tinos-roman-400.woff2") format("woff2"); font-style: normal; font-weight: 400; font-display: swap; }
+@font-face { font-family: "Tinos"; src: url("/fonts/tinos-roman-700.woff2") format("woff2"); font-style: normal; font-weight: 700; font-display: swap; }
+@font-face { font-family: "Gelasio"; src: url("/fonts/gelasio-italic-400-700.woff2") format("woff2"); font-style: italic; font-weight: 400 700; font-display: swap; }
+@font-face { font-family: "Gelasio"; src: url("/fonts/gelasio-roman-400-700.woff2") format("woff2"); font-style: normal; font-weight: 400 700; font-display: swap; }
+@font-face { font-family: "Literata"; src: url("/fonts/literata-italic-400-700.woff2") format("woff2"); font-style: italic; font-weight: 400 700; font-display: swap; }
+@font-face { font-family: "Literata"; src: url("/fonts/literata-roman-400-700.woff2") format("woff2"); font-style: normal; font-weight: 400 700; font-display: swap; }
+@font-face { font-family: "Crimson Pro"; src: url("/fonts/crimson-pro-italic-400-700.woff2") format("woff2"); font-style: italic; font-weight: 400 700; font-display: swap; }
+@font-face { font-family: "Crimson Pro"; src: url("/fonts/crimson-pro-roman-400-700.woff2") format("woff2"); font-style: normal; font-weight: 400 700; font-display: swap; }

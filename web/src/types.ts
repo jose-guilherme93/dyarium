@@ -1,3 +1,32 @@
+import type { BookFontId } from "./lib/bookFonts";
+
+/** Tamanhos de folha aceitos pelo modo escritor. A4 so existe para livros
+ *  antigos e para o manuscrito; os formatos de livro ficam nos demais. */
+export type PageSize = "a4" | "6x9" | "5x8" | "a5" | "14x21" | "11x18";
+
+/** Um dia de escrita do livro; `words` e o saldo liquido do dia. */
+export interface WritingDay {
+  day: string;
+  words: number;
+}
+
+/** Ritmo do livro devolvido pelo servidor. */
+export interface WritingRhythm {
+  today: number;
+  days: WritingDay[];
+  daily_goal: number;
+  deadline: string;
+  goal_words: number;
+}
+
+/** Entidade ja encontrada nos capitulos do livro. */
+export interface BookEntity {
+  kind: string;
+  name: string;
+  mentions: number;
+  chapters: number;
+}
+
 export interface Entry {
   id: string;
   title: string;
@@ -30,6 +59,27 @@ export interface Entry {
   author?: AuthorRole;
   /** Quando a nota foi apagada (so na listagem da lixeira, `?deleted=1`). */
   deleted_at?: string | null;
+  /** Tombstone cujo conteudo ja foi purgado; nao pode ser restaurado. */
+  purged?: boolean;
+  /**
+   * Quem criou a nota: `device` (um aparelho com o app) ou `server` (este
+   * ambiente). Proveniencia apenas: nao restringe edicao. Vazio nas linhas
+   * anteriores ao campo.
+   */
+  origin_kind?: 'device' | 'server' | '';
+  origin_instance?: string;
+  /** Estrutura do livro; vazia numa nota comum. */
+  chapter_kind?: ChapterKind | "";
+  chapter_position?: number | null;
+  chapter_status?: ChapterStatus;
+  chapter_goal_words?: number;
+  chapter_synopsis?: string;
+  /** Plano do capitulo: um beat por linha, fora da prosa. */
+  chapter_beats?: string;
+  /** Pesquisa do capitulo: texto livre, fora da prosa. */
+  chapter_notes?: string;
+  /** Contagem de prosa do capitulo, quando pedida. */
+  word_count?: number;
 }
 
 export interface Audio {
@@ -65,6 +115,8 @@ export interface Segment {
   edited?: boolean;
   /** A passada de revisao chegou neste trecho, mesmo sem mudar o texto. */
   reviewed?: boolean;
+  /** O trecho ja virou tarefa, ideia ou citacao (guardado neste navegador). */
+  capture?: "task" | "idea" | "quote";
 }
 
 export interface Transcript {
@@ -120,6 +172,21 @@ export interface Analysis {
   key_moments?: KeyMoment[] | null;
   questions?: string[] | null;
   decisions?: string[] | null;
+  tasks?: string[] | null;
+  ideas?: string[] | null;
+  events?: string[] | null;
+  epiphanies?: string[] | null;
+  /** "model" quando a frase veio do modelo; "derived" quando o codigo a montou. */
+  sentence_source?: string;
+  /** Cobertura da leitura por bloco; ausente em analises antigas. */
+  coverage?: {
+    blocks_read: number;
+    blocks_total: number;
+    chars_read: number;
+    chars_total: number;
+    audio_ms: number;
+    partial: boolean;
+  } | null;
   /** 0-100 estimate of how well the transcript represents the speech; -1 when absent. */
   comprehension?: number;
   /** "review" when the revision pass measured it, "analysis" for the model estimate. */
@@ -216,6 +283,12 @@ export interface EntitySummary {
   mentions: number;
   sentiment: number;
   last_seen: string | null;
+  /** Relogio do servidor para nome/icone/"sou eu". */
+  updated_at?: string | null;
+  /** Grafias antigas que ainda resolvem para esta entidade. */
+  aliases?: string[];
+  /** Id da edicao que acabou de acontecer, para o "desfazer". */
+  edit_id?: string;
 }
 
 export interface EntityEntry {
@@ -294,12 +367,46 @@ export interface Tag {
   entry_count: number;
 }
 
+export type NotebookKind = "notes" | "book";
+export type BookStatus = "drafting" | "revising" | "done";
+export type ChapterKind = "chapter" | "part" | "front" | "back";
+export type ChapterStatus = "" | "draft" | "revising" | "done";
+
 export interface Notebook {
   id: string;
   name: string;
   color: string;
   is_default: boolean;
+  /** `book` abre o modo escritor; `notes` e o caderno comum. */
+  kind: NotebookKind;
+  subtitle: string;
+  author: string;
+  synopsis: string;
+  language: string;
+  goal_words: number;
+  book_status: BookStatus;
+  /** O livro tem foto de capa guardada no servidor. */
+  has_cover?: boolean;
+  /** Versao da capa, usada para quebrar o cache da imagem. */
+  cover_updated_at?: string | null;
+  /** Medida da folha do editor, da leitura e da exportacao. */
+  page_size?: PageSize;
+  /** Margem da folha em milimetros. */
+  page_margin_mm?: number;
+  /** Corpo da prosa em px de tela. */
+  body_px?: number;
+  /** Entrelinha em percentual (160 = 1,6). */
+  body_leading?: number;
+  /** Fonte do corpo, escolhida entre as fontes de livro. */
+  body_font?: BookFontId;
+  daily_goal_words?: number;
+  /** Prazo do livro, AAAA-MM-DD; vazio quando nao ha. */
+  deadline?: string;
   entry_count: number;
+  /** Capitulos vivos, so em livros. */
+  chapter_count: number;
+  /** Soma das palavras dos capitulos, so quando o dashboard pede. */
+  words?: number;
   last_entry_at?: string;
   created_at: string;
   updated_at: string;

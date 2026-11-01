@@ -26,10 +26,12 @@ import { bumpRender } from '@/dev/perf';
 import {
   clearServerConfig,
   loadPrefs,
-  loadServerConfig,
+  loadServers,
+  removeServer as removeStoredServer,
   savePrefs,
-  saveServerConfig,
+  upsertServer,
   type Prefs,
+  type StoredServer,
   type SwipeAction,
 } from '@/services/secure';
 import {
@@ -44,11 +46,15 @@ const doFetch = globalThis.fetch as unknown as FetchLike;
 export interface ConnectionResult {
   ok: boolean;
   version?: string;
+  instanceId?: string;
+  contract?: string;
   error?: string;
 }
 
 interface SettingsValue {
   config: ServerConfig | null;
+  /** Ambientes conectados; o primeiro e o primario. */
+  servers: StoredServer[];
   ready: boolean;
   /** Tema visual do app. */
   theme: ThemeName;
@@ -120,6 +126,8 @@ interface SettingsValue {
   test(baseUrl: string, token: string): Promise<ConnectionResult>;
   /** Testa e, se ok, persiste no SecureStore. */
   save(baseUrl: string, token: string): Promise<ConnectionResult>;
+  /** Remove um ambiente da lista; nao apaga notas locais. */
+  removeServer(id: string): Promise<void>;
   disconnect(): Promise<void>;
 }
 
@@ -134,6 +142,7 @@ function normalizeUrl(baseUrl: string): string {
 export function SettingsProvider({ children }: { children: ReactNode }) {
   bumpRender('SettingsProvider');
   const [config, setConfig] = useState<ServerConfig | null>(null);
+  const [servers, setServers] = useState<StoredServer[]>([]);
   // "ready" significa configuracao E preferencias carregadas. A home e a nota
   // nao esperam: abrem com os padroes e atualizam quando o cofre responde.
   const [configReady, setConfigReady] = useState(false);
@@ -169,10 +178,11 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let alive = true;
-    loadServerConfig()
+    loadServers()
       .then((loaded) => {
         if (!alive) return;
-        setConfig(loaded);
+        setServers(loaded);
+        setConfig(loaded[0] ? { baseUrl: loaded[0].baseUrl, token: loaded[0].token } : null);
       })
       .catch(() => undefined)
       .finally(() => {
@@ -419,7 +429,24 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     }
     try {
       const version = await api.version();
-      return { ok: true, version: version.version };
+      if (!version.instance_id) {
+        return {
+          ok: false,
+          error: 'O servidor respondeu mas não tem identidade de ambiente. Atualize o servidor.',
+        };
+      }
+      if (version.sync_contract && version.sync_contract !== '1') {
+        return {
+          ok: false,
+          error: `Contrato de sincronização ${version.sync_contract} não suportado. Atualize o app ou o servidor.`,
+        };
+      }
+      return {
+        ok: true,
+        version: version.version,
+        instanceId: version.instance_id,
+        contract: version.sync_contract ?? '1',
+      };
     } catch {
       return { ok: false, error: 'O servidor respondeu, mas recusou o token.' };
     }
@@ -429,27 +456,51 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     async (baseUrl: string, token: string): Promise<ConnectionResult> => {
       const result = await test(baseUrl, token);
       if (result.ok) {
-        const next: ServerConfig = { baseUrl: normalizeUrl(baseUrl), token: token.trim() };
-        await saveServerConfig(next);
-        setConfig(next);
+        const next = await upsertServer({
+          id: result.instanceId ?? '',
+          baseUrl: normalizeUrl(baseUrl),
+          token: token.trim(),
+          label: '',
+          contract: result.contract ?? '1',
+        });
+        setServers(next);
+        setConfig({ baseUrl: next[0].baseUrl, token: next[0].token });
+        setServerProcessingState(true);
+        await persistPrefs({ serverProcessing: true });
       }
       return result;
     },
-    [test],
+    [persistPrefs, test],
   );
 
+  const removeServer = useCallback(async (id: string) => {
+    const next = await removeStoredServer(id);
+    setServers(next);
+    setConfig(next[0] ? { baseUrl: next[0].baseUrl, token: next[0].token } : null);
+    if (next.length === 0) {
+      setServerProcessingState(false);
+      await persistPrefs({ serverProcessing: false });
+    }
+  }, [persistPrefs]);
+
   const disconnect = useCallback(async () => {
+    const current = servers[0];
+    if (current) {
+      await removeServer(current.id || current.baseUrl);
+      return;
+    }
     await clearServerConfig();
     setConfig(null);
     // Sem servidor nao existe processamento remoto: desligar junto evita uma
     // escolha salva que nao pode mais ser cumprida.
     setServerProcessingState(false);
     await persistPrefs({ serverProcessing: false });
-  }, [persistPrefs]);
+  }, [persistPrefs, removeServer, servers]);
 
   const value = useMemo<SettingsValue>(
     () => ({
       config,
+      servers,
       ready,
       theme,
       setTheme,
@@ -497,10 +548,12 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setNoteOrder,
       test,
       save,
+      removeServer,
       disconnect,
     }),
     [
       config,
+      servers,
       ready,
       theme,
       setTheme,
@@ -548,6 +601,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setNoteOrder,
       test,
       save,
+      removeServer,
       disconnect,
     ],
   );

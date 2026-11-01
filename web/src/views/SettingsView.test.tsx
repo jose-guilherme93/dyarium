@@ -284,3 +284,18 @@ describe("SettingsView autor", () => {
     );
   });
 });
+
+describe("SettingsView chave da Deepgram", () => {
+  it("mantem a chave no campo quando o salvamento falha", async () => {
+    vi.mocked(api.getSettings).mockResolvedValue({ ...settings, transcribe_provider: "deepgram" });
+    vi.mocked(api.putSettings).mockRejectedValueOnce(new Error("rede"));
+    render(<SettingsView />);
+
+    const input = await screen.findByLabelText("Chave da Deepgram");
+    fireEvent.change(input, { target: { value: "segredo" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar chave da Deepgram" }));
+
+    await waitFor(() => expect(api.putSettings).toHaveBeenCalled());
+    expect(input).toHaveValue("segredo");
+  });
+});

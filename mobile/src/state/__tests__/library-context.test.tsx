@@ -25,6 +25,9 @@ jest.mock('@/services/db', () => ({
   upsertRecording: (recording: Recording) => mockUpsertRecording(recording),
   getRecording: (id: string) => mockGetRecording(id),
   deleteRecordingRow: jest.fn(async () => undefined),
+  // O estado de sync por ambiente vive no mesmo banco; os testes de contexto
+  // nao precisam de SQLite real, so da escrita dos tombstones.
+  getDatabase: jest.fn(async () => ({ runAsync: jest.fn(async () => undefined) })),
 }));
 
 jest.mock('@/services/notebooks', () => ({
@@ -50,6 +53,7 @@ jest.mock('@/services/files', () => ({
   deleteSessionAudioFiles: jest.fn(async () => 0),
   deleteSessionFiles: jest.fn(async () => undefined),
 }));
+jest.mock('@/services/clock', () => ({ clockNode: jest.fn(async () => 'dev_teste') }));
 jest.mock('@/services/noteVisibility', () => ({ noteIsOpen: () => false }));
 jest.mock('@/services/pull', () => ({ pullServerEntries: jest.fn(async () => 0) }));
 jest.mock('@/services/transcripts', () => ({ fetchTranscriptsOnce: jest.fn(async () => 0) }));

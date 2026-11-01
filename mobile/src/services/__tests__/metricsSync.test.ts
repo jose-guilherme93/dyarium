@@ -26,6 +26,7 @@ jest.mock('@/core/api', () => ({
       return mockPutMetrics(payload);
     }
   },
+  setClientOrigin: jest.fn(),
 }));
 
 const snapshot = {

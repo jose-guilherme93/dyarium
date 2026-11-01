@@ -31,7 +31,15 @@ export const MediaContext = createContext<{
   onOpenEntry: (id: string) => void;
   /** Remove o audio do corpo e do servidor (o menu do player). */
   onDeleteAudio: (attachmentId: string) => void;
-}>({ audios: new Map(), entryId: "", onOpenEntry: () => {}, onDeleteAudio: () => {} });
+  /** Cor padrao das imagens neste editor: livro usa preto e branco. */
+  imageDefault: "bw" | "color";
+}>({
+  audios: new Map(),
+  entryId: "",
+  onOpenEntry: () => {},
+  onDeleteAudio: () => {},
+  imageDefault: "color",
+});
 
 // ---- inline content: a reference to another note (/link) ----
 
@@ -103,6 +111,8 @@ const imageConfig = {
     attachmentId: { default: "" },
     caption: { default: "" },
     width: { default: "" },
+    // "1" = cor original, "0" = preto e branco, "" = padrao do contexto.
+    color: { default: "" },
     // Transitorios: a foto aparece borrada e com giro desde o clique, antes de
     // o upload terminar. Nao vao para o markdown (o bloco pendente e filtrado
     // pelo conversor).
@@ -175,6 +185,11 @@ function aspectValue(value: string): number | undefined {
  * continua sendo o mesmo `{w=N}` que o app le e escreve.
  */
 function ImageBlockView({ block, editor }: ImageRenderProps) {
+  const { imageDefault } = useContext(MediaContext);
+  // A excecao explicita da imagem vence o padrao do editor; sem marcador, o
+  // livro mostra preto e branco e a nota comum mostra cor.
+  const grayscale =
+    block.props.color === "1" ? false : block.props.color === "0" ? true : imageDefault === "bw";
   const stored = Number(block.props.width);
   const initial = Number.isFinite(stored) && stored >= MIN_WIDTH && stored < MAX_WIDTH ? stored : MAX_WIDTH;
   const [width, setWidth] = useState(initial);
@@ -265,11 +280,18 @@ function ImageBlockView({ block, editor }: ImageRenderProps) {
         {block.props.preview ? (
           // Miniatura local borrada: aparece no mesmo clique, antes de o upload
           // terminar, para a nota nao ficar parada por segundos.
-          <img className="doc-image-blur" src={block.props.preview} alt="" aria-hidden="true" />
+          <img
+            className="doc-image-blur"
+            src={block.props.preview}
+            alt=""
+            aria-hidden="true"
+            style={grayscale ? { filter: "grayscale(1)" } : undefined}
+          />
         ) : null}
         {attachmentId ? (
           <img
             className={loaded ? "doc-image doc-image--loaded" : "doc-image"}
+            style={grayscale ? { filter: "grayscale(1)" } : undefined}
             src={attachmentUrl(attachmentId)}
             alt={block.props.caption || "Imagem da nota"}
             loading="lazy"
@@ -334,6 +356,28 @@ function ImageBlockView({ block, editor }: ImageRenderProps) {
               </button>
               {menu && (
                 <div className="doc-image-menu" role="menu">
+                  <div className="doc-image-menu-label">Cor</div>
+                  {[
+                    { value: "0", label: "Preto e branco" },
+                    { value: "1", label: "Cor original" },
+                  ].map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={(block.props.color || (imageDefault === "bw" ? "0" : "1")) === option.value}
+                      className="doc-image-menu-item"
+                      onClick={() => {
+                        editor.updateBlock(block, {
+                          props: { ...block.props, color: option.value },
+                        });
+                        setMenu(false);
+                      }}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                  <div className="doc-image-menu-rule" role="presentation" />
                   <div className="doc-image-menu-label">Largura</div>
                   {WIDTH_PRESETS.map((preset) => (
                     <button

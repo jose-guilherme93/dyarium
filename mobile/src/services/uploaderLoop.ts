@@ -6,6 +6,7 @@
 
 import { DyariumApi, type FetchLike } from '@/core/api';
 import { isPermanentUploadError } from '@/core/errors';
+import { stableAttachmentId } from '@/core/id';
 import { withUploadedAudio } from '@/core/noteAudio';
 import { markCompleted, markFailed, markFailedTerminal, pickNextToUpload } from '@/core/queue';
 import { mergeTranscript } from '@/core/transcript';
@@ -15,10 +16,10 @@ import { uploadRecording } from '@/core/uploader';
 import { acquireLock, getRecording, listRecordings, releaseLock, upsertRecording } from './db';
 import { CONTENT_TYPE, FILE_EXTENSION, uploadFileIO } from './files';
 import { pushNotebooks } from './notebookSync';
-import { applySyncConflict, applySyncResult } from '@/core/noteSync';
+import { applySyncResult } from '@/core/noteSync';
 
 import { notifyActivity, notifyActivityDone } from './notifications';
-import { conflictFields, syncNote, type SyncNoteResult } from './noteSync';
+import { conflictFields, syncNote, syncNoteForcing, type SyncNoteResult } from './noteSync';
 import { loadServerConfig } from './secure';
 import { pushTranscript } from './transcriptSync';
 import { clientOwnsAnalysis } from './processing';
@@ -116,9 +117,9 @@ export async function runUploadQueueOnce(): Promise<void> {
  * Depois de enviar o conteudo (entrada criada), envia o corpo da nota em markdown
  * e guarda o noteId. Assim o corpo sobe junto, sem esperar um re-edit.
  *
- * Conflito (409): o servidor recusou porque o campo ja mudou no desktop. Nao
- * sobrescreve nada e nao devolve a nota para a fila — registra o conflito para a
- * tela da nota perguntar ao usuario.
+ * Conflito (409): a ultima gravacao vence. O app reenvia a versao local sem
+ * versao-base e o servidor guarda a perdedora em `note_revisions`; nao ha
+ * dialogo. Se o reenvio falhar, a nota continua suja para a proxima rodada.
  */
 async function pushNoteDocument(recording: Recording): Promise<Recording> {
   let result: SyncNoteResult | undefined;
@@ -128,10 +129,19 @@ async function pushNoteDocument(recording: Recording): Promise<Recording> {
     const fields = conflictFields(error);
     if (fields.length === 0) return recording;
     const current = (await getRecording(recording.id)) ?? recording;
-    const conflicted = applySyncConflict(current, fields);
-    await upsertRecording(conflicted);
-    emitRecording(conflicted);
-    return conflicted;
+    try {
+      const forced = await syncNoteForcing(current);
+      if (!forced) return current;
+      const fresh = (await getRecording(recording.id)) ?? current;
+      const updated = applySyncResult(fresh, current, forced);
+      await upsertRecording(updated);
+      emitRecording(updated);
+      void pushTranscript(recording.id);
+      return updated;
+    } catch {
+      // Sem rede no meio da resolucao: mantem o texto local e tenta de novo.
+      return current;
+    }
   }
   if (!result) return recording;
   // Relê o registro: se o usuario editou a nota durante o envio, nao sobrescreve
@@ -179,6 +189,15 @@ async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
           : undefined,
         uploadId: current.uploadId,
         offset: current.offset,
+        // O id da nota e do aparelho e vale igual em todo ambiente. Sem ele o
+        // servidor gerava outro id, e a mesma nota tinha identidades diferentes
+        // em cada servidor.
+        entryId: current.entryId ?? current.id,
+        // Id portatil do audio: o corpo da nota referencia `attachment:<id>` e
+        // precisa continuar valido quando a nota for para outro ambiente.
+        attachmentId:
+          current.serverAttachmentId ??
+          stableAttachmentId(current.id, current.fileName ?? 'audio'),
         author: current.author ?? '',
       },
       {
@@ -257,7 +276,7 @@ async function uploadTextOne(api: DyariumApi, recording: Recording): Promise<voi
 
   try {
     const result = await api.createTextEntry({
-      id: current.id,
+      id: current.entryId ?? current.id,
       title: current.title,
       recorded_at: current.recordedAt,
       created_at: current.createdAt,

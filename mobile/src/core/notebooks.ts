@@ -24,6 +24,8 @@ export interface Notebook {
   name: string;
   color: string;
   isDefault: boolean;
+  /** `book` esconde o caderno do app no v1; o sync continua guardando. */
+  kind?: 'notes' | 'book';
   createdAt: string;
   updatedAt: string;
   /** Alteracao local ainda nao enviada ao servidor. */
@@ -52,6 +54,7 @@ export function sameNotebooks(a: Notebook[], b: Notebook[]): boolean {
       left.name !== right.name ||
       left.color !== right.color ||
       left.isDefault !== right.isDefault ||
+      left.kind !== right.kind ||
       left.createdAt !== right.createdAt ||
       left.updatedAt !== right.updatedAt ||
       Boolean(left.dirty) !== Boolean(right.dirty) ||
@@ -61,6 +64,18 @@ export function sameNotebooks(a: Notebook[], b: Notebook[]): boolean {
     }
   }
   return true;
+}
+
+/** Cadernos que o app mostra. Livros existem so no dashboard no v1. */
+export function noteNotebooks(notebooks: Notebook[]): Notebook[] {
+  return notebooks.filter((notebook) => notebook.kind !== 'book');
+}
+
+/** Ids dos livros, para tirar as notas deles das metricas e da biblioteca. */
+export function bookNotebookIds(notebooks: Notebook[]): Set<string> {
+  return new Set(
+    notebooks.filter((notebook) => notebook.kind === 'book').map((notebook) => notebook.id),
+  );
 }
 
 /** Ordem canonica: criacao, com o padrao sempre no fim. */

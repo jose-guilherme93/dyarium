@@ -27,12 +27,12 @@ import {
   resolveLocalAudioRefs,
   type AttachmentResolution,
 } from '@/core/attachments';
-import { newId } from '@/core/id';
+import { newId, stableAttachmentId } from '@/core/id';
 import { extractImageUrls } from '@/core/richText';
 import { uploadRecording } from '@/core/uploader';
 
 import { uploadFileIO, sessionDirectory } from './files';
-import { loadServerConfig } from './secure';
+import { loadServerConfig, loadServers } from './secure';
 
 const doFetch = globalThis.fetch as unknown as FetchLike;
 
@@ -156,41 +156,46 @@ export function cachedAttachmentUri(id: string): string | null {
 
 /** Baixa o anexo do servidor para o cache e devolve a URI local. */
 async function downloadAttachment(id: string): Promise<string | null> {
-  const config = await loadServerConfig();
-  if (!config) return null;
-  try {
-    const url = `${config.baseUrl.replace(/\/+$/, '')}/api/v1/attachments/${id}`;
-    // Sem teto, uma conexao pendurada prendia a imagem para sempre (e o editor
-    // ficava sem ela). 15 s e suficiente para uma foto.
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 15000);
-    let res: Response;
+  // O anexo pode existir em qualquer ambiente conectado; o primario e so o
+  // primeiro da lista. Tentar todos evita imagem quebrada quando a nota veio
+  // de um ambiente secundario e ainda nao foi empurrada para o primario.
+  const servers = await loadServers();
+  for (const server of servers) {
     try {
-      res = await fetch(url, {
-        headers: { Authorization: `Bearer ${config.token}` },
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timer);
-    }
-    if (!res.ok) return null;
-    const type = res.headers.get('Content-Type') ?? 'image/jpeg';
-    const bytes = new Uint8Array(await res.arrayBuffer());
+      const url = `${server.baseUrl.replace(/\/+$/, '')}/api/v1/attachments/${id}`;
+      // Sem teto, uma conexao pendurada prendia a imagem para sempre (e o
+      // editor ficava sem ela). 15 s e suficiente para uma foto.
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15000);
+      let res: Response;
+      try {
+        res = await fetch(url, {
+          headers: { Authorization: `Bearer ${server.token}` },
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+      if (!res.ok) continue;
+      const type = res.headers.get('Content-Type') ?? 'image/jpeg';
+      const bytes = new Uint8Array(await res.arrayBuffer());
 
-    const dir = attachmentsDir();
-    const file = new File(dir, `${id}.${extensionOf(type)}`);
-    if (!file.exists) file.create({ intermediates: true, overwrite: true });
-    const handle = file.open(FileMode.Append);
-    try {
-      handle.writeBytes(bytes);
-    } finally {
-      handle.close();
+      const dir = attachmentsDir();
+      const file = new File(dir, `${id}.${extensionOf(type)}`);
+      if (!file.exists) file.create({ intermediates: true, overwrite: true });
+      const handle = file.open(FileMode.Append);
+      try {
+        handle.writeBytes(bytes);
+      } finally {
+        handle.close();
+      }
+      invalidateAttachmentIndex();
+      return file.uri;
+    } catch {
+      // ambiente indisponivel ou objeto ausente: tenta o proximo
     }
-    invalidateAttachmentIndex();
-    return file.uri;
-  } catch {
-    return null;
   }
+  return null;
 }
 
 /** URI local de um anexo do servidor: usa o cache e, se faltar, baixa uma vez. */
@@ -204,7 +209,12 @@ export async function uploadLocalImage(entryId: string, noteId: string, name: st
   if (!config) throw new Error('sem servidor configurado');
   const api = new DyariumApi(config, doFetch);
   const bytes = await readLocalImage(noteId, name);
-  const attachment = await api.uploadAttachment(entryId, bytes, mimeFromName(name));
+  const attachment = await api.uploadAttachment(
+    entryId,
+    bytes,
+    mimeFromName(name),
+    stableAttachmentId(noteId, name),
+  );
   // Deixa a copia local acessivel por id, para exibir sem baixar depois.
   await cacheLocalCopy(noteId, name, attachment.id);
   return attachment.id;
@@ -290,6 +300,7 @@ export async function uploadLocalAudio(
       sizeBytes,
       durationSeconds: durationMs > 0 ? durationMs / 1000 : undefined,
       entryId,
+      attachmentId: stableAttachmentId(noteId, name),
     },
     { api, file: uploadFileIO },
   );

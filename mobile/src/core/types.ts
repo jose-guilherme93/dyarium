@@ -141,6 +141,13 @@ export interface Recording {
   recordedAtVersion?: string;
   bodyVersion?: string;
   /**
+   * Versao da nota inteira no relogio hibrido: o instante da ultima mudanca de
+   * conteudo (titulo, texto ou data). E a referencia para decidir, sem dialogo,
+   * se a edicao local aconteceu antes ou depois da edicao que veio do servidor,
+   * mesmo com o relogio do aparelho atrasado.
+   */
+  updatedHlc?: string;
+  /**
    * Campos que o servidor recusou por conflito (409), esperando o usuario
    * escolher qual versao fica. Enquanto isto estiver aqui, a nota nao volta para
    * a fila: repetir a gravacao nao resolveria nada.
@@ -210,6 +217,12 @@ export type AuthorRole = '' | 'self' | 'other' | 'mixed';
 export interface ServerConfig {
   baseUrl: string;
   token: string;
+  /** Stable identity of the environment (server `instance_id`). */
+  id?: string;
+  /** Human label; falls back to the host when empty. */
+  label?: string;
+  /** Major sync contract negotiated with this environment. */
+  contract?: string;
 }
 
 export const ACTIVE_STATUSES: RecordingStatus[] = ['recording', 'interrupted'];

@@ -96,11 +96,21 @@ func serve() error {
 		return fmt.Errorf("chave mestra invalida: %w", err)
 	}
 
+	// Identidade estavel do ambiente. Nao e segredo: so precisa ser unica e
+	// sobreviver a reinicio, troca de endereco e troca de token.
+	instanceID, err := bootstrap.EnsureInstanceID(cfg.DataDir)
+	if err != nil {
+		return fmt.Errorf("resolver identidade da instancia: %w", err)
+	}
+
 	st, err := store.Open(cfg.DBPath)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
+	// Stamps carry the environment identity: two servers issuing a version in
+	// the same millisecond still produce different, ordered tokens.
+	st.SetClockNode(instanceID)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -217,7 +227,7 @@ func serve() error {
 		Config:    cfg,
 		Store:     st,
 		Logger:    logger,
-		Version:   api.Version{Version: version, Commit: commit, BuiltAt: date},
+		Version:   api.Version{Version: version, Commit: commit, BuiltAt: date, InstanceID: instanceID, SyncContract: api.SyncContract},
 		Ingest:    ingestSvc,
 		Queue:     queue,
 		Analyzer:  analyzer,

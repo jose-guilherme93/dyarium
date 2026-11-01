@@ -33,17 +33,17 @@ vi.mock("../editor/NotesEditor", () => ({
   }: {
     initialContent?: { content?: string }[];
     onChange?: (markdown: string) => void;
-  }) => (
-    <button
-      type="button"
-      onClick={() => {
-        const current = (initialContent ?? []).map((block) => block.content ?? "").join(" ");
-        onChange?.(`${current} editado`.trim());
-      }}
-    >
-      editar corpo
-    </button>
-  ),
+  }) => {
+    const content = (initialContent ?? []).map((block) => block.content ?? "").join(" ");
+    return (
+      <div>
+        <span data-testid="editor-body">{content}</span>
+        <button type="button" onClick={() => onChange?.(`${content} editado`.trim())}>
+          editar corpo
+        </button>
+      </div>
+    );
+  },
   mediaRefs: () => [],
 }));
 
@@ -95,14 +95,60 @@ vi.mock("../api", () => ({
 }));
 
 const noop = () => {};
+let confirmSpy: ReturnType<typeof vi.spyOn>;
+
+function entry(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "e1",
+    title: "Nota escrita",
+    status: "ready",
+    source: "text",
+    parent_id: "",
+    notebook_id: "notas-ao-acaso",
+    content_type: "",
+    original_filename: "",
+    duration_seconds: 0,
+    recorded_at: null,
+    created_at: "2026-10-15T12:00:00Z",
+    updated_at: "2026-10-15T12:00:00Z",
+    ...overrides,
+  };
+}
+
+function note(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "n1",
+    entry_id: "e1",
+    title: "",
+    content_markdown: "antigo",
+    body_version: "v1",
+    created_at: "2026-10-15T12:00:00Z",
+    updated_at: "2026-10-15T12:00:00Z",
+    ...overrides,
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Um unico spy para o arquivo inteiro: criar/restaurar por teste deixava a
+  // resposta do teste anterior valendo quando um caso terminava no meio.
+  confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
 });
 
 afterEach(() => {
   vi.useRealTimers();
   workerState.current = null;
+  confirmSpy?.mockRestore();
 });
 
 describe("NoteEditor autosave", () => {
@@ -194,7 +240,7 @@ describe("NoteEditor apagar audio", () => {
         },
       ],
     });
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    confirmSpy.mockReturnValue(true);
     const onChanged = vi.fn();
 
     render(
@@ -215,7 +261,6 @@ describe("NoteEditor apagar audio", () => {
     await waitFor(() => expect(api.deleteAttachment).toHaveBeenCalledWith("a1"));
     expect(onChanged).toHaveBeenCalled();
     await waitFor(() => expect(screen.queryByLabelText("Opções do áudio")).toBeNull());
-    confirm.mockRestore();
   });
 
   it("nao apaga nada quando a confirmacao e cancelada", async () => {
@@ -233,7 +278,7 @@ describe("NoteEditor apagar audio", () => {
         },
       ],
     });
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    confirmSpy.mockReturnValue(false);
 
     render(
       <NoteEditor
@@ -251,7 +296,6 @@ describe("NoteEditor apagar audio", () => {
     fireEvent.click(screen.getByText("Apagar áudio"));
 
     expect(api.deleteAttachment).not.toHaveBeenCalled();
-    confirm.mockRestore();
   });
 });
 
@@ -286,6 +330,39 @@ describe("Origem da analise", () => {
     const open = screen.queryByLabelText("Abrir propriedades");
     if (open) fireEvent.click(open);
     expect(await screen.findByText("aparelho")).toBeInTheDocument();
+  });
+
+  it("nao apaga a analise quando um refresh falha", async () => {
+    vi.mocked(api.getAnalysis)
+      .mockResolvedValueOnce({
+        origin: "app",
+        model: "gemma-3-270m",
+        sentiment: 0.2,
+        sentiment_label: "positivo",
+        emotions: null,
+        people: null,
+        places: null,
+        summary: "Um dia bom.",
+      })
+      .mockRejectedValueOnce(new Error("rede"));
+
+    const props = {
+      entryId: "e1",
+      onChanged: noop,
+      onDeleted: noop,
+      onOpenEntity: noop,
+      onOpenEntry: noop,
+      notebooks: [],
+    };
+    const { rerender } = render(<NoteEditor {...props} refreshKey={0} />);
+    await screen.findByLabelText("Ver markdown");
+    const open = screen.queryByLabelText("Abrir propriedades");
+    if (open) fireEvent.click(open);
+    expect(await screen.findByText("aparelho")).toBeInTheDocument();
+
+    rerender(<NoteEditor {...props} refreshKey={1} />);
+    await waitFor(() => expect(api.getAnalysis).toHaveBeenCalledTimes(2));
+    expect(screen.getByText("aparelho")).toBeInTheDocument();
   });
 
   it("bloqueia Analisar enquanto os modelos do PC estao carregando", async () => {
@@ -337,7 +414,7 @@ describe("Origem da analise", () => {
     const open = screen.queryByLabelText("Abrir propriedades");
     if (open) fireEvent.click(open);
     expect(
-      await screen.findByText("Edge 156 · Windows · Intel HD Graphics 620"),
+      await screen.findByText("Edge 156 · Windows · Intel HD Graphics 620 · LFM2.5 230M"),
     ).toBeInTheDocument();
   });
 
@@ -396,5 +473,111 @@ describe("Origem da analise", () => {
     const open = screen.queryByLabelText("Abrir propriedades");
     if (open) fireEvent.click(open);
     expect(await screen.findByText("API")).toBeInTheDocument();
+  });
+});
+
+function renderEditor() {
+  return render(
+    <NoteEditor
+      entryId="e1"
+      refreshKey={0}
+      onChanged={noop}
+      onDeleted={noop}
+      onOpenEntity={noop}
+      onOpenEntry={noop}
+      notebooks={[]}
+    />,
+  );
+}
+
+describe("NoteEditor integridade do corpo", () => {
+  it("remonta com o corpo da rede quando o cache estava velho", async () => {
+    const cachedEntry = entry();
+    const freshEntry = deferred<ReturnType<typeof entry>>();
+    const freshNotes = deferred<{ notes: ReturnType<typeof note>[] }>();
+    vi.mocked(api.getEntryCached).mockResolvedValueOnce(cachedEntry as never);
+    vi.mocked(api.listNotesCached).mockResolvedValueOnce({ notes: [note()] } as never);
+    vi.mocked(api.getEntry).mockReturnValueOnce(freshEntry.promise as never);
+    vi.mocked(api.listNotes).mockReturnValueOnce(freshNotes.promise as never);
+
+    renderEditor();
+    const before = await screen.findByTestId("editor-body");
+    expect(before).toHaveTextContent("antigo");
+
+    freshEntry.resolve(cachedEntry);
+    freshNotes.resolve({ notes: [note({ content_markdown: "novo", body_version: "v2" })] });
+
+    await waitFor(() => expect(screen.getByTestId("editor-body")).toHaveTextContent("novo"));
+    // Um texto novo por cima do editor montado nao basta: o BlockNote so le o
+    // initialContent na criacao, entao o editor precisa ter remontado.
+    expect(screen.getByTestId("editor-body")).not.toBe(before);
+  });
+
+  it("nao cria nota duplicada quando o corpo nao carrega", async () => {
+    vi.mocked(api.listNotes).mockRejectedValueOnce(new Error("falha"));
+
+    renderEditor();
+
+    expect(
+      await screen.findByText("Não foi possível carregar o corpo da nota."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "editar corpo" })).toBeNull();
+    expect(api.createNote).not.toHaveBeenCalled();
+  });
+
+  it("mantem a nota em cache quando a rede falha, sem criar duplicata", async () => {
+    const cachedEntry = entry();
+    vi.mocked(api.getEntryCached).mockResolvedValueOnce(cachedEntry as never);
+    vi.mocked(api.listNotesCached).mockResolvedValueOnce({ notes: [note()] } as never);
+    vi.mocked(api.listNotes).mockRejectedValueOnce(new Error("falha"));
+
+    const { unmount } = renderEditor();
+    expect(await screen.findByTestId("editor-body")).toHaveTextContent("antigo");
+
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole("button", { name: "editar corpo" }));
+    unmount();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(api.updateNote).toHaveBeenCalled();
+    expect(api.createNote).not.toHaveBeenCalled();
+  });
+
+  it("nao renomeia com o nome do arquivo ao abrir e fechar", async () => {
+    vi.mocked(api.getEntry).mockResolvedValueOnce(
+      entry({ title: "", original_filename: "gravacao.m4a" }) as never,
+    );
+
+    const { unmount } = renderEditor();
+    await screen.findByTestId("editor-body");
+    expect(screen.getByLabelText("Título da nota")).toHaveValue("");
+
+    unmount();
+    expect(api.patchEntry).not.toHaveBeenCalled();
+  });
+
+  it("reenvia a criacao da nota com o mesmo id depois de uma falha", async () => {
+    vi.mocked(api.listNotes).mockResolvedValueOnce({ notes: [] } as never);
+    vi.mocked(api.createNote).mockRejectedValueOnce(new Error("rede"));
+
+    renderEditor();
+    const edit = await screen.findByRole("button", { name: "editar corpo" });
+
+    vi.useFakeTimers();
+    fireEvent.click(edit);
+    await vi.advanceTimersByTimeAsync(900);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(api.createNote).toHaveBeenCalledTimes(1);
+    const firstId = vi.mocked(api.createNote).mock.calls[0][3];
+    expect(firstId).toMatch(/^note_/);
+
+    fireEvent.click(screen.getByRole("button", { name: "Ver markdown" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Markdown da nota" }), {
+      target: { value: "outro texto" },
+    });
+    await vi.advanceTimersByTimeAsync(900);
+
+    expect(api.createNote).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(api.createNote).mock.calls[1][3]).toBe(firstId);
   });
 });

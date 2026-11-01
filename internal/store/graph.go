@@ -61,8 +61,11 @@ type GraphData struct {
 // GraphOptions narrows and expands the map.
 type GraphOptions struct {
 	NotebookID string
-	From       time.Time
-	To         time.Time
+	// ExcludeBooks keeps chapters out of the diary map. The book workspace does
+	// not open the map, and "all notebooks" means the diary.
+	ExcludeBooks bool
+	From         time.Time
+	To           time.Time
 	// Focus is a node id ("person:<entity id>", "place:<id>", "theme:<id>").
 	// Empty returns the ego network; set returns that entity, its notes and the
 	// entities those notes mention.
@@ -97,6 +100,9 @@ func (o GraphOptions) entryFilter() (string, []any) {
 	if notebook := strings.TrimSpace(o.NotebookID); notebook != "" {
 		where += ` AND e.notebook_id = ?`
 		args = append(args, notebook)
+	}
+	if o.ExcludeBooks {
+		where += ` AND e.notebook_id NOT IN (SELECT nb.id FROM notebooks nb WHERE nb.kind = 'book')`
 	}
 	if !o.From.IsZero() {
 		where += ` AND COALESCE(e.recorded_at, e.created_at) >= ?`

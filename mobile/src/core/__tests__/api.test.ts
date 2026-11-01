@@ -1,4 +1,11 @@
-import { ApiError, ConflictError, DyariumApi, type FetchLike, type HttpResponse } from '../api';
+import {
+  ApiError,
+  ConflictError,
+  DyariumApi,
+  setClientOrigin,
+  type FetchLike,
+  type HttpResponse,
+} from '../api';
 
 function resp(status: number, body: unknown): HttpResponse {
   return {
@@ -44,6 +51,14 @@ describe('DyariumApi', () => {
     await api.version();
     expect(calls[0].url).toBe('http://host:8080/api/v1/version');
     expect(calls[0].init?.headers?.Authorization).toBe('Bearer tok');
+  });
+
+  it('envia a origem do aparelho nas requisicoes autenticadas', async () => {
+    setClientOrigin('dev_01J');
+    const { api, calls } = makeApi(() => resp(200, { version: '1.0', commit: 'x', built_at: 'y' }));
+    await api.version();
+    expect(calls[0].init?.headers?.['X-Origin-Instance']).toBe('dev_01J');
+    setClientOrigin('');
   });
 
   it('healthz nao envia autenticacao', async () => {

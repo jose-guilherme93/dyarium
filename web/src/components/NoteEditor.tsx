@@ -6,15 +6,22 @@ import { NotesEditor, type NotesEditorHandle } from "../editor/NotesEditor";
 import { markdownToPlain, noteBlocksToMarkdown, normalizeLegacyAttachmentImages, audioAttachmentIds } from "../editor/blocknoteMarkdown";
 import { markdownToNoteBlocks } from "../editor/markdownBlocks";
 import { createAutosave, type Autosave } from "../lib/autosave";
+import { modelShortLabel } from "../lib/browserModels";
 import { formatBytes, formatDateTime, formatDuration } from "../lib/format";
+import { clientId } from "../lib/id";
 import { patchNoteViewState, readNoteViewState } from "../lib/noteViewState";
 import { useEscape } from "../lib/useEscape";
 import type { Analysis, Attachment, Audio, AuthorRole, EntityKind, Entry, Note, Notebook, Revision } from "../types";
 import { Spinner, isBusy, statusLabel } from "./Status";
 import { TagEditor } from "./TagEditor";
 import { ListSkeleton } from "./Skeleton";
-import { ProcessOnPc } from "./ProcessOnPc";
 import { AnalysisStatus } from "./AnalysisStatus";
+import { InsightsBody } from "./InsightsBody";
+import {
+  getLiveAnalysis,
+  subscribeLiveAnalysis,
+  type LiveAnalysis,
+} from "../lib/liveAnalysis";
 import {
   beginWorkerEntry,
   cancelWorkerEntry,
@@ -26,7 +33,6 @@ import { useToast } from "./Toasts";
 import {
   ArchiveIcon,
   CheckIcon,
-  ChevronIcon,
   CloseIcon,
   CodeIcon,
   ImageIcon,
@@ -48,7 +54,6 @@ interface NoteEditorProps {
   onOpenEntry: (id: string) => void;
   notebooks: Notebook[];
   /** Abre o processamento (laboratorio) e deixa Voltar trazer a nota de volta. */
-  onOpenLab?: () => void;
 }
 
 const FONTS = [
@@ -56,19 +61,6 @@ const FONTS = [
   { id: "serif", label: "Serifada", preview: '"Newsreader", Georgia, serif' },
   { id: "mono", label: "Monoespaçada", preview: "var(--font-mono)" },
 ];
-
-function sentimentText(label?: string): string {
-  switch (label) {
-    case "positivo":
-      return "Positivo";
-    case "negativo":
-      return "Negativo";
-    case "neutro":
-      return "Neutro";
-    default:
-      return "Sem rotulo";
-  }
-}
 
 /** Tira do markdown o marcador do audio apagado (pilha ou modo cru). */
 function withoutAudioMarker(markdown: string, attachmentId: string): string {
@@ -244,7 +236,6 @@ export function NoteEditor({
   onOpenEntity,
   onOpenEntry,
   notebooks,
-  onOpenLab,
 }: NoteEditorProps) {
   const { notify } = useToast();
   const [entry, setEntry] = useState<Entry | null>(null);
@@ -269,7 +260,14 @@ export function NoteEditor({
   // Enquanto isso, Analisar fica indisponivel para a nota nao escapar para o
   // servidor quando o usuario pediu processamento neste PC.
   const [workerState, setWorkerState] = useState(getWorkerState());
+  const [live, setLive] = useState<LiveAnalysis | null>(() => getLiveAnalysis(entryId));
   const workerPreparing = workerState?.phase === "preparing";
+  useEffect(() => {
+    setLive(getLiveAnalysis(entryId));
+    return subscribeLiveAnalysis((changedEntryId, state) => {
+      if (changedEntryId === entryId) setLive(state);
+    });
+  }, [entryId]);
   const [optionsOpen, setOptionsOpen] = useState(false);
   useEffect(() => {
     if (asideOpen) {
@@ -312,6 +310,15 @@ export function NoteEditor({
   const [rawOpen, setRawOpen] = useState(() => readNoteViewState(entryId).rawOpen);
   const [revisionsCursor, setRevisionsCursor] = useState<string | undefined>(undefined);
   const lastQueuedRef = useRef<string>("");
+  // Markdown que o editor realmente recebeu ao montar. E o que a gravacao usa
+  // como base: se o cache mostrou um texto e a rede trouxe outro, o editor
+  // remonta para o texto novo antes de qualquer digitacao.
+  const mountedMarkdownRef = useRef<string | null>(null);
+  // Id do rascunho criado neste navegador. Reenviar depois de uma resposta
+  // perdida devolve a mesma nota em vez de criar uma segunda.
+  const pendingNoteIdRef = useRef<string | null>(null);
+  const [editorEpoch, setEditorEpoch] = useState(0);
+  const [bodyError, setBodyError] = useState("");
   const saveBodyRef = useRef<(document: unknown) => Promise<void>>(async () => {});
   const saveTitleRef = useRef<() => Promise<void>>(async () => {});
   const autosaveRef = useRef<Autosave | null>(null);
@@ -354,13 +361,29 @@ export function NoteEditor({
   }, [title, entry]);
 
   const applyNoteData = useCallback(
-    (loaded: Entry, analysisValue: Analysis | null, imagesValue: Attachment[], note: Note | undefined, applyBody: boolean) => {
+    (
+      loaded: Entry,
+      analysisValue: Analysis | null,
+      imagesValue: Attachment[],
+      note: Note | undefined,
+      bodyReady: boolean,
+    ) => {
       setEntry(loaded);
       if (!titleDirtyRef.current) {
-        setTitle(loaded.title || loaded.original_filename || "");
+        // O nome do arquivo e so um rotulo de exibicao na lista; usa-lo como
+        // titulo aqui fazia abrir e fechar a nota renomea-la sem o usuario pedir.
+        setTitle(loaded.title ?? "");
+        titleVersionRef.current = loaded.versions?.title ?? "";
       }
       setAnalysis(analysisValue);
       setImages(imagesValue);
+      // `bodyReady` falso significa "a resposta do corpo falhou", nao "a nota
+      // nao tem corpo". Nesse caso, nao zere a identidade nem o documento: um
+      // corpo vazio com noteId nulo faria a proxima digitacao criar uma nota
+      // duplicada.
+      if (!bodyReady) {
+        return;
+      }
       if (note) {
         noteIdRef.current = note.id;
         setNoteId(note.id);
@@ -370,11 +393,11 @@ export function NoteEditor({
         setNoteId(null);
         noteTitleRef.current = "";
       }
-      // A versao do corpo lida agora: e o que o servidor compara na proxima
-      // gravacao, para recusar o que mudou no celular em vez de sobrescrever.
-      bodyVersionRef.current = note?.body_version ?? "";
-      titleVersionRef.current = loaded.versions?.title ?? "";
-      if (!applyBody) {
+      // Enquanto o usuario digita, o documento montado manda. Trocar o corpo
+      // por baixo dele perderia a digitacao; a versao lida continua sendo a do
+      // texto que esta na tela, para a gravacao seguinte disputar com o servidor
+      // em vez de sobrescrever sem aviso.
+      if (bodyDirtyRef.current && mountedMarkdownRef.current !== null) {
         return;
       }
       const stored = note?.content_markdown ?? "";
@@ -383,10 +406,20 @@ export function NoteEditor({
       // regravada uma vez para o servidor voltar a ter a referencia `attachment:`.
       const markdown = normalizeLegacyAttachmentImages(stored);
       const filled = note ? noteBodyToBlocks(note) : undefined;
+      // O BlockNote so le `initialContent` na criacao. Se o corpo em cache era
+      // diferente do corpo que chegou da rede, o editor precisa remontar; sem
+      // isso ele continuava mostrando o texto velho e a primeira tecla gravava
+      // esse texto velho com a versao nova do servidor.
+      if (mountedMarkdownRef.current !== null && markdown !== mountedMarkdownRef.current) {
+        setEditorEpoch((epoch) => epoch + 1);
+      }
+      mountedMarkdownRef.current = markdown;
+      bodyVersionRef.current = note?.body_version ?? "";
       setRawMarkdown(markdown);
       setInitialBody(filled);
       lastQueuedRef.current = markdown;
       setBodyLoaded(true);
+      setBodyError("");
       if (markdown !== stored) {
         autosaveRef.current?.schedule(markdown);
       }
@@ -396,8 +429,10 @@ export function NoteEditor({
 
   const loadFull = useCallback(async () => {
     setError("");
+    setBodyError("");
     setBodyLoaded(false);
     noteIdRef.current = null;
+    pendingNoteIdRef.current = null;
 
     // First paint comes from the local cache: reopening a note should not wait
     // for the network. The fresh copy is applied right after. Both start
@@ -419,7 +454,9 @@ export function NoteEditor({
         cachedAnalysis ?? null,
         cachedImages?.attachments ?? [],
         cachedNotes?.notes?.[0],
-        !bodyDirtyRef.current,
+        // Cache sem a nota nao prova que a nota nao existe; espere a rede em
+        // vez de pintar um corpo vazio que a digitacao transformaria em duplicata.
+        cachedNotes !== undefined,
       );
     });
     const [entryRes, analysisRes, notesRes, imagesRes] = await Promise.allSettled([
@@ -435,13 +472,17 @@ export function NoteEditor({
       }
       return;
     }
+    const notesOk = notesRes.status === "fulfilled";
     applyNoteData(
       entryRes.value,
       analysisRes.status === "fulfilled" ? analysisRes.value : null,
       imagesRes.status === "fulfilled" ? imagesRes.value.attachments ?? [] : [],
-      notesRes.status === "fulfilled" ? notesRes.value.notes?.[0] : undefined,
-      !bodyDirtyRef.current,
+      notesOk ? notesRes.value.notes?.[0] : undefined,
+      notesOk,
     );
+    if (!notesOk && mountedMarkdownRef.current === null) {
+      setBodyError("Não foi possível carregar o corpo da nota.");
+    }
   }, [applyNoteData, entryId]);
 
   const loadLight = useCallback(async () => {
@@ -453,7 +494,10 @@ export function NoteEditor({
     if (entryRes.status === "fulfilled") {
       setEntry(entryRes.value);
     }
-    setAnalysis(analysisRes.status === "fulfilled" ? analysisRes.value : null);
+    // Uma falha passageira nao pode apagar a analise que ja esta na tela.
+    if (analysisRes.status === "fulfilled") {
+      setAnalysis(analysisRes.value);
+    }
     if (imagesRes.status === "fulfilled") {
       setImages(imagesRes.value.attachments ?? []);
     }
@@ -574,11 +618,16 @@ export function NoteEditor({
           const saved = await api.updateNote(noteIdRef.current, text, bodyVersionRef.current);
           bodyVersionRef.current = saved.versions?.body ?? bodyVersionRef.current;
         } else {
-          const created = await api.createNote(entryId, noteTitle, text);
+          const clientNoteId = pendingNoteIdRef.current ?? clientId("note");
+          pendingNoteIdRef.current = clientNoteId;
+          const created = await api.createNote(entryId, noteTitle, text, clientNoteId);
           noteIdRef.current = created.id;
+          pendingNoteIdRef.current = null;
           setNoteId(created.id);
           bodyVersionRef.current = created.body_version ?? "";
         }
+        mountedMarkdownRef.current = text;
+        setError("");
         setSaving("saved");
         window.setTimeout(() => setSaving((value) => (value === "saved" ? "idle" : value)), 1500);
       } catch (err) {
@@ -590,6 +639,8 @@ export function NoteEditor({
           try {
             const saved = await api.updateNote(noteIdRef.current, text);
             bodyVersionRef.current = saved.versions?.body ?? bodyVersionRef.current;
+            mountedMarkdownRef.current = text;
+            setError("");
             setSaving("saved");
             window.setTimeout(() => setSaving((value) => (value === "saved" ? "idle" : value)), 1500);
             return;
@@ -671,12 +722,15 @@ export function NoteEditor({
       const blocks = markdownToNoteBlocks(rawMarkdown);
       setInitialBody(blocks.length > 0 ? blocks : undefined);
       lastQueuedRef.current = rawMarkdown;
+      mountedMarkdownRef.current = rawMarkdown;
     }
     setRawOpen(!rawOpen);
   }, [rawMarkdown, rawOpen]);
 
   const saveTitle = useCallback(async () => {
-    if (!entry || title === entry.title) {
+    // So grava o que o usuario editou. O titulo vazio e um estado valido e nao
+    // pode ser preenchido com o nome do arquivo no flush de saida.
+    if (!entry || !titleDirtyRef.current || title === entry.title) {
       return;
     }
     try {
@@ -685,6 +739,7 @@ export function NoteEditor({
         versions: { title: titleVersionRef.current },
       });
       titleVersionRef.current = saved.versions?.title ?? titleVersionRef.current;
+      titleDirtyRef.current = false;
       setEntry((current) => (current ? { ...current, title } : current));
       onChanged();
     } catch (err) {
@@ -694,6 +749,7 @@ export function NoteEditor({
         try {
           const saved = await api.patchEntry(entry.id, { title });
           titleVersionRef.current = saved.versions?.title ?? titleVersionRef.current;
+          titleDirtyRef.current = false;
           setEntry((current) => (current ? { ...current, title } : current));
           onChanged();
           return;
@@ -777,7 +833,11 @@ export function NoteEditor({
     if (!entry) {
       return;
     }
-    if (!window.confirm("Apagar esta nota e os áudios? Esta ação não pode ser desfeita.")) {
+    if (
+      !window.confirm(
+        "Apagar esta nota? Ela vai para a Lixeira e pode ser restaurada em Configurações > Lixeira.",
+      )
+    ) {
       return;
     }
     try {
@@ -834,7 +894,8 @@ export function NoteEditor({
   // so a pilha (notas antigas e audios enviados pelo dashboard) fica no topo.
   const bodyAudioIds = useMemo(() => audioAttachmentIds(rawMarkdown), [rawMarkdown]);
   const stackAudios = audios.filter((audio) => !bodyAudioIds.has(audio.id));
-  const processing = running || busy !== null;
+  const localJob = workerState?.job?.entryId === entryId ? workerState.job : null;
+  const processing = localJob !== null || running || busy !== null;
   // Derived numbers walk the whole document. They used to be recomputed on
   // every keystroke and every SSE event; memoizing keeps typing cheap.
   const spokenText = useMemo(
@@ -884,128 +945,33 @@ export function NoteEditor({
     );
   }
 
-  const insights = processing ? (
+  const liveAnalysis = live?.analysis ?? null;
+  const liveBlocks = liveAnalysis?.coverage?.blocks_read ?? 0;
+  const serverBlocks = analysis?.coverage?.blocks_read ?? 0;
+  // Uma analise antiga pode nao ter cobertura; nesse caso a leitura ou as
+  // secoes dizem que ela ja esta completa.
+  const serverComplete =
+    analysis !== null &&
+    (analysis.coverage?.partial === false ||
+      Boolean(analysis.reading) ||
+      Boolean(analysis.sections && analysis.sections.length > 0));
+  // Enquanto o worker desta nota esta ativo, o parcial manda; depois, o
+  // servidor assume assim que estiver completo ou alcancar a cobertura.
+  const showLive = localJob !== null && liveAnalysis !== null;
+  const shownAnalysis =
+    showLive
+      ? liveAnalysis
+      : liveAnalysis !== null && !serverComplete && liveBlocks > serverBlocks
+        ? liveAnalysis
+        : (analysis ?? liveAnalysis);
+
+  const insights = processing && !showLive ? (
     <AnalysisStatus entryId={entryId} progress={progress} status={status} />
-  ) : analysis ? (
-    <div className="insights">
-      <p>
-        Sentimento: <strong>{sentimentText(analysis.sentiment_label)}</strong>{" "}
-        <span className="muted">({Number(analysis.sentiment ?? 0).toFixed(2)})</span>
-      </p>
-      {typeof analysis.comprehension === "number" && analysis.comprehension >= 0 && (
-        <p
-          className="insight-comprehension"
-          title={
-            analysis.comprehension_source === "review"
-              ? `Compreensão lógica estimada do texto revisado (0 a 100); ${analysis.revised_segments ?? 0} trechos melhorados pela IA.`
-              : "Compreensão lógica estimada pelo modelo sobre o texto lido (0 a 100); a transcrição não foi revisada."
-          }
-        >
-          Compreensão <strong>{analysis.comprehension}/100</strong>
-          {analysis.comprehension_source !== "review" && (
-            <span className="muted"> · sem revisão</span>
-          )}
-        </p>
-      )}
-      {((analysis.stutter_rate ?? 0) > 0 || (analysis.hesitation_rate ?? 0) > 0) && (
-        <p
-          className="muted insight-disfluency"
-          title="Ocorrências por 100 palavras do texto cru do áudio."
-        >
-          Gagueira {Number(analysis.stutter_rate ?? 0).toFixed(1)} · Hesitação{" "}
-          {Number(analysis.hesitation_rate ?? 0).toFixed(1)}
-        </p>
-      )}
-      {/* A prosa e legenda das metricas: duas frases no maximo. O resumo so
-          aparece quando nao ha leitura (analises antigas). */}
-      {(analysis.reading || analysis.summary) && (
-        <p className="insight-reading">{analysis.reading || analysis.summary}</p>
-      )}
-      {analysis.origin === "browser" && analysis.device_name && (
-        <p className="hint insight-device" title="Aparelho que processou esta análise.">
-          {analysis.device_name}
-        </p>
-      )}
-
-      {analysis.sections && analysis.sections.length > 1 && (
-        <div className="analysis-block">
-          <h4>Seções</h4>
-          {analysis.sections.map((section, index) => (
-            <details key={`${section.heading}-${index}`} className="insight-section">
-              <summary>
-                {section.heading || "Nota"}
-                <span className="muted">
-                  {" "}
-                  {sentimentText(section.sentiment?.label ?? "")}
-                </span>
-              </summary>
-              {(section.reading || section.summary) && (
-                <p>{section.reading || section.summary}</p>
-              )}
-            </details>
-          ))}
-        </div>
-      )}
-
-      {analysis.themes && analysis.themes.length > 0 && (
-        <div className="analysis-block">
-          <h4>Temas</h4>
-          <ul className="chips stagger-in">
-            {analysis.themes.map((theme) => (
-              <li key={theme.name}>
-                <button type="button" className="chip-button" onClick={() => onOpenEntity("theme", theme.name)}>
-                  {theme.name}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {analysis.people_detail && analysis.people_detail.length > 0 && (
-        <div className="analysis-block">
-          <h4>Pessoas</h4>
-          <ul className="chips stagger-in">
-            {analysis.people_detail.map((person) => (
-              <li key={person.name}>
-                <button type="button" className="chip-button" onClick={() => onOpenEntity("person", person.name)}>
-                  {person.name}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {analysis.places_detail && analysis.places_detail.length > 0 && (
-        <div className="analysis-block">
-          <h4>Lugares</h4>
-          <ul className="chips stagger-in">
-            {analysis.places_detail.map((place) => (
-              <li key={place.name}>
-                <button type="button" className="chip-button" onClick={() => onOpenEntity("place", place.name)}>
-                  {place.name}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {analysis.key_moments && analysis.key_moments.length > 0 && (
-        <div className="analysis-block">
-          <h4>Momentos</h4>
-          <ul className="moments">
-            {analysis.key_moments.map((moment, index) => (
-              <li key={index}>
-                <span className="timestamp">{formatDuration(moment.start_ms / 1000)}</span>
-                {moment.text}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
+  ) : shownAnalysis ? (
+    <>
+      {showLive && <AnalysisStatus entryId={entryId} progress={progress} status={status} />}
+      <InsightsBody analysis={shownAnalysis} onOpenEntity={onOpenEntity} live={showLive} />
+    </>
   ) : (
     <p className="muted">Sem análise ainda.</p>
   );
@@ -1228,8 +1194,8 @@ export function NoteEditor({
         ) : null}
 
         <div className="note-body">
-          {bodyLoaded &&
-            (rawOpen ? (
+          {bodyLoaded ? (
+            rawOpen ? (
               <div className="note-raw">
                 <p className="note-raw-hint">
                   Markdown da nota: e o mesmo texto que o app le. O que for alterado aqui substitui o corpo.
@@ -1244,6 +1210,7 @@ export function NoteEditor({
               </div>
             ) : (
               <NotesEditor
+                key={editorEpoch}
                 ref={notesRef}
                 entryId={entry.id}
                 initialContent={initialBody}
@@ -1256,7 +1223,15 @@ export function NoteEditor({
                 onOpenEntry={onOpenEntry}
                 onDeleteAudio={(id) => void deleteAudio(id)}
               />
-            ))}
+            )
+          ) : bodyError ? (
+            <div className="note-body-error">
+              <p className="error">{bodyError}</p>
+              <button type="button" className="button button--ghost" onClick={() => void loadFull()}>
+                Tentar novamente
+              </button>
+            </div>
+          ) : null}
         </div>
         </div>
       </div>
@@ -1294,7 +1269,7 @@ export function NoteEditor({
                         : analysis.origin === "api"
                           ? "Análise feita por um provedor de terceiro."
                           : analysis.origin === "browser"
-                            ? `Análise feita neste computador${analysis.device_name ? ` (${analysis.device_name})` : ""}, sem provedor externo.`
+                            ? `Análise feita neste computador${analysis.device_name ? ` (${analysis.device_name})` : ""}, sem provedor externo${analysis.model ? `. Modelo: ${modelShortLabel(analysis.model)}` : ""}.`
                             : "Análise feita neste servidor."
                     }
                   >
@@ -1309,7 +1284,6 @@ export function NoteEditor({
                 ) : null}
               </div>
               <div className="aside-insights-actions">
-                <ProcessOnPc hasAnalysis={analysis !== null} />
                 <button
                   type="button"
                   className="primary small"
@@ -1328,17 +1302,6 @@ export function NoteEditor({
                   )}{" "}
                   Analisar
                 </button>
-                {onOpenLab && (
-                  <button
-                    type="button"
-                    className="icon-button aside-lab-link"
-                    onClick={onOpenLab}
-                    aria-label="Abrir processamento"
-                    title="Processamento neste PC"
-                  >
-                    <ChevronIcon size={15} />
-                  </button>
-                )}
               </div>
             </div>
             {failureReason && !processing && !analysis ? (

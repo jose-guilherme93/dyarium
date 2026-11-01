@@ -109,6 +109,10 @@ Nesse mesmo primeiro boot o servidor gera e guarda a chave mestra em
 
 - **Dashboard**: abra o endereco do servico e faca upload de um audio (wav, mp3,
   m4a, ogg, flac, aac), acompanhe a transcricao e leia notas e analises.
+- **Modo escritor**: um caderno vazio pode virar livro. Os capitulos continuam
+  sendo notas (texto em markdown) e ganham casa do livro, ordem arrastavel,
+  status, metas, leitura e exportacao DOCX/PDF/Markdown. Livros ficam fora do
+  diario, do mapa, do humor e das Estatisticas; o app movel os esconde no v1.
 - **App Android**: o app de captura grava com a tela bloqueada, enfileira e
   envia sozinho. Veja `mobile/README.md`.
 

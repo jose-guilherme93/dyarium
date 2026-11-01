@@ -85,7 +85,7 @@ func (s *Store) scrubNoteBodies(ctx context.Context) (int, error) {
 	for _, change := range changes {
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE notes SET content_markdown = ?, body_updated_at = ?, updated_at = ? WHERE id = ?`,
-			change.body, versionNow(), now, change.id); err != nil {
+			change.body, s.versionNow(), now, change.id); err != nil {
 			return 0, fmt.Errorf("store: scrub note %s: %w", change.id, err)
 		}
 	}

@@ -18,7 +18,7 @@
 
 ## Layout base
 
-- Barra lateral a esquerda: a lista de notas e, no rodape, Mapa, Escrita, Processamento e
+- Barra lateral a esquerda: a lista de notas e, no rodape, Mapa, Estatísticas, Processamento e
   Configuracoes, com estado selecionado e recolhimento opcional.
 - Area central: conteudo da tela atual.
 - Painel recolhivel a direita: contexto da entrada aberta (analise, metadados, notas).
@@ -48,6 +48,18 @@ Layout responsivo:
 - Cabecalho: titulo editavel, data, duracao, tags, status.
 - Corpo: transcricao com segmentos e marcas de tempo; reprodução do audio cifrado
   (decifrado sob demanda) com sincronizacao pela marca de tempo do segmento.
+- Cada linha da transcricao completa mostra um lapis discreto a direita no hover (e
+  sempre no toque). O menu do lapis edita o trecho e transforma em **Tarefa**, **Ideia**
+  ou **Citacao**: a captura vira uma nota acumulada no caderno "Tarefas e ideias", com a
+  tag do tipo, igual ao app. O trecho ganha um selo colorido do tipo.
+- O antigo icone de IA dentro da linha saiu. **Ver texto original** (so quando a revisao
+  mudou a linha) agora mora no mesmo menu do lapis; o chip de revisao que ficava acima da
+  transcricao tambem saiu.
+- A transcricao e um texto corrido, com a entrelinha dos paragrafos e sem buraco entre
+  os trechos; o lapis fica na altura da minutagem, a direita.
+- Numa transcricao longa, o player rola para fora. Um botao redondo de play/pause fica
+  preso no meio da altura da tela enquanto o bloco de audio estiver visivel, para pausar
+  sem voltar ao topo.
 - Abas: Transcricao, Analise, Notas, Anexos e Links.
 - Acoes: retranscrever, adicionar tag, exportar texto.
 
@@ -61,8 +73,9 @@ Layout responsivo:
 - A analise feita no navegador guarda e mostra o aparelho que processou (navegador, sistema
   e placa); e o selo **neste PC**, nao uma API de terceiro.
 - O laboratorio mostra por que a WebGPU falta (`não · HTTPS`, `não · driver`,
-  `não · navegador`) e permite escolher quantos nucleos a analise usa: **Todos** por padrao,
-  ou **Metade** para a maquina continuar respondendo.
+  `não · navegador`), permite escolher quantos nucleos a analise usa (**Todos** por
+  padrao, ou **Metade**) e deixa forcar **CPU** quando o offload da GPU deixa a
+  maquina lenta. A tela mostra o backend e os threads que o motor abriu de fato.
 - Sentimento: indicador simples (positivo/neutro/negativo) com valor numerico.
 - Emocoes: lista com rotulos e intensidades.
 - Pessoas e lugares: listas de mencoes.
@@ -148,17 +161,111 @@ Layout responsivo:
 - Pagina propria, tambem acessivel em `/lab`. O modo so existe com esta aba aberta.
 - **Este computador**: navegador, GPU, VRAM, RAM, nucleos, WebGPU, threads e espaco.
   Botoes para medir CPU/GPU, testar a VRAM por alocacao e exportar o relatorio em JSON.
+  A grade e densa: cada fato ocupa uma linha, com a explicacao no `title`.
+- **Em uso**: mostra o backend e os threads que o motor abriu de verdade, nao os que o
+  navegador promete. Com offload de GPU, o selo e **GPU**; a CPU usa **N threads**.
+  Sem isolamento (COOP/COEP) a linha vira **1 thread** e o aviso explica o porquê.
 - **Modelos**: cinco perfis (0 minimo a 4 maximo). Cada perfil mostra o Whisper, o LLM,
-  o tamanho de cada um e o total do download; o usuario confirma antes de baixar.
-  "Trocar modelo" permite forcar uma combinacao no laboratorio.
-- **Processar neste PC**: registra o worker, baixa o que falta com progresso e fica
-  ocioso. A VPS continua processando a fila; so o **Analisar** de uma nota pede que
-  este PC a processe, e apenas ela.
+  o tamanho de cada um e o total do download; o usuario confirma antes de ligar.
+  "Trocar modelo e processador" permite forcar uma combinacao, escolher **CPU** (todos
+  os nucleos) ou **GPU**, e usar metade dos nucleos.
+- **Processar neste PC**: registra o worker e fica ocioso; os pesos baixam na primeira
+  nota de cada tipo (analise de texto nao paga o download do Whisper). A VPS continua
+  processando a fila; so o **Analisar** de uma nota pede que este PC a processe.
 - **Fila**: reservados, em curso, retentativas, parados, notas feitas e falhas nesta
-  maquina. O trabalho atual mostra tipo, titulo, etapa, blocos lidos e tokens/s.
-- **Parar**: encerra depois da nota atual; a presenca expira e o servidor reassume.
+  maquina, num bloco compacto de seis numeros. O trabalho atual mostra tipo, titulo,
+  etapa, blocos lidos e tokens/s.
+- **Desligar**: o interruptor no topo do cartao e a unica acao. Ligado, o PC continua
+  disponivel ate o usuario desligar; desligado no meio de uma nota, termina a passada
+  atual e para. Nao existe "parar depois de uma nota" escondido num botao.
+- **Analise viva**: a ficha da nota mostra o documento composto a cada bloco lido
+  (tom, emocoes, pessoas, lugares, temas, eventos, decisoes, tarefas, ideias,
+  epifanias e momentos), com os chips entrando em cascata curta. O medidor de blocos
+  continua no topo, e a cobertura marca a leitura como parcial ate o fim.
+- **Notificacoes**: enquanto o worker da aba trabalha, o sino fica azul com um ponto
+  pulsando, e a central mostra o nome da nota, a etapa e o progresso. Desligado o
+  processamento, o sino volta ao estado normal e a lista de concluidos continua.
 - Diagnostico: nenhuma frase solta; os numeros ficam na grade e a explicacao de cada
   aviso aparece no `title` do item.
+
+### 9. Livro (modo escritor)
+
+O seletor compacto da sidebar abre a biblioteca em dois grupos, "Cadernos"
+(Todos, o padrao e os demais, com contagem) e "Livros" (ponto de status e mini
+progresso quando ha meta). Depois de escolher, ele fecha e a coluna volta ao
+conteudo do caderno. Num livro, a lista de capitulos ocupa exatamente o lugar
+onde as notas ficariam, na mesma escala da lista de notas: titulo em 14,5 px,
+linha de metadados com "Capitulo N" e palavras, sinopse em duas linhas e ponto
+de status. Arrastar reordena; "+ Capitulo" fecha a lista. Nao existe tela global
+de escrita: tudo vive dentro do caderno-livro.
+
+**Casa do livro.** Duas abas: "Capa" e "Estrutura". O formato padrao de um livro
+novo e Romance, 14 x 21 cm (o A4 fica para o manuscrito). A capa e uma ficha grande:
+capa solida a esquerda e, a direita, estado, ultima escrita, medida da folha,
+titulo, autor, sinopse, uma linha com capitulos, partes, palavras e paginas
+estimadas, alem da barra `palavras / meta` quando ha meta. Abaixo, "Ultimos 7
+dias" mostra o ritmo diario em barras e "Capitulos" mostra quantos estao em
+rascunho, revisao e final, com o total de beats. "Continuar no capitulo N" abre o
+primeiro capitulo nao final. A estrutura e uma grade de cartoes com numero,
+titulo, status, palavras, sinopse e beats; partes viram cartao largo divisor;
+arrastar reordena pela mesma rota da lista; "+ Capitulo" fecha a grade. Acoes:
+Ler, Exportar, Configuracoes do livro.
+
+**Workspace.** O topo tem voltar, titulo do livro, estado de gravacao (ponto e
+palavra curta), palavras de hoje sobre a meta diaria, contagem do capitulo,
+setas de capitulo anterior/proximo, Foco e Painel. Abaixo, uma barra fixa e fina
+com Estilo (Corpo, Secao, Citacao), negrito, italico, link e separador de cena.
+O corpo e uma folha de verdade na medida do livro (padrao 14 x 21 cm, margem de
+19 mm, corpo de 18 px e entrelinha de 1,6), centralizada, com justificado,
+hifenizacao e recuo de primeira linha. Cada pagina e uma folha separada, com a
+margem do livro e um espaco de fundo entre uma e outra; o numero da pagina fica
+na margem da folha seguinte. A divisao e calculada pelas linhas realmente
+renderizadas e nao entra no texto: ela existe so como camada de editor. O mesmo
+texto, com a mesma fonte e as mesmas margens, vira o PDF, entao as folhas batem
+com a impressao. O topo mostra a contagem de paginas do capitulo. O titulo e a
+overline ficam dentro da primeira folha.
+
+A barra fixa e a caixa de ferramentas do escritor: desfazer, refazer, estilo do
+paragrafo (corpo, secao, subtitulo, citacao), negrito, italico, sublinhado,
+riscado, listas com marcadores e numerada, alinhamento, link para nota, imagem,
+audio e separador de cena. Selecionar texto abre a mesma barra flutuante das
+notas, com o seletor de tipo de bloco, estilos, link, cor e alinhamento. O menu
+"/" continua para imagem, audio e link; as alcas de bloco ficam desligadas.
+Foco esconde sidebar, gaveta e barra de formatacao; Esc sai.
+
+**Gaveta do capitulo.** Coluna de 340 px que passa por cima da folha, como o
+painel da nota: status, meta, sinopse, beats (um por linha, contados no cartao),
+anotacoes, referencias externas (link e rotulo, abertas em outra aba), "Aparece
+em" com as entidades que a analise ja encontrou nos capitulos e as versoes.
+Sem analise, a secao oferece "Analisar capitulo" e nao dispara nada sozinha.
+
+**Fluxo.** Ctrl+Enter cria um capitulo logo depois do atual; Ctrl+PageUp/Down
+navegam entre capitulos; Ctrl+S grava na hora. O rascunho offline continua por
+capitulo no IndexedDB (250 ms), com flush ao esconder a aba e reproducao ao
+voltar a rede. Conflito 409 abre a folha com as duas versoes e diff por palavra;
+"Manter o meu" grava sem versao base e "Usar o do servidor" guarda o texto local
+por sete dias. A fila nunca resolve conflito sozinha.
+
+**Imagens.** Preto e branco por padrao; o menu da imagem oferece "Cor original",
+que grava `c=1` no markdown. A leitura, o PDF e o DOCX respeitam a marca.
+
+**Capa.** Em "Configuracoes do livro", a secao Capa recebe uma foto; o quadro de
+encaixe tem a proporcao da folha e a imagem pode ser arrastada e ampliada. O
+canvas salva exatamente o que esta no quadro. A capa aparece na casa do livro e
+como primeira pagina da leitura e do PDF.
+
+**Leitura e exportacao.** A previa compila capitulos nao vazios na folha do
+livro, com capa, pagina de titulo, sumario, divisoria de parte e quebra por
+capitulo; o rotulo conta "Capitulo X de Y" (a paginacao real fica no PDF). A
+folha da previa tem tamanho fixo na proporcao do livro, o fundo e escuro e a
+barra de paginas fica fora da folha, presa; a leitura nao rola a folha junto com
+o menu. O PDF usa a
+impressao do navegador com a fonte escolhida do livro, medida, margem, corpo e
+entrelinha do editor, entao as linhas e as quebras batem com as guias da folha.
+A capa entra numa pagina propria sem margem, antes da pagina de titulo.
+O DOCX sai com a medida e as margens do livro, usando o nome da fonte escolhida;
+o Word cai para a reserva dele quando a fonte nao esta instalada. O Markdown
+mantem o corpo e os separadores.
 
 ## Comportamento reativo
 

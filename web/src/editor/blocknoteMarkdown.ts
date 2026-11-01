@@ -37,8 +37,8 @@ function scratch(): AnyEditor {
 /** Bloco do editor, sem tipo: aqui so interessa a forma dos dados. */
 type PartialBlock = Record<string, unknown>;
 
-/** `{w=50}` depois da referencia da imagem (mesma sintaxe que o app usa). */
-const WIDTH = /\{w=(\d{1,3})\}/g;
+/** Marcador de midia: `{w=50}` / `{w=50,c=1}` / `{c=1}`. */
+const MARKER = /\{(?:w=\d{1,3}(?:,c=[01])?|c=[01])\}/g;
 
 type AnyBlock = Record<string, unknown> & {
   type?: string;
@@ -63,6 +63,20 @@ function imageWidth(block: AnyBlock): number {
   return Number.isFinite(raw) && raw > 0 && raw < 100 ? Math.round(raw) : 0;
 }
 
+/** `1` = cor original, `0` = preto e branco, vazio = padrao do contexto. */
+function imageColor(block: AnyBlock): string {
+  const raw = String(block.props?.color ?? "");
+  return raw === "1" || raw === "0" ? raw : "";
+}
+
+/** Marcador de uma imagem, com largura e/ou excecao de cor. */
+function imageMarker(width: number, color: string): string {
+  const parts: string[] = [];
+  if (width > 0) parts.push(`w=${width}`);
+  if (color) parts.push(`c=${color}`);
+  return parts.length > 0 ? `{${parts.join(",")}}` : "";
+}
+
 /**
  * Blocos -> markdown. O conversor oficial gera o texto e o paragrafo temporario
  * de cada audio; aqui os marcadores são repostos no lugar certo: o `{w=N}` na
@@ -79,14 +93,17 @@ export function blocksToNoteMarkdown(
     (block) => block.type !== "image" || isImageBlock(block),
   );
   const base = editor.blocksToMarkdownLossy(savable as never[]);
-  const widths = savable.filter(isImageBlock).map(imageWidth);
+  const images = savable.filter(isImageBlock).map((block) => ({
+    width: imageWidth(block),
+    color: imageColor(block),
+  }));
   const audioById = new Map<string, AnyBlock>();
   for (const block of savable) {
     if (!isAudioBlock(block)) continue;
     const id = String(block.props?.attachmentId ?? "");
     if (id) audioById.set(id, block);
   }
-  if (widths.length === 0 && audioById.size === 0) return base;
+  if (images.length === 0 && audioById.size === 0) return base;
 
   const lines = base.split("\n");
   let image = 0;
@@ -105,9 +122,10 @@ export function blocksToNoteMarkdown(
       continue;
     }
     if (!/^!\[[^\]]*\]\([^)\s]+\)\s*$/.test(lines[i])) continue;
-    const width = widths[image];
+    const current = images[image];
     image += 1;
-    if (width > 0) lines[i] = `${lines[i].trimEnd()}{w=${width}}`;
+    const marker = imageMarker(current?.width ?? 0, current?.color ?? "");
+    if (marker) lines[i] = `${lines[i].trimEnd()}${marker}`;
   }
   return lines.join("\n");
 }
@@ -133,6 +151,7 @@ export function noteMarkdownToBlocks(
         caption: part.alt,
       };
       if (part.width > 0) props.width = String(part.width);
+      if (part.color) props.color = part.color;
       out.push({ type: "image", props } as AnyBlock);
       continue;
     }
@@ -147,7 +166,7 @@ export function noteMarkdownToBlocks(
       continue;
     }
     if (!part.text.trim()) continue;
-    out.push(...(editor.tryParseMarkdownToBlocks(part.text.replace(WIDTH, "")) as AnyBlock[]));
+    out.push(...(editor.tryParseMarkdownToBlocks(part.text.replace(MARKER, "")) as AnyBlock[]));
   }
   return out as PartialBlock[];
 }
@@ -173,7 +192,7 @@ export function markdownToPlain(markdown: string): string {
     .replace(/!audio\[[^\]]*\](?:\{d=[^}]*\})?/g, "")
     .replace(/\[([^\]]*)\]\(note:[^)\s]+\)/g, "")
     .replace(/!?\[([^\]]*)\]\([^)\s]*\)/g, "$1")
-    .replace(/\{w=\d+\}/g, "")
+    .replace(/\{(?:w=\d{1,3}(?:,c=[01])?|c=[01])\}/g, "")
     .replace(/^#{1,6}\s+/gm, "")
     .replace(/^>\s?/gm, "")
     .replace(/^\s*[-*+]\s+/gm, "")
@@ -197,7 +216,7 @@ export function audioAttachmentIds(markdown: string): Set<string> {
 
 type Part =
   | { kind: "text"; text: string }
-  | { kind: "image"; alt: string; src: string; width: number }
+  | { kind: "image"; alt: string; src: string; width: number; color: string }
   | { kind: "audio"; src: string; duration: string };
 
 /**
@@ -240,7 +259,8 @@ function splitMediaLines(markdown: string): Part[] {
     buffer = [];
     if (image) {
       const width = image[3] ? Number(image[3]) : 0;
-      parts.push({ kind: "image", alt: image[1], src: image[2], width });
+      const color = image[4] ?? "";
+      parts.push({ kind: "image", alt: image[1], src: image[2], width, color });
     } else if (audio) {
       parts.push({ kind: "audio", src: audio[1], duration: audio[2] ?? "" });
     }
@@ -249,8 +269,8 @@ function splitMediaLines(markdown: string): Part[] {
   return parts;
 }
 
-/** Imagem em linha propria, com o marcador opcional de largura. */
-const IMAGE_LINE = /^!\[([^\]]*)\]\(([^)\s]+)\)(?:\{w=(\d{1,3})\})?$/;
+/** Imagem em linha propria, com marcador opcional de largura e cor. */
+const IMAGE_LINE = /^!\[([^\]]*)\]\(([^)\s]+)\)(?:\{(?:w=(\d{1,3}))?(?:,?c=([01]))?\})?$/;
 
 /** Audio em linha propria, com a duracao opcional em segundos. */
 const AUDIO_LINE = /^!audio\[([^\]\s]+)\](?:\{d=([0-9]+(?:\.[0-9]+)?)\})?$/;

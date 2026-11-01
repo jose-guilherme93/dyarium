@@ -102,12 +102,15 @@ async function handle(request: WorkerRequest): Promise<void> {
   switch (request.type) {
     case "load":
     case "prepare": {
-      await browser.loadTranscriber(request.plan, request.allowGpu);
-      await browser.loadLlm(request.plan, request.contextSize, request.allowGpu, request.threads);
+      // Ativar o modo local ja baixa os dois modelos, um de cada vez. A nota
+      // nao paga o primeiro download depois que o interruptor liga.
+      browser.configure(request.plan, request.allowGpu, request.threads, request.contextSize);
+      await browser.warm();
       post({ id: request.id, type: "result", result: { ready: true } });
       return;
     }
     case "transcribe": {
+      await browser.ensureTranscriber();
       const transcription: Transcription = await browser.transcribe(
         request.audio,
         request.language ?? "portuguese",
@@ -117,6 +120,7 @@ async function handle(request: WorkerRequest): Promise<void> {
     }
     case "analyze": {
       stopped = false;
+      await browser.ensureLlm();
       const result = await analyzeNoteInBrowser(
         request.note,
         request.modelId,

@@ -28,11 +28,24 @@ Representa um audio enviado e seu ciclo de vida.
 | sha256 | TEXT | SHA-256 do conteudo em claro |
 | recorded_at | TEXT | data do evento (pode diferir da criacao) |
 | author | TEXT | papel do autor: `self`, `other`, `mixed` ou vazio (segue o padrao) |
+| origin_instance | TEXT | id de quem criou (`dev_...` do aparelho ou `instance_id` do ambiente); vazio nas linhas antigas |
+| origin_kind | TEXT | `device` ou `server`; proveniencia apenas, nao restringe edicao |
+| chapter_kind | TEXT | vazio em nota comum; `chapter`, `part`, `front` ou `back` em livro |
+| chapter_position | REAL | ordem na lista plana do livro; `NULL` fora de livro |
+| chapter_status | TEXT | `draft`, `revising`, `done` ou vazio |
+| chapter_goal_words | INTEGER | meta opcional do capitulo |
+| chapter_synopsis | TEXT | sinopse/outline do capitulo |
 | created_at | TEXT | |
 | updated_at | TEXT | ultima edicao de conteudo/metadados; abrir a nota e mudar so o status nao alteram |
 | deleted_at | TEXT | remocao logica |
 
-Indices: `status`, `recorded_at`, `created_at`, `deleted_at`, `notebook_id`.
+Indices: `status`, `recorded_at`, `created_at`, `deleted_at`, `notebook_id`,
+`(notebook_id, chapter_position)`.
+
+Invariantes do livro: `chapter_kind` e `chapter_position` so existem em entrada de
+livro; `archived` nunca e 1 em capitulo; mover para um livro limpa o arquivamento
+e poe no fim; mover para um caderno comum limpa os campos de capitulo; a lista de
+posicoes e plana, sem arvore.
 
 `parent_id` existia para a arvore de subnotas. Com cadernos e tags, subnotas
 deixaram de ser necessarias: o web nao cria mais subnotas e a lista e plana. Os
@@ -58,19 +71,53 @@ existe em `settings`.
 
 ## Notebook
 
-Colecao de notas. Toda nota pertence a exatamente um caderno.
+Colecao de notas. Toda nota pertence a exatamente um caderno. Um caderno com
+`kind = 'book'` e um livro e as entradas dele sao capitulos. Nao existe tabela
+de capitulos: o capitulo e a propria `Entry`, o que preserva editor, autosave,
+versoes, lixeira, anexos, busca e sync.
 
 | Campo | Tipo | Notas |
 |---|---|---|
 | id | TEXT PK | o padrao usa `notas-ao-acaso` |
 | name | TEXT | unico (case-sensitive no banco; API compara sem caixa) |
-| color | TEXT | opcional; vazio = neutro |
+| color | TEXT | opcional; vazio = neutro; e a cor da capa do livro |
 | is_default | INTEGER | 1 no caderno "Notas ao acaso" |
+| kind | TEXT | `notes` (padrao) ou `book` |
+| subtitle | TEXT | livro |
+| author | TEXT | livro |
+| synopsis | TEXT | livro |
+| language | TEXT | livro |
+| goal_words | INTEGER | meta total do livro; 0 = sem meta |
+| book_status | TEXT | `drafting`, `revising` ou `done` |
 | created_at | TEXT | |
 | updated_at | TEXT | |
 
+Invariantes: o caderno padrao nunca e livro; ativar exige zero entries vivas
+(inclusive arquivadas); desativar com capitulos exige `confirm_convert`; a
+conversao preserva os textos e limpa a estrutura do livro.
+
 Indices: unico em `name`; unico parcial em `is_default` quando 1. O caderno
 padrao e criado pela migracao 0017 e nao pode ser renomeado nem excluido.
+
+## Tombstone
+
+Prova permanente de uma exclusao, usada pela reconciliacao entre ambientes. A
+linha sobrevive a purga do conteudo: um ambiente offline por mais tempo que a
+retencao ainda precisa aprender que o objeto foi apagado.
+
+| Campo | Tipo | Notas |
+|---|---|---|
+| id | TEXT | id da entrada ou do caderno |
+| kind | TEXT | `entry` ou `notebook` |
+| deleted_at | TEXT | RFC 3339; a exclusao mais nova vence |
+| origin | TEXT | `instance_id` do ambiente ou id do aparelho que apagou |
+| PK | (id, kind) | |
+
+Indice em `(deleted_at, id)`. `GET /api/v1/entries?deleted=1` e
+`GET /api/v1/sync/manifest?kind=deleted` leem daqui, com `LEFT JOIN` na entrada
+para manter o titulo enquanto o conteudo ainda existe. Restaurar remove a linha;
+recriar a mesma entrada com o mesmo id tambem remove (o tombstone antigo nao pode
+valer contra a nota nova).
 
 ## Attachment
 
@@ -205,6 +252,7 @@ Pessoa, lugar, tema ou decisao extraida das analises, normalizada por (`kind`, `
 | name | TEXT | nome como exibido |
 | icon | TEXT | chave de um icone monocromatico da paleta do mapa; vazio usa o do tipo |
 | created_at | TEXT | |
+| updated_at | TEXT | ultima mudanca de nome/icone/"sou eu"; o app usa para reconciliar |
 
 Indices: unico (`kind`, `name`). A paleta de icones e validada pelo servidor e desenhada
 pelo cliente; o banco guarda apenas a chave.
@@ -235,6 +283,7 @@ que a leitura resolve para o `owner_name` das configuracoes.
 |---|---|---|
 | name | TEXT PK | grafia antiga, sem caixa (COLLATE NOCASE) |
 | created_at | TEXT | |
+| updated_at | TEXT | ultima vez que a grafia foi confirmada como do dono |
 
 ## EntryEntity
 
@@ -279,6 +328,7 @@ textuais:
 ```
 texto antes
 ![foto](attachment:abc){w=50}
+![mapa](attachment:def){w=60,c=1}
 texto no meio
 !audio[attachment:xyz]{d=12.5}
 texto depois
@@ -286,7 +336,10 @@ texto depois
 
 `local:<arquivo>` identifica um anexo que ainda esta so no aparelho; depois do
 sync vira `attachment:<id>`. `{w=N}` e a largura da imagem em percentual da nota
-e `{d=N}` e a duracao do audio em segundos. O parser/serializer do app fica em
+e `{d=N}` e a duracao do audio em segundos. No marcador da imagem, `c=1` preserva
+a cor original e `c=0` forca preto e branco; sem o campo vale o padrao do
+contexto (livro usa P/B, nota comum usa cor). O app preserva o marcador no
+parser/serializer mesmo sem desenhar P/B. O parser/serializer do app fica em
 `mobile/src/core/noteDocument`; o dashboard le o mesmo markdown e mostra imagem e
 audio como blocos na posicao dos marcadores, preservando-os ao salvar.
 
@@ -297,7 +350,7 @@ audio como blocos na posicao dos marcadores, preservando-os ao salvar.
 | title | TEXT | opcional |
 | document | TEXT | legado do BlockNote (vazio nas notas novas) |
 | content_markdown | TEXT | corpo canonico em markdown |
-| body_updated_at | TEXT | versao do corpo para conflito |
+| body_updated_at | TEXT | versao do corpo para conflito (carimbo HLC opaco; RFC 3339 antigo ainda e aceito) |
 | created_at | TEXT | |
 | updated_at | TEXT | |
 

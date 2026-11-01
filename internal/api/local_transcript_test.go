@@ -75,6 +75,55 @@ func TestPutTranscriptWithoutAttachmentLinksSingleAudio(t *testing.T) {
 	}
 }
 
+// Editar uma linha da transcricao pelo dashboard: o texto do usuario vence,
+// o trecho fica marcado como editado e as outras linhas nao mudam.
+func TestEditTranscriptSegment(t *testing.T) {
+	srv := newTestServer(t)
+	ctx := context.Background()
+	seedPlainEntry(t, srv, "e1")
+	now := time.Now().UTC()
+	if err := srv.deps.Store.CreateAttachment(ctx, store.Attachment{
+		ID: "a1", EntryID: "e1", Kind: store.AttachmentOriginal, StorageKey: "objects/a1",
+		ContentType: "audio/wav", SizeBytes: 10, Cipher: "aes-256-gcm", DurationSeconds: 12, CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("attachment: %v", err)
+	}
+
+	body := `{"attachment_id":"a1","language":"pt","text":"primeira\nsegunda","segments":[{"start_ms":0,"end_ms":1000,"text":"primeira"},{"start_ms":1000,"end_ms":2000,"text":"segunda"}]}`
+	rec, _ := doJSON(t, srv, http.MethodPut, "/api/v1/entries/e1/transcript", strings.NewReader(body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("put transcript: %d %s", rec.Code, rec.Body.String())
+	}
+
+	edit := `{"attachment_id":"a1","text":"segunda corrigida"}`
+	rec, _ = doJSON(t, srv, http.MethodPatch, "/api/v1/entries/e1/transcript/segments/1", strings.NewReader(edit))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("edit segment: %d %s", rec.Code, rec.Body.String())
+	}
+
+	transcript, segments, err := srv.deps.Store.GetTranscriptByAttachment(ctx, "a1")
+	if err != nil {
+		t.Fatalf("get transcript: %v", err)
+	}
+	if len(segments) != 2 {
+		t.Fatalf("segments = %+v", segments)
+	}
+	if segments[0].Text != "primeira" || segments[0].UserEdited {
+		t.Fatalf("trecho 0 mudou: %+v", segments[0])
+	}
+	if segments[1].Text != "segunda corrigida" || !segments[1].UserEdited {
+		t.Fatalf("trecho 1 nao foi editado: %+v", segments[1])
+	}
+	if transcript.Text != "primeira\nsegunda corrigida" {
+		t.Fatalf("texto cru = %q", transcript.Text)
+	}
+
+	rec, _ = doJSON(t, srv, http.MethodPatch, "/api/v1/entries/e1/transcript/segments/9", strings.NewReader(edit))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("indice inexistente: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 // O app empurra a transcricao feita no aparelho; o servidor guarda com origem
 // local (model "local").
 func TestPutTranscriptStoresLocal(t *testing.T) {

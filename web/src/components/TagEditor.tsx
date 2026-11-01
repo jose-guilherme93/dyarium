@@ -20,6 +20,11 @@ export function TagEditor({ entryId, onChanged }: TagEditorProps) {
   const [error, setError] = useState("");
   const [loaded, setLoaded] = useState(false);
   const blurTimer = useRef<number | null>(null);
+  // Uma gravacao por vez e sempre a lista mais recente. Antes, duas edicoes
+  // rapidas mandavam listas sobrepostas e a resposta mais lenta podia desfazer
+  // a outra.
+  const pendingRef = useRef<string[] | null>(null);
+  const savingRef = useRef(false);
 
   const load = useCallback(async () => {
     const [entryRes, allRes] = await Promise.allSettled([api.listEntryTags(entryId), api.listTags()]);
@@ -41,17 +46,36 @@ export function TagEditor({ entryId, onChanged }: TagEditorProps) {
     void load();
   }, [load]);
 
-  const save = async (names: string[]) => {
-    setTags(names);
-    try {
-      await api.setEntryTags(entryId, names);
-      setError("");
-      onChanged();
-      void load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "falha ao salvar tags");
+  const drain = useCallback(async () => {
+    if (savingRef.current) {
+      return;
     }
-  };
+    savingRef.current = true;
+    try {
+      while (pendingRef.current) {
+        const names = pendingRef.current;
+        pendingRef.current = null;
+        await api.setEntryTags(entryId, names);
+        setError("");
+        onChanged();
+      }
+    } catch (err) {
+      pendingRef.current = null;
+      setError(err instanceof Error ? err.message : "falha ao salvar tags");
+    } finally {
+      savingRef.current = false;
+    }
+    void load();
+  }, [entryId, load, onChanged]);
+
+  const save = useCallback(
+    (names: string[]) => {
+      setTags(names);
+      pendingRef.current = names;
+      void drain();
+    },
+    [drain],
+  );
 
   const add = (raw: string) => {
     const name = raw.trim();
@@ -59,7 +83,7 @@ export function TagEditor({ entryId, onChanged }: TagEditorProps) {
     if (!name || tags.some((tag) => tag.toLowerCase() === name.toLowerCase())) {
       return;
     }
-    void save([...tags, name]);
+    save([...tags, name]);
   };
 
   const query = input.trim().toLowerCase();
@@ -82,7 +106,7 @@ export function TagEditor({ entryId, onChanged }: TagEditorProps) {
           <button
             type="button"
             className="tag-remove"
-            onClick={() => void save(tags.filter((item) => item !== tag))}
+            onClick={() => save(tags.filter((item) => item !== tag))}
             aria-label={`Remover tag ${tag}`}
           >
             <CloseIcon size={12} />

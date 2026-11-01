@@ -17,6 +17,10 @@ import { Field } from '@/components/Field';
 import { Screen } from '@/components/Screen';
 import type { ServerConfig } from '@/core/types';
 import { discoverServer } from '@/services/discovery';
+import type { StoredServer } from '@/services/secure';
+import { countSyncedNotes } from '@/services/sync/state';
+import { reconcileAllServers } from '@/services/sync/engine';
+import { useLibrary } from '@/state/LibraryContext';
 import { useSettings, type ConnectionResult } from '@/state/SettingsContext';
 import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
 import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
@@ -26,7 +30,7 @@ export default function ServerScreen() {
   const styles = useThemedStyles(baseStyles);
   const { colors } = useTheme();
 
-  const { config, ready, save, disconnect } = useSettings();
+  const { config, servers, ready, save, removeServer, disconnect } = useSettings();
 
   return (
     <Screen>
@@ -38,7 +42,13 @@ export default function ServerScreen() {
         <View style={styles.back} />
       </View>
       {ready ? (
-        <ServerForm config={config} save={save} disconnect={disconnect} />
+        <ServerForm
+          config={config}
+          servers={servers}
+          save={save}
+          removeServer={removeServer}
+          disconnect={disconnect}
+        />
       ) : null}
     </Screen>
   );
@@ -46,13 +56,16 @@ export default function ServerScreen() {
 
 interface ServerFormProps {
   config: ServerConfig | null;
+  servers: StoredServer[];
   save(baseUrl: string, token: string): Promise<ConnectionResult>;
+  removeServer(id: string): Promise<void>;
   disconnect(): Promise<void>;
 }
 
-function ServerForm({ config, save, disconnect }: ServerFormProps) {
+function ServerForm({ config, servers, save, removeServer, disconnect }: ServerFormProps) {
   const styles = useThemedStyles(baseStyles);
   const { colors } = useTheme();
+  const { recordings } = useLibrary();
 
   const [baseUrl, setBaseUrl] = useState(config?.baseUrl ?? '');
   const [token, setToken] = useState(config?.token ?? '');
@@ -60,6 +73,31 @@ function ServerForm({ config, save, disconnect }: ServerFormProps) {
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
   const [discovering, setDiscovering] = useState(false);
   const [discovery, setDiscovery] = useState<string | null>(null);
+  const [counts, setCounts] = useState<Record<string, number>>({});
+
+  const total = recordings.filter((r) => !r.deletedAt && r.status === 'completed').length;
+
+  useEffect(() => {
+    let alive = true;
+    const load = () => {
+      void Promise.all(
+        servers.map(async (server) => {
+          const count = await countSyncedNotes(server.baseUrl).catch(() => 0);
+          return [server.baseUrl, count] as const;
+        }),
+      ).then((entries) => {
+        if (alive) setCounts(Object.fromEntries(entries));
+      });
+    };
+    load();
+    // A primeira copia de um acervo grande demora; o numero precisa andar
+    // enquanto a tela esta aberta.
+    const id = setInterval(load, 3000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, [servers, total]);
 
   const runDiscovery = useCallback(async () => {
     setDiscovering(true);
@@ -169,6 +207,47 @@ function ServerForm({ config, save, disconnect }: ServerFormProps) {
           ) : null}
         </Card>
 
+        {servers.length > 0 ? (
+          <Card style={styles.form}>
+            <Text style={styles.sectionLabel}>Ambientes</Text>
+            {servers.map((server) => {
+              const count = counts[server.baseUrl] ?? 0;
+              const complete = total > 0 && count >= total;
+              return (
+                <View key={server.id || server.baseUrl} style={styles.serverRow}>
+                  <Ionicons
+                    name={complete ? 'checkmark-circle' : 'sync-outline'}
+                    size={18}
+                    color={complete ? colors.success : colors.textSecondary}
+                  />
+                  <View style={styles.serverText}>
+                    <Text style={styles.serverName} numberOfLines={1}>
+                      {serverHost(server.baseUrl)}
+                    </Text>
+                    <Text style={styles.serverMeta} numberOfLines={1}>
+                      {count}/{total} notas
+                    </Text>
+                  </View>
+                  <Press
+                    onPress={() => void removeServer(server.id || server.baseUrl)}
+                    accessibilityLabel="Remover servidor"
+                    hitSlop={8}
+                  >
+                    <Ionicons name="close-circle-outline" size={22} color={colors.danger} />
+                  </Press>
+                </View>
+              );
+            })}
+            <Button
+              label="Sincronizar agora"
+              variant="secondary"
+              onPress={() => {
+                void reconcileAllServers().catch(() => undefined);
+              }}
+            />
+          </Card>
+        ) : null}
+
         <Card style={styles.tip}>
           <Ionicons name="information-circle-outline" size={20} color={colors.info} />
           <Text style={styles.tipText}>
@@ -183,6 +262,14 @@ function ServerForm({ config, save, disconnect }: ServerFormProps) {
       </ScrollView>
     </KeyboardAvoidingView>
   );
+}
+
+function serverHost(baseUrl: string): string {
+  try {
+    return new URL(baseUrl).host || baseUrl;
+  } catch {
+    return baseUrl.replace(/^https?:\/\//i, '');
+  }
 }
 
 const baseStyles = defineStyles({
@@ -209,6 +296,16 @@ const baseStyles = defineStyles({
     borderWidth: StyleSheet.hairlineWidth,
   },
   messageText: { flex: 1, fontSize: fontSize.sm, fontWeight: '600' },
+  sectionLabel: { color: baseColors.textSecondary, fontSize: fontSize.xs, fontWeight: '700' },
+  serverRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  serverText: { flex: 1, gap: 2 },
+  serverName: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
+  serverMeta: { color: baseColors.textSecondary, fontSize: fontSize.xs },
   tip: { flexDirection: 'row', gap: spacing.md, alignItems: 'flex-start' },
   tipText: { flex: 1, color: baseColors.textSecondary, fontSize: fontSize.sm, lineHeight: 20 },
 });

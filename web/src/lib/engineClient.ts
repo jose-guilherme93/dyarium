@@ -76,9 +76,12 @@ export class EngineClient {
     return this.send({ type: "load", plan, allowGpu, threads, contextSize: plan.contextSize });
   }
 
-  transcribe(audio: Float32Array, language = "portuguese"): Promise<Transcription> {
+  transcribe(audio: Float32Array, language?: string): Promise<Transcription> {
     const copy = audio.slice();
-    return this.send({ type: "transcribe", audio: copy, language }, [copy.buffer]);
+    return this.send(
+      { type: "transcribe", audio: copy, ...(language ? { language } : {}) },
+      [copy.buffer],
+    );
   }
 
   analyze(note: WorkerNote, modelId: string): Promise<WorkerAnalysis> {

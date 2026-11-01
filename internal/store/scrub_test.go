@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/joseti/dyarium/internal/hlc"
 	"github.com/joseti/dyarium/internal/id"
 )
 
@@ -75,8 +76,8 @@ func TestScrubAttachmentTokens(t *testing.T) {
 	if !strings.Contains(after.ContentMarkdown, "![outra](attachment:abc123)") {
 		t.Fatalf("imagem markdown nao foi normalizada: %q", after.ContentMarkdown)
 	}
-	if before.BodyUpdatedAt == nil || after.BodyUpdatedAt == nil || !after.BodyUpdatedAt.After(*before.BodyUpdatedAt) {
-		t.Fatalf("a versao do corpo deveria subir: before=%v after=%v", before.BodyUpdatedAt, after.BodyUpdatedAt)
+	if !hlc.After(after.BodyVersion, before.BodyVersion) {
+		t.Fatalf("a versao do corpo deveria subir: before=%q after=%q", before.BodyVersion, after.BodyVersion)
 	}
 
 	cleanAfter, err := s.GetNote(ctx, cleanID)
@@ -86,8 +87,8 @@ func TestScrubAttachmentTokens(t *testing.T) {
 	if cleanAfter.ContentMarkdown != cleanBefore.ContentMarkdown {
 		t.Fatalf("nota limpa mudou: %q", cleanAfter.ContentMarkdown)
 	}
-	if cleanBefore.BodyUpdatedAt == nil || cleanAfter.BodyUpdatedAt == nil || !cleanAfter.BodyUpdatedAt.Equal(*cleanBefore.BodyUpdatedAt) {
-		t.Fatalf("versao da nota limpa nao deveria mudar")
+	if cleanAfter.BodyVersion != cleanBefore.BodyVersion {
+		t.Fatalf("versao da nota limpa nao deveria mudar: %q %q", cleanBefore.BodyVersion, cleanAfter.BodyVersion)
 	}
 
 	revs, err := s.ListRevisions(ctx, noteID)

@@ -278,7 +278,7 @@ Abrir o Painel nao pode travar a thread de JS. Tres regras sustentam isso:
 
 1. **Nucleo puro** (implementado): agregacao por janela e frases de resumo em
    `mobile/src/core`, com testes de relogio fixo e limites de janela.
-2. **Painel v1** (implementado): Escrita, Sentimento e Voz em
+2. **Painel v1** (implementado): Estatísticas, Sentimento e Voz em
    `mobile/src/app/dashboard.tsx`, com filtro, estados vazios, detalhes e setas de
    tom.
 3. **Schema 2** (implementado): documento completo com as tres janelas, servidor

@@ -1,6 +1,9 @@
+import { formatHlc } from '../hlc';
 import { duplicateEntryRecordings, entryToRecording, isBlankServerEntry, mergeServerNote, recordingsDeletedOnServer } from '../pull';
 import type { ServerEntry, ServerNote } from '../api';
 import type { Recording } from '../types';
+
+const AT = Date.UTC(2026, 9, 30, 12, 0, 0);
 
 function recording(overrides: Partial<Recording> = {}): Recording {
   return {
@@ -458,5 +461,66 @@ describe('mergeServerNote', () => {
 
   it('sem nada novo, nao devolve mudanca', () => {
     expect(mergeServerNote(clean(), serverEntry(), serverNote())).toBeNull();
+  });
+});
+
+describe('mergeServerNote com relogio hibrido', () => {
+  const serverEntry = (over: Partial<ServerEntry> = {}): ServerEntry => ({
+    ...ENTRY,
+    archived: false,
+    versions: { title: 't1', recorded_at: 'r1', body: 'b1' },
+    ...over,
+  });
+
+  const serverNote = (over: Partial<ServerNote> = {}): ServerNote => ({
+    id: 'n1',
+    entry_id: ENTRY.id,
+    title: '',
+    content_markdown: 'texto do servidor',
+    body_version: 'b1',
+    created_at: '2026-10-11T14:00:00Z',
+    updated_at: '2026-10-11T14:05:00Z',
+    ...over,
+  });
+
+  const localCopy = (over: Partial<Recording> = {}): Recording =>
+    recording({ title: 'titulo local', text: 'texto local', ...over });
+
+  it('edicao local feita depois da versao lida vence mesmo com o relogio atrasado', () => {
+    // O aparelho leu uma versao carimbada em AT+40s e editou depois (AT+140s),
+    // mas o relogio de parede dele continua em 13:00 — muito atras do servidor.
+    const serverBody = formatHlc({ physical: AT + 40_000, counter: 0, node: 'srv' });
+    const local = localCopy({
+      noteDirty: true,
+      updatedAt: '2026-10-11T13:00:00Z',
+      updatedHlc: formatHlc({ physical: AT + 140_000, counter: 0, node: 'dev_a' }),
+    });
+    const merged = mergeServerNote(
+      local,
+      serverEntry({ versions: { title: 't1', recorded_at: 'r1', body: serverBody } }),
+      serverNote({ body_version: serverBody, content_markdown: 'texto que veio do servidor' }),
+    );
+    expect(merged).toBeNull();
+  });
+
+  it('versao do servidor carimbada depois da edicao local vence', () => {
+    const local = localCopy({
+      noteDirty: true,
+      updatedAt: '2026-10-11T16:00:00Z',
+      updatedHlc: formatHlc({ physical: AT + 10_000, counter: 0, node: 'dev_a' }),
+    });
+    const serverBody = formatHlc({ physical: AT + 20_000, counter: 0, node: 'srv' });
+    const merged = mergeServerNote(
+      local,
+      serverEntry({ versions: { title: 't1', recorded_at: 'r1', body: serverBody } }),
+      serverNote({ body_version: serverBody, content_markdown: 'texto novo do servidor' }),
+    );
+    expect(merged?.text).toBe('texto novo do servidor');
+    expect(merged?.updatedHlc).toBe(serverBody);
+  });
+
+  it('a copia baixada nasce com a versao do servidor', () => {
+    const copy = entryToRecording(serverEntry(), serverNote({ body_version: 'b1' }));
+    expect(copy.updatedHlc).toBe(formatHlc({ physical: Date.parse('2026-10-11T14:05:00Z'), counter: 0, node: '' }));
   });
 });

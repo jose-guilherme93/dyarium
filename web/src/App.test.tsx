@@ -1,9 +1,13 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import App from "./App";
 
 beforeEach(() => {
   localStorage.clear();
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 describe("App", () => {
@@ -133,6 +137,50 @@ describe("App primeiro acesso", () => {
     fireEvent.click(screen.getByRole("button", { name: "Criar token e entrar" }));
 
     await waitFor(() => expect(localStorage.getItem("dyarium.token")).toBe("token-forte"));
-    vi.unstubAllGlobals();
+  });
+});
+
+describe("App eventos", () => {
+  it("abre o stream de eventos depois do login e assina notebook.changed", async () => {
+    const streams: { url: string; names: string[]; closed: boolean }[] = [];
+    class FakeEventSource {
+      url: string;
+      names: string[] = [];
+      closed = false;
+      constructor(url: string) {
+        this.url = url;
+        streams.push(this);
+      }
+      addEventListener(name: string) {
+        this.names.push(name);
+      }
+      close() {
+        this.closed = true;
+      }
+    }
+    vi.stubGlobal("EventSource", FakeEventSource);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => ({
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify(String(url).includes("/api/v1/version") ? { version: "test" } : { entries: [] }),
+      })),
+    );
+
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("Token de acesso"), { target: { value: "bom" } });
+    fireEvent.click(screen.getByRole("button", { name: "Entrar" }));
+
+    await waitFor(() => expect(screen.getByRole("navigation")).toBeInTheDocument());
+    // O efeito do stream roda depois da primeira pintura; espere o EventSource
+    // existir em vez de depender da ordem entre a pintura e o efeito.
+    await waitFor(() =>
+      expect(streams.find((item) => item.url.includes("token=bom"))).toBeDefined(),
+    );
+    const stream = streams.find((item) => item.url.includes("token=bom"));
+    expect(stream?.names).toContain("notebook.changed");
+    expect(stream?.names).toContain("entry.status");
   });
 });

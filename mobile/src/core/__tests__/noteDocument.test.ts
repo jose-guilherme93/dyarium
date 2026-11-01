@@ -55,6 +55,26 @@ describe('parseNoteDocument', () => {
     expect(nodes[4]).toMatchObject({ kind: 'text', markdown: 'C' });
   });
 
+  it('preserva a marca de cor original da imagem no livro', () => {
+    for (const markdown of [
+      '![foto](attachment:abc){c=1}',
+      '![foto](attachment:abc){w=40,c=1}',
+      '![foto](attachment:abc){w=40,c=0}',
+    ]) {
+      const nodes = parseNoteDocument(markdown);
+      expect(serializeNoteDocument(nodes)).toBe(markdown);
+      const imageNode = nodes.find((node) => node.kind === 'image');
+      expect(imageNode).toMatchObject({
+        kind: 'image',
+        color: markdown.includes('c=1'),
+      });
+    }
+    expect(parseNoteDocument('![foto](attachment:abc){w=40}')[0]).toMatchObject({
+      kind: 'image',
+      color: undefined,
+    });
+  });
+
   it('preserva o markdown exatamente no ida e volta', () => {
     for (const markdown of [
       '',

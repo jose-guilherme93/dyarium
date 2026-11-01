@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/joseti/dyarium/internal/hlc"
 	"github.com/joseti/dyarium/internal/id"
 	"github.com/joseti/dyarium/internal/store"
 )
@@ -380,5 +382,37 @@ func TestPatchEntryValidates(t *testing.T) {
 	if rec, _ := doJSON(t, srv, http.MethodPatch, "/api/v1/entries/"+id.New(),
 		strings.NewReader(`{}`)); rec.Code != http.StatusBadRequest {
 		t.Fatalf("patch vazio: status = %d, want 400", rec.Code)
+	}
+}
+
+// O cliente que leu uma versao adiantada (relogio adiantado, ou versao vinda de
+// outro ambiente) manda X-HLC; a gravacao seguinte precisa ficar depois dela,
+// senao a edicao dele seria considerada antiga na proxima leitura.
+func TestPatchEntryStampsAfterClientVersion(t *testing.T) {
+	srv := newTestServer(t)
+	entryID := id.New()
+	seedTextEntry(t, srv, entryID, "antes")
+
+	clientStamp := hlc.Timestamp{
+		Physical: time.Now().Add(2 * time.Hour).UnixMilli(),
+		Counter:  3,
+		Node:     "dev_teste",
+	}.String()
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/entries/"+entryID,
+		strings.NewReader(`{"title":"depois"}`))
+	req.Header.Set("Authorization", "Bearer token-de-teste")
+	req.Header.Set("X-HLC", clientStamp)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &parsed); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	versions, _ := parsed["versions"].(map[string]any)
+	if got := versionOf(t, versions, store.FieldTitle); !hlc.After(got, clientStamp) {
+		t.Fatalf("versao %q nao ficou depois do X-HLC %q", got, clientStamp)
 	}
 }

@@ -48,7 +48,7 @@ func (s *Store) RenameEntity(ctx context.Context, kind, oldName, newName string)
 	}
 	switch {
 	case !found || targetID == sourceID:
-		if _, err := tx.ExecContext(ctx, `UPDATE entities SET name = ? WHERE id = ?`, newName, sourceID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE entities SET name = ?, updated_at = ? WHERE id = ?`, newName, ts(now), sourceID); err != nil {
 			return EntitySummary{}, fmt.Errorf("store: rename entity name: %w", err)
 		}
 		if !strings.EqualFold(oldName, newName) {
@@ -60,6 +60,9 @@ func (s *Store) RenameEntity(ctx context.Context, kind, oldName, newName string)
 	default:
 		if err := mergeEntity(ctx, tx, sourceID, targetID, now); err != nil {
 			return EntitySummary{}, err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE entities SET updated_at = ? WHERE id = ?`, ts(now), targetID); err != nil {
+			return EntitySummary{}, fmt.Errorf("store: touch merged entity: %w", err)
 		}
 		if err := addEntityAlias(ctx, tx, kind, oldName, targetID, now); err != nil {
 			return EntitySummary{}, err
@@ -236,8 +239,8 @@ func (s *Store) ClaimPersonAsOwner(ctx context.Context, name string) (string, er
 	now := time.Now().UTC()
 	for _, alias := range names {
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO owner_aliases (name, created_at) VALUES (?, ?)
-			ON CONFLICT (name) DO NOTHING`, alias, ts(now)); err != nil {
+			INSERT INTO owner_aliases (name, created_at, updated_at) VALUES (?, ?, ?)
+			ON CONFLICT (name) DO UPDATE SET updated_at = excluded.updated_at`, alias, ts(now), ts(now)); err != nil {
 			return "", fmt.Errorf("store: owner alias: %w", err)
 		}
 	}
@@ -273,7 +276,7 @@ func (s *Store) SetEntityIcon(ctx context.Context, kind, name, icon string) (Ent
 	if !found {
 		return EntitySummary{}, ErrNotFound
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE entities SET icon = ? WHERE id = ?`, icon, id); err != nil {
+	if _, err := s.db.ExecContext(ctx, `UPDATE entities SET icon = ?, updated_at = ? WHERE id = ?`, icon, ts(time.Now()), id); err != nil {
 		return EntitySummary{}, fmt.Errorf("store: set entity icon: %w", err)
 	}
 	summary, _, ok, err := s.GetEntity(ctx, kind, name)

@@ -134,7 +134,8 @@ func (s *Server) handlePutUpload(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCompleteUpload(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	result, err := s.deps.Ingest.Complete(ctx, r.PathValue("id"))
+	result, err := s.deps.Ingest.CompleteWithOrigin(ctx, r.PathValue("id"),
+		r.Header.Get("X-Attachment-Id"), s.requestOrigin(r))
 	if err != nil {
 		s.writeIngestError(w, err)
 		return

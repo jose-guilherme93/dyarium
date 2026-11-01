@@ -12,6 +12,7 @@ interface NotebookRow {
   name: string;
   color: string;
   is_default: number;
+  kind?: string;
   created_at: string;
   updated_at: string;
   dirty: number;
@@ -25,6 +26,7 @@ function rowToNotebook(row: NotebookRow): Notebook {
     name: row.name,
     color: row.color,
     isDefault: row.is_default !== 0,
+    kind: row.kind === 'book' ? 'book' : 'notes',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     dirty: row.dirty !== 0,
@@ -56,13 +58,14 @@ export async function insertLocalNotebook(notebook: Notebook): Promise<void> {
   const db = await getDatabase();
   await db.runAsync(
     `INSERT INTO notebooks
-      (id, name, color, is_default, created_at, updated_at, dirty, synced, deleted)
-     VALUES (?, ?, ?, ?, ?, ?, 1, 0, 0)`,
+      (id, name, color, is_default, kind, created_at, updated_at, dirty, synced, deleted)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, 0)`,
     [
       notebook.id,
       notebook.name,
       notebook.color,
       notebook.isDefault ? 1 : 0,
+      notebook.kind === 'book' ? 'book' : 'notes',
       notebook.createdAt,
       notebook.updatedAt,
     ],
@@ -146,12 +149,13 @@ export async function upsertNotebookFromServer(notebook: Notebook): Promise<void
   const db = await getDatabase();
   await db.runAsync(
     `INSERT INTO notebooks
-      (id, name, color, is_default, created_at, updated_at, dirty, synced, deleted)
-     VALUES (?, ?, ?, ?, ?, ?, 0, 1, 0)
+      (id, name, color, is_default, kind, created_at, updated_at, dirty, synced, deleted)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, 0)
      ON CONFLICT(id) DO UPDATE SET
        name = CASE WHEN notebooks.dirty = 1 THEN notebooks.name ELSE excluded.name END,
        color = CASE WHEN notebooks.dirty = 1 THEN notebooks.color ELSE excluded.color END,
        is_default = excluded.is_default,
+       kind = excluded.kind,
        created_at = excluded.created_at,
        updated_at = CASE WHEN notebooks.dirty = 1 THEN notebooks.updated_at ELSE excluded.updated_at END,
        synced = 1,
@@ -162,6 +166,7 @@ export async function upsertNotebookFromServer(notebook: Notebook): Promise<void
       notebook.name,
       notebook.color,
       notebook.isDefault ? 1 : 0,
+      notebook.kind === 'book' ? 'book' : 'notes',
       notebook.createdAt,
       notebook.updatedAt,
     ],
@@ -195,13 +200,14 @@ export async function restoreLocalNotebook(notebook: Notebook): Promise<void> {
   const db = await getDatabase();
   await db.runAsync(
     `INSERT OR IGNORE INTO notebooks
-      (id, name, color, is_default, created_at, updated_at, dirty, synced, deleted)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0)`,
+      (id, name, color, is_default, kind, created_at, updated_at, dirty, synced, deleted)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0)`,
     [
       notebook.id,
       notebook.name,
       notebook.color,
       notebook.isDefault ? 1 : 0,
+      notebook.kind === 'book' ? 'book' : 'notes',
       notebook.createdAt || new Date().toISOString(),
       notebook.updatedAt || new Date().toISOString(),
       notebook.isDefault ? 0 : 1,

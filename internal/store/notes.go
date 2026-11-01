@@ -32,48 +32,98 @@ func (s *Store) ListSettings(ctx context.Context) (map[string]string, error) {
 	return out, rows.Err()
 }
 
-// SoftDeleteEntry marks an entry as deleted.
+// SoftDeleteEntry marks an entry as deleted and records the permanent tombstone
+// that lets an environment which was offline longer than the retention window
+// learn about the deletion. It is idempotent: deleting an already deleted entry
+// succeeds and keeps the original timestamp.
 func (s *Store) SoftDeleteEntry(ctx context.Context, id string) error {
-	res, err := s.db.ExecContext(ctx,
-		`UPDATE entries SET deleted_at = ?, status = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
-		ts(time.Now()), EntryDeleted, ts(time.Now()), id)
+	return s.SoftDeleteEntryWithOrigin(ctx, id, "server")
+}
+
+// SoftDeleteEntryWithOrigin is SoftDeleteEntry with the identity of the
+// environment that made the deletion. The origin is used as the deterministic
+// tie-break when two environments delete the same note at the same instant.
+func (s *Store) SoftDeleteEntryWithOrigin(ctx context.Context, id, origin string) error {
+	if origin == "" {
+		origin = "server"
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: soft delete: %w", err)
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return ErrNotFound
-	}
-	return nil
-}
+	defer tx.Rollback()
 
-// RestoreEntry undoes a soft delete, so the entry becomes visible again. It is
-// idempotent: restoring an entry that is already live succeeds. It returns
-// ErrNotFound only when the entry does not exist at all (never existed, or was
-// already purged by the cleanup job).
-func (s *Store) RestoreEntry(ctx context.Context, id string) error {
-	res, err := s.db.ExecContext(ctx,
-		`UPDATE entries SET deleted_at = NULL, status = ?, updated_at = ? WHERE id = ? AND deleted_at IS NOT NULL`,
-		EntryReady, ts(time.Now()), id)
-	if err != nil {
-		return fmt.Errorf("store: restore entry: %w", err)
-	}
-	if n, _ := res.RowsAffected(); n > 0 {
-		return nil
-	}
-	var one int
-	err = s.db.QueryRowContext(ctx, `SELECT 1 FROM entries WHERE id = ?`, id).Scan(&one)
+	var deletedAt sql.NullString
+	err = tx.QueryRowContext(ctx, `SELECT deleted_at FROM entries WHERE id = ?`, id).Scan(&deletedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	}
 	if err != nil {
+		return fmt.Errorf("store: soft delete: %w", err)
+	}
+
+	stamp := ts(time.Now())
+	if !deletedAt.Valid {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE entries SET deleted_at = ?, status = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
+			stamp, EntryDeleted, stamp, id); err != nil {
+			return fmt.Errorf("store: soft delete: %w", err)
+		}
+	} else {
+		stamp = deletedAt.String
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO tombstones (id, kind, deleted_at, origin)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT (id, kind) DO UPDATE SET
+			deleted_at = excluded.deleted_at,
+			origin = excluded.origin
+		WHERE excluded.deleted_at >= tombstones.deleted_at`,
+		id, TombstoneEntry, stamp, origin); err != nil {
+		return fmt.Errorf("store: gravar tombstone: %w", err)
+	}
+	return tx.Commit()
+}
+
+// RestoreEntry undoes a soft delete, so the entry becomes visible again. It is
+// idempotent: restoring an entry that is already live succeeds. The tombstone is
+// removed even when the entry was already purged: the next create with the same
+// id must be able to live without the old deletion coming back.
+func (s *Store) RestoreEntry(ctx context.Context, id string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
 		return fmt.Errorf("store: restore entry: %w", err)
 	}
-	return nil
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE entries SET deleted_at = NULL, status = ?, updated_at = ? WHERE id = ? AND deleted_at IS NOT NULL`,
+		EntryReady, ts(time.Now()), id); err != nil {
+		return fmt.Errorf("store: restore entry: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM tombstones WHERE id = ? AND kind = ?`, id, TombstoneEntry); err != nil {
+		return fmt.Errorf("store: restore entry: %w", err)
+	}
+	var one int
+	err = tx.QueryRowContext(ctx, `SELECT 1 FROM entries WHERE id = ?`, id).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		// Commit the tombstone removal before reporting the missing entry: the
+		// caller will recreate the entry with the same id.
+		if commitErr := tx.Commit(); commitErr != nil {
+			return fmt.Errorf("store: restore entry: %w", commitErr)
+		}
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("store: restore entry: %w", err)
+	}
+	return tx.Commit()
 }
 
 // CreateNote inserts a note.
 func (s *Store) CreateNote(ctx context.Context, n Note) error {
-	bodyVersion := versionNow()
+	bodyVersion := s.versionNow()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: create note: %w", err)
@@ -91,6 +141,13 @@ func (s *Store) CreateNote(ctx context.Context, n Note) error {
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE entries SET updated_at = ? WHERE id = ?`, ts(n.UpdatedAt), n.EntryID); err != nil {
 		return fmt.Errorf("store: touch entry after note: %w", err)
+	}
+	// O primeiro corpo de um capitulo tambem e escrita do dia. Sem isto, o
+	// texto que chega do rascunho offline nunca entra no ritmo do livro.
+	if notebookID, isBook, err := bookOfEntry(ctx, tx, n.EntryID); err == nil && isBook {
+		if err := recordWritingDelta(ctx, tx, notebookID, wordCount(n.ContentMarkdown)); err != nil {
+			return err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("store: create note: %w", err)
@@ -144,11 +201,7 @@ func scanNote(row rowScanner) (Note, error) {
 		&bodyVersion, &createdAt, &updatedAt); err != nil {
 		return Note{}, err
 	}
-	if bodyVersion.Valid {
-		if t := parseTS(bodyVersion.String); !t.IsZero() {
-			n.BodyUpdatedAt = &t
-		}
-	}
+	n.BodyVersion = bodyVersion.String
 	n.CreatedAt = parseTS(createdAt)
 	n.UpdatedAt = parseTS(updatedAt)
 	return n, nil
@@ -180,7 +233,7 @@ func (s *Store) UpdateNoteBody(ctx context.Context, id, markdown, readVersion st
 		}
 		return "", false, err
 	}
-	stamp := versionNow()
+	stamp := s.versionNow()
 	if current == markdown {
 		// Nada mudou: nao grava revisao nem mexe na versao.
 		return stored, false, tx.Commit()
@@ -202,10 +255,20 @@ func (s *Store) UpdateNoteBody(ctx context.Context, id, markdown, readVersion st
 	}
 	// A edicao do corpo e atividade recente da entrada: sem tocar em updated_at,
 	// a nota editada no dashboard nao subia na ordem de "recentes" do app.
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE entries SET updated_at = ? WHERE id = (SELECT entry_id FROM notes WHERE id = ?)`,
-		ts(time.Now()), id); err != nil {
+	var entryID string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT entry_id FROM notes WHERE id = ?`, id).Scan(&entryID); err != nil {
 		return "", false, fmt.Errorf("store: touch entry after note body: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE entries SET updated_at = ? WHERE id = ?`, ts(time.Now()), entryID); err != nil {
+		return "", false, fmt.Errorf("store: touch entry after note body: %w", err)
+	}
+	// Ritmo do livro: a diferenca liquida de palavras desta gravacao entra no dia.
+	if notebookID, isBook, err := bookOfEntry(ctx, tx, entryID); err == nil && isBook {
+		if err := recordWritingDelta(ctx, tx, notebookID, wordCount(markdown)-wordCount(current)); err != nil {
+			return "", false, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return "", false, fmt.Errorf("store: update note body: %w", err)

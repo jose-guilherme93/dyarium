@@ -16,16 +16,20 @@ import {
   type FetchLike,
   type ServerAnalysis,
   type ServerEntry,
+  type SyncManifestEntry,
 } from '@/core/api';
+import type { Recording } from '@/core/types';
 
 import { emitAnalysis } from './analysisFeed';
 import {
   deleteCachedServerAnalysis,
   getAnalysisSyncAt,
+  getAnalysisSyncAtEnv,
   getCachedAnalysis,
   listCachedAnalyses,
   saveCachedAnalyses,
   setAnalysisSyncAt,
+  setAnalysisSyncAtEnv,
 } from './db';
 import { loadServerConfig } from './secure';
 
@@ -128,6 +132,79 @@ export async function syncServerAnalyses(entries: ServerEntry[]): Promise<number
     }
   }
   return imported;
+}
+
+/**
+ * O mesmo pull de analises, por ambiente. O cache local e unico (a ficha le
+ * sempre dele); a analise feita no aparelho vence. O marcador e por
+ * `(server_id, entry_id)`.
+ */
+export async function syncServerAnalysesFor(
+  api: DyariumApi,
+  serverId: string,
+  entries: SyncManifestEntry[],
+  byEntry: Map<string, Recording>,
+  primary = false,
+): Promise<number> {
+  let imported = 0;
+  for (const entry of entries) {
+    if (!entry.id || !entry.analysis_at) continue;
+    const sourceAt = entry.analysis_at;
+    const last = primary
+      ? await getAnalysisSyncAt(entry.id)
+      : await getAnalysisSyncAtEnv(serverId, entry.id);
+    if (last === sourceAt) continue;
+
+    const recording = byEntry.get(entry.id);
+    const localEntryId = recording?.entryId ?? entry.id;
+    const cached = await getCachedAnalysis(localEntryId).catch(() => null);
+    if (cached?.origin === 'local') {
+      if (primary) await setAnalysisSyncAt(entry.id, sourceAt);
+      else await setAnalysisSyncAtEnv(serverId, entry.id, sourceAt);
+      continue;
+    }
+
+    try {
+      const analysis = await api.getAnalysis(entry.id);
+      await saveCachedAnalyses([
+        {
+          entryId: localEntryId,
+          title: recording?.title ?? entry.title ?? '',
+          recordedAt: recording?.recordedAt ?? entry.recorded_at ?? entry.created_at,
+          analysis,
+          origin: 'server',
+        },
+      ]);
+      if (primary) await setAnalysisSyncAt(entry.id, sourceAt);
+      else await setAnalysisSyncAtEnv(serverId, entry.id, sourceAt);
+      emitAnalysis(localEntryId);
+      imported += 1;
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        await deleteCachedServerAnalysis(localEntryId).catch(() => undefined);
+        if (primary) await setAnalysisSyncAt(entry.id, sourceAt);
+        else await setAnalysisSyncAtEnv(serverId, entry.id, sourceAt);
+        emitAnalysis(localEntryId);
+      }
+      // Rede/5xx: o marcador fica como esta e o proximo ciclo tenta de novo.
+    }
+  }
+  return imported;
+}
+
+/** Sobe uma analise para um ambiente especifico, com o id de entrada dele. */
+export async function pushAnalysisToServer(
+  api: DyariumApi,
+  entryId: string,
+  analysis: ServerAnalysis,
+  replace = false,
+): Promise<boolean> {
+  try {
+    const result = await api.putAnalysis(entryId, { ...analysis, replace });
+    return result.stored === true;
+  } catch {
+    return false;
+  }
 }
 
 /**

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/joseti/dyarium/internal/hlc"
 	"github.com/joseti/dyarium/internal/id"
 	_ "modernc.org/sqlite"
 )
@@ -18,6 +19,10 @@ import (
 // Store wraps the database connection.
 type Store struct {
 	db *sql.DB
+	// clock stamps every version this environment issues. It is a hybrid
+	// logical clock, so a client edit made after reading a stamp is always
+	// ordered after it even when the client clock is behind.
+	clock *hlc.Clock
 }
 
 // Open opens (creating if needed) the SQLite database at path and configures
@@ -47,8 +52,22 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("store: ping: %w", err)
 	}
-	return &Store{db: db}, nil
+	return &Store{db: db, clock: hlc.NewClock("")}, nil
 }
+
+// SetClockNode names this environment in the version stamps it issues. The
+// identity is stable across restarts, so two environments never produce the
+// same stamp for the same millisecond.
+func (s *Store) SetClockNode(node string) { s.clock.SetNode(node) }
+
+// InstanceID is the stable identity of this environment. It is the same value
+// the API exposes as `instance_id` and the one recorded as the origin of
+// objects created here.
+func (s *Store) InstanceID() string { return s.clock.Node() }
+
+// ObserveClock advances the version clock with a stamp received from a client,
+// so the write about to happen is ordered after everything that client saw.
+func (s *Store) ObserveClock(token string) { s.clock.ObserveToken(token) }
 
 // DB exposes the underlying connection for repository methods.
 func (s *Store) DB() *sql.DB { return s.db }

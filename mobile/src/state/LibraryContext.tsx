@@ -9,6 +9,7 @@ import type { NoteInsertPosition } from '@/core/noteDocument';
 import { markQueued } from '@/core/queue';
 import { isUploadable, needsNoteSync, needsTranscript, type AuthorRole, type Recording } from '@/core/types';
 import { bumpRender } from '@/dev/perf';
+import { clockNode } from '@/services/clock';
 import { deleteRecordingRow, getRecording, listRecordings, updateRecordingNote, upsertRecording } from '@/services/db';
 import { deleteServerEntry, restoreServerEntry } from '@/services/entries';
 import { deleteSessionAudioFiles, deleteSessionFiles } from '@/services/files';
@@ -28,6 +29,8 @@ import { maybeTranscribeLocally, transcribePendingLocally } from '@/services/loc
 import { reviewRecording } from '@/services/transcriptReview';
 import { noteIsOpen } from '@/services/noteVisibility';
 import { pullServerEntries } from '@/services/pull';
+import { putTombstone, removeTombstone } from '@/services/sync/state';
+import { reconcileAllServers } from '@/services/sync/engine';
 import { pushPendingTranscriptsOnce } from '@/services/transcriptSync';
 import { fetchTranscriptsOnce } from '@/services/transcripts';
 import { emitRecording, observeUploads, runUploadQueueOnce } from '@/services/uploaderLoop';
@@ -132,6 +135,9 @@ const TRANSCRIPT_INTERVAL_MS = 8_000;
 
 /** Com o app aberto, busca edicoes feitas no servidor (dashboard). */
 const SERVER_PULL_INTERVAL_MS = 20_000;
+
+/** Reconciliacao completa por ambiente: cara, entao roda devagar. */
+const SERVER_RECONCILE_INTERVAL_MS = 120_000;
 
 export function LibraryProvider({ children }: { children: ReactNode }) {
   const {
@@ -290,6 +296,21 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       .catch(() => undefined);
   }, [refresh, refreshNotebooks]);
 
+  // Reconciliacao por ambiente: une o que so existe de um lado e propaga
+  // tombstones. Roda ao conectar, ao voltar para o app e num intervalo lento;
+  // nao a cada 20 s, porque o manifesto percorre a biblioteca inteira.
+  const reconcile = useCallback(() => {
+    if (noteIsOpen()) return;
+    void reconcileAllServers()
+      .then((summaries) => {
+        if (summaries.some((summary) => summary.pulled + summary.pushed > 0)) {
+          return refresh();
+        }
+        return undefined;
+      })
+      .catch(() => undefined);
+  }, [refresh]);
+
   useEffect(() => {
     if (!ready || !config) return undefined;
     // A lista e a prioridade do boot. Envio, transcricao e pull entram depois
@@ -299,6 +320,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       pullTranscripts();
       pushTranscripts();
       pullServer();
+      reconcile();
       // O que ficou pela metade antes de o app morrer continua de onde parou.
       // A fila local so roda com o app na frente: trabalho pesado iniciado do
       // fundo nao consegue abrir o servico em primeiro plano no Android 12+.
@@ -308,7 +330,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       void pushLocalAnalyses().catch(() => undefined);
     }, 2000);
     return () => clearTimeout(timer);
-  }, [ready, config, kick, pullTranscripts, pushTranscripts, pullServer, resumeReviews]);
+  }, [ready, config, kick, pullTranscripts, pushTranscripts, pullServer, reconcile, resumeReviews]);
 
   useEffect(() => {
     if (!hasPending) return undefined;
@@ -337,10 +359,11 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
         pullTranscripts();
         pushTranscripts();
         pullServer();
+        reconcile();
       }
     });
     return () => subscription.remove();
-  }, [kick, pullTranscripts, pushTranscripts, pullServer]);
+  }, [kick, pullTranscripts, pushTranscripts, pullServer, reconcile]);
 
   // Nota editada no dashboard aparece no app sem precisar reabrir: com o app em
   // primeiro plano, busca as versoes novas a cada intervalo. Fora de foco, o
@@ -354,6 +377,18 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     }, SERVER_PULL_INTERVAL_MS);
     return () => clearInterval(id);
   }, [config, pullServer]);
+
+  // A reconciliacao completa (manifesto de todos os ambientes) e mais cara que
+  // o pull do primario: roda devagar, e de imediato so ao conectar/voltar.
+  useEffect(() => {
+    if (!config) return undefined;
+    const id = setInterval(() => {
+      if (AppState.currentState === 'active') {
+        reconcile();
+      }
+    }, SERVER_RECONCILE_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [config, reconcile]);
 
   const enqueue = useCallback(
     async (recording: Recording) => {
@@ -470,6 +505,15 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       const deletedAt = new Date().toISOString();
       const trashed: Recording = { ...current, deletedAt, updatedAt: deletedAt };
       await upsertRecording(trashed);
+      // A intencao de exclusao fica permanente, mesmo depois de a lixeira
+      // purgar o conteudo: um ambiente offline por mais tempo que a janela
+      // ainda precisa aprender que a nota foi apagada.
+      await putTombstone({
+        id: current.entryId ?? current.id,
+        kind: 'entry',
+        deletedAt,
+        origin: await clockNode(),
+      });
       setRecordings((prev) => prev.filter((r) => r.id !== id));
       // O servidor tem a mesma lixeira de 7 dias; a chamada e best-effort para
       // apagar offline nao impedir a nota de sair da lista local agora.
@@ -497,6 +541,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
         updatedAt: new Date().toISOString(),
       };
       await upsertRecording(restored);
+      await removeTombstone(current.entryId ?? current.id, 'entry');
       await refresh();
       // Desfaz a exclusao logica no servidor. Sem isso o proximo pull veria a
       // entrada na lixeira dele e apagaria a nota de novo.
@@ -591,6 +636,14 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
 
   const removeNotebook = useCallback(
     async (id: string) => {
+      // A exclusao do caderno tambem precisa sobreviver a purga local e
+      // chegar aos outros ambientes; o tombstone e a prova.
+      await putTombstone({
+        id,
+        kind: 'notebook',
+        deletedAt: new Date().toISOString(),
+        origin: await clockNode(),
+      });
       await deleteLocalNotebook(id);
       await Promise.all([refresh(), refreshNotebooks()]);
       void pushNotebooks().then(refreshNotebooks).catch(() => undefined);

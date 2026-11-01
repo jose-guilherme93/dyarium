@@ -9,29 +9,13 @@
  */
 
 import { DyariumApi, type FetchLike } from '@/core/api';
-import { newId } from '@/core/id';
 import type { MetricsSnapshot } from '@/core/metricsSnapshot';
-import { Platform } from 'react-native';
 
-import { markMetricsSynced, saveMetricsSnapshot } from './db';
-import { loadDeviceIdentity, loadServerConfig, saveDeviceIdentity } from './secure';
+import { loadMetricsSnapshot, markMetricsSynced, saveMetricsSnapshot } from './db';
+import { deviceIdentity } from './device';
+import { loadServerConfig } from './secure';
 
 const doFetch = globalThis.fetch as unknown as FetchLike;
-
-/** Id opaco do aparelho, criado uma vez e guardado no cofre. */
-async function deviceIdentity(): Promise<{ id: string; name: string }> {
-  const existing = await loadDeviceIdentity();
-  if (existing) return existing;
-  const created = { id: newId('dev_'), name: deviceLabel() };
-  await saveDeviceIdentity(created).catch(() => undefined);
-  return created;
-}
-
-/** Rotulo legivel do aparelho; nada sensivel (so plataforma e versao). */
-function deviceLabel(): string {
-  const version = typeof Platform.Version === 'string' ? Platform.Version : String(Platform.Version ?? '');
-  return version ? `${Platform.OS} ${version}` : Platform.OS;
-}
 
 /**
  * Guarda o snapshot no aparelho e tenta enviar. Devolve `true` quando chegou ao
@@ -50,5 +34,28 @@ export async function publishMetricsSnapshot(snapshot: MetricsSnapshot): Promise
     ...snapshot,
   });
   await markMetricsSynced(new Date().toISOString());
+  return true;
+}
+
+/**
+ * Envia o snapshot ja guardado no aparelho para um ambiente especifico. Cada
+ * servidor mantem o proprio painel; o app nao depende de nenhum deles para
+ * funcionar, entao a falha de um nao impede o outro.
+ */
+export async function publishMetricsTo(api: DyariumApi): Promise<boolean> {
+  const stored = await loadMetricsSnapshot();
+  if (!stored) return false;
+  let snapshot: MetricsSnapshot;
+  try {
+    snapshot = JSON.parse(stored.payload) as MetricsSnapshot;
+  } catch {
+    return false;
+  }
+  const device = await deviceIdentity();
+  await api.putMetrics({
+    device_id: device.id,
+    device_name: device.name,
+    ...snapshot,
+  });
   return true;
 }

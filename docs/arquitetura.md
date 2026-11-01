@@ -39,15 +39,15 @@ referencia local).
 
 Consequencias que valem registrar:
 
-- **Ultima edicao vence.** Titulo, data do evento e corpo tem versao propria no
-  servidor, mas os clientes oficiais usam last-write-wins para o texto: o app grava
-  o corpo sem versao de base e o dashboard reenvia sem versao quando recebe `409`.
-  O pull do app sempre aplica a versao do servidor quando ela e mais nova que a
-  ultima edicao local; nota com edicao pendente so perde o campo que o servidor
-  gravou depois (compara a versao do campo com o horario da edicao local). O
-  endpoint continua devolvendo `409` com o campo que brigou para clientes que
-  queiram oferecer a escolha, mas o produto nao interrompe mais o usuario com um
-  dialogo: a ultima gravacao vale.
+- **Ultima edicao vence, sem dialogo.** Titulo, data do evento e corpo tem versao
+  propria, e a versao e um carimbo do **relogio hibrido logico** (fisico em ms,
+  contador e no de quem emitiu). O app manda a versao que leu em `X-HLC`; o
+  servidor avanca o proprio relogio ate ela antes de carimbar a gravacao, entao
+  uma edicao feita depois de uma leitura vence a leitura mesmo com o relogio do
+  aparelho atrasado. Nota limpa aceita qualquer versao nova; nota com edicao
+  pendente so perde o campo que foi carimbado depois do carimbo local. O perdedor
+  fica em `note_revisions`; o produto nao interrompe mais o usuario com um
+  dialogo. Versoes antigas em RFC 3339 continuam validas.
 - **O que o markdown nao sabe, o editor nao oferece.** Cor de texto, cor de fundo e
   sublinhado sairam do schema do editor: dariam para formatar algo que nao sobrevive
   a gravacao.
@@ -550,6 +550,73 @@ do topo, sem marcador). A remocao leva a transcricao, os segmentos e a revisao
 junto, e recalcula a duracao da entrada. Sem essa separacao, um audio removido do
 corpo reaparecia na pilha do dashboard sem nenhuma forma de apagar.
 
+## Modo escritor: livro = caderno, capitulo = entry
+
+Um livro e um caderno com `kind = 'book'`; um capitulo e uma `Entry` com corpo
+em markdown. Nao existe tabela de capitulos nem segunda entidade de conteudo: o
+capitulo herda editor, autosave, versoes, lixeira, anexos, busca, sync e espelho
+do app. A estrutura e plana (`chapter`, `part`, `front`, `back`) e uma parte e um
+divisor na mesma lista, nao uma arvore.
+
+A interface do livro so existe quando o caderno ativo e um livro. Fora dele, o
+diario continua igual: "Todos os cadernos", Mapa, humor e Estatisticas usam
+`exclude_books=1` no servidor. O app movel esconde livros no v1, mas continua
+baixando o espelho para o futuro.
+
+Decisoes de seguranca e integridade:
+
+- ativar o modo escritor exige caderno sem nota viva; um caderno cheio oferece
+  mover as notas para "Notas ao acaso", nunca apaga;
+- desativar com capitulos exige conversao confirmada, que mantem os textos como
+  notas e descarta apenas a estrutura;
+- excluir um livro exige o titulo exato e manda os capitulos para a Lixeira com
+  tombstones na mesma transacao, em vez de despeja-los no caderno padrao;
+- o caderno padrao nunca vira livro;
+- capitulo nao usa `archived`; o livro organiza por `chapter_status`.
+
+Exportacao roda no navegador (DOCX com `fflate`, PDF pela impressao do
+navegador, Markdown/TXT), sem renderizacao no servidor: a VPS e pequena e um
+livro grande nao pode competir por RAM com o processamento. Imagens sao preto e
+branco por padrao; `c=1` no markdown e a excecao de cor, respeitada no editor,
+na leitura, no PDF e no DOCX.
+
+A folha do livro tem uma medida so, guardada no caderno (`page_size`,
+`page_margin_mm`, `body_px`, `body_leading`, `body_font`) e usada pelo editor,
+pela leitura, pelo PDF e pelo DOCX. As fontes de livro sao auto-hospedadas em
+`web/public/fonts` (Newsreader, EB Garamond, Libre Baskerville, Libre Caslon
+Text, Tinos, Gelasio, Literata e Crimson Pro) para o editor e o PDF usarem o
+mesmo arquivo; o DOCX so pode citar o nome. O A4 nao e formato de livro: fica
+para o manuscrito na exportacao. O formato padrao de um livro novo e 14 x 21 cm. O editor mostra folhas de verdade: a largura e a medida
+real da pagina, cada folha com a margem do livro e um espaco de fundo entre uma e
+outra, e o numero da pagina na margem da seguinte. A divisao nao recorta o
+documento nem cria paragrafos novos: ela mede as linhas ja renderizadas (line
+boxes e altura util da folha), marca a primeira linha que nao caberia e insere um
+widget de decoracao do ProseMirror naquela posicao. O widget nao faz parte do
+markdown, do autosave, das versoes nem da exportacao; some quando o capitulo
+fecha. Dividir o corpo em editores por pagina quebraria cursor, selecao e undo
+entre folhas, por isso a folha continua por baixo e a quebra e uma camada de
+layout. O PDF usa a mesma fonte, medida e entrelinha, entao as folhas batem com
+as paginas impressas; no DOCX a fonte cai para Georgia e uma linha pode mudar de
+pagina. A4 nao cabe na largura util com a sidebar de 300 px aberta, entao a folha
+encolhe ate caber; 6 x 9 cabe na medida real. Abaixo de 640 px a folha ocupa a
+tela e a divisao passa a ser a da tela, nao a da pagina impressa.
+
+A capa e uma imagem recortada no navegador na proporcao da folha e guardada em
+`book_covers`, uma por livro, com tipo e versao (`updated_at`). A lista de
+cadernos carrega so `has_cover` e a versao; a imagem vem por
+`GET /notebooks/{id}/cover`, o que evita baixar capas de todos os livros a cada
+refresh. O PDF recebe a capa como data URL na pagina `cover` sem margem, antes da
+pagina de titulo. A previa de leitura usa a mesma imagem e a mesma medida da
+folha; o fundo escuro e a barra fixa existem so para olhar a pagina, nao entram no
+PDF.
+
+O ritmo nao e derivado das revisoes: `writing_days` guarda o saldo liquido de
+palavras por livro e por dia, somado na mesma transacao que grava o corpo. E o
+unico jeito barato de bater o numero entre dispositivos e de sobreviver a
+limpeza do navegador; o dia e a data do servidor. O plano do capitulo fica em
+campos proprios (`chapter_beats`, `chapter_notes`) para nao sujar o corpo e nao
+entrar na exportacao.
+
 ## Decisoes e justificativas
 
 - SQLite em WAL: um arquivo unico, transacoes ACID, leitura concorrente. Adequado a um
@@ -622,9 +689,63 @@ corpo reaparecia na pilha do dashboard sem nenhuma forma de apagar.
   entidade em vez de criar uma duplicata. Quando a pessoa e o proprio dono, "sou eu" apaga
   a entidade duplicada e guarda a grafia em `owner_aliases`; o centro do mapa e a unica
   representacao do diarista e a leitura resolve o nome para `owner_name`.
+  A reescrita do texto troca **nome por nome**, nunca gramatica: pronomes, artigos e
+  papeis genericos ("eu", "a gente", "pessoa") resolvem no mapa estruturado, mas nao
+  entram na prosa. Sem isso, marcar a pessoa "eu" como "sou eu" transformava a citacao
+  "eu fiz isso" em "Joseti fiz isso". Grafias com menos de tres letras tambem ficam
+  fora da prosa ("li", "vi" e "ja" sao palavras), e continuam valendo no mapa.
+  Cada edicao de entidade (renomear, mesclar, icone, "sou eu") guarda antes uma foto das
+  linhas afetadas em `entity_edits`; o "Desfazer" do painel restaura entidade, aliases,
+  vinculos e grafias do dono. Mesclar apaga a origem e soma contagens, entao o desfazer
+  precisa da foto, nao de uma operacao inversa. So a edicao mais recente ainda de pe pode
+  ser desfeita, e a restauracao carimba `updated_at` como agora para vencer copias antigas
+  em outros clientes.
   O cliente desenha em canvas com forca local e tamanho relativo ao maior no da visao;
   o servidor nao manda layout nem posicao. O mapa inclui todas as notas, inclusive as de
   autor "outros": o diario e do dono, mesmo quando a fala e de outra pessoa.
+- No aparelho o mapa e independente: o app reproduz as mesmas quatro tabelas
+  (`entities`, `entity_aliases`, `entry_entities`, `owner_aliases`), deriva os vinculos
+  ao salvar cada analise e calcula o layout localmente, sem chamar `GET /graph`. O desenho
+  usa a mesma relaxacao de forcas do dashboard (repulsao, mola pelas ligacoes e ancora no
+  dono) e o mesmo tamanho relativo por mencoes, entao as duas telas tem a mesma cara. O
+  dono liga so as bolas mais mencionadas e sao elas que puxam o resto pela co-ocorrencia,
+  o que da a teia em vez de um leque de raios; o
+  resultado e deterministico e fica em cache no SQLite. A cena e desenhada uma vez em SVG,
+  com bolas, icones e linhas em unidades do grafo; o pan e a pinca so aplicam outra matriz
+  ao container nativo. Ampliar e reduzir e zoom em pixels: nenhum estado do React muda e
+  nenhum elemento e remontado. Os nomes ficam fora do SVG, em texto de tela de tamanho
+  fixo, posicionados por transform na thread de UI: o `react-native-svg` descarta o bitmap
+  da cena a cada prop que muda, entao um nome por quadro custaria um redesenho de tela
+  cheia por nome. O
+  encaixe mostra o conjunto inteiro dentro da faixa acima da folha, com o que e periferico
+  pequeno, e o arrasto nunca tira o desenho da area disponivel. Abrir uma bola troca a
+  visao: ela, as relacoes dela e as notas que a citam passam a ser o desenho inteiro, com
+  as arestas de nota pontilhadas, como no foco do `GET /graph`. O tamanho de cada bola e
+  relativo ao maior da visao e o dono fica sempre maior que a entidade aberta, para marcar
+  de onde parte tudo; tocar no dono devolve o mapa inteiro. A ligacao nao tem cor: usa a cor
+  do texto do tema e a grossura mostra a proximidade, em tres faixas de peso. O encaixe
+  aproveita a faixa inteira, entao as bolas quase se encostam, com o dono sempre maior. A
+  folha tem tres alturas e
+  a altura cheia rola todos os trechos da entidade.
+  Para o desenho nao crescer sem limite, o app desenha no maximo 120 entidades (as mais
+  mencionadas) e 120 notas no foco, como os limites do servidor; o painel de detalhe lista
+  todas as notas e trechos. Abrir o mapa nao parseia payload de analise nem transcricao:
+  so identificacao, caderno e chaves sao lidos; os trechos e o tom do Humor sao carregados
+  sob demanda, e analises antigas sao derivadas em segundo plano, em lotes curtos, sem
+  bloquear o primeiro gesto.
+  Renomear, trocar icone e "sou eu" sao aplicados no SQLite local e enfileirados em
+  `entity_outbox`; o pull empurra a fila e aplica o catalogo de `GET /entities`
+  (`updated_at`, `aliases` e `owner_aliases`), entao as duas pontas convergem sem
+  depender da rede para abrir o mapa.
+
+## Ambientes independentes
+
+O app e o servidor sao pares independentes: cada um tem banco proprio, chave
+propria e funciona sozinho. A conexao e opcional e reconcilia conjuntos por id;
+nao existe espelho nem autoridade de um lado. O contrato normativo (identidade,
+uniao, tombstone permanente, versoes, anexos portateis e falha/retomada) esta em
+`docs/sincronizacao.md`. A identidade do servidor e gerada no primeiro boot em
+`/data/instance.id` e exposta em `GET /api/v1/version`; a URL nunca e identidade.
 
 ## Limites e configuracoes relevantes
 

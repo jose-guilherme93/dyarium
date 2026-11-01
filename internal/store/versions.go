@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/joseti/dyarium/internal/hlc"
 )
 
 // Campo editavel da nota, usado para dizer qual lado brigou num conflito.
@@ -16,10 +18,11 @@ const (
 	FieldBody       = "body"
 )
 
-// versionNow is the current version stamp of a field. Nanoseconds matter: two
-// writes in the same second still have to be ordered.
-func versionNow() string {
-	return time.Now().UTC().Format(time.RFC3339Nano)
+// versionNow is the current version stamp of a field, issued by the hybrid
+// logical clock: strictly increasing, so two writes in the same millisecond are
+// still ordered.
+func (s *Store) versionNow() string {
+	return s.clock.Now().String()
 }
 
 // versionAfter reports whether `stored` is newer than the version the client last
@@ -30,15 +33,7 @@ func versionAfter(stored, clientRead string) bool {
 	if clientRead == "" || strings.TrimSpace(stored) == "" {
 		return false
 	}
-	storedAt, err := time.Parse(time.RFC3339, stored)
-	if err != nil {
-		return false
-	}
-	clientAt, err := time.Parse(time.RFC3339, clientRead)
-	if err != nil {
-		return false
-	}
-	return storedAt.After(clientAt)
+	return hlc.After(stored, clientRead)
 }
 
 // EntryFieldVersions returns the current versions of an entry's editable fields.
@@ -59,17 +54,18 @@ func (s *Store) EntryFieldVersions(ctx context.Context, id string) (title, recor
 // version. It returns the versions after the write and the names of the fields
 // that had already changed since the client read them: those are NOT applied, so
 // the caller can ask the user whose version wins instead of silently losing one.
-func (s *Store) UpdateEntryFields(ctx context.Context, id string, title *string, recordedAt *time.Time, notebookID *string, archived *bool, author *string, readTitle, readRecorded string) (map[string]string, []string, error) {
-	var storedTitle, storedRecorded, storedNotebook, storedAuthor string
+func (s *Store) UpdateEntryFields(ctx context.Context, id string, title *string, recordedAt *time.Time, notebookID *string, archived *bool, author *string, chapterKind *string, readTitle, readRecorded string) (map[string]string, []string, error) {
+	var storedTitle, storedRecorded, storedNotebook, storedAuthor, storedChapterKind string
 	var storedRecordedRaw sql.NullString
+	var storedChapterPosition sql.NullFloat64
 	var storedArchived int
 	var storedTitleVersion, storedRecordedVersion sql.NullString
 	err := s.db.QueryRowContext(ctx, `
 		SELECT COALESCE(title,''), recorded_at, COALESCE(notebook_id,''), archived, COALESCE(author,''),
-			title_updated_at, recorded_at_updated_at
+			title_updated_at, recorded_at_updated_at, COALESCE(chapter_kind,''), chapter_position
 		FROM entries WHERE id = ?`, id).Scan(
 		&storedTitle, &storedRecordedRaw, &storedNotebook, &storedArchived, &storedAuthor,
-		&storedTitleVersion, &storedRecordedVersion)
+		&storedTitleVersion, &storedRecordedVersion, &storedChapterKind, &storedChapterPosition)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil, ErrNotFound
 	}
@@ -77,10 +73,36 @@ func (s *Store) UpdateEntryFields(ctx context.Context, id string, title *string,
 		return nil, nil, fmt.Errorf("store: entry field versions: %w", err)
 	}
 	storedRecorded = storedRecordedRaw.String
+	nextNotebook := storedNotebook
 	if notebookID != nil {
-		if err := s.NotebookExists(ctx, strings.TrimSpace(*notebookID)); err != nil {
+		nextNotebook = strings.TrimSpace(*notebookID)
+		if err := s.NotebookExists(ctx, nextNotebook); err != nil {
 			return nil, nil, err
 		}
+	}
+	targetBook, err := s.NotebookIsBook(ctx, nextNotebook)
+	if err != nil {
+		return nil, nil, err
+	}
+	sourceBook, err := s.NotebookIsBook(ctx, storedNotebook)
+	if err != nil {
+		return nil, nil, err
+	}
+	// O livro usa o status do capitulo, nao a lixeira de trabalho do diario.
+	if targetBook && archived != nil && *archived != (storedArchived != 0) {
+		return nil, nil, ErrNotABookEntry
+	}
+	var nextChapterKind string
+	if chapterKind != nil {
+		if !targetBook {
+			return nil, nil, ErrNotABook
+		}
+		nextChapterKind = strings.TrimSpace(*chapterKind)
+		if !ValidChapterKind(nextChapterKind) {
+			return nil, nil, ErrInvalidChapter
+		}
+	} else if storedChapterKind != "" {
+		nextChapterKind = storedChapterKind
 	}
 	var nextAuthor string
 	if author != nil {
@@ -107,13 +129,29 @@ func (s *Store) UpdateEntryFields(ctx context.Context, id string, title *string,
 	writeTitle := title != nil && *title != storedTitle
 	writeRecorded := recordedAt != nil && ts(*recordedAt) != storedRecorded
 	writeNotebook := notebookID != nil && strings.TrimSpace(*notebookID) != storedNotebook
+	writeChapterKind := chapterKind != nil && nextChapterKind != storedChapterKind
+	// Um capitulo nunca fica arquivado no livro: mover para la limpa o
+	// arquivamento, e o status do capitulo e o que organiza o trabalho.
 	writeArchived := archived != nil && boolInt(*archived) != storedArchived
+	if targetBook && storedArchived != 0 {
+		writeArchived = true
+	}
 	writeAuthor := author != nil && nextAuthor != storedAuthor
-	if !writeTitle && !writeRecorded && !writeNotebook && !writeArchived && !writeAuthor {
+	if !writeTitle && !writeRecorded && !writeNotebook && !writeArchived &&
+		!writeAuthor && !writeChapterKind {
 		return versions, nil, nil
 	}
 
-	stamp := versionNow()
+	var nextPosition float64
+	if writeNotebook && targetBook && !sourceBook {
+		// Mover uma nota comum para um livro: a entrada passa a ser o ultimo
+		// capitulo, como o app faz ao criar.
+		nextPosition, err = s.NextChapterPosition(ctx, nextNotebook)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	stamp := s.versionNow()
 	updatedAt := ts(time.Now())
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -140,18 +178,52 @@ func (s *Store) UpdateEntryFields(ctx context.Context, id string, title *string,
 	// Caderno e um ponteiro, nao texto: nao tem versao nem conflito. Mover a
 	// nota no celular e no desktop ao mesmo tempo e raro; a ultima gravacao vence.
 	if writeNotebook {
+		switch {
+		case targetBook && !sourceBook:
+			kind := nextChapterKind
+			if kind == "" {
+				kind = ChapterKindChapter
+			}
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE entries SET notebook_id = ?, archived = 0, chapter_kind = ?,
+					chapter_position = ?, chapter_status = ?, updated_at = ?
+				WHERE id = ?`,
+				nextNotebook, kind, nextPosition, ChapterDraft, updatedAt, id); err != nil {
+				return nil, nil, fmt.Errorf("store: update notebook: %w", err)
+			}
+		case targetBook && sourceBook:
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE entries SET notebook_id = ?, archived = 0, updated_at = ? WHERE id = ?`,
+				nextNotebook, updatedAt, id); err != nil {
+				return nil, nil, fmt.Errorf("store: update notebook: %w", err)
+			}
+		default:
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE entries SET notebook_id = ?, chapter_kind = '',
+					chapter_position = NULL, chapter_status = '', chapter_goal_words = 0,
+					chapter_synopsis = '', chapter_beats = '', chapter_notes = '', updated_at = ?
+				WHERE id = ?`, nextNotebook, updatedAt, id); err != nil {
+				return nil, nil, fmt.Errorf("store: update notebook: %w", err)
+			}
+		}
+	}
+	if writeChapterKind {
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE entries SET notebook_id = ?, updated_at = ? WHERE id = ?`,
-			strings.TrimSpace(*notebookID), updatedAt, id); err != nil {
-			return nil, nil, fmt.Errorf("store: update notebook: %w", err)
+			`UPDATE entries SET chapter_kind = ?, updated_at = ? WHERE id = ?`,
+			nextChapterKind, updatedAt, id); err != nil {
+			return nil, nil, fmt.Errorf("store: update chapter kind: %w", err)
 		}
 	}
 	// Arquivar e um interruptor, nao texto: nao tem versao nem conflito. Quem
 	// arrived depois manda, e o estado e o mesmo nos dois lugares.
 	if writeArchived {
+		value := 0
+		if archived != nil && *archived {
+			value = 1
+		}
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE entries SET archived = ?, updated_at = ? WHERE id = ?`,
-			boolInt(*archived), updatedAt, id); err != nil {
+			value, updatedAt, id); err != nil {
 			return nil, nil, fmt.Errorf("store: update archived: %w", err)
 		}
 	}

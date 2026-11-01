@@ -10,6 +10,7 @@
  *
  * Marcadores no markdown:
  * - imagem: `![alt](local:arquivo.jpg){w=50}` (a linha inteira e um no);
+ *   `{c=1}` preserva a cor original no livro e `{c=0}` forca preto e branco;
  * - audio: `!audio[local:audio.aac]{d=12.5}` (duracao em segundos, opcional).
  *
  * O parser e o serializer sao puros e devolvem exatamente o markdown de entrada
@@ -51,6 +52,11 @@ export interface NoteImageNode {
   alt: string;
   /** Largura em percentual da nota (100 = largura total). */
   width: number;
+  /**
+   * Cor da imagem no livro: true = original, false = preto e branco, ausente =
+   * padrao do contexto. O app preserva o marcador mesmo sem desenhar P/B.
+   */
+  color?: boolean;
   /** As quebras de linha depois da midia (o separador do texto seguinte). */
   breakAfter?: string;
 }
@@ -77,7 +83,7 @@ export interface NoteInsertPosition {
 }
 
 const AUDIO_LINE = /^\s*!audio\[([^\]\s]+)\](?:\{d=([0-9]+(?:\.[0-9]+)?)\})?\s*$/;
-const IMAGE_LINE = /^\s*!\[([^\]]*)\]\(([^)\s]+)\)(?:\{w=(\d+)\})?\s*$/;
+const IMAGE_LINE = /^\s*!\[([^\]]*)\]\(([^)\s]+)\)(?:\{(?:w=(\d+))?(?:,?c=([01]))?\})?\s*$/;
 
 /**
  * Teto de um no de texto.
@@ -112,8 +118,9 @@ function imageNode(
   width: number,
   index: number,
   breakAfter = '',
+  color?: boolean,
 ): NoteImageNode {
-  return { kind: 'image', id: `i${index}`, ref, alt, width, breakAfter };
+  return { kind: 'image', id: `i${index}`, ref, alt, width, breakAfter, color };
 }
 
 /**
@@ -190,7 +197,8 @@ export function parseNoteDocument(markdown: string): NoteNode[] {
       } else if (image) {
         const rawWidth = image[3] ? Number(image[3]) : 100;
         const width = Number.isFinite(rawWidth) ? Math.min(100, Math.max(1, rawWidth)) : 100;
-        nodes.push(imageNode(image[2], image[1], width, nodes.length, breakAfter));
+        const color = image[4] ? image[4] === '1' : undefined;
+        nodes.push(imageNode(image[2], image[1], width, nodes.length, breakAfter, color));
       }
       // A proxima linha comeca depois da linha da midia; o texto seguinte
       // comeca depois das quebras que a midia carrega.
@@ -296,8 +304,11 @@ function serializeNode(node: NoteNode): string {
     const duration = node.durationMs > 0 ? `{d=${seconds(node.durationMs)}}` : '';
     return `!audio[${node.ref}]${duration}`;
   }
-  const width = node.width > 0 && node.width < 100 ? `{w=${Math.round(node.width)}}` : '';
-  return `![${node.alt}](${node.ref})${width}`;
+  const parts: string[] = [];
+  if (node.width > 0 && node.width < 100) parts.push(`w=${Math.round(node.width)}`);
+  if (node.color !== undefined) parts.push(`c=${node.color ? 1 : 0}`);
+  const marker = parts.length > 0 ? `{${parts.join(',')}}` : '';
+  return `![${node.alt}](${node.ref})${marker}`;
 }
 
 /** Nos de audio do documento, na ordem em que aparecem. */

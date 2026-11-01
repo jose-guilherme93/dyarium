@@ -13,9 +13,13 @@ import "@blocknote/mantine/style.css";
 import { api, uploadAttachment, uploadFile } from "../api";
 import { CloseIcon } from "../components/icons";
 import { useEscape } from "../lib/useEscape";
+import { normalizeSearch } from "../lib/search";
 import { removeAudioBlocks } from "./audioBlocks";
 import { blocksToNoteMarkdown } from "./blocknoteMarkdown";
 import { createEditorSchema, MediaContext } from "./editorSchema";
+import { pageGapExtension, pageGapKey } from "./paginationGaps";
+import { Decoration, DecorationSet } from "prosemirror-view";
+import type { PageBreak } from "../lib/pagination";
 import type { Audio, Entry } from "../types";
 
 interface NotesEditorProps {
@@ -31,7 +35,31 @@ interface NotesEditorProps {
   onOpenEntry?: (id: string) => void;
   /** Apaga o audio (corpo + servidor); o menu do player chama isto. */
   onDeleteAudio?: (attachmentId: string) => void;
+  /** Padrao de cor das imagens: o livro usa preto e branco. */
+  imageDefault?: "bw" | "color";
+  /** O livro esconde as alcas de bloco; a barra flutuante de selecao fica. */
+  hideSideMenu?: boolean;
 }
+
+/** Acoes da barra do modo escritor, aplicadas ao bloco ou a selecao atual. */
+export type EditorFormat =
+  | "undo"
+  | "redo"
+  | "bold"
+  | "italic"
+  | "underline"
+  | "strike"
+  | "body"
+  | "section"
+  | "subtitle"
+  | "quote"
+  | "bullet"
+  | "numbered"
+  | "align-left"
+  | "align-center"
+  | "align-right"
+  | "align-justify"
+  | "scene";
 
 // NotesEditorHandle lets the note header trigger the media/link inserters that
 // live inside the editor (which owns the file inputs and the picker).
@@ -39,6 +67,9 @@ export interface NotesEditorHandle {
   addImage: () => void;
   addAudio: () => void;
   openLink: () => void;
+  format: (action: EditorFormat) => void;
+  /** Troca as quebras de pagina por widgets de folha no documento. */
+  setPageBreaks: (breaks: PageBreak[], textHeight: number) => void;
   /**
    * Remove o bloco de audio do documento e devolve o markdown resultante.
    * `undefined` quando nao havia bloco (audio so na pilha ou modo cru).
@@ -52,10 +83,25 @@ const schema = createEditorSchema();
 // plus the /link command. Audio and image are media blocks with the same markers
 // the app reads and writes.
 export const NotesEditor = forwardRef<NotesEditorHandle, NotesEditorProps>(function NotesEditor(
-  { entryId, initialContent, audios = new Map(), onChange, onMediaAdded, onOpenEntry, onDeleteAudio },
+  {
+    entryId,
+    initialContent,
+    audios = new Map(),
+    onChange,
+    onMediaAdded,
+    onOpenEntry,
+    onDeleteAudio,
+    imageDefault = "color",
+    hideSideMenu = false,
+  },
   ref,
 ) {
-  const editor = useCreateBlockNote({ schema, initialContent, dictionary: pt });
+  const editor = useCreateBlockNote({
+    schema,
+    initialContent,
+    dictionary: pt,
+    extensions: [pageGapExtension],
+  });
   const [dark, setDark] = useState(
     typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches,
   );
@@ -71,7 +117,7 @@ export const NotesEditor = forwardRef<NotesEditorHandle, NotesEditorProps>(funct
     }
     let active = true;
     api
-      .listEntries()
+      .listAllEntries({ exclude_books: true })
       .then((result) => {
         if (active) {
           setPickerEntries(result.entries ?? []);
@@ -108,11 +154,109 @@ export const NotesEditor = forwardRef<NotesEditorHandle, NotesEditorProps>(funct
     return markdown;
   };
 
+  /**
+   * Aplica a acao da barra do livro no bloco do cursor. Sem selecao, negrito e
+   * italico nao tem onde agir e a acao e ignorada em vez de criar texto solto.
+   */
+  const format = (action: EditorFormat) => {
+    try {
+      if (action === "undo") {
+        editor.undo();
+        return;
+      }
+      if (action === "redo") {
+        editor.redo();
+        return;
+      }
+      if (action === "bold") {
+        editor.toggleStyles({ bold: true });
+        return;
+      }
+      if (action === "italic") {
+        editor.toggleStyles({ italic: true });
+        return;
+      }
+      if (action === "underline") {
+        editor.toggleStyles({ underline: true });
+        return;
+      }
+      if (action === "strike") {
+        editor.toggleStyles({ strike: true });
+        return;
+      }
+      const block = editor.getTextCursorPosition().block;
+      if (action === "scene") {
+        const inserted = editor.insertBlocks(
+          [{ type: "paragraph", props: { textAlignment: "center" }, content: "* * *" } as never],
+          block,
+          "after",
+        );
+        if (inserted[0]) editor.setTextCursorPosition(inserted[0], "end");
+        emit();
+        return;
+      }
+      if (action === "section") {
+        editor.updateBlock(block, { type: "heading", props: { level: 2 } });
+      } else if (action === "subtitle") {
+        editor.updateBlock(block, { type: "heading", props: { level: 3 } });
+      } else if (action === "quote") {
+        editor.updateBlock(block, { type: "quote" });
+      } else if (action === "bullet") {
+        editor.updateBlock(block, { type: "bulletListItem" });
+      } else if (action === "numbered") {
+        editor.updateBlock(block, { type: "numberedListItem" });
+      } else if (action.startsWith("align-")) {
+        const textAlignment = action.replace("align-", "") as "left" | "center" | "right" | "justify";
+        editor.updateBlock(block, {
+          props: { ...block.props, textAlignment },
+        } as never);
+      } else {
+        editor.updateBlock(block, { type: "paragraph" });
+      }
+      emit();
+    } catch {
+      // O cursor esta num bloco sem texto (imagem/audio): nao ha estilo a aplicar.
+    }
+  };
+
+  const setPageBreaks = (breaks: PageBreak[], textHeight: number) => {
+    const view = editor.prosemirrorView;
+    if (!view) return;
+    const rect = view.dom.getBoundingClientRect();
+    const seen = new Set<number>();
+    const widgets: Decoration[] = [];
+    for (const mark of breaks) {
+      const coords = view.posAtCoords({ left: rect.left + 2, top: mark.top + 4 });
+      if (!coords || seen.has(coords.pos)) continue;
+      seen.add(coords.pos);
+      const offset = Math.max(0, Math.min(textHeight, mark.pageStart + textHeight - mark.top));
+      const node = document.createElement("span");
+      node.className = "chapter-page-gap";
+      node.dataset.page = String(mark.page);
+      node.style.marginTop = `${offset}px`;
+      node.setAttribute("contenteditable", "false");
+      node.setAttribute("aria-hidden", "true");
+      widgets.push(
+        Decoration.widget(coords.pos, node, {
+          key: `page-gap-${mark.page}`,
+          side: 1,
+        }),
+      );
+    }
+    view.dispatch(
+      view.state.tr
+        .setMeta(pageGapKey, DecorationSet.create(view.state.doc, widgets))
+        .setMeta("addToHistory", false),
+    );
+  };
+
   useImperativeHandle(ref, () => ({
     addImage: () => imageInput.current?.click(),
     addAudio: () => audioInput.current?.click(),
     openLink: () => setPicker(true),
     removeAudio,
+    format,
+    setPageBreaks,
   }));
 
   const addMedia = () => {
@@ -222,6 +366,7 @@ export const NotesEditor = forwardRef<NotesEditorHandle, NotesEditorProps>(funct
           attachmentId: "",
           caption: "",
           width: "",
+          color: "",
           preview,
           pending: true,
           error: false,
@@ -334,9 +479,9 @@ export const NotesEditor = forwardRef<NotesEditorHandle, NotesEditorProps>(funct
   });
 
   const filtered = pickerEntries.filter((entry) =>
-    `${entry.title} ${entry.original_filename ?? ""} ${entry.preview ?? ""}`
-      .toLowerCase()
-      .includes(term.trim().toLowerCase()),
+    normalizeSearch(
+      `${entry.title} ${entry.original_filename ?? ""} ${entry.preview ?? ""}`,
+    ).includes(normalizeSearch(term.trim())),
   );
 
   return (
@@ -346,12 +491,14 @@ export const NotesEditor = forwardRef<NotesEditorHandle, NotesEditorProps>(funct
         entryId,
         onOpenEntry: onOpenEntry ?? (() => {}),
         onDeleteAudio: onDeleteAudio ?? (() => {}),
+        imageDefault,
       }}
     >
       <BlockNoteView
         editor={editor}
         theme={dark ? "dark" : "light"}
         slashMenu={false}
+        sideMenu={!hideSideMenu}
         onChange={() => emit()}
       >
         <SuggestionMenuController triggerCharacter="/" getItems={getItems} />

@@ -70,21 +70,37 @@ describe("AudioTrack revisao por IA", () => {
     },
   };
 
-  it("mostra o texto revisado e marca so o trecho que a IA mudou", () => {
-    const { container } = render(<AudioTrack audio={revised} />);
+  it("mostra o texto revisado e deixa o original no menu da linha", () => {
+    render(<AudioTrack audio={revised} />);
     fireEvent.click(screen.getByRole("button", { name: "Mostrar transcrição" }));
     expect(screen.getByText(/Um, dois\./)).toBeInTheDocument();
-    expect(container.querySelectorAll(".transcript-original-toggle")).toHaveLength(1);
-  });
+    expect(
+      screen.queryByRole("button", { name: "Ver o texto original do whisper" }),
+    ).toBeNull();
 
-  it("revela o texto original do whisper ao tocar no icone", () => {
-    const { container } = render(<AudioTrack audio={revised} />);
-    fireEvent.click(screen.getByRole("button", { name: "Mostrar transcrição" }));
-    fireEvent.click(screen.getByRole("button", { name: "Ver o texto original do whisper" }));
+    fireEvent.click(screen.getAllByLabelText("Opções do trecho")[0]);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Ver texto original" }));
     expect(screen.getByText(/Original do whisper: um dois/)).toBeInTheDocument();
-    expect(container.querySelector(".transcript-original")).not.toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Ver o texto original do whisper" }));
-    expect(container.querySelector(".transcript-original")).toBeNull();
+
+    fireEvent.click(screen.getAllByLabelText("Opções do trecho")[0]);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Ocultar texto original" }));
+    expect(screen.queryByText(/Original do whisper: um dois/)).toBeNull();
+  });
+});
+
+describe("AudioTrack ações da linha", () => {
+  it("abre edição, tarefa, ideia e citação no menu do lápis", () => {
+    render(<AudioTrack audio={audio} entryId="e1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Mostrar transcrição" }));
+
+    fireEvent.click(screen.getAllByLabelText("Opções do trecho")[0]);
+    expect(screen.getByRole("menuitem", { name: "Editar trecho" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Tarefa" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Ideia" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Citação" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "Editar trecho" }));
+    expect(screen.getByLabelText("Editar trecho da transcrição")).toHaveValue("um dois");
   });
 });
 

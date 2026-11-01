@@ -244,6 +244,20 @@ export function LinkIcon({ size = 18 }: IconProps) {
   );
 }
 
+export function BookIcon({ size = 18 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16.5H6.5A2.5 2.5 0 0 0 4 22V5.5Z"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+      <path d="M4 18.5A2.5 2.5 0 0 1 6.5 16H20" stroke="currentColor" strokeWidth="1.6" />
+    </svg>
+  );
+}
+
 export function WritingIcon({ size = 18 }: IconProps) {
   return (
     <svg {...svgProps(size)}>
