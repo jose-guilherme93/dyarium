@@ -12,9 +12,18 @@ interface BookSidebarProps {
   onReorder: (sourceId: string, targetId: string) => void;
 }
 
+/** Numero ou letra que abre a linha do capitulo. */
+function chapterMark(chapters: Entry[], chapter: Entry): string {
+  if (chapter.chapter_kind === "chapter") return `Capítulo ${chapterNumber(chapters, chapter.id)}`;
+  if (chapter.chapter_kind === "part") return "Parte";
+  if (chapter.chapter_kind === "front") return "Frontispício";
+  return "Posfácio";
+}
+
 /**
  * Lista de capitulos no mesmo lugar onde as notas ficariam. E o que faz o
- * caderno virar livro: a coluna esquerda passa a ser a estrutura da obra.
+ * caderno virar livro: a coluna esquerda passa a ser a estrutura da obra, na
+ * mesma escala da lista de notas.
  */
 export function BookSidebar({
   book,
@@ -87,23 +96,23 @@ export function BookSidebar({
                     onClick={() => onOpen(chapter.id)}
                     aria-current={chapter.id === activeChapterId ? "page" : undefined}
                   >
-                    <span className="book-side-num">
-                      {chapter.chapter_kind === "chapter"
-                        ? chapterNumber(chapters, chapter.id)
-                        : chapter.chapter_kind === "front"
-                          ? "F"
-                          : "P"}
+                    <span className="book-side-row-head">
+                      <span className="book-side-name">{chapter.title || "Sem título"}</span>
+                      <i className="book-side-grip" aria-hidden="true">
+                        ⋮⋮
+                      </i>
                     </span>
-                    <span className="book-side-name">{chapter.title || "Sem título"}</span>
-                    <span className="book-side-words">{formatWords(chapter.word_count ?? 0)}</span>
-                    <i
-                      className={"status-dot status-dot--" + (chapter.chapter_status || "draft")}
-                      aria-label={chapter.chapter_status || "rascunho"}
-                    />
+                    <span className="book-side-meta">
+                      {chapterMark(chapters, chapter)} · {formatWords(chapter.word_count ?? 0)} palavras
+                      <i
+                        className={"status-dot status-dot--" + (chapter.chapter_status || "draft")}
+                        aria-label={chapter.chapter_status || "rascunho"}
+                      />
+                    </span>
+                    {chapter.chapter_synopsis ? (
+                      <span className="book-side-synopsis">{chapter.chapter_synopsis}</span>
+                    ) : null}
                   </button>
-                  {chapter.chapter_synopsis ? (
-                    <p className="book-side-synopsis">{chapter.chapter_synopsis}</p>
-                  ) : null}
                 </div>
               ))}
             </div>

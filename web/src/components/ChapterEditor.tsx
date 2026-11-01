@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import type { PartialBlock } from "@blocknote/core";
 import { api, isConflict } from "../api";
 import { createAutosave, type Autosave } from "../lib/autosave";
@@ -9,11 +10,29 @@ import {
   writeDraft,
   type ChapterDraft,
 } from "../lib/bookDrafts";
-import { chapterNumber, formatWords } from "../lib/books";
+import {
+  beatsOf,
+  bookBodyFont,
+  bookPage,
+  chapterNumber,
+  formatWords,
+  orderedChapters,
+} from "../lib/books";
 import { blocknoteMarkdownToBlocks, markdownToPlain } from "../editor/blocknoteMarkdown";
-import { NotesEditor } from "../editor/NotesEditor";
+import { NotesEditor, type EditorFormat, type NotesEditorHandle } from "../editor/NotesEditor";
+import { ImageIcon, LinkIcon, MicIcon } from "./icons";
+import { groupLineRects, paginate } from "../lib/pagination";
 import { useToast } from "./Toasts";
-import type { ChapterStatus, Entry, Note, Notebook, Revision } from "../types";
+import type {
+  BookEntity,
+  ChapterStatus,
+  Entry,
+  Link,
+  Note,
+  Notebook,
+  Revision,
+  WritingRhythm,
+} from "../types";
 
 interface ChapterEditorProps {
   book: Notebook;
@@ -21,6 +40,9 @@ interface ChapterEditorProps {
   chapters: Entry[];
   onBack: () => void;
   onOpenChapters?: () => void;
+  onOpenChapter?: (id: string) => void;
+  /** Cria o capitulo logo depois deste (Ctrl+Enter). */
+  onCreateAfter?: () => void;
   onFocusChange?: (focus: boolean) => void;
   onChanged: () => void;
   onDeleted: () => void;
@@ -65,13 +87,41 @@ function diffSets(oldText: string, newText: string): { added: Set<string>; remov
   return { added, removed };
 }
 
-/** Editor do capitulo: texto, imagem, autosave, rascunho offline e conflito. */
+function domainOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
+
+function UndoGlyph() {
+  return (
+    <svg className="chapter-fmt-icon" viewBox="0 0 16 16" aria-hidden="true">
+      <path d="M6 4 3 7l3 3" />
+      <path d="M3 7h6a4 4 0 0 1 0 8H7" />
+    </svg>
+  );
+}
+
+function RedoGlyph() {
+  return (
+    <svg className="chapter-fmt-icon" viewBox="0 0 16 16" aria-hidden="true">
+      <path d="m10 4 3 3-3 3" />
+      <path d="M13 7H7a4 4 0 0 0 0 8h2" />
+    </svg>
+  );
+}
+
+/** Editor do capitulo: folha do livro, autosave, rascunho offline e painel. */
 export function ChapterEditor({
   book,
   chapter,
   chapters,
   onBack,
   onOpenChapters,
+  onOpenChapter,
+  onCreateAfter,
   onFocusChange,
   onChanged,
   onDeleted,
@@ -92,10 +142,20 @@ export function ChapterEditor({
   const [revisionDiff, setRevisionDiff] = useState<Revision | null>(null);
   const [synopsis, setSynopsis] = useState(chapter.chapter_synopsis ?? "");
   const [goalWords, setGoalWords] = useState(chapter.chapter_goal_words ?? 0);
+  const [beats, setBeats] = useState<string[]>(beatsOf(chapter));
+  const [notes, setNotes] = useState(chapter.chapter_notes ?? "");
   const [status, setStatus] = useState<Exclude<ChapterStatus, "">>(
     (chapter.chapter_status as Exclude<ChapterStatus, "">) || "draft",
   );
   const [editorEpoch, setEditorEpoch] = useState(0);
+  const [links, setLinks] = useState<Link[]>([]);
+  const [refURL, setRefURL] = useState("");
+  const [refLabel, setRefLabel] = useState("");
+  const [refBusy, setRefBusy] = useState(false);
+  const [entities, setEntities] = useState<BookEntity[]>([]);
+  const [rhythm, setRhythm] = useState<WritingRhythm | null>(null);
+  const [pageTotal, setPageTotal] = useState(1);
+  const sheetRef = useRef<HTMLElement | null>(null);
 
   const updateFocus = useCallback(
     (value: boolean) => {
@@ -113,10 +173,31 @@ export function ChapterEditor({
   const conflictRef = useRef(false);
   const saveRef = useRef<(value: unknown) => Promise<void>>(async () => {});
   const autosaveRef = useRef<Autosave | null>(null);
+  const editorRef = useRef<NotesEditorHandle | null>(null);
+  const rhythmAt = useRef(0);
+  const chapterIDRef = useRef(chapter.id);
   if (!autosaveRef.current) {
     autosaveRef.current = createAutosave((value) => saveRef.current(value));
   }
   const latestMarkdown = useRef("");
+
+  const refreshRhythm = useCallback(
+    (force = false) => {
+      if (!force && Date.now() - rhythmAt.current < 4000) return;
+      rhythmAt.current = Date.now();
+      void api
+        .getWritingRhythm(book.id)
+        .then((value) => {
+          if (chapterIDRef.current === chapter.id) setRhythm(value);
+        })
+        .catch(() => undefined);
+    },
+    [book.id, chapter.id],
+  );
+
+  useEffect(() => {
+    chapterIDRef.current = chapter.id;
+  }, [chapter.id]);
 
   const persistDraft = useCallback(
     (value: string, state: ChapterDraft["state"]) => {
@@ -167,13 +248,13 @@ export function ChapterEditor({
   useEffect(() => {
     let active = true;
     void (async () => {
-      const [loaded, notes, draft] = await Promise.all([
+      const [loaded, notesList, draft] = await Promise.all([
         api.getEntry(chapter.id).catch(() => chapter),
         api.listNotes(chapter.id).catch(() => ({ notes: [] as Note[] })),
         readDraft(chapter.id),
       ]);
       if (!active) return;
-      apply(loaded, notes.notes?.[0], draft);
+      apply(loaded, notesList.notes?.[0], draft);
       if (draft && draft.state !== "conflict") {
         autosaveRef.current?.schedule(draft.markdown);
       }
@@ -182,6 +263,23 @@ export function ChapterEditor({
       active = false;
     };
   }, [chapter.id, apply]);
+
+  useEffect(() => {
+    refreshRhythm(true);
+  }, [refreshRhythm]);
+
+  useEffect(() => {
+    let active = true;
+    void api
+      .getBookEntities(book.id)
+      .then((result) => {
+        if (active) setEntities(result.entities ?? []);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [book.id]);
 
   useEffect(() => {
     if (!panelOpen) {
@@ -197,10 +295,16 @@ export function ChapterEditor({
         })
         .catch(() => undefined);
     }
+    void api
+      .listLinks(entry.id)
+      .then((result) => {
+        if (active) setLinks(result.links ?? []);
+      })
+      .catch(() => undefined);
     return () => {
       active = false;
     };
-  }, [panelOpen, noteId]);
+  }, [panelOpen, noteId, entry.id]);
 
   const saveBody = useCallback(
     async (value: unknown) => {
@@ -222,6 +326,7 @@ export function ChapterEditor({
         setSaving("saved");
         setDraftState(null);
         await clearDraft(entry.id);
+        refreshRhythm();
         window.setTimeout(() => setSaving((current) => (current === "saved" ? "idle" : current)), 1500);
         onChanged();
       } catch (err) {
@@ -257,7 +362,7 @@ export function ChapterEditor({
         notify("Sem rede. O capítulo está guardado neste navegador.", "error");
       }
     },
-    [entry.id, notify, onChanged, persistDraft, title],
+    [entry.id, notify, onChanged, persistDraft, refreshRhythm, title],
   );
 
   useEffect(() => {
@@ -316,11 +421,84 @@ export function ChapterEditor({
     };
   }, []);
 
+  const page = bookPage(book);
+
+  const measurePages = useCallback(() => {
+    const sheet = sheetRef.current;
+    if (!sheet) return;
+    const start = sheet.querySelector(".chapter-overline");
+    const end = sheet.querySelector(".bn-editor");
+    if (!start || !end) return;
+    const textHeight = page.heightPx - page.marginPx * 2;
+    if (textHeight <= 0) return;
+    // Com as quebras antigas escondidas, a medida volta ao fluxo continuo: as
+    // linhas por pagina nao dependem do espaco ja inserido entre as folhas.
+    sheet.classList.add("is-measuring-pages");
+    try {
+      const range = document.createRange();
+      range.setStartBefore(start);
+      range.setEndAfter(end);
+      const raw = Array.from(range.getClientRects())
+        .filter((rect) => rect.width > 1 && rect.height > 1 && rect.height < 160)
+        .map((rect) => ({ top: rect.top, bottom: rect.bottom }));
+      const lines = groupLineRects(raw);
+      const breaks = lines.length > 0 ? paginate(lines, textHeight) : [];
+      editorRef.current?.setPageBreaks(breaks, textHeight);
+      setPageTotal(breaks.length + 1);
+    } finally {
+      sheet.classList.remove("is-measuring-pages");
+    }
+  }, [page.heightPx, page.marginPx, page.widthPx, page.bodyPx, page.leading, book.body_font]);
+
+  // A quebra e medida depois da pintura: mudou o texto, a fonte carregou ou a
+  // janela mudou de tamanho, a linha de cada pagina e recalculada.
+  useEffect(() => {
+    if (!bodyLoaded) return;
+    let timer = 0;
+    const run = () => {
+      timer = 0;
+      measurePages();
+    };
+    const schedule = () => {
+      if (timer) window.clearTimeout(timer);
+      timer = window.setTimeout(run, 240);
+    };
+    schedule();
+    window.addEventListener("resize", schedule);
+    void document.fonts?.ready.then(schedule).catch(() => undefined);
+    return () => {
+      window.removeEventListener("resize", schedule);
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [bodyLoaded, markdown, measurePages]);
+
+  const ordered = useMemo(() => orderedChapters(chapters), [chapters]);
+  const index = ordered.findIndex((item) => item.id === entry.id);
+  const previous = index > 0 ? ordered[index - 1] : null;
+  const next = index >= 0 && index < ordered.length - 1 ? ordered[index + 1] : null;
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+      const mod = event.metaKey || event.ctrlKey;
+      if (mod && event.key.toLowerCase() === "s") {
         event.preventDefault();
         void autosaveRef.current?.flush();
+        return;
+      }
+      if (mod && event.key === "Enter") {
+        event.preventDefault();
+        onCreateAfter?.();
+        return;
+      }
+      if (mod && event.key === "PageDown") {
+        event.preventDefault();
+        if (next && onOpenChapter) onOpenChapter(next.id);
+        return;
+      }
+      if (mod && event.key === "PageUp") {
+        event.preventDefault();
+        if (previous && onOpenChapter) onOpenChapter(previous.id);
+        return;
       }
       if (event.key === "Escape") {
         if (conflict) return;
@@ -329,18 +507,18 @@ export function ChapterEditor({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [conflict, focus, updateFocus]);
+  }, [conflict, focus, next, previous, onCreateAfter, onOpenChapter, updateFocus]);
 
   const saveTitle = async () => {
-    const next = title.trim() || chapter.title;
-    if (next === entry.title) return;
+    const nextTitle = title.trim() || chapter.title;
+    if (nextTitle === entry.title) return;
     try {
       const result = await api.patchEntry(entry.id, {
-        title: next,
+        title: nextTitle,
         versions: { title: titleVersionRef.current },
       });
       titleVersionRef.current = result.versions?.title ?? titleVersionRef.current;
-      setEntry((current) => ({ ...current, title: next }));
+      setEntry((current) => ({ ...current, title: nextTitle }));
       onChanged();
     } catch {
       notify("Não foi possível salvar o título.", "error");
@@ -351,6 +529,8 @@ export function ChapterEditor({
     chapter_status?: Exclude<ChapterStatus, "">;
     chapter_goal_words?: number;
     chapter_synopsis?: string;
+    chapter_beats?: string;
+    chapter_notes?: string;
   }) => {
     try {
       await api.patchEntry(entry.id, patch);
@@ -358,6 +538,51 @@ export function ChapterEditor({
       onChanged();
     } catch {
       notify("Não foi possível salvar o capítulo.", "error");
+    }
+  };
+
+  const commitBeats = (list: string[]) => {
+    setBeats(list);
+    void patchChapter({ chapter_beats: list.join("\n") });
+  };
+
+  const addReference = async () => {
+    const url = refURL.trim();
+    if (!/^https?:\/\/\S+$/i.test(url)) {
+      notify("Referência precisa de um endereço http ou https.", "error");
+      return;
+    }
+    setRefBusy(true);
+    try {
+      const created = await api.createLink(entry.id, {
+        url,
+        label: refLabel.trim() || domainOf(url),
+      });
+      setLinks((current) => [...current, created]);
+      setRefURL("");
+      setRefLabel("");
+    } catch {
+      notify("Não foi possível salvar a referência.", "error");
+    } finally {
+      setRefBusy(false);
+    }
+  };
+
+  const removeReference = async (id: string) => {
+    try {
+      await api.deleteLink(id);
+      setLinks((current) => current.filter((link) => link.id !== id));
+    } catch {
+      notify("Não foi possível remover a referência.", "error");
+    }
+  };
+
+  const analyzeChapter = async () => {
+    try {
+      await api.analyze(entry.id);
+      notify("Capítulo enviado para análise.", "info");
+    } catch {
+      notify("Não foi possível analisar o capítulo.", "error");
     }
   };
 
@@ -402,11 +627,20 @@ export function ChapterEditor({
   };
 
   const total = words(markdown);
+  const bookType = bookBodyFont(book);
   const diff = conflict?.showDiff ? diffSets(conflict.server, conflict.local) : null;
+  const sheetStyle = {
+    "--sheet-width": `${page.widthPx}px`,
+    "--sheet-min": `${page.heightPx}px`,
+    "--sheet-margin": `${page.marginPx}px`,
+    "--page-margin": `${page.marginPx}px`,
+    "--sheet-body": `${page.bodyPx}px`,
+    "--sheet-leading": String(page.leading),
+    "--book-font": bookType.css,
+  } as CSSProperties;
+
   let partTitle = "";
-  for (const item of [...chapters].sort(
-    (left, right) => (left.chapter_position ?? 0) - (right.chapter_position ?? 0),
-  )) {
+  for (const item of ordered) {
     if (item.chapter_kind === "part") partTitle = item.title;
     if (item.id === entry.id) break;
   }
@@ -418,6 +652,10 @@ export function ChapterEditor({
         : chapter.chapter_kind === "front"
           ? "Frontispício"
           : "Posfácio";
+
+  const applyFormat = (action: EditorFormat) => editorRef.current?.format(action);
+  const dailyGoal = book.daily_goal_words ?? rhythm?.daily_goal ?? 0;
+  const today = rhythm?.today ?? 0;
 
   return (
     <div className={focus ? "chapter-workspace chapter-workspace--focus" : "chapter-workspace"}>
@@ -440,29 +678,65 @@ export function ChapterEditor({
           {saving === "saving"
             ? "salvando"
             : saving === "saved"
-              ? "salvo neste dispositivo"
+              ? "salvo"
               : saving === "offline"
                 ? "sem rede"
                 : saving === "conflict"
                   ? "conflito"
                   : draftState === "local"
                     ? "local"
-                    : "salvo neste dispositivo"}
+                    : "salvo"}
         </span>
+        <span className="spacer" />
+        {dailyGoal > 0 ? (
+          <span className="chapter-today" title="Palavras escritas hoje e a meta diária do livro">
+            hoje {formatWords(today)} / {formatWords(dailyGoal)}
+            <i className="chapter-meter">
+              <b style={{ width: `${Math.min(100, (today / dailyGoal) * 100)}%` }} />
+            </i>
+          </span>
+        ) : null}
         <span className="chapter-count">
           {formatWords(total)}
-          {goalWords > 0 ? ` / ${formatWords(goalWords)}` : ""}
+          {goalWords > 0 ? ` / ${formatWords(goalWords)}` : ""} palavras
+          <span className="chapter-pages-count">
+            {" · "}
+            {pageTotal} {pageTotal === 1 ? "página" : "páginas"}
+          </span>
+        </span>
+        <span className="chapter-nav">
+          <button
+            type="button"
+            className="button button--ghost button--small"
+            onClick={() => previous && onOpenChapter?.(previous.id)}
+            disabled={!previous}
+            aria-label="Capítulo anterior"
+            title="Capítulo anterior"
+          >
+            ‹
+          </button>
+          <button
+            type="button"
+            className="button button--ghost button--small"
+            onClick={() => next && onOpenChapter?.(next.id)}
+            disabled={!next}
+            aria-label="Próximo capítulo"
+            title="Próximo capítulo"
+          >
+            ›
+          </button>
         </span>
         <button
           type="button"
           className="button button--ghost button--small"
           onClick={() => updateFocus(!focus)}
+          aria-pressed={focus}
         >
           Foco
         </button>
         <button
           type="button"
-          className="button button--ghost button--small"
+          className="button button--ghost button--small chapter-panel-toggle"
           onClick={() => setPanelOpen((value) => !value)}
           aria-expanded={panelOpen}
         >
@@ -470,9 +744,89 @@ export function ChapterEditor({
         </button>
       </header>
 
-      <div className={panelOpen && !focus ? "chapter-columns chapter-columns--panel" : "chapter-columns"}>
-        <article className="chapter-page">
-          <div className="chapter-overline">{overline}</div>
+      <div className="chapter-fmt" role="toolbar" aria-label="Formatação do capítulo">
+        <button type="button" onClick={() => applyFormat("undo")} aria-label="Desfazer" title="Desfazer (Ctrl+Z)">
+          <UndoGlyph />
+        </button>
+        <button type="button" onClick={() => applyFormat("redo")} aria-label="Refazer" title="Refazer (Ctrl+Shift+Z)">
+          <RedoGlyph />
+        </button>
+        <i className="chapter-fmt-rule" />
+
+        <select
+          className="chapter-style"
+          aria-label="Estilo do parágrafo"
+          value=""
+          onChange={(event) => {
+            if (event.target.value) applyFormat(event.target.value as EditorFormat);
+          }}
+        >
+          <option value="">Estilo</option>
+          <option value="body">Corpo</option>
+          <option value="section">Seção</option>
+          <option value="subtitle">Subtítulo</option>
+          <option value="quote">Citação</option>
+        </select>
+        <i className="chapter-fmt-rule" />
+
+        <button type="button" className="chapter-fmt-bold" onClick={() => applyFormat("bold")} aria-label="Negrito" title="Negrito (Ctrl+B)">
+          B
+        </button>
+        <button type="button" className="chapter-fmt-italic" onClick={() => applyFormat("italic")} aria-label="Itálico" title="Itálico (Ctrl+I)">
+          I
+        </button>
+        <button type="button" className="chapter-fmt-underline" onClick={() => applyFormat("underline")} aria-label="Sublinhado" title="Sublinhado (Ctrl+U)">
+          U
+        </button>
+        <button type="button" className="chapter-fmt-strike" onClick={() => applyFormat("strike")} aria-label="Riscado" title="Riscado">
+          S
+        </button>
+        <i className="chapter-fmt-rule" />
+
+        <button type="button" className="chapter-fmt-list" onClick={() => applyFormat("bullet")} aria-label="Lista com marcadores" title="Lista com marcadores">
+          •
+        </button>
+        <button type="button" className="chapter-fmt-list" onClick={() => applyFormat("numbered")} aria-label="Lista numerada" title="Lista numerada">
+          1.
+        </button>
+        <i className="chapter-fmt-rule" />
+
+        <select
+          className="chapter-align"
+          aria-label="Alinhamento do parágrafo"
+          value=""
+          onChange={(event) => {
+            if (event.target.value) applyFormat(event.target.value as EditorFormat);
+          }}
+        >
+          <option value="">Alinhar</option>
+          <option value="align-left">Esquerda</option>
+          <option value="align-center">Centro</option>
+          <option value="align-right">Direita</option>
+          <option value="align-justify">Justificar</option>
+        </select>
+        <i className="chapter-fmt-rule" />
+
+        <button type="button" onClick={() => editorRef.current?.openLink()} aria-label="Link para nota" title="Link para outra nota">
+          <LinkIcon size={14} />
+        </button>
+        <button type="button" onClick={() => editorRef.current?.addImage()} aria-label="Imagem" title="Inserir imagem">
+          <ImageIcon size={14} />
+        </button>
+        <button type="button" onClick={() => editorRef.current?.addAudio()} aria-label="Áudio" title="Inserir áudio">
+          <MicIcon size={14} />
+        </button>
+        <i className="chapter-fmt-rule" />
+
+        <button type="button" className="chapter-fmt-scene" onClick={() => applyFormat("scene")} aria-label="Separador de cena" title="Separador de cena">
+          ***
+        </button>
+      </div>
+
+      <div className="chapter-columns">
+        <div className="chapter-scroll">
+          <article className="chapter-sheet" style={sheetStyle} ref={sheetRef}>
+          <p className="chapter-overline">{overline}</p>
           <input
             className="chapter-title"
             value={title}
@@ -487,22 +841,40 @@ export function ChapterEditor({
               }
             }}
           />
-          {bodyLoaded ? (
-            <NotesEditor
-              key={editorEpoch}
-              entryId={entry.id}
-              initialContent={initialBody}
-              onChange={onChange}
-              imageDefault="bw"
-              onMediaAdded={onChanged}
-            />
-          ) : (
-            <p className="muted">Carregando o capítulo...</p>
-          )}
-        </article>
+            {bodyLoaded ? (
+              <NotesEditor
+                key={editorEpoch}
+                ref={editorRef}
+                entryId={entry.id}
+                initialContent={initialBody}
+                onChange={onChange}
+                imageDefault="bw"
+                hideSideMenu
+                onMediaAdded={onChanged}
+              />
+            ) : (
+              <p className="muted">Carregando o capítulo...</p>
+            )}
+          </article>
+        </div>
 
         {panelOpen && !focus ? (
-          <aside className="chapter-panel" aria-label="Painel do capítulo">
+          <aside className="chapter-drawer" aria-label="Painel do capítulo">
+            <div className="chapter-drawer-head">
+              <strong>
+                {chapter.chapter_kind === "chapter" ? `Capítulo ${chapterNumber(chapters, entry.id)}` : overline}
+                {title.trim() ? ` · ${title.trim()}` : ""}
+              </strong>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => setPanelOpen(false)}
+                aria-label="Fechar painel"
+              >
+                ×
+              </button>
+            </div>
+
             <section>
               <h3 className="panel-label">Status</h3>
               <div className="chapter-statuses" role="group" aria-label="Status do capítulo">
@@ -522,6 +894,7 @@ export function ChapterEditor({
                 ))}
               </div>
             </section>
+
             <section>
               <h3 className="panel-label">Meta</h3>
               <input
@@ -543,21 +916,142 @@ export function ChapterEditor({
                 </div>
               ) : null}
             </section>
+
             <section>
               <h3 className="panel-label">Sinopse</h3>
               <textarea
                 className="panel-input"
-                rows={5}
+                rows={3}
                 value={synopsis}
                 placeholder="O que acontece neste capítulo"
                 onChange={(event) => setSynopsis(event.target.value)}
                 onBlur={() => void patchChapter({ chapter_synopsis: synopsis })}
               />
             </section>
+
+            <section>
+              <h3 className="panel-label">Beats</h3>
+              {beats.length === 0 ? null : (
+                <ul className="chapter-beats">
+                  {beats.map((beat, beatIndex) => (
+                    <li key={beatIndex}>
+                      <i className="beat-dot" />
+                      <input
+                        value={beat}
+                        aria-label={`Beat ${beatIndex + 1}`}
+                        onChange={(event) => {
+                          const list = [...beats];
+                          list[beatIndex] = event.target.value;
+                          setBeats(list);
+                        }}
+                        onBlur={() => commitBeats(beats.filter((item) => item.trim()))}
+                      />
+                      <button
+                        type="button"
+                        className="icon-button"
+                        aria-label={`Remover beat ${beatIndex + 1}`}
+                        onClick={() => commitBeats(beats.filter((_, i) => i !== beatIndex))}
+                      >
+                        ×
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <button
+                type="button"
+                className="chapter-add-beat"
+                onClick={() => {
+                  setBeats((current) => [...current, ""]);
+                }}
+              >
+                + Beat
+              </button>
+            </section>
+
+            <section>
+              <h3 className="panel-label">Anotações</h3>
+              <textarea
+                className="panel-input"
+                rows={4}
+                value={notes}
+                placeholder="Ideias, pesquisa e lembretes deste capítulo"
+                onChange={(event) => setNotes(event.target.value)}
+                onBlur={() => void patchChapter({ chapter_notes: notes })}
+              />
+            </section>
+
+            <section>
+              <h3 className="panel-label">Referências</h3>
+              {links.filter((link) => !link.to_entry_id).length === 0 ? (
+                <p className="muted panel-empty">Nenhuma referência.</p>
+              ) : (
+                <ul className="chapter-refs">
+                  {links
+                    .filter((link) => !link.to_entry_id)
+                    .map((link) => (
+                      <li key={link.id}>
+                        <a href={link.url} target="_blank" rel="noreferrer noopener">
+                          <span>{link.label || domainOf(link.url)}</span>
+                          <i>{domainOf(link.url)}</i>
+                        </a>
+                        <button
+                          type="button"
+                          className="icon-button"
+                          aria-label="Remover referência"
+                          onClick={() => void removeReference(link.id)}
+                        >
+                          ×
+                        </button>
+                      </li>
+                    ))}
+                </ul>
+              )}
+              <div className="chapter-ref-form">
+                <input
+                  className="panel-input"
+                  value={refURL}
+                  placeholder="https://"
+                  aria-label="Endereço da referência"
+                  onChange={(event) => setRefURL(event.target.value)}
+                />
+                <input
+                  className="panel-input"
+                  value={refLabel}
+                  placeholder="Rótulo"
+                  aria-label="Rótulo da referência"
+                  onChange={(event) => setRefLabel(event.target.value)}
+                />
+                <button type="button" className="button button--ghost button--small" onClick={() => void addReference()} disabled={refBusy}>
+                  Adicionar
+                </button>
+              </div>
+            </section>
+
+            <section>
+              <h3 className="panel-label">Aparece em</h3>
+              {entities.length === 0 ? (
+                <div className="panel-empty">
+                  <p className="muted">A análise ainda não leu este livro.</p>
+                  <button type="button" className="button button--ghost button--small" onClick={() => void analyzeChapter()}>
+                    Analisar capítulo
+                  </button>
+                </div>
+              ) : (
+                <div className="chapter-entities">
+                  {entities.slice(0, 12).map((entity) => (
+                    <span key={`${entity.kind}-${entity.name}`} className={`entity-chip entity-chip--${entity.kind}`}>
+                      <b>{entity.name}</b> · {entity.mentions}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </section>
+
             <section>
               <h3 className="panel-label">Versões</h3>
               {revisions.length === 0 ? (
-                <p className="muted">Sem versões.</p>
+                <p className="muted panel-empty">Sem versões.</p>
               ) : (
                 <ul className="chapter-versions">
                   {revisions.slice(0, 12).map((revision) => (
@@ -583,19 +1077,20 @@ export function ChapterEditor({
                 <div className="revision-diff" aria-label="Diferença da versão">
                   {(() => {
                     const diff = diffSets(revisionDiff.content_markdown, markdown);
-                    return markdown.split(/(\s+)/).map((part, index) => {
+                    return markdown.split(/(\s+)/).map((part, partIndex) => {
                       const token = part.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
-                      if (diff.added.has(token)) return <mark key={index}>{part}</mark>;
-                      if (diff.removed.has(token)) return <del key={index}>{part}</del>;
-                      return <span key={index}>{part}</span>;
+                      if (diff.added.has(token)) return <mark key={partIndex}>{part}</mark>;
+                      if (diff.removed.has(token)) return <del key={partIndex}>{part}</del>;
+                      return <span key={partIndex}>{part}</span>;
                     });
                   })()}
                 </div>
               ) : null}
             </section>
+
             <button
               type="button"
-              className="button button--ghost"
+              className="button button--ghost chapter-delete"
               onClick={async () => {
                 if (!window.confirm("Excluir este capítulo? Ele vai para a Lixeira.")) return;
                 try {
@@ -629,11 +1124,11 @@ export function ChapterEditor({
             </div>
             {conflict.showDiff && diff ? (
               <p className="conflict-diff">
-                {conflict.local.split(/(\s+)/).map((part, index) => {
+                {conflict.local.split(/(\s+)/).map((part, partIndex) => {
                   const token = part.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
-                  if (diff.added.has(token)) return <mark key={index}>{part}</mark>;
-                  if (diff.removed.has(token)) return <del key={index}>{part}</del>;
-                  return <span key={index}>{part}</span>;
+                  if (diff.added.has(token)) return <mark key={partIndex}>{part}</mark>;
+                  if (diff.removed.has(token)) return <del key={partIndex}>{part}</del>;
+                  return <span key={partIndex}>{part}</span>;
                 })}
               </p>
             ) : null}

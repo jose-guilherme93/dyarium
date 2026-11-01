@@ -35,6 +35,54 @@ describe("dialogo do livro", () => {
     expect(onActivate).toHaveBeenCalled();
   });
 
+  it("explica o ritmo em palavras por dia", () => {
+    render(
+      <BookDialog
+        open
+        notebook={notebook({ kind: "book", name: "O nome do vento" })}
+        onClose={() => {}}
+        onSave={() => {}}
+      />,
+    );
+    expect(screen.getByText("Palavras por dia")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("ex.: 500")).toBeInTheDocument();
+    expect(screen.getByLabelText("Palavras por dia")).toBeInTheDocument();
+  });
+
+  it("oferece formatos de livro e fontes com previa da pagina", () => {
+    render(
+      <BookDialog
+        open
+        notebook={notebook({ kind: "book", name: "O nome do vento" })}
+        onClose={() => {}}
+        onSave={() => {}}
+      />,
+    );
+    expect(screen.getByRole("radio", { name: /Romance/ })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio", { name: /Garamond/ })).toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /^A4/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/A4 não é formato de livro/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Prévia da página")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: /Garamond/ }));
+    expect(screen.getByRole("radio", { name: /Garamond/ })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("mostra o encaixe da capa em livro existente", () => {
+    render(
+      <BookDialog
+        open
+        notebook={notebook({ kind: "book", name: "O nome do vento" })}
+        onClose={() => {}}
+        onSave={() => {}}
+        onCoverSave={async () => {}}
+        onCoverRemove={async () => {}}
+      />,
+    );
+    expect(screen.getByText("Capa")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Escolher foto" })).toBeInTheDocument();
+    expect(screen.getByText("Sem foto")).toBeInTheDocument();
+  });
+
   it("caderno cheio oferece mover as notas antes de ativar", () => {
     const onMoveNotes = vi.fn();
     const onActivate = vi.fn();
@@ -67,6 +115,7 @@ describe("dialogo do livro", () => {
         onDelete={onDelete}
       />,
     );
+    fireEvent.click(screen.getByRole("button", { name: "Apagar ou converter" }));
     const button = screen.getByRole("button", { name: "Excluir livro" });
     expect(button).toBeDisabled();
     fireEvent.change(screen.getByLabelText("Confirmar exclusão do livro"), {

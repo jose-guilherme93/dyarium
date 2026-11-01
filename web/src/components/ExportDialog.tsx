@@ -12,6 +12,8 @@ import {
   type ImageMode,
 } from "../lib/bookExport";
 import { useEscape } from "../lib/useEscape";
+import { printHtmlDocument } from "../lib/print";
+import { PAGE_SIZES, bookBodyFont, bookPage } from "../lib/books";
 
 interface ExportDialogProps {
   open: boolean;
@@ -27,17 +29,6 @@ function download(data: Uint8Array | string, filename: string, type: string) {
   link.download = filename;
   link.click();
   URL.revokeObjectURL(url);
-}
-
-function printHtml(html: string) {
-  const blob = new Blob([html], { type: "text/html" });
-  const url = URL.createObjectURL(blob);
-  const win = window.open(url, "_blank", "noopener,noreferrer");
-  if (!win) return;
-  win.addEventListener("load", () => {
-    win.focus();
-    win.print();
-  });
 }
 
 /** Dialogo de exportacao, com presets e o resumo do que vai sair. */
@@ -80,7 +71,7 @@ export function ExportDialog({ open, input, onClose }: ExportDialogProps) {
     try {
       const withOptions = { ...effective, options };
       if (options.format === "pdf") {
-        printHtml(exportHtml(withOptions).html);
+        printHtmlDocument(exportHtml(withOptions).html);
         onClose();
         return;
       }
@@ -135,7 +126,7 @@ export function ExportDialog({ open, input, onClose }: ExportDialogProps) {
               {
                 value: "book" as ExportPreset,
                 title: "Livro",
-                text: "6 × 9 pol · serifada · justificado · títulos de capítulo",
+                text: `${PAGE_SIZES[bookPage(input.book).size].short} · ${bookBodyFont(input.book).label} · justificado · títulos de capítulo`,
               },
             ]
           ).map((preset) => (

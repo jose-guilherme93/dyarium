@@ -227,13 +227,27 @@ export function NotebookSwitcher({
           </li>
           {books.map((notebook) => row(notebook, true))}
           <li>
-            <button type="button" className="notebook-menu-new" onClick={onCreateBook}>
+            <button
+              type="button"
+              className="notebook-menu-new"
+              onClick={() => {
+                setOpen(false);
+                onCreateBook();
+              }}
+            >
               <BookIcon size={15} />
               Novo livro
             </button>
           </li>
           <li>
-            <button type="button" className="notebook-menu-new" onClick={onCreate}>
+            <button
+              type="button"
+              className="notebook-menu-new"
+              onClick={() => {
+                setOpen(false);
+                onCreate();
+              }}
+            >
               <PlusIcon size={15} />
               Novo caderno
             </button>

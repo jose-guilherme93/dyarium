@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
+import type { CSSProperties } from "react";
 import { exportHtml, markdownToHtml, type BookExportInput } from "../lib/bookExport";
+import { bookBodyFont, bookPage } from "../lib/books";
 import { useEscape } from "../lib/useEscape";
+import { printHtmlDocument } from "../lib/print";
 
 interface ReadingViewProps {
   open: boolean;
@@ -9,14 +12,7 @@ interface ReadingViewProps {
 }
 
 function printBook(input: BookExportInput) {
-  const blob = new Blob([exportHtml(input).html], { type: "text/html" });
-  const url = URL.createObjectURL(blob);
-  const win = window.open(url, "_blank", "noopener,noreferrer");
-  if (!win) return;
-  win.addEventListener("load", () => {
-    win.focus();
-    win.print();
-  });
+  printHtmlDocument(exportHtml(input).html);
 }
 
 /** Previa de leitura em pagina, com o mesmo conteudo da impressao. */
@@ -33,7 +29,14 @@ export function ReadingView({ open, input, onClose }: ReadingViewProps) {
     const usable = input.chapters.filter(
       (chapter) => chapter.entry.chapter_kind === "part" || chapter.words > 0,
     );
-    const parts: Array<{ kind: "title" | "toc" | "part" | "chapter"; title: string; html?: string }> = [];
+    const parts: Array<{
+      kind: "cover" | "title" | "toc" | "part" | "chapter";
+      title: string;
+      html?: string;
+    }> = [];
+    if (input.coverDataUrl) {
+      parts.push({ kind: "cover", title: "Capa" });
+    }
     if (input.options.includeTitlePage) {
       parts.push({ kind: "title", title: input.book.name });
     }
@@ -52,14 +55,43 @@ export function ReadingView({ open, input, onClose }: ReadingViewProps) {
 
   if (!open || !input || sections.length === 0) return null;
   const current = sections[Math.max(0, Math.min(page, sections.length - 1))];
+  const measure = bookPage(input.book);
+  const readingFont = bookBodyFont(input.book);
+  const chapterTotal = sections.filter((section) => section.kind === "chapter").length;
+  const chapterIndex = sections
+    .slice(0, Math.max(0, Math.min(page, sections.length - 1)) + 1)
+    .filter((section) => section.kind === "chapter").length;
+  const positionLabel =
+    current.kind === "chapter"
+      ? `Capítulo ${chapterIndex} de ${chapterTotal}`
+      : current.kind === "part"
+        ? "Parte"
+        : current.kind === "title"
+          ? "Título"
+          : current.kind === "cover"
+            ? "Capa"
+            : "Sumário";
+  const ratio = measure.widthMm / measure.heightMm;
+  const stageStyle: CSSProperties = {
+    width: `min(${measure.widthPx}px, calc((100vh - 132px) * ${ratio}), 94vw)`,
+  };
+  const pageStyle = {
+    padding:
+      current.kind === "cover"
+        ? 0
+        : `${Math.round(measure.marginPx * 0.75)}px ${measure.marginPx}px 24px`,
+    aspectRatio: `${measure.widthMm} / ${measure.heightMm}`,
+    maxHeight: "none",
+    "--reading-body": `${measure.bodyPx}px`,
+    "--reading-leading": String(measure.leading),
+    "--reading-font": readingFont.css,
+  } as CSSProperties;
 
   return (
     <div className="reading" role="dialog" aria-modal="true" aria-label="Prévia de leitura">
-      <div className="reading-stage">
+      <div className="reading-stage" style={stageStyle}>
         <div className="reader-bar">
-          <span className="reading-pages">
-            Página {Math.min(page + 1, sections.length)} de {sections.length}
-          </span>
+          <span className="reading-pages">{positionLabel}</span>
           <span className="spacer" />
           <button
             type="button"
@@ -90,12 +122,13 @@ export function ReadingView({ open, input, onClose }: ReadingViewProps) {
           </button>
         </div>
 
-        <article className={"reading-page reading-page--" + current.kind}>
-          <div className="reading-runhead">
-            <span>{input.book.name}</span>
-            <span>{input.book.author}</span>
-          </div>
-          {current.kind === "title" ? (
+        <article className={"reading-page reading-page--" + current.kind} style={pageStyle}>
+          {current.kind === "cover" && input.coverDataUrl ? (
+            <div className="reading-cover">
+              <img src={input.coverDataUrl} alt="" />
+            </div>
+          ) : null}
+          {current.kind === "cover" ? null : current.kind === "title" ? (
             <div className="reading-title-page">
               <h1>{input.book.name}</h1>
               {input.book.subtitle ? <p className="reading-subtitle">{input.book.subtitle}</p> : null}
@@ -125,7 +158,6 @@ export function ReadingView({ open, input, onClose }: ReadingViewProps) {
               />
             </div>
           )}
-          <p className="reading-folio">{page + 1}</p>
         </article>
       </div>
     </div>

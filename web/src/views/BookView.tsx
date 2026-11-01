@@ -1,16 +1,25 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api } from "../api";
+import { api, blobToDataURL, coverUrl } from "../api";
 import { ChapterEditor } from "../components/ChapterEditor";
 import { ExportDialog } from "../components/ExportDialog";
 import { ReadingView } from "../components/ReadingView";
 import {
+  PAGE_SIZES,
+  beatsOf,
+  bookBodyFont,
+  bookPage,
+  chapterGroups,
   chapterNumber,
   continueChapter,
   countLabel,
   coverInk,
+  estimatePages,
   formatWords,
   orderedChapters,
+  pace,
   progress as clampProgress,
+  weekdayInitial,
+  wordsPerPage,
 } from "../lib/books";
 import {
   clearDraft,
@@ -25,7 +34,7 @@ import {
 } from "../lib/bookExport";
 import { markdownToPlain } from "../editor/blocknoteMarkdown";
 import { SettingsIcon } from "../components/icons";
-import type { ChapterKind, Entry, Notebook } from "../types";
+import type { ChapterKind, Entry, Notebook, WritingRhythm } from "../types";
 
 interface BookViewProps {
   book: Notebook;
@@ -35,6 +44,9 @@ interface BookViewProps {
   onOpenChapter: (id: string) => void;
   onCloseChapter: () => void;
   onCreateChapter: (kind: ChapterKind) => void;
+  /** Cria um capitulo logo depois do atual (Ctrl+Enter no editor). */
+  onCreateChapterAfter?: (currentId: string) => void;
+  onReorderChapter?: (sourceId: string, targetId: string) => void;
   onChanged: () => void;
   onOpenSettings: () => void;
 }
@@ -48,6 +60,8 @@ export function BookView({
   onOpenChapter,
   onCloseChapter,
   onCreateChapter,
+  onCreateChapterAfter,
+  onReorderChapter,
   onChanged,
   onOpenSettings,
 }: BookViewProps) {
@@ -57,6 +71,9 @@ export function BookView({
   const [pendingOpen, setPendingOpen] = useState(false);
   const [focus, setFocus] = useState(false);
   const [lastChapterId, setLastChapterId] = useState("");
+  const [tab, setTab] = useState<"cover" | "structure">("cover");
+  const [rhythm, setRhythm] = useState<WritingRhythm | null>(null);
+  const [dragging, setDragging] = useState<string | null>(null);
 
   useEffect(() => {
     try {
@@ -69,6 +86,19 @@ export function BookView({
   useEffect(() => {
     void cleanupConflictBackups();
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    void api
+      .getWritingRhythm(book.id)
+      .then((value) => {
+        if (active) setRhythm(value);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [book.id, chapters.length, activeChapterId]);
 
   const loadPending = useCallback(async () => {
     const drafts = await listDrafts();
@@ -92,6 +122,37 @@ export function BookView({
   const goal = book.goal_words > 0 ? book.goal_words : 0;
   const percent = goal > 0 ? clampProgress((totalWords / goal) * 100) : 0;
   const next = continueChapter(chapters, lastChapterId);
+  const page = bookPage(book);
+  const dailyGoal = book.daily_goal_words ?? rhythm?.daily_goal ?? 0;
+  const today = rhythm?.today ?? 0;
+  const goalPace = pace(totalWords, goal, rhythm?.deadline ?? book.deadline ?? "");
+  const groups = useMemo(() => chapterGroups(chapters), [chapters]);
+  const statusCounts = { draft: 0, revising: 0, done: 0 };
+  let beatsTotal = 0;
+  for (const chapter of chapters) {
+    if (chapter.chapter_kind === "part") continue;
+    const key = (chapter.chapter_status || "draft") as keyof typeof statusCounts;
+    if (key in statusCounts) statusCounts[key] += 1;
+    beatsTotal += beatsOf(chapter).length;
+  }
+  const pagesEstimate = estimatePages(totalWords, page);
+  const perPage = wordsPerPage(page);
+  const rhythmDays = rhythm?.days ?? [];
+  const rhythmMax = Math.max(1, ...rhythmDays.map((day) => day.words));
+  const todayKey = rhythmDays[rhythmDays.length - 1]?.day ?? "";
+  const lastWrite = book.last_entry_at
+    ? new Date(book.last_entry_at).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })
+    : "";
+  const statusLabel =
+    book.book_status === "done" ? "final" : book.book_status === "revising" ? "revisão" : "rascunho";
+  const bookType = bookBodyFont(book);
+  const metaLine = [
+    statusLabel,
+    lastWrite ? `última escrita em ${lastWrite}` : "",
+    `${PAGE_SIZES[page.size].short} · margem ${page.marginMm} mm`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   const openChapter = (id: string) => {
     setFocus(false);
@@ -122,7 +183,15 @@ export function BookView({
         }
       }),
     );
-    return { book, chapters: loaded, options: DEFAULT_EXPORT_OPTIONS };
+    let coverDataUrl: string | undefined;
+    if (book.has_cover) {
+      try {
+        coverDataUrl = await blobToDataURL(await api.getCover(book.id));
+      } catch {
+        // sem capa legivel: o PDF segue com a pagina de titulo
+      }
+    }
+    return { book, chapters: loaded, options: DEFAULT_EXPORT_OPTIONS, coverDataUrl };
   }, [book, chapters]);
 
   const openReading = async () => {
@@ -131,6 +200,46 @@ export function BookView({
   const openExport = async () => {
     setExportInput(await exportChapters());
   };
+
+  const progressRow = (
+    <div className="book-progress-row">
+      {goal > 0 ? (
+        <>
+          <span className="book-progress-numbers">
+            {formatWords(totalWords)} / {formatWords(goal)} palavras
+          </span>
+          <span className="book-bar-track">
+            <i style={{ width: `${percent}%` }} />
+          </span>
+          <span>{Math.round(percent)}%</span>
+        </>
+      ) : (
+        <span className="book-progress-numbers">{formatWords(totalWords)} palavras</span>
+      )}
+      {dailyGoal > 0 ? (
+        <span className="book-today" title="Palavras escritas hoje e a meta diária">
+          hoje {formatWords(today)} / {formatWords(dailyGoal)}
+          <i className="book-today-track">
+            <b style={{ width: `${Math.min(100, (today / dailyGoal) * 100)}%` }} />
+          </i>
+        </span>
+      ) : null}
+      {goalPace ? (
+        <span
+          className="book-pace"
+          title={
+            (rhythm?.deadline || book.deadline)
+              ? `Ritmo necessário até ${new Date(`${(rhythm?.deadline || book.deadline)}T12:00:00`).toLocaleDateString("pt-BR")}`
+              : "Ritmo necessário para chegar ao prazo"
+          }
+        >
+          {goalPace.remaining > 0
+            ? `faltam ${formatWords(goalPace.remaining)} · ${formatWords(goalPace.perDay)}/dia`
+            : "meta batida"}
+        </span>
+      ) : null}
+    </div>
+  );
 
   if (active) {
     return (
@@ -145,6 +254,8 @@ export function BookView({
               setFocus(false);
               onCloseChapter();
             }}
+            onOpenChapter={(id) => openChapter(id)}
+            onCreateAfter={onCreateChapterAfter ? () => onCreateChapterAfter(active.id) : undefined}
             onFocusChange={setFocus}
             onChanged={onChanged}
             onDeleted={() => {
@@ -193,92 +304,295 @@ export function BookView({
             </button>
           </div>
 
-          <div className="book-head">
-            <div
-              className="book-cover"
-              style={{
-                backgroundColor: book.color || "var(--color-accent)",
-                ...(book.color ? { color: coverInk(book.color) } : {}),
-              }}
+          <div className="book-tabs" role="tablist" aria-label="Visões do livro">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === "cover"}
+              className={tab === "cover" ? "book-tab is-on" : "book-tab"}
+              onClick={() => setTab("cover")}
             >
-              <span>{book.subtitle || "Livro"}</span>
-              <b>{book.name}</b>
-              <span>{book.author || ""}</span>
-            </div>
-            <div className="book-head-info">
-              <h2 className="book-title">{book.name}</h2>
-              <p className="book-sub">
-                {book.subtitle ? `${book.subtitle} · ` : ""}
-                {book.book_status === "done"
-                  ? "final"
-                  : book.book_status === "revising"
-                    ? "revisão"
-                    : "rascunho"}
-              </p>
-              {book.author ? <p className="book-author">por {book.author}</p> : null}
-              {book.synopsis ? <p className="book-synopsis">{book.synopsis}</p> : null}
-              <div className="book-chips">
-                <span className="chip chip--static">{countLabel(chapterCount, "capítulo", "capítulos")}</span>
-                <span className="chip chip--static">{countLabel(partCount, "parte", "partes")}</span>
-                <span className="chip chip--static">{countLabel(totalWords, "palavra", "palavras")}</span>
-                {goal > 0 ? <span className="chip chip--static">meta {formatWords(goal)}</span> : null}
+              Capa
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === "structure"}
+              className={tab === "structure" ? "book-tab is-on" : "book-tab"}
+              onClick={() => setTab("structure")}
+            >
+              Estrutura
+            </button>
+          </div>
+
+          {tab === "cover" ? (
+            <>
+              <div className="book-plate">
+                <div
+                  className={book.has_cover ? "book-plate-cover book-plate-cover--photo" : "book-plate-cover"}
+                  style={{
+                    aspectRatio: `${page.widthMm} / ${page.heightMm}`,
+                    backgroundColor: book.color || "var(--color-accent)",
+                    color: book.color ? coverInk(book.color) : "var(--color-bg)",
+                  }}
+                >
+                  {book.has_cover ? (
+                    <img
+                      className="book-plate-cover-photo"
+                      src={coverUrl(book.id, book.cover_updated_at)}
+                      alt=""
+                    />
+                  ) : (
+                    <>
+                      <span className="book-plate-kind">Livro</span>
+                      <span className="book-plate-cover-title" style={{ fontFamily: bookType.css }}>
+                        {book.name}
+                      </span>
+                      <span className="book-plate-cover-foot">
+                        {book.subtitle || book.author || ""}
+                      </span>
+                    </>
+                  )}
+                </div>
+
+                <div className="book-plate-info">
+                  <p className="book-plate-meta">{metaLine}</p>
+                  <h2 className="book-plate-title" style={{ fontFamily: bookType.css }}>
+                    {book.name}
+                  </h2>
+                  {book.author ? <p className="book-plate-byline">por {book.author}</p> : null}
+                  {book.synopsis ? <p className="book-plate-synopsis">{book.synopsis}</p> : null}
+
+                  <div className="book-plate-stats">
+                    <div className="book-stat">
+                      <b>{chapterCount}</b>
+                      <span>{chapterCount === 1 ? "capítulo" : "capítulos"}</span>
+                    </div>
+                    <div className="book-stat">
+                      <b>{partCount}</b>
+                      <span>{partCount === 1 ? "parte" : "partes"}</span>
+                    </div>
+                    <div className="book-stat">
+                      <b>{formatWords(totalWords)}</b>
+                      <span>{totalWords === 1 ? "palavra" : "palavras"}</span>
+                    </div>
+                    <div className="book-stat" title={`Cerca de ${perPage} palavras por página`}>
+                      <b>{totalWords > 0 ? `≈ ${formatWords(pagesEstimate)}` : "0"}</b>
+                      <span>{pagesEstimate === 1 ? "página" : "páginas"}</span>
+                    </div>
+                  </div>
+
+                  {goal > 0 ? (
+                    <div className="book-plate-progress">
+                      <span className="book-progress-numbers">
+                        {formatWords(totalWords)} / {formatWords(goal)} palavras
+                      </span>
+                      <span className="book-bar-track">
+                        <i style={{ width: `${percent}%` }} />
+                      </span>
+                      <span>{Math.round(percent)}%</span>
+                      {goalPace ? (
+                        <span
+                          className="book-pace"
+                          title={
+                            rhythm?.deadline || book.deadline
+                              ? `Ritmo necessário até ${new Date(`${rhythm?.deadline || book.deadline}T12:00:00`).toLocaleDateString("pt-BR")}`
+                              : "Ritmo necessário para chegar ao prazo"
+                          }
+                        >
+                          {goalPace.remaining > 0
+                            ? `faltam ${formatWords(goalPace.remaining)} · ${formatWords(goalPace.perDay)}/dia`
+                            : "meta batida"}
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  {next ? (
+                    <button type="button" className="book-continue" onClick={() => openChapter(next.id)}>
+                      <i className={"status-dot status-dot--" + (next.chapter_status || "draft")} />
+                      <span>
+                        Continuar no <b>Capítulo {chapterNumber(chapters, next.id)} · {next.title || "Sem título"}</b>
+                      </span>
+                      <span className="book-continue-arrow" aria-hidden="true">
+                        →
+                      </span>
+                    </button>
+                  ) : null}
+
+                  {loading ? (
+                    <p className="muted book-empty">Carregando...</p>
+                  ) : chapters.length === 0 ? (
+                    <div className="book-empty">
+                      <p className="muted">Nenhum capítulo</p>
+                      <button type="button" className="button" onClick={() => onCreateChapter("chapter")}>
+                        Começar o primeiro capítulo
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               </div>
-            </div>
-          </div>
 
-          {goal > 0 ? (
-            <div className="book-progress-row">
-              <span>
-                {formatWords(totalWords)} / {formatWords(goal)}
-              </span>
-              <span className="book-bar-track">
-                <i style={{ width: `${percent}%` }} />
-              </span>
-              <span>{Math.round(percent)}%</span>
-            </div>
+              {!loading && chapters.length > 0 ? (
+                <div className="book-plate-extras">
+                  <section className="book-rhythm" aria-label="Ritmo dos últimos sete dias">
+                    <div className="book-rhythm-head">
+                      <span>Últimos 7 dias</span>
+                      <b>
+                        {dailyGoal > 0
+                          ? `hoje ${formatWords(today)} / ${formatWords(dailyGoal)}`
+                          : `hoje ${formatWords(today)}`}
+                      </b>
+                    </div>
+                    <div className="book-rhythm-bars">
+                      {rhythmDays.map((day) => (
+                        <span
+                          key={day.day}
+                          className={day.day === todayKey ? "book-rhythm-day is-today" : "book-rhythm-day"}
+                          title={`${new Date(`${day.day}T12:00:00`).toLocaleDateString("pt-BR")}: ${formatWords(day.words)} palavras`}
+                        >
+                          <span className="book-rhythm-track">
+                            <i style={{ height: `${Math.max(2, (day.words / rhythmMax) * 100)}%` }} />
+                          </span>
+                          <span className="book-rhythm-day-label">{weekdayInitial(day.day)}</span>
+                        </span>
+                      ))}
+                    </div>
+                  </section>
+
+                  <section className="book-status" aria-label="Estado dos capítulos">
+                    <div className="book-rhythm-head">
+                      <span>Capítulos</span>
+                      <b>{beatsTotal > 0 ? countLabel(beatsTotal, "beat", "beats") : ""}</b>
+                    </div>
+                    <div className="book-status-row">
+                      <i className="status-dot status-dot--draft" />
+                      <b>{statusCounts.draft}</b>
+                      <span>rascunho</span>
+                    </div>
+                    <div className="book-status-row">
+                      <i className="status-dot status-dot--revising" />
+                      <b>{statusCounts.revising}</b>
+                      <span>revisão</span>
+                    </div>
+                    <div className="book-status-row">
+                      <i className="status-dot status-dot--done" />
+                      <b>{statusCounts.done}</b>
+                      <span>finais</span>
+                    </div>
+                  </section>
+                </div>
+              ) : null}
+
+              <div className="book-add-row">
+                <button type="button" onClick={() => onCreateChapter("chapter")}>
+                  + Capítulo
+                </button>
+                <button type="button" onClick={() => onCreateChapter("part")}>
+                  + Parte
+                </button>
+                <button type="button" onClick={() => onCreateChapter("front")}>
+                  + Frontispício
+                </button>
+                <button type="button" onClick={() => onCreateChapter("back")}>
+                  + Posfácio
+                </button>
+              </div>
+            </>
           ) : (
-            <div className="book-progress-row book-progress-row--plain">
-              <span>{formatWords(totalWords)} palavras</span>
-            </div>
+            <>
+              {progressRow}
+
+              {loading ? (
+                <p className="muted book-empty">Carregando...</p>
+              ) : chapters.length === 0 ? (
+                <div className="book-empty">
+                  <p className="muted">Nenhum capítulo</p>
+                  <button type="button" className="button" onClick={() => onCreateChapter("chapter")}>
+                    Começar o primeiro capítulo
+                  </button>
+                </div>
+              ) : null}
+
+              <div className="book-cards">
+                {groups.map((group) => (
+                  <div key={group.part?.id ?? "root"} className="book-card-group">
+                    {group.part ? (
+                      <button
+                        type="button"
+                        className="book-card book-card--part"
+                        draggable
+                        onDragStart={() => setDragging(group.part!.id)}
+                        onDragOver={(event) => event.preventDefault()}
+                        onDrop={() => {
+                          if (dragging && onReorderChapter) onReorderChapter(dragging, group.part!.id);
+                          setDragging(null);
+                        }}
+                        onClick={() => openChapter(group.part!.id)}
+                      >
+                        <span>Parte</span>
+                        <b>{group.part.title || "Sem título"}</b>
+                      </button>
+                    ) : null}
+                    {group.items.map((chapter) => (
+                      <button
+                        key={chapter.id}
+                        type="button"
+                        className="book-card"
+                        draggable
+                        onDragStart={() => setDragging(chapter.id)}
+                        onDragOver={(event) => event.preventDefault()}
+                        onDrop={() => {
+                          if (dragging && onReorderChapter && dragging !== chapter.id) {
+                            onReorderChapter(dragging, chapter.id);
+                          }
+                          setDragging(null);
+                        }}
+                        onClick={() => openChapter(chapter.id)}
+                      >
+                        <div className="book-card-top">
+                          <span>
+                            {chapter.chapter_kind === "chapter"
+                              ? `${chapterNumber(chapters, chapter.id)}`
+                              : chapter.chapter_kind === "front"
+                                ? "F"
+                                : "P"}
+                          </span>
+                          <i className="book-card-grip" aria-hidden="true">
+                            ⋮⋮
+                          </i>
+                          <i
+                            className={"status-dot status-dot--" + (chapter.chapter_status || "draft")}
+                            aria-label={chapter.chapter_status || "rascunho"}
+                          />
+                        </div>
+                        <span className="book-card-title">{chapter.title || "Sem título"}</span>
+                        <span className="book-card-meta">
+                          {formatWords(chapter.word_count ?? 0)} palavras
+                          {beatsOf(chapter).length > 0 ? ` · ${countLabel(beatsOf(chapter).length, "beat", "beats")}` : ""}
+                        </span>
+                        {chapter.chapter_synopsis ? (
+                          <span className="book-card-synopsis">{chapter.chapter_synopsis}</span>
+                        ) : null}
+                        {beatsOf(chapter).length > 0 ? (
+                          <span className="book-card-beats" aria-label="Beats do capítulo">
+                            {beatsOf(chapter)
+                              .slice(0, 8)
+                              .map((beat, beatIndex) => (
+                                <i key={beatIndex} title={beat} />
+                              ))}
+                          </span>
+                        ) : null}
+                      </button>
+                    ))}
+                  </div>
+                ))}
+                <button type="button" className="book-card book-card--add" onClick={() => onCreateChapter("chapter")}>
+                  + Capítulo
+                </button>
+              </div>
+            </>
           )}
-
-          {next ? (
-            <button type="button" className="book-continue" onClick={() => openChapter(next.id)}>
-              <i className={"status-dot status-dot--" + (next.chapter_status || "draft")} />
-              <span>
-                Continuar no <b>Capítulo {chapterNumber(chapters, next.id)} · {next.title || "Sem título"}</b>
-              </span>
-              <span className="book-continue-arrow" aria-hidden="true">
-                →
-              </span>
-            </button>
-          ) : null}
-
-          {loading ? (
-            <p className="muted book-empty">Carregando...</p>
-          ) : chapters.length === 0 ? (
-            <div className="book-empty">
-              <p className="muted">Nenhum capítulo</p>
-              <button type="button" className="button" onClick={() => onCreateChapter("chapter")}>
-                Começar o primeiro capítulo
-              </button>
-            </div>
-          ) : null}
-
-          <div className="book-add-row">
-            <button type="button" onClick={() => onCreateChapter("chapter")}>
-              + Capítulo
-            </button>
-            <button type="button" onClick={() => onCreateChapter("part")}>
-              + Parte
-            </button>
-            <button type="button" onClick={() => onCreateChapter("front")}>
-              + Frontispício
-            </button>
-            <button type="button" onClick={() => onCreateChapter("back")}>
-              + Posfácio
-            </button>
-          </div>
         </div>
       </main>
 

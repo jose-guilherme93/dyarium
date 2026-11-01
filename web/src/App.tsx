@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
-import { api, ApiError, clearToken, getSetupState, getToken, setToken, verifyToken } from "./api";
+import {
+  api,
+  ApiError,
+  clearToken,
+  getSetupState,
+  getToken,
+  setToken,
+  tokenIsPersisted,
+  verifyToken,
+} from "./api";
 import { useEvents } from "./useEvents";
 import { TokenGate } from "./components/TokenGate";
 import { SetupGate } from "./components/SetupGate";
@@ -289,6 +298,9 @@ export function App() {
       }
       setToken(value);
       setTokenState(value);
+      if (!tokenIsPersisted()) {
+        notify("O navegador bloqueou o armazenamento. O token vale só até fechar esta aba.", "info");
+      }
     } catch (err) {
       if (err instanceof ApiError) {
         setAuthError("Não foi possível validar o token. Tente de novo.");
@@ -297,6 +309,9 @@ export function App() {
       // Falha de rede: entra em modo offline com o token informado.
       setToken(value);
       setTokenState(value);
+      if (!tokenIsPersisted()) {
+        notify("O navegador bloqueou o armazenamento. O token vale só até fechar esta aba.", "info");
+      }
     } finally {
       setCheckingToken(false);
     }
@@ -424,6 +439,35 @@ export function App() {
     }
   };
 
+  // Ctrl+Enter no capitulo abre o proximo logo depois dele. A posicao e
+  // recalculada pela mesma ordem que o arrastar usa, entao a lista continua
+  // sendo uma so.
+  const createBookChapterAfter = async (currentId: string) => {
+    if (!activeNotebook) return;
+    try {
+      const created = await api.createEntry("Sem título", null, activeNotebook.id, "chapter");
+      const list = orderedChapters([...bookChapters, created]).filter(
+        (chapter) => chapter.id !== created.id,
+      );
+      const at = list.findIndex((chapter) => chapter.id === currentId);
+      list.splice(at >= 0 ? at + 1 : list.length, 0, created);
+      const payload = list.map((chapter, index) => ({
+        entry_id: chapter.id,
+        chapter_kind: (chapter.chapter_kind || "chapter") as ChapterKind,
+        chapter_status: chapter.chapter_status || "draft",
+        position: (index + 1) * 1024,
+      }));
+      await api.reorderChapters(activeNotebook.id, payload);
+      setBookChapters(
+        list.map((chapter, index) => ({ ...chapter, chapter_position: (index + 1) * 1024 })),
+      );
+      setOpenEntryId(created.id);
+      refresh();
+    } catch {
+      notify("Não foi possível criar o capítulo.", "error");
+    }
+  };
+
   const reorderBookChapters = async (sourceId: string, targetId: string) => {
     if (!activeNotebook || sourceId === targetId) return;
     const list = orderedChapters(bookChapters);
@@ -542,6 +586,26 @@ export function App() {
       refresh();
     } catch {
       notify("Não foi possível excluir o caderno.", "error");
+    }
+  };
+
+  const saveBookCover = async (notebook: Notebook, image: Blob) => {
+    try {
+      await api.uploadCover(notebook.id, image);
+      refresh();
+    } catch {
+      notify("Não foi possível salvar a capa.", "error");
+      throw new Error("cap");
+    }
+  };
+
+  const removeBookCover = async (notebook: Notebook) => {
+    try {
+      await api.deleteCover(notebook.id);
+      refresh();
+    } catch {
+      notify("Não foi possível remover a capa.", "error");
+      throw new Error("cap");
     }
   };
 
@@ -891,6 +955,8 @@ export function App() {
               }}
               onCloseChapter={() => setOpenEntryId(null)}
               onCreateChapter={(kind) => void createBookChapter(kind)}
+              onCreateChapterAfter={(id) => void createBookChapterAfter(id)}
+              onReorderChapter={(source, target) => void reorderBookChapters(source, target)}
               onChanged={refresh}
               onOpenSettings={() => setBookDialog({ notebook: activeNotebook })}
             />
@@ -994,6 +1060,12 @@ export function App() {
         }
         onDeactivate={() => bookDialog?.notebook && void deactivateBook(bookDialog.notebook)}
         onDelete={(confirm) => bookDialog?.notebook && void deleteBook(bookDialog.notebook, confirm)}
+        onCoverSave={
+          bookDialog?.notebook ? (image) => saveBookCover(bookDialog.notebook!, image) : undefined
+        }
+        onCoverRemove={
+          bookDialog?.notebook ? () => removeBookCover(bookDialog.notebook!) : undefined
+        }
       />
 
       <TagManager
