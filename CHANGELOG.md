@@ -1,5 +1,67 @@
 # Changelog
 
+## [0.6.0](https://github.com/jose-guilherme93/dyarium/compare/v0.5.1...v0.6.0) (2026-11-01)
+
+
+### Features
+
+* **analise:** deriva entidades com a mesma regra nos dois lados ([08d8b74](https://github.com/jose-guilherme93/dyarium/commit/08d8b74854d2ffd8d4bb80e1cbd2737fce510dbc))
+* **api:** folha, ritmo, fontes e capa do modo escritor ([d92a836](https://github.com/jose-guilherme93/dyarium/commit/d92a8360f63d8644ed83460880e92e9583e8a407))
+* **entities:** expoe updated_at, aliases e owner_aliases ([f9badad](https://github.com/jose-guilherme93/dyarium/commit/f9badad5501c32166f2000bb750364b6bcb3a8b4))
+* **mobile:** a camera voa ate a bola escolhida ([2ccbba4](https://github.com/jose-guilherme93/dyarium/commit/2ccbba42a4f31ed7e682c55b24f0c3ccc887658d))
+* **mobile:** a ligacao nao tem cor, a grossura mostra a proximidade ([3c106a8](https://github.com/jose-guilherme93/dyarium/commit/3c106a8bb20730b81816d653e2fee906c5f745da))
+* **mobile:** abrir uma bola escurece a cena e volta sem piscar ([bcfceb7](https://github.com/jose-guilherme93/dyarium/commit/bcfceb72bd7a797cc971cf4030c8974ca74f9c1b))
+* **mobile:** abrir uma bola mostra so as relacoes dela ([9529a33](https://github.com/jose-guilherme93/dyarium/commit/9529a3317437f46498bfc2dc2cb38b5692804cb9))
+* **mobile:** as bolas preenchem o espaco que ja existe ([1006861](https://github.com/jose-guilherme93/dyarium/commit/100686161132a3e01bdbfd5e899444a50f665f0e))
+* **mobile:** dados locais do mapa de relacoes ([11aaae6](https://github.com/jose-guilherme93/dyarium/commit/11aaae677d77e6541d97cb343c9f6fc515e1e841))
+* **mobile:** esconde livros e preserva cor da imagem ([1f77e0c](https://github.com/jose-guilherme93/dyarium/commit/1f77e0cffab72539fc7ff1aa26069f664f6c90c0))
+* **mobile:** lista alfabetica, humor da entidade e voltar do Android ([dbcae75](https://github.com/jose-guilherme93/dyarium/commit/dbcae7505e35f62dc87a31b9849b2beb62e37cb9))
+* **mobile:** o nome ocupa o primeiro vao livre da bola ([49c1a92](https://github.com/jose-guilherme93/dyarium/commit/49c1a9298bd6b5fa97d6d9a230ee22c34db885e3))
+* **mobile:** os nomes voltam a entrar conforme o espaco abre ([6d4bfa3](https://github.com/jose-guilherme93/dyarium/commit/6d4bfa3185bc441e98f381ac08dc4766f9789f06))
+* **mobile:** reativa o mapa de relacoes, sem nada animado ([5fc9162](https://github.com/jose-guilherme93/dyarium/commit/5fc9162387f5af5f13bea00ae5d74203d455eb25))
+* **mobile:** reconcilia ambientes independentes por id ([be55a4a](https://github.com/jose-guilherme93/dyarium/commit/be55a4a81484ea06515182ae3a01b26f5b03fe38))
+* **mobile:** teia em vez de leque de raios ([90bb690](https://github.com/jose-guilherme93/dyarium/commit/90bb690ab3f6b4742daee647eeda0dc384d42265))
+* **mobile:** tela de mapa de relacoes ([c80e384](https://github.com/jose-guilherme93/dyarium/commit/c80e384b647d2e43fa2d7228617511c3dd36df57))
+* **mobile:** troca de cena do mapa desliza como abrir uma nota ([677c6fa](https://github.com/jose-guilherme93/dyarium/commit/677c6faff0c00b564760963f1a816072b8b1f676))
+* **server:** adiciona modo escritor com livros e capitulos ([cf93f66](https://github.com/jose-guilherme93/dyarium/commit/cf93f6652794dd8a72e80e059e49c4d42f23a1aa))
+* **server:** ambientes independentes com identidade, tombstones e HLC ([1f79905](https://github.com/jose-guilherme93/dyarium/commit/1f7990502a42c924d8c27c445a8c2d3865031141))
+* **server:** desfazer edicoes de entidade e preservar pronomes na prosa ([10e3697](https://github.com/jose-guilherme93/dyarium/commit/10e3697e5c33fdd25ccb2d7b1cad482465a425f6))
+* **web:** analise parcial ao vivo e notificacoes com progresso ([a5a8bbe](https://github.com/jose-guilherme93/dyarium/commit/a5a8bbefb43be9fd5afcd63a868c553a291f0389))
+* **web:** cria componentes do modo escritor ([36c459c](https://github.com/jose-guilherme93/dyarium/commit/36c459c1f0568af0777eced9eda206a0e4f06ce6))
+* **web:** dados de pagina, fonte, capa e impressao do livro ([1b5c57e](https://github.com/jose-guilherme93/dyarium/commit/1b5c57e1506555614b7f070d348aa0613b0ab67a))
+* **web:** desfazer edicao de entidade no mapa ([4514c59](https://github.com/jose-guilherme93/dyarium/commit/4514c5907107de6b6d4ce7a700eff57623442c3e))
+* **web:** editar e capturar trechos da transcricao ([e1c608d](https://github.com/jose-guilherme93/dyarium/commit/e1c608d315231f159919f6d528d3a271c3c1ae76))
+* **web:** fontes de livro auto-hospedadas ([3e5b716](https://github.com/jose-guilherme93/dyarium/commit/3e5b71691b9bc2fa33b73665d51068fff91817a2))
+* **web:** grafo das relacoes da nota e ajustes do painel da entidade ([62b2398](https://github.com/jose-guilherme93/dyarium/commit/62b239822a4dd894748bc0e654c67f8b77ded30a))
+* **web:** integra livros e capitulos ao dashboard ([903c92c](https://github.com/jose-guilherme93/dyarium/commit/903c92c576509ce91a8c2c45b091a4211810fa21))
+* **web:** laboratorio compacto com controles de processamento ([df77f50](https://github.com/jose-guilherme93/dyarium/commit/df77f50e1ceb273e34bf24857ce0d846f5bab7ac))
+* **web:** lixeira reconhece tombstone purgado e entrada ganha origem ([d758b5f](https://github.com/jose-guilherme93/dyarium/commit/d758b5f139ed44cbabac2a6274d355aadc808daf))
+* **web:** melhora processamento local e edicao de trechos ([34c958c](https://github.com/jose-guilherme93/dyarium/commit/34c958c1f9b3ac8de240988e5c2d7f0bf3000112))
+* **web:** move processamento local para as configuracoes e remove botao da nota ([0a43260](https://github.com/jose-guilherme93/dyarium/commit/0a432601186698d3616384ffed9ef83d8628d83d))
+* **web:** novo workspace do escritor, casa do livro e capa ([4fd9f5e](https://github.com/jose-guilherme93/dyarium/commit/4fd9f5ee1301a1ad9757a80cdf56fa929c56b9e4))
+* **web:** processamento local nas configuracoes e botao removido da nota ([7d8f80f](https://github.com/jose-guilherme93/dyarium/commit/7d8f80f1e80f1a6b77fd8ae774e0449632e4f0bb))
+
+
+### Bug Fixes
+
+* **api:** isola o dashboard e permite editar trecho da transcricao ([fbeb958](https://github.com/jose-guilherme93/dyarium/commit/fbeb958886ae73a49c3fb33890c3096969413d4e))
+* **auth:** manter login quando o navegador bloqueia storage ([beb4262](https://github.com/jose-guilherme93/dyarium/commit/beb42622ab90ae4a326a534ddb169e6d949b66e9))
+* **mobile:** o nome do mapa volta ao encaixe com a camera certa ([fb6346c](https://github.com/jose-guilherme93/dyarium/commit/fb6346c45d44a0369a3687603f5655e859c9c9ee))
+* **mobile:** o nome e texto de tela, nao desenho ampliado ([8682048](https://github.com/jose-guilherme93/dyarium/commit/86820481b91a433d61ac586086b48b195e07064a))
+* **mobile:** zoom nao pisca, lista desliza e desenho escurece ([a035304](https://github.com/jose-guilherme93/dyarium/commit/a035304a279db7c5a3fd8b7e8a2d4392a4e2b849))
+
+
+### Performance Improvements
+
+* **mobile:** abrir e escolher nao remonta nem consulta o banco ([311548a](https://github.com/jose-guilherme93/dyarium/commit/311548a83e378c4c7b6a9d49a4e3270185e353d7))
+* **mobile:** arrasto da folha do mapa roda na thread de UI ([7ae8d47](https://github.com/jose-guilherme93/dyarium/commit/7ae8d47b2a38a3edcbc93b6753e441206a69e89e))
+* **mobile:** filtrar por tipo e so desenho, nao refaz o grafo ([8ba6a6b](https://github.com/jose-guilherme93/dyarium/commit/8ba6a6bfaf1819b094244e1bd4d26e973f20d4d5))
+* **mobile:** o mapa e um desenho so, o zoom nao passa pelo React ([0f3b046](https://github.com/jose-guilherme93/dyarium/commit/0f3b046e7daafbe9a7a0ea7cce835effc5956a90))
+* **mobile:** o nome do mapa nao redesenha a cena a cada quadro ([a6c309c](https://github.com/jose-guilherme93/dyarium/commit/a6c309c765c1149a6550cb8e3d50c840f9a9474f))
+* **mobile:** o zoom nao remonta icones nem redesenhos ([2b3e8df](https://github.com/jose-guilherme93/dyarium/commit/2b3e8dff77f158e388d53a41c3fd638436328f98))
+* **mobile:** voltar ao mapa nao remonta a lista inteira ([11231be](https://github.com/jose-guilherme93/dyarium/commit/11231beb7e68c6536324fc67cfd25640b5da7925))
+* **web:** usa os nucleos reais e guarda modelos no IndexedDB ([6d87c9a](https://github.com/jose-guilherme93/dyarium/commit/6d87c9a659fc0bb611ce80b62f9291c127a6b466))
+
 ## [0.5.1](https://github.com/jose-guilherme93/dyarium/compare/v0.5.0...v0.5.1) (2026-10-29)
 
 
