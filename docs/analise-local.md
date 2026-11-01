@@ -435,9 +435,9 @@ como hoje.
   oferece) e o mesmo catalogo de GGUFs do app pelo `wllama` (llama.cpp em WASM, com
   offload de GPU quando o runtime suporta). O laboratorio mostra o tamanho de cada
   arquivo e o total antes do download; quem baixa e o navegador, para o cache local.
-  Cada tipo de nota carrega so o motor de que precisa: uma analise de texto nao baixa
-  o Whisper e uma transcricao nao baixa o GGUF. Um motor por vez: o outro e liberado
-  antes de o proximo entrar na memoria.
+  **Ligar neste PC baixa os dois modelos do perfil na hora**, um de cada vez: o Whisper
+  entra e sai antes de o GGUF entrar. Depois so a nota pedida usa o motor, que vem do
+  cache. Um motor por vez: o outro e liberado antes de o proximo entrar na memoria.
 - **Backend**: a analise pode rodar em **Automatico**, **CPU** (todos os nucleos) ou
   **GPU**. Quando o offload de WebGPU falha, o wllama recarrega em CPU com uma
   instancia nova; antes o mesmo objeto tentava carregar duas vezes e abortava com
@@ -456,10 +456,14 @@ como hoje.
   texto, JSON e metadados. O audio continua sendo decifrado no servidor para o
   streaming autenticado, exatamente como no player. Nao ha chamada a API de IA.
 - **Ativacao**: o interruptor **neste PC** fica no painel da nota, ao lado de
-  **Analisar** (a unica acao de analise), e tambem no topo do `/lab`. Ele mede o hardware,
-  mostra o download e liga o worker. Ligar nao enfileira nem reserva nada: sem um clique
-  em **Analisar**, o PC fica ocioso e a VPS segue a fila. **Ligado, o worker continua
-  ligado ate o usuario desligar**; nao existe parada automatica depois de uma nota.
+  **Analisar** (a unica acao de analise), e tambem no topo do `/lab`. Primeiro o usuario
+  escolhe o perfil em **Modelos**; ligar mede o hardware, baixa os dois modelos do perfil
+  e deixa o worker pronto. Ligar nao enfileira nem reserva nada: sem um clique em
+  **Analisar**, o PC fica ocioso e a VPS segue a fila. **Ligado, o worker continua ligado
+  ate o usuario desligar**; nao existe parada automatica depois de uma nota. O perfil
+  escolhido volta ao abrir a tela e e o mesmo que o botao da nota usa; trocar de perfil
+  com o worker ligado reinicia o motor e baixa o novo modelo. A ficha da analise mostra
+  o modelo local que leu a nota, para nao confundir a escolha com o que rodou.
   Analisar pede a nota aberta (claim restrito aquela entrada) e substitui a analise
   existente. A seta ao lado abre `/lab`, e **Voltar** devolve a nota.
 - **Andamento**: cada bloco lido publica o documento parcial na ficha da nota, com os

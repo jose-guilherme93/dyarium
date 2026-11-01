@@ -1,5 +1,4 @@
 import { useEffect, useRef } from "react";
-import { getToken } from "./api";
 import type { ServerEvent } from "./types";
 
 const EVENT_NAMES = [
@@ -9,16 +8,18 @@ const EVENT_NAMES = [
   "transcript.revised",
   "analysis.ready",
   "entry.failed",
+  "notebook.changed",
 ];
 
 // useEvents subscribes to the server-sent events stream and invokes the handler
-// for each event. It reconnects automatically via EventSource.
-export function useEvents(onEvent: (event: ServerEvent) => void): void {
+// for each event. It reconnects automatically via EventSource. The token is a
+// dependency: entering the token for the first time (or rotating it) has to
+// open a new stream, not keep the session without events until a reload.
+export function useEvents(token: string, onEvent: (event: ServerEvent) => void): void {
   const handlerRef = useRef(onEvent);
   handlerRef.current = onEvent;
 
   useEffect(() => {
-    const token = getToken();
     if (!token || typeof EventSource === "undefined") {
       return;
     }
@@ -36,5 +37,5 @@ export function useEvents(onEvent: (event: ServerEvent) => void): void {
       source.addEventListener(name, listener as EventListener);
     }
     return () => source.close();
-  }, []);
+  }, [token]);
 }

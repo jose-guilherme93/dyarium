@@ -276,3 +276,11 @@ export function llmModelUrl(model: LlmModel): string {
   return `https://huggingface.co/${model.repo}/resolve/${model.revision}/${model.file}`;
 }
 
+/** Nome curto de um modelo do catalogo, para a ficha e o laboratorio. */
+export function modelShortLabel(id: string | undefined): string {
+  if (!id) return "";
+  const model = LLM_MODELS.find((item) => item.id === id);
+  if (!model) return id;
+  return model.label.replace(/ (qualidade( máxima)?|rápida)$/i, "");
+}
+

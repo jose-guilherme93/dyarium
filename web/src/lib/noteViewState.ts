@@ -28,7 +28,10 @@ const EMPTY: NoteViewState = {
 const states = new Map<string, NoteViewState>();
 
 export function readNoteViewState(entryId: string): NoteViewState {
-  return states.get(entryId) ?? EMPTY;
+  // Nunca devolva o EMPTY compartilhado: o chamador grava scroll/posicao no
+  // objeto devolvido, e isso contaminaria todas as outras notas.
+  const current = states.get(entryId);
+  return current ?? { ...EMPTY, expandedAudios: [], audioTimes: {} };
 }
 
 export function patchNoteViewState(entryId: string, patch: Partial<NoteViewState>): void {
@@ -37,7 +40,9 @@ export function patchNoteViewState(entryId: string, patch: Partial<NoteViewState
 }
 
 export function rememberAudioTime(entryId: string, audioId: string, seconds: number): void {
-  const current = states.get(entryId) ?? EMPTY;
-  current.audioTimes = { ...current.audioTimes, [audioId]: seconds };
-  states.set(entryId, current);
+  const current = states.get(entryId);
+  states.set(entryId, {
+    ...(current ?? EMPTY),
+    audioTimes: { ...(current?.audioTimes ?? {}), [audioId]: seconds },
+  });
 }

@@ -6,7 +6,7 @@
  * vezes o mesmo trabalho. O token vai no header, nunca na URL.
  */
 
-import { ApiError, getToken } from "../api";
+import { ApiError, getToken, parseResponseBody } from "../api";
 import type { Entry, Note, Transcript } from "../types";
 
 export interface WorkerJob {
@@ -53,7 +53,7 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   const res = await fetch(`/api/v1${path}`, { ...init, headers });
   const text = await res.text();
-  const body = text ? (JSON.parse(text) as { error?: { message?: string; code?: string } }) : {};
+  const body = parseResponseBody<{ error?: { message?: string; code?: string } }>(text);
   if (!res.ok) {
     throw new ApiError(
       body?.error?.message ?? res.statusText,

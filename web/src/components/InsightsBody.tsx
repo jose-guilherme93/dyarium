@@ -1,3 +1,4 @@
+import { modelShortLabel } from "../lib/browserModels";
 import { formatDuration } from "../lib/format";
 import type { Analysis, EntityKind } from "../types";
 import { NoteRelations } from "./NoteRelations";
@@ -120,9 +121,9 @@ export function InsightsBody({ analysis, onOpenEntity, live = false }: InsightsB
         </p>
       )}
 
-      {analysis.origin === "browser" && analysis.device_name && (
-        <p className="hint insight-device" title="Aparelho que processou esta análise.">
-          {analysis.device_name}
+      {analysis.origin === "browser" && (analysis.device_name || analysis.model) && (
+        <p className="hint insight-device" title="Aparelho e modelo local que processaram esta análise.">
+          {[analysis.device_name, modelShortLabel(analysis.model)].filter(Boolean).join(" · ")}
         </p>
       )}
 

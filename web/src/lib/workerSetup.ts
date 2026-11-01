@@ -188,15 +188,25 @@ export function saveWorkerPlan(plan: BrowserPlan): void {
   }
 }
 
-/** Perfil pronto para ligar o worker sem abrir o laboratorio. */
-export async function prepareWorkerSetup(): Promise<WorkerSetup> {
-  const snapshot = await detectHardwareOnce();
+export interface ResolvedWorkerPlan {
+  verdict: HardwareVerdict;
+  tier: ProcessingTier;
+  plan: BrowserPlan;
+  /** A escolha veio do laboratorio, nao da recomendacao do hardware. */
+  saved: boolean;
+}
+
+/**
+ * Perfil que o laboratorio mostra e que o worker usa. A escolha salva vence a
+ * recomendacao; sem escolha, vale a maior qualidade que a maquina comporta.
+ * O laboratorio e o botao da nota passam por aqui para nunca divergirem.
+ */
+export function resolveWorkerPlan(snapshot: HardwareSnapshot): ResolvedWorkerPlan {
   const verdict = chooseTier(snapshot);
   const saved = readSavedPlan();
   const recommended = (multithreadAvailable()
     ? verdict.tier
     : Math.min(verdict.tier, 0)) as ProcessingTier;
-  // Uma escolha explicita do laboratorio vence a recomendacao.
   const tier = saved?.tier ?? recommended;
   const base = planForSnapshot(tier, snapshot);
   // Um Whisper grande salvo antes (ou escolhido a mao) nao pode voltar quando a
@@ -212,6 +222,13 @@ export async function prepareWorkerSetup(): Promise<WorkerSetup> {
     whisper,
     llm: LLM_MODELS.find((model) => model.id === saved?.llmId) ?? base.llm,
   };
+  return { verdict, tier, plan, saved: saved !== null };
+}
+
+/** Perfil pronto para ligar o worker sem abrir o laboratorio. */
+export async function prepareWorkerSetup(): Promise<WorkerSetup> {
+  const snapshot = await detectHardwareOnce();
+  const { verdict, plan } = resolveWorkerPlan(snapshot);
   const backend = readBackend();
   return {
     snapshot,

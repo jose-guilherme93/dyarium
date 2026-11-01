@@ -158,7 +158,7 @@ export function ProcessOnPc({ hasAnalysis }: ProcessOnPcProps) {
               <p className="hint" title="Este nome fica guardado na análise, para saber que ela rodou localmente neste aparelho.">
                 {setup.device.name}
               </p>
-              <p className="hint">Os modelos baixam na primeira nota de cada tipo. Só a nota que você mandar analisar.</p>
+              <p className="hint">Os modelos baixam ao ligar. Só a nota que você mandar analisar.</p>
               {hasAnalysis ? <p className="hint">A análise atual será substituída.</p> : null}
             </>
           ) : (

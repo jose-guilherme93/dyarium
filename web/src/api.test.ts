@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api, cachedGet } from "./api";
+import { ApiError, api, cachedGet } from "./api";
 
 describe("GET cache", () => {
   afterEach(() => {
@@ -61,8 +61,7 @@ describe("GET cache", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("createImportEntry distingue entrada nova (201) de existente (200)", async () => {
-    const fetchMock = vi
+  it("createImportEntry distingue entrada nova (201) de existente (200)", async () => {    const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
         new Response(JSON.stringify({ id: "e-import-1", title: "Nota" }), {
@@ -93,5 +92,16 @@ describe("GET cache", () => {
       recorded_at: "2025-11-17T18:57:00.000Z",
     });
     expect(body).not.toHaveProperty("created_at");
+  });
+
+  it("nao transforma erro HTML do proxy em SyntaxError", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("<html>bad gateway</html>", { status: 503, statusText: "Service Unavailable" })),
+    );
+
+    const failure = api.deleteEntry("e1");
+    await expect(failure).rejects.toBeInstanceOf(ApiError);
+    await expect(failure).rejects.toMatchObject({ status: 503 });
   });
 });

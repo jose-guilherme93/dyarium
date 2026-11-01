@@ -1,8 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
+import { planForTier } from "./browserModels";
 import type { HardwareSnapshot } from "./hardware";
 import {
   allowGpuFor,
   planForSnapshot,
+  resolveWorkerPlan,
+  saveWorkerPlan,
   threadsFor,
   type LlmBackend,
 } from "./workerSetup";
@@ -73,6 +76,43 @@ describe("planForSnapshot", () => {
     const noGpu = snapshot({ webgpu: { available: false, adapter: null, reason: "unsupported" } });
     expect(planForSnapshot(0, noGpu).whisper.id).toBe("whisper-base");
     expect(planForSnapshot(1, noGpu).whisper.id).toBe("whisper-small");
+  });
+});
+
+describe("resolveWorkerPlan", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("volta com o perfil que o usuario escolheu, nao com a recomendacao", () => {
+    saveWorkerPlan(planForTier(4));
+
+    const resolved = resolveWorkerPlan(snapshot());
+
+    expect(resolved.saved).toBe(true);
+    expect(resolved.tier).toBe(4);
+    expect(resolved.plan.llm.id).toBe("qwen2.5-7b-q4");
+    expect(resolved.plan.whisper.id).toBe("whisper-large-v3-turbo");
+  });
+
+  it("sem escolha salva, usa a recomendacao do hardware", () => {
+    const resolved = resolveWorkerPlan(snapshot());
+
+    expect(resolved.saved).toBe(false);
+    expect(resolved.plan.llm.id).toBe(planForTier(resolved.tier).llm.id);
+  });
+
+  it("mantem o 7B salvo e cai o Whisper quando a GPU some", () => {
+    saveWorkerPlan(planForTier(4));
+
+    const noGpu = snapshot({
+      webgpu: { available: false, adapter: null, reason: "no-adapter" },
+    });
+    const resolved = resolveWorkerPlan(noGpu);
+
+    expect(resolved.tier).toBe(4);
+    expect(resolved.plan.llm.id).toBe("qwen2.5-7b-q4");
+    expect(resolved.plan.whisper.id).toBe("whisper-small");
   });
 });
 

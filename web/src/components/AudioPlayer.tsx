@@ -47,7 +47,9 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
       return;
     }
     if (el.paused) {
-      void el.play();
+      // Autoplay bloqueado ou decode falhando nao e erro de app: o botao
+      // continua no estado anterior e o usuario tenta de novo.
+      el.play().catch(() => undefined);
     } else {
       el.pause();
     }
@@ -79,7 +81,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
       const el = ref.current;
       if (el) {
         el.currentTime = seconds;
-        void el.play();
+        el.play().catch(() => undefined);
       }
     },
     toggle: () => toggle(),

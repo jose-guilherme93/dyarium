@@ -87,6 +87,26 @@ describe("NotificationsMenu", () => {
     await waitFor(() => expect(document.title).toBe("(2) dyarium"));
   });
 
+  it("nao acumula o numero na aba ao remontar", async () => {
+    const seen = Date.now() - 30 * 60 * 1000;
+    localStorage.setItem(SEEN_KEY, String(seen));
+    vi.mocked(api.listActivities).mockResolvedValue({
+      activities: [
+        activity({ id: "a1", finished_at: new Date().toISOString() }),
+        activity({ id: "a2", finished_at: new Date().toISOString() }),
+      ],
+    });
+
+    const first = render(<NotificationsMenu refreshKey={0} onOpen={() => {}} />);
+    await screen.findByLabelText("Notificações, 2 não lidas");
+    await waitFor(() => expect(document.title).toBe("(2) dyarium"));
+    first.unmount();
+
+    render(<NotificationsMenu refreshKey={0} onOpen={() => {}} />);
+    await screen.findByLabelText("Notificações, 2 não lidas");
+    await waitFor(() => expect(document.title).toBe("(2) dyarium"));
+  });
+
   it("na primeira visita nao transforma o historico inteiro em nao lido", async () => {
     vi.mocked(api.listActivities).mockResolvedValue({
       activities: [

@@ -36,7 +36,7 @@ export function TagManager({ open, onClose, onChanged }: TagManagerProps) {
     if (open) void load();
   }, [open, load]);
 
-  useEscape(open, onClose);
+  useEscape(open && editing === null, onClose);
 
   if (!open) return null;
 

@@ -166,12 +166,24 @@ export function NotificationsMenu({ refreshKey, onOpen }: NotificationsMenuProps
   // notificacao do navegador. O numero e o mesmo do sino e some quando a
   // lista e lida.
   const baseTitle = useRef(
-    typeof document === "undefined" ? "dyarium" : document.title || "dyarium",
+    typeof document === "undefined"
+      ? "dyarium"
+      : (document.title || "dyarium").replace(/^\(\d+\+?\)\s*/, "") || "dyarium",
   );
   useEffect(() => {
     if (typeof document === "undefined") return;
     document.title = unread > 0 ? `(${unread > 9 ? "9+" : unread}) ${baseTitle.current}` : baseTitle.current;
   }, [unread]);
+  // Recolher a sidebar desmonta este componente e remontar de novo nao pode
+  // capturar o titulo ja prefixado, senao a aba vira "(2) (2) dyarium".
+  useEffect(() => {
+    const base = baseTitle.current;
+    return () => {
+      if (typeof document !== "undefined") {
+        document.title = base;
+      }
+    };
+  }, []);
 
   const openActivity = (activity: Activity) => {
     close();

@@ -76,6 +76,33 @@ const WORKER_ID_KEY = "dyarium.browser-worker";
 interface StoredSettings {
   owner_name: string;
   all_notes_mine: boolean;
+  /** Codigo do idioma do whisper ("pt", "en"...) ou vazio para detectar. */
+  whisper_language?: string;
+}
+
+const WHISPER_LANGUAGE_NAMES: Record<string, string> = {
+  pt: "portuguese",
+  en: "english",
+  es: "spanish",
+  fr: "french",
+  de: "german",
+  it: "italian",
+  ja: "japanese",
+  zh: "chinese",
+  ru: "russian",
+  ar: "arabic",
+  hi: "hindi",
+};
+
+/**
+ * O transformers.js espera o nome do idioma ("portuguese"), e as configuracoes
+ * guardam o codigo ("pt"). Sem esta traducao o worker ignorava a escolha e
+ * transcrevia tudo como portugues.
+ */
+export function whisperLanguageName(code: string | undefined): string | undefined {
+  const key = (code ?? "").trim().toLowerCase();
+  if (!key) return undefined;
+  return WHISPER_LANGUAGE_NAMES[key] ?? key;
 }
 
 /**
@@ -558,7 +585,7 @@ export class BrowserProcessor {
     if (this.lostJob) return;
     await saveTranscript(entryId, {
       attachment_id: attachmentId,
-      language: "pt",
+      language: (this.settings.whisper_language ?? "") || "auto",
       text: transcription.text,
       segments: transcription.segments,
     });
@@ -571,7 +598,7 @@ export class BrowserProcessor {
 
   private transcribe(pcm: Float32Array): Promise<Transcription> {
     if (!this.engine) throw new Error("engine indisponivel");
-    return this.engine.transcribe(pcm);
+    return this.engine.transcribe(pcm, whisperLanguageName(this.settings.whisper_language));
   }
 
   private async runAnalysis(job: WorkerJob): Promise<void> {
@@ -710,8 +737,12 @@ export async function loadWorkerSettings(): Promise<StoredSettings> {
     });
     if (!res.ok) throw new Error("settings");
     const body = (await res.json()) as Settings;
-    return { owner_name: body.owner_name ?? "", all_notes_mine: body.all_notes_mine !== false };
+    return {
+      owner_name: body.owner_name ?? "",
+      all_notes_mine: body.all_notes_mine !== false,
+      whisper_language: body.whisper_language ?? "",
+    };
   } catch {
-    return { owner_name: "", all_notes_mine: true };
+    return { owner_name: "", all_notes_mine: true, whisper_language: "" };
   }
 }

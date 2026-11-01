@@ -30,6 +30,7 @@ import {
   planForSnapshot,
   readBackend,
   readThreadMode,
+  resolveWorkerPlan,
   saveBackend,
   saveThreadMode,
   saveWorkerPlan,
@@ -166,9 +167,10 @@ export function LabView({ onBack }: { onBack?: () => void } = {}) {
   const [snapshot, setSnapshot] = useState<HardwareSnapshot | null>(null);
   const [verdict, setVerdict] = useState<HardwareVerdict | null>(null);
   const [report, setReport] = useState<LabReport | null>(null);
-  const [tier, setTier] = useState<ProcessingTier>(0);
   const [manualTier, setManualTier] = useState<ProcessingTier | null>(null);
   const [plan, setPlan] = useState<BrowserPlan>(planForTier(0));
+  /** Perfil escolhido durante uma analise: aplica quando o worker voltar a esperar. */
+  const [pendingRestart, setPendingRestart] = useState<BrowserPlan | null>(null);
   const [testing, setTesting] = useState<"" | "cpu" | "vram">("");
   const [confirming, setConfirming] = useState(false);
   const [proc, setProc] = useState(getWorkerState());
@@ -183,16 +185,14 @@ export function LabView({ onBack }: { onBack?: () => void } = {}) {
     void probeHardware()
       .then((probed) => {
         if (!alive) return;
-        const chosen = chooseTier(probed);
-        // Sem contexto isolado nao ha SharedArrayBuffer: o motor fica em uma
-        // thread e um modelo grande nao termina em tempo util.
-        const recommended = multithreadAvailable()
-          ? chosen.tier
-          : (Math.min(chosen.tier, 0) as ProcessingTier);
+        // A escolha do usuario volta ao abrir a tela; so sem escolha salva o
+        // laboratorio mostra a recomendacao do hardware. Sem isso, um perfil
+        // maximo voltava a aparecer como leve depois de navegar para a nota.
+        const resolved = resolveWorkerPlan(probed);
         setSnapshot(probed);
-        setVerdict(chosen);
-        setTier(recommended);
-        setPlan(planForSnapshot(recommended, probed));
+        setVerdict(resolved.verdict);
+        setPlan(resolved.plan);
+        if (resolved.saved) setManualTier(resolved.tier);
       })
       .catch(() => {
         if (alive) setError("Não foi possível ler o hardware deste navegador.");
@@ -223,6 +223,11 @@ export function LabView({ onBack }: { onBack?: () => void } = {}) {
   useEffect(() => subscribeWorker(setProc), []);
 
   const running = proc !== null && proc.phase !== "idle" && proc.phase !== "error";
+  // Ligado, o cartao de modelos mostra o perfil que o motor abriu de fato. O
+  // estado local pode ser a recomendacao da montagem da tela; exibir outro
+  // perfil faria o usuario achar que escolheu maximo e rodou leve.
+  const activePlan = running && proc?.plan && !pendingRestart ? proc.plan : plan;
+  const activeTier = activePlan.tier;
   const httpOnly = typeof window !== "undefined" && window.isSecureContext === false;
   const gpuUsable = snapshot ? webGpuUsable(snapshot) : false;
   const threadTarget = snapshot
@@ -230,15 +235,44 @@ export function LabView({ onBack }: { onBack?: () => void } = {}) {
     : threadsFor(threadMode);
   const gpuForAnalysis = snapshot ? allowGpuFor(snapshot, backend) : false;
 
+  const bootWorker = async (next: BrowserPlan) => {
+    if (!snapshot) return;
+    setError("");
+    await startWorker(
+      next,
+      splitCaps(snapshot),
+      gpuForAnalysis,
+      threadTarget,
+      loadDeviceIdentity(snapshot),
+    );
+    void refreshServer();
+  };
+
   const selectTier = (next: ProcessingTier) => {
-    if (running) return;
     const selected = snapshot ? planForSnapshot(next, snapshot) : planForTier(next);
     setManualTier(next);
-    setTier(next);
     setPlan(selected);
     saveWorkerPlan(selected);
     setConfirming(false);
+    // Com o worker ligado, trocar de perfil reinicia o motor com o novo plano.
+    // Antes o clique nao fazia nada e a proxima analise continuava no modelo
+    // anterior, mesmo com "Maximo" marcado. Durante uma nota, espera a passada
+    // terminar para nao devolver o job a VPS no meio.
+    if (running && snapshot) {
+      if (proc?.phase === "working" || proc?.phase === "stopping") {
+        setPendingRestart(selected);
+      } else {
+        void bootWorker(selected);
+      }
+    }
   };
+
+  useEffect(() => {
+    if (!pendingRestart || !snapshot) return;
+    if (proc?.phase !== "waiting") return;
+    setPendingRestart(null);
+    void bootWorker(pendingRestart);
+  }, [pendingRestart, proc?.phase, snapshot]);
 
   const benchmark = async (vram: boolean) => {
     if (!snapshot || testing !== "") return;
@@ -250,7 +284,6 @@ export function LabView({ onBack }: { onBack?: () => void } = {}) {
       setSnapshot(next.hardware);
       if (manualTier === null) {
         setVerdict(next.verdict);
-        setTier(next.verdict.tier);
         setPlan(planForSnapshot(next.verdict.tier, next.hardware));
       }
     } catch {
@@ -261,20 +294,13 @@ export function LabView({ onBack }: { onBack?: () => void } = {}) {
   };
 
   const start = async () => {
-    if (!snapshot) return;
-    setError("");
     setConfirming(false);
-    await startWorker(
-      plan,
-      splitCaps(snapshot),
-      gpuForAnalysis,
-      threadTarget,
-      loadDeviceIdentity(snapshot),
-    );
-    void refreshServer();
+    setPendingRestart(null);
+    await bootWorker(plan);
   };
 
   const stop = async () => {
+    setPendingRestart(null);
     await stopWorker();
     setConfirming(false);
     void refreshServer();
@@ -300,11 +326,11 @@ export function LabView({ onBack }: { onBack?: () => void } = {}) {
         generatedAt: new Date().toISOString(),
       }),
       plan: {
-        tier: plan.tier,
-        label: plan.label,
-        whisper: plan.whisper.id,
-        llm: plan.llm.id,
-        download_bytes: planDownloadBytes(plan),
+        tier: activePlan.tier,
+        label: activePlan.label,
+        whisper: activePlan.whisper.id,
+        llm: activePlan.llm.id,
+        download_bytes: planDownloadBytes(activePlan),
       },
       processing: proc
         ? {
@@ -327,9 +353,9 @@ export function LabView({ onBack }: { onBack?: () => void } = {}) {
   };
 
   const engineProgress = proc?.engine?.progress ?? -1;
-  const downloadBytes = useMemo(() => planDownloadBytes(plan), [plan]);
-  const selectedWhisper = WHISPER_MODELS.find((model) => model.id === plan.whisper.id);
-  const selectedLlm = LLM_MODELS.find((model) => model.id === plan.llm.id);
+  const downloadBytes = useMemo(() => planDownloadBytes(activePlan), [activePlan]);
+  const selectedWhisper = WHISPER_MODELS.find((model) => model.id === activePlan.whisper.id);
+  const selectedLlm = LLM_MODELS.find((model) => model.id === activePlan.llm.id);
   const queue = server?.queue ?? {};
 
   // O selo da execucao usa o motor; parado, usa a escolha do usuario.
@@ -400,6 +426,130 @@ export function LabView({ onBack }: { onBack?: () => void } = {}) {
 
       <div className="lab-layout">
         <div className="lab-column lab-column--main">
+          <section className="card lab-card">
+            <div className="card-head lab-card-head">
+              <h2>Modelos</h2>
+              <p className="hint" title="O download é feito uma vez e fica no cache do navegador. Nenhum texto da nota é enviado ao Hugging Face; só os pesos são baixados.">
+                {modelCacheAvailable()
+                  ? "download único · cache deste navegador"
+                  : "este navegador não guarda o modelo"}
+              </p>
+            </div>
+
+            <div className="segmented lab-tier" role="group" aria-label="Perfil de processamento">
+              {BROWSER_PLANS.map((option) => (
+                <button
+                  key={option.tier}
+                  type="button"
+                  aria-pressed={activeTier === option.tier}
+                  onClick={() => selectTier(option.tier)}
+                  disabled={!snapshot}
+                  title={option.hardware}
+                >
+                  {TIER_LABELS[option.tier]}
+                </button>
+              ))}
+            </div>
+
+            <div className="lab-models">
+              <ModelRow
+                label="Transcrição"
+                title={activePlan.whisper.label}
+                size={activePlan.whisper.sizeBytes}
+                hint={activePlan.whisper.note}
+              />
+              <ModelRow
+                label="Análise"
+                title={activePlan.llm.label}
+                size={activePlan.llm.sizeBytes}
+                hint={activePlan.llm.note}
+              />
+              <div className="lab-row lab-row--total">
+                <span className="lab-row-label">Total</span>
+                <span
+                  className="lab-row-value"
+                  title={`${activePlan.whisper.license} · ${activePlan.llm.license}`}
+                >
+                  download único
+                </span>
+                <span className="lab-row-size">{formatBytes(downloadBytes)}</span>
+              </div>
+            </div>
+
+            <p className="hint lab-profile-note">{planForTier(activeTier).hardware}</p>
+
+            {!gpuUsable && planForTier(activeTier).whisper.id === "whisper-large-v3-turbo" && (
+              <p className="hint lab-profile-note">
+                Sem WebGPU, a transcrição usa {activePlan.whisper.label}: o modelo grande rodaria
+                em uma thread só.
+              </p>
+            )}
+            {!httpOnly && !multithreadAvailable() && (
+              <p className="hint lab-profile-note lab-profile-note--warn">
+                O proxy não repassa COOP/COEP: a análise fica em uma thread. Libere esses
+                cabeçalhos no HTTPS para usar todos os núcleos.
+              </p>
+            )}
+
+            <details className="lab-advanced">
+              <summary>Trocar modelos</summary>
+              <label className="lab-field">
+                <span>Transcrição</span>
+                <select
+                  value={activePlan.whisper.id}
+                  disabled={running}
+                  onChange={(event) => {
+                    const whisper = WHISPER_MODELS.find((model) => model.id === event.target.value);
+                    if (whisper) {
+                      const next = { ...plan, whisper };
+                      setManualTier(next.tier);
+                      setPlan(next);
+                      saveWorkerPlan(next);
+                    }
+                  }}
+                >
+                  {WHISPER_MODELS.map((model) => (
+                    <option
+                      key={model.id}
+                      value={model.id}
+                      disabled={model.id === "whisper-large-v3-turbo" && !gpuUsable}
+                    >
+                      {model.label} · {formatBytes(model.sizeBytes)}
+                      {model.id === "whisper-large-v3-turbo" && !gpuUsable ? " · exige WebGPU" : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="lab-field">
+                <span>Análise</span>
+                <select
+                  value={activePlan.llm.id}
+                  disabled={running}
+                  onChange={(event) => {
+                    const llm = LLM_MODELS.find((model) => model.id === event.target.value);
+                    if (llm) {
+                      const next = { ...plan, llm };
+                      setManualTier(next.tier);
+                      setPlan(next);
+                      saveWorkerPlan(next);
+                    }
+                  }}
+                >
+                  {LLM_MODELS.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.label} · {formatBytes(model.sizeBytes)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {selectedWhisper && selectedLlm && (
+                <p className="hint lab-advanced-note">
+                  {selectedWhisper.note} {selectedLlm.note}
+                </p>
+              )}
+            </details>
+          </section>
+
           <section className="card lab-card lab-run">
             <div className="lab-run-head">
               <div className="lab-run-title">
@@ -514,13 +664,13 @@ export function LabView({ onBack }: { onBack?: () => void } = {}) {
             {!running && !confirming && (
               <>
                 <p className="lab-run-models">
-                  <span>{plan.whisper.label}</span>
+                  <span>{activePlan.whisper.label}</span>
                   <span className="lab-plus">+</span>
-                  <span>{plan.llm.label}</span>
+                  <span>{activePlan.llm.label}</span>
                 </p>
                 <div className="lab-chips">
-                  <span className="lab-chip" title="Download total dos dois modelos; cada um baixa na primeira nota do seu tipo.">
-                    {formatBytes(downloadBytes)} · primeira vez
+                  <span className="lab-chip" title="Download total dos dois modelos, feito ao ligar neste PC.">
+                    {formatBytes(downloadBytes)} · download único
                   </span>
                   <span className="lab-chip" title={gpuHint}>{runtime}</span>
                   <span className="lab-chip" title="As notas só rodam aqui quando você pede Analisar; o resto fica com a VPS.">
@@ -528,8 +678,8 @@ export function LabView({ onBack }: { onBack?: () => void } = {}) {
                   </span>
                 </div>
                 <p className="hint lab-run-hint">
-                  Ligar deixa a máquina pronta e não ocupa a fila. Os modelos baixam na
-                  primeira nota de cada tipo e ficam no cache do navegador.
+                  Ligar baixa os dois modelos do perfil e deixa a máquina pronta, sem ocupar a
+                  fila. Eles ficam no cache deste navegador.
                 </p>
                 <button
                   type="button"
@@ -582,7 +732,7 @@ export function LabView({ onBack }: { onBack?: () => void } = {}) {
                     {proc?.engine
                       ? proc.engine.stage === "ready"
                         ? (proc.engine.detail ?? "modelos prontos")
-                        : `${proc.engine.detail ?? plan.llm.label} · ${percent(Math.max(0, engineProgress))}`
+                        : `${proc.engine.detail ?? activePlan.llm.label} · ${percent(Math.max(0, engineProgress))}`
                       : "pronto para a próxima nota"}
                   </span>
                 </div>
@@ -655,124 +805,6 @@ export function LabView({ onBack }: { onBack?: () => void } = {}) {
             )}
           </section>
 
-          <section className="card lab-card">
-            <div className="card-head lab-card-head">
-              <h2>Modelos</h2>
-              <p className="hint" title="O download é feito uma vez e fica no cache do navegador. Nenhum texto da nota é enviado ao Hugging Face; só os pesos são baixados.">
-                {modelCacheAvailable()
-                  ? "download único · cache deste navegador"
-                  : "este navegador não guarda o modelo"}
-              </p>
-            </div>
-
-            <div className="segmented lab-tier" role="group" aria-label="Perfil de processamento">
-              {BROWSER_PLANS.map((option) => (
-                <button
-                  key={option.tier}
-                  type="button"
-                  aria-pressed={tier === option.tier}
-                  onClick={() => selectTier(option.tier)}
-                  disabled={running || !snapshot}
-                  title={option.hardware}
-                >
-                  {TIER_LABELS[option.tier]}
-                </button>
-              ))}
-            </div>
-
-            <div className="lab-models">
-              <ModelRow
-                label="Transcrição"
-                title={plan.whisper.label}
-                size={plan.whisper.sizeBytes}
-                hint={plan.whisper.note}
-              />
-              <ModelRow
-                label="Análise"
-                title={plan.llm.label}
-                size={plan.llm.sizeBytes}
-                hint={plan.llm.note}
-              />
-              <div className="lab-row lab-row--total">
-                <span className="lab-row-label">Total</span>
-                <span className="lab-row-value" title={`${plan.whisper.license} · ${plan.llm.license}`}>
-                  download único
-                </span>
-                <span className="lab-row-size">{formatBytes(downloadBytes)}</span>
-              </div>
-            </div>
-
-            <p className="hint lab-profile-note">{planForTier(tier).hardware}</p>
-
-            {!gpuUsable && planForTier(tier).whisper.id === "whisper-large-v3-turbo" && (
-              <p className="hint lab-profile-note">
-                Sem WebGPU, a transcrição usa {plan.whisper.label}: o modelo grande rodaria em uma
-                thread só.
-              </p>
-            )}
-            {!httpOnly && !multithreadAvailable() && (
-              <p className="hint lab-profile-note lab-profile-note--warn">
-                O proxy não repassa COOP/COEP: a análise fica em uma thread. Libere esses
-                cabeçalhos no HTTPS para usar todos os núcleos.
-              </p>
-            )}
-
-            <details className="lab-advanced">
-              <summary>Trocar modelos</summary>
-              <label className="lab-field">
-                <span>Transcrição</span>
-                <select
-                  value={plan.whisper.id}
-                  disabled={running}
-                  onChange={(event) => {
-                    const whisper = WHISPER_MODELS.find((model) => model.id === event.target.value);
-                    if (whisper) {
-                      const next = { ...plan, whisper };
-                      setPlan(next);
-                      saveWorkerPlan(next);
-                    }
-                  }}
-                >
-                  {WHISPER_MODELS.map((model) => (
-                    <option
-                      key={model.id}
-                      value={model.id}
-                      disabled={model.id === "whisper-large-v3-turbo" && !gpuUsable}
-                    >
-                      {model.label} · {formatBytes(model.sizeBytes)}
-                      {model.id === "whisper-large-v3-turbo" && !gpuUsable ? " · exige WebGPU" : ""}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="lab-field">
-                <span>Análise</span>
-                <select
-                  value={plan.llm.id}
-                  disabled={running}
-                  onChange={(event) => {
-                    const llm = LLM_MODELS.find((model) => model.id === event.target.value);
-                    if (llm) {
-                      const next = { ...plan, llm };
-                      setPlan(next);
-                      saveWorkerPlan(next);
-                    }
-                  }}
-                >
-                  {LLM_MODELS.map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {model.label} · {formatBytes(model.sizeBytes)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              {selectedWhisper && selectedLlm && (
-                <p className="hint lab-advanced-note">
-                  {selectedWhisper.note} {selectedLlm.note}
-                </p>
-              )}
-            </details>
-          </section>
         </div>
 
         <div className="lab-column lab-column--side">

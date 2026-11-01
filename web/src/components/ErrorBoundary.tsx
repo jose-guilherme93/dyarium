@@ -3,6 +3,9 @@ import type { ErrorInfo, ReactNode } from "react";
 
 interface ErrorBoundaryProps {
   children: ReactNode;
+  /** Mudar este valor (tela aberta) limpa o erro, para uma tela quebrada nao
+   *  prender as outras. */
+  resetKey?: unknown;
 }
 
 interface ErrorBoundaryState {
@@ -19,6 +22,12 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
     console.error("Erro na interface:", error, info);
+  }
+
+  componentDidUpdate(previous: ErrorBoundaryProps): void {
+    if (this.state.error && previous.resetKey !== this.props.resetKey) {
+      this.setState({ error: null });
+    }
   }
 
   render(): ReactNode {

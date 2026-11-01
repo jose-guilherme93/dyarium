@@ -102,9 +102,10 @@ async function handle(request: WorkerRequest): Promise<void> {
   switch (request.type) {
     case "load":
     case "prepare": {
-      // Apenas guarda o plano. O modelo entra na primeira nota daquele tipo:
-      // analise de texto nao paga o download do Whisper.
+      // Ativar o modo local ja baixa os dois modelos, um de cada vez. A nota
+      // nao paga o primeiro download depois que o interruptor liga.
       browser.configure(request.plan, request.allowGpu, request.threads, request.contextSize);
+      await browser.warm();
       post({ id: request.id, type: "result", result: { ready: true } });
       return;
     }

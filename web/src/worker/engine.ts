@@ -134,9 +134,23 @@ export class BrowserEngine {
   }
 
   async ensureLlm(): Promise<void> {
-    if (this.llama) return;
     if (!this.plan) throw new Error("processamento local nao configurado");
+    // Um GGUF diferente do plano nao pode ser reaproveitado: o usuario trocou de
+    // perfil e a analise nao pode sair com o modelo anterior.
+    if (this.llama && this.llamaId === this.plan.llm.id) return;
     await this.loadLlm(this.plan, this.contextSize, this.allowGpu, this.threads);
+  }
+
+  /**
+   * Baixa os dois modelos agora, um de cada vez.
+   *
+   * Ativar o modo local deixa a maquina pronta: o download nao espera a
+   * primeira nota de cada tipo. A memoria continua com um motor so; o Whisper
+   * sai antes de o GGUF entrar e volta do cache quando houver transcricao.
+   */
+  async warm(): Promise<void> {
+    await this.ensureTranscriber();
+    await this.ensureLlm();
   }
 
   /** Baixa (se preciso) e carrega o Whisper do plano. */
@@ -368,12 +382,12 @@ export class BrowserEngine {
     await instance.loadModel(blobs, params);
   }
 
-  /** Transcreve audio mono 16 kHz. */
-  async transcribe(audio: Float32Array, language = "portuguese"): Promise<Transcription> {
+  /** Transcreve audio mono 16 kHz; sem idioma, o modelo detecta. */
+  async transcribe(audio: Float32Array, language?: string): Promise<Transcription> {
     if (!this.transcriber) throw new Error("Whisper nao carregado");
     const started = Date.now();
     const output = (await this.transcriber(audio, {
-      language,
+      ...(language ? { language } : {}),
       task: "transcribe",
       chunk_length_s: 30,
       stride_length_s: 5,
@@ -394,7 +408,7 @@ export class BrowserEngine {
     }
     return {
       text: segments.map((segment) => segment.text).join(" ").trim(),
-      language: this.gpuForWhisper ? `${language} (gpu)` : `${language} (cpu)`,
+      language: `${(output as { language?: string }).language ?? language ?? "auto"}${this.gpuForWhisper ? " (gpu)" : " (cpu)"}`,
       segments,
       wallMs: Date.now() - started,
     };
