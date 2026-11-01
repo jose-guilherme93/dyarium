@@ -1,4 +1,4 @@
-import { cacheGet, cacheSet } from "./lib/idb";
+import { cacheClear, cacheGet, cacheSet } from "./lib/idb";
 import { shrinkImage } from "./lib/image";
 import { setOffline } from "./lib/offline";
 import type {
@@ -6,6 +6,9 @@ import type {
   Analysis,
   Attachment,
   AuthorRole,
+  BookStatus,
+  ChapterKind,
+  ChapterStatus,
   EntityDetail,
   EntityMention,
   EntitySummary,
@@ -42,6 +45,13 @@ export function setToken(token: string): void {
 
 export function clearToken(): void {
   localStorage.removeItem(TOKEN_KEY);
+  // Sair tambem apaga o que ficou no navegador: sem isto, o proximo login no
+  // mesmo navegador ainda lia corpos e transcricoes da sessao anterior offline.
+  memoryCache.clear();
+  etagCache.clear();
+  inflight.clear();
+  analysisMisses.clear();
+  void cacheClear();
 }
 
 // getSetupState reports whether the first-run setup is still open. It is a
@@ -108,6 +118,21 @@ export class ApiError extends Error {
     super(message);
     this.status = status;
     this.code = code;
+  }
+}
+
+/**
+ * Le um corpo JSON sem transformar o HTML de um proxy em `SyntaxError`. O
+ * chamador decide o que fazer quando o corpo nao e o JSON esperado.
+ */
+export function parseResponseBody<T>(text: string): T {
+  if (!text) {
+    return {} as T;
+  }
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return {} as T;
   }
 }
 
@@ -253,7 +278,7 @@ async function mutate<T>(path: string, init?: RequestInit): Promise<{ data: T; s
   }
   const text = await res.text();
   if (!res.ok) {
-    const body = text ? JSON.parse(text) : {};
+    const body = parseResponseBody<{ error?: { message?: string; code?: string }; conflict?: ConflictField[] }>(text);
     // 409 e conflito de edicao, não erro: o chamador precisa saber qual campo
     // brigou para oferecer a escolha ao usuario.
     if (res.status === 409) {
@@ -262,7 +287,14 @@ async function mutate<T>(path: string, init?: RequestInit): Promise<{ data: T; s
     throw new ApiError(body?.error?.message ?? res.statusText, res.status, body?.error?.code);
   }
   setOffline(false);
-  return { data: (text ? JSON.parse(text) : {}) as T, status: res.status };
+  if (!text) {
+    return { data: {} as T, status: res.status };
+  }
+  try {
+    return { data: JSON.parse(text) as T, status: res.status };
+  } catch {
+    throw new ApiError("resposta inválida do servidor", res.status, "invalid_response");
+  }
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -295,6 +327,10 @@ export interface EntryFilters {
   cursor?: string;
   /** `true` so as arquivadas, `false` so as da lista de trabalho. */
   archived?: boolean;
+  /** Deixa os livros fora do escopo do diario. */
+  exclude_books?: boolean;
+  /** Pede a contagem de palavras por entrada (lista de um livro). */
+  include_words?: boolean;
 }
 
 /** Campo que briguou quando o servidor recusou a gravacao. */
@@ -341,6 +377,12 @@ function entriesPath(filters?: EntryFilters): string {
   if (filters?.archived !== undefined) {
     params.set("archived", filters.archived ? "1" : "0");
   }
+  if (filters?.exclude_books) {
+    params.set("exclude_books", "1");
+  }
+  if (filters?.include_words) {
+    params.set("include_words", "1");
+  }
   const query = params.toString();
   return `/entries${query ? `?${query}` : ""}`;
 }
@@ -384,13 +426,19 @@ export const api = {
     return { entries };
   },
   listEntriesCached: (filters?: EntryFilters) => cachedGet<{ entries: Entry[] }>(entriesPath(filters)),
-  createEntry: (title: string, parentId?: string | null, notebookId?: string) =>
+  createEntry: (
+    title: string,
+    parentId?: string | null,
+    notebookId?: string,
+    chapterKind?: ChapterKind,
+  ) =>
     request<Entry>("/entries", {
       method: "POST",
       body: JSON.stringify({
         title,
         ...(parentId ? { parent_id: parentId } : {}),
         ...(notebookId ? { notebook_id: notebookId } : {}),
+        ...(chapterKind ? { chapter_kind: chapterKind } : {}),
       }),
     }),
   /**
@@ -476,6 +524,10 @@ export const api = {
       notebook_id?: string;
       archived?: boolean;
       author?: AuthorRole;
+      chapter_kind?: ChapterKind;
+      chapter_status?: ChapterStatus;
+      chapter_goal_words?: number;
+      chapter_synopsis?: string;
       versions?: { title?: string; recorded_at?: string };
     },
   ) => request<{ status: string; versions: { title?: string; recorded_at?: string } }>(
@@ -484,11 +536,15 @@ export const api = {
   ),
   listNotes: (id: string) => request<{ notes: Note[] }>(`/entries/${id}/notes`),
   listNotesCached: (id: string) => cachedGet<{ notes: Note[] }>(`/entries/${id}/notes`),
-  /** Cria a nota a partir do markdown do corpo. */
-  createNote: (id: string, title: string, markdown: string) =>
+  /** Cria a nota a partir do markdown do corpo. `noteId` torna o POST idempotente. */
+  createNote: (id: string, title: string, markdown: string, noteId?: string) =>
     request<Note>(`/entries/${id}/notes`, {
       method: "POST",
-      body: JSON.stringify({ title, content_markdown: markdown }),
+      body: JSON.stringify({
+        ...(noteId ? { id: noteId } : {}),
+        title,
+        content_markdown: markdown,
+      }),
     }),
   /**
    * Grava o corpo em markdown. `baseVersion` e a versao lida: se o corpo ja
@@ -521,13 +577,56 @@ export const api = {
       body: JSON.stringify(patch),
     }),
   deleteTag: (id: string) => request<void>(`/tags/${id}`, { method: "DELETE" }),
-  listNotebooks: () => request<{ notebooks: Notebook[] }>("/notebooks"),
-  createNotebook: (notebook: { id?: string; name: string; color: string }) =>
-    request<Notebook>("/notebooks", { method: "POST", body: JSON.stringify(notebook) }),
-  updateNotebook: (id: string, patch: { name?: string; color?: string }) =>
-    request<Notebook>(`/notebooks/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
-  deleteNotebook: (id: string) =>
-    request<void>(`/notebooks/${id}`, { method: "DELETE" }),
+  listNotebooks: (includeWords = true) =>
+    request<{ notebooks: Notebook[] }>(`/notebooks${includeWords ? "?include_words=1" : ""}`),
+  createNotebook: (notebook: {
+    id?: string;
+    name: string;
+    color: string;
+    kind?: "notes" | "book";
+    subtitle?: string;
+    author?: string;
+    synopsis?: string;
+    language?: string;
+    goal_words?: number;
+    book_status?: BookStatus;
+  }) => request<Notebook>("/notebooks", { method: "POST", body: JSON.stringify(notebook) }),
+  updateNotebook: (
+    id: string,
+    patch: {
+      name?: string;
+      color?: string;
+      kind?: "notes" | "book";
+      subtitle?: string;
+      author?: string;
+      synopsis?: string;
+      language?: string;
+      goal_words?: number;
+      book_status?: BookStatus;
+      confirm_convert?: boolean;
+    },
+  ) => request<Notebook>(`/notebooks/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteNotebook: (id: string, options?: { trash?: boolean; confirm?: string }) => {
+    const params = new URLSearchParams();
+    if (options?.trash) params.set("mode", "trash");
+    if (options?.confirm) params.set("confirm", options.confirm);
+    const query = params.toString();
+    return request<void>(`/notebooks/${id}${query ? `?${query}` : ""}`, { method: "DELETE" });
+  },
+  /** Reordena e reescreve o tipo/status da lista inteira de capitulos. */
+  reorderChapters: (
+    notebookId: string,
+    chapters: Array<{
+      entry_id: string;
+      chapter_kind: ChapterKind;
+      chapter_status: ChapterStatus;
+      position: number;
+    }>,
+  ) =>
+    request<{ status: string }>(`/notebooks/${notebookId}/chapters/order`, {
+      method: "PUT",
+      body: JSON.stringify({ chapters }),
+    }),
   getSettings: () => request<Settings>("/settings"),
   putSettings: (patch: Record<string, unknown>) =>
     request<{ status: string }>("/settings", { method: "PUT", body: JSON.stringify(patch) }),
@@ -577,13 +676,16 @@ export const api = {
       `/entities/edits/${encodeURIComponent(id)}/undo`,
       { method: "POST" },
     ),
-  getMood: (from?: string, to?: string) => {
+  getMood: (from?: string, to?: string, excludeBooks = false) => {
     const params = new URLSearchParams();
     if (from) {
       params.set("from", from);
     }
     if (to) {
       params.set("to", to);
+    }
+    if (excludeBooks) {
+      params.set("exclude_books", "1");
     }
     const query = params.toString();
     return request<{ mood: MoodPoint[] }>(`/mood${query ? `?${query}` : ""}`);
@@ -594,12 +696,14 @@ export const api = {
     from?: string;
     to?: string;
     focus?: string;
+    excludeBooks?: boolean;
   } = {}) => {
     const params = new URLSearchParams();
     if (options.notebookId) params.set("notebook_id", options.notebookId);
     if (options.from) params.set("from", options.from);
     if (options.to) params.set("to", options.to);
     if (options.focus) params.set("focus", options.focus);
+    if (options.excludeBooks) params.set("exclude_books", "1");
     const query = params.toString();
     return request<GraphResponse>(`/graph${query ? `?${query}` : ""}`);
   },
@@ -639,7 +743,7 @@ export async function uploadAttachment(entryId: string, file: File): Promise<Att
     body: upload,
   });
   const text = await res.text();
-  const body = text ? JSON.parse(text) : {};
+  const body = parseResponseBody<{ error?: { message?: string; code?: string } } & Attachment>(text);
   if (!res.ok) {
     throw new ApiError(body?.error?.message ?? res.statusText, res.status, body?.error?.code);
   }
@@ -686,10 +790,25 @@ export async function uploadFile(
       },
       body: chunk,
     });
+    if (res.status === 409) {
+      // O servidor responde o offset que ja recebeu; retomar dali e o ponto do
+      // upload resumivel. So aceite um offset que avance, para nao repetir o
+      // mesmo trecho para sempre.
+      const body = parseResponseBody<{ offset?: number }>(await res.text());
+      if (typeof body.offset === "number" && body.offset > offset) {
+        offset = body.offset;
+        onProgress?.(offset, file.size);
+        continue;
+      }
+      throw new ApiError("falha ao enviar o audio", res.status);
+    }
     if (!res.ok) {
       throw new ApiError("falha ao enviar o audio", res.status);
     }
-    const body = (await res.json()) as { offset: number };
+    const body = parseResponseBody<{ offset?: number }>(await res.text());
+    if (typeof body.offset !== "number" || body.offset <= offset) {
+      throw new ApiError("offset inválido no upload", res.status, "invalid_offset");
+    }
     offset = body.offset;
     onProgress?.(offset, file.size);
   }

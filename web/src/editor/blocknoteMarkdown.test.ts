@@ -57,6 +57,24 @@ describe("markdown da nota", () => {
     expect(markdown).toBe("![](attachment:at_2)\n");
   });
 
+  it("preserva a excecao de cor da imagem no livro", () => {
+    const markdown = blocksToNoteMarkdown(editor, [
+      { type: "image", props: { attachmentId: "at_1", caption: "foto", width: "50", color: "1" } },
+      { type: "image", props: { attachmentId: "at_2", caption: "", width: "", color: "1" } },
+      { type: "image", props: { attachmentId: "at_3", caption: "", width: "", color: "0" } },
+    ] as never);
+    expect(markdown).toContain("![foto](attachment:at_1){w=50,c=1}");
+    expect(markdown).toContain("![](attachment:at_2){c=1}");
+    expect(markdown).toContain("![](attachment:at_3){c=0}");
+
+    const blocks = noteMarkdownToBlocks(editor, markdown) as never as {
+      type: string;
+      props?: Record<string, string>;
+    }[];
+    const images = blocks.filter((block) => block.type === "image");
+    expect(images.map((block) => block.props?.color)).toEqual(["1", "1", "0"]);
+  });
+
   it("foto ainda subindo nao entra no corpo", () => {
     const markdown = blocksToNoteMarkdown(editor, [
       { type: "paragraph", content: "antes" },

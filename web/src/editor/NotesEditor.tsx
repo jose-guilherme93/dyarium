@@ -13,6 +13,7 @@ import "@blocknote/mantine/style.css";
 import { api, uploadAttachment, uploadFile } from "../api";
 import { CloseIcon } from "../components/icons";
 import { useEscape } from "../lib/useEscape";
+import { normalizeSearch } from "../lib/search";
 import { removeAudioBlocks } from "./audioBlocks";
 import { blocksToNoteMarkdown } from "./blocknoteMarkdown";
 import { createEditorSchema, MediaContext } from "./editorSchema";
@@ -31,6 +32,8 @@ interface NotesEditorProps {
   onOpenEntry?: (id: string) => void;
   /** Apaga o audio (corpo + servidor); o menu do player chama isto. */
   onDeleteAudio?: (attachmentId: string) => void;
+  /** Padrao de cor das imagens: o livro usa preto e branco. */
+  imageDefault?: "bw" | "color";
 }
 
 // NotesEditorHandle lets the note header trigger the media/link inserters that
@@ -52,7 +55,16 @@ const schema = createEditorSchema();
 // plus the /link command. Audio and image are media blocks with the same markers
 // the app reads and writes.
 export const NotesEditor = forwardRef<NotesEditorHandle, NotesEditorProps>(function NotesEditor(
-  { entryId, initialContent, audios = new Map(), onChange, onMediaAdded, onOpenEntry, onDeleteAudio },
+  {
+    entryId,
+    initialContent,
+    audios = new Map(),
+    onChange,
+    onMediaAdded,
+    onOpenEntry,
+    onDeleteAudio,
+    imageDefault = "color",
+  },
   ref,
 ) {
   const editor = useCreateBlockNote({ schema, initialContent, dictionary: pt });
@@ -71,7 +83,7 @@ export const NotesEditor = forwardRef<NotesEditorHandle, NotesEditorProps>(funct
     }
     let active = true;
     api
-      .listEntries()
+      .listAllEntries({ exclude_books: true })
       .then((result) => {
         if (active) {
           setPickerEntries(result.entries ?? []);
@@ -222,6 +234,7 @@ export const NotesEditor = forwardRef<NotesEditorHandle, NotesEditorProps>(funct
           attachmentId: "",
           caption: "",
           width: "",
+          color: "",
           preview,
           pending: true,
           error: false,
@@ -334,9 +347,9 @@ export const NotesEditor = forwardRef<NotesEditorHandle, NotesEditorProps>(funct
   });
 
   const filtered = pickerEntries.filter((entry) =>
-    `${entry.title} ${entry.original_filename ?? ""} ${entry.preview ?? ""}`
-      .toLowerCase()
-      .includes(term.trim().toLowerCase()),
+    normalizeSearch(
+      `${entry.title} ${entry.original_filename ?? ""} ${entry.preview ?? ""}`,
+    ).includes(normalizeSearch(term.trim())),
   );
 
   return (
@@ -346,6 +359,7 @@ export const NotesEditor = forwardRef<NotesEditorHandle, NotesEditorProps>(funct
         entryId,
         onOpenEntry: onOpenEntry ?? (() => {}),
         onDeleteAudio: onDeleteAudio ?? (() => {}),
+        imageDefault,
       }}
     >
       <BlockNoteView

@@ -39,6 +39,14 @@ export interface Entry {
    */
   origin_kind?: 'device' | 'server' | '';
   origin_instance?: string;
+  /** Estrutura do livro; vazia numa nota comum. */
+  chapter_kind?: ChapterKind | "";
+  chapter_position?: number | null;
+  chapter_status?: ChapterStatus;
+  chapter_goal_words?: number;
+  chapter_synopsis?: string;
+  /** Contagem de prosa do capitulo, quando pedida. */
+  word_count?: number;
 }
 
 export interface Audio {
@@ -326,12 +334,29 @@ export interface Tag {
   entry_count: number;
 }
 
+export type NotebookKind = "notes" | "book";
+export type BookStatus = "drafting" | "revising" | "done";
+export type ChapterKind = "chapter" | "part" | "front" | "back";
+export type ChapterStatus = "" | "draft" | "revising" | "done";
+
 export interface Notebook {
   id: string;
   name: string;
   color: string;
   is_default: boolean;
+  /** `book` abre o modo escritor; `notes` e o caderno comum. */
+  kind: NotebookKind;
+  subtitle: string;
+  author: string;
+  synopsis: string;
+  language: string;
+  goal_words: number;
+  book_status: BookStatus;
   entry_count: number;
+  /** Capitulos vivos, so em livros. */
+  chapter_count: number;
+  /** Soma das palavras dos capitulos, so quando o dashboard pede. */
+  words?: number;
   last_entry_at?: string;
   created_at: string;
   updated_at: string;

@@ -12,6 +12,14 @@ const NOTEBOOKS: Notebook[] = [
     color: "",
     entry_count: 1,
     is_default: false,
+    kind: "notes",
+    subtitle: "",
+    author: "",
+    synopsis: "",
+    language: "",
+    goal_words: 0,
+    book_status: "drafting",
+    chapter_count: 0,
     created_at: "2026-10-01T00:00:00Z",
     updated_at: "2026-10-01T00:00:00Z",
   },
@@ -21,6 +29,14 @@ const NOTEBOOKS: Notebook[] = [
     color: "",
     entry_count: 2,
     is_default: true,
+    kind: "notes",
+    subtitle: "",
+    author: "",
+    synopsis: "",
+    language: "",
+    goal_words: 0,
+    book_status: "drafting",
+    chapter_count: 0,
     created_at: "2026-10-01T00:00:00Z",
     updated_at: "2026-10-01T00:00:00Z",
   },
@@ -158,6 +174,18 @@ describe("NoteList", () => {
     expect(screen.getByRole("button", { name: "Remover filtro contrato" })).toBeInTheDocument();
   });
 
+  it("busca sem acento encontra a nota acentuada", async () => {
+    renderList(ALL_NOTEBOOKS);
+    await waitFor(() => expect(screen.getByText("Viagem de fim de ano")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Buscar nas notas" }));
+    fireEvent.change(screen.getByRole("searchbox", { name: "Buscar nas notas" }), {
+      target: { value: "reuniao" },
+    });
+
+    expect(screen.getByText("Reunião de segunda")).toBeInTheDocument();
+    expect(screen.queryByText("Viagem de fim de ano")).not.toBeInTheDocument();
+  });
+
   it("mostra o carregamento no lugar da lista, sem pular de vazio para cheio", async () => {
     let release: ((value: { entries: Entry[] }) => void) | undefined;
     vi.mocked(api.listAllEntries).mockImplementationOnce(
@@ -233,5 +261,15 @@ describe("NoteList", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Arquivar" }));
 
     await waitFor(() => expect(api.patchEntry).toHaveBeenCalledWith("e3", { archived: true }));
+  });
+
+  it("desarquiva em lote na aba de arquivadas", async () => {
+    vi.mocked(api.patchEntry).mockClear();
+    renderList(ALL_NOTEBOOKS);
+    fireEvent.click(await screen.findByLabelText("Ver notas arquivadas"));
+    fireEvent.click(await screen.findByText("Áudio arquivado"), { ctrlKey: true });
+    fireEvent.click(await screen.findByRole("button", { name: "Desarquivar" }));
+
+    await waitFor(() => expect(api.patchEntry).toHaveBeenCalledWith("e2", { archived: false }));
   });
 });
