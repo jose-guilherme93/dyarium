@@ -24,6 +24,8 @@ export interface BookExportInput {
   book: Notebook;
   chapters: ExportChapter[];
   options: ExportOptions;
+  /** Capa recortada, ja em data URL, para a previa e a impressao. */
+  coverDataUrl?: string;
 }
 
 export interface ExportSummary {
@@ -35,7 +37,7 @@ export interface ExportSummary {
 }
 
 export const DEFAULT_EXPORT_OPTIONS: ExportOptions = {
-  preset: "manuscript",
+  preset: "book",
   format: "docx",
   images: "bw",
   includeTitlePage: true,

@@ -1,5 +1,7 @@
 import { strToU8, zipSync } from "fflate";
 import { attachmentUrl } from "../../api";
+import { bookPage } from "../books";
+import { bookFont } from "../bookFonts";
 import type { BookExportInput, ImageMode } from "./types";
 
 /** Imagem ja decodificada, pronta para entrar no pacote. */
@@ -201,9 +203,11 @@ function documentXml(
     }
     flush();
   }
+  const measure = bookPage(book);
+  const twips = (mm: number) => Math.round(mm * 56.6929);
   const page = manuscript
     ? `<w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1417" w:right="1417" w:bottom="1417" w:left="1417" w:header="708" w:footer="708" w:gutter="0"/>`
-    : `<w:pgSz w:w="8640" w:h="12960"/><w:pgMar w:top="1077" w:right="1077" w:bottom="1077" w:left="1077" w:header="708" w:footer="708" w:gutter="0"/>`;
+    : `<w:pgSz w:w="${twips(measure.widthMm)}" w:h="${twips(measure.heightMm)}"/><w:pgMar w:top="${twips(measure.marginMm)}" w:right="${twips(measure.marginMm)}" w:bottom="${twips(measure.marginMm)}" w:left="${twips(measure.marginMm)}" w:header="708" w:footer="708" w:gutter="0"/>`;
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
   xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -211,17 +215,25 @@ function documentXml(
 <w:body>${body.join("")}<w:sectPr>${page}</w:sectPr></w:body></w:document>`;
 }
 
-const STYLES = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+/** Estilos do DOCX: Georgia no livro, Times no manuscrito, com o corpo e a
+ *  entrelinha do livro. DOCX nao embute a Newsreader, entao a fallback e Georgia. */
+function stylesXml(input: BookExportInput): string {
+  const manuscript = input.options.preset === "manuscript";
+  const family = manuscript ? "Times New Roman" : bookFont(input.book.body_font).google;
+  const halfPoints = manuscript ? 24 : Math.round((input.book.body_px ?? 18) * 0.75 * 2);
+  const line = manuscript ? 480 : Math.round((input.book.body_leading ?? 160) * 2.4);
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="24"/></w:rPr></w:rPrDefault></w:docDefaults>
+<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="${family}" w:hAnsi="${family}"/><w:sz w:val="${halfPoints}"/></w:rPr></w:rPrDefault></w:docDefaults>
 <w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:rPr><w:b/><w:sz w:val="56"/></w:rPr></w:style>
 <w:style w:type="paragraph" w:styleId="Subtitle"><w:name w:val="Subtitle"/><w:rPr><w:sz w:val="32"/></w:rPr></w:style>
 <w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:rPr><w:b/><w:sz w:val="40"/></w:rPr></w:style>
 <w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:rPr><w:b/><w:sz w:val="32"/></w:rPr></w:style>
-<w:style w:type="paragraph" w:styleId="Body"><w:name w:val="Body"/><w:rPr><w:sz w:val="24"/></w:rPr></w:style>
-<w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:rPr><w:i/><w:sz w:val="24"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="Body"><w:name w:val="Body"/><w:pPr><w:spacing w:line="${line}" w:lineRule="auto"/></w:pPr><w:rPr><w:sz w:val="${halfPoints}"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/><w:pPr><w:spacing w:line="${line}" w:lineRule="auto"/></w:pPr><w:rPr><w:i/><w:sz w:val="${halfPoints}"/></w:rPr></w:style>
 <w:style w:type="paragraph" w:styleId="Caption"><w:name w:val="Caption"/><w:rPr><w:sz w:val="20"/></w:rPr></w:style>
 </w:styles>`;
+}
 
 /** Monta o .docx (zip OOXML) sem tocar na rede. */
 export function buildDocx(input: BookExportInput, images: DocxImage[] = []): Uint8Array {
@@ -265,7 +277,7 @@ ${imageRels.join("")}
     "[Content_Types].xml": strToU8(contentTypes),
     "_rels/.rels": strToU8(rels),
     "word/document.xml": strToU8(documentXml(input, images)),
-    "word/styles.xml": strToU8(STYLES),
+    "word/styles.xml": strToU8(stylesXml(input)),
     "word/_rels/document.xml.rels": strToU8(documentRels),
     "docProps/core.xml": strToU8(core),
     ...Object.fromEntries(Object.entries(media)),

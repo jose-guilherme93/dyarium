@@ -1,3 +1,32 @@
+import type { BookFontId } from "./lib/bookFonts";
+
+/** Tamanhos de folha aceitos pelo modo escritor. A4 so existe para livros
+ *  antigos e para o manuscrito; os formatos de livro ficam nos demais. */
+export type PageSize = "a4" | "6x9" | "5x8" | "a5" | "14x21" | "11x18";
+
+/** Um dia de escrita do livro; `words` e o saldo liquido do dia. */
+export interface WritingDay {
+  day: string;
+  words: number;
+}
+
+/** Ritmo do livro devolvido pelo servidor. */
+export interface WritingRhythm {
+  today: number;
+  days: WritingDay[];
+  daily_goal: number;
+  deadline: string;
+  goal_words: number;
+}
+
+/** Entidade ja encontrada nos capitulos do livro. */
+export interface BookEntity {
+  kind: string;
+  name: string;
+  mentions: number;
+  chapters: number;
+}
+
 export interface Entry {
   id: string;
   title: string;
@@ -45,6 +74,10 @@ export interface Entry {
   chapter_status?: ChapterStatus;
   chapter_goal_words?: number;
   chapter_synopsis?: string;
+  /** Plano do capitulo: um beat por linha, fora da prosa. */
+  chapter_beats?: string;
+  /** Pesquisa do capitulo: texto livre, fora da prosa. */
+  chapter_notes?: string;
   /** Contagem de prosa do capitulo, quando pedida. */
   word_count?: number;
 }
@@ -352,6 +385,23 @@ export interface Notebook {
   language: string;
   goal_words: number;
   book_status: BookStatus;
+  /** O livro tem foto de capa guardada no servidor. */
+  has_cover?: boolean;
+  /** Versao da capa, usada para quebrar o cache da imagem. */
+  cover_updated_at?: string | null;
+  /** Medida da folha do editor, da leitura e da exportacao. */
+  page_size?: PageSize;
+  /** Margem da folha em milimetros. */
+  page_margin_mm?: number;
+  /** Corpo da prosa em px de tela. */
+  body_px?: number;
+  /** Entrelinha em percentual (160 = 1,6). */
+  body_leading?: number;
+  /** Fonte do corpo, escolhida entre as fontes de livro. */
+  body_font?: BookFontId;
+  daily_goal_words?: number;
+  /** Prazo do livro, AAAA-MM-DD; vazio quando nao ha. */
+  deadline?: string;
   entry_count: number;
   /** Capitulos vivos, so em livros. */
   chapter_count: number;

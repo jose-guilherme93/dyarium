@@ -6,6 +6,7 @@ import type {
   Analysis,
   Attachment,
   AuthorRole,
+  BookEntity,
   BookStatus,
   ChapterKind,
   ChapterStatus,
@@ -22,12 +23,15 @@ import type {
   MoodPoint,
   Note,
   Notebook,
+  PageSize,
   Revision,
   Segment,
   Settings,
   Tag,
   Transcript,
+  WritingRhythm,
 } from "./types";
+import type { BookFontId } from "./lib/bookFonts";
 
 const TOKEN_KEY = "dyarium.token";
 
@@ -580,6 +584,8 @@ export const api = {
       chapter_status?: ChapterStatus;
       chapter_goal_words?: number;
       chapter_synopsis?: string;
+      chapter_beats?: string;
+      chapter_notes?: string;
       versions?: { title?: string; recorded_at?: string };
     },
   ) => request<{ status: string; versions: { title?: string; recorded_at?: string } }>(
@@ -642,6 +648,13 @@ export const api = {
     language?: string;
     goal_words?: number;
     book_status?: BookStatus;
+    page_size?: PageSize;
+    page_margin_mm?: number;
+    body_px?: number;
+    body_leading?: number;
+    body_font?: BookFontId;
+    daily_goal_words?: number;
+    deadline?: string;
   }) => request<Notebook>("/notebooks", { method: "POST", body: JSON.stringify(notebook) }),
   updateNotebook: (
     id: string,
@@ -655,9 +668,46 @@ export const api = {
       language?: string;
       goal_words?: number;
       book_status?: BookStatus;
+      page_size?: PageSize;
+      page_margin_mm?: number;
+      body_px?: number;
+      body_leading?: number;
+      body_font?: BookFontId;
+      daily_goal_words?: number;
+      deadline?: string;
       confirm_convert?: boolean;
     },
   ) => request<Notebook>(`/notebooks/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  /** Ritmo do livro: palavras de hoje, janela de dias, meta diaria e prazo. */
+  getWritingRhythm: (bookId: string, days = 7) =>
+    request<WritingRhythm>(`/notebooks/${bookId}/writing?days=${days}`),
+  getCover: async (bookId: string): Promise<Blob> => {
+    const response = await fetch(`/api/v1/notebooks/${bookId}/cover`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    });
+    if (!response.ok) {
+      throw new ApiError("capa indisponivel", response.status, "cover");
+    }
+    return response.blob();
+  },
+  uploadCover: async (bookId: string, image: Blob): Promise<void> => {
+    const response = await fetch(`/api/v1/notebooks/${bookId}/cover`, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${getToken()}`,
+        "Content-Type": image.type || "image/jpeg",
+      },
+      body: image,
+    });
+    if (!response.ok) {
+      throw new ApiError("nao foi possivel salvar a capa", response.status, "cover");
+    }
+  },
+  deleteCover: (bookId: string) =>
+    request<void>(`/notebooks/${bookId}/cover`, { method: "DELETE" }),
+  /** Entidades que a analise ja encontrou nos capitulos do livro. */
+  getBookEntities: (bookId: string) =>
+    request<{ entities: BookEntity[] }>(`/notebooks/${bookId}/entities`),
   deleteNotebook: (id: string, options?: { trash?: boolean; confirm?: string }) => {
     const params = new URLSearchParams();
     if (options?.trash) params.set("mode", "trash");
@@ -767,8 +817,10 @@ export const api = {
   listAttachmentsCached: (entryId: string) =>
     cachedGet<{ attachments: Attachment[] }>(`/entries/${entryId}/attachments`),
   deleteAttachment: (id: string) => request<void>(`/attachments/${id}`, { method: "DELETE" }),
+  listLinks: (entryId: string) => request<{ links: Link[] }>(`/entries/${entryId}/links`),
   createLink: (entryId: string, body: { to_entry_id?: string; url?: string; label?: string }) =>
     request<Link>(`/entries/${entryId}/links`, { method: "POST", body: JSON.stringify(body) }),
+  deleteLink: (id: string) => request<void>(`/links/${id}`, { method: "DELETE" }),
 };
 
 // audioUrl builds a playable URL for the decrypted original audio. The token
@@ -779,6 +831,23 @@ export function audioUrl(entryId: string): string {
 
 export function attachmentUrl(id: string): string {
   return `/api/v1/attachments/${id}?token=${encodeURIComponent(getToken())}`;
+}
+
+/** URL da capa do livro; a versao evita reaproveitar a imagem antiga. */
+export function coverUrl(bookId: string, version?: string | null): string {
+  const params = new URLSearchParams({ token: getToken() });
+  if (version) params.set("v", version);
+  return `/api/v1/notebooks/${bookId}/cover?${params.toString()}`;
+}
+
+/** Converte o blob da capa para data URL, para a previa e a impressao. */
+export function blobToDataURL(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
 }
 
 // uploadAttachment stores an image attached to an entry. Photos are shrunk in

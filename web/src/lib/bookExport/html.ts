@@ -1,3 +1,5 @@
+import { bookPage, estimatePages } from "../books";
+import { bookFont, bookFontFaces } from "../bookFonts";
 import type { BookExportInput, ExportPreset } from "./types";
 
 function escapeHtml(value: string): string {
@@ -124,11 +126,12 @@ export function markdownToHtml(markdown: string): string {
   return out.join("\n");
 }
 
-function pageCss(preset: ExportPreset): string {
+function pageCss(preset: ExportPreset, input: BookExportInput): string {
   if (preset === "manuscript") {
     return "size: A4; margin: 2.5cm;";
   }
-  return "size: 6in 9in; margin: 1.9cm;";
+  const page = bookPage(input.book);
+  return `size: ${page.widthMm}mm ${page.heightMm}mm; margin: ${page.marginMm}mm;`;
 }
 
 export interface HtmlExport {
@@ -143,6 +146,9 @@ export function exportHtml(input: BookExportInput): HtmlExport {
     (chapter) => chapter.entry.chapter_kind === "part" || chapter.words > 0,
   );
   const manuscript = options.preset === "manuscript";
+  const font = bookFont(book.body_font);
+  const printFont = manuscript ? '"Times New Roman", Times, serif' : font.css;
+  const fontFaces = manuscript ? "" : `${bookFontFaces(font)}\n`;
   const titlePage = options.includeTitlePage
     ? `<section class="title-page">
         <h1>${escapeHtml(book.name)}</h1>
@@ -163,53 +169,130 @@ export function exportHtml(input: BookExportInput): HtmlExport {
           .join("")}
       </nav>`
     : "";
+  let chapterNo = 0;
+  let partTitle = "";
   const body = chapters
     .map((chapter) => {
-      const part = chapter.entry.chapter_kind === "part";
-      return `<section class="chapter ${part ? "part-page" : ""}">
-        <h2>${escapeHtml(chapter.entry.title || "Sem título")}</h2>
-        ${markdownToHtml(chapter.markdown)}
+      const entry = chapter.entry;
+      const part = entry.chapter_kind === "part";
+      if (part) {
+        partTitle = entry.title || "";
+      } else if (entry.chapter_kind === "chapter") {
+        chapterNo += 1;
+      }
+      const overline = part
+        ? "Parte"
+        : entry.chapter_kind === "front"
+          ? "Frontispício"
+          : entry.chapter_kind === "back"
+            ? "Posfácio"
+            : `Capítulo ${chapterNo}${partTitle ? ` · ${partTitle}` : ""}`;
+      return `<section class="chapter">
+        <p class="chapter-overline">${escapeHtml(overline)}</p>
+        <h1 class="chapter-title">${escapeHtml(entry.title || "Sem título")}</h1>
+        <div class="chapter-body">${markdownToHtml(chapter.markdown)}</div>
       </section>`;
     })
     .join("\n");
+  const measure = bookPage(book);
+  const coverPageCss = manuscript
+    ? "size: A4; margin: 0;"
+    : `size: ${measure.widthMm}mm ${measure.heightMm}mm; margin: 0;`;
+  const cover = input.coverDataUrl
+    ? `<section class="cover-page"><img src="${input.coverDataUrl}" alt=""></section>`
+    : "";
   const words = chapters.reduce((sum, chapter) => sum + chapter.words, 0);
   return {
-    pages: Math.max(1, Math.ceil((words + (options.includeTitlePage ? 300 : 0)) / 300)),
+    pages:
+      estimatePages(words, measure) +
+      (options.includeTitlePage ? 1 : 0) +
+      (input.coverDataUrl ? 1 : 0),
     html: `<!doctype html>
 <html lang="${escapeHtml(book.language || "pt-BR")}">
 <head>
 <meta charset="utf-8">
 <title>${escapeHtml(book.name)}</title>
 <style>
-@page { ${pageCss(options.preset)} }
+@page { ${pageCss(options.preset, input)} }
+@page cover { ${coverPageCss} }
 html, body { margin: 0; padding: 0; background: #fff; color: #111; }
-body { font-family: ${manuscript ? '"Times New Roman", Times, serif' : 'Georgia, "Times New Roman", serif'}; font-size: 12pt; line-height: ${manuscript ? 2 : 1.15}; text-align: justify; }
-.title-page, .toc, .chapter { page-break-after: always; padding: 1.25cm 0; }
+.cover-page { page: cover; margin: 0; padding: 0; page-break-after: always; }
+.cover-page img { display: block; width: 100%; height: auto; }
+body { font-family: ${printFont}; font-size: ${manuscript ? "12pt" : `${input.book.body_px ?? 18}px`}; line-height: ${manuscript ? 2 : (input.book.body_leading ?? 160) / 100}; text-align: justify; hyphens: auto; color: #111; }
+${fontFaces}@font-face { font-family: "Inter"; src: url("/fonts/inter-latin.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+.title-page, .toc, .chapter { page-break-after: always; }
 .title-page { text-align: center; page-break-after: always; padding-top: 5cm; }
 .title-page h1 { font-size: 2.2em; margin: 0 0 0.4em; }
 .title-page .subtitle { font-size: 1.3em; margin: 0 0 1.4em; }
 .title-page .author { font-size: 1.1em; }
 .toc h2 { font-size: 1.4em; }
-.toc p { margin: 0.2em 0; text-align: left; }
+.toc p { margin: 0.2em 0; text-align: left; text-indent: 0; }
 .toc-part { font-weight: bold; margin-top: 1em !important; }
 .toc-chapter { padding-left: 1.2em; }
-.chapter h2 { font-size: 1.6em; text-align: left; margin: 0 0 1em; }
-.part-page { text-align: center; page-break-before: always; }
-.part-page h2 { text-align: center; margin-top: 5cm; font-size: 2em; }
-p { margin: 0; text-indent: ${manuscript ? "1.25cm" : "1.4em"}; orphans: 2; widows: 2; }
-h1, h2, h3, h4, h5, h6 { text-indent: 0; page-break-after: avoid; }
-blockquote { margin: 1em 2em; font-style: italic; }
-blockquote p { text-indent: 0; }
-ul, ol { margin: 0.6em 0 0.6em 1.4em; }
-li { margin: 0.25em 0; }
-img.book-image { display: block; max-width: 100%; margin: 1em auto; filter: grayscale(1); }
-img.book-image--color { filter: none; }
+.chapter-overline {
+  margin: 0;
+  color: #6b655c;
+  font-family: Inter, ui-sans-serif, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  font-size: 9px;
+  line-height: 1.6;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  text-indent: 0;
+}
+.chapter-title {
+  margin: 7px 0 22px;
+  padding: 0 0 2px;
+  border-bottom: 1px solid transparent;
+  color: #111;
+  font-family: ${printFont};
+  font-size: 31px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.12;
+  text-align: left;
+  text-indent: 0;
+}
+.chapter-body > p {
+  margin: 0;
+  padding: 0;
+  text-indent: ${manuscript ? "1.25cm" : "1.4em"};
+}
+.chapter-body > p:first-child { text-indent: 0; }
+.chapter-body h1, .chapter-body h2, .chapter-body h3,
+.chapter-body h4, .chapter-body h5, .chapter-body h6 {
+  margin: 0;
+  padding: 16px 0 2px;
+  color: #111;
+  font-family: ${printFont};
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
+  text-align: left;
+  text-indent: 0;
+}
+.chapter-body h1 { font-size: 24px; }
+.chapter-body h2 { font-size: 19px; }
+.chapter-body h3 { font-size: 17px; }
+.chapter-body h4 { font-size: 15.5px; }
+.chapter-body h5 { font-size: 14.5px; }
+.chapter-body h6 { font-size: 13.5px; }
+.chapter-body blockquote {
+  margin: 8px 0;
+  padding-left: 14px;
+  border-left: 2px solid #ded8cc;
+  font-style: italic;
+}
+.chapter-body blockquote p { text-indent: 0; }
+.chapter-body ul, .chapter-body ol { margin: 6px 0; padding-left: 1.4em; }
+.chapter-body li { margin: 0; }
+.chapter-body img.book-image { display: block; max-width: 100%; margin: 1em auto; filter: grayscale(1); }
+.chapter-body img.book-image--color { filter: none; }
 body.images-color img.book-image { filter: none; }
 code { font-family: monospace; }
-section + section { page-break-before: always; }
 </style>
 </head>
 <body class="${options.images === "color" ? "images-color" : ""}">
+${cover}
 ${titlePage}
 ${toc}
 ${body}

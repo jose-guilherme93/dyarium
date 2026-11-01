@@ -1,6 +1,7 @@
 import { exportDocx } from "./docx";
 import { exportHtml } from "./html";
 import { exportMarkdown } from "./markdown";
+import { bookPage, estimatePages } from "../books";
 import type { BookExportInput, ExportSummary } from "./types";
 
 export * from "./types";
@@ -19,7 +20,7 @@ export function exportSummary(input: BookExportInput): ExportSummary {
   return {
     chapters: usable.filter((chapter) => chapter.entry.chapter_kind !== "part").length,
     words,
-    pages: Math.max(1, Math.ceil(words / 300)),
+    pages: estimatePages(words, bookPage(input.book)),
     empty,
     ignoredImages: 0,
   };
