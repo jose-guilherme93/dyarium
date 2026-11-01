@@ -580,6 +580,43 @@ livro grande nao pode competir por RAM com o processamento. Imagens sao preto e
 branco por padrao; `c=1` no markdown e a excecao de cor, respeitada no editor,
 na leitura, no PDF e no DOCX.
 
+A folha do livro tem uma medida so, guardada no caderno (`page_size`,
+`page_margin_mm`, `body_px`, `body_leading`, `body_font`) e usada pelo editor,
+pela leitura, pelo PDF e pelo DOCX. As fontes de livro sao auto-hospedadas em
+`web/public/fonts` (Newsreader, EB Garamond, Libre Baskerville, Libre Caslon
+Text, Tinos, Gelasio, Literata e Crimson Pro) para o editor e o PDF usarem o
+mesmo arquivo; o DOCX so pode citar o nome. O A4 nao e formato de livro: fica
+para o manuscrito na exportacao. O formato padrao de um livro novo e 14 x 21 cm. O editor mostra folhas de verdade: a largura e a medida
+real da pagina, cada folha com a margem do livro e um espaco de fundo entre uma e
+outra, e o numero da pagina na margem da seguinte. A divisao nao recorta o
+documento nem cria paragrafos novos: ela mede as linhas ja renderizadas (line
+boxes e altura util da folha), marca a primeira linha que nao caberia e insere um
+widget de decoracao do ProseMirror naquela posicao. O widget nao faz parte do
+markdown, do autosave, das versoes nem da exportacao; some quando o capitulo
+fecha. Dividir o corpo em editores por pagina quebraria cursor, selecao e undo
+entre folhas, por isso a folha continua por baixo e a quebra e uma camada de
+layout. O PDF usa a mesma fonte, medida e entrelinha, entao as folhas batem com
+as paginas impressas; no DOCX a fonte cai para Georgia e uma linha pode mudar de
+pagina. A4 nao cabe na largura util com a sidebar de 300 px aberta, entao a folha
+encolhe ate caber; 6 x 9 cabe na medida real. Abaixo de 640 px a folha ocupa a
+tela e a divisao passa a ser a da tela, nao a da pagina impressa.
+
+A capa e uma imagem recortada no navegador na proporcao da folha e guardada em
+`book_covers`, uma por livro, com tipo e versao (`updated_at`). A lista de
+cadernos carrega so `has_cover` e a versao; a imagem vem por
+`GET /notebooks/{id}/cover`, o que evita baixar capas de todos os livros a cada
+refresh. O PDF recebe a capa como data URL na pagina `cover` sem margem, antes da
+pagina de titulo. A previa de leitura usa a mesma imagem e a mesma medida da
+folha; o fundo escuro e a barra fixa existem so para olhar a pagina, nao entram no
+PDF.
+
+O ritmo nao e derivado das revisoes: `writing_days` guarda o saldo liquido de
+palavras por livro e por dia, somado na mesma transacao que grava o corpo. E o
+unico jeito barato de bater o numero entre dispositivos e de sobreviver a
+limpeza do navegador; o dia e a data do servidor. O plano do capitulo fica em
+campos proprios (`chapter_beats`, `chapter_notes`) para nao sujar o corpo e nao
+entrar na exportacao.
+
 ## Decisoes e justificativas
 
 - SQLite em WAL: um arquivo unico, transacoes ACID, leitura concorrente. Adequado a um

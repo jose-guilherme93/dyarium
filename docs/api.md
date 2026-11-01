@@ -187,9 +187,10 @@ aprende que a nota foi apagada e nao a ressuscita.
   em `notes`.
 - Em um livro, cada entrada traz `chapter_kind` (`chapter`, `part`, `front` ou
   `back`), `chapter_position`, `chapter_status` (`draft`, `revising`, `done`),
-  `chapter_goal_words` e `chapter_synopsis`. Com `include_words=1` (ou ao listar
-  um livro), traz tambem `word_count`. Em caderno de notas, os campos de capitulo
-  vem vazios.
+  `chapter_goal_words`, `chapter_synopsis`, `chapter_beats` (um beat por linha)
+  e `chapter_notes` (pesquisa do capitulo, fora do corpo). Com `include_words=1`
+  (ou ao listar um livro), traz tambem `word_count`. Em caderno de notas, os
+  campos de capitulo vem vazios.
 
 ## Markdown como formato da nota
 
@@ -287,8 +288,9 @@ Resposta 200: `{ "status": "ok", "versions": { "title": "...", "recorded_at": ".
   livro limpa o arquivamento e atribui a posicao no fim; mover para um caderno
   de notas limpa `chapter_kind` e `chapter_position`.
 - `chapter_kind` (so em livro) troca o tipo do capitulo; `chapter_status`,
-  `chapter_goal_words` e `chapter_synopsis` alimentam o painel do capitulo. Fora
-  de um livro, `chapter_kind` responde 422 `not_a_book`.
+  `chapter_goal_words`, `chapter_synopsis`, `chapter_beats` e `chapter_notes`
+  alimentam o painel do capitulo. Fora de um livro, `chapter_kind` responde 422
+  `not_a_book`.
 - Nao altera o audio.
 
 ### POST /api/v1/entries
@@ -350,6 +352,8 @@ Manifesto compacto para reconciliacao. Parametros: `kind` (`entries`, `deleted` 
       "chapter_status": "",
       "chapter_goal_words": 0,
       "chapter_synopsis": "",
+      "chapter_beats": "",
+      "chapter_notes": "",
       "tags": ["..."]
     }
   ],
@@ -1180,11 +1184,28 @@ Lista cadernos em ordem de criacao, com o padrao no fim:
 { "notebooks": [ { "id": "nb_...", "name": "O nome do vento", "color": "#C7D8F2",
   "is_default": false, "kind": "book", "subtitle": "Volume I", "author": "Ana",
   "synopsis": "...", "language": "pt-BR", "goal_words": 90000,
-  "book_status": "drafting", "chapter_count": 12, "words": 48320,
+  "book_status": "drafting", "page_size": "14x21", "page_margin_mm": 19,
+  "body_px": 18, "body_leading": 160, "body_font": "newsreader",
+  "has_cover": false, "cover_updated_at": null,
+  "daily_goal_words": 500,
+  "deadline": "2026-12-01",
+  "chapter_count": 12, "words": 48320,
   "entry_count": 12, "created_at": "...", "updated_at": "..." } ] }
 ```
 - `kind` e `notes` ou `book`; cadernos antigos ficam `notes`.
 - `book_status` e `drafting`, `revising` ou `done`.
+- `page_size` e um formato de livro: `11x18` (bolso), `14x21` (romance, padrao),
+  `a5`, `5x8` ou `6x9`. `a4` continua aceito para livros antigos e para o
+  manuscrito, nao e oferecido como formato de livro. `page_margin_mm` fica entre
+  10 e 60 (padrao 19); `body_px` entre 12 e 26 (padrao 18); `body_leading` e o
+  percentual da entrelinha entre 100 e 220 (padrao 160). A folha vale para o
+  editor, a leitura e a exportacao do livro.
+- `body_font` e a fonte do corpo: `newsreader` (padrao), `eb-garamond`,
+  `libre-baskerville`, `libre-caslon-text`, `tinos`, `gelasio`, `literata` ou
+  `crimson-pro`. As fontes ficam servidas pelo dashboard; valor desconhecido
+  responde 422 `invalid_font`.
+- `daily_goal_words` e `deadline` (`AAAA-MM-DD`) formam o ritmo do livro; zero e
+  vazio desligam meta diaria e prazo.
 - `entry_count` e `last_entry_at` consideram apenas notas ativas (nao arquivadas,
   nao apagadas); `last_entry_at` usa `recorded_at` (a data real da nota). Em um
   livro, `entry_count` conta os capitulos vivos.
@@ -1197,17 +1218,24 @@ Cria um caderno ou um livro:
 ```json
 { "id": "nb_opcional", "name": "...", "color": "#C7D8F2", "kind": "book",
   "subtitle": "Volume I", "author": "Ana", "synopsis": "...",
-  "language": "pt-BR", "goal_words": 90000, "book_status": "drafting" }
+  "language": "pt-BR", "goal_words": 90000, "book_status": "drafting",
+  "page_size": "14x21", "page_margin_mm": 19, "body_px": 18,
+  "body_leading": 160, "body_font": "newsreader",
+  "daily_goal_words": 500, "deadline": "2026-12-01" }
 ```
 - `id` e opcional: o app cria offline e preserva o mesmo id nos dois lados. Se o
   id ja existir, responde 200 com o caderno existente (idempotente).
 - Um livro nasce vazio, entao a regra de ativacao vale por construcao.
 - Nome vazio: 400 `invalid_name`; nome duplicado (case-insensitive): 409
-  `conflict`; `kind` ou `book_status` invalidos: 422.
+  `conflict`; `kind` ou `book_status` invalidos: 422; pagina fora da faixa: 422
+  `invalid_page`; prazo fora de `AAAA-MM-DD`: 422 `invalid_deadline`.
 
 ### PATCH /api/v1/notebooks/{id}
 Aceita `name`, `color`, `kind` e os metadados do livro (`subtitle`, `author`,
-`synopsis`, `language`, `goal_words`, `book_status`) com `confirm_convert`.
+`synopsis`, `language`, `goal_words`, `book_status`, `page_size`,
+`page_margin_mm`, `body_px`, `body_leading`, `body_font`, `daily_goal_words`,
+`deadline`) com
+`confirm_convert`.
 
 - `kind: "book"` em caderno com entry viva (ativa **ou** arquivada) responde 409
   `notebook_not_empty` com `{ "entry_count": N }`. Nota so na lixeira nao bloqueia.
@@ -1230,6 +1258,43 @@ A lista precisa conter todos os capitulos vivos do livro (o cliente arrasta a
 lista inteira). A gravacao e uma transacao. Erros: 422 `not_a_book`,
 `chapter_not_in_book` (id de outro livro, apagado ou lista incompleta) e
 `invalid_chapter` (kind/status fora da whitelist ou posicao nao finita).
+
+### GET /api/v1/notebooks/{id}/cover
+Entrega a capa recortada do livro. A imagem e binaria; o `Content-Type` vem do
+upload (JPEG, PNG ou WebP) e o `ETag` muda a cada capa. `404` quando o livro nao
+tem capa. As listas de cadernos trazem apenas `has_cover` e
+`cover_updated_at`, nunca a imagem.
+
+### PUT /api/v1/notebooks/{id}/cover
+Corpo cru com a imagem ja recortada pelo dashboard (ate 8 MiB), `Content-Type`
+`image/jpeg`, `image/png` ou `image/webp`. So aceita livro; caderno comum
+responde 422 `not_a_book`; tipo fora da lista responde 415 `invalid_image`. O
+dashboard recorta a foto na proporcao da folha antes de enviar. A resposta e
+`{ "notebook_id": "...", "cover_updated_at": "...", "size_bytes": N }`.
+
+### DELETE /api/v1/notebooks/{id}/cover
+Remove a capa. Idempotente.
+
+### GET /api/v1/notebooks/{id}/writing
+Ritmo de escrita do livro para o topo do capitulo e a casa do livro:
+```json
+{ "today": 320, "daily_goal": 500, "deadline": "2026-12-01", "goal_words": 90000,
+  "days": [ { "day": "2026-10-26", "words": 0 }, { "day": "2026-11-01", "words": 320 } ] }
+```
+- `days` traz a janela pedida em `?days=N` (padrao 7, maximo 90), do mais antigo
+  para hoje, com zero nos dias sem escrita.
+- `words` e o saldo liquido do dia (o que foi escrito menos o que foi apagado),
+  preso em zero na leitura. O dia e a data do servidor.
+- A gravacao do corpo de um capitulo (`POST`/`PUT` de notes) soma a diferenca de
+  prosa do dia; nota comum nao entra no ritmo.
+
+### GET /api/v1/notebooks/{id}/entities
+Entidades que a analise ja encontrou nos capitulos vivos do livro, sem disparar
+analise:
+```json
+{ "entities": [ { "kind": "person", "name": "Elisa", "mentions": 4, "chapters": 2 } ] }
+```
+As mais mencionadas vem primeiro (limite de 30).
 
 ### DELETE /api/v1/notebooks/{id}
 - Caderno de notas: exclui o caderno e move as notas para "Notas ao acaso" na

@@ -194,40 +194,78 @@ O seletor compacto da sidebar abre a biblioteca em dois grupos, "Cadernos"
 (Todos, o padrao e os demais, com contagem) e "Livros" (ponto de status e mini
 progresso quando ha meta). Depois de escolher, ele fecha e a coluna volta ao
 conteudo do caderno. Num livro, a lista de capitulos ocupa exatamente o lugar
-onde as notas ficariam; a area central mostra a casa do livro ou o capitulo
-aberto. Nao existe tela global de escrita: tudo vive dentro do caderno-livro.
+onde as notas ficariam, na mesma escala da lista de notas: titulo em 14,5 px,
+linha de metadados com "Capitulo N" e palavras, sinopse em duas linhas e ponto
+de status. Arrastar reordena; "+ Capitulo" fecha a lista. Nao existe tela global
+de escrita: tudo vive dentro do caderno-livro.
 
-**Casa do livro.** Capa solida na cor do caderno, titulo, subtitulo, autor,
-sinopse e chips (capitulos, partes, palavras, meta). Barra de progresso
-`palavras / meta`; sem meta, so o numero. "Continuar no capitulo N" abre o
-primeiro capitulo nao final. Acoes: Ler, Exportar, Configuracoes do livro.
-Estado vazio: "Nenhum capitulo" e "Comecar o primeiro capitulo".
+**Casa do livro.** Duas abas: "Capa" e "Estrutura". O formato padrao de um livro
+novo e Romance, 14 x 21 cm (o A4 fica para o manuscrito). A capa e uma ficha grande:
+capa solida a esquerda e, a direita, estado, ultima escrita, medida da folha,
+titulo, autor, sinopse, uma linha com capitulos, partes, palavras e paginas
+estimadas, alem da barra `palavras / meta` quando ha meta. Abaixo, "Ultimos 7
+dias" mostra o ritmo diario em barras e "Capitulos" mostra quantos estao em
+rascunho, revisao e final, com o total de beats. "Continuar no capitulo N" abre o
+primeiro capitulo nao final. A estrutura e uma grade de cartoes com numero,
+titulo, status, palavras, sinopse e beats; partes viram cartao largo divisor;
+arrastar reordena pela mesma rota da lista; "+ Capitulo" fecha a grade. Acoes:
+Ler, Exportar, Configuracoes do livro.
 
-**Lista de capitulos.** Agrupada por partes, arrastavel. Cada linha tem numero,
-titulo, ponto de status (rascunho vazio, revisao ambar, final verde), contagem de
-palavras e sinopse discreta. "+ Capitulo", "+ Parte", "+ Frontispicio" e
-"+ Posfacio".
+**Workspace.** O topo tem voltar, titulo do livro, estado de gravacao (ponto e
+palavra curta), palavras de hoje sobre a meta diaria, contagem do capitulo,
+setas de capitulo anterior/proximo, Foco e Painel. Abaixo, uma barra fixa e fina
+com Estilo (Corpo, Secao, Citacao), negrito, italico, link e separador de cena.
+O corpo e uma folha de verdade na medida do livro (padrao 14 x 21 cm, margem de
+19 mm, corpo de 18 px e entrelinha de 1,6), centralizada, com justificado,
+hifenizacao e recuo de primeira linha. Cada pagina e uma folha separada, com a
+margem do livro e um espaco de fundo entre uma e outra; o numero da pagina fica
+na margem da folha seguinte. A divisao e calculada pelas linhas realmente
+renderizadas e nao entra no texto: ela existe so como camada de editor. O mesmo
+texto, com a mesma fonte e as mesmas margens, vira o PDF, entao as folhas batem
+com a impressao. O topo mostra a contagem de paginas do capitulo. O titulo e a
+overline ficam dentro da primeira folha.
 
-**Workspace.** Colunas: lista de capitulos, editor e painel do capitulo. O topo
-tem voltar, titulo do livro, estado de gravacao, contagem, Foco e Painel. O corpo
-usa Newsreader 18 px, entrelinha 1.8, medida de 62-68 caracteres e recuo de
-primeira linha; o titulo em Newsreader 30 px e a overline em Inter 11 px. O
-painel traz status, meta, sinopse/outline e versoes. Foco esconde as colunas e
-Esc sai.
+A barra fixa e a caixa de ferramentas do escritor: desfazer, refazer, estilo do
+paragrafo (corpo, secao, subtitulo, citacao), negrito, italico, sublinhado,
+riscado, listas com marcadores e numerada, alinhamento, link para nota, imagem,
+audio e separador de cena. Selecionar texto abre a mesma barra flutuante das
+notas, com o seletor de tipo de bloco, estilos, link, cor e alinhamento. O menu
+"/" continua para imagem, audio e link; as alcas de bloco ficam desligadas.
+Foco esconde sidebar, gaveta e barra de formatacao; Esc sai.
+
+**Gaveta do capitulo.** Coluna de 340 px que passa por cima da folha, como o
+painel da nota: status, meta, sinopse, beats (um por linha, contados no cartao),
+anotacoes, referencias externas (link e rotulo, abertas em outra aba), "Aparece
+em" com as entidades que a analise ja encontrou nos capitulos e as versoes.
+Sem analise, a secao oferece "Analisar capitulo" e nao dispara nada sozinha.
+
+**Fluxo.** Ctrl+Enter cria um capitulo logo depois do atual; Ctrl+PageUp/Down
+navegam entre capitulos; Ctrl+S grava na hora. O rascunho offline continua por
+capitulo no IndexedDB (250 ms), com flush ao esconder a aba e reproducao ao
+voltar a rede. Conflito 409 abre a folha com as duas versoes e diff por palavra;
+"Manter o meu" grava sem versao base e "Usar o do servidor" guarda o texto local
+por sete dias. A fila nunca resolve conflito sozinha.
 
 **Imagens.** Preto e branco por padrao; o menu da imagem oferece "Cor original",
 que grava `c=1` no markdown. A leitura, o PDF e o DOCX respeitam a marca.
 
-**Offline e conflito.** Rascunho local por capitulo no IndexedDB (250 ms), com
-flush ao esconder a aba e reproducao ao voltar a rede. Conflito 409 no livro
-abre uma folha com as duas versoes e diff por palavra; "Manter o meu" grava sem
-versao base e "Usar o do servidor" guarda o texto local por sete dias. A fila
-nunca resolve conflito sozinha.
+**Capa.** Em "Configuracoes do livro", a secao Capa recebe uma foto; o quadro de
+encaixe tem a proporcao da folha e a imagem pode ser arrastada e ampliada. O
+canvas salva exatamente o que esta no quadro. A capa aparece na casa do livro e
+como primeira pagina da leitura e do PDF.
 
-**Leitura e exportacao.** A previa compila capitulos nao vazios com pagina de
-titulo, sumario, divisoria de parte, quebra por capitulo e contador de paginas.
-O PDF usa a impressao do navegador; o DOCX sai com presets Manuscrito (A4) e
-Livro (6 x 9 pol); o Markdown mantem o corpo e os separadores.
+**Leitura e exportacao.** A previa compila capitulos nao vazios na folha do
+livro, com capa, pagina de titulo, sumario, divisoria de parte e quebra por
+capitulo; o rotulo conta "Capitulo X de Y" (a paginacao real fica no PDF). A
+folha da previa tem tamanho fixo na proporcao do livro, o fundo e escuro e a
+barra de paginas fica fora da folha, presa; a leitura nao rola a folha junto com
+o menu. O PDF usa a
+impressao do navegador com a fonte escolhida do livro, medida, margem, corpo e
+entrelinha do editor, entao as linhas e as quebras batem com as guias da folha.
+A capa entra numa pagina propria sem margem, antes da pagina de titulo.
+O DOCX sai com a medida e as margens do livro, usando o nome da fonte escolhida;
+o Word cai para a reserva dele quando a fonte nao esta instalada. O Markdown
+mantem o corpo e os separadores.
 
 ## Comportamento reativo
 
