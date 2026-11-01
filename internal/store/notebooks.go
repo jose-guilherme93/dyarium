@@ -64,7 +64,13 @@ const notebookSelect = `
 	SELECT n.id, n.name, COALESCE(n.color, ''), n.is_default,
 		COALESCE(n.kind, 'notes'), COALESCE(n.subtitle, ''), COALESCE(n.author, ''),
 		COALESCE(n.synopsis, ''), COALESCE(n.language, ''), COALESCE(n.goal_words, 0),
-		COALESCE(n.book_status, 'drafting'), n.created_at, n.updated_at,
+		COALESCE(n.book_status, 'drafting'), COALESCE(n.page_size, '6x9'),
+		COALESCE(n.page_margin_mm, 19), COALESCE(n.body_px, 18),
+		COALESCE(n.body_leading, 160), COALESCE(n.body_font, 'newsreader'),
+		COALESCE(n.daily_goal_words, 0), COALESCE(n.deadline, ''),
+		n.created_at, n.updated_at,
+		(SELECT MAX(c.updated_at) FROM book_covers c WHERE c.notebook_id = n.id),
+		(SELECT COUNT(*) FROM book_covers c WHERE c.notebook_id = n.id),
 		(SELECT COUNT(*) FROM entries e
 		 WHERE e.notebook_id = n.id AND e.deleted_at IS NULL
 		   AND (e.archived = 0 OR n.kind = 'book')),
@@ -77,10 +83,14 @@ func (s *Store) scanNotebook(scanner interface{ Scan(...any) error }) (Notebook,
 	var n Notebook
 	var isDefault int
 	var createdAt, updatedAt string
-	var lastEntryAt sql.NullString
+	var lastEntryAt, coverUpdatedAt sql.NullString
+	var covers int
 	if err := scanner.Scan(&n.ID, &n.Name, &n.Color, &isDefault, &n.Kind,
 		&n.Subtitle, &n.Author, &n.Synopsis, &n.Language, &n.GoalWords, &n.BookStatus,
-		&createdAt, &updatedAt, &n.EntryCount, &lastEntryAt); err != nil {
+		&n.PageSize, &n.PageMarginMM, &n.BodyPX, &n.BodyLeading, &n.BodyFont,
+		&n.DailyGoalWords, &n.Deadline,
+		&createdAt, &updatedAt, &coverUpdatedAt, &covers,
+		&n.EntryCount, &lastEntryAt); err != nil {
 		return Notebook{}, err
 	}
 	n.IsDefault = isDefault != 0
@@ -89,6 +99,11 @@ func (s *Store) scanNotebook(scanner interface{ Scan(...any) error }) (Notebook,
 	if lastEntryAt.Valid {
 		t := parseTS(lastEntryAt.String)
 		n.LastEntryAt = &t
+	}
+	n.HasCover = covers > 0
+	if coverUpdatedAt.Valid {
+		t := parseTS(coverUpdatedAt.String)
+		n.CoverUpdatedAt = &t
 	}
 	if n.IsBook() {
 		n.ChapterCount = n.EntryCount
@@ -158,16 +173,19 @@ func (s *Store) CreateNotebook(ctx context.Context, n Notebook) error {
 	if n.GoalWords < 0 {
 		return fmt.Errorf("store: create notebook: meta negativa")
 	}
+	n.normalizePage()
 	if err := s.notebookNameTaken(ctx, name, ""); err != nil {
 		return err
 	}
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO notebooks (id, name, color, is_default, kind, subtitle, author,
-			synopsis, language, goal_words, book_status, created_at, updated_at)
-		VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			synopsis, language, goal_words, book_status, page_size, page_margin_mm,
+			body_px, body_leading, body_font, daily_goal_words, deadline, created_at, updated_at)
+		VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		n.ID, name, strings.TrimSpace(n.Color), kind, strings.TrimSpace(n.Subtitle),
 		strings.TrimSpace(n.Author), strings.TrimSpace(n.Synopsis), strings.TrimSpace(n.Language),
-		n.GoalWords, status, ts(n.CreatedAt), ts(n.UpdatedAt))
+		n.GoalWords, status, n.PageSize, n.PageMarginMM, n.BodyPX, n.BodyLeading, n.BodyFont,
+		n.DailyGoalWords, n.Deadline, ts(n.CreatedAt), ts(n.UpdatedAt))
 	if err != nil {
 		return fmt.Errorf("store: create notebook: %w", err)
 	}
@@ -213,14 +231,48 @@ func (s *Store) UpdateNotebook(ctx context.Context, id string, name, color *stri
 	return s.GetNotebook(ctx, id)
 }
 
-// BookMeta is the writable metadata of a book.
+// normalizePage fills the page geometry, font and rhythm with the safe defaults
+// when the caller did not send one.
+func (n *Notebook) normalizePage() {
+	n.PageSize = strings.TrimSpace(n.PageSize)
+	if !ValidPageSize(n.PageSize) {
+		n.PageSize = Page14x21
+	}
+	n.BodyFont = strings.TrimSpace(n.BodyFont)
+	if !ValidBookFont(n.BodyFont) {
+		n.BodyFont = FontNewsreader
+	}
+	if n.PageMarginMM <= 0 {
+		n.PageMarginMM = 19
+	}
+	if n.BodyPX <= 0 {
+		n.BodyPX = 18
+	}
+	if n.BodyLeading <= 0 {
+		n.BodyLeading = 160
+	}
+	if n.DailyGoalWords < 0 {
+		n.DailyGoalWords = 0
+	}
+	n.Deadline = strings.TrimSpace(n.Deadline)
+}
+
+// BookMeta is the writable metadata of a book, including the page geometry the
+// writer sheet uses and the writing rhythm.
 type BookMeta struct {
-	Subtitle   string
-	Author     string
-	Synopsis   string
-	Language   string
-	GoalWords  int
-	BookStatus string
+	Subtitle       string
+	Author         string
+	Synopsis       string
+	Language       string
+	GoalWords      int
+	BookStatus     string
+	PageSize       string
+	PageMarginMM   int
+	BodyPX         int
+	BodyLeading    int
+	BodyFont       string
+	DailyGoalWords int
+	Deadline       string
 }
 
 // UpdateBookMeta writes the book metadata. Only a book accepts it.
@@ -242,13 +294,31 @@ func (s *Store) UpdateBookMeta(ctx context.Context, id string, meta BookMeta) (N
 	if !ValidBookStatus(status) {
 		return Notebook{}, fmt.Errorf("store: update book: status invalido %q", status)
 	}
+	next := current
+	next.Subtitle = strings.TrimSpace(meta.Subtitle)
+	next.Author = strings.TrimSpace(meta.Author)
+	next.Synopsis = strings.TrimSpace(meta.Synopsis)
+	next.Language = strings.TrimSpace(meta.Language)
+	next.GoalWords = meta.GoalWords
+	next.BookStatus = status
+	next.PageSize = meta.PageSize
+	next.PageMarginMM = meta.PageMarginMM
+	next.BodyPX = meta.BodyPX
+	next.BodyLeading = meta.BodyLeading
+	next.BodyFont = meta.BodyFont
+	next.DailyGoalWords = meta.DailyGoalWords
+	next.Deadline = meta.Deadline
+	next.normalizePage()
 	_, err = s.db.ExecContext(ctx, `
 		UPDATE notebooks SET subtitle = ?, author = ?, synopsis = ?, language = ?,
-			goal_words = ?, book_status = ?, updated_at = ?
+			goal_words = ?, book_status = ?, page_size = ?, page_margin_mm = ?,
+			body_px = ?, body_leading = ?, body_font = ?, daily_goal_words = ?, deadline = ?,
+			updated_at = ?
 		WHERE id = ?`,
-		strings.TrimSpace(meta.Subtitle), strings.TrimSpace(meta.Author),
-		strings.TrimSpace(meta.Synopsis), strings.TrimSpace(meta.Language),
-		meta.GoalWords, status, ts(time.Now().UTC()), id)
+		next.Subtitle, next.Author, next.Synopsis, next.Language, next.GoalWords,
+		next.BookStatus, next.PageSize, next.PageMarginMM, next.BodyPX,
+		next.BodyLeading, next.BodyFont, next.DailyGoalWords, next.Deadline,
+		ts(time.Now().UTC()), id)
 	if err != nil {
 		return Notebook{}, fmt.Errorf("store: update book: %w", err)
 	}
@@ -310,7 +380,7 @@ func (s *Store) SetNotebookKind(ctx context.Context, id, kind string, confirmCon
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE entries SET chapter_kind = '', chapter_position = NULL,
 				chapter_status = '', chapter_goal_words = 0, chapter_synopsis = '',
-				updated_at = ?
+				chapter_beats = '', chapter_notes = '', updated_at = ?
 			WHERE notebook_id = ?`, now, id); err != nil {
 			return Notebook{}, fmt.Errorf("store: convert book: %w", err)
 		}
@@ -382,7 +452,8 @@ func (s *Store) DeleteBook(ctx context.Context, id, confirmName string) error {
 	// restritiva impede remover o livro enquanto sobrar qualquer referencia.
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE entries SET notebook_id = ?, chapter_kind = '', chapter_position = NULL,
-			chapter_status = '', chapter_goal_words = 0, chapter_synopsis = ''
+			chapter_status = '', chapter_goal_words = 0, chapter_synopsis = '',
+			chapter_beats = '', chapter_notes = ''
 		WHERE notebook_id = ? AND deleted_at IS NOT NULL`, DefaultNotebookID, id); err != nil {
 		return fmt.Errorf("store: delete book: %w", err)
 	}
@@ -412,7 +483,8 @@ func (s *Store) DeleteBook(ctx context.Context, id, confirmName string) error {
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE entries SET deleted_at = ?, status = ?, notebook_id = ?,
 				chapter_kind = '', chapter_position = NULL, chapter_status = '',
-				chapter_goal_words = 0, chapter_synopsis = '', updated_at = ?
+				chapter_goal_words = 0, chapter_synopsis = '', chapter_beats = '', chapter_notes = '',
+				updated_at = ?
 			WHERE id = ? AND deleted_at IS NULL`,
 			stamp, EntryDeleted, DefaultNotebookID, stamp, entryID); err != nil {
 			return fmt.Errorf("store: trash book chapter: %w", err)

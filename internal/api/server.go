@@ -166,6 +166,11 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("PATCH /api/v1/notebooks/{id}", s.handleUpdateNotebook)
 	protected.HandleFunc("DELETE /api/v1/notebooks/{id}", s.handleDeleteNotebook)
 	protected.HandleFunc("PUT /api/v1/notebooks/{id}/chapters/order", s.handleReorderChapters)
+	protected.HandleFunc("GET /api/v1/notebooks/{id}/writing", s.handleGetWriting)
+	protected.HandleFunc("GET /api/v1/notebooks/{id}/cover", s.handleGetBookCover)
+	protected.HandleFunc("PUT /api/v1/notebooks/{id}/cover", s.handlePutBookCover)
+	protected.HandleFunc("DELETE /api/v1/notebooks/{id}/cover", s.handleDeleteBookCover)
+	protected.HandleFunc("GET /api/v1/notebooks/{id}/entities", s.handleBookEntities)
 
 	protected.HandleFunc("GET /api/v1/settings", s.handleGetSettings)
 	protected.HandleFunc("PUT /api/v1/settings", s.handlePutSettings)

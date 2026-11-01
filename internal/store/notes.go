@@ -142,6 +142,13 @@ func (s *Store) CreateNote(ctx context.Context, n Note) error {
 		`UPDATE entries SET updated_at = ? WHERE id = ?`, ts(n.UpdatedAt), n.EntryID); err != nil {
 		return fmt.Errorf("store: touch entry after note: %w", err)
 	}
+	// O primeiro corpo de um capitulo tambem e escrita do dia. Sem isto, o
+	// texto que chega do rascunho offline nunca entra no ritmo do livro.
+	if notebookID, isBook, err := bookOfEntry(ctx, tx, n.EntryID); err == nil && isBook {
+		if err := recordWritingDelta(ctx, tx, notebookID, wordCount(n.ContentMarkdown)); err != nil {
+			return err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("store: create note: %w", err)
 	}
@@ -248,10 +255,20 @@ func (s *Store) UpdateNoteBody(ctx context.Context, id, markdown, readVersion st
 	}
 	// A edicao do corpo e atividade recente da entrada: sem tocar em updated_at,
 	// a nota editada no dashboard nao subia na ordem de "recentes" do app.
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE entries SET updated_at = ? WHERE id = (SELECT entry_id FROM notes WHERE id = ?)`,
-		ts(time.Now()), id); err != nil {
+	var entryID string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT entry_id FROM notes WHERE id = ?`, id).Scan(&entryID); err != nil {
 		return "", false, fmt.Errorf("store: touch entry after note body: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE entries SET updated_at = ? WHERE id = ?`, ts(time.Now()), entryID); err != nil {
+		return "", false, fmt.Errorf("store: touch entry after note body: %w", err)
+	}
+	// Ritmo do livro: a diferenca liquida de palavras desta gravacao entra no dia.
+	if notebookID, isBook, err := bookOfEntry(ctx, tx, entryID); err == nil && isBook {
+		if err := recordWritingDelta(ctx, tx, notebookID, wordCount(markdown)-wordCount(current)); err != nil {
+			return "", false, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return "", false, fmt.Errorf("store: update note body: %w", err)

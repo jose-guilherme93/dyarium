@@ -170,6 +170,10 @@ type Entry struct {
 	ChapterStatus    string
 	ChapterGoalWords int
 	ChapterSynopsis  string
+	// ChapterBeats is the chapter plan: one beat per line, outside the prose.
+	ChapterBeats string
+	// ChapterNotes is the chapter research: free text, outside the prose.
+	ChapterNotes string
 	// WordCount is the prose word count, filled only when the caller asks for it
 	// (the book list and the book home).
 	WordCount int
@@ -389,27 +393,47 @@ func ValidChapterStatus(status string) bool {
 // Notebook is a collection of entries. Every entry belongs to exactly one.
 // A notebook with Kind "book" is a book and its entries are chapters.
 type Notebook struct {
-	ID           string
-	Name         string
-	Color        string
-	IsDefault    bool
-	Kind         string
-	Subtitle     string
-	Author       string
-	Synopsis     string
-	Language     string
-	GoalWords    int
-	BookStatus   string
-	EntryCount   int
-	ChapterCount int
-	Words        int
-	LastEntryAt  *time.Time
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID         string
+	Name       string
+	Color      string
+	IsDefault  bool
+	Kind       string
+	Subtitle   string
+	Author     string
+	Synopsis   string
+	Language   string
+	GoalWords  int
+	BookStatus string
+	// Page geometry of the book: the editor sheet, the reading preview, the
+	// PDF and the DOCX all use the same measure.
+	PageSize       string
+	PageMarginMM   int
+	BodyPX         int
+	BodyLeading    int
+	BodyFont       string
+	DailyGoalWords int
+	Deadline       string
+	HasCover       bool
+	CoverUpdatedAt *time.Time
+	EntryCount     int
+	ChapterCount   int
+	Words          int
+	LastEntryAt    *time.Time
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 // IsBook reports whether the notebook is a book.
 func (n Notebook) IsBook() bool { return n.Kind == NotebookKindBook }
+
+// BookCover is the cropped cover image of a book. One per notebook; the list of
+// notebooks only carries whether it exists and when it changed.
+type BookCover struct {
+	NotebookID  string
+	ContentType string
+	Image       []byte
+	UpdatedAt   time.Time
+}
 
 // Tag is a label that can be attached to entries.
 type Tag struct {

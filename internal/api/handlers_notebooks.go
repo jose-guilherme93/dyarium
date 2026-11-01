@@ -36,23 +36,68 @@ func validColor(raw string) bool {
 	return true
 }
 
+// validBookPage accepts the zero value as "use the safe default" and rejects a
+// page outside the contract. The ranges are wide enough for a real book page
+// and narrow enough to keep a typo from breaking the sheet.
+func validBookPage(size string, margin, body, leading int) bool {
+	if trimmed := strings.TrimSpace(size); trimmed != "" && !store.ValidPageSize(trimmed) {
+		return false
+	}
+	if margin != 0 && (margin < 10 || margin > 60) {
+		return false
+	}
+	if body != 0 && (body < 12 || body > 26) {
+		return false
+	}
+	if leading != 0 && (leading < 100 || leading > 220) {
+		return false
+	}
+	return true
+}
+
+// validBookFont accepts an empty value (use the default) or a self-hosted book
+// face. The list is the same used by the editor and the PDF.
+func validBookFont(raw string) bool {
+	value := strings.TrimSpace(raw)
+	return value == "" || store.ValidBookFont(value)
+}
+
+// validDeadline accepts an empty date (no deadline) or a calendar day.
+func validDeadline(raw string) bool {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return true
+	}
+	_, err := time.Parse("2006-01-02", value)
+	return err == nil
+}
+
 func notebookJSON(n store.Notebook) map[string]any {
 	body := map[string]any{
-		"id":            n.ID,
-		"name":          n.Name,
-		"color":         n.Color,
-		"is_default":    n.IsDefault,
-		"kind":          n.Kind,
-		"subtitle":      n.Subtitle,
-		"author":        n.Author,
-		"synopsis":      n.Synopsis,
-		"language":      n.Language,
-		"goal_words":    n.GoalWords,
-		"book_status":   n.BookStatus,
-		"entry_count":   n.EntryCount,
-		"chapter_count": n.ChapterCount,
-		"created_at":    n.CreatedAt,
-		"updated_at":    n.UpdatedAt,
+		"id":               n.ID,
+		"name":             n.Name,
+		"color":            n.Color,
+		"is_default":       n.IsDefault,
+		"kind":             n.Kind,
+		"subtitle":         n.Subtitle,
+		"author":           n.Author,
+		"synopsis":         n.Synopsis,
+		"language":         n.Language,
+		"goal_words":       n.GoalWords,
+		"book_status":      n.BookStatus,
+		"page_size":        n.PageSize,
+		"page_margin_mm":   n.PageMarginMM,
+		"body_px":          n.BodyPX,
+		"body_leading":     n.BodyLeading,
+		"body_font":        n.BodyFont,
+		"daily_goal_words": n.DailyGoalWords,
+		"deadline":         n.Deadline,
+		"has_cover":        n.HasCover,
+		"cover_updated_at": n.CoverUpdatedAt,
+		"entry_count":      n.EntryCount,
+		"chapter_count":    n.ChapterCount,
+		"created_at":       n.CreatedAt,
+		"updated_at":       n.UpdatedAt,
 	}
 	if n.LastEntryAt != nil {
 		body["last_entry_at"] = n.LastEntryAt
@@ -103,6 +148,14 @@ type notebookRequest struct {
 	Language   string `json:"language"`
 	GoalWords  int    `json:"goal_words"`
 	BookStatus string `json:"book_status"`
+	// Pagina e ritmo do livro. Vazio segue o padrao seguro do modo escritor.
+	PageSize       string `json:"page_size"`
+	PageMarginMM   int    `json:"page_margin_mm"`
+	BodyPX         int    `json:"body_px"`
+	BodyLeading    int    `json:"body_leading"`
+	BodyFont       string `json:"body_font"`
+	DailyGoalWords int    `json:"daily_goal_words"`
+	Deadline       string `json:"deadline"`
 }
 
 func (s *Server) handleCreateNotebook(w http.ResponseWriter, r *http.Request) {
@@ -144,6 +197,22 @@ func (s *Server) handleCreateNotebook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_goal", "meta invalida")
 		return
 	}
+	if !validBookPage(req.PageSize, req.PageMarginMM, req.BodyPX, req.BodyLeading) {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_page", "pagina invalida")
+		return
+	}
+	if !validBookFont(req.BodyFont) {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_font", "fonte invalida")
+		return
+	}
+	if req.DailyGoalWords < 0 {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_goal", "meta diaria invalida")
+		return
+	}
+	if !validDeadline(req.Deadline) {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_deadline", "prazo invalido")
+		return
+	}
 	notebookID := strings.TrimSpace(req.ID)
 	if notebookID != "" {
 		if !id.Valid(notebookID) {
@@ -160,18 +229,25 @@ func (s *Server) handleCreateNotebook(w http.ResponseWriter, r *http.Request) {
 		notebookID = id.New()
 	}
 	notebook := store.Notebook{
-		ID:         notebookID,
-		Name:       name,
-		Color:      strings.TrimSpace(req.Color),
-		Kind:       kind,
-		Subtitle:   strings.TrimSpace(req.Subtitle),
-		Author:     strings.TrimSpace(req.Author),
-		Synopsis:   strings.TrimSpace(req.Synopsis),
-		Language:   strings.TrimSpace(req.Language),
-		GoalWords:  req.GoalWords,
-		BookStatus: bookStatus,
-		CreatedAt:  now,
-		UpdatedAt:  now,
+		ID:             notebookID,
+		Name:           name,
+		Color:          strings.TrimSpace(req.Color),
+		Kind:           kind,
+		Subtitle:       strings.TrimSpace(req.Subtitle),
+		Author:         strings.TrimSpace(req.Author),
+		Synopsis:       strings.TrimSpace(req.Synopsis),
+		Language:       strings.TrimSpace(req.Language),
+		GoalWords:      req.GoalWords,
+		BookStatus:     bookStatus,
+		PageSize:       strings.TrimSpace(req.PageSize),
+		PageMarginMM:   req.PageMarginMM,
+		BodyPX:         req.BodyPX,
+		BodyLeading:    req.BodyLeading,
+		BodyFont:       strings.TrimSpace(req.BodyFont),
+		DailyGoalWords: req.DailyGoalWords,
+		Deadline:       strings.TrimSpace(req.Deadline),
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 	if err := s.deps.Store.CreateNotebook(r.Context(), notebook); err != nil {
 		if errors.Is(err, store.ErrNotebookExists) {
@@ -205,6 +281,13 @@ func (s *Server) handleUpdateNotebook(w http.ResponseWriter, r *http.Request) {
 		Language       *string `json:"language"`
 		GoalWords      *int    `json:"goal_words"`
 		BookStatus     *string `json:"book_status"`
+		PageSize       *string `json:"page_size"`
+		PageMarginMM   *int    `json:"page_margin_mm"`
+		BodyPX         *int    `json:"body_px"`
+		BodyLeading    *int    `json:"body_leading"`
+		BodyFont       *string `json:"body_font"`
+		DailyGoalWords *int    `json:"daily_goal_words"`
+		Deadline       *string `json:"deadline"`
 		ConfirmConvert bool    `json:"confirm_convert"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
@@ -212,7 +295,10 @@ func (s *Server) handleUpdateNotebook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	hasMeta := req.Subtitle != nil || req.Author != nil || req.Synopsis != nil ||
-		req.Language != nil || req.GoalWords != nil || req.BookStatus != nil
+		req.Language != nil || req.GoalWords != nil || req.BookStatus != nil ||
+		req.PageSize != nil || req.PageMarginMM != nil || req.BodyPX != nil ||
+		req.BodyLeading != nil || req.BodyFont != nil || req.DailyGoalWords != nil ||
+		req.Deadline != nil
 	if req.Name == nil && req.Color == nil && req.Kind == nil && !hasMeta {
 		writeError(w, http.StatusBadRequest, "empty_patch", "nada para atualizar")
 		return
@@ -242,6 +328,34 @@ func (s *Server) handleUpdateNotebook(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.GoalWords != nil && *req.GoalWords < 0 {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_goal", "meta invalida")
+		return
+	}
+	if req.PageSize != nil && !store.ValidPageSize(*req.PageSize) {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_page", "tamanho de pagina invalido")
+		return
+	}
+	if req.PageMarginMM != nil && (*req.PageMarginMM < 10 || *req.PageMarginMM > 60) {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_page", "margem invalida")
+		return
+	}
+	if req.BodyPX != nil && (*req.BodyPX < 12 || *req.BodyPX > 26) {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_page", "corpo invalido")
+		return
+	}
+	if req.BodyLeading != nil && (*req.BodyLeading < 100 || *req.BodyLeading > 220) {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_page", "entrelinha invalida")
+		return
+	}
+	if req.BodyFont != nil && !validBookFont(*req.BodyFont) {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_font", "fonte invalida")
+		return
+	}
+	if req.DailyGoalWords != nil && *req.DailyGoalWords < 0 {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_goal", "meta diaria invalida")
+		return
+	}
+	if req.Deadline != nil && !validDeadline(*req.Deadline) {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_deadline", "prazo invalido")
 		return
 	}
 
@@ -277,12 +391,19 @@ func (s *Server) handleUpdateNotebook(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		meta := store.BookMeta{
-			Subtitle:   notebook.Subtitle,
-			Author:     notebook.Author,
-			Synopsis:   notebook.Synopsis,
-			Language:   notebook.Language,
-			GoalWords:  notebook.GoalWords,
-			BookStatus: notebook.BookStatus,
+			Subtitle:       notebook.Subtitle,
+			Author:         notebook.Author,
+			Synopsis:       notebook.Synopsis,
+			Language:       notebook.Language,
+			GoalWords:      notebook.GoalWords,
+			BookStatus:     notebook.BookStatus,
+			PageSize:       notebook.PageSize,
+			PageMarginMM:   notebook.PageMarginMM,
+			BodyPX:         notebook.BodyPX,
+			BodyLeading:    notebook.BodyLeading,
+			BodyFont:       notebook.BodyFont,
+			DailyGoalWords: notebook.DailyGoalWords,
+			Deadline:       notebook.Deadline,
 		}
 		if req.Subtitle != nil {
 			meta.Subtitle = *req.Subtitle
@@ -301,6 +422,27 @@ func (s *Server) handleUpdateNotebook(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.BookStatus != nil {
 			meta.BookStatus = *req.BookStatus
+		}
+		if req.PageSize != nil {
+			meta.PageSize = strings.TrimSpace(*req.PageSize)
+		}
+		if req.PageMarginMM != nil {
+			meta.PageMarginMM = *req.PageMarginMM
+		}
+		if req.BodyPX != nil {
+			meta.BodyPX = *req.BodyPX
+		}
+		if req.BodyLeading != nil {
+			meta.BodyLeading = *req.BodyLeading
+		}
+		if req.BodyFont != nil {
+			meta.BodyFont = strings.TrimSpace(*req.BodyFont)
+		}
+		if req.DailyGoalWords != nil {
+			meta.DailyGoalWords = *req.DailyGoalWords
+		}
+		if req.Deadline != nil {
+			meta.Deadline = strings.TrimSpace(*req.Deadline)
 		}
 		notebook, err = s.deps.Store.UpdateBookMeta(ctx, notebookID, meta)
 		if err != nil {

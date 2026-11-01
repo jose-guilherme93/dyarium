@@ -72,6 +72,8 @@ func entryJSON(e store.Entry) map[string]any {
 		"chapter_status":     e.ChapterStatus,
 		"chapter_goal_words": e.ChapterGoalWords,
 		"chapter_synopsis":   e.ChapterSynopsis,
+		"chapter_beats":      e.ChapterBeats,
+		"chapter_notes":      e.ChapterNotes,
 	}
 	if e.ChapterPosition != nil {
 		body["chapter_position"] = *e.ChapterPosition
@@ -450,6 +452,8 @@ type patchEntryRequest struct {
 	ChapterStatus    *string `json:"chapter_status"`
 	ChapterGoalWords *int    `json:"chapter_goal_words"`
 	ChapterSynopsis  *string `json:"chapter_synopsis"`
+	ChapterBeats     *string `json:"chapter_beats"`
+	ChapterNotes     *string `json:"chapter_notes"`
 	// Versions are the versions of title/recorded_at the client last read.
 	// Fields whose version moved on are not written; they come back as a
 	// conflict so the user decides instead of the last write winning blindly.
@@ -475,7 +479,8 @@ func (s *Server) handlePatchEntry(w http.ResponseWriter, r *http.Request) {
 			recordedAt = &t
 		}
 	}
-	hasChapterMeta := req.ChapterStatus != nil || req.ChapterGoalWords != nil || req.ChapterSynopsis != nil
+	hasChapterMeta := req.ChapterStatus != nil || req.ChapterGoalWords != nil ||
+		req.ChapterSynopsis != nil || req.ChapterBeats != nil || req.ChapterNotes != nil
 	if req.Title == nil && recordedAt == nil && req.NotebookID == nil && req.Archived == nil &&
 		req.Author == nil && req.ChapterKind == nil && !hasChapterMeta {
 		writeError(w, http.StatusBadRequest, "empty_patch", "nada para atualizar")
@@ -542,7 +547,7 @@ func (s *Server) handlePatchEntry(w http.ResponseWriter, r *http.Request) {
 	}
 	if hasChapterMeta {
 		if err := s.deps.Store.UpdateChapterMeta(r.Context(), id,
-			req.ChapterStatus, req.ChapterGoalWords, req.ChapterSynopsis); err != nil {
+			req.ChapterStatus, req.ChapterGoalWords, req.ChapterSynopsis, req.ChapterBeats, req.ChapterNotes); err != nil {
 			if errors.Is(err, store.ErrNotABook) {
 				writeError(w, http.StatusUnprocessableEntity, "not_a_book", "caderno nao e um livro")
 				return

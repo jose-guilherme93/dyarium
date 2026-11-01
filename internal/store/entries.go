@@ -167,12 +167,14 @@ func (s *Store) CreateEntry(ctx context.Context, e Entry) error {
 		INSERT INTO entries (id, title, status, source, parent_id, notebook_id, original_filename, content_type,
 			size_bytes, duration_seconds, sha256, recorded_at, created_at, updated_at, deleted_at,
 			title_updated_at, recorded_at_updated_at, author, origin_instance, origin_kind,
-			chapter_kind, chapter_position, chapter_status, chapter_goal_words, chapter_synopsis)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			chapter_kind, chapter_position, chapter_status, chapter_goal_words, chapter_synopsis, chapter_beats,
+			chapter_notes)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.ID, e.Title, e.Status, e.Source, nullString(e.ParentID), notebookID, e.OriginalFilename, e.ContentType,
 		e.SizeBytes, e.DurationSeconds, e.SHA256, nullTS(e.RecordedAt), ts(e.CreatedAt), ts(e.UpdatedAt),
 		nullTS(e.DeletedAt), stamp, stamp, e.Author, originInstance, originKind,
-		e.ChapterKind, nullFloat(e.ChapterPosition), e.ChapterStatus, e.ChapterGoalWords, e.ChapterSynopsis); err != nil {
+		e.ChapterKind, nullFloat(e.ChapterPosition), e.ChapterStatus, e.ChapterGoalWords, e.ChapterSynopsis,
+		e.ChapterBeats, e.ChapterNotes); err != nil {
 		return fmt.Errorf("store: create entry: %w", err)
 	}
 	// Recriar uma nota com o mesmo id depois de uma exclusao antiga e a forma
@@ -206,13 +208,15 @@ func (s *Store) GetEntry(ctx context.Context, id string) (Entry, error) {
 			COALESCE((SELECT t.created_at FROM transcripts t WHERE t.entry_id = entries.id
 				ORDER BY t.created_at DESC LIMIT 1), ''),
 			COALESCE(chapter_kind, ''), chapter_position, COALESCE(chapter_status, ''),
-			COALESCE(chapter_goal_words, 0), COALESCE(chapter_synopsis, '')
+			COALESCE(chapter_goal_words, 0), COALESCE(chapter_synopsis, ''),
+			COALESCE(chapter_beats, ''), COALESCE(chapter_notes, '')
 		FROM entries WHERE id = ? AND deleted_at IS NULL`, AttachmentOriginal, id).Scan(
 		&e.ID, &e.Title, &e.Status, &e.Source, &e.ParentID, &e.NotebookID, &e.OriginalFilename, &e.ContentType,
 		&e.SizeBytes, &e.DurationSeconds, &e.SHA256, &recordedAt, &createdAt, &updatedAt, &deletedAt, &archived,
 		&titleVersion, &recordedVersion, &e.Author, &e.OriginInstance, &e.OriginKind,
 		&bodyVersion, &e.PrimaryAttachmentID, &e.AnalysisAt, &e.TranscriptAt,
-		&e.ChapterKind, &chapterPosition, &e.ChapterStatus, &e.ChapterGoalWords, &e.ChapterSynopsis)
+		&e.ChapterKind, &chapterPosition, &e.ChapterStatus, &e.ChapterGoalWords, &e.ChapterSynopsis,
+		&e.ChapterBeats, &e.ChapterNotes)
 	if err != nil {
 		return Entry{}, err
 	}
@@ -344,7 +348,8 @@ func (s *Store) ListEntriesFilteredScope(ctx context.Context, limit, offset int,
 			COALESCE((SELECT t.created_at FROM transcripts t WHERE t.entry_id = e.id
 				ORDER BY t.created_at DESC LIMIT 1), ''),
 			COALESCE(e.chapter_kind, ''), e.chapter_position, COALESCE(e.chapter_status, ''),
-			COALESCE(e.chapter_goal_words, 0), COALESCE(e.chapter_synopsis, '')
+			COALESCE(e.chapter_goal_words, 0), COALESCE(e.chapter_synopsis, ''),
+			COALESCE(e.chapter_beats, ''), COALESCE(e.chapter_notes, '')
 		FROM entries e WHERE e.deleted_at IS NULL`
 	args := []any{AttachmentOriginal}
 	if notebookID = strings.TrimSpace(notebookID); notebookID != "" {
@@ -392,7 +397,7 @@ func (s *Store) ListEntriesFilteredScope(ctx context.Context, limit, offset int,
 			&archived, &e.Author, &e.OriginInstance, &e.OriginKind, &titleVersion, &recordedVersion,
 			&bodyVersion, &e.PrimaryAttachmentID, &e.Preview, &e.SpokenPreview, &e.AnalysisAt,
 			&e.TranscriptAt, &e.ChapterKind, &chapterPosition, &e.ChapterStatus,
-			&e.ChapterGoalWords, &e.ChapterSynopsis); err != nil {
+			&e.ChapterGoalWords, &e.ChapterSynopsis, &e.ChapterBeats, &e.ChapterNotes); err != nil {
 			return nil, fmt.Errorf("store: scan entry: %w", err)
 		}
 		if chapterPosition.Valid {

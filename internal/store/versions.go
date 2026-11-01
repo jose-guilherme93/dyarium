@@ -201,7 +201,7 @@ func (s *Store) UpdateEntryFields(ctx context.Context, id string, title *string,
 			if _, err := tx.ExecContext(ctx, `
 				UPDATE entries SET notebook_id = ?, chapter_kind = '',
 					chapter_position = NULL, chapter_status = '', chapter_goal_words = 0,
-					chapter_synopsis = '', updated_at = ?
+					chapter_synopsis = '', chapter_beats = '', chapter_notes = '', updated_at = ?
 				WHERE id = ?`, nextNotebook, updatedAt, id); err != nil {
 				return nil, nil, fmt.Errorf("store: update notebook: %w", err)
 			}

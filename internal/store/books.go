@@ -10,6 +10,56 @@ import (
 	"time"
 )
 
+// Page sizes accepted by the writer. The editor sheet, the reading preview,
+// the PDF and the DOCX export share the same list.
+const (
+	PageA4    = "a4"
+	Page6x9   = "6x9"
+	Page5x8   = "5x8"
+	PageA5    = "a5"
+	Page14x21 = "14x21"
+	Page11x18 = "11x18"
+)
+
+// ValidPageSize reports whether the size is one of the four book measures.
+func ValidPageSize(size string) bool {
+	switch strings.TrimSpace(size) {
+	case PageA4, Page6x9, Page5x8, PageA5, Page14x21, Page11x18:
+		return true
+	default:
+		return false
+	}
+}
+
+// Book fonts accepted by the writer. They are auto-hosted in the dashboard so
+// the editor and the PDF use the same file; the DOCX can only refer to the name.
+const (
+	FontNewsreader       = "newsreader"
+	FontEBGaramond       = "eb-garamond"
+	FontLibreBaskerville = "libre-baskerville"
+	FontLibreCaslon      = "libre-caslon-text"
+	FontTinos            = "tinos"
+	FontGelasio          = "gelasio"
+	FontLiterata         = "literata"
+	FontCrimson          = "crimson-pro"
+)
+
+var bookFonts = []string{
+	FontNewsreader, FontEBGaramond, FontLibreBaskerville, FontLibreCaslon,
+	FontTinos, FontGelasio, FontLiterata, FontCrimson,
+}
+
+// ValidBookFont reports whether the font is one of the self-hosted book faces.
+func ValidBookFont(font string) bool {
+	value := strings.TrimSpace(font)
+	for _, item := range bookFonts {
+		if value == item {
+			return true
+		}
+	}
+	return false
+}
+
 // ChapterOrder is one row of an atomic chapter reorder. The client sends the
 // whole live list, because dragging a chapter changes the position of many.
 type ChapterOrder struct {
@@ -149,7 +199,7 @@ func (s *Store) SetEntryChapterKind(ctx context.Context, entryID, kind string) e
 }
 
 // UpdateChapterMeta writes the optional chapter fields shown in the panel.
-func (s *Store) UpdateChapterMeta(ctx context.Context, entryID string, status *string, goalWords *int, synopsis *string) error {
+func (s *Store) UpdateChapterMeta(ctx context.Context, entryID string, status *string, goalWords *int, synopsis *string, beats *string, notes *string) error {
 	entry, err := s.GetEntry(ctx, entryID)
 	if err != nil {
 		return err
@@ -182,11 +232,19 @@ func (s *Store) UpdateChapterMeta(ctx context.Context, entryID string, status *s
 	if synopsis != nil {
 		nextSynopsis = strings.TrimSpace(*synopsis)
 	}
+	nextBeats := entry.ChapterBeats
+	if beats != nil {
+		nextBeats = strings.TrimSpace(*beats)
+	}
+	nextNotes := entry.ChapterNotes
+	if notes != nil {
+		nextNotes = strings.TrimSpace(*notes)
+	}
 	_, err = s.db.ExecContext(ctx, `
 		UPDATE entries SET chapter_status = ?, chapter_goal_words = ?,
-			chapter_synopsis = ?, updated_at = ?
+			chapter_synopsis = ?, chapter_beats = ?, chapter_notes = ?, updated_at = ?
 		WHERE id = ?`,
-		nextStatus, nextGoal, nextSynopsis, ts(time.Now().UTC()), entryID)
+		nextStatus, nextGoal, nextSynopsis, nextBeats, nextNotes, ts(time.Now().UTC()), entryID)
 	if err != nil {
 		return fmt.Errorf("store: update chapter meta: %w", err)
 	}
@@ -206,7 +264,7 @@ func (s *Store) NormalizeEntryNotebook(ctx context.Context, entryID, targetNoteb
 		_, err := s.db.ExecContext(ctx, `
 			UPDATE entries SET notebook_id = ?, chapter_kind = '', chapter_position = NULL,
 				chapter_status = '', chapter_goal_words = 0, chapter_synopsis = '',
-				updated_at = ?
+				chapter_beats = '', chapter_notes = '', updated_at = ?
 			WHERE id = ?`, target.ID, ts(time.Now().UTC()), entryID)
 		if err != nil {
 			return fmt.Errorf("store: move entry to notes: %w", err)
