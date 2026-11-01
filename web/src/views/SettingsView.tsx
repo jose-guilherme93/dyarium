@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, getToken } from "../api";
+import { BrowserProcessing } from "../components/BrowserProcessing";
 import { ChevronIcon } from "../components/icons";
 import { ListSkeleton } from "../components/Skeleton";
 import { Toggle } from "../components/Toggle";
@@ -751,6 +752,7 @@ export function SettingsView({ refreshKey = 0, onBack }: { refreshKey?: number; 
                 use Personalizado para informar a base manualmente.
               </p>
             </div>
+            <BrowserProcessing embedded />
             <div className="field">
               <span className="field-label">Ativar análise</span>
               <Toggle

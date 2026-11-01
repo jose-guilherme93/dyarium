@@ -455,17 +455,16 @@ como hoje.
 - **Privacidade**: os modelos rodam no PC; a VPS nao processa esses jobs e so recebe
   texto, JSON e metadados. O audio continua sendo decifrado no servidor para o
   streaming autenticado, exatamente como no player. Nao ha chamada a API de IA.
-- **Ativacao**: o interruptor **neste PC** fica no painel da nota, ao lado de
-  **Analisar** (a unica acao de analise), e tambem no topo do `/lab`. Primeiro o usuario
-  escolhe o perfil em **Modelos**; ligar mede o hardware, baixa os dois modelos do perfil
-  e deixa o worker pronto. Ligar nao enfileira nem reserva nada: sem um clique em
-  **Analisar**, o PC fica ocioso e a VPS segue a fila. **Ligado, o worker continua ligado
-  ate o usuario desligar**; nao existe parada automatica depois de uma nota. O perfil
+- **Ativacao**: o controle de **processar neste PC** fica em **Configuracoes > Analise por
+  IA**, depois de **Transcricao**; o laboratorio (`/lab`) mantem o diagnostico completo.
+  Primeiro o usuario escolhe o perfil; ligar mede o hardware, baixa os dois modelos do
+  perfil e deixa o worker pronto. Ligar nao enfileira nem reserva nada: sem um clique em
+  **Analisar** na nota, o PC fica ocioso e a VPS segue a fila. **Ligado, o worker continua
+  ligado ate o usuario desligar**; nao existe parada automatica depois de uma nota. O perfil
   escolhido volta ao abrir a tela e e o mesmo que o botao da nota usa; trocar de perfil
   com o worker ligado reinicia o motor e baixa o novo modelo. A ficha da analise mostra
-  o modelo local que leu a nota, para nao confundir a escolha com o que rodou.
-  Analisar pede a nota aberta (claim restrito aquela entrada) e substitui a analise
-  existente. A seta ao lado abre `/lab`, e **Voltar** devolve a nota.
+  o modelo local que leu a nota, para nao confundir a escolha com o que rodou. Analisar
+  pede a nota aberta (claim restrito aquela entrada) e substitui a analise existente.
 - **Andamento**: cada bloco lido publica o documento parcial na ficha da nota, com os
   chips entrando em cascata; o medidor, o tempo e o tok/s continuam no topo. O sino de
   notificacoes fica azul com um ponto pulsando e a central lista a nota, a etapa e o

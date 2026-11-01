@@ -980,7 +980,6 @@ export function App() {
                   }}
                   onOpenEntry={(id) => setOpenEntryId(id)}
                   notebooks={notebooks}
-                  onOpenLab={() => openView("lab")}
                 />
               ) : (
                 <div className="empty-editor">

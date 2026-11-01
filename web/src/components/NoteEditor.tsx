@@ -15,7 +15,6 @@ import type { Analysis, Attachment, Audio, AuthorRole, EntityKind, Entry, Note, 
 import { Spinner, isBusy, statusLabel } from "./Status";
 import { TagEditor } from "./TagEditor";
 import { ListSkeleton } from "./Skeleton";
-import { ProcessOnPc } from "./ProcessOnPc";
 import { AnalysisStatus } from "./AnalysisStatus";
 import { InsightsBody } from "./InsightsBody";
 import {
@@ -34,7 +33,6 @@ import { useToast } from "./Toasts";
 import {
   ArchiveIcon,
   CheckIcon,
-  ChevronIcon,
   CloseIcon,
   CodeIcon,
   ImageIcon,
@@ -56,7 +54,6 @@ interface NoteEditorProps {
   onOpenEntry: (id: string) => void;
   notebooks: Notebook[];
   /** Abre o processamento (laboratorio) e deixa Voltar trazer a nota de volta. */
-  onOpenLab?: () => void;
 }
 
 const FONTS = [
@@ -239,7 +236,6 @@ export function NoteEditor({
   onOpenEntity,
   onOpenEntry,
   notebooks,
-  onOpenLab,
 }: NoteEditorProps) {
   const { notify } = useToast();
   const [entry, setEntry] = useState<Entry | null>(null);
@@ -1288,7 +1284,6 @@ export function NoteEditor({
                 ) : null}
               </div>
               <div className="aside-insights-actions">
-                <ProcessOnPc hasAnalysis={analysis !== null} />
                 <button
                   type="button"
                   className="primary small"
@@ -1307,17 +1302,6 @@ export function NoteEditor({
                   )}{" "}
                   Analisar
                 </button>
-                {onOpenLab && (
-                  <button
-                    type="button"
-                    className="icon-button aside-lab-link"
-                    onClick={onOpenLab}
-                    aria-label="Abrir processamento"
-                    title="Processamento neste PC"
-                  >
-                    <ChevronIcon size={15} />
-                  </button>
-                )}
               </div>
             </div>
             {failureReason && !processing && !analysis ? (
