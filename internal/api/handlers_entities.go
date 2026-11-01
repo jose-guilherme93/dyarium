@@ -56,10 +56,11 @@ func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
 		owner = "Você"
 	}
 	data, err := s.deps.Store.Graph(ctx, store.GraphOptions{
-		NotebookID: notebookID,
-		From:       parseDateParam(query.Get("from"), false),
-		To:         parseDateParam(query.Get("to"), true),
-		Focus:      query.Get("focus"),
+		NotebookID:   notebookID,
+		ExcludeBooks: truthy(query.Get("exclude_books")),
+		From:         parseDateParam(query.Get("from"), false),
+		To:           parseDateParam(query.Get("to"), true),
+		Focus:        query.Get("focus"),
 	})
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", "entidade inexistente")
@@ -321,7 +322,8 @@ func (s *Server) handleMood(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	from := parseDateParam(query.Get("from"), false)
 	to := parseDateParam(query.Get("to"), true)
-	points, err := s.deps.Store.MoodSeries(r.Context(), from, to)
+	points, err := s.deps.Store.MoodSeriesExcludingBooks(r.Context(), from, to,
+		truthy(query.Get("exclude_books")))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return

@@ -229,6 +229,12 @@ func (s *Store) EntityAliases(ctx context.Context, entityID string) ([]string, e
 // MoodSeries returns the daily average sentiment, optionally bounded by from
 // and to (zero values mean unbounded).
 func (s *Store) MoodSeries(ctx context.Context, from, to time.Time) ([]MoodPoint, error) {
+	return s.MoodSeriesExcludingBooks(ctx, from, to, false)
+}
+
+// MoodSeriesExcludingBooks is MoodSeries with the diary scope. ExcludeBooks
+// keeps chapters out of the humor timeline, which belongs to the diary.
+func (s *Store) MoodSeriesExcludingBooks(ctx context.Context, from, to time.Time, excludeBooks bool) ([]MoodPoint, error) {
 	query := `
 		SELECT substr(COALESCE(e.recorded_at, e.created_at), 1, 10) AS day,
 			COALESCE(AVG(a.sentiment), 0), COUNT(DISTINCT a.entry_id)
@@ -236,6 +242,9 @@ func (s *Store) MoodSeries(ctx context.Context, from, to time.Time) ([]MoodPoint
 		JOIN entries e ON e.id = a.entry_id AND e.deleted_at IS NULL
 		WHERE 1 = 1`
 	var args []any
+	if excludeBooks {
+		query += ` AND e.notebook_id NOT IN (SELECT nb.id FROM notebooks nb WHERE nb.kind = 'book')`
+	}
 	if !from.IsZero() {
 		query += ` AND COALESCE(e.recorded_at, e.created_at) >= ?`
 		args = append(args, ts(from))

@@ -550,6 +550,36 @@ do topo, sem marcador). A remocao leva a transcricao, os segmentos e a revisao
 junto, e recalcula a duracao da entrada. Sem essa separacao, um audio removido do
 corpo reaparecia na pilha do dashboard sem nenhuma forma de apagar.
 
+## Modo escritor: livro = caderno, capitulo = entry
+
+Um livro e um caderno com `kind = 'book'`; um capitulo e uma `Entry` com corpo
+em markdown. Nao existe tabela de capitulos nem segunda entidade de conteudo: o
+capitulo herda editor, autosave, versoes, lixeira, anexos, busca, sync e espelho
+do app. A estrutura e plana (`chapter`, `part`, `front`, `back`) e uma parte e um
+divisor na mesma lista, nao uma arvore.
+
+A interface do livro so existe quando o caderno ativo e um livro. Fora dele, o
+diario continua igual: "Todos os cadernos", Mapa, humor e Estatisticas usam
+`exclude_books=1` no servidor. O app movel esconde livros no v1, mas continua
+baixando o espelho para o futuro.
+
+Decisoes de seguranca e integridade:
+
+- ativar o modo escritor exige caderno sem nota viva; um caderno cheio oferece
+  mover as notas para "Notas ao acaso", nunca apaga;
+- desativar com capitulos exige conversao confirmada, que mantem os textos como
+  notas e descarta apenas a estrutura;
+- excluir um livro exige o titulo exato e manda os capitulos para a Lixeira com
+  tombstones na mesma transacao, em vez de despeja-los no caderno padrao;
+- o caderno padrao nunca vira livro;
+- capitulo nao usa `archived`; o livro organiza por `chapter_status`.
+
+Exportacao roda no navegador (DOCX com `fflate`, PDF pela impressao do
+navegador, Markdown/TXT), sem renderizacao no servidor: a VPS e pequena e um
+livro grande nao pode competir por RAM com o processamento. Imagens sao preto e
+branco por padrao; `c=1` no markdown e a excecao de cor, respeitada no editor,
+na leitura, no PDF e no DOCX.
+
 ## Decisoes e justificativas
 
 - SQLite em WAL: um arquivo unico, transacoes ACID, leitura concorrente. Adequado a um

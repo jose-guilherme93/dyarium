@@ -185,6 +185,11 @@ aprende que a nota foi apagada e nao a ressuscita.
   markdown vira texto, imagens, marcadores de audio e escapes somem e a frase nao
   e cortada no meio de uma palavra. E so para desenhar a lista; o corpo continua
   em `notes`.
+- Em um livro, cada entrada traz `chapter_kind` (`chapter`, `part`, `front` ou
+  `back`), `chapter_position`, `chapter_status` (`draft`, `revising`, `done`),
+  `chapter_goal_words` e `chapter_synopsis`. Com `include_words=1` (ou ao listar
+  um livro), traz tambem `word_count`. Em caderno de notas, os campos de capitulo
+  vem vazios.
 
 ## Markdown como formato da nota
 
@@ -277,13 +282,20 @@ Resposta 200: `{ "status": "ok", "versions": { "title": "...", "recorded_at": ".
   padrao da instancia). Como `archived`, e a ultima gravacao que vence, sem versao.
   Valor desconhecido responde 400 `invalid_author`.
 - 400 quando o corpo nao traz nenhum campo.
+- Em um livro, `archived` responde 422 `not_a_book_entry`: o livro usa
+  `chapter_status`, nao a lixeira de trabalho do diario. Mover a nota para um
+  livro limpa o arquivamento e atribui a posicao no fim; mover para um caderno
+  de notas limpa `chapter_kind` e `chapter_position`.
+- `chapter_kind` (so em livro) troca o tipo do capitulo; `chapter_status`,
+  `chapter_goal_words` e `chapter_synopsis` alimentam o painel do capitulo. Fora
+  de um livro, `chapter_kind` responde 422 `not_a_book`.
 - Nao altera o audio.
 
 ### POST /api/v1/entries
 Cria uma nota escrita (sem audio). Corpo:
 ```json
 { "title": "...", "id": "note_...", "created_at": "...", "recorded_at": "...",
-  "notebook_id": "...", "author": "other" }
+  "notebook_id": "...", "author": "other", "chapter_kind": "chapter" }
 ```
 A entrada nasce com `source: "text"` e `status: "ready"`; o corpo **nao** vai
 aqui: ele e gravado como nota em markdown por `POST /api/v1/entries/{id}/notes`,
@@ -297,6 +309,9 @@ nasce em "Notas ao acaso".
   **na lixeira**, desfaz a remocao e devolve 200 (trazer a nota de volta sem duplicar); senao cria
   com 201.
 - `created_at` (RFC 3339) posiciona a nota na linha do tempo quando ela nasceu offline.
+- Em um livro, `chapter_kind` e opcional (padrao `chapter`); a posicao e
+  `max(position) + 1024`, o status nasce `draft` e `archived` fica 0. Mandar
+  `chapter_kind` em caderno de notas responde 422 `not_a_book`.
 
 ## Sincronizacao entre ambientes
 
@@ -331,6 +346,10 @@ Manifesto compacto para reconciliacao. Parametros: `kind` (`entries`, `deleted` 
       "attachment_ids": ["at_..."],
       "transcript_at": "...",
       "analysis_at": "...",
+      "chapter_kind": "",
+      "chapter_status": "",
+      "chapter_goal_words": 0,
+      "chapter_synopsis": "",
       "tags": ["..."]
     }
   ],
@@ -1150,29 +1169,81 @@ Cada nota pertence a exatamente um caderno. O caderno padrao `notas-ao-acaso`
 ("Notas ao acaso") e criado pela migracao 0017, nao pode ser renomeado nem
 excluido, e recebe as notas de cadernos excluidos.
 
+Um caderno com `kind: "book"` e um livro: suas entradas sao capitulos e o
+dashboard abre o modo escritor. O modelo e o mesmo da nota (uma `Entry` com
+corpo em markdown); nao existe segunda entidade de conteudo. O caderno padrao
+nunca pode ser livro.
+
 ### GET /api/v1/notebooks
 Lista cadernos em ordem de criacao, com o padrao no fim:
 ```json
-{ "notebooks": [ { "id": "...", "name": "Trabalho", "color": "#C7D8F2",
-  "is_default": false, "entry_count": 12, "last_entry_at": "...",
-  "created_at": "...", "updated_at": "..." } ] }
+{ "notebooks": [ { "id": "nb_...", "name": "O nome do vento", "color": "#C7D8F2",
+  "is_default": false, "kind": "book", "subtitle": "Volume I", "author": "Ana",
+  "synopsis": "...", "language": "pt-BR", "goal_words": 90000,
+  "book_status": "drafting", "chapter_count": 12, "words": 48320,
+  "entry_count": 12, "created_at": "...", "updated_at": "..." } ] }
 ```
-`entry_count` e `last_entry_at` consideram apenas notas ativas (nao arquivadas,
-nao apagadas); `last_entry_at` usa `recorded_at` (a data real da nota).
+- `kind` e `notes` ou `book`; cadernos antigos ficam `notes`.
+- `book_status` e `drafting`, `revising` ou `done`.
+- `entry_count` e `last_entry_at` consideram apenas notas ativas (nao arquivadas,
+  nao apagadas); `last_entry_at` usa `recorded_at` (a data real da nota). Em um
+  livro, `entry_count` conta os capitulos vivos.
+- `chapter_count` e `words` so aparecem em livros. `words` e a soma da prosa dos
+  capitulos, calculada no servidor com a mesma conversao da previa; so e
+  devolvida com `include_words=1` (o dashboard pede). Fora isso, zero/ausente.
 
 ### POST /api/v1/notebooks
-Cria um caderno (`{ "name": "...", "color": "...", "id": "nb_..." }`).
+Cria um caderno ou um livro:
+```json
+{ "id": "nb_opcional", "name": "...", "color": "#C7D8F2", "kind": "book",
+  "subtitle": "Volume I", "author": "Ana", "synopsis": "...",
+  "language": "pt-BR", "goal_words": 90000, "book_status": "drafting" }
+```
 - `id` e opcional: o app cria offline e preserva o mesmo id nos dois lados. Se o
   id ja existir, responde 200 com o caderno existente (idempotente).
-- Nome vazio: 400 `invalid_name`; nome duplicado (case-insensitive): 409 `conflict`.
+- Um livro nasce vazio, entao a regra de ativacao vale por construcao.
+- Nome vazio: 400 `invalid_name`; nome duplicado (case-insensitive): 409
+  `conflict`; `kind` ou `book_status` invalidos: 422.
 
 ### PATCH /api/v1/notebooks/{id}
-Renomeia e/ou recolore (`{ "name": "...", "color": "..." }`). O padrao responde
-409 `protected`; nome duplicado responde 409 `conflict`.
+Aceita `name`, `color`, `kind` e os metadados do livro (`subtitle`, `author`,
+`synopsis`, `language`, `goal_words`, `book_status`) com `confirm_convert`.
+
+- `kind: "book"` em caderno com entry viva (ativa **ou** arquivada) responde 409
+  `notebook_not_empty` com `{ "entry_count": N }`. Nota so na lixeira nao bloqueia.
+- `kind: "notes"` em livro com capitulos responde 409 `book_has_chapters` com
+  `{ "chapter_count": N }`, a menos que venha `confirm_convert: true`. A conversao
+  mantem os textos como notas e limpa `chapter_kind`, `chapter_position` e os
+  metadados do livro na mesma transacao.
+- Metadados em caderno que nao e livro respondem 422 `not_a_book`.
+- O padrao responde 409 `protected`; nome duplicado 409 `conflict`.
+
+### PUT /api/v1/notebooks/{id}/chapters/order
+Reordena a lista plana e reescreve o tipo/status de cada capitulo:
+```json
+{ "chapters": [
+  { "entry_id": "e1", "chapter_kind": "part", "chapter_status": "draft", "position": 1024 },
+  { "entry_id": "e2", "chapter_kind": "chapter", "chapter_status": "revising", "position": 2048 }
+] }
+```
+A lista precisa conter todos os capitulos vivos do livro (o cliente arrasta a
+lista inteira). A gravacao e uma transacao. Erros: 422 `not_a_book`,
+`chapter_not_in_book` (id de outro livro, apagado ou lista incompleta) e
+`invalid_chapter` (kind/status fora da whitelist ou posicao nao finita).
 
 ### DELETE /api/v1/notebooks/{id}
-Exclui o caderno e move as notas para "Notas ao acaso" na mesma transacao.
-204; 409 `protected` para o padrao; 404 se nao existir.
+- Caderno de notas: exclui o caderno e move as notas para "Notas ao acaso" na
+  mesma transacao. 204; 409 `protected` para o padrao; 404 se nao existir.
+- Livro: exige `?mode=trash&confirm=<titulo exato>`. Sem isso, 409
+  `confirm_required`. Com a confirmacao, os capitulos vivos vao para a Lixeira
+  (com tombstones) e o caderno e removido na mesma transacao. Nada e despejado
+  no caderno padrao.
+
+### Escopo do diario
+`GET /entries`, `GET /graph` e `GET /mood` aceitam `exclude_books=1`, que deixa
+capitulos de livros fora do diario, do mapa e do humor. O dashboard usa o filtro
+em "Todos os cadernos", Mapa, humor e Estatisticas. Sem o parametro, o
+comportamento antigo (inclui livros) e preservado para clientes antigos.
 
 ## Tags
 

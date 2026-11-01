@@ -82,7 +82,7 @@ func TestCompletePreservesEntryCreatedAtAndSource(t *testing.T) {
 	}
 
 	newTitle := "titulo editado"
-	if _, conflict, err := st.UpdateEntryFields(ctx, result.Entry.ID, &newTitle, nil, nil, nil, nil, "", ""); err != nil {
+	if _, conflict, err := st.UpdateEntryFields(ctx, result.Entry.ID, &newTitle, nil, nil, nil, nil, nil, "", ""); err != nil {
 		t.Fatalf("update: %v", err)
 	} else if len(conflict) > 0 {
 		t.Fatalf("update conflict: %v", conflict)

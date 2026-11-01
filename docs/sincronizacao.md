@@ -96,6 +96,14 @@ aditiva (campo/endpoint novo) nao sobe o major; mudanca de semantica sobe.
   transcricao sao buscados pelos endpoints normais quando o hash/versao difere.
 - `GET /api/v1/entries` e `GET /api/v1/entries?deleted=1` continuam valendo; o
   manifesto e a forma compacta e estavel.
+- `kind=notebooks` inclui `kind` (`notes`/`book`) e os metadados do livro. Nao ha
+  tipo novo de manifesto; cliente antigo ignora os campos desconhecidos.
+- `kind=entries` inclui `chapter_kind` e `chapter_position` (e o status/sinopse
+  do capitulo). O app movel guarda o espelho dos livros mesmo sem mostra-los no
+  v1, para o futuro.
+- Excluir um livro grava o tombstone do caderno e o de cada capitulo. O app
+  reconcilia como qualquer nota apagada; converter um livro em caderno limpa os
+  campos de capitulo e o proximo pull entrega notas comuns.
 - `<id>` e `<instance_id>` sao opacos. URL nao e identidade.
 
 ### Erros

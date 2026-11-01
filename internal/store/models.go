@@ -162,6 +162,17 @@ type Entry struct {
 	// list query. When the body has no prose (an app note whose body is just the
 	// audio marker), the list shows the transcript instead.
 	SpokenPreview string
+	// Chapter fields. A chapter is an entry inside a book notebook; an empty
+	// ChapterKind means the entry is a regular note. ChapterPosition orders the
+	// flat chapter list and is never used by a notes notebook.
+	ChapterKind      string
+	ChapterPosition  *float64
+	ChapterStatus    string
+	ChapterGoalWords int
+	ChapterSynopsis  string
+	// WordCount is the prose word count, filled only when the caller asks for it
+	// (the book list and the book home).
+	WordCount int
 
 	// Versoes dos campos editaveis, como o cliente leu (so preenchidas nas
 	// leituras que as trazem). Sao os valores **exatos** gravados no banco: o
@@ -310,17 +321,95 @@ type NoteRevision struct {
 	CreatedAt time.Time
 }
 
-// Notebook is a collection of entries. Every entry belongs to exactly one.
-type Notebook struct {
-	ID          string
-	Name        string
-	Color       string
-	IsDefault   bool
-	EntryCount  int
-	LastEntryAt *time.Time
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+// Notebook kinds. A notebook is either a regular collection of notes or a
+// book: its entries are chapters and the dashboard opens the writer workspace.
+const (
+	NotebookKindNotes = "notes"
+	NotebookKindBook  = "book"
+)
+
+// Book statuses.
+const (
+	BookDrafting = "drafting"
+	BookRevising = "revising"
+	BookDone     = "done"
+)
+
+// Chapter kinds. A book keeps a flat list; a part is a divider in the same list.
+const (
+	ChapterKindChapter = "chapter"
+	ChapterKindPart    = "part"
+	ChapterKindFront   = "front"
+	ChapterKindBack    = "back"
+)
+
+// Chapter statuses. Empty means "not a chapter"; the book interface maps the
+// three values to draft, revising and done marks.
+const (
+	ChapterDraft    = "draft"
+	ChapterRevising = "revising"
+	ChapterDone     = "done"
+)
+
+// ValidNotebookKind reports whether kind is a known notebook kind.
+func ValidNotebookKind(kind string) bool {
+	return kind == NotebookKindNotes || kind == NotebookKindBook
 }
+
+// ValidBookStatus reports whether status is a known book status.
+func ValidBookStatus(status string) bool {
+	switch status {
+	case BookDrafting, BookRevising, BookDone:
+		return true
+	default:
+		return false
+	}
+}
+
+// ValidChapterKind reports whether kind is a chapter kind a book accepts.
+func ValidChapterKind(kind string) bool {
+	switch kind {
+	case ChapterKindChapter, ChapterKindPart, ChapterKindFront, ChapterKindBack:
+		return true
+	default:
+		return false
+	}
+}
+
+// ValidChapterStatus reports whether status is a known chapter status.
+func ValidChapterStatus(status string) bool {
+	switch status {
+	case "", ChapterDraft, ChapterRevising, ChapterDone:
+		return true
+	default:
+		return false
+	}
+}
+
+// Notebook is a collection of entries. Every entry belongs to exactly one.
+// A notebook with Kind "book" is a book and its entries are chapters.
+type Notebook struct {
+	ID           string
+	Name         string
+	Color        string
+	IsDefault    bool
+	Kind         string
+	Subtitle     string
+	Author       string
+	Synopsis     string
+	Language     string
+	GoalWords    int
+	BookStatus   string
+	EntryCount   int
+	ChapterCount int
+	Words        int
+	LastEntryAt  *time.Time
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+// IsBook reports whether the notebook is a book.
+func (n Notebook) IsBook() bool { return n.Kind == NotebookKindBook }
 
 // Tag is a label that can be attached to entries.
 type Tag struct {

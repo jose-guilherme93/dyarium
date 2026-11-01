@@ -67,6 +67,17 @@ func entryJSON(e store.Entry) map[string]any {
 		// ambiente que recebe a nota continua podendo edita-la.
 		"origin_instance": e.OriginInstance,
 		"origin_kind":     e.OriginKind,
+		// Estrutura do livro. Vazia numa nota comum.
+		"chapter_kind":       e.ChapterKind,
+		"chapter_status":     e.ChapterStatus,
+		"chapter_goal_words": e.ChapterGoalWords,
+		"chapter_synopsis":   e.ChapterSynopsis,
+	}
+	if e.ChapterPosition != nil {
+		body["chapter_position"] = *e.ChapterPosition
+	}
+	if e.WordCount > 0 {
+		body["word_count"] = e.WordCount
 	}
 	if e.DeletedAt != nil {
 		body["deleted_at"] = e.DeletedAt
@@ -160,8 +171,11 @@ func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	notebookID := strings.TrimSpace(query.Get("notebook_id"))
+	isBook := false
 	if notebookID != "" {
-		if err := s.deps.Store.NotebookExists(r.Context(), notebookID); err != nil {
+		var err error
+		isBook, err = s.deps.Store.NotebookIsBook(r.Context(), notebookID)
+		if err != nil {
 			if errors.Is(err, store.ErrNotebookNotFound) {
 				writeError(w, http.StatusNotFound, "notebook_not_found", "caderno inexistente")
 				return
@@ -170,11 +184,17 @@ func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	entries, err := s.deps.Store.ListEntriesFilteredNotebook(r.Context(), limit, cursor,
-		query.Get("person"), query.Get("place"), query.Get("theme"), archiveFilter(query), notebookID)
+	entries, err := s.deps.Store.ListEntriesFilteredScope(r.Context(), limit, cursor,
+		query.Get("person"), query.Get("place"), query.Get("theme"), archiveFilter(query),
+		notebookID, truthy(query.Get("exclude_books")))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
+	}
+	if isBook || truthy(query.Get("include_words")) {
+		for i := range entries {
+			entries[i].WordCount = len(strings.Fields(preview.Plain(entries[i].Preview)))
+		}
 	}
 	ids := make([]string, 0, len(entries))
 	for _, e := range entries {
@@ -247,6 +267,9 @@ func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 		// Author is the explicit role of the note (self/other/mixed). Empty
 		// means "follow the app default".
 		Author string `json:"author"`
+		// ChapterKind is accepted only when the notebook is a book. Empty
+		// becomes "chapter": a new chapter is the common case.
+		ChapterKind string `json:"chapter_kind"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_body", "corpo invalido")
@@ -261,12 +284,26 @@ func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 	if notebookID == "" {
 		notebookID = store.DefaultNotebookID
 	}
-	if err := s.deps.Store.NotebookExists(r.Context(), notebookID); err != nil {
+	book, err := s.deps.Store.NotebookIsBook(r.Context(), notebookID)
+	if err != nil {
 		if errors.Is(err, store.ErrNotebookNotFound) {
 			writeError(w, http.StatusUnprocessableEntity, "invalid_notebook", "caderno inexistente")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	chapterKind := strings.TrimSpace(req.ChapterKind)
+	if book {
+		if chapterKind == "" {
+			chapterKind = store.ChapterKindChapter
+		}
+		if !store.ValidChapterKind(chapterKind) {
+			writeError(w, http.StatusUnprocessableEntity, "invalid_chapter", "chapter_kind invalido")
+			return
+		}
+	} else if chapterKind != "" {
+		writeError(w, http.StatusUnprocessableEntity, "not_a_book", "caderno nao e um livro")
 		return
 	}
 	parentID := strings.TrimSpace(req.ParentID)
@@ -315,6 +352,16 @@ func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 		Author:         author,
 		OriginInstance: origin.Instance,
 		OriginKind:     origin.Kind,
+		ChapterKind:    chapterKind,
+	}
+	if book {
+		position, err := s.deps.Store.NextChapterPosition(r.Context(), notebookID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			return
+		}
+		entry.ChapterPosition = &position
+		entry.ChapterStatus = store.ChapterDraft
 	}
 	if clientID := strings.TrimSpace(req.ID); clientID != "" {
 		if !id.Valid(clientID) {
@@ -398,6 +445,11 @@ type patchEntryRequest struct {
 	// Author troca o papel da nota (self/other/mixed). Vazio volta ao padrao do
 	// app. Como os outros interruptores, a ultima gravacao vence.
 	Author *string `json:"author"`
+	// Estrutura e painel do capitulo. So valem dentro de um livro.
+	ChapterKind      *string `json:"chapter_kind"`
+	ChapterStatus    *string `json:"chapter_status"`
+	ChapterGoalWords *int    `json:"chapter_goal_words"`
+	ChapterSynopsis  *string `json:"chapter_synopsis"`
 	// Versions are the versions of title/recorded_at the client last read.
 	// Fields whose version moved on are not written; they come back as a
 	// conflict so the user decides instead of the last write winning blindly.
@@ -423,7 +475,9 @@ func (s *Server) handlePatchEntry(w http.ResponseWriter, r *http.Request) {
 			recordedAt = &t
 		}
 	}
-	if req.Title == nil && recordedAt == nil && req.NotebookID == nil && req.Archived == nil && req.Author == nil {
+	hasChapterMeta := req.ChapterStatus != nil || req.ChapterGoalWords != nil || req.ChapterSynopsis != nil
+	if req.Title == nil && recordedAt == nil && req.NotebookID == nil && req.Archived == nil &&
+		req.Author == nil && req.ChapterKind == nil && !hasChapterMeta {
 		writeError(w, http.StatusBadRequest, "empty_patch", "nada para atualizar")
 		return
 	}
@@ -435,8 +489,21 @@ func (s *Server) handlePatchEntry(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_notebook", "caderno obrigatorio")
 		return
 	}
+	if req.ChapterKind != nil && !store.ValidChapterKind(strings.TrimSpace(*req.ChapterKind)) {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_chapter", "chapter_kind invalido")
+		return
+	}
+	if req.ChapterStatus != nil && !store.ValidChapterStatus(strings.TrimSpace(*req.ChapterStatus)) {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_chapter", "chapter_status invalido")
+		return
+	}
+	if req.ChapterGoalWords != nil && *req.ChapterGoalWords < 0 {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_chapter", "meta invalida")
+		return
+	}
 	versions, conflict, err := s.deps.Store.UpdateEntryFields(r.Context(), id, req.Title, recordedAt,
-		req.NotebookID, req.Archived, req.Author, req.Versions.Title, req.Versions.RecordedAt)
+		req.NotebookID, req.Archived, req.Author, req.ChapterKind,
+		req.Versions.Title, req.Versions.RecordedAt)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", "entrada inexistente")
 		return
@@ -447,6 +514,18 @@ func (s *Server) handlePatchEntry(w http.ResponseWriter, r *http.Request) {
 	}
 	if errors.Is(err, store.ErrNotebookNotFound) {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_notebook", "caderno inexistente")
+		return
+	}
+	if errors.Is(err, store.ErrNotABook) {
+		writeError(w, http.StatusUnprocessableEntity, "not_a_book", "caderno nao e um livro")
+		return
+	}
+	if errors.Is(err, store.ErrNotABookEntry) {
+		writeError(w, http.StatusUnprocessableEntity, "not_a_book_entry", "capitulo nao pode ser arquivado")
+		return
+	}
+	if errors.Is(err, store.ErrInvalidChapter) {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_chapter", "capitulo invalido")
 		return
 	}
 	if err != nil {
@@ -460,6 +539,21 @@ func (s *Server) handlePatchEntry(w http.ResponseWriter, r *http.Request) {
 			"versions": versions,
 		})
 		return
+	}
+	if hasChapterMeta {
+		if err := s.deps.Store.UpdateChapterMeta(r.Context(), id,
+			req.ChapterStatus, req.ChapterGoalWords, req.ChapterSynopsis); err != nil {
+			if errors.Is(err, store.ErrNotABook) {
+				writeError(w, http.StatusUnprocessableEntity, "not_a_book", "caderno nao e um livro")
+				return
+			}
+			if errors.Is(err, store.ErrInvalidChapter) {
+				writeError(w, http.StatusUnprocessableEntity, "invalid_chapter", "capitulo invalido")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "versions": versions})
 }

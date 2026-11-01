@@ -158,6 +158,13 @@ func manifestEntry(e store.Entry, tags, attachmentIDs []string) map[string]any {
 		"analysis_at":           e.AnalysisAt,
 		"origin_instance":       e.OriginInstance,
 		"origin_kind":           e.OriginKind,
+		"chapter_kind":          e.ChapterKind,
+		"chapter_status":        e.ChapterStatus,
+		"chapter_goal_words":    e.ChapterGoalWords,
+		"chapter_synopsis":      e.ChapterSynopsis,
+	}
+	if e.ChapterPosition != nil {
+		item["chapter_position"] = *e.ChapterPosition
 	}
 	if len(tags) > 0 {
 		item["tags"] = tags

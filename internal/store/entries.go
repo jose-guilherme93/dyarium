@@ -166,11 +166,13 @@ func (s *Store) CreateEntry(ctx context.Context, e Entry) error {
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO entries (id, title, status, source, parent_id, notebook_id, original_filename, content_type,
 			size_bytes, duration_seconds, sha256, recorded_at, created_at, updated_at, deleted_at,
-			title_updated_at, recorded_at_updated_at, author, origin_instance, origin_kind)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			title_updated_at, recorded_at_updated_at, author, origin_instance, origin_kind,
+			chapter_kind, chapter_position, chapter_status, chapter_goal_words, chapter_synopsis)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.ID, e.Title, e.Status, e.Source, nullString(e.ParentID), notebookID, e.OriginalFilename, e.ContentType,
 		e.SizeBytes, e.DurationSeconds, e.SHA256, nullTS(e.RecordedAt), ts(e.CreatedAt), ts(e.UpdatedAt),
-		nullTS(e.DeletedAt), stamp, stamp, e.Author, originInstance, originKind); err != nil {
+		nullTS(e.DeletedAt), stamp, stamp, e.Author, originInstance, originKind,
+		e.ChapterKind, nullFloat(e.ChapterPosition), e.ChapterStatus, e.ChapterGoalWords, e.ChapterSynopsis); err != nil {
 		return fmt.Errorf("store: create entry: %w", err)
 	}
 	// Recriar uma nota com o mesmo id depois de uma exclusao antiga e a forma
@@ -187,6 +189,7 @@ func (s *Store) CreateEntry(ctx context.Context, e Entry) error {
 func (s *Store) GetEntry(ctx context.Context, id string) (Entry, error) {
 	var e Entry
 	var recordedAt, deletedAt, titleVersion, recordedVersion, bodyVersion sql.NullString
+	var chapterPosition sql.NullFloat64
 	var archived int
 	var createdAt, updatedAt string
 	err := s.db.QueryRowContext(ctx, `
@@ -201,14 +204,21 @@ func (s *Store) GetEntry(ctx context.Context, id string) (Entry, error) {
 			COALESCE((SELECT a.created_at FROM analyses a WHERE a.entry_id = entries.id
 				ORDER BY a.created_at DESC, a.rowid DESC LIMIT 1), ''),
 			COALESCE((SELECT t.created_at FROM transcripts t WHERE t.entry_id = entries.id
-				ORDER BY t.created_at DESC LIMIT 1), '')
+				ORDER BY t.created_at DESC LIMIT 1), ''),
+			COALESCE(chapter_kind, ''), chapter_position, COALESCE(chapter_status, ''),
+			COALESCE(chapter_goal_words, 0), COALESCE(chapter_synopsis, '')
 		FROM entries WHERE id = ? AND deleted_at IS NULL`, AttachmentOriginal, id).Scan(
 		&e.ID, &e.Title, &e.Status, &e.Source, &e.ParentID, &e.NotebookID, &e.OriginalFilename, &e.ContentType,
 		&e.SizeBytes, &e.DurationSeconds, &e.SHA256, &recordedAt, &createdAt, &updatedAt, &deletedAt, &archived,
 		&titleVersion, &recordedVersion, &e.Author, &e.OriginInstance, &e.OriginKind,
-		&bodyVersion, &e.PrimaryAttachmentID, &e.AnalysisAt, &e.TranscriptAt)
+		&bodyVersion, &e.PrimaryAttachmentID, &e.AnalysisAt, &e.TranscriptAt,
+		&e.ChapterKind, &chapterPosition, &e.ChapterStatus, &e.ChapterGoalWords, &e.ChapterSynopsis)
 	if err != nil {
 		return Entry{}, err
+	}
+	if chapterPosition.Valid {
+		position := chapterPosition.Float64
+		e.ChapterPosition = &position
 	}
 	if recordedAt.Valid {
 		t := parseTS(recordedAt.String)
@@ -302,6 +312,13 @@ func (s *Store) ListEntriesFiltered(ctx context.Context, limit int, person, plac
 // result; the order is stable (created_at, id) so a page boundary does not
 // repeat or skip rows while nothing changes.
 func (s *Store) ListEntriesFilteredNotebook(ctx context.Context, limit, offset int, person, place, theme string, archived *bool, notebookID string) ([]Entry, error) {
+	return s.ListEntriesFilteredScope(ctx, limit, offset, person, place, theme, archived, notebookID, false)
+}
+
+// ListEntriesFilteredScope is ListEntriesFilteredNotebook with the diary scope:
+// ExcludeBooks leaves chapters out of "all notebooks", the map, mood and the
+// statistics, while the book home keeps querying by notebook id.
+func (s *Store) ListEntriesFilteredScope(ctx context.Context, limit, offset int, person, place, theme string, archived *bool, notebookID string, excludeBooks bool) ([]Entry, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -325,12 +342,17 @@ func (s *Store) ListEntriesFilteredNotebook(ctx context.Context, limit, offset i
 			COALESCE((SELECT a.created_at FROM analyses a WHERE a.entry_id = e.id
 				ORDER BY a.created_at DESC, a.rowid DESC LIMIT 1), ''),
 			COALESCE((SELECT t.created_at FROM transcripts t WHERE t.entry_id = e.id
-				ORDER BY t.created_at DESC LIMIT 1), '')
+				ORDER BY t.created_at DESC LIMIT 1), ''),
+			COALESCE(e.chapter_kind, ''), e.chapter_position, COALESCE(e.chapter_status, ''),
+			COALESCE(e.chapter_goal_words, 0), COALESCE(e.chapter_synopsis, '')
 		FROM entries e WHERE e.deleted_at IS NULL`
 	args := []any{AttachmentOriginal}
 	if notebookID = strings.TrimSpace(notebookID); notebookID != "" {
 		query += ` AND e.notebook_id = ?`
 		args = append(args, notebookID)
+	}
+	if excludeBooks {
+		query += ` AND e.notebook_id NOT IN (SELECT nb.id FROM notebooks nb WHERE nb.kind = 'book')`
 	}
 	if archived != nil {
 		query += ` AND e.archived = ?`
@@ -362,14 +384,20 @@ func (s *Store) ListEntriesFilteredNotebook(ctx context.Context, limit, offset i
 	for rows.Next() {
 		var e Entry
 		var recordedAt, titleVersion, recordedVersion, bodyVersion sql.NullString
+		var chapterPosition sql.NullFloat64
 		var archived int
 		var createdAt, updatedAt string
 		if err := rows.Scan(&e.ID, &e.Title, &e.Status, &e.Source, &e.ParentID, &e.NotebookID, &e.OriginalFilename,
 			&e.ContentType, &e.SizeBytes, &e.DurationSeconds, &e.SHA256, &recordedAt, &createdAt, &updatedAt,
 			&archived, &e.Author, &e.OriginInstance, &e.OriginKind, &titleVersion, &recordedVersion,
 			&bodyVersion, &e.PrimaryAttachmentID, &e.Preview, &e.SpokenPreview, &e.AnalysisAt,
-			&e.TranscriptAt); err != nil {
+			&e.TranscriptAt, &e.ChapterKind, &chapterPosition, &e.ChapterStatus,
+			&e.ChapterGoalWords, &e.ChapterSynopsis); err != nil {
 			return nil, fmt.Errorf("store: scan entry: %w", err)
+		}
+		if chapterPosition.Valid {
+			position := chapterPosition.Float64
+			e.ChapterPosition = &position
 		}
 		if recordedAt.Valid {
 			t := parseTS(recordedAt.String)

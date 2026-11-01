@@ -165,6 +165,7 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("POST /api/v1/notebooks", s.handleCreateNotebook)
 	protected.HandleFunc("PATCH /api/v1/notebooks/{id}", s.handleUpdateNotebook)
 	protected.HandleFunc("DELETE /api/v1/notebooks/{id}", s.handleDeleteNotebook)
+	protected.HandleFunc("PUT /api/v1/notebooks/{id}/chapters/order", s.handleReorderChapters)
 
 	protected.HandleFunc("GET /api/v1/settings", s.handleGetSettings)
 	protected.HandleFunc("PUT /api/v1/settings", s.handlePutSettings)
