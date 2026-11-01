@@ -31,20 +31,72 @@ import type {
 
 const TOKEN_KEY = "dyarium.token";
 
-export function getToken(): string {
+// O token fica na memoria durante a sessao. Alguns navegadores bloqueiam
+// localStorage (privacidade, iframe sem allow-same-origin) e o setItem lanca
+// NS_ERROR_FAILURE; sem esta reserva o login morria no clique de Entrar.
+type TokenStorage = "persistent" | "session" | "memory";
+let memoryToken = "";
+let tokenStorage: TokenStorage = "persistent";
+
+function readStoredToken(): string {
   try {
-    return localStorage.getItem(TOKEN_KEY) ?? "";
+    const stored = localStorage.getItem(TOKEN_KEY);
+    tokenStorage = "persistent";
+    if (stored) return stored;
+  } catch {
+    // localStorage bloqueado
+  }
+  try {
+    const stored = sessionStorage.getItem(TOKEN_KEY);
+    tokenStorage = "session";
+    return stored ?? "";
   } catch {
     return "";
   }
 }
 
+export function getToken(): string {
+  if (tokenStorage === "memory") return memoryToken;
+  const stored = readStoredToken();
+  memoryToken = stored;
+  return stored;
+}
+
+/** True quando o token foi gravado no navegador e sobrevive a fechar a aba. */
+export function tokenIsPersisted(): boolean {
+  return tokenStorage !== "memory";
+}
+
 export function setToken(token: string): void {
-  localStorage.setItem(TOKEN_KEY, token);
+  memoryToken = token;
+  try {
+    localStorage.setItem(TOKEN_KEY, token);
+    tokenStorage = "persistent";
+    return;
+  } catch {
+    // localStorage bloqueado
+  }
+  try {
+    sessionStorage.setItem(TOKEN_KEY, token);
+    tokenStorage = "session";
+  } catch {
+    tokenStorage = "memory";
+  }
 }
 
 export function clearToken(): void {
-  localStorage.removeItem(TOKEN_KEY);
+  memoryToken = "";
+  tokenStorage = "persistent";
+  try {
+    localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    // storage bloqueado
+  }
+  try {
+    sessionStorage.removeItem(TOKEN_KEY);
+  } catch {
+    // storage bloqueado
+  }
   // Sair tambem apaga o que ficou no navegador: sem isto, o proximo login no
   // mesmo navegador ainda lia corpos e transcricoes da sessao anterior offline.
   memoryCache.clear();

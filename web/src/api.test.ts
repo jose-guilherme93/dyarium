@@ -1,5 +1,30 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, api, cachedGet } from "./api";
+import { ApiError, api, cachedGet, clearToken, getToken, setToken } from "./api";
+
+describe("token sem storage", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    clearToken();
+  });
+
+  it("entra na sessao mesmo quando o navegador bloqueia localStorage", () => {
+    clearToken();
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("NS_ERROR_FAILURE");
+    });
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("NS_ERROR_FAILURE");
+    });
+    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
+      throw new Error("NS_ERROR_FAILURE");
+    });
+
+    expect(() => setToken("token-de-teste")).not.toThrow();
+    expect(getToken()).toBe("token-de-teste");
+    expect(() => clearToken()).not.toThrow();
+    expect(getToken()).toBe("");
+  });
+});
 
 describe("GET cache", () => {
   afterEach(() => {
