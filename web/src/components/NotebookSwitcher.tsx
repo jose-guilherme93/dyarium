@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import type { Notebook } from "../types";
 import { ALL_NOTEBOOKS } from "../lib/notebooks";
+import { progress } from "../lib/books";
 import {
   AllNotebooksIcon,
+  BookIcon,
   CheckIcon,
   ChevronIcon,
   PencilIcon,
   PlusIcon,
+  SettingsIcon,
   TrashIcon,
 } from "./icons";
 
@@ -15,27 +18,35 @@ interface NotebookSwitcherProps {
   activeId: string;
   onSelect: (id: string) => void;
   onCreate: () => void;
+  onCreateBook: () => void;
   onRename: (notebook: Notebook) => void;
+  onBookSettings: (notebook: Notebook) => void;
   onDelete: (notebook: Notebook) => void;
 }
 
-/** Seletor de cadernos no topo da sidebar; "todos" vem primeiro. */
+/**
+ * Seletor compacto de cadernos e livros. Depois de escolher, a sidebar volta a
+ * mostrar a lista do caderno (notas ou capitulos); a biblioteca inteira nao
+ * ocupa a coluna o tempo todo.
+ */
 export function NotebookSwitcher({
   notebooks,
   activeId,
   onSelect,
   onCreate,
+  onCreateBook,
   onRename,
+  onBookSettings,
   onDelete,
 }: NotebookSwitcherProps) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement | null>(null);
   const all = activeId === ALL_NOTEBOOKS;
   const active = notebooks.find((notebook) => notebook.id === activeId);
-  const total = notebooks.reduce((sum, notebook) => sum + notebook.entry_count, 0);
+  const notes = notebooks.filter((notebook) => notebook.kind !== "book");
+  const books = notebooks.filter((notebook) => notebook.kind === "book");
+  const total = notes.reduce((sum, notebook) => sum + notebook.entry_count, 0);
 
-  // Um menu aberto não sobrevive a um clique fora, ao Esc nem à troca de tela:
-  // antes ele ficava aberto por cima da nota e do painel de configurações.
   useEffect(() => {
     if (!open) return;
     const onPointer = (event: MouseEvent) => {
@@ -63,6 +74,106 @@ export function NotebookSwitcher({
     setOpen(false);
   };
 
+  const row = (notebook: Notebook, book: boolean) => (
+    <li key={notebook.id} className="notebook-menu-row">
+      <button
+        type="button"
+        className={
+          notebook.id === activeId
+            ? "notebook-menu-main notebook-menu-main--on"
+            : "notebook-menu-main"
+        }
+        onClick={() => select(notebook.id)}
+      >
+        {book ? (
+          <span
+            className={
+              "status-dot status-dot--" +
+              (notebook.book_status === "done"
+                ? "done"
+                : notebook.book_status === "revising"
+                  ? "revising"
+                  : "draft")
+            }
+          />
+        ) : (
+          <span
+            className="notebook-dot"
+            style={{ backgroundColor: notebook.color || "var(--color-muted)" }}
+          />
+        )}
+        <span className="notebook-menu-text">
+          <span className="notebook-menu-name">{notebook.name}</span>
+          <span className="notebook-menu-last">
+            {book
+              ? notebook.goal_words > 0
+                ? `${notebook.words ?? 0} / ${notebook.goal_words}`
+                : `${notebook.chapter_count} capítulos`
+              : notebook.last_entry_at
+                ? `última em ${new Date(notebook.last_entry_at).toLocaleDateString("pt-BR")}`
+                : "sem notas"}
+          </span>
+          {book && notebook.goal_words > 0 ? (
+            <span
+              className="book-bar-track notebook-progress"
+              aria-hidden="true"
+            >
+              <i
+                style={{
+                  width: `${progress(((notebook.words ?? 0) / notebook.goal_words) * 100)}%`,
+                }}
+              />
+            </span>
+          ) : null}
+        </span>
+        {!book ? <span className="notebook-menu-count">{notebook.entry_count}</span> : null}
+        {notebook.id === activeId && <CheckIcon size={13} />}
+      </button>
+      {!notebook.is_default ? (
+        <span className="notebook-menu-actions">
+          <button
+            type="button"
+            className="icon-button icon-button--small"
+            onClick={() => {
+              setOpen(false);
+              onBookSettings(notebook);
+            }}
+            aria-label={book ? `Configurações de ${notebook.name}` : `Modo escritor em ${notebook.name}`}
+            title={book ? "Configurações do livro" : "Modo escritor"}
+          >
+            {book ? <SettingsIcon size={13} /> : <BookIcon size={13} />}
+          </button>
+          {!book ? (
+            <button
+              type="button"
+              className="icon-button icon-button--small"
+              onClick={() => {
+                setOpen(false);
+                onRename(notebook);
+              }}
+              aria-label={`Renomear ${notebook.name}`}
+              title="Renomear"
+            >
+              <PencilIcon size={13} />
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="icon-button icon-button--small"
+            onClick={() => {
+              setOpen(false);
+              onDelete(notebook);
+            }}
+            aria-label={`Excluir ${notebook.name}`}
+            title="Excluir"
+          >
+            <TrashIcon size={13} />
+          </button>
+        </span>
+      ) : null}
+    </li>
+  );
+
   return (
     <div className="notebook-switcher" ref={root}>
       <button
@@ -74,6 +185,8 @@ export function NotebookSwitcher({
       >
         {all ? (
           <AllNotebooksIcon size={15} />
+        ) : active?.kind === "book" ? (
+          <BookIcon size={15} />
         ) : (
           <span
             className="notebook-dot"
@@ -86,7 +199,7 @@ export function NotebookSwitcher({
         <ChevronIcon size={14} />
       </button>
 
-      {open && (
+      {open ? (
         <ul className="notebook-menu">
           <li className="notebook-menu-row">
             <button
@@ -104,78 +217,29 @@ export function NotebookSwitcher({
             </button>
           </li>
           <li className="notebook-menu-rule" role="presentation" />
-          {notebooks.map((notebook) => (
-            <li key={notebook.id} className="notebook-menu-row">
-              <button
-                type="button"
-                className={
-                  notebook.id === activeId
-                    ? "notebook-menu-main notebook-menu-main--on"
-                    : "notebook-menu-main"
-                }
-                onClick={() => select(notebook.id)}
-              >
-                <span
-                  className="notebook-dot"
-                  style={{ backgroundColor: notebook.color || "var(--color-muted)" }}
-                />
-                <span className="notebook-menu-text">
-                  <span className="notebook-menu-name">{notebook.name}</span>
-                  <span className="notebook-menu-last">
-                    {notebook.last_entry_at
-                      ? `última em ${new Date(notebook.last_entry_at).toLocaleDateString("pt-BR")}`
-                      : "sem notas"}
-                  </span>
-                </span>
-                <span className="notebook-menu-count">{notebook.entry_count}</span>
-                {notebook.id === activeId && <CheckIcon size={13} />}
-              </button>
-              {!notebook.is_default && (
-                <span className="notebook-menu-actions">
-                  <button
-                    type="button"
-                    className="icon-button icon-button--small"
-                    onClick={() => {
-                      setOpen(false);
-                      onRename(notebook);
-                    }}
-                    aria-label={`Renomear ${notebook.name}`}
-                    title="Renomear"
-                  >
-                    <PencilIcon size={13} />
-                  </button>
-                  <button
-                    type="button"
-                    className="icon-button icon-button--small"
-                    onClick={() => {
-                      setOpen(false);
-                      onDelete(notebook);
-                    }}
-                    aria-label={`Excluir ${notebook.name}`}
-                    title="Excluir"
-                  >
-                    <TrashIcon size={13} />
-                  </button>
-                </span>
-              )}
-            </li>
-          ))}
+          <li className="notebook-menu-label" role="presentation">
+            Cadernos
+          </li>
+          {notes.map((notebook) => row(notebook, false))}
           <li className="notebook-menu-rule" role="presentation" />
+          <li className="notebook-menu-label" role="presentation">
+            Livros
+          </li>
+          {books.map((notebook) => row(notebook, true))}
           <li>
-            <button
-              type="button"
-              className="notebook-menu-new"
-              onClick={() => {
-                setOpen(false);
-                onCreate();
-              }}
-            >
+            <button type="button" className="notebook-menu-new" onClick={onCreateBook}>
+              <BookIcon size={15} />
+              Novo livro
+            </button>
+          </li>
+          <li>
+            <button type="button" className="notebook-menu-new" onClick={onCreate}>
               <PlusIcon size={15} />
               Novo caderno
             </button>
           </li>
         </ul>
-      )}
+      ) : null}
     </div>
   );
 }

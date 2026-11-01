@@ -5,6 +5,7 @@ import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 import { NotificationsMenu } from "./NotificationsMenu";
 import { ListSkeleton } from "./Skeleton";
 import { ALL_NOTEBOOKS } from "../lib/notebooks";
+import { normalizeSearch } from "../lib/search";
 import { formatDuration, formatShortDate } from "../lib/format";
 import { tagColor } from "../lib/tags";
 import { useEscape } from "../lib/useEscape";
@@ -49,18 +50,18 @@ function noteDate(entry: Entry): string {
 }
 
 function matches(entry: Entry, query: string): boolean {
-  return `${displayTitle(entry)} ${entry.original_filename ?? ""} ${entry.preview ?? ""} ${(
-    entry.tags ?? []
-  ).join(" ")}`
-    .toLowerCase()
-    .includes(query);
+  return normalizeSearch(
+    `${displayTitle(entry)} ${entry.original_filename ?? ""} ${entry.preview ?? ""} ${(
+      entry.tags ?? []
+    ).join(" ")}`,
+  ).includes(query);
 }
 
 function tagCounts(entries: Entry[], selected: string[]): { name: string; count: number }[] {
   const universe = new Map<string, { name: string; count: number }>();
   for (const entry of entries) {
     for (const tag of entry.tags ?? []) {
-      const key = tag.toLowerCase();
+      const key = normalizeSearch(tag);
       const current = universe.get(key);
       if (current) current.count += 1;
       else universe.set(key, { name: tag, count: 1 });
@@ -69,13 +70,13 @@ function tagCounts(entries: Entry[], selected: string[]): { name: string; count:
   if (selected.length === 0) {
     return [...universe.values()].sort((a, b) => a.name.localeCompare(b.name));
   }
-  const selectedKeys = selected.map((tag) => tag.toLowerCase());
+  const selectedKeys = selected.map((tag) => normalizeSearch(tag));
   return [...universe.values()]
     .map((tag) => {
-      const key = tag.name.toLowerCase();
+      const key = normalizeSearch(tag.name);
       const wanted = selectedKeys.includes(key) ? selectedKeys : [...selectedKeys, key];
       const count = entries.filter((entry) => {
-        const present = new Set((entry.tags ?? []).map((item) => item.toLowerCase()));
+        const present = new Set((entry.tags ?? []).map((item) => normalizeSearch(item)));
         return wanted.every((item) => present.has(item));
       }).length;
       return { name: tag.name, count };
@@ -114,13 +115,13 @@ export function NoteList({
   const tagMenu = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(async () => {
-    const cached = await api.listEntriesCached({ limit: 1000 });
+    const cached = await api.listEntriesCached({ limit: 1000, exclude_books: true });
     if (cached) {
       setEntries(cached.entries ?? []);
       setLoaded(true);
     }
     try {
-      const result = await api.listAllEntries();
+      const result = await api.listAllEntries({ exclude_books: true });
       setEntries(result.entries ?? []);
       setError("");
     } catch (err) {
@@ -189,17 +190,24 @@ export function NoteList({
     [entries, notebookId, allNotebooks, archived],
   );
 
-  const term = query.trim().toLowerCase();
+  const term = normalizeSearch(query.trim());
   const withTags = useMemo(() => {
     if (selectedTags.length === 0) return inScope;
     return inScope.filter((entry) => {
-      const present = new Set((entry.tags ?? []).map((tag) => tag.toLowerCase()));
-      return selectedTags.every((tag) => present.has(tag.toLowerCase()));
+      const present = new Set((entry.tags ?? []).map((tag) => normalizeSearch(tag)));
+      return selectedTags.every((tag) => present.has(normalizeSearch(tag)));
     });
   }, [inScope, selectedTags]);
   const visible = useMemo(() => {
     const filtered = term ? withTags.filter((entry) => matches(entry, term)) : withTags;
-    return [...filtered].sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
+    // Comparador consistente: com a mesma data, o id decide (antes dois itens
+    // "iguais" podiam trocar de lugar a cada render).
+    return [...filtered].sort((a, b) => {
+      if (a.updated_at === b.updated_at) {
+        return a.id < b.id ? 1 : -1;
+      }
+      return a.updated_at < b.updated_at ? 1 : -1;
+    });
   }, [withTags, term]);
 
   const counts = useMemo(() => tagCounts(inScope, selectedTags), [inScope, selectedTags]);
@@ -265,8 +273,8 @@ export function NoteList({
     if (targets.length === 0) return;
     const question =
       targets.length === 1
-        ? "Apagar esta nota e os áudios? Esta ação não pode ser desfeita."
-        : `Apagar ${targets.length} notas e os áudios? Esta ação não pode ser desfeita.`;
+        ? "Apagar esta nota? Ela vai para a Lixeira e pode ser restaurada em Configurações > Lixeira."
+        : `Apagar ${targets.length} notas? Elas vão para a Lixeira e podem ser restauradas em Configurações > Lixeira.`;
     if (!window.confirm(question)) return;
     setBusy(true);
     const removed: string[] = [];
@@ -338,8 +346,8 @@ export function NoteList({
 
   const toggleTag = (name: string) => {
     setSelectedTags((current) =>
-      current.some((tag) => tag.toLowerCase() === name.toLowerCase())
-        ? current.filter((tag) => tag.toLowerCase() !== name.toLowerCase())
+      current.some((tag) => normalizeSearch(tag) === normalizeSearch(name))
+        ? current.filter((tag) => normalizeSearch(tag) !== normalizeSearch(name))
         : [...current, name],
     );
   };
@@ -547,11 +555,11 @@ export function NoteList({
                         </button>
                         {counts.map((tag) => {
                           const selected = selectedTags.some(
-                            (item) => item.toLowerCase() === tag.name.toLowerCase(),
+                            (item) => normalizeSearch(item) === normalizeSearch(tag.name),
                           );
                           return (
                             <button
-                              key={tag.name.toLowerCase()}
+                              key={normalizeSearch(tag.name)}
                               type="button"
                               className={
                                 selected
@@ -599,10 +607,10 @@ export function NoteList({
           <button
             type="button"
             className="button button--ghost button--small"
-            onClick={() => void archiveEntries(selectedEntries, true)}
+            onClick={() => void archiveEntries(selectedEntries, !archived)}
             disabled={busy || selectedEntries.length === 0}
           >
-            Arquivar
+            {archived ? "Desarquivar" : "Arquivar"}
           </button>
           <button
             type="button"

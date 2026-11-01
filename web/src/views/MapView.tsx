@@ -511,6 +511,7 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
         notebookId: notebookId || undefined,
         from: periodFrom(period),
         focus: focusId ?? undefined,
+        excludeBooks: true,
       })
       .then((result) => {
         if (cancelled) return;

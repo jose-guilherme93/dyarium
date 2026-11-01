@@ -13,7 +13,7 @@ export function MoodView({ refreshKey }: MoodViewProps) {
 
   const load = useCallback(async () => {
     try {
-      const result = await api.getMood();
+      const result = await api.getMood(undefined, undefined, true);
       setPoints(result.mood ?? []);
       setError("");
     } catch (err) {

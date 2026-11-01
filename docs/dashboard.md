@@ -18,7 +18,7 @@
 
 ## Layout base
 
-- Barra lateral a esquerda: a lista de notas e, no rodape, Mapa, Escrita, Processamento e
+- Barra lateral a esquerda: a lista de notas e, no rodape, Mapa, Estatísticas, Processamento e
   Configuracoes, com estado selecionado e recolhimento opcional.
 - Area central: conteudo da tela atual.
 - Painel recolhivel a direita: contexto da entrada aberta (analise, metadados, notas).
@@ -187,6 +187,47 @@ Layout responsivo:
   processamento, o sino volta ao estado normal e a lista de concluidos continua.
 - Diagnostico: nenhuma frase solta; os numeros ficam na grade e a explicacao de cada
   aviso aparece no `title` do item.
+
+### 9. Livro (modo escritor)
+
+O seletor compacto da sidebar abre a biblioteca em dois grupos, "Cadernos"
+(Todos, o padrao e os demais, com contagem) e "Livros" (ponto de status e mini
+progresso quando ha meta). Depois de escolher, ele fecha e a coluna volta ao
+conteudo do caderno. Num livro, a lista de capitulos ocupa exatamente o lugar
+onde as notas ficariam; a area central mostra a casa do livro ou o capitulo
+aberto. Nao existe tela global de escrita: tudo vive dentro do caderno-livro.
+
+**Casa do livro.** Capa solida na cor do caderno, titulo, subtitulo, autor,
+sinopse e chips (capitulos, partes, palavras, meta). Barra de progresso
+`palavras / meta`; sem meta, so o numero. "Continuar no capitulo N" abre o
+primeiro capitulo nao final. Acoes: Ler, Exportar, Configuracoes do livro.
+Estado vazio: "Nenhum capitulo" e "Comecar o primeiro capitulo".
+
+**Lista de capitulos.** Agrupada por partes, arrastavel. Cada linha tem numero,
+titulo, ponto de status (rascunho vazio, revisao ambar, final verde), contagem de
+palavras e sinopse discreta. "+ Capitulo", "+ Parte", "+ Frontispicio" e
+"+ Posfacio".
+
+**Workspace.** Colunas: lista de capitulos, editor e painel do capitulo. O topo
+tem voltar, titulo do livro, estado de gravacao, contagem, Foco e Painel. O corpo
+usa Newsreader 18 px, entrelinha 1.8, medida de 62-68 caracteres e recuo de
+primeira linha; o titulo em Newsreader 30 px e a overline em Inter 11 px. O
+painel traz status, meta, sinopse/outline e versoes. Foco esconde as colunas e
+Esc sai.
+
+**Imagens.** Preto e branco por padrao; o menu da imagem oferece "Cor original",
+que grava `c=1` no markdown. A leitura, o PDF e o DOCX respeitam a marca.
+
+**Offline e conflito.** Rascunho local por capitulo no IndexedDB (250 ms), com
+flush ao esconder a aba e reproducao ao voltar a rede. Conflito 409 no livro
+abre uma folha com as duas versoes e diff por palavra; "Manter o meu" grava sem
+versao base e "Usar o do servidor" guarda o texto local por sete dias. A fila
+nunca resolve conflito sozinha.
+
+**Leitura e exportacao.** A previa compila capitulos nao vazios com pagina de
+titulo, sumario, divisoria de parte, quebra por capitulo e contador de paginas.
+O PDF usa a impressao do navegador; o DOCX sai com presets Manuscrito (A4) e
+Livro (6 x 9 pol); o Markdown mantem o corpo e os separadores.
 
 ## Comportamento reativo
 
