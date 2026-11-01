@@ -712,6 +712,16 @@ const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    version: 36,
+    run: async (db) => {
+      // Modo escritor: o app nao mostra livros, mas guarda o tipo para esconder
+      // o caderno e as notas dele da biblioteca e das metricas.
+      if (!(await columnExists(db, 'notebooks', 'kind'))) {
+        await db.execAsync("ALTER TABLE notebooks ADD COLUMN kind TEXT NOT NULL DEFAULT 'notes'");
+      }
+    },
+  },
 ];
 
 async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {

@@ -76,7 +76,7 @@ import {
 import { syncEntities } from '@/services/entitySync';
 import { back, push } from '@/services/appNavigation';
 import { listNotebooks } from '@/services/notebooks';
-import type { Notebook } from '@/core/notebooks';
+import { noteNotebooks, type Notebook } from '@/core/notebooks';
 import { mark, useRenderCount } from '@/dev/perf';
 import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
 import { GRAPH_PALETTES } from '@/theme/graph';
@@ -507,7 +507,7 @@ export default function MapScreen() {
     let alive = true;
     void listNotebooks()
       .then((items) => {
-        if (alive) setNotebooks(items);
+        if (alive) setNotebooks(noteNotebooks(items));
       })
       .catch(() => undefined);
     return () => {

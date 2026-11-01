@@ -20,7 +20,12 @@ import {
   recordingNotebookId,
   searchRecordings,
 } from '@/core/notebookFilter';
-import { sortNotebooks, type Notebook } from '@/core/notebooks';
+import {
+  bookNotebookIds,
+  noteNotebooks,
+  sortNotebooks,
+  type Notebook,
+} from '@/core/notebooks';
 import { useLibrary } from '@/state/LibraryContext';
 import { useSettings } from '@/state/SettingsContext';
 import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
@@ -44,18 +49,24 @@ export default function NotebooksScreen() {
   const [form, setForm] = useState<{ mode: FormMode; notebook?: Notebook } | null>(null);
   const [actionsNotebook, setActionsNotebook] = useState<Notebook | null>(null);
 
+  const shown = useMemo(() => noteNotebooks(notebooks), [notebooks]);
+  const bookIds = useMemo(() => bookNotebookIds(notebooks), [notebooks]);
+  const diaryRecordings = useMemo(
+    () => recordings.filter((recording) => !bookIds.has(recordingNotebookId(recording))),
+    [recordings, bookIds],
+  );
   const ordered = useMemo(
-    () => sortNotebooks(notebooks, notebooksAlphabetical),
-    [notebooks, notebooksAlphabetical],
+    () => sortNotebooks(shown, notebooksAlphabetical),
+    [shown, notebooksAlphabetical],
   );
   const term = query.trim();
-  const results = useMemo(() => searchRecordings(recordings, term), [recordings, term]);
+  const results = useMemo(() => searchRecordings(diaryRecordings, term), [diaryRecordings, term]);
   // Uma passada pela biblioteca alimenta a contagem e a data de todos os
   // cadernos; antes cada item visivel varria a lista inteira.
-  const stats = useMemo(() => notebookStats(recordings), [recordings]);
+  const stats = useMemo(() => notebookStats(diaryRecordings), [diaryRecordings]);
   const notebookById = useMemo(
-    () => new Map(notebooks.map((notebook) => [notebook.id, notebook])),
-    [notebooks],
+    () => new Map(shown.map((notebook) => [notebook.id, notebook])),
+    [shown],
   );
 
   const canGoBack = router.canGoBack();
@@ -91,7 +102,7 @@ export default function NotebooksScreen() {
 
   const saveForm = async (input: { name: string; color: string }) => {
     if (!form) return;
-    const duplicate = notebooks.some(
+    const duplicate = shown.some(
       (notebook) =>
         notebook.id !== form.notebook?.id &&
         notebook.name.toLowerCase() === input.name.toLowerCase(),
@@ -123,9 +134,9 @@ export default function NotebooksScreen() {
       <View style={styles.headerText}>
         <Text style={styles.title}>Cadernos</Text>
         <Text style={styles.subtitle}>
-          {notebooks.length === 1
+          {shown.length === 1
             ? '1 caderno'
-            : `${notebooks.length} cadernos`}
+            : `${shown.length} cadernos`}
         </Text>
       </View>
       <View style={styles.headerActions}>

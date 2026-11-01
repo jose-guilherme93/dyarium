@@ -33,7 +33,7 @@ import {
   recordingNotebookId,
   tagCountsForFilter,
 } from '@/core/notebookFilter';
-import { DEFAULT_NOTEBOOK_ID } from '@/core/notebooks';
+import { DEFAULT_NOTEBOOK_ID, bookNotebookIds, noteNotebooks } from '@/core/notebooks';
 import { noteStats } from '@/core/noteStats';
 import { markdownToPlain } from '@/core/richText';
 import { displayTitle } from '@/core/title';
@@ -198,36 +198,43 @@ export default function NotebookScreen() {
   const [actionsProps, setActionsProps] = useState<NoteProperty[]>([]);
   const [actionsAnchor, setActionsAnchor] = useState<{ x: number; y: number } | null>(null);
 
+  // Livros ficam fora do app no v1: nem o caderno, nem as notas dele aparecem.
+  const shownNotebooks = useMemo(() => noteNotebooks(notebooks), [notebooks]);
+  const bookIds = useMemo(() => bookNotebookIds(notebooks), [notebooks]);
+  const diaryRecordings = useMemo(
+    () => recordings.filter((recording) => !bookIds.has(recordingNotebookId(recording))),
+    [recordings, bookIds],
+  );
   const scopeNotebook = scopeId
-    ? notebooks.find((notebook) => notebook.id === scopeId)
+    ? shownNotebooks.find((notebook) => notebook.id === scopeId)
     : undefined;
   // O caderno do escopo tambem e o destino de novas notas; sem escopo, vale o
   // ultimo escolhido e, por fim, o padrao.
   const targetNotebook =
     scopeNotebook ??
-    notebooks.find((notebook) => notebook.id === lastNotebookId) ??
-    notebooks.find((notebook) => notebook.isDefault) ??
-    notebooks[0];
+    shownNotebooks.find((notebook) => notebook.id === lastNotebookId) ??
+    shownNotebooks.find((notebook) => notebook.isDefault) ??
+    shownNotebooks[0];
   // Handlers da lista nao podem depender de `notebooks`: cada refresh do banco
   // troca a identidade da lista, e isso recriava `openActions` e re-renderizava
   // todos os cards. As refs guardam a versao mais nova sem mudar os handlers.
-  const notebooksRef = useRef(notebooks);
+  const notebooksRef = useRef(shownNotebooks);
   const targetNotebookRef = useRef(targetNotebook);
   useEffect(() => {
-    notebooksRef.current = notebooks;
-  }, [notebooks]);
+    notebooksRef.current = shownNotebooks;
+  }, [shownNotebooks]);
   useEffect(() => {
     targetNotebookRef.current = targetNotebook;
   }, [targetNotebook]);
 
   const notebookId = targetNotebook?.id ?? DEFAULT_NOTEBOOK_ID;
 
-  const pending = recordings.filter(
+  const pending = diaryRecordings.filter(
     (r) => PENDING_STATUSES.includes(r.status) || needsNoteSync(r),
   ).length;
-  const interrupted = recordings.filter((r) => r.status === 'interrupted').length;
+  const interrupted = diaryRecordings.filter((r) => r.status === 'interrupted').length;
 
-  const syncState: 'ok' | 'syncing' | 'error' = recordings.some((r) => r.status === 'failed')
+  const syncState: 'ok' | 'syncing' | 'error' = diaryRecordings.some((r) => r.status === 'failed')
     ? 'error'
     : pending > 0
       ? 'syncing'
@@ -237,23 +244,23 @@ export default function NotebookScreen() {
     () =>
       sortByCreation(
         scopeNotebook
-          ? notesInNotebook(recordings, {
+          ? notesInNotebook(diaryRecordings, {
               notebookId: scopeNotebook.id,
               tags: selectedTags,
               query,
             })
-          : recentNotes(recordings, { tags: selectedTags, query }),
+          : recentNotes(diaryRecordings, { tags: selectedTags, query }),
         noteOrder,
       ),
-    [recordings, scopeNotebook, selectedTags, query, noteOrder],
+    [diaryRecordings, scopeNotebook, selectedTags, query, noteOrder],
   );
   const notebookNames = useMemo(
     () => new Map(notebooks.map((notebook) => [notebook.id, notebook.name])),
     [notebooks],
   );
   const tagCounts = useMemo(
-    () => tagCountsForFilter(recordings, scopeNotebook?.id ?? null, selectedTags),
-    [recordings, scopeNotebook, selectedTags],
+    () => tagCountsForFilter(diaryRecordings, scopeNotebook?.id ?? null, selectedTags),
+    [diaryRecordings, scopeNotebook, selectedTags],
   );
 
   const onRefresh = useCallback(async () => {
@@ -557,7 +564,7 @@ export default function NotebookScreen() {
 
       <NotebookPicker
         visible={notebookPickerOpen}
-        notebooks={notebooks}
+        notebooks={shownNotebooks}
         currentId={scopeNotebook?.id}
         recentSelected={!scopeNotebook}
         title="Cadernos"

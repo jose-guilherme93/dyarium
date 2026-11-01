@@ -515,6 +515,7 @@ export interface ServerNotebook {
   name: string;
   color: string;
   is_default: boolean;
+  kind?: 'notes' | 'book';
   entry_count: number;
   last_entry_at?: string;
   created_at: string;

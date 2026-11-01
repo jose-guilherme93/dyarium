@@ -36,6 +36,8 @@ import type { Recording } from '@/core/types';
 import { loadDashboard, type DashboardData } from '@/services/dashboard';
 import { listCachedAnalyses, type CachedAnalysis } from '@/services/db';
 import { scanImageBytesAsync } from '@/services/storageScan';
+import { bookNotebookIds } from '@/core/notebooks';
+import { recordingNotebookId } from '@/core/notebookFilter';
 import { useLibrary } from '@/state/LibraryContext';
 import { useSettings } from '@/state/SettingsContext';
 import { useMetricsSync } from '@/state/useMetricsSync';
@@ -1086,7 +1088,13 @@ export default function DashboardScreen() {
   const { colors } = useTheme();
 
   const { config } = useSettings();
-  const { recordings, refresh } = useLibrary();
+  const { recordings, notebooks, refresh } = useLibrary();
+  // Livros nao entram nas metricas de escrita: o snapshot e calculado aqui.
+  const bookIds = useMemo(() => bookNotebookIds(notebooks), [notebooks]);
+  const diaryRecordings = useMemo(
+    () => recordings.filter((recording) => !bookIds.has(recordingNotebookId(recording))),
+    [recordings, bookIds],
+  );
   const [data, setData] = useState<DashboardData | null>(null);
   const [cachedAnalyses, setCachedAnalyses] = useState<CachedAnalysis[] | null>(null);
   const [imageBytes, setImageBytes] = useState<Record<string, number> | null>(null);
@@ -1214,7 +1222,7 @@ export default function DashboardScreen() {
       >
         {ready ? (
           <PanelContent
-            recordings={recordings}
+            recordings={diaryRecordings}
             cachedAnalyses={cachedAnalyses}
             imageBytes={imageBytes}
             now={now}
