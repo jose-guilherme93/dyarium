@@ -40,6 +40,12 @@ metricas e dashboard funcionam offline. Somente a analise de texto por IA e opci
   mede compreensao logica, gagueira e hesitacao. Ligada por preferencia em cada
   superficie (servidor e app).
 - Dashboard SPA: lista, entrada aberta, painel de analise, humor, busca e configuracao.
+- Modo escritor: um caderno com `kind=book` vira livro; capitulos sao entries
+  com `chapter_kind`/`chapter_position`, estrutura plana com partes, casa do
+  livro, escrita com tipografia propria, imagens P/B com excecao `c=1`,
+  rascunho offline, conflito explicito, leitura e exportacao DOCX/PDF/Markdown.
+  O app movel esconde livros no v1; importacao, EPUB, biblia da historia e
+  mural ficam para o v2.
 - Backup continuo opcional com Litestream para S3.
 - Modulo Telegram opcional, desligado por padrao, para envio de audio.
 - Empacotamento Docker multi-stage com a imagem de producao.
