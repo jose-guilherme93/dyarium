@@ -134,7 +134,7 @@ describe("folha e ritmo do livro", () => {
     const now = new Date(2026, 10, 1);
     expect(daysUntil("2026-11-11", now)).toBe(10);
     expect(daysUntil("2026-10-01", now)).toBeNull();
-    expect(pace(400, 1000, "2026-11-11")).toEqual({ remaining: 600, days: 10, perDay: 60 });
+    expect(pace(400, 1000, "2026-11-11", now)).toEqual({ remaining: 600, days: 10, perDay: 60 });
     expect(pace(1000, 1000, "2026-11-11")?.remaining).toBe(0);
     expect(pace(400, 0, "2026-11-11")).toBeNull();
   });

@@ -187,13 +187,13 @@ export function daysUntil(deadline: string, now = new Date()): number | null {
 }
 
 /** Ritmo necessario para bater a meta no prazo. */
-export function pace(totalWords: number, goalWords: number, deadline: string): {
+export function pace(totalWords: number, goalWords: number, deadline: string, now = new Date()): {
   remaining: number;
   days: number;
   perDay: number;
 } | null {
   if (goalWords <= 0) return null;
-  const days = daysUntil(deadline);
+  const days = daysUntil(deadline, now);
   if (days === null) return null;
   const remaining = Math.max(0, goalWords - totalWords);
   return { remaining, days, perDay: Math.ceil(remaining / Math.max(1, days)) };
