@@ -307,6 +307,14 @@ export function NoteEditor({
   const titleVersionRef = useRef("");
   // Markdown cru: fonte da verdade e a segunda visualizacao da nota.
   const [rawMarkdown, setRawMarkdown] = useState("");
+  const titleStateRef = useRef(title);
+  titleStateRef.current = title;
+  const entryStateRef = useRef(entry);
+  entryStateRef.current = entry;
+  const imagesStateRef = useRef(images);
+  imagesStateRef.current = images;
+  const rawMarkdownStateRef = useRef(rawMarkdown);
+  rawMarkdownStateRef.current = rawMarkdown;
   const [rawOpen, setRawOpen] = useState(() => readNoteViewState(entryId).rawOpen);
   const [revisionsCursor, setRevisionsCursor] = useState<string | undefined>(undefined);
   const lastQueuedRef = useRef<string>("");
