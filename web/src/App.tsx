@@ -761,7 +761,7 @@ export function App() {
         </button>
         <span className="mobile-bar-title">
           {activeNotebookId === ALL_NOTEBOOKS
-            ? "Todos os cadernos"
+            ? "Notas recentes"
             : (notebooks.find((notebook) => notebook.id === activeNotebookId)?.name ??
               "Notas ao acaso")}
         </span>
@@ -971,7 +971,12 @@ export function App() {
                   progress={entryProgress[openEntryId]}
                   onChanged={refresh}
                   onDeleted={() => {
-                    setOpenEntryId(null);
+                    // So apaga a nota aberta se ela ainda for a que foi
+                    // deletada; ao navegar para outra nota no meio, nao
+                    // fecha a que acabou de abrir.
+                    setOpenEntryId((current) =>
+                      current === openEntryId ? null : current,
+                    );
                     refresh();
                   }}
                   onOpenEntity={(kind, name) => {

@@ -5280,6 +5280,7 @@
   min-width: 0;
   overflow: hidden;
   padding: calc(var(--space) * 5) calc(var(--space) * 6);
+  animation: fade-in 400ms ease-out;
 }
 
 .map-view {
@@ -5578,6 +5579,11 @@
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--paper-2);
+  animation: fade-in 240ms ease-out;
+}
+
+.map-detail--focus {
+  animation: fade-in 320ms ease-out;
 }
 
 /* Insights vive no trilho direito do mapa: a lista some quando uma bola e
