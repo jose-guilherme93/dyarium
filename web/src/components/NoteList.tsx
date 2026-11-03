@@ -5,6 +5,19 @@ import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 import { NotificationsMenu } from "./NotificationsMenu";
 import { ListSkeleton } from "./Skeleton";
 import { ALL_NOTEBOOKS } from "../lib/notebooks";
+
+const NOTE_ORDER_KEY = "dyarium.noteOrder";
+
+type NoteOrder = "newest" | "oldest";
+
+function readNoteOrder(): NoteOrder {
+  try {
+    const value = localStorage.getItem(NOTE_ORDER_KEY);
+    return value === "oldest" ? "oldest" : "newest";
+  } catch {
+    return "newest";
+  }
+}
 import { normalizeSearch } from "../lib/search";
 import { formatDuration, formatShortDate } from "../lib/format";
 import { tagColor } from "../lib/tags";
@@ -17,6 +30,7 @@ import {
   MicIcon,
   PlusIcon,
   SearchIcon,
+  SortIcon,
   TagIcon,
 } from "./icons";
 import { useToast } from "./Toasts";
@@ -41,8 +55,25 @@ interface NoteListProps {
 // displayTitle hides the date older automatic titles carried; the date is shown
 // separately, small, below the title.
 function displayTitle(entry: Entry): string {
-  const raw = entry.title || entry.original_filename || "Nota";
-  return raw.replace(/\s·\s\d{2}\/\d{2}\/\d{4}\s\d{2}:\d{2}$/, "");
+  const rawTitle = (entry.title || "").trim();
+  const isAutomatic =
+    rawTitle.toLowerCase() === "texto" ||
+    rawTitle.toLowerCase() === "audio" ||
+    rawTitle.toLowerCase() === "áudio";
+  if (rawTitle && !isAutomatic) {
+    return rawTitle.replace(/\s·\s\d{2}\/\d{2}\/\d{4}\s\d{2}:\d{2}$/, "");
+  }
+  const preview = (entry.preview || "").trim();
+  if (preview) {
+    return preview.split("\n")[0].trim();
+  }
+  if (entry.original_filename) {
+    return entry.original_filename;
+  }
+  if (entry.source !== "text") {
+    return "Áudio";
+  }
+  return "Sem título";
 }
 
 function noteDate(entry: Entry): string {
@@ -111,6 +142,7 @@ export function NoteList({
   const [tagsOpen, setTagsOpen] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [menu, setMenu] = useState<{ x: number; y: number; id: string } | null>(null);
+  const [noteOrder, setNoteOrder] = useState<NoteOrder>(() => readNoteOrder());
   const [busy, setBusy] = useState(false);
   const tagMenu = useRef<HTMLDivElement | null>(null);
 
@@ -151,6 +183,14 @@ export function NoteList({
       onSearchOpened?.();
     }
   }, [autoSearch, onSearchOpened]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(NOTE_ORDER_KEY, noteOrder);
+    } catch {
+      // sem localStorage: a ordem vale so para esta sessao
+    }
+  }, [noteOrder]);
 
   useEffect(() => {
     if (!tagsOpen) return;
@@ -204,11 +244,15 @@ export function NoteList({
     // "iguais" podiam trocar de lugar a cada render).
     return [...filtered].sort((a, b) => {
       if (a.updated_at === b.updated_at) {
-        return a.id < b.id ? 1 : -1;
+        const tie = a.id < b.id ? -1 : 1;
+        return noteOrder === "newest" ? -tie : tie;
       }
-      return a.updated_at < b.updated_at ? 1 : -1;
+      if (noteOrder === "newest") {
+        return a.updated_at < b.updated_at ? 1 : -1;
+      }
+      return a.updated_at < b.updated_at ? -1 : 1;
     });
-  }, [withTags, term]);
+  }, [withTags, term, noteOrder]);
 
   const counts = useMemo(() => tagCounts(inScope, selectedTags), [inScope, selectedTags]);
 
@@ -299,7 +343,7 @@ export function NoteList({
   };
 
   const menuItems = (entry: Entry): ContextMenuItem[] => {
-    const targets = selected.has(entry.id) && selected.size > 1 ? selectedEntries : [entry];
+    const targets = selected.size > 1 ? selectedEntries : [entry];
     const allSelected = visible.length > 0 && selected.size === visible.length;
     return [
       {
@@ -370,9 +414,9 @@ export function NoteList({
           className={className}
           onContextMenu={(event) => {
             event.preventDefault();
-            // O clique direito seleciona a nota sem desfazer uma selecao que ja
-            // a contem: as acoes do menu valem para o conjunto.
-            if (!isSelected) setSelected(new Set([entry.id]));
+            // O clique direito so abre o menu: não seleciona a nota nem
+            // desfaz a selecao existente. As acoes valem para o conjunto ja
+            // selecionado quando a nota clicada esta nele.
             setMenu({ x: event.clientX, y: event.clientY, id: entry.id });
           }}
         >
@@ -388,8 +432,6 @@ export function NoteList({
                 return;
               }
               if (selected.size > 0) {
-                // Clicar de novo na unica nota selecionada abre; em qualquer
-                // outra, o clique troca a selecao para ela.
                 if (selected.size === 1 && isSelected) {
                   setSelected(new Set());
                   onOpen(entry.id);
@@ -584,6 +626,22 @@ export function NoteList({
                   </div>
                 )}
               </div>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() =>
+                  setNoteOrder((value) => (value === "newest" ? "oldest" : "newest"))
+                }
+                aria-pressed={noteOrder === "oldest"}
+                aria-label={
+                  noteOrder === "newest"
+                    ? "Ordenar notas: mais antigas primeiro"
+                    : "Ordenar notas: mais recentes primeiro"
+                }
+                title={noteOrder === "newest" ? "Mais recentes primeiro" : "Mais antigas primeiro"}
+              >
+                <SortIcon size={16} />
+              </button>
               <NotificationsMenu refreshKey={refreshKey} onOpen={onOpen} />
             </div>
             <button
@@ -604,6 +662,20 @@ export function NoteList({
           <span className="list-selection-count" aria-live="polite">
             {selected.size} {selected.size === 1 ? "nota" : "notas"}
           </span>
+          {selected.size === 1 && (
+            <button
+              type="button"
+              className="button button--ghost button--small"
+              onClick={() => {
+                const id = [...selected][0];
+                setSelected(new Set());
+                onOpen(id);
+              }}
+              disabled={busy}
+            >
+              Abrir
+            </button>
+          )}
           <button
             type="button"
             className="button button--ghost button--small"
