@@ -377,6 +377,7 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
   const rippleCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const rippleRafRef = useRef<number | null>(null);
   const simRef = useRef<{ nodes: SimNode[]; edges: SimEdge[]; pos: Map<string, { x: number; y: number }> } | null>(null);
+  const prevFocusIdRef = useRef<string | null>(null);
   const viewRef = useRef<View>({ zoom: 1, panX: 0, panY: 0 });
   const sizeRef = useRef({ w: 0, h: 0 });
   const colorsRef = useRef<Colors>(readColors());
@@ -969,13 +970,16 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
   }, [draw]);
 
   const animateView = useCallback(
-    (panX: number, panY: number, duration = 650) => {
+    (panX: number, panY: number, duration = 650, targetZoom?: number) => {
       cancelViewAnim();
       const startX = viewRef.current.panX;
       const startY = viewRef.current.panY;
+      const startZoom = viewRef.current.zoom;
+      const endZoom = targetZoom ?? startZoom;
       const dx = panX - startX;
       const dy = panY - startY;
-      if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return;
+      const dz = endZoom - startZoom;
+      if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5 && Math.abs(dz) < 0.001) return;
       const reduce =
         typeof window !== "undefined" &&
         typeof window.matchMedia === "function" &&
@@ -994,6 +998,7 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
         const view = viewRef.current;
         view.panX = startX + dx * eased;
         view.panY = startY + dy * eased;
+        view.zoom = Math.max(0.35, Math.min(3.5, startZoom + dz * eased));
         draw();
         if (t < 1) {
           viewAnimRef.current = window.requestAnimationFrame(step);
@@ -1157,7 +1162,7 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
           dy = Math.random() - 0.5;
           d2 = 1;
         }
-        const strength = a.kind === "user" || b.kind === "user" ? 10000 : 5200;
+        const strength = (a.kind === "user" || b.kind === "user" ? 10000 : 5200) * 0.25;
         const force = strength / Math.max(d2, 2500);
         const inv = 1 / Math.sqrt(d2);
         a.vx += dx * inv * force;
@@ -1172,7 +1177,7 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
       const dy = b.y - a.y;
       const dist = Math.max(1, Math.hypot(dx, dy));
       const target = a.r + b.r + (edge.kind === "cooccurrence" ? 120 : 100);
-      const force = (dist - target) * (edge.kind === "cooccurrence" ? 0.005 : 0.009);
+      const force = (dist - target) * (edge.kind === "cooccurrence" ? 0.005 : 0.009) * 0.25;
       const ux = dx / dist;
       const uy = dy / dist;
       if (!a.fixed) {
@@ -1194,14 +1199,14 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
         sim.pos.set(node.id, { x: node.x, y: node.y });
         continue;
       }
-      node.vx += (anchorX - node.x) * 0.0008;
-      node.vy += (anchorY - node.y) * 0.0008;
-      node.vx *= 0.87;
-      node.vy *= 0.87;
+      node.vx += (anchorX - node.x) * 0.0002;
+      node.vy += (anchorY - node.y) * 0.0002;
+      node.vx *= 0.92;
+      node.vy *= 0.92;
       const speed = Math.hypot(node.vx, node.vy);
-      if (speed > 24) {
-        node.vx *= 24 / speed;
-        node.vy *= 24 / speed;
+      if (speed > 6) {
+        node.vx *= 6 / speed;
+        node.vy *= 6 / speed;
       }
       node.x += node.vx;
       node.y += node.vy;
@@ -1214,23 +1219,49 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
   // posicao: nada muda de lugar e nenhuma bola encosta na outra.
 
   const startSimulation = useCallback(
-    (budget = 220, passes = 2) => {
+    (budget = 2400, passes = 2) => {
       if (rafRef.current !== null) {
         window.cancelAnimationFrame(rafRef.current);
       }
       let left = budget;
+      const started = performance.now();
+      const MAX_MS = 4000;
+      let prevPos: Map<string, { x: number; y: number }> | null = null;
+      let stableFrames = 0;
       const step = () => {
         const sim = simRef.current;
         if (!sim) {
           rafRef.current = null;
           return;
         }
+        let maxSpeed = 0;
         for (let pass = 0; pass < passes && left > 0; pass++) {
           left--;
           simStep(sim);
+          for (const node of sim.nodes) {
+            if (node.fixed) continue;
+            const speed = Math.hypot(node.vx, node.vy);
+            if (speed > maxSpeed) maxSpeed = speed;
+          }
         }
+        // Convergencia: a animacao termina quando as posicoes param de mudar.
+        let maxDelta = 0;
+        if (prevPos) {
+          for (const node of sim.nodes) {
+            const prev = prevPos.get(node.id);
+            if (!prev) continue;
+            const d = Math.hypot(node.x - prev.x, node.y - prev.y);
+            if (d > maxDelta) maxDelta = d;
+          }
+        }
+        prevPos = new Map(sim.pos);
+        if (maxDelta < 0.1) stableFrames++;
+        else stableFrames = 0;
         draw();
-        if (left > 0) {
+        // A animacao termina naturalmente, quando a fisica assenta (posicoes
+        // estaveis) ou ao atingir o teto de 4 segundos.
+        const elapsed = performance.now() - started;
+        if (left > 0 && stableFrames < 10 && elapsed < MAX_MS) {
           rafRef.current = window.requestAnimationFrame(step);
         } else {
           rafRef.current = null;
@@ -1257,7 +1288,7 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
       fitRef.current = false;
       manualViewRef.current = true;
       const view = viewRef.current;
-      animateView(-simNode.x * view.zoom, -simNode.y * view.zoom, 450);
+      animateView(-simNode.x * view.zoom, -simNode.y * view.zoom, 450, view.zoom * 1.4);
     },
     [visible, animateView, selectNode],
   );
@@ -1348,9 +1379,29 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
     manualViewRef.current = false;
     // Pre-settle synchronously: the first frame already shows the final layout.
     for (let i = 0; i < 280; i++) simStep(simRef.current);
-    fitView();
+    const focusChanged = focusId !== prevFocusIdRef.current;
+    prevFocusIdRef.current = focusId;
+    if (focusChanged && focusId) {
+      // Drill-down: zoom in suave.
+      const simNode = simRef.current?.nodes.find((item) => item.id === focusId);
+      fitRef.current = false;
+      manualViewRef.current = true;
+      if (simNode) {
+        const view = viewRef.current;
+        animateView(-simNode.x * view.zoom, -simNode.y * view.zoom, 450, view.zoom * 1.6);
+      } else {
+        fitView();
+      }
+    } else if (focusChanged && !focusId) {
+      // Voltar: zoom out suave.
+      fitRef.current = false;
+      manualViewRef.current = true;
+      fitView();
+    } else {
+      fitView();
+    }
     draw();
-  }, [filtered, data, focusId, simStep, draw, fitView]);
+  }, [filtered, data, focusId, simStep, draw, fitView, animateView]);
 
   // Uma entidade aberta numa nota chega aqui: o mapa acende e centraliza a
   // bola correspondente. O foco vale uma vez e e devolvido ao App.
@@ -1505,12 +1556,11 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
         }
         draw();
         // Ao arrastar o centro, as ligadas acompanham devagar. Isso e o unico
-        // momento em que a fisica roda fora do assentamento inicial, e mesmo
-        // assim a 30 Hz.
+        // momento em que a fisica roda fora do assentamento inicial, a 60 fps.
         const sim = simRef.current;
         if (sim && node.id === data?.center.id) {
           const now = performance.now();
-          if (now - lastDragStepRef.current >= 33) {
+          if (now - lastDragStepRef.current >= 16) {
             lastDragStepRef.current = now;
             simStep(sim);
             draw();
@@ -1560,7 +1610,7 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
             const view = viewRef.current;
             animateView(-node.x * view.zoom, -node.y * view.zoom, 650);
           }
-          startSimulation(70);
+          startSimulation();
           return;
         }
       }
@@ -1575,7 +1625,15 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
     if (dragRef.current) return;
     const point = graphPoint(event as unknown as React.PointerEvent<HTMLCanvasElement>);
     const node = pickNode(point.x, point.y);
-    if (node) selectNode(node.id);
+    if (!node) return;
+    selectNode(node.id);
+    const simNode = simRef.current?.nodes.find((item) => item.id === node.id);
+    if (simNode) {
+      fitRef.current = false;
+      manualViewRef.current = true;
+      const view = viewRef.current;
+      animateView(-simNode.x * view.zoom, -simNode.y * view.zoom, 400, view.zoom * 1.25);
+    }
   };
 
   const handleDoubleClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
@@ -1842,7 +1900,10 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
         </div>
 
         {selection ? (
-          <aside className="map-detail" aria-label="Detalhe do mapa">
+          <aside
+            className={focusId ? "map-detail map-detail--focus" : "map-detail"}
+            aria-label="Detalhe do mapa"
+          >
             <header className="map-detail-head">
               <span className={`map-kind map-kind--${selection.kind}`}>{kindLabel(selection.kind)}</span>
               <button
