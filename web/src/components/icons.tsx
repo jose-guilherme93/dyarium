@@ -295,3 +295,15 @@ export function CpuIcon({ size = 18 }: IconProps) {
     </svg>
   );
 }
+
+/** Ordena a lista: duas setas (cima/baixo) para alternar mais recentes/antigas. */
+export function SortIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M7 4v16" />
+      <path d="m4 7 3-3 3 3" />
+      <path d="M17 20V4" />
+      <path d="m20 17-3 3-3-3" />
+    </svg>
+  );
+}

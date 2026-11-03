@@ -194,7 +194,7 @@ export function NotebookSwitcher({
           />
         )}
         <span className="notebook-current-name">
-          {all ? "Todos os cadernos" : (active?.name ?? "Notas ao acaso")}
+          {all ? "Notas recentes" : (active?.name ?? "Notas ao acaso")}
         </span>
         <ChevronIcon size={14} />
       </button>
@@ -209,8 +209,8 @@ export function NotebookSwitcher({
             >
               <AllNotebooksIcon size={15} />
               <span className="notebook-menu-text">
-                <span className="notebook-menu-name">Todos os cadernos</span>
-                <span className="notebook-menu-last">a biblioteca inteira</span>
+                <span className="notebook-menu-name">Notas recentes</span>
+                <span className="notebook-menu-last">as mais recentes primeiro</span>
               </span>
               <span className="notebook-menu-count">{total}</span>
               {all && <CheckIcon size={13} />}
