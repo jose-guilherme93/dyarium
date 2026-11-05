@@ -229,7 +229,7 @@ export default function MapEntityScreen() {
 
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ ...styles.scrollContent, flexGrow: 1 }}
+        contentContainerStyle={{ ...styles.scrollContent, flexGrow: 1, minHeight: 800 }}
         showsVerticalScrollIndicator={false}
         nestedScrollEnabled={false}
       >
