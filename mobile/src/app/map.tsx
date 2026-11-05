@@ -23,7 +23,6 @@ import {
   ActivityIndicator,
   FlatList,
   BackHandler,
-  InteractionManager,
   ScrollView,
   StyleSheet,
   useWindowDimensions,
@@ -46,7 +45,7 @@ import { EntityEditor } from '@/components/graph/EntityEditor';
 import { GraphCanvas, type GraphCanvasHandle } from '@/components/graph/GraphCanvas';
 import { GraphIcon } from '@/components/graph/GraphIcon';
 import { MapFilters, type MapPeriod } from '@/components/graph/MapFilters';
-import { MapSheet, SNAP_DETAIL, SNAP_REST, type MapSheetHandle } from '@/components/graph/MapSheet';
+import { MapSheet, SNAP_COLLAPSED, SNAP_DETAIL, SNAP_REST, type MapSheetHandle } from '@/components/graph/MapSheet';
 import { MoodPanel } from '@/components/graph/MoodPanel';
 import type { EntityKind, GraphData, GraphNodeKind } from '@/core/graphModel';
 import { kindLabel, splitNodeId } from '@/core/graphModel';
@@ -234,6 +233,9 @@ export default function MapScreen() {
   const [notebooks, setNotebooks] = useState<Notebook[]>([]);
 
   const [snapshot, setSnapshot] = useState<GraphSnapshot | null>(null);
+  // Espelho do estado para o efeito da derivacao ler o recorte atual sem
+  // reexecutar a cada snapshot novo.
+  const snapshotRef = useRef<GraphSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [kinds, setKinds] = useState<Set<EntityKind>>(new Set(KINDS));
@@ -241,7 +243,7 @@ export default function MapScreen() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [period, setPeriod] = useState('all');
   const [notebookId, setNotebookId] = useState('');
-  const [sheetSnap, setSheetSnap] = useState(SNAP_REST);
+  const [sheetSnap, setSheetSnap] = useState(0);
   const [tab, setTab] = useState<'detail' | 'mood'>('detail');
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
@@ -366,7 +368,8 @@ export default function MapScreen() {
       if (!mounted.current) return;
       if (__DEV__) {
         console.log(
-          `[map] snapshot ${next.entries.length} notas ${next.links.length} vinculos ${Date.now() - started}ms`,
+          `[map] snapshot ${next.entries.length} notas ${next.links.length} vinculos ` +
+            `${next.analyzed} analisadas ${Date.now() - started}ms`,
         );
       }
       const previous = cached?.snapshot;
@@ -455,31 +458,37 @@ export default function MapScreen() {
   // desenhado: enquanto ele abre, a leitura do layout tem o banco so para ela.
   const drawn = Boolean(visible);
   useEffect(() => {
+    snapshotRef.current = snapshot;
+  }, [snapshot]);
+  useEffect(() => {
     if (!drawn) return undefined;
     let alive = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    // So depois que a tela e o primeiro gesto terminam: o mapa abre sem
-    // disputar a thread com a derivacao das analises antigas.
-    const interaction = InteractionManager.runAfterInteractions(() => {
-      timer = setTimeout(() => {
+    // Tempo, e nao `runAfterInteractions`: o mapa tem uma deriva continua e a
+    // fila de interacoes nunca esvazia, o que impedia a derivacao de rodar.
+    const timer = setTimeout(() => {
         const started = Date.now();
-        void ensureEntityDerivation()
+        // Mapa com notas mas sem nenhum vinculo: o marcador de derivacao pode
+        // estar gravado de uma versao anterior em que nada foi derivado. Nesse
+        // caso, refaz a partir das analises guardadas em vez de desistir.
+        const actual = snapshotRef.current;
+        const force = Boolean(actual && actual.entries.length > 0 && actual.links.length === 0);
+        void ensureEntityDerivation(force)
           .then((processed) => {
             if (__DEV__) {
               console.log(`[map] backfill ${processed} ${Date.now() - started}ms`);
             }
-            if (alive && processed > 0) void loadRef.current();
+            if (alive && processed > 0) {
+              // A leitura fresca em cache esconderia justamente o que acabou de
+              // ser derivado: joga o cache fora antes de reler.
+              snapshotCache = null;
+              void loadRef.current();
+            }
           })
           .catch(() => undefined);
-      }, 2500);
-    });
+    }, 2500);
     return () => {
       alive = false;
-      // O timer nasce dentro da interacao; `cancel()` para a interacao pendente,
-      // mas nao um timer ja agendado. Sem isto, a tela desmontada ainda acordava
-      // 2,5 s depois para derivar analises (e logar) sem ninguem olhando.
-      interaction.cancel();
-      if (timer !== undefined) clearTimeout(timer);
+      clearTimeout(timer);
     };
   }, [drawn]);
 
@@ -627,6 +636,8 @@ export default function MapScreen() {
       if (transition.current === 'slide') switchScene(() => setFocusId(null), -1);
       else fadeScene(() => setFocusId(null));
     }
+    // Recolhe a lista quando volta ao mapa.
+    sheetRef.current?.snapTo(SNAP_COLLAPSED);
   }, [focusId, switchScene, fadeScene]);
 
   /**
@@ -649,6 +660,8 @@ export default function MapScreen() {
         if (from === 'list') switchScene(() => setFocusId(id), 1);
         else fadeScene(() => setFocusId(id));
       }
+      // Mostra a lista quando uma bola e aberta.
+      sheetRef.current?.snapTo(SNAP_REST);
       tabRef.current = 'detail';
       setTab('detail');
       // A folha fica onde o usuario deixou (50%): ele sobe se quiser ler mais.
@@ -869,7 +882,7 @@ export default function MapScreen() {
                 width={width}
                 height={height}
                 viewportTop={insets.top + (focusId ? 72 : 50)}
-                viewportBottom={Math.round(height * (1 - SNAP_REST))}
+                viewportBottom={Math.round(height * (1 - (selectedId || focusId ? SNAP_REST : sheetSnap)))}
                 selectedId={selectedId}
                 focusMode={Boolean(focusId)}
                 kinds={kinds}
@@ -884,7 +897,7 @@ export default function MapScreen() {
         pointerEvents="none"
         style={[
           styles.veil,
-          { bottom: Math.round(height * (1 - SNAP_REST)), backgroundColor: theme.bg },
+          { bottom: Math.round(height * (1 - (selectedId || focusId ? SNAP_REST : sheetSnap || SNAP_COLLAPSED))), backgroundColor: theme.bg },
           veilStyle,
         ]}
       />
@@ -937,7 +950,7 @@ export default function MapScreen() {
 
       {selectedId || focusId ? (
         <Press
-          style={[styles.mapBack, { bottom: Math.round(height * SNAP_REST) + spacing.sm }]}
+          style={[styles.mapBack, { bottom: Math.round(height * (selectedId || focusId ? SNAP_REST : sheetSnap || SNAP_COLLAPSED)) + spacing.sm }]}
           onPress={resetToMap}
           accessibilityRole="button"
           accessibilityLabel="Voltar ao mapa inteiro"
@@ -947,7 +960,7 @@ export default function MapScreen() {
         </Press>
       ) : null}
 
-      <View style={[styles.zoom, { bottom: Math.round(height * SNAP_REST) + spacing.sm }]}>
+      <View style={[styles.zoom, { bottom: Math.round(height * (selectedId || focusId ? SNAP_REST : sheetSnap || SNAP_COLLAPSED)) + spacing.sm }]}>
         <Press
           style={styles.zoomButton}
           onPress={() => canvasRef.current?.zoomIn()}
@@ -977,7 +990,7 @@ export default function MapScreen() {
             styles.graphLoading,
             {
               top: insets.top + 50,
-              bottom: Math.round(height * (1 - SNAP_REST)),
+              bottom: Math.round(height * (1 - (selectedId || focusId ? SNAP_REST : sheetSnap || SNAP_COLLAPSED))),
             },
           ]}
           pointerEvents="none"
@@ -995,7 +1008,7 @@ export default function MapScreen() {
         ref={sheetRef}
         header={sheetHeader}
         onSnapChange={setSheetSnap}
-        initialSnap={SNAP_REST}
+        initialSnap={selectedId || focusId ? SNAP_REST : SNAP_COLLAPSED}
       >
         {(snap) =>
           tab === 'mood' ? (
