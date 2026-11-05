@@ -8,8 +8,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View, ScrollView } from 'react-native';
+import { useWindowDimensions } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Text } from '@/components/AppText';
 import { Press } from '@/components/Press';
@@ -41,6 +43,8 @@ export default function MapEntityScreen() {
   const graphColors = GRAPH_PALETTES[themeName as ThemeName];
   const params = useLocalSearchParams<MapEntityParams>();
   const entityId = params.id;
+  const insets = useSafeAreaInsets();
+  const { width: screenWidth } = useWindowDimensions();
 
   const [snapshot, setSnapshot] = useState<GraphSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -179,9 +183,14 @@ export default function MapEntityScreen() {
 
   if (!data || !entity) return null;
 
+  // Largura disponível para o grafo: tela inteira menos padding dos lados.
+  const graphWidth = Math.max(300, screenWidth - spacing.sm * 2);
+  // Altura generosa para o grafo da relação ficar visível e usável.
+  const graphHeight = 420;
+
   return (
     <View style={styles.screen}>
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
         <Press onPress={back} style={styles.backButton} accessibilityLabel="Voltar">
           <Ionicons name="chevron-back" size={20} color={theme.text} />
           <Text style={styles.backText}>Mapa</Text>
@@ -237,8 +246,8 @@ export default function MapEntityScreen() {
               data={graphData.data}
               layout={graphData.layout}
               colors={graphColors}
-              width={390 - spacing.sm * 2}
-              height={300}
+              width={graphWidth}
+              height={graphHeight}
               viewportTop={0}
               viewportBottom={0}
               selectedId={entityId}
@@ -264,7 +273,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: spacing.sm,
-    paddingTop: 14,
     paddingBottom: spacing.sm,
     gap: 2,
   },
