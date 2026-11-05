@@ -35,10 +35,11 @@ import { useThemedStyles } from '@/theme/ThemeContext';
 import { defineStyles } from '@/theme/themedStyles';
 
 /** Alturas em fracao da tela: repouso, detalhe e lista completa. */
+export const SNAP_COLLAPSED = 0.08;
 export const SNAP_REST = 0.5;
 export const SNAP_DETAIL = 0.72;
 export const SNAP_FULL = 1;
-export const SHEET_SNAPS = [SNAP_REST, SNAP_DETAIL, SNAP_FULL];
+export const SHEET_SNAPS = [SNAP_COLLAPSED, SNAP_REST, SNAP_DETAIL, SNAP_FULL];
 
 /** Empurrao da velocidade: arrasto curto e rapido escolhe a altura seguinte. */
 const FLING_MS = 70;
