@@ -5,8 +5,9 @@
  * que provam a relação, com o grafo focado nessa entidade abaixo das
  * informações. Tocar em "Voltar" retorna ao grafo inteiro.
  *
- * Ordem visual: header (nome), grafo focado, grafico de humor (quando
- * houver), depois o restante das informacoes (estatisticas e trechos).
+ * Ordem visual: header (nome), grafico de humor (quando houver), depois
+ * o restante das informacoes (estatisticas e trechos), e por fim o grafo
+ * das relacoes dessa entidade.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -229,6 +230,7 @@ export default function MapEntityScreen() {
       </View>
 
       <ScrollView
+        style={{ flex: 1 }}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
@@ -258,7 +260,7 @@ export default function MapEntityScreen() {
           />
         )}
 
-        {/* Grafo focado nesta entidade: aparece como ultima sessao da tela,
+        {/* Grafo focado nesta entidade: aparece como ultima secao da tela,
             depois de todas as informacoes. */}
         {graphData && (
           <View style={styles.graphSection}>
