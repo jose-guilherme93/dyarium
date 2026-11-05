@@ -275,6 +275,7 @@ export default function MapEntityScreen() {
               viewportBottom={0}
               selectedId={entityId}
               focusMode={false}
+              interactive={false}
               kinds={new Set<EntityKind>(['person', 'place', 'theme', 'decision'])}
               onSelect={(id) => {
                 if (id && id !== 'user' && id !== entityId) {

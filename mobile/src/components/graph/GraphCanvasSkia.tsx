@@ -116,6 +116,8 @@ interface GraphCanvasProps {
   focusMode?: boolean;
   kinds: ReadonlySet<EntityKind>;
   onSelect(id: string | null): void;
+  /** Quando false, o grafo é estático (sem pan/zoom/tap). */
+  interactive?: boolean;
 }
 
 function clampWorklet(value: number, min: number, max: number): number {
@@ -136,6 +138,7 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
     focusMode = false,
     kinds = new Set<EntityKind>(),
     onSelect,
+    interactive = true,
   },
   ref,
 ) {
@@ -595,11 +598,10 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
     return out;
   }, [shown, layout]);
 
-  return (
-    <GestureDetector gesture={gestures}>
-      <View style={StyleSheet.absoluteFill} collapsable={false}>
-        <Canvas style={{ width, height }}>
-          <Group transform={cameraTransform}>
+  const canvas = (
+    <View style={StyleSheet.absoluteFill} collapsable={false}>
+      <Canvas style={{ width, height }}>
+        <Group transform={cameraTransform}>
             {/* edges: linhas diretas, sem Path de SVG */}
             {EDGE_KINDS.map((kind: GraphEdgeKind) => {
               const alpha = dimmed ? (activeIds?.size ? 0.18 : 0.1) : EDGE_ALPHA[kind];
@@ -753,7 +755,12 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
           ))}
         </Canvas>
       </View>
-    </GestureDetector>
+  );
+
+  return interactive ? (
+    <GestureDetector gesture={gestures}>{canvas}</GestureDetector>
+  ) : (
+    canvas
   );
 });
 
