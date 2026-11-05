@@ -45,7 +45,7 @@ import { EntityEditor } from '@/components/graph/EntityEditor';
 import { GraphCanvas, type GraphCanvasHandle } from '@/components/graph/GraphCanvas';
 import { GraphIcon } from '@/components/graph/GraphIcon';
 import { MapFilters, type MapPeriod } from '@/components/graph/MapFilters';
-import { MapSheet, SNAP_COLLAPSED, SNAP_DETAIL, SNAP_REST, type MapSheetHandle } from '@/components/graph/MapSheet';
+import { MapSheet, SNAP_COLLAPSED, SNAP_REST, type MapSheetHandle } from '@/components/graph/MapSheet';
 import { MoodPanel } from '@/components/graph/MoodPanel';
 import type { EntityKind, GraphData, GraphNodeKind } from '@/core/graphModel';
 import { kindLabel, splitNodeId } from '@/core/graphModel';
@@ -243,7 +243,7 @@ export default function MapScreen() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [period, setPeriod] = useState('all');
   const [notebookId, setNotebookId] = useState('');
-  const [sheetSnap, setSheetSnap] = useState(0);
+  const [sheetSnap, setSheetSnap] = useState(SNAP_COLLAPSED);
   const [tab, setTab] = useState<'detail' | 'mood'>('detail');
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
@@ -661,11 +661,9 @@ export default function MapScreen() {
         else fadeScene(() => setFocusId(id));
       }
       // Mostra a lista quando uma bola e aberta.
-      sheetRef.current?.snapTo(SNAP_REST);
       tabRef.current = 'detail';
       setTab('detail');
-      // A folha fica onde o usuario deixou (50%): ele sobe se quiser ler mais.
-      // Os numeros vem do snapshot na hora; so os trechos chegam depois.
+      // A folha fica onde o usuario deixou: nao muda o espaco do grafo. Ele sobe se quiser ler mais.
       const instant = snapshot && parsed ? panelForEntity(snapshot, parsed.id) : null;
       setSelectedPanel(instant);
       setPanelLoading(!instant);
@@ -853,7 +851,7 @@ export default function MapScreen() {
           onPress={() => {
             tabRef.current = 'mood';
             setTab('mood');
-            if (sheetSnap < SNAP_DETAIL) sheetRef.current?.snapTo(SNAP_DETAIL);
+            // A folha fica onde o usuario deixou: nao muda o espaco do grafo.
             if (snapshot) void hydrateMood(snapshot);
           }}
           accessibilityRole="tab"
@@ -882,7 +880,7 @@ export default function MapScreen() {
                 width={width}
                 height={height}
                 viewportTop={insets.top + (focusId ? 72 : 50)}
-                viewportBottom={Math.round(height * (1 - (selectedId || focusId ? SNAP_REST : sheetSnap)))}
+                viewportBottom={Math.round(height * (1 - sheetSnap))}
                 selectedId={selectedId}
                 focusMode={Boolean(focusId)}
                 kinds={kinds}
@@ -897,7 +895,7 @@ export default function MapScreen() {
         pointerEvents="none"
         style={[
           styles.veil,
-          { bottom: Math.round(height * (1 - (selectedId || focusId ? SNAP_REST : sheetSnap || SNAP_COLLAPSED))), backgroundColor: theme.bg },
+          { bottom: Math.round(height * (1 - (sheetSnap || SNAP_COLLAPSED))), backgroundColor: theme.bg },
           veilStyle,
         ]}
       />
@@ -950,7 +948,7 @@ export default function MapScreen() {
 
       {selectedId || focusId ? (
         <Press
-          style={[styles.mapBack, { bottom: Math.round(height * (selectedId || focusId ? SNAP_REST : sheetSnap || SNAP_COLLAPSED)) + spacing.sm }]}
+          style={[styles.mapBack, { bottom: Math.round(height * (sheetSnap || SNAP_COLLAPSED)) + spacing.sm }]}
           onPress={resetToMap}
           accessibilityRole="button"
           accessibilityLabel="Voltar ao mapa inteiro"
@@ -960,7 +958,7 @@ export default function MapScreen() {
         </Press>
       ) : null}
 
-      <View style={[styles.zoom, { bottom: Math.round(height * (selectedId || focusId ? SNAP_REST : sheetSnap || SNAP_COLLAPSED)) + spacing.sm }]}>
+      <View style={[styles.zoom, { bottom: Math.round(height * (sheetSnap || SNAP_COLLAPSED)) + spacing.sm }]}>
         <Press
           style={styles.zoomButton}
           onPress={() => canvasRef.current?.zoomIn()}
@@ -990,7 +988,7 @@ export default function MapScreen() {
             styles.graphLoading,
             {
               top: insets.top + 50,
-              bottom: Math.round(height * (1 - (selectedId || focusId ? SNAP_REST : sheetSnap || SNAP_COLLAPSED))),
+              bottom: Math.round(height * (1 - (sheetSnap || SNAP_COLLAPSED))),
             },
           ]}
           pointerEvents="none"
@@ -1008,7 +1006,7 @@ export default function MapScreen() {
         ref={sheetRef}
         header={sheetHeader}
         onSnapChange={setSheetSnap}
-        initialSnap={selectedId || focusId ? SNAP_REST : SNAP_COLLAPSED}
+        initialSnap={SNAP_COLLAPSED}
       >
         {(snap) =>
           tab === 'mood' ? (
