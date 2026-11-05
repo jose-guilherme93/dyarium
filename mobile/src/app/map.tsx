@@ -9,6 +9,7 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams } from 'expo-router';
+import { router } from 'expo-router';
 import {
   Profiler,
   memo,
@@ -40,12 +41,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Text } from '@/components/AppText';
 import { Press } from '@/components/Press';
 import { TagStrip } from '@/components/TagStrip';
-import { EntityDetail } from '@/components/graph/EntityDetail';
 import { EntityEditor } from '@/components/graph/EntityEditor';
 import { GraphCanvas, type GraphCanvasHandle } from '@/components/graph/GraphCanvas';
 import { GraphIcon } from '@/components/graph/GraphIcon';
 import { MapFilters, type MapPeriod } from '@/components/graph/MapFilters';
-import { MapSheet, SNAP_COLLAPSED, SNAP_REST, type MapSheetHandle } from '@/components/graph/MapSheet';
 import { MoodPanel } from '@/components/graph/MoodPanel';
 import type { EntityKind, GraphData, GraphNodeKind } from '@/core/graphModel';
 import { kindLabel, splitNodeId } from '@/core/graphModel';
@@ -243,7 +242,6 @@ export default function MapScreen() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [period, setPeriod] = useState('all');
   const [notebookId, setNotebookId] = useState('');
-  const [sheetSnap, setSheetSnap] = useState(SNAP_COLLAPSED);
   const [tab, setTab] = useState<'detail' | 'mood'>('detail');
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
@@ -259,7 +257,6 @@ export default function MapScreen() {
   const [mood, setMood] = useState<MoodPoint[]>([]);
   const [moodLoading, setMoodLoading] = useState(false);
 
-  const sheetRef = useRef<MapSheetHandle>(null);
   const canvasRef = useRef<GraphCanvasHandle>(null);
   const focusApplied = useRef(false);
   const selectedRef = useRef<string | null>(null);
@@ -636,14 +633,10 @@ export default function MapScreen() {
       if (transition.current === 'slide') switchScene(() => setFocusId(null), -1);
       else fadeScene(() => setFocusId(null));
     }
-    // Recolhe a lista quando volta ao mapa.
-    sheetRef.current?.snapTo(SNAP_COLLAPSED);
   }, [focusId, switchScene, fadeScene]);
 
   /**
-   * Abre uma bola: ela vira a raiz da propria visao. Todo o resto sai de cena
-   * e ficam so ela, as relacoes dela e as notas que a citam. Tocar no dono
-   * ("Você") devolve o mapa inteiro.
+   * Abre uma bola: navega para a tela de detalhe da entidade.
    */
   const openEntity = useCallback(
     (id: string, from: 'graph' | 'list') => {
@@ -652,24 +645,11 @@ export default function MapScreen() {
         openNote(noteKeyFromNode(id));
         return;
       }
-      selectedRef.current = id;
-      setSelectedId(id);
-      // So troca o desenho se a bola ainda nao esta aberta: tocar de novo na
-      // mesma bola nao pode piscar a tela.
-      if (id !== focusId) {
-        if (from === 'list') switchScene(() => setFocusId(id), 1);
-        else fadeScene(() => setFocusId(id));
+      if (parsed?.kind && parsed.kind !== 'user') {
+        push(`/map/${entityNodeId(parsed.kind as EntityKind, parsed.id)}`);
       }
-      // Mostra a lista quando uma bola e aberta.
-      tabRef.current = 'detail';
-      setTab('detail');
-      // A folha fica onde o usuario deixou: nao muda o espaco do grafo. Ele sobe se quiser ler mais.
-      const instant = snapshot && parsed ? panelForEntity(snapshot, parsed.id) : null;
-      setSelectedPanel(instant);
-      setPanelLoading(!instant);
-      if (snapshot) void hydratePanel(snapshot, id);
     },
-    [openNote, snapshot, hydratePanel, focusId, switchScene, fadeScene],
+    [openNote],
   );
 
   /** Toque no desenho: troca escurecendo. Tocar no dono/vazio volta ao mapa. */
@@ -681,24 +661,19 @@ export default function MapScreen() {
     [openEntity, resetToMap],
   );
 
-  /** Toque na lista: e navegacao, entao o desenho desliza. */
+  /** Toque na lista: navega para o detalhe da entidade. */
   const selectFromList = useCallback(
     (id: string) => openEntity(id, 'list'),
     [openEntity],
   );
 
-  // Voltar do Android desfaz o estado do mapa antes de sair dele: Humor volta
-  // para Detalhe, a folha desce para o repouso e o foco volta ao mapa inteiro.
-  // So no repouso, com a lista embaixo, e que sai para a biblioteca.
+  // Voltar do Android: se houver foco, volta ao mapa inteiro.
+  // Caso contrario, sai para a biblioteca.
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
       if (tabRef.current === 'mood') {
         tabRef.current = 'detail';
         setTab('detail');
-        return true;
-      }
-      if (sheetSnap > SNAP_REST + 0.01) {
-        sheetRef.current?.snapTo(SNAP_REST);
         return true;
       }
       if (focusId) {
@@ -708,32 +683,10 @@ export default function MapScreen() {
       return false;
     });
     return () => subscription.remove();
-  }, [sheetSnap, focusId, resetToMap]);
+  }, [focusId, resetToMap]);
 
   // A lista e para procurar, nao para ranquear: ordem alfabetica e mais simples
   // de achar um nome do que a ordem por mencoes do desenho.
-  const overviewNodes = useMemo(
-    () =>
-      data
-        ? data.nodes
-            .filter((node) => node.kind !== 'note')
-            .filter((node) => kinds.has(node.kind as EntityKind) || node.id === selectedId)
-            .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'))
-        : [],
-    [data, kinds, selectedId],
-  );
-
-  const renderOverview = useCallback(
-    ({ item }: ListRenderItemInfo<GraphData['nodes'][number]>) => (
-      <OverviewRow
-        node={item}
-        color={item.kind === 'user' ? theme.neutralSoft : graphColors[item.kind as EntityKind]}
-        onPress={selectFromList}
-      />
-    ),
-    [theme.neutralSoft, graphColors, selectFromList],
-  );
-
   const toggleKind = useCallback((kind: EntityKind) => {
     setKinds((current) => {
       const next = new Set(current);
@@ -880,7 +833,7 @@ export default function MapScreen() {
                 width={width}
                 height={height}
                 viewportTop={insets.top + (focusId ? 72 : 50)}
-                viewportBottom={Math.round(height * (1 - sheetSnap))}
+                viewportBottom={Math.round(height)}
                 selectedId={selectedId}
                 focusMode={Boolean(focusId)}
                 kinds={kinds}
@@ -895,7 +848,7 @@ export default function MapScreen() {
         pointerEvents="none"
         style={[
           styles.veil,
-          { bottom: Math.round(height * (1 - (sheetSnap || SNAP_COLLAPSED))), backgroundColor: theme.bg },
+          { bottom: 0, backgroundColor: theme.bg },
           veilStyle,
         ]}
       />
@@ -948,7 +901,7 @@ export default function MapScreen() {
 
       {selectedId || focusId ? (
         <Press
-          style={[styles.mapBack, { bottom: Math.round(height * (sheetSnap || SNAP_COLLAPSED)) + spacing.sm }]}
+          style={[styles.mapBack, { bottom: spacing.sm }]}
           onPress={resetToMap}
           accessibilityRole="button"
           accessibilityLabel="Voltar ao mapa inteiro"
@@ -958,7 +911,7 @@ export default function MapScreen() {
         </Press>
       ) : null}
 
-      <View style={[styles.zoom, { bottom: Math.round(height * (sheetSnap || SNAP_COLLAPSED)) + spacing.sm }]}>
+      <View style={[styles.zoom, { bottom: spacing.sm }]}>
         <Press
           style={styles.zoomButton}
           onPress={() => canvasRef.current?.zoomIn()}
@@ -988,7 +941,7 @@ export default function MapScreen() {
             styles.graphLoading,
             {
               top: insets.top + 50,
-              bottom: Math.round(height * (1 - (sheetSnap || SNAP_COLLAPSED))),
+              bottom: Math.round(height * (1 - 0)),
             },
           ]}
           pointerEvents="none"
@@ -1002,79 +955,6 @@ export default function MapScreen() {
         </View>
       ) : null}
 
-      <MapSheet
-        ref={sheetRef}
-        header={sheetHeader}
-        onSnapChange={setSheetSnap}
-        initialSnap={SNAP_COLLAPSED}
-      >
-        {(snap) =>
-          tab === 'mood' ? (
-            <ScrollView
-              style={styles.sheetScroll}
-              showsVerticalScrollIndicator={false}
-              scrollEnabled
-              contentContainerStyle={styles.moodScroll}
-            >
-              {moodBusy ? (
-                <View style={styles.panelLoading}>
-                  <ActivityIndicator color={theme.accent} />
-                </View>
-              ) : (
-                <MoodPanel series={moodSeries} colors={graphColors} subject={moodSubject} />
-              )}
-            </ScrollView>
-          ) : selectedEntity ? (
-            panelLoading || !selectedPanel ? (
-              <View style={styles.panelLoading}>
-                <ActivityIndicator color={theme.accent} />
-              </View>
-            ) : (
-              <EntityDetail
-                panel={selectedPanel}
-                colors={graphColors}
-                snap={snap}
-                onOpenNote={openNote}
-                onRename={() => {
-                  setEditorError(null);
-                  setEditorOpen(true);
-                }}
-                onIcon={() => {
-                  setEditorError(null);
-                  setEditorOpen(true);
-                }}
-                onClaimSelf={onClaimSelf}
-              />
-            )
-          ) : (
-            <FlatList
-              data={overviewNodes}
-              keyExtractor={(node) => node.id}
-              renderItem={renderOverview}
-              style={styles.sheetScroll}
-              contentContainerStyle={styles.overview}
-              showsVerticalScrollIndicator={false}
-              initialNumToRender={10}
-              maxToRenderPerBatch={6}
-              updateCellsBatchingPeriod={40}
-              windowSize={5}
-              // Altura fixa da linha: a lista sabe onde cada nome comeca sem
-              // medir nada, entao rolar nao paga layout por linha.
-              getItemLayout={(_, index) => ({
-                length: OVERVIEW_ROW,
-                offset: OVERVIEW_ROW * index,
-                index,
-              })}
-              removeClippedSubviews
-              ListEmptyComponent={
-                <Text style={styles.empty}>
-                  {snapshot?.total ? 'Sem relações' : 'Sem notas'}
-                </Text>
-              }
-            />
-          )
-        }
-      </MapSheet>
 
       <MapFilters
         visible={filtersOpen}
