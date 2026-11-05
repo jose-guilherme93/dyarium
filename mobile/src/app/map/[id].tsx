@@ -228,30 +228,6 @@ export default function MapEntityScreen() {
         </Press>
       </View>
 
-      {/* Grafo focado nesta entidade: só ela e as relações dela. */}
-      {graphData && (
-        <View style={styles.graphSection}>
-          <GraphCanvas
-            ref={canvasRef}
-            data={graphData.data}
-            layout={graphData.layout}
-            colors={graphColors}
-            width={graphWidth}
-            height={graphHeight}
-            viewportTop={0}
-            viewportBottom={0}
-            selectedId={entityId}
-            focusMode={false}
-            kinds={new Set<EntityKind>(['person', 'place', 'theme', 'decision'])}
-            onSelect={(id) => {
-              if (id && id !== 'user' && id !== entityId) {
-                push(`/map/${id}`);
-              }
-            }}
-          />
-        </View>
-      )}
-
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
@@ -280,6 +256,31 @@ export default function MapEntityScreen() {
             onClaimSelf={() => {}}
             scrollEnabled={false}
           />
+        )}
+
+        {/* Grafo focado nesta entidade: aparece como ultima sessao da tela,
+            depois de todas as informacoes. */}
+        {graphData && (
+          <View style={styles.graphSection}>
+            <GraphCanvas
+              ref={canvasRef}
+              data={graphData.data}
+              layout={graphData.layout}
+              colors={graphColors}
+              width={graphWidth}
+              height={graphHeight}
+              viewportTop={0}
+              viewportBottom={0}
+              selectedId={entityId}
+              focusMode={false}
+              kinds={new Set<EntityKind>(['person', 'place', 'theme', 'decision'])}
+              onSelect={(id) => {
+                if (id && id !== 'user' && id !== entityId) {
+                  push(`/map/${id}`);
+                }
+              }}
+            />
+          </View>
         )}
       </ScrollView>
     </View>
