@@ -38,6 +38,7 @@ export const LABEL_GAP = 6;
 const LABEL_CHAR = 0.56;
 
 export function labelWidth(text: string): number {
+  'worklet';
   return text.length * LABEL_FONT * LABEL_CHAR;
 }
 
