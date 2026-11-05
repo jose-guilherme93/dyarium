@@ -1,14 +1,14 @@
 /**
- * O mapa desenha bolas e linhas em SVG, mas o nome de cada bola e texto de
- * tela: uma view comum, fora do desenho.
+ * O mapa desenha bolas, linhas e nomes no mesmo canvas do Skia.
  *
- * Nao e detalhe de implementacao. O `react-native-svg` joga fora o bitmap da
- * cena inteira a cada prop que muda; quando os nomes eram nos de SVG, cada
- * quadro de arrasto custava um redesenho de tela cheia por nome. Este teste
- * guarda o desenho de volta no lugar: nomes como texto, cena como desenho.
+ * Nao e detalhe de implementacao. Quando cada nome virava uma view animada, um
+ * arrasto atualizava dezenas de views por quadro e o mapa caia para 14 fps com
+ * a tela parada. Este teste guarda o desenho no lugar: nomes sao texto do
+ * canvas, e o Skia recebe a camera como numeros.
  */
 
-import { render, screen } from '@testing-library/react-native';
+import { render, screen, within } from '@testing-library/react-native';
+import { View } from 'react-native';
 
 import type { GraphLayout } from '@/core/graphLayout';
 import type { EntityKind, GraphData } from '@/core/graphModel';
@@ -24,10 +24,14 @@ jest.mock('react-native-reanimated', () => {
   return {
     __esModule: true,
     default: { View, createAnimatedComponent: (component: unknown) => component },
+    Easing: { out: (fn: unknown) => fn, cubic: (value: number) => value },
     runOnJS: (fn: unknown) => fn,
     useSharedValue: (initial: unknown) => ({ value: initial }),
+    useDerivedValue: (factory: () => unknown) => ({ value: factory() }),
     useAnimatedStyle: (factory: () => unknown) => factory(),
     useFrameCallback: () => ({ setActive: jest.fn(), isActive: false, callbackId: 0 }),
+    withTiming: (value: unknown) => value,
+    withDelay: (_delay: number, value: unknown) => value,
   };
 });
 
@@ -61,16 +65,31 @@ jest.mock('react-native-gesture-handler', () => {
   };
 });
 
-jest.mock('react-native-svg', () => {
+// Skia nao inicializa no Jest; o mock devolve views comuns. O texto tem que sair
+// de dentro do canvas mockado, e nao de uma view irma.
+jest.mock('@shopify/react-native-skia', () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { View, Text } = require('react-native');
+  const { Text: NativeText, View } = require('react-native');
+  const Skia = {
+    Path: { MakeFromSVGString: () => null },
+  };
+  const font = {
+    measureText: (text: string) => ({ width: text.length * 5, height: 10 }),
+    getMetrics: () => ({ ascent: -8, descent: 2 }),
+  };
   return {
     __esModule: true,
-    default: View,
+    Canvas: ({ children }: { children: unknown }) => (
+      <View testID="graph-canvas">{children}</View>
+    ),
     Circle: View,
+    DashPathEffect: View,
+    Group: View,
     Path: View,
-    // Marca qualquer texto que volte a ser desenhado dentro do SVG.
-    Text: (props: { children?: unknown }) => <Text testID="svg-text">{props.children}</Text>,
+    RoundedRect: View,
+    Skia,
+    Text: ({ text }: { text: string }) => <NativeText>{text}</NativeText>,
+    matchFont: () => font,
   };
 });
 
@@ -116,18 +135,35 @@ function desenha() {
 }
 
 describe('desenho do mapa', () => {
-  it('mostra o nome das bolas como texto de tela', () => {
+  it('desenha os nomes dentro do canvas, no mesmo passe das bolas', () => {
     desenha();
 
-    expect(screen.getByText('Maria')).toBeTruthy();
-    expect(screen.getByText('Praia')).toBeTruthy();
-    expect(screen.getByText('Você')).toBeTruthy();
+    const canvas = screen.getByTestId('graph-canvas');
+    expect(within(canvas).getByText('Maria')).toBeTruthy();
+    expect(within(canvas).getByText('Praia')).toBeTruthy();
+    expect(within(canvas).getByText('Você')).toBeTruthy();
   });
 
-  it('nao desenha nome dentro do SVG', () => {
+  it('passa a camera ao Skia como numero, nunca como objeto de shared value', () => {
     desenha();
 
-    // Cada nome e uma view de texto; nenhum deles e um no de SVG.
-    expect(screen.queryByTestId('svg-text')).toBeNull();
+    // O Skia nativo recebe o transform por JSI e responde "Value is an object,
+    // expected a number" se um shared value for mandado solto dentro do array.
+    // A camera tem que chegar como array de numeros (direto ou via derived).
+    const comTransform = screen.UNSAFE_getAllByType(View).filter(
+      (node) => node.props.transform !== undefined,
+    );
+    expect(comTransform.length).toBeGreaterThan(0);
+
+    for (const node of comTransform) {
+      const transform = node.props.transform;
+      const passos = Array.isArray(transform) ? transform : transform.value;
+      expect(Array.isArray(passos)).toBe(true);
+      for (const passo of passos) {
+        for (const valor of Object.values(passo as Record<string, unknown>)) {
+          expect(typeof valor).toBe('number');
+        }
+      }
+    }
   });
 });
