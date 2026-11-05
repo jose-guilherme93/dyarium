@@ -2,38 +2,36 @@
  * Detalhe de uma entidade do mapa, em tela propria.
  *
  * Abre ao tocar em uma bola do grafo. Mostra as estatísticas e os trechos
- * que provam a relação, igual ao painel que antes subia de baixo. Tocar
- * em "Voltar" retorna ao grafo inteiro.
+ * que provam a relação, com o grafo focado nessa entidade abaixo das
+ * informações. Tocar em "Voltar" retorna ao grafo inteiro.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, StyleSheet, View, type ListRenderItemInfo } from 'react-native';
+import { ActivityIndicator, StyleSheet, View, ScrollView } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
 import { Text } from '@/components/AppText';
 import { Press } from '@/components/Press';
 import { EntityDetail } from '@/components/graph/EntityDetail';
-import type { EntityKind, GraphData, GraphNodeKind } from '@/core/graphModel';
-import { kindLabel, splitNodeId } from '@/core/graphModel';
+import { GraphCanvas, type GraphCanvasHandle } from '@/components/graph/GraphCanvas';
+import type { EntityKind, GraphNodeKind } from '@/core/graphModel';
+import { kindLabel } from '@/core/graphModel';
 import type { EntityPanel } from '@/core/graphPanel';
 import type { GraphSnapshot } from '@/services/graphData';
 import {
   graphFromSnapshot,
-  kindCounts,
+  layoutSeeded,
   loadEntityPanel,
   loadGraphSnapshot,
   readCachedSnapshot,
-  rememberSnapshot,
 } from '@/services/graphData';
 import { back, push } from '@/services/appNavigation';
 import { useRenderCount } from '@/dev/perf';
-import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
+import { baseColors, fontSize, spacing } from '@/theme/tokens';
 import { GRAPH_PALETTES } from '@/theme/graph';
 import { useTheme } from '@/theme/ThemeContext';
 import type { ThemeName } from '@/theme/tokens';
-
-const SNAPSHOT_FRESH_MS = 20_000;
 
 type MapEntityParams = { id: string };
 
@@ -51,6 +49,7 @@ export default function MapEntityScreen() {
   const [panelLoading, setPanelLoading] = useState(false);
   const mounted = useRef(true);
   const panelSeq = useRef(0);
+  const canvasRef = useRef<GraphCanvasHandle>(null);
 
   const data = useMemo(() => {
     if (!snapshot) return null;
@@ -61,51 +60,15 @@ export default function MapEntityScreen() {
     });
   }, [snapshot]);
 
-  const counts = useMemo(() => {
-    if (!data) return { person: 0, place: 0, theme: 0, decision: 0 };
-    return kindCounts(data);
-  }, [data]);
-  const entityTotal = counts ? Object.values(counts).reduce((s, v) => s + v, 0) : 0;
+  const focusLayout = useMemo(() => {
+    if (!data || !entityId) return null;
+    return layoutSeeded(data, entityId, null);
+  }, [data, entityId]);
 
-  useEffect(() => {
-    let cancelled = false;
-    const cacheKey = `entity:${entityId}`;
-    let cachedSnapshot: GraphSnapshot | null = null;
-    let snapshotCacheValue: { key: string; at: number; snapshot: GraphSnapshot } | null = null;
-
-    readCachedSnapshot(cacheKey).then((cached) => {
-      if (cancelled || !mounted.current) return;
-      cachedSnapshot = cached;
-      if (cached) {
-        setSnapshot(cached);
-        setLoading(false);
-      }
-    });
-
-    loadGraphSnapshot({})
-      .then((next) => {
-        if (cancelled || !mounted.current || !next) return;
-        snapshotCacheValue = { key: cacheKey, at: Date.now(), snapshot: next };
-        if (!sameSnapshot(cachedSnapshot, next)) setSnapshot(next);
-        setLoading(false);
-        void hydratePanel(next);
-      })
-      .catch(() => {
-        if (cancelled || !mounted.current) return;
-        setError('Não foi possível carregar o mapa.');
-        setLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [entityId]);
-
-  useEffect(() => {
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
+  const graphData = useMemo(() => {
+    if (!data) return null;
+    return { data, layout: focusLayout! };
+  }, [data, focusLayout]);
 
   const hydratePanel = useCallback(
     (snap: GraphSnapshot) => {
@@ -125,6 +88,44 @@ export default function MapEntityScreen() {
     },
     [entityId],
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    const cacheKey = `entity:${entityId}`;
+    let cachedSnapshot: GraphSnapshot | null = null;
+
+    readCachedSnapshot(cacheKey).then((cached) => {
+      if (cancelled || !mounted.current) return;
+      cachedSnapshot = cached;
+      if (cached) {
+        setSnapshot(cached);
+        setLoading(false);
+      }
+    });
+
+    loadGraphSnapshot({})
+      .then((next) => {
+        if (cancelled || !mounted.current || !next) return;
+        if (!sameSnapshot(cachedSnapshot, next)) setSnapshot(next);
+        setLoading(false);
+        void hydratePanel(next);
+      })
+      .catch(() => {
+        if (cancelled || !mounted.current) return;
+        setError('Não foi possível carregar o mapa.');
+        setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [entityId, hydratePanel]);
+
+  useEffect(() => {
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   function sameSnapshot(a: GraphSnapshot | null, b: GraphSnapshot | null): boolean {
     if (!a || !b) return false;
@@ -209,21 +210,49 @@ export default function MapEntityScreen() {
         </Press>
       </View>
 
-      {panelLoading || !panel ? (
-        <View style={styles.center}>
-          <ActivityIndicator color={theme.accent} />
-        </View>
-      ) : (
-        <EntityDetail
-          panel={panel}
-          colors={graphColors}
-          snap={0}
-          onOpenNote={(entryId) => push(`/note/${entryId}`)}
-          onRename={() => {}}
-          onIcon={() => {}}
-          onClaimSelf={() => {}}
-        />
-      )}
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {panelLoading || !panel ? (
+          <View style={styles.center}>
+            <ActivityIndicator color={theme.accent} />
+          </View>
+        ) : (
+          <EntityDetail
+            panel={panel}
+            colors={graphColors}
+            snap={0}
+            onOpenNote={(entryId) => push(`/note/${entryId}`)}
+            onRename={() => {}}
+            onIcon={() => {}}
+            onClaimSelf={() => {}}
+          />
+        )}
+
+        {graphData && (
+          <View style={styles.graphSection}>
+            <GraphCanvas
+              ref={canvasRef}
+              data={graphData.data}
+              layout={graphData.layout}
+              colors={graphColors}
+              width={390 - spacing.sm * 2}
+              height={300}
+              viewportTop={0}
+              viewportBottom={0}
+              selectedId={entityId}
+              focusMode={false}
+              kinds={new Set<EntityKind>(['person', 'place', 'theme', 'decision'])}
+              onSelect={(id) => {
+                if (id && id !== 'user' && id !== entityId) {
+                  push(`/map/${id}`);
+                }
+              }}
+            />
+          </View>
+        )}
+      </ScrollView>
     </View>
   );
 }
@@ -235,7 +264,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: spacing.sm,
-    paddingTop: 10,
+    paddingTop: 14,
     paddingBottom: spacing.sm,
     gap: 2,
   },
@@ -253,6 +282,17 @@ const styles = StyleSheet.create({
   title: { color: baseColors.text, fontSize: fontSize.lg, fontWeight: '700' },
   meta: { color: baseColors.textSecondary, fontSize: fontSize.xs },
   openNoteButton: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  scrollContent: {
+    paddingHorizontal: spacing.sm,
+    paddingBottom: spacing.xxl,
+    gap: spacing.sm,
+  },
+  center: { paddingVertical: 40, alignItems: 'center', justifyContent: 'center' },
   error: { color: baseColors.danger, fontSize: fontSize.sm, paddingHorizontal: spacing.md },
+  graphSection: {
+    marginTop: spacing.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: baseColors.border,
+    paddingTop: spacing.sm,
+  },
 });
