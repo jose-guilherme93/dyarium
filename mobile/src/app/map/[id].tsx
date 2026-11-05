@@ -23,9 +23,9 @@ import { EntityDetail } from '@/components/graph/EntityDetail';
 import { GraphCanvas, type GraphCanvasHandle } from '@/components/graph/GraphCanvas';
 import { MoodPanel } from '@/components/graph/MoodPanel';
 import type { EntityKind, GraphNodeKind } from '@/core/graphModel';
-import { kindLabel } from '@/core/graphModel';
+import { kindLabel, splitNodeId } from '@/core/graphModel';
 import type { MoodPoint } from '@/core/graphMood';
-import { buildMoodSeries } from '@/core/graphMood';
+import { buildEntityMood } from '@/core/graphMood';
 import type { EntityPanel } from '@/core/graphPanel';
 import type { GraphSnapshot } from '@/services/graphData';
 import {
@@ -102,6 +102,17 @@ export default function MapEntityScreen() {
   );
 
   useEffect(() => {
+  function sameSnapshot(a: GraphSnapshot | null, b: GraphSnapshot | null): boolean {
+    if (!a || !b) return false;
+    return (
+      a.entries.length === b.entries.length &&
+      a.links.length === b.links.length &&
+      a.entities.length === b.entities.length &&
+      a.total === b.total &&
+      a.analyzed === b.analyzed
+    );
+  }
+
     let cancelled = false;
     const cacheKey = `entity:${entityId}`;
     let cachedSnapshot: GraphSnapshot | null = null;
@@ -121,8 +132,12 @@ export default function MapEntityScreen() {
         if (!sameSnapshot(cachedSnapshot, next)) setSnapshot(next);
         setLoading(false);
         void hydratePanel(next);
-        const series = buildMoodSeries(next.entries);
-        if (mounted.current) setMoodSeries(series);
+        const parsed = splitNodeId(entityId);
+        const eid = parsed?.kind && parsed.kind !== 'user' ? parsed.id : null;
+        if (eid) {
+          const series = buildEntityMood(next.links, next.entries, eid);
+          if (mounted.current) setMoodSeries(series);
+        }
       })
       .catch(() => {
         if (cancelled || !mounted.current) return;
@@ -141,24 +156,7 @@ export default function MapEntityScreen() {
     };
   }, []);
 
-  function sameSnapshot(a: GraphSnapshot | null, b: GraphSnapshot | null): boolean {
-    if (!a || !b) return false;
-    return (
-      a.entries.length === b.entries.length &&
-      a.links.length === b.links.length &&
-      a.entities.length === b.entities.length &&
-      a.total === b.total &&
-      a.analyzed === b.analyzed
-    );
-  }
 
-  function splitNodeId(id: string): { kind: GraphNodeKind; id: string } | null {
-    const sep = id.indexOf(':');
-    if (sep <= 0) return null;
-    const kind = id.slice(0, sep) as GraphNodeKind;
-    const nid = id.slice(sep + 1);
-    return { kind, id: nid };
-  }
 
   const entity = useMemo(() => {
     if (!snapshot || !entityId) return null;
@@ -231,8 +229,9 @@ export default function MapEntityScreen() {
 
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={{ ...styles.scrollContent, flexGrow: 1 }}
         showsVerticalScrollIndicator={false}
+        nestedScrollEnabled={false}
       >
         {/* Grafico de humor primeiro, quando houver dados. */}
         {moodSeries && moodSeries.length > 0 ? (
