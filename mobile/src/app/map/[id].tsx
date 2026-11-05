@@ -4,6 +4,9 @@
  * Abre ao tocar em uma bola do grafo. Mostra as estatísticas e os trechos
  * que provam a relação, com o grafo focado nessa entidade abaixo das
  * informações. Tocar em "Voltar" retorna ao grafo inteiro.
+ *
+ * Ordem visual: header (nome), grafo focado, grafico de humor (quando
+ * houver), depois o restante das informacoes (estatisticas e trechos).
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -17,8 +20,11 @@ import { Text } from '@/components/AppText';
 import { Press } from '@/components/Press';
 import { EntityDetail } from '@/components/graph/EntityDetail';
 import { GraphCanvas, type GraphCanvasHandle } from '@/components/graph/GraphCanvas';
+import { MoodPanel } from '@/components/graph/MoodPanel';
 import type { EntityKind, GraphNodeKind } from '@/core/graphModel';
 import { kindLabel } from '@/core/graphModel';
+import type { MoodPoint } from '@/core/graphMood';
+import { buildMoodSeries } from '@/core/graphMood';
 import type { EntityPanel } from '@/core/graphPanel';
 import type { GraphSnapshot } from '@/services/graphData';
 import {
@@ -51,6 +57,7 @@ export default function MapEntityScreen() {
   const [error, setError] = useState<string | null>(null);
   const [panel, setPanel] = useState<EntityPanel | null>(null);
   const [panelLoading, setPanelLoading] = useState(false);
+  const [moodSeries, setMoodSeries] = useState<MoodPoint[] | null>(null);
   const mounted = useRef(true);
   const panelSeq = useRef(0);
   const canvasRef = useRef<GraphCanvasHandle>(null);
@@ -113,6 +120,8 @@ export default function MapEntityScreen() {
         if (!sameSnapshot(cachedSnapshot, next)) setSnapshot(next);
         setLoading(false);
         void hydratePanel(next);
+        const series = buildMoodSeries(next.entries);
+        if (mounted.current) setMoodSeries(series);
       })
       .catch(() => {
         if (cancelled || !mounted.current) return;
@@ -219,10 +228,43 @@ export default function MapEntityScreen() {
         </Press>
       </View>
 
+      {/* Grafo focado nesta entidade: só ela e as relações dela. */}
+      {graphData && (
+        <View style={styles.graphSection}>
+          <GraphCanvas
+            ref={canvasRef}
+            data={graphData.data}
+            layout={graphData.layout}
+            colors={graphColors}
+            width={graphWidth}
+            height={graphHeight}
+            viewportTop={0}
+            viewportBottom={0}
+            selectedId={entityId}
+            focusMode={false}
+            kinds={new Set<EntityKind>(['person', 'place', 'theme', 'decision'])}
+            onSelect={(id) => {
+              if (id && id !== 'user' && id !== entityId) {
+                push(`/map/${id}`);
+              }
+            }}
+          />
+        </View>
+      )}
+
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
+        {/* Grafico de humor primeiro, quando houver dados. */}
+        {moodSeries && moodSeries.length > 0 ? (
+          <View style={styles.moodSection}>
+            <MoodPanel series={moodSeries} colors={graphColors} subject={entity.name} />
+          </View>
+        ) : null}
+
+        {/* Restante das informacoes: estatisticas e trechos.
+             scrollEnabled={false} para nao aninhar FlatList dentro do ScrollView externo. */}
         {panelLoading || !panel ? (
           <View style={styles.center}>
             <ActivityIndicator color={theme.accent} />
@@ -236,30 +278,8 @@ export default function MapEntityScreen() {
             onRename={() => {}}
             onIcon={() => {}}
             onClaimSelf={() => {}}
+            scrollEnabled={false}
           />
-        )}
-
-        {graphData && (
-          <View style={styles.graphSection}>
-            <GraphCanvas
-              ref={canvasRef}
-              data={graphData.data}
-              layout={graphData.layout}
-              colors={graphColors}
-              width={graphWidth}
-              height={graphHeight}
-              viewportTop={0}
-              viewportBottom={0}
-              selectedId={entityId}
-              focusMode={false}
-              kinds={new Set<EntityKind>(['person', 'place', 'theme', 'decision'])}
-              onSelect={(id) => {
-                if (id && id !== 'user' && id !== entityId) {
-                  push(`/map/${id}`);
-                }
-              }}
-            />
-          </View>
         )}
       </ScrollView>
     </View>
@@ -302,5 +322,9 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: baseColors.border,
     paddingTop: spacing.sm,
+  },
+  moodSection: {
+    marginTop: spacing.md,
+    paddingBottom: spacing.sm,
   },
 });

@@ -30,6 +30,7 @@ interface EntityDetailProps {
   onRename(): void;
   onIcon(): void;
   onClaimSelf(): void;
+  scrollEnabled?: boolean;
 }
 
 /** Marca a grafia que fez o trecho casar com a entidade. */
@@ -82,6 +83,7 @@ export function EntityDetail({
   onRename,
   onIcon,
   onClaimSelf,
+  scrollEnabled = true,
 }: EntityDetailProps) {
   const styles = useThemedStyles(baseStyles);
   const entity = panel.entity;
@@ -207,6 +209,7 @@ export function EntityDetail({
       maxToRenderPerBatch={3}
       windowSize={5}
       removeClippedSubviews
+      scrollEnabled={scrollEnabled}
     />
   );
 }
