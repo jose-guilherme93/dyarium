@@ -201,7 +201,7 @@ export function EntityDetail({
           </View>
         ) : null
       }
-      style={styles.list}
+      style={scrollEnabled ? styles.list : undefined}
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
       keyboardShouldPersistTaps="handled"

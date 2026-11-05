@@ -18,6 +18,7 @@ import {
   upsertRecording,
 } from './db';
 import { loadServerConfig } from './secure';
+import { willTranscribeLocally } from './localTranscription';
 import { emitRecording } from './uploaderLoop';
 
 const doFetch = globalThis.fetch as unknown as FetchLike;
@@ -78,6 +79,13 @@ export async function fetchTranscriptsOnce(): Promise<void> {
           retryDelay.set(entryId, delay);
           retryAt.set(entryId, Date.now() + delay);
           continue;
+        }
+        // Sem modelo local, nao ha como retomar: marca como falha para nao
+        // ficar preso em "transcrevendo" para sempre.
+        if (!(await willTranscribeLocally())) {
+          const failed: Recording = { ...recording, transcriptStatus: 'failed', updatedAt: new Date().toISOString() };
+          await upsertRecording(failed);
+          emitRecording(failed);
         }
         // outros erros (rede, etc.): mantem pendente e tenta de novo depois
       }

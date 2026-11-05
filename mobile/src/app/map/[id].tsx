@@ -49,7 +49,8 @@ export default function MapEntityScreen() {
   const { colors: theme, name: themeName } = useTheme();
   const graphColors = GRAPH_PALETTES[themeName as ThemeName];
   const params = useLocalSearchParams<MapEntityParams>();
-  const entityId = params.id;
+  const rawId = params.id;
+  const entityId = Array.isArray(rawId) ? (rawId[0] ?? '') : (rawId ?? '');
   const insets = useSafeAreaInsets();
   const { width: screenWidth } = useWindowDimensions();
 
@@ -78,8 +79,8 @@ export default function MapEntityScreen() {
   }, [data, entityId]);
 
   const graphData = useMemo(() => {
-    if (!data) return null;
-    return { data, layout: focusLayout! };
+    if (!data || !focusLayout) return null;
+    return { data, layout: focusLayout };
   }, [data, focusLayout]);
 
   const hydratePanel = useCallback(
@@ -262,7 +263,7 @@ export default function MapEntityScreen() {
         {/* Grafo focado nesta entidade: aparece como ultima secao da tela,
             depois de todas as informacoes. */}
         {graphData && (
-          <View style={styles.graphSection}>
+          <View style={[styles.graphSection, { height: graphHeight }]}>
             <GraphCanvas
               ref={canvasRef}
               data={graphData.data}

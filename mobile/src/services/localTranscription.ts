@@ -45,7 +45,7 @@ import {
   type WhisperSegment,
 } from './whisper';
 
-export { localTranscriptionAvailable };
+export { localTranscriptionAvailable, willTranscribeLocally };
 
 // O aparelho e pequeno: 4 threads de whisper saturam os nucleos e a interface
 // trava enquanto a nota transcreve. Duas threads transcrevem um pouco mais
@@ -434,6 +434,11 @@ export async function transcribeLocally(id: string): Promise<void> {
   cancelled.delete(id);
   cancelContextRelease();
   setRunning(id, true);
+  // Mecanismo de segurança: nenhuma transcricao pode ficar para sempre.
+  // Se passar de 5 minutos, para a passada e marca como pendente.
+  const watchdog = setTimeout(() => {
+    void stopTranscription(id);
+  }, 300_000);
   setProgress(id, knownDuration > 0 ? Math.min(100, (checkpoint / knownDuration) * 100) : 0);
   // Marca a nota como "transcrevendo" so depois de ter a vez: uma nota que
   // ganhou texto final enquanto esperava nao pode voltar para pending.
@@ -546,7 +551,14 @@ export async function transcribeLocally(id: string): Promise<void> {
       });
       activeRuns.set(id, { stop });
 
-      const result = await promise;
+      // Mecanismo de segurança: se o whisper travar em 0%, cancela a janela e
+      // marca a nota como pendente (retomavel), em vez de ficar para sempre.
+      const result = await Promise.race([
+        promise,
+        new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error('transcricao travada')), 120_000);
+        }),
+      ]);
       language = result.language || language;
       committed = [...committed, ...toSegments(result.segments, chunkStart)];
       checkpoint = chunkEnd;
@@ -599,6 +611,7 @@ export async function transcribeLocally(id: string): Promise<void> {
       transcriptOrigin: 'local',
     });
   } finally {
+    clearTimeout(watchdog);
     if (wavPath) {
       const wav = new File(wavPath);
       if (wav.exists) wav.delete();
