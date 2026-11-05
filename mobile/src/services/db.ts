@@ -764,6 +764,39 @@ function getDb(): Promise<SQLite.SQLiteDatabase> {
   return dbPromise;
 }
 
+/** Conexao dedicada para leituras de UI (mapa, painel de entidade).
+ *
+ * Usa busy_timeout baixo (1s): se o pull ou outra escrita estiver segurando a
+ * trava do banco, a leitura de UI nao fica esperando segundos. Falha rapido e
+ * o painel mostra os dados que ja tem do snapshot enquanto isso.
+ */
+let dbUiPromise: Promise<SQLite.SQLiteDatabase> | null = null;
+function getDbForUI(): Promise<SQLite.SQLiteDatabase> {
+  if (!dbUiPromise) {
+    dbUiPromise = openDatabaseForUI().catch((error) => {
+      dbUiPromise = null;
+      throw error;
+    });
+  }
+  return dbUiPromise;
+}
+
+async function openDatabaseForUI(): Promise<SQLite.SQLiteDatabase> {
+  const db = await SQLite.openDatabaseAsync('dyarium.db');
+  try {
+    if (Platform.OS !== 'web') {
+      await db.execAsync('PRAGMA journal_mode = WAL;').catch(() => undefined);
+    }
+    // Leitura de UI nao pode esperar 30s pelo lock do pull. Espera no maximo
+    // 1s e segue com o que tem.
+    await db.execAsync('PRAGMA busy_timeout = 1000;');
+    return db;
+  } catch (error) {
+    await db.closeAsync().catch(() => undefined);
+    throw error;
+  }
+}
+
 const DB_OPEN_ATTEMPTS = 3;
 
 async function openWithRetry(): Promise<SQLite.SQLiteDatabase> {
@@ -794,7 +827,7 @@ async function openDatabase(): Promise<SQLite.SQLiteDatabase> {
     // Espera a trava liberar em vez de falhar na hora: em desenvolvimento um
     // reload pode deixar a conexao anterior presa por um instante, o que
     // antes virava "database is locked" ao iniciar a gravacao.
-    await db.execAsync('PRAGMA busy_timeout = 5000;');
+    await db.execAsync('PRAGMA busy_timeout = 30000;');
     await migrate(db);
     return db;
   } catch (error) {
@@ -1464,15 +1497,14 @@ export async function saveCachedAnalyses(items: CachedAnalysis[]): Promise<void>
   if (items.length === 0) return;
   const db = await getDb();
   const fetchedAt = new Date().toISOString();
-  // A transacao e comum (nao exclusiva) e passa pela fila do mapa: a analise
-  // local nao espera a fila de background, mas duas escritas do grafo nunca
-  // abrem transacao ao mesmo tempo. Os vinculos de entidade andam junto com a
-  // analise, para o mapa nunca apontar para uma analise que nao existe mais.
   const owners = await ownerKeysFor(db);
-  for (const item of items) {
-    const payload = JSON.stringify(item.analysis);
-    await withGraphWrite(() =>
-      db.withTransactionAsync(async () => {
+  // Uma transacao para o lote inteiro: antes era uma por analise, e num pull
+  // com dezenas de analises novas o banco ficava segurando a conexao por
+  // segundos, atrasando a leitura do mapa que estava abrindo.
+  await withGraphWrite(() =>
+    db.withTransactionAsync(async () => {
+      for (const item of items) {
+        const payload = JSON.stringify(item.analysis);
         await db.runAsync(
           `INSERT INTO analyses (
              entry_id, title, recorded_at, payload, fetched_at, origin, analysis_content_hash
@@ -1505,9 +1537,9 @@ export async function saveCachedAnalyses(items: CachedAnalysis[]): Promise<void>
         if (kept?.payload === payload) {
           await replaceEntryEntities(db, item.entryId, item.analysis, fetchedAt, owners);
         }
-      }),
-    );
-  }
+      }
+    }),
+  );
 }
 
 interface CachedAnalysisRow {
@@ -1663,7 +1695,7 @@ export async function loadGraphEntryDetails(
 ): Promise<Record<string, GraphEntryDetail>> {
   const ids = [...new Set(localIds.filter(Boolean))];
   if (ids.length === 0) return {};
-  const db = await getDb();
+  const db = await getDbForUI();
   const out: Record<string, GraphEntryDetail> = {};
   for (let offset = 0; offset < ids.length; offset += 100) {
     const chunk = ids.slice(offset, offset + 100);
@@ -1694,7 +1726,7 @@ export async function loadAnalysisComments(
 ): Promise<Record<string, { reading: string; summary: string }>> {
   const ids = [...new Set(entryIds.filter(Boolean))];
   if (ids.length === 0) return {};
-  const db = await getDb();
+  const db = await getDbForUI();
   const out: Record<string, { reading: string; summary: string }> = {};
   for (let offset = 0; offset < ids.length; offset += 100) {
     const chunk = ids.slice(offset, offset + 100);
@@ -2362,28 +2394,27 @@ async function replaceEntryEntities(
 
 /**
  * Deriva as entidades das analises guardadas antes da versao 30. Roda uma vez,
- * em lotes, no primeiro mapa aberto; nao atrasa o boot do app.
- */
-let backfillPromise: Promise<number> | null = null;
-
-/**
- * Deriva as entidades das analises guardadas antes da versao 30. Roda uma vez,
  * em lotes, no primeiro mapa aberto; nao atrasa o boot nem segura uma analise
  * nova por todo o backfill (cada lote e uma transacao).
  */
-export function ensureEntityDerivation(): Promise<number> {
+let backfillPromise: Promise<number> | null = null;
+
+export function ensureEntityDerivation(force = false): Promise<number> {
   if (backfillPromise) return backfillPromise;
-  backfillPromise = runEntityBackfill().finally(() => {
+  backfillPromise = runEntityBackfill(force).finally(() => {
     backfillPromise = null;
   });
   return backfillPromise;
 }
 
-async function runEntityBackfill(): Promise<number> {
+async function runEntityBackfill(force = false): Promise<number> {
   const db = await getDb();
-  if ((await getAppFlag(ENTITIES_BACKFILL_KEY)) === 'true') return 0;
+  if (!force && (await getAppFlag(ENTITIES_BACKFILL_KEY)) === 'true') return 0;
   const owners = await ownerKeysFor(db);
-  let cursor = Number(await getAppFlag(ENTITIES_CURSOR_KEY)) || 0;
+  // Sem `force` continua de onde parou; com `force` refaz do comeco, que e o
+  // caso do mapa vazio com analises guardadas (marcador antigo, vinculos nunca
+  // gravados).
+  let cursor = force ? 0 : Number(await getAppFlag(ENTITIES_CURSOR_KEY)) || 0;
   let processed = 0;
   for (;;) {
     const rows = await db.getAllAsync<{
