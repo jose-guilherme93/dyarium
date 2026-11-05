@@ -107,31 +107,34 @@ export function pickLabels(
 
     const width = labelWidth(text);
     const half = LABEL_LINE_HEIGHT / 2;
-    const SIDES: LabelSide[] = ['below', 'above', 'right', 'left'];
+    // O rótulo nunca fica acima da bola. Escolhe o lado oposto ao da tela:
+    // bola na metade esquerda -> rótulo à direita; bola na metade direita ->
+    // rótulo à esquerda; centro -> abaixo.
+    const preferred: LabelSide[] =
+      sx < camera.width / 2 ? ['right', 'below', 'left']
+        : sx > camera.width / 2 ? ['left', 'below', 'right']
+        : ['below', 'right', 'left'];
 
     let chosenSide: LabelSide | null = null;
-    for (const candidate of SIDES) {
+    for (const candidate of preferred) {
       let b: { x1: number; y1: number; x2: number; y2: number };
       switch (candidate) {
         case 'below':
           b = { x1: sx - width / 2, y1: sy + sr + LABEL_GAP, x2: sx + width / 2, y2: sy + sr + LABEL_GAP + LABEL_LINE_HEIGHT };
           break;
-        case 'above':
-          b = { x1: sx - width / 2, y1: sy - sr - LABEL_GAP - LABEL_LINE_HEIGHT, x2: sx + width / 2, y2: sy - sr - LABEL_GAP };
-          break;
         case 'right':
           b = { x1: sx + sr + LABEL_GAP, y1: sy - half, x2: sx + sr + LABEL_GAP + width, y2: sy + half };
           break;
-        default:
+        default: // left
           b = { x1: sx - sr - LABEL_GAP - width, y1: sy - half, x2: sx - sr - LABEL_GAP, y2: sy + half };
           break;
       }
 
-      // Cabe inteiro na faixa visivel?
+      // Cabe inteiro na faixa visível?
       if (b.x1 < 2 || b.x2 > camera.width - 2) continue;
       if (b.y1 < camera.bandTop + 2 || b.y2 > camera.bandBottom - 2) continue;
 
-      // Nao pode encostar em bola nenhuma nem em outro nome.
+      // Não pode encostar em bola nenhuma nem em outro nome.
       if (balls.some((ball) => overlaps(ball, b))) continue;
       if (taken.some((box) => overlaps(box, b))) continue;
 
