@@ -201,7 +201,7 @@ export function EntityDetail({
           </View>
         ) : null
       }
-      style={scrollEnabled ? styles.list : undefined}
+      style={scrollEnabled ? styles.list : styles.listStatic}
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
       keyboardShouldPersistTaps="handled"
@@ -216,6 +216,7 @@ export function EntityDetail({
 
 const baseStyles = defineStyles({
   list: { flex: 1 },
+  listStatic: { minHeight: 200 },
   content: { paddingHorizontal: spacing.xl, paddingBottom: spacing.xxxl },
   headerBlock: { gap: spacing.sm, paddingBottom: spacing.sm },
   stats: { flexDirection: 'row', gap: spacing.sm },

@@ -83,6 +83,11 @@ export default function MapEntityScreen() {
     return { data, layout: focusLayout };
   }, [data, focusLayout]);
 
+  const graphKinds = useMemo(
+    () => new Set<EntityKind>(['person', 'place', 'theme', 'decision']),
+    [],
+  );
+
   const hydratePanel = useCallback(
     (snap: GraphSnapshot) => {
       const parsed = splitNodeId(entityId);
@@ -190,7 +195,9 @@ export default function MapEntityScreen() {
     );
   }
 
-  if (!data || !entity) return null;
+  // Sem dados ou sem entidade reconhecida: ainda assim mostra o grafo focado,
+  // para a nao ficar em branco quando o no saiu do recorte.
+  if (!data) return null;
 
   // Largura disponível para o grafo: tela inteira menos padding dos lados.
   const graphWidth = Math.max(300, screenWidth - spacing.sm * 2);
@@ -204,28 +211,32 @@ export default function MapEntityScreen() {
           <Ionicons name="chevron-back" size={20} color={theme.text} />
           <Text style={styles.backText}>Mapa</Text>
         </Press>
-        <View style={styles.titleWrapper}>
-          <View style={[styles.entityDot, { backgroundColor: graphColors[entity.kind] }]}>
-            <Ionicons
-              name={entity.kind === 'place' ? 'home' : entity.kind === 'theme' ? 'pricetag' : entity.kind === 'decision' ? 'checkmark' : 'person'}
-              size={16}
-              color={theme.bg}
-            />
+        {entity ? (
+          <View style={styles.titleWrapper}>
+            <View style={[styles.entityDot, { backgroundColor: graphColors[entity.kind] }]}>
+              <Ionicons
+                name={entity.kind === 'place' ? 'home' : entity.kind === 'theme' ? 'pricetag' : entity.kind === 'decision' ? 'checkmark' : 'person'}
+                size={16}
+                color={theme.bg}
+              />
+            </View>
+            <View style={styles.titleTextWrapper}>
+              <Text style={styles.title}>{entity.name}</Text>
+              <Text style={styles.meta}>
+                {kindLabel(entity.kind)} · {stats?.notes.length} notas
+              </Text>
+            </View>
           </View>
-          <View style={styles.titleTextWrapper}>
-            <Text style={styles.title}>{entity.name}</Text>
-            <Text style={styles.meta}>
-              {kindLabel(entity.kind)} · {stats?.notes.length} notas
-            </Text>
-          </View>
-        </View>
-        <Press
-          onPress={() => push(`/note/${entity.id}`)}
-          style={styles.openNoteButton}
-          accessibilityLabel="Abrir nota"
-        >
-          <Ionicons name="arrow-forward" size={14} color={theme.accent} />
-        </Press>
+        ) : null}
+        {entity ? (
+          <Press
+            onPress={() => push(`/note/${entity.id}`)}
+            style={styles.openNoteButton}
+            accessibilityLabel="Abrir nota"
+          >
+            <Ionicons name="arrow-forward" size={14} color={theme.accent} />
+          </Press>
+        ) : null}
       </View>
 
       <ScrollView
@@ -237,7 +248,7 @@ export default function MapEntityScreen() {
         {/* Grafico de humor primeiro, quando houver dados. */}
         {moodSeries && moodSeries.length > 0 ? (
           <View style={styles.moodSection}>
-            <MoodPanel series={moodSeries} colors={graphColors} subject={entity.name} />
+            <MoodPanel series={moodSeries} colors={graphColors} subject={entity?.name ?? null} />
           </View>
         ) : null}
 
@@ -248,16 +259,21 @@ export default function MapEntityScreen() {
             <ActivityIndicator color={theme.accent} />
           </View>
         ) : (
-          <EntityDetail
-            panel={panel}
-            colors={graphColors}
-            snap={0}
-            onOpenNote={(entryId) => push(`/note/${entryId}`)}
-            onRename={() => {}}
-            onIcon={() => {}}
-            onClaimSelf={() => {}}
-            scrollEnabled={false}
-          />
+          // O EntityDetail usa FlatList: dentro do ScrollView externo precisa
+          // de um container com altura minima para nao colapsar e esconder o
+          // grafo que vem a seguir.
+          <View style={styles.detailWrapper}>
+            <EntityDetail
+              panel={panel}
+              colors={graphColors}
+              snap={0}
+              onOpenNote={(entryId) => push(`/note/${entryId}`)}
+              onRename={() => {}}
+              onIcon={() => {}}
+              onClaimSelf={() => {}}
+              scrollEnabled={false}
+            />
+          </View>
         )}
 
         {/* Grafo focado nesta entidade: aparece como ultima secao da tela,
@@ -273,10 +289,10 @@ export default function MapEntityScreen() {
               height={graphHeight}
               viewportTop={0}
               viewportBottom={0}
-              selectedId={entityId}
+              selectedId={entityId || null}
               focusMode={false}
               interactive={false}
-              kinds={new Set<EntityKind>(['person', 'place', 'theme', 'decision'])}
+              kinds={graphKinds}
               onSelect={(id) => {
                 if (id && id !== 'user' && id !== entityId) {
                   push(`/map/${id}`);
@@ -327,6 +343,7 @@ const styles = StyleSheet.create({
     borderTopColor: baseColors.border,
     paddingTop: spacing.sm,
   },
+  detailWrapper: { minHeight: 220 },
   moodSection: {
     marginTop: spacing.md,
     paddingBottom: spacing.sm,
