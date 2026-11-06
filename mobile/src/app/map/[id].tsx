@@ -55,7 +55,7 @@ export default function MapEntityScreen() {
   const { width: screenWidth } = useWindowDimensions();
 
   const [snapshot, setSnapshot] = useState<GraphSnapshot | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [snapshotReady, setSnapshotReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [panel, setPanel] = useState<EntityPanel | null>(null);
   const [panelLoading, setPanelLoading] = useState(false);
@@ -99,6 +99,7 @@ export default function MapEntityScreen() {
       }
       const seq = panelSeq.current + 1;
       panelSeq.current = seq;
+      setPanelLoading(true);
       loadEntityPanel(snap, eid).then((p) => {
         if (panelSeq.current === seq && mounted.current) setPanel(p);
         setPanelLoading(false);
@@ -107,54 +108,65 @@ export default function MapEntityScreen() {
     [entityId],
   );
 
+  const setMoodFrom = useCallback(
+    (snap: GraphSnapshot) => {
+      const parsed = splitNodeId(entityId);
+      const eid = parsed?.kind && parsed.kind !== 'user' ? parsed.id : null;
+      if (!eid) return;
+      const series = buildEntityMood(snap.links, snap.entries, eid);
+      if (mounted.current) setMoodSeries(series);
+    },
+    [entityId],
+  );
+
   useEffect(() => {
-  function sameSnapshot(a: GraphSnapshot | null, b: GraphSnapshot | null): boolean {
-    if (!a || !b) return false;
-    return (
-      a.entries.length === b.entries.length &&
-      a.links.length === b.links.length &&
-      a.entities.length === b.entities.length &&
-      a.total === b.total &&
-      a.analyzed === b.analyzed
-    );
-  }
+    function sameSnapshot(a: GraphSnapshot | null, b: GraphSnapshot | null): boolean {
+      if (!a || !b) return false;
+      return (
+        a.entries.length === b.entries.length &&
+        a.links.length === b.links.length &&
+        a.entities.length === b.entities.length &&
+        a.total === b.total &&
+        a.analyzed === b.analyzed
+      );
+    }
 
     let cancelled = false;
     const cacheKey = `entity:${entityId}`;
     let cachedSnapshot: GraphSnapshot | null = null;
 
+    // 1. Primeiro pinta o recorte em cache, se houver, para a tela nao ficar em branco.
     readCachedSnapshot(cacheKey).then((cached) => {
       if (cancelled || !mounted.current) return;
       cachedSnapshot = cached;
       if (cached) {
         setSnapshot(cached);
-        setLoading(false);
+        // O humor e a primeira informacao a aparecer: calcula do cache imediatamente.
+        setMoodFrom(cached);
       }
     });
 
+    // 2. Carrega a leitura fresca do banco em background, sem travar a tela.
     loadGraphSnapshot({})
       .then((next) => {
         if (cancelled || !mounted.current || !next) return;
         if (!sameSnapshot(cachedSnapshot, next)) setSnapshot(next);
-        setLoading(false);
+        // Recalcula o humor com os dados frescos (sobrepoe o do cache).
+        setMoodFrom(next);
+        // As informacoes/trechos (painel) carregam depois que o snapshot esta pronto.
         void hydratePanel(next);
-        const parsed = splitNodeId(entityId);
-        const eid = parsed?.kind && parsed.kind !== 'user' ? parsed.id : null;
-        if (eid) {
-          const series = buildEntityMood(next.links, next.entries, eid);
-          if (mounted.current) setMoodSeries(series);
-        }
+        setSnapshotReady(true);
       })
       .catch(() => {
         if (cancelled || !mounted.current) return;
         setError('Não foi possível carregar o mapa.');
-        setLoading(false);
+        setSnapshotReady(true);
       });
 
     return () => {
       cancelled = true;
     };
-  }, [entityId, hydratePanel]);
+  }, [entityId, hydratePanel, setMoodFrom]);
 
   useEffect(() => {
     return () => {
@@ -181,16 +193,24 @@ export default function MapEntityScreen() {
     return { links, notes };
   }, [snapshot, entity]);
 
-  if (loading || error) {
+  if (error) {
     return (
       <View style={styles.screen}>
-        {error ? (
-          <View style={styles.center}>
-            <Text style={styles.error}>{error}</Text>
-          </View>
-        ) : (
+        <View style={styles.center}>
+          <Text style={styles.error}>{error}</Text>
+        </View>
+      </View>
+    );
+  }
+
+  // Enquanto a leitura fresca nao chega, mostra um carregamento leve.
+  // O humor ja pode estar pintado a partir do cache acima.
+  if (!snapshotReady) {
+    return (
+      <View style={styles.screen}>
+        <View style={styles.center}>
           <ActivityIndicator color={theme.accent} />
-        )}
+        </View>
       </View>
     );
   }
