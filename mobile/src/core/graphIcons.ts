@@ -30,6 +30,15 @@ export const GRAPH_ICONS: Record<string, GraphIcon> = {
     label: 'Tema',
     paths: ['M4 9h16M4 15h16M10 3 8 21M16 3l-2 18'],
   },
+  puzzle: {
+    label: 'Quebra-cabeca',
+    paths: [
+      'M10 2h4c1.1 0 2 .9 2 2v4c0 1.1-.9 2-2 2h-4c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2Z',
+      'M4 10h4c1.1 0 2 .9 2 2v4c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2v-4c0-1.1.9-2 2-2Z',
+      'M10 18h4c1.1 0 2 .9 2 2v4c0 1.1-.9 2-2 2h-4c-1.1 0-2-.9-2-2v-4c0-1.1.9-2 2-2Z',
+      'M18 10h4c1.1 0 2 .9 2 2v4c0 1.1-.9 2-2 2h-4c-1.1 0-2-.9-2-2v-4c0-1.1.9-2 2-2Z',
+    ],
+  },
   check: {
     label: 'Decisão',
     paths: ['M4 12.5 9.5 18 20 6'],
@@ -111,7 +120,7 @@ const KIND_ICON: Record<GraphNodeKind, string> = {
   user: 'person',
   person: 'person',
   place: 'home',
-  theme: 'hash',
+  theme: 'puzzle',
   decision: 'check',
   note: 'document',
 };
