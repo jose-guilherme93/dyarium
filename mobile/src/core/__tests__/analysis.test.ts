@@ -1,6 +1,7 @@
 import type { ServerAnalysis } from '../api';
 import { simplifiedAnalysis, toNoteAnalysis, toServerAnalysis } from '../analysis';
 import type { ComposedAnalysis } from '../analysisCompose';
+import { entityNameMapKey } from '../entities';
 
 function analysis(partial: Partial<ServerAnalysis>): ServerAnalysis {
   return {

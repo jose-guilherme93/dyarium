@@ -2995,6 +2995,7 @@ async function mergeEntitiesInto(
   kind: EntityKind,
   sourceName: string,
   now: string,
+  addSourceAlias = true,
 ): Promise<void> {
   const links = await db.getAllAsync<{
     entry_id: string;
@@ -3032,7 +3033,7 @@ async function mergeEntitiesInto(
   );
   await db.runAsync('DELETE FROM entities WHERE id = ?', [sourceId]);
   await db.runAsync('UPDATE entities SET updated_at = ? WHERE id = ?', [now, targetId]);
-  await addEntityAlias(db, kind, sourceName, targetId, now);
+  if (addSourceAlias) await addEntityAlias(db, kind, sourceName, targetId, now);
 }
 
 /**
