@@ -307,3 +307,42 @@ export function SortIcon({ size = 18 }: IconProps) {
     </svg>
   );
 }
+
+/** Escudo: o que sai e o que fica no servidor. */
+export function ShieldIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M12 3l7 4v5c0 4-3 7-7 9-4-2-7-5-7-9V7l7-4z" />
+      <path d="m9 12 2 2 4-4" />
+    </svg>
+  );
+}
+
+/** Seta circular: buscar a lista de modelos de novo. */
+export function RefreshIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M20 12a8 8 0 1 1-2.3-5.7" />
+      <path d="M20 4v4h-4" />
+    </svg>
+  );
+}
+
+/** Pessoa: autor das notas. */
+export function UserIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <circle cx="12" cy="8" r="3.2" />
+      <path d="M5 21c0-4 3-7 7-7s7 3 7 7" />
+    </svg>
+  );
+}
+
+/** Onda de audio: a etapa de transcricao. */
+export function WaveIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M3 12h2l2-6 3 12 3-9 2 6 2-3h4" />
+    </svg>
+  );
+}
