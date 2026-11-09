@@ -1397,10 +1397,6 @@
 
 /* ---------- settings cards ---------- */
 
-.settings-page {
-  max-width: 760px;
-}
-
 .card {
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
@@ -1426,7 +1422,7 @@
 
 /* Atalho para o console do provedor: criar a chave e conferir os modelos. */
 .key-links {
-  grid-column: 2 / -1;
+  grid-column: 1 / -1;
   display: flex;
   flex-wrap: wrap;
   gap: calc(var(--space) * 3);
@@ -1479,66 +1475,6 @@
   opacity: 1;
 }
 
-.field {
-  display: grid;
-  grid-template-columns: 160px 1fr;
-  gap: calc(var(--space) * 3);
-  align-items: start;
-  padding: calc(var(--space) * 2) 0;
-  border-top: 1px solid var(--color-border);
-}
-
-.field:first-of-type {
-  border-top: none;
-}
-
-.field-label {
-  color: var(--color-muted);
-  font-size: 14px;
-  padding-top: calc(var(--space));
-}
-
-.field-control {
-  display: flex;
-  align-items: center;
-  gap: calc(var(--space) * 2);
-  flex-wrap: wrap;
-}
-
-.field > .hint {
-  grid-column: 2 / -1;
-}
-
-.field input[type="text"],
-.field input[type="password"],
-.field input[type="number"],
-.field select {
-  width: 100%;
-  max-width: 360px;
-  padding: calc(var(--space) * 2) calc(var(--space) * 3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-bg);
-  color: var(--color-text);
-}
-
-.field input[type="number"] {
-  max-width: 110px;
-}
-
-.card .model-item {
-  display: grid;
-  grid-template-columns: 160px 1fr auto;
-  gap: calc(var(--space) * 3);
-  align-items: center;
-  padding: calc(var(--space) * 2) 0;
-}
-
-.card .model-item .ram-track,
-.card .model-item .error {
-  grid-column: 1 / -1;
-}
-
 .switch {
   display: inline-flex;
   align-items: center;
@@ -1552,13 +1488,6 @@
   display: inline-flex;
   align-items: center;
   gap: calc(var(--space));
-}
-
-@media (max-width: 560px){
-  .field {
-    grid-template-columns: 1fr;
-    gap: calc(var(--space));
-  }
 }
 
 /* ---------- apple-style toggle ---------- */
@@ -3962,36 +3891,6 @@
 .note-picker-empty {
   padding: calc(var(--space) * 3);
   font-size: 13px;
-}
-
-/* Configuracoes: coluna centrada e acoes secundarias como botoes. */
-.settings-page {
-  max-width: 880px;
-  margin-inline: auto;
-}
-
-.settings-page .card {
-  background: var(--color-surface);
-  border-radius: calc(var(--space) * 2.5);
-  padding: calc(var(--space) * 6);
-}
-
-.settings-page .card + .card {
-  margin-top: calc(var(--space) * 5);
-}
-
-.settings-page .card-head h2 {
-  font-size: 20px;
-}
-
-.card .model-item {
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  padding: calc(var(--space) * 2.25) 0;
-  border-top: 1px solid var(--color-border);
-}
-
-.model-list .model-item:first-child {
-  border-top: none;
 }
 
 .model-name {
@@ -8150,8 +8049,8 @@
 }
 
 .status-dot--draft { background: transparent; }
-.status-dot--revising { background: var(--color-warning, #b8860b); border-color: var(--color-warning, #b8860b); }
-.status-dot--done { background: var(--color-success, #3f7d4f); border-color: var(--color-success, #3f7d4f); }
+.status-dot--revising { background: var(--warn, #b8860b); border-color: var(--warn, #b8860b); }
+.status-dot--done { background: var(--ok, #3f7d4f); border-color: var(--ok, #3f7d4f); }
 
 .chapter-add {
   display: flex;
@@ -8310,7 +8209,7 @@
 }
 
 .save-state--saving { color: var(--color-accent); }
-.save-state--offline { color: var(--color-warning, #b8860b); }
+.save-state--offline { color: var(--warn, #b8860b); }
 .save-state--conflict { color: var(--color-danger); }
 
 .chapter-columns {
@@ -8461,7 +8360,7 @@
   line-height: 1.6;
 }
 
-.conflict-diff mark { background: color-mix(in srgb, var(--color-success, #3f7d4f) 25%, transparent); }
+.conflict-diff mark { background: color-mix(in srgb, var(--ok, #3f7d4f) 25%, transparent); }
 .conflict-diff del { color: var(--color-danger); }
 
 .book-dialog,
@@ -8707,7 +8606,7 @@
   line-height: 1.5;
 }
 
-.revision-diff mark { background: color-mix(in srgb, var(--color-success, #3f7d4f) 25%, transparent); }
+.revision-diff mark { background: color-mix(in srgb, var(--ok, #3f7d4f) 25%, transparent); }
 .revision-diff del { color: var(--color-danger); }
 
 .notebook-menu-name { display: inline-flex; align-items: center; gap: 6px; }
@@ -8809,7 +8708,7 @@
 .pending-link {
   border: 0;
   background: transparent;
-  color: var(--color-warning, #8a5a16);
+  color: var(--warn, #8a5a16);
   font: inherit;
   font-size: 10px;
   cursor: pointer;
@@ -9023,7 +8922,7 @@
 .save-state { display: inline-flex; align-items: center; gap: 5px; color: var(--color-muted); font-size: 10px; white-space: nowrap; }
 .save-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--color-ok, var(--ok)); }
 .save-state--saving .save-dot { background: var(--color-accent); }
-.save-state--offline .save-dot { background: var(--color-warning, var(--warn)); }
+.save-state--offline .save-dot { background: var(--warn, var(--warn)); }
 .save-state--conflict .save-dot { background: var(--color-danger); }
 .chapter-today { display: inline-flex; align-items: center; gap: 6px; color: var(--color-muted); font-size: 10.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .chapter-meter { display: inline-block; width: 44px; height: 3px; border-radius: 2px; background: var(--color-surface-2); overflow: hidden; }
@@ -9543,7 +9442,7 @@
 }
 .state-line:last-of-type { border-bottom: 0; }
 .state-line b { font-weight: 600; }
-.state-locked { color: var(--color-warning, var(--warn)); font-weight: 600; }
+.state-locked { color: var(--warn, var(--warn)); font-weight: 600; }
 .state-toggle {
   position: relative;
   width: 26px;
@@ -10338,3 +10237,1065 @@
 }
 .book-side-add:hover { border-color: var(--color-muted); color: var(--color-text); }
 .book-side-empty { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 8px 2px; }
+
+/* ============ Configuracoes: secoes, provedores, modelos ============ */
+
+/* A barra sticky ancora no topo do scrollport: o padding do .page sairia
+   como uma faixa por onde o conteudo apareceria por cima dela. O respiro
+   superior passa para dentro da propria barra. */
+.page:has(.settings-page) {
+  padding-top: 0;
+  /* A largura util da pagina manda: no desktop ela comporta a linha de
+     secoes; no estreito, nao. Consultar a janela erraria quando a barra
+     lateral aberta rouba ~300px. */
+  container-type: inline-size;
+  container-name: settings;
+}
+
+.settings-page {
+  max-width: 460px;
+  text-align: left;
+}
+
+/* Cabecalho: voltar + "Configurações" curto + faixa de secoes, tudo numa linha
+   pegajosa no topo da pagina. O titulo grande e a frase de apoio sairam. */
+.settings-page .settings-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--space) * 3);
+  margin-bottom: calc(var(--space) * 4);
+  padding: calc(var(--space) * 5) 0 calc(var(--space) * 2);
+  /* Opaco de verdade: o conteudo rola por baixo sem aparecer na barra. */
+  background-color: var(--color-bg);
+  background-image: linear-gradient(var(--color-bg), var(--color-bg));
+  border-bottom: 1px solid var(--color-border);
+  isolation: isolate;
+}
+
+.settings-page .header-title {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--color-text);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+/* No largo o padding antigo do .page era 32px; ele passa para a barra. */
+@media (min-width: 901px) {
+  .settings-page .settings-header {
+    padding-top: calc(var(--space) * 8);
+  }
+}
+
+/* A faixa de secoes fica na mesma linha do titulo; no estreito quebra abaixo. */
+.settings-page .settings-nav {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.settings-page .card {
+  border-radius: calc(var(--space) * 2.5);
+  padding: calc(var(--space) * 6);
+  margin-bottom: calc(var(--space) * 2.5);
+}
+
+.settings-page .card + .card {
+  margin-top: calc(var(--space) * 2.5);
+}
+
+.settings-page .card-head h2 {
+  font-size: 20px;
+}
+
+/* Links de apoio da tela: acento discreto e sublinhado fino, nunca o azul do
+   navegador. Escopado para nao vazar para o resto do app. */
+.settings-page .lnk,
+.settings-page .key-links a {
+  color: var(--color-accent);
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  white-space: nowrap;
+}
+
+.settings-page .lnk:hover,
+.settings-page .key-links a:hover {
+  color: var(--color-text);
+  text-decoration-thickness: 2px;
+}
+
+/* Abaixo da largura da pagina, principal e secundaria seguem empilhadas. */
+.settings-columns,
+.settings-main,
+.settings-side {
+  min-width: 0;
+}
+
+.settings-side {
+  margin-top: calc(var(--space) * 4);
+}
+
+/* Faixa horizontal de secoes: cada aba e uma linha clicavel, com estado
+   distinguido por fundo/peso, nao so cor de texto. */
+.settings-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  padding: calc(var(--space)) 0 0;
+}
+
+.settings-nav-item {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space) * 1.5);
+  padding: calc(var(--space) * 1.5) calc(var(--space) * 2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--color-muted);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 400;
+  white-space: nowrap;
+  position: relative;
+  z-index: 1;
+}
+
+.settings-nav-item:hover {
+  color: var(--color-text);
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+}
+
+.settings-nav-item--on {
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent) 35%, transparent);
+  color: var(--color-accent);
+  font-weight: 650;
+}
+
+.settings-nav-item svg {
+  opacity: 0.9;
+  flex: none;
+}
+
+.settings-nav-item--on svg {
+  opacity: 1;
+}
+
+/* ---------- acordeao: uma linha por secao, a ativa abre embaixo ---------- */
+
+/* Linha das secoes. No estreito cada uma ocupa a largura toda, empilhada. */
+.settings-sections {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* Cada secao e uma linha com nome, resumo, pill de estado e chevron. O
+   conteudo aberto aparece logo abaixo da propria linha, em largura total. */
+.section-row {
+  border-bottom: 1px solid var(--color-border);
+  /* A barra pegajosa pode ocupar duas linhas no estreito; 140px deixam a
+     secao inteira abaixo dela com folga nos dois breakpoints. */
+  scroll-margin-top: calc(var(--space) * 35);
+}
+
+.section-row:last-child {
+  border-bottom: none;
+}
+
+.section-toggle {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 2);
+  width: 100%;
+  padding: calc(var(--space) * 2.5) calc(var(--space) * 1.5);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-muted);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.section-toggle:hover {
+  background: color-mix(in srgb, var(--color-accent) 6%, transparent);
+}
+
+.section-toggle:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+.section-row--open > .section-toggle {
+  color: var(--color-text);
+}
+
+.section-label {
+  flex: none;
+  width: 130px;
+  font-weight: 650;
+  color: var(--color-text);
+}
+
+.section-row--open .section-label {
+  color: var(--color-accent);
+}
+
+.section-summary {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.state-pill {
+  flex: none;
+  font-size: 11px;
+  font-weight: 650;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-muted);
+  white-space: nowrap;
+}
+
+.state-pill--ok {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 40%, transparent);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+}
+
+.state-pill--warn {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 40%, transparent);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
+
+.chevron {
+  flex: none;
+  color: var(--color-muted);
+  transition: transform 0.15s ease;
+}
+
+.chevron--open {
+  transform: rotate(90deg);
+}
+
+.section-content {
+  padding: 0 calc(var(--space) * 1.5) calc(var(--space) * 3);
+}
+
+/* No desktop a secao ativa e a coluna larga e as recolhidas viram colunas
+   estreitas ao lado dela, preenchendo a largura util. O gatilho e a largura
+   da pagina (container), nao a da janela: com a barra lateral aberta, uma
+   janela de 1000px ainda nao comporta as quatro colunas. */
+@container settings (min-width: 900px) {
+  .settings-page {
+    max-width: 934px;
+  }
+
+  .settings-sections {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .section-row {
+    flex: 0 0 148px;
+    min-width: 0;
+    border-bottom: none;
+  }
+
+  /* A secao ativa usa a largura toda; as recolhidas viram uma faixa de cartas
+     na linha seguinte, em vez de espremer o conteudo numa coluna estreita. */
+  .section-row--open {
+    order: -1;
+    flex: 1 0 100%;
+    max-width: none;
+  }
+
+  /* Inativa: nome e estado empilhados, sem controle nenhum. Fica presa logo
+     abaixo da barra para nao sumir ao rolar a secao ativa. */
+  .section-row:not(.section-row--open) {
+    position: static;
+    min-height: 108px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-surface);
+  }
+
+  .section-row:not(.section-row--open):hover {
+    border-color: color-mix(in srgb, var(--color-accent) 35%, var(--color-border));
+  }
+
+  .section-row:not(.section-row--open) > .section-toggle {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    padding: calc(var(--space) * 2.5) calc(var(--space) * 3);
+  }
+
+  .section-row:not(.section-row--open) .section-label {
+    width: auto;
+  }
+
+  .section-row:not(.section-row--open) .section-summary {
+    display: block;
+    overflow: visible;
+    white-space: normal;
+    overflow-wrap: break-word;
+    line-height: 1.35;
+  }
+
+  .section-row:not(.section-row--open) .state-pill {
+    margin-top: calc(var(--space) * 1.5);
+  }
+
+  .section-row:not(.section-row--open) .chevron {
+    display: none;
+  }
+}
+
+.section-block {
+  padding-top: calc(var(--space) * 3);
+  border-top: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
+}
+
+.section-block:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.section-block + .section-block {
+  margin-top: calc(var(--space) * 3);
+}
+
+/* Provedores em 2 colunas dentro da largura estreita. */
+.settings-page .providers {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.settings-page .providers--2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.toggle-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.toggle-label {
+  font-size: 12px;
+  color: var(--color-muted);
+}
+
+/* Cartoes de provedor */
+.providers {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+}
+
+.pv {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  border-radius: 8px;
+  padding: 7px 8px;
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.pv:hover {
+  border-color: var(--color-accent);
+}
+
+.pv--on {
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 15%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
+
+.pv--disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.pv-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  margin: 0;
+}
+
+.ico {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  background: var(--color-surface-2);
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  font-weight: 750;
+  color: var(--color-accent);
+  flex: none;
+  letter-spacing: -0.02em;
+}
+
+.txt {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+}
+
+.nm {
+  font-size: 13px;
+  font-weight: 650;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* Linhas de modelo */
+.listhead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.meta {
+  font-size: 11px;
+  color: var(--color-muted);
+}
+
+/* Erro acionavel da busca de modelos. */
+.error-banner {
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 35%, transparent);
+  border-radius: 6px;
+  padding: 4px 6px;
+  margin-top: 4px;
+}
+
+.refresh {
+  margin-left: auto;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  border-radius: 5px;
+  padding: 2px 6px;
+  font-size: 11px;
+  color: var(--color-muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.refresh:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.rows {
+  border-top: 1px solid var(--color-border);
+  margin-top: 5px;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 5px;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border) 40%, transparent);
+  min-width: 0;
+}
+
+/* Conexao do MCP: um formato por vez, com o snippet em largura total. */
+.mcp-settings {
+  max-width: none;
+}
+
+.mcp-connection {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: calc(var(--space) * 5);
+}
+
+.mcp-connection-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--space) * 3);
+  flex-wrap: wrap;
+}
+
+.mcp-connection-label {
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--color-text);
+}
+
+.mcp-snippet {
+  margin: 0;
+  padding: calc(var(--space) * 2) calc(var(--space) * 3);
+  max-height: 320px;
+  overflow: auto;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.mcp-projects-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: calc(var(--space) * 2);
+}
+
+.mcp-projects {
+  display: flex;
+  flex-direction: column;
+}
+
+.mcp-project {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 3);
+  padding: calc(var(--space) * 2.5) 0;
+  border-top: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
+}
+
+.mcp-project-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.mcp-project .segmented {
+  flex: none;
+}
+
+
+
+/* Uma linha por projeto na secao de resumos MCP. */
+.summary-detail-row {
+  justify-content: space-between;
+}
+
+.summary-detail-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.summary-detail-row .segmented {
+  flex: none;
+}
+
+/* Nome curto e previsivel: o medidor e a adequacao ficam ao lado, nao na
+   outra ponta da tela. */
+.row > .ram-track,
+.row > .error {
+  flex: 0 0 100%;
+  max-width: none;
+}
+
+.row--selected {
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+  border-bottom-color: transparent;
+  border-radius: 6px;
+  margin-top: 2px;
+}
+
+.radio {
+  width: 13px;
+  height: 13px;
+  border: 1.5px solid var(--color-border);
+  border-radius: 50%;
+  flex: none;
+  background: transparent;
+  appearance: none;
+  cursor: pointer;
+  position: relative;
+}
+
+.radio:checked {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+}
+
+.radio:checked::before {
+  content: "";
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--color-bg);
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.row--selected .radio {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+}
+
+.row--selected .radio::before {
+  background: var(--color-bg);
+}
+
+.radio:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.mname {
+  min-width: 0;
+  /* Sem crescer: o medidor e a adequacao comecam logo depois do nome, e a
+     sobra da linha fica no fim, nunca entre os dois. */
+  flex: 0 1 auto;
+  max-width: 240px;
+}
+
+.n {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.n-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.s {
+  font-size: 11px;
+  color: var(--color-muted);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.reco {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  border-radius: 3px;
+  padding: 1px 4px;
+  flex: none;
+}
+
+.meter {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  flex: none;
+}
+
+.meter i {
+  width: 3px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--color-border) 50%, transparent);
+  display: block;
+}
+
+.meter i.f {
+  background: var(--color-accent);
+}
+
+.meter i:nth-child(1) { height: 5px; }
+.meter i:nth-child(2) { height: 8px; }
+.meter i:nth-child(3) { height: 11px; }
+
+.qual {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--color-accent);
+  white-space: nowrap;
+  flex: none;
+}
+
+.settings-page .chip {
+  font-size: 10px;
+  color: var(--color-muted);
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  padding: 1px 4px;
+  flex: none;
+  background: var(--color-bg);
+  white-space: nowrap;
+}
+
+.settings-page .chip.warn {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 40%, transparent);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
+
+.more {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--color-accent);
+  font-weight: 650;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+
+.more:hover {
+  text-decoration: underline;
+}
+
+.caption {
+  font-size: 11px;
+  color: var(--color-muted);
+  margin-top: 6px;
+}
+
+/* Passos numerados */
+.step {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 7px;
+}
+
+.num {
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  flex: none;
+}
+
+.t {
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.step-note {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--color-muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+/* Campos: so existem dentro das configuracoes; escopados para nao vazar. */
+.settings-page .fields {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.settings-page .field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: calc(var(--space) * 2);
+  align-items: start;
+  padding: calc(var(--space) * 2.5) 0;
+  border-top: 1px solid var(--color-border);
+  text-align: left;
+}
+
+.settings-page .field:first-child {
+  border-top: none;
+}
+
+.settings-page .field-label {
+  color: var(--color-muted);
+  font-size: 13px;
+  font-weight: 600;
+  padding-top: 0;
+  text-align: left;
+}
+
+.settings-page .field-control {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 2);
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.settings-page .field input[type="text"],
+.settings-page .field input[type="password"],
+.settings-page .field input[type="number"],
+.settings-page .field select {
+  width: 100%;
+  max-width: 320px;
+  padding: calc(var(--space) * 2) calc(var(--space) * 3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  text-align: left;
+}
+
+.settings-page .field input[type="number"] { max-width: 130px; }
+
+.settings-page .field-hint {
+  grid-column: 1 / -1;
+  color: var(--color-muted);
+  font-size: 12px;
+  text-align: left;
+}
+
+.settings-page .field-full { grid-column: 1 / -1; }
+
+/* Chave: campo e atalhos do console logo abaixo do provedor. */
+.settings-page .key-field {
+  padding-top: 0;
+  border-top: none;
+}
+
+/* Runtime local: separado por uma linha, sem virar cartao dentro do cartao. */
+.runtime-box {
+  margin-top: calc(var(--space) * 4);
+  padding-top: calc(var(--space) * 4);
+  border-top: 1px solid var(--color-border);
+}
+
+.runtime-box .card-head {
+  margin-bottom: calc(var(--space) * 2);
+}
+
+/* Toggle custom (interruptor) */
+.settings-page .toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-muted);
+  cursor: pointer;
+  position: relative;
+}
+
+.settings-page .toggle input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  margin: 0;
+}
+
+.settings-page .sw {
+  width: 28px;
+  height: 16px;
+  border-radius: 99px;
+  background: var(--color-border);
+  position: relative;
+  flex: none;
+}
+
+.settings-page .toggle--on .sw {
+  background: var(--ok);
+}
+
+.settings-page .sw::after {
+  content: "";
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--color-bg);
+  top: 2px;
+  left: 2px;
+  transition: transform 0.15s;
+}
+
+.settings-page .toggle--on .sw::after {
+  left: 14px;
+}
+
+/* Secoes colapsadas (avancado) */
+.collapsible-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--space) * 2);
+  padding: calc(var(--space) * 4);
+  background: transparent;
+  border: none;
+  text-align: left;
+  width: 100%;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.collapsible-head:focus {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+.collapsible-head h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.collapsible-head .hint {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.collapsive-icon {
+  font-size: 11px;
+  color: var(--color-muted);
+  flex-shrink: 0;
+}
+
+.collapsible-body {
+  padding: calc(var(--space) * 4);
+  border-top: 1px solid var(--color-border);
+}
+
+/* Botoes das configuracoes: discretos ao lado dos campos. */
+.settings-page .button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--space));
+  padding: calc(var(--space) * 1.75) calc(var(--space) * 3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.settings-page .button:hover { border-color: var(--color-accent); color: var(--color-accent); }
+
+.settings-page .button--ghost {
+  background: transparent;
+  color: var(--color-text);
+  border-color: var(--color-border);
+}
+
+.settings-page .button--ghost:hover { border-color: var(--color-muted); color: var(--color-text); }
+
+.settings-page .button--small { padding: calc(var(--space)) calc(var(--space) * 2); font-size: 11.5px; }
+
+.settings-page .button:disabled { opacity: 0.5; cursor: default; }
+
+/* Skeleton de busca */
+.settings-page .skeleton-row {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: calc(var(--space) * 2);
+  padding: calc(var(--space) * 2) 0;
+  align-items: center;
+}
+
+.settings-page .skeleton-cell {
+  border-radius: var(--radius-sm);
+  background: linear-gradient(90deg, var(--color-surface), var(--color-bg), var(--color-surface));
+  background-size: 200% 100%;
+  animation: shimmer 1.2s ease-in-out infinite;
+}
+
+.settings-page .skeleton-title { width: 55%; height: 14px; }
+.settings-page .skeleton-line { width: 40%; height: 10px; }
+
+@keyframes shimmer {
+  to { background-position: -200% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-page .skeleton-cell { animation: none; }
+}
+
+/* ---------- narrow screens ---------- */
+@media (max-width: 600px) {
+  .settings-page .settings-header {
+    gap: calc(var(--space) * 2);
+  }
+
+  .settings-page .settings-nav {
+    order: 3;
+    flex-basis: 100%;
+    flex-direction: row;
+    overflow-x: auto;
+  }
+
+  .settings-page .settings-nav-item { white-space: nowrap; }
+  .section-label { width: auto; }
+  .section-toggle { flex-wrap: wrap; }
+  .settings-page .providers,
+  .settings-page .providers--2 { grid-template-columns: 1fr; }
+  .row { flex-direction: column; align-items: flex-start; gap: 4px; }
+  .row .mname { flex: none; width: 100%; max-width: 100%; }
+  .settings-page .qual,
+  .settings-page .chip { width: auto; min-width: 0; }
+}

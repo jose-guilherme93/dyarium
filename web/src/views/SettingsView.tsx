@@ -1,12 +1,28 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
 import { api, getToken } from "../api";
-import { BrowserProcessing } from "../components/BrowserProcessing";
-import { ChevronIcon } from "../components/icons";
+import { AllNotebooksIcon, RefreshIcon, SparkIcon, TrashIcon, UserIcon, WaveIcon } from "../components/icons";
 import { ListSkeleton } from "../components/Skeleton";
-import { Toggle } from "../components/Toggle";
 import { TrashSection } from "../components/TrashSection";
 import { useToast } from "../components/Toasts";
-import type { LocalAnalysis, ModelInfo, Settings } from "../types";
+import {
+  canSearchModels,
+  DEEPGRAM_KEY_URL,
+  DEEPGRAM_MODELS,
+  FALLBACK_MODELS,
+  LOCAL_PROVIDER_IDS,
+  CLOUD_PROVIDER_IDS,
+  localRuntimeOf,
+  providerFromSettings,
+  PROVIDER_PRESETS,
+  qualityOf,
+  recommendedModel,
+  TRANSCRIBE_PROVIDERS,
+  whisperModelLabel,
+  whisperQuality,
+  WHISPER_CATALOG_URL,
+} from "../lib/modelCatalog";
+import type { Entry, LocalAnalysis, ModelInfo, Settings, SummaryDetail } from "../types";
 
 interface DownloadProgress {
   received: number;
@@ -15,285 +31,24 @@ interface DownloadProgress {
   error: string;
 }
 
-interface ProviderPreset {
-  label: string;
-  baseUrl: string;
-  model: string;
-  /** analyze_provider value stored on the server. */
-  kind: string;
-  /** Prefixo esperado da chave, mostrado no campo vazio. */
-  keyPlaceholder?: string;
-  /** Atalhos para criar a chave e ver os modelos no console do provedor. */
-  links?: { label: string; href: string }[];
-}
+type TabId = "transcricao" | "analise" | "projetos" | "autor" | "dados";
 
-const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
-  opencodeZen: {
-    label: "OpenCode Zen (chave)",
-    baseUrl: "https://opencode.ai/inference/openai/v1",
-    model: "glm-5.3-flash-free",
-    kind: "openai",
-    keyPlaceholder: "chave do OpenCode Console",
-    links: [
-      { label: "Criar chave", href: "https://opencode.ai/auth" },
-      { label: "Modelos", href: "https://opencode.ai/docs/zen/" },
-    ],
-  },
-  opencodeGo: {
-    label: "OpenCode Go (assinatura)",
-    baseUrl: "https://opencode.ai/inference/go/openai/v1",
-    // Nao e modelo de raciocinio: responde direto, sem gastar o teto pensando.
-    model: "glm-5.3-flash",
-    kind: "openai",
-    keyPlaceholder: "chave do OpenCode Console",
-    links: [
-      { label: "Criar chave", href: "https://opencode.ai/auth" },
-      { label: "Modelos", href: "https://opencode.ai/docs/go/" },
-    ],
-  },
-  opencodeLocal: {
-    label: "opencode local (login)",
-    baseUrl: "http://127.0.0.1:49374",
-    model: "opencode-go/qwen3.8-flash",
-    kind: "opencode",
-    links: [{ label: "Como conectar", href: "https://opencode.ai/docs/server/" }],
-  },
-  openrouter: {
-    label: "OpenRouter (chave)",
-    baseUrl: "https://openrouter.ai/api/v1",
-    // Modelo comum e barato: responde sem gastar tokens raciocinando.
-    model: "google/gemini-2.5-flash",
-    kind: "openai",
-    keyPlaceholder: "sk-or-v1-...",
-    links: [
-      { label: "Criar chave", href: "https://openrouter.ai/keys" },
-      { label: "Modelos", href: "https://openrouter.ai/models" },
-    ],
-  },
-  google: {
-    label: "Google Gemini (chave)",
-    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
-    model: "gemini-2.5-flash",
-    kind: "openai",
-    keyPlaceholder: "AIza...",
-    links: [
-      { label: "Criar chave", href: "https://aistudio.google.com/app/apikey" },
-      { label: "Modelos", href: "https://ai.google.dev/gemini-api/docs/models" },
-    ],
-  },
-  groq: {
-    label: "Groq (chave)",
-    baseUrl: "https://api.groq.com/openai/v1",
-    model: "llama-3.3-70b-versatile",
-    kind: "openai",
-    keyPlaceholder: "gsk_...",
-    links: [
-      { label: "Criar chave", href: "https://console.groq.com/keys" },
-      { label: "Modelos", href: "https://console.groq.com/docs/models" },
-    ],
-  },
-  deepseek: {
-    label: "DeepSeek (chave)",
-    baseUrl: "https://api.deepseek.com/v1",
-    model: "deepseek-chat",
-    kind: "openai",
-    keyPlaceholder: "sk-...",
-    links: [
-      { label: "Criar chave", href: "https://platform.deepseek.com/api_keys" },
-      { label: "Modelos", href: "https://api-docs.deepseek.com/quick_start/pricing" },
-    ],
-  },
-  mistral: {
-    label: "Mistral (chave)",
-    baseUrl: "https://api.mistral.ai/v1",
-    model: "mistral-small-latest",
-    kind: "openai",
-    links: [
-      { label: "Criar chave", href: "https://console.mistral.ai/api-keys/" },
-      { label: "Modelos", href: "https://docs.mistral.ai/getting-started/models/models_overview/" },
-    ],
-  },
-  xai: {
-    label: "xAI Grok (chave)",
-    baseUrl: "https://api.x.ai/v1",
-    model: "grok-3-mini",
-    kind: "openai",
-    keyPlaceholder: "xai-...",
-    links: [
-      { label: "Criar chave", href: "https://console.x.ai/" },
-      { label: "Modelos", href: "https://docs.x.ai/docs/models" },
-    ],
-  },
-  ollama: {
-    label: "Ollama local",
-    baseUrl: "http://ollama:11434/v1",
-    model: "qwen2.5:0.5b",
-    kind: "openai",
-    links: [{ label: "Modelos", href: "https://ollama.com/library" }],
-  },
-  llamaLocal: {
-    label: "llama.cpp embutido",
-    baseUrl: "",
-    model: "qwen2.5-0.5b-instruct-q4_k_m",
-    kind: "openai",
-    links: [{ label: "Modelos GGUF", href: "https://huggingface.co/models?library=gguf" }],
-  },
-  custom: { label: "Personalizado", baseUrl: "", model: "", kind: "openai" },
-};
+type FetchStatus = "idle" | "loading" | "ready" | "error" | "needs-key";
 
-const DEEPGRAM_MODELS = ["nova-3", "nova-2", "nova-1", "enhanced", "base"];
-const DEEPGRAM_KEY_URL = "https://console.deepgram.com/";
-const DEEPGRAM_MODELS_URL = "https://developers.deepgram.com/docs/models-languages-overview";
-const WHISPER_CATALOG_URL = "https://huggingface.co/ggerganov/whisper.cpp/tree/main";
+const MODEL_PREVIEW = 6;
 
-// A análise fala o formato /chat/completions. Google Gemini entra pelo endpoint
-// compatível com OpenAI; provedores com formato próprio (Anthropic, Responses)
-// só aparecem através de um gateway como OpenRouter ou OpenCode. Por isso a
-// lista de modelos é curada onde o /models não diz o formato de cada um.
-// Modelos que pensam antes de responder. Nao servem de padrao para analisar
-// notas: gastam o teto de tokens raciocinando e demoram mais. A interface os
-// marca para o usuario escolher com o custo na frente.
-const REASONING_MODELS = new Set([
-  "deepseek-v4.1-flash-free",
-  "deepseek-v4.1-flash",
-  "deepseek-v4-pro",
-  "glm-5.3",
-  "longcat-2.0",
-  "qwen3.8-max",
-  "minimax-m3",
-  "hy3",
-]);
-
-function isReasoningModel(model: string): boolean {
-  return REASONING_MODELS.has(model);
-}
-
-const ZEN_MODELS = [
-  "glm-5.3-flash-free",
-  "glm-5.3-flash",
-  "kimi-k2.7-code",
-  "space-bunny-free",
-  "deepseek-v4.1-flash-free",
-  "deepseek-v4.1-flash",
-  "qwen3.8-max",
-  "minimax-m3",
+const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
+  { id: "transcricao", label: "Transcrição", icon: <WaveIcon size={12} /> },
+  { id: "analise", label: "Análise", icon: <SparkIcon size={12} /> },
+  { id: "projetos", label: "Projetos (MCP)", icon: <AllNotebooksIcon size={12} /> },
+  { id: "autor", label: "Autor", icon: <UserIcon size={12} /> },
+  { id: "dados", label: "Dados e lixeira", icon: <TrashIcon size={12} /> },
 ];
 
-const GO_MODELS = [
-  "glm-5.3-flash",
-  "kimi-k2.7-code",
-  "space-bunny",
-  "deepseek-v4.1-flash",
-  "deepseek-v4-pro",
-  "glm-5.3",
-  "longcat-2.0",
-  "hy3",
+const SUMMARY_DETAIL_OPTIONS: { value: SummaryDetail; label: string }[] = [
+  { value: "concise", label: "Enxuto" },
+  { value: "full", label: "Completo" },
 ];
-
-const OPENCODE_MODELS = [
-  "opencode-go/qwen3.8-flash",
-  "opencode-go/glm-5.3-flash",
-  "opencode-go/claude-haiku-5-5",
-  "opencode-go/gpt-6-luna",
-  "deepseek/deepseek-chat",
-];
-
-const FALLBACK_MODELS: Record<string, string[]> = {
-  opencodeZen: ZEN_MODELS,
-  opencodeGo: GO_MODELS,
-  opencodeLocal: OPENCODE_MODELS,
-  openrouter: [
-    "google/gemini-2.5-flash",
-    "openai/gpt-4.1-mini",
-    "anthropic/claude-sonnet-4",
-    "deepseek/deepseek-chat-v3.1",
-  ],
-  google: ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"],
-  groq: ["llama-3.3-70b-versatile", "openai/gpt-oss-120b", "qwen/qwen3-32b"],
-  deepseek: ["deepseek-chat", "deepseek-reasoner"],
-  mistral: ["mistral-small-latest", "mistral-large-latest", "open-mistral-nemo"],
-  xai: ["grok-3-mini", "grok-3", "grok-4-fast"],
-  llamaLocal: [],
-  ollama: [],
-  custom: [],
-};
-
-function providerFromSettings(kind: string, baseUrl: string, localRuntime: string): string {
-  if (localRuntime === "embedded") {
-    return "llamaLocal";
-  }
-  if (localRuntime === "ollama") {
-    return "ollama";
-  }
-  if (kind === "opencode") {
-    return "opencodeLocal";
-  }
-  if (baseUrl.includes("opencode.ai/inference/go/")) {
-    return "opencodeGo";
-  }
-  if (baseUrl.includes("opencode.ai/inference/")) {
-    return "opencodeZen";
-  }
-  if (baseUrl.includes("openrouter.ai")) {
-    return "openrouter";
-  }
-  if (baseUrl.includes("generativelanguage.googleapis.com")) {
-    return "google";
-  }
-  if (baseUrl.includes("api.groq.com")) {
-    return "groq";
-  }
-  if (baseUrl.includes("deepseek")) {
-    return "deepseek";
-  }
-  if (baseUrl.includes("api.mistral.ai")) {
-    return "mistral";
-  }
-  if (baseUrl.includes("api.x.ai")) {
-    return "xai";
-  }
-  if (baseUrl.includes("ollama") || baseUrl.includes("11434")) {
-    return "ollama";
-  }
-  return "custom";
-}
-
-/** Modelos do OpenCode vem de uma lista curada: o /models deles não diz o formato de cada um. */
-function canSearchModels(provider: string): boolean {
-  return provider !== "opencodeZen" && provider !== "opencodeGo" && provider !== "ollama" && provider !== "llamaLocal";
-}
-
-/** Runtime local de um provedor, ou vazio quando a análise usa a nuvem. */
-function localRuntimeOf(provider: string): "ollama" | "embedded" | null {
-  if (provider === "llamaLocal") {
-    return "embedded";
-  }
-  if (provider === "ollama") {
-    return "ollama";
-  }
-  return null;
-}
-
-/** Estado da chave em uma linha: preenchido quando ja existe uma guardada. */
-function KeyState({ defined }: { defined: boolean }) {
-  return <span className={`key-state${defined ? " key-state--on" : ""}`}>{defined ? "definida" : "ausente"}</span>;
-}
-
-/** Atalhos do console do provedor, abertos em outra aba. */
-function KeyLinks({ links }: { links?: { label: string; href: string }[] }) {
-  if (!links?.length) {
-    return null;
-  }
-  return (
-    <span className="key-links">
-      {links.map((link) => (
-        <a key={link.href} href={link.href} target="_blank" rel="noreferrer">
-          {link.label}
-        </a>
-      ))}
-    </span>
-  );
-}
 
 export function SettingsView({ refreshKey = 0, onBack }: { refreshKey?: number; onBack?: () => void }) {
   const { notify } = useToast();
@@ -311,24 +66,66 @@ export function SettingsView({ refreshKey = 0, onBack }: { refreshKey?: number; 
   const [local, setLocal] = useState<LocalAnalysis | null>(null);
   const [localBusy, setLocalBusy] = useState(false);
   const [error, setError] = useState("");
+  const [mcpEntries, setMcpEntries] = useState<Entry[] | null>(null);
+  const [copied, setCopied] = useState<"command" | "file" | null>(null);
+  const [mcpSnippet, setMcpSnippet] = useState<"command" | "file">("command");
+  const [summaryErrors, setSummaryErrors] = useState<Record<string, string>>({});
+  const [summaryLoadError, setSummaryLoadError] = useState("");
 
-  const searchable = canSearchModels(provider);
+  // UI state
+  const [activeTab, setActiveTab] = useState<TabId>("analise");
+  const [fetchStatus, setFetchStatus] = useState<FetchStatus>("idle");
+  const [fetchError, setFetchError] = useState("");
+  const [deepgramBusy, setDeepgramBusy] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [showAllModels, setShowAllModels] = useState(false);
+
+  // Id da requisicao em andamento, para descartar respostas obsoletas.
+  const fetchReqId = useRef(0);
+
   const localRuntime = localRuntimeOf(provider);
   const preset = PROVIDER_PRESETS[provider];
   const currentLocal = localRuntime && local?.runtime === localRuntime ? local : null;
+
+  const whisperModels = useMemo(() => {
+    const bySize = [...models].sort((a, b) => a.size_mb - b.size_mb);
+    const seen = new Set<string>();
+    return bySize.filter((m) => {
+      if (seen.has(m.name)) return false;
+      seen.add(m.name);
+      return true;
+    });
+  }, [models]);
+
+  const analysisModels = useMemo(() => {
+    if (localRuntime) {
+      const localModels = currentLocal?.models?.length ? currentLocal.models : currentLocal?.model ? [currentLocal.model] : [];
+      return [...new Set([...localModels, settings?.analyze_model ?? ""])].filter((m) => m !== "");
+    }
+    if (providerModels.length > 0) return providerModels;
+    const fallback = FALLBACK_MODELS[provider] ?? [];
+    return [...new Set([...fallback, settings?.analyze_model ?? ""])].filter((m) => m !== "");
+  }, [provider, providerModels, localRuntime, currentLocal, settings?.analyze_model]);
+
   const deepgramModels = useMemo(() => {
     const current = settings?.deepgram_model ?? "";
     return [...new Set([...DEEPGRAM_MODELS, current])].filter((model) => model !== "");
   }, [settings?.deepgram_model]);
-  const modelOptions = useMemo(() => {
-    const fallback = localRuntime
-      ? (currentLocal?.models?.length ? currentLocal.models : currentLocal?.model ? [currentLocal.model] : [])
-      : FALLBACK_MODELS[provider] ?? [];
-    const remote = !localRuntime && searchable ? providerModels : [];
-    const list = remote.length > 0 ? remote : fallback;
-    const current = settings?.analyze_model ?? "";
-    return [...new Set([...list, current])].filter((model) => model !== "");
-  }, [provider, providerModels, settings?.analyze_model, currentLocal, searchable, localRuntime]);
+
+  const visibleModels = useMemo(() => {
+    if (showAllModels || analysisModels.length <= MODEL_PREVIEW) return analysisModels;
+    const preview = analysisModels.slice(0, MODEL_PREVIEW);
+    const selected = settings?.analyze_model ?? "";
+    return selected && !preview.includes(selected) ? [...preview, selected] : preview;
+  }, [analysisModels, settings?.analyze_model, showAllModels]);
+
+  const modelCountNote = (() => {
+    if (fetchStatus === "loading") return "buscando modelos";
+    if (localRuntime) return `${analysisModels.length} modelos · locais`;
+    if (fetchStatus === "ready") return `${analysisModels.length} modelos · do provedor`;
+    if (fetchStatus === "needs-key") return `${analysisModels.length} modelos · catálogo`;
+    return `${analysisModels.length} modelos · catálogo`;
+  })();
 
   const loadSettings = useCallback(async () => {
     const value = await api.getSettings();
@@ -351,11 +148,33 @@ export function SettingsView({ refreshKey = 0, onBack }: { refreshKey?: number; 
     }
   }, []);
 
+  const loadNotebooks = useCallback(async () => {
+    try {
+      const result = await api.listNotebooks(false);
+      setSummaryLoadError("");
+      const mcp = (result.notebooks ?? []).find((notebook) => notebook.kind === "mcp");
+      if (mcp) {
+        try {
+          const entries = await api.listAllEntries({ notebook_id: mcp.id });
+          setMcpEntries(entries.entries ?? []);
+        } catch {
+          setMcpEntries([]);
+        }
+      } else {
+        setMcpEntries([]);
+      }
+    } catch {
+      setMcpEntries([]);
+      setSummaryLoadError("Falha ao carregar projetos.");
+    }
+  }, []);
+
   useEffect(() => {
     loadSettings().catch((err: unknown) => setError(err instanceof Error ? err.message : "falha ao carregar"));
     loadModels().catch((err: unknown) => setError(err instanceof Error ? err.message : "falha ao carregar"));
     void loadLocal("ollama");
-  }, [loadSettings, loadModels, loadLocal]);
+    void loadNotebooks();
+  }, [loadSettings, loadModels, loadLocal, loadNotebooks]);
 
   useEffect(() => {
     if (localRuntime) {
@@ -406,29 +225,104 @@ export function SettingsView({ refreshKey = 0, onBack }: { refreshKey?: number; 
     }
   };
 
-  const fetchModels = useCallback(async () => {
-    setModelsNote("Buscando modelos...");
+  /** Troca o detalhe do resumo MCP de um projeto, otimista e com volta em erro. */
+  const setProjectDetail = async (entry: Entry, value: SummaryDetail) => {
+    const previous = entry.summary_detail ?? "concise";
+    if (previous === value) return;
+    setSummaryErrors((current) => {
+      const next = { ...current };
+      delete next[entry.id];
+      return next;
+    });
+    setMcpEntries((current) => current?.map((e) => (e.id === entry.id ? { ...e, summary_detail: value } : e)) ?? current);
+    try {
+      await api.patchEntry(entry.id, { summary_detail: value });
+    } catch {
+      setMcpEntries((current) => current?.map((e) => (e.id === entry.id ? { ...e, summary_detail: previous } : e)) ?? current);
+      setSummaryErrors((current) => ({ ...current, [entry.id]: "Falha ao salvar. Tente de novo." }));
+    }
+  };
+
+  /** Busca a lista de modelos do provedor, salvando primeiro quando e preciso. */
+  const fetchAnalyzeModels = useCallback(async () => {
+    const reqId = ++fetchReqId.current;
+    setFetchStatus("loading");
+    setFetchError("");
     try {
       const result = await api.listAnalyzeModels();
+      if (reqId !== fetchReqId.current) return;
       const list = result.models ?? [];
       setProviderModels(list);
+      setFetchStatus(list.length > 0 ? "ready" : "error");
       setModelsNote(
         list.length > 0 ? `${list.length} modelos encontrados.` : "Nenhum modelo retornado pelo provedor.",
       );
     } catch (err) {
+      if (reqId !== fetchReqId.current) return;
       setProviderModels([]);
-      setModelsNote(err instanceof Error ? err.message : "falha ao buscar modelos");
+      setFetchStatus("error");
+      setFetchError(err instanceof Error ? err.message : "falha ao buscar modelos");
+      setModelsNote("Falha ao buscar modelos do provedor.");
     }
   }, []);
 
-  useEffect(() => {
-    if (settings?.analyze_base_url && searchable) {
-      void fetchModels();
-    }
-  }, [settings?.analyze_base_url, searchable, fetchModels]);
+  const selectProvider = async (id: string) => {
+    setProvider(id);
+    setProviderModels([]);
+    setApiKey("");
+    setShowAllModels(false);
+    setFetchStatus("idle");
+    setFetchError("");
+    setModelsNote("");
+    const p = PROVIDER_PRESETS[id];
+    if (!p) return;
 
-  // Enquanto o modelo baixa, o painel acompanha pelo mesmo endpoint que iniciou
-  // o download; quando termina, recarrega as configurações para refletir o modelo.
+    if (id === "llamaLocal" || id === "ollama") {
+      void installLocal(id === "llamaLocal" ? "embedded" : "ollama");
+      return;
+    }
+
+    const ok = await save(
+      {
+        analyze_provider: p.kind,
+        analyze_base_url: p.baseUrl,
+        analyze_model: p.model,
+        analyze_local_runtime: "",
+        analyze_enabled: true,
+      },
+      "Provedor atualizado",
+    );
+    if (!ok) {
+      await loadSettings();
+      return;
+    }
+
+    if (p.keyRequired && !(settings?.analyze_api_key_set ?? false)) {
+      setFetchStatus("needs-key");
+      setModelsNote("Informe a chave para ver os modelos do provedor.");
+      return;
+    }
+    const canSearch = canSearchModels(id);
+    if (canSearch) {
+      void fetchAnalyzeModels();
+    } else {
+      setFetchStatus("ready");
+    }
+  };
+
+  /** Salva a chave e, quando o provedor permite, ja testa a busca de modelos. */
+  const saveAnalyzeKey = async () => {
+    const key = apiKey.trim();
+    if (key === "") return;
+    const saved = await save({ analyze_api_key: key }, "Chave salva");
+    if (!saved) return;
+    setApiKey("");
+    if (preset?.searchable) {
+      setFetchStatus("idle");
+      await fetchAnalyzeModels();
+    }
+  };
+
   const pulling = Boolean(currentLocal?.pull && !currentLocal.pull.done && !currentLocal.pull.error);
   useEffect(() => {
     if (!pulling || !localRuntime) {
@@ -447,12 +341,11 @@ export function SettingsView({ refreshKey = 0, onBack }: { refreshKey?: number; 
     }
   }, [pullDone, loadSettings, loadLocal, localRuntime]);
 
-  /** Um clique: configura o runtime local e baixa o modelo se ainda faltar. */
   const installLocal = async (runtime: "ollama" | "embedded", model?: string) => {
-    const preset = runtime === "embedded" ? PROVIDER_PRESETS.llamaLocal : PROVIDER_PRESETS.ollama;
+    const p = runtime === "embedded" ? PROVIDER_PRESETS.llamaLocal : PROVIDER_PRESETS.ollama;
     const saved = localRuntime === runtime ? settings?.analyze_model?.trim() : "";
     const current = local?.runtime === runtime ? local : null;
-    const target = model || saved || current?.model || preset.model;
+    const target = model || saved || current?.model || p.model;
     setLocalBusy(true);
     try {
       const result = await api.setupLocalAnalysis(runtime, target);
@@ -467,11 +360,23 @@ export function SettingsView({ refreshKey = 0, onBack }: { refreshKey?: number; 
         result.status === "ready" ? "success" : "info",
       );
     } catch (err) {
-      // O seletor ja mudou na tela; volta para o provedor que esta salvo.
       await loadSettings();
       notify(err instanceof Error ? err.message : "não foi possível configurar a análise local", "error");
     } finally {
       setLocalBusy(false);
+    }
+  };
+
+  const download = async (name: string) => {
+    try {
+      await api.downloadModel(name);
+      setProgress((current) => ({
+        ...current,
+        [name]: { received: 0, total: 0, done: false, error: "" },
+      }));
+      notify(`Download de ${name} iniciado`, "info");
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "falha ao iniciar o download", "error");
     }
   };
 
@@ -496,392 +401,407 @@ export function SettingsView({ refreshKey = 0, onBack }: { refreshKey?: number; 
     return `Ollama não encontrado em ${currentLocal.base_url}. Confira se o serviço ollama está no ar.`;
   })();
 
-  const download = async (name: string) => {
-    try {
-      await api.downloadModel(name);
-      setProgress((current) => ({
-        ...current,
-        [name]: { received: 0, total: 0, done: false, error: "" },
-      }));
-      notify(`Download de ${name} iniciado`, "info");
-    } catch (err) {
-      notify(err instanceof Error ? err.message : "falha ao iniciar o download", "error");
-    }
+  // ---------- resumo de cada secao (linha do acordeao) ----------
+  const transcribeProvider = settings?.transcribe_provider ?? "whisper";
+  const tpPreset = TRANSCRIBE_PROVIDERS[transcribeProvider as keyof typeof TRANSCRIBE_PROVIDERS];
+  const transcribeSummary = tpPreset ? tpPreset.short : transcribeProvider;
+
+  const analyzeProviderId = providerFromSettings(
+    settings?.analyze_provider ?? "openai",
+    settings?.analyze_base_url ?? "",
+    settings?.analyze_local_runtime ?? "",
+  );
+  const analyzePreset = PROVIDER_PRESETS[analyzeProviderId];
+  const analyzeLabel = analyzePreset ? analyzePreset.short : (settings?.analyze_provider ?? "");
+  const transcribeKeyMissing = transcribeProvider === "deepgram" && !settings?.deepgram_api_key_set;
+  const projectEntries = mcpEntries ?? [];
+  const projectCount = projectEntries.length;
+  const fullProjects = projectEntries.filter((entry) => entry.summary_detail === "full").length;
+
+  const summaries: Record<TabId, { text: string; state?: "ok" | "warn" | "off"; stateText?: string }> = {
+    transcricao: {
+      text: `${transcribeSummary} · ${
+        transcribeProvider === "deepgram" ? (settings?.deepgram_model ?? "") : (settings?.whisper_model ? whisperModelLabel(settings.whisper_model) : "")
+      }`.replace(/ · $/, ""),
+      state: transcribeKeyMissing ? "warn" : undefined,
+      stateText: transcribeKeyMissing ? "chave ausente" : undefined,
+    },
+    analise: {
+      text: `${analyzeLabel}${settings?.analyze_model ? " · " + settings.analyze_model : ""}`,
+      state: settings && !settings.analyze_enabled ? "off" : undefined,
+      stateText: settings && !settings.analyze_enabled ? "desligada" : undefined,
+    },
+    projetos: {
+      text: mcpEntries === null ? "carregando" : `${projectCount} ${projectCount === 1 ? "projeto" : "projetos"}`,
+      stateText: fullProjects > 0 ? `${fullProjects} completo${fullProjects === 1 ? "" : "s"}` : undefined,
+    },
+    autor: {
+      text: settings?.owner_name && settings.owner_name.trim() !== "" ? settings.owner_name : "sem nome",
+      state: settings?.all_notes_mine ? "ok" : "off",
+      stateText: settings?.all_notes_mine ? "minhas" : "por nota",
+    },
+    // "lixeira" ja esta no nome da secao; o resumo diz o que ha ali.
+    dados: { text: "notas excluídas", state: "off" },
   };
 
-  return (
-    <section className="settings-page">
-      <header className="page-head">
-        {onBack && (
-          <button type="button" className="page-back" onClick={onBack} aria-label="Voltar" title="Voltar">
-            <ChevronIcon size={16} />
-          </button>
-        )}
-        <div>
-          <h1>Configurações</h1>
-          <p>Transcrição, análise por IA e o que fica guardado no servidor.</p>
-        </div>
-      </header>
-      {error && <p className="error">{error}</p>}
-
-      {!settings && <ListSkeleton rows={4} />}
-
-      {settings && (
-        <>
-          <div className="card">
-            <div className="card-head">
-              <h2>Modelos de transcrição</h2>
-              <p className="hint">
-                Modelos ggml do whisper. O modelo ativo vale para as próximas transcrições.{" "}
-                <a href={WHISPER_CATALOG_URL} target="_blank" rel="noreferrer">
-                  Catálogo
-                </a>
-              </p>
+  // ---------- conteudo aberto de cada secao ----------
+  const renderTranscription = (s: Settings) => (
+    <>
+      <div className="settings-columns">
+        <div className="settings-main">
+          <div className="section-block">
+            <div className="listhead">
+              <span className="meta">{whisperModels.length} modelos</span>
+              <button type="button" className="refresh" onClick={() => void loadModels()} aria-label="Atualizar lista de modelos">
+                <RefreshIcon size={9} />
+                Atualizar
+              </button>
+              <a className="lnk" href={WHISPER_CATALOG_URL} target="_blank" rel="noreferrer">
+                Catálogo
+              </a>
             </div>
-            <ul className="model-list stagger-in">
-              {models.map((model) => {
+            <div className="rows">
+              {whisperModels.map((model) => {
                 const p = progress[model.name];
-                const percent =
-                  p && p.total > 0 ? Math.min(100, Math.round((p.received / p.total) * 100)) : 0;
+                const percent = p && p.total > 0 ? Math.min(100, Math.round((p.received / p.total) * 100)) : 0;
+                const quality = whisperQuality(whisperModelLabel(model.name));
+                const downloaded = model.downloaded;
+                const selected = s.whisper_model === model.path;
                 return (
-                  <li key={model.name} className="model-item">
-                    <label className="model-name">
-                      <input
-                        type="radio"
-                        name="active-model"
-                        checked={settings.whisper_model === model.path}
-                        disabled={!model.downloaded}
-                        onChange={() => void save({ whisper_model: model.path }, "Modelo ativo atualizado")}
-                      />
-                      <span>{model.name}</span>
-                    </label>
-                    <span className="muted">
-                      ~{model.size_mb} MB{" "}
-                      {model.downloaded ? `(${Math.round(model.local_bytes / 1048576)} MB baixados)` : "(ausente)"}
+                  <div key={model.name} className={`row${selected ? " row--selected" : ""}`} aria-selected={selected}>
+                    <input
+                      className="radio"
+                      type="radio"
+                      name="whisper-model"
+                      value={model.path}
+                      checked={selected}
+                      disabled={!downloaded}
+                      onChange={() => void save({ whisper_model: model.path }, "Modelo ativo atualizado")}
+                      aria-label={whisperModelLabel(model.name)}
+                    />
+                    <span className="mname">
+                      <span className="n">
+                        <span className="n-text">{whisperModelLabel(model.name)}</span>
+                        {quality.score >= 2 && <span className="reco">recomendado</span>}
+                      </span>
+                      <span className="s">
+                        {downloaded ? `~${model.size_mb} MB` : `~${model.size_mb} MB (ausente)`} ·{" "}
+                        {quality.note === "mais leve" || quality.note === "equilíbrio" || quality.note === "mais preciso"
+                          ? quality.note
+                          : ""}
+                      </span>
                     </span>
-                    {!model.downloaded && (
+                    <span className="meter">
+                      {[1, 2, 3].map((level) => (
+                        <i key={level} className={level <= quality.score ? "f" : ""} />
+                      ))}
+                    </span>
+                    <span className="qual">{quality.label}</span>
+                    <span className="chip">local</span>
+                    {!downloaded && (
                       <button
                         type="button"
-                        className="button button--ghost button--small"
+                        className="button button--small button--ghost"
                         onClick={() => void download(model.name)}
                         disabled={p && !p.done}
                       >
                         {p && !p.done ? "Baixando..." : "Baixar"}
                       </button>
                     )}
-                    {p && !p.done && (
+                    {!downloaded && p && !p.done && (
                       <span className="ram-track" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}>
                         <span className="ram-fill" style={{ width: `${percent}%` }} />
                       </span>
                     )}
-                    {p && p.error && <span className="error">Falha no download: {p.error}</span>}
-                  </li>
+                    {!downloaded && p && p.error && <span className="error">Falha no download: {p.error}</span>}
+                  </div>
                 );
               })}
-            </ul>
+            </div>
           </div>
+        </div>
 
-          <div className="card">
-            <div className="card-head">
-              <h2>Transcrição</h2>
-              <p className="hint">Como o audio vira texto.</p>
+        <div className="settings-side">
+          <div className="section-block">
+            <div className="providers providers--2">
+              <ProviderCard
+                preset={TRANSCRIBE_PROVIDERS.whisper}
+                selected={s.transcribe_provider === "whisper"}
+                onSelect={() => void save({ transcribe_provider: "whisper" }, "Provedor atualizado")}
+              />
+              <ProviderCard
+                preset={TRANSCRIBE_PROVIDERS.deepgram}
+                selected={s.transcribe_provider === "deepgram"}
+                onSelect={() => void save({ transcribe_provider: "deepgram" }, "Provedor atualizado")}
+              />
             </div>
-            <div className="field">
-              <span className="field-label">Provedor</span>
-              <select
-                aria-label="Provedor de transcrição"
-                value={settings.transcribe_provider}
-                onChange={(event) => void save({ transcribe_provider: event.target.value })}
-              >
-                <option value="whisper">Whisper local</option>
-                <option value="deepgram">Deepgram (API na nuvem)</option>
-              </select>
-            </div>
-            {settings.transcribe_provider === "deepgram" && (
+            {s.transcribe_provider === "deepgram" && (
               <>
                 <div className="field">
-                  <span className="field-label">Modelo Deepgram</span>
-                  <select
-                    aria-label="Modelo Deepgram"
-                    value={settings.deepgram_model}
-                    onChange={(event) => void save({ deepgram_model: event.target.value })}
-                  >
-                    {deepgramModels.map((model) => (
-                      <option key={model} value={model}>
-                        {model}
-                      </option>
-                    ))}
-                  </select>
-                  <span className="key-links">
-                    <a href={DEEPGRAM_MODELS_URL} target="_blank" rel="noreferrer">
-                      Modelos e preços
-                    </a>
-                  </span>
+                  <span className="field-label">Modelo</span>
+                  <div className="field-control">
+                    <select
+                      aria-label="Modelo Deepgram"
+                      value={s.deepgram_model}
+                      onChange={(event) => void save({ deepgram_model: event.target.value }, "Modelo da Deepgram atualizado")}
+                    >
+                      {deepgramModels.map((model) => (
+                        <option key={model} value={model}>
+                          {model}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
-                <div className="field">
+                <div className="field field-full">
                   <span className="field-label">
-                    Chave da Deepgram <KeyState defined={settings.deepgram_api_key_set} />
+                    Chave da Deepgram <KeyState defined={s.deepgram_api_key_set} />
                   </span>
                   <div className="field-control">
                     <input
                       type="password"
                       aria-label="Chave da Deepgram"
-                      placeholder={settings.deepgram_api_key_set ? "definida (deixe vazio para manter)" : "cole a chave da Deepgram"}
+                      placeholder={s.deepgram_api_key_set ? "definida (deixe vazio para manter)" : "cole a chave da Deepgram"}
                       value={deepgramKey}
                       onChange={(event) => setDeepgramKey(event.target.value)}
+                      disabled={deepgramBusy}
                     />
                     <button
                       type="button"
-                      className="button button--ghost button--small"
+                      className="button button--small button--ghost"
                       onClick={() => {
                         const key = deepgramKey.trim();
                         if (key === "") return;
-                        // So limpa o campo quando o servidor confirmou; antes, uma
-                        // falha de rede apagava a chave digitada.
+                        setDeepgramBusy(true);
                         void save({ deepgram_api_key: key }, "Chave da Deepgram salva").then((ok) => {
                           if (ok) setDeepgramKey("");
+                          setDeepgramBusy(false);
                         });
                       }}
+                      disabled={deepgramBusy}
                     >
-                      Salvar chave da Deepgram
+                      {deepgramBusy ? "Salvando..." : "Salvar chave da Deepgram"}
                     </button>
                   </div>
-                  <span className="key-links">
-                    <a href={DEEPGRAM_KEY_URL} target="_blank" rel="noreferrer">
+                  <div className="key-links">
+                    <a className="lnk" href={DEEPGRAM_KEY_URL} target="_blank" rel="noreferrer">
                       Criar chave na Deepgram
                     </a>
-                  </span>
+                  </div>
                 </div>
               </>
             )}
-            <div className="field">
-              <span className="field-label">Idioma</span>
-              <select
-                aria-label="Idioma da transcrição"
-                value={settings.whisper_language}
-                onChange={(event) => void save({ whisper_language: event.target.value })}
-              >
-                <option value="">Detectar automaticamente</option>
-                <option value="pt">Português</option>
-                <option value="en">Inglês</option>
-                <option value="es">Espanhol</option>
-                <option value="fr">Francês</option>
-                <option value="de">Alemão</option>
-                <option value="it">Italiano</option>
-                <option value="ja">Japonês</option>
-                <option value="zh">Chinês</option>
-                <option value="ru">Russo</option>
-                <option value="ar">Árabe</option>
-                <option value="hi">Hindi</option>
-              </select>
-            </div>
-            <div className="field">
-              <span className="field-label">Corte de silêncio</span>
-              <Toggle
-                checked={settings.trim_silence}
-                onChange={(value) => void save({ trim_silence: value })}
-                label={settings.trim_silence ? "Ligado" : "Desligado"}
-              />
-            </div>
-            <div className="field">
-              <span className="field-label">Limite de RAM (MB)</span>
-              <div className="field-control">
-                <input
-                  type="number"
-                  min={0}
-                  aria-label="Limite de RAM da transcrição em MB"
-                  value={ceiling}
-                  onChange={(event) => setCeiling(event.target.value)}
-                />
-                <button
-                  type="button"
-                  className="button button--ghost button--small"
-                  onClick={() => void save({ max_whisper_rss_mb: Math.max(0, Math.floor(Number(ceiling) || 0)) })}
-                >
-                  Salvar
-                </button>
-                <span className="hint">0 significa sem limite</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="card">
-            <div className="card-head">
-              <h2>Autor</h2>
-              <p className="hint">
-                O nome que a IA e o centro do mapa usam. O interruptor vale para notas sem escolha manual;
-                o seletor de cada nota sempre vence.
-              </p>
-            </div>
-            <div className="field">
-              <span className="field-label">Seu nome</span>
-              <input
-                type="text"
-                aria-label="Seu nome"
-                value={ownerName}
-                maxLength={80}
-                placeholder="Você"
-                onChange={(event) => setOwnerName(event.target.value)}
-                onBlur={() => {
-                  const next = ownerName.trim();
-                  if (next !== (settings.owner_name ?? "")) {
-                    void save({ owner_name: next }, "Nome salvo");
-                  }
-                }}
-              />
-            </div>
-            <div className="field">
-              <span className="field-label">Todas as notas são minhas</span>
-              <Toggle
-                checked={settings.all_notes_mine}
-                onChange={(value) => void save({ all_notes_mine: value })}
-                label={settings.all_notes_mine ? "Ligado" : "Desligado"}
-                ariaLabel="Todas as notas são minhas"
-              />
-              <span className="hint">
-                Desligado, uma nota sem escolha manual fica sem autor. O seletor da nota sempre vence.
-              </span>
-            </div>
-          </div>
-
-          <div className="card">
-            <div className="card-head">
-              <h2>Análise por IA</h2>
-              <p className="hint">
-                Escolha o provedor, cole a chave e selecione o modelo. A lista de modelos e buscada do provedor;
-                use Personalizado para informar a base manualmente.
-              </p>
-            </div>
-            <BrowserProcessing embedded />
-            <div className="field">
-              <span className="field-label">Ativar análise</span>
-              <Toggle
-                checked={settings.analyze_enabled}
-                onChange={(value) => void save({ analyze_enabled: value })}
-                label={settings.analyze_enabled ? "Ligada" : "Desligada"}
-              />
-            </div>
-            <div className="field">
-              <span className="field-label">Revisar a transcrição com IA</span>
-              <Toggle
-                checked={settings.review_enabled}
-                onChange={(value) => void save({ review_enabled: value })}
-                label={settings.review_enabled ? "Ligada" : "Desligada"}
-                ariaLabel="Revisar a transcrição com IA"
-              />
-              <span className="hint">
-                Corrige concordância, pontuação e siglas antes de analisar. Desligada, a análise
-                continua funcionando, mas perde precisão sobre o que foi falado. Vale só para este
-                dashboard: a escolha no app é separada.
-              </span>
-            </div>
-            {settings.review_enabled && (
+            <div className="fields">
               <div className="field">
-                <span className="field-label">Transcrição literal</span>
-                <Toggle
-                  checked={settings.literal_transcript}
-                  onChange={(value) => void save({ literal_transcript: value })}
-                  label={settings.literal_transcript ? "Ligada" : "Desligada"}
-                  ariaLabel="Transcrição literal"
-                />
-                <span className="hint">
-                  Mantém hesitações ("éé", "hum") e repetições de gagueira, para quem quer acompanhar
-                  como fala. Desligada, a revisão remove só o que não tem significado; "tipo", "né"
-                  e gírias ficam sempre.
-                </span>
-              </div>
-            )}
-            <div className="field">
-              <span className="field-label">Provedor</span>
-              <select
-                aria-label="Provedor da análise"
-                value={provider}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  setProvider(value);
-                  setProviderModels([]);
-                  setModelsNote("");
-                  const preset = PROVIDER_PRESETS[value];
-                  if (value === "ollama" || value === "llamaLocal") {
-                    // O runtime local ja se configura e baixa o modelo em um
-                    // clique; nao salvar a base URL antes de o servico responder.
-                    void installLocal(value === "llamaLocal" ? "embedded" : "ollama");
-                  } else if (preset && value !== "custom") {
-                    void save(
-                      {
-                        analyze_provider: preset.kind,
-                        analyze_base_url: preset.baseUrl,
-                        analyze_model: preset.model,
-                        // Sair do runtime local: a base URL e o runtime antigos
-                        // nao podem continuar valendo.
-                        analyze_local_runtime: "",
-                        // Escolher o provedor ja e a decisao de ligar a análise.
-                        analyze_enabled: true,
-                      },
-                      "Provedor atualizado",
-                    );
-                  } else if (value === "custom") {
-                    void save(
-                      { analyze_provider: "openai", analyze_local_runtime: "" },
-                      "Provedor atualizado",
-                    );
-                  }
-                }}
-              >
-                {Object.entries(PROVIDER_PRESETS).map(([id, preset]) => (
-                  <option key={id} value={id}>
-                    {preset.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            {localRuntime && (
-              <div className="field">
-                <span className="field-label">
-                  {provider === "llamaLocal" ? "llama.cpp embutido" : "Ollama local"}
-                </span>
+                <span className="field-label">Idioma</span>
                 <div className="field-control">
+                  <select
+                    aria-label="Idioma da transcrição"
+                    value={s.whisper_language}
+                    onChange={(event) => void save({ whisper_language: event.target.value })}
+                  >
+                    <option value="">Detectar automaticamente</option>
+                    <option value="pt">Português</option>
+                    <option value="en">Inglês</option>
+                    <option value="es">Espanhol</option>
+                    <option value="fr">Francês</option>
+                    <option value="de">Alemão</option>
+                    <option value="it">Italiano</option>
+                    <option value="ja">Japonês</option>
+                    <option value="zh">Chinês</option>
+                    <option value="ru">Russo</option>
+                    <option value="ar">Árabe</option>
+                    <option value="hi">Hindi</option>
+                  </select>
+                </div>
+              </div>
+              <div className="field">
+                <span className="field-label">Corte de silêncio</span>
+                <div className="field-control">
+                  <ToggleCustom
+                    ariaLabel="Corte de silêncio"
+                    checked={s.trim_silence}
+                    onChange={(value) => void save({ trim_silence: value })}
+                  />
+                </div>
+              </div>
+              <div className="field">
+                <span className="field-label">Limite de RAM (MB)</span>
+                <div className="field-control">
+                  <input
+                    type="number"
+                    min={0}
+                    aria-label="Limite de RAM da transcrição em MB"
+                    value={ceiling}
+                    onChange={(event) => setCeiling(event.target.value)}
+                  />
                   <button
                     type="button"
-                    className="primary"
-                    onClick={() => void installLocal(localRuntime)}
-                    disabled={localBusy}
+                    className="button button--small button--ghost"
+                    onClick={() => void save({ max_whisper_rss_mb: Math.max(0, Math.floor(Number(ceiling) || 0)) })}
                   >
-                    {localBusy ? "Configurando..." : "Usar análise local"}
+                    Salvar
                   </button>
-                  {currentLocal?.pull && !currentLocal.pull.done && !currentLocal.pull.error && (
-                    <span
-                      className="ram-track"
-                      role="progressbar"
-                      aria-valuenow={currentLocal.pull.percent}
-                      aria-valuemin={0}
-                      aria-valuemax={100}
-                    >
-                      <span className="ram-fill" style={{ width: `${currentLocal.pull.percent}%` }} />
-                    </span>
-                  )}
+                  <span className="field-hint">0 significa sem limite</span>
                 </div>
-                <span className="hint">
-                  {currentLocal?.pull && !currentLocal.pull.done && !currentLocal.pull.error
-                    ? `Baixando ${currentLocal.pull.model} (${currentLocal.pull.percent}%)...`
-                    : localHint}
-                </span>
-                <KeyLinks links={preset?.links} />
-                {currentLocal?.pull?.error && <span className="error">{currentLocal.pull.error}</span>}
               </div>
-            )}
-            {!localRuntime && (
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+
+  const renderAnalysis = (s: Settings) => {
+    const recommended = recommendedModel(provider);
+    return (
+      <>
+        <div className="settings-columns">
+          <div className="settings-main">
+            <div className="section-block">
               <div className="field">
+                <span className="field-label">Análise por IA</span>
+                <div className="field-control">
+                  <ToggleCustom ariaLabel="Análise por IA" checked={s.analyze_enabled} onChange={(value) => void save({ analyze_enabled: value })} />
+                </div>
+              </div>
+            </div>
+
+            <div className="section-block">
+              <div className="step">
+                <span className="num">1</span>
+                <span className="t">Provedor</span>
+              </div>
+              <div className="providers">
+                {[...LOCAL_PROVIDER_IDS, ...CLOUD_PROVIDER_IDS].map((id) => {
+                  const p = PROVIDER_PRESETS[id];
+                  return (
+                    <ProviderCard
+                      key={id}
+                      preset={p}
+                      selected={provider === id}
+                      onSelect={() => void selectProvider(id)}
+                      disabled={localBusy && id !== provider}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="section-block">
+              <div className="step">
+                <span className="num">2</span>
+                <span className="t">Modelo</span>
+                <span className="listhead">
+                  <span className="meta">{modelCountNote}</span>
+                  {preset?.searchable && (
+                    <button
+                      type="button"
+                      className="refresh"
+                      onClick={() => void fetchAnalyzeModels()}
+                      disabled={fetchStatus === "loading" || (Boolean(preset?.keyRequired) && !s.analyze_api_key_set)}
+                      aria-label="Buscar modelos do provedor"
+                    >
+                      <RefreshIcon size={9} />
+                      Buscar
+                    </button>
+                  )}
+                </span>
+                {fetchStatus === "loading" && (
+                  <span className="listhead">
+                    <span className="meta">{modelsNote || "Buscando modelos..."}</span>
+                  </span>
+                )}
+                {fetchStatus === "error" && (
+                  <span className="listhead error-banner">
+                    <span className="error">{fetchError}</span>
+                    <button type="button" className="button button--small button--ghost" onClick={() => void fetchAnalyzeModels()}>
+                      Tentar novamente
+                    </button>
+                  </span>
+                )}
+              </div>
+
+              <div className="rows">
+                {fetchStatus === "loading" ? (
+                  <div className="row skeleton-row">
+                    <span className="skeleton-cell skeleton-title" />
+                    <span className="skeleton-cell skeleton-line" />
+                    <span className="skeleton-cell skeleton-line" />
+                  </div>
+                ) : visibleModels.map((model) => {
+                  const q = qualityOf(provider, model);
+                  const selected = s.analyze_model === model;
+                  const isReasoning = q.reasoning;
+                  return (
+                    <div key={model} className={`row${selected ? " row--selected" : ""}`} aria-selected={selected}>
+                      <input
+                        className="radio"
+                        type="radio"
+                        name="analysis-model"
+                        value={model}
+                        checked={selected}
+                        onChange={() => void save({ analyze_model: model }, "Modelo atualizado")}
+                        aria-label={model}
+                      />
+                      <span className="mname">
+                        <span className="n">
+                          <span className="n-text">{model}</span>
+                          {model === recommended && <span className="reco">recomendado</span>}
+                        </span>
+                        <span className="s">{isReasoning ? "pensa antes de responder" : q.note}</span>
+                      </span>
+                      <span className="meter">
+                        {[1, 2, 3].map((level) => (
+                          <i key={level} className={level <= q.score ? "f" : ""} />
+                        ))}
+                      </span>
+                      <span className="qual">{q.label}</span>
+                      <span className="chip">
+                        {q.cost === "local" ? "local" : q.cost === "grátis" ? "grátis" : q.cost === "" ? undefined : q.cost}
+                        {isReasoning && q.cost ? " · " : ""}
+                        {isReasoning ? "lento" : ""}
+                      </span>
+                    </div>
+                  );
+                })}
+                {analysisModels.length === 0 && fetchStatus !== "loading" && (
+                  <div className="row">
+                    <span className="muted">Nenhum modelo disponível para este provedor.</span>
+                  </div>
+                )}
+              </div>
+              {modelsNote && fetchStatus !== "loading" && <span className="hint">{modelsNote}</span>}
+              {analysisModels.length > MODEL_PREVIEW && (
+                <button
+                  type="button"
+                  className="more"
+                  aria-expanded={showAllModels}
+                  onClick={() => setShowAllModels((value) => !value)}
+                >
+                  {showAllModels ? "Mostrar menos" : `Mostrar todos os ${analysisModels.length}`}
+                  {!showAllModels && (
+                    <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                      <path d="M6 9l6 6 6-6" />
+                    </svg>
+                  )}
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="settings-side">
+            {!localRuntime && (
+              <div className="field key-field">
                 <span className="field-label">
-                  {provider === "opencodeLocal" ? "Senha do opencode" : "Chave da API"}{" "}
-                  <KeyState defined={settings.analyze_api_key_set} />
+                  {provider === "opencodeLocal" ? "Senha do opencode" : "Chave da API"} <KeyState defined={s.analyze_api_key_set} />
                 </span>
                 <div className="field-control">
                   <input
                     type="password"
                     aria-label="Chave da API de análise"
                     placeholder={
-                      settings.analyze_api_key_set
+                      s.analyze_api_key_set
                         ? "definida (deixe vazio para manter)"
                         : provider === "opencodeLocal"
                           ? "senha de ~/.config/opencode/service.json"
@@ -892,105 +812,439 @@ export function SettingsView({ refreshKey = 0, onBack }: { refreshKey?: number; 
                   />
                   <button
                     type="button"
-                    className="button button--ghost button--small"
-                    onClick={() => {
-                      void (async () => {
-                        if (apiKey.trim() !== "") {
-                          await save({ analyze_api_key: apiKey }, "Chave salva");
-                          setApiKey("");
-                        }
-                        if (searchable) {
-                          await fetchModels();
-                        }
-                      })();
-                    }}
+                    className="button button--small button--ghost"
+                    onClick={() => void saveAnalyzeKey()}
+                    disabled={apiKey.trim() === ""}
                   >
-                    {searchable ? "Salvar e testar" : "Salvar chave"}
+                    {preset?.searchable ? "Salvar e testar" : "Salvar chave"}
                   </button>
                 </div>
                 <KeyLinks links={preset?.links} />
-                {provider === "opencodeLocal" && (
-                  <span className="hint">
-                    Usa o opencode já logado na sua máquina. O modelo usa o formato provedor/modelo.
-                  </span>
-                )}
               </div>
             )}
-            <div className="field">
-              <span className="field-label">Modelo</span>
-              <div className="field-control">
-                <select
-                  aria-label="Modelo da análise"
-                  value={settings.analyze_model}
-                  onChange={(event) => void save({ analyze_model: event.target.value }, "Modelo atualizado")}
-                >
-                  {settings.analyze_model === "" && <option value="">(nenhum)</option>}
-                  {modelOptions.map((model) => (
-                    <option key={model} value={model}>
-                      {isReasoningModel(model) ? `${model} · raciocínio` : model}
-                    </option>
-                  ))}
-                </select>
-                {searchable && (
-                  <button type="button" className="button button--ghost button--small" onClick={() => void fetchModels()}>
-                    Buscar modelos
+
+            {localRuntime && (
+              <div className="runtime-box">
+                <div className="card-head">
+                  <h2>{provider === "llamaLocal" ? "llama.cpp embutido" : "Ollama local"}</h2>
+                  <p className="hint">{localHint}</p>
+                </div>
+                <div className="field-control">
+                  <button
+                    type="button"
+                    className="button button--small button--ghost"
+                    onClick={() => void installLocal(localRuntime)}
+                    disabled={localBusy}
+                  >
+                    {localBusy ? "Configurando..." : "Usar análise local"}
                   </button>
+                  {currentLocal?.pull && !currentLocal.pull.done && !currentLocal.pull.error && (
+                    <span className="ram-track" role="progressbar" aria-valuenow={currentLocal.pull.percent} aria-valuemin={0} aria-valuemax={100}>
+                      <span className="ram-fill" style={{ width: `${currentLocal.pull.percent}%` }} />
+                    </span>
+                  )}
+                </div>
+                {currentLocal?.pull?.error && <span className="error">{currentLocal.pull.error}</span>}
+              </div>
+            )}
+
+            <div className="section-block">
+              <div className="fields">
+                <div className="field">
+                  <span className="field-label">Revisar a transcrição com IA</span>
+                  <div className="field-control">
+                    <ToggleCustom ariaLabel="Revisar a transcrição com IA" checked={s.review_enabled} onChange={(value) => void save({ review_enabled: value })} />
+                  </div>
+                  <span className="field-hint">
+                    Corrige concordância, pontuação e siglas antes de analisar. Desligada, a análise
+                    continua funcionando, mas perde precisão sobre o que foi falado. Vale só para este
+                    dashboard: a escolha no app é separada.
+                  </span>
+                </div>
+                {s.review_enabled && (
+                  <div className="field">
+                    <span className="field-label">Transcrição literal</span>
+                    <div className="field-control">
+                      <ToggleCustom ariaLabel="Transcrição literal" checked={s.literal_transcript} onChange={(value) => void save({ literal_transcript: value })} />
+                    </div>
+                    <span className="field-hint">
+                      Mantém hesitações ("éé", "hum") e repetições de gagueira, para quem quer acompanhar
+                      como fala. Desligada, a revisão remove só o que não tem significado; "tipo", "né"
+                      e gírias ficam sempre.
+                    </span>
+                  </div>
                 )}
               </div>
-              {modelsNote && <span className="hint">{modelsNote}</span>}
-              {isReasoningModel(settings.analyze_model) && (
-                <span className="hint">
-                  Modelo de raciocínio: pensa antes de responder, demora mais e gasta mais tokens.
-                  Um modelo comum entrega a mesma análise mais rápido.
-                </span>
-              )}
-              {!searchable && !localRuntime && (
-                <span className="hint">Lista curada de modelos compativeis; a lista completa esta no console.</span>
-              )}
-              {localRuntime && (
-                <span className="hint">
-                  {provider === "llamaLocal"
-                    ? "Modelo GGUF executado pelo proprio servidor."
-                    : "Modelo instalado no servico Ollama."}
-                </span>
+            </div>
+
+            <div className="section-block">
+              <button
+                className="collapsible-head"
+                aria-expanded={advancedOpen}
+                aria-label="Avançado"
+                onClick={() => setAdvancedOpen(!advancedOpen)}
+              >
+                <div>
+                  <h2>Avançado</h2>
+                  <p className="hint">Base URL e temas da análise.</p>
+                </div>
+                <span className="collapsive-icon">{advancedOpen ? "▾" : "▸"}</span>
+              </button>
+              {advancedOpen && (
+                <div className="collapsible-body">
+                  <div className="fields">
+                    <div className="field">
+                      <span className="field-label">Base URL</span>
+                      <div className="field-control">
+                        <input
+                          key={s.analyze_base_url}
+                          type="text"
+                          aria-label="Base URL da análise"
+                          defaultValue={s.analyze_base_url}
+                          onBlur={(event) => void save({ analyze_base_url: event.target.value })}
+                        />
+                      </div>
+                    </div>
+                    <div className="field">
+                      <span className="field-label">Temas</span>
+                      <div className="field-control">
+                        <input
+                          type="text"
+                          aria-label="Temas da análise"
+                          value={themes}
+                          onChange={(event) => setThemes(event.target.value)}
+                        />
+                        <button
+                          type="button"
+                          className="button button--small button--ghost"
+                          onClick={() => void save({ analysis_themes: themes }, "Temas salvos")}
+                        >
+                          Salvar
+                        </button>
+                      </div>
+                      <span className="field-hint">Temas preferidos na análise, separados por vírgulas.</span>
+                    </div>
+                  </div>
+                </div>
               )}
             </div>
-            <div className="field">
-              <span className="field-label">Base URL</span>
-              <input
-                key={settings.analyze_base_url}
-                type="text"
-                aria-label="Base URL da análise"
-                defaultValue={settings.analyze_base_url}
-                onBlur={(event) => void save({ analyze_base_url: event.target.value })}
-              />
-            </div>
-            <div className="field">
-              <span className="field-label">Temas</span>
-              <div className="field-control">
-                <input
-                  type="text"
-                  aria-label="Temas da análise"
-                  value={themes}
-                  onChange={(event) => setThemes(event.target.value)}
-                />
-                <button
-                  type="button"
-                  className="button button--ghost button--small"
-                  onClick={() => void save({ analysis_themes: themes }, "Temas salvos")}
-                >
-                  Salvar
-                </button>
-              </div>
-              <span className="hint">Temas preferidos na análise, separados por vírgulas.</span>
+
+            <div className="caption">
+              Adequação para analisar notas em português. Não é um ranking geral de inteligência.
             </div>
           </div>
+        </div>
+      </>
+    );
+  };
 
-          <TrashSection refreshKey={refreshKey} />
-        </>
+  const renderAuthor = (s: Settings) => (
+    <div className="settings-single">
+      <div className="section-block">
+        <div className="fields">
+          <div className="field">
+            <span className="field-label">Seu nome</span>
+            <div className="field-control">
+              <input
+                type="text"
+                aria-label="Seu nome"
+                value={ownerName}
+                maxLength={80}
+                placeholder="Você"
+                onChange={(event) => setOwnerName(event.target.value)}
+                onBlur={() => {
+                  const next = ownerName.trim();
+                  if (next !== (s.owner_name ?? "")) {
+                    void save({ owner_name: next }, "Nome salvo");
+                  }
+                }}
+              />
+            </div>
+          </div>
+          <div className="field">
+            <span className="field-label">Todas as notas são minhas</span>
+            <div className="field-control">
+              <ToggleCustom
+                checked={s.all_notes_mine}
+                onChange={(value) => void save({ all_notes_mine: value })}
+                ariaLabel="Todas as notas são minhas"
+              />
+            </div>
+            <span className="field-hint">
+              Desligado, uma nota sem escolha manual fica sem autor. O seletor da nota sempre vence.
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const mcpEndpoint = `${window.location.origin}/mcp`;
+  const mcpCommand = (token: string) =>
+    `opencode mcp add dyarium --global --url "${mcpEndpoint}" --header "Authorization=Bearer ${token}" --header "X-Dyarium-Host=$(hostname -s)"`;
+  const mcpFile = (token: string) => `{
+  "mcp": {
+    "servers": {
+      "dyarium": {
+        "type": "remote",
+        "url": "${mcpEndpoint}",
+        "oauth": false,
+        "headers": {
+          "Authorization": "Bearer ${token}",
+          "X-Dyarium-Host": "nome-da-maquina"
+        }
+      }
+    }
+  }
+}`;
+
+  const copyMcp = async (kind: "command" | "file") => {
+    const token = getToken() || "SEU_TOKEN";
+    const text = kind === "command" ? mcpCommand(token) : mcpFile(token);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(kind);
+      window.setTimeout(() => setCopied(null), 1500);
+    } catch {
+      // ignore
+    }
+  };
+
+  const renderProjects = () => (
+    <div className="settings-single mcp-settings">
+      <div className="section-block">
+        {summaryLoadError && <p className="error">{summaryLoadError}</p>}
+        <div className="mcp-connection">
+          <div className="mcp-connection-head">
+            <div className="segmented segmented--compact" role="group" aria-label="Formato da conexão">
+              <button type="button" aria-pressed={mcpSnippet === "command"} onClick={() => setMcpSnippet("command")}>
+                Comando
+              </button>
+              <button type="button" aria-pressed={mcpSnippet === "file"} onClick={() => setMcpSnippet("file")}>
+                Arquivo
+              </button>
+            </div>
+            <button
+              type="button"
+              className="button button--small button--ghost"
+              onClick={() => void copyMcp(mcpSnippet)}
+              title="Copia com o token real"
+            >
+              {copied === mcpSnippet ? "Copiado" : "Copiar"}
+            </button>
+          </div>
+          <pre className="mcp-snippet">
+            {mcpSnippet === "command" ? mcpCommand("SEU_TOKEN") : mcpFile("SEU_TOKEN")}
+          </pre>
+        </div>
+        <div className="mcp-projects-head">
+          <span className="mcp-connection-label">Projetos</span>
+        </div>
+        {mcpEntries === null && <ListSkeleton rows={2} />}
+        {mcpEntries !== null && projectCount === 0 && !summaryLoadError && <p className="meta">Nenhum projeto ainda.</p>}
+        {mcpEntries !== null && projectCount > 0 && (
+          <div className="mcp-projects">
+            {projectEntries.map((entry) => {
+              const value = entry.summary_detail ?? "concise";
+              return (
+                <div key={entry.id} className="mcp-project">
+                  <span className="mcp-project-name" title={entry.title}>
+                    {entry.title}
+                  </span>
+                  <div
+                    className="segmented segmented--compact"
+                    role="group"
+                    aria-label={`Resumo de ${entry.title}`}
+                    title="Detalhe do resumo automático que o MCP gera para este projeto"
+                  >
+                    {SUMMARY_DETAIL_OPTIONS.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        aria-pressed={value === option.value}
+                        onClick={() => void setProjectDetail(entry, option.value)}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                  {summaryErrors[entry.id] && <span className="error">{summaryErrors[entry.id]}</span>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  const renderData = () => (
+    <div className="settings-single">
+      <div className="section-block">
+        <TrashSection refreshKey={refreshKey} />
+      </div>
+    </div>
+  );
+
+  const renderSectionContent = (tab: TabId, s: Settings) => {
+    if (tab === "transcricao") return renderTranscription(s);
+    if (tab === "analise") return renderAnalysis(s);
+    if (tab === "projetos") return renderProjects();
+    if (tab === "autor") return renderAuthor(s);
+    return renderData();
+  };
+
+  return (
+    <section className="settings-page">
+      <header className="settings-header">
+        {onBack && (
+          <button type="button" className="page-back" onClick={onBack} aria-label="Voltar" title="Voltar">
+            <ChevronIcon size={16} />
+          </button>
+        )}
+        <span className="header-title">Configurações</span>
+        <nav className="settings-nav" aria-label="Seções de configurações">
+          {TABS.map((tab) => {
+            const active = activeTab === tab.id;
+            return (
+              <a
+                key={tab.id}
+                href={`#settings-${tab.id}`}
+                className={`settings-nav-item${active ? " settings-nav-item--on" : ""}`}
+                aria-current={active ? "page" : undefined}
+                onClick={(event) => {
+                  event.preventDefault();
+                  setActiveTab(tab.id);
+                }}
+              >
+                {tab.icon}
+                <span>{tab.label}</span>
+              </a>
+            );
+          })}
+        </nav>
+      </header>
+
+      {error && <p className="error">{error}</p>}
+
+      {!settings && <ListSkeleton rows={4} />}
+
+      {settings && (
+        <main className="settings-sections">
+          {TABS.map((tab) => {
+            const active = activeTab === tab.id;
+            const summary = summaries[tab.id];
+            const contentId = `settings-section-${tab.id}`;
+            return (
+              <div
+                key={tab.id}
+                className={`section-row${active ? " section-row--open" : ""}`}
+                id={`settings-${tab.id}`}
+              >
+                <button
+                  type="button"
+                  className="section-toggle"
+                  aria-expanded={active}
+                  aria-controls={contentId}
+                  aria-label={tab.label}
+                  onClick={() => setActiveTab(tab.id)}
+                >
+                  <span className="section-label">{tab.label}</span>
+                  <span className="section-summary">{summary.text}</span>
+                  {summary.stateText && (
+                    <span className={`state-pill${summary.state === "warn" ? " state-pill--warn" : ""}${summary.state === "ok" ? " state-pill--ok" : ""}`}>
+                      {summary.stateText}
+                    </span>
+                  )}
+                  <ChevronIcon size={14} rotate={active} />
+                </button>
+                {active && (
+                  <div className="section-content" id={contentId}>
+                    {renderSectionContent(tab.id, settings)}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </main>
       )}
     </section>
   );
 }
 
-export default SettingsView;
+function ChevronIcon({ size = 18, rotate = false }: { size?: number; rotate?: boolean }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      className={rotate ? "chevron chevron--open" : "chevron"}
+    >
+      <path d="M9 6l6 6-6 6" />
+    </svg>
+  );
+}
+
+function ToggleCustom({ checked, onChange, ariaLabel }: { checked: boolean; onChange: (checked: boolean) => void; ariaLabel?: string }) {
+  return (
+    <label className={`toggle${checked ? " toggle--on" : ""}`}>
+      <input type="checkbox" checked={checked} readOnly onChange={(event) => onChange(event.target.checked)} aria-label={ariaLabel} />
+      <span className="sw" />
+    </label>
+  );
+}
+
+/** Estado da chave: preenchido quando ja existe uma guardada. */
+function KeyState({ defined }: { defined: boolean }) {
+  return <span className={`key-state${defined ? " key-state--on" : ""}`}>{defined ? "definida" : "ausente"}</span>;
+}
+
+/** Atalhos do console do provedor, abertos em outra aba. */
+function KeyLinks({ links }: { links?: { label: string; href: string }[] }) {
+  if (!links?.length) return null;
+  return (
+    <span className="key-links">
+      {links.map((link) => (
+        <a key={link.href} className="lnk" href={link.href} target="_blank" rel="noreferrer">
+          {link.label}
+        </a>
+      ))}
+    </span>
+  );
+}
+
+/** Cartao compacto de provedor (transcricao e analise). */
+function ProviderCard({
+  preset,
+  selected,
+  onSelect,
+  disabled,
+}: {
+  preset: { short: string; label: string; initials: string; baseUrl?: string; kind?: string; localRuntime?: string };
+  selected: boolean;
+  onSelect: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      className={`pv${selected ? " pv--on" : ""}`}
+      onClick={onSelect}
+      disabled={disabled}
+      role="radio"
+      aria-checked={selected}
+      aria-label={preset.label}
+    >
+      <span className="pv-initials">{preset.initials}</span>
+      <span className="txt">
+        <span className="nm">{preset.label}</span>
+      </span>
+    </button>
+  );
+}
