@@ -149,6 +149,87 @@ describe('DyariumApi', () => {
     expect(JSON.parse(String(calls[3].init?.body)).icon).toBe('heart');
   });
 
+  it('fala o contrato de curadoria: rotulo, tipo, exclusao e rejeicoes', async () => {
+    const entity = {
+      kind: 'person',
+      name: 'Paulo Ramos',
+      label: 'gata',
+      icon: '',
+      entries: 1,
+      mentions: 1,
+      sentiment: 0,
+      last_seen: null,
+      updated_at: '2026-11-09T10:00:00Z',
+    };
+    const rejection = {
+      kind: 'person',
+      name: 'Paulo Ramos',
+      name_key: 'paulo ramos',
+      updated_at: '2026-11-09T10:00:00Z',
+    };
+    const { api, calls } = makeApi((call) => {
+      if (call.url.endsWith('/api/v1/entities')) {
+        return resp(200, {
+          entities: [entity],
+          owner_aliases: [],
+          rejections: [rejection],
+        });
+      }
+      if (call.url.endsWith('/entity-rejections')) {
+        return resp(200, { status: 'ok', rejection });
+      }
+      if (call.init?.method === 'DELETE') {
+        return resp(200, { status: 'ok', rejection });
+      }
+      return resp(200, entity);
+    });
+
+    const catalog = await api.getEntityCatalog();
+    expect(catalog.rejections).toEqual([
+      {
+        kind: 'person',
+        name: 'Paulo Ramos',
+        nameKey: 'paulo ramos',
+        updatedAt: '2026-11-09T10:00:00Z',
+      },
+    ]);
+
+    await api.setEntityLabel('person', 'Paulo Ramos', 'gata');
+    expect(calls[1].init?.method).toBe('PUT');
+    expect(calls[1].url).toBe(
+      'http://host:8080/api/v1/entities/person/Paulo%20Ramos/label',
+    );
+    expect(JSON.parse(String(calls[1].init?.body)).label).toBe('gata');
+
+    await api.changeEntityKind('person', 'Paulo Ramos', 'place');
+    expect(calls[2].init?.method).toBe('POST');
+    expect(calls[2].url).toBe(
+      'http://host:8080/api/v1/entities/person/Paulo%20Ramos/kind',
+    );
+    expect(JSON.parse(String(calls[2].init?.body)).kind).toBe('place');
+
+    const deleted = await api.deleteEntity('person', 'Paulo Ramos');
+    expect(calls[3].init?.method).toBe('DELETE');
+    expect(calls[3].url).toBe(
+      'http://host:8080/api/v1/entities/person/Paulo%20Ramos',
+    );
+    expect(deleted.rejection?.nameKey).toBe('paulo ramos');
+
+    await api.addEntityRejection('person', 'Paulo Ramos');
+    expect(calls[4].init?.method).toBe('POST');
+    expect(calls[4].url).toBe('http://host:8080/api/v1/entity-rejections');
+    expect(JSON.parse(String(calls[4].init?.body))).toEqual({
+      kind: 'person',
+      name: 'Paulo Ramos',
+    });
+
+    await api.removeEntityRejection('person', 'Paulo Ramos');
+    expect(calls[5].init?.method).toBe('DELETE');
+    expect(calls[5].url).toBe(
+      'http://host:8080/api/v1/entity-rejections/person/Paulo%20Ramos',
+    );
+  });
+
   it('mapeia erro do servidor para ApiError com codigo', async () => {
     const { api } = makeApi(() =>
       resp(401, { error: { code: 'unauthorized', message: 'token invalido' } }),

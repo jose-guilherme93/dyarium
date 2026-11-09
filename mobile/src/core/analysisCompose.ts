@@ -10,6 +10,12 @@ import type { AnalysisBlock } from './analysisPlan';
 import type { AnalysisEmotion, AnalysisTheme, ChunkExtraction } from './analysisChunk';
 import { contentWordList } from './analysisChunk';
 import { foldText } from './analysisPrompt';
+import {
+  canonicalEntityName,
+  isEntityRejected,
+  type CanonicalNameMap,
+  type EntityRejection,
+} from './entities';
 
 export interface ComposedPerson {
   name: string;
@@ -114,6 +120,10 @@ export interface ComposeInput {
   models?: string[];
   /** Grafias ja conhecidas no aparelho, para nao duplicar pessoa. */
   known?: { people?: string[]; places?: string[] };
+  /** Rejeicoes do dono: o vinculo rejeitado nunca entra no documento. */
+  rejections?: readonly EntityRejection[];
+  /** Mapa de nomes canonicos da tabela `entities` (e aliases). */
+  canonical?: CanonicalNameMap;
 }
 
 const MAX_PEOPLE = 8;
@@ -254,7 +264,11 @@ export function composeAnalysis(input: ComposeInput): ComposedAnalysis {
   for (const fact of facts) {
     const { block, extraction } = fact;
     for (const raw of extraction.people) {
-      const name = canonicalName(raw, knownPeople);
+      const resolved = canonicalEntityName(input.canonical, 'person', raw);
+      if (isEntityRejected('person', raw, input.rejections) || isEntityRejected('person', resolved, input.rejections)) {
+        continue;
+      }
+      const name = canonicalName(resolved, knownPeople);
       const key = nameKey(name);
       const group = people.get(key) ?? emptyGroup(name);
       group.mentions += occurrences(block.text, name);
@@ -268,7 +282,11 @@ export function composeAnalysis(input: ComposeInput): ComposedAnalysis {
       people.set(key, group);
     }
     for (const raw of extraction.places) {
-      const name = canonicalName(raw, knownPlaces);
+      const resolved = canonicalEntityName(input.canonical, 'place', raw);
+      if (isEntityRejected('place', raw, input.rejections) || isEntityRejected('place', resolved, input.rejections)) {
+        continue;
+      }
+      const name = canonicalName(resolved, knownPlaces);
       const key = nameKey(name);
       const group = places.get(key) ?? emptyGroup(name);
       group.mentions += occurrences(block.text, name);
@@ -287,10 +305,15 @@ export function composeAnalysis(input: ComposeInput): ComposedAnalysis {
       emotions.set(emotion, group);
     }
     for (const theme of extraction.themes) {
+      if (isEntityRejected('theme', theme, input.rejections)) continue;
       themes.set(theme, (themes.get(theme) ?? 0) + 1);
     }
     for (const event of extraction.events) pushUnique(events, event, block);
-    for (const decision of extraction.decisions) pushUnique(decisions, decision, block);
+    for (const raw of extraction.decisions) {
+      if (isEntityRejected('decision', raw, input.rejections)) continue;
+      const decision = canonicalEntityName(input.canonical, 'decision', raw);
+      pushUnique(decisions, decision, block);
+    }
     for (const task of extraction.tasks) pushUnique(tasks, task, block);
     for (const idea of extraction.ideas) pushUnique(ideas, idea, block);
     for (const epiphany of extraction.epiphanies) pushUnique(epiphanies, epiphany, block);

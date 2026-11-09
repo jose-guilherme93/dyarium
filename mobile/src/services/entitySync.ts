@@ -35,6 +35,7 @@ function remoteState(summary: EntitySummary): RemoteEntityState | null {
     id: summary.id,
     kind: summary.kind,
     name: summary.name,
+    label: summary.label ?? '',
     icon: summary.icon ?? '',
     updatedAt: summary.updated_at ?? '',
     aliases: summary.aliases ?? [],
@@ -48,6 +49,21 @@ async function push(api: DyariumApi, item: EntityOutboxItem): Promise<void> {
       return;
     case 'icon':
       await api.setEntityIcon(item.kind, item.name, item.icon ?? '');
+      return;
+    case 'label':
+      await api.setEntityLabel(item.kind, item.name, item.label ?? '');
+      return;
+    case 'kind':
+      if (item.nextKind) await api.changeEntityKind(item.kind, item.name, item.nextKind);
+      return;
+    case 'delete':
+      await api.deleteEntity(item.kind, item.name);
+      return;
+    case 'reject':
+      await api.addEntityRejection(item.kind, item.name);
+      return;
+    case 'unreject':
+      await api.removeEntityRejection(item.kind, item.name);
       return;
     case 'self':
       await api.claimSelf(item.name);
@@ -63,6 +79,9 @@ async function pushDifference(api: DyariumApi, item: EntityPush): Promise<void> 
   }
   if (item.icon !== undefined) {
     await api.setEntityIcon(item.kind, name, item.icon);
+  }
+  if (item.label !== undefined) {
+    await api.setEntityLabel(item.kind, name, item.label);
   }
 }
 
@@ -147,7 +166,7 @@ async function run(api: DyariumApi, primary: boolean): Promise<void> {
   const remote = catalog.entities
     .map(remoteState)
     .filter((item): item is RemoteEntityState => Boolean(item));
-  const differences = await applyRemoteEntities(remote, pendingIds);
+  const differences = await applyRemoteEntities(remote, pendingIds, catalog.rejections);
   for (const difference of differences) {
     await pushDifference(api, difference).catch((error) => {
       // 404: a entidade foi mesclada/apagada la; a proxima leitura reconcilia.

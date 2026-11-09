@@ -32,6 +32,7 @@ import {
 import { planAnalysis, type AnalysisBlock, type AnalysisPlan } from '@/core/analysisPlan';
 import type { AnalysisStage } from '@/core/analysisStages';
 import { analysisContentHash } from '@/core/analysisPrompt';
+import { buildEntityMemory, type EntityMemoryEntry } from '@/core/entities';
 import {
   SUMMARY_SCHEMA,
   acceptSummary,
@@ -56,6 +57,9 @@ import {
   deleteAnalysisChunks,
   listAnalysisChunks,
   listCachedAnalyses,
+  listEntityAliases,
+  listEntityRejections,
+  listLocalEntities,
   saveAnalysisChunks,
   type StoredAnalysisChunk,
 } from './db';
@@ -400,6 +404,8 @@ export interface AnalysisPassProgress {
 
 export interface AnalysisPassOptions {
   lowPower?: boolean;
+  /** Dicionario do diario recuperado para o bloco; a passada carrega uma vez. */
+  memory?: readonly EntityMemoryEntry[];
   /** Recomeca do zero: apaga os blocos ja lidos desta nota. */
   restart?: boolean;
   /** Gravacao de cada bloco para retomada; desligado no benchmark. */
@@ -462,6 +468,31 @@ async function loadKnownEntities(
 }
 
 /**
+ * Monta o dicionario que o prompt le: nome real, rotulo, apelidos e rejeicoes.
+ * Carregado uma vez por passada; uma falha de banco nao impede a analise.
+ */
+async function loadEntityMemory(): Promise<EntityMemoryEntry[]> {
+  try {
+    const [entities, aliases, rejections] = await Promise.all([
+      listLocalEntities(),
+      listEntityAliases(),
+      listEntityRejections(),
+    ]);
+    return buildEntityMemory(
+      entities.map((entity) => ({
+        kind: entity.kind,
+        name: entity.name,
+        label: entity.label,
+        aliases: aliases[entity.id] ?? [],
+      })),
+      rejections,
+    );
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Analisa uma nota inteira. Le so os blocos que ainda nao tem resultado valido
  * para o modelo e o prompt atuais; cada bloco fica gravado, entao parar e
  * continuar nao perde trabalho.
@@ -509,6 +540,7 @@ export async function analyzeNote(
     await deleteAnalysisChunks(entryKey).catch(() => undefined);
   }
   const known = await loadKnownEntities(entryKey);
+  const memory = await loadEntityMemory();
 
   const total = plan.blocks.length;
   const passId = ++passSeq;
@@ -581,7 +613,7 @@ export async function analyzeNote(
         continue;
       }
 
-      const attempt = await readBlock(block, model, options, options.title, passId);
+      const attempt = await readBlock(block, model, { ...options, memory }, options.title, passId);
       if (attempt) {
         promptTokens += attempt.promptTokens;
         completionTokens += attempt.completionTokens;
@@ -758,7 +790,7 @@ async function readBlock(
             title,
             block: { text: block.text, context: block.context },
           },
-          { compact: attempt.compact },
+          { compact: attempt.compact, memory: options.memory },
         ),
         {
           lowPower: options.lowPower,

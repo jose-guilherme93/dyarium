@@ -5,8 +5,9 @@
 
 import type {
   AuthorRole, ConflictField, ServerAudio, ServerConfig, TranscriptSegment } from './types';
+import { entityNameKey, type EntityRejection } from './entities';
 
-export type { ConflictField, ServerAudio, TranscriptSegment };
+export type { ConflictField, ServerAudio, TranscriptSegment, EntityRejection };
 
 /**
  * Nome do aparelho anexado a toda requisicao autenticada (`X-Origin-Instance`).
@@ -352,6 +353,8 @@ export interface EntitySummary {
   id?: string;
   kind: EntityKind;
   name: string;
+  /** Rotulo livre de exibicao (escola, gata, personagem); so exibicao. */
+  label?: string;
   /** Icone monocromatico; vazio segue o do tipo. */
   icon?: string;
   entries: number;
@@ -373,6 +376,13 @@ export interface EntityEntry {
 
 export interface EntityDetail extends EntitySummary {
   entry_list: EntityEntry[];
+}
+
+/** Resposta das rotas que gravam rejeicao (excluir entidade, rejeitar nome). */
+export interface EntityRejectionResult {
+  status: string;
+  rejection?: EntityRejection;
+  edit_id?: string;
 }
 
 export interface ServerEntry {
@@ -550,6 +560,35 @@ function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.trim().replace(/\/+$/, '');
 }
 
+function isEntityKindValue(value: unknown): value is EntityKind {
+  return value === 'person' || value === 'place' || value === 'theme' || value === 'decision';
+}
+
+/** Le a memoria de rejeicoes do catalogo, aceitando a forma snake_case. */
+function parseEntityRejection(value: unknown): EntityRejection | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (!isEntityKindValue(record.kind)) return null;
+  const name = typeof record.name === 'string' ? record.name.trim() : '';
+  if (name === '') return null;
+  const nameKey =
+    typeof record.name_key === 'string' && record.name_key.trim() !== ''
+      ? record.name_key.trim()
+      : entityNameKey(name);
+  const updatedAt = typeof record.updated_at === 'string' ? record.updated_at : '';
+  return { kind: record.kind, name, nameKey, updatedAt };
+}
+
+function parseEntityRejections(value: unknown): EntityRejection[] {
+  if (!Array.isArray(value)) return [];
+  const out: EntityRejection[] = [];
+  for (const item of value) {
+    const rejection = parseEntityRejection(item);
+    if (rejection) out.push(rejection);
+  }
+  return out;
+}
+
 export class DyariumApi {
   private readonly baseUrl: string;
   private readonly token: string;
@@ -692,12 +731,15 @@ export class DyariumApi {
   }
 
   /**
-   * Catalogo completo: entidades e as grafias "sou eu". O app usa as duas
-   * coisas juntas para nao mostrar como pessoa quem o painel ja fundiu no dono.
+   * Catalogo completo: entidades, as grafias "sou eu" e a memoria de rejeicoes.
+   * O app usa as tres coisas juntas para nao mostrar como pessoa quem o painel
+   * fundiu no dono e para filtrar a extracao com a mesma curadoria.
    */
-  async getEntityCatalog(
-    kind?: EntityKind,
-  ): Promise<{ entities: EntitySummary[]; ownerAliases: string[] }> {
+  async getEntityCatalog(kind?: EntityKind): Promise<{
+    entities: EntitySummary[];
+    ownerAliases: string[];
+    rejections: EntityRejection[];
+  }> {
     const query = kind ? `?kind=${encodeURIComponent(kind)}` : '';
     const res = await this.fetchImpl(this.url(`/api/v1/entities${query}`), {
       method: 'GET',
@@ -707,11 +749,16 @@ export class DyariumApi {
     const parsed = JSON.parse(await res.text()) as {
       entities?: EntitySummary[];
       owner_aliases?: unknown;
+      rejections?: unknown;
     };
     const ownerAliases = Array.isArray(parsed.owner_aliases)
       ? parsed.owner_aliases.filter((value): value is string => typeof value === 'string')
       : [];
-    return { entities: parsed.entities ?? [], ownerAliases };
+    return {
+      entities: parsed.entities ?? [],
+      ownerAliases,
+      rejections: parseEntityRejections(parsed.rejections),
+    };
   }
 
   async getEntity(kind: EntityKind, name: string): Promise<EntityDetail> {
@@ -759,6 +806,98 @@ export class DyariumApi {
     );
     if (!res.ok) throw await this.parseError(res);
     return JSON.parse(await res.text()) as EntitySummary;
+  }
+
+  /** Rotulo livre de exibicao; vazio limpa. Nao muda tipo, metrica nem sync. */
+  async setEntityLabel(
+    kind: EntityKind,
+    name: string,
+    label: string,
+  ): Promise<EntitySummary> {
+    const res = await this.fetchImpl(
+      this.url(`/api/v1/entities/${kind}/${encodeURIComponent(name)}/label`),
+      {
+        method: 'PUT',
+        headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ label }),
+      },
+    );
+    if (!res.ok) throw await this.parseError(res);
+    return JSON.parse(await res.text()) as EntitySummary;
+  }
+
+  /**
+   * Troca o tipo da entidade. Move vinculos, mescla se ja existir no destino e
+   * grava a rejeicao do tipo antigo.
+   */
+  async changeEntityKind(
+    kind: EntityKind,
+    name: string,
+    newKind: EntityKind,
+  ): Promise<EntitySummary> {
+    const res = await this.fetchImpl(
+      this.url(`/api/v1/entities/${kind}/${encodeURIComponent(name)}/kind`),
+      {
+        method: 'POST',
+        headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ kind: newKind }),
+      },
+    );
+    if (!res.ok) throw await this.parseError(res);
+    return JSON.parse(await res.text()) as EntitySummary;
+  }
+
+  /** Exclui a entidade e grava a rejeicao do tipo; devolve o id do desfazer. */
+  async deleteEntity(kind: EntityKind, name: string): Promise<EntityRejectionResult> {
+    const res = await this.fetchImpl(
+      this.url(`/api/v1/entities/${kind}/${encodeURIComponent(name)}`),
+      { method: 'DELETE', headers: this.authHeaders() },
+    );
+    if (!res.ok) throw await this.parseError(res);
+    const body = JSON.parse(await res.text()) as {
+      status?: unknown;
+      rejection?: unknown;
+      edit_id?: unknown;
+    };
+    const rejection = parseEntityRejection(body.rejection);
+    return {
+      status: typeof body.status === 'string' ? body.status : 'ok',
+      ...(rejection ? { rejection } : {}),
+      ...(typeof body.edit_id === 'string' ? { edit_id: body.edit_id } : {}),
+    };
+  }
+
+  /** Diz que o nome nunca e entidade daquele tipo; aplicado antes de persistir. */
+  async addEntityRejection(
+    kind: EntityKind,
+    name: string,
+  ): Promise<EntityRejectionResult> {
+    const res = await this.fetchImpl(this.url('/api/v1/entity-rejections'), {
+      method: 'POST',
+      headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ kind, name }),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    const body = JSON.parse(await res.text()) as {
+      status?: unknown;
+      rejection?: unknown;
+      edit_id?: unknown;
+    };
+    const rejection = parseEntityRejection(body.rejection);
+    return {
+      status: typeof body.status === 'string' ? body.status : 'ok',
+      ...(rejection ? { rejection } : {}),
+      ...(typeof body.edit_id === 'string' ? { edit_id: body.edit_id } : {}),
+    };
+  }
+
+  /** Libera o nome rejeitado; um nome que nao estava rejeitado e no-op. */
+  async removeEntityRejection(kind: EntityKind, name: string): Promise<void> {
+    const res = await this.fetchImpl(
+      this.url(`/api/v1/entity-rejections/${kind}/${encodeURIComponent(name)}`),
+      { method: 'DELETE', headers: this.authHeaders() },
+    );
+    if (!res.ok) throw await this.parseError(res);
   }
 
   async createUpload(body: CreateUploadBody): Promise<CreateUploadResponse> {

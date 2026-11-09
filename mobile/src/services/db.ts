@@ -11,9 +11,10 @@ import type { ServerAnalysis, ServerAudio } from '@/core/api';
 import type { ChunkExtraction } from '@/core/analysisChunk';
 import type { AnalysisOutcome, AnalysisRun, AnalysisRuntime } from '@/core/analysisRuns';
 import { deriveEntityLinks, ownerKey } from '@/core/graphEntities';
+import { entityNameKey, type EntityRejection } from '@/core/entities';
 import { formatHlc, nextHlc, observeHlc, parseHlc, type Hlc } from '@/core/hlc';
 import type { GraphLayout } from '@/core/graphLayout';
-import type { EntityKind, EntityLink, GraphEntity } from '@/core/graphModel';
+import { isEntityKind, type EntityKind, type EntityLink, type GraphEntity } from '@/core/graphModel';
 import { newId } from '@/core/id';
 import { DEFAULT_NOTEBOOK_ID } from '@/core/notebooks';
 import type {
@@ -719,6 +720,77 @@ const MIGRATIONS: Migration[] = [
       // o caderno e as notas dele da biblioteca e das metricas.
       if (!(await columnExists(db, 'notebooks', 'kind'))) {
         await db.execAsync("ALTER TABLE notebooks ADD COLUMN kind TEXT NOT NULL DEFAULT 'notes'");
+      }
+    },
+  },
+  {
+    version: 37,
+    run: async (db) => {
+      // Limpa o "Transcrevendo 0%" eterno que versoes anteriores deixaram nas
+      // notas puxadas do servidor: elas nascam com `transcript_status =
+      // 'pending'` e o app pedia /transcript a cada 8 s para sempre quando o
+      // servidor nao transcrevia. A partir daqui quem avisa que o texto ficou
+      // pronto e o `transcript_at` da entrada (syncServerTranscripts), entao um
+      // pending sem texto e sem posse local e lixo de estado.
+      await db.execAsync(`
+        UPDATE recordings
+           SET transcript_status = NULL
+         WHERE transcript_status = 'pending'
+           AND transcript_origin = 'server'
+           AND COALESCE(transcript, '') = ''
+           AND (has_transcript IS NULL OR has_transcript IN (0, '0'))
+      `);
+    },
+  },
+  {
+    version: 38,
+    run: async (db) => {
+      // Rotulo livre editavel de uma entidade (escola, gata, personagem) e a
+      // memoria de rejeicoes do dono. O rotulo e so exibicao; a rejeicao diz
+      // "este nome nunca e entidade deste tipo" e e aplicada antes de persistir.
+      if (!(await columnExists(db, 'entities', 'label'))) {
+        await db.execAsync("ALTER TABLE entities ADD COLUMN label TEXT NOT NULL DEFAULT ''");
+      }
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS entity_rejections (
+          kind       TEXT NOT NULL,
+          name       TEXT NOT NULL,
+          name_key   TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL DEFAULT '',
+          PRIMARY KEY (kind, name_key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_entity_rejections_kind_updated
+          ON entity_rejections (kind, updated_at);
+      `);
+      if (!(await columnExists(db, 'entity_outbox', 'label'))) {
+        await db.execAsync('ALTER TABLE entity_outbox ADD COLUMN label TEXT');
+      }
+      if (!(await columnExists(db, 'entity_outbox', 'next_kind'))) {
+        await db.execAsync('ALTER TABLE entity_outbox ADD COLUMN next_kind TEXT');
+      }
+    },
+  },
+  {
+    version: 39,
+    run: async (db) => {
+      // Detalhe do resumo automatico do caderno: `concise` (padrao) ou `full`.
+      // Cadernos antigos nascem enxutos, como o servidor faz.
+      if (!(await columnExists(db, 'notebooks', 'summary_detail'))) {
+        await db.execAsync(
+          "ALTER TABLE notebooks ADD COLUMN summary_detail TEXT NOT NULL DEFAULT 'concise'",
+        );
+      }
+    },
+  },
+  {
+    version: 40,
+    run: async (db) => {
+      // Detalhe do resumo automatico do projeto (entrada): `concise` (padrao) ou `full`.
+      if (!(await columnExists(db, 'recordings', 'summary_detail'))) {
+        await db.execAsync(
+          "ALTER TABLE recordings ADD COLUMN summary_detail TEXT NOT NULL DEFAULT 'concise'",
+        );
       }
     },
   },
@@ -2283,6 +2355,42 @@ async function ownerKeysFor(db: MigrationDb): Promise<Set<string>> {
   return keys;
 }
 
+/** Chave de comparacao de `(kind, name_key)`, a mesma da tabela de rejeicoes. */
+function rejectionLookupKey(kind: string, nameKey: string): string {
+  return `${kind}\u0000${nameKey}`;
+}
+
+/** Todos os nomes rejeitados, para o filtro antes de persistir um vinculo. */
+async function rejectedEntityKeys(db: MigrationDb): Promise<Set<string>> {
+  const rows = await db.getAllAsync<{ kind: string; name_key: string }>(
+    'SELECT kind, name_key FROM entity_rejections',
+  );
+  return new Set(rows.map((row) => rejectionLookupKey(row.kind, row.name_key)));
+}
+
+/**
+ * Grava (ou atualiza) a rejeicao local. A chave e `(kind, name_key)`: uma nova
+ * grafia do mesmo nome atualiza o texto e o relogio sem duplicar a linha.
+ */
+async function upsertLocalEntityRejection(
+  db: MigrationDb,
+  kind: EntityKind,
+  name: string,
+  now: string,
+  updatedAt = now,
+): Promise<void> {
+  const trimmed = name.trim();
+  if (!trimmed) return;
+  await db.runAsync(
+    `INSERT INTO entity_rejections (kind, name, name_key, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT (kind, name_key) DO UPDATE SET
+       name = excluded.name,
+       updated_at = excluded.updated_at`,
+    [kind, trimmed, entityNameKey(trimmed), now, updatedAt],
+  );
+}
+
 /** Nome exibido no centro do mapa. Vazio quando o dono ainda nao escolheu. */
 export async function getOwnerName(): Promise<string> {
   const db = await getDb();
@@ -2297,14 +2405,35 @@ export async function listLocalEntities(): Promise<GraphEntity[]> {
     id: string;
     kind: string;
     name: string;
+    label: string;
     icon: string;
     updated_at: string;
-  }>('SELECT id, kind, name, icon, updated_at FROM entities ORDER BY kind, name');
+  }>('SELECT id, kind, name, label, icon, updated_at FROM entities ORDER BY kind, name');
   return rows.map((row) => ({
     id: row.id,
     kind: row.kind as EntityKind,
     name: row.name,
+    label: row.label ?? '',
     icon: row.icon ?? '',
+    updatedAt: row.updated_at ?? '',
+  }));
+}
+
+/** Nomes recusados pelo dono, com o relogio do sync. */
+export async function listEntityRejections(): Promise<EntityRejection[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<{
+    kind: string;
+    name: string;
+    name_key: string;
+    updated_at: string;
+  }>(
+    'SELECT kind, name, name_key, updated_at FROM entity_rejections ORDER BY kind, name',
+  );
+  return rows.map((row) => ({
+    kind: row.kind as EntityKind,
+    name: row.name,
+    nameKey: row.name_key,
     updatedAt: row.updated_at ?? '',
   }));
 }
@@ -2397,7 +2526,11 @@ async function replaceEntryEntities(
   owners: ReadonlySet<string>,
 ): Promise<void> {
   await db.runAsync('DELETE FROM entry_entities WHERE entry_id = ?', [entryId]);
+  const rejected = await rejectedEntityKeys(db);
   for (const link of deriveEntityLinks(analysis, owners)) {
+    // A rejeicao do dono e aplicada por script antes de persistir: o vinculo
+    // nem chega ao banco. A camada de gramatica continua no `deriveEntityLinks`.
+    if (rejected.has(rejectionLookupKey(link.kind, entityNameKey(link.name)))) continue;
     const entityId = await resolveEntityId(db, link.kind, link.name, now);
     if (!entityId) continue;
     await db.runAsync(
@@ -2507,6 +2640,7 @@ interface LocalEntityRow {
   id: string;
   kind: string;
   name: string;
+  label: string;
   icon: string;
   created_at: string;
   updated_at: string;
@@ -2517,6 +2651,7 @@ function toLocalEntity(row: LocalEntityRow): GraphEntity {
     id: row.id,
     kind: row.kind as EntityKind,
     name: row.name,
+    label: row.label ?? '',
     icon: row.icon ?? '',
     updatedAt: row.updated_at ?? '',
   };
@@ -2541,6 +2676,255 @@ async function findEntityIdByName(
   return alias?.entity_id ?? null;
 }
 
+/** Entidade, vinculos, aliases e rejeicao anterior capturados para o desfazer. */
+export interface LocalEntitySnapshot {
+  entity: {
+    id: string;
+    kind: EntityKind;
+    name: string;
+    label: string;
+    icon: string;
+    created_at: string;
+    updated_at: string;
+  };
+  links: {
+    entry_id: string;
+    count: number;
+    relation: string | null;
+    sentiment: number | null;
+  }[];
+  aliases: {
+    id: string;
+    kind: EntityKind;
+    name: string;
+    created_at: string;
+    updated_at: string;
+  }[];
+  /** Rejeicao de (kind, name_key) que existia antes da operacao, se havia. */
+  rejection: EntityRejection | null;
+}
+
+interface LocalEntitySnapshotRelationRow {
+  entry_id: string;
+  count: number;
+  relation: string | null;
+  sentiment: number | null;
+}
+
+interface LocalEntitySnapshotAliasRow {
+  id: string;
+  kind: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface LocalEntitySnapshotRejectionRow {
+  kind: string;
+  name: string;
+  name_key: string;
+  updated_at: string;
+}
+
+/**
+ * Captura o estado de uma entidade para o "Desfazer" de 5 s.
+ *
+ * O snapshot vive **somente em memoria** na tela que fez a exclusao/troca de
+ * tipo; nao e historico persistente e nao sincroniza. Para a troca de tipo com
+ * mesclagem, capture tambem o snapshot da entidade de destino antes de mudar.
+ */
+export async function snapshotEntityForUndo(
+  kind: EntityKind,
+  name: string,
+): Promise<LocalEntitySnapshot | null> {
+  const trimmedName = name.trim();
+  if (!isEntityKind(kind) || trimmedName === '') return null;
+  const db = await getDb();
+  const entityId = await findEntityIdByName(db, kind, trimmedName);
+  if (!entityId) return null;
+  const entity = await db.getFirstAsync<LocalEntityRow>(
+    'SELECT id, kind, name, label, icon, created_at, updated_at FROM entities WHERE id = ?',
+    [entityId],
+  );
+  if (!entity) return null;
+
+  const links = await db.getAllAsync<LocalEntitySnapshotRelationRow>(
+    'SELECT entry_id, count, relation, sentiment FROM entry_entities WHERE entity_id = ? ORDER BY entry_id',
+    [entityId],
+  );
+  const aliases = await db.getAllAsync<LocalEntitySnapshotAliasRow>(
+    'SELECT id, kind, name, created_at, updated_at FROM entity_aliases WHERE entity_id = ? ORDER BY created_at, name',
+    [entityId],
+  );
+  const rejectionRow = await db.getFirstAsync<LocalEntitySnapshotRejectionRow>(
+    'SELECT kind, name, name_key, updated_at FROM entity_rejections WHERE kind = ? AND name_key = ?',
+    [entity.kind, entityNameKey(entity.name)],
+  );
+
+  return {
+    entity: {
+      id: entity.id,
+      kind: entity.kind as EntityKind,
+      name: entity.name,
+      label: entity.label ?? '',
+      icon: entity.icon ?? '',
+      created_at: entity.created_at,
+      updated_at: entity.updated_at,
+    },
+    links: links.map((link) => ({
+      entry_id: link.entry_id,
+      count: link.count,
+      relation: link.relation,
+      sentiment: link.sentiment,
+    })),
+    aliases: aliases.map((alias) => ({
+      id: alias.id,
+      kind: alias.kind as EntityKind,
+      name: alias.name,
+      created_at: alias.created_at,
+      updated_at: alias.updated_at,
+    })),
+    rejection: rejectionRow
+      ? {
+          kind: rejectionRow.kind as EntityKind,
+          name: rejectionRow.name,
+          nameKey: rejectionRow.name_key,
+          updatedAt: rejectionRow.updated_at,
+        }
+      : null,
+  };
+}
+
+/**
+ * Restaura um ou mais snapshots capturados por `snapshotEntityForUndo`.
+ *
+ * Serve para desfazer tanto a exclusao quanto a troca de tipo. Na troca com
+ * mesclagem, passe os dois snapshots (origem e destino); o restore limpa os
+ * ids/(kind, name) atuais que conflitam antes de reinserir entidades, aliases,
+ * vinculos e a rejeicao anterior. O snapshot vive em memoria por 5 s; nao e um
+ * historico persistente.
+ */
+export async function restoreEntitySnapshot(
+  snapshot: LocalEntitySnapshot | readonly LocalEntitySnapshot[],
+): Promise<void> {
+  const snapshots = (
+    Array.isArray(snapshot) ? snapshot : [snapshot]
+  ) as readonly LocalEntitySnapshot[];
+  if (snapshots.length === 0) return;
+  await withGraphWrite(async () => {
+    const db = await getDb();
+    const now = new Date().toISOString();
+    await db.withTransactionAsync(async () => {
+      // Junta os ids que precisam sair: o id do snapshot e qualquer entidade
+      // atual que ocupe o mesmo (kind, name), inclusive com id diferente.
+      const clearIds = new Set<string>();
+      for (const item of snapshots) {
+        clearIds.add(item.entity.id);
+        const conflicts = await db.getAllAsync<{ id: string }>(
+          'SELECT id FROM entities WHERE id = ? OR (kind = ? AND lower(name) = lower(?))',
+          [item.entity.id, item.entity.kind, item.entity.name],
+        );
+        for (const row of conflicts) clearIds.add(row.id);
+      }
+      for (const id of clearIds) {
+        await db.runAsync('DELETE FROM entry_entities WHERE entity_id = ?', [id]);
+        await db.runAsync('DELETE FROM entity_aliases WHERE entity_id = ?', [id]);
+        await db.runAsync('DELETE FROM entities WHERE id = ?', [id]);
+      }
+
+      // A exclusao/troca de tipo gravou uma rejeicao do tipo de origem. Ela sai
+      // para a entidade poder voltar; a rejeicao anterior, se havia, volta no
+      // fim. Cada snapshot cobre a sua propria chave.
+      for (const item of snapshots) {
+        await db.runAsync(
+          'DELETE FROM entity_rejections WHERE kind = ? AND name_key = ?',
+          [item.entity.kind, entityNameKey(item.entity.name)],
+        );
+      }
+
+      for (const item of snapshots) {
+        await db.runAsync(
+          `INSERT INTO entities (id, kind, name, label, icon, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [
+            item.entity.id,
+            item.entity.kind,
+            item.entity.name,
+            item.entity.label,
+            item.entity.icon,
+            item.entity.created_at,
+            item.entity.updated_at,
+          ],
+        );
+      }
+
+      for (const item of snapshots) {
+        for (const alias of item.aliases) {
+          // Nome de alias e unico por tipo (NOCASE): uma grafia tomada por
+          // outra entidade depois da operacao precisa sair antes.
+          await db.runAsync(
+            'DELETE FROM entity_aliases WHERE id = ? OR (kind = ? AND lower(name) = lower(?))',
+            [alias.id, alias.kind, alias.name],
+          );
+          await db.runAsync(
+            `INSERT INTO entity_aliases (id, entity_id, kind, name, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [
+              alias.id,
+              item.entity.id,
+              alias.kind,
+              alias.name,
+              alias.created_at,
+              alias.updated_at,
+            ],
+          );
+        }
+      }
+
+      for (const item of snapshots) {
+        for (const link of item.links) {
+          await db.runAsync(
+            `INSERT INTO entry_entities (entry_id, entity_id, count, relation, sentiment, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT (entry_id, entity_id) DO UPDATE SET
+               count = excluded.count,
+               relation = excluded.relation,
+               sentiment = excluded.sentiment`,
+            [
+              link.entry_id,
+              item.entity.id,
+              link.count,
+              link.relation,
+              link.sentiment,
+              item.entity.updated_at || now,
+            ],
+          );
+        }
+      }
+
+      for (const item of snapshots) {
+        const rejection = item.rejection;
+        if (!rejection) continue;
+        await db.runAsync(
+          `INSERT INTO entity_rejections (kind, name, name_key, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT (kind, name_key) DO UPDATE SET
+             name = excluded.name,
+             updated_at = excluded.updated_at`,
+          [
+            rejection.kind,
+            rejection.name,
+            rejection.nameKey || entityNameKey(rejection.name),
+            rejection.updatedAt || now,
+            rejection.updatedAt || now,
+          ],
+        );
+      }
+    });
+  });
+}
+
+
 async function addEntityAlias(
   db: MigrationDb,
   kind: EntityKind,
@@ -2560,14 +2944,23 @@ async function addEntityAlias(
 
 async function enqueueEntityOp(
   db: MigrationDb,
-  operation: 'rename' | 'icon' | 'self',
+  operation:
+    | 'rename'
+    | 'icon'
+    | 'self'
+    | 'label'
+    | 'kind'
+    | 'delete'
+    | 'reject'
+    | 'unreject',
   entity: { id: string; kind: EntityKind; name: string },
   now: string,
-  extra: { nextName?: string; icon?: string } = {},
+  extra: { nextName?: string; icon?: string; label?: string; nextKind?: EntityKind } = {},
 ): Promise<void> {
   await db.runAsync(
-    `INSERT INTO entity_outbox (id, operation, entity_id, kind, name, next_name, icon, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO entity_outbox
+       (id, operation, entity_id, kind, name, next_name, icon, label, next_kind, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       newId('eop_'),
       operation,
@@ -2576,6 +2969,8 @@ async function enqueueEntityOp(
       entity.name,
       extra.nextName ?? null,
       extra.icon ?? null,
+      extra.label ?? null,
+      extra.nextKind ?? null,
       now,
     ],
   );
@@ -2663,7 +3058,7 @@ export async function renameLocalEntity(
         survivorId = targetId;
       }
       const row = await db.getFirstAsync<LocalEntityRow>(
-        'SELECT id, kind, name, icon, created_at, updated_at FROM entities WHERE id = ?',
+        'SELECT id, kind, name, label, icon, created_at, updated_at FROM entities WHERE id = ?',
         [survivorId],
       );
       // O outbox guarda o nome que o servidor conhece (o antigo), nao o novo:
@@ -2679,7 +3074,7 @@ export async function renameLocalEntity(
       }
     });
     const row = await db.getFirstAsync<LocalEntityRow>(
-      'SELECT id, kind, name, icon, created_at, updated_at FROM entities WHERE id = ?',
+      'SELECT id, kind, name, label, icon, created_at, updated_at FROM entities WHERE id = ?',
       [survivorId],
     );
     if (!row) throw new Error('entidade não encontrada');
@@ -2700,12 +3095,228 @@ export async function setLocalEntityIcon(
     if (!id) throw new Error('entidade não encontrada');
     await db.runAsync('UPDATE entities SET icon = ?, updated_at = ? WHERE id = ?', [icon, now, id]);
     const row = await db.getFirstAsync<LocalEntityRow>(
-      'SELECT id, kind, name, icon, created_at, updated_at FROM entities WHERE id = ?',
+      'SELECT id, kind, name, label, icon, created_at, updated_at FROM entities WHERE id = ?',
       [id],
     );
     if (!row) throw new Error('entidade não encontrada');
     await enqueueEntityOp(db, 'icon', toLocalEntity(row), now, { icon });
     return toLocalEntity(row);
+  });
+}
+
+async function readLocalEntity(db: MigrationDb, id: string): Promise<LocalEntityRow | null> {
+  return db.getFirstAsync<LocalEntityRow>(
+    'SELECT id, kind, name, label, icon, created_at, updated_at FROM entities WHERE id = ?',
+    [id],
+  );
+}
+
+/** Copia os aliases de uma entidade para o novo tipo e remove os do tipo antigo. */
+async function moveEntityAliasesKindLocal(
+  db: MigrationDb,
+  entityId: string,
+  oldKind: EntityKind,
+  newKind: EntityKind,
+  now: string,
+): Promise<void> {
+  const aliases = await db.getAllAsync<{ name: string }>(
+    'SELECT name FROM entity_aliases WHERE entity_id = ? AND kind = ? ORDER BY name',
+    [entityId, oldKind],
+  );
+  for (const alias of aliases) {
+    await db.runAsync(
+      `INSERT OR IGNORE INTO entity_aliases (id, entity_id, kind, name, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [newId('eal_'), entityId, newKind, alias.name, now, now],
+    );
+  }
+  await db.runAsync('DELETE FROM entity_aliases WHERE entity_id = ? AND kind = ?', [
+    entityId,
+    oldKind,
+  ]);
+}
+
+/**
+ * Move uma entidade local para outro tipo, como `ChangeEntityKind` no servidor:
+ * se o tipo destino ja tem o mesmo nome, mescla os vinculos; senao troca o tipo
+ * e leva os aliases. Devolve o id da sobrevivente.
+ */
+async function changeEntityKindLocal(
+  db: MigrationDb,
+  sourceId: string,
+  fromKind: EntityKind,
+  toKind: EntityKind,
+  lookupName: string,
+  canonicalName: string,
+  now: string,
+): Promise<string> {
+  const targetId = await findEntityIdByName(db, toKind, lookupName);
+  if (targetId && targetId !== sourceId) {
+    await mergeEntitiesInto(db, sourceId, targetId, toKind, canonicalName, now, false);
+    return targetId;
+  }
+  await db.runAsync('UPDATE entities SET kind = ?, updated_at = ? WHERE id = ?', [
+    toKind,
+    now,
+    sourceId,
+  ]);
+  await moveEntityAliasesKindLocal(db, sourceId, fromKind, toKind, now);
+  return sourceId;
+}
+
+/** Rotulo livre de exibicao; vazio limpa. Nao muda tipo, metrica nem sync. */
+export async function setEntityLabel(
+  kind: EntityKind,
+  name: string,
+  label: string,
+): Promise<GraphEntity> {
+  const trimmedName = name.trim();
+  const trimmedLabel = label.trim();
+  if (!isEntityKind(kind) || trimmedName === '' || Array.from(trimmedLabel).length > 80) {
+    throw new Error('rotulo inválido');
+  }
+  return withGraphWrite(async () => {
+    const db = await getDb();
+    const now = new Date().toISOString();
+    let id = '';
+    await db.withTransactionAsync(async () => {
+      id = (await findEntityIdByName(db, kind, trimmedName)) ?? '';
+      if (!id) throw new Error('entidade não encontrada');
+      await db.runAsync('UPDATE entities SET label = ?, updated_at = ? WHERE id = ?', [
+        trimmedLabel,
+        now,
+        id,
+      ]);
+      await enqueueEntityOp(db, 'label', { id, kind, name: trimmedName }, now, {
+        label: trimmedLabel,
+      });
+    });
+    const row = await readLocalEntity(db, id);
+    if (!row) throw new Error('entidade não encontrada');
+    return toLocalEntity(row);
+  });
+}
+
+/**
+ * Troca o tipo de uma entidade local. Move os vinculos, mescla se o tipo
+ * destino ja tem o mesmo nome e grava a rejeicao do tipo antigo.
+ */
+export async function changeEntityKind(
+  kind: EntityKind,
+  name: string,
+  newKind: EntityKind,
+): Promise<GraphEntity> {
+  const trimmedName = name.trim();
+  if (!isEntityKind(kind) || !isEntityKind(newKind) || trimmedName === '' || kind === newKind) {
+    throw new Error('tipo inválido');
+  }
+  return withGraphWrite(async () => {
+    const db = await getDb();
+    const now = new Date().toISOString();
+    let survivorId = '';
+    await db.withTransactionAsync(async () => {
+      const sourceId = await findEntityIdByName(db, kind, trimmedName);
+      if (!sourceId) throw new Error('entidade não encontrada');
+      const canonicalRow = await db.getFirstAsync<{ name: string }>(
+        'SELECT name FROM entities WHERE id = ?',
+        [sourceId],
+      );
+      const canonical = canonicalRow?.name ?? trimmedName;
+      survivorId = await changeEntityKindLocal(
+        db,
+        sourceId,
+        kind,
+        newKind,
+        trimmedName,
+        canonical,
+        now,
+      );
+      await upsertLocalEntityRejection(db, kind, canonical, now);
+      await enqueueEntityOp(db, 'kind', { id: survivorId, kind, name: trimmedName }, now, {
+        nextKind: newKind,
+      });
+    });
+    const row = await readLocalEntity(db, survivorId);
+    if (!row) throw new Error('entidade não encontrada');
+    return toLocalEntity(row);
+  });
+}
+
+/**
+ * Exclui a entidade, os vinculos e os aliases e grava a rejeicao do tipo. O
+ * desfazer restaura tudo no servidor; aqui a rejeicao impede a analise de
+ * recriar o nome.
+ */
+export async function deleteEntityAndReject(
+  kind: EntityKind,
+  name: string,
+): Promise<void> {
+  const trimmedName = name.trim();
+  if (!isEntityKind(kind) || trimmedName === '') throw new Error('entidade inválida');
+  await withGraphWrite(async () => {
+    const db = await getDb();
+    const now = new Date().toISOString();
+    await db.withTransactionAsync(async () => {
+      const id = await findEntityIdByName(db, kind, trimmedName);
+      if (!id) throw new Error('entidade não encontrada');
+      const canonicalRow = await db.getFirstAsync<{ name: string }>(
+        'SELECT name FROM entities WHERE id = ?',
+        [id],
+      );
+      const canonical = canonicalRow?.name ?? trimmedName;
+      await db.runAsync('DELETE FROM entry_entities WHERE entity_id = ?', [id]);
+      await db.runAsync('DELETE FROM entity_aliases WHERE entity_id = ?', [id]);
+      await db.runAsync('DELETE FROM entities WHERE id = ?', [id]);
+      await upsertLocalEntityRejection(db, kind, canonical, now);
+      await enqueueEntityOp(db, 'delete', { id, kind, name: trimmedName }, now);
+    });
+  });
+}
+
+/** Diz que o nome nunca e entidade daquele tipo; aplicado antes de persistir. */
+export async function addEntityRejection(
+  kind: EntityKind,
+  name: string,
+): Promise<void> {
+  const trimmedName = name.trim();
+  if (!isEntityKind(kind) || trimmedName === '') throw new Error('rejeição inválida');
+  await withGraphWrite(async () => {
+    const db = await getDb();
+    const now = new Date().toISOString();
+    await db.withTransactionAsync(async () => {
+      await upsertLocalEntityRejection(db, kind, trimmedName, now);
+      await enqueueEntityOp(
+        db,
+        'reject',
+        { id: '', kind, name: trimmedName },
+        now,
+      );
+    });
+  });
+}
+
+/** Libera um nome rejeitado; remover uma rejeicao ausente e no-op. */
+export async function removeEntityRejection(
+  kind: EntityKind,
+  name: string,
+): Promise<void> {
+  const trimmedName = name.trim();
+  if (!isEntityKind(kind) || trimmedName === '') throw new Error('rejeição inválida');
+  await withGraphWrite(async () => {
+    const db = await getDb();
+    const now = new Date().toISOString();
+    await db.withTransactionAsync(async () => {
+      await db.runAsync('DELETE FROM entity_rejections WHERE kind = ? AND name_key = ?', [
+        kind,
+        entityNameKey(trimmedName),
+      ]);
+      await enqueueEntityOp(
+        db,
+        'unreject',
+        { id: '', kind, name: trimmedName },
+        now,
+      );
+    });
   });
 }
 
@@ -2745,7 +3356,7 @@ export async function claimLocalSelf(name: string): Promise<string> {
         );
       }
       const row = await db.getFirstAsync<LocalEntityRow>(
-        'SELECT id, kind, name, icon, created_at, updated_at FROM entities WHERE id = ?',
+        'SELECT id, kind, name, label, icon, created_at, updated_at FROM entities WHERE id = ?',
         [id],
       );
       if (row) await enqueueEntityOp(db, 'self', toLocalEntity(row), now);
@@ -2763,12 +3374,22 @@ export async function claimLocalSelf(name: string): Promise<string> {
 
 export interface EntityOutboxItem {
   id: string;
-  operation: 'rename' | 'icon' | 'self';
+  operation:
+    | 'rename'
+    | 'icon'
+    | 'self'
+    | 'label'
+    | 'kind'
+    | 'delete'
+    | 'reject'
+    | 'unreject';
   entityId: string;
   kind: EntityKind;
   name: string;
   nextName?: string;
   icon?: string;
+  label?: string;
+  nextKind?: EntityKind;
   attempts: number;
   lastError?: string;
 }
@@ -2783,6 +3404,8 @@ export async function listEntityOutbox(limit = 50): Promise<EntityOutboxItem[]> 
     name: string;
     next_name: string | null;
     icon: string | null;
+    label: string | null;
+    next_kind: string | null;
     attempts: number;
     last_error: string | null;
   }>('SELECT * FROM entity_outbox ORDER BY created_at LIMIT ?', [limit]);
@@ -2794,6 +3417,8 @@ export async function listEntityOutbox(limit = 50): Promise<EntityOutboxItem[]> 
     name: row.name,
     nextName: row.next_name ?? undefined,
     icon: row.icon ?? undefined,
+    label: row.label ?? undefined,
+    nextKind: (row.next_kind as EntityKind | null) ?? undefined,
     attempts: row.attempts,
     lastError: row.last_error ?? undefined,
   }));
@@ -2848,28 +3473,39 @@ export interface RemoteEntityState {
   id: string;
   kind: EntityKind;
   name: string;
+  label: string;
   icon: string;
   updatedAt: string;
   aliases: string[];
 }
 
 function entityKey(kind: string, name: string): string {
-  return `${kind}\u0000${name.trim().toLowerCase()}`;
+  return `${kind}\u0000${entityNameKey(name)}`;
 }
 
 /**
- * Escrita que o aparelho tem e aquele ambiente ainda nao: nome ou icone novos.
- * Quem chama empurra com o PATCH daquele ambiente, usando o nome que ele
- * conhece como chave.
+ * Escrita que o aparelho tem e aquele ambiente ainda nao: nome, icone ou
+ * rotulo novos. Quem chama empurra com o endpoint daquele ambiente, usando o
+ * nome que ele conhece como chave.
  */
 export interface EntityPush {
   kind: EntityKind;
   /** Nome que o ambiente conhece; e a chave do PATCH. */
   name: string;
-  /** Nome que deve ficar; ausente quando so o icone muda. */
+  /** Nome que deve ficar; ausente quando so o icone ou o rotulo muda. */
   renameTo?: string;
-  /** Icone que deve ficar; ausente quando so o nome muda. */
+  /** Icone que deve ficar; ausente quando so o nome ou o rotulo muda. */
   icon?: string;
+  /** Rotulo que deve ficar; ausente quando so o nome ou o icone muda. */
+  label?: string;
+}
+
+/** Chaves de rejeicao com operacao pendente na outbox, para o LWW local. */
+async function pendingRejectionKeys(db: MigrationDb): Promise<Set<string>> {
+  const rows = await db.getAllAsync<{ kind: string; name: string }>(
+    "SELECT kind, name FROM entity_outbox WHERE operation IN ('reject', 'unreject')",
+  );
+  return new Set(rows.map((row) => rejectionLookupKey(row.kind, entityNameKey(row.name))));
 }
 
 /**
@@ -2878,29 +3514,70 @@ export interface EntityPush {
  * O nome e a chave de encontro: a entidade local que tem o nome antigo e
  * fundida na sobrevivente do servidor, e os aliases remotos passam a resolver
  * as analises futuras. Entidades com operacao pendente na outbox ficam
- * intocadas: a escrita local ainda vai subir.
+ * intocadas: a escrita local ainda vai subir. A rejeicao remota vence por
+ * `updated_at` e propaga a exclusao e a troca de tipo.
  */
 export async function applyRemoteEntities(
   remote: RemoteEntityState[],
   pendingEntityIds: ReadonlySet<string> = new Set(),
+  remoteRejections: readonly EntityRejection[] = [],
 ): Promise<EntityPush[]> {
-  if (remote.length === 0) return [];
+  if (remote.length === 0 && remoteRejections.length === 0) return [];
   const pushes: EntityPush[] = [];
   await withGraphWrite(async () => {
     const db = await getDb();
     const now = new Date().toISOString();
     await db.withTransactionAsync(async () => {
       const locals = await db.getAllAsync<LocalEntityRow>(
-        'SELECT id, kind, name, icon, created_at, updated_at FROM entities',
+        'SELECT id, kind, name, label, icon, created_at, updated_at FROM entities',
       );
       const localById = new Map(locals.map((row) => [row.id, row]));
       const localByName = new Map(locals.map((row) => [entityKey(row.kind, row.name), row]));
       const matched = new Set<string>();
       const localIdForRemote = new Map<string, string>();
       const targetByAlias = new Map<string, RemoteEntityState>();
+      const remoteByName = new Map<string, RemoteEntityState[]>();
 
       for (const item of remote) {
         for (const alias of item.aliases) targetByAlias.set(entityKey(item.kind, alias), item);
+        const key = entityNameKey(item.name);
+        const list = remoteByName.get(key);
+        if (list) list.push(item);
+        else remoteByName.set(key, [item]);
+      }
+
+      // Rejeicoes primeiro: elas decidem se a entidade local que o catalogo nao
+      // lista foi excluida ou trocou de tipo naquele ambiente.
+      const pendingKeys = await pendingRejectionKeys(db);
+      const localRejections = await db.getAllAsync<{
+        kind: string;
+        name: string;
+        name_key: string;
+        updated_at: string;
+      }>('SELECT kind, name, name_key, updated_at FROM entity_rejections');
+      const localRejectionByKey = new Map(
+        localRejections.map((row) => [
+          rejectionLookupKey(row.kind, row.name_key),
+          row,
+        ]),
+      );
+      const winningRejections = new Map<string, EntityRejection>();
+      for (const rejection of remoteRejections) {
+        const nameKey = rejection.nameKey || entityNameKey(rejection.name);
+        const key = rejectionLookupKey(rejection.kind, nameKey);
+        if (pendingKeys.has(key)) continue;
+        const local = localRejectionByKey.get(key);
+        // A escrita mais nova vence; o relogio local so perde quando o remoto
+        // e de fato mais novo.
+        if (local && newerThan(local.updated_at, rejection.updatedAt)) continue;
+        await upsertLocalEntityRejection(
+          db,
+          rejection.kind,
+          rejection.name,
+          now,
+          rejection.updatedAt || now,
+        );
+        winningRejections.set(key, rejection);
       }
 
       for (const item of remote) {
@@ -2933,16 +3610,19 @@ export async function applyRemoteEntities(
         }
 
         // A ultima edicao vence tambem aqui: se o aparelho renomeou (ou trocou o
-        // icone) depois da ultima mudanca naquele ambiente, o catalogo de la nao
-        // desfaz a escolha. Ela e empurrada de volta com o nome que o ambiente
-        // conhece.
+        // icone/rotulo) depois da ultima mudanca naquele ambiente, o catalogo de
+        // la nao desfaz a escolha. Ela e empurrada de volta com o nome que o
+        // ambiente conhece.
         if (local && newerThan(local.updated_at, item.updatedAt)) {
-          const sameName = local.name.trim().toLowerCase() === item.name.trim().toLowerCase();
+          const sameName = entityNameKey(local.name) === entityNameKey(item.name);
           if (!sameName) {
             pushes.push({ kind, name: item.name, renameTo: local.name });
           }
           if (local.icon !== item.icon) {
             pushes.push({ kind, name: item.name, icon: local.icon });
+          }
+          if ((local.label ?? '') !== (item.label ?? '')) {
+            pushes.push({ kind, name: item.name, label: local.label ?? '' });
           }
           matched.add(local.id);
           localIdForRemote.set(item.id, local.id);
@@ -2951,27 +3631,47 @@ export async function applyRemoteEntities(
 
         const updatedAt = item.updatedAt || now;
         const previousName = local?.name;
+        if (local && local.kind !== kind) {
+          // O tipo mudou naquele ambiente: leva os vinculos ou mescla na
+          // entidade que ja existia no destino.
+          const conflict = localByName.get(entityKey(kind, item.name));
+          if (conflict && conflict.id !== local.id) {
+            await mergeEntitiesInto(db, local.id, conflict.id, kind, local.name, now, false);
+            local = conflict;
+          } else {
+            await changeEntityKindLocal(
+              db,
+              local.id,
+              local.kind as EntityKind,
+              kind,
+              item.name,
+              local.name,
+              now,
+            );
+          }
+        }
         if (!local) {
           await db.runAsync(
-            `INSERT INTO entities (id, kind, name, icon, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?)
+            `INSERT INTO entities (id, kind, name, label, icon, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT (id) DO UPDATE SET
-               kind = excluded.kind, name = excluded.name,
+               kind = excluded.kind, name = excluded.name, label = excluded.label,
                icon = excluded.icon, updated_at = excluded.updated_at`,
-            [item.id, kind, item.name, item.icon, updatedAt, updatedAt],
+            [item.id, kind, item.name, item.label, item.icon, updatedAt, updatedAt],
           );
           local = {
             id: item.id,
             kind,
             name: item.name,
+            label: item.label,
             icon: item.icon,
             created_at: updatedAt,
             updated_at: updatedAt,
           };
         } else {
           await db.runAsync(
-            'UPDATE entities SET name = ?, icon = ?, updated_at = ? WHERE id = ?',
-            [item.name, item.icon, updatedAt, local.id],
+            'UPDATE entities SET kind = ?, name = ?, label = ?, icon = ?, updated_at = ? WHERE id = ?',
+            [kind, item.name, item.label, item.icon, updatedAt, local.id],
           );
         }
 
@@ -2983,30 +3683,63 @@ export async function applyRemoteEntities(
         for (const alias of item.aliases) {
           await addEntityAlias(db, kind, alias, local.id, now);
         }
-        if (previousName && previousName.toLowerCase() !== item.name.toLowerCase()) {
+        if (previousName && entityNameKey(previousName) !== entityNameKey(item.name)) {
           await addEntityAlias(db, kind, previousName, local.id, now);
         }
         matched.add(local.id);
         localIdForRemote.set(item.id, local.id);
       }
 
-      // Entidade local que o servidor nao lista, mas cujo nome virou alias de
-      // outra: foi mesclada no painel. Funde aqui tambem.
       for (const local of locals) {
         if (matched.has(local.id)) continue;
         if (pendingEntityIds.has(local.id)) continue;
+
+        // Entidade local que o servidor nao lista, mas cujo nome virou alias de
+        // outra: foi mesclada no painel. Funde aqui tambem.
         const target = targetByAlias.get(entityKey(local.kind, local.name));
-        if (!target) continue;
-        const targetLocalId = localIdForRemote.get(target.id);
-        if (!targetLocalId || targetLocalId === local.id) continue;
-        await mergeEntitiesInto(
-          db,
-          local.id,
-          targetLocalId,
-          local.kind as EntityKind,
-          local.name,
-          now,
+        if (target) {
+          const targetLocalId = localIdForRemote.get(target.id);
+          if (targetLocalId && targetLocalId !== local.id) {
+            await mergeEntitiesInto(
+              db,
+              local.id,
+              targetLocalId,
+              local.kind as EntityKind,
+              local.name,
+              now,
+            );
+            matched.add(local.id);
+            continue;
+          }
+        }
+
+        // Rejeicao remota vencendo para este (kind, nome): ou o tipo mudou no
+        // outro ambiente (ha uma entidade de mesmo nome em outro tipo) ou a
+        // entidade foi excluida la. Nos dois casos a local nao fica.
+        const rejection = winningRejections.get(
+          rejectionLookupKey(local.kind, entityNameKey(local.name)),
         );
+        if (!rejection) continue;
+        const moved = (remoteByName.get(entityNameKey(local.name)) ?? []).find(
+          (item) => item.kind !== local.kind,
+        );
+        const movedLocalId = moved ? localIdForRemote.get(moved.id) : undefined;
+        if (moved && movedLocalId && movedLocalId !== local.id) {
+          await mergeEntitiesInto(
+            db,
+            local.id,
+            movedLocalId,
+            moved.kind,
+            local.name,
+            now,
+            false,
+          );
+          matched.add(local.id);
+          continue;
+        }
+        await db.runAsync('DELETE FROM entry_entities WHERE entity_id = ?', [local.id]);
+        await db.runAsync('DELETE FROM entity_aliases WHERE entity_id = ?', [local.id]);
+        await db.runAsync('DELETE FROM entities WHERE id = ?', [local.id]);
         matched.add(local.id);
       }
     });
