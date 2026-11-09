@@ -25,6 +25,7 @@ export interface NoteSyncApi {
       notebook_id?: string;
       archived?: boolean;
       author?: string;
+      summary_detail?: 'concise' | 'full';
       versions?: { title?: string; recorded_at?: string };
     },
     hlc?: string,
@@ -111,6 +112,7 @@ export async function syncNoteWith(
       recorded_at: note.recordedAt,
       ...(note.archivedDirty ? { archived: note.archived ?? false } : {}),
       ...(note.authorDirty ? { author: note.author ?? '' } : {}),
+      ...(note.summaryDetailDirty ? { summary_detail: note.summaryDetail ?? 'concise' } : {}),
       versions: baseVersions,
     }, note.updatedHlc);
     versions.title = entryVersions.title;
@@ -124,6 +126,7 @@ export async function syncNoteWith(
       recorded_at?: string;
       archived?: boolean;
       author?: string;
+      summary_detail?: 'concise' | 'full';
       versions?: { title?: string; recorded_at?: string };
     } = {
       versions: {
@@ -135,11 +138,13 @@ export async function syncNoteWith(
     if (!conflicted.has("recorded_at")) retry.recorded_at = note.recordedAt;
     if (note.archivedDirty) retry.archived = note.archived ?? false;
     if (note.authorDirty) retry.author = note.author ?? '';
+    if (note.summaryDetailDirty) retry.summary_detail = note.summaryDetail ?? 'concise';
     if (
       retry.title !== undefined ||
       retry.recorded_at !== undefined ||
       retry.archived !== undefined ||
-      retry.author !== undefined
+      retry.author !== undefined ||
+      retry.summary_detail !== undefined
     ) {
       const entryVersions = await api.updateEntry(note.entryId, retry, note.updatedHlc);
       // O campo em conflito **nao** adota a versao do servidor: assim o pull
@@ -313,6 +318,7 @@ export function applySyncResult(fresh: Recording, sent: Recording, result: SyncN
   // tag marcado depois (ou sem destino) continua de pe para a proxima rodada.
   const archiveSent = Boolean(sent.archivedDirty);
   const authorSent = Boolean(sent.authorDirty);
+  const summaryDetailSent = Boolean(sent.summaryDetailDirty);
   const notebookSent = Boolean(sent.notebookDirty && sent.notebookId);
   const tagsSent = Boolean(sent.tagsDirty);
   return {
@@ -328,6 +334,7 @@ export function applySyncResult(fresh: Recording, sent: Recording, result: SyncN
     tagsDirty: editedDuringSync ? fresh.tagsDirty : tagsSent ? undefined : fresh.tagsDirty,
     archivedDirty: editedDuringSync ? fresh.archivedDirty : archiveSent ? undefined : fresh.archivedDirty,
     authorDirty: editedDuringSync ? fresh.authorDirty : authorSent ? undefined : fresh.authorDirty,
+    summaryDetailDirty: editedDuringSync ? fresh.summaryDetailDirty : summaryDetailSent ? undefined : fresh.summaryDetailDirty,
   };
 }
 

@@ -189,6 +189,7 @@ export function parseManifest(json: string): BackupManifest | null {
         name: item.name,
         color: typeof item.color === 'string' ? item.color : '',
         isDefault: item.isDefault === true,
+        kind: item.kind === 'mcp' ? 'mcp' : item.kind === 'book' ? 'book' : 'notes',
         createdAt: typeof item.createdAt === 'string' ? item.createdAt : '',
         updatedAt: typeof item.updatedAt === 'string' ? item.updatedAt : '',
       });

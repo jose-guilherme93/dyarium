@@ -79,7 +79,7 @@ export async function pullNotebooks(): Promise<number> {
       name: notebook.name,
       color: notebook.color,
       isDefault: notebook.is_default,
-      kind: notebook.kind === 'book' ? 'book' : 'notes',
+      kind: notebook.kind === 'mcp' ? 'mcp' : notebook.kind === 'book' ? 'book' : 'notes',
       createdAt: notebook.created_at,
       updatedAt: notebook.updated_at,
       dirty: false,

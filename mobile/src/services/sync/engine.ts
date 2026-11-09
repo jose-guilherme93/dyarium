@@ -164,7 +164,8 @@ export async function reconcileServer(server: StoredServer): Promise<SyncSummary
         recording.notebookDirty ||
         recording.tagsDirty ||
         recording.archivedDirty ||
-        recording.authorDirty,
+        recording.authorDirty ||
+        recording.summaryDetailDirty,
     );
     // Sem linha de sync, a nota e nova naquele ambiente: o plano a coloca em
     // `push` pelo proprio id. Com linha, qualquer mudanca depois do ultimo
@@ -489,6 +490,7 @@ async function syncNotebooks(api: DyariumApi, serverId: string): Promise<void> {
       name: item.name,
       color: item.color,
       isDefault: item.is_default,
+      kind: item.kind === 'mcp' ? 'mcp' : item.kind === 'book' ? 'book' : 'notes',
       createdAt: item.created_at,
       updatedAt: item.updated_at,
       dirty: false,
@@ -747,6 +749,7 @@ async function pushRecording(
     tagsDirty: true,
     archivedDirty: true,
     authorDirty: true,
+    summaryDetailDirty: true,
   };
   const result = await syncNoteWith(api, view, async () => ({
     markdown,

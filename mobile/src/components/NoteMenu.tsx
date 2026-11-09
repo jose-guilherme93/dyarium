@@ -4,7 +4,7 @@ import { Modal, ScrollView, StyleSheet, View } from 'react-native';
 import { Text } from '@/components/AppText';
 import { Press } from '@/components/Press';
 import { Screen } from '@/components/Screen';
-import type { AuthorRole } from '@/core/types';
+import type { AuthorRole, SummaryDetail } from '@/core/types';
 import { titleFontSize } from '@/core/format';
 import {
   clampFontSize,
@@ -36,6 +36,16 @@ interface NoteMenuProps {
   onChangeTypography(next: NoteTypography): void;
   onClose(): void;
   onShare(): void;
+  /** Caderno de projetos (MCP): libera o ajuste de resumo do projeto. */
+  mcp?: boolean;
+  isMcp?: boolean;
+  project?: boolean;
+  isProject?: boolean;
+  /** Detalhe do resumo do projeto. */
+  summaryDetail?: SummaryDetail;
+  initialSummaryDetail?: SummaryDetail;
+  onChangeSummaryDetail?(detail: SummaryDetail): void;
+  onSummaryDetailChange?(detail: SummaryDetail): void;
 }
 
 const AUTHOR_OPTIONS: { value: AuthorRole; label: string }[] = [
@@ -94,6 +104,11 @@ function Segment<T extends string>({
  * A analise tem tela propria (botao de IA); aqui ficam apenas os ajustes da
  * nota que ja existiam: compartilhar, tipografia, autor e propriedades.
  */
+const SUMMARY_DETAIL_OPTIONS: { value: SummaryDetail; label: string }[] = [
+  { value: 'concise', label: 'Enxuto' },
+  { value: 'full', label: 'Completo' },
+];
+
 export function NoteMenu({
   visible,
   title,
@@ -106,7 +121,16 @@ export function NoteMenu({
   onChangeTypography,
   onClose,
   onShare,
+  mcp = false,
+  isMcp = false,
+  project = false,
+  isProject = false,
+  summaryDetail,
+  initialSummaryDetail = 'concise',
+  onChangeSummaryDetail,
+  onSummaryDetailChange,
 }: NoteMenuProps) {
+  const mcpEnabled = mcp || isMcp || project || isProject;
   const styles = useThemedStyles(baseStyles);
   const { colors } = useTheme();
   const shown = title.trim() || 'Nota sem título';
@@ -207,6 +231,20 @@ export function NoteMenu({
                   </Press>
                 ) : null}
               </View>
+            </>
+          ) : null}
+
+          {mcpEnabled ? (
+            <>
+              <Text style={styles.sectionLabel}>Resumo</Text>
+              <Segment
+                value={summaryDetail ?? initialSummaryDetail}
+                options={SUMMARY_DETAIL_OPTIONS}
+                onChange={(detail) => {
+                  onChangeSummaryDetail?.(detail);
+                  onSummaryDetailChange?.(detail);
+                }}
+              />
             </>
           ) : null}
 

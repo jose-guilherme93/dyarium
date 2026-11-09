@@ -4,7 +4,10 @@
  * tombstone (`deleted=1`) ate o push confirmar.
  */
 
-import { DEFAULT_NOTEBOOK_ID, type Notebook } from '@/core/notebooks';
+import {
+  DEFAULT_NOTEBOOK_ID,
+  type Notebook,
+} from '@/core/notebooks';
 import { getDatabase } from './db';
 
 interface NotebookRow {
@@ -26,7 +29,7 @@ function rowToNotebook(row: NotebookRow): Notebook {
     name: row.name,
     color: row.color,
     isDefault: row.is_default !== 0,
-    kind: row.kind === 'book' ? 'book' : 'notes',
+    kind: row.kind === 'mcp' ? 'mcp' : row.kind === 'book' ? 'book' : 'notes',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     dirty: row.dirty !== 0,
@@ -65,7 +68,7 @@ export async function insertLocalNotebook(notebook: Notebook): Promise<void> {
       notebook.name,
       notebook.color,
       notebook.isDefault ? 1 : 0,
-      notebook.kind === 'book' ? 'book' : 'notes',
+      notebook.kind === 'mcp' ? 'mcp' : notebook.kind === 'book' ? 'book' : 'notes',
       notebook.createdAt,
       notebook.updatedAt,
     ],
@@ -87,7 +90,12 @@ export async function updateLocalNotebook(
        updated_at = ?,
        dirty = 1
      WHERE id = ? AND is_default = 0`,
-    [nextName && nextName.length > 0 ? nextName : null, nextColor ?? null, new Date().toISOString(), id],
+    [
+      nextName && nextName.length > 0 ? nextName : null,
+      nextColor ?? null,
+      new Date().toISOString(),
+      id,
+    ],
   );
 }
 
@@ -166,7 +174,7 @@ export async function upsertNotebookFromServer(notebook: Notebook): Promise<void
       notebook.name,
       notebook.color,
       notebook.isDefault ? 1 : 0,
-      notebook.kind === 'book' ? 'book' : 'notes',
+      notebook.kind === 'mcp' ? 'mcp' : notebook.kind === 'book' ? 'book' : 'notes',
       notebook.createdAt,
       notebook.updatedAt,
     ],
@@ -207,7 +215,7 @@ export async function restoreLocalNotebook(notebook: Notebook): Promise<void> {
       notebook.name,
       notebook.color,
       notebook.isDefault ? 1 : 0,
-      notebook.kind === 'book' ? 'book' : 'notes',
+      notebook.kind === 'mcp' ? 'mcp' : notebook.kind === 'book' ? 'book' : 'notes',
       notebook.createdAt || new Date().toISOString(),
       notebook.updatedAt || new Date().toISOString(),
       notebook.isDefault ? 0 : 1,

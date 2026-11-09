@@ -122,6 +122,8 @@ export interface UpdateEntryBody {
   archived?: boolean;
   /** Papel do autor da nota (ultima gravacao vence). */
   author?: AuthorRole;
+  /** Detalhe do resumo automatico do projeto. */
+  summary_detail?: 'concise' | 'full';
   /** Versoes lidas pelo cliente: o servidor recusa o campo que ja mudou. */
   versions?: {
     title?: string;
@@ -252,6 +254,7 @@ export interface SyncManifestEntry {
   notebook_id?: string;
   archived?: boolean;
   author?: AuthorRole;
+  summary_detail?: 'concise' | 'full';
   versions?: { title?: string; recorded_at?: string; body?: string };
   body_hash?: string;
   primary_attachment_id?: string;
@@ -405,6 +408,8 @@ export interface ServerEntry {
   archived?: boolean;
   /** Papel do autor da nota; vazio segue o padrao do app. */
   author?: AuthorRole;
+  /** Detalhe do resumo automatico do projeto. */
+  summary_detail?: 'concise' | 'full';
   /** Pilha de audios (so no detalhe da entrada), cada um com sua transcricao. */
   audios?: ServerAudio[];
   /** Primeiro audio original da entrada (a listagem traz so o id, nao a pilha). */
@@ -525,7 +530,7 @@ export interface ServerNotebook {
   name: string;
   color: string;
   is_default: boolean;
-  kind?: 'notes' | 'book';
+  kind?: 'notes' | 'book' | 'mcp';
   entry_count: number;
   last_entry_at?: string;
   created_at: string;

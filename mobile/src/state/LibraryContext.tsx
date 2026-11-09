@@ -2,12 +2,16 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { AppState } from 'react-native';
 
 import { newId } from '@/core/id';
-import { DEFAULT_NOTEBOOK_ID, sameNotebooks, type Notebook } from '@/core/notebooks';
+import {
+  DEFAULT_NOTEBOOK_ID,
+  sameNotebooks,
+  type Notebook,
+} from '@/core/notebooks';
 import { buildDraftNote, buildTextNote, noteHasContent } from '@/core/note';
 import { attachAudioToNote, audioRefFromPath, canFreeLocalAudio } from '@/core/noteAudio';
 import type { NoteInsertPosition } from '@/core/noteDocument';
 import { markQueued } from '@/core/queue';
-import { isUploadable, needsNoteSync, needsTranscript, type AuthorRole, type Recording } from '@/core/types';
+import { isUploadable, needsNoteSync, needsTranscript, type AuthorRole, type Recording, type SummaryDetail } from '@/core/types';
 import { bumpRender } from '@/dev/perf';
 import { clockNode } from '@/services/clock';
 import { deleteRecordingRow, getRecording, listRecordings, updateRecordingNote, upsertRecording } from '@/services/db';
@@ -57,6 +61,8 @@ interface LibraryValue {
   setNoteTags(id: string, tags: string[]): Promise<void>;
   /** Troca o autor da nota (vazio volta ao padrao da instancia). */
   setNoteAuthor(id: string, author: AuthorRole): Promise<void>;
+  /** Ajusta o detalhe do resumo do projeto (entrada MCP). */
+  setNoteSummaryDetail(id: string, detail: SummaryDetail): Promise<void>;
   /** Coloca uma gravacao recem-finalizada na fila e dispara o envio. */
   enqueue(recording: Recording): Promise<void>;
   /** Cria uma nota somente texto e a coloca na fila. */
@@ -721,6 +727,24 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     [kick],
   );
 
+  const setNoteSummaryDetail = useCallback(
+    async (id: string, detail: SummaryDetail) => {
+      const current = await getRecording(id);
+      if (!current) return;
+      if ((current.summaryDetail ?? 'concise') === detail) return;
+      const updated: Recording = {
+        ...current,
+        summaryDetail: detail,
+        summaryDetailDirty: true,
+        updatedAt: new Date().toISOString(),
+      };
+      await upsertRecording(updated);
+      setRecordings((prev) => prev.map((r) => (r.id === id ? updated : r)));
+      if (current.entryId) kick();
+    },
+    [kick],
+  );
+
   const freeAudioForNote = useCallback(
     async (id: string) => {
       const current =
@@ -781,6 +805,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       moveNoteToNotebook,
       setNoteTags,
       setNoteAuthor,
+      setNoteSummaryDetail,
       enqueue,
       createTextNote,
       createDraftNote,
@@ -809,6 +834,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       moveNoteToNotebook,
       setNoteTags,
       setNoteAuthor,
+      setNoteSummaryDetail,
       enqueue,
       createTextNote,
       createDraftNote,

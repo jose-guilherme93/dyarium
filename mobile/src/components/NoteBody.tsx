@@ -57,6 +57,7 @@ import {
   serializeNoteDocument,
   setWidthInNoteNodes,
   type NoteAudioNode,
+  type NoteDetailsNode,
   type NoteImageNode,
   type NoteNode,
   type NoteTextNode,
@@ -787,6 +788,10 @@ const NativeNoteBody = memo(
         );
       }
 
+      if (node.kind === 'details') {
+        return <NoteDetails key={`${version}-${node.id}`} node={node} />;
+      }
+
       const own = ownAudioRefs.includes(node.ref);
       // O no pode ter uma referencia que nao casa com o mapa (audio antigo,
       // `local:` virou `attachment:` em outro aparelho). Para o audio da
@@ -1068,6 +1073,36 @@ function ImageBlock({
   );
 }
 
+/** Bloco colapsavel de detalhes tecnicos (MCP). */
+function NoteDetails({ node }: { node: NoteDetailsNode }) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+  const [open, setOpen] = useState(node.open);
+
+  return (
+    <View style={styles.details} testID="note-details">
+      <Press
+        style={styles.detailsHeader}
+        onPress={() => setOpen((value) => !value)}
+        accessibilityRole="button"
+        accessibilityLabel={node.summary}
+      >
+        <Text style={styles.detailsSummary}>{node.summary}</Text>
+        <Ionicons
+          name={open ? 'chevron-up' : 'chevron-down'}
+          size={18}
+          color={colors.textSecondary}
+        />
+      </Press>
+      {open ? (
+        <Text style={styles.detailsBody} testID="note-details-body">
+          {node.body}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
 /** Busca uma URI no mapa, tolerando a codificacao que o editor pode devolver. */
 function lookup(map: Map<string, string>, src: string): string | undefined {
   const found = map.get(src);
@@ -1180,5 +1215,28 @@ const baseStyles = defineStyles({
     backgroundColor: baseColors.surfaceElevated,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  details: {
+    backgroundColor: baseColors.surface,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    gap: spacing.sm,
+  },
+  detailsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+  },
+  detailsSummary: {
+    color: baseColors.text,
+    fontSize: 15,
+    fontWeight: '600',
+    flex: 1,
+  },
+  detailsBody: {
+    color: baseColors.textSecondary,
+    fontSize: 13,
+    lineHeight: 19,
   },
 });

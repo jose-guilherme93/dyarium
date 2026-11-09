@@ -55,4 +55,25 @@ describe('NoteMenu', () => {
     expect(screen.queryByText('Analisar nota')).toBeNull();
     expect(screen.queryByText('Análise')).toBeNull();
   });
+
+  it('mostra o controle de Resumo quando o prop mcp esta ativo', () => {
+    render(
+      <NoteMenu
+        visible
+        title="Nota"
+        properties={[]}
+        typography={typography}
+        onChangeTypography={jest.fn()}
+        onClose={jest.fn()}
+        onShare={jest.fn()}
+        mcp
+        summaryDetail="concise"
+        onChangeSummaryDetail={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByText('Resumo')).toBeTruthy();
+    expect(screen.getByText('Enxuto')).toBeTruthy();
+    expect(screen.getByText('Completo')).toBeTruthy();
+  });
 });

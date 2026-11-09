@@ -105,6 +105,10 @@ export interface Recording {
   author?: AuthorRole;
   /** Escolha local ainda nao enviada ao servidor. */
   authorDirty?: boolean;
+  /** Detalhe do resumo automatico do projeto (entrada MCP). */
+  summaryDetail?: SummaryDetail;
+  /** Escolha local ainda nao enviada ao servidor. */
+  summaryDetailDirty?: boolean;
   /**
    * Nota apagada, esperando o fim da janela da lixeira (7 dias). Enquanto
    * existir, a nota nao aparece em lista nenhuma; o audio local fica guardado
@@ -156,6 +160,8 @@ export interface Recording {
   createdAt: string;
   updatedAt: string;
 }
+
+export type SummaryDetail = 'concise' | 'full';
 
 export type TranscriptStatus = 'pending' | 'ready' | 'failed';
 

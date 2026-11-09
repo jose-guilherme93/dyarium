@@ -72,7 +72,20 @@ export interface NoteAudioNode {
   breakAfter?: string;
 }
 
-export type NoteNode = NoteTextNode | NoteImageNode | NoteAudioNode;
+export interface NoteDetailsNode {
+  kind: 'details';
+  id: string;
+  /** Rotulo do bloco colapsavel. */
+  summary: string;
+  /** Corpo em texto puro, com as quebras de linha preservadas. */
+  body: string;
+  /** Aberto por padrao quando true. */
+  open: boolean;
+  /** As quebras de linha depois do bloco (o separador do texto seguinte). */
+  breakAfter?: string;
+}
+
+export type NoteNode = NoteTextNode | NoteImageNode | NoteAudioNode | NoteDetailsNode;
 
 /** Posicao de insercao: no de texto e deslocamento no texto visivel. */
 export interface NoteInsertPosition {
@@ -84,6 +97,7 @@ export interface NoteInsertPosition {
 
 const AUDIO_LINE = /^\s*!audio\[([^\]\s]+)\](?:\{d=([0-9]+(?:\.[0-9]+)?)\})?\s*$/;
 const IMAGE_LINE = /^\s*!\[([^\]]*)\]\(([^)\s]+)\)(?:\{(?:w=(\d+))?(?:,?c=([01]))?\})?\s*$/;
+const DETAILS_LINE = /^\s*:::details(?:\s+(open))?\s*(.*)$/;
 
 /**
  * Teto de um no de texto.
@@ -123,6 +137,16 @@ function imageNode(
   return { kind: 'image', id: `i${index}`, ref, alt, width, breakAfter, color };
 }
 
+function detailsNode(
+  summary: string,
+  body: string,
+  open: boolean,
+  index: number,
+  breakAfter = '',
+): NoteDetailsNode {
+  return { kind: 'details', id: `d${index}`, summary, body, open, breakAfter };
+}
+
 /**
  * Separa o markdown em nos: o texto (todo ele, com os paragrafos dentro) e as
  * midias, na ordem em que aparecem.
@@ -136,8 +160,14 @@ function imageNode(
 export function parseNoteDocument(markdown: string): NoteNode[] {
   const text = markdown.replace(/\r\n/g, '\n');
   const nodes: NoteNode[] = [];
+  const lines = text.split('\n');
 
-  let offset = 0;
+  const lineOffset = (index: number): number => {
+    let offset = 0;
+    for (let k = 0; k < index; k += 1) offset += lines[k].length + 1;
+    return offset;
+  };
+
   let segmentStart = 0;
   let hasText = false;
 
@@ -164,16 +194,21 @@ export function parseNoteDocument(markdown: string): NoteNode[] {
     }
   };
 
-  for (const line of text.split('\n')) {
-    const audio = AUDIO_LINE.exec(line);
-    const image = audio ? null : IMAGE_LINE.exec(line);
-    if (audio ?? image) {
-      // O texto ate aqui e um no so (todos os paragrafos juntos).
-      pushText(offset);
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const detailsMatch = DETAILS_LINE.exec(line);
+    const audio = detailsMatch ? null : AUDIO_LINE.exec(line);
+    const image = detailsMatch || audio ? null : IMAGE_LINE.exec(line);
 
-      // A midia ocupa a propria linha: as quebras do fim do texto vao para
-      // o separador (o editor mostra so o conteudo) e as quebras depois da
-      // midia tambem (o texto seguinte comeca na linha seguinte).
+    if (detailsMatch || audio || image) {
+      const off = lineOffset(i);
+      // O texto ate aqui e um no so (todos os paragrafos juntos).
+      pushText(off);
+
+      // O bloco ocupa a propria linha: as quebras do fim do texto vao para
+      // o separador (o editor mostra so o conteudo) e as quebras depois do
+      // bloco tambem (o texto seguinte comeca na linha seguinte).
       const previous = nodes[nodes.length - 1];
       if (previous?.kind === 'text') {
         const content = previous.markdown.replace(/\n+$/, '');
@@ -183,11 +218,49 @@ export function parseNoteDocument(markdown: string): NoteNode[] {
           breakAfter: `${previous.breakAfter ?? ''}${previous.markdown.slice(content.length)}`,
         };
       }
-      const lineEnd = offset + line.length + 1;
+
+      if (detailsMatch) {
+        const open = detailsMatch[1] === 'open';
+        const summaryRaw = (detailsMatch[2] ?? '').trim();
+        const summary = summaryRaw === '' ? 'Detalhes técnicos' : summaryRaw;
+
+        // Coleta as linhas ate a cerca de fechamento.
+        let closeIndex = -1;
+        for (let j = i + 1; j < lines.length; j += 1) {
+          if (/^\s*:::\s*$/.test(lines[j])) {
+            closeIndex = j;
+            break;
+          }
+        }
+        let body = '';
+        let consumedLast = i;
+        if (closeIndex >= 0) {
+          body = lines.slice(i + 1, closeIndex).join('\n');
+          consumedLast = closeIndex;
+        } else {
+          body = lines.slice(i + 1).join('\n');
+          consumedLast = lines.length - 1;
+        }
+
+        const closeLineStart = lineOffset(consumedLast);
+        const closeLineEnd = closeLineStart + lines[consumedLast].length;
+        let after = closeLineEnd + 1;
+        while (after < text.length && text[after] === '\n') after += 1;
+        const breakAfter = text.slice(closeLineEnd, after);
+
+        nodes.push(detailsNode(summary, body, open, nodes.length, breakAfter));
+
+        i = consumedLast + 1;
+        segmentStart = after;
+        hasText = false;
+        continue;
+      }
+
+      const lineEnd = off + line.length + 1;
       let after = lineEnd;
       while (after < text.length && text[after] === '\n') after += 1;
-      // O separador da midia comeca na quebra que fecha a linha dela.
-      const breakAfter = text.slice(offset + line.length, after);
+      // O separador do bloco comeca na quebra que fecha a linha dele.
+      const breakAfter = text.slice(off + line.length, after);
 
       if (audio) {
         const seconds = audio[2] ? Number(audio[2]) : 0;
@@ -200,14 +273,15 @@ export function parseNoteDocument(markdown: string): NoteNode[] {
         const color = image[4] ? image[4] === '1' : undefined;
         nodes.push(imageNode(image[2], image[1], width, nodes.length, breakAfter, color));
       }
-      // A proxima linha comeca depois da linha da midia; o texto seguinte
-      // comeca depois das quebras que a midia carrega.
-      offset = lineEnd;
+      // A proxima linha comeca depois da linha do bloco; o texto seguinte
+      // comeca depois das quebras que o bloco carrega.
+      i += 1;
       segmentStart = after;
+      hasText = false;
       continue;
     }
     hasText = true;
-    offset += line.length + 1;
+    i += 1;
   }
   pushText(text.length);
 
@@ -285,7 +359,7 @@ export function serializeNoteDocument(nodes: NoteNode[]): string {
     // Texto digitado logo abaixo de uma midia precisa de uma quebra: sem ela,
     // a linha `![foto](...)texto` deixaria de ser imagem na proxima abertura.
     if (
-      node.kind === 'text' &&
+      (node.kind === 'text' || node.kind === 'details') &&
       piece !== '' &&
       (previous === 'image' || previous === 'audio') &&
       !out.endsWith('\n')
@@ -300,6 +374,12 @@ export function serializeNoteDocument(nodes: NoteNode[]): string {
 
 function serializeNode(node: NoteNode): string {
   if (node.kind === 'text') return node.markdown;
+  if (node.kind === 'details') {
+    const head = node.open ? ':::details open' : ':::details';
+    const opening = node.summary ? `${head} ${node.summary}` : head;
+    const body = node.body ?? '';
+    return body === '' ? `${opening}\n:::` : `${opening}\n${body}\n:::`;
+  }
   if (node.kind === 'audio') {
     const duration = node.durationMs > 0 ? `{d=${seconds(node.durationMs)}}` : '';
     return `!audio[${node.ref}]${duration}`;

@@ -2315,6 +2315,9 @@ export default function NoteScreen() {
           authorExplicit={noteAuthorExplicit}
           authorHint={noteAuthorHint}
           onChangeAuthor={(next: AuthorRole) => void library.setNoteAuthor(note.id, next)}
+          mcp={currentNotebook?.kind === 'mcp'}
+          summaryDetail={note.summaryDetail ?? 'concise'}
+          onChangeSummaryDetail={(detail) => void library.setNoteSummaryDetail(note.id, detail)}
           typography={typography}
           onChangeTypography={(next) => void setTypography(next)}
           onClose={() => setMenuOpen(false)}

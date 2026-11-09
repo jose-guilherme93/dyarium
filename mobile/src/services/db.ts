@@ -85,6 +85,8 @@ interface Row {
   created_at: string;
   updated_at: string;
   updated_hlc: string | null;
+  summary_detail: string | null;
+  summary_detail_dirty: number | null;
 }
 
 type MigrationDb = Pick<
@@ -792,6 +794,11 @@ const MIGRATIONS: Migration[] = [
           "ALTER TABLE recordings ADD COLUMN summary_detail TEXT NOT NULL DEFAULT 'concise'",
         );
       }
+      if (!(await columnExists(db, 'recordings', 'summary_detail_dirty'))) {
+        await db.execAsync(
+          'ALTER TABLE recordings ADD COLUMN summary_detail_dirty INTEGER NOT NULL DEFAULT 0',
+        );
+      }
     },
   },
 ];
@@ -1213,6 +1220,8 @@ function rowToRecording(row: Row): Recording {
     archived: row.archived ? true : undefined,
     author: (row.author as Recording['author']) ?? '',
     authorDirty: row.author_dirty ? true : undefined,
+    summaryDetail: (row.summary_detail === 'full' ? 'full' : 'concise') as Recording['summaryDetail'],
+    summaryDetailDirty: (row.summary_detail_dirty ?? 0) === 1 ? true : undefined,
     deletedAt: row.deleted_at ?? undefined,
     notebookId: row.notebook_id ?? DEFAULT_NOTEBOOK_ID,
     tags: parseTags(row.tags),
@@ -1287,8 +1296,8 @@ export async function upsertRecording(r: Recording): Promise<void> {
       note_dirty, attachments,
       title_version, recorded_at_version, body_version, sync_conflict, server_audios,
       capture_source_id, capture_start_ms, created_at, updated_at, deleted_at, author, author_dirty,
-      updated_hlc
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      summary_detail, summary_detail_dirty, updated_hlc
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
       recorded_at = excluded.recorded_at,
@@ -1337,6 +1346,8 @@ export async function upsertRecording(r: Recording): Promise<void> {
       deleted_at = excluded.deleted_at,
       author = excluded.author,
       author_dirty = excluded.author_dirty,
+      summary_detail = excluded.summary_detail,
+      summary_detail_dirty = excluded.summary_detail_dirty,
       updated_at = excluded.updated_at,
       updated_hlc = excluded.updated_hlc`,
     [

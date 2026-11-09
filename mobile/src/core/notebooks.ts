@@ -24,8 +24,8 @@ export interface Notebook {
   name: string;
   color: string;
   isDefault: boolean;
-  /** `book` esconde o caderno do app no v1; o sync continua guardando. */
-  kind?: 'notes' | 'book';
+  /** `book` esconde o caderno do app no v1; `mcp` e o caderno automatico de projetos; o sync continua guardando. */
+  kind?: 'notes' | 'book' | 'mcp';
   createdAt: string;
   updatedAt: string;
   /** Alteracao local ainda nao enviada ao servidor. */

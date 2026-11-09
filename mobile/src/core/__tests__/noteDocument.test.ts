@@ -375,6 +375,66 @@ describe('sameNoteContent', () => {
   });
 });
 
+describe('details (bloco colapsavel)', () => {
+  it('faz ida e volta do bloco fechado', () => {
+    const markdown = [
+      ':::details Detalhes técnicos',
+      '- item: detalhe',
+      'Commits:',
+      '- abc1234 mensagem https://example.com/c',
+      'Links:',
+      '- spec: https://example.com/s',
+      ':::',
+    ].join('\n');
+    const nodes = parseNoteDocument(markdown);
+    expect(nodes[0]).toMatchObject({
+      kind: 'details',
+      summary: 'Detalhes técnicos',
+      open: false,
+      body: [
+        '- item: detalhe',
+        'Commits:',
+        '- abc1234 mensagem https://example.com/c',
+        'Links:',
+        '- spec: https://example.com/s',
+      ].join('\n'),
+    });
+    expect(serializeNoteDocument(nodes)).toBe(markdown);
+  });
+
+  it('preserva o bloco aberto', () => {
+    const markdown = ':::details open Detalhes técnicos\n- item\n:::';
+    const nodes = parseNoteDocument(markdown);
+    expect(nodes[0]).toMatchObject({ kind: 'details', open: true, summary: 'Detalhes técnicos', body: '- item' });
+    expect(serializeNoteDocument(nodes)).toBe(markdown);
+  });
+
+  it('preserva texto antes e depois', () => {
+    const markdown = 'Antes\n:::details Detalhes técnicos\n- item: detalhe\n:::\nDepois';
+    const nodes = parseNoteDocument(markdown);
+    expect(nodes.map((node) => node.kind)).toEqual(['text', 'details', 'text']);
+    expect((nodes[0] as any).markdown).toBe('Antes');
+    expect((nodes[0] as any).breakAfter).toBe('\n');
+    expect((nodes[2] as any).markdown).toBe('Depois');
+    expect(serializeNoteDocument(nodes)).toBe(markdown);
+  });
+
+  it('preserva corpo com varias linhas', () => {
+    const body = 'linha 1\n\nlinha 3\nlinha 4';
+    const markdown = `:::details X\n${body}\n:::`;
+    const nodes = parseNoteDocument(markdown);
+    expect((nodes[0] as any).body).toBe(body);
+    expect(serializeNoteDocument(nodes)).toBe(markdown);
+  });
+
+  it('rotulo padrao quando ausente', () => {
+    const markdown = ':::details\nfoo\n:::';
+    const nodes = parseNoteDocument(markdown);
+    expect((nodes[0] as any).summary).toBe('Detalhes técnicos');
+    expect(serializeNoteDocument(nodes)).toBe(':::details Detalhes técnicos\nfoo\n:::');
+  });
+});
+
 describe('revealIndexForLines', () => {
   it('revela o documento inteiro quando cabe no limite de linhas', () => {
     const nodes = parseNoteDocument('A\nB\nC');
