@@ -304,7 +304,7 @@ const DrawnLabel = memo(function DrawnLabel({
     } else if (label.side === 'above') {
       ty = sy - sr - LABEL_GAP - LABEL_LINE_HEIGHT;
     }
-    return [{ translateX: tx }, { translateY: ty }];
+    return [{ translateX: tx + label.dx }, { translateY: ty + label.dy }];
   });
 
   return (
@@ -360,9 +360,13 @@ const LabelLayer = memo(
       panX: SharedValue<number>;
       panY: SharedValue<number>;
       sim: SharedValue<SimState>;
+      /** No grafo estatico o nome aparece sem gesto de zoom. */
+      alwaysLabels: boolean;
+      /** Na previa, so as relacoes da entidade aberta ganham nome. */
+      onlyIds?: ReadonlySet<string>;
     }
   >(function LabelLayer(
-    { shown, ids, indexById, bodies, layout, fitted, colors, fonts, band, width, selectedId, zoom, panX, panY, sim },
+    { shown, ids, indexById, bodies, layout, fitted, colors, fonts, band, width, selectedId, zoom, panX, panY, sim, alwaysLabels, onlyIds },
     ref,
   ) {
     const [labels, setLabels] = useState<GraphLabel[]>([]);
@@ -374,7 +378,7 @@ const LabelLayer = memo(
       (cameraZoom: number, cameraPanX: number, cameraPanY: number) => {
         camera.current = { zoom: cameraZoom, panX: cameraPanX, panY: cameraPanY };
         const ratio = fitted.zoom > 0 ? cameraZoom / fitted.zoom : 1;
-        if (ratio < LABEL_ZOOM_ON) {
+        if (!alwaysLabels && ratio < LABEL_ZOOM_ON) {
           if (current.current.length > 0) {
             current.current = [];
             setLabels([]);
@@ -400,6 +404,9 @@ const LabelLayer = memo(
           },
           selectedId,
           budget: 48,
+          preferEntities: alwaysLabels,
+          onlyIds,
+          radialSides: alwaysLabels,
         });
         const previous = current.current;
         const same =
@@ -407,13 +414,16 @@ const LabelLayer = memo(
           next.every(
             (label, index) =>
               label.id === previous[index].id &&
+              label.side === previous[index].side &&
+              label.dx === previous[index].dx &&
+              label.dy === previous[index].dy &&
               label.selected === previous[index].selected,
           );
         if (same) return;
         current.current = next;
         setLabels(next);
       },
-      [shown, ids, bodies, layout, fitted, band, width, selectedId, sim],
+      [shown, ids, bodies, layout, fitted, band, width, selectedId, sim, alwaysLabels, onlyIds],
     );
 
     const queue = useCallback(
@@ -506,6 +516,11 @@ interface GraphCanvasProps {
   onSelect(id: string | null): void;
   /** Quando false, o grafo é estático (sem pan/zoom/tap). */
   interactive?: boolean;
+  /**
+   * Mostra os nomes sem esperar zoom. A tela da entidade usa isso na previa
+   * estatica, onde nao ha gesto para aproximar e o nome e a informacao.
+   */
+  showLabels?: boolean;
 }
 
 function clampWorklet(value: number, min: number, max: number): number {
@@ -527,6 +542,7 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
     kinds = new Set<EntityKind>(),
     onSelect,
     interactive = true,
+    showLabels,
   },
   ref,
 ) {
@@ -542,6 +558,9 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
     () => visibleBand(height, viewportTop, viewportBottom),
     [height, viewportTop, viewportBottom],
   );
+  // A previa estatica nasce com o desenho no lugar e sem gesto: o nome tem que
+  // aparecer sozinho.
+  const labelsAlways = showLabels ?? !interactive;
   const visibleHeight = band.height;
 
   const fitted = useMemo(
@@ -608,6 +627,15 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
     () => (selectedId ? neighborIds(shown, selectedId) : new Set<string>()),
     [shown, selectedId],
   );
+
+  // Na previa da entidade, o resto do mapa e so contexto: nome so nas relacoes
+  // dela e nela mesma.
+  const relationIds = useMemo(() => {
+    if (!labelsAlways || !selectedId) return undefined;
+    const ids = new Set<string>([selectedId]);
+    for (const id of selectedNeighbors) if (id !== 'user') ids.add(id);
+    return ids;
+  }, [labelsAlways, selectedId, selectedNeighbors]);
 
   // ---- simulacao -----------------------------------------------------------
 
@@ -1185,6 +1213,8 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
           panX={panX}
           panY={panY}
           sim={sim}
+          alwaysLabels={labelsAlways}
+          onlyIds={relationIds}
         />
       </Canvas>
       <FrameHud label={`grafo ${deviceTag}`} />

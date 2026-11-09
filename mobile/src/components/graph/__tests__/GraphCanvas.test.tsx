@@ -131,7 +131,10 @@ const layout: GraphLayout = {
   },
 };
 
-function desenha(ref?: React.Ref<GraphCanvasHandle>) {
+function desenha(
+  ref?: React.Ref<GraphCanvasHandle>,
+  props: Partial<React.ComponentProps<typeof GraphCanvas>> = {},
+) {
   return render(
     <GraphCanvas
       ref={ref}
@@ -145,6 +148,7 @@ function desenha(ref?: React.Ref<GraphCanvasHandle>) {
       selectedId={null}
       kinds={new Set<EntityKind>(['person', 'place', 'theme', 'decision'])}
       onSelect={() => undefined}
+      {...props}
     />,
   );
 }
@@ -169,6 +173,17 @@ describe('desenho do mapa', () => {
     expect(within(canvas).getByText('Praia')).toBeTruthy();
     expect(within(canvas).getByText('Você')).toBeTruthy();
     jest.useRealTimers();
+  });
+
+  it('na previa estatica, nomeia so as relacoes do no aberto', () => {
+    // A tela da entidade abre o grafo sem gesto; o nome das relacoes e a
+    // informacao, entao ele nasce junto com o desenho. O resto do mapa ali e
+    // so contexto e nao ganha nome.
+    desenha(undefined, { interactive: false, showLabels: true, selectedId: 'person:e1' });
+    const canvas = screen.getByTestId('graph-canvas');
+    expect(within(canvas).getByText('Maria')).toBeTruthy();
+    expect(within(canvas).queryByText('Praia')).toBeNull();
+    expect(within(canvas).queryByText('Você')).toBeNull();
   });
 
   it('passa a camera ao Skia como numero, nunca como objeto de shared value', () => {

@@ -1,9 +1,10 @@
-import { buildGraph } from '../graphBuild';
+import { buildGraph, buildEntityPreview } from '../graphBuild';
 import type { EntityLink, GraphEntry, GraphEntity } from '../graphModel';
 import {
   fitCamera,
   layoutGraph,
   layoutKey,
+  layoutRelationPreview,
   panLimits,
   stableHash,
   visibleBand,
@@ -50,16 +51,26 @@ describe('layoutGraph', () => {
     }
   });
 
-  it('espalha as bolas em vez de alinhar num anel perfeito', () => {
+  it('faz do dono a maior bola, com o dobro da segunda maior', () => {
+    // Nada de disco a parte: o dono e uma bola normal, so que o dobro da
+    // maior entidade, com a mesma cor e o mesmo traco das outras.
+    const data = graphOf(12);
+    const layout = layoutGraph(data);
+    const second = Math.max(...data.nodes.map((node) => layout.positions[node.id].r));
+    expect(layout.positions.user.r).toBeCloseTo(second * 2);
+  });
+
+  it('distribui as bolas em espiral preenchendo o espaco', () => {
     const data = graphOf(40);
     const layout = layoutGraph(data);
     const radii = data.nodes.map((node) =>
       Math.hypot(layout.positions[node.id].x, layout.positions[node.id].y),
     );
-    // A relaxacao de forcas cria uma nuvem: raios variados, sem todos no mesmo
-    // valor como num anel.
+    // Layout em espiral: raios variados, preenchendo o espaco.
     const distinct = new Set(radii.map((value) => Math.round(value / 10)));
     expect(distinct.size).toBeGreaterThan(5);
+    // O centro fica na origem.
+    expect(layout.positions.user).toMatchObject({ x: 0, y: 0 });
   });
 
   it('afasta as bolas conforme o conjunto cresce', () => {
@@ -68,7 +79,7 @@ describe('layoutGraph', () => {
     const radii = data.nodes.map((node) =>
       Math.hypot(layout.positions[node.id].x, layout.positions[node.id].y),
     );
-    expect(Math.max(...radii)).toBeGreaterThan(200);
+    expect(Math.max(...radii)).toBeGreaterThan(100);
   });
 
   it('mantém a entidade do foco perto do centro e as notas em volta', () => {
@@ -170,5 +181,45 @@ describe('zoomAround', () => {
     // Depois do zoom, o mesmo ponto do mundo continua sob o foco.
     expect(width / 2 + next.panX + worldX * next.zoom).toBeCloseTo(focalX, 6);
     expect(centerY + next.panY + worldY * next.zoom).toBeCloseTo(focalY, 6);
+  });
+});
+
+describe('layoutRelationPreview', () => {
+  it('poe a entidade no centro e as relacoes numa elipse dentro da tela', () => {
+    const source = graphOf(5);
+    const preview = buildEntityPreview(
+      {
+        entries: [{ id: 'n1', title: 'Nota', recordedAt: now, notebookId: 'nb' }],
+        entities: source.nodes.map((node) => ({
+          id: node.id.split(':')[1],
+          kind: node.kind as GraphEntity['kind'],
+          name: node.label,
+          icon: '',
+          updatedAt: '',
+        })),
+        links: source.nodes.map((node) => ({
+          entryId: 'n1',
+          entityId: node.id.split(':')[1],
+          count: 1,
+        })),
+        centerLabel: 'Você',
+      },
+      source.nodes[0].id,
+    );
+    const layout = layoutRelationPreview(preview);
+
+    expect(layout.positions[preview.center.id]).toMatchObject({ x: 0, y: 0 });
+    const ring = preview.nodes.map((node) => layout.positions[node.id]);
+    expect(ring.every(Boolean)).toBe(true);
+    // Nada de circulo perfeito: a espiral afasta uns e aproxima outros.
+    const distances = ring.map((pos) => Math.hypot(pos.x, pos.y));
+    expect(new Set(distances.map((value) => value.toFixed(2))).size).toBeGreaterThan(3);
+    // Nenhuma bola toca a outra.
+    for (let i = 0; i < ring.length; i += 1) {
+      for (let j = i + 1; j < ring.length; j += 1) {
+        const distance = Math.hypot(ring[i].x - ring[j].x, ring[i].y - ring[j].y);
+        expect(distance).toBeGreaterThan(ring[i].r + ring[j].r);
+      }
+    }
   });
 });

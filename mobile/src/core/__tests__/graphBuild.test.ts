@@ -1,4 +1,4 @@
-import { buildGraph, analyzedCount } from '../graphBuild';
+import { buildGraph, analyzedCount, buildEntityPreview } from '../graphBuild';
 import type { EntityLink, GraphEntry, GraphEntity } from '../graphModel';
 
 function entry(id: string, recordedAt: string, extra: Partial<GraphEntry> = {}): GraphEntry {
@@ -138,6 +138,39 @@ describe('buildGraph', () => {
       { focus: 'person:nao' },
     );
     expect(data.nodes).toHaveLength(0);
+  });
+
+  it('a previa mantem a entidade no centro e so as relacoes dela', () => {
+    const source = { entries, entities, links, centerLabel: 'João' };
+    const preview = buildEntityPreview(source, 'person:e-maria');
+
+    // A entidade aberta vira o centro; o dono sai do desenho.
+    expect(preview.center.id).toBe('person:e-maria');
+    expect(preview.nodes.map((node) => node.id)).not.toContain('user');
+    expect(preview.nodes.map((node) => node.id)).not.toContain('person:e-maria');
+    // Cada vizinho direto vira uma aresta do centro.
+    expect(preview.edges.every((edge) => edge.source === 'person:e-maria')).toBe(true);
+    expect(preview.nodes.length).toBe(preview.edges.length);
+    expect(preview.nodes.map((node) => node.id).sort()).toEqual(
+      [...new Set(preview.edges.map((edge) => edge.target))].sort(),
+    );
+  });
+
+  it('a previa cabe muito mais relacoes que o corte do mapa', () => {
+    const many = Array.from({ length: 30 }, (_, index) => ({
+      ...entity(`e-parceiro-${index}`, 'person', `Parceiro ${index}`),
+    }));
+    const manyLinks = many.map((item) => link('n1', item.id, 1));
+    const source = {
+      entries: [entry('n1', '2026-10-20T10:00:00Z')],
+      entities: [...many, entity('e-maria', 'person', 'Maria')],
+      links: [link('n1', 'e-maria', 3), ...manyLinks],
+      centerLabel: 'João',
+    };
+
+    const preview = buildEntityPreview(source, 'person:e-maria', 25);
+    expect(preview.nodes).toHaveLength(25);
+    expect(preview.edges).toHaveLength(25);
   });
 
   it('conta quantas notas foram analisadas', () => {

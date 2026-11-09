@@ -1,16 +1,4 @@
-/**
- * Posicoes do mapa.
- *
- * Uma unica relaxacao de forcas, a mesma do dashboard: repulsao entre as bolas,
- * mola pelas ligacoes e ancora fraca no dono. As bolas crescem com as mencoes,
- * entao as perifericas ficam pequenas e o centro domina -- o desenho tem a
- * mesma cara do mapa do web.
- *
- * O layout e deterministico: o mesmo conjunto cai sempre nas mesmas posicoes,
- * entao o resultado pode ser guardado no SQLite.
- */
-
-import type { GraphData, GraphEdgeKind, GraphNode, GraphNodeKind } from './graphModel';
+import type { GraphData, GraphEdgeKind, GraphNode } from './graphModel';
 
 export interface NodePosition {
   x: number;
@@ -28,26 +16,19 @@ export interface GraphBounds {
 export interface GraphLayout {
   positions: Record<string, NodePosition>;
   bounds: GraphBounds;
-  /** Chave do conjunto desenhado; muda quando as posicoes precisam ser refeitas. */
   key: string;
 }
 
-/** Angulo dourado: distribui as sementes sem alinhar tudo num raio. */
-const GOLDEN_ANGLE = 2.399963;
-/**
- * O layout e calculado em espaco circular e so as posicoes sao esticadas no
- * eixo X para preencher a largura sem virar elipse.
- */
-const LAYOUT_STRETCH_X = 1.35;
+const GOLDEN_ANGLE = 2.3999632297286533;
+const CENTER_RADIUS = 24;
+const MIN_ENTITY_RADIUS = 4;
+/** Acima disso a previa vira duas colunas: a elipse apertaria os nomes. */
+const RING_MAX = 8;
+const MAX_ENTITY_RADIUS = 10;
+const BASE_RADIUS = 40;
+const NOTE_RING_RADIUS = 160;
+const NOTE_RADIUS = 5;
 
-/** Raio de uma bola de entidade, relativo ao maior da visao (igual ao web). */
-export function relativeRadius(mentions: number, maxMentions: number): number {
-  const max = Math.max(1, maxMentions);
-  const ratio = Math.max(0, Math.min(1, mentions / max));
-  return 6 + 20 * Math.sqrt(ratio);
-}
-
-/** Hash estavel (FNV-1a) para chaves e testes. */
 export function stableHash(value: string): number {
   let hash = 2166136261;
   for (let i = 0; i < value.length; i += 1) {
@@ -57,257 +38,87 @@ export function stableHash(value: string): number {
   return hash >>> 0;
 }
 
-/** Chave do conjunto: ids + mencoes + foco. Qualquer mudanca refaz o layout. */
+export function relativeRadius(mentions: number, maxMentions: number): number {
+  const max = Math.max(1, maxMentions);
+  const ratio = Math.max(0, Math.min(1, mentions / max));
+  return MIN_ENTITY_RADIUS + (MAX_ENTITY_RADIUS - MIN_ENTITY_RADIUS) * Math.sqrt(ratio);
+}
+
 export function layoutKey(data: GraphData, focus?: string, steps?: number): string {
   const parts = data.nodes.map((node) => `${node.id}:${node.mentions}:${node.notes}`);
   parts.sort();
   const mode = steps === undefined ? 'full' : `seed${steps}`;
-  return `v10:${BALL_SCALE}|${mode}|${focus ?? ''}|${parts.join(',')}`;
+  // v3: o raio do dono passou a ser o dobro da segunda maior bola. A chave
+  // entra no cache do SQLite, entao subir a versao descarta o layout antigo --
+  // sem isso o aparelho continuava desenhando o dono com o raio velho.
+  return `spiral:v3:${mode}|${focus ?? ''}|${parts.join(',')}`;
 }
 
-function nodeRadius(node: GraphNode, maxMentions: number): number {
-  if (node.kind === 'note') return 7 * BALL_SCALE;
-  return relativeRadius(node.mentions, maxMentions) * BALL_SCALE;
+function polarToCartesian(centerX: number, centerY: number, radius: number, angle: number): { x: number; y: number } {
+  return {
+    x: centerX + radius * Math.cos(angle),
+    y: centerY + radius * Math.sin(angle),
+  };
 }
 
-interface SimNode extends NodePosition {
-  id: string;
-  kind: GraphNodeKind;
-  vx: number;
-  vy: number;
-  fixed: boolean;
-}
+export function layoutGraph(data: GraphData, options: { focus?: string; seed?: Record<string, NodePosition>; steps?: number } = {}): GraphLayout {
+  const { focus } = options;
+  const positions: Record<string, NodePosition> = {};
 
-/**
- * Sementes deterministicas: espiral de angulo dourado a partir do centro.
- *
- * Com `seed`, as bolas que ja estavam na tela continuam exatamente onde
- * estavam: abrir um no mexe so nas que nao existiam ali (as notas), e a
- * fisica tem pouco o que assentar.
- */
-function seedNodes(
-  data: GraphData,
-  focus?: string,
-  seed?: Record<string, NodePosition>,
-): SimNode[] {
+  const center = data.center;
+
+  if (data.nodes.length === 0) {
+    positions[center.id] = { x: 0, y: 0, r: CENTER_RADIUS };
+    return { positions, bounds: boundsOf(positions), key: layoutKey(data, focus) };
+  }
+
   let maxMentions = 1;
   for (const node of data.nodes) {
     if (node.kind !== 'note' && node.mentions > maxMentions) maxMentions = node.mentions;
   }
-  const centerRadius =
-    Math.max(36, relativeRadius(maxMentions, maxMentions) * 1.35) * BALL_SCALE;
-  const nodes: SimNode[] = [
-    {
-      id: data.center.id,
-      kind: 'user',
-      x: 0,
-      y: 0,
-      r: centerRadius,
-      vx: 0,
-      vy: 0,
-      fixed: true,
-    },
-  ];
 
-  let entityIndex = 0;
-  let noteIndex = 0;
-  for (const node of data.nodes) {
-    let x = 0;
-    let y = 0;
-    const prior = seed?.[node.id];
-    if (prior) {
-      x = prior.x;
-      y = prior.y;
-    } else if (focus && node.id === focus) {
-      x = 0;
-      y = -90;
-    } else if (node.kind === 'note') {
-      const angle = noteIndex * GOLDEN_ANGLE;
-      noteIndex += 1;
-      x = Math.cos(angle) * 260;
-      y = Math.sin(angle) * 260;
-    } else {
-      const angle = entityIndex * GOLDEN_ANGLE;
-      entityIndex += 1;
-      const spread = 150 + 18 * Math.sqrt(entityIndex);
-      x = Math.cos(angle) * spread;
-      y = Math.sin(angle) * spread;
+  const entities = data.nodes.filter((n) => n.kind !== 'note');
+  const notes = data.nodes.filter((n) => n.kind === 'note');
+
+  // A bola do dono e o dobro da segunda maior, nao um disco gigante a parte:
+  // ela e so a maior bola do desenho, com a mesma cor e o mesmo traco.
+  let secondRadius = NOTE_RADIUS;
+  for (const node of entities) {
+    const r = relativeRadius(node.mentions, maxMentions);
+    if (r > secondRadius) secondRadius = r;
+  }
+  positions[center.id] = { x: 0, y: 0, r: secondRadius * 2 };
+
+  const sortedEntities = [...entities].sort((a, b) => b.mentions - a.mentions || a.label.localeCompare(b.label));
+
+  for (let i = 0; i < sortedEntities.length; i += 1) {
+    const node = sortedEntities[i];
+    const angle = i * GOLDEN_ANGLE;
+    const radius = BASE_RADIUS + Math.sqrt(i) * 10;
+    const r = relativeRadius(node.mentions, maxMentions);
+
+    let finalAngle = angle;
+    if (node.id === focus) {
+      finalAngle = -Math.PI / 2;
     }
-    nodes.push({
-      id: node.id,
-      kind: node.kind,
-      x,
-      y,
-      r: nodeRadius(node, maxMentions),
-      vx: 0,
-      vy: 0,
-      fixed: false,
+
+    const pos = polarToCartesian(0, 0, node.id === focus ? BASE_RADIUS : radius, finalAngle);
+    positions[node.id] = { x: pos.x, y: pos.y, r };
+  }
+
+  if (focus && notes.length > 0) {
+    const focusNotes = notes.filter((n) => {
+      return data.edges.some((e) => (e.source === focus && e.target === n.id) || (e.target === focus && e.source === n.id));
     });
-  }
-  return nodes;
-}
-
-/**
- * Escala das bolas. O encaixe normaliza o desenho, entao crescer o raio nao
- * aumenta a nuvem na mesma proporcao: a bola ocupa mais do espaco que ja
- * existe, ate as bolas quase se encostarem como numa grade de relogio.
- */
-const BALL_SCALE = 2;
-
-/** Folga entre duas bolas ligadas, em unidades do grafo: o que sobra para o nome. */
-const BALL_GAP: Record<GraphEdgeKind, number> = {
-  relation: 48,
-  cooccurrence: 66,
-  // A nota fica na borda: ela e a prova do foco, nao pode encostar no centro.
-  mention: 104,
-};
-
-interface SimLink {
-  a: number;
-  b: number;
-  kind: GraphEdgeKind;
-}
-
-/** Uma passada de fisica, identica ao web: repulsao, mola e ancora. */
-function relax(nodes: SimNode[], links: SimLink[], limit?: number): void {
-  // Menos passos em grafos grandes: o resultado ainda assenta, e a abertura
-  // deixa de pagar centenas de milhares de pares. O layout fica em cache.
-  const steps = limit ?? (nodes.length > 90 ? 110 : nodes.length > 50 ? 170 : 220);
-  // Repulsao por vizinhanca: a forca cai com o quadrado da distancia, entao
-  // so os pares proximos importam. Uma grade uniforme troca o custo O(n^2) por
-  // O(n), e o mapa abre em milissegundos mesmo com centenas de bolas.
-  const cell = 160;
-  const grid = new Map<string, number[]>();
-  for (let step = 0; step < steps; step += 1) {
-    grid.clear();
-    for (let i = 0; i < nodes.length; i += 1) {
-      const key = `${Math.floor(nodes[i].x / cell)}:${Math.floor(nodes[i].y / cell)}`;
-      const bucket = grid.get(key);
-      if (bucket) bucket.push(i);
-      else grid.set(key, [i]);
-    }
-    for (let i = 0; i < nodes.length; i += 1) {
-      const a = nodes[i];
-      const cx = Math.floor(a.x / cell);
-      const cy = Math.floor(a.y / cell);
-      for (let gx = cx - 1; gx <= cx + 1; gx += 1) {
-        for (let gy = cy - 1; gy <= cy + 1; gy += 1) {
-          const bucket = grid.get(`${gx}:${gy}`);
-          if (!bucket) continue;
-          for (const j of bucket) {
-            if (j <= i) continue;
-            const b = nodes[j];
-            let dx = a.x - b.x;
-            let dy = a.y - b.y;
-            let d2 = dx * dx + dy * dy;
-            if (d2 < 1) {
-              // Empurrao deterministico quando duas bolas coincidem (o web usa
-              // Math.random; aqui o hash mantem o resultado reproduzivel).
-              const seed = stableHash(`${a.id}|${b.id}`);
-              dx = ((seed & 0xff) / 0xff) - 0.5;
-              dy = (((seed >>> 8) & 0xff) / 0xff) - 0.5;
-              d2 = 1;
-            }
-            const strength = a.kind === 'user' || b.kind === 'user' ? 4200 : 2400;
-            const force = strength / Math.max(d2, 2500);
-            const inv = 1 / Math.sqrt(d2);
-            const fx = dx * inv * force;
-            const fy = dy * inv * force;
-            if (!a.fixed) {
-              a.vx += fx;
-              a.vy += fy;
-            }
-            if (!b.fixed) {
-              b.vx -= fx;
-              b.vy -= fy;
-            }
-          }
-        }
-      }
-    }
-
-    for (const link of links) {
-      const a = nodes[link.a];
-      const b = nodes[link.b];
-      if (!a || !b) continue;
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const dist = Math.max(1, Math.hypot(dx, dy));
-      // Folga entre bolas como no dashboard: as pequenas nao colam no centro e
-      // a nuvem abre espaco para os rotulos.
-      const target = a.r + b.r + BALL_GAP[link.kind];
-      const force = (dist - target) * (link.kind === 'cooccurrence' ? 0.005 : 0.009);
-      const ux = dx / dist;
-      const uy = dy / dist;
-      if (!a.fixed) {
-        a.vx += ux * force;
-        a.vy += uy * force;
-      }
-      if (!b.fixed) {
-        b.vx -= ux * force;
-        b.vy -= uy * force;
-      }
-    }
-
-    for (const node of nodes) {
-      if (node.fixed) {
-        node.vx = 0;
-        node.vy = 0;
-        continue;
-      }
-      node.vx += -node.x * 0.0008;
-      node.vy += -node.y * 0.0008;
-      node.vx *= 0.87;
-      node.vy *= 0.87;
-      const speed = Math.hypot(node.vx, node.vy);
-      if (speed > 24) {
-        node.vx *= 24 / speed;
-        node.vy *= 24 / speed;
-      }
-      node.x += node.vx;
-      node.y += node.vy;
+    for (let i = 0; i < focusNotes.length; i += 1) {
+      const node = focusNotes[i];
+      const angle = (i / Math.max(1, focusNotes.length)) * 2 * Math.PI - Math.PI / 2;
+      const pos = polarToCartesian(0, 0, NOTE_RING_RADIUS, angle);
+      positions[node.id] = { x: pos.x, y: pos.y, r: NOTE_RADIUS };
     }
   }
-}
 
-function forcePositions(
-  data: GraphData,
-  focus?: string,
-  seed?: Record<string, NodePosition>,
-  steps?: number,
-): Record<string, NodePosition> {
-  const nodes = seedNodes(data, focus, seed);
-  const index = new Map(nodes.map((node, position) => [node.id, position]));
-  const links: SimLink[] = [];
-  for (const edge of data.edges) {
-    const a = index.get(edge.source);
-    const b = index.get(edge.target);
-    if (a === undefined || b === undefined) continue;
-    links.push({ a, b, kind: edge.kind });
-  }
-  relax(nodes, links, steps);
-  const positions: Record<string, NodePosition> = {};
-  for (const node of nodes) {
-    positions[node.id] = { x: node.x * LAYOUT_STRETCH_X, y: node.y, r: node.r };
-  }
-  return positions;
-}
-
-export interface LayoutOptions {
-  focus?: string;
-  /** Posicoes ja na tela: o que existe ali nao se mexe. */
-  seed?: Record<string, NodePosition>;
-  /** Passos de fisica; menos passos quando a semente ja esta perto. */
-  steps?: number;
-}
-
-export function layoutGraph(data: GraphData, options: LayoutOptions = {}): GraphLayout {
-  const positions = forcePositions(data, options.focus, options.seed, options.steps);
-  return {
-    positions,
-    bounds: boundsOf(positions),
-    key: layoutKey(data, options.focus, options.steps),
-  };
+  return { positions, bounds: boundsOf(positions), key: layoutKey(data, focus) };
 }
 
 function boundsOf(positions: Record<string, NodePosition>): GraphBounds {
@@ -315,29 +126,52 @@ function boundsOf(positions: Record<string, NodePosition>): GraphBounds {
   let minY = 0;
   let maxX = 0;
   let maxY = 0;
-  for (const position of Object.values(positions)) {
-    minX = Math.min(minX, position.x - position.r);
-    minY = Math.min(minY, position.y - position.r);
-    maxX = Math.max(maxX, position.x + position.r);
-    maxY = Math.max(maxY, position.y + position.r);
+  let first = true;
+  for (const pos of Object.values(positions)) {
+    if (first) {
+      minX = pos.x - pos.r;
+      minY = pos.y - pos.r;
+      maxX = pos.x + pos.r;
+      maxY = pos.y + pos.r;
+      first = false;
+    } else {
+      minX = Math.min(minX, pos.x - pos.r);
+      minY = Math.min(minY, pos.y - pos.r);
+      maxX = Math.max(maxX, pos.x + pos.r);
+      maxY = Math.max(maxY, pos.y + pos.r);
+    }
   }
   return { minX, minY, maxX, maxY };
 }
 
+/** Teto do zoom. */
+export const MAX_ZOOM = 4.5;
+
+/**
+ * Quanto da para afastar alem do encaixe: em 35% dele o mapa vira uma nuvem de
+ * pontos, que e o limite util da tela. Sem isso o encaixe era o minimo e a
+ * abertura do mapa nunca aparecia.
+ */
+export const MIN_ZOOM_RATIO = 0.35;
+
+export interface ZoomRange {
+  min: number;
+  max: number;
+}
+
+export function zoomRange(fitZoom: number): ZoomRange {
+  const fit = fitZoom > 0 ? fitZoom : 1;
+  return { min: fit * MIN_ZOOM_RATIO, max: MAX_ZOOM };
+}
+
 export interface FittedCamera {
   zoom: number;
-  /** Deslocamento em relacao ao centro da faixa (zero no encaixe). */
   panX: number;
   panY: number;
-  /** Centro do desenho em coordenadas do grafo. */
   originX: number;
   originY: number;
 }
 
-/**
- * Encaixa o desenho inteiro na faixa visivel. O desenho e o retangulo das
- * bolas: nada fica fora da tela, e o que e periferico aparece pequeno.
- */
 export function fitCamera(
   bounds: GraphBounds,
   width: number,
@@ -346,11 +180,10 @@ export function fitCamera(
     padding?: number;
     minZoom?: number;
     maxZoom?: number;
-    /** `cover` preenche a tela (transborda); `contain` mostra tudo. */
     mode?: 'contain' | 'cover';
   } = {},
 ): FittedCamera {
-  const padding = options.padding ?? 24;
+  const padding = options.padding ?? 8;
   const spanX = Math.max(1, bounds.maxX - bounds.minX);
   const spanY = Math.max(1, bounds.maxY - bounds.minY);
   const fitX = (width - padding * 2) / spanX;
@@ -368,16 +201,10 @@ export function fitCamera(
 export interface VisibleBand {
   top: number;
   bottom: number;
-  /** Centro vertical da faixa: e onde o mapa se encaixa. */
   centerY: number;
   height: number;
 }
 
-/**
- * Faixa da tela onde o mapa aparece: do topo do conteudo ate a borda da folha.
- * `viewportBottom` e a posicao do topo da folha; zero ou invalido cai para a
- * tela inteira.
- */
 export function visibleBand(
   height: number,
   viewportTop = 0,
@@ -393,33 +220,12 @@ export function visibleBand(
   };
 }
 
-/**
- * Limites de pan, em dp de tela. O desenho nunca sai da area disponivel: se ele
- * cabe, nao arrasta; se esta ampliado, arrasta so ate a propria borda.
- */
-export function panLimits(
-  bounds: GraphBounds,
-  zoom: number,
-  width: number,
-  height: number,
-): { limitX: number; limitY: number } {
-  const spanX = Math.max(1, bounds.maxX - bounds.minX) * zoom;
-  const spanY = Math.max(1, bounds.maxY - bounds.minY) * zoom;
-  return {
-    limitX: Math.max(0, (spanX - width) / 2),
-    limitY: Math.max(0, (spanY - height) / 2),
-  };
-}
-
 export interface CameraState {
   zoom: number;
   panX: number;
   panY: number;
 }
 
-/**
- * Zoom mantendo parado o ponto entre os dedos. Devolve a camera nova.
- */
 export function zoomAround(
   start: CameraState,
   nextZoom: number,
@@ -438,6 +244,57 @@ export function zoomAround(
   };
 }
 
+export function panLimits(
+  bounds: GraphBounds,
+  zoom: number,
+  width: number,
+  height: number,
+): { limitX: number; limitY: number } {
+  const spanX = Math.max(1, bounds.maxX - bounds.minX) * zoom;
+  const spanY = Math.max(1, bounds.maxY - bounds.minY) * zoom;
+  return {
+    limitX: Math.max(0, (spanX - width) / 2),
+    limitY: Math.max(0, (spanY - height) / 2),
+  };
+}
+
 export function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+export interface LayoutOptions {
+  focus?: string;
+  seed?: Record<string, NodePosition>;
+  steps?: number;
+}
+
+export function layoutSeeded(
+  data: GraphData,
+  focus: string,
+  seed: Record<string, NodePosition> | null,
+): GraphLayout {
+  return layoutGraph(data, { focus });
+}
+
+/**
+ * Layout da previa de uma entidade: o mesmo espiral do mapa geral.
+ *
+ * Nada de circulo perfeito: as relacoes ficam em volta da entidade com angulo
+ * aureo e raio crescente, entao algumas ficam mais para dentro e outras mais
+ * para fora, como no desenho do mapa. A entidade aberta e o centro.
+ */
+export function layoutRelationPreview(data: GraphData): GraphLayout {
+  return layoutGraph(data);
+}
+
+export function edgeKindCounts(data: GraphData): Record<GraphEdgeKind, number> {
+  const counts: Record<GraphEdgeKind, number> = {
+    relation: 0,
+    cooccurrence: 0,
+    mention: 0,
+  };
+  for (const edge of data.edges) {
+    counts[edge.kind] += 1;
+  }
+  return counts;
 }
