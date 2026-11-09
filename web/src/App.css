@@ -6180,6 +6180,259 @@
   font-size: 12px;
 }
 
+/* ---------- curadoria de entidades (lapis, editor e memoria) ----------
+   Tudo com os tokens de tinta e papel: nada de cor nova, nada de emoji. */
+
+.map-detail-label {
+  margin: -4px 0 8px;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+/* Ficha: lapis colado no nome da entidade. Compacto, inline, sem fundo. */
+.entity-edit {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-soft);
+  vertical-align: baseline;
+}
+
+.entity-edit:hover {
+  color: var(--accent);
+}
+
+/* Grafo: "nao e isso?" com a interrogacao no circulo, discreto sob o nome. */
+.map-not-this {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0 0 10px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-soft);
+  font-size: 11.5px;
+}
+
+.map-not-this:hover {
+  color: var(--accent);
+}
+
+/* O chip com lapis vira uma linha: nome e icone lado a lado no mesmo papel. */
+.chips li:has(.entity-edit) {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.map-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 0 12px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper-2);
+}
+
+.map-editor-field,
+.map-editor-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--ink-soft);
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.map-editor-field .map-title-input,
+.map-editor-field .map-rename-select {
+  margin: 0;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.map-editor-kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.map-kind-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.map-kind-pill--on {
+  border-color: var(--ink);
+  background: var(--paper-3);
+  color: var(--ink);
+}
+
+.map-kind-pill:disabled {
+  opacity: 0.45;
+}
+
+.map-editor-aliases {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.map-alias-chip {
+  padding: 1px 7px;
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  color: var(--ink-soft);
+  font-size: 11px;
+}
+
+.map-editor-icons {
+  max-width: 194px;
+}
+
+.map-editor-icons:focus-visible {
+  outline: none;
+}
+
+.map-kind-pill:focus-visible,
+.map-editor-icons button:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Memoria: rejeicoes, nomes reais e a previa do que a IA le. */
+.map-memory {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.map-memory-count {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--paper-3);
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.map-memory-chips {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+}
+
+.map-reject-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px 2px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  font-size: 12px;
+}
+
+.map-memory-kind {
+  color: var(--ink-soft);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.map-reject-remove {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--ink-soft);
+  font-size: 13px;
+  line-height: 1;
+}
+
+.map-reject-remove:hover:not(:disabled) {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+.map-memory-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  margin-top: 4px;
+}
+
+.map-memory-add .map-rename-select {
+  flex: 1 1 90px;
+  min-width: 0;
+}
+
+.map-memory-names {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+}
+
+.map-memory-names li {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 12px;
+}
+
+.map-memory-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-wrap: anywhere;
+}
+
+.map-memory-names .muted {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.map-memory-preview {
+  max-height: 180px;
+  margin: 0;
+  padding: 8px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--paper-2);
+  color: var(--ink-soft);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* ---------- importacao do Notion ---------- */
 
 .notion-import {

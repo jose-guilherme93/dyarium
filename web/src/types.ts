@@ -279,16 +279,28 @@ export interface EntitySummary {
   kind: EntityKind;
   name: string;
   icon?: string;
+  /** Rotulo livre do dono (escola, gata, personagem); so exibicao. */
+  label?: string;
   entries: number;
   mentions: number;
   sentiment: number;
   last_seen: string | null;
-  /** Relogio do servidor para nome/icone/"sou eu". */
+  /** Relogio do servidor para nome/rotulo/icone/"sou eu". */
   updated_at?: string | null;
   /** Grafias antigas que ainda resolvem para esta entidade. */
   aliases?: string[];
   /** Id da edicao que acabou de acontecer, para o "desfazer". */
   edit_id?: string;
+}
+
+/** "Este nome nunca e entidade deste tipo": memoria aplicada por script antes de gravar. */
+export interface EntityRejection {
+  kind: EntityKind;
+  name: string;
+  /** Chave normalizada: minusculas, sem acento, espacos colapsados, pontas aparadas. */
+  name_key: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface EntityEntry {

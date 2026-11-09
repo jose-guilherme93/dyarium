@@ -8,6 +8,7 @@
  */
 
 import type { BrowserPlan } from "../lib/browserModels";
+import type { EntityMemoryEntry } from "../../../mobile/src/core/entities";
 import type { AnalysisProgress, WorkerNote } from "./analysis";
 import { analyzeNoteInBrowser } from "./analysis";
 import { BrowserEngine, type EngineProgress, type Transcription } from "./engine";
@@ -43,6 +44,8 @@ interface AnalyzeRequest {
   type: "analyze";
   note: WorkerNote;
   modelId: string;
+  /** Dicionario do diario (nome real, rotulo, apelidos, rejeicoes). */
+  memory?: EntityMemoryEntry[];
 }
 
 interface StopRequest {
@@ -128,6 +131,7 @@ async function handle(request: WorkerRequest): Promise<void> {
         {
           shouldStop: () => stopped,
           onProgress: (progress) => post({ id: request.id, type: "analysis-progress", progress }),
+          memory: request.memory,
         },
       );
       post({ id: request.id, type: "result", result });

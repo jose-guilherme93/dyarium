@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { InsightsBody } from "./InsightsBody";
 import type { Analysis } from "../types";
 
@@ -40,5 +40,17 @@ describe("InsightsBody", () => {
     expect(screen.getByText("comprar a passagem")).toBeInTheDocument();
     expect(screen.getByText("viagem para Minas")).toBeInTheDocument();
     expect(screen.getByText(/parcial · 2\/6 blocos/)).toBeInTheDocument();
+  });
+
+  it("o lapis do chip abre a curadoria no tipo", () => {
+    const onOpen = vi.fn();
+    render(<InsightsBody analysis={partial} onOpenEntity={onOpen} />);
+
+    const chip = screen.getByRole("button", { name: "Maria" });
+    const pencil = within(chip.closest("li") as HTMLElement).getByRole("button", {
+      name: "Editar entidade",
+    });
+    fireEvent.click(pencil);
+    expect(onOpen).toHaveBeenCalledWith("person", "Maria", "kind");
   });
 });

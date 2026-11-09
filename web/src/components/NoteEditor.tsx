@@ -50,7 +50,7 @@ interface NoteEditorProps {
   progress?: { stage: string; done: number; total: number };
   onChanged: () => void;
   onDeleted: () => void;
-  onOpenEntity: (kind: EntityKind, name: string) => void;
+  onOpenEntity: (kind: EntityKind, name: string, edit?: "kind") => void;
   onOpenEntry: (id: string) => void;
   notebooks: Notebook[];
   /** Abre o processamento (laboratorio) e deixa Voltar trazer a nota de volta. */

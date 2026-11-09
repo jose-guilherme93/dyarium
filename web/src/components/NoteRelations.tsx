@@ -14,7 +14,8 @@ type RelationKind = Extract<EntityKind, "person" | "place" | "theme">;
 
 export interface NoteRelationsProps {
   analysis: Analysis;
-  onOpenEntity: (kind: EntityKind, name: string) => void;
+  /** `edit` e ignorado aqui: o toque na bola abre o mapa, nao o editor. */
+  onOpenEntity: (kind: EntityKind, name: string, edit?: "kind") => void;
 }
 
 interface RelationNode {

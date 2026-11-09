@@ -12,6 +12,7 @@ import type {
   ChapterStatus,
   EntityDetail,
   EntityMention,
+  EntityRejection,
   EntitySummary,
   Entry,
   GraphResponse,
@@ -746,7 +747,13 @@ export const api = {
       body: JSON.stringify({ runtime, model }),
     }),
   listEntities: (kind?: string) =>
-    request<{ entities: EntitySummary[] }>(`/entities${kind ? `?kind=${encodeURIComponent(kind)}` : ""}`),
+    request<{
+      entities: EntitySummary[];
+      /** Grafias que o dono marcou como ele mesmo. */
+      owner_aliases?: string[];
+      /** Nomes que nunca sao entidade daquele tipo (memoria de curadoria). */
+      rejections?: EntityRejection[];
+    }>(`/entities${kind ? `?kind=${encodeURIComponent(kind)}` : ""}`),
   getEntity: (kind: string, name: string) =>
     request<EntityDetail>(`/entities/${kind}/${encodeURIComponent(name)}`),
   /** Trechos da transcricao ou do texto que provam a entidade no mapa. */
@@ -766,13 +773,43 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ icon }),
     }),
+  /** Rotulo livre exibido junto do nome (escola, gata); so exibicao. */
+  setEntityLabel: (kind: string, name: string, label: string) =>
+    request<EntitySummary>(`/entities/${kind}/${encodeURIComponent(name)}/label`, {
+      method: "PUT",
+      body: JSON.stringify({ label }),
+    }),
+  /** Troca o tipo; mescla com a entidade destino se ela ja existir e rejeita o tipo antigo. */
+  changeEntityKind: (kind: string, name: string, nextKind: string) =>
+    request<EntitySummary>(`/entities/${kind}/${encodeURIComponent(name)}/kind`, {
+      method: "POST",
+      body: JSON.stringify({ kind: nextKind }),
+    }),
+  /** Apaga entidade, vinculos e aliases, e grava a rejeicao do tipo; o edit_id desfaz tudo. */
+  deleteEntity: (kind: string, name: string) =>
+    request<{ status: string; edit_id?: string; rejection?: EntityRejection }>(
+      `/entities/${kind}/${encodeURIComponent(name)}`,
+      { method: "DELETE" },
+    ),
+  /** Memoria: grava que um nome nunca e entidade de um tipo. */
+  addEntityRejection: (kind: string, name: string) =>
+    request<{ status: string; rejection?: EntityRejection; edit_id?: string }>("/entity-rejections", {
+      method: "POST",
+      body: JSON.stringify({ kind, name }),
+    }),
+  /** Libera o nome: uma analise futura pode extrai-lo de novo. */
+  removeEntityRejection: (kind: string, name: string) =>
+    request<{ status: string; edit_id?: string }>(
+      `/entity-rejections/${kind}/${encodeURIComponent(name)}`,
+      { method: "DELETE" },
+    ),
   /** "Sou eu": funde a pessoa com o dono e usa o nome das configuracoes. */
   claimSelf: (name: string) =>
     request<{ status: string; owner: string; edit_id?: string }>(
       `/entities/person/${encodeURIComponent(name)}/self`,
       { method: "POST" },
     ),
-  /** Desfaz a ultima edicao de entidade (renomear, mesclar, icone ou "sou eu"). */
+  /** Desfaz a ultima edicao de entidade (nome, rotulo, tipo, icone, exclusao ou "sou eu"). */
   undoEntityEdit: (id: string) =>
     request<{ status: string; action?: string; label?: string }>(
       `/entities/edits/${encodeURIComponent(id)}/undo`,

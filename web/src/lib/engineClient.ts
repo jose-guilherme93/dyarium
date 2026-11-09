@@ -3,6 +3,7 @@
  * trabalho pesado e continua vivo enquanto a aba estiver aberta.
  */
 
+import type { EntityMemoryEntry } from "../../../mobile/src/core/entities";
 import type { BrowserPlan } from "./browserModels";
 import type { AnalysisProgress, WorkerNote, WorkerAnalysis } from "../worker/analysis";
 import type { EngineProgress, Transcription } from "../worker/engine";
@@ -84,8 +85,12 @@ export class EngineClient {
     );
   }
 
-  analyze(note: WorkerNote, modelId: string): Promise<WorkerAnalysis> {
-    return this.send({ type: "analyze", note, modelId });
+  analyze(
+    note: WorkerNote,
+    modelId: string,
+    memory?: readonly EntityMemoryEntry[],
+  ): Promise<WorkerAnalysis> {
+    return this.send({ type: "analyze", note, modelId, memory });
   }
 
   stop(): void {

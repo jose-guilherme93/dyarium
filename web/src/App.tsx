@@ -86,7 +86,12 @@ export function App() {
   // nota, por exemplo) precisa devolver para onde o usuario estava, e nao para
   // a primeira tela do menu.
   const [returnView, setReturnView] = useState<ViewId | null>(null);
-  const [entityFocus, setEntityFocus] = useState<{ kind: EntityKind; name: string } | null>(null);
+  const [entityFocus, setEntityFocus] = useState<{
+    kind: EntityKind;
+    name: string;
+    /** "kind": abre o editor da entidade ja no seletor de tipo (lapis da ficha). */
+    edit?: "kind";
+  } | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [notebooks, setNotebooks] = useState<Notebook[]>([]);
   const [bookChapters, setBookChapters] = useState<Entry[]>([]);
@@ -322,6 +327,7 @@ export function App() {
       ? null
       : (notebooks.find((notebook) => notebook.id === activeNotebookId) ?? null);
   const isBook = activeNotebook?.kind === "book";
+  const isMcp = activeNotebook?.kind === "mcp";
 
   // A lista de capitulos vive na sidebar, no lugar das notas. O App e o dono
   // dela para a sidebar e a casa do livro verem a mesma ordem.
@@ -765,15 +771,17 @@ export function App() {
             : (notebooks.find((notebook) => notebook.id === activeNotebookId)?.name ??
               "Notas ao acaso")}
         </span>
-        <button
-          type="button"
-          className="button button--primary button--small"
-          onClick={isBook ? () => void createNote() : openCompose}
-          aria-label={isBook ? "Novo capítulo" : "Nova nota"}
-        >
-          <PlusIcon size={15} />
-          {isBook ? "Capítulo" : "Nova nota"}
-        </button>
+        {!isMcp && (
+          <button
+            type="button"
+            className="button button--primary button--small"
+            onClick={isBook ? () => void createNote() : openCompose}
+            aria-label={isBook ? "Novo capítulo" : "Nova nota"}
+          >
+            <PlusIcon size={15} />
+            {isBook ? "Capítulo" : "Nova nota"}
+          </button>
+        )}
       </header>
       {navOpen && (
         <button
@@ -876,15 +884,17 @@ export function App() {
           </>
         ) : (
           <div className="side-rail">
-            <button
-              type="button"
-              className="rail-action rail-action--new"
-              onClick={isBook ? () => void createNote() : openCompose}
-              aria-label={isBook ? "Novo capítulo" : "Nova nota"}
-              title={isBook ? "Novo capítulo" : "Nova nota"}
-            >
-              <PlusIcon size={18} />
-            </button>
+            {!isMcp && (
+              <button
+                type="button"
+                className="rail-action rail-action--new"
+                onClick={isBook ? () => void createNote() : openCompose}
+                aria-label={isBook ? "Novo capítulo" : "Nova nota"}
+                title={isBook ? "Novo capítulo" : "Nova nota"}
+              >
+                <PlusIcon size={18} />
+              </button>
+            )}
             <button
               type="button"
               className="rail-action"
@@ -979,8 +989,8 @@ export function App() {
                     );
                     refresh();
                   }}
-                  onOpenEntity={(kind, name) => {
-                    setEntityFocus({ kind, name });
+                  onOpenEntity={(kind, name, edit) => {
+                    setEntityFocus({ kind, name, edit });
                     setView("map");
                   }}
                   onOpenEntry={(id) => setOpenEntryId(id)}

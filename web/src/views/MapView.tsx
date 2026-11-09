@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
-import { FitIcon, InsightsIcon, PencilIcon, SearchIcon } from "../components/icons";
+import { ContextMenu, type ContextMenuItem } from "../components/ContextMenu";
+import { FitIcon, InsightsIcon, PencilIcon, SearchIcon, TrashIcon } from "../components/icons";
 import { Spinner } from "../components/Status";
 import { useToast } from "../components/Toasts";
 import {
@@ -17,6 +18,7 @@ import type {
   EntityDetail,
   EntityKind,
   EntityMention,
+  EntityRejection,
   EntitySummary,
   GraphEdge,
   GraphNode,
@@ -30,12 +32,14 @@ interface MapViewProps {
   refreshKey: number;
   onOpen: (id: string) => void;
   /** Entidade aberta a partir de uma nota; o mapa seleciona e centraliza. */
-  focus?: { kind: EntityKind; name: string } | null;
+  focus?: { kind: EntityKind; name: string; edit?: "kind" } | null;
   onFocusApplied?: () => void;
 }
 
 type Period = "all" | "12m" | "30d";
-type InsightTab = EntityKind | "mood";
+type InsightTab = EntityKind | "mood" | "memory";
+/** Seção do editor que recebe o foco quando o menu ou "não é isso?" abre o painel. */
+type EditorSection = "name" | "kind" | "label" | "icon" | "self";
 
 interface SimNode {
   id: string;
@@ -106,7 +110,11 @@ const INSIGHT_TABS: { id: InsightTab; label: string }[] = [
   { id: "theme", label: "Temas" },
   { id: "decision", label: "Decisões" },
   { id: "mood", label: "Humor" },
+  { id: "memory", label: "Memória" },
 ];
+
+/** Tipos da lista fechada do editor (sem "nota" nem "voce"). */
+const EDITOR_KINDS: EntityKind[] = ["person", "place", "theme", "decision"];
 
 function periodFrom(period: Period): string | undefined {
   if (period === "all") return undefined;
@@ -167,6 +175,29 @@ function kindColor(kind: GraphNode["kind"], colors: Colors): string {
     default:
       return colors.ink;
   }
+}
+
+/** Interrogacao num circulo: o "nao e isso?" da folha do mapa. */
+function QuestionCircleIcon({ size = 13 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      fill="none"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <circle cx="8" cy="8" r="6.4" stroke="currentColor" strokeWidth="1.2" />
+      <path
+        d="M6.1 6.1a1.9 1.9 0 1 1 2.6 1.8c-.7.3-1 .8-1 1.4v.3"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+      />
+      <circle cx="7.75" cy="11.9" r="0.85" fill="currentColor" />
+    </svg>
+  );
 }
 
 function IconPreview({ icon, size = 18 }: { icon: string; size?: number }) {
@@ -348,19 +379,35 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
   const [mentions, setMentions] = useState<EntityMention[]>([]);
   const [mentionsLoading, setMentionsLoading] = useState(false);
   const [mentionsError, setMentionsError] = useState("");
-  const [renameOpen, setRenameOpen] = useState(false);
-  const [renameValue, setRenameValue] = useState("");
-  const [claimSelf, setClaimSelf] = useState(false);
-  const [mergeTarget, setMergeTarget] = useState("");
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editorSection, setEditorSection] = useState<EditorSection>("name");
+  const [editName, setEditName] = useState("");
+  const [editKind, setEditKind] = useState<EntityKind>("person");
+  const [editLabel, setEditLabel] = useState("");
+  const [editLabelBase, setEditLabelBase] = useState("");
+  const [editLabelDirty, setEditLabelDirty] = useState(false);
+  const [editIconDraft, setEditIconDraft] = useState("");
+  const [editIconBase, setEditIconBase] = useState("");
+  const [editSelf, setEditSelf] = useState(false);
+  const [editAlias, setEditAlias] = useState("");
+  const [editorError, setEditorError] = useState("");
+  const [editorBusy, setEditorBusy] = useState(false);
+  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const [mergeOptions, setMergeOptions] = useState<EntitySummary[]>([]);
   const [iconBusy, setIconBusy] = useState(false);
   const [iconError, setIconError] = useState("");
   const [iconOpen, setIconOpen] = useState(false);
   // Trocar o icone e cosmetico: nao refaz o grafo nem reenquadra o mapa.
   const [iconOverrides, setIconOverrides] = useState<Record<string, string>>({});
-  const [renameError, setRenameError] = useState("");
-  const [renameBusy, setRenameBusy] = useState(false);
+  const [memoryVersion, setMemoryVersion] = useState(0);
   const [settings, setSettings] = useState<Settings | null>(null);
+
+  const pencilRef = useRef<HTMLButtonElement | null>(null);
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
+  const kindGroupRef = useRef<HTMLDivElement | null>(null);
+  const labelInputRef = useRef<HTMLInputElement | null>(null);
+  const iconGridRef = useRef<HTMLDivElement | null>(null);
+  const selfInputRef = useRef<HTMLInputElement | null>(null);
 
   /** Seleciona uma bola e reinicia a onda do destaque. */
   const selectNode = useCallback((id: string) => {
@@ -413,7 +460,7 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
   const filtered = useMemo(() => (data ? filterGraph(data, kindSet) : null), [data, kindSet]);
   const counts = useMemo(() => (data ? kindCounts(data) : {}), [data]);
   const insightEntities = useMemo(() => {
-    if (!data || insightTab === "mood") return [];
+    if (!data || insightTab === "mood" || insightTab === "memory") return [];
     return data.nodes
       .filter((node) => node.kind === insightTab)
       .slice()
@@ -425,8 +472,12 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
   }, [filtered, selectedId, data]);
   const selection = selectedNode ?? null;
   const noteNode = selection?.kind === "note" ? selection : null;
-  const entityNode =
-    selection && selection.kind !== "note" && selection.kind !== "user" ? selection : null;
+  // No de entidade: os dois tipos que nao sao entidade ficam de fora, e o
+  // restante e a lista fechada (person, place, theme, decision).
+  const entityNode = useMemo(() => {
+    if (!selection || selection.kind === "note" || selection.kind === "user") return null;
+    return selection as GraphNode & { kind: EntityKind };
+  }, [selection]);
   const entityIcon = entityNode
     ? (iconOverrides[entityNode.id] ?? entityNode.icon ?? "")
     : "";
@@ -461,14 +512,14 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
     return detail.entry_list.filter((entry) => !seen.has(entry.id));
   }, [detail, mentionGroups]);
 
-  // Entidades do mesmo tipo para o "mesclar em" da renomeacao. Serve para
+  // Entidades do mesmo tipo para o campo de mesclar do editor. Serve para
   // qualquer tipo: a IA pode extrair grafias diferentes da mesma pessoa, lugar,
   // tema ou decisao.
   useEffect(() => {
-    if (!renameOpen || !entityNode) return;
+    if (!editorOpen || !entityNode) return;
     let cancelled = false;
     api
-      .listEntities(entityNode.kind)
+      .listEntities(editKind)
       .then((result) => {
         if (cancelled) return;
         const current = entityNode.label.toLowerCase();
@@ -482,7 +533,7 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
     return () => {
       cancelled = true;
     };
-  }, [renameOpen, entityNode]);
+  }, [editorOpen, editKind, entityNode]);
 
   useEffect(() => {
     selectedRef.current = selectedId;
@@ -563,9 +614,9 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
   }, [selectedNode]);
 
   useEffect(() => {
-    setRenameOpen(false);
-    setRenameValue("");
-    setRenameError("");
+    setEditorOpen(false);
+    setMenuPos(null);
+    setEditorError("");
     setIconOpen(false);
   }, [selectedId]);
 
@@ -585,6 +636,36 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
       document.removeEventListener("keydown", onKeyDown);
     };
   }, [iconOpen]);
+
+  // O detalhe pode chegar depois de abrir o editor (foco vindo de uma nota):
+  // se ninguem tocou no rotulo, o campo assume o valor lido.
+  useEffect(() => {
+    if (!editorOpen || !entityNode || !detail) return;
+    if (detail.kind !== entityNode.kind) return;
+    if (detail.name.toLowerCase() !== entityNode.label.toLowerCase()) return;
+    if (editLabelDirty) return;
+    const value = detail.label ?? "";
+    setEditLabel(value);
+    setEditLabelBase(value);
+  }, [editorOpen, entityNode, detail, editLabelDirty]);
+
+  // Abrir pelo lápis ou pelo "não é isso?" leva o cursor até a seção certa.
+  useEffect(() => {
+    if (!editorOpen) return;
+    const target =
+      editorSection === "name"
+        ? nameInputRef.current
+        : editorSection === "kind"
+          ? kindGroupRef.current
+          : editorSection === "label"
+            ? labelInputRef.current
+            : editorSection === "icon"
+              ? iconGridRef.current
+              : selfInputRef.current;
+    if (!target) return;
+    target.scrollIntoView?.({ block: "nearest" });
+    target.focus({ preventScroll: true });
+  }, [editorOpen, editorSection]);
 
   // Trechos reais da entidade: a passagem da transcricao (com o tempo) ou a
   // frase do texto, junto da leitura da analise daquela nota.
@@ -1418,6 +1499,8 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
     appliedFocusRef.current = key;
     setInsightTab(focus.kind);
     selectEntity(node);
+    // O lapis da ficha pede o editor ja no seletor de tipo.
+    if (focus.edit === "kind") openEditorFor(node, "kind");
     onFocusApplied?.();
   }, [focus, data, selectEntity, onFocusApplied]);
 
@@ -1655,13 +1738,31 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
     draw();
   };
 
-  // Desfazer a edicao que acabou de acontecer (renomear, mesclar, icone ou
-  // "sou eu"). O servidor guarda o estado anterior, inclusive os vinculos
-  // somados numa mescla; aqui so recarrega o desenho.
+  // Desfazer a edicao que acabou de acontecer (renomear, mesclar, rotulo, tipo,
+  // icone, exclusao ou "sou eu"). O servidor guarda o estado anterior, inclusive
+  // os vinculos somados numa mescla; aqui so recarrega o desenho.
   const undoEntityEdit = useCallback(
     async (editId: string) => {
       try {
         await api.undoEntityEdit(editId);
+        setGraphVersion((value) => value + 1);
+        notify("Desfeito.", "info");
+      } catch {
+        notify("Não foi possível desfazer.", "error");
+      }
+    },
+    [notify],
+  );
+
+  // Um Salvar pode encadear varias edicoes (tipo, nome, rotulo, icone). O
+  // servidor so deixa desfazer a mais recente, entao o desfazer caminha de
+  // tras para frente pela lista.
+  const undoEdits = useCallback(
+    async (editIds: string[]) => {
+      try {
+        for (let i = editIds.length - 1; i >= 0; i--) {
+          await api.undoEntityEdit(editIds[i]);
+        }
         setGraphVersion((value) => value + 1);
         notify("Desfeito.", "info");
       } catch {
@@ -1706,56 +1807,201 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
     if (await saveIcon(icon)) setIconOpen(false);
   };
 
-  const openRename = () => {
-    if (!entityNode) return;
-    setRenameValue(entityNode.label);
-    setRenameOpen(true);
-    setRenameError("");
-    setClaimSelf(false);
-    setMergeTarget("");
+  // Prepara o rascunho do editor a partir do no escolhido e abre a secao pedida.
+  const openEditorFor = (node: GraphNode, section: EditorSection) => {
+    if (node.kind === "note" || node.kind === "user") return;
+    const known =
+      detail && detail.kind === node.kind && detail.name.toLowerCase() === node.label.toLowerCase();
+    setEditName(node.label);
+    setEditKind(node.kind);
+    const label = known ? (detail?.label ?? "") : "";
+    setEditLabel(label);
+    setEditLabelBase(label);
+    setEditLabelDirty(false);
+    const icon = iconOverrides[node.id] ?? node.icon ?? "";
+    setEditIconDraft(icon);
+    setEditIconBase(icon);
+    setEditSelf(false);
+    setEditAlias("");
+    setEditorError("");
+    setEditorSection(section);
+    setEditorOpen(true);
+    setMenuPos(null);
     setIconOpen(false);
   };
 
-  const closeRename = () => {
-    setRenameOpen(false);
-    setRenameError("");
+  const closeEditor = () => {
+    setEditorOpen(false);
+    setEditorError("");
   };
 
-  const saveRename = async () => {
-    if (!entityNode) return;
-    const next = renameValue.trim();
-    const claimingSelf = entityNode.kind === "person" && claimSelf;
-    const merging = mergeTarget !== "";
-    if (!claimingSelf && !merging && (!next || next === entityNode.label)) {
-      setRenameOpen(false);
-      return;
-    }
-    setRenameBusy(true);
-    setRenameError("");
+  // Excluir e imediato, sem confirmacao: o toast de 5 s desfaz tudo, inclusive
+  // a rejeicao que o servidor grava junto (entidades, vinculos e aliases).
+  const removeEntity = async (kind: EntityKind, name: string) => {
+    setMenuPos(null);
+    setSelectedId(null);
+    setFocusId(null);
+    setEditorOpen(false);
     try {
-      let editId = "";
-      if (claimingSelf) {
-        editId = (await api.claimSelf(entityNode.label)).edit_id ?? "";
-      } else if (merging) {
-        editId = (await api.renameEntity(entityNode.kind, entityNode.label, mergeTarget)).edit_id ?? "";
-      } else {
-        editId = (await api.renameEntity(entityNode.kind, entityNode.label, next)).edit_id ?? "";
-      }
-      setRenameOpen(false);
-      setFocusId(null);
-      setSelectedId(null);
+      const result = await api.deleteEntity(kind, name);
       setGraphVersion((value) => value + 1);
+      setMemoryVersion((value) => value + 1);
+      const editId = result?.edit_id;
       notify(
-        claimingSelf ? "Sou eu." : merging ? "Mesclado." : "Renomeado.",
-        "success",
-        editId ? { label: "Desfazer", onClick: () => undoEntityEdit(editId) } : undefined,
+        "Excluído.",
+        "info",
+        editId
+          ? { label: "Desfazer", duration: 5000, onClick: () => void undoEntityEdit(editId) }
+          : undefined,
       );
-    } catch (err) {
-      setRenameError(err instanceof Error ? err.message : "não foi possível renomear");
-    } finally {
-      setRenameBusy(false);
+    } catch {
+      notify("Não foi possível excluir.", "error");
     }
   };
+
+  // Salvar aplica so o que mudou, na ordem: tipo, mesclagem de grafia, nome,
+  // rotulo, icone. Cada escrita devolve um edit_id; um unico "Desfazer" caminha
+  // pela lista de tras para frente.
+  const saveEditor = async () => {
+    if (!entityNode) return;
+    const kind = entityNode.kind;
+    const name = entityNode.label;
+    if (editSelf && kind === "person") {
+      setEditorBusy(true);
+      setEditorError("");
+      try {
+        const result = await api.claimSelf(name);
+        closeEditor();
+        setSelectedId(null);
+        setFocusId(null);
+        setGraphVersion((value) => value + 1);
+        notify(
+          "Sou eu.",
+          "success",
+          result.edit_id
+            ? {
+                label: "Desfazer",
+                onClick: () => void undoEntityEdit(result.edit_id ?? ""),
+              }
+            : undefined,
+        );
+      } catch (err) {
+        setEditorError(err instanceof Error ? err.message : "não foi possível marcar como você");
+      } finally {
+        setEditorBusy(false);
+      }
+      return;
+    }
+    const nextName = editName.trim();
+    const aliasInput = editAlias.trim();
+    const labelChanged = editLabelDirty && editLabel.trim() !== editLabelBase;
+    const iconChanged = editIconDraft !== editIconBase;
+    if (editKind === kind && !aliasInput && nextName === name && !labelChanged && !iconChanged) {
+      closeEditor();
+      return;
+    }
+    setEditorBusy(true);
+    setEditorError("");
+    const editIds: string[] = [];
+    let currentKind: EntityKind = kind;
+    let currentName = name;
+    try {
+      if (editKind !== kind) {
+        const saved = await api.changeEntityKind(kind, name, editKind);
+        if (saved.edit_id) editIds.push(saved.edit_id);
+        currentKind = saved.kind ?? editKind;
+      }
+      if (aliasInput) {
+        const target = mergeOptions.find(
+          (item) => item.name.toLowerCase() === aliasInput.toLowerCase(),
+        );
+        if (!target) {
+          throw new Error(
+            `nenhuma ${kindLabel(currentKind).toLowerCase()} com a grafia "${aliasInput}"`,
+          );
+        }
+        const saved = await api.renameEntity(currentKind, target.name, currentName);
+        if (saved.edit_id) editIds.push(saved.edit_id);
+      }
+      if (nextName && nextName !== currentName) {
+        const saved = await api.renameEntity(currentKind, currentName, nextName);
+        if (saved.edit_id) editIds.push(saved.edit_id);
+        currentName = saved.name || nextName;
+      }
+      if (labelChanged) {
+        const saved = await api.setEntityLabel(currentKind, currentName, editLabel.trim());
+        if (saved.edit_id) editIds.push(saved.edit_id);
+      }
+      if (iconChanged) {
+        const saved = await api.setEntityIcon(currentKind, currentName, editIconDraft);
+        if (saved.edit_id) editIds.push(saved.edit_id);
+        setIconOverrides((current) => ({ ...current, [entityNode.id]: editIconDraft }));
+      }
+      closeEditor();
+      if (currentKind !== kind) {
+        // A bola mudou de cor e de id: sem no igual para manter selecionado.
+        setSelectedId(null);
+        setFocusId(null);
+        // Trocar tipo grava a rejeicao do tipo antigo na memoria.
+        setMemoryVersion((value) => value + 1);
+      }
+      setGraphVersion((value) => value + 1);
+      notify(
+        "Salvo.",
+        "success",
+        editIds.length
+          ? { label: "Desfazer", onClick: () => void undoEdits(editIds) }
+          : undefined,
+      );
+    } catch (err) {
+      // Edicoes parciais ja aconteceram: recarrega e oferece desfazer o que entrou.
+      setGraphVersion((value) => value + 1);
+      if (editIds.length) {
+        notify("Metade não foi.", "error", {
+          label: "Desfazer",
+          onClick: () => void undoEdits(editIds),
+        });
+      }
+      setEditorError(err instanceof Error ? err.message : "não foi possível salvar");
+    } finally {
+      setEditorBusy(false);
+    }
+  };
+
+  const openPencilMenu = () => {
+    const rect = pencilRef.current?.getBoundingClientRect();
+    if (!rect || !entityNode) return;
+    setMenuPos({ x: rect.left, y: rect.bottom + 4 });
+  };
+
+  const pencilItems: ContextMenuItem[] = entityNode
+    ? [
+        {
+          key: "delete",
+          label: "Excluir",
+          danger: true,
+          icon: <TrashIcon size={13} />,
+          onSelect: () => void removeEntity(entityNode.kind, entityNode.label),
+        },
+        {
+          key: "name",
+          label: "Nome real / mesclar",
+          onSelect: () => openEditorFor(entityNode, "name"),
+        },
+        { key: "kind", label: "Tipo", onSelect: () => openEditorFor(entityNode, "kind") },
+        { key: "label", label: "Rótulo", onSelect: () => openEditorFor(entityNode, "label") },
+        { key: "icon", label: "Ícone", onSelect: () => openEditorFor(entityNode, "icon") },
+        ...(entityNode.kind === "person"
+          ? [
+              {
+                key: "self",
+                label: "Sou eu",
+                onSelect: () => openEditorFor(entityNode, "self"),
+              },
+            ]
+          : []),
+      ]
+    : [];
 
   const resetAll = () => {
     setFocusId(null);
@@ -1974,96 +2220,184 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
                   )}
                 </div>
               )}
-              {renameOpen && entityNode ? (
-                <input
-                  autoFocus
-                  className="map-title-input"
-                  value={claimSelf ? settings?.owner_name?.trim() || "Você" : renameValue}
-                  maxLength={200}
-                  aria-label="Nome da bola"
-                  disabled={claimSelf || mergeTarget !== ""}
-                  onChange={(event) => setRenameValue(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Escape") {
-                      closeRename();
-                    } else if (event.key === "Enter") {
-                      event.preventDefault();
-                      void saveRename();
-                    }
-                  }}
-                />
-              ) : (
-                <h2>{selection.label || "Sem título"}</h2>
-              )}
-              {entityNode && !renameOpen && (
+              <h2>{selection.label || "Sem título"}</h2>
+              {entityNode && (
                 <button
+                  ref={pencilRef}
                   type="button"
                   className="icon-button map-detail-rename"
-                  aria-label="Renomear"
-                  title="Renomear"
-                  onClick={openRename}
+                  aria-label="Editar entidade"
+                  title="Editar"
+                  aria-haspopup="menu"
+                  onClick={openPencilMenu}
                 >
                   <PencilIcon size={12} />
                 </button>
               )}
             </div>
-            {renameOpen && entityNode && (
-              <div className="map-inline-edit">
+            {entityNode && detail?.label && !editorOpen && (
+              <p className="map-detail-label">{detail.label}</p>
+            )}
+            {entityNode && !editorOpen && (
+              <button
+                type="button"
+                className="map-not-this"
+                title="O nome saiu errado ou é outra coisa: o editor abre no tipo"
+                onClick={() => openEditorFor(entityNode, "kind")}
+              >
+                <QuestionCircleIcon size={13} />
+                não é isso?
+              </button>
+            )}
+            {editorOpen && entityNode && (
+              <div className="map-editor" role="group" aria-label="Editor da entidade">
+                <label className="map-editor-field">
+                  Nome real
+                  <input
+                    ref={nameInputRef}
+                    className="map-title-input"
+                    value={editSelf ? settings?.owner_name?.trim() || "Você" : editName}
+                    maxLength={200}
+                    aria-label="Nome da bola"
+                    disabled={editSelf}
+                    onChange={(event) => setEditName(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape") {
+                        closeEditor();
+                      } else if (event.key === "Enter") {
+                        event.preventDefault();
+                        void saveEditor();
+                      }
+                    }}
+                  />
+                </label>
+                {(detail?.aliases?.length ?? 0) > 0 && (
+                  <div className="map-editor-aliases" title="Grafias que ainda resolvem para esta entidade">
+                    {detail?.aliases?.map((alias) => (
+                      <span key={alias} className="map-alias-chip">
+                        {alias}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <label className="map-editor-field">
+                  Adicionar apelido / mesclar
+                  <input
+                    className="map-title-input"
+                    value={editAlias}
+                    list="map-alias-candidates"
+                    placeholder="outra grafia deste nome"
+                    aria-label="Apelido ou grafia para mesclar"
+                    disabled={editSelf}
+                    onChange={(event) => setEditAlias(event.target.value)}
+                  />
+                  <datalist id="map-alias-candidates">
+                    {mergeOptions.map((item) => (
+                      <option key={item.id ?? item.name} value={item.name} />
+                    ))}
+                  </datalist>
+                </label>
+                <div className="map-editor-section">
+                  <span className="map-editor-caption">Tipo</span>
+                  <div className="map-editor-kinds" role="group" aria-label="Tipo da entidade" tabIndex={-1} ref={kindGroupRef}>
+                    {EDITOR_KINDS.map((kind) => (
+                      <button
+                        key={kind}
+                        type="button"
+                        className={
+                          editKind === kind ? "map-kind-pill map-kind-pill--on" : "map-kind-pill"
+                        }
+                        aria-pressed={editKind === kind}
+                        disabled={editSelf}
+                        onClick={() => setEditKind(kind)}
+                      >
+                        <span className={`map-dot map-dot--${kind}`} aria-hidden="true" />
+                        {kindLabel(kind)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <label className="map-editor-field">
+                  Rótulo
+                  <input
+                    ref={labelInputRef}
+                    className="map-title-input"
+                    value={editLabel}
+                    maxLength={80}
+                    placeholder="ex.: escola"
+                    aria-label="Rótulo da entidade"
+                    disabled={editSelf}
+                    onChange={(event) => {
+                      setEditLabel(event.target.value);
+                      setEditLabelDirty(true);
+                    }}
+                  />
+                </label>
+                <div className="map-editor-section">
+                  <span className="map-editor-caption">Ícone</span>
+                  <div className="map-icon-grid map-editor-icons" ref={iconGridRef} tabIndex={-1}>
+                    <button
+                      type="button"
+                      className={
+                        editIconDraft ? "map-icon-choice" : "map-icon-choice map-icon-choice--on"
+                      }
+                      onClick={() => setEditIconDraft("")}
+                      aria-pressed={!editIconDraft}
+                      aria-label="Ícone do tipo"
+                      title="Ícone do tipo"
+                      disabled={editSelf}
+                    >
+                      <IconPreview icon={iconKeyFor(editKind, "")} />
+                    </button>
+                    {GRAPH_ICONS.map((item) => (
+                      <button
+                        key={item.key}
+                        type="button"
+                        className={
+                          editIconDraft === item.key
+                            ? "map-icon-choice map-icon-choice--on"
+                            : "map-icon-choice"
+                        }
+                        onClick={() => setEditIconDraft(item.key)}
+                        aria-pressed={editIconDraft === item.key}
+                        aria-label={item.label}
+                        title={item.label}
+                        disabled={editSelf}
+                      >
+                        <IconPreview icon={item.key} />
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 {entityNode.kind === "person" && (
                   <label className="map-rename-option">
                     <input
+                      ref={selfInputRef}
                       type="checkbox"
-                      checked={claimSelf}
-                      onChange={(event) => {
-                        setClaimSelf(event.target.checked);
-                        if (event.target.checked) setMergeTarget("");
-                      }}
+                      checked={editSelf}
+                      onChange={(event) => setEditSelf(event.target.checked)}
                     />
                     Sou eu
-                  </label>
-                )}
-                {mergeOptions.length > 0 && (
-                  <label
-                    className="map-rename-option"
-                    title="O nome antigo vira alias e nunca mais precisa ser mesclado."
-                  >
-                    Mesclar em
-                    <select
-                      className="map-rename-select"
-                      value={mergeTarget}
-                      onChange={(event) => {
-                        setMergeTarget(event.target.value);
-                        if (event.target.value) setClaimSelf(false);
-                      }}
-                      aria-label={`Mesclar com outro ${kindLabel(entityNode.kind).toLowerCase()}`}
-                    >
-                      <option value="">—</option>
-                      {mergeOptions.map((item) => (
-                        <option key={item.id ?? item.name} value={item.name}>
-                          {item.name}
-                        </option>
-                      ))}
-                    </select>
                   </label>
                 )}
                 <div className="map-inline-actions">
                   <button
                     type="button"
                     className="button button--primary button--small"
-                    onClick={() => void saveRename()}
-                    disabled={renameBusy}
+                    onClick={() => void saveEditor()}
+                    disabled={editorBusy}
                   >
                     Salvar
                   </button>
                   <button
                     type="button"
                     className="button button--ghost button--small"
-                    onClick={closeRename}
+                    onClick={closeEditor}
                   >
                     Cancelar
                   </button>
                 </div>
-                {renameError && <p className="error">{renameError}</p>}
+                {editorError && <p className="error">{editorError}</p>}
               </div>
             )}
             {selection.kind === "note" && noteNode && (
@@ -2267,7 +2601,7 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
                   onClick={() => setInsightTab(tab.id)}
                 >
                   {tab.label}
-                  {tab.id !== "mood" && (
+                  {tab.id !== "mood" && tab.id !== "memory" && (
                     <span className="map-insights-tab-count">{counts[tab.id] ?? 0}</span>
                   )}
                 </button>
@@ -2275,6 +2609,8 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
             </div>
             {insightTab === "mood" ? (
               <MoodView refreshKey={refreshKey} />
+            ) : insightTab === "memory" ? (
+              <MemoryPanel refreshKey={memoryVersion} />
             ) : loading && !data ? (
               <p className="muted">
                 <Spinner />
@@ -2305,7 +2641,228 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
           </aside>
         )}
       </div>
+      {menuPos && entityNode && (
+        <ContextMenu
+          x={menuPos.x}
+          y={menuPos.y}
+          label={`Curadoria de ${entityNode.label}`}
+          items={pencilItems}
+          onClose={() => setMenuPos(null)}
+        />
+      )}
     </section>
+  );
+}
+
+/**
+ * Memoria de curadoria: nomes que nunca sao entidade daquele tipo (o script
+ * descarta o vinculo antes de gravar a analise), nomes reais com rotulo e
+ * apelidos, e a previa do dicionario que a IA le.
+ */
+function MemoryPanel({ refreshKey }: { refreshKey: number }) {
+  const { notify } = useToast();
+  const [entities, setEntities] = useState<EntitySummary[]>([]);
+  const [rejections, setRejections] = useState<EntityRejection[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [rejName, setRejName] = useState("");
+  const [rejKind, setRejKind] = useState<EntityKind>("person");
+  const [busy, setBusy] = useState(false);
+  const [version, setVersion] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    api
+      .listEntities()
+      .then((result) => {
+        if (cancelled) return;
+        setEntities(result.entities ?? []);
+        setRejections(result.rejections ?? []);
+        setError("");
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : "falha ao carregar");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshKey, version]);
+
+  const addRejection = async () => {
+    const name = rejName.trim();
+    if (!name || busy) return;
+    setBusy(true);
+    try {
+      await api.addEntityRejection(rejKind, name);
+      setRejName("");
+      setVersion((value) => value + 1);
+      notify("Agora, nunca.", "success");
+    } catch {
+      notify("Não foi possível registrar.", "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeRejection = async (kind: EntityKind, name: string) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await api.removeEntityRejection(kind, name);
+      setVersion((value) => value + 1);
+      notify("Nome liberado.", "info");
+    } catch {
+      notify("Não foi possível liberar o nome.", "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Nomes reais: entidade com rotulo proprio ou apelidos acumulados.
+  const canonical = useMemo(
+    () =>
+      entities
+        .filter((entity) => (entity.label ?? "") !== "" || (entity.aliases?.length ?? 0) > 0)
+        .sort((a, b) => b.mentions - a.mentions || a.name.localeCompare(b.name)),
+    [entities],
+  );
+
+  // Previa do dicionario de recuperacao: nome -> tipo, rotulo, apelidos e os
+  // tipos nunca daquele nome. So o que casa com o texto entra no prompt.
+  const preview = useMemo(() => {
+    const dict: Record<string, { tipo?: string; rotulo?: string; apelidos?: string[]; nunca?: string[] }> = {};
+    for (const entity of entities.slice(0, 8)) {
+      const key = entity.name.toLocaleLowerCase();
+      const row: { tipo?: string; rotulo?: string; apelidos?: string[]; nunca?: string[] } = {
+        tipo: entity.kind,
+      };
+      if (entity.label) row.rotulo = entity.label;
+      if (entity.aliases?.length) row.apelidos = entity.aliases;
+      const nunca = rejections
+        .filter((item) => item.name_key === key || item.name.toLocaleLowerCase() === key)
+        .map((item) => item.kind);
+      if (nunca.length) row.nunca = nunca;
+      dict[key] = row;
+    }
+    for (const rejection of rejections.slice(0, 8)) {
+      const key = rejection.name_key;
+      if (dict[key]?.nunca?.includes(rejection.kind)) continue;
+      dict[key] = {
+        ...(dict[key] ?? {}),
+        nunca: [...(dict[key]?.nunca ?? []), rejection.kind],
+      };
+    }
+    return dict;
+  }, [entities, rejections]);
+
+  return (
+    <div className="map-memory">
+      {loading && (
+        <p className="muted">
+          <Spinner />
+        </p>
+      )}
+      {error && <p className="error">{error}</p>}
+      <h3 className="map-subhead" title="A rejeição é aplicada pelo script antes de gravar a análise: o vínculo nem chega ao banco.">
+        Nunca extrair
+        <span className="map-memory-count">{rejections.length}</span>
+      </h3>
+      {rejections.length > 0 ? (
+        <ul className="map-memory-chips stagger-in">
+          {rejections.map((rejection) => (
+            <li key={`${rejection.kind}:${rejection.name_key}`} className="map-reject-chip">
+              <span>{rejection.name}</span>
+              <span className="map-memory-kind">{kindLabel(rejection.kind)}</span>
+              <button
+                type="button"
+                className="map-reject-remove"
+                aria-label={`Liberar ${rejection.name} para ${kindLabel(rejection.kind).toLowerCase()}`}
+                title="Liberar o nome"
+                disabled={busy}
+                onClick={() => void removeRejection(rejection.kind, rejection.name)}
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        !loading && <p className="map-insights-empty">0 rejeições</p>
+      )}
+      <div className="map-memory-add">
+        <input
+          className="map-rename-select"
+          value={rejName}
+          maxLength={200}
+          placeholder="nome"
+          aria-label="Nome para nunca extrair"
+          onChange={(event) => setRejName(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              void addRejection();
+            }
+          }}
+        />
+        <select
+          className="map-rename-select"
+          value={rejKind}
+          aria-label="Tipo rejeitado"
+          onChange={(event) => setRejKind(event.target.value as EntityKind)}
+        >
+          {EDITOR_KINDS.map((kind) => (
+            <option key={kind} value={kind}>
+              {kindLabel(kind)}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          className="button button--ghost button--small"
+          onClick={() => void addRejection()}
+          disabled={busy || rejName.trim() === ""}
+        >
+          Adicionar
+        </button>
+      </div>
+      <h3 className="map-subhead" title="Nome real exibido no mapa; rótulo e grafias antigas continuam resolvendo para ele.">
+        Nomes reais
+        <span className="map-memory-count">{canonical.length}</span>
+      </h3>
+      {canonical.length === 0 && !loading ? (
+        <p className="map-insights-empty">0 nomes curados</p>
+      ) : (
+        <ul className="map-memory-names stagger-in">
+          {canonical.slice(0, 30).map((entity) => (
+            <li key={`${entity.kind}:${entity.name}`}>
+              <span className="map-memory-name">
+                <span className={`map-dot map-dot--${entity.kind}`} aria-hidden="true" />
+                {entity.name}
+              </span>
+              <span className="muted">
+                {[entity.label, ...(entity.aliases ?? [])].filter(Boolean).join(" · ")}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <h3
+        className="map-subhead"
+        title="Dicionário de recuperação: só o nome que aparece literalmente no texto entra no prompt da análise."
+      >
+        O que a IA lê
+        <span className="map-memory-count">{Object.keys(preview).length}</span>
+      </h3>
+      {Object.keys(preview).length === 0 && !loading ? (
+        <p className="map-insights-empty">0 entradas</p>
+      ) : (
+        <pre className="map-memory-preview">{JSON.stringify(preview)}</pre>
+      )}
+    </div>
   );
 }
 

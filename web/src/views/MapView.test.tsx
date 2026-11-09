@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MapView } from "./MapView";
 import { api } from "../api";
 import { ToastProvider } from "../components/Toasts";
@@ -15,6 +15,11 @@ vi.mock("../api", () => ({
     getAnalysis: vi.fn(),
     getMood: vi.fn(),
     setEntityIcon: vi.fn(),
+    setEntityLabel: vi.fn(),
+    changeEntityKind: vi.fn(),
+    deleteEntity: vi.fn(),
+    addEntityRejection: vi.fn(),
+    removeEntityRejection: vi.fn(),
     renameEntity: vi.fn(),
     claimSelf: vi.fn(),
     undoEntityEdit: vi.fn(),
@@ -121,7 +126,42 @@ beforeEach(() => {
   vi.mocked(api.getAnalysis).mockResolvedValue({ key_moments: [], sections: [] } as never);
   vi.mocked(api.getMood).mockResolvedValue({ mood: [] });
   vi.mocked(api.undoEntityEdit).mockResolvedValue({ status: "ok" });
-  vi.mocked(api.listEntities).mockResolvedValue({ entities: [] });
+  vi.mocked(api.listEntities).mockResolvedValue({ entities: [], rejections: [] });
+  vi.mocked(api.deleteEntity).mockResolvedValue({
+    status: "ok",
+    edit_id: "edit-del",
+    rejection: { kind: "person", name: "Ana", name_key: "ana" },
+  });
+  vi.mocked(api.changeEntityKind).mockResolvedValue({
+    id: "place:ana",
+    kind: "place",
+    name: "Ana",
+    entries: 8,
+    mentions: 12,
+    sentiment: 0,
+    last_seen: null,
+    edit_id: "edit-kind",
+  });
+  vi.mocked(api.setEntityLabel).mockResolvedValue({
+    kind: "person",
+    name: "Ana",
+    label: "escola",
+    entries: 8,
+    mentions: 12,
+    sentiment: 0.4,
+    last_seen: null,
+    edit_id: "edit-label",
+  });
+  vi.mocked(api.addEntityRejection).mockResolvedValue({ status: "ok", edit_id: "edit-rej" });
+  vi.mocked(api.removeEntityRejection).mockResolvedValue({ status: "ok", edit_id: "edit-unrej" });
+  vi.mocked(api.renameEntity).mockResolvedValue({
+    kind: "person",
+    name: "Ana",
+    entries: 8,
+    mentions: 12,
+    sentiment: 0.4,
+    last_seen: null,
+  });
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -255,15 +295,144 @@ describe("MapView insights", () => {
 
     fireEvent.click(await screen.findByRole("tab", { name: /Pessoas/ }));
     fireEvent.click(await screen.findByRole("button", { name: /Ana/ }));
-    fireEvent.click(await screen.findByRole("button", { name: "Renomear" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Editar entidade" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Nome real/ }));
 
     const input = screen.getByRole("textbox", { name: "Nome da bola" });
     fireEvent.change(input, { target: { value: "Ana Maria" } });
     fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
 
-    expect(await screen.findByText("Renomeado.")).toBeInTheDocument();
+    expect(await screen.findByText("Salvo.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Desfazer" }));
     await waitFor(() => expect(api.undoEntityEdit).toHaveBeenCalledWith("edit-1"));
+  });
+
+  it("exclui pelo menu, sem confirmacao, e desfaz pelo toast", async () => {
+    render(
+      <ToastProvider>
+        <MapView refreshKey={0} onOpen={() => undefined} />
+      </ToastProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole("tab", { name: /Pessoas/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Ana/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Editar entidade" }));
+
+    // Excluir e o primeiro item e vermelho; nao ha confirmacao no caminho.
+    const items = await screen.findAllByRole("menuitem");
+    expect(items[0]).toHaveTextContent("Excluir");
+    fireEvent.click(items[0]);
+
+    await waitFor(() => expect(api.deleteEntity).toHaveBeenCalledWith("person", "Ana"));
+    expect(await screen.findByText("Excluído.")).toBeInTheDocument();
+    expect(screen.queryByText("Confirmar exclusão")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Desfazer" }));
+    await waitFor(() => expect(api.undoEntityEdit).toHaveBeenCalledWith("edit-del"));
+  });
+
+  it("troca o tipo no editor e grava pela rota de tipo", async () => {
+    render(
+      <ToastProvider>
+        <MapView refreshKey={0} onOpen={() => undefined} />
+      </ToastProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole("tab", { name: /Pessoas/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Ana/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Editar entidade" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Tipo" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: "Lugar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+
+    await waitFor(() => expect(api.changeEntityKind).toHaveBeenCalledWith("person", "Ana", "place"));
+    expect(await screen.findByText("Salvo.")).toBeInTheDocument();
+  });
+
+  it("salva o rotulo livre pelo editor", async () => {
+    render(
+      <ToastProvider>
+        <MapView refreshKey={0} onOpen={() => undefined} />
+      </ToastProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole("tab", { name: /Pessoas/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Ana/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Editar entidade" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Rótulo" }));
+
+    fireEvent.change(await screen.findByRole("textbox", { name: "Rótulo da entidade" }), {
+      target: { value: "escola" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+
+    await waitFor(() => expect(api.setEntityLabel).toHaveBeenCalledWith("person", "Ana", "escola"));
+  });
+
+  it("abre o editor no tipo quando a nota pede 'é outra coisa' (foco)", async () => {
+    const applied = vi.fn();
+    render(
+      <MapView
+        refreshKey={0}
+        onOpen={() => undefined}
+        focus={{ kind: "person", name: "Ana", edit: "kind" }}
+        onFocusApplied={applied}
+      />,
+    );
+
+    const group = await screen.findByRole("group", { name: "Tipo da entidade" });
+    expect(applied).toHaveBeenCalled();
+    expect(group).toBeInTheDocument();
+    expect(within(group).getByRole("button", { name: "Pessoa" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("'não é isso?' no grafo abre o editor no tipo", async () => {
+    render(
+      <ToastProvider>
+        <MapView refreshKey={0} onOpen={() => undefined} />
+      </ToastProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole("tab", { name: /Pessoas/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Ana/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "não é isso?" }));
+
+    const group = await screen.findByRole("group", { name: "Tipo da entidade" });
+    expect(within(group).getByRole("button", { name: "Pessoa" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("lista, adiciona e libera rejeicoes na memoria", async () => {
+    vi.mocked(api.listEntities).mockResolvedValue({
+      entities: [],
+      rejections: [{ kind: "person", name: "você", name_key: "voce" }],
+    });
+
+    render(
+      <ToastProvider>
+        <MapView refreshKey={0} onOpen={() => undefined} />
+      </ToastProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole("tab", { name: /Memória/ }));
+
+    expect(await screen.findByText("você")).toBeInTheDocument();
+    expect(screen.getByTitle(/antes de gravar a análise/)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Nome para nunca extrair" }), {
+      target: { value: "ele" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Adicionar" }));
+    await waitFor(() => expect(api.addEntityRejection).toHaveBeenCalledWith("person", "ele"));
+
+    fireEvent.click(screen.getByRole("button", { name: /Liberar você/ }));
+    await waitFor(() => expect(api.removeEntityRejection).toHaveBeenCalledWith("person", "você"));
   });
 
   it("desenha a onda na camada do no selecionado", async () => {
