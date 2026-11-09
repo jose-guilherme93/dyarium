@@ -244,7 +244,12 @@ export default function MapScreen() {
   const graphColors = GRAPH_PALETTES[themeName];
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
-  const params = useLocalSearchParams<{ focusKind?: string; focusName?: string }>();
+  const params = useLocalSearchParams<{
+    focusKind?: string;
+    focusName?: string;
+    /** "kind" abre o menu da entidade ja no seletor de tipo (lapis da nota). */
+    edit?: string;
+  }>();
   const [notebooks, setNotebooks] = useState<Notebook[]>([]);
 
   const [snapshot, setSnapshot] = useState<GraphSnapshot | null>(null);
@@ -1390,4 +1395,65 @@ const baseStyles = defineStyles({
     paddingVertical: spacing.xxl,
   },
   moodScroll: { paddingTop: spacing.md },
+  snackbar: {
+    position: 'absolute',
+    left: spacing.md,
+    right: spacing.md,
+    bottom: spacing.xl,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: baseColors.surfaceElevated,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: baseColors.borderStrong,
+  },
+  snackbarText: { color: baseColors.text, fontSize: fontSize.sm },
+  snackbarAction: { color: baseColors.accent, fontSize: fontSize.sm, fontWeight: '700' },
+  memoryCard: { gap: spacing.sm, maxHeight: '82%' },
+  memoryHeader: { flexDirection: 'row', alignItems: 'center' },
+  memoryTitle: { color: baseColors.text, fontSize: fontSize.lg, fontWeight: '700' },
+  memoryNote: { color: baseColors.textTertiary, fontSize: fontSize.xs },
+  memoryAddRow: { gap: spacing.xs },
+  memoryPills: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
+  memoryPill: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    backgroundColor: baseColors.neutralSoft,
+  },
+  memoryPillActive: { backgroundColor: baseColors.accentSoft },
+  memoryPillText: { color: baseColors.textSecondary, fontSize: fontSize.xs, fontWeight: '600' },
+  memoryPillTextActive: { color: baseColors.accent },
+  memoryInput: {
+    height: 40,
+    borderRadius: radius.md,
+    backgroundColor: baseColors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: baseColors.borderStrong,
+    paddingHorizontal: spacing.md,
+    color: baseColors.text,
+    fontSize: fontSize.sm,
+  },
+  memoryAdd: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    backgroundColor: baseColors.accentSoft,
+  },
+  memoryAddText: { color: baseColors.accent, fontSize: fontSize.xs, fontWeight: '700' },
+  memoryList: { maxHeight: 240 },
+  memoryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: spacing.xs,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: baseColors.border,
+  },
+  memoryRowText: { color: baseColors.text, fontSize: fontSize.sm },
+  memoryRemove: { color: baseColors.accent, fontSize: fontSize.xs, fontWeight: '600' },
 });
