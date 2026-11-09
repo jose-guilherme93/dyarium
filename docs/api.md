@@ -174,6 +174,8 @@ aprende que a nota foi apagada e nao a ressuscita.
   cabecalho (dashboard/API) o criador e o proprio ambiente. E proveniencia: nao
   muda permissao e nao impede editar a nota em nenhum ambiente. Linha criada
   antes do campo vem com os dois vazios.
+- `summary_detail` e o nivel do resumo do projeto MCP daquela entrada:
+  `concise` (padrao) ou `full`. Nas notas comuns permanece `concise`.
 - `analysis_at` e quando a analise mais nova foi gravada no servidor (vazio quando
   nao ha analise). E o sinal de atualizacao do app: quando o valor muda, ele busca
   a analise uma vez e guarda no banco; a ficha mostra sempre a copia local, sem
@@ -260,6 +262,7 @@ Atualiza campos editaveis com versao por campo.
   "notebook_id": "nb_...",
   "archived": true,
   "author": "mixed",
+  "summary_detail": "full",
   "versions": { "title": "...", "recorded_at": "..." }
 }
 ```
@@ -291,6 +294,9 @@ Resposta 200: `{ "status": "ok", "versions": { "title": "...", "recorded_at": ".
   `chapter_goal_words`, `chapter_synopsis`, `chapter_beats` e `chapter_notes`
   alimentam o painel do capitulo. Fora de um livro, `chapter_kind` responde 422
   `not_a_book`.
+- `summary_detail` (`concise` ou `full`) muda o nivel do resumo do projeto MCP
+  daquela entrada; outro valor responde 422 `invalid_summary_detail`. Nao tem
+  versao: a ultima gravacao vence.
 - Nao altera o audio.
 
 ### POST /api/v1/entries
@@ -354,6 +360,7 @@ Manifesto compacto para reconciliacao. Parametros: `kind` (`entries`, `deleted` 
       "chapter_synopsis": "",
       "chapter_beats": "",
       "chapter_notes": "",
+      "summary_detail": "concise",
       "tags": ["..."]
     }
   ],
@@ -1283,7 +1290,8 @@ Cria um caderno ou um livro:
   id ja existir, responde 200 com o caderno existente (idempotente).
 - Um livro nasce vazio, entao a regra de ativacao vale por construcao.
 - Nome vazio: 400 `invalid_name`; nome duplicado (case-insensitive): 409
-  `conflict`; `kind` ou `book_status` invalidos: 422; pagina fora da faixa: 422
+  `conflict`; `kind` ou `book_status` invalidos: 422 (o `kind` interno `mcp`
+  responde 422 `invalid_kind`); pagina fora da faixa: 422
   `invalid_page`; prazo fora de `AAAA-MM-DD`: 422 `invalid_deadline`.
 
 ### PATCH /api/v1/notebooks/{id}
@@ -1300,6 +1308,10 @@ Aceita `name`, `color`, `kind` e os metadados do livro (`subtitle`, `author`,
   mantem os textos como notas e limpa `chapter_kind`, `chapter_position` e os
   metadados do livro na mesma transacao.
 - Metadados em caderno que nao e livro respondem 422 `not_a_book`.
+- O caderno interno do MCP (`projetos-mcp`) recusa troca de tipo e exclusao com
+  409 `protected`; renomear e recolorir continuam permitidos.
+- `kind: "mcp"` vindo de um cliente responde 422 `invalid_kind`: esse tipo e
+  interno do servidor.
 - O padrao responde 409 `protected`; nome duplicado 409 `conflict`.
 
 ### PUT /api/v1/notebooks/{id}/chapters/order
@@ -1479,6 +1491,102 @@ precisa alcancar a URL informada (o OpenCode escuta em `127.0.0.1` por padrao).
 Atualiza configuracoes. Alterar `trim_silence` invalida o artefato derivado em cache
 (regenerado na proxima transcricao).
 
+## Servidor MCP
+
+### POST /mcp
+Endpoint do Model Context Protocol em Streamable HTTP. Autenticacao por Bearer,
+igual ao resto de `/api/v1`: sem token responde 401. O transporte e stateless e
+responde em SSE ou JSON conforme o `Accept` do cliente (`application/json` e
+`text/event-stream` sao obrigatorios no POST). Nao passa pelo cache/gzip da API.
+
+Na inicializacao o servidor envia instrucoes em pt-BR: e o diario central de
+projetos do dono, e depois de concluir uma unidade de trabalho relevante o
+agente chama a ferramenta, sem pedir confirmacao.
+
+#### Ferramenta `record_project_summary`
+```json
+{
+  "name": "record_project_summary",
+  "arguments": {
+    "project": "dyarium",
+    "summary": "resumo curto da sessao",
+    "date": "2026-11-09",
+    "items": [
+      { "kind": "feat", "title": "servidor mcp", "detail": "texto do item",
+        "commit": "abc1234", "url": "https://..." }
+    ],
+    "commits": [ { "hash": "def5678", "message": "teste", "url": "https://..." } ],
+    "links":   [ { "label": "spec", "url": "https://..." } ]
+  }
+}
+```
+- `project` (obrigatorio, ate 100 caracteres) e o nome do projeto. O servidor
+  procura uma entrada com esse titulo, sem diferenciar maiusculas, dentro do
+  caderno interno "Projetos" (`projetos-mcp`); se nao existir, cria a entrada do
+  projeto. Nao existe um caderno por projeto.
+- `items` tem no maximo 100 entradas; `title` e obrigatorio, `detail` aceita ate
+  8192 caracteres e `kind` vazio vira `chore`.
+- `commits` aceita ate 100 e `links` ate 50. So URLs `http` e `https` sao
+  renderizadas.
+- `date` (`AAAA-MM-DD`) e o dia do trabalho; vazio usa hoje em UTC. A data entra
+  no cabecalho do bloco, porque varias sessoes e varios dias se acumulam na mesma
+  entrada do projeto.
+- A entrada do projeto guarda uma unica nota, e cada chamada anexa um bloco de
+  sessao a ela. O cabecalho do bloco e `## AAAA-MM-DD HH:MM · <computador>`; o
+  computador vem do header `X-Dyarium-Host`, sanitizado para `[A-Za-z0-9_-]`
+  (maximo 64) ou `unknown`.
+- O bloco sempre abre pelo resumo objetivo, logo depois do cabecalho: e onde o
+  agente poe os numeros e versoes que importam (performance, bugs corrigidos,
+  versao da aplicacao, versao do agente), tambem no modo enxuto.
+- Depois do resumo vem uma linha por item. Os detalhes tecnicos, os commits
+  extras e os links ficam dentro de um bloco recolhivel:
+  ```
+  :::details Detalhes técnicos
+  ...
+  :::
+  ```
+  O nivel de detalhe e uma preferencia da **entrada do projeto**
+  (`summary_detail` no `PATCH /api/v1/entries/{id}`), nao do caderno nem da
+  chamada: `concise` grava o bloco recolhido (`:::details`) e `full` grava
+  aberto (`:::details open`). O conteudo interno e texto simples, sem markdown.
+  O projeto nasce em `concise`.
+- Uma chamada identica (mesmo projeto, dia, conteudo e computador) nao duplica:
+  o bloco carrega um marcador invisivel `<!-- mcp:<sha256-12> -->` e a segunda
+  chamada responde sem escrever.
+
+#### Conexao do cliente
+No OpenCode de cada maquina, registre o servidor remoto uma vez. O token e o
+mesmo do login; `X-Dyarium-Host` identifica a maquina no bloco de sessao.
+
+Caminho curto, com o CLI do OpenCode (o `$(hostname -s)` vira o nome da maquina
+onde o comando roda):
+
+```sh
+opencode mcp add dyarium --global \
+  --url https://seu-dyarium/mcp \
+  --header "Authorization=Bearer $DIARY_TOKEN" \
+  --header "X-Dyarium-Host=$(hostname -s)"
+```
+
+Alternativa por arquivo, util para desligar OAuth explicitamente:
+
+```jsonc
+{
+  "mcp": {
+    "servers": {
+      "dyarium": {
+        "type": "remote",
+        "url": "https://seu-dyarium/mcp",
+        "oauth": false,
+        "headers": {
+          "Authorization": "Bearer <DIARY_TOKEN>",
+          "X-Dyarium-Host": "nome-da-maquina"
+        }
+      }
+    }
+  }
+}
+```
 ## Eventos (SSE)
 
 ### GET /api/v1/events

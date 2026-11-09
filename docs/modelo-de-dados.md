@@ -35,6 +35,7 @@ Representa um audio enviado e seu ciclo de vida.
 | chapter_status | TEXT | `draft`, `revising`, `done` ou vazio |
 | chapter_goal_words | INTEGER | meta opcional do capitulo |
 | chapter_synopsis | TEXT | sinopse/outline do capitulo |
+| summary_detail | TEXT | `concise` (padrao) ou `full`; nivel do resumo do projeto MCP gravado nesta entrada |
 | created_at | TEXT | |
 | updated_at | TEXT | ultima edicao de conteudo/metadados; abrir a nota e mudar so o status nao alteram |
 | deleted_at | TEXT | remocao logica |
@@ -46,6 +47,11 @@ Invariantes do livro: `chapter_kind` e `chapter_position` so existem em entrada 
 livro; `archived` nunca e 1 em capitulo; mover para um livro limpa o arquivamento
 e poe no fim; mover para um caderno comum limpa os campos de capitulo; a lista de
 posicoes e plana, sem arvore.
+
+Entradas do caderno MCP sao projetos: `title` e o nome do projeto e a nota unica
+acumula um bloco por sessao, com data e hora no cabecalho. `summary_detail`
+(`concise` ou `full`) e a preferencia de renderizacao daquele projeto; nas demais
+notas permanece `concise` e nao tem efeito.
 
 `parent_id` existia para a arvore de subnotas. Com cadernos e tags, subnotas
 deixaram de ser necessarias: o web nao cria mais subnotas e a lista e plana. Os
@@ -76,13 +82,19 @@ Colecao de notas. Toda nota pertence a exatamente um caderno. Um caderno com
 de capitulos: o capitulo e a propria `Entry`, o que preserva editor, autosave,
 versoes, lixeira, anexos, busca e sync.
 
+O caderno interno `kind = 'mcp'` (id `projetos-mcp`, nome "Projetos") e do
+servidor MCP. Suas entradas nao sao cadernos de projeto: **cada entrada e um
+projeto**, e a nota dela acumula os blocos de sessao. O caderno e criado pela
+migracao 0040, nao pode ser excluido nem trocar de tipo, e nao aceita `kind`
+vindo de cliente.
+
 | Campo | Tipo | Notas |
 |---|---|---|
-| id | TEXT PK | o padrao usa `notas-ao-acaso` |
+| id | TEXT PK | o padrao usa `notas-ao-acaso`; o do MCP usa `projetos-mcp` |
 | name | TEXT | unico (case-sensitive no banco; API compara sem caixa) |
 | color | TEXT | opcional; vazio = neutro; e a cor da capa do livro |
 | is_default | INTEGER | 1 no caderno "Notas ao acaso" |
-| kind | TEXT | `notes` (padrao) ou `book` |
+| kind | TEXT | `notes` (padrao), `book` ou `mcp` (interno) |
 | subtitle | TEXT | livro |
 | author | TEXT | livro |
 | synopsis | TEXT | livro |
@@ -94,10 +106,14 @@ versoes, lixeira, anexos, busca e sync.
 
 Invariantes: o caderno padrao nunca e livro; ativar exige zero entries vivas
 (inclusive arquivadas); desativar com capitulos exige `confirm_convert`; a
-conversao preserva os textos e limpa a estrutura do livro.
+conversao preserva os textos e limpa a estrutura do livro. O caderno do MCP e
+protegido: excluir ou trocar o `kind` responde `ErrProtected`; renomear e recolorir
+continuam permitidos. `summary_detail` pertence a entrada do projeto, nao ao
+caderno: mudar o valor so afeta os resumos futuros daquele projeto.
 
 Indices: unico em `name`; unico parcial em `is_default` quando 1. O caderno
-padrao e criado pela migracao 0017 e nao pode ser renomeado nem excluido.
+padrao e criado pela migracao 0017 e nao pode ser renomeado nem excluido; o do
+MCP e criado pela 0040.
 
 ## Tombstone
 
@@ -357,6 +373,20 @@ texto no meio
 !audio[attachment:xyz]{d=12.5}
 texto depois
 ```
+
+Blocos colapsaveis de detalhe tecnico usam uma cerca explicita, com o corpo em
+texto simples (sem markdown):
+
+```
+:::details Detalhes técnicos
+- item: detalhe
+Commits:
+- abc1234 mensagem https://...
+:::
+```
+
+`:::details open <rotulo>` abre o bloco por padrao. O web e o app renderizam
+como lista suspensa.
 
 `local:<arquivo>` identifica um anexo que ainda esta so no aparelho; depois do
 sync vira `attachment:<id>`. `{w=N}` e a largura da imagem em percentual da nota

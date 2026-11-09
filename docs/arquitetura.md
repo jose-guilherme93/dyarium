@@ -20,6 +20,7 @@ internal/jobs        Fila de jobs, leases, heartbeat, retries com backoff, agend
 internal/transcribe  Orquestracao do whisper-cli: chunking, checkpoints, metricas de audio.
 internal/analyze     Cliente de API compativel com OpenAI: sentimento, emocoes, pessoas, lugares, resumo.
 internal/store       Repositorio: SQLite (WAL), migrations, interface de dados.
+internal/mcpserver   Servidor MCP (Streamable HTTP): registro de sessoes de projetos enviado por agentes.
 internal/crypto      AES-256-GCM: cifra/decifra em streaming, derivacao de chave.
 internal/telegram    Modulo opcional (envio de audio pelo bot). Stub nesta versao.
 web                  SPA React + Vite + TypeScript com BlockNote.
@@ -28,6 +29,33 @@ deploy               Dockerfile e compose de desenvolvimento.
 
 Cada pacote `internal` expoe interfaces pequenas e concretiza as dependencias externas
 (SQLite, ffmpeg, HTTP) na borda, para permitir testes com dublês.
+
+## Servidor MCP
+
+`internal/mcpserver` expoe `POST /mcp` em Streamable HTTP, montado fora do cache
+de resposta e atras do mesmo `requireAuth` do resto da API. Na inicializacao ele
+devolve instrucoes que entram no system prompt do agente: e o diario central dos
+projetos do dono e, ao concluir trabalho relevante, o agente chama
+`record_project_summary` sem pedir confirmacao.
+
+A ferramenta guarda os projetos no caderno interno "Projetos" (`projetos-mcp`,
+`kind = mcp`), criado pela migracao 0040. Cada projeto e uma **entry** desse
+caderno: o titulo e o nome do projeto, procurado sem diferenciar maiusculas para
+nao duplicar ao mudar a caixa. A entrada do projeto tem uma unica nota, e cada
+chamada anexa um bloco de sessao a ela, com cabecalho
+`## AAAA-MM-DD HH:MM · <computador>`. O computador vem do header
+`X-Dyarium-Host`, sanitizado, e nunca decide permissao. Chamadas identicas nao
+duplicam: o bloco carrega um marcador `<!-- mcp:<sha256-12> -->`.
+
+O nivel de detalhe e uma preferencia da **entry do projeto** (`summary_detail`:
+`concise` ou `full`), nao do caderno nem da chamada. Como e um campo da nota, ele
+sincroniza entre app e web pelo mesmo mecanismo das entradas; as duas superficies
+editam o mesmo valor. Mudar a preferencia so afeta resumos futuros daquele
+projeto. O caderno do MCP e protegido contra exclusao e troca de tipo.
+
+O protocolo nao tem gatilho de fim de sessao: quem decide quando chamar e o
+modelo, guiado pelas instrucoes. Um hook no cliente pode chamar a mesma
+ferramenta para garantir o disparo.
 
 ## Formato do corpo da nota
 
