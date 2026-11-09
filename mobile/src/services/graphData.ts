@@ -78,19 +78,55 @@ function withinPeriod(recordedAt: string, filters: GraphFilters): boolean {
 }
 
 /**
+ * Recorte da sessao. O mapa e a tela de relacao pedem o mesmo snapshot varias
+ * vezes; sem isso, abrir uma relacao lia a biblioteca inteira de novo e a tela
+ * ficava segundos no spinner.
+ */
+let sessionSnapshot: { key: string; at: number; snapshot: GraphSnapshot } | null = null;
+/** Tempo em que o recorte da sessao vale antes de reler o banco. */
+const SESSION_SNAPSHOT_MS = 20_000;
+
+function snapshotFiltersKey(filters: GraphFilters): string {
+  return `${filters.notebookId ?? ''}|${filters.from ?? ''}|${filters.to ?? ''}`;
+}
+
+/** Recorte lido ha pouco para este filtro, sem tocar no banco. */
+export function readSessionSnapshot(filters: GraphFilters = {}): GraphSnapshot | null {
+  if (!sessionSnapshot) return null;
+  if (sessionSnapshot.key !== snapshotFiltersKey(filters)) return null;
+  return sessionSnapshot.snapshot;
+}
+
+/**
  * Le a biblioteca e devolve tudo o que o mapa precisa. Nao parseia payload de
  * analise nem transcricao: o desenho usa so contagens e o tom, e os trechos sao
  * carregados quando uma entidade e aberta (`loadEntityPanel`).
  */
 export async function loadGraphSnapshot(filters: GraphFilters = {}): Promise<GraphSnapshot> {
-  const [recordings, entities, links, aliases, ownerAliases, settings] = await Promise.all([
-    listGraphRecordings(),
-    listLocalEntities(),
-    listEntityLinks(),
-    listEntityAliases(),
-    listOwnerAliases(),
-    loadAuthorSettings(),
-  ]);
+  const key = snapshotFiltersKey(filters);
+  if (
+    sessionSnapshot &&
+    sessionSnapshot.key === key &&
+    Date.now() - sessionSnapshot.at < SESSION_SNAPSHOT_MS
+  ) {
+    return sessionSnapshot.snapshot;
+  }
+  // Travessao de tempo por leitura: o mapa abria em segundos e era preciso ver
+  // qual consulta (ou fila do banco) segurava a abertura.
+  const t0 = Date.now();
+  const recordings = await listGraphRecordings();
+  const t1 = Date.now();
+  const entities = await listLocalEntities();
+  const links = await listEntityLinks();
+  const aliases = await listEntityAliases();
+  const ownerAliases = await listOwnerAliases();
+  const settings = await loadAuthorSettings();
+  if (__DEV__) {
+    console.log(
+      `[map] leitura ${recordings.length} notas em ${t1 - t0}ms, ` +
+        `entidades/vinculos/aliases em ${Date.now() - t1}ms`,
+    );
+  }
 
   const entries: GraphEntry[] = [];
   const entryByKey: Record<string, GraphEntry> = {};
@@ -132,7 +168,7 @@ export async function loadGraphSnapshot(filters: GraphFilters = {}): Promise<Gra
   const entityIds = new Set(visibleLinks.map((link) => link.entityId));
   const visibleEntities = entities.filter((entity) => entityIds.has(entity.id));
 
-  return {
+  const snapshot: GraphSnapshot = {
     entries,
     entities: visibleEntities,
     links: visibleLinks,
@@ -145,6 +181,8 @@ export async function loadGraphSnapshot(filters: GraphFilters = {}): Promise<Gra
     total: entries.length,
     entryByKey,
   };
+  sessionSnapshot = { key, at: Date.now(), snapshot };
+  return snapshot;
 }
 
 /** Ultimo recorte gravado para este filtro, sem tocar nas tabelas. */

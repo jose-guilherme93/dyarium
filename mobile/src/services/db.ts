@@ -1636,45 +1636,60 @@ export interface GraphRecordingRow {
  * trechos sao lidos sob demanda.
  */
 export async function listGraphRecordings(): Promise<GraphRecordingRow[]> {
+  const tOpen = Date.now();
   const db = await getDb();
-  const rows = await db.getAllAsync<{
-    id: string;
-    entry_id: string | null;
-    title: string;
-    recorded_at: string;
-    notebook_id: string | null;
-    author: string | null;
-    archived: number | null;
-    def_key: string | null;
-    def_origin: string | null;
-    local_key: string | null;
-    local_origin: string | null;
-  }>(`
-    SELECT r.id, r.entry_id, r.title, r.recorded_at,
-      COALESCE(r.notebook_id, '') AS notebook_id,
-      COALESCE(r.author, '') AS author,
-      COALESCE(r.archived, 0) AS archived,
-      ad.entry_id AS def_key, ad.origin AS def_origin,
-      al.entry_id AS local_key, al.origin AS local_origin
+  const tQuery = Date.now();
+  // O SQLite monta o JSON e devolve UMA linha: 400 notas viravam ~4400
+  // valores atravessando a ponte uma vez por campo (segundos no dev build).
+  const row = await db.getFirstAsync<{ data: string | null }>(`
+    SELECT json_group_array(json_object(
+      'localId', r.id,
+      'entryId', r.entry_id,
+      'title', r.title,
+      'recordedAt', r.recorded_at,
+      'notebookId', COALESCE(r.notebook_id, ''),
+      'author', COALESCE(r.author, ''),
+      'archived', COALESCE(r.archived, 0),
+      'defKey', ad.entry_id,
+      'defOrigin', ad.origin,
+      'localKey', al.entry_id,
+      'localOrigin', al.origin
+    )) AS data
     FROM recordings r
     LEFT JOIN analyses ad ON ad.entry_id = r.entry_id
     LEFT JOIN analyses al ON al.entry_id = r.id
     WHERE r.deleted_at IS NULL
     ORDER BY r.recorded_at DESC
   `);
-  return rows.map((row) => ({
-    localId: row.id,
-    entryId: row.entry_id ?? undefined,
-    title: row.title,
-    recordedAt: row.recorded_at,
-    notebookId: row.notebook_id ?? '',
-    author: row.author || undefined,
-    archived: row.archived === 1,
-    definitive: row.def_key
-      ? { key: row.def_key, origin: row.def_origin ?? 'server' }
+  const parsed: {
+    localId: string;
+    entryId: string | null;
+    title: string;
+    recordedAt: string;
+    notebookId: string;
+    author: string;
+    archived: number;
+    defKey: string | null;
+    defOrigin: string | null;
+    localKey: string | null;
+    localOrigin: string | null;
+  }[] = row?.data ? JSON.parse(row.data) : [];
+  if (__DEV__) {
+    console.log(`[db] recordings open ${tQuery - tOpen}ms query ${Date.now() - tQuery}ms`);
+  }
+  return parsed.map((item) => ({
+    localId: item.localId,
+    entryId: item.entryId ?? undefined,
+    title: item.title,
+    recordedAt: item.recordedAt,
+    notebookId: item.notebookId ?? '',
+    author: item.author || undefined,
+    archived: item.archived === 1,
+    definitive: item.defKey
+      ? { key: item.defKey, origin: item.defOrigin ?? 'server' }
       : undefined,
-    local: row.local_key
-      ? { key: row.local_key, origin: row.local_origin ?? 'server' }
+    local: item.localKey
+      ? { key: item.localKey, origin: item.localOrigin ?? 'server' }
       : undefined,
   }));
 }
@@ -2297,19 +2312,31 @@ export async function listLocalEntities(): Promise<GraphEntity[]> {
 /** Ligacoes nota -> entidade, com a chave da analise (local ou do servidor). */
 export async function listEntityLinks(): Promise<EntityLink[]> {
   const db = await getDb();
-  const rows = await db.getAllAsync<{
-    entry_id: string;
-    entity_id: string;
+  // Uma linha JSON em vez de uma por vinculo: cada campo atravessava a ponte
+  // separado e 850 vinculos custavam quase um segundo no dev build.
+  const row = await db.getFirstAsync<{ data: string | null }>(`
+    SELECT json_group_array(json_object(
+      'entryId', entry_id,
+      'entityId', entity_id,
+      'count', count,
+      'relation', relation,
+      'sentiment', sentiment
+    )) AS data
+    FROM entry_entities
+  `);
+  const rows: {
+    entryId: string;
+    entityId: string;
     count: number;
     relation: string | null;
     sentiment: number | null;
-  }>('SELECT entry_id, entity_id, count, relation, sentiment FROM entry_entities');
-  return rows.map((row) => ({
-    entryId: row.entry_id,
-    entityId: row.entity_id,
-    count: row.count,
-    relation: row.relation ?? undefined,
-    sentiment: row.sentiment ?? undefined,
+  }[] = row?.data ? JSON.parse(row.data) : [];
+  return rows.map((item) => ({
+    entryId: item.entryId,
+    entityId: item.entityId,
+    count: item.count,
+    relation: item.relation ?? undefined,
+    sentiment: item.sentiment ?? undefined,
   }));
 }
 
