@@ -2365,6 +2365,13 @@ export default function NoteScreen() {
           setAnalysisOpen(false);
           push({ pathname: '/map', params: { focusKind: kind, focusName: name } });
         }}
+        onEditEntity={(kind, name) => {
+          setAnalysisOpen(false);
+          push({
+            pathname: '/map',
+            params: { focusKind: kind, focusName: name, edit: 'kind' },
+          });
+        }}
         onClose={() => setAnalysisOpen(false)}
       />
 

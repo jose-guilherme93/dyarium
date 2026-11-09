@@ -63,6 +63,14 @@ jest.mock('@/services/db', () => ({
   claimLocalSelf: () => mockClaim(),
   renameLocalEntity: () => mockRename(),
   setLocalEntityIcon: () => mockSetIcon(),
+  changeEntityKind: jest.fn(async () => ({})),
+  setEntityLabel: jest.fn(async () => ({})),
+  deleteEntityAndReject: jest.fn(async () => undefined),
+  snapshotEntityForUndo: jest.fn(async () => null),
+  restoreEntitySnapshot: jest.fn(async () => undefined),
+  listEntityRejections: jest.fn(async () => []),
+  addEntityRejection: jest.fn(async () => undefined),
+  removeEntityRejection: jest.fn(async () => undefined),
 }));
 
 jest.mock('@/services/graphData', () => ({

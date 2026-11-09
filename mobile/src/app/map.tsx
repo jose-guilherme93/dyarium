@@ -38,9 +38,11 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Text } from '@/components/AppText';
+import { Text, TextInput } from '@/components/AppText';
+import { BottomSheet } from '@/components/BottomSheet';
 import { Press } from '@/components/Press';
 import { TagStrip } from '@/components/TagStrip';
+import { EntityActionSheet } from '@/components/graph/EntityActionSheet';
 import { EntityEditor } from '@/components/graph/EntityEditor';
 import { GraphCanvas, type GraphCanvasHandle } from '@/components/graph/GraphCanvas';
 import { GraphIcon } from '@/components/graph/GraphIcon';
@@ -64,10 +66,19 @@ import {
 import { buildEntityMood } from '@/core/graphMood';
 import type { MoodPoint } from '@/core/graphMood';
 import {
+  addEntityRejection,
+  changeEntityKind,
   claimLocalSelf,
+  deleteEntityAndReject,
   ensureEntityDerivation,
+  listEntityRejections,
+  removeEntityRejection,
   renameLocalEntity,
+  restoreEntitySnapshot,
+  setEntityLabel,
   setLocalEntityIcon,
+  snapshotEntityForUndo,
+  type LocalEntitySnapshot,
 } from '@/services/db';
 import { syncEntities } from '@/services/entitySync';
 import { back, push } from '@/services/appNavigation';
@@ -252,6 +263,18 @@ export default function MapScreen() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorBusy, setEditorBusy] = useState(false);
   const [editorError, setEditorError] = useState<string | null>(null);
+  const [actionSheetOpen, setActionSheetOpen] = useState(false);
+  const [actionSheetExpandedType, setActionSheetExpandedType] = useState(false);
+  const [memoryOpen, setMemoryOpen] = useState(false);
+  const [rejections, setRejections] = useState<
+    { kind: EntityKind; name: string; nameKey: string; updatedAt: string }[]
+  >([]);
+  const [rejectionName, setRejectionName] = useState('');
+  const [rejectionKind, setRejectionKind] = useState<EntityKind>('person');
+  const [undoSnapshot, setUndoSnapshot] = useState<LocalEntitySnapshot | LocalEntitySnapshot[] | null>(null);
+  const [undoVisible, setUndoVisible] = useState(false);
+  const [undoLabel, setUndoLabel] = useState('Excluído');
+  const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // O desenho que esta na tela. Quando o conjunto muda (abrir um no, filtrar),
   // o anterior fica ate a posicao nova chegar: trocar para um quadro vazio
   // faria a tela piscar no meio do toque.
@@ -407,6 +430,10 @@ export default function MapScreen() {
             selectedRef.current = id;
             setFocusId(id);
             setSelectedId(id);
+            if (params.edit === 'kind') {
+              setActionSheetExpandedType(true);
+              setActionSheetOpen(true);
+            }
           }
         }
       }
@@ -416,7 +443,7 @@ export default function MapScreen() {
       loadedOnce.current = true;
       setLoading(false);
     }
-  }, [notebookId, period, params.focusKind, params.focusName, hydrateMood]);
+  }, [notebookId, period, params.focusKind, params.focusName, params.edit, hydrateMood]);
 
   useEffect(() => {
     mounted.current = true;
@@ -732,15 +759,150 @@ export default function MapScreen() {
     });
   }, [editEntity, selectedEntity]);
 
+  const showUndo = useCallback((snapshot: LocalEntitySnapshot | LocalEntitySnapshot[], label = 'Excluído') => {
+    if (undoTimer.current) clearTimeout(undoTimer.current);
+    setUndoSnapshot(snapshot);
+    setUndoLabel(label);
+    setUndoVisible(true);
+    undoTimer.current = setTimeout(() => {
+      setUndoVisible(false);
+      setUndoSnapshot(null);
+    }, 5000);
+  }, []);
+
+  const onKind = useCallback(
+    (kind: EntityKind) => {
+      if (!selectedEntity) return;
+      void (async () => {
+        const snap = await snapshotEntityForUndo(selectedEntity.kind, selectedEntity.name);
+        setEditorBusy(true);
+        setEditorError(null);
+        try {
+          await changeEntityKind(selectedEntity.kind, selectedEntity.name, kind);
+          await reloadSnapshot();
+          if (snap) showUndo(snap, 'Tipo alterado');
+          setEditorOpen(false);
+          setActionSheetOpen(false);
+          void syncEntities().catch(() => undefined);
+        } catch (cause) {
+          setEditorError(cause instanceof Error ? cause.message : 'Não foi possível salvar.');
+        } finally {
+          setEditorBusy(false);
+        }
+      })();
+    },
+    [selectedEntity, reloadSnapshot, showUndo],
+  );
+
+  const onLabel = useCallback(
+    (label: string) => {
+      if (!selectedEntity) return;
+      void editEntity(async () => {
+        await setEntityLabel(selectedEntity.kind, selectedEntity.name, label);
+        void syncEntities().catch(() => undefined);
+      });
+    },
+    [editEntity, selectedEntity],
+  );
+
+  const onDelete = useCallback(() => {
+    if (!selectedEntity) return;
+    void (async () => {
+      const snap = await snapshotEntityForUndo(selectedEntity.kind, selectedEntity.name);
+      setEditorBusy(true);
+      setEditorError(null);
+      try {
+        await deleteEntityAndReject(selectedEntity.kind, selectedEntity.name);
+        await reloadSnapshot();
+        if (snap) showUndo(snap, 'Excluído');
+        setEditorOpen(false);
+        setActionSheetOpen(false);
+        selectedRef.current = null;
+        setSelectedId(null);
+        setFocusId(null);
+        void syncEntities().catch(() => undefined);
+      } catch (cause) {
+        setEditorError(cause instanceof Error ? cause.message : 'Não foi possível salvar.');
+      } finally {
+        setEditorBusy(false);
+      }
+    })();
+  }, [selectedEntity, reloadSnapshot, showUndo]);
+
+  const onUndo = useCallback(() => {
+    if (!undoSnapshot) return;
+    if (undoTimer.current) clearTimeout(undoTimer.current);
+    void (async () => {
+      try {
+        await restoreEntitySnapshot(undoSnapshot);
+        await reloadSnapshot();
+        void syncEntities().catch(() => undefined);
+      } catch {
+        // ignore
+      } finally {
+        setUndoVisible(false);
+        setUndoSnapshot(null);
+      }
+    })();
+  }, [undoSnapshot, reloadSnapshot]);
+
+  const loadRejections = useCallback(async () => {
+    try {
+      const list = await listEntityRejections();
+      setRejections(
+        list.map((r) => ({ kind: r.kind, name: r.name, nameKey: r.nameKey, updatedAt: r.updatedAt })),
+      );
+    } catch {
+      setRejections([]);
+    }
+  }, []);
+
+  // rejeicoes carregadas ao abrir a memoria (chamado no onPress)
+
+  const onAddRejection = useCallback(() => {
+    const name = rejectionName.trim();
+    if (!name) return;
+    void (async () => {
+      try {
+        await addEntityRejection(rejectionKind, name);
+        setRejectionName('');
+        await loadRejections();
+        void syncEntities().catch(() => undefined);
+      } catch {
+        // ignore
+      }
+    })();
+  }, [rejectionName, rejectionKind, loadRejections]);
+
+  const onRemoveRejection = useCallback(
+    (kind: EntityKind, name: string) => {
+      void (async () => {
+        try {
+          await removeEntityRejection(kind, name);
+          await loadRejections();
+          void syncEntities().catch(() => undefined);
+        } catch {
+          // ignore
+        }
+      })();
+    },
+    [loadRejections],
+  );
+
   const sheetHeader = (
     <View style={styles.sheetHeader}>
       <View style={styles.sheetTitleRow}>
         {selectedEntity ? (
-          <View
+          <Press
             style={[
               styles.entityDot,
               { backgroundColor: graphColors[selectedEntity.kind] },
             ]}
+            onPress={() => {
+              setActionSheetExpandedType(false);
+              setActionSheetOpen(true);
+            }}
+            accessibilityLabel="Editar entidade"
           >
             <GraphIcon
               kind={selectedEntity.kind}
@@ -862,6 +1024,16 @@ export default function MapScreen() {
             })}
           </TagStrip>
           <Press
+            onPress={() => {
+              setMemoryOpen(true);
+              void loadRejections();
+            }}
+            style={styles.iconButton}
+            accessibilityLabel="Memória"
+          >
+            <Ionicons name="book-outline" size={20} color={theme.text} />
+          </Press>
+          <Press
             onPress={() => setFiltersOpen(true)}
             style={styles.iconButton}
             accessibilityLabel="Filtros do mapa"
@@ -950,6 +1122,8 @@ export default function MapScreen() {
         }}
       />
 
+      {sheetHeader}
+
       <EntityEditor
         key={selectedEntity?.id ?? 'none'}
         entity={selectedEntity}
@@ -960,7 +1134,104 @@ export default function MapScreen() {
         onRename={onRename}
         onIcon={onIcon}
         onClaimSelf={onClaimSelf}
+        onKind={onKind}
+        onLabel={onLabel}
+        onDelete={onDelete}
       />
+
+      <EntityActionSheet
+        entity={selectedEntity}
+        visible={actionSheetOpen}
+        busy={editorBusy}
+        error={editorError}
+        onClose={() => setActionSheetOpen(false)}
+        onOpenName={() => {
+          setActionSheetOpen(false);
+          setEditorOpen(true);
+        }}
+        onOpenIcon={() => {
+          setActionSheetOpen(false);
+          setEditorOpen(true);
+        }}
+        onClaimSelf={onClaimSelf}
+        onKind={onKind}
+        onLabel={onLabel}
+        onDelete={onDelete}
+        initialExpandedType={actionSheetExpandedType}
+      />
+
+      {undoVisible ? (
+        <View style={styles.snackbar}>
+          <Text style={styles.snackbarText}>{undoLabel}</Text>
+          <Press onPress={onUndo} accessibilityLabel="Desfazer">
+            <Text style={styles.snackbarAction}>Desfazer</Text>
+          </Press>
+        </View>
+      ) : null}
+
+      <BottomSheet visible={memoryOpen} onClose={() => setMemoryOpen(false)} cardStyle={styles.memoryCard}>
+        <View style={styles.memoryHeader}>
+          <Text style={styles.memoryTitle}>Memória</Text>
+        </View>
+        <Text style={styles.memoryNote}>O script barra antes de gravar.</Text>
+        <View style={styles.memoryAddRow}>
+          <View style={styles.memoryPills}>
+            {(['person', 'place', 'theme', 'decision'] as EntityKind[]).map((k) => (
+              <Press
+                key={k}
+                style={[styles.memoryPill, rejectionKind === k ? styles.memoryPillActive : null]}
+                onPress={() => setRejectionKind(k)}
+                accessibilityRole="button"
+                accessibilityLabel={kindLabel(k)}
+              >
+                <Text
+                  style={[
+                    styles.memoryPillText,
+                    rejectionKind === k ? styles.memoryPillTextActive : null,
+                  ]}
+                >
+                  {kindLabel(k)}
+                </Text>
+              </Press>
+            ))}
+          </View>
+          <TextInput
+            style={styles.memoryInput}
+            value={rejectionName}
+            onChangeText={setRejectionName}
+            placeholder="nome"
+            placeholderTextColor={theme.textTertiary}
+            selectionColor={theme.accent}
+            autoCorrect={false}
+            returnKeyType="done"
+            onSubmitEditing={onAddRejection}
+            accessibilityLabel="Nome rejeitado"
+          />
+          <Press
+            style={styles.memoryAdd}
+            onPress={onAddRejection}
+            accessibilityLabel="Adicionar rejeição"
+          >
+            <Text style={styles.memoryAddText}>Adicionar</Text>
+          </Press>
+        </View>
+        <Text style={styles.memoryNote}>nunca é {kindLabel(rejectionKind).toLowerCase()}</Text>
+        <ScrollView style={styles.memoryList}>
+          {rejections.map((r) => (
+            <View key={`${r.kind}:${r.nameKey}`} style={styles.memoryRow}>
+              <Text style={styles.memoryRowText}>
+                {r.name} · {kindLabel(r.kind)}
+              </Text>
+              <Press
+                onPress={() => onRemoveRejection(r.kind, r.name)}
+                accessibilityLabel={`Remover ${r.name}`}
+              >
+                <Text style={styles.memoryRemove}>Remover</Text>
+              </Press>
+            </View>
+          ))}
+        </ScrollView>
+      </BottomSheet>
     </View>
   );
 }

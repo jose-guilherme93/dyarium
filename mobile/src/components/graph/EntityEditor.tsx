@@ -1,5 +1,5 @@
 /**
- * Editor de uma entidade do mapa: nome, icone e "sou eu".
+ * Editor de uma entidade do mapa: nome, tipo, rotulo, icone e "sou eu".
  *
  * Renomear para um nome que ja existe mescla as duas bolas, como no painel; o
  * editor nao pergunta de novo. "Sou eu" so aparece para pessoa, porque o dono
@@ -14,12 +14,14 @@ import { BottomSheet } from '@/components/BottomSheet';
 import { Button } from '@/components/Button';
 import { Press } from '@/components/Press';
 import { GRAPH_ICONS } from '@/core/graphIcons';
-import { kindLabel, type GraphEntity } from '@/core/graphModel';
+import { kindLabel, type EntityKind, type GraphEntity } from '@/core/graphModel';
 import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
 import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
 import { defineStyles } from '@/theme/themedStyles';
 
 import { GraphIcon } from './GraphIcon';
+
+const KINDS: EntityKind[] = ['person', 'place', 'theme', 'decision'];
 
 interface EntityEditorProps {
   entity: GraphEntity | null;
@@ -30,6 +32,9 @@ interface EntityEditorProps {
   onRename(name: string): void;
   onIcon(icon: string): void;
   onClaimSelf(): void;
+  onKind?(kind: EntityKind): void;
+  onLabel?(label: string): void;
+  onDelete?(): void;
 }
 
 export function EntityEditor({
@@ -41,14 +46,21 @@ export function EntityEditor({
   onRename,
   onIcon,
   onClaimSelf,
+  onKind,
+  onLabel,
+  onDelete,
 }: EntityEditorProps) {
   const styles = useThemedStyles(baseStyles);
   const { colors } = useTheme();
   const [name, setName] = useState(entity?.name ?? '');
+  const [label, setLabel] = useState(entity?.label ?? '');
 
   if (!entity) return null;
   const trimmed = name.trim();
+  const trimmedLabel = label.trim();
   const canSave = trimmed.length > 0 && trimmed !== entity.name && !busy;
+  const canSaveLabel =
+    Array.from(trimmedLabel).length <= 80 && trimmedLabel !== (entity.label ?? '') && !busy;
 
   return (
     <BottomSheet visible={visible} onClose={onClose} cardStyle={styles.card}>
@@ -84,6 +96,45 @@ export function EntityEditor({
         onPress={() => onRename(trimmed)}
         disabled={!canSave}
         loading={busy}
+      />
+
+      <Text style={styles.section}>Tipo</Text>
+      <View style={styles.pills}>
+        {KINDS.map((kind) => (
+          <Press
+            key={kind}
+            style={[styles.pill, entity.kind === kind ? styles.pillActive : null]}
+            onPress={() => onKind?.(kind)}
+            disabled={busy}
+            accessibilityRole="button"
+            accessibilityLabel={kindLabel(kind)}
+            accessibilityState={{ selected: entity.kind === kind }}
+          >
+            <Text style={[styles.pillText, entity.kind === kind ? styles.pillTextActive : null]}>
+              {kindLabel(kind)}
+            </Text>
+          </Press>
+        ))}
+      </View>
+
+      <Text style={styles.section}>Rótulo</Text>
+      <TextInput
+        style={styles.input}
+        value={label}
+        onChangeText={(value) => setLabel(value.slice(0, 80))}
+        placeholder="escola, gata, personagem"
+        placeholderTextColor={colors.textTertiary}
+        selectionColor={colors.accent}
+        autoCorrect={false}
+        maxLength={80}
+        returnKeyType="done"
+        onSubmitEditing={() => {
+          if (canSaveLabel && onLabel) onLabel(trimmedLabel);
+        }}
+        onBlur={() => {
+          if (canSaveLabel && onLabel) onLabel(trimmedLabel);
+        }}
+        accessibilityLabel="Rótulo da entidade"
       />
 
       <Text style={styles.section}>Ícone</Text>
@@ -123,6 +174,20 @@ export function EntityEditor({
           <Text style={styles.selfText}>Sou eu</Text>
         </Press>
       ) : null}
+
+      <Press
+        style={styles.delete}
+        onPress={() => onDelete?.()}
+        disabled={busy}
+        accessibilityRole="button"
+        accessibilityLabel="Excluir entidade"
+      >
+        <Text style={styles.deleteText}>Excluir entidade</Text>
+      </Press>
+
+      <Text style={styles.note}>
+        Renomear para um nome existente mescla; o texto das notas nunca muda.
+      </Text>
     </BottomSheet>
   );
 }
@@ -159,6 +224,16 @@ const baseStyles = defineStyles({
     textTransform: 'uppercase',
     letterSpacing: 0.7,
   },
+  pills: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
+  pill: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    backgroundColor: baseColors.neutralSoft,
+  },
+  pillActive: { backgroundColor: baseColors.accentSoft },
+  pillText: { color: baseColors.textSecondary, fontSize: fontSize.xs, fontWeight: '600' },
+  pillTextActive: { color: baseColors.accent },
   iconScroll: { maxHeight: 210 },
   icons: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, paddingBottom: spacing.sm },
   iconButton: {
@@ -179,4 +254,14 @@ const baseStyles = defineStyles({
     borderTopColor: baseColors.border,
   },
   selfText: { color: baseColors.danger, fontSize: fontSize.md, fontWeight: '600' },
+  delete: {
+    paddingVertical: spacing.sm,
+    alignItems: 'center',
+    borderRadius: radius.sm,
+    backgroundColor: baseColors.dangerSoft ?? baseColors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: baseColors.danger,
+  },
+  deleteText: { color: baseColors.danger, fontSize: fontSize.md, fontWeight: '700' },
+  note: { color: baseColors.textTertiary, fontSize: fontSize.xs, lineHeight: 16 },
 });
