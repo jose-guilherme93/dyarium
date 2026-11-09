@@ -7,14 +7,15 @@
  * canvas, e o Skia recebe a camera como numeros.
  */
 
-import { render, screen, within } from '@testing-library/react-native';
+import { createRef } from 'react';
+import { act, render, screen, within } from '@testing-library/react-native';
 import { View } from 'react-native';
 
 import type { GraphLayout } from '@/core/graphLayout';
 import type { EntityKind, GraphData } from '@/core/graphModel';
 import { GRAPH_PALETTES } from '@/theme/graph';
 
-import { GraphCanvas } from '../GraphCanvas';
+import { GraphCanvas, type GraphCanvasHandle } from '../GraphCanvas';
 
 // O Reanimated real nao inicializa no Jest. O mock devolve valores comuns e
 // chama o worklet na hora; aqui interessa a estrutura do desenho.
@@ -48,6 +49,8 @@ jest.mock('react-native-gesture-handler', () => {
       'onStart',
       'onUpdate',
       'onEnd',
+      'onFinalize',
+      'onBegin',
     ]) {
       builder[name] = () => builder;
     }
@@ -70,8 +73,18 @@ jest.mock('react-native-gesture-handler', () => {
 jest.mock('@shopify/react-native-skia', () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { Text: NativeText, View } = require('react-native');
+  const fakePath = { fake: true };
+  const fakeBuilder = {
+    reset: () => fakeBuilder,
+    addCircle: () => fakeBuilder,
+    moveTo: () => fakeBuilder,
+    lineTo: () => fakeBuilder,
+    detach: () => fakePath,
+    build: () => fakePath,
+  };
   const Skia = {
-    Path: { MakeFromSVGString: () => null },
+    Path: { Make: () => fakePath, MakeFromSVGString: () => null },
+    PathBuilder: { Make: () => fakeBuilder },
   };
   const font = {
     measureText: (text: string) => ({ width: text.length * 5, height: 10 }),
@@ -86,6 +99,7 @@ jest.mock('@shopify/react-native-skia', () => {
     DashPathEffect: View,
     Group: View,
     Path: View,
+    Points: View,
     RoundedRect: View,
     Skia,
     Text: ({ text }: { text: string }) => <NativeText>{text}</NativeText>,
@@ -117,9 +131,10 @@ const layout: GraphLayout = {
   },
 };
 
-function desenha() {
+function desenha(ref?: React.Ref<GraphCanvasHandle>) {
   return render(
     <GraphCanvas
+      ref={ref}
       data={data}
       layout={layout}
       colors={GRAPH_PALETTES.amoled}
@@ -135,13 +150,25 @@ function desenha() {
 }
 
 describe('desenho do mapa', () => {
-  it('desenha os nomes dentro do canvas, no mesmo passe das bolas', () => {
-    desenha();
-
+  it('so mostra os nomes ao aproximar, e no mesmo canvas das bolas', () => {
+    // No encaixe o mapa e so bolas e ligacoes, como o "text fade threshold" do
+    // Obsidian; o nome entra quando o usuario aproxima. A lista de nomes e
+    // recalculada uma vez, depois da rajada de zoom (debounce de 120 ms).
+    jest.useFakeTimers();
+    const ref = createRef<GraphCanvasHandle>();
+    desenha(ref);
     const canvas = screen.getByTestId('graph-canvas');
+    expect(within(canvas).queryByText('Maria')).toBeNull();
+
+    act(() => {
+      ref.current?.zoomIn();
+      jest.advanceTimersByTime(200);
+    });
+
     expect(within(canvas).getByText('Maria')).toBeTruthy();
     expect(within(canvas).getByText('Praia')).toBeTruthy();
     expect(within(canvas).getByText('Você')).toBeTruthy();
+    jest.useRealTimers();
   });
 
   it('passa a camera ao Skia como numero, nunca como objeto de shared value', () => {
@@ -164,6 +191,16 @@ describe('desenho do mapa', () => {
           expect(typeof valor).toBe('number');
         }
       }
+    }
+  });
+
+  it('nao anima opacidade (camada por quadro derruba o desenho)', () => {
+    // Um <Group opacity={sharedValue}> vira saveLayer a cada quadro e foi o que
+    // levou o mapa a 15 fps. Opacidade tem que ser numero estatico.
+    desenha();
+    for (const node of screen.UNSAFE_getAllByType(View)) {
+      if (node.props.opacity === undefined) continue;
+      expect(typeof node.props.opacity).toBe('number');
     }
   });
 });
