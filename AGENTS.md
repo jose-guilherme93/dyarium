@@ -7,6 +7,21 @@ O projeto tem tres superficies: o binario Go (`cmd/`, `internal/`), o dashboard
 (`web/`) e o app de captura (`mobile/`). A documentacao de referencia fica em
 `docs/`.
 
+## Arquitetura de clientes (regra dura)
+
+- **O app (`mobile/`) e o dashboard (`web/`) sao dois clientes independentes do
+  mesmo produto.** Nao existe "servidor" como superficie de usuario: o binario Go
+  e o backend que ambos consomem, mas o usuario pode usar so o app, so o web, ou
+  os dois. Nunca trate o "servidor" como dono da verdade nem como superficie.
+- Cada cliente tem seu proprio banco (SQLite no app, IndexedDB/SQLite no web via
+  sync) e eles **sincronizam quando conectados**. Tudo que um faz, o outro faz:
+  analise local existe nos dois, curadoria de entidades existe nos dois.
+- Uma nota que existe so no app passa a existir no web ao conectar (e vice-versa),
+  porque o usuario pode usar um cliente por meses sem abrir o outro.
+- Qualquer funcionalidade nova (memoria de correcoes de entidades, preferencias,
+  etc.) deve existir em **ambos** os clientes e sincronizar pelo mesmo mecanismo
+  das entidades/aliases/owner_aliases. Nao criar fonte unica no backend.
+
 ## Como trabalhar
 
 - **Trabalhe direto no checkout e na branch `develop`**, sem worktree. Um
