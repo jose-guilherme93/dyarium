@@ -98,11 +98,16 @@ describe('entryToRecording', () => {
     expect(rec.recordedAt).toBe(ENTRY.created_at);
   });
 
-  it('marca audio como microfone com transcricao pendente', () => {
+  it('audio puxado do servidor nao nasce pendente no aparelho', () => {
+    // Antes marcava 'pending' e o app pedia /transcript a cada 8 s para sempre
+    // quando o servidor nao transcrevia (nota presa em "Transcrevendo 0%").
+    // Agora quem avisa que o texto ficou pronto e o `transcript_at` da entrada,
+    // buscado uma vez por mudanca em syncServerTranscripts.
     const rec = entryToRecording({ ...ENTRY, content_type: 'audio/aac' });
     expect(rec.source).toBe('microphone');
     expect(rec.contentType).toBe('audio/aac');
-    expect(rec.transcriptStatus).toBe('pending');
+    expect(rec.transcriptStatus).toBeUndefined();
+    expect(rec.transcriptOrigin).toBe('server');
     expect(rec.text).toBe('');
   });
 

@@ -35,6 +35,8 @@ export interface BackupNote {
   recording: Recording;
   /** Nome original do audio, quando a nota tem audio. */
   audioFile?: string;
+  /** Hash SHA-256 do texto da nota (hex), para conferir integridade ao restaurar. */
+  textSha256?: string;
   files: BackupFile[];
 }
 
@@ -174,6 +176,7 @@ export function parseManifest(json: string): BackupManifest | null {
     notes.push({
       recording,
       audioFile: typeof note.audioFile === 'string' ? note.audioFile : undefined,
+      textSha256: typeof note.textSha256 === 'string' ? note.textSha256 : undefined,
       files,
     });
   }

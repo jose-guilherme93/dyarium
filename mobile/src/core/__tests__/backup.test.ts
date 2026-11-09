@@ -12,6 +12,7 @@ import {
   toRestoredRecording,
   type BackupNote,
 } from '../backup';
+import { sha256Hex } from '../sha256';
 import type { Recording } from '../types';
 
 function base(overrides: Partial<Recording> = {}): Recording {
@@ -147,5 +148,61 @@ describe('toRestoredRecording', () => {
     const restored = toRestoredRecording(base({ status: 'draft' }), 'file:///novo/r1/');
     expect(restored.filePath).toBeUndefined();
     expect(restored.status).toBe('draft');
+  });
+});
+
+describe('integridade do texto', () => {
+  const text = 'hello';
+  const textSha = sha256Hex(new TextEncoder().encode(text));
+
+  it('buildManifest preserva textSha256 quando o BackupNote tem', () => {
+    const manifest = buildManifest([
+      note({ recording: base({ id: 'r1', text }), textSha256: textSha }),
+    ], new Date('2026-10-16T12:00:00.000Z'), '0.2.1');
+
+    expect(manifest.notes[0].textSha256).toBe(textSha);
+  });
+
+  it('parseManifest devolve textSha256 quando o JSON tem', () => {
+    const parsed = parseManifest(JSON.stringify({
+      version: 2,
+      createdAt: '2026-10-16T12:00:00.000Z',
+      notes: [{
+        recording: { id: 'r1' },
+        audioFile: 'recording.aac',
+        textSha256: textSha,
+        files: [{ name: 'r1__abc__recording.aac', originalName: 'recording.aac', md5: 'abc', size: 10 }],
+      }],
+    }));
+
+    expect(parsed?.notes[0].textSha256).toBe(textSha);
+  });
+
+  it('parseManifest devolve undefined quando o JSON nao tem (compatibilidade)', () => {
+    const parsed = parseManifest(JSON.stringify({
+      version: 2,
+      createdAt: '2026-10-16T12:00:00.000Z',
+      notes: [{
+        recording: { id: 'r1' },
+        audioFile: 'recording.aac',
+        files: [{ name: 'r1__abc__recording.aac', originalName: 'recording.aac', md5: 'abc', size: 10 }],
+      }],
+    }));
+
+    expect(parsed?.notes[0].textSha256).toBeUndefined();
+  });
+
+  it('buildManifest/parseManifest arredondam textSha256 sem perda', () => {
+    // Garante que o valor fixado na nota e reprisado em buildManifest e recoverado
+    // imediatamente depois por parseManifest, com a cadeia intacta.
+    const noteWithText: BackupNote = {
+      recording: base({ id: 'r1', text }),
+      audioFile: 'recording.aac',
+      textSha256: textSha,
+      files: [{ name: 'r1__abc__recording.aac', originalName: 'recording.aac', md5: 'abc', size: 10 }],
+    };
+    const manifest = buildManifest([noteWithText], new Date());
+    const roundTrip = parseManifest(JSON.stringify(manifest));
+    expect(roundTrip?.notes[0].textSha256).toBe(textSha);
   });
 });

@@ -534,7 +534,10 @@ Lista os anexos de midia (imagens) da entrada.
 ### POST /api/v1/entries/{id}/attachments
 Envia uma imagem. O corpo e os bytes da imagem e o `Content-Type` deve comecar com
 `image/`. `X-Attachment-Id` (opcional) usa o id do criador, com a mesma regra de
-idempotencia/conflito do complete do upload. Resposta 201 com
+idempotencia/conflito do complete do upload. `X-Content-Sha256` (opcional) leva o
+SHA-256 em hex dos bytes enviados: quando presente, o servidor recalcula sobre o
+conteudo recebido, apaga o objeto cifrado e responde 422 `integrity` se divergir;
+hash fora do formato de 64 hex responde 400 `invalid_sha256`. Resposta 201 com
 `{ id, entry_id, kind, content_type, size_bytes, sha256, created_at }`.
 
 ### GET /api/v1/attachments/{id}
@@ -1255,7 +1258,9 @@ Lista cadernos em ordem de criacao, com o padrao no fim:
   "chapter_count": 12, "words": 48320,
   "entry_count": 12, "created_at": "...", "updated_at": "..." } ] }
 ```
-- `kind` e `notes` ou `book`; cadernos antigos ficam `notes`.
+- `kind` e `notes`, `book` ou `mcp`; cadernos antigos ficam `notes`. `mcp` e o
+  caderno interno "Projetos" do servidor MCP: os clientes o recebem na lista, mas
+  nao o criam nem trocam o tipo.
 - `book_status` e `drafting`, `revising` ou `done`.
 - `page_size` e um formato de livro: `11x18` (bolso), `14x21` (romance, padrao),
   `a5`, `5x8` ou `6x9`. `a4` continua aceito para livros antigos e para o
@@ -1464,6 +1469,13 @@ sem ela a analise continua, so perde precisao). `literal_transcript` mantem hesi
 gagueira no texto revisado. As duas sao por instancia: o app tem preferencias separadas, e
 ligar em um lado nao liga no outro.
 
+`analyze_concurrency` limita quantas chamadas de analise rodam ao mesmo tempo (inteiro de 0
+a 16; padrao 0). Zero escolhe o padrao do runtime: uma chamada para o llama.cpp embutido,
+Ollama ou o servidor OpenCode, e tres para uma API hospedada. O valor 1 restaura a execucao
+estritamente sequencial. A ordem do merge nao depende da ordem de chegada: cada secao e
+janela escreve no proprio indice. O limite vale para a execucao inteira, inclusive quando
+uma secao longa e dividida em janelas dentro de uma nota com varias secoes.
+
 `analyze_provider` escolhe o formato da API de analise:
 - `openai` (padrao): endpoint compativel com OpenAI (`/chat/completions`) autenticado por
   chave (`analyze_api_key`).
@@ -1489,7 +1501,8 @@ precisa alcancar a URL informada (o OpenCode escuta em `127.0.0.1` por padrao).
 
 ### PUT /api/v1/settings
 Atualiza configuracoes. Alterar `trim_silence` invalida o artefato derivado em cache
-(regenerado na proxima transcricao).
+(regenerado na proxima transcricao). `analyze_concurrency` aceita inteiro de 0 a 16; fora
+desse intervalo a requisicao responde 400 e nenhuma configuracao e gravada.
 
 ## Servidor MCP
 
@@ -1587,6 +1600,7 @@ Alternativa por arquivo, util para desligar OAuth explicitamente:
   }
 }
 ```
+
 ## Eventos (SSE)
 
 ### GET /api/v1/events

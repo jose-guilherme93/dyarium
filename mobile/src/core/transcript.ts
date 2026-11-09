@@ -24,17 +24,27 @@ export function activeSegmentIndex(segments: TranscriptSegment[], currentMs: num
  * sobrescrito sem o texto e o status voltava para "pending", deixando a nota
  * presa em "Transcrevendo" para sempre. Nunca rebaixa um estado ja pronto.
  */
-export function mergeTranscript(base: Recording, fresh: Recording): Recording {
-  const hasText = Boolean(fresh.transcript?.trim()) || Boolean(fresh.transcriptSegments?.length);
+/**
+ * Combina a leitura mais nova do banco (`latest`) com o que a execucao em voo
+ * ainda tem em memoria (`previous`). O resultado e o que vai para o banco: tudo
+ * o que o usuario mudou no meio do caminho — apagar a nota, editar titulo, tags
+ * ou caderno — vem de `latest` e continua valendo. Da transcricao, o que
+ * `latest` nao trouxer e completado com o de `previous`, sem nunca rebaixar um
+ * estado ja pronto (era assim que a nota ficava em "Transcrevendo" para sempre).
+ */
+export function mergeTranscript(previous: Recording, latest: Recording): Recording {
+  const transcript = latest.transcript ?? previous.transcript;
+  const transcriptSegments = latest.transcriptSegments ?? previous.transcriptSegments;
+  const hasText = Boolean(transcript?.trim()) || Boolean(transcriptSegments?.length);
   const transcriptStatus =
-    fresh.transcriptStatus ?? (hasText || fresh.hasTranscript ? 'ready' : 'pending');
+    latest.transcriptStatus ?? (hasText || latest.hasTranscript ? 'ready' : 'pending');
   return {
-    ...base,
-    transcript: fresh.transcript ?? base.transcript,
-    transcriptLanguage: fresh.transcriptLanguage ?? base.transcriptLanguage,
-    transcriptSegments: fresh.transcriptSegments ?? base.transcriptSegments,
-    transcriptOrigin: fresh.transcriptOrigin ?? base.transcriptOrigin,
-    hasTranscript: fresh.hasTranscript ?? base.hasTranscript,
+    ...latest,
+    transcript,
+    transcriptLanguage: latest.transcriptLanguage ?? previous.transcriptLanguage,
+    transcriptSegments,
+    transcriptOrigin: latest.transcriptOrigin ?? previous.transcriptOrigin,
+    hasTranscript: latest.hasTranscript ?? previous.hasTranscript,
     transcriptStatus,
   };
 }

@@ -24,6 +24,7 @@ import { loadServerConfig } from './secure';
 import { pushTranscript } from './transcriptSync';
 import { clientOwnsAnalysis } from './processing';
 import { clientOwnsTranscription } from './whisper';
+import { fileSha256 } from './hash';
 
 const doFetch = globalThis.fetch as unknown as FetchLike;
 
@@ -171,6 +172,8 @@ async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
       clientOwnsTranscription(),
       clientOwnsAnalysis(),
     ]);
+    // Calcula o hash somente em uploads novos; em retomadas nao rele o arquivo.
+    const sha256 = current.uploadId ? undefined : await fileSha256(current.filePath as string);
     const result = await uploadRecording(
       {
         clientKey: current.id,
@@ -189,6 +192,7 @@ async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
           : undefined,
         uploadId: current.uploadId,
         offset: current.offset,
+        sha256,
         // O id da nota e do aparelho e vale igual em todo ambiente. Sem ele o
         // servidor gerava outro id, e a mesma nota tinha identidades diferentes
         // em cada servidor.
@@ -234,13 +238,15 @@ async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
     // subir o mesmo audio de novo.
     current = withUploadedAudio(
       {
-        ...mergeTranscript(markCompleted(current, result.entryId, new Date()), fresh),
+        ...mergeTranscript(current, markCompleted(fresh, result.entryId, new Date())),
         transcriptOrigin,
         serverAttachmentId: attachmentId,
         duplicate: result.duplicate ? true : undefined,
         // O upload cria a entrada no servidor; o caderno local e enviado no
         // sync da nota logo abaixo (o endpoint de upload nao carrega o caderno).
-        notebookDirty: current.notebookId ? true : undefined,
+        // Usa a leitura mais nova: o usuario pode ter mudado de caderno durante
+        // o envio.
+        notebookDirty: fresh.notebookId ? true : undefined,
       },
       attachmentId ?? '',
     );

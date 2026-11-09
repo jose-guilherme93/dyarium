@@ -124,11 +124,12 @@ export function entryToRecording(entry: ServerEntry, note?: ServerNote): Recordi
     serverAttachmentId: entry.primary_attachment_id ?? entry.audios?.[0]?.id,
     durationMs: entry.duration_seconds > 0 ? Math.round(entry.duration_seconds * 1000) : undefined,
     sizeBytes: entry.size_bytes > 0 ? entry.size_bytes : undefined,
-    // O servidor ainda pode estar transcrevendo; `services/transcripts` busca o
-    // texto quando ele estiver pronto. Nota escrita (sem audio) nao tem
-    // transcricao: marcar como pendente faria o app pedir /transcript para
-    // sempre.
-    transcriptStatus: entry.content_type.startsWith('audio/') ? 'pending' : undefined,
+    // Transcricao de nota puxada do servidor NAO e pendente no aparelho: quem
+    // avisa que o texto ficou pronto e o `transcript_at` da entrada, e o
+    // `services/transcripts.syncServerTranscripts` busca uma vez por mudanca.
+    // Marcar `pending` aqui fazia o app pedir /transcript para sempre (e a nota
+    // ficava em "Transcrevendo 0%") quando o servidor nao transcreve.
+    transcriptStatus: undefined,
     // Nota importada do servidor: o texto, quando existir, e de la. O app nao
     // deve reenviar a transcricao como se a tivesse produzido.
     transcriptOrigin: 'server',

@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestCreateTextEntryGetsAutomaticTitle(t *testing.T) {
+func TestCreateTextEntryHasNoAutomaticTitle(t *testing.T) {
 	srv := newTestServer(t)
 
 	rec, body := doJSON(t, srv, http.MethodPost, "/api/v1/entries", strings.NewReader(`{"title":""}`))
@@ -14,8 +14,8 @@ func TestCreateTextEntryGetsAutomaticTitle(t *testing.T) {
 		t.Fatalf("status = %d, body %v", rec.Code, body)
 	}
 	title, _ := body["title"].(string)
-	if title != "Texto" {
-		t.Fatalf("title = %q, want \"Texto\"", title)
+	if title != "" {
+		t.Fatalf("title = %q, want empty", title)
 	}
 }
 

@@ -674,11 +674,7 @@ export default function MapScreen() {
     [openEntity, resetToMap],
   );
 
-  /** Toque na lista: navega para o detalhe da entidade. */
-  const selectFromList = useCallback(
-    (id: string) => openEntity(id, 'list'),
-    [openEntity],
-  );
+
 
   // Voltar do Android: se houver foco, volta ao mapa inteiro.
   // Caso contrario, sai para a biblioteca.

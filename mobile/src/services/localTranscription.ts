@@ -380,7 +380,13 @@ function lastSegmentEnd(segments: TranscriptSegment[]): number {
 export async function transcribeLocally(id: string): Promise<void> {
   if (running.has(id)) return;
   const recording = await getRecording(id);
-  if (!recording?.filePath) return;
+  // Nota apagada: nao tenta transcrever; mantem a atividade no historico
+  // marcada como interrompida (so o usuario apaga).
+  if (!recording) {
+    cancelActivity(activityId(id), 'Nota apagada');
+    return;
+  }
+  if (!recording.filePath) return;
   // Transcricao terminada, local ou do servidor, nao e refeita sozinha.
   if (hasFinalTranscript(recording)) return;
 

@@ -16,7 +16,10 @@ Antes de escrever codigo que toca em API do Expo, EAS ou React Native:
 
 - Instale dependencias com `npx expo install <pacote>` (resolve versoes
   compativeis com o SDK). Nunca `pnpm add` direto para modulos nativos.
-- Antes de concluir: `pnpm typecheck`, `pnpm lint` e `pnpm test` limpos.
+- Antes de concluir: `pnpm typecheck`, `pnpm lint` e `pnpm test` limpos **e a
+  tela vista no aparelho**: o grafo, a lista e o editor nao se julgam por teste
+  de unidade. Performance se mede no gesto (pan, pinca, abrir bola), no
+  aparelho, antes e depois.
 - Diagnostico: `npx expo-doctor`.
 
 ## Native e config plugins

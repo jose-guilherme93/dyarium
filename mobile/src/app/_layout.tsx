@@ -5,13 +5,15 @@ import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import * as SystemUI from 'expo-system-ui';
 import { useEffect } from 'react';
+import { AppState } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { startPerfReport, useRenderCount } from '@/dev/perf';
 import { stopForegroundTask } from '../../modules/foreground-task';
 import { loadStoredActivities } from '@/services/activity';
-import { registerUploadTask } from '@/services/background';
+import { registerUploadTask, registerBackupTaskFromPrefs } from '@/services/background';
+import { runScheduledBackupIfDue } from '@/services/backupScheduler';
 import { configureNotifications } from '@/services/notifications';
 import { LibraryProvider } from '@/state/LibraryContext';
 import { PlaybackProvider } from '@/state/PlaybackContext';
@@ -107,6 +109,7 @@ export default function RootLayout() {
     configureNotifications();
     startPerfReport();
     void registerUploadTask();
+    void registerBackupTaskFromPrefs();
     // Historico do centro de atividade: o que rodou antes continua la, e o que
     // morreu no meio aparece como interrompido.
     void loadStoredActivities();
@@ -114,6 +117,19 @@ export default function RootLayout() {
     // em primeiro plano fica presa para sempre. No boot nao ha transcricao
     // rodando: limpar aqui evita o aviso fantasma de "Transcrevendo nota".
     stopForegroundTask();
+  }, []);
+
+  // Backup "de meia-noite": roda no primeiro momento em que o app abre ou o
+  // sistema acorda depois do limite (00:00 local). O SO nao garante hora
+  // exata, entao so confere "ja passou do limite?".
+  useEffect(() => {
+    if (AppState.currentState === 'active') {
+      void runScheduledBackupIfDue().catch(() => undefined);
+    }
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void runScheduledBackupIfDue().catch(() => undefined);
+    });
+    return () => subscription.remove();
   }, []);
 
   if (!fontsLoaded && !fontError) {

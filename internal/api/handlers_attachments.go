@@ -195,7 +195,7 @@ func (s *Server) handleCreateAttachment(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid_type", "envie uma imagem (Content-Type image/*)")
 		return
 	}
-	att, err := s.deps.Ingest.PutAttachmentWithID(ctx, entryID, store.AttachmentImage, contentType, r.Header.Get("X-Attachment-Id"), r.Body, maxImageBytes)
+	att, err := s.deps.Ingest.PutAttachmentWithHashAndID(ctx, entryID, store.AttachmentImage, contentType, r.Header.Get("X-Attachment-Id"), r.Header.Get("X-Content-Sha256"), r.Body, maxImageBytes)
 	if err != nil {
 		var ingestErr *ingest.Error
 		if errors.As(err, &ingestErr) {

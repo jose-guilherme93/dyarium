@@ -310,4 +310,27 @@ describe('DyariumApi', () => {
     await api.listEntriesPage(500, '500');
     expect(calls[1].url).toBe('http://host:8080/api/v1/entries?limit=500&cursor=500');
   });
+
+  it('uploadAttachment envia X-Content-Sha256 e X-Attachment-Id quando sha256 informado', async () => {
+    const { api, calls } = makeApi(() => resp(201, { id: 'at_1' }));
+    const bytes = new Uint8Array([72, 101, 108, 108, 111]); // "Hello"
+    const sha = '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08';
+    const out = await api.uploadAttachment('e1', bytes, 'image/jpeg', 'at_1', sha);
+
+    expect(calls[0].url).toBe('http://host:8080/api/v1/entries/e1/attachments');
+    expect(calls[0].init?.method).toBe('POST');
+    expect(calls[0].init?.headers?.['X-Attachment-Id']).toBe('at_1');
+    expect(calls[0].init?.headers?.['X-Content-Sha256']).toBe(sha);
+    expect(calls[0].init?.body).toBe(bytes);
+    expect(out.id).toBe('at_1');
+  });
+
+  it('uploadAttachment nao envia X-Content-Sha256 sem o quinto argumento', async () => {
+    const { api, calls } = makeApi(() => resp(201, { id: 'at_1' }));
+    const bytes = new Uint8Array([1, 2, 3]);
+    await api.uploadAttachment('e1', bytes, 'image/jpeg');
+
+    expect(calls[0].init?.headers?.['X-Content-Sha256']).toBeUndefined();
+    expect(calls[0].init?.headers?.['X-Attachment-Id']).toBeUndefined();
+  });
 });

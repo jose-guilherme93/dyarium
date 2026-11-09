@@ -11,6 +11,7 @@
 
 import { Directory, File, FileMode, Paths } from 'expo-file-system';
 
+import { isAdtsHeader } from '@/core/concat';
 import type { ConcatIO } from '@/core/concat';
 import { storageFileKind } from '@/core/storage';
 import type { UploadFileIO } from '@/core/uploader';
@@ -208,6 +209,27 @@ export function sessionFiles(sessionId: string): File[] {
   const dir = existingSessionDirectory(sessionId);
   if (!dir) return [];
   return dir.list().filter((entry): entry is File => entry instanceof File);
+}
+
+/** Verifica que a sessao tem ao menos um segmento de audio valido (ADTS). */
+export function verifySessionAudio(sessionId: string): { files: number; bytes: number } {
+  const dir = existingSessionDirectory(sessionId);
+  if (!dir) throw new Error('nenhum segmento de audio na sessao');
+  const segments = dir.list().filter(
+    (entry): entry is File => entry instanceof File && entry.name.startsWith('seg-') && entry.name.endsWith(FILE_EXTENSION),
+  );
+  if (segments.length === 0) throw new Error('nenhum segmento de audio na sessao');
+  let files = 0;
+  let bytes = 0;
+  for (const entry of segments) {
+    const size = entry.size;
+    if (size <= 0) throw new Error('segmento vazio: ' + entry.name);
+    const header = readBytesAt(entry.uri, 0, 2);
+    if (!isAdtsHeader(header[0], header[1])) throw new Error('cabecalho ADTS invalido em: ' + entry.name);
+    files += 1;
+    bytes += size;
+  }
+  return { files, bytes };
 }
 
 export interface FreedAudio {

@@ -12,6 +12,7 @@ import {
 import { DyariumApi, type FetchLike } from '@/core/api';
 import { DEFAULT_ANALYSIS_MODEL } from '@/core/analysisModels';
 import { DEFAULT_NOTE_ORDER, normalizeNoteOrder, type NoteOrder } from '@/core/noteOrder';
+import { type BackupFrequency, normalizeBackupFrequency } from '@/core/backupSchedule';
 import {
   DEFAULT_TRANSCRIPTION_MODEL,
   type TranscriptionLanguage,
@@ -34,6 +35,7 @@ import {
   type StoredServer,
   type SwipeAction,
 } from '@/services/secure';
+import { syncBackupTask } from '@/services/background';
 import {
   DEFAULT_THEME,
   normalizeTheme,
@@ -122,6 +124,12 @@ interface SettingsValue {
   /** Ordem das notas pela data de criacao no app. */
   noteOrder: NoteOrder;
   setNoteOrder(order: NoteOrder): Promise<void>;
+  /** Rotina de backup local (off/diario/semanal/mensal). */
+  backupFrequency: BackupFrequency;
+  setBackupFrequency(value: BackupFrequency): Promise<void>;
+  /** ISO da última execução automática bem-sucedida. */
+  backupLastRunAt?: string;
+  setBackupLastRunAt(value: string | undefined): Promise<void>;
   /** Testa alcance (healthz) e token (version) sem salvar. */
   test(baseUrl: string, token: string): Promise<ConnectionResult>;
   /** Testa e, se ok, persiste no SecureStore. */
@@ -173,6 +181,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [lastNotebookId, setLastNotebookIdState] = useState<string | undefined>(undefined);
   const [notebooksAlphabetical, setNotebooksAlphabeticalState] = useState(false);
   const [noteOrder, setNoteOrderState] = useState<NoteOrder>(DEFAULT_NOTE_ORDER);
+  const [backupFrequency, setBackupFrequencyState] = useState<BackupFrequency>('off');
+  const [backupLastRunAt, setBackupLastRunAtState] = useState<string | undefined>(undefined);
   // Espelho das preferencias atuais, para gravar sempre o conjunto completo.
   const prefsRef = useRef<Prefs>({ swipeAction: 'delete', typography: DEFAULT_TYPOGRAPHY });
 
@@ -218,6 +228,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         setLastNotebookIdState(prefs.lastNotebookId);
         setNotebooksAlphabeticalState(prefs.notebooksAlphabetical === true);
         setNoteOrderState(normalizeNoteOrder(prefs.noteOrder));
+        setBackupFrequencyState(normalizeBackupFrequency(prefs.backupFrequency));
+        setBackupLastRunAtState(prefs.backupLastRunAt);
       })
       .catch(() => undefined)
       .finally(() => {
@@ -416,6 +428,23 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     [persistPrefs],
   );
 
+  const setBackupFrequency = useCallback(
+    async (value: BackupFrequency) => {
+      setBackupFrequencyState(value);
+      await persistPrefs({ backupFrequency: value });
+      void syncBackupTask(value);
+    },
+    [persistPrefs],
+  );
+
+  const setBackupLastRunAt = useCallback(
+    async (value: string | undefined) => {
+      setBackupLastRunAtState(value);
+      await persistPrefs({ backupLastRunAt: value });
+    },
+    [persistPrefs],
+  );
+
   const test = useCallback(async (baseUrl: string, token: string): Promise<ConnectionResult> => {
     const url = normalizeUrl(baseUrl);
     if (!url || !token.trim()) {
@@ -546,6 +575,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setNotebooksAlphabetical,
       noteOrder,
       setNoteOrder,
+      backupFrequency,
+      setBackupFrequency,
+      backupLastRunAt,
+      setBackupLastRunAt,
       test,
       save,
       removeServer,
@@ -599,6 +632,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setNotebooksAlphabetical,
       noteOrder,
       setNoteOrder,
+      backupFrequency,
+      setBackupFrequency,
+      backupLastRunAt,
+      setBackupLastRunAt,
       test,
       save,
       removeServer,

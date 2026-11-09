@@ -27,6 +27,7 @@
   "dependencies": {
     "@expo/ui": "~57.0.25",
     "@expo/vector-icons": "^15.1.1",
+    "@shopify/react-native-skia": "2.6.2",
     "buffer": "^6.0.3",
     "expo": "~57.0.30",
     "expo-asset": "~57.0.20",

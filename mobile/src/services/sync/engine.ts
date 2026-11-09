@@ -40,6 +40,7 @@ import { clientOwnsTranscription } from '@/services/whisper';
 import { pushTranscriptToServer } from '@/services/transcriptSync';
 import { syncServerTranscriptsFor } from '@/services/transcripts';
 import { pushAnalysisToServer, syncServerAnalysesFor } from '@/services/analysis';
+import { fileSha256 } from '@/services/hash';
 
 import { ensureBodyAttachments, uploadAudioFromPeer } from './media';
 
@@ -514,7 +515,11 @@ async function syncNotebooks(api: DyariumApi, serverId: string): Promise<void> {
       continue;
     }
     if (Date.parse(notebook.updatedAt) > Date.parse(tomb.deleted_at)) {
-      await api.createNotebook({ id: notebook.id, name: notebook.name, color: notebook.color });
+      await api.createNotebook({
+        id: notebook.id,
+        name: notebook.name,
+        color: notebook.color,
+      });
       await removeTombstone(tomb.id, 'notebook');
       continue;
     }
@@ -545,13 +550,19 @@ async function syncNotebooks(api: DyariumApi, serverId: string): Promise<void> {
     });
   }
 
-  // 4. Cadernos locais: cria no ambiente ou atualiza nome/cor.
+  // 4. Cadernos locais: cria no ambiente ou atualiza nome, cor e detalhe do resumo.
   for (const notebook of local) {
     if (notebook.isDefault || deletedLocally.has(notebook.id)) continue;
     const exists = remoteById.get(notebook.id);
     if (exists) {
-      if (exists.name !== notebook.name || exists.color !== notebook.color) {
-        await api.updateNotebook(notebook.id, { name: notebook.name, color: notebook.color });
+      if (
+        exists.name !== notebook.name ||
+        exists.color !== notebook.color
+      ) {
+        await api.updateNotebook(notebook.id, {
+          name: notebook.name,
+          color: notebook.color,
+        });
       }
     } else {
       await api.createNotebook({
@@ -678,6 +689,7 @@ async function pushRecording(
         clientOwnsTranscription(),
         clientOwnsAnalysis(),
       ]);
+      const sha256 = await fileSha256(recording.filePath);
       const result = await uploadRecording(
         {
           clientKey: recording.id,
@@ -697,6 +709,7 @@ async function pushRecording(
           entryId: remoteId,
           attachmentId,
           author: recording.author ?? '',
+          sha256,
         },
         { api, file: uploadFileIO },
       );

@@ -446,7 +446,10 @@ um minuto e o lease expirar.
 ## Fluxo de dados
 
 1. Cliente inicia um upload: `POST /uploads` com metadados e o SHA-256 esperado do arquivo.
-   O servidor reserva um `Upload` e responde com um id e o offset atual (0).
+   O app calcula o hash em pedacos de 1 MiB antes da primeira requisicao (o arquivo pode
+   ter GiB), de modo que um audio local corrompido e recusado no `complete` em vez de
+   virar uma entrada valida. O servidor reserva um `Upload` e responde com um id e o
+   offset atual (0).
 2. O cliente envia os bytes em partes: `PUT /uploads/{id}` com o header de offset. O servidor
    cifra o fluxo em streaming (AES-256-GCM) e grava o ciphertext no diretorio de dados.
    Nenhum byte em claro chega ao disco persistente.
@@ -456,6 +459,8 @@ um minuto e o lease expirar.
    Em caso de sucesso, cria uma `Entry` e enfileira um job `transcribe`. Se o SHA-256 ja
    corresponde a uma `Entry` ativa, o servidor nao duplica: descarta o objeto recem-recebido
    e devolve a entrada existente (o audio e imutavel, entao o hash e a sua identidade).
+   O mesmo vale para imagem: `POST /entries/{id}/attachments` aceita `X-Content-Sha256`;
+   divergindo, o objeto cifrado e removido e a resposta e 422 `integrity`.
 5. O worker pega o job, decifra para um diretorio temporario com permissao restrita, deriva
    a copia 16 kHz mono (e, opcionalmente, remove silencios), transcreve por trechos com
    checkpoint, grava `Transcript` e `Segment`, calcula metricas de audio e, se a analise
@@ -550,6 +555,13 @@ secao (`analysisInput` monta `TextSections` + a secao da fala). O pipeline anali
 secao com o texto inteiro dela e depois faz uma sintese da nota, que liga as leituras — por
 isso `Result.Sections` existe ao lado de `summary`/`reading`. Uma secao maior que o limite
 de uma chamada e dividida em janelas (entre paragrafos ou palavras), nunca truncada.
+
+As secoes e as janelas independentes sao analisadas em paralelo, com concorrencia limitada
+(`analyze_concurrency`; zero escolhe o padrao do runtime: uma chamada para llama.cpp, Ollama
+ou o servidor OpenCode, tres para uma API hospedada). A ordem do merge nao muda, porque cada
+chamada escreve no proprio indice. Um provedor que recusa o schema JSON estrito uma vez e
+lembrado pelo resto da execucao: sem isso, cada janela gastava uma requisicao recusada antes
+de cair no objeto JSON simples.
 
 O que a analise entrega sao metricas: sentimento, emocoes, pessoas, lugares, temas,
 momentos-chave e compreensao. A prosa e legenda disso, e o servidor a corta em codigo
@@ -660,6 +672,10 @@ entrar na exportacao.
 - Dedupe por SHA-256 no `complete`: como o audio nunca muda, o hash e a identidade do
   conteudo. Reimportar o mesmo arquivo (por exemplo, compartilhado duas vezes no app) nao
   cria entrada nem transcricao duplicadas; entradas removidas nao contam para o dedupe.
+- Integridade conferida nas duas pontas: o app valida os segmentos AAC (tamanho e cabecalho
+  ADTS) antes de concatenar e falha o fechamento em vez de marcar como gravado um audio
+  truncado; e envia o SHA-256 do arquivo final no inicio do upload, para o servidor recusar
+  o que chegou diferente do que foi gravado. Nenhum dos dois lado "conserta em silencio".
 - Toda `Entry` tem titulo e dia: quando o cliente nao informa, o servidor deriva o titulo do
   nome original do arquivo (ou da data/hora) e usa a hora de criacao como `recorded_at`.
   Isso mantem a linha do tempo e o calendario do dashboard sempre preenchidos, inclusive
@@ -846,3 +862,13 @@ uniao, tombstone permanente, versoes, anexos portateis e falha/retomada) esta em
 - Analise local no servidor: minimo realista de 2 GB de RAM para transcrever e analisar no
   mesmo host; em 1 GB, apenas transcricao com `tiny` e analise no aparelho ou hospedada.
 - Corte de silencio na transcricao: booleano em `Settings`, desligado por padrao.
+
+## Backup local
+
+- O backup copia todas as notas (texto, transcricao, audio e imagens) para uma pasta
+  escolhida pelo usuario (SAF), com manifesto e md5 por arquivo. A rotina automatica
+  (desligado/diario/semanal/mensal) confere, ao abrir o app ou acordar o sistema, se o
+  limite (00:00 local) ja passou; a hora exata nao e garantida pelo sistema operacional.
+- O manifesto carrega `textSha256` (SHA-256 do texto da nota). Ao restaurar, o hash e
+  conferido; divergencia aborta com `BackupError('corrupt')`. Backups antigos sem o campo
+  seguem compativeis (o campo e opcional).

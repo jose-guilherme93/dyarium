@@ -296,6 +296,7 @@ async function hydrate(): Promise<void> {
     if (activities.has(row.id)) continue;
     if (!KINDS.includes(row.kind as ActivityKind)) continue;
     if (!STATUSES.includes(row.status as ActivityStatus)) continue;
+
     const interrupted = row.status === 'running';
     const item: Activity = {
       id: row.id,

@@ -4,6 +4,13 @@
  * No desenvolvimento, o Metro roda na mesma maquina que a API (caso comum: o
  * app conecta via tailnet no host de dev). Entao derivamos o host a partir do
  * dev server e procuramos a API ali, na porta padrao 8080.
+ *
+ * O probe so prova que o servico PARECE um dyarium: /healthz responde
+ * `{"status":"ok","version":"..."}`. Sem token nao da para conferir o contrato
+ * de sincronizacao (as rotas de /api/v1 exigem Bearer), entao quem confirma a
+ * identidade do ambiente e o teste em `SettingsContext.save()`. Um host pode
+ * rodar mais de um dyarium; nesse caso a descoberta aponta o primeiro que
+ * responde e o usuario confirma na tela do servidor.
  */
 
 import Constants from 'expo-constants';
@@ -21,16 +28,22 @@ function devHost(): string | null {
 }
 
 async function probe(baseUrl: string): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 2500);
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 2500);
     const response = await fetch(`${baseUrl}/healthz`, { signal: controller.signal });
-    clearTimeout(timer);
     if (!response.ok) return false;
-    const body = (await response.json()) as { status?: string };
-    return body?.status === 'ok';
+    // O /healthz do dyarium sempre traz a versao. Servico que responde so
+    // `{"status":"ok"}` (health check generico) nao passa: era assim que a
+    // descoberta preenchia a URL de outro servico na mesma maquina.
+    const body = (await response.json()) as { status?: string; version?: string };
+    return body?.status === 'ok' && typeof body.version === 'string' && body.version.length > 0;
   } catch {
     return false;
+  } finally {
+    // Tambem no caminho de erro: sem isto o timer de abort ficava pendente
+    // depois de uma falha de rede.
+    clearTimeout(timer);
   }
 }
 

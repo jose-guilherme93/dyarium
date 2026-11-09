@@ -46,6 +46,8 @@ export interface UploadInput {
   attachmentId?: string;
   /** Papel do autor da nota; vazio segue o padrao do app. */
   author?: AuthorRole;
+  /** SHA-256 do arquivo local, enviado ao servidor para verificar integridade. */
+  sha256?: string;
 }
 
 export interface UploadDeps {
@@ -93,6 +95,7 @@ export async function uploadRecording(
       local_analysis: input.localAnalysis,
       entry_id: input.entryId,
       author: input.author,
+      ...(input.sha256 ? { sha256: input.sha256 } : {}),
     });
     uploadId = created.id;
     offset = created.offset ?? 0;

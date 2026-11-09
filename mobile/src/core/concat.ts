@@ -17,9 +17,17 @@ export interface ConcatIO {
   append(outPath: string, bytes: Uint8Array): Promise<void>;
 }
 
+/** Cabecalho ADTS: sync word (12 bits = 0xFFF) nos dois primeiros bytes. */
+export function isAdtsHeader(first: number, second: number): boolean {
+  return first === 0xff && (second & 0xf0) === 0xf0;
+}
+
 /**
  * Concatena todos os segmentos de `dir` em `outPath`, na ordem lexicografica
  * (os nomes sao zero-padded: seg-000, seg-001, ...). Retorna o total de bytes.
+ *
+ * Falha explicitamente (sem `break` silencioso) se algum segmento estiver
+ * truncado, vazio, ou se o IO devolver bytes a mais ou a menos que o pedido.
  */
 export async function concatenateSegments(
   dir: string,
@@ -29,18 +37,28 @@ export async function concatenateSegments(
 ): Promise<number> {
   if (chunkSize <= 0) throw new Error('chunkSize deve ser positivo');
   const segments = (await io.listSegments(dir)).slice().sort();
-  let total = 0;
+  const sizes: Record<string, number> = {};
+  let expectedTotal = 0;
   for (const segment of segments) {
     const size = await io.size(segment);
+    if (size <= 0) throw new Error('segmento vazio ou invalido: ' + segment);
+    sizes[segment] = size;
+    expectedTotal += size;
+  }
+  let total = 0;
+  for (const segment of segments) {
+    const size = sizes[segment];
     let offset = 0;
     while (offset < size) {
       const length = Math.min(chunkSize, size - offset);
       const bytes = await io.read(segment, offset, length);
-      if (bytes.length === 0) break; // evita loop infinito em IO defeituoso
+      if (bytes.length === 0) throw new Error('segmento truncado: ' + segment);
+      if (bytes.length > length) throw new Error('leitura excedeu o solicitado: ' + segment);
       await io.append(outPath, bytes);
       offset += bytes.length;
       total += bytes.length;
     }
   }
+  if (total !== expectedTotal) throw new Error('total de bytes nao confere com os segmentos');
   return total;
 }

@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joseti/dyarium/internal/entrytitle"
 	"github.com/joseti/dyarium/internal/id"
 	"github.com/joseti/dyarium/internal/jobs"
 	"github.com/joseti/dyarium/internal/preview"
@@ -330,9 +329,8 @@ func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 		createdAt = parsed.UTC()
 	}
 	title := strings.TrimSpace(req.Title)
-	if title == "" {
-		title = entrytitle.Name(entrytitle.Text)
-	}
+	// Nota nova nao recebe titulo automatico: o titulo fica vazio e a lista
+	// usa o corpo (ou o placeholder) ate o usuario nomear a nota.
 	var recordedAt *time.Time
 	if raw := strings.TrimSpace(req.RecordedAt); raw != "" {
 		parsed, err := time.Parse(time.RFC3339, raw)

@@ -100,7 +100,10 @@ export default function NotebooksScreen() {
     );
   };
 
-  const saveForm = async (input: { name: string; color: string }) => {
+  const saveForm = async (input: {
+    name: string;
+    color: string;
+  }) => {
     if (!form) return;
     const duplicate = shown.some(
       (notebook) =>

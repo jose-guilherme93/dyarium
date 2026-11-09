@@ -122,6 +122,42 @@ func TestAnalyzeFallsBackToJSONObject(t *testing.T) {
 	}
 }
 
+// O provedor que recusa o schema estrito uma vez recusa sempre. Lembrar disso
+// evita uma requisicao desperdicada em cada janela da mesma analise.
+func TestAnalyzeRemembersSchemaRejection(t *testing.T) {
+	var schemaAttempts, jsonAttempts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		format, _ := body["response_format"].(map[string]any)
+		if format["type"] == "json_schema" {
+			schemaAttempts++
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"message":"json_schema nao suportado"}}`))
+			return
+		}
+		jsonAttempts++
+		resp := map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": richResponse}}},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	client := analyze.New(analyze.Config{Enabled: true, BaseURL: server.URL, Model: "llama"})
+	for i := 0; i < 3; i++ {
+		if _, err := client.Analyze(context.Background(), "texto"); err != nil {
+			t.Fatalf("analyze %d: %v", i, err)
+		}
+	}
+	if schemaAttempts != 1 {
+		t.Fatalf("tentativas de schema = %d, queria 1", schemaAttempts)
+	}
+	if jsonAttempts != 3 {
+		t.Fatalf("respostas json = %d, queria 3", jsonAttempts)
+	}
+}
+
 func TestListModels(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/models" {
@@ -262,5 +298,21 @@ func TestConfigFromSettingsReadsLocalRuntime(t *testing.T) {
 	})
 	if got.LocalRuntime != "embedded" {
 		t.Fatalf("local runtime = %q", got.LocalRuntime)
+	}
+}
+
+func TestConfigFromSettingsReadsConcurrency(t *testing.T) {
+	got := analyze.ConfigFromSettings(analyze.Config{}, map[string]string{
+		"analyze_concurrency": "2",
+	})
+	if got.Concurrency != 2 {
+		t.Fatalf("concorrencia = %d, queria 2", got.Concurrency)
+	}
+	// Valor invalido nao derruba a analise: fica o padrao do runtime.
+	got = analyze.ConfigFromSettings(analyze.Config{}, map[string]string{
+		"analyze_concurrency": "muitas",
+	})
+	if got.Concurrency != 0 {
+		t.Fatalf("concorrencia invalida = %d, queria 0", got.Concurrency)
 	}
 }

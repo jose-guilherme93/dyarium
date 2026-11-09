@@ -67,6 +67,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		"analyze_base_url":      analyzeBaseURL,
 		"analyze_model":         analyzeModel,
 		"analyze_api_key_set":   settings["analyze_api_key"] != "",
+		"analyze_concurrency":   toInt(settings["analyze_concurrency"]),
 		"analysis_themes":       analysisThemes,
 		"review_enabled":        settings["review_enabled"] == "true",
 		"literal_transcript":    settings["literal_transcript"] == "true",
@@ -144,6 +145,15 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if !set(key, str) {
+				return
+			}
+		case "analyze_concurrency":
+			n, err := toNumber(value)
+			if err != nil || n < 0 || n > 16 {
+				writeError(w, http.StatusBadRequest, "invalid_value", "analyze_concurrency deve ser inteiro entre 0 e 16")
+				return
+			}
+			if !set(key, strconv.Itoa(n)) {
 				return
 			}
 		case "whisper_model", "whisper_language", "analyze_provider", "analyze_base_url", "analyze_model",

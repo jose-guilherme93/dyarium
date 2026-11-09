@@ -1073,17 +1073,24 @@ export class DyariumApi {
     return new ConflictError(res.status, error.code, error.message, fields, versions);
   }
 
-  /** Sobe uma imagem como anexo da entrada (bytes crus, Content-Type image/*). */
+  /**
+   * Sobe uma imagem como anexo da entrada (bytes crus, Content-Type image/*).
+   * `sha256`, quando informado, e enviado em `X-Content-Sha256` para o servidor
+   * recusar conteudo corrompido antes de gravar.
+   */
   async uploadAttachment(
     entryId: string,
     bytes: Uint8Array,
     contentType: string,
     attachmentId?: string,
+    sha256?: string,
   ): Promise<ServerAttachment> {
     const headers = this.authHeaders({ 'Content-Type': contentType });
     // Id do criador: o mesmo anexo vale em todos os ambientes, entao o corpo
     // que referencia `attachment:<id>` nao precisa ser reescrito ao sincronizar.
     if (attachmentId) headers['X-Attachment-Id'] = attachmentId;
+    // Hash permite o servidor rejeitar bytes corrompidos antes de escrever em disco.
+    if (sha256) headers['X-Content-Sha256'] = sha256;
     const res = await this.fetchImpl(this.url(`/api/v1/entries/${entryId}/attachments`), {
       method: 'POST',
       headers,

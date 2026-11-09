@@ -50,9 +50,15 @@ interface LibraryValue {
   refresh(): Promise<Recording[]>;
   refreshNotebooks(): Promise<void>;
   /** Cria um caderno local; o push ao servidor e best-effort. */
-  createNotebook(input: { name: string; color?: string }): Promise<Notebook>;
-  /** Renomeia/recolore um caderno. */
-  renameNotebook(id: string, patch: { name?: string; color?: string }): Promise<void>;
+  createNotebook(input: {
+    name: string;
+    color?: string;
+  }): Promise<Notebook>;
+  /** Renomeia, recolore ou ajusta o detalhe do resumo de um caderno. */
+  renameNotebook(
+    id: string,
+    patch: { name?: string; color?: string },
+  ): Promise<void>;
   /** Exclui um caderno; as notas vao para "Notas ao acaso". */
   removeNotebook(id: string): Promise<void>;
   /** Move uma nota de caderno. */
@@ -191,16 +197,16 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     bumpRender('kick.called');
     // Enquanto a nota esta aberta, upload/rede/SQLite esperam: eles competem
     // com a leitura e a digitacao. A fila e persistente e retoma ao sair.
-    if (noteIsOpen()) return;
+    if (noteIsOpen()) return Promise.resolve();
     // Cadernos pendentes (criados/renomeados/excluidos offline) sobem **antes**
     // da fila: uma nota que aponta para um caderno ainda inexistente no servidor
     // levaria 422 invalid_notebook e ficaria falha para sempre.
-    void pushNotebooks()
+    // Devolve a promessa para o boot poder encadear uma etapa depois da outra.
+    return pushNotebooks()
       .then(refreshNotebooks)
       .catch(() => undefined)
-      .finally(() => {
-        void runUploadQueueOnce().then(refresh).catch(() => undefined);
-      });
+      .then(() => runUploadQueueOnce().then(refresh))
+      .catch(() => undefined);
   }, [refresh, refreshNotebooks]);
 
   useEffect(() => {
@@ -244,9 +250,11 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
 
   const pullTranscripts = useCallback(() => {
     // A nota aberta e local-first: nada de rede/SQLite de fundo competindo.
-    if (noteIsOpen()) return;
+    if (noteIsOpen()) return Promise.resolve();
     bumpRender('transcripts.called');
-    void fetchTranscriptsOnce().then(refresh).catch(() => undefined);
+    return fetchTranscriptsOnce()
+      .then(refresh)
+      .catch(() => undefined);
   }, [refresh]);
 
   // Traz notas do servidor para o app (best-effort). Se nada novo chegou, nao
@@ -255,10 +263,12 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   // envio que falhou offline) sobe para o servidor. Sem isso o dashboard
   // mostrava a nota transcrita sem texto.
   const pushTranscripts = useCallback(() => {
-    if (noteIsOpen()) return;
+    if (noteIsOpen()) return Promise.resolve();
     // O envio pode adotar a transcricao refeita no servidor: recarrega a lista
     // para o texto certo aparecer sem esperar o proximo ciclo.
-    void pushPendingTranscriptsOnce().then(refresh).catch(() => undefined);
+    return pushPendingTranscriptsOnce()
+      .then(refresh)
+      .catch(() => undefined);
   }, [refresh]);
 
   // Uma revisao interrompida (app morto no meio) retoma no boot, como a
@@ -291,9 +301,9 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   }, [reviewEnabled, literalTranscript, analysisModel, analysisLowPower]);
 
   const pullServer = useCallback(() => {
-    if (noteIsOpen()) return;
+    if (noteIsOpen()) return Promise.resolve();
     bumpRender('pullserver.called');
-    void pullServerEntries()
+    return pullServerEntries()
       .then(async (changed) => {
         await refreshNotebooks();
         if (changed > 0) return refresh();
@@ -306,8 +316,8 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   // tombstones. Roda ao conectar, ao voltar para o app e num intervalo lento;
   // nao a cada 20 s, porque o manifesto percorre a biblioteca inteira.
   const reconcile = useCallback(() => {
-    if (noteIsOpen()) return;
-    void reconcileAllServers()
+    if (noteIsOpen()) return Promise.resolve();
+    return reconcileAllServers()
       .then((summaries) => {
         if (summaries.some((summary) => summary.pulled + summary.pushed > 0)) {
           return refresh();
@@ -321,19 +331,25 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     if (!ready || !config) return undefined;
     // A lista e a prioridade do boot. Envio, transcricao e pull entram depois
     // que a tela assentou, e cada um desiste se uma nota abrir no meio.
+    //
+    // Em serie, de proposito: cada etapa rele a biblioteca do banco, e antes
+    // todas partiam juntas 2 s depois de conectar — era o pico de memoria que
+    // matava o app em aparelho pequeno. Uma termina e a proxima comeca.
     const timer = setTimeout(() => {
-      kick();
-      pullTranscripts();
-      pushTranscripts();
-      pullServer();
-      reconcile();
-      // O que ficou pela metade antes de o app morrer continua de onde parou.
-      // A fila local so roda com o app na frente: trabalho pesado iniciado do
-      // fundo nao consegue abrir o servico em primeiro plano no Android 12+.
-      void transcribePendingLocally().catch(() => undefined);
-      void resumeReviews().catch(() => undefined);
-      // Analises feitas no aparelho antes da conexao sobem agora (idempotente).
-      void pushLocalAnalyses().catch(() => undefined);
+      void (async () => {
+        await kick();
+        await pullTranscripts();
+        await pushTranscripts();
+        await pullServer();
+        await reconcile();
+        // O que ficou pela metade antes de o app morrer continua de onde parou.
+        // A fila local so roda com o app na frente: trabalho pesado iniciado do
+        // fundo nao consegue abrir o servico em primeiro plano no Android 12+.
+        await transcribePendingLocally().catch(() => undefined);
+        await resumeReviews().catch(() => undefined);
+        // Analises feitas no aparelho antes da conexao sobem agora (idempotente).
+        await pushLocalAnalyses().catch(() => undefined);
+      })().catch(() => undefined);
     }, 2000);
     return () => clearTimeout(timer);
   }, [ready, config, kick, pullTranscripts, pushTranscripts, pullServer, reconcile, resumeReviews]);
@@ -611,7 +627,10 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   const unarchiveNote = useCallback((id: string) => setArchived(id, false), [setArchived]);
 
   const createNotebook = useCallback(
-    async (input: { name: string; color?: string }) => {
+    async (input: {
+      name: string;
+      color?: string;
+    }) => {
       const now = new Date().toISOString();
       const notebook: Notebook = {
         id: newId('nb_'),
@@ -632,7 +651,10 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   );
 
   const renameNotebook = useCallback(
-    async (id: string, patch: { name?: string; color?: string }) => {
+    async (
+      id: string,
+      patch: { name?: string; color?: string },
+    ) => {
       await updateLocalNotebook(id, patch);
       await refreshNotebooks();
       void pushNotebooks().then(refreshNotebooks).catch(() => undefined);

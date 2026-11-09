@@ -30,6 +30,7 @@ import {
   saveCachedAnalyses,
   setAnalysisSyncAt,
   setAnalysisSyncAtEnv,
+  type CachedAnalysis,
 } from './db';
 import { loadServerConfig } from './secure';
 
@@ -94,43 +95,74 @@ export async function syncServerAnalyses(entries: ServerEntry[]): Promise<number
   if (!config) return 0;
   const api = new DyariumApi(config, doFetch);
   let imported = 0;
+  if (__DEV__) {
+    const comAnalise = entries.filter((entry) => Boolean(entry.analysis_at)).length;
+    console.warn('ana: entradas', entries.length, 'com analysis_at', comAnalise);
+  }
+  let marcados = 0;
+  let locais = 0;
+  let falhas = 0;
+  // Busca tudo primeiro e grava de uma vez: uma transacao por analise segurava
+  // a conexao do SQLite por segundos e travava a leitura do mapa que abria.
+  const pending: CachedAnalysis[] = [];
+  const markers: { id: string; at: string }[] = [];
 
   for (const entry of entries) {
     if (!entry.id || !entry.analysis_at) continue;
     const sourceAt = entry.analysis_at;
-    if ((await getAnalysisSyncAt(entry.id)) === sourceAt) continue;
+    if ((await getAnalysisSyncAt(entry.id)) === sourceAt) {
+      marcados += 1;
+      continue;
+    }
 
     // Analise feita no aparelho vence: nao vale gastar rede nem sobrescrever.
     const cached = await getCachedAnalysis(entry.id).catch(() => null);
     if (cached?.origin === 'local') {
+      locais += 1;
       await setAnalysisSyncAt(entry.id, sourceAt);
       continue;
     }
 
     try {
       const analysis = await api.getAnalysis(entry.id);
-      await saveCachedAnalyses([
-        {
-          entryId: entry.id,
-          title: entry.title,
-          recordedAt: entry.recorded_at ?? entry.created_at,
-          analysis,
-          origin: 'server',
-        },
-      ]);
-      await setAnalysisSyncAt(entry.id, sourceAt);
-      emitAnalysis(entry.id);
-      imported += 1;
+      pending.push({
+        entryId: entry.id,
+        title: entry.title,
+        recordedAt: entry.recorded_at ?? entry.created_at,
+        analysis,
+        origin: 'server',
+      });
+      markers.push({ id: entry.id, at: sourceAt });
     } catch (error) {
       if (error instanceof ApiError && error.status === 404) {
         // A atualizacao era de uma analise que ja nao existe.
         await deleteCachedServerAnalysis(entry.id).catch(() => undefined);
         await setAnalysisSyncAt(entry.id, sourceAt);
         emitAnalysis(entry.id);
+      } else {
+        falhas += 1;
+        if (__DEV__ && falhas <= 3) {
+          console.warn(
+            'ana: falha ao buscar',
+            entry.id,
+            error instanceof ApiError ? `${error.status} ${error.code ?? ''}` : String(error),
+          );
+        }
       }
       // Rede/5xx: o marcador fica como esta e o proximo pull tenta de novo.
     }
   }
+
+  if (pending.length > 0) {
+    // Se a gravacao falhar, nenhum marcador sobe: o proximo pull tenta de novo.
+    await saveCachedAnalyses(pending);
+    for (const marker of markers) {
+      await setAnalysisSyncAt(marker.id, marker.at);
+      emitAnalysis(marker.id);
+    }
+    imported = pending.length;
+  }
+  if (__DEV__) console.warn('ana: importadas', imported, 'marcadas', marcados, 'locais', locais, 'falhas', falhas);
   return imported;
 }
 

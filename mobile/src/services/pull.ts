@@ -90,7 +90,6 @@ async function pullOnce(): Promise<number> {
   // nunca chegavam ao aparelho.
   const entriesPage = await listAllPages((cursor) => api.listEntriesPage(PULL_PAGE_SIZE, cursor));
   const entries = entriesPage.items;
-  // Inclui a lixeira local: uma nota apagada aqui nao pode ser recriada pelo
   // pull enquanto o servidor ainda nao confirmou a exclusao.
   const local = await listRecordings(true);
 
@@ -171,7 +170,9 @@ async function pullOnce(): Promise<number> {
       continue;
     }
 
-    if (known.has(entry.id)) continue;
+    if (known.has(entry.id)) {
+      continue;
+    }
     let note;
     try {
       const notes = await api.listNotes(entry.id);
@@ -179,7 +180,9 @@ async function pullOnce(): Promise<number> {
     } catch {
       // sem nota associada: segue so com o titulo
     }
-    if (isBlankServerEntry(entry, note)) continue;
+    if (isBlankServerEntry(entry, note)) {
+      continue;
+    }
     await upsertRecording(entryToRecording(entry, note));
     changed += 1;
   }

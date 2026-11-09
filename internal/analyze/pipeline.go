@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 )
 
 const (
@@ -34,6 +36,59 @@ type Pipeline struct {
 // NewPipeline builds a Pipeline over an analysis client.
 func NewPipeline(client *Client) *Pipeline { return &Pipeline{client: client} }
 
+// runParallel calls fn for every index in [0, total) with at most limit calls in
+// flight. fn writes only to its own slot, so the caller keeps the original
+// order; the first real error cancels the remaining calls.
+func runParallel(ctx context.Context, total, limit int, fn func(context.Context, int) error) error {
+	if total <= 0 {
+		return nil
+	}
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > total {
+		limit = total
+	}
+	if limit == 1 {
+		for i := 0; i < total; i++ {
+			if err := fn(ctx, i); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	sem := make(chan struct{}, limit)
+	var wg sync.WaitGroup
+	var once sync.Once
+	for i := 0; i < total; i++ {
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+		}
+		if ctx.Err() != nil {
+			break
+		}
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if ctx.Err() != nil {
+				return
+			}
+			if err := fn(ctx, i); err != nil {
+				once.Do(func() { cancel(err) })
+			}
+		}(i)
+	}
+	wg.Wait()
+	if cause := context.Cause(ctx); cause != nil && !errors.Is(cause, context.Canceled) {
+		return cause
+	}
+	return ctx.Err()
+}
+
 type textPart struct {
 	text string
 	size int
@@ -60,17 +115,22 @@ func (p *Pipeline) Run(ctx context.Context, segments []Segment, progress func(st
 	if len(windows) == 0 {
 		return Result{}, errors.New("analyze: transcricao vazia")
 	}
-	results := make([]Result, 0, len(windows))
-	weights := make([]int, 0, len(windows))
+	results := make([]Result, len(windows))
+	weights := make([]int, len(windows))
+	var done atomic.Int64
 	report("analyzing", 0, len(windows))
-	for i, w := range windows {
-		result, err := p.client.Analyze(ctx, w.text)
+	err := runParallel(ctx, len(windows), p.client.concurrency(), func(ctx context.Context, i int) error {
+		result, err := p.client.Analyze(ctx, windows[i].text)
 		if err != nil {
-			return Result{}, err
+			return err
 		}
-		results = append(results, result)
-		weights = append(weights, w.size)
-		report("analyzing", i+1, len(windows))
+		results[i] = result
+		weights[i] = windows[i].size
+		report("analyzing", int(done.Add(1)), len(windows))
+		return nil
+	})
+	if err != nil {
+		return Result{}, err
 	}
 	merged := mergeResults(results, weights)
 	if len(windows) > 1 {
@@ -105,13 +165,15 @@ func (p *Pipeline) RunSections(ctx context.Context, title string, sections []Sec
 	}
 	total := len(sections) + 1
 	report("analyzing", 0, total)
-	analyses := make([]SectionAnalysis, 0, len(sections))
-	results := make([]Result, 0, len(sections))
-	weights := make([]int, 0, len(sections))
-	for i, section := range sections {
+	analyses := make([]SectionAnalysis, len(sections))
+	results := make([]Result, len(sections))
+	weights := make([]int, len(sections))
+	var done atomic.Int64
+	err := runParallel(ctx, len(sections), p.client.concurrency(), func(ctx context.Context, i int) error {
+		section := sections[i]
 		result, err := p.analyzeSection(ctx, title, section)
 		if err != nil {
-			return Result{}, err
+			return err
 		}
 		// Momento com tempo so faz sentido na fala. Uma secao escrita nao tem
 		// audio: o modelo inventaria `start_ms`, e o painel mostraria um
@@ -119,7 +181,7 @@ func (p *Pipeline) RunSections(ctx context.Context, title string, sections []Sec
 		if section.Kind != "transcript" {
 			result.KeyMoments = nil
 		}
-		analyses = append(analyses, SectionAnalysis{
+		analyses[i] = SectionAnalysis{
 			Heading:    section.Heading,
 			Kind:       section.Kind,
 			Reading:    result.Reading,
@@ -133,10 +195,14 @@ func (p *Pipeline) RunSections(ctx context.Context, title string, sections []Sec
 			Ideas:      result.Ideas,
 			Events:     result.Events,
 			Epiphanies: result.Epiphanies,
-		})
-		results = append(results, result)
-		weights = append(weights, max(1, len([]rune(section.Text))))
-		report("analyzing", i+1, total)
+		}
+		results[i] = result
+		weights[i] = max(1, len([]rune(section.Text)))
+		report("analyzing", int(done.Add(1)), total)
+		return nil
+	})
+	if err != nil {
+		return Result{}, err
 	}
 
 	merged := mergeResults(results, weights)
@@ -168,35 +234,41 @@ func (p *Pipeline) analyzeSection(ctx context.Context, title string, section Sec
 	if len([]rune(section.Text)) <= singlePassLimit {
 		return p.client.AnalyzeSection(ctx, title, section)
 	}
-	texts := []string{section.Text}
+	var texts []string
 	if len(section.Segments) > 0 {
-		windows := buildWindows(section.Segments)
-		texts = texts[:0]
-		for _, w := range windows {
+		for _, w := range buildWindows(section.Segments) {
 			texts = append(texts, w.text)
 		}
 	} else {
 		texts = buildTextWindows(section.Text, windowTarget)
 	}
-	results := make([]Result, 0, len(texts))
-	weights := make([]int, 0, len(texts))
+	// A janela vazia nao vira chamada: o modelo nao tem o que ler.
+	parts := texts[:0]
 	for _, text := range texts {
-		if strings.TrimSpace(text) == "" {
-			continue
+		if strings.TrimSpace(text) != "" {
+			parts = append(parts, text)
 		}
+	}
+	if len(parts) == 0 {
+		return Result{}, errors.New("analyze: secao vazia")
+	}
+	results := make([]Result, len(parts))
+	weights := make([]int, len(parts))
+	err := runParallel(ctx, len(parts), p.client.concurrency(), func(ctx context.Context, i int) error {
 		result, err := p.client.AnalyzeSection(ctx, title, Section{
 			Heading: section.Heading,
 			Kind:    section.Kind,
-			Text:    text,
+			Text:    parts[i],
 		})
 		if err != nil {
-			return Result{}, err
+			return err
 		}
-		results = append(results, result)
-		weights = append(weights, max(1, len([]rune(text))))
-	}
-	if len(results) == 0 {
-		return Result{}, errors.New("analyze: secao vazia")
+		results[i] = result
+		weights[i] = max(1, len([]rune(parts[i])))
+		return nil
+	})
+	if err != nil {
+		return Result{}, err
 	}
 	return mergeResults(results, weights), nil
 }

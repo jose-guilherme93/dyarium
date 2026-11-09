@@ -23,8 +23,8 @@ import { markRecorded } from '@/core/queue';
 import { formatTitle, toRecordedAt } from '@/core/title';
 import type { Recording } from '@/core/types';
 import { bumpRender, mark } from '@/dev/perf';
-import { listRecordings, upsertRecording } from '@/services/db';
-import { concatIO, outputFileUri, sessionDirUri, storeSegment } from '@/services/files';
+import { listRecordings, markInterruptedRecordings, upsertRecording } from '@/services/db';
+import { concatIO, outputFileUri, sessionDirUri, storeSegment, verifySessionAudio } from '@/services/files';
 import { notificationPermissionGranted } from '@/services/notifications';
 
 import { useLibrary } from './LibraryContext';
@@ -124,16 +124,8 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
     let alive = true;
     (async () => {
       try {
-        const list = await listRecordings();
-        for (const r of list) {
-          if (r.status === 'recording') {
-            await upsertRecording({
-              ...r,
-              status: 'interrupted',
-              updatedAt: new Date().toISOString(),
-            });
-          }
-        }
+        // Um UPDATE no banco, sem ler a biblioteca inteira no boot.
+        await markInterruptedRecordings();
         if (alive) await library.refresh();
       } catch {
         // Sem banco disponivel: o app segue; a fila fica vazia ate o banco voltar.
@@ -314,6 +306,23 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
 
       const durationMs = elapsed();
       const outUri = outputFileUri(session.id);
+
+      try {
+        verifySessionAudio(session.id);
+      } catch {
+        const interrupted = {
+          ...session,
+          status: 'interrupted' as const,
+          updatedAt: new Date().toISOString(),
+        };
+        await upsertRecording(interrupted);
+        activeRef.current = null;
+        setActive(null);
+        setElapsedMs(0);
+        setError('O áudio gravado está incompleto e não pode ser finalizado.');
+        return null;
+      }
+
       const size = await concatenateSegments(sessionDirUri(session.id), outUri, concatIO);
 
       if (size <= 0) {
@@ -415,6 +424,19 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
         const found = list.find((r) => r.id === id);
         if (!found) return;
         const outUri = outputFileUri(id);
+
+        try {
+          verifySessionAudio(id);
+        } catch {
+          await upsertRecording({
+            ...found,
+            status: 'interrupted' as const,
+            updatedAt: new Date().toISOString(),
+          });
+          setError('O áudio interrompido está incompleto e não pode ser finalizado.');
+          return;
+        }
+
         const size = await concatenateSegments(sessionDirUri(id), outUri, concatIO);
         const finished = markRecorded(
           { ...found, updatedAt: new Date().toISOString() },

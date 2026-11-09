@@ -12,6 +12,7 @@ import {
 } from '@/core/transcription';
 import { normalizeNoteOrder, type NoteOrder } from '@/core/noteOrder';
 import { normalizeTypography, type NoteTypography } from '@/core/typography';
+import { normalizeBackupFrequency, type BackupFrequency } from '@/core/backupSchedule';
 import type { ServerConfig } from '@/core/types';
 import { normalizeTheme, type ThemeName } from '@/theme/tokens';
 
@@ -247,6 +248,10 @@ export interface Prefs {
   analysisLowPower?: boolean;
   /** Pasta escolhida para o backup local (uri). */
   backupFolder?: string;
+  /** Rotina de backup local. */
+  backupFrequency?: BackupFrequency;
+  /** ISO da última execução automática bem-sucedida. */
+  backupLastRunAt?: string;
   /** Meta de palavras por semana (Painel). */
   weeklyWordGoal?: number;
   /** Lembretes de escrita (meta/sequencia). */
@@ -269,6 +274,7 @@ const PREFS_KEY = 'dyarium.prefs';
 const DEFAULT_PREFS: Prefs = {
   version: PREFS_VERSION,
   swipeAction: 'delete',
+  backupFrequency: 'off',
   transcriptionEnabled: false,
   analysisEnabled: false,
   serverProcessing: false,
@@ -325,6 +331,9 @@ export async function loadPrefs(): Promise<Prefs> {
       analysisModel:
         typeof parsed.analysisModel === 'string' ? parsed.analysisModel : undefined,
       backupFolder: typeof parsed.backupFolder === 'string' ? parsed.backupFolder : undefined,
+      backupFrequency: normalizeBackupFrequency(parsed.backupFrequency),
+      backupLastRunAt:
+        typeof parsed.backupLastRunAt === 'string' ? parsed.backupLastRunAt : undefined,
       weeklyWordGoal:
         typeof parsed.weeklyWordGoal === 'number' && parsed.weeklyWordGoal >= 0
           ? parsed.weeklyWordGoal

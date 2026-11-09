@@ -34,6 +34,7 @@ import {
   type BackupFile,
   type BackupNote,
 } from '@/core/backup';
+import { sha256Hex } from '@/core/sha256';
 import { DEFAULT_NOTEBOOK_ID } from '@/core/notebooks';
 import type { Recording } from '@/core/types';
 
@@ -232,6 +233,7 @@ export async function runBackup(
       // Sem os caminhos absolutos: serao refeitos no restore.
       recording: { ...recording, dir: '', filePath: undefined },
       audioFile: baseName(recording.filePath),
+      textSha256: recording.text ? sha256Hex(new TextEncoder().encode(recording.text)) : undefined,
       files: backed,
     });
     onProgress?.(i + 1, recordings.length);
@@ -307,6 +309,15 @@ export async function runRestore(
       if (staged.exists) staged.delete();
       await Legacy.copyAsync({ from: source, to: staged.uri });
       if (md5Of(staged.uri) !== file.md5) throw new BackupError('corrupt');
+    }
+
+    // 3) Confere integridade do texto: hash armazenado vs hash do texto no aparelho.
+    // Um backup antigo nao traz `textSha256`; entao sem ele apenas ignora (compatibilidade).
+    if (entry.textSha256 !== undefined && recording.text !== undefined) {
+      const actual = sha256Hex(new TextEncoder().encode(recording.text));
+      if (actual !== entry.textSha256) {
+        throw new BackupError('corrupt');
+      }
     }
 
     // 2) So depois de conferir tudo, poe na pasta da nota e grava no banco.

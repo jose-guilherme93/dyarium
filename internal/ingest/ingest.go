@@ -540,14 +540,32 @@ func (s *Service) PutAttachment(ctx context.Context, entryID, kind, contentType 
 // used in every environment, so a body that references it stays valid when the
 // note is pushed to another server. Empty keeps the generated id. A repeated id
 // with the same bytes is idempotent; different bytes under the same id is a
-// conflict.
+// conflict. Sem hash esperado, nao ha integridade a verificar.
 func (s *Service) PutAttachmentWithID(ctx context.Context, entryID, kind, contentType, attachmentID string, data io.Reader, maxBytes int64) (store.Attachment, error) {
+	return s.PutAttachmentWithHashAndID(ctx, entryID, kind, contentType, attachmentID, "", data, maxBytes)
+}
+
+// PutAttachmentWithHashAndID is PutAttachmentWithID with an integrity check.
+// When expectedSHA256 is not empty it must be 64 hex chars, and the hash of
+// the received content is compared with it; on mismatch the encrypted object
+// is removed and a 422 integrity error is returned, without creating the
+// attachment. Neither the hash nor the content is ever logged.
+func (s *Service) PutAttachmentWithHashAndID(ctx context.Context, entryID, kind, contentType, attachmentID, expectedSHA256 string, data io.Reader, maxBytes int64) (store.Attachment, error) {
 	if maxBytes <= 0 {
 		maxBytes = s.cfg.MaxUploadBytes
 	}
 	attachmentID = strings.TrimSpace(attachmentID)
 	if attachmentID != "" && !id.Valid(attachmentID) {
 		return store.Attachment{}, newError(400, "invalid_attachment_id", "attachment_id invalido")
+	}
+	expectedSHA256 = strings.ToLower(strings.TrimSpace(expectedSHA256))
+	if expectedSHA256 != "" {
+		if len(expectedSHA256) != 64 {
+			return store.Attachment{}, newError(400, "invalid_sha256", "sha256 deve ter 64 caracteres hexadecimais")
+		}
+		if _, err := hex.DecodeString(expectedSHA256); err != nil {
+			return store.Attachment{}, newError(400, "invalid_sha256", "sha256 invalido")
+		}
 	}
 	attID := attachmentID
 	if attID == "" {
@@ -595,6 +613,11 @@ func (s *Service) PutAttachmentWithID(ctx context.Context, entryID, kind, conten
 		os.Remove(path)
 		return store.Attachment{}, newError(413, "too_large", "anexo excede o tamanho maximo")
 	}
+	sum := hex.EncodeToString(hasher.Sum(nil))
+	if expectedSHA256 != "" && sum != expectedSHA256 {
+		os.Remove(path)
+		return store.Attachment{}, newError(422, "integrity", "sha256 do conteudo diverge do informado")
+	}
 	att := store.Attachment{
 		ID:          attID,
 		EntryID:     entryID,
@@ -602,7 +625,7 @@ func (s *Service) PutAttachmentWithID(ctx context.Context, entryID, kind, conten
 		StorageKey:  storageKey,
 		ContentType: contentType,
 		SizeBytes:   size,
-		SHA256:      hex.EncodeToString(hasher.Sum(nil)),
+		SHA256:      sum,
 		Cipher:      "aes-256-gcm",
 		CreatedAt:   time.Now().UTC(),
 	}

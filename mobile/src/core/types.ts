@@ -256,7 +256,11 @@ export function needsTranscript(r: Recording): boolean {
     Boolean(r.entryId) &&
     r.status === 'completed' &&
     r.transcriptOrigin !== 'local' &&
-    r.transcriptStatus !== 'ready'
+    r.transcriptStatus !== 'ready' &&
+    // Nota cujo texto vem do servidor so entra na fila quando existe um
+    // `pending` explicito (houve transcript_at a buscar). Sem isto ela pedia
+    // /transcript para sempre quando o servidor nao transcrevia.
+    (r.transcriptOrigin !== 'server' || r.transcriptStatus === 'pending')
   );
 }
 

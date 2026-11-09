@@ -111,10 +111,20 @@ type Client struct {
 	cfg       Config
 	http      *http.Client
 	sessionID string
+	// slots caps the provider requests in flight for the whole run, including
+	// the nested section/window loops. Nil means the sequential loops already
+	// keep one request at a time.
+	slots chan struct{}
 
 	usageMu          sync.Mutex
 	promptTokens     int
 	completionTokens int
+
+	// schemaMu guards the one probe that matters for the whole run: a provider
+	// that rejected the strict schema once will reject it on every window, so
+	// remembering it saves one wasted request per call.
+	schemaMu          sync.Mutex
+	schemaUnsupported bool
 }
 
 // Usage returns the accumulated tokens of the calls made by this client. The
@@ -138,7 +148,11 @@ func (c *Client) addUsage(prompt, completion int) {
 // New builds a Client. The session id is what the OpenCode gateway uses to
 // route and cache a conversation; it stays stable for the whole analysis run.
 func New(cfg Config) *Client {
-	return &Client{cfg: cfg, http: &http.Client{Timeout: 300 * time.Second}, sessionID: newSessionID()}
+	c := &Client{cfg: cfg, http: &http.Client{Timeout: 300 * time.Second}, sessionID: newSessionID()}
+	if n := c.concurrency(); n > 1 {
+		c.slots = make(chan struct{}, n)
+	}
+	return c
 }
 
 func newSessionID() string {
@@ -161,6 +175,57 @@ func (c *Client) gatewayHeaders(req *http.Request) {
 
 // Enabled reports whether analysis is turned on.
 func (c *Client) Enabled() bool { return c.cfg.Enabled }
+
+// defaultHostedConcurrency is how many provider calls run at once for a hosted
+// API. A local runtime serializes its own requests, so it stays at one.
+const defaultHostedConcurrency = 3
+
+// concurrency is how many provider calls this client may run at once.
+func (c *Client) concurrency() int {
+	if c.cfg.Concurrency > 0 {
+		return c.cfg.Concurrency
+	}
+	if c.cfg.LocalRuntime != "" || c.cfg.Provider == ProviderOpenCode {
+		return 1
+	}
+	return defaultHostedConcurrency
+}
+
+// schemaBlocked reports whether this provider already rejected the strict JSON
+// schema, so the next calls go straight to the plain JSON object.
+func (c *Client) schemaBlocked() bool {
+	c.schemaMu.Lock()
+	defer c.schemaMu.Unlock()
+	return c.schemaUnsupported
+}
+
+// blockSchema remembers that the provider does not accept the strict schema.
+func (c *Client) blockSchema() {
+	c.schemaMu.Lock()
+	c.schemaUnsupported = true
+	c.schemaMu.Unlock()
+}
+
+// acquire waits for a provider slot. The cap belongs to the client, not to each
+// loop: a section that is windowed inside a parallel section would otherwise
+// multiply the requests in flight.
+func (c *Client) acquire(ctx context.Context) error {
+	if c.slots == nil {
+		return nil
+	}
+	select {
+	case c.slots <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (c *Client) release() {
+	if c.slots != nil {
+		<-c.slots
+	}
+}
 
 // ErrDisabled is returned when analysis is disabled.
 var ErrDisabled = errors.New("analyze: disabled")
@@ -491,10 +556,16 @@ func (c *Client) do(ctx context.Context, system, user string, maxTokens int) (st
 }
 
 // doWithSchema runs one completion asking for a JSON schema, falling back to a
-// plain JSON object when the provider rejects strict schemas.
+// plain JSON object when the provider rejects strict schemas. The rejection is
+// remembered for the rest of the run: trying the schema on every window only
+// adds one failed request per call.
 func (c *Client) doWithSchema(ctx context.Context, system, user string, maxTokens int, name, schema string) (string, error) {
+	if c.cfg.Provider != ProviderOpenCode && c.schemaBlocked() {
+		return c.call(ctx, system, user, maxTokens, false, name, schema)
+	}
 	content, err := c.call(ctx, system, user, maxTokens, true, name, schema)
 	if errors.Is(err, errUnsupportedFormat) {
+		c.blockSchema()
 		return c.call(ctx, system, user, maxTokens, false, name, schema)
 	}
 	return content, err
@@ -571,6 +642,10 @@ const (
 // reason so the caller can tell a cut answer from a complete one.
 func (c *Client) postChat(ctx context.Context, system, user string, maxTokens int, format callFormat, name, schema string) (providerAnswer, error) {
 	var out providerAnswer
+	if err := c.acquire(ctx); err != nil {
+		return out, err
+	}
+	defer c.release()
 	body := chatRequest{
 		Model: c.cfg.Model,
 		Messages: []chatMessage{
@@ -652,6 +727,10 @@ func (c *Client) authBasic() string {
 // callOpenCode runs a one-shot generation on the local OpenCode server, which
 // authenticates the user via their OpenCode login.
 func (c *Client) callOpenCode(ctx context.Context, system, user string) (string, error) {
+	if err := c.acquire(ctx); err != nil {
+		return "", err
+	}
+	defer c.release()
 	prompt := user
 	if strings.TrimSpace(system) != "" {
 		prompt = system + "\n\n" + user

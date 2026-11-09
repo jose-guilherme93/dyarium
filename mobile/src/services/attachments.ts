@@ -29,10 +29,12 @@ import {
 } from '@/core/attachments';
 import { newId, stableAttachmentId } from '@/core/id';
 import { extractImageUrls } from '@/core/richText';
+import { sha256Hex } from '@/core/sha256';
 import { uploadRecording } from '@/core/uploader';
 
 import { uploadFileIO, sessionDirectory } from './files';
 import { loadServerConfig, loadServers } from './secure';
+import { fileSha256 } from './hash';
 
 const doFetch = globalThis.fetch as unknown as FetchLike;
 
@@ -209,11 +211,13 @@ export async function uploadLocalImage(entryId: string, noteId: string, name: st
   if (!config) throw new Error('sem servidor configurado');
   const api = new DyariumApi(config, doFetch);
   const bytes = await readLocalImage(noteId, name);
+  const sha256 = sha256Hex(bytes);
   const attachment = await api.uploadAttachment(
     entryId,
     bytes,
     mimeFromName(name),
     stableAttachmentId(noteId, name),
+    sha256,
   );
   // Deixa a copia local acessivel por id, para exibir sem baixar depois.
   await cacheLocalCopy(noteId, name, attachment.id);
@@ -288,6 +292,7 @@ export async function uploadLocalAudio(
   const api = new DyariumApi(config, doFetch);
   const now = new Date().toISOString();
   const sizeBytes = new File(uri).size;
+  const sha256 = await fileSha256(uri);
   const result = await uploadRecording(
     {
       clientKey: `audio:${noteId}:${name}`,
@@ -301,6 +306,7 @@ export async function uploadLocalAudio(
       durationSeconds: durationMs > 0 ? durationMs / 1000 : undefined,
       entryId,
       attachmentId: stableAttachmentId(noteId, name),
+      sha256,
     },
     { api, file: uploadFileIO },
   );

@@ -1402,6 +1402,8 @@ export async function upsertRecording(r: Recording): Promise<void> {
       r.deletedAt ?? null,
       r.author ?? '',
       r.authorDirty ? '1' : null,
+      r.summaryDetail ?? 'concise',
+      r.summaryDetailDirty ? 1 : 0,
       updatedHlc ?? null,
     ],
   );
@@ -1415,6 +1417,22 @@ export async function listRecordings(includeDeleted = false): Promise<Recording[
       : 'SELECT * FROM recordings WHERE deleted_at IS NULL ORDER BY created_at DESC',
   );
   return rows.map(rowToRecording);
+}
+
+/**
+ * Sessoes que ficaram "gravando" depois de o app morrer viram "interrompida".
+ *
+ * Um UPDATE so: a varredura anterior lia a biblioteca inteira no boot, montava
+ * cada Recording (com transcricao e segmentos) e regravava linha por linha para
+ * trocar um campo. Devolve quantas linhas mudaram.
+ */
+export async function markInterruptedRecordings(now = new Date().toISOString()): Promise<number> {
+  const db = await getDb();
+  const result = await db.runAsync(
+    "UPDATE recordings SET status = 'interrupted', updated_at = ? WHERE status = 'recording'",
+    [now],
+  );
+  return result.changes ?? 0;
 }
 
 /** Notas na lixeira, da mais recentemente apagada para a mais antiga. */
@@ -1499,6 +1517,12 @@ export async function deleteRecordingRow(id: string): Promise<void> {
         [id],
       );
       await db.runAsync('DELETE FROM recordings WHERE id = ?', [id]);
+      // A nota saiu da biblioteca: a atividade de transcricao fica no historico
+      // (so o usuario apaga), mas e marcada como interrompida para nao tentar
+      // de novo.
+      void import('./activity').then((m) => {
+        m.cancelActivity(`transcription:${id}`, 'Nota apagada');
+      }).catch(() => undefined);
       // A nota saiu da biblioteca: as relacoes dela nao podem continuar no mapa,
       // seja qual for a chave que a analise usava (local ou do servidor). Se
       // outra linha ainda representa a mesma entrada (duplicata importada), os

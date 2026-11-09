@@ -34,6 +34,19 @@ O projeto tem tres superficies: o binario Go (`cmd/`, `internal/`), o dashboard
 - Nao edite codigo gerado (`web/dist/`, `web/node_modules/`, migrations ja
   aplicadas, `models/`). Migrations sao append-only.
 
+## Entrega: nada sai sem ver rodando no aparelho
+
+- **Nenhuma mudanca esta pronta sem ter sido vista rodando no aparelho** (ou no
+  emulador). Teste de unidade nao mostra tela quebrada, gesto travado nem
+  layout errado. Se o aparelho nao estiver acessivel, diga que a mudanca esta
+  sem verificacao no aparelho; nunca apresente como pronta.
+- Comportamento novo vem com **teste novo**; bug corrigido vem com teste que
+  falhava antes. Sem isso a mudanca nao esta pronta.
+- Performance se mede, nao se supoe: antes e depois, no aparelho, **mexendo no
+  que ficou lento** (pan, pinca, abrir bola), nao so abrindo a tela. Sem numero
+  de quadro, nao ha prova.
+- Nunca entregue "deve funcionar". Diga o que foi rodado, onde e o resultado.
+
 ## Interface: mostre, nao escreva
 
 Regra de UX do produto, nao sugestao. Vale para o app, o dashboard e as notificacoes.

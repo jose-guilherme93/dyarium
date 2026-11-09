@@ -1,6 +1,9 @@
 package analyze
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 // ConfigFromSettings merges the environment defaults with the values saved in
 // the dashboard. The API and the worker must ask the provider through the same
@@ -31,6 +34,13 @@ func ConfigFromSettings(base Config, settings map[string]string) Config {
 	}
 	if v, ok := settings["analysis_themes"]; ok && strings.TrimSpace(v) != "" {
 		result.Themes = ParseThemes(v)
+	}
+	// Optional: zero keeps the safe default for the runtime. A value of one
+	// restores the strictly sequential behavior.
+	if v, ok := settings["analyze_concurrency"]; ok {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			result.Concurrency = n
+		}
 	}
 	if v, ok := settings["owner_name"]; ok {
 		result.OwnerName = strings.TrimSpace(v)

@@ -13,6 +13,11 @@ import { Button } from '@/components/Button';
 import { Screen } from '@/components/Screen';
 import { formatBytes, formatDateTime } from '@/core/format';
 import {
+  BACKUP_FREQUENCIES,
+  backupFrequencyLabel,
+  nextBackupAt,
+} from '@/core/backupSchedule';
+import {
   cancelActivity,
   failActivity,
   finishActivity,
@@ -98,7 +103,8 @@ export default function BackupScreen() {
   const styles = useThemedStyles(baseStyles);
   const { colors } = useTheme();
 
-  const { backupFolder, setBackupFolder } = useSettings();
+  const { backupFolder, setBackupFolder, backupFrequency, setBackupFrequency, backupLastRunAt } =
+    useSettings();
   const { refresh } = useLibrary();
   const [busy, setBusy] = useState<'backup' | 'restore' | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
@@ -299,6 +305,43 @@ export default function BackupScreen() {
           )}
         </View>
 
+        <View style={styles.card}>
+          <Text style={styles.cardLabel}>Rotina de backup</Text>
+          <View style={styles.frequencyRow}>
+            {BACKUP_FREQUENCIES.map((freq) => {
+              const selected = backupFrequency === freq;
+              const label = backupFrequencyLabel(freq);
+              return (
+                <Press
+                  key={freq}
+                  onPress={() => void setBackupFrequency(freq)}
+                  style={[styles.frequencyButton, selected && styles.frequencyButtonSelected]}
+                  accessibilityLabel={label}
+                  accessibilityRole="button"
+                >
+                  <Ionicons
+                    name={selected ? 'checkmark-circle' : 'ellipse'}
+                    size={18}
+                    color={selected ? colors.text : colors.textTertiary}
+                  />
+                  <Text style={[styles.frequencyText, selected && styles.frequencyTextSelected]}>
+                    {label}
+                  </Text>
+                </Press>
+              );
+            })}
+          </View>
+          <Text style={styles.infoFaint}>
+            {backupFrequency === 'off'
+              ? 'Backup automático desligado.'
+              : `Próxima execução: ${formatDateTime(
+                  (nextBackupAt(backupFrequency, new Date()) ?? new Date()).toISOString(),
+                )}${
+                  backupLastRunAt ? ` · Último backup: ${formatDateTime(backupLastRunAt)}` : ''
+                }`}
+          </Text>
+        </View>
+
         <Text style={styles.hint}>
           O backup copia tudo o que você tem para uma pasta do aparelho: notas, áudio, imagens e
           links, em ordem. Cada arquivo leva um código de verificação, conferido ao restaurar. Use
@@ -364,6 +407,15 @@ const baseStyles = defineStyles({
   infoFaint: { color: baseColors.textSecondary, fontSize: fontSize.sm },
   hint: { color: baseColors.textSecondary, fontSize: fontSize.sm, lineHeight: 20 },
   status: { color: baseColors.textSecondary, fontSize: fontSize.sm },
+  frequencyRow: { flexDirection: 'row', gap: spacing.xs, alignItems: 'center' },
+  frequencyButton: {
+    padding: spacing.xs,
+    borderRadius: radius.md,
+    backgroundColor: baseColors.surface,
+  },
+  frequencyButtonSelected: { backgroundColor: baseColors.accent },
+  frequencyText: { color: baseColors.text, fontSize: fontSize.sm },
+  frequencyTextSelected: { color: baseColors.accent },
   success: { color: baseColors.success, fontSize: fontSize.sm },
   error: { color: baseColors.danger, fontSize: fontSize.sm },
 });
