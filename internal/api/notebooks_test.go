@@ -24,11 +24,12 @@ func TestNotebooksLifecycle(t *testing.T) {
 
 	_, listed := doJSON(t, srv, http.MethodGet, "/api/v1/notebooks", nil)
 	notebooks, _ := listed["notebooks"].([]any)
-	if len(notebooks) != 1 {
+	// The default notebook and the internal MCP project notebook.
+	if len(notebooks) != 2 {
 		t.Fatalf("cadernos iniciais = %+v", notebooks)
 	}
-	defaultNotebook := notebooks[0].(map[string]any)
-	if defaultNotebook["name"] != "Notas ao acaso" || defaultNotebook["is_default"] != true {
+	defaultNotebook := notebookByName(t, listed, "Notas ao acaso")
+	if defaultNotebook["is_default"] != true {
 		t.Fatalf("caderno padrao = %+v", defaultNotebook)
 	}
 	defaultID := defaultNotebook["id"].(string)
@@ -92,7 +93,7 @@ func TestNotebooksLifecycle(t *testing.T) {
 func TestDefaultNotebookIsProtected(t *testing.T) {
 	srv := newTestServer(t)
 	_, listed := doJSON(t, srv, http.MethodGet, "/api/v1/notebooks", nil)
-	defaultID := listed["notebooks"].([]any)[0].(map[string]any)["id"].(string)
+	defaultID := notebookByName(t, listed, "Notas ao acaso")["id"].(string)
 
 	if rec, _ := doJSON(t, srv, http.MethodPatch, "/api/v1/notebooks/"+defaultID,
 		strings.NewReader(`{"name":"Outro"}`)); rec.Code != http.StatusConflict {

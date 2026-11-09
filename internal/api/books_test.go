@@ -84,7 +84,7 @@ func TestBookLifecycleAPI(t *testing.T) {
 func TestBookActivationAPI(t *testing.T) {
 	srv := newTestServer(t)
 	_, listed := doJSON(t, srv, http.MethodGet, "/api/v1/notebooks", nil)
-	defaultID := listed["notebooks"].([]any)[0].(map[string]any)["id"].(string)
+	defaultID := notebookByName(t, listed, "Notas ao acaso")["id"].(string)
 
 	if rec, _ := doJSON(t, srv, http.MethodPatch, "/api/v1/notebooks/"+defaultID,
 		strings.NewReader(`{"kind":"book"}`)); rec.Code != http.StatusConflict {

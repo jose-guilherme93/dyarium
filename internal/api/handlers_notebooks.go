@@ -181,7 +181,9 @@ func (s *Server) handleCreateNotebook(w http.ResponseWriter, r *http.Request) {
 	if kind == "" {
 		kind = store.NotebookKindNotes
 	}
-	if !store.ValidNotebookKind(kind) {
+	// O caderno do MCP e interno: o cliente nunca cria nem transforma um caderno
+	// nesse tipo.
+	if kind == store.NotebookKindMCP || !store.ValidNotebookKind(kind) {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_kind", "kind deve ser notes ou book")
 		return
 	}
@@ -318,9 +320,12 @@ func (s *Server) handleUpdateNotebook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_color", "cor invalida")
 		return
 	}
-	if req.Kind != nil && !store.ValidNotebookKind(strings.TrimSpace(*req.Kind)) {
-		writeError(w, http.StatusUnprocessableEntity, "invalid_kind", "kind deve ser notes ou book")
-		return
+	if req.Kind != nil {
+		kind := strings.TrimSpace(*req.Kind)
+		if kind == store.NotebookKindMCP || !store.ValidNotebookKind(kind) {
+			writeError(w, http.StatusUnprocessableEntity, "invalid_kind", "kind deve ser notes ou book")
+			return
+		}
 	}
 	if req.BookStatus != nil && !store.ValidBookStatus(strings.TrimSpace(*req.BookStatus)) {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_book_status", "book_status invalido")
