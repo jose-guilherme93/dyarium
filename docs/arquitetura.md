@@ -710,26 +710,71 @@ entrar na exportacao.
   dono) e o mesmo tamanho relativo por mencoes, entao as duas telas tem a mesma cara. O
   dono liga so as bolas mais mencionadas e sao elas que puxam o resto pela co-ocorrencia,
   o que da a teia em vez de um leque de raios; o
-  resultado e deterministico e fica em cache no SQLite. A cena e desenhada uma vez em SVG,
-  com bolas, icones e linhas em unidades do grafo; o pan e a pinca so aplicam outra matriz
-  ao container nativo. Ampliar e reduzir e zoom em pixels: nenhum estado do React muda e
-  nenhum elemento e remontado. Os nomes ficam fora do SVG, em texto de tela de tamanho
-  fixo, posicionados por transform na thread de UI: o `react-native-svg` descarta o bitmap
-  da cena a cada prop que muda, entao um nome por quadro custaria um redesenho de tela
-  cheia por nome. O
-  encaixe mostra o conjunto inteiro dentro da faixa acima da folha, com o que e periferico
-  pequeno, e o arrasto nunca tira o desenho da area disponivel. Abrir uma bola troca a
+  resultado e deterministico. A relaxacao nao e pre-calculada: `graphSim` roda na thread de
+  UI (`useFrameCallback`) e assenta em cerca de quatro segundos, devagar e sem parar de
+  repente, como a simulacao do Obsidian; e **um** passo por quadro de 16,7 ms (tres num
+  quadro longo), com o `alpha` caindo a 0,98 por passo. Dois passos por quadro custavam
+  metade do orcamento de 60 fps so na fisica quando o mapa tem 120 bolas. A semente entra comprimida -- o mapa
+  nasce menor e se abre --, senao as bolas ja nasciam no lugar final e a fisica parecia
+  parada. O passo puro e testavel em Jest; o teto de trabalho por quadro tambem
+  (`graphPerf.test.ts`).
+- **Zoom e so a camera.** Bolas e ligacoes vivem sob a matriz da camera; um gesto de pinca
+  muda uma matriz e nao reconstroi geometria nenhuma. Foi essa a causa do zoom a 5--10 fps: o fator de abertura reconstruia
+  dezenas de caminhos do Skia por quadro, e os rotulos recalculavam posicao e opacidade por
+  quadro. Ficou como no grafo do Obsidian, cujo zoom tambem e a camera: os nomes
+  aparecem com um limiar (1,15x o encaixe), entao no encaixe o mapa e so bolas e ligacoes. O texto e desenhado em **pixels de tela, com fonte fixa**, e nao em unidades do
+  grafo: escalar o texto pela camera muda o tamanho em pixels a cada quadro do zoom, o Skia
+  perde o cache de glifos e re-rasteriza todos os nomes por quadro -- era o que derrubava o
+  gesto para ~45 fps com os nomes na tela. A camada de nomes tem estado proprio, filha do
+  canvas: trocar a lista re-renderiza so ela, nunca as bolas e as arestas.
+- **Arrastar um no.** Dedo em cima de uma bola prende a bola sob o dedo (`dragNode`) e a
+  fisica roda em volta dela com a temperatura elevada, entao a vizinhanca acompanha; soltar
+  reaquece a simulacao e as ligadas se acomodam. Dedo no fundo move a camera, com folga de
+  30% alem do desenho. Arrastar o dono move a ancora da simulacao e, ao soltar, a camera
+  desliza ate ele -- o mesmo comportamento do mapa do dashboard web.
+- A cena e desenhada em poucos nos do Skia na thread de UI -- um caminho por tipo e
+  opacidade para as bolas e um `Points` em modo linha por tipo e faixa de peso para as
+  arestas --; nenhum componente do React re-renderiza durante o movimento e nenhuma
+  opacidade de grupo e animada (camada por quadro derrubava o mapa). As arestas eram
+  `moveTo`/`lineTo` num `SkPath`: com 425 ligacoes davam 850 chamadas JSI por quadro e
+  derrubavam a thread de UI para ~15 fps durante a fisica; um `Points` leva um array de
+  pontos e uma chamada. Foi por isso que o tracejado da mencao saiu: `DashPathEffect`
+  obriga o Skia a recontar o caminho no CPU a cada quadro, e o grafo do Obsidian nao
+  traceja ligacoes. A camera vai ao Skia como array de numeros derivado das shared values,
+  com a translacao do centro da tela explicita: o Skia nao tem origem no centro da view como
+  o RN, e shared value solto dentro do array vira erro de JSI.
+- **Quem mede o gesto e o aparelho.** Em desenvolvimento, `src/dev/frameMeter.ts` registra o
+  intervalo entre quadros da thread de UI e imprime `[frame] ... p50 p95 max >16` a cada 120
+  quadros no log do Metro. E o numero que vale para dizer se o gesto esta a 60 fps; tempo de
+  render do React nao diz nada sobre o desenho. O controle e o pan: um pan nao reconstroi
+  geometria nem recalcula nome nenhum, entao se o pan e o zoom medem parecido, o gargalo e
+  rasterizacao do aparelho e nao o app. No emulador sem GPU (SwiftShader) isso ficou
+  evidente: pan p95 183 ms e zoom p95 100 ms com p50 16,7 ms nos dois -- mesmo trabalho de
+  app, mesmo custo de raster. Numa GPU de verdade a matriz da camera e gratuita.
+- A lista de nomes e recalculada uma vez, 60 ms depois da ultima mudanca de zoom
+  (`LabelLayer`): numa rajada de toques nos botoes, trocar a lista a cada toque
+  re-renderizava o canvas no meio do gesto. O encaixe mostra o conjunto inteiro dentro da
+  faixa acima da folha, com o que e periferico pequeno, e o arrasto nunca tira o desenho da
+  area disponivel. Abrir uma bola troca a
   visao: ela, as relacoes dela e as notas que a citam passam a ser o desenho inteiro, com
-  as arestas de nota pontilhadas, como no foco do `GET /graph`. O tamanho de cada bola e
+  as arestas de nota mais finas e apagadas (o tracejado saiu: `DashPathEffect` recontava o
+  caminho no CPU a cada quadro), como no foco do `GET /graph`. O tamanho de cada bola e
   relativo ao maior da visao e o dono fica sempre maior que a entidade aberta, para marcar
-  de onde parte tudo; tocar no dono devolve o mapa inteiro. A ligacao nao tem cor: usa a cor
+  de onde parte tudo; tocar no dono devolve o mapa inteiro. O dono e so a maior bola do
+  desenho -- o dobro da segunda maior, **com a cor dela**, o mesmo preenchimento e o mesmo
+  traco; o disco translucido a parte saiu. A colisao separa por posicao (metade da
+  sobreposicao por passo, com teto de 2,5 unidades), nao so empurrando a velocidade: com a
+  fisica fria varias bolas ficavam encostadas. A ligacao nao tem cor: usa a cor
   do texto do tema e a grossura mostra a proximidade, em tres faixas de peso. O encaixe
   aproveita a faixa inteira, entao as bolas quase se encostam, com o dono sempre maior. A
   folha tem tres alturas e
   a altura cheia rola todos os trechos da entidade.
   Para o desenho nao crescer sem limite, o app desenha no maximo 120 entidades (as mais
   mencionadas) e 120 notas no foco, como os limites do servidor; o painel de detalhe lista
-  todas as notas e trechos. Abrir o mapa nao parseia payload de analise nem transcricao:
+  todas as notas e trechos. A previa do mapa dentro da tela da entidade e estatica
+  (`interactive={false}`): semente sem compressao e sem animacao de camera, porque nao ha
+  gesto para acompanhar e um segundo canvas animando custava quadro a toa. Abrir o mapa nao
+  parseia payload de analise nem transcricao:
   so identificacao, caderno e chaves sao lidos; os trechos e o tom do Humor sao carregados
   sob demanda, e analises antigas sao derivadas em segundo plano, em lotes curtos, sem
   bloquear o primeiro gesto.
