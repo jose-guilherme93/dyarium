@@ -18,6 +18,13 @@ const DefaultNotebookID = "notas-ao-acaso"
 // DefaultNotebookName is the visible name of the catch-all notebook.
 const DefaultNotebookName = "Notas ao acaso"
 
+// MCPNotebookID is the fixed id of the internal notebook where the MCP server
+// records one entry per project. It is created by migration 0040.
+const MCPNotebookID = "projetos-mcp"
+
+// MCPNotebookName is the visible name of the MCP project notebook.
+const MCPNotebookName = "Projetos"
+
 var (
 	// ErrProtected is returned when someone tries to change the default notebook.
 	ErrProtected = errors.New("store: registro protegido")
@@ -45,7 +52,22 @@ var (
 	// ErrNotABookEntry is returned when a book chapter is archived: a book uses
 	// the chapter status, not the diary archive.
 	ErrNotABookEntry = errors.New("store: capitulo nao pode ser arquivado")
+	// ErrInvalidSummaryDetail is returned when summary_detail is not concise or
+	// full.
+	ErrInvalidSummaryDetail = errors.New("store: detalhe de resumo invalido")
 )
+
+// Summary detail levels of an entry. A project summary written by an AI agent
+// is rendered according to the project entry's setting.
+const (
+	SummaryDetailConcise = "concise"
+	SummaryDetailFull    = "full"
+)
+
+// ValidSummaryDetail reports whether detail is a known summary detail level.
+func ValidSummaryDetail(detail string) bool {
+	return detail == SummaryDetailConcise || detail == SummaryDetailFull
+}
 
 // NotebookCountError carries how many entries blocked an activation or
 // conversion. The caller reports the count to the client.
@@ -180,7 +202,8 @@ func (s *Store) CreateNotebook(ctx context.Context, n Notebook) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO notebooks (id, name, color, is_default, kind, subtitle, author,
 			synopsis, language, goal_words, book_status, page_size, page_margin_mm,
-			body_px, body_leading, body_font, daily_goal_words, deadline, created_at, updated_at)
+			body_px, body_leading, body_font, daily_goal_words, deadline,
+			created_at, updated_at)
 		VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		n.ID, name, strings.TrimSpace(n.Color), kind, strings.TrimSpace(n.Subtitle),
 		strings.TrimSpace(n.Author), strings.TrimSpace(n.Synopsis), strings.TrimSpace(n.Language),
@@ -190,6 +213,37 @@ func (s *Store) CreateNotebook(ctx context.Context, n Notebook) error {
 		return fmt.Errorf("store: create notebook: %w", err)
 	}
 	return nil
+}
+
+// EnsureMCPNotebook returns the internal MCP notebook, creating it when it does
+// not exist. Migration 0040 inserts it, so the create path only runs on an old
+// database or after a manual delete; a concurrent call is resolved by reading
+// again.
+func (s *Store) EnsureMCPNotebook(ctx context.Context) (Notebook, error) {
+	notebook, err := s.GetNotebook(ctx, MCPNotebookID)
+	if err == nil {
+		return notebook, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return Notebook{}, err
+	}
+	now := time.Now().UTC()
+	created := Notebook{
+		ID:        MCPNotebookID,
+		Name:      MCPNotebookName,
+		Kind:      NotebookKindMCP,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := s.CreateNotebook(ctx, created); err != nil {
+		// A concurrent call may have created it first. Re-read once before
+		// failing, so a race does not turn into an error for the agent.
+		if current, getErr := s.GetNotebook(ctx, MCPNotebookID); getErr == nil {
+			return current, nil
+		}
+		return Notebook{}, fmt.Errorf("store: ensure mcp notebook: %w", err)
+	}
+	return s.GetNotebook(ctx, MCPNotebookID)
 }
 
 // CreateBook is CreateNotebook fixed to the book kind.
@@ -342,7 +396,7 @@ func (s *Store) SetNotebookKind(ctx context.Context, id, kind string, confirmCon
 	if current.Kind == kind {
 		return current, nil
 	}
-	if current.IsDefault {
+	if current.IsDefault || current.ID == MCPNotebookID || current.Kind == NotebookKindMCP {
 		return Notebook{}, ErrProtected
 	}
 	now := ts(time.Now().UTC())
@@ -432,7 +486,7 @@ func (s *Store) DeleteBook(ctx context.Context, id, confirmName string) error {
 	if err != nil {
 		return err
 	}
-	if current.IsDefault {
+	if current.IsDefault || current.ID == MCPNotebookID || current.Kind == NotebookKindMCP {
 		return ErrProtected
 	}
 	if !current.IsBook() {
@@ -523,7 +577,7 @@ func (s *Store) DeleteNotebook(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if current.IsDefault {
+	if current.IsDefault || current.ID == MCPNotebookID || current.Kind == NotebookKindMCP {
 		return ErrProtected
 	}
 	tx, err := s.db.BeginTx(ctx, nil)

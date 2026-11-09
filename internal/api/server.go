@@ -46,6 +46,9 @@ type Deps struct {
 	// Presence tracks the optional browser workers. Nil means an empty
 	// registry, so the default behavior (server processes everything) holds.
 	Presence *jobs.Presence
+	// MCP is the streamable HTTP handler of the MCP server. Nil disables the
+	// /mcp route, keeping tests and builds without it unchanged.
+	MCP http.Handler
 }
 
 // Server holds the HTTP handlers and their dependencies.
@@ -206,7 +209,16 @@ func (s *Server) Handler() http.Handler {
 
 	mux.Handle("/api/v1/", s.requireAuth(protected))
 	mux.Handle("/", s.spaHandler())
-	return s.withLogging(s.withResponseCache(mux))
+
+	// MCP streams responses as SSE; the cache wrapper would buffer and gzip it,
+	// so the route is mounted outside withResponseCache while the rest of the
+	// server keeps the existing cache behavior.
+	root := http.NewServeMux()
+	if s.deps.MCP != nil {
+		root.Handle("/mcp", s.requireAuth(s.deps.MCP))
+	}
+	root.Handle("/", s.withResponseCache(mux))
+	return s.withLogging(root)
 }
 
 // instanceOrigin identifies this environment in tombstones and versions. Tests
