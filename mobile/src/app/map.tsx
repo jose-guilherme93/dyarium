@@ -143,6 +143,13 @@ const OVERVIEW_ROW = 46;
 /** Idade em que o cache ainda vale sem ir ao banco. */
 const SNAPSHOT_FRESH_MS = 20_000;
 
+/**
+ * A derivacao de entidades antigas e uma varredura da biblioteca (2 s neste
+ * aparelho). Ela so precisa rodar uma vez por execucao: rodava a cada abertura
+ * do mapa e travava a thread de JS por segundos logo depois do desenho.
+ */
+let derivationChecked = false;
+
 /** Mesmo recorte, mesmo desenho: evita remontar o SVG a toa. */
 function sameSnapshot(a: GraphSnapshot, b: GraphSnapshot): boolean {
   return (
@@ -263,7 +270,7 @@ export default function MapScreen() {
   const panelSeq = useRef(0);
   const moodSeq = useRef(0);
   const tabRef = useRef<'detail' | 'mood'>('detail');
-  const loadRef = useRef<() => Promise<void>>(async () => undefined);
+  const loadRef = useRef<(force?: boolean) => Promise<void>>(async () => undefined);
   const loadedOnce = useRef(false);
   const mounted = useRef(true);
 
@@ -328,7 +335,15 @@ export default function MapScreen() {
     }
   }, []);
 
-  const load = useCallback(async () => {
+  // Recorte que ja esta na tela. Abrir/fechar uma bola muda a identidade dos
+  // params do router; sem esta guarda o mapa relia a biblioteca e refazia o
+  // layout a cada ida e volta -- era o travamento de segundos ao voltar.
+  const loadedDataKey = useRef<string | null>(null);
+
+  const load = useCallback(async (force = false) => {
+    const dataKey = `${notebookId}|${period}`;
+    if (!force && loadedOnce.current && loadedDataKey.current === dataKey) return;
+    loadedDataKey.current = dataKey;
     const cacheKey = `${notebookId}|${period}|${params.focusKind ?? ''}|${params.focusName ?? ''}`;
     const cached = snapshotCache?.key === cacheKey ? snapshotCache : null;
     if (!loadedOnce.current && cached) {
@@ -458,7 +473,8 @@ export default function MapScreen() {
     snapshotRef.current = snapshot;
   }, [snapshot]);
   useEffect(() => {
-    if (!drawn) return undefined;
+    if (!drawn || derivationChecked) return undefined;
+    derivationChecked = true;
     let alive = true;
     // Tempo, e nao `runAfterInteractions`: o mapa tem uma deriva continua e a
     // fila de interacoes nunca esvazia, o que impedia a derivacao de rodar.
@@ -478,7 +494,7 @@ export default function MapScreen() {
               // A leitura fresca em cache esconderia justamente o que acabou de
               // ser derivado: joga o cache fora antes de reler.
               snapshotCache = null;
-              void loadRef.current();
+              void loadRef.current(true);
             }
           })
           .catch(() => undefined);
