@@ -66,24 +66,28 @@ export function MoodPanel({ series, colors, subject }: MoodPanelProps) {
   return (
     <View style={styles.wrap}>
       <View style={styles.summary}>
-        <Text style={[styles.average, { color: toneColor }]}>
-          {tone >= 0 ? '+' : ''}
-          {tone.toFixed(2)}
+        {/* O titulo fica na linha inteira: ao lado do numero, um assunto de
+            nome comprido era cortado fora da tela. */}
+        <Text style={styles.summaryTitle} numberOfLines={1}>
+          {subject ? `Tom sobre ${subject}` : 'Tom médio'}
         </Text>
-        <View style={styles.summaryText}>
-          <Text style={styles.summaryTitle} numberOfLines={1}>
-            {subject ? `Tom sobre ${subject}` : 'Tom médio'}
+        <View style={styles.summaryRow}>
+          <Text style={[styles.average, { color: toneColor }]}>
+            {tone >= 0 ? '+' : ''}
+            {tone.toFixed(2)}
           </Text>
-          <Text style={styles.summaryMeta}>
-            {series.length > 1 ? (
-              <Text style={{ color: trend > 0.05 ? colors.moodPositive : trend < -0.05 ? colors.moodNegative : theme.textTertiary }}>
-                {trend >= 0 ? '+' : ''}
-                {trend.toFixed(2)} desde o início ·{' '}
-              </Text>
-            ) : null}
-            {average.notes} {average.notes === 1 ? 'nota' : 'notas'} · {series.length}{' '}
-            {series.length === 1 ? 'dia' : 'dias'}
-          </Text>
+          <View style={styles.summaryText}>
+            <Text style={styles.summaryMeta}>
+              {series.length > 1 ? (
+                <Text style={{ color: trend > 0.05 ? colors.moodPositive : trend < -0.05 ? colors.moodNegative : theme.textTertiary }}>
+                  {trend >= 0 ? '+' : ''}
+                  {trend.toFixed(2)} desde o início ·{' '}
+                </Text>
+              ) : null}
+              {average.notes} {average.notes === 1 ? 'nota' : 'notas'} · {series.length}{' '}
+              {series.length === 1 ? 'dia' : 'dias'}
+            </Text>
+          </View>
         </View>
       </View>
 
@@ -149,14 +153,17 @@ export function MoodPanel({ series, colors, subject }: MoodPanelProps) {
 
 const baseStyles = defineStyles({
   wrap: { paddingHorizontal: spacing.xl, paddingBottom: spacing.xxxl, gap: spacing.lg },
-  summary: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  summary: { gap: 2 },
+  summaryRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
   average: {
     fontSize: fontSize.display,
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
     letterSpacing: -1.5,
   },
-  summaryText: { gap: 2 },
+  // Sem `flex: 1`, um assunto de nome comprido empurra a coluna de texto para
+  // fora da tela e o titulo aparece cortado no meio.
+  summaryText: { flex: 1, gap: 2 },
   summaryTitle: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
   summaryMeta: { color: baseColors.textTertiary, fontSize: fontSize.sm },
   chart: { height: CHART_HEIGHT, width: '100%' },
