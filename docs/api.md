@@ -919,14 +919,19 @@ Configura a analise para usar um runtime local em uma requisicao. Corpo:
 Lista as entidades extraidas, ordenadas por mencoes. Filtro opcional `kind` (`person`,
 `place`, `theme` ou `decision`; outro valor retorna 400).
 ```json
-{ "entities": [ { "id": "01J...", "kind": "person", "name": "Maria", "icon": "",
+{ "entities": [ { "id": "01J...", "kind": "person", "name": "Maria", "label": "gata", "icon": "",
   "entries": 2, "mentions": 5, "sentiment": 0.4, "last_seen": "2026-10-10T21:05:00Z",
   "updated_at": "2026-10-10T21:05:00Z", "aliases": ["Mariana"] } ],
-  "owner_aliases": ["Ze"] }
+  "owner_aliases": ["Ze"],
+  "rejections": [ { "kind": "person", "name": "você", "name_key": "voce",
+    "updated_at": "2026-10-10T21:05:00Z" } ] }
 ```
-`updated_at` e o relogio do servidor para nome, icone e "sou eu"; `aliases` sao as grafias
+`label` e o rotulo livre do dono (escola, gata, personagem); so exibicao.
+`updated_at` e o relogio do servidor para nome, rotulo, icone e "sou eu"; `aliases` sao as grafias
 antigas que ainda resolvem para a entidade. `owner_aliases` traz as grafias que o dono
 marcou como ele mesmo, para o app tirar a pessoa duplicada do mapa local.
+`rejections` e a memoria de nomes que nunca sao entidade daquele tipo, com a chave
+normalizada `name_key` (minusculas, sem acento, espacos colapsados, pontas aparadas).
 
 ### GET /api/v1/entities/{kind}/{name}
 Retorna a entidade (mesmos campos) mais a lista de entradas que a mencionam. Nomes antigos
@@ -987,6 +992,53 @@ Escolhe o icone monocromatico desenhado dentro da bola. Corpo:
 - Retorna a entidade com `icon` ja atualizado e o `edit_id` da edicao. O mapa recebe a
   chave em `nodes[].icon`.
 
+### PUT /api/v1/entities/{kind}/{name}/label
+Escolhe o rotulo livre exibido junto do nome. Corpo:
+```json
+{ "label": "escola" }
+```
+- Texto aparado, no maximo 80 caracteres; vazio limpa o rotulo. 400 `invalid_label`
+  para texto longo e 404 se a entidade nao existe.
+- O rotulo e so exibicao: nao muda tipo, metrica, cor nem sync.
+- Retorna a entidade com `label` atualizado e o `edit_id`.
+
+### POST /api/v1/entities/{kind}/{name}/kind
+Troca o tipo de uma entidade. Corpo:
+```json
+{ "kind": "place" }
+```
+- Os dois tipos precisam ser validos e diferentes (`person`, `place`, `theme` ou
+  `decision`); caso contrario responde 400 `invalid_kind`.
+- Se ja existir uma entidade do tipo destino com o mesmo nome (ou alias), as duas sao
+  mescladas: notas e mencoes passam para a sobrevivente e o nome vira alias.
+- Caso contrario, a entidade muda de tipo e os aliases acompanham.
+- O tipo antigo vira rejeicao `(kind, name)`, entao uma analise futura nao recria a
+  entidade ali. A resposta traz a entidade ja no tipo novo e o `edit_id`.
+
+### DELETE /api/v1/entities/{kind}/{name}
+Apaga a entidade, seus vinculos e aliases, e grava a rejeicao do tipo. Resposta:
+```json
+{ "status": "ok", "edit_id": "01J...",
+  "rejection": { "kind": "person", "name": "Maria", "name_key": "maria",
+    "updated_at": "2026-10-10T21:05:00Z" } }
+```
+- 404 se a entidade nao existe. O `edit_id` restaura entidade, vinculos, aliases e a
+  rejeicao anterior.
+
+### POST /api/v1/entity-rejections
+Grava que um nome nunca e entidade de um tipo (tela de memoria). Corpo:
+```json
+{ "kind": "person", "name": "você" }
+```
+- A chave e `(kind, name_key)`, com o mesmo `name_key` normalizado da listagem. Retorna
+  `{ "status": "ok", "rejection": { ... }, "edit_id": "..." }`.
+- 400 `invalid_kind` ou `invalid_name` para entrada invalida.
+
+### DELETE /api/v1/entity-rejections/{kind}/{name}
+Libera o nome: uma analise futura pode extrai-lo de novo. Resposta
+`{ "status": "ok", "edit_id": "..." }`. Remover uma rejeicao inexistente tambem
+responde 200.
+
 ### POST /api/v1/entities/person/{name}/self
 Marca uma pessoa como **o dono do diario** ("sou eu"). Usado quando a IA tratou uma
 grafia do nome do dono como outra pessoa.
@@ -1000,15 +1052,19 @@ grafia do nome do dono como outra pessoa.
   nao existir.
 
 ### POST /api/v1/entities/edits/{id}/undo
-Desfaz a edicao de entidade mais recente (renomear, mesclar, icone ou "sou eu").
-- O servidor guarda, antes da escrita, as linhas afetadas (entidade, aliases, vinculos e
-  a lista de grafias do dono), porque mesclar apaga a origem e soma os vinculos: desfazer
-  nao e so voltar o nome, e restaurar as contagens originais.
+Desfaz a edicao de entidade mais recente (renomear, mesclar, rotulo, icone, tipo,
+exclusao ou "sou eu").
+- O servidor guarda, antes da escrita, as linhas afetadas (entidade, rotulo, aliases,
+  vinculos, rejeicoes e a lista de grafias do dono), porque mesclar apaga a origem e
+  soma os vinculos: desfazer nao e so voltar o nome, e restaurar as contagens originais.
+- A troca de tipo restaura o tipo antigo, os vinculos e remove a rejeicao criada. Excluir
+  uma entidade restaura entidade, vinculos, aliases e a rejeicao anterior; se ela nao
+  existia, o desfazer apenas apaga a rejeicao nova.
 - So a edicao **mais recente ainda de pe** pode ser desfeita; uma mais nova responde 409
   `edit_not_latest` (reverter apagaria a mudanca recente).
 - A restauracao marca `updated_at` como agora: o desfazer e uma mudanca nova e vence a
   copia antiga que outro cliente ainda tenha.
-- Resposta: `{"status":"ok","action":"rename|merge|icon|self","label":"..."}`. 404 para
+- Resposta: `{"status":"ok","action":"rename|merge|icon|self|label|kind|delete|reject|unreject","label":"..."}`. 404 para
   id inexistente ou ja desfeito.
 
 ### GET /api/v1/mood

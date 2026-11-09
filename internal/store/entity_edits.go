@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -31,17 +32,30 @@ type EntityEdit struct {
 }
 
 type entityEditSnapshot struct {
-	Entities []snapshotEntity `json:"entities"`
-	Aliases  []snapshotAlias  `json:"aliases"`
-	Links    []snapshotLink   `json:"links"`
-	Owners   []snapshotOwner  `json:"owners"`
+	Entities   []snapshotEntity    `json:"entities"`
+	Aliases    []snapshotAlias     `json:"aliases"`
+	Links      []snapshotLink      `json:"links"`
+	Owners     []snapshotOwner     `json:"owners"`
+	Rejections []snapshotRejection `json:"rejections"`
 }
 
 type snapshotEntity struct {
 	ID        string `json:"id"`
 	Kind      string `json:"kind"`
 	Name      string `json:"name"`
+	Label     string `json:"label"`
 	Icon      string `json:"icon"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+// snapshotRejection captures the rejection of one (kind, name_key) pair. Empty
+// timestamps mean the rejection did not exist before the edit; undoing then
+// only removes the one the mutation created.
+type snapshotRejection struct {
+	Kind      string `json:"kind"`
+	Name      string `json:"name"`
+	NameKey   string `json:"name_key"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
 }
@@ -69,6 +83,13 @@ type snapshotOwner struct {
 	UpdatedAt string `json:"updated_at"`
 }
 
+// EntityPair identifies one entity by kind and canonical name or alias. A kind
+// change needs two pairs: the source and the possible merge target.
+type EntityPair struct {
+	Kind string
+	Name string
+}
+
 // PrepareEntityEdit stores the current state of the entities named in `names`
 // (canonical names or aliases) plus their aliases, links and the owner spelling
 // list. It must run before the mutation; the returned id is what the client
@@ -79,16 +100,35 @@ func (s *Store) PrepareEntityEdit(ctx context.Context, action, label, kind strin
 	if !ValidEntityKind(kind) {
 		return "", ErrInvalidEntity
 	}
-	snapshot := entityEditSnapshot{Owners: []snapshotOwner{}}
+	pairs := make([]EntityPair, 0, len(names))
+	for _, name := range names {
+		pairs = append(pairs, EntityPair{Kind: kind, Name: name})
+	}
+	return s.prepareEntityEditPairs(ctx, action, label, pairs)
+}
+
+// PrepareEntityEditPairs is PrepareEntityEdit for a mutation that touches more
+// than one kind, such as changing an entity's kind: the source and the possible
+// merge target are both snapshotted.
+func (s *Store) PrepareEntityEditPairs(ctx context.Context, action, label string, pairs ...EntityPair) (string, error) {
+	return s.prepareEntityEditPairs(ctx, action, label, pairs)
+}
+
+func (s *Store) prepareEntityEditPairs(ctx context.Context, action, label string, pairs []EntityPair) (string, error) {
+	snapshot := entityEditSnapshot{Owners: []snapshotOwner{}, Rejections: []snapshotRejection{}}
 
 	ids := make(map[string]struct{})
-	cleanNames := make([]string, 0, len(names))
-	for _, name := range names {
-		name = strings.TrimSpace(name)
+	cleanPairs := make([]EntityPair, 0, len(pairs))
+	for _, pair := range pairs {
+		kind := strings.TrimSpace(pair.Kind)
+		name := strings.TrimSpace(pair.Name)
 		if name == "" {
 			continue
 		}
-		cleanNames = append(cleanNames, name)
+		if !ValidEntityKind(kind) {
+			return "", ErrInvalidEntity
+		}
+		cleanPairs = append(cleanPairs, EntityPair{Kind: kind, Name: name})
 		id, found, err := entityIDByName(ctx, s.db, kind, name)
 		if err != nil {
 			return "", err
@@ -101,14 +141,14 @@ func (s *Store) PrepareEntityEdit(ctx context.Context, action, label, kind strin
 	entityIDs := keys(ids)
 	if len(entityIDs) > 0 {
 		rows, err := s.db.QueryContext(ctx, `
-			SELECT id, kind, name, COALESCE(icon, ''), created_at, COALESCE(updated_at, '')
+			SELECT id, kind, name, COALESCE(label, ''), COALESCE(icon, ''), created_at, COALESCE(updated_at, '')
 			FROM entities WHERE id IN (`+placeholders(len(entityIDs))+`)`, anyArgs(entityIDs)...)
 		if err != nil {
 			return "", fmt.Errorf("store: snapshot entities: %w", err)
 		}
 		for rows.Next() {
 			var item snapshotEntity
-			if err := rows.Scan(&item.ID, &item.Kind, &item.Name, &item.Icon, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			if err := rows.Scan(&item.ID, &item.Kind, &item.Name, &item.Label, &item.Icon, &item.CreatedAt, &item.UpdatedAt); err != nil {
 				rows.Close()
 				return "", fmt.Errorf("store: scan snapshot entity: %w", err)
 			}
@@ -131,10 +171,9 @@ func (s *Store) PrepareEntityEdit(ctx context.Context, action, label, kind strin
 		aliasConds = append(aliasConds, "entity_id IN ("+placeholders(len(entityIDs))+")")
 		aliasArgs = append(aliasArgs, anyArgs(entityIDs)...)
 	}
-	if len(cleanNames) > 0 {
-		aliasConds = append(aliasConds, "kind = ? AND name IN ("+placeholders(len(cleanNames))+")")
-		aliasArgs = append(aliasArgs, kind)
-		aliasArgs = append(aliasArgs, anyArgs(cleanNames)...)
+	for _, pair := range cleanPairs {
+		aliasConds = append(aliasConds, "(kind = ? AND name = ?)")
+		aliasArgs = append(aliasArgs, pair.Kind, pair.Name)
 	}
 	if len(aliasConds) > 0 {
 		rows, err := s.db.QueryContext(ctx, `
@@ -192,6 +231,25 @@ func (s *Store) PrepareEntityEdit(ctx context.Context, action, label, kind strin
 			return "", err
 		}
 	}
+
+	// Rejeicoes afetadas: os pares pedidos, os nomes canonicos do snapshot e os
+	// aliases. Captura o estado anterior; um par sem linha vira fantasma, para o
+	// desfazer apagar a rejeicao que a mutacao criar.
+	rejectionKeys := make(map[rejectionKey]struct{})
+	for _, pair := range cleanPairs {
+		rejectionKeys[rejectionKey{kind: pair.Kind, nameKey: EntityRejectionKey(pair.Name)}] = struct{}{}
+	}
+	for _, item := range snapshot.Entities {
+		rejectionKeys[rejectionKey{kind: item.Kind, nameKey: EntityRejectionKey(item.Name)}] = struct{}{}
+	}
+	for _, item := range snapshot.Aliases {
+		rejectionKeys[rejectionKey{kind: item.Kind, nameKey: EntityRejectionKey(item.Name)}] = struct{}{}
+	}
+	rejections, err := snapshotRejections(ctx, s.db, rejectionKeys)
+	if err != nil {
+		return "", err
+	}
+	snapshot.Rejections = rejections
 
 	ownerRows, err := s.db.QueryContext(ctx,
 		`SELECT name, created_at, COALESCE(updated_at, '') FROM owner_aliases ORDER BY name`)
@@ -344,9 +402,9 @@ func (s *Store) UndoEntityEdit(ctx context.Context, id string) (EntityEdit, erro
 		// comparacao e empurraria a edicao de volta.
 		for _, item := range snapshot.Entities {
 			if _, err := tx.ExecContext(ctx, `
-				INSERT INTO entities (id, kind, name, icon, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?)`,
-				item.ID, item.Kind, item.Name, item.Icon, item.CreatedAt, ts(now)); err != nil {
+				INSERT INTO entities (id, kind, name, label, icon, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?)`,
+				item.ID, item.Kind, item.Name, item.Label, item.Icon, item.CreatedAt, ts(now)); err != nil {
 				return EntityEdit{}, fmt.Errorf("store: restore entity: %w", err)
 			}
 		}
@@ -378,6 +436,13 @@ func (s *Store) UndoEntityEdit(ctx context.Context, id string) (EntityEdit, erro
 				return EntityEdit{}, fmt.Errorf("store: restore owner alias: %w", err)
 			}
 		}
+
+		// Rejeicoes: apaga o estado atual dos name_keys da foto e devolve o que
+		// existia antes. Um par fantasma (sem timestamps) so apaga a rejeicao que
+		// a mutacao criou.
+		if err := restoreEntityRejections(ctx, tx, snapshot.Rejections); err != nil {
+			return EntityEdit{}, err
+		}
 	}
 
 	if _, err := tx.ExecContext(ctx,
@@ -390,6 +455,103 @@ func (s *Store) UndoEntityEdit(ctx context.Context, id string) (EntityEdit, erro
 	edit.ID = id
 	edit.CreatedAt = parseTS(createdAt)
 	return edit, nil
+}
+
+// snapshotRejections reads the current rejection rows of the affected keys. A
+// key without a row becomes a phantom entry, so undoing a delete or a kind
+// change removes the rejection that mutation created even when none existed.
+func snapshotRejections(ctx context.Context, ex execer, keys map[rejectionKey]struct{}) ([]snapshotRejection, error) {
+	out := make([]snapshotRejection, 0, len(keys))
+	if len(keys) == 0 {
+		return out, nil
+	}
+	ordered := make([]rejectionKey, 0, len(keys))
+	for key := range keys {
+		ordered = append(ordered, key)
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].kind != ordered[j].kind {
+			return ordered[i].kind < ordered[j].kind
+		}
+		return ordered[i].nameKey < ordered[j].nameKey
+	})
+	conds := make([]string, 0, len(ordered))
+	args := make([]any, 0, len(ordered)*2)
+	for _, key := range ordered {
+		conds = append(conds, "(kind = ? AND name_key = ?)")
+		args = append(args, key.kind, key.nameKey)
+	}
+	rows, err := ex.QueryContext(ctx, `
+		SELECT kind, name, name_key, created_at, COALESCE(updated_at, '')
+		FROM entity_rejections WHERE `+strings.Join(conds, " OR ")+`
+		ORDER BY kind, name_key`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("store: snapshot rejections: %w", err)
+	}
+	found := make(map[rejectionKey]bool)
+	for rows.Next() {
+		var item snapshotRejection
+		if err := rows.Scan(&item.Kind, &item.Name, &item.NameKey, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("store: scan snapshot rejection: %w", err)
+		}
+		found[rejectionKey{kind: item.Kind, nameKey: item.NameKey}] = true
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for _, key := range ordered {
+		if !found[key] {
+			out = append(out, snapshotRejection{Kind: key.kind, NameKey: key.nameKey})
+		}
+	}
+	return out, nil
+}
+
+// restoreEntityRejections removes the current rows of every captured name_key
+// and reinserts the ones that existed before. Empty timestamps are the phantom
+// entries: they only remove the row created by the mutation.
+func restoreEntityRejections(ctx context.Context, tx *sql.Tx, items []snapshotRejection) error {
+	if len(items) == 0 {
+		return nil
+	}
+	conds := make([]string, 0, len(items))
+	args := make([]any, 0, len(items)*2)
+	seen := make(map[rejectionKey]bool, len(items))
+	for _, item := range items {
+		key := rejectionKey{kind: item.Kind, nameKey: item.NameKey}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		conds = append(conds, "(kind = ? AND name_key = ?)")
+		args = append(args, item.Kind, item.NameKey)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM entity_rejections WHERE `+strings.Join(conds, " OR "), args...); err != nil {
+		return fmt.Errorf("store: undo rejections: %w", err)
+	}
+	for _, item := range items {
+		if item.CreatedAt == "" {
+			continue
+		}
+		updatedAt := item.UpdatedAt
+		if updatedAt == "" {
+			updatedAt = item.CreatedAt
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO entity_rejections (kind, name, name_key, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?)`,
+			item.Kind, item.Name, item.NameKey, item.CreatedAt, updatedAt); err != nil {
+			return fmt.Errorf("store: restore rejection: %w", err)
+		}
+	}
+	return nil
 }
 
 func anyArgs(values []string) []any {

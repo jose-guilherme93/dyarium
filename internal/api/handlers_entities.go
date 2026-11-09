@@ -18,6 +18,7 @@ func entitySummaryJSON(s store.EntitySummary) map[string]any {
 		"id":         s.ID,
 		"kind":       s.Kind,
 		"name":       s.Name,
+		"label":      s.Label,
 		"icon":       s.Icon,
 		"entries":    s.Entries,
 		"mentions":   s.Mentions,
@@ -134,14 +135,36 @@ func (s *Server) handleListEntities(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 		return
 	}
+	// A memoria de rejeicoes viaja junto: o app precisa dela para filtrar a
+	// extracao local com a mesma curadoria do servidor.
+	rejections, err := s.deps.Store.ListEntityRejections(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
 	out := make([]map[string]any, 0, len(entities))
 	for _, e := range entities {
 		out = append(out, entitySummaryJSON(e))
 	}
+	rejected := make([]map[string]any, 0, len(rejections))
+	for _, item := range rejections {
+		rejected = append(rejected, entityRejectionJSON(item))
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"entities":      out,
 		"owner_aliases": ownerAliases,
+		"rejections":    rejected,
 	})
+}
+
+// entityRejectionJSON is the wire shape of one rejected name.
+func entityRejectionJSON(item store.EntityRejection) map[string]any {
+	return map[string]any{
+		"kind":       item.Kind,
+		"name":       item.Name,
+		"name_key":   item.NameKey,
+		"updated_at": nullTime(item.UpdatedAt),
+	}
 }
 
 func (s *Server) handleGetEntity(w http.ResponseWriter, r *http.Request) {
@@ -285,10 +308,260 @@ func (s *Server) handleSetEntityIcon(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, body)
 }
 
+// handleSetEntityLabel stores the free display label of one entity. Empty
+// clears it. The label is display-only: it does not change kind, metrics or
+// the sync key.
+func (s *Server) handleSetEntityLabel(w http.ResponseWriter, r *http.Request) {
+	kind := r.PathValue("kind")
+	if !store.ValidEntityKind(kind) {
+		writeError(w, http.StatusBadRequest, "invalid_kind", "kind deve ser person, place, theme ou decision")
+		return
+	}
+	var req struct {
+		Label string `json:"label"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_body", "corpo invalido")
+		return
+	}
+	name := strings.TrimSpace(r.PathValue("name"))
+	editID := s.prepareEntityEdit(r, "label", name+" = "+strings.TrimSpace(req.Label), kind, name)
+	summary, err := s.deps.Store.SetEntityLabel(r.Context(), kind, name, req.Label)
+	if err != nil && editID != "" {
+		_ = s.deps.Store.DiscardEntityEdit(r.Context(), editID)
+	}
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		writeError(w, http.StatusNotFound, "not_found", "entidade inexistente")
+		return
+	case errors.Is(err, store.ErrInvalidEntity):
+		writeError(w, http.StatusBadRequest, "invalid_label", "rotulo invalido")
+		return
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	body := entitySummaryJSON(summary)
+	if editID != "" {
+		body["edit_id"] = editID
+	}
+	writeJSON(w, http.StatusOK, body)
+}
+
+// handleChangeEntityKind moves an entity to another kind. When the target kind
+// already has the same name (or an alias), the two are merged; otherwise the
+// links follow the entity. The old kind is recorded as a rejection.
+func (s *Server) handleChangeEntityKind(w http.ResponseWriter, r *http.Request) {
+	kind := r.PathValue("kind")
+	if !store.ValidEntityKind(kind) {
+		writeError(w, http.StatusBadRequest, "invalid_kind", "kind deve ser person, place, theme ou decision")
+		return
+	}
+	var req struct {
+		Kind string `json:"kind"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_body", "corpo invalido")
+		return
+	}
+	newKind := strings.TrimSpace(req.Kind)
+	if !store.ValidEntityKind(newKind) {
+		writeError(w, http.StatusBadRequest, "invalid_kind", "kind de destino invalido")
+		return
+	}
+	name := strings.TrimSpace(r.PathValue("name"))
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "invalid_name", "nome invalido")
+		return
+	}
+	if newKind == kind {
+		writeError(w, http.StatusBadRequest, "invalid_kind", "kind de destino deve ser diferente")
+		return
+	}
+	// O alvo da mescla tambem entra na foto: se ja existir, o desfazer precisa
+	// restaurar as duas entidades e as contagens originais.
+	editID := s.prepareEntityEditPairs(r, "kind", name+" -> "+newKind,
+		store.EntityPair{Kind: kind, Name: name},
+		store.EntityPair{Kind: newKind, Name: name})
+	summary, err := s.deps.Store.ChangeEntityKind(r.Context(), kind, name, newKind)
+	if err != nil && editID != "" {
+		_ = s.deps.Store.DiscardEntityEdit(r.Context(), editID)
+	}
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		writeError(w, http.StatusNotFound, "not_found", "entidade inexistente")
+		return
+	case errors.Is(err, store.ErrInvalidEntity):
+		writeError(w, http.StatusBadRequest, "invalid_kind", "kind invalido")
+		return
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	body := entitySummaryJSON(summary)
+	if editID != "" {
+		body["edit_id"] = editID
+	}
+	writeJSON(w, http.StatusOK, body)
+}
+
+// handleDeleteEntity removes an entity (links and aliases cascade) and records
+// a rejection of its kind. The response carries the edit id for the undo.
+func (s *Server) handleDeleteEntity(w http.ResponseWriter, r *http.Request) {
+	kind := r.PathValue("kind")
+	if !store.ValidEntityKind(kind) {
+		writeError(w, http.StatusBadRequest, "invalid_kind", "kind deve ser person, place, theme ou decision")
+		return
+	}
+	name := strings.TrimSpace(r.PathValue("name"))
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "invalid_name", "nome invalido")
+		return
+	}
+	editID := s.prepareEntityEdit(r, "delete", name, kind, name)
+	err := s.deps.Store.DeleteEntity(r.Context(), kind, name)
+	if err != nil && editID != "" {
+		_ = s.deps.Store.DiscardEntityEdit(r.Context(), editID)
+	}
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		writeError(w, http.StatusNotFound, "not_found", "entidade inexistente")
+		return
+	case errors.Is(err, store.ErrInvalidEntity):
+		writeError(w, http.StatusBadRequest, "invalid_name", "nome invalido")
+		return
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	rejection := map[string]any{
+		"kind":     kind,
+		"name":     name,
+		"name_key": store.EntityRejectionKey(name),
+	}
+	if saved, ok := s.findEntityRejection(r, kind, name); ok {
+		rejection = entityRejectionJSON(saved)
+	}
+	body := map[string]any{"status": "ok", "rejection": rejection}
+	if editID != "" {
+		body["edit_id"] = editID
+	}
+	writeJSON(w, http.StatusOK, body)
+}
+
+// findEntityRejection reads back the rejection a mutation just wrote, so the
+// response carries the canonical name and the sync timestamp.
+func (s *Server) findEntityRejection(r *http.Request, kind, name string) (store.EntityRejection, bool) {
+	items, err := s.deps.Store.ListEntityRejections(r.Context())
+	if err != nil {
+		return store.EntityRejection{}, false
+	}
+	key := store.EntityRejectionKey(name)
+	for _, item := range items {
+		if item.Kind == kind && item.NameKey == key {
+			return item, true
+		}
+	}
+	return store.EntityRejection{}, false
+}
+
+// handleAddEntityRejection records that a name is never an entity of a kind.
+// The next analysis discards that link before persisting it.
+func (s *Server) handleAddEntityRejection(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Kind string `json:"kind"`
+		Name string `json:"name"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_body", "corpo invalido")
+		return
+	}
+	kind := strings.TrimSpace(req.Kind)
+	name := strings.TrimSpace(req.Name)
+	if !store.ValidEntityKind(kind) {
+		writeError(w, http.StatusBadRequest, "invalid_kind", "kind deve ser person, place, theme ou decision")
+		return
+	}
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "invalid_name", "nome invalido")
+		return
+	}
+	editID := s.prepareEntityEdit(r, "reject", kind+" "+name, kind, name)
+	err := s.deps.Store.AddEntityRejection(r.Context(), kind, name)
+	if err != nil && editID != "" {
+		_ = s.deps.Store.DiscardEntityEdit(r.Context(), editID)
+	}
+	if errors.Is(err, store.ErrInvalidEntity) {
+		writeError(w, http.StatusBadRequest, "invalid_name", "nome invalido")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	rejection := map[string]any{
+		"kind":     kind,
+		"name":     name,
+		"name_key": store.EntityRejectionKey(name),
+	}
+	if saved, ok := s.findEntityRejection(r, kind, name); ok {
+		rejection = entityRejectionJSON(saved)
+	}
+	body := map[string]any{"status": "ok", "rejection": rejection}
+	if editID != "" {
+		body["edit_id"] = editID
+	}
+	writeJSON(w, http.StatusOK, body)
+}
+
+// handleRemoveEntityRejection releases a rejected name so a future analysis may
+// extract it again.
+func (s *Server) handleRemoveEntityRejection(w http.ResponseWriter, r *http.Request) {
+	kind := r.PathValue("kind")
+	if !store.ValidEntityKind(kind) {
+		writeError(w, http.StatusBadRequest, "invalid_kind", "kind deve ser person, place, theme ou decision")
+		return
+	}
+	name := strings.TrimSpace(r.PathValue("name"))
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "invalid_name", "nome invalido")
+		return
+	}
+	editID := s.prepareEntityEdit(r, "unreject", kind+" "+name, kind, name)
+	err := s.deps.Store.RemoveEntityRejection(r.Context(), kind, name)
+	if err != nil && editID != "" {
+		_ = s.deps.Store.DiscardEntityEdit(r.Context(), editID)
+	}
+	if errors.Is(err, store.ErrInvalidEntity) {
+		writeError(w, http.StatusBadRequest, "invalid_name", "nome invalido")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	body := map[string]any{"status": "ok"}
+	if editID != "" {
+		body["edit_id"] = editID
+	}
+	writeJSON(w, http.StatusOK, body)
+}
+
 // prepareEntityEdit snapshots what a mutation is about to change. A snapshot
 // failure is logged and does not block the write: the edit only loses undo.
 func (s *Server) prepareEntityEdit(r *http.Request, action, label, kind string, names ...string) string {
 	id, err := s.deps.Store.PrepareEntityEdit(r.Context(), action, label, kind, names...)
+	if err != nil {
+		s.deps.Logger.Error("entidade: guardar desfazer", "erro", err)
+		return ""
+	}
+	return id
+}
+
+// prepareEntityEditPairs is prepareEntityEdit for a mutation that touches more
+// than one kind (a kind change snapshots the source and the merge target).
+func (s *Server) prepareEntityEditPairs(r *http.Request, action, label string, pairs ...store.EntityPair) string {
+	id, err := s.deps.Store.PrepareEntityEditPairs(r.Context(), action, label, pairs...)
 	if err != nil {
 		s.deps.Logger.Error("entidade: guardar desfazer", "erro", err)
 		return ""

@@ -249,13 +249,15 @@ Pessoa, lugar, tema ou decisao extraida das analises, normalizada por (`kind`, `
 |---|---|---|
 | id | TEXT PK | |
 | kind | TEXT | person, place, theme ou decision |
-| name | TEXT | nome como exibido |
+| name | TEXT | nome real/canonico como exibido |
+| label | TEXT | rotulo livre editavel (escola, gata, personagem); so exibicao |
 | icon | TEXT | chave de um icone monocromatico da paleta do mapa; vazio usa o do tipo |
 | created_at | TEXT | |
-| updated_at | TEXT | ultima mudanca de nome/icone/"sou eu"; o app usa para reconciliar |
+| updated_at | TEXT | ultima mudanca de nome/label/icone/tipo/"sou eu"; o app usa para reconciliar |
 
 Indices: unico (`kind`, `name`). A paleta de icones e validada pelo servidor e desenhada
-pelo cliente; o banco guarda apenas a chave.
+pelo cliente; o banco guarda apenas a chave. O tipo e fechado nos quatro valores acima;
+`label` nao altera tipo, metrica, cor nem sync.
 
 ## EntityAlias
 
@@ -272,6 +274,28 @@ Nome antigo de uma entidade renomeada. O lookup de analises novas e de
 
 Indices: unico (`kind`, `name`); `entity_id`. Ao mesclar duas entidades, os aliases e os
 vinculos passam para a sobrevivente.
+
+## EntityRejection
+
+Diz que um nome nunca e entidade de um tipo. E a curadoria do dono sobre a
+extracao da IA, aplicada por script antes de persistir.
+
+| Campo | Tipo | Notas |
+|---|---|---|
+| kind | TEXT | person, place, theme ou decision rejeitado |
+| name | TEXT | grafia exibida |
+| name_key | TEXT | normalizado: minusculas, sem acento, espacos colapsados, pontas aparadas |
+| created_at | TEXT | |
+| updated_at | TEXT | LWW do sync |
+
+Chave primaria: (`kind`, `name_key`). Indice em `(kind, updated_at)`.
+
+Excluir uma entidade grava a rejeicao do tipo dela. Trocar o tipo grava a
+rejeicao do tipo antigo. O filtro roda em `SaveRichAnalysis` (servidor) e em
+`replaceEntryEntities` (app): o vinculo rejeitado e descartado, nunca gravado.
+Desfazer restaura entidade, vinculos, aliases e a rejeicao a partir de
+`entity_edits`. Pronomes, artigos e papeis genericos continuam barrados pela
+camada de gramatica (`rewriteStopwords`), mesmo sem rejeicao registrada.
 
 ## OwnerAlias
 
