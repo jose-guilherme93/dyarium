@@ -51,8 +51,16 @@ type Config struct {
 	// OwnerName is the name the diarist chose, used only to make the prompt
 	// concrete. Empty is fine.
 	OwnerName string
+	// Memory is the owner's curation memory (known entities and rejected
+	// names) used by lexical recovery to keep the analysis from repeating a
+	// corrected mistake. Empty means "no memory".
+	Memory []MemoryEntry
 	// AllNotesMine is the app default used when a note has no explicit author.
 	AllNotesMine bool
+	// Concurrency is how many provider calls one analysis may run at once.
+	// Zero means the safe default: one for a local runtime (llama.cpp, Ollama
+	// or the OpenCode server), a few for a hosted API.
+	Concurrency int
 }
 
 // languageName maps a language code to a pt-BR name used in the prompt.
@@ -384,7 +392,11 @@ func (c *Client) Analyze(ctx context.Context, text string) (Result, error) {
 	if strings.TrimSpace(text) == "" {
 		return Result{}, errors.New("analyze: texto vazio")
 	}
-	content, err := c.do(ctx, c.systemPrompt(), text, answerBudget(text))
+	system := c.systemPrompt()
+	if block := memoryBlock(text, c.cfg.Memory); block != "" {
+		system += "\n\n" + block
+	}
+	content, err := c.do(ctx, system, text, answerBudget(text))
 	if err != nil {
 		return Result{}, err
 	}
@@ -872,6 +884,9 @@ func (c *Client) AnalyzeSection(ctx context.Context, title string, section Secti
 		themes = DefaultThemes
 	}
 	system := sectionSystemPrompt(themes, languageName(c.cfg.Language), section.Heading, c.authorLine())
+	if block := memoryBlock(section.Text, c.cfg.Memory); block != "" {
+		system += "\n\n" + block
+	}
 	user := text
 	if t := CleanText(title); t != "" {
 		user = "Titulo da nota: " + t + "\n\n" + text
