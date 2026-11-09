@@ -142,6 +142,12 @@ describe('entryToRecording', () => {
     expect(entryToRecording({ ...ENTRY, author: 'other' }).author).toBe('other');
   });
 
+  it('traz o detalhe do resumo do projeto (entry summary_detail)', () => {
+    expect(entryToRecording({ ...ENTRY, summary_detail: 'full' }).summaryDetail).toBe('full');
+    expect(entryToRecording({ ...ENTRY, summary_detail: 'concise' }).summaryDetail).toBe('concise');
+    expect(entryToRecording({ ...ENTRY }).summaryDetail).toBe('concise');
+  });
+
   it('traz o primeiro audio do servidor como referencia para o player', () => {
     const byList = entryToRecording({ ...ENTRY, primary_attachment_id: 'at_1' });
     expect(byList.serverAttachmentId).toBe('at_1');

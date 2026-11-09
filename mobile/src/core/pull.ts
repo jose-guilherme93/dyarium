@@ -82,6 +82,7 @@ export function duplicateEntryRecordings(local: Recording[]): Recording[] {
         !recording.notebookDirty &&
         !recording.tagsDirty &&
         !recording.archivedDirty &&
+        !recording.summaryDetailDirty &&
         (recording.syncConflict?.length ?? 0) === 0,
     );
     if (clean.length < 2) continue;
@@ -134,6 +135,7 @@ export function entryToRecording(entry: ServerEntry, note?: ServerNote): Recordi
     text: note?.content_markdown ?? '',
     archived: entry.archived,
     author: entry.author ?? '',
+    summaryDetail: entry.summary_detail === 'full' ? 'full' : 'concise',
     notebookId: entry.notebook_id || DEFAULT_NOTEBOOK_ID,
     tags: entry.tags && entry.tags.length > 0 ? entry.tags : undefined,
     titleVersion: entry.versions?.title,
@@ -201,6 +203,9 @@ export function mergeServerNote(
   // ultima gravacao do servidor entra.
   const serverAuthor = entry.author ?? '';
   const authorMoved = !local.authorDirty && serverAuthor !== (local.author ?? '');
+  const serverSummaryDetail = entry.summary_detail === 'full' ? 'full' : 'concise';
+  const summaryDetailMoved =
+    !local.summaryDetailDirty && serverSummaryDetail !== (local.summaryDetail ?? 'concise');
   const serverNotebook = entry.notebook_id || DEFAULT_NOTEBOOK_ID;
   const notebookMoved = !local.notebookDirty && serverNotebook !== (local.notebookId || DEFAULT_NOTEBOOK_ID);
   const serverTags = entry.tags ?? [];
@@ -236,6 +241,7 @@ export function mergeServerNote(
     !applyRecorded &&
     !archivedMoved &&
     !authorMoved &&
+    !summaryDetailMoved &&
     !notebookMoved &&
     !tagsMoved &&
     !attachmentMoved
@@ -268,6 +274,7 @@ export function mergeServerNote(
       : {}),
     ...(archivedMoved ? { archived: entry.archived } : {}),
     ...(authorMoved ? { author: serverAuthor, authorDirty: undefined } : {}),
+    ...(summaryDetailMoved ? { summaryDetail: serverSummaryDetail, summaryDetailDirty: undefined } : {}),
     ...(notebookMoved ? { notebookId: serverNotebook, notebookDirty: undefined } : {}),
     ...(tagsMoved ? { tags: serverTags.length > 0 ? serverTags : undefined, tagsDirty: undefined } : {}),
     // Se o corpo veio do servidor, a pendencia local (texto e conflito) acabou.
