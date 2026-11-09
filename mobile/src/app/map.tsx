@@ -910,7 +910,7 @@ export default function MapScreen() {
               size={16}
               color={theme.bg}
             />
-          </View>
+          </Press>
         ) : null}
         <View style={styles.sheetTitleText}>
           <Text style={styles.sheetTitle} numberOfLines={1}>
