@@ -771,9 +771,24 @@ entrar na exportacao.
   a altura cheia rola todos os trechos da entidade.
   Para o desenho nao crescer sem limite, o app desenha no maximo 120 entidades (as mais
   mencionadas) e 120 notas no foco, como os limites do servidor; o painel de detalhe lista
-  todas as notas e trechos. A previa do mapa dentro da tela da entidade e estatica
+  todas as notas e trechos. A tela da entidade carrega em tres camadas, na ordem em que se
+  le: o humor sai direto das ligacoes que ja vieram no recorte, os trechos (texto e
+  transcricao) so da entidade escolhida -- 15 na primeira pagina, mais 30 a cada "Ver mais"
+  no fim da lista, porque uma nota pode render centenas de trechos -- e o grafo focado entra
+  por ultimo, so quando o painel assenta. Cada camada reserva o lugar
+  com um esqueleto estatico (sem shimmer: animacao de carregamento custa quadro) e nao
+  desmonta a tela anterior. A previa do mapa dentro da tela da entidade e estatica
   (`interactive={false}`): semente sem compressao e sem animacao de camera, porque nao ha
-  gesto para acompanhar e um segundo canvas animando custava quadro a toa. Abrir o mapa nao
+  gesto para acompanhar e um segundo canvas animando custava quadro a toa. La o desenho nao
+  e o mapa inteiro: `buildEntityPreview` deixa so a entidade e ate 25 relacoes dela, e
+  `layoutRelationPreview` usa a mesma espiral do mapa geral -- angulo aureo e raio crescente,
+  entao algumas bolas ficam mais para dentro e outras mais para fora. Os nomes aparecem sem
+  zoom (`showLabels`) no mesmo sentido do no em relacao ao centro: bola de baixo, nome
+  embaixo; de cima, nome em cima; da esquerda, a esquerda. Quando o nome encosta em outro
+  ele anda mais para fora, no mesmo sentido, e na borda da tela desliza para dentro sem
+  mudar de lado; o deslocamento vai junto para o desenho. Sem gesto para
+  aproximar, o limiar de zoom do mapa interativo nunca seria cruzado; e o nome ao lado de
+  uma bola boiava entre duas, sem dizer a qual pertencia. Abrir o mapa nao
   parseia payload de analise nem transcricao:
   so identificacao, caderno e chaves sao lidos; os trechos e o tom do Humor sao carregados
   sob demanda, e analises antigas sao derivadas em segundo plano, em lotes curtos, sem
