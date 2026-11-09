@@ -48,13 +48,11 @@ import { MapFilters, type MapPeriod } from '@/components/graph/MapFilters';
 import { MoodPanel } from '@/components/graph/MoodPanel';
 import type { EntityKind, GraphData, GraphNodeKind } from '@/core/graphModel';
 import { kindLabel, splitNodeId } from '@/core/graphModel';
-import type { EntityPanel } from '@/core/graphPanel';
 import {
   graphFromSnapshot,
   kindCounts,
   layoutForGraph,
   layoutSeeded,
-  loadEntityPanel,
   loadGraphSnapshot,
   loadMoodSeries,
   noteKeyFromNode,
@@ -258,8 +256,6 @@ export default function MapScreen() {
   // o anterior fica ate a posicao nova chegar: trocar para um quadro vazio
   // faria a tela piscar no meio do toque.
   const [shown, setShown] = useState<{ data: GraphData; layout: GraphLayout } | null>(null);
-  const [selectedPanel, setSelectedPanel] = useState<EntityPanel | null>(null);
-  const [panelLoading, setPanelLoading] = useState(false);
 
   const [mood, setMood] = useState<MoodPoint[]>([]);
   const [moodLoading, setMoodLoading] = useState(false);
@@ -267,7 +263,6 @@ export default function MapScreen() {
   const canvasRef = useRef<GraphCanvasHandle>(null);
   const focusApplied = useRef(false);
   const selectedRef = useRef<string | null>(null);
-  const panelSeq = useRef(0);
   const moodSeq = useRef(0);
   const tabRef = useRef<'detail' | 'mood'>('detail');
   const loadRef = useRef<(force?: boolean) => Promise<void>>(async () => undefined);
@@ -299,27 +294,6 @@ export default function MapScreen() {
     [data, focusId, shown],
   );
   const visible = data ? (focusLayout ? { data, layout: focusLayout } : shown) : null;
-
-  const hydratePanel = useCallback(async (snap: GraphSnapshot, id: string | null) => {
-    const parsed = id ? splitNodeId(id) : null;
-    const entityId =
-      parsed && parsed.kind !== 'note' && parsed.kind !== 'user' ? parsed.id : null;
-    const seq = panelSeq.current + 1;
-    panelSeq.current = seq;
-    if (!entityId) {
-      setSelectedPanel(null);
-      setPanelLoading(false);
-      return;
-    }
-    try {
-      const panel = await loadEntityPanel(snap, entityId);
-      if (panelSeq.current === seq) setSelectedPanel(panel);
-    } catch {
-      if (panelSeq.current === seq) setSelectedPanel(null);
-    } finally {
-      if (panelSeq.current === seq) setPanelLoading(false);
-    }
-  }, []);
 
   const hydrateMood = useCallback(async (snap: GraphSnapshot) => {
     const seq = moodSeq.current + 1;
@@ -403,13 +377,8 @@ export default function MapScreen() {
             (entity) => entity.kind === parsed.kind && entity.id === parsed.id,
           );
         if (!exists) {
-          panelSeq.current += 1;
           selectedRef.current = null;
           setSelectedId(null);
-          setSelectedPanel(null);
-          setPanelLoading(false);
-        } else {
-          void hydratePanel(next, current);
         }
       }
       setFocusId((currentFocus) =>
@@ -438,7 +407,6 @@ export default function MapScreen() {
             selectedRef.current = id;
             setFocusId(id);
             setSelectedId(id);
-            void hydratePanel(next, id);
           }
         }
       }
@@ -448,7 +416,7 @@ export default function MapScreen() {
       loadedOnce.current = true;
       setLoading(false);
     }
-  }, [notebookId, period, params.focusKind, params.focusName, hydratePanel, hydrateMood]);
+  }, [notebookId, period, params.focusKind, params.focusName, hydrateMood]);
 
   useEffect(() => {
     mounted.current = true;
@@ -640,11 +608,8 @@ export default function MapScreen() {
 
   /** Volta ao mapa inteiro: nada escolhido, nada em foco. */
   const resetToMap = useCallback(() => {
-    panelSeq.current += 1;
     selectedRef.current = null;
     setSelectedId(null);
-    setSelectedPanel(null);
-    setPanelLoading(false);
     if (focusId) {
       if (transition.current === 'slide') switchScene(() => setFocusId(null), -1);
       else fadeScene(() => setFocusId(null));
@@ -718,15 +683,14 @@ export default function MapScreen() {
       setEditorError(null);
       try {
         await action();
-        const next = await reloadSnapshot();
-        if (next) await hydratePanel(next, selectedRef.current);
+        await reloadSnapshot();
       } catch (cause) {
         setEditorError(cause instanceof Error ? cause.message : 'Não foi possível salvar.');
       } finally {
         setEditorBusy(false);
       }
     },
-    [reloadSnapshot, hydratePanel],
+    [reloadSnapshot],
   );
 
   const onRename = useCallback(
@@ -737,7 +701,6 @@ export default function MapScreen() {
         const nextId = entityNodeId(renamed.kind, renamed.id);
         selectedRef.current = nextId;
         setSelectedId(nextId);
-        setSelectedPanel(null);
         if (focusId) setFocusId(nextId);
         setEditorOpen(false);
         void syncEntities().catch(() => undefined);
@@ -761,10 +724,8 @@ export default function MapScreen() {
     if (!selectedEntity) return;
     void editEntity(async () => {
       await claimLocalSelf(selectedEntity.name);
-      panelSeq.current += 1;
       selectedRef.current = null;
       setSelectedId(null);
-      setSelectedPanel(null);
       setFocusId(null);
       setEditorOpen(false);
       void syncEntities().catch(() => undefined);
@@ -1158,10 +1119,4 @@ const baseStyles = defineStyles({
     paddingVertical: spacing.xxl,
   },
   moodScroll: { paddingTop: spacing.md },
-  panelLoading: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: spacing.xxl,
-  },
 });
