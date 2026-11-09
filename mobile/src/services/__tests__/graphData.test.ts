@@ -1,3 +1,6 @@
+import type { EntityLink, GraphEntity, GraphEntry } from '@/core/graphModel';
+
+import type { EntityPanelRow } from '../db';
 import {
   graphFromSnapshot,
   kindCounts,
@@ -5,6 +8,7 @@ import {
   loadGraphSnapshot,
   loadMoodSeries,
   noteKeyFromNode,
+  type GraphSnapshot,
 } from '../graphData';
 
 const mockRows = jest.fn();
@@ -13,8 +17,7 @@ const mockLinks = jest.fn();
 const mockAliases = jest.fn();
 const mockOwnerAliases = jest.fn();
 const mockOwnerSettings = jest.fn();
-const mockDetails = jest.fn();
-const mockComments = jest.fn();
+const mockPanelRows = jest.fn();
 const mockSentiments = jest.fn();
 
 jest.mock('../db', () => ({
@@ -23,8 +26,7 @@ jest.mock('../db', () => ({
   listEntityLinks: () => mockLinks(),
   listEntityAliases: () => mockAliases(),
   listOwnerAliases: () => mockOwnerAliases(),
-  loadGraphEntryDetails: (ids: string[]) => mockDetails(ids),
-  loadAnalysisComments: (ids: string[]) => mockComments(ids),
+  loadEntityPanelRows: (ids: string[]) => mockPanelRows(ids),
   loadAnalysisSentiments: (ids: string[]) => mockSentiments(ids),
   loadGraphLayout: jest.fn(async () => null),
   saveGraphLayout: jest.fn(async () => undefined),
@@ -89,6 +91,39 @@ const LINKS = [
   { entryId: 'apagada', entityId: 'e-maria', count: 1 },
 ];
 
+const MARIA: GraphEntity = { id: 'e-maria', kind: 'person', name: 'Maria', icon: '', updatedAt: '' };
+
+/** Recorte com `count` notas ligadas a Maria, uma por dia, da mais antiga à nova. */
+function snapshotWithNotes(count: number): GraphSnapshot {
+  const entries: GraphEntry[] = [];
+  const links: EntityLink[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const id = `n${String(index).padStart(2, '0')}`;
+    entries.push({
+      id,
+      localId: `local-${id}`,
+      title: `Nota ${id}`,
+      recordedAt: `2026-10-${String(index + 1).padStart(2, '0')}T10:00:00`,
+      notebookId: 'nb1',
+      hasAnalysis: true,
+    });
+    links.push({ entryId: id, entityId: 'e-maria', count: 1 });
+  }
+  return {
+    entries,
+    entities: [MARIA],
+    links,
+    centerLabel: 'João',
+    ownerName: 'João',
+    ownerAliases: [],
+    aliases: {},
+    allNotesMine: true,
+    analyzed: count,
+    total: count,
+    entryByKey: Object.fromEntries(entries.map((entry) => [entry.id, entry])),
+  };
+}
+
 describe('loadGraphSnapshot', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -98,17 +133,17 @@ describe('loadGraphSnapshot', () => {
     mockAliases.mockResolvedValue({ 'e-maria': ['Mariana'] });
     mockOwnerAliases.mockResolvedValue(['João']);
     mockOwnerSettings.mockResolvedValue({ ownerName: 'João', allNotesMine: true });
-    mockDetails.mockResolvedValue({
+    mockPanelRows.mockResolvedValue({
       local1: {
+        id: 'local1',
         text: 'Falei com a Maria na praia.',
         transcriptSegments: [
           { start_ms: 1200, end_ms: 2400, text: 'A Maria chegou cedo.' },
           { start_ms: 2400, end_ms: 3000, text: 'Fomos embora.' },
         ],
+        reading: 'Fala sobre a amiga.',
+        summary: 'resumo',
       },
-    });
-    mockComments.mockResolvedValue({
-      srv1: { reading: 'Fala sobre a amiga.', summary: 'resumo' },
     });
     mockSentiments.mockResolvedValue({ srv1: 0.4, local2: -0.2, local3: 0.7 });
   });
@@ -176,16 +211,102 @@ describe('loadGraphSnapshot', () => {
     expect(noteKeyFromNode('note:srv1')).toBe('srv1');
   });
 
+  it('reaproveita a montagem do grafo para o mesmo recorte e as mesmas opcoes', async () => {
+    const snapshot = await loadGraphSnapshot();
+    const options = { nodeLimit: 120, edgesPerNode: 6 };
+    const first = graphFromSnapshot(snapshot, options);
+    const second = graphFromSnapshot(snapshot, options);
+    // Mesmo objeto: o mapa e a tela da entidade compartilham a conta.
+    expect(second).toBe(first);
+    const filtered = graphFromSnapshot(snapshot, { ...options, kinds: new Set(['person']) });
+    expect(filtered).not.toBe(first);
+    expect(filtered.nodes.map((node) => node.label)).toEqual(['Maria']);
+  });
+
   it('hidrata só as notas da entidade escolhida', async () => {
     const snapshot = await loadGraphSnapshot();
-    const panel = await loadEntityPanel(snapshot, 'e-maria');
-    expect(panel?.mentions).toBe(3);
-    expect(panel?.groups.map((group) => group.entryId)).toEqual(['srv1']);
-    const srv1 = panel?.groups[0];
+    const page = await loadEntityPanel(snapshot, 'e-maria');
+    expect(page.panel?.mentions).toBe(3);
+    expect(page.panel?.notes).toBe(2);
+    expect(page.hasMore).toBe(false);
+    expect(page.panel?.groups.map((group) => group.entryId)).toEqual(['srv1']);
+    const srv1 = page.panel?.groups[0];
     expect(srv1?.items.map((item) => item.source)).toEqual(['transcript', 'text']);
     expect(srv1?.items[0].text).toBe('A Maria chegou cedo.');
     expect(srv1?.comment).toBe('Fala sobre a amiga.');
-    expect(mockDetails).toHaveBeenCalledWith(['local1', 'local2']);
-    expect(await loadEntityPanel(snapshot, 'nao-existe')).toBeNull();
+    // Uma chamada só, com as notas da página na ordem (mais recente primeiro).
+    expect(mockPanelRows).toHaveBeenCalledTimes(1);
+    expect(mockPanelRows).toHaveBeenCalledWith(['local2', 'local1']);
+    expect((await loadEntityPanel(snapshot, 'nao-existe')).panel).toBeNull();
+  });
+
+  it('pagina por trechos: uma nota com 188 trechos mostra so 15', async () => {
+    const snapshot = snapshotWithNotes(1);
+    mockPanelRows.mockImplementation(async (ids: string[]) => {
+      const rows: Record<string, EntityPanelRow> = {};
+      for (const id of ids) {
+        rows[id] = {
+          id,
+          text: Array.from({ length: 188 }, (_, index) => `Maria apareceu ${index}.`).join(' '),
+        };
+      }
+      return rows;
+    });
+
+    const page = await loadEntityPanel(snapshot, 'e-maria', { limit: 15 });
+
+    expect(page.panel?.excerpts).toHaveLength(15);
+    // O grupo da nota fica pela metade; o resto vem no "Ver mais".
+    expect(page.panel?.groups).toHaveLength(1);
+    expect(page.panel?.groups[0].items).toHaveLength(15);
+    expect(page.hasMore).toBe(true);
+    expect(mockPanelRows).toHaveBeenCalledTimes(1);
+
+    const more = await loadEntityPanel(snapshot, 'e-maria', { limit: 45 });
+    expect(more.panel?.excerpts).toHaveLength(45);
+    expect(more.hasMore).toBe(true);
+  });
+
+  it('le as notas em blocos mas mostra so a pagina de trechos', async () => {
+    const snapshot = snapshotWithNotes(20);
+    mockPanelRows.mockImplementation(async (ids: string[]) => {
+      const rows: Record<string, EntityPanelRow> = {};
+      for (const id of ids) rows[id] = { id, text: 'Maria apareceu.' };
+      return rows;
+    });
+
+    const page = await loadEntityPanel(snapshot, 'e-maria', { limit: 15 });
+
+    expect(page.panel?.excerpts).toHaveLength(15);
+    expect(page.panel?.groups).toHaveLength(15);
+    // Os numeros falam do recorte inteiro, nao da pagina.
+    expect(page.panel?.notes).toBe(20);
+    expect(page.hasMore).toBe(true);
+    // Blocos de 15 notas: 15 + 5 para saber que ainda ha trechos.
+    expect(mockPanelRows).toHaveBeenCalledTimes(2);
+    expect(mockPanelRows).toHaveBeenNthCalledWith(
+      1,
+      Array.from({ length: 15 }, (_, index) => `local-n${String(19 - index).padStart(2, '0')}`),
+    );
+  });
+
+  it('reaproveita o painel da sessão sem ler o banco de novo', async () => {
+    const snapshot = snapshotWithNotes(19);
+    mockPanelRows.mockImplementation(async (ids: string[]) => {
+      const rows: Record<string, EntityPanelRow> = {};
+      for (const id of ids) rows[id] = { id, text: 'Maria apareceu.' };
+      return rows;
+    });
+
+    const first = await loadEntityPanel(snapshot, 'e-maria', { limit: 15 });
+    expect(mockPanelRows).toHaveBeenCalledTimes(2);
+    mockPanelRows.mockClear();
+
+    const second = await loadEntityPanel(snapshot, 'e-maria', { limit: 15 });
+
+    expect(mockPanelRows).not.toHaveBeenCalled();
+    expect(second).toBe(first);
+    expect(second.panel?.notes).toBe(19);
+    expect(second.hasMore).toBe(true);
   });
 });

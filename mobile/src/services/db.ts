@@ -3049,3 +3049,69 @@ export async function applyRemoteOwnerAliases(names: string[]): Promise<void> {
     });
   });
 }
+
+export interface EntityPanelRow {
+  /** `recordings.id` (chave local). */
+  id: string;
+  text?: string;
+  transcript?: string;
+  transcriptSegments?: TranscriptSegment[];
+  reading?: string;
+  summary?: string;
+}
+
+/**
+ * Detalhe das notas + leitura da analise em UMA consulta.
+ *
+ * A analise local (`a`) vive sob `recordings.id` e a do servidor (`b`) sob o
+ * `entry_id`; a local vence e a do servidor cobre quando ela esta vazia. Chunks
+ * de 100 mantem o `IN` curto, como em `loadGraphEntryDetails`.
+ */
+export async function loadEntityPanelRows(
+  ids: string[],
+): Promise<Record<string, EntityPanelRow>> {
+  const localIds = [...new Set(ids.filter(Boolean))];
+  if (localIds.length === 0) return {};
+  const db = await getDbForUI();
+  const out: Record<string, EntityPanelRow> = {};
+  for (let offset = 0; offset < localIds.length; offset += 100) {
+    const chunk = localIds.slice(offset, offset + 100);
+    const rows = await db.getAllAsync<{
+      id: string;
+      text: string | null;
+      transcript: string | null;
+      transcript_segments: string | null;
+      reading: string | null;
+      summary: string | null;
+      remote_reading: string | null;
+      remote_summary: string | null;
+    }>(
+      `SELECT r.id,
+         r.text,
+         r.transcript,
+         r.transcript_segments,
+         CASE WHEN json_valid(a.payload) THEN json_extract(a.payload, '$.reading') END AS reading,
+         CASE WHEN json_valid(a.payload) THEN json_extract(a.payload, '$.summary') END AS summary,
+         CASE WHEN json_valid(b.payload) THEN json_extract(b.payload, '$.reading') END AS remote_reading,
+         CASE WHEN json_valid(b.payload) THEN json_extract(b.payload, '$.summary') END AS remote_summary
+       FROM recordings r
+       LEFT JOIN analyses a ON a.entry_id = r.id
+       LEFT JOIN analyses b ON b.entry_id = r.entry_id AND b.entry_id <> r.id
+       WHERE r.id IN (${placeholders(chunk.length)})`,
+      chunk,
+    );
+    for (const row of rows) {
+      const reading = (row.reading ?? '').trim() || (row.remote_reading ?? '').trim();
+      const summary = (row.summary ?? '').trim() || (row.remote_summary ?? '').trim();
+      out[row.id] = {
+        id: row.id,
+        text: row.text ?? undefined,
+        transcript: row.transcript ?? undefined,
+        transcriptSegments: parseSegments(row.transcript_segments),
+        reading: reading || undefined,
+        summary: summary || undefined,
+      };
+    }
+  }
+  return out;
+}

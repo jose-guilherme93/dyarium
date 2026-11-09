@@ -21,18 +21,18 @@ import {
   type NodePosition,
 } from '@/core/graphLayout';
 import type { EntityPanel } from '@/core/graphPanel';
-import { buildEntityPanel } from '@/core/graphPanel';
+import { buildEntityPanel, buildEntityPanelPage, entityStats } from '@/core/graphPanel';
 import type { ServerAnalysis } from '@/core/api';
 
+import type { EntityPanelRow } from './db';
 import {
   listEntityAliases,
   listEntityLinks,
   listGraphRecordings,
   listLocalEntities,
   listOwnerAliases,
-  loadAnalysisComments,
   loadAnalysisSentiments,
-  loadGraphEntryDetails,
+  loadEntityPanelRows,
   loadGraphLayout,
   loadGraphSnapshotCache,
   saveGraphLayout,
@@ -205,9 +205,33 @@ export function rememberSnapshot(key: string, snapshot: GraphSnapshot): void {
   }
 }
 
+/**
+ * Grafo montado a partir do recorte, guardado enquanto o recorte viver.
+ *
+ * Montar o grafo de 404 notas custa ~490 ms neste aparelho. O mapa e a tela da
+ * entidade pedem exatamente o mesmo conjunto (mesmo objeto de snapshot e mesmas
+ * opcoes), entao a segunda montagem vira leitura de cache em vez de refazer a
+ * conta no gesto de abrir a bola.
+ */
+const graphCache = new WeakMap<GraphSnapshot, Map<string, GraphData>>();
+
+function graphOptionsKey(options: GraphOptions): string {
+  const kinds = options.kinds ? [...options.kinds].sort().join(',') : '';
+  return `${options.nodeLimit ?? ''}|${options.edgesPerNode ?? ''}|${options.noteLimit ?? ''}|${options.focus ?? ''}|${kinds}`;
+}
+
 /** Monta o grafo (visao do dia a dia ou foco) a partir do snapshot. */
 export function graphFromSnapshot(snapshot: GraphSnapshot, options: GraphOptions = {}): GraphData {
-  return buildGraph(snapshot, options);
+  const key = graphOptionsKey(options);
+  const byKey = graphCache.get(snapshot);
+  const cached = byKey?.get(key);
+  if (cached) return cached;
+  const graph = buildGraph(snapshot, options);
+  const target = byKey ?? new Map<string, GraphData>();
+  if (target.size > 8) target.clear();
+  target.set(key, graph);
+  if (!byKey) graphCache.set(snapshot, target);
+  return graph;
 }
 
 /**
@@ -300,45 +324,138 @@ export function panelForEntity(
   );
 }
 
+/** Trechos carregados na primeira pagina do painel. */
+export const ENTITY_PANEL_PAGE = 15;
+/** Trechos a mais a cada "Ver mais". */
+export const ENTITY_PANEL_MORE = 30;
+/** Notas hidratadas por consulta enquanto a pagina de trechos nao enche. */
+const HYDRATE_CHUNK = 15;
+
+export interface EntityPanelPage {
+  panel: EntityPanel | null;
+  /** Ha mais trechos alem desta pagina. */
+  hasMore: boolean;
+}
+
 /**
- * Hidrata so as notas da entidade escolhida (texto, transcricao e leitura) e
- * monta o painel. E o unico ponto que paga o custo de ler transcricoes; o mapa
- * inteiro nunca as carrega.
+ * Cache de sessao do painel. Abrir o mesmo no de novo reusa os grupos e os
+ * totais sem tocar no banco; a assinatura do recorte invalida quando ele muda.
+ */
+const PANEL_CACHE_LIMIT = 8;
+const panelCache = new Map<string, EntityPanelPage>();
+
+function snapshotSignature(snapshot: GraphSnapshot): string {
+  let latest = '';
+  for (const entry of snapshot.entries) {
+    if (entry.recordedAt > latest) latest = entry.recordedAt;
+  }
+  return `${snapshot.entries.length}|${snapshot.links.length}|${snapshot.entities.length}|${latest}`;
+}
+
+function rememberPanel(key: string, page: EntityPanelPage): void {
+  if (panelCache.size >= PANEL_CACHE_LIMIT) panelCache.clear();
+  panelCache.set(key, page);
+}
+
+function hydrateEntry(entry: GraphEntry, row: EntityPanelRow | undefined): GraphEntry {
+  const reading = row?.reading?.trim();
+  const summary = row?.summary?.trim();
+  const analysis =
+    reading || summary
+      ? ({ reading: reading || undefined, summary: summary || undefined } as ServerAnalysis)
+      : undefined;
+  return {
+    ...entry,
+    text: row?.text,
+    transcript: row?.transcript,
+    transcriptSegments: row?.transcriptSegments,
+    analysis,
+  };
+}
+
+/**
+ * Hidrata as notas da entidade ate encher a pagina de trechos e monta o painel.
+ *
+ * O limite e por trecho, nao por nota: uma nota pode ter centenas de trechos e
+ * a tela nao deve abrir com todos. As notas sao lidas em blocos de 15 e a
+ * leitura para assim que a pagina tem mais trechos que o limite (o excedente
+ * so serve para saber que existe "Ver mais"). E o unico ponto que paga o custo
+ * de ler transcricoes; o mapa inteiro nunca as carrega.
+ *
+ * Os numeros do painel saem de `entityStats` sobre TODAS as notas do recorte,
+ * para mencoes e notas nao encolherem quando a pagina e so um pedaco.
  */
 export async function loadEntityPanel(
   snapshot: GraphSnapshot,
   entityId: string,
-): Promise<EntityPanel | null> {
+  options: { limit?: number } = {},
+): Promise<EntityPanelPage> {
+  const t0 = Date.now();
   const entity = snapshot.entities.find((item) => item.id === entityId);
-  if (!entity) return null;
+  if (!entity) return { panel: null, hasMore: false };
+
+  const limit = Math.max(1, options.limit ?? ENTITY_PANEL_PAGE);
+  const cacheKey = `${entityId}|${limit}|${snapshotSignature(snapshot)}`;
+  const cached = panelCache.get(cacheKey);
+  if (cached) return cached;
+
   const entityLinks = snapshot.links.filter((link) => link.entityId === entityId);
-  const keys = [...new Set(entityLinks.map((link) => link.entryId))];
-  const entries = keys
+  const noteKeys = [...new Set(entityLinks.map((link) => link.entryId))];
+  const notes = noteKeys
     .map((key) => snapshot.entryByKey[key])
-    .filter((entry): entry is GraphEntry => Boolean(entry));
-  const localIds = entries
-    .map((entry) => entry.localId)
-    .filter((id): id is string => Boolean(id));
-  const [details, comments] = await Promise.all([
-    loadGraphEntryDetails(localIds),
-    loadAnalysisComments(entries.map((entry) => entry.id)),
-  ]);
-  const hydrated = entries.map((entry) => {
-    const detail = entry.localId ? details[entry.localId] : undefined;
-    const comment = comments[entry.id];
-    const analysis =
-      comment && (comment.reading || comment.summary)
-        ? ({ reading: comment.reading, summary: comment.summary } as ServerAnalysis)
-        : undefined;
-    return {
-      ...entry,
-      text: detail?.text,
-      transcript: detail?.transcript,
-      transcriptSegments: detail?.transcriptSegments,
-      analysis,
-    };
-  });
-  return buildEntityPanel(entity, hydrated, entityLinks, snapshot.aliases[entity.id] ?? []);
+    .filter((entry): entry is GraphEntry => Boolean(entry))
+    .sort((a, b) =>
+      a.recordedAt === b.recordedAt
+        ? a.id < b.id
+          ? -1
+          : 1
+        : a.recordedAt < b.recordedAt
+          ? 1
+          : -1,
+    );
+
+  const aliases = snapshot.aliases[entity.id] ?? [];
+  const stats = entityStats(entity.id, snapshot.entries, snapshot.links);
+  const hydrated: GraphEntry[] = [];
+  let totalItems = 0;
+  const tq = Date.now();
+  let cursor = 0;
+  while (cursor < notes.length) {
+    const chunk = notes.slice(cursor, cursor + HYDRATE_CHUNK);
+    const localIds = chunk
+      .map((entry) => entry.localId)
+      .filter((id): id is string => Boolean(id));
+    const rows = localIds.length > 0 ? await loadEntityPanelRows(localIds) : {};
+    for (const entry of chunk) {
+      hydrated.push(hydrateEntry(entry, entry.localId ? rows[entry.localId] : undefined));
+    }
+    cursor += chunk.length;
+    totalItems = buildEntityPanelPage(
+      entity,
+      hydrated,
+      entityLinks,
+      aliases,
+      stats,
+      limit,
+    ).totalItems;
+    // Passou do limite: ja ha o suficiente para a pagina e para saber que ha
+    // mais trechos adiante.
+    if (totalItems > limit) break;
+  }
+  const tQueries = Date.now() - tq;
+
+  const slice = buildEntityPanelPage(entity, hydrated, entityLinks, aliases, stats, limit);
+  const hasMore = slice.totalItems > limit || cursor < notes.length;
+  const result: EntityPanelPage = { panel: slice.panel, hasMore };
+  rememberPanel(cacheKey, result);
+  if (__DEV__) {
+    console.log(
+      `[entity] painel ${slice.panel.excerpts.length} de ${slice.totalItems} trechos em ${
+        Date.now() - t0
+      }ms (banco ${tQueries}ms)`,
+    );
+  }
+  return result;
 }
 
 /** Serie de humor do recorte visivel, lida sob demanda (aba Humor). */
