@@ -112,6 +112,31 @@ export const noteMentionSpec = () =>
     },
   );
 
+/** Marcador temporario do conversor para o bloco de detalhes tecnicos. */
+export const DETAILS_PLACEHOLDER = "DYARIUMDETAILS";
+
+/** Bloco colapsavel de detalhes tecnicos (somente leitura). */
+export const detailsBlockSpec = () =>
+  createBlockSpec(
+    {
+      type: "details",
+      propSchema: {
+        summary: { default: "Detalhes técnicos" },
+        body: { default: "" },
+        open: { default: false },
+      },
+      content: "none",
+    },
+    {
+      render: () => ({ dom: document.createElement("div") }),
+      toExternalHTML: () => {
+        const paragraph = document.createElement("p");
+        paragraph.textContent = DETAILS_PLACEHOLDER;
+        return { dom: paragraph };
+      },
+    },
+  )();
+
 /**
  * Estilos que a nota aceita.
  *
@@ -134,7 +159,7 @@ export function createNoteStyleSchema() {
  */
 export function createNoteSchema() {
   return BlockNoteSchema.create({
-    blockSpecs: { ...defaultBlockSpecs, audio: audioBlockSpec(), image: imageBlockSpec() },
+    blockSpecs: { ...defaultBlockSpecs, audio: audioBlockSpec(), image: imageBlockSpec(), details: detailsBlockSpec() },
     inlineContentSpecs: { ...defaultInlineContentSpecs, noteMention: noteMentionSpec() },
     styleSpecs: createNoteStyleSchema(),
   });

@@ -6,6 +6,7 @@ import {
   markdownToPlain,
   noteMarkdownToBlocks,
 } from "./blocknoteMarkdown";
+import { resetMarkdownCache } from "./markdownBlocks";
 import { createNoteStyleSchema } from "./schema";
 
 /**
@@ -236,6 +237,61 @@ describe("texto simples da nota", () => {
   it("nao conta o marcador de audio como palavra", () => {
     const markdown = "Antes\n!audio[attachment:at_audio]{d=28.794}\nDepois";
     expect(markdownToPlain(markdown)).toBe("Antes Depois");
+  });
+});
+
+describe("detalhes tecnicos", () => {
+  it("bloco fechado volta identico", () => {
+    resetMarkdownCache();
+    const markdown = "Antes\n\n:::details Detalhes técnicos\n- item: detalhe\n:::\n\nDepois";
+    const blocks = noteMarkdownToBlocks(editor, markdown) as never as {
+      type: string;
+      props?: Record<string, unknown>;
+    }[];
+    expect(blocks.map((block) => block.type)).toEqual(["paragraph", "details", "paragraph"]);
+    const details = blocks.find((block) => block.type === "details");
+    expect(details?.props).toEqual({ summary: "Detalhes técnicos", body: "- item: detalhe", open: false });
+
+    const again = blocksToNoteMarkdown(editor, blocks);
+    expect(again.trim()).toBe(markdown.trim());
+  });
+
+  it(":::details open mapeia para open: true", () => {
+    resetMarkdownCache();
+    const markdown = ":::details open Detalhes técnicos\ncorpo\n:::";
+    const blocks = noteMarkdownToBlocks(editor, markdown) as never as {
+      type: string;
+      props?: Record<string, unknown>;
+    }[];
+    const details = blocks.find((block) => block.type === "details");
+    expect(details?.props?.open).toBe(true);
+    expect(details?.props?.body).toBe("corpo");
+
+    const again = blocksToNoteMarkdown(editor, blocks);
+    expect(again.trim()).toBe(markdown.trim());
+  });
+
+  it("texto antes e depois do fence sobrevive", () => {
+    resetMarkdownCache();
+    const markdown = "antes\n\n:::details Detalhes técnicos\nlinha\n:::\n\ndepois";
+    const blocks = noteMarkdownToBlocks(editor, markdown);
+    const again = blocksToNoteMarkdown(editor, blocks);
+    expect(again).toContain("antes");
+    expect(again).toContain("depois");
+    expect(again).toContain(":::details Detalhes técnicos");
+  });
+
+  it("corpo com varias linhas preserva quebras", () => {
+    resetMarkdownCache();
+    const markdown = ":::details Detalhes técnicos\na\nb\nc\n:::";
+    const blocks = noteMarkdownToBlocks(editor, markdown) as never as {
+      type: string;
+      props?: Record<string, unknown>;
+    }[];
+    const details = blocks.find((block) => block.type === "details");
+    expect(details?.props?.body).toBe("a\nb\nc");
+    const again = blocksToNoteMarkdown(editor, blocks);
+    expect(again.trim()).toBe(markdown.trim());
   });
 });
 

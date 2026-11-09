@@ -28,6 +28,7 @@ import type {
   Revision,
   Segment,
   Settings,
+  SummaryDetail,
   Tag,
   Transcript,
   WritingRhythm,
@@ -587,6 +588,7 @@ export const api = {
       chapter_synopsis?: string;
       chapter_beats?: string;
       chapter_notes?: string;
+      summary_detail?: SummaryDetail;
       versions?: { title?: string; recorded_at?: string };
     },
   ) => request<{ status: string; versions: { title?: string; recorded_at?: string } }>(

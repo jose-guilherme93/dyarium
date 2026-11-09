@@ -129,7 +129,7 @@ export function NotebookSwitcher({
         {!book ? <span className="notebook-menu-count">{notebook.entry_count}</span> : null}
         {notebook.id === activeId && <CheckIcon size={13} />}
       </button>
-      {!notebook.is_default ? (
+      {!notebook.is_default && notebook.kind !== "mcp" ? (
         <span className="notebook-menu-actions">
           <button
             type="button"

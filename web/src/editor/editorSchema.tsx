@@ -21,7 +21,7 @@ import { AudioTrack } from "../components/AudioTrack";
 import { MoreIcon } from "../components/icons";
 import { useEscape } from "../lib/useEscape";
 import type { Audio } from "../types";
-import { AUDIO_PLACEHOLDER, audioPropSchema } from "./schema";
+import { AUDIO_PLACEHOLDER, DETAILS_PLACEHOLDER, audioPropSchema } from "./schema";
 
 // MediaContext gives the media blocks access to the audios (with transcript)
 // and to navigation between notes, without going through BlockNote internals.
@@ -449,8 +449,29 @@ function ImageBlockView({ block, editor }: ImageRenderProps) {
   );
 }
 
+const detailsBlock = createReactBlockSpec(
+  {
+    type: "details",
+    propSchema: {
+      summary: { default: "Detalhes técnicos" },
+      body: { default: "" },
+      open: { default: false },
+    },
+    content: "none",
+  },
+  {
+    render: (props) => (
+      <details className="doc-details" open={props.block.props.open}>
+        <summary className="doc-details-summary">{props.block.props.summary || "Detalhes técnicos"}</summary>
+        <pre className="doc-details-body">{props.block.props.body}</pre>
+      </details>
+    ),
+    toExternalHTML: () => <p>{DETAILS_PLACEHOLDER}</p>,
+  },
+);
+
 const schema = BlockNoteSchema.create({
-  blockSpecs: { ...defaultBlockSpecs, audio: audioBlock(), image: imageBlock() },
+  blockSpecs: { ...defaultBlockSpecs, audio: audioBlock(), image: imageBlock(), details: detailsBlock() },
   inlineContentSpecs: { ...defaultInlineContentSpecs, noteMention },
 });
 

@@ -214,6 +214,11 @@ export function NoteList({
   }, []);
 
   const allNotebooks = notebookId === ALL_NOTEBOOKS;
+  const activeNotebook = useMemo(
+    () => notebooks.find((notebook) => notebook.id === notebookId),
+    [notebooks, notebookId],
+  );
+  const isMcp = activeNotebook?.kind === "mcp";
   const notebookById = useMemo(
     () => new Map(notebooks.map((notebook) => [notebook.id, notebook])),
     [notebooks],
@@ -644,15 +649,17 @@ export function NoteList({
               </button>
               <NotificationsMenu refreshKey={refreshKey} onOpen={onOpen} />
             </div>
-            <button
-              type="button"
-              className="icon-button list-new"
-              onClick={onCreate}
-              aria-label="Nova nota"
-              title="Nova nota"
-            >
-              <PlusIcon size={16} />
-            </button>
+            {!isMcp && (
+              <button
+                type="button"
+                className="icon-button list-new"
+                onClick={onCreate}
+                aria-label="Nova nota"
+                title="Nova nota"
+              >
+                <PlusIcon size={16} />
+              </button>
+            )}
           </>
         )}
       </div>
@@ -760,6 +767,10 @@ export function NoteList({
               <>
                 <p>Nenhuma nota com essas tags.</p>
                 <p>Limpe o filtro para ver o escopo inteiro.</p>
+              </>
+            ) : isMcp ? (
+              <>
+                <p>Nenhum projeto ainda.</p>
               </>
             ) : (
               <>

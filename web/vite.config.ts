@@ -86,6 +86,12 @@ export default defineConfig({
         target: process.env.VITE_API_URL ?? "http://localhost:8080",
         changeOrigin: true,
       },
+      // O MCP usa SSE; o proxy repassa o stream para o backend Go. Sem isto o
+      // comando gerado no painel aponta para o Vite e recebe 404.
+      "/mcp": {
+        target: process.env.VITE_API_URL ?? "http://localhost:8080",
+        changeOrigin: true,
+      },
       "/setup": {
         target: process.env.VITE_API_URL ?? "http://localhost:8080",
         changeOrigin: true,

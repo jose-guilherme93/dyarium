@@ -4177,6 +4177,28 @@
   font-size: 13px;
 }
 
+.doc-details {
+  margin: calc(var(--space) * 3) 0;
+  padding: calc(var(--space) * 2) calc(var(--space) * 3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+
+.doc-details summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.doc-details-body {
+  margin: calc(var(--space) * 2) 0 0;
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--color-muted);
+}
+
 /* O BlockNote desenha uma caixa azul em volta do no selecionado. Na imagem ela
    virava um retangulo do tamanho da coluna, mesmo com a foto pela metade; some
    por completo. A selecao aparece pelas acoes e pela alca. */

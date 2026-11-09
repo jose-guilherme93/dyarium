@@ -80,6 +80,8 @@ export interface Entry {
   chapter_notes?: string;
   /** Contagem de prosa do capitulo, quando pedida. */
   word_count?: number;
+  /** Detalhe do resumo automatico de projetos MCP; so em entradas de projeto. */
+  summary_detail?: SummaryDetail;
 }
 
 export interface Audio {
@@ -379,7 +381,9 @@ export interface Tag {
   entry_count: number;
 }
 
-export type NotebookKind = "notes" | "book";
+export type NotebookKind = "notes" | "book" | "mcp";
+/** Detalhe do resumo automatico de projetos MCP: enxuto ou completo. */
+export type SummaryDetail = "concise" | "full";
 export type BookStatus = "drafting" | "revising" | "done";
 export type ChapterKind = "chapter" | "part" | "front" | "back";
 export type ChapterStatus = "" | "draft" | "revising" | "done";
