@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import MapScreen from '../map';
-import { push } from '@/services/appNavigation';
+import { back, push } from '@/services/appNavigation';
 
 const mockLoadSnapshot = jest.fn();
 const mockPanel = jest.fn();
@@ -271,6 +271,22 @@ describe('tela do mapa', () => {
     expect(mockLayout.mock.calls.length).toBe(layoutAntes);
     expect(screen.queryByLabelText('Abrir Praia')).toBeNull();
     expect(screen.getByLabelText('Abrir Maria')).toBeTruthy();
+  });
+
+  it('aba Humor mostra o painel de tom', async () => {
+    await renderMap();
+
+    fireEvent.press(screen.getByText('Humor'));
+
+    expect(screen.getByTestId('map-mood-panel')).toBeTruthy();
+  });
+
+  it('o Voltar do cabeçalho volta para a tela anterior', async () => {
+    await renderMap();
+
+    fireEvent.press(screen.getByLabelText('Voltar'));
+
+    expect(back).toHaveBeenCalled();
   });
 
   it('abre os filtros por período', async () => {

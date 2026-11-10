@@ -993,7 +993,7 @@ export default function MapScreen() {
         ]}
       />
 
-      <View style={[styles.chrome, { paddingTop: insets.top + spacing.xs }]}>
+      <View style={[styles.chrome, { paddingTop: insets.top + spacing.xs }]} pointerEvents="box-none">
         <View style={styles.topBar}>
           <Press onPress={() => back()} style={styles.iconButton} accessibilityLabel="Voltar">
             <Ionicons name="chevron-back" size={24} color={theme.text} />
@@ -1047,6 +1047,19 @@ export default function MapScreen() {
           </Press>
         </View>
 
+        {sheetHeader}
+
+        {tab === 'mood' ? (
+          <View style={styles.moodPanel} testID="map-mood-panel">
+            {moodBusy ? (
+              <View style={styles.moodLoading}>
+                <ActivityIndicator color={theme.accent} />
+              </View>
+            ) : (
+              <MoodPanel series={moodSeries} colors={graphColors} subject={moodSubject} />
+            )}
+          </View>
+        ) : null}
       </View>
 
       {selectedId || focusId ? (
@@ -1122,8 +1135,6 @@ export default function MapScreen() {
           setFiltersOpen(false);
         }}
       />
-
-      {sheetHeader}
 
       <EntityEditor
         key={selectedEntity?.id ?? 'none'}
@@ -1336,6 +1347,15 @@ const baseStyles = defineStyles({
   },
   error: { color: baseColors.danger, fontSize: fontSize.sm },
   sheetHeader: { gap: spacing.xs },
+  moodPanel: {
+    marginTop: spacing.xs,
+    backgroundColor: baseColors.bg,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: baseColors.border,
+    overflow: 'hidden',
+  },
+  moodLoading: { paddingVertical: spacing.xxl, alignItems: 'center' },
   sheetTitleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   entityDot: {
     width: 28,

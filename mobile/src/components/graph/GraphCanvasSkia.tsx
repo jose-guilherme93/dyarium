@@ -60,7 +60,7 @@ import {
 import { iconKeyFor, iconPaths } from '@/core/graphIcons';
 import { neighborIds } from '@/core/graphPaths';
 import { useRenderCount } from '@/dev/perf';
-import { useFrameMeter, useJsFrameMeter } from '@/dev/frameMeter';
+import { FRAME_HUD_ON, useFrameMeter, useJsFrameMeter } from '@/dev/frameMeter';
 import type { GraphColors } from '@/theme/graph';
 
 const FIT_PADDING = 4;
@@ -487,8 +487,8 @@ const LabelLayer = memo(
  */
 const FrameHud = memo(function FrameHud({ label }: { label: string }) {
   const [text, setText] = useState('');
-  useFrameMeter(label, setText);
-  if (!__DEV__ || !text) return null;
+  useFrameMeter(label, FRAME_HUD_ON ? setText : undefined);
+  if (!FRAME_HUD_ON || !text) return null;
   return (
     <View style={styles.hud} pointerEvents="none">
       <Text style={styles.hudText}>{text}</Text>

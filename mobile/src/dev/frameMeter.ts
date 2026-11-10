@@ -15,6 +15,13 @@ import { runOnJS, useFrameCallback, useSharedValue } from 'react-native-reanimat
 
 import { formatSummary, hudSummary, summarize } from './frameStats';
 
+/**
+ * O numero de quadro na tela e uma ferramenta de depuracao: so aparece em
+ * desenvolvimento e com a flag ligada, para nao virar parte da interface.
+ */
+const FRAME_HUD_ON = __DEV__ && process.env.EXPO_PUBLIC_GRAPH_PERF === '1';
+export { FRAME_HUD_ON };
+
 function useFrameMeterDev(label: string, onReport?: (text: string) => void): void {
   const window = useSharedValue<number[]>([]);
   const report = useCallback(
@@ -27,6 +34,7 @@ function useFrameMeterDev(label: string, onReport?: (text: string) => void): voi
   );
   useFrameCallback((info) => {
     'worklet';
+    if (!FRAME_HUD_ON) return;
     const delta = info.timeSincePreviousFrame;
     if (delta === null || delta <= 0) return;
     const list = window.value;
@@ -50,7 +58,7 @@ export const useFrameMeter: (label: string, onReport?: (text: string) => void) =
  */
 export function useJsFrameMeter(label: string): void {
   useEffect(() => {
-    if (!__DEV__) return;
+    if (!FRAME_HUD_ON) return;
     let last = 0;
     let samples: number[] = [];
     let raf = 0;
