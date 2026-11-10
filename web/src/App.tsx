@@ -27,6 +27,7 @@ import { TagManager } from "./components/TagManager";
 import { ComposeDialog, type ComposeAnchor } from "./components/ComposeDialog";
 import { useToast } from "./components/Toasts";
 import {
+  BookIcon,
   ChevronIcon,
   CpuIcon,
   ExitIcon,
@@ -41,6 +42,9 @@ import { ALL_NOTEBOOKS, DEFAULT_NOTEBOOK_ID } from "./lib/notebooks";
 import { orderedChapters } from "./lib/books";
 import type { NotionImportResult } from "./lib/notionImport";
 import { MapView } from "./views/MapView";
+import { ProjectsView } from "./views/ProjectsView";
+import type { ProjectsFilterRequest } from "./views/ProjectsView";
+import { ProjectNote } from "./views/ProjectNote";
 import { LabView } from "./views/LabView";
 import { SettingsView } from "./views/SettingsView";
 import { WritingView } from "./views/WritingView";
@@ -118,6 +122,15 @@ export function App() {
     openEntryRef.current = openEntryId;
   }, [openEntryId]);
   const [failures, setFailures] = useState<Record<string, string>>({});
+  // A nota do caderno MCP abre em leitura (ProjectNote); "Editar" liga o editor
+  // de markdown de sempre, e a faixa "Leitura" devolve para a leitura.
+  const [pjEditing, setPjEditing] = useState(false);
+  useEffect(() => {
+    setPjEditing(false);
+  }, [openEntryId, activeNotebookId]);
+  // "Filtrar itens" fecha a nota e pede a superficie de projetos a filtrar
+  // aquele projeto e periodo; o nonce re-aplica o mesmo pedido duas vezes.
+  const [pjFilter, setPjFilter] = useState<ProjectsFilterRequest | null>(null);
   // /lab e uma pagina de verdade: recarregar a aba continua no processamento,
   // e o endereco fica estavel para deixar a aba aberta no PC.
   useEffect(() => {
@@ -839,7 +852,10 @@ export function App() {
             </div>
 
             {/* O menu e a lista de notas: não ha "Notas" aqui, porque a lista e
-                as notas. As demais telas viram icones pequenos no rodape. */}
+                as notas. As demais telas viram icones pequenos no rodape. No
+                caderno de projetos (MCP) a tabela da area principal ja lista
+                todos os itens: a lista de previews e redundante e fica de
+                fora; seguem o seletor de caderno e a navegacao do rodape. */}
             {isBook && activeNotebook ? (
               <BookSidebar
                 book={activeNotebook}
@@ -854,6 +870,8 @@ export function App() {
                 onCreate={(kind) => void createBookChapter(kind)}
                 onReorder={(source, target) => void reorderBookChapters(source, target)}
               />
+            ) : isMcp ? (
+              <div className="list-spacer" aria-hidden="true" />
             ) : (
             <NoteList
               refreshKey={refreshKey}
@@ -895,15 +913,17 @@ export function App() {
                 <PlusIcon size={18} />
               </button>
             )}
-            <button
-              type="button"
-              className="rail-action"
-              onClick={expandSearch}
-              aria-label="Buscar nas notas"
-              title="Buscar"
-            >
-              <SearchIcon size={17} />
-            </button>
+            {!isMcp && (
+              <button
+                type="button"
+                className="rail-action"
+                onClick={expandSearch}
+                aria-label="Buscar nas notas"
+                title="Buscar"
+              >
+                <SearchIcon size={17} />
+              </button>
+            )}
             <button
               type="button"
               className="rail-action rail-expand"
@@ -971,8 +991,59 @@ export function App() {
               onOpenSettings={() => setBookDialog({ notebook: activeNotebook })}
             />
           ) : view === "notes" ? (
-            <div className="editor-pane">
-              {openEntryId ? (
+            <div className={isMcp ? "editor-pane editor-pane--pj" : "editor-pane"}>
+              {openEntryId && isMcp ? (
+                // Caderno de projetos: a nota abre por cima da superficie; a
+                // faixa devolve para a tabela, como o menu faz com o livro.
+                <div className="pj-backbar">
+                  <button
+                    type="button"
+                    className="pj-back"
+                    onClick={() => setOpenEntryId(null)}
+                    aria-label="Voltar para projetos"
+                    title="Projetos"
+                  >
+                    <span className="pj-backic" aria-hidden="true">
+                      <ChevronIcon size={14} />
+                    </span>
+                    Projetos
+                  </button>
+                  {pjEditing ? (
+                    <button
+                      type="button"
+                      className="pj-back"
+                      onClick={() => {
+                        setPjEditing(false);
+                        refresh();
+                      }}
+                      aria-label="Voltar para a leitura"
+                      title="Leitura"
+                    >
+                      <BookIcon size={14} />
+                      Leitura
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+              {openEntryId && isMcp && !pjEditing ? (
+                // Leitura da nota do projeto, como o prototipo; a edicao fica
+                // a um toque (Editar), e ao voltar da edicao le de novo.
+                <ProjectNote
+                  key={openEntryId}
+                  entryId={openEntryId}
+                  notebookName={activeNotebook?.name ?? "Projetos"}
+                  refreshKey={noteRefreshKey}
+                  onFilterItems={(project, range) => {
+                    setOpenEntryId(null);
+                    setPjFilter((current) => ({
+                      project,
+                      range,
+                      nonce: (current?.nonce ?? 0) + 1,
+                    }));
+                  }}
+                  onEdit={() => setPjEditing(true)}
+                />
+              ) : openEntryId ? (
                 <NoteEditor
                   key={openEntryId}
                   entryId={openEntryId}
@@ -996,6 +1067,22 @@ export function App() {
                   onOpenEntry={(id) => setOpenEntryId(id)}
                   notebooks={notebooks}
                 />
+              ) : isMcp ? (
+                // Caderno de projetos MCP: no lugar da lista vazia, a
+                // superficie de projetos. Clicar numa linha abre a nota daquele
+                // projeto no mesmo editor, como a lista de notas faz.
+                <div className="page page--projects">
+                  <ProjectsView
+                    notebookId={activeNotebookId}
+                    refreshKey={refreshKey}
+                    filterRequest={pjFilter}
+                    onOpenEntry={(id) => {
+                      setView("notes");
+                      setOpenEntryId(id);
+                      closeDrawer();
+                    }}
+                  />
+                </div>
               ) : (
                 <div className="empty-editor">
                   <div className="empty-inner">

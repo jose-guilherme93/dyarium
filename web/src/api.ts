@@ -595,6 +595,16 @@ export const api = {
     `/entries/${id}`,
     { method: "PATCH", body: JSON.stringify(patch) },
   ),
+  /**
+   * Patch de campo simples da entrada: hoje so o icone do projeto (emoji).
+   * O campo entra no backend em lane propria, entao o chamador trata a falha
+   * sem quebrar a tela.
+   */
+  updateEntry: (id: string, patch: { icon?: string }) =>
+    request<{ status: string }>(`/entries/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    }),
   listNotes: (id: string) => request<{ notes: Note[] }>(`/entries/${id}/notes`),
   listNotesCached: (id: string) => cachedGet<{ notes: Note[] }>(`/entries/${id}/notes`),
   /** Cria a nota a partir do markdown do corpo. `noteId` torna o POST idempotente. */

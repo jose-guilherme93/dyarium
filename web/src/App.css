@@ -11299,3 +11299,1003 @@
   .settings-page .qual,
   .settings-page .chip { width: auto; min-width: 0; }
 }
+
+/* ---------- superficie Projetos (caderno mcp) ---------- */
+/* Reproduz o prototipo aprovado (/tmp/opencode/proto-resumos.html) com as
+   variaveis --paper*/--ink*/--line/--accent* do painel. */
+
+.editor-pane--pj {
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-pane--pj .pj-backbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: 38px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.editor-pane--pj > .note {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+}
+
+.editor-pane--pj .page--projects {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.pj-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+
+.pj-back:hover {
+  background: var(--paper-2);
+  color: var(--ink);
+}
+
+.pj-back .pj-backic {
+  display: inline-flex;
+  transform: rotate(90deg);
+}
+
+.pj-root {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.page--projects { padding: 0; }
+
+/* Caderno MCP: sem lista de previews na sidebar; o espaco da lista empurra o
+   rodape de navegacao para baixo, como a .list fazia. */
+.list-spacer {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.pj-view {
+  flex: 1;
+  min-width: 0;
+  max-width: 1140px;
+  margin: 0 auto;
+  padding: 0 24px;
+  width: 100%;
+}
+
+.pj-view :focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.pj-head {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: color-mix(in srgb, var(--paper) 88%, transparent);
+  backdrop-filter: blur(6px);
+  border-bottom: 1px solid var(--line);
+}
+
+.pj-tabs {
+  display: flex;
+  gap: 2px;
+  height: 50px;
+  align-items: center;
+}
+
+.pj-tabs [role="tab"] {
+  font-size: 13.5px;
+  color: var(--ink-soft);
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  line-height: 20px;
+}
+
+.pj-tabs [role="tab"][aria-selected="true"] {
+  color: var(--ink);
+  font-weight: 500;
+  background: var(--paper-2);
+}
+
+.pj-tabs [role="tab"]:hover {
+  background: var(--paper-2);
+  color: var(--ink);
+}
+
+.pj-tabn {
+  font-size: 11px;
+  color: var(--ink-soft);
+  margin-left: 5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* toolbar */
+.pj-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 0 12px;
+}
+
+.pj-chips {
+  display: contents;
+}
+
+.pj-mark {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border-radius: var(--radius-sm);
+  background: var(--paper-3);
+  font-size: 13px;
+  line-height: 1;
+}
+
+.pj-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  background: var(--paper);
+}
+
+.pj-chip .pj-mark {
+  width: 18px;
+  height: 18px;
+  font-size: 12px;
+}
+
+.pj-chip:hover {
+  background: var(--paper-2);
+  color: var(--ink);
+}
+
+.pj-chip[aria-pressed="true"] {
+  background: var(--paper-3);
+  border-color: transparent;
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.pj-kchip {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.pj-sep {
+  width: 1px;
+  height: 18px;
+  background: var(--line);
+  margin: 0 2px;
+}
+
+.pj-seg {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.pj-seg button {
+  padding: 0 10px;
+  height: 28px;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+
+.pj-seg button + button {
+  border-left: 1px solid var(--line);
+}
+
+.pj-seg button[aria-pressed="true"] {
+  background: var(--paper-3);
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.pj-seg button:hover {
+  background: var(--paper-2);
+}
+
+.pj-seg--off {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.pj-push {
+  flex: 1;
+}
+
+/* variante tabela */
+.pj-vtable {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  max-height: 560px;
+  overflow: auto;
+  background: var(--paper);
+}
+
+.pj-vtable table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+  table-layout: fixed;
+}
+
+.pj-vtable thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+  height: 32px;
+  padding: 0 10px;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+.pj-vtable thead th:last-child,
+.pj-vtable tbody td:last-child {
+  text-align: right;
+}
+
+.pj-col-pj { width: 150px; }
+.pj-col-k { width: 58px; }
+.pj-col-d { width: 66px; }
+.pj-col-c { width: 126px; }
+
+.pj-vtable tbody td {
+  height: 34px;
+  padding: 0 10px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pj-vtable tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.pj-vtable tbody tr:hover td {
+  background: var(--paper-2);
+}
+
+.pj-vtable tbody tr[tabindex]:focus-visible td {
+  box-shadow: inset 0 0 0 1.5px var(--focus-ring);
+}
+
+.pj-pcell {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.pj-pcell .pj-mark {
+  width: 18px;
+  height: 18px;
+  font-size: 12px;
+}
+
+.pj-ch {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--ink-soft);
+}
+
+.pj-opc {
+  display: inline-flex;
+  width: 13px;
+  height: 13px;
+  vertical-align: -2px;
+  margin-left: 5px;
+  color: var(--ink-soft);
+}
+
+.pj-opc:hover {
+  color: var(--accent);
+}
+
+.pj-kb {
+  display: inline-block;
+  font-size: 11px;
+  line-height: 19px;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 4px;
+  font-weight: 500;
+  background: color-mix(in srgb, currentColor 11%, transparent);
+}
+
+.pj-kc--feat { color: var(--ok); }
+.pj-kc--fix { color: var(--danger); }
+.pj-kc--perf { color: var(--info); }
+.pj-kc--test { color: var(--warn); }
+.pj-kc--muted { color: var(--ink-soft); }
+
+/* variante cartoes */
+.pj-vcards {
+  margin-top: 10px;
+}
+
+.pj-sess {
+  padding: 10px 0 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.pj-vcards .pj-sess:last-child {
+  border-bottom: 0;
+}
+
+.pj-ssh {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+}
+
+.pj-ssh b {
+  font-weight: 600;
+  font-size: 13.5px;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pj-ssh .pj-m {
+  color: var(--ink-soft);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.pj-ssh .pj-cnt {
+  margin-left: auto;
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.pj-ci,
+.pj-it2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 32px;
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+
+.pj-ci:hover,
+.pj-it2:hover {
+  background: var(--paper-2);
+}
+
+.pj-kw {
+  flex: none;
+  width: 56px;
+}
+
+.pj-tt {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pj-cc {
+  flex: none;
+  color: var(--ink-soft);
+}
+
+/* rodape com contagem */
+.pj-foot {
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  margin: 12px -24px 0;
+  background: var(--paper);
+  border-top: 1px solid var(--line);
+}
+
+.pj-foot-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 34px;
+  margin: 0;
+  max-width: 1140px;
+  padding: 0 24px;
+  font-size: 12px;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.pj-empty {
+  color: var(--ink-soft);
+  font-size: 13px;
+  margin: 14px 0;
+}
+
+/* aba Projetos */
+.pj-projects {
+  padding-top: 12px;
+}
+
+.pj {
+  border-bottom: 1px solid var(--line);
+}
+
+.pj-row {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 110px 82px 160px 12px 20px;
+  gap: 14px;
+  align-items: center;
+  min-height: 56px;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.pj-row:hover,
+.pj-row:focus-visible {
+  background: var(--paper-2);
+}
+
+.pj-row[aria-expanded="true"] {
+  background: var(--paper-2);
+}
+
+.pj-emojibtn {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius);
+  display: grid;
+  place-items: center;
+}
+
+.pj-emojibtn .pj-mark {
+  width: 100%;
+  height: 100%;
+  border-radius: var(--radius);
+  font-size: 19px;
+}
+
+.pj-emojibtn:hover {
+  background: var(--paper-3);
+}
+
+.pj-name {
+  min-width: 0;
+}
+
+.pj-pnm {
+  font-weight: 500;
+  font-size: 14px;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pj-psub {
+  display: none;
+  font-size: 11.5px;
+  color: var(--ink-soft);
+}
+
+.pj-plast,
+.pj-pnum {
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+.pj-pnum .pj-n {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.pj-mbar {
+  display: flex;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--paper-3);
+  /* Kind sem classe propria (desconhecido) cai no cinza do tema, como no
+     badge dele; os kinds conhecidos pintam a propria matiz no i. */
+  color: var(--ink-soft);
+}
+
+/* Mesma semantica do prototipo (.mbar i = currentColor das classes kc-*), mas
+   no wash do badge 70/30 a favor do kind: a matiz se le lado a lado sem a
+   saturacao cheia que competia com a tabela. A regua de separacao divide
+   kinds de tom parecido sem borda externa na barra. */
+.pj-mbar i {
+  display: block;
+  height: 100%;
+  background: color-mix(in srgb, currentColor 70%, var(--paper-3));
+}
+
+.pj-mbar i + i {
+  border-left: 1px solid var(--paper);
+}
+
+.pj-dot {
+  display: block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin: 0 auto;
+}
+
+.pj-dot--ok { background: var(--ok); }
+.pj-dot--warn { background: var(--warn); }
+.pj-dot:not([class*="--"]) {
+  background: color-mix(in srgb, var(--ink-soft) 45%, transparent);
+}
+
+.pj-chev {
+  display: inline-flex;
+  color: var(--ink-soft);
+  transition: transform 0.15s ease;
+}
+
+.pj-row .pj-chev,
+.pj-det summary .pj-chev {
+  transform: rotate(-90deg);
+}
+
+.pj-row[aria-expanded="true"] .pj-chev,
+.pj-det[open] summary .pj-chev {
+  transform: rotate(0deg);
+}
+
+.pj-sz {
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--paper-2) 45%, var(--paper));
+  padding: 2px 4px 14px 44px;
+}
+
+.pj-sess2 {
+  padding-top: 10px;
+}
+
+.pj-sline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  min-height: 26px;
+}
+
+.pj-sline b {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.pj-it2 {
+  height: 30px;
+}
+
+.pj-det {
+  margin: 8px 0 2px;
+}
+
+.pj-det summary {
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink-soft);
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.pj-det summary::-webkit-details-marker {
+  display: none;
+}
+
+.pj-det summary:hover,
+.pj-det summary:focus-visible {
+  background: var(--paper-3);
+  color: var(--ink);
+}
+
+.pj-det .pj-db {
+  display: grid;
+  gap: 3px;
+  border-left: 2px solid var(--line);
+  padding: 2px 0 2px 12px;
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--ink-soft);
+}
+
+.pj-det .pj-db a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+/* seletor de emoji */
+.pj-pop {
+  position: fixed;
+  z-index: 60;
+  width: 296px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px;
+}
+
+.pj-pop input {
+  width: 100%;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--paper-2);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 0 9px;
+}
+
+.pj-pop input::placeholder {
+  color: var(--ink-soft);
+}
+
+.pj-pop .pj-pg {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 2px;
+  margin-top: 8px;
+  max-height: 216px;
+  overflow: auto;
+}
+
+.pj-pop .pj-pg button {
+  height: 32px;
+  font-size: 17px;
+  border-radius: var(--radius-sm);
+  display: grid;
+  place-items: center;
+}
+
+.pj-pop .pj-pg button:hover {
+  background: var(--paper-2);
+}
+
+.pj-pop .pj-pg button[aria-pressed="true"] {
+  background: var(--accent-soft);
+}
+
+/* nota do projeto (leitura) */
+/* Colunas do prototipo (proto-resumos.html, aba Nota): cabecalho grande com o
+   icone da pagina, resumo em prosa, um bloco por sessao com a tabela por kind
+   e os botoes de acao ao lado. Mesmas medidas e ritmo. */
+
+.editor-pane--pj > .pjn {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.pjn {
+  width: 100%;
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 30px 24px 40px;
+  color: var(--ink);
+}
+
+.pjn :focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.pjn-title {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  min-width: 0;
+}
+
+.pjn-emojibtn {
+  width: 46px;
+  height: 46px;
+  border-radius: var(--radius);
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+
+.pjn-emojibtn:hover {
+  background: var(--paper-3);
+}
+
+.pjn-mark {
+  font-size: 26px;
+  line-height: 1;
+}
+
+.pjn-title h1 {
+  margin: 0;
+  font-size: 29px;
+  line-height: 1.3;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pjn-meta {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 12px 0 20px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.pjn-host {
+  font-family: var(--font-mono);
+}
+
+.pjn-lede {
+  margin: 0;
+  max-width: 66ch;
+  font-size: 15px;
+}
+
+.pjn-empty {
+  margin: 14px 0;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.pjn-blk {
+  margin-top: 26px;
+}
+
+.pjn-cap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.pjn-cap b {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.pjn-cap .pjn-n {
+  font-variant-numeric: tabular-nums;
+}
+
+.pjn-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 156px;
+  gap: 18px;
+  align-items: start;
+}
+
+.pjn-items {
+  list-style: none;
+  margin: 0 0 14px;
+  padding: 0;
+}
+
+.pjn-it {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 30px;
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+
+.pjn-kw {
+  flex: none;
+  width: 56px;
+}
+
+.pjn-tt {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pjn-cc {
+  flex: none;
+}
+
+.pjn-tbl {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+
+.pjn-tbl th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--ink-soft);
+  font-size: 12px;
+  border-bottom: 1px solid var(--ink-soft);
+  padding: 6px 10px;
+}
+
+.pjn-tbl th.pjn-num {
+  text-align: right;
+}
+
+.pjn-tbl td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.pjn-tbl tr:last-child td {
+  border-bottom: 0;
+}
+
+.pjn-tbl .pjn-tot td {
+  border-top: 2px solid var(--line);
+  font-weight: 500;
+}
+
+.pjn-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.pjn-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* coluna de acoes: pills discretos, como .toolbl do prototipo */
+.pjn-act {
+  display: grid;
+  gap: 8px;
+  padding-top: 26px;
+}
+
+.pjn-ab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  background: var(--paper);
+  cursor: pointer;
+}
+
+.pjn-ab:hover:not(:disabled) {
+  background: var(--paper-2);
+  color: var(--ink);
+}
+
+.pjn-ab:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pjn-stx {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ok);
+  font-variant-numeric: tabular-nums;
+}
+
+.pjn-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 34px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.pjn-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+
+.pjn-edit:hover {
+  background: var(--paper-2);
+  color: var(--ink);
+}
+
+/* botao Nota na linha da sessao da aba Projetos */
+.pj-notabtn {
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font-size: 11.5px;
+  color: var(--ink-soft);
+  background: var(--paper);
+  white-space: nowrap;
+}
+
+.pj-notabtn:hover {
+  background: var(--paper-2);
+  color: var(--ink);
+}
+
+/* responsivo */
+@media (max-width: 720px) {
+  .pjn { padding: 24px 16px 32px; }
+  .pjn-title h1 { font-size: 24px; }
+  .pjn-grid { grid-template-columns: 1fr; }
+  .pjn-act { padding-top: 0; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); }
+  .pj-view { padding: 0 16px; }
+  .pj-foot { margin: 12px -16px 0; }
+  .pj-foot-row { padding: 0 16px; }
+  .pj-vtable { display: none; }
+  .pj-tabs { height: 46px; }
+  .pj-row { grid-template-columns: 44px minmax(0, 1fr) 12px 20px; gap: 10px; }
+  .pj-plast,
+  .pj-pnum,
+  .pj-mbar { display: none; }
+  .pj-psub { display: block; }
+}

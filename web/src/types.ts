@@ -82,6 +82,8 @@ export interface Entry {
   word_count?: number;
   /** Detalhe do resumo automatico de projetos MCP; so em entradas de projeto. */
   summary_detail?: SummaryDetail;
+  /** Icone do projeto (emoji), escolhido no painel de projetos. */
+  icon?: string;
 }
 
 export interface Audio {

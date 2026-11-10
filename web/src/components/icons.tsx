@@ -346,3 +346,23 @@ export function WaveIcon({ size = 18 }: IconProps) {
     </svg>
   );
 }
+
+/** Seta saindo da caixa: abre o commit ou link no remoto. */
+export function ExternalIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+      <path d="M15 3h6v6" />
+      <path d="M10 14 21 3" />
+    </svg>
+  );
+}
+
+/** Funil: abre um filtro entre os itens. */
+export function FilterIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" />
+    </svg>
+  );
+}
