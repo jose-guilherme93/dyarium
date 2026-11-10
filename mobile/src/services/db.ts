@@ -8,6 +8,7 @@ import { Directory, File, Paths } from 'expo-file-system';
 import { Platform } from 'react-native';
 
 import type { ServerAnalysis, ServerAudio } from '@/core/api';
+import type { BackupKnowledge } from '@/core/backup';
 import type { ChunkExtraction } from '@/core/analysisChunk';
 import type { AnalysisOutcome, AnalysisRun, AnalysisRuntime } from '@/core/analysisRuns';
 import { deriveEntityLinks, ownerKey } from '@/core/graphEntities';
@@ -2536,6 +2537,373 @@ export async function listOwnerAliases(): Promise<string[]> {
   const db = await getDb();
   const rows = await db.getAllAsync<OwnerAliasRow>('SELECT name FROM owner_aliases ORDER BY name');
   return rows.map((row) => row.name);
+}
+
+/**
+ * Le tudo o que o aparelho sabe alem da nota e da midia: analises, blocos ja
+ * lidos e o estado do mapa (entidades, aliases, vinculos, dono, rejeicoes e
+ * posicoes). O servico de backup grava isso no manifesto; sem esse estado uma
+ * restauracao devolveria as notas sem ficha e sem mapa.
+ */
+export async function exportBackupKnowledge(
+  dbArg?: SQLite.SQLiteDatabase,
+): Promise<BackupKnowledge> {
+  const db = dbArg ?? (await getDb());
+  const analyses = await db.getAllAsync<{
+    entry_id: string;
+    title: string;
+    recorded_at: string;
+    payload: string;
+    fetched_at: string;
+    origin: string | null;
+    analysis_content_hash: string | null;
+  }>(
+    `SELECT entry_id, title, recorded_at, payload, fetched_at, origin, analysis_content_hash
+     FROM analyses ORDER BY recorded_at`,
+  );
+  const chunks = await db.getAllAsync<{
+    entry_id: string;
+    block_index: number;
+    block_hash: string;
+    prompt_version: number;
+    model: string;
+    status: string;
+    dropped: number;
+    payload: string;
+    updated_at: string;
+  }>(
+    `SELECT entry_id, block_index, block_hash, prompt_version, model, status, dropped,
+            payload, updated_at
+     FROM analysis_chunks ORDER BY entry_id, block_index`,
+  );
+  const entities = await db.getAllAsync<{
+    id: string;
+    kind: string;
+    name: string;
+    label: string;
+    icon: string;
+    created_at: string;
+    updated_at: string;
+  }>('SELECT id, kind, name, label, icon, created_at, updated_at FROM entities ORDER BY created_at');
+  const aliases = await db.getAllAsync<{
+    id: string;
+    entity_id: string;
+    kind: string;
+    name: string;
+    created_at: string;
+    updated_at: string;
+  }>(
+    'SELECT id, entity_id, kind, name, created_at, updated_at FROM entity_aliases ORDER BY created_at',
+  );
+  const links = await db.getAllAsync<{
+    entry_id: string;
+    entity_id: string;
+    count: number;
+    relation: string | null;
+    sentiment: number | null;
+    created_at: string;
+  }>(
+    `SELECT entry_id, entity_id, count, relation, sentiment, created_at
+     FROM entry_entities ORDER BY entry_id, entity_id`,
+  );
+  const owners = await db.getAllAsync<{
+    name: string;
+    created_at: string;
+    updated_at: string;
+  }>('SELECT name, created_at, updated_at FROM owner_aliases ORDER BY name');
+  const rejections = await db.getAllAsync<{
+    kind: string;
+    name: string;
+    name_key: string;
+    created_at: string;
+    updated_at: string;
+  }>(
+    `SELECT kind, name, name_key, created_at, updated_at
+     FROM entity_rejections ORDER BY kind, name_key`,
+  );
+  const layouts = await db.getAllAsync<{ key: string; data: string; updated_at: string }>(
+    'SELECT key, data, updated_at FROM graph_layout ORDER BY key',
+  );
+  const transcriptMarks = await db.getAllAsync<{ entry_id: string; source_at: string }>(
+    'SELECT entry_id, source_at FROM transcript_sync ORDER BY entry_id',
+  );
+  const analysisMarks = await db.getAllAsync<{ entry_id: string; source_at: string }>(
+    'SELECT entry_id, source_at FROM analysis_sync ORDER BY entry_id',
+  );
+  const transcriptMarksEnv = await db.getAllAsync<{
+    server_id: string;
+    entry_id: string;
+    source_at: string;
+  }>('SELECT server_id, entry_id, source_at FROM transcript_sync_env ORDER BY server_id, entry_id');
+  const analysisMarksEnv = await db.getAllAsync<{
+    server_id: string;
+    entry_id: string;
+    source_at: string;
+  }>('SELECT server_id, entry_id, source_at FROM analysis_sync_env ORDER BY server_id, entry_id');
+
+  const authorRow = await db.getFirstAsync<{ value: string }>(
+    'SELECT value FROM app_flags WHERE key = ?',
+    [AUTHOR_SETTINGS_KEY],
+  );
+  let author: BackupKnowledge['author'];
+  if (authorRow) {
+    try {
+      const parsed = JSON.parse(authorRow.value) as {
+        ownerName?: unknown;
+        allNotesMine?: unknown;
+      };
+      author = {
+        ownerName: typeof parsed.ownerName === 'string' ? parsed.ownerName : '',
+        allNotesMine: parsed.allNotesMine !== false,
+      };
+    } catch {
+      // Configuracao ilegivel: o backup segue sem ela; o servidor repoe.
+    }
+  }
+
+  return {
+    analyses: analyses.map((row) => ({
+      entryId: row.entry_id,
+      title: row.title,
+      recordedAt: row.recorded_at,
+      payload: row.payload,
+      fetchedAt: row.fetched_at,
+      origin: row.origin === 'local' ? 'local' : 'server',
+      contentHash: row.analysis_content_hash ?? undefined,
+    })),
+    analysisChunks: chunks.map((row) => ({
+      entryId: row.entry_id,
+      blockIndex: row.block_index,
+      blockHash: row.block_hash,
+      promptVersion: row.prompt_version,
+      model: row.model,
+      status: row.status,
+      dropped: row.dropped,
+      payload: row.payload,
+      updatedAt: row.updated_at,
+    })),
+    entities: entities.map((row) => ({
+      id: row.id,
+      kind: row.kind,
+      name: row.name,
+      label: row.label ?? '',
+      icon: row.icon ?? '',
+      createdAt: row.created_at,
+      updatedAt: row.updated_at ?? '',
+    })),
+    entityAliases: aliases.map((row) => ({
+      id: row.id,
+      entityId: row.entity_id,
+      kind: row.kind,
+      name: row.name,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at ?? '',
+    })),
+    entryEntities: links.map((row) => ({
+      entryId: row.entry_id,
+      entityId: row.entity_id,
+      count: row.count,
+      relation: row.relation ?? undefined,
+      sentiment: typeof row.sentiment === 'number' ? row.sentiment : undefined,
+      createdAt: row.created_at,
+    })),
+    ownerAliases: owners.map((row) => ({
+      name: row.name,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at ?? '',
+    })),
+    entityRejections: rejections.map((row) => ({
+      kind: row.kind,
+      name: row.name,
+      nameKey: row.name_key,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at ?? '',
+    })),
+    graphLayout: layouts.map((row) => ({
+      key: row.key,
+      data: row.data,
+      updatedAt: row.updated_at,
+    })),
+    transcriptSync: transcriptMarks.map((row) => ({
+      entryId: row.entry_id,
+      sourceAt: row.source_at,
+    })),
+    analysisSync: analysisMarks.map((row) => ({
+      entryId: row.entry_id,
+      sourceAt: row.source_at,
+    })),
+    transcriptSyncEnv: transcriptMarksEnv.map((row) => ({
+      serverId: row.server_id,
+      entryId: row.entry_id,
+      sourceAt: row.source_at,
+    })),
+    analysisSyncEnv: analysisMarksEnv.map((row) => ({
+      serverId: row.server_id,
+      entryId: row.entry_id,
+      sourceAt: row.source_at,
+    })),
+    author,
+  };
+}
+
+/**
+ * Grava o conhecimento restaurado. Nada sobrescreve o que ja existe no
+ * aparelho (`INSERT OR IGNORE`): restaurar duas vezes, ou depois de uma analise
+ * nova, nunca perde o trabalho mais recente.
+ */
+export async function importBackupKnowledge(
+  knowledge: BackupKnowledge,
+  dbArg?: SQLite.SQLiteDatabase,
+): Promise<void> {
+  const db = dbArg ?? (await getDb());
+  await withGraphWrite(() =>
+    db.withTransactionAsync(async () => {
+      // Entidades antes dos vinculos: um alias/vínculo aponta para o id delas.
+      for (const entity of knowledge.entities) {
+        await db.runAsync(
+          `INSERT OR IGNORE INTO entities (id, kind, name, label, icon, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [
+            entity.id,
+            entity.kind,
+            entity.name,
+            entity.label,
+            entity.icon,
+            entity.createdAt,
+            entity.updatedAt,
+          ],
+        );
+      }
+      for (const alias of knowledge.entityAliases) {
+        await db.runAsync(
+          `INSERT OR IGNORE INTO entity_aliases (id, entity_id, kind, name, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [alias.id, alias.entityId, alias.kind, alias.name, alias.createdAt, alias.updatedAt],
+        );
+      }
+      for (const link of knowledge.entryEntities) {
+        await db.runAsync(
+          `INSERT OR IGNORE INTO entry_entities
+             (entry_id, entity_id, count, relation, sentiment, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [
+            link.entryId,
+            link.entityId,
+            Math.max(1, link.count),
+            link.relation ?? null,
+            typeof link.sentiment === 'number' ? link.sentiment : null,
+            link.createdAt,
+          ],
+        );
+      }
+      for (const owner of knowledge.ownerAliases) {
+        await db.runAsync(
+          `INSERT OR IGNORE INTO owner_aliases (name, created_at, updated_at)
+           VALUES (?, ?, ?)`,
+          [owner.name, owner.createdAt, owner.updatedAt],
+        );
+      }
+      for (const rejection of knowledge.entityRejections) {
+        await db.runAsync(
+          `INSERT OR IGNORE INTO entity_rejections (kind, name, name_key, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?)`,
+          [
+            rejection.kind,
+            rejection.name,
+            rejection.nameKey,
+            rejection.createdAt,
+            rejection.updatedAt,
+          ],
+        );
+      }
+      for (const analysis of knowledge.analyses) {
+        await db.runAsync(
+          `INSERT OR IGNORE INTO analyses
+             (entry_id, title, recorded_at, payload, fetched_at, origin, analysis_content_hash)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [
+            analysis.entryId,
+            analysis.title,
+            analysis.recordedAt,
+            analysis.payload,
+            analysis.fetchedAt,
+            analysis.origin,
+            analysis.contentHash ?? null,
+          ],
+        );
+      }
+      for (const chunk of knowledge.analysisChunks) {
+        await db.runAsync(
+          `INSERT OR IGNORE INTO analysis_chunks
+             (entry_id, block_index, block_hash, prompt_version, model, status, dropped, payload, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            chunk.entryId,
+            chunk.blockIndex,
+            chunk.blockHash,
+            chunk.promptVersion,
+            chunk.model,
+            chunk.status,
+            chunk.dropped,
+            chunk.payload,
+            chunk.updatedAt,
+          ],
+        );
+      }
+      for (const layout of knowledge.graphLayout) {
+        await db.runAsync(
+          `INSERT OR IGNORE INTO graph_layout (key, data, updated_at) VALUES (?, ?, ?)`,
+          [layout.key, layout.data, layout.updatedAt],
+        );
+      }
+      // Marcadores do que ja foi trocado: sem eles o primeiro sync acharia que
+      // nunca viu transcricao/analise e baixaria tudo de novo.
+      for (const mark of knowledge.transcriptSync) {
+        await db.runAsync(
+          `INSERT OR IGNORE INTO transcript_sync (entry_id, source_at) VALUES (?, ?)`,
+          [mark.entryId, mark.sourceAt],
+        );
+      }
+      for (const mark of knowledge.analysisSync) {
+        await db.runAsync(
+          `INSERT OR IGNORE INTO analysis_sync (entry_id, source_at) VALUES (?, ?)`,
+          [mark.entryId, mark.sourceAt],
+        );
+      }
+      for (const mark of knowledge.transcriptSyncEnv) {
+        await db.runAsync(
+          `INSERT OR IGNORE INTO transcript_sync_env (server_id, entry_id, source_at)
+           VALUES (?, ?, ?)`,
+          [mark.serverId, mark.entryId, mark.sourceAt],
+        );
+      }
+      for (const mark of knowledge.analysisSyncEnv) {
+        await db.runAsync(
+          `INSERT OR IGNORE INTO analysis_sync_env (server_id, entry_id, source_at)
+           VALUES (?, ?, ?)`,
+          [mark.serverId, mark.entryId, mark.sourceAt],
+        );
+      }
+      if (knowledge.author) {
+        await db.runAsync(
+          `INSERT OR IGNORE INTO app_flags (key, value) VALUES (?, ?)`,
+          [AUTHOR_SETTINGS_KEY, JSON.stringify(knowledge.author)],
+        );
+      }
+      // Os vinculos vieram do backup: o backfill nao deve rederivar por cima
+      // (perderia relacao/sentimento editados a mao). Quando so ha analises, o
+      // marcador fica como esta e o mapa deriva os vinculos sozinho.
+      if (knowledge.entryEntities.length > 0) {
+        await db.runAsync(
+          `INSERT INTO app_flags (key, value) VALUES (?, 'true')
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+          [ENTITIES_BACKFILL_KEY],
+        );
+      }
+      // Recorte antigo do mapa mostraria o estado de antes da restauracao.
+      await db.runAsync("DELETE FROM app_flags WHERE key LIKE 'graph_snapshot:%'");
+    }),
+  );
 }
 
 /** Resolve um nome para o id canonico, seguindo alias e ignorando caixa. */

@@ -1,8 +1,11 @@
 import {
+  BACKUP_VERSION,
+  backupEntryKeys,
   backupMediaName,
   baseName,
   buildManifest,
   bytesToBase64,
+  filterKnowledge,
   isBackupMediaName,
   joinUri,
   nameFromDocumentUri,
@@ -10,6 +13,7 @@ import {
   orderNotesForRestore,
   parseManifest,
   toRestoredRecording,
+  type BackupKnowledge,
   type BackupNote,
 } from '../backup';
 import { sha256Hex } from '../sha256';
@@ -144,10 +148,205 @@ describe('toRestoredRecording', () => {
     expect(restored.status).toBe('recorded');
   });
 
+  it('restaurar nao e editar: preserva a data real e solta o carimbo antigo', () => {
+    const restored = toRestoredRecording(
+      base({
+        updatedAt: '2026-10-01T10:00:00.000Z',
+        updatedHlc: '2026-10-01T10-0-abcd',
+      }),
+      'file:///novo/r1/',
+    );
+    expect(restored.updatedAt).toBe('2026-10-01T10:00:00.000Z');
+    expect(restored.updatedHlc).toBeUndefined();
+  });
+
   it('sem audio, limpa o filePath', () => {
     const restored = toRestoredRecording(base({ status: 'draft' }), 'file:///novo/r1/');
     expect(restored.filePath).toBeUndefined();
     expect(restored.status).toBe('draft');
+  });
+});
+
+function knowledge(overrides: Partial<BackupKnowledge> = {}): BackupKnowledge {
+  return {
+    analyses: [
+      {
+        entryId: 'r1',
+        title: 'Nota',
+        recordedAt: '2026-10-11T00:00:00.000Z',
+        payload: '{"summary":"ok"}',
+        fetchedAt: '2026-10-12T00:00:00.000Z',
+        origin: 'local',
+        contentHash: 'abc',
+      },
+    ],
+    analysisChunks: [
+      {
+        entryId: 'r1',
+        blockIndex: 0,
+        blockHash: 'h0',
+        promptVersion: 3,
+        model: 'modelo',
+        status: 'ok',
+        dropped: 1,
+        payload: '{"items":[]}',
+        updatedAt: '2026-10-12T00:00:00.000Z',
+      },
+    ],
+    entities: [
+      {
+        id: 'ent_1',
+        kind: 'person',
+        name: 'Ana',
+        label: '',
+        icon: 'star',
+        createdAt: '2026-10-11T00:00:00.000Z',
+        updatedAt: '2026-10-12T00:00:00.000Z',
+      },
+    ],
+    entityAliases: [
+      {
+        id: 'ali_1',
+        entityId: 'ent_1',
+        kind: 'person',
+        name: 'Aninha',
+        createdAt: '2026-10-11T00:00:00.000Z',
+        updatedAt: '2026-10-12T00:00:00.000Z',
+      },
+    ],
+    entryEntities: [
+      {
+        entryId: 'r1',
+        entityId: 'ent_1',
+        count: 2,
+        relation: 'irma',
+        sentiment: 0.5,
+        createdAt: '2026-10-11T00:00:00.000Z',
+      },
+    ],
+    ownerAliases: [{ name: 'Eu', createdAt: '2026-10-11T00:00:00.000Z', updatedAt: '' }],
+    entityRejections: [
+      {
+        kind: 'person',
+        name: 'Paulo',
+        nameKey: 'paulo',
+        createdAt: '2026-10-11T00:00:00.000Z',
+        updatedAt: '',
+      },
+    ],
+    graphLayout: [
+      { key: 'default', data: '{"nodes":[]}', updatedAt: '2026-10-12T00:00:00.000Z' },
+    ],
+    transcriptSync: [{ entryId: 'r1', sourceAt: '2026-10-12T00:00:00.000Z' }],
+    analysisSync: [{ entryId: 'r1', sourceAt: '2026-10-12T00:00:00.000Z' }],
+    transcriptSyncEnv: [
+      {
+        serverId: 'srv_1',
+        entryId: 'r1',
+        sourceAt: '2026-10-12T00:00:00.000Z',
+      },
+    ],
+    analysisSyncEnv: [
+      {
+        serverId: 'srv_1',
+        entryId: 'r1',
+        sourceAt: '2026-10-12T00:00:00.000Z',
+      },
+    ],
+    author: { ownerName: 'Ana', allNotesMine: true },
+    ...overrides,
+  };
+}
+
+describe('conhecimento local no manifesto', () => {
+  it('o manifesto atual leva analises, blocos e o mapa', () => {
+    expect(BACKUP_VERSION).toBe(3);
+    const manifest = buildManifest(
+      [note()],
+      new Date('2026-10-16T12:00:00.000Z'),
+      '0.5.1',
+      undefined,
+      knowledge(),
+    );
+    const parsed = parseManifest(JSON.stringify(manifest));
+    expect(parsed?.knowledge?.analyses[0]).toMatchObject({
+      entryId: 'r1',
+      origin: 'local',
+      contentHash: 'abc',
+    });
+    expect(parsed?.knowledge?.analysisChunks).toHaveLength(1);
+    expect(parsed?.knowledge?.entryEntities[0]).toMatchObject({
+      entryId: 'r1',
+      entityId: 'ent_1',
+      count: 2,
+      relation: 'irma',
+    });
+    expect(parsed?.knowledge?.author).toEqual({ ownerName: 'Ana', allNotesMine: true });
+    expect(parsed?.knowledge?.transcriptSync).toEqual([
+      { entryId: 'r1', sourceAt: '2026-10-12T00:00:00.000Z' },
+    ]);
+    expect(parsed?.knowledge?.analysisSyncEnv?.[0]?.serverId).toBe('srv_1');
+  });
+
+  it('backup v2 continua legivel, so que sem conhecimento', () => {
+    const parsed = parseManifest(
+      JSON.stringify({
+        version: 2,
+        createdAt: '2026-10-16T12:00:00.000Z',
+        notes: [{ recording: { id: 'r1' }, files: [] }],
+      }),
+    );
+    expect(parsed?.notes).toHaveLength(1);
+    expect(parsed?.knowledge).toBeUndefined();
+  });
+
+  it('descarta linhas malformadas sem perder o resto', () => {
+    const parsed = parseManifest(
+      JSON.stringify({
+        version: 3,
+        createdAt: '2026-10-16T12:00:00.000Z',
+        notes: [],
+        knowledge: {
+          analyses: [{ entryId: 'r1' }, { entryId: 'r2', payload: '{}' }],
+          entities: [{ id: 'ent_1', kind: 'person' }, 42],
+          entryEntities: [{ entryId: 'r1' }],
+          graphLayout: [{ key: 'default', data: '{}' }],
+        },
+      }),
+    );
+    expect(parsed?.knowledge?.analyses.map((item) => item.entryId)).toEqual(['r2']);
+    expect(parsed?.knowledge?.entities).toEqual([]);
+    expect(parsed?.knowledge?.entryEntities).toEqual([]);
+    expect(parsed?.knowledge?.graphLayout).toHaveLength(1);
+  });
+
+  it('o backup leva so o conhecimento das notas que estao nele', () => {
+    const keys = backupEntryKeys([
+      { recording: base({ id: 'r1', entryId: 'entrada-1' }) },
+    ]);
+    expect(keys).toEqual(new Set(['r1', 'entrada-1']));
+
+    const filtered = filterKnowledge(
+      knowledge({
+        analyses: [
+          ...knowledge().analyses,
+          {
+            entryId: 'outra',
+            title: 'Fora',
+            recordedAt: '',
+            payload: '{}',
+            fetchedAt: '',
+            origin: 'server',
+          },
+        ],
+      }),
+      keys,
+    );
+    expect(filtered.analyses.map((item) => item.entryId)).toEqual(['r1']);
+    expect(filtered.entryEntities).toHaveLength(1);
+    expect(filtered.analysisChunks).toHaveLength(1);
+    expect(filtered.transcriptSync).toHaveLength(1);
+    expect(filtered.analysisSyncEnv).toHaveLength(1);
   });
 });
 

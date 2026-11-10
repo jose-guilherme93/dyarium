@@ -872,3 +872,20 @@ uniao, tombstone permanente, versoes, anexos portateis e falha/retomada) esta em
 - O manifesto carrega `textSha256` (SHA-256 do texto da nota). Ao restaurar, o hash e
   conferido; divergencia aborta com `BackupError('corrupt')`. Backups antigos sem o campo
   seguem compativeis (o campo e opcional).
+- Desde a versao 3, o manifesto carrega tambem o conhecimento local do aparelho: as
+  analises guardadas, os blocos ja lidos da analise local, as entidades e aliases do
+  mapa, os vinculos nota-entidade, as rejeicoes, os nomes "sou eu", as posicoes do mapa
+  e o nome do dono. Restaurar um backup devolve a ficha e o mapa sem sincronizar nada:
+  o app e um cliente independente e o que ele ja sabia tem de estar na pasta.
+- O manifesto leva ainda os marcadores do que ja foi trocado com cada ambiente
+  (`transcript_sync`, `analysis_sync` e as versoes por ambiente). Sem eles, o primeiro
+  sync depois de uma restauracao acharia que nunca viu transcricao nem analise e baixaria
+  tudo de novo — o oposto de trocar so o que falta.
+- Restaurar **nao e editar**: o `updatedAt` da nota continua sendo o da ultima mudanca
+  real, e so o carimbo do relogio hibrido e refeito (o que protege a nota de um tombstone
+  antigo do servidor). Sem isso a reconciliacao veria a biblioteca inteira como alterada
+  e reenviaria tudo.
+- Manifestos v2 continuam legiveis. Eles nao tem esse bloco, porque ele nunca esteve no
+  arquivo, e restauram apenas as notas.
+- Nada do conhecimento restaurado sobrescreve o que ja existe no aparelho: restaurar
+  duas vezes, ou depois de uma analise nova, mantem o trabalho mais recente.
