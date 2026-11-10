@@ -90,6 +90,7 @@ export async function prepareSharedAudios(now = new Date()): Promise<PreparedSha
           draft.reason = 'Não foi possível ler o áudio.';
         }
       } catch {
+        if (__DEV__) console.warn('[dyarium] falha ao copiar o audio compartilhado');
         draft.supported = false;
         draft.reason = 'Não foi possível copiar o áudio.';
       }

@@ -10,6 +10,7 @@
  */
 
 import { Directory, File, FileMode, Paths } from 'expo-file-system';
+import * as Legacy from 'expo-file-system/legacy';
 
 import { isAdtsHeader } from '@/core/concat';
 import type { ConcatIO } from '@/core/concat';
@@ -65,38 +66,45 @@ export function outputFileUri(sessionId: string): string {
  * (uri file://); se falhar, cai para copia por bytes, que tambem funciona para
  * uris content:// (SAF). Retorna o uri local e o tamanho em bytes.
  */
+/**
+ * Copia o arquivo compartilhado para o diretorio da sessao, preservando os
+ * bytes (o audio original e imutavel). A API nova (`File.copy`) funciona para
+ * URIs `file://`; para `content://` (SAF do Android) ela nao le o conteudo, por
+ * isso caimos para `expo-file-system/legacy` (`copyAsync`), que suporta essas
+ * URIs. Se a copia pela API nova falhar por outro motivo, tentamos o mesmo
+ * caminho legado antes de desistir.
+ */
 export async function copySharedAudio(
   sourceUri: string,
   sessionId: string,
   extension: string,
 ): Promise<{ uri: string; size: number }> {
-  const source = new File(sourceUri);
   const suffix = extension.startsWith('.') ? extension : `.${extension}`;
   const destination = new File(sessionDirectory(sessionId), `original${suffix}`);
   if (destination.exists) destination.delete();
-  try {
-    await source.copy(destination);
-  } catch {
-    destination.create({ intermediates: true, overwrite: true });
-    const chunkSize = 1 << 20;
-    const input = source.open(FileMode.ReadOnly);
-    const output = destination.open(FileMode.Append);
+
+  const isContentUri = sourceUri.startsWith('content://');
+
+  // content:// nao e lido pela API nova: vai direto para o caminho suportado.
+  if (!isContentUri) {
     try {
-      let chunk = input.readBytes(chunkSize);
-      while (chunk.length > 0) {
-        output.writeBytes(chunk);
-        chunk = input.readBytes(chunkSize);
-      }
-    } finally {
-      input.close();
-      output.close();
+      const source = new File(sourceUri);
+      await source.copy(destination);
+      return { uri: destination.uri, size: destination.size };
+    } catch {
+      // cai para o caminho legado
     }
   }
+
+  await Legacy.copyAsync({ from: sourceUri, to: destination.uri });
   return { uri: destination.uri, size: destination.size };
 }
 
 /** Data de modificacao do arquivo em ms, quando disponivel. */
 export function fileModifiedMs(uri: string): number | undefined {
+  // URIs content:// nao sao lidas pela API nova; devolve undefined em vez de
+  // lancar (a data de modificacao nao e essencial para a revisao).
+  if (uri.startsWith('content://')) return undefined;
   try {
     const value = new File(uri).lastModified;
     return typeof value === 'number' && value > 0 ? value : undefined;
