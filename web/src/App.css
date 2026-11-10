@@ -11302,7 +11302,7 @@
 
 /* ---------- superficie Projetos (caderno mcp) ---------- */
 /* Reproduz o prototipo aprovado (/tmp/opencode/proto-resumos.html) com as
-   variaveis --paper*/--ink*/--line/--accent* do painel. */
+   variaveis de tinta e papel do painel (paper, ink, line, accent). */
 
 .editor-pane--pj {
   display: flex;
