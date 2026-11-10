@@ -39,10 +39,28 @@ interface ProjectsViewProps {
 type TabId = "items" | "projects";
 type RangeId = ProjectsRange;
 type VariantId = "table" | "cards";
+type TableWidth = "contained" | "full";
+type TableDensity = "compact" | "comfortable" | "wide";
+type TableAppearance = "lines" | "grade" | "zebra";
+interface TableCols {
+  proj: boolean;
+  kind: boolean;
+  data: boolean;
+  commit: boolean;
+  sess: boolean;
+}
+interface TablePrefs {
+  width: TableWidth;
+  density: TableDensity;
+  cols: TableCols;
+  appearance: TableAppearance;
+  customOpen: boolean;
+}
 
 /** Linha da tabela/cartao: um item de sessao amarrado a entry do caderno. */
 interface ItemRow extends LogItem {
   entryId: string | null;
+  host?: string;
 }
 
 interface SessionRow {
@@ -75,6 +93,66 @@ const KIND_CLASS: Record<string, string> = {
   chore: "pj-kc--muted",
 };
 const MONTHS = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+
+const TABLE_PREFS_KEY = "dyarium.projetos.tabela";
+const DEFAULT_TABLE_PREFS: TablePrefs = {
+  width: "full",
+  density: "comfortable",
+  cols: { proj: true, kind: true, data: true, commit: true, sess: true },
+  appearance: "grade",
+  customOpen: false,
+};
+const TABLE_COL_KEYS = ["proj", "kind", "data", "commit", "sess"] as const;
+const TABLE_COL_LABELS: Record<string, string> = {
+  proj: "Projeto",
+  kind: "Kind",
+  data: "Data",
+  commit: "Commit",
+  sess: "Sessão",
+};
+const TABLE_DENSITY_VALUES: Record<TableDensity, { rh: number; fs: number }> = {
+  compact: { rh: 28, fs: 12.5 },
+  comfortable: { rh: 36, fs: 13.5 },
+  wide: { rh: 44, fs: 14 },
+};
+
+function normalizeTablePrefs(raw: unknown): TablePrefs {
+  const base = { ...DEFAULT_TABLE_PREFS, cols: { ...DEFAULT_TABLE_PREFS.cols } };
+  if (!raw || typeof raw !== "object") return base;
+  const obj = raw as Record<string, unknown>;
+  const width = obj.width === "contained" || obj.width === "full" ? obj.width : base.width;
+  const density =
+    obj.density === "compact" || obj.density === "comfortable" || obj.density === "wide"
+      ? obj.density
+      : base.density;
+  const appearance =
+    obj.appearance === "lines" || obj.appearance === "grade" || obj.appearance === "zebra"
+      ? obj.appearance
+      : base.appearance;
+  const colsRaw = obj.cols && typeof obj.cols === "object" ? (obj.cols as Record<string, unknown>) : {};
+  const cols: TableCols = { ...base.cols };
+  for (const key of TABLE_COL_KEYS) {
+    if (typeof colsRaw[key] === "boolean") cols[key] = colsRaw[key] as boolean;
+  }
+  // Garante ao menos 3 opcionais marcadas.
+  if (Object.values(cols).filter(Boolean).length < 3) {
+    // restaura padrao
+    for (const key of TABLE_COL_KEYS) cols[key] = DEFAULT_TABLE_PREFS.cols[key];
+  }
+  const customOpen = typeof obj.customOpen === "boolean" ? obj.customOpen : base.customOpen;
+  return { width, density, cols, appearance, customOpen };
+}
+
+function loadTablePrefs(): TablePrefs {
+  if (typeof window === "undefined") return { ...DEFAULT_TABLE_PREFS, cols: { ...DEFAULT_TABLE_PREFS.cols } };
+  try {
+    const raw = window.localStorage.getItem(TABLE_PREFS_KEY);
+    if (!raw) return { ...DEFAULT_TABLE_PREFS, cols: { ...DEFAULT_TABLE_PREFS.cols } };
+    return normalizeTablePrefs(JSON.parse(raw));
+  } catch {
+    return { ...DEFAULT_TABLE_PREFS, cols: { ...DEFAULT_TABLE_PREFS.cols } };
+  }
+}
 
 /** Dia como numero, para comparar datas sem nesta horario. */
 function dayNumber(date: string): number {
@@ -140,7 +218,7 @@ function buildIndex(entries: Entry[], noteLists: Note[][]): ProjectsIndex {
   const rows: ItemRow[] = [];
   sessions.forEach((row) => {
     row.session.items.forEach((item) => {
-      rows.push({ ...item, entryId: row.entryId });
+      rows.push({ ...item, entryId: row.entryId, host: row.session.host });
     });
   });
   rows.sort((a, b) => {
@@ -205,6 +283,8 @@ export function ProjectsView({
   const [kindFilter, setKindFilter] = useState<Set<string>>(new Set());
   const [range, setRange] = useState<RangeId>("all");
   const [variant, setVariant] = useState<VariantId>("table");
+  const [tablePrefs, setTablePrefs] = useState<TablePrefs>(loadTablePrefs);
+  const [colsPanelOpen, setColsPanelOpen] = useState(false);
   const [openProjects, setOpenProjects] = useState<Record<string, boolean>>({});
   const [icons, setIcons] = useState<Record<string, string>>({});
   /** Janela estreita (<720px): so cartoes, e o segmento fica desabilitado. */
@@ -263,6 +343,14 @@ export function ProjectsView({
     mq.addEventListener("change", update);
     return () => mq.removeEventListener("change", update);
   }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(TABLE_PREFS_KEY, JSON.stringify(tablePrefs));
+    } catch {
+      // ignore
+    }
+  }, [tablePrefs]);
 
   // Filtro pedido de fora (nota do projeto): abre a aba Itens ja filtrada
   // pelo projeto e pelo periodo da sessao.
@@ -375,6 +463,41 @@ export function ProjectsView({
   const tableVisible = !narrow && variant === "table";
   const cardsVisible = narrow || variant === "cards";
 
+  const visibleOptionalCols = TABLE_COL_KEYS.filter((key) => tablePrefs.cols[key]);
+  const canUncheckCol = (key: string) =>
+    !(tablePrefs.cols[key as keyof TableCols] && visibleOptionalCols.length <= 3);
+
+  const updatePrefs = (patch: Partial<TablePrefs>) =>
+    setTablePrefs((current) => ({ ...current, ...patch }));
+  const setWidth = (width: TableWidth) => updatePrefs({ width });
+  const setDensity = (density: TableDensity) => updatePrefs({ density });
+  const setAppearance = (appearance: TableAppearance) => updatePrefs({ appearance });
+  const toggleCustom = () => {
+    setTablePrefs((current) => {
+      const next = { ...current, customOpen: !current.customOpen };
+      if (next.customOpen) setColsPanelOpen(true);
+      return next;
+    });
+  };
+  const resetPrefs = () =>
+    setTablePrefs({ ...DEFAULT_TABLE_PREFS, cols: { ...DEFAULT_TABLE_PREFS.cols } });
+
+  const toggleCol = (key: string) => {
+    setTablePrefs((current) => {
+      const cols = { ...current.cols };
+      const k = key as keyof TableCols;
+      if (cols[k]) {
+        if (visibleOptionalCols.length <= 3) return current;
+        cols[k] = false;
+      } else {
+        cols[k] = true;
+      }
+      return { ...current, cols };
+    });
+  };
+
+  const densityStyle = TABLE_DENSITY_VALUES[tablePrefs.density];
+
   const emptyState = (
     <p className="pj-empty">Sem sessões registradas.</p>
   );
@@ -482,58 +605,246 @@ export function ProjectsView({
               </div>
             ) : null}
 
+            {projects.length > 0 || data.rows.length > 0 ? (
+              <div className="pj-barhead">
+                <button
+                  type="button"
+                  className="pj-btn"
+                  aria-pressed={tablePrefs.customOpen}
+                  onClick={toggleCustom}
+                >
+                  Personalizar
+                </button>
+                <button type="button" className="pj-btn" onClick={resetPrefs}>
+                  Restaurar
+                </button>
+              </div>
+            ) : null}
+
+            {tablePrefs.customOpen ? (
+              <section className="pj-custom">
+                <div className="pj-ctrl">
+                  <span className="pj-ctrl-lbl">Largura</span>
+                  <div className="pj-seg" role="group" aria-label="Largura">
+                    <button
+                      type="button"
+                      aria-pressed={tablePrefs.width === "contained"}
+                      onClick={() => setWidth("contained")}
+                    >
+                      Contida
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={tablePrefs.width === "full"}
+                      onClick={() => setWidth("full")}
+                    >
+                      Cheia
+                    </button>
+                  </div>
+                </div>
+                <div className="pj-ctrl">
+                  <span className="pj-ctrl-lbl">Densidade</span>
+                  <div className="pj-seg" role="group" aria-label="Densidade">
+                    <button
+                      type="button"
+                      aria-pressed={tablePrefs.density === "compact"}
+                      onClick={() => setDensity("compact")}
+                    >
+                      Compacta
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={tablePrefs.density === "comfortable"}
+                      onClick={() => setDensity("comfortable")}
+                    >
+                      Confortável
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={tablePrefs.density === "wide"}
+                      onClick={() => setDensity("wide")}
+                    >
+                      Ampla
+                    </button>
+                  </div>
+                </div>
+                <div className="pj-ctrl pj-menucols">
+                  <span className="pj-ctrl-lbl">Colunas</span>
+                  <button
+                    type="button"
+                    className="pj-btn"
+                    onClick={() => setColsPanelOpen((open) => !open)}
+                  >
+                    Colunas ▾
+                  </button>
+                  <div className="pj-colspanel" hidden={!colsPanelOpen}>
+                    {TABLE_COL_KEYS.map((key) => (
+                      <label key={key}>
+                        <input
+                          type="checkbox"
+                          checked={tablePrefs.cols[key as keyof TableCols]}
+                          disabled={!canUncheckCol(key)}
+                          onChange={() => toggleCol(key)}
+                        />
+                        {TABLE_COL_LABELS[key]}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <div className="pj-ctrl">
+                  <span className="pj-ctrl-lbl">Aparência</span>
+                  <div className="pj-seg" role="group" aria-label="Aparência">
+                    <button
+                      type="button"
+                      aria-pressed={tablePrefs.appearance === "lines"}
+                      onClick={() => setAppearance("lines")}
+                    >
+                      Linhas
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={tablePrefs.appearance === "grade"}
+                      onClick={() => setAppearance("grade")}
+                    >
+                      Grade
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={tablePrefs.appearance === "zebra"}
+                      onClick={() => setAppearance("zebra")}
+                    >
+                      Zebra
+                    </button>
+                  </div>
+                </div>
+              </section>
+            ) : null}
+
             {filtered.length === 0 ? (
               emptyState
             ) : (
               <>
-                <div className="pj-vtable" hidden={!tableVisible}>
-                  <table>
-                    <colgroup>
-                      <col className="pj-col-pj" />
-                      <col />
-                      <col className="pj-col-k" />
-                      <col className="pj-col-d" />
-                      <col className="pj-col-c" />
-                    </colgroup>
-                    <thead>
-                      <tr>
-                        <th>Projeto</th>
-                        <th>Item</th>
-                        <th>Kind</th>
-                        <th>Data</th>
-                        <th>Commit</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filtered.map((row, at) => (
-                        <tr
-                          key={`${row.sessionId}:${at}`}
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => openRow(row)}
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter" || event.key === " ") {
-                              event.preventDefault();
-                              openRow(row);
+                <div
+                  className={`pj-tablewrap pj-tablewrap--${tablePrefs.width}`}
+                  data-width={tablePrefs.width}
+                  data-density={tablePrefs.density}
+                >
+                  <div
+                    className={`pj-vtable ap-${tablePrefs.appearance} density-${tablePrefs.density} ${tablePrefs.appearance}`}
+                    data-density={tablePrefs.density}
+                    data-densidade={tablePrefs.density}
+                    data-d={tablePrefs.density}
+                    data-appearance={tablePrefs.appearance}
+                    data-width={tablePrefs.width}
+                    style={{
+                      ["--rh" as string]: `${densityStyle.rh}px`,
+                      ["--fs" as string]: `${densityStyle.fs}px`,
+                    }}
+                    hidden={!tableVisible}
+                  >
+                    <table>
+                      <colgroup>
+                        {(() => {
+                          const visible = new Set(visibleOptionalCols);
+                          const nodes: ReactNode[] = [];
+                          for (const key of ["proj", "item", "kind", "data", "commit", "sess"] as const) {
+                            if (key === "item") {
+                              nodes.push(<col key="item" />);
+                            } else if (visible.has(key)) {
+                              const cls =
+                                key === "proj"
+                                  ? "pj-col-pj"
+                                  : key === "kind"
+                                    ? "pj-col-k"
+                                    : key === "data"
+                                      ? "pj-col-d"
+                                      : key === "commit"
+                                        ? "pj-col-c"
+                                        : "pj-col-s";
+                              nodes.push(<col key={key} className={cls} />);
                             }
-                          }}
-                        >
-                          <td>
-                            <span className="pj-pcell">
-                              <ProjectMark icon={iconFor(row.project)} project={row.project} />
-                              {row.project}
-                            </span>
-                          </td>
-                          <td title={row.title}>{row.title}</td>
-                          <td>
-                            <KindBadge kind={row.kind} />
-                          </td>
-                          <td>{shortDate(row.date)}</td>
-                          <td>{commitCell(row)}</td>
+                          }
+                          return nodes;
+                        })()}
+                      </colgroup>
+                      <thead>
+                        <tr>
+                          {(() => {
+                            const visible = new Set(visibleOptionalCols);
+                            const nodes: ReactNode[] = [];
+                            for (const key of ["proj", "item", "kind", "data", "commit", "sess"] as const) {
+                              if (key === "item") {
+                                nodes.push(<th key="item">Item</th>);
+                              } else if (visible.has(key)) {
+                                const right = key === "data" || key === "commit";
+                                nodes.push(
+                                  <th key={key} className={right ? "pj-num" : undefined}>
+                                    {TABLE_COL_LABELS[key]}
+                                  </th>,
+                                );
+                              }
+                            }
+                            return nodes;
+                          })()}
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {filtered.map((row, at) => (
+                          <tr
+                            key={`${row.sessionId}:${at}`}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => openRow(row)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                openRow(row);
+                              }
+                            }}
+                          >
+                            {(() => {
+                              const visible = new Set(visibleOptionalCols);
+                              const nodes: ReactNode[] = [];
+                              for (const key of ["proj", "item", "kind", "data", "commit", "sess"] as const) {
+                                if (key === "item") {
+                                  nodes.push(
+                                    <td key="item" title={row.title}>
+                                      {row.title}
+                                    </td>,
+                                  );
+                                } else if (visible.has(key)) {
+                                  let v: ReactNode = null;
+                                  if (key === "proj") {
+                                    v = (
+                                      <span className="pj-pcell">
+                                        <ProjectMark icon={iconFor(row.project)} project={row.project} />
+                                        {row.project}
+                                      </span>
+                                    );
+                                  } else if (key === "kind") {
+                                    v = <KindBadge kind={row.kind} />;
+                                  } else if (key === "data") {
+                                    v = shortDate(row.date);
+                                  } else if (key === "commit") {
+                                    v = commitCell(row);
+                                  } else if (key === "sess") {
+                                    v = row.host ?? "";
+                                  }
+                                  const right = key === "data" || key === "commit";
+                                  nodes.push(
+                                    <td key={key} className={right ? "pj-num" : undefined}>
+                                      {v}
+                                    </td>,
+                                  );
+                                }
+                              }
+                              return nodes;
+                            })()}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
                 <div className="pj-vcards" hidden={!cardsVisible}>
                   {filteredSessions.map((row) => (

@@ -71,6 +71,7 @@ beforeEach(() => {
   vi.mocked(api.listEntries).mockReset();
   vi.mocked(api.listNotes).mockReset();
   vi.mocked(api.updateEntry).mockReset();
+  localStorage.clear();
 });
 
 describe("ProjectsView", () => {
@@ -175,4 +176,126 @@ describe("ProjectsView", () => {
     );
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
   });
+
+  it("padrao abre em grade, largura cheia, densidade confortavel, 5 colunas opcionais", async () => {
+    setup(dataRows());
+
+    const table = await screen.findByRole("table");
+    const container = table.closest(".pj-vtable") as HTMLElement;
+    expect(container).toHaveClass("ap-grade");
+    expect(container).toHaveAttribute("data-width", "full");
+    expect(container).toHaveAttribute("data-density", "comfortable");
+    const headers = within(table).getAllByRole("columnheader").map((h) => h.textContent);
+    expect(headers).toEqual(["Projeto", "Item", "Kind", "Data", "Commit", "Sessão"]);
+  });
+
+  it("alternar densidade muda o atributo de densidade do container", async () => {
+    setup(dataRows());
+
+    await screen.findByRole("table");
+    fireEvent.click(screen.getByRole("button", { name: /Personalizar/i }));
+
+    fireEvent.click(screen.getByRole("button", { name: /Compacta/i }));
+    let container = screen.getByRole("table").closest(".pj-vtable") as HTMLElement;
+    expect(container).toHaveAttribute("data-density", "compact");
+
+    fireEvent.click(screen.getByRole("button", { name: /Ampla/i }));
+    container = screen.getByRole("table").closest(".pj-vtable") as HTMLElement;
+    expect(container).toHaveAttribute("data-density", "wide");
+  });
+
+  it("desmarcar Commit remove a coluna do cabecalho e das linhas; minimo de 3 opcionais", async () => {
+    setup(dataRows());
+
+    await screen.findByRole("table");
+    fireEvent.click(screen.getByRole("button", { name: /Personalizar/i }));
+
+    const commitBox = screen.getByRole("checkbox", { name: /Commit/i });
+    fireEvent.click(commitBox);
+
+    const table = screen.getByRole("table");
+    const headers = within(table).getAllByRole("columnheader").map((h) => h.textContent);
+    expect(headers).not.toContain("Commit");
+
+    // Tenta desmarcar ate sobrar menos de 3: deve parar em 3.
+    const boxes = screen.getAllByRole("checkbox");
+    for (const box of boxes) {
+      if ((box as HTMLInputElement).checked) fireEvent.click(box);
+    }
+    const stillChecked = screen.getAllByRole("checkbox").filter(
+      (box) => (box as HTMLInputElement).checked,
+    ).length;
+    expect(stillChecked).toBeGreaterThanOrEqual(3);
+  });
+
+  it("Restaurar volta ao padrao depois de mudar tudo", async () => {
+    setup(dataRows());
+
+    await screen.findByRole("table");
+    fireEvent.click(screen.getByRole("button", { name: /Personalizar/i }));
+
+    fireEvent.click(screen.getByRole("button", { name: /Contida/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Compacta/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Zebra/i }));
+    const commitBox = screen.getByRole("checkbox", { name: /Commit/i });
+    fireEvent.click(commitBox);
+
+    fireEvent.click(screen.getByRole("button", { name: /Restaurar/i }));
+
+    const container = screen.getByRole("table").closest(".pj-vtable") as HTMLElement;
+    expect(container).toHaveClass("ap-grade");
+    expect(container).toHaveAttribute("data-width", "full");
+    expect(container).toHaveAttribute("data-density", "comfortable");
+    const headers = within(screen.getByRole("table")).getAllByRole("columnheader").map((h) => h.textContent);
+    expect(headers).toContain("Commit");
+  });
+
+  it("as escolhas sobrevivem a um remount (localStorage)", async () => {
+    const rows = dataRows();
+    vi.mocked(api.listEntries).mockResolvedValue({ entries: rows.map((r: any) => r.entry) } as never);
+    rows.forEach((row: any) => vi.mocked(api.listNotes).mockResolvedValueOnce({ notes: row.notes } as never));
+
+    const { unmount } = render(<ProjectsView notebookId="nb-mcp" refreshKey={0} onOpenEntry={vi.fn()} />);
+    await screen.findByRole("table");
+    fireEvent.click(screen.getByRole("button", { name: /Personalizar/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Compacta/i }));
+    unmount();
+
+    // remount
+    vi.mocked(api.listEntries).mockResolvedValue({ entries: rows.map((r: any) => r.entry) } as never);
+    rows.forEach((row: any) => vi.mocked(api.listNotes).mockResolvedValueOnce({ notes: row.notes } as never));
+    render(<ProjectsView notebookId="nb-mcp" refreshKey={1} onOpenEntry={vi.fn()} />);
+
+    const table = await screen.findByRole("table");
+    const container = table.closest(".pj-vtable") as HTMLElement;
+    expect(container).toHaveAttribute("data-density", "compact");
+  });
+
+  it("JSON invalido cai no padrao sem quebrar", async () => {
+    localStorage.setItem("dyarium.projetos.tabela", "{{{");
+    setup(dataRows());
+
+    const table = await screen.findByRole("table");
+    const container = table.closest(".pj-vtable") as HTMLElement;
+    expect(container).toHaveClass("ap-grade");
+    expect(container).toHaveAttribute("data-density", "comfortable");
+    expect(container).toHaveAttribute("data-width", "full");
+  });
+
+  it("Grade e zebra aplicam a classe certa no container", async () => {
+    setup(dataRows());
+
+    await screen.findByRole("table");
+    fireEvent.click(screen.getByRole("button", { name: /Personalizar/i }));
+
+    fireEvent.click(screen.getByRole("button", { name: /Zebra/i }));
+    let container = screen.getByRole("table").closest(".pj-vtable") as HTMLElement;
+    expect(container).toHaveClass("ap-zebra");
+
+    fireEvent.click(screen.getByRole("button", { name: /Linhas/i }));
+    container = screen.getByRole("table").closest(".pj-vtable") as HTMLElement;
+    expect(container).not.toHaveClass("ap-zebra");
+    expect(container).toHaveClass("ap-lines");
+  });
 });
+
