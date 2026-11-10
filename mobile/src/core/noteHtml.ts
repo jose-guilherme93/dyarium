@@ -98,6 +98,22 @@ export function markdownToHtml(markdown: string, options: MarkdownToHtmlOptions 
       continue;
     }
 
+    const details = readDetails(lines, index, inline);
+    if (details) {
+      out.push(details.html);
+      index = details.end - 1;
+      continue;
+    }
+
+    if (trimmed.startsWith('|')) {
+      const table = readTable(lines, index, inline);
+      if (table) {
+        out.push(table.html);
+        index = table.end - 1;
+        continue;
+      }
+    }
+
     const unordered = /^\s*[-*+]\s+/.test(line);
     const ordered = /^\s*\d+\.\s+/.test(line);
     if (unordered || ordered) {
@@ -247,6 +263,34 @@ export function htmlToMarkdown(html: string, options: HtmlToMarkdownOptions = {}
     },
   );
 
+  // Tabela: o editor recebe `<table>` e a volta precisa devolver os pipes. O
+  // alinhamento vem do `align` que o proprio `markdownToHtml` escreveu.
+  value = value.replace(/<table[^>]*>([\s\S]*?)<\/table>/gi, (_all, inner: string) => {
+    // Codigo e link da celula ja viraram placeholders (o `hold`): a tabela
+    // inteira e guardada de uma vez, entao eles precisam ser resolvidos aqui,
+    // antes de o conteudo entrar no bloco guardado.
+    const resolve = (text: string): string =>
+      text.replace(/\u0001(\d+)\u0001/g, (_match, at: string) => stash[Number(at)] ?? '');
+    const rows = [...inner.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)].map((row) =>
+      [...row[1].matchAll(/<(th|td)\b([^>]*)>([\s\S]*?)<\/\1>/gi)].map((cell) => ({
+        align: (attr(cell[2], 'align') ?? '').toLowerCase(),
+        text: resolve(plain(cell[3]).replace(/\s*\n\s*/g, ' ').trim()),
+      })),
+    );
+    const header = rows[0];
+    if (!header || header.length === 0) return hold('');
+    const rule = header.map((cell) => {
+      if (cell.align === 'center') return ':--:';
+      if (cell.align === 'right') return '---:';
+      if (cell.align === 'left') return ':---';
+      return '---';
+    });
+    const line = (cells: { text: string }[]): string =>
+      `| ${cells.map((cell) => cell.text).join(' | ')} |`;
+    const table = [line(header), `| ${rule.join(' | ')} |`, ...rows.slice(1).map(line)];
+    return hold(`${table.join('\n')}\n`);
+  });
+
   value = value
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<\/(?:p|div)>/gi, '\n')
@@ -309,6 +353,147 @@ function inlineToHtml(
     .replace(/(^|[^\w])\*([^*]+)\*(?=[^\w]|$)/g, '$1<i>$2</i>');
 
   return html;
+}
+
+const TABLE_SEPARATOR_CELL = /^:?-+:?$/;
+const DETAILS_OPEN = /^:::details(?:\s+(open))?\s*(.*)$/;
+const DETAILS_CLOSE = /^:::\s*$/;
+
+type TableAlign = 'left' | 'center' | 'right';
+
+/**
+ * Celulas de uma linha de tabela (`| a | b |`), respeitando `\|` escapado.
+ *
+ * A barra final e opcional no formato; o que sobra depois da ultima e a
+ * ultima celula.
+ */
+export function splitTableRow(line: string): string[] | null {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith('|')) return null;
+  const cells: string[] = [];
+  let cell = '';
+  for (let at = 1; at < trimmed.length; at += 1) {
+    const char = trimmed[at];
+    if (char === '\\' && at + 1 < trimmed.length) {
+      cell += char + trimmed[at + 1];
+      at += 1;
+      continue;
+    }
+    if (char === '|') {
+      cells.push(cell.trim());
+      cell = '';
+      continue;
+    }
+    cell += char;
+  }
+  if (cell.trim() !== '') cells.push(cell.trim());
+  return cells.length > 0 ? cells : null;
+}
+
+/** Alinhamento de uma celula da linha separadora (`:---`, `:--:`, `---:`). */
+export function tableAlignment(cell: string): TableAlign | undefined {
+  const left = cell.startsWith(':');
+  const right = cell.endsWith(':');
+  if (left && right) return 'center';
+  if (left) return 'left';
+  if (right) return 'right';
+  return undefined;
+}
+
+/**
+ * Tabela markdown (`| a | b |` + `|---|---|`).
+ *
+ * Sem separador, com contagem de celulas diferente do cabecalho ou com uma
+ * linha de corpo desigual, nao e tabela: devolve `null` e as linhas seguem o
+ * caminho de paragrafo de sempre, sem quebrar a nota.
+ */
+function readTable(
+  lines: string[],
+  start: number,
+  inline: (value: string) => string,
+): { html: string; end: number } | null {
+  const header = splitTableRow(lines[start]);
+  if (!header || start + 1 >= lines.length) return null;
+  const separator = splitTableRow(lines[start + 1]);
+  if (!separator || separator.length !== header.length) return null;
+  if (!separator.every((cell) => TABLE_SEPARATOR_CELL.test(cell))) return null;
+
+  const aligns = separator.map(tableAlignment);
+  const rows: string[][] = [];
+  let index = start + 2;
+  while (index < lines.length) {
+    const row = splitTableRow(lines[index]);
+    if (!row) break;
+    if (row.length !== header.length) return null;
+    rows.push(row);
+    index += 1;
+  }
+
+  const cell = (tag: 'th' | 'td', value: string, column: number): string => {
+    const align = aligns[column] ? ` align="${aligns[column]}"` : '';
+    return `<${tag}${align}>${inline(value)}</${tag}>`;
+  };
+  const head = `<thead><tr>${header
+    .map((value, column) => cell('th', value, column))
+    .join('')}</tr></thead>`;
+  const body = `<tbody>${rows
+    .map((row) => `<tr>${row.map((value, column) => cell('td', value, column)).join('')}</tr>`)
+    .join('')}</tbody>`;
+  return { html: `<table>${head}${body}</table>`, end: index };
+}
+
+/**
+ * Indice da ultima linha de um bloco de tabela markdown que comeca em `start`,
+ * ou `null` quando as linhas nao formam tabela. Usado pelo noteDocument para
+ * separar a tabela em um no proprio.
+ */
+export function tableBlockEnd(lines: string[], start: number): number | null {
+  const header = splitTableRow(lines[start]);
+  if (!header || start + 1 >= lines.length) return null;
+  const separator = splitTableRow(lines[start + 1]);
+  if (!separator || separator.length !== header.length) return null;
+  if (!separator.every((cell) => TABLE_SEPARATOR_CELL.test(cell))) return null;
+  let index = start + 2;
+  while (index < lines.length) {
+    const row = splitTableRow(lines[index]);
+    if (!row || row.length !== header.length) break;
+    index += 1;
+  }
+  return index - 1;
+}
+
+/**
+ * Bloco `:::details [open] Rotulo` ... `:::`.
+ *
+ * O rich text do app nao conhece `<details>`/`<summary>` (o parser nativo
+ * descarta as duas tags), entao o bloco vira citacao com o rotulo em negrito e
+ * o conteudo visivel. O recolhivel de verdade e o NoteDetails, alimentado pelo
+ * noteDocument; este caminho so garante que o markdown cru nao apareca como
+ * texto literal quando passa pelo conversor.
+ */
+function readDetails(
+  lines: string[],
+  start: number,
+  inline: (value: string) => string,
+): { html: string; end: number } | null {
+  const match = DETAILS_OPEN.exec(lines[start].trim());
+  if (!match) return null;
+  const label = match[2].trim() === '' ? 'Detalhes técnicos' : match[2].trim();
+  const content: string[] = [];
+  let index = start + 1;
+  while (index < lines.length && !DETAILS_CLOSE.test(lines[index].trim())) {
+    content.push(lines[index]);
+    index += 1;
+  }
+  if (index < lines.length) index += 1;
+  const paragraphs = content
+    .filter((line) => line.trim() !== '')
+    .map((line) => `<p>${inline(line)}</p>`)
+    .join('');
+  return {
+    html: `<blockquote><p><b>${inline(label)}</b></p>${paragraphs}</blockquote>`,
+    end: index,
+  };
 }
 
 /** Conteudo de um bloco de codigo, sem tags, como texto puro. */

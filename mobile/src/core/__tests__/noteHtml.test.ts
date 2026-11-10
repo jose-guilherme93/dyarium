@@ -231,6 +231,65 @@ describe('htmlToMarkdown', () => {
   });
 });
 
+describe('tabela', () => {
+  it('converte a tabela com alinhamento por coluna', () => {
+    const html = markdownToHtml('| nome | estado | valor |\n| :--- | :--: | ---: |\n| a | b | 1 |');
+
+    expect(html).toContain(
+      '<table><thead><tr><th align="left">nome</th><th align="center">estado</th><th align="right">valor</th></tr></thead>',
+    );
+    expect(html).toContain(
+      '<tbody><tr><td align="left">a</td><td align="center">b</td><td align="right">1</td></tr></tbody></table>',
+    );
+  });
+
+  it('aceita negrito, codigo e link dentro da celula', () => {
+    const html = markdownToHtml(
+      '| item | nota |\n| --- | --- |\n| **forte** | `codigo` |\n| [site](https://exemplo.test) | _leve_ |',
+    );
+
+    expect(html).toContain('<td><b>forte</b></td>');
+    expect(html).toContain('<td><code>codigo</code></td>');
+    expect(html).toContain('<td><a href="https://exemplo.test">site</a></td>');
+    expect(html).toContain('<td><i>leve</i></td>');
+  });
+
+  it('tabela malformada cai no paragrafo sem quebrar', () => {
+    const semSeparador = markdownToHtml('| a | b |');
+    expect(semSeparador).not.toContain('<table>');
+    expect(semSeparador).toContain('<p>| a | b |</p>');
+
+    const desiguais = markdownToHtml('| a | b |\n| --- | --- |\n| 1 | 2 | 3 |');
+    expect(desiguais).not.toContain('<table>');
+    expect(desiguais).toContain('<p>| a | b |</p>');
+  });
+
+  it('faz ida e volta pelo editor sem perder a tabela', () => {
+    const markdown = '| item | valor |\n| :--- | ---: |\n| **a** | `b` |\n| c | d |';
+    expect(htmlToMarkdown(markdownToHtml(markdown))).toBe(markdown);
+  });
+});
+
+describe(':::details', () => {
+  it('mostra o rotulo em negrito e o conteudo visivel', () => {
+    const html = markdownToHtml(':::details Detalhes técnicos\nlinha **forte**\n:::');
+
+    expect(html).toContain(
+      '<blockquote><p><b>Detalhes técnicos</b></p><p>linha <b>forte</b></p></blockquote>',
+    );
+    expect(html).not.toContain(':::');
+  });
+
+  it('aceita a palavra open e o rotulo ausente', () => {
+    const html = markdownToHtml(':::details open\n- um\n- dois\n:::');
+
+    expect(html).toContain(
+      '<blockquote><p><b>Detalhes técnicos</b></p><p>- um</p><p>- dois</p></blockquote>',
+    );
+    expect(html).not.toContain('open');
+  });
+});
+
 describe('noteImages', () => {
   it('lista as imagens na ordem, com alt e largura', () => {
     expect(noteImages('a ![um](local:1.jpg) b ![dois](attachment:2){w=30}')).toEqual([

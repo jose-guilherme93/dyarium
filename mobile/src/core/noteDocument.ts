@@ -22,6 +22,7 @@
  */
 
 import { clampImageWidth } from './image';
+import { tableBlockEnd } from './noteHtml';
 
 export interface NoteTextNode {
   kind: 'text';
@@ -85,7 +86,24 @@ export interface NoteDetailsNode {
   breakAfter?: string;
 }
 
-export type NoteNode = NoteTextNode | NoteImageNode | NoteAudioNode | NoteDetailsNode;
+export interface NoteTableNode {
+  kind: 'table';
+  id: string;
+  /**
+   * O markdown original do bloco de tabela (cabecalho, separador e linhas),
+   * preservado byte a byte para o round-trip. Nao e reformatado.
+   */
+  markdown: string;
+  /**
+   * Alias do conteudo, para quem le o bloco como corpo de texto (o mesmo
+   * vocabulario do no de detalhes). Mantido em sincronia com `markdown`.
+   */
+  body: string;
+  /** As quebras de linha depois do bloco (o separador do texto seguinte). */
+  breakAfter?: string;
+}
+
+export type NoteNode = NoteTextNode | NoteImageNode | NoteAudioNode | NoteDetailsNode | NoteTableNode;
 
 /** Posicao de insercao: no de texto e deslocamento no texto visivel. */
 export interface NoteInsertPosition {
@@ -145,6 +163,10 @@ function detailsNode(
   breakAfter = '',
 ): NoteDetailsNode {
   return { kind: 'details', id: `d${index}`, summary, body, open, breakAfter };
+}
+
+function tableNode(markdown: string, index: number, breakAfter = ''): NoteTableNode {
+  return { kind: 'table', id: `tb${index}`, markdown, body: markdown, breakAfter };
 }
 
 /**
@@ -280,6 +302,39 @@ export function parseNoteDocument(markdown: string): NoteNode[] {
       hasText = false;
       continue;
     }
+    // Tabela markdown: vira um no proprio, com o markdown original preservado.
+    const tableEnd =
+      detailsMatch || audio || image ? null : tableBlockEnd(lines, i);
+    if (tableEnd !== null) {
+      const off = lineOffset(i);
+      pushText(off);
+
+      const previous = nodes[nodes.length - 1];
+      if (previous?.kind === 'text') {
+        const content = previous.markdown.replace(/\n+$/, '');
+        nodes[nodes.length - 1] = {
+          ...previous,
+          markdown: content,
+          breakAfter: `${previous.breakAfter ?? ''}${previous.markdown.slice(content.length)}`,
+        };
+      }
+
+      const consumedLast = tableEnd;
+      const closeLineStart = lineOffset(consumedLast);
+      const closeLineEnd = closeLineStart + lines[consumedLast].length;
+      let after = closeLineEnd + 1;
+      while (after < text.length && text[after] === '\n') after += 1;
+      const breakAfter = text.slice(closeLineEnd, after);
+
+      const markdown = lines.slice(i, consumedLast + 1).join('\n');
+      nodes.push(tableNode(markdown, nodes.length, breakAfter));
+
+      i = consumedLast + 1;
+      segmentStart = after;
+      hasText = false;
+      continue;
+    }
+
     hasText = true;
     i += 1;
   }
@@ -359,7 +414,7 @@ export function serializeNoteDocument(nodes: NoteNode[]): string {
     // Texto digitado logo abaixo de uma midia precisa de uma quebra: sem ela,
     // a linha `![foto](...)texto` deixaria de ser imagem na proxima abertura.
     if (
-      (node.kind === 'text' || node.kind === 'details') &&
+      (node.kind === 'text' || node.kind === 'details' || node.kind === 'table') &&
       piece !== '' &&
       (previous === 'image' || previous === 'audio') &&
       !out.endsWith('\n')
@@ -374,6 +429,7 @@ export function serializeNoteDocument(nodes: NoteNode[]): string {
 
 function serializeNode(node: NoteNode): string {
   if (node.kind === 'text') return node.markdown;
+  if (node.kind === 'table') return (node as NoteTableNode).markdown;
   if (node.kind === 'details') {
     const head = node.open ? ':::details open' : ':::details';
     const opening = node.summary ? `${head} ${node.summary}` : head;
@@ -402,6 +458,13 @@ export function noteAudioNodes(markdown: string): NoteAudioNode[] {
 export function noteImageNodes(markdown: string): NoteImageNode[] {
   return parseNoteDocument(markdown).filter(
     (node): node is NoteImageNode => node.kind === 'image',
+  );
+}
+
+/** Nos de tabela do documento, na ordem em que aparecem. */
+export function noteTableNodes(markdown: string): NoteTableNode[] {
+  return parseNoteDocument(markdown).filter(
+    (node): node is NoteTableNode => node.kind === 'table',
   );
 }
 
