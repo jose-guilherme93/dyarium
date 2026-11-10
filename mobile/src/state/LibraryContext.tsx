@@ -355,18 +355,21 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   }, [ready, config, kick, pullTranscripts, pushTranscripts, pullServer, reconcile, resumeReviews]);
 
   useEffect(() => {
-    if (!hasPending) return undefined;
+    // Sem servidor nao ha para onde enviar: pendentes ficam no banco e sao
+    // tentadas ao conectar, no boot ou ao voltar ao app. Um timer de 15 s aqui
+    // so relia o SQLite e re-renderizava a home parada.
+    if (!config || !hasPending) return undefined;
     const id = setInterval(() => kick(), WORKER_INTERVAL_MS);
     return () => clearInterval(id);
-  }, [hasPending, kick]);
+  }, [config, hasPending, kick]);
 
   // Caderno criado/alterado offline tambem tenta de novo periodicamente, mesmo
   // sem nota pendente.
   useEffect(() => {
-    if (!notebooks.some((notebook) => notebook.dirty)) return undefined;
+    if (!config || !notebooks.some((notebook) => notebook.dirty)) return undefined;
     const id = setInterval(() => kick(), WORKER_INTERVAL_MS);
     return () => clearInterval(id);
-  }, [notebooks, kick]);
+  }, [config, notebooks, kick]);
 
   useEffect(() => {
     if (!hasPendingTranscripts) return undefined;
