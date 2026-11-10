@@ -638,12 +638,18 @@ export function NoteList({
                   setNoteOrder((value) => (value === "newest" ? "oldest" : "newest"))
                 }
                 aria-pressed={noteOrder === "oldest"}
+                // Rotulo e dica dizem a mesma coisa (a acao do clique); antes o
+                // title descrevia o estado atual e contradizia o aria-label.
                 aria-label={
                   noteOrder === "newest"
                     ? "Ordenar notas: mais antigas primeiro"
                     : "Ordenar notas: mais recentes primeiro"
                 }
-                title={noteOrder === "newest" ? "Mais recentes primeiro" : "Mais antigas primeiro"}
+                title={
+                  noteOrder === "newest"
+                    ? "Ordenar notas: mais antigas primeiro"
+                    : "Ordenar notas: mais recentes primeiro"
+                }
               >
                 <SortIcon size={16} />
               </button>

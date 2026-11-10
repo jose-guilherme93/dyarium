@@ -1365,6 +1365,29 @@
   font-size: 14px;
 }
 
+/* O tipo do aviso precisa mudar a aparencia: erro tinha a mesma cara de um
+   aviso informativo e passava despercebido. Barra a esquerda na cor do tipo,
+   sem virar bloco colorido. */
+.toast {
+  border-left-width: 3px;
+}
+
+.toast--error {
+  border-left-color: var(--danger);
+}
+
+.toast--success {
+  border-left-color: var(--ok);
+}
+
+.toast--info {
+  border-left-color: var(--info);
+}
+
+.toast--warning {
+  border-left-color: var(--warn);
+}
+
 /* Acao do aviso (ex.: "Desfazer"): texto, nao um botao pesado. */
 .toast-action {
   flex: 0 0 auto;
