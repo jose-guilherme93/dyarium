@@ -94,6 +94,16 @@ describe('concatenateSegments', () => {
     expect(fs.out).toEqual([1, 2, 3, 4, 5]);
   });
 
+  it('cede a thread a cada oito pedacos', async () => {
+    const fs = new MemFS();
+    // 18 pedacos: deve ceder duas vezes (8 e 16) e nunca no primeiro.
+    fs.files['g/seg-000.aac'] = bytes(...Array.from({ length: 18 }, (_, i) => i + 1));
+    const yieldToUI = jest.fn().mockResolvedValue(undefined);
+    (fs as ConcatIO).yieldToUI = yieldToUI;
+    await concatenateSegments('g/', 'out.aac', fs, 1);
+    expect(yieldToUI).toHaveBeenCalledTimes(2);
+  });
+
   it('retorna 0 quando nao ha segmentos', async () => {
     const fs = new MemFS();
     expect(await concatenateSegments('vazio/', 'out.aac', fs)).toBe(0);

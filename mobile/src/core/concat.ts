@@ -15,7 +15,20 @@ export interface ConcatIO {
   read(path: string, offset: number, length: number): Promise<Uint8Array>;
   /** Acrescenta bytes ao arquivo de saida. */
   append(outPath: string, bytes: Uint8Array): Promise<void>;
+  /**
+   * Cede a thread de JS entre pedacos. Sem isso a copia inteira roda numa
+   * cadeia de microtasks e a interface congela durante a concatenacao de uma
+   * gravacao longa (uma hora de audio = ~230 pedacos de 1 MiB).
+   */
+  yieldToUI?(): Promise<void>;
 }
+
+/** Cede a thread a cada N pedacos: 8 MiB, o suficiente para nao pesar e para
+ *  a interface respirar durante uma concatenacao longa. */
+const YIELD_EVERY_CHUNKS = 8;
+
+const defaultYieldToUI = (): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, 0));
 
 /** Cabecalho ADTS: sync word (12 bits = 0xFFF) nos dois primeiros bytes. */
 export function isAdtsHeader(first: number, second: number): boolean {
@@ -46,6 +59,7 @@ export async function concatenateSegments(
     expectedTotal += size;
   }
   let total = 0;
+  let chunks = 0;
   for (const segment of segments) {
     const size = sizes[segment];
     let offset = 0;
@@ -57,6 +71,10 @@ export async function concatenateSegments(
       await io.append(outPath, bytes);
       offset += bytes.length;
       total += bytes.length;
+      chunks++;
+      if (chunks % YIELD_EVERY_CHUNKS === 0) {
+        await (io.yieldToUI ?? defaultYieldToUI)();
+      }
     }
   }
   if (total !== expectedTotal) throw new Error('total de bytes nao confere com os segmentos');
