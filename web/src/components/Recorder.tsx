@@ -16,6 +16,8 @@ export function Recorder({ onUploaded, entryId }: RecorderProps) {
   const [recording, setRecording] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [busy, setBusy] = useState(false);
+  /** 0..1 do envio; o botao mostra o numero em vez de um "Enviando..." cego. */
+  const [progress, setProgress] = useState(0);
   const [error, setError] = useState("");
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -45,9 +47,16 @@ export function Recorder({ onUploaded, entryId }: RecorderProps) {
     const ext = mimeType.includes("ogg") ? "ogg" : mimeType.includes("mp4") ? "m4a" : "webm";
     const file = new File([blob], `gravacao.${ext}`, { type: mimeType || "audio/webm" });
     setBusy(true);
+    setProgress(0);
     setError("");
     try {
-      const result = await uploadFile(file, undefined, entryId);
+      const result = await uploadFile(
+        file,
+        (sent, total) => {
+          if (!cancelledRef.current && total > 0) setProgress(sent / total);
+        },
+        entryId,
+      );
       if (!cancelledRef.current) {
         onUploaded(result.entry_id);
       }
@@ -116,7 +125,7 @@ export function Recorder({ onUploaded, entryId }: RecorderProps) {
     <div className="recorder">
       <button type="button" className="recorder-start" onClick={() => void start()} disabled={busy}>
         <MicIcon size={16} />
-        {busy ? "Enviando..." : "Gravar"}
+        {busy ? `Enviando ${Math.round(progress * 100)}%` : "Gravar"}
       </button>
       {error && <span className="error">{error}</span>}
     </div>
