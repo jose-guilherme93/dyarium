@@ -172,7 +172,9 @@ func transcribeHandler(st *store.Store, cfg config.Config, pipeline *transcribe.
 					bus.Publish("entry.status", map[string]string{"entry_id": payload.EntryID, "status": store.EntryTranscribed})
 				} else {
 					_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryFailed)
-					bus.Publish("entry.failed", map[string]string{"entry_id": payload.EntryID, "reason": err.Error()})
+					// O motivo vai direto para o toast e para a faixa da nota: so a
+					// mensagem generica, nunca o texto do banco ou da biblioteca.
+					bus.Publish("entry.failed", map[string]string{"entry_id": payload.EntryID, "reason": "falha ao transcrever a nota"})
 				}
 			}
 			return err
