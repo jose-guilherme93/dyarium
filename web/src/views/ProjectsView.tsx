@@ -3,7 +3,7 @@ import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import { api } from "../api";
 import { EmojiPicker } from "../components/EmojiPicker";
 import { Spinner } from "../components/Status";
-import { ChevronIcon, ExternalIcon } from "../components/icons";
+import { ChevronIcon, ExternalIcon, FilterIcon, RefreshIcon, SearchIcon, SlidersIcon } from "../components/icons";
 import {
   parseProjectLogs,
   type LogItem,
@@ -155,8 +155,15 @@ function loadTablePrefs(): TablePrefs {
 }
 
 /** Dia como numero, para comparar datas sem nesta horario. */
-function dayNumber(date: string): number {
-  const parts = date.split("-").map(Number);
+/** Compara sem acento e sem caixa: a busca nao deve exigir o acerto exato. */
+function foldText(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function dayNumber(date: string): number {  const parts = date.split("-").map(Number);
   if (parts.length < 3 || parts.some((part) => Number.isNaN(part))) return Number.NaN;
   return Date.UTC(parts[0], parts[1] - 1, parts[2]) / 864e5;
 }
@@ -283,6 +290,9 @@ export function ProjectsView({
   const [kindFilter, setKindFilter] = useState<Set<string>>(new Set());
   const [range, setRange] = useState<RangeId>("all");
   const [variant, setVariant] = useState<VariantId>("table");
+  const [search, setSearch] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(true);
   const [tablePrefs, setTablePrefs] = useState<TablePrefs>(loadTablePrefs);
   const [colsPanelOpen, setColsPanelOpen] = useState(false);
   const [openProjects, setOpenProjects] = useState<Record<string, boolean>>({});
@@ -363,7 +373,7 @@ export function ProjectsView({
 
   if (loading && !index) {
     return (
-      <section className="pj-view">
+      <section className="pj-view pj-view--center">
         <p className="muted">
           <Spinner /> Carregando...
         </p>
@@ -373,7 +383,7 @@ export function ProjectsView({
 
   if (error) {
     return (
-      <section className="pj-view">
+      <section className="pj-view pj-view--center">
         <p className="error">{error}</p>
       </section>
     );
@@ -386,6 +396,11 @@ export function ProjectsView({
   // pesado e construido uma vez so (no buildIndex).
   const limit = range === "all" ? 0 : range === "7" ? 6 : 29;
   const keep = (row: LogItem) => {
+    if (search.trim()) {
+      const needle = foldText(search);
+      const haystack = foldText(`${row.title} ${row.project} ${row.kind} ${row.commit ?? ""}`);
+      if (!haystack.includes(needle)) return false;
+    }
     if (projectFilter.size > 0 && !(row.project && projectFilter.has(row.project))) return false;
     if (kindFilter.size > 0 && !kindFilter.has(row.kind)) return false;
     if (limit > 0) {
@@ -530,9 +545,11 @@ export function ProjectsView({
         </header>
 
         {tab === "items" ? (
-          <div role="tabpanel" aria-labelledby="pj-tab-itens">
+          <div className="pj-items" role="tabpanel" aria-labelledby="pj-tab-itens">
             {projects.length > 0 || data.rows.length > 0 ? (
               <div className="pj-toolbar">
+                {filtersOpen ? (
+                  <div className="pj-filters">
                 <span className="pj-chips">
                   {projects.map((agg) => (
                     <button
@@ -561,6 +578,9 @@ export function ProjectsView({
                     </button>
                   ))}
                 </span>
+                  </div>
+                ) : null}
+                <span className="pj-push" />
                 <span className="pj-sep" aria-hidden="true" />
                 <div className="pj-seg" role="group" aria-label="Período">
                   {(
@@ -580,7 +600,63 @@ export function ProjectsView({
                     </button>
                   ))}
                 </div>
-                <span className="pj-push" />
+                {searchOpen ? (
+                  <label className="pj-search">
+                    <SearchIcon size={15} />
+                    <input
+                      autoFocus
+                      value={search}
+                      onChange={(event) => setSearch(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Escape") {
+                          setSearch("");
+                          setSearchOpen(false);
+                        }
+                      }}
+                      placeholder="Buscar"
+                      aria-label="Buscar itens"
+                    />
+                  </label>
+                ) : (
+                  <button
+                    type="button"
+                    className="pj-iconbtn"
+                    title="Buscar"
+                    aria-label="Buscar itens"
+                    onClick={() => setSearchOpen(true)}
+                  >
+                    <SearchIcon size={15} />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className={`pj-iconbtn${filtersOpen ? " pj-iconbtn--on" : ""}`}
+                  title="Filtros"
+                  aria-label="Mostrar filtros"
+                  aria-pressed={filtersOpen}
+                  onClick={() => setFiltersOpen((open) => !open)}
+                >
+                  <FilterIcon size={15} />
+                </button>
+                <button
+                  type="button"
+                  className={`pj-iconbtn${tablePrefs.customOpen ? " pj-iconbtn--on" : ""}`}
+                  title="Personalizar"
+                  aria-label="Personalizar tabela"
+                  aria-pressed={tablePrefs.customOpen}
+                  onClick={toggleCustom}
+                >
+                  <SlidersIcon size={15} />
+                </button>
+                <button
+                  type="button"
+                  className="pj-iconbtn"
+                  title="Restaurar"
+                  aria-label="Restaurar padrao"
+                  onClick={resetPrefs}
+                >
+                  <RefreshIcon size={15} />
+                </button>
                 <div
                   className={`pj-seg${narrow ? " pj-seg--off" : ""}`}
                   role="group"
@@ -602,22 +678,6 @@ export function ProjectsView({
                     Cartões
                   </button>
                 </div>
-              </div>
-            ) : null}
-
-            {projects.length > 0 || data.rows.length > 0 ? (
-              <div className="pj-barhead">
-                <button
-                  type="button"
-                  className="pj-btn"
-                  aria-pressed={tablePrefs.customOpen}
-                  onClick={toggleCustom}
-                >
-                  Personalizar
-                </button>
-                <button type="button" className="pj-btn" onClick={resetPrefs}>
-                  Restaurar
-                </button>
               </div>
             ) : null}
 
@@ -721,9 +781,9 @@ export function ProjectsView({
             ) : null}
 
             {filtered.length === 0 ? (
-              emptyState
+              <div className="pj-items-body pj-items-body--center">{emptyState}</div>
             ) : (
-              <>
+              <div className="pj-items-body">
                 <div
                   className={`pj-tablewrap pj-tablewrap--${tablePrefs.width}`}
                   data-width={tablePrefs.width}
@@ -885,7 +945,7 @@ export function ProjectsView({
                     </section>
                   ))}
                 </div>
-              </>
+              </div>
             )}
 
             <footer className="pj-foot">

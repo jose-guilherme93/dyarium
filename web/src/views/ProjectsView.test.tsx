@@ -252,8 +252,8 @@ describe("ProjectsView", () => {
 
   it("as escolhas sobrevivem a um remount (localStorage)", async () => {
     const rows = dataRows();
-    vi.mocked(api.listEntries).mockResolvedValue({ entries: rows.map((r: any) => r.entry) } as never);
-    rows.forEach((row: any) => vi.mocked(api.listNotes).mockResolvedValueOnce({ notes: row.notes } as never));
+    vi.mocked(api.listEntries).mockResolvedValue({ entries: rows.map((r) => r.entry) } as never);
+    rows.forEach((row) => vi.mocked(api.listNotes).mockResolvedValueOnce({ notes: row.notes } as never));
 
     const { unmount } = render(<ProjectsView notebookId="nb-mcp" refreshKey={0} onOpenEntry={vi.fn()} />);
     await screen.findByRole("table");
@@ -262,8 +262,8 @@ describe("ProjectsView", () => {
     unmount();
 
     // remount
-    vi.mocked(api.listEntries).mockResolvedValue({ entries: rows.map((r: any) => r.entry) } as never);
-    rows.forEach((row: any) => vi.mocked(api.listNotes).mockResolvedValueOnce({ notes: row.notes } as never));
+    vi.mocked(api.listEntries).mockResolvedValue({ entries: rows.map((r) => r.entry) } as never);
+    rows.forEach((row) => vi.mocked(api.listNotes).mockResolvedValueOnce({ notes: row.notes } as never));
     render(<ProjectsView notebookId="nb-mcp" refreshKey={1} onOpenEntry={vi.fn()} />);
 
     const table = await screen.findByRole("table");
@@ -296,6 +296,30 @@ describe("ProjectsView", () => {
     container = screen.getByRole("table").closest(".pj-vtable") as HTMLElement;
     expect(container).not.toHaveClass("ap-zebra");
     expect(container).toHaveClass("ap-lines");
+  });
+
+  it("a lupa filtra os itens pelo texto digitado", async () => {
+    setup(dataRows());
+    await screen.findByRole("table");
+
+    fireEvent.click(screen.getByRole("button", { name: /Buscar itens/i }));
+    const field = screen.getByRole("textbox", { name: /Buscar itens/i });
+    fireEvent.change(field, { target: { value: "csv" } });
+
+    expect(screen.getByRole("tab", { name: /Itens/i }).textContent).toContain("1");
+    expect(screen.getAllByText(/saldo calculado duas vezes/).length).toBeGreaterThan(0);
+    expect(screen.queryAllByText(/terminal do mapa em tres camadas/)).toHaveLength(0);
+  });
+
+  it("o funil esconde e mostra os chips de filtro", async () => {
+    setup(dataRows());
+    await screen.findByRole("table");
+
+    expect(screen.getByRole("button", { name: "caixa" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Mostrar filtros/i }));
+    expect(screen.queryByRole("button", { name: "caixa" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Mostrar filtros/i }));
+    expect(screen.getByRole("button", { name: "caixa" })).toBeTruthy();
   });
 });
 

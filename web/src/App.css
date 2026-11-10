@@ -11466,10 +11466,33 @@
 /* toolbar */
 .pj-toolbar {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 8px;
   padding: 14px 0 12px;
+}
+
+/* O grupo de filtros rola na horizontal em vez de empurrar os botoes-icone
+   para a linha de baixo: a direita da barra fica sempre no canto. */
+.pj-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.pj-filters::-webkit-scrollbar {
+  display: none;
+}
+
+.pj-toolbar > .pj-seg,
+.pj-toolbar > .pj-iconbtn,
+.pj-toolbar > .pj-search,
+.pj-filters > .pj-seg {
+  flex: none;
 }
 
 .pj-chips {
@@ -11600,6 +11623,54 @@
   border-color: transparent;
   color: var(--ink);
   font-weight: 500;
+}
+
+/* Botoes-icone da barra: busca, filtro, personalizar e restaurar. */
+.pj-iconbtn {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--ink-soft);
+  background: none;
+}
+
+.pj-iconbtn:hover {
+  background: var(--paper-2);
+  color: var(--ink);
+}
+
+.pj-iconbtn[aria-pressed="true"],
+.pj-iconbtn--on {
+  background: var(--paper-3);
+  color: var(--ink);
+}
+
+.pj-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 4px 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--ink-soft);
+  background: var(--paper);
+}
+
+.pj-search input {
+  width: 150px;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.pj-search input:focus {
+  outline: none;
 }
 
 .pj-custom {
