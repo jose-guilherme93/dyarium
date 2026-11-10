@@ -40,6 +40,8 @@ import {
 } from "./components/icons";
 import { ALL_NOTEBOOKS, DEFAULT_NOTEBOOK_ID } from "./lib/notebooks";
 import { orderedChapters } from "./lib/books";
+import { aggregate, useProjectsIndex } from "./lib/useProjectsIndex";
+import { ProjectList } from "./components/ProjectList";
 import type { NotionImportResult } from "./lib/notionImport";
 import { MapView } from "./views/MapView";
 import { ProjectsView } from "./views/ProjectsView";
@@ -131,6 +133,16 @@ export function App() {
   // "Filtrar itens" fecha a nota e pede a superficie de projetos a filtrar
   // aquele projeto e periodo; o nonce re-aplica o mesmo pedido duas vezes.
   const [pjFilter, setPjFilter] = useState<ProjectsFilterRequest | null>(null);
+  // Projeto aberto na lista da sidebar do caderno MCP; null = "Todos". A
+  // selecao e estado do App, nao URL: lista e superficie leem o mesmo valor.
+  const [pjProject, setPjProject] = useState<string | null>(null);
+  // Icones escolhidos nesta sessao (a escolha local vence a entry persistida);
+  // vivem no App para a lista e a superficie mostrarem o mesmo icone.
+  const [pjIcons, setPjIcons] = useState<Record<string, string>>({});
+  useEffect(() => {
+    setPjProject(null);
+    setPjIcons({});
+  }, [activeNotebookId]);
   // /lab e uma pagina de verdade: recarregar a aba continua no processamento,
   // e o endereco fica estavel para deixar a aba aberta no PC.
   useEffect(() => {
@@ -341,6 +353,18 @@ export function App() {
       : (notebooks.find((notebook) => notebook.id === activeNotebookId) ?? null);
   const isBook = activeNotebook?.kind === "book";
   const isMcp = activeNotebook?.kind === "mcp";
+
+  // Uma unica carga do indice de projetos serve as duas superficies: a lista
+  // da sidebar e a area principal. Fora do caderno MCP nao busca nada.
+  const projectsData = useProjectsIndex(isMcp ? activeNotebookId : "", refreshKey);
+  const projectAggs = projectsData.index ? aggregate(projectsData.index) : [];
+
+  const chooseProjectIcon = (entryId: string, icon: string) => {
+    setPjIcons((current) => ({ ...current, [entryId]: icon }));
+    // O icone persiste na entry; se a gravacao falhar, a tela nao quebra e a
+    // escolha fica nesta sessao.
+    void api.updateEntry(entryId, { icon }).catch(() => undefined);
+  };
 
   // A lista de capitulos vive na sidebar, no lugar das notas. O App e o dono
   // dela para a sidebar e a casa do livro verem a mesma ordem.
@@ -851,11 +875,10 @@ export function App() {
               />
             </div>
 
-            {/* O menu e a lista de notas: não ha "Notas" aqui, porque a lista e
-                as notas. As demais telas viram icones pequenos no rodape. No
-                caderno de projetos (MCP) a tabela da area principal ja lista
-                todos os itens: a lista de previews e redundante e fica de
-                fora; seguem o seletor de caderno e a navegacao do rodape. */}
+            {/* O menu e a lista do escopo. No caderno de projetos (MCP) a
+                lista da sidebar sao os proprios projetos: cada um no seu
+                lugar, abrir um escopa a area principal. Nas listas comuns a
+                busca, tags e arquivadas ficam no topo da propria lista. */}
             {isBook && activeNotebook ? (
               <BookSidebar
                 book={activeNotebook}
@@ -871,7 +894,20 @@ export function App() {
                 onReorder={(source, target) => void reorderBookChapters(source, target)}
               />
             ) : isMcp ? (
-              <div className="list-spacer" aria-hidden="true" />
+              <ProjectList
+                projects={projectAggs}
+                totalCount={projectsData.index?.rows.length ?? 0}
+                selectedProject={pjProject}
+                onSelect={(project) => {
+                  setPjProject(project);
+                  setOpenEntryId(null);
+                  setView("notes");
+                  closeDrawer();
+                }}
+                icons={pjIcons}
+                loading={projectsData.loading}
+                error={projectsData.error}
+              />
             ) : (
             <NoteList
               refreshKey={refreshKey}
@@ -1035,6 +1071,9 @@ export function App() {
                   refreshKey={noteRefreshKey}
                   onFilterItems={(project, range) => {
                     setOpenEntryId(null);
+                    // O pedido de fora escolhe o projeto na lista (estado do
+                    // App) e so o periodo vai como pedido a superficie.
+                    setPjProject(project);
                     setPjFilter((current) => ({
                       project,
                       range,
@@ -1068,13 +1107,17 @@ export function App() {
                   notebooks={notebooks}
                 />
               ) : isMcp ? (
-                // Caderno de projetos MCP: no lugar da lista vazia, a
-                // superficie de projetos. Clicar numa linha abre a nota daquele
-                // projeto no mesmo editor, como a lista de notas faz.
+                // Caderno de projetos MCP: a lista da sidebar sao os projetos;
+                // abrir um escopa esta area. Clicar numa linha abre a nota
+                // daquele projeto no mesmo editor, como a lista de notas faz.
                 <div className="page page--projects">
                   <ProjectsView
-                    notebookId={activeNotebookId}
-                    refreshKey={refreshKey}
+                    index={projectsData.index}
+                    loading={projectsData.loading}
+                    error={projectsData.error}
+                    selectedProject={pjProject}
+                    icons={pjIcons}
+                    onChooseIcon={chooseProjectIcon}
                     filterRequest={pjFilter}
                     onOpenEntry={(id) => {
                       setView("notes");

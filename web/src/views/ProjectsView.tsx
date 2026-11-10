@@ -1,22 +1,22 @@
 import { useEffect, useState } from "react";
 import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
-import { api } from "../api";
 import { EmojiPicker } from "../components/EmojiPicker";
 import { Spinner } from "../components/Status";
 import { ChevronIcon, ExternalIcon, FilterIcon, RefreshIcon, SearchIcon, SlidersIcon } from "../components/icons";
-import {
-  parseProjectLogs,
-  type LogItem,
-  type LogSession,
-} from "../../../mobile/src/core/projetoLog";
+import { ProjectMark } from "../components/ProjectList";
+import type { LogItem } from "../../../mobile/src/core/projetoLog";
+import type { ProjectAgg, ProjectsIndex } from "../lib/useProjectsIndex";
 import type { ProjectsRange } from "../lib/actions";
-import type { Entry, Note } from "../types";
 
 /**
  * Superficie "Projetos" do caderno MCP (docs/projetos.md). Um notebook de
  * kind=mcp substitui a lista de notas: o corpo das entradas e lido pelo
  * modulo projetoLog e vira duas vistas, Itens (tabela/cartoes) e Projetos.
  * O prototipo aprovado (proto-resumos.html) e a fonte da verdade visual.
+ *
+ * A carga do indice nao mora mais aqui: o App chama useProjectsIndex uma vez
+ * e passa o mesmo indice para esta vista e para a lista da sidebar. A
+ * selecao de projeto tambem vive no App: a lista escolhe, a vista respeita.
  */
 
 /** Pedido de filtro vindo de fora (nota do projeto): abre Itens filtrada. */
@@ -27,9 +27,16 @@ export interface ProjectsFilterRequest extends Record<string, unknown> {
   nonce: number;
 }
 
-interface ProjectsViewProps {
-  notebookId: string;
-  refreshKey: number;
+export interface ProjectsViewProps {
+  index: ProjectsIndex | null;
+  loading: boolean;
+  error: string;
+  /** Projeto escolhido na lista da sidebar; null = todos. */
+  selectedProject: string | null;
+  /** Icones escolhidos nesta sessao (a escolha local vence a entry). */
+  icons: Record<string, string>;
+  /** Trocou icone: o App guarda a escolha e persiste na entry. */
+  onChooseIcon: (entryId: string, icon: string) => void;
   /** Abre a nota do projeto no editor que ja existe; nao cria rota nova. */
   onOpenEntry: (entryId: string) => void;
   /** Filtro aplicado de fora (acao "Filtrar itens" da nota do projeto). */
@@ -55,32 +62,6 @@ interface TablePrefs {
   cols: TableCols;
   appearance: TableAppearance;
   customOpen: boolean;
-}
-
-/** Linha da tabela/cartao: um item de sessao amarrado a entry do caderno. */
-interface ItemRow extends LogItem {
-  entryId: string | null;
-  host?: string;
-}
-
-interface SessionRow {
-  session: LogSession;
-  entryId: string | null;
-}
-
-/** Uma linha da aba Projetos, amarrada a entry: titulo e identidade, icone. */
-interface ProjectAgg {
-  project: string;
-  entryId: string;
-  sessions: SessionRow[];
-}
-
-interface ProjectsIndex {
-  rows: ItemRow[];
-  sessions: SessionRow[];
-  entries: Entry[];
-  entryByProject: Record<string, string>;
-  kinds: string[];
 }
 
 const KIND_ORDER = ["feat", "fix", "perf", "test", "docs", "chore"];
@@ -191,83 +172,8 @@ function relativeLabel(date: string | null): string {
   return `há ${diff} dias`;
 }
 
-function newerFirst(a: { date: string; time: string }, b: { date: string; time: string }): number {
-  const key = (one: { date: string; time: string }) => `${one.date}T${one.time}`;
-  if (key(a) !== key(b)) return key(a) > key(b) ? -1 : 1;
-  return 0;
-}
-
-/** Constroi o indice uma vez por (notebook, notas): parsing so no modulo puro. */
-function buildIndex(entries: Entry[], noteLists: Note[][]): ProjectsIndex {
-  const noteBodies: Array<{ id: string; body: string }> = [];
-  const projectByNoteId: Record<string, string> = {};
-  const entryByProject: Record<string, string> = {};
-
-  entries.forEach((entry) => {
-    if (entry?.title && entryByProject[entry.title] === undefined) {
-      entryByProject[entry.title] = entry.id;
-    }
-  });
-  noteLists.forEach((notes, index) => {
-    const entry = entries[index];
-    (notes ?? []).forEach((note) => {
-      if (!note) return;
-      noteBodies.push({ id: note.id, body: note.content_markdown ?? "" });
-      if (entry?.title) projectByNoteId[note.id] = entry.title;
-    });
-  });
-
-  const parsed = parseProjectLogs(noteBodies, projectByNoteId);
-  const sessions: SessionRow[] = parsed.map((session) => ({
-    entryId: entryByProject[session.project] ?? null,
-    session,
-  }));
-  const rows: ItemRow[] = [];
-  sessions.forEach((row) => {
-    row.session.items.forEach((item) => {
-      rows.push({ ...item, entryId: row.entryId, host: row.session.host });
-    });
-  });
-  rows.sort((a, b) => {
-    if (a.date !== b.date) return a.date > b.date ? -1 : 1;
-    return newerFirst({ date: a.date, time: a.time }, { date: b.date, time: b.time });
-  });
-  sessions.sort((a, b) => newerFirst(a.session, b.session));
-
-  const seen = new Set<string>();
-  const kinds = [...KIND_ORDER];
-  for (const kind of new Set(rows.map((row) => row.kind))) {
-    if (!seen.has(kind) && !KIND_ORDER.includes(kind)) {
-      seen.add(kind);
-      kinds.push(kind);
-    }
-  }
-
-  return { rows, sessions, entries, entryByProject, kinds };
-}
-
-/** Linhas por projeto, na ordem das entries; sessoes juntas por project name. */
-function aggregate(index: ProjectsIndex): ProjectAgg[] {
-  return index.entries
-    .filter((entry) => Boolean(entry.title))
-    .map((entry) => ({
-      project: entry.title,
-      entryId: entry.id,
-      sessions: index.sessions.filter((row) => row.session.project === entry.title),
-    }));
-}
-
 function KindBadge({ kind }: { kind: string }) {
   return <span className={`pj-kb ${KIND_CLASS[kind] ?? ""}`}>{kind}</span>;
-}
-
-/** Quadrado da letra quando o projeto ainda nem tem icone. */
-function ProjectMark({ icon, project }: { icon: string; project: string }) {
-  return (
-    <span className="pj-mark" aria-hidden="true">
-      {icon || (project.charAt(0) || "?")}
-    </span>
-  );
 }
 
 interface PickerSpot {
@@ -277,16 +183,16 @@ interface PickerSpot {
 }
 
 export function ProjectsView({
-  notebookId,
-  refreshKey,
+  index,
+  loading,
+  error,
+  selectedProject,
+  icons,
+  onChooseIcon,
   onOpenEntry,
   filterRequest,
 }: ProjectsViewProps) {
-  const [index, setIndex] = useState<ProjectsIndex | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
   const [tab, setTab] = useState<TabId>("items");
-  const [projectFilter, setProjectFilter] = useState<Set<string>>(new Set());
   const [kindFilter, setKindFilter] = useState<Set<string>>(new Set());
   const [range, setRange] = useState<RangeId>("all");
   const [variant, setVariant] = useState<VariantId>("table");
@@ -296,54 +202,11 @@ export function ProjectsView({
   const [tablePrefs, setTablePrefs] = useState<TablePrefs>(loadTablePrefs);
   const [colsPanelOpen, setColsPanelOpen] = useState(false);
   const [openProjects, setOpenProjects] = useState<Record<string, boolean>>({});
-  const [icons, setIcons] = useState<Record<string, string>>({});
   /** Janela estreita (<720px): so cartoes, e o segmento fica desabilitado. */
   const [narrow, setNarrow] = useState(() =>
     typeof window === "undefined" ? false : window.innerWidth <= 720,
   );
   const [picker, setPicker] = useState<PickerSpot | null>(null);
-
-  // Carrega uma vez por notebook (e a cada refresh): a lista de notas nao roda
-  // mais no caderno MCP, entao a leitura e sempre fresca (as variantes Cached
-  // chegaram vazias no primeiro acesso). Notas de todas as entries em paralelo
-  // (sao poucas). Cancelamento local: trocar de caderno no meio da leitura nao
-  // pode marcar estado tardiamente.
-  useEffect(() => {
-    if (!notebookId) {
-      setLoading(false);
-      setIndex(null);
-      return;
-    }
-    let active = true;
-    setLoading(true);
-    void (async () => {
-      try {
-        const entriesRes = await api.listEntries({ notebook_id: notebookId, limit: 1000 });
-        const entries = entriesRes?.entries ?? [];
-        const noteLists = await Promise.all(
-          entries.map((entry) =>
-            api
-              .listNotes(entry.id)
-              .then((res) => res?.notes ?? [])
-              .catch(() => [] as Note[]),
-          ),
-        );
-        if (!active) return;
-        setIndex(buildIndex(entries, noteLists));
-        setError("");
-      } catch (err) {
-        if (active) {
-          setIndex(null);
-          setError(err instanceof Error ? err.message : "falha ao carregar os projetos");
-        }
-      } finally {
-        if (active) setLoading(false);
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, [notebookId, refreshKey]);
 
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
@@ -363,11 +226,11 @@ export function ProjectsView({
   }, [tablePrefs]);
 
   // Filtro pedido de fora (nota do projeto): abre a aba Itens ja filtrada
-  // pelo projeto e pelo periodo da sessao.
+  // pelo periodo da sessao. O projeto em si ja foi escolhido na lista da
+  // sidebar pelo App; aqui só muda a vista e o periodo.
   useEffect(() => {
     if (!filterRequest) return;
     setTab("items");
-    setProjectFilter(new Set([filterRequest.project]));
     setRange(filterRequest.range);
   }, [filterRequest]);
 
@@ -389,19 +252,32 @@ export function ProjectsView({
     );
   }
 
-  const data = index ?? { rows: [], sessions: [], entries: [], entryByProject: {}, kinds: [] };
-  const projects = aggregate(data);
+  const data: ProjectsIndex = index ?? {
+    rows: [],
+    sessions: [],
+    entries: [],
+    entryByProject: {},
+    kinds: [],
+  };
+  const projects: ProjectAgg[] = data.entries
+    .filter((entry) => Boolean(entry.title))
+    .map((entry) => ({
+      project: entry.title,
+      entryId: entry.id,
+      icon: entry.icon ?? "",
+      sessions: data.sessions.filter((row) => row.session.project === entry.title),
+    }));
 
-  // Filtro vigente: chips somados + periodo. Derivado por render, o indice
-  // pesado e construido uma vez so (no buildIndex).
+  // Filtro vigente: escopo da lista + chips de kind + periodo + busca.
+  // Derivado por render, o indice pesado e construido uma vez so (no hook).
   const limit = range === "all" ? 0 : range === "7" ? 6 : 29;
-  const keep = (row: LogItem) => {
+  const keep = (row: { project: string; kind: string; date: string; title: string; commit?: string }) => {
+    if (selectedProject && row.project !== selectedProject) return false;
     if (search.trim()) {
       const needle = foldText(search);
       const haystack = foldText(`${row.title} ${row.project} ${row.kind} ${row.commit ?? ""}`);
       if (!haystack.includes(needle)) return false;
     }
-    if (projectFilter.size > 0 && !(row.project && projectFilter.has(row.project))) return false;
     if (kindFilter.size > 0 && !kindFilter.has(row.kind)) return false;
     if (limit > 0) {
       const day = dayNumber(row.date);
@@ -416,18 +292,15 @@ export function ProjectsView({
   const filteredProjects = new Set(filtered.map((row) => row.project)).size;
 
   /** Icone de um projeto no estado atual (escolha local vence a entry). */
-  const iconFor = (project: string): string => {
-    const entry = projects.find((agg) => agg.project === project);
-    if (entry) {
-      const chosen = icons[entry.entryId];
-      if (chosen) return chosen;
-      const entryRecord = data.entries.find((record) => record.id === entry.entryId);
-      if (entryRecord?.icon) return entryRecord.icon;
-    }
-    return "";
+  const iconFor = (agg: ProjectAgg): string => icons[agg.entryId] || agg.icon || "";
+
+  /** Icone pelo nome do projeto, para linhas de sessao (cartoes). */
+  const iconForName = (project: string): string => {
+    const agg = projects.find((p) => p.project === project);
+    return agg ? iconFor(agg) : "";
   };
 
-  const openRow = (row: LogItem & { entryId?: string | null }) => {
+  const openRow = (row: LogItem & { entryId?: string | null }): void => {
     if (row.entryId) onOpenEntry(row.entryId);
   };
 
@@ -442,21 +315,13 @@ export function ProjectsView({
   };
 
   /** Abre o seletor colado no botao de icone, como no prototipo. */
-  const openPicker = (event: ReactMouseEvent<HTMLElement>, project: string, entryId: string) => {
+  const openPicker = (event: ReactMouseEvent<HTMLElement>, agg: ProjectAgg) => {
     event.stopPropagation();
     setPicker({
-      entryId,
-      current: iconFor(project),
+      entryId: agg.entryId,
+      current: iconFor(agg),
       anchor: event.currentTarget.getBoundingClientRect(),
     });
-  };
-
-  const chooseIcon = (entryId: string, value: string) => {
-    setIcons((current) => ({ ...current, [entryId]: value }));
-    setPicker(null);
-    // O icone persiste na entry; se a gravacao falhar, a tela nao quebra e a
-    // escolha fica nesta sessao.
-    void api.updateEntry(entryId, { icon: value }).catch(() => undefined);
   };
 
   const commitCell = (row: { commit?: string; url?: string }): ReactNode => {
@@ -478,7 +343,11 @@ export function ProjectsView({
   const tableVisible = !narrow && variant === "table";
   const cardsVisible = narrow || variant === "cards";
 
-  const visibleOptionalCols = TABLE_COL_KEYS.filter((key) => tablePrefs.cols[key]);
+  // Projeto escolhido: a coluna "Projeto" so repetiria o nome que ja esta
+  // fixado na lista da sidebar; ela sai da tabela neste escopo.
+  const visibleOptionalCols = TABLE_COL_KEYS.filter(
+    (key) => tablePrefs.cols[key] && !(key === "proj" && selectedProject),
+  );
   const canUncheckCol = (key: string) =>
     !(tablePrefs.cols[key as keyof TableCols] && visibleOptionalCols.length <= 3);
 
@@ -546,38 +415,23 @@ export function ProjectsView({
 
         {tab === "items" ? (
           <div className="pj-items" role="tabpanel" aria-labelledby="pj-tab-itens">
-            {projects.length > 0 || data.rows.length > 0 ? (
+            {data.rows.length > 0 ? (
               <div className="pj-toolbar">
                 {filtersOpen ? (
                   <div className="pj-filters">
-                <span className="pj-chips">
-                  {projects.map((agg) => (
-                    <button
-                      key={agg.entryId}
-                      type="button"
-                      className={activeChip(projectFilter.has(agg.project))}
-                      aria-pressed={projectFilter.has(agg.project)}
-                      onClick={() => toggleSet(agg.project, setProjectFilter, projectFilter)}
-                    >
-                      <ProjectMark icon={iconFor(agg.project)} project={agg.project} />
-                      {agg.project}
-                    </button>
-                  ))}
-                </span>
-                <span className="pj-sep" aria-hidden="true" />
-                <span className="pj-chips">
-                  {data.kinds.map((kind) => (
-                    <button
-                      key={kind}
-                      type="button"
-                      className={`${activeChip(kindFilter.has(kind))} pj-kchip`}
-                      aria-pressed={kindFilter.has(kind)}
-                      onClick={() => toggleSet(kind, setKindFilter, kindFilter)}
-                    >
-                      {kind}
-                    </button>
-                  ))}
-                </span>
+                    <span className="pj-chips">
+                      {data.kinds.map((kind) => (
+                        <button
+                          key={kind}
+                          type="button"
+                          className={`${activeChip(kindFilter.has(kind))} pj-kchip`}
+                          aria-pressed={kindFilter.has(kind)}
+                          onClick={() => toggleSet(kind, setKindFilter, kindFilter)}
+                        >
+                          {kind}
+                        </button>
+                      ))}
+                    </span>
                   </div>
                 ) : null}
                 <span className="pj-push" />
@@ -877,7 +731,7 @@ export function ProjectsView({
                                   if (key === "proj") {
                                     v = (
                                       <span className="pj-pcell">
-                                        <ProjectMark icon={iconFor(row.project)} project={row.project} />
+                                        <ProjectMark icon={iconForName(row.project)} project={row.project} />
                                         {row.project}
                                       </span>
                                     );
@@ -910,7 +764,10 @@ export function ProjectsView({
                   {filteredSessions.map((row) => (
                     <section className="pj-sess" key={row.session.sessionId}>
                       <div className="pj-ssh">
-                        <ProjectMark icon={iconFor(row.session.project)} project={row.session.project} />
+                        <ProjectMark
+                          icon={iconForName(row.session.project)}
+                          project={row.session.project}
+                        />
                         <b>{row.session.project}</b>
                         <span className="pj-m">
                           · {shortDate(row.session.date)} · {row.session.host}
@@ -962,170 +819,173 @@ export function ProjectsView({
         {tab === "projects" ? (
           <div className="pj-projects" role="tabpanel" aria-labelledby="pj-tab-projetos">
             {projects.length === 0 ? emptyState : null}
-            {projects.map((agg) => {
-              // A janela de 35 dias do prototipo: o resumo do projeto olha o
-              // trabalho recente; sessoes mais antigas ficam fora da linha e da
-              // expansao.
-              const recentSessions = agg.sessions.filter((row) =>
-                row.session.items.some((item) => {
-                  const day = dayNumber(item.date);
-                  return !Number.isNaN(day) && day >= todayNumber() - 34;
-                }),
-              );
-              const recent = recentSessions.flatMap((row) => row.session.items);
-              const last = recentSessions[0]?.session.date ?? null;
-              const state =
-                last === null
-                  ? ""
-                  : todayNumber() - dayNumber(last) <= 1
-                    ? " pj-dot--ok"
-                    : todayNumber() - dayNumber(last) <= 8
-                      ? " pj-dot--warn"
-                      : "";
-              const open = Boolean(openProjects[agg.entryId]);
-              return (
-                <div className="pj" key={agg.entryId}>
-                  <div
-                    className="pj-row"
-                    role="button"
-                    tabIndex={0}
-                    aria-expanded={open}
-                    onClick={() => setOpenProjects((current) => ({ ...current, [agg.entryId]: !open }))}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        setOpenProjects((current) => ({ ...current, [agg.entryId]: !open }));
-                      }
-                    }}
-                  >
-                    <button
-                      type="button"
-                      className="pj-emojibtn"
-                      aria-label={`trocar ícone de ${agg.project}`}
-                      onClick={(event) => openPicker(event, agg.project, agg.entryId)}
+            {(selectedProject ? projects.filter((agg) => agg.project === selectedProject) : projects).map(
+              (agg) => {
+                // A janela de 35 dias do prototipo: o resumo do projeto olha o
+                // trabalho recente; sessoes mais antigas ficam fora da linha e da
+                // expansao.
+                const recentSessions = agg.sessions.filter((row) =>
+                  row.session.items.some((item) => {
+                    const day = dayNumber(item.date);
+                    return !Number.isNaN(day) && day >= todayNumber() - 34;
+                  }),
+                );
+                const recent = recentSessions.flatMap((row) => row.session.items);
+                const last = recentSessions[0]?.session.date ?? null;
+                const state =
+                  last === null
+                    ? ""
+                    : todayNumber() - dayNumber(last) <= 1
+                      ? " pj-dot--ok"
+                      : todayNumber() - dayNumber(last) <= 8
+                        ? " pj-dot--warn"
+                        : "";
+                // Projeto escolhido na lista: a superficie dele ja e expandida.
+                const open = selectedProject ? true : Boolean(openProjects[agg.entryId]);
+                return (
+                  <div className="pj" key={agg.entryId}>
+                    <div
+                      className="pj-row"
+                      role="button"
+                      tabIndex={0}
+                      aria-expanded={open}
+                      onClick={() => setOpenProjects((current) => ({ ...current, [agg.entryId]: !open }))}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          setOpenProjects((current) => ({ ...current, [agg.entryId]: !open }));
+                        }
+                      }}
                     >
-                      <ProjectMark icon={iconFor(agg.project)} project={agg.project} />
-                    </button>
-                    <div className="pj-name">
-                      <div className="pj-pnm">{agg.project}</div>
-                      <div className="pj-psub">
-                        {relativeLabel(last)} · {recent.length} {recent.length === 1 ? "item" : "itens"}
+                      <button
+                        type="button"
+                        className="pj-emojibtn"
+                        aria-label={`trocar ícone de ${agg.project}`}
+                        onClick={(event) => openPicker(event, agg)}
+                      >
+                        <ProjectMark icon={iconFor(agg)} project={agg.project} />
+                      </button>
+                      <div className="pj-name">
+                        <div className="pj-pnm">{agg.project}</div>
+                        <div className="pj-psub">
+                          {relativeLabel(last)} · {recent.length} {recent.length === 1 ? "item" : "itens"}
+                        </div>
                       </div>
+                      <span className="pj-plast">{relativeLabel(last)}</span>
+                      <span className="pj-pnum">
+                        <span className="pj-n">{recent.length}</span> {recent.length === 1 ? "item" : "itens"}
+                      </span>
+                      <span className="pj-mbar" aria-hidden="true">
+                        {KIND_ORDER.map((kind) => {
+                          const count = recent.filter((row) => row.kind === kind).length;
+                          if (count === 0) return null;
+                          return (
+                            <i
+                              key={kind}
+                              className={KIND_CLASS[kind] ?? ""}
+                              style={{ width: `${((count / recent.length) * 100).toFixed(1)}%` }}
+                            />
+                          );
+                        })}
+                      </span>
+                      <span>
+                        <span className={`pj-dot${state}`} title={relativeLabel(last)} />
+                      </span>
+                      <span className="pj-chev">
+                        <ChevronIcon size={15} />
+                      </span>
                     </div>
-                    <span className="pj-plast">{relativeLabel(last)}</span>
-                    <span className="pj-pnum">
-                      <span className="pj-n">{recent.length}</span> {recent.length === 1 ? "item" : "itens"}
-                    </span>
-                    <span className="pj-mbar" aria-hidden="true">
-                      {KIND_ORDER.map((kind) => {
-                        const count = recent.filter((row) => row.kind === kind).length;
-                        if (count === 0) return null;
-                        return (
-                          <i
-                            key={kind}
-                            className={KIND_CLASS[kind] ?? ""}
-                            style={{ width: `${((count / recent.length) * 100).toFixed(1)}%` }}
-                          />
-                        );
-                      })}
-                    </span>
-                    <span>
-                      <span className={`pj-dot${state}`} title={relativeLabel(last)} />
-                    </span>
-                    <span className="pj-chev">
-                      <ChevronIcon size={15} />
-                    </span>
-                  </div>
-                  {open
-                    ? recentSessions.map((row) => (
-                        <div className="pj-sz" key={row.session.sessionId}>
-                          <div className="pj-sline">
-                            <b>{shortDate(row.session.date)}</b>
-                            <span>· {row.session.host}</span>
-                            <span>
-                              · {row.session.items.length}{" "}
-                              {row.session.items.length === 1 ? "item" : "itens"}
-                            </span>
-                            <span className="pj-push" />
-                            {row.entryId ? (
-                              <button
-                                type="button"
-                                className="pj-notabtn"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  onOpenEntry(row.entryId as string);
+                    {open
+                      ? recentSessions.map((row) => (
+                          <div className="pj-sz" key={row.session.sessionId}>
+                            <div className="pj-sline">
+                              <b>{shortDate(row.session.date)}</b>
+                              <span>· {row.session.host}</span>
+                              <span>
+                                · {row.session.items.length}{" "}
+                                {row.session.items.length === 1 ? "item" : "itens"}
+                              </span>
+                              <span className="pj-push" />
+                              {row.entryId ? (
+                                <button
+                                  type="button"
+                                  className="pj-notabtn"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    onOpenEntry(row.entryId as string);
+                                  }}
+                                >
+                                  Nota
+                                </button>
+                              ) : null}
+                            </div>
+                            {row.session.items.map((item, at) => (
+                              <div
+                                className="pj-it2"
+                                role="button"
+                                tabIndex={0}
+                                key={`${item.title}:${at}`}
+                                onClick={() => openRow(item)}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter" || event.key === " ") {
+                                    event.preventDefault();
+                                    openRow(item);
+                                  }
                                 }}
                               >
-                                Nota
-                              </button>
+                                <span className="pj-kw">
+                                  <KindBadge kind={item.kind} />
+                                </span>
+                                <span className="pj-tt" title={item.title}>
+                                  {item.title}
+                                </span>
+                                <span className="pj-cc">{commitCell(item)}</span>
+                              </div>
+                            ))}
+                            {row.session.commits.length > 0 || row.session.links.length > 0 ? (
+                              <details className="pj-det">
+                                <summary>
+                                  <span className="pj-chev pj-chev--sm">
+                                    <ChevronIcon size={13} />
+                                  </span>
+                                  Detalhes técnicos
+                                </summary>
+                                <div className="pj-db">
+                                  {row.session.commits.map((commit, at) => (
+                                    <span key={`${commit.hash}:${at}`}>
+                                      {commit.hash ? `${commit.hash} — ` : ""}
+                                      {commit.message}
+                                      {commit.url ? (
+                                        <a
+                                          className="pj-opc"
+                                          href={commit.url}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          title="Abrir commit"
+                                        >
+                                          <ExternalIcon size={13} />
+                                        </a>
+                                      ) : null}
+                                    </span>
+                                  ))}
+                                  {row.session.links.map((link, at) => (
+                                    <span key={`${link.url}:${at}`}>
+                                      {link.label ? `${link.label}: ` : ""}
+                                      <a href={link.url} target="_blank" rel="noreferrer">
+                                        {link.url}
+                                      </a>
+                                    </span>
+                                  ))}
+                                </div>
+                              </details>
                             ) : null}
                           </div>
-                          {row.session.items.map((item, at) => (
-                            <div
-                              className="pj-it2"
-                              role="button"
-                              tabIndex={0}
-                              key={`${item.title}:${at}`}
-                              onClick={() => openRow(item)}
-                              onKeyDown={(event) => {
-                                if (event.key === "Enter" || event.key === " ") {
-                                  event.preventDefault();
-                                  openRow(item);
-                                }
-                              }}
-                            >
-                              <span className="pj-kw">
-                                <KindBadge kind={item.kind} />
-                              </span>
-                              <span className="pj-tt" title={item.title}>
-                                {item.title}
-                              </span>
-                              <span className="pj-cc">{commitCell(item)}</span>
-                            </div>
-                          ))}
-                          {row.session.commits.length > 0 || row.session.links.length > 0 ? (
-                            <details className="pj-det">
-                              <summary>
-                                <span className="pj-chev pj-chev--sm">
-                                  <ChevronIcon size={13} />
-                                </span>
-                                Detalhes técnicos
-                              </summary>
-                              <div className="pj-db">
-                                {row.session.commits.map((commit, at) => (
-                                  <span key={`${commit.hash}:${at}`}>
-                                    {commit.hash ? `${commit.hash} — ` : ""}
-                                    {commit.message}
-                                    {commit.url ? (
-                                      <a
-                                        className="pj-opc"
-                                        href={commit.url}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        title="Abrir commit"
-                                      >
-                                        <ExternalIcon size={13} />
-                                      </a>
-                                    ) : null}
-                                  </span>
-                                ))}
-                                {row.session.links.map((link, at) => (
-                                  <span key={`${link.url}:${at}`}>
-                                    {link.label ? `${link.label}: ` : ""}
-                                    <a href={link.url} target="_blank" rel="noreferrer">
-                                      {link.url}
-                                    </a>
-                                  </span>
-                                ))}
-                              </div>
-                            </details>
-                          ) : null}
-                        </div>
-                      ))
-                    : null}
-                </div>
-              );
-            })}
+                        ))
+                      : null}
+                  </div>
+                );
+              },
+            )}
           </div>
         ) : null}
       </section>
@@ -1134,7 +994,10 @@ export function ProjectsView({
         <EmojiPicker
           anchor={picker.anchor}
           current={picker.current}
-          onPick={(emoji) => chooseIcon(picker.entryId, emoji)}
+          onPick={(emoji) => {
+            onChooseIcon(picker.entryId, emoji);
+            setPicker(null);
+          }}
           onClose={() => setPicker(null)}
         />
       ) : null}

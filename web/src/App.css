@@ -11371,11 +11371,17 @@
   min-width: 0;
 }
 
-/* Caderno MCP: sem lista de previews na sidebar; o espaco da lista empurra o
-   rodape de navegacao para baixo, como a .list fazia. */
-.list-spacer {
-  flex: 1 1 auto;
-  min-height: 0;
+/* Caderno MCP: a lista da sidebar sao os projetos. Ela usa as mesmas classes
+   .list / .note-row das notas; aqui so entra o icone no tamanho da linha e a
+   contagem encosta na direita, como a data das notas. */
+.pj-list .pj-mark {
+  width: 18px;
+  height: 18px;
+  font-size: 11px;
+}
+
+.pj-list .note-row-date {
+  margin-left: auto;
 }
 
 .pj-view {

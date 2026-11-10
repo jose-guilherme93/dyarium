@@ -1,17 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ProjectsView } from "./ProjectsView";
+import type { ProjectsViewProps } from "./ProjectsView";
+import { buildIndex } from "../lib/useProjectsIndex";
 import type { Entry, Note } from "../types";
-
-vi.mock("../api", () => ({
-  api: {
-    listEntries: vi.fn(),
-    listNotes: vi.fn(),
-    updateEntry: vi.fn(),
-  },
-}));
-
-import { api } from "../api";
 
 const entry = (id: string, title: string, icon?: string) =>
   ({ id, title, icon }) as unknown as Entry;
@@ -53,30 +45,39 @@ const dataRows = () => [
   },
 ];
 
-const setup = (rows: Array<{ entry: Entry; notes: Note[] }>) => {
-  vi.mocked(api.listEntries).mockResolvedValue({
-    entries: rows.map((row) => row.entry),
-  } as never);
-  rows.forEach((row) => {
-    vi.mocked(api.listNotes).mockResolvedValueOnce({
-      notes: row.notes,
-    } as never);
-  });
+function indexFrom(rows: Array<{ entry: Entry; notes: Note[] }>) {
+  return buildIndex(
+    rows.map((row) => row.entry),
+    rows.map((row) => row.notes),
+  );
+}
+
+/** A vista nao busca mais nada: o App chama o hook e entrega o indice aqui. */
+function renderView(overrides: Partial<ProjectsViewProps> = {}) {
   const onOpenEntry = vi.fn();
-  render(<ProjectsView notebookId="nb-mcp" refreshKey={0} onOpenEntry={onOpenEntry} />);
-  return { onOpenEntry };
-};
+  const onChooseIcon = vi.fn();
+  render(
+    <ProjectsView
+      index={indexFrom(dataRows())}
+      loading={false}
+      error=""
+      selectedProject={null}
+      icons={{}}
+      onChooseIcon={onChooseIcon}
+      onOpenEntry={onOpenEntry}
+      {...overrides}
+    />,
+  );
+  return { onOpenEntry, onChooseIcon };
+}
 
 beforeEach(() => {
-  vi.mocked(api.listEntries).mockReset();
-  vi.mocked(api.listNotes).mockReset();
-  vi.mocked(api.updateEntry).mockReset();
   localStorage.clear();
 });
 
 describe("ProjectsView", () => {
   it("duas notas do caderno viram tabela com os itens e a contagem do rodape", async () => {
-    const { onOpenEntry } = setup(dataRows());
+    const { onOpenEntry } = renderView();
 
     const table = await screen.findByRole("table");
     expect(within(table).getByText("terminal do mapa em tres camadas")).toBeInTheDocument();
@@ -101,7 +102,7 @@ describe("ProjectsView", () => {
         ].join("\n"),
       ),
     ];
-    setup(rows);
+    renderView({ index: indexFrom(rows) });
 
     const table = await screen.findByRole("table");
     const body = table.querySelector("tbody") as HTMLTableSectionElement;
@@ -109,8 +110,18 @@ describe("ProjectsView", () => {
     expect(first?.textContent).toContain("terminal do mapa em tres camadas");
   });
 
+  it("a barra de Itens nao tem chip de projeto: quem escolhe e a lista da sidebar", async () => {
+    renderView();
+    await screen.findByRole("table");
+
+    expect(screen.queryByRole("button", { name: "caixa" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "dyarium" })).not.toBeInTheDocument();
+    // Os chips de kind continuam na barra.
+    expect(screen.getByRole("button", { name: "fix" })).toBeInTheDocument();
+  });
+
   it("filtrar por kind reduz as linhas", async () => {
-    setup(dataRows());
+    renderView();
 
     await screen.findByRole("table");
     fireEvent.click(screen.getByRole("button", { name: "fix" }));
@@ -121,8 +132,47 @@ describe("ProjectsView", () => {
     expect(screen.getByText("1 item · 1 projeto")).toBeInTheDocument();
   });
 
+  it("o funil esconde e mostra os chips de kind", async () => {
+    renderView();
+    await screen.findByRole("table");
+
+    expect(screen.getByRole("button", { name: "fix" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Mostrar filtros/i }));
+    expect(screen.queryByRole("button", { name: "fix" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "feat" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Mostrar filtros/i }));
+    expect(screen.getByRole("button", { name: "fix" })).toBeTruthy();
+  });
+
+  it("projeto escolhido na lista escopa a tabela e esconde a coluna Projeto", async () => {
+    renderView({ selectedProject: "caixa" });
+
+    const table = await screen.findByRole("table");
+    expect(within(table).getByText("saldo calculado duas vezes ao importar csv")).toBeInTheDocument();
+    expect(within(table).queryByText("terminal do mapa em tres camadas")).not.toBeInTheDocument();
+    const headers = within(table).getAllByRole("columnheader").map((h) => h.textContent);
+    expect(headers).not.toContain("Projeto");
+    expect(screen.getByText("1 item · 1 projeto")).toBeInTheDocument();
+  });
+
+  it("projeto escolhido expande so ele na aba Projetos", async () => {
+    renderView({ selectedProject: "dyarium" });
+
+    fireEvent.click(screen.getByRole("tab", { name: /Projetos/ }));
+
+    const rows = (screen.getAllByRole("button", { name: /dyarium/ }) as HTMLElement[]).filter(
+      (button) => button.hasAttribute("aria-expanded"),
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toHaveAttribute("aria-expanded", "true");
+    // O resumo do projeto escolhido ja esta aberto, sem novo clique; o outro
+    // projeto sumiu da aba.
+    expect(screen.getByText(/vps-dev/)).toBeInTheDocument();
+    expect(screen.queryByText("caixa")).not.toBeInTheDocument();
+  });
+
   it("alternar Tabela/Cartoes muda a variante", async () => {
-    setup(dataRows());
+    renderView();
 
     await screen.findByRole("table");
     fireEvent.click(screen.getByRole("button", { name: "Cartões" }));
@@ -144,7 +194,7 @@ describe("ProjectsView", () => {
   });
 
   it("expandir projeto mostra as sessoes e o bloco Detalhes tecnicos", async () => {
-    setup(dataRows());
+    renderView();
 
     fireEvent.click(await screen.findByRole("tab", { name: /Projetos/ }));
 
@@ -167,9 +217,11 @@ describe("ProjectsView", () => {
   });
 
   it("nota sem sessao nenhuma mostra estado vazio sem quebrar", async () => {
-    setup([
-      { entry: entry("entry-vazio", "projeto solto"), notes: [note("n-3", "entry-vazio", "")] },
-    ]);
+    renderView({
+      index: indexFrom([
+        { entry: entry("entry-vazio", "projeto solto"), notes: [note("n-3", "entry-vazio", "")] },
+      ]),
+    });
 
     await waitFor(() =>
       expect(screen.getByText("Sem sessões registradas.")).toBeInTheDocument(),
@@ -178,7 +230,7 @@ describe("ProjectsView", () => {
   });
 
   it("padrao abre em grade, largura cheia, densidade confortavel, 5 colunas opcionais", async () => {
-    setup(dataRows());
+    renderView();
 
     const table = await screen.findByRole("table");
     const container = table.closest(".pj-vtable") as HTMLElement;
@@ -190,7 +242,7 @@ describe("ProjectsView", () => {
   });
 
   it("alternar densidade muda o atributo de densidade do container", async () => {
-    setup(dataRows());
+    renderView();
 
     await screen.findByRole("table");
     fireEvent.click(screen.getByRole("button", { name: /Personalizar/i }));
@@ -205,7 +257,7 @@ describe("ProjectsView", () => {
   });
 
   it("desmarcar Commit remove a coluna do cabecalho e das linhas; minimo de 3 opcionais", async () => {
-    setup(dataRows());
+    renderView();
 
     await screen.findByRole("table");
     fireEvent.click(screen.getByRole("button", { name: /Personalizar/i }));
@@ -229,7 +281,7 @@ describe("ProjectsView", () => {
   });
 
   it("Restaurar volta ao padrao depois de mudar tudo", async () => {
-    setup(dataRows());
+    renderView();
 
     await screen.findByRole("table");
     fireEvent.click(screen.getByRole("button", { name: /Personalizar/i }));
@@ -251,20 +303,34 @@ describe("ProjectsView", () => {
   });
 
   it("as escolhas sobrevivem a um remount (localStorage)", async () => {
-    const rows = dataRows();
-    vi.mocked(api.listEntries).mockResolvedValue({ entries: rows.map((r) => r.entry) } as never);
-    rows.forEach((row) => vi.mocked(api.listNotes).mockResolvedValueOnce({ notes: row.notes } as never));
-
-    const { unmount } = render(<ProjectsView notebookId="nb-mcp" refreshKey={0} onOpenEntry={vi.fn()} />);
+    const index = indexFrom(dataRows());
+    const { unmount } = render(
+      <ProjectsView
+        index={index}
+        loading={false}
+        error=""
+        selectedProject={null}
+        icons={{}}
+        onChooseIcon={vi.fn()}
+        onOpenEntry={vi.fn()}
+      />,
+    );
     await screen.findByRole("table");
     fireEvent.click(screen.getByRole("button", { name: /Personalizar/i }));
     fireEvent.click(screen.getByRole("button", { name: /Compacta/i }));
     unmount();
 
-    // remount
-    vi.mocked(api.listEntries).mockResolvedValue({ entries: rows.map((r) => r.entry) } as never);
-    rows.forEach((row) => vi.mocked(api.listNotes).mockResolvedValueOnce({ notes: row.notes } as never));
-    render(<ProjectsView notebookId="nb-mcp" refreshKey={1} onOpenEntry={vi.fn()} />);
+    render(
+      <ProjectsView
+        index={index}
+        loading={false}
+        error=""
+        selectedProject={null}
+        icons={{}}
+        onChooseIcon={vi.fn()}
+        onOpenEntry={vi.fn()}
+      />,
+    );
 
     const table = await screen.findByRole("table");
     const container = table.closest(".pj-vtable") as HTMLElement;
@@ -273,7 +339,7 @@ describe("ProjectsView", () => {
 
   it("JSON invalido cai no padrao sem quebrar", async () => {
     localStorage.setItem("dyarium.projetos.tabela", "{{{");
-    setup(dataRows());
+    renderView();
 
     const table = await screen.findByRole("table");
     const container = table.closest(".pj-vtable") as HTMLElement;
@@ -283,7 +349,7 @@ describe("ProjectsView", () => {
   });
 
   it("Grade e zebra aplicam a classe certa no container", async () => {
-    setup(dataRows());
+    renderView();
 
     await screen.findByRole("table");
     fireEvent.click(screen.getByRole("button", { name: /Personalizar/i }));
@@ -299,7 +365,7 @@ describe("ProjectsView", () => {
   });
 
   it("a lupa filtra os itens pelo texto digitado", async () => {
-    setup(dataRows());
+    renderView();
     await screen.findByRole("table");
 
     fireEvent.click(screen.getByRole("button", { name: /Buscar itens/i }));
@@ -310,16 +376,4 @@ describe("ProjectsView", () => {
     expect(screen.getAllByText(/saldo calculado duas vezes/).length).toBeGreaterThan(0);
     expect(screen.queryAllByText(/terminal do mapa em tres camadas/)).toHaveLength(0);
   });
-
-  it("o funil esconde e mostra os chips de filtro", async () => {
-    setup(dataRows());
-    await screen.findByRole("table");
-
-    expect(screen.getByRole("button", { name: "caixa" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /Mostrar filtros/i }));
-    expect(screen.queryByRole("button", { name: "caixa" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /Mostrar filtros/i }));
-    expect(screen.getByRole("button", { name: "caixa" })).toBeTruthy();
-  });
 });
-
