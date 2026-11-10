@@ -165,6 +165,9 @@ async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
   await upsertRecording(current);
   emitRecording(current);
 
+  // Ultimo percentual persistido neste envio; ver onProgress abaixo.
+  let lastStoredPercent = -1;
+
   try {
     // Quem se responsabiliza pela transcricao e pela analise? Quando e o
     // cliente (aparelho ou etapa desligada), o servidor nao enfileira nada.
@@ -213,8 +216,14 @@ async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
             await upsertRecording(current);
             emitRecording(current);
           },
-          onProgress: async (sent) => {
+          // O envio avisa a cada 4 MB: gravar a linha inteira e re-renderizar a
+          // lista nesse ritmo custa 125 escritas e 125 re-renders num audio de
+          // 500 MB. Persiste so quando o percentual inteiro muda.
+          onProgress: async (sent, total) => {
             current = { ...current, offset: sent, updatedAt: new Date().toISOString() };
+            const percent = total > 0 ? Math.floor((sent / total) * 100) : 0;
+            if (percent === lastStoredPercent) return;
+            lastStoredPercent = percent;
             await upsertRecording(current);
             emitRecording(current);
           },
