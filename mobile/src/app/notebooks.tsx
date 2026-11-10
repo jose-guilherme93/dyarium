@@ -75,6 +75,11 @@ export default function NotebooksScreen() {
   };
 
   const select = async (notebook: Notebook) => {
+    // Caderno de projetos nao vira escopo de notas: abre a superficie Projetos.
+    if (notebook.kind === 'mcp') {
+      push({ pathname: '/projects', params: { notebook: notebook.id } });
+      return;
+    }
     await setLastNotebookId(notebook.id);
     back();
   };

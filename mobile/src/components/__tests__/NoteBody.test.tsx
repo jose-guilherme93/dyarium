@@ -795,6 +795,37 @@ describe('corpo da nota em nos', () => {
     expect(onChange).toHaveBeenLastCalledWith('A novo\n\nB novo');
   });
 
+  it('regressao: tabela intacta sem edicao (render/flush)', async () => {
+    const onChange = jest.fn();
+    render(
+      <NoteBody
+        value={'Antes\n\n| Kind | Itens | % |\n|:-----|------:|--:|\n| feat | 6 | 43% |\n\nDepois'}
+        onChangeMarkdown={onChange}
+        typography={typography}
+      />,
+    );
+    await flushDebounce();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('regressao: editar texto ao redor preserva os pipes da tabela', async () => {
+    const onChange = jest.fn();
+    render(
+      <NoteBody
+        value={'Antes\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n\nDepois'}
+        onChangeMarkdown={onChange}
+        typography={typography}
+      />,
+    );
+    const editors = screen.getAllByTestId('rich-editor');
+    fireEvent.changeText(editors[0], '<p>Antes editado</p>');
+    await flushDebounce();
+    expect(onChange).toHaveBeenCalled();
+    const last = onChange.mock.calls[onChange.mock.calls.length - 1][0];
+    expect(last).toContain('| a | b |');
+    expect(last).toContain('| 1 | 2 |');
+  });
+
   it('abre a nota grande so com as primeiras linhas e revela o resto depois', () => {
     // Paragrafo longo (cruza 60 linhas) seguido de 40 fotos: no primeiro
     // frame so o texto monta, o resto fica com esqueleto de texto e carrega

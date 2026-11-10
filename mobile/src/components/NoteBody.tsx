@@ -33,6 +33,8 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Platform,
+  TextInput,
   useWindowDimensions,
   View,
   type LayoutChangeEvent,
@@ -60,9 +62,10 @@ import {
   type NoteDetailsNode,
   type NoteImageNode,
   type NoteNode,
+  type NoteTableNode,
   type NoteTextNode,
 } from '@/core/noteDocument';
-import { htmlToMarkdown, markdownToHtml, noteImages } from '@/core/noteHtml';
+import { htmlToMarkdown, markdownToHtml, noteImages, tableBlockEnd } from '@/core/noteHtml';
 import { fontFamilyNative, fontWeightNative, noteLineHeight, NOTE_LETTER_SPACING } from '@/core/typography';
 import type { TranscriptSegment } from '@/core/types';
 import { mark } from '@/dev/perf';
@@ -72,6 +75,7 @@ import { baseColors, radius, spacing } from '@/theme/tokens';
 
 import { FastModal } from './FastModal';
 import { NoteAudioCard } from './NoteAudioCard';
+import { NoteTable } from './NoteTable';
 import { noteHtmlStyle } from './noteHtmlStyle';
 import type { FormatType, NoteBodyHandle, NoteBodyProps } from './noteBodyTypes';
 import { defineStyles } from '@/theme/themedStyles';
@@ -435,6 +439,44 @@ const NativeNoteBody = memo(
      */
     /** Foto com as opcoes abertas (tamanho e remover). */
     const [imageMenuId, setImageMenuId] = useState<string | null>(null);
+    /** Tabela sendo editada como markdown puro. */
+    const [editingTableId, setEditingTableId] = useState<string | null>(null);
+    const [editingTableDraft, setEditingTableDraft] = useState('');
+
+    const saveTableEdit = useCallback(async () => {
+      if (!editingTableId) return;
+      await flushNodes([...dirty.current]);
+      const draft = editingTableDraft;
+      const lines = draft.replace(/\r\n/g, '\n').split('\n');
+      const valid = tableBlockEnd(lines, 0) !== null && lines.length >= 2;
+      const next = nodesRef.current.map((node) => {
+        if (node.kind !== 'table' || node.id !== editingTableId) return node;
+        if (valid) {
+          return {
+            kind: 'table',
+            id: node.id,
+            markdown: draft,
+            body: draft,
+            breakAfter: node.breakAfter,
+          } as NoteTableNode;
+        }
+        return {
+          kind: 'text',
+          id: node.id,
+          markdown: draft,
+          breakAfter: node.breakAfter,
+        } as NoteTextNode;
+      });
+      nodesRef.current = next;
+      selections.current.clear();
+      dirty.current.clear();
+      setNodes(next);
+      setRevealed(next.length);
+      setVersion((current) => current + 1);
+      emit(next);
+      setEditingTableId(null);
+    }, [editingTableDraft, editingTableId, emit, flushNodes]);
+
     const imageMenu = nodes.find(
       (node): node is NoteImageNode => node.kind === 'image' && node.id === imageMenuId,
     );
@@ -792,6 +834,20 @@ const NativeNoteBody = memo(
         return <NoteDetails key={`${version}-${node.id}`} node={node} />;
       }
 
+      if (node.kind === 'table') {
+        return (
+          <NoteTable
+            key={`${version}-${node.id}`}
+            node={node as NoteTableNode}
+            typography={typography}
+            onEditMarkdown={() => {
+              setEditingTableDraft((node as NoteTableNode).markdown);
+              setEditingTableId(node.id);
+            }}
+          />
+        );
+      }
+
       const own = ownAudioRefs.includes(node.ref);
       // O no pode ter uma referencia que nao casa com o mapa (audio antigo,
       // `local:` virou `attachment:` em outro aparelho). Para o audio da
@@ -855,6 +911,43 @@ const NativeNoteBody = memo(
               />
             ))}
           </View>
+        ) : null}
+
+        {/* Edicao de tabela como markdown puro (nunca passa pelo conversor HTML). */}
+        {editingTableId ? (
+          <FastModal visible transparent onRequestClose={() => setEditingTableId(null)}>
+            <Press style={styles.sheetBackdrop} onPress={() => setEditingTableId(null)} feedback={false}>
+              <View style={styles.sheet}>
+                <Text style={styles.sheetTitle}>Tabela</Text>
+                <TextInput
+                  testID="note-table-editor"
+                  value={editingTableDraft}
+                  onChangeText={setEditingTableDraft}
+                  multiline
+                  style={[
+                    styles.sheetText,
+                    {
+                      fontFamily: fontFamilyNative('mono'),
+                      minHeight: 120,
+                      textAlignVertical: 'top',
+                    },
+                  ]}
+                />
+                <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: spacing.sm }}>
+                  <Press style={styles.sheetRow} onPress={() => setEditingTableId(null)}>
+                    <Text style={styles.sheetText}>Cancelar</Text>
+                  </Press>
+                  <Press
+                    style={styles.sheetRow}
+                    onPress={() => void saveTableEdit()}
+                    testID="note-table-save"
+                  >
+                    <Text style={styles.sheetText}>Salvar</Text>
+                  </Press>
+                </View>
+              </View>
+            </Press>
+          </FastModal>
         ) : null}
 
         {/* Opcoes da foto: tamanho e, por ultimo, remover. Um menu proprio (e
@@ -943,9 +1036,15 @@ const TextNodeEditor = memo(function TextNodeEditor({
   );
 
   useEffect(() => {
+    // O `defaultValue` nao aplica os estilos do HTML no Android (bug conhecido
+    // da lib: software-mansion/react-native-enriched-html#265). Reparseia o
+    // HTML depois que a view nativa esta pronta, quando o htmlStyle ja vale.
+    // Sem isso, negrito/italico/titulo salvos apareciam como texto simples ao
+    // reabrir a nota.
+    if (Platform.OS === 'android') ref.current?.setValue(html);
     onReady(id, ref.current);
     return () => onReady(id, null);
-  }, [id, onReady]);
+  }, [html, id, onReady]);
 
   // Os callbacks sao fixos por trecho: o editor e memoizado e nao pode
   // remontar (a view nativa e cara) por causa de uma funcao nova.
@@ -959,7 +1058,9 @@ const TextNodeEditor = memo(function TextNodeEditor({
   return (
     <EnrichedTextInput
       ref={ref}
-      defaultValue={html}
+      // No Android o HTML entra pelo setValue do efeito (unica passada). Nas
+      // outras plataformas o defaultValue ja aplica os estilos.
+      defaultValue={Platform.OS === 'android' ? '' : html}
       placeholder={placeholder}
       placeholderTextColor={colors.textTertiary}
       cursorColor={colors.accent}

@@ -381,6 +381,16 @@ export default function NotebookScreen() {
 
   const selectScope = useCallback(
     (id: string | null) => {
+      // O caderno de projetos nao e uma lista de notas: no app ele abre a
+      // superficie Projetos, com as abas Itens e Projetos (docs/projetos.md).
+      if (id) {
+        const target = notebooksRef.current.find((notebook) => notebook.id === id);
+        if (target?.kind === 'mcp') {
+          setNotebookPickerOpen(false);
+          push({ pathname: '/projects', params: { notebook: id } });
+          return;
+        }
+      }
       setScopeId(id);
       setNotebookPickerOpen(false);
       setQuery('');
