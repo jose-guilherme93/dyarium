@@ -1,12 +1,13 @@
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { createRef } from 'react';
-import { Alert } from 'react-native';
+import { Alert, Platform } from 'react-native';
 
 import { NoteBody, type NoteBodyHandle } from '@/components/NoteBody';
 
 const typography = { family: 'system', size: 17, weight: 'regular' } as const;
 
 const mockSetLink = jest.fn();
+const mockSetEditorValue = jest.fn();
 const mockSetSelection = jest.fn();
 const mockFocus = jest.fn();
 const mockGetHTML = jest.fn();
@@ -35,6 +36,7 @@ jest.mock('react-native-enriched-html', () => {
         focus: mockFocus,
         blur: jest.fn(),
         setValue: (next: string) => {
+          mockSetEditorValue(next);
           html.current = next;
           setValue(next);
         },
@@ -627,6 +629,49 @@ describe('corpo da nota em nos', () => {
     });
 
     expect(mockSetLink).toHaveBeenCalledWith(0, 5, 'linha', 'https://exemplo.test');
+  });
+
+  it('insere o link no primeiro trecho quando nada esta em foco', () => {
+    const ref = createRef<NoteBodyHandle>();
+    render(
+      <NoteBody ref={ref} value="linha" onChangeMarkdown={jest.fn()} typography={typography} />,
+    );
+
+    act(() => {
+      ref.current?.insertLink('https://exemplo.test');
+    });
+
+    // Sem cursor, o primeiro trecho recebe o foco e o link, em vez de o botao
+    // nao fazer nada.
+    expect(mockFocus).toHaveBeenCalled();
+    expect(mockSetLink).toHaveBeenCalledWith(
+      0,
+      0,
+      'https://exemplo.test',
+      'https://exemplo.test',
+    );
+  });
+
+  it('reparseia o HTML no Android depois de montar (estilos do defaultValue)', () => {
+    const original = Platform.OS;
+    Object.defineProperty(Platform, 'OS', { value: 'android', configurable: true });
+    try {
+      render(
+        <NoteBody
+          value={'normal **forte**'}
+          onChangeMarkdown={jest.fn()}
+          typography={typography}
+        />,
+      );
+
+      // O defaultValue nao aplica os estilos no Android; o trecho reaplica o
+      // HTML depois que a view nativa esta pronta.
+      expect(mockSetEditorValue).toHaveBeenCalledWith(
+        expect.stringContaining('<b>forte</b>'),
+      );
+    } finally {
+      Object.defineProperty(Platform, 'OS', { value: original, configurable: true });
+    }
   });
 
   it('reidrata quando o documento muda por fora', async () => {

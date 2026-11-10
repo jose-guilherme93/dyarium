@@ -204,6 +204,8 @@ const NativeNoteBody = memo(
      * cursor): ela entra quando o primeiro trecho recebe o foco.
      */
     const pendingFormat = useRef<FormatType | null>(null);
+    /** Link pedido sem um trecho em foco: entra quando o trecho receber o foco. */
+    const pendingLink = useRef<string | null>(null);
     const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const widthRef = useRef(Math.max(1, window.width));
     const [mountedAt] = useState(() => Date.now());
@@ -271,6 +273,29 @@ const NativeNoteBody = memo(
       [],
     );
 
+    /**
+     * Aplica formatacao e link pedidos antes do foco. Os dois usam a selecao
+     * do trecho quando ela existe; sem selecao, o link entra no cursor.
+     */
+    const applyPending = useCallback((instance: EnrichedTextInputInstance) => {
+      const type = pendingFormat.current;
+      if (type) {
+        pendingFormat.current = null;
+        applyFormat(instance, type);
+      }
+      const link = pendingLink.current;
+      if (!link) return;
+      pendingLink.current = null;
+      const id = activeId.current;
+      const selection = id ? selections.current.get(id) : null;
+      instance.setLink(
+        selection?.start ?? 0,
+        selection?.end ?? 0,
+        selection?.text.trim() || link,
+        link,
+      );
+    }, []);
+
     const registerEditor = useCallback(
       (id: string, instance: EnrichedTextInputInstance | null) => {
         if (!instance) {
@@ -285,13 +310,10 @@ const NativeNoteBody = memo(
         setTimeout(() => {
           if (editors.current.get(id) !== instance) return;
           instance.focus();
-          const type = pendingFormat.current;
-          if (!type) return;
-          pendingFormat.current = null;
-          applyFormat(instance, type);
+          applyPending(instance);
         }, 0);
       },
-      [],
+      [applyPending],
     );
 
     /**
@@ -613,12 +635,9 @@ const NativeNoteBody = memo(
         const editor = editorFor(id);
         if (editor) {
           editor.focus();
-          // Formato pedido antes do foco (barra de acoes sem cursor): aplica
-          // agora que o campo esta em edicao.
-          const type = pendingFormat.current;
-          if (!type) return;
-          pendingFormat.current = null;
-          applyFormat(editor, type);
+          // Formato/link pedidos antes do foco (barra de acoes sem cursor):
+          // aplica agora que o campo esta em edicao.
+          applyPending(editor);
           return;
         }
         // O trecho ainda nao montou (midia acabou de dividir o texto): o foco
@@ -627,13 +646,10 @@ const NativeNoteBody = memo(
           const mounted = editorFor(id);
           if (!mounted) return;
           mounted.focus();
-          const type = pendingFormat.current;
-          if (!type) return;
-          pendingFormat.current = null;
-          applyFormat(mounted, type);
+          applyPending(mounted);
         }, 60);
       },
-      [editorFor],
+      [applyPending, editorFor],
     );
 
     const format = useCallback(
@@ -752,7 +768,17 @@ const NativeNoteBody = memo(
         insertLink(url) {
           const id = activeId.current;
           const editor = editorFor(id);
-          if (!editor) return;
+          if (!editor) {
+            // Barra de acoes sem um trecho em foco: o primeiro trecho recebe o
+            // foco e o link, em vez de o botao nao fazer nada.
+            const first = nodesRef.current.find(
+              (node): node is NoteTextNode => node.kind === 'text',
+            );
+            if (!first) return;
+            pendingLink.current = url;
+            focusNode(first.id);
+            return;
+          }
           const selection = id ? selections.current.get(id) : null;
           const start = selection?.start ?? 0;
           const end = selection?.end ?? 0;
