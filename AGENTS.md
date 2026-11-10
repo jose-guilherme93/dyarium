@@ -24,6 +24,10 @@ O projeto tem tres superficies: o binario Go (`cmd/`, `internal/`), o dashboard
 
 ## Como trabalhar
 
+- **Mudanca visual ou funcionalidade nova comeca por prototipo navegavel.** Antes de
+  tocar no editor, no layout ou na API, monte um HTML com dados reais, abra no
+  navegador e deixe o mantenedor julgar usabilidade e aparencia. Codigo vem depois
+  do "sim" — o prototipo e descartavel e nao usa o bundle de producao.
 - **Trabalhe direto no checkout e na branch `develop`**, sem worktree. Um
   worktree por tarefa so quando o mantenedor pedir explicitamente.
 - Antes de mudar algo, leia `docs/` e os arquivos envolvidos. Trate mudancas nao
@@ -36,6 +40,9 @@ O projeto tem tres superficies: o binario Go (`cmd/`, `internal/`), o dashboard
 
 ## Entrega: nada sai sem ver rodando no aparelho
 
+- **O emulador esta em `hp240-debian` (ssh, usuario `joseti`) e fica a disposicao.**
+  Antes de dizer que uma mudanca do app esta pronta, conecte nele e rode a tela
+  la; "sem aparelho por perto" nao vale enquanto esse emulador estiver no ar.
 - **Nenhuma mudanca esta pronta sem ter sido vista rodando no aparelho** (ou no
   emulador). Teste de unidade nao mostra tela quebrada, gesto travado nem
   layout errado. Se o aparelho nao estiver acessivel, diga que a mudanca esta
