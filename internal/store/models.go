@@ -181,6 +181,10 @@ type Entry struct {
 	// project entry: concise (one line per item) or full (detail and commits).
 	// Entries that are not MCP projects keep the default "concise".
 	SummaryDetail string
+	// Icon e o icone de pagina escolhido para o projeto (emoji ou texto curto).
+	// Vazio significa que o cliente decide o fallback. O servidor nao
+	// interpreta o valor.
+	Icon string
 
 	// Versoes dos campos editaveis, como o cliente leu (so preenchidas nas
 	// leituras que as trazem). Sao os valores **exatos** gravados no banco: o

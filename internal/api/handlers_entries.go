@@ -76,6 +76,9 @@ func entryJSON(e store.Entry) map[string]any {
 		// Nivel do resumo do projeto MCP: concise ou full. Nas notas comuns
 		// permanece o padrao (concise).
 		"summary_detail": e.SummaryDetail,
+		// Icone de pagina escolhido para o projeto. Vazio deixa o fallback para
+		// o cliente.
+		"icon": e.Icon,
 	}
 	if e.ChapterPosition != nil {
 		body["chapter_position"] = *e.ChapterPosition
@@ -460,6 +463,9 @@ type patchEntryRequest struct {
 	// not allowed when the field is sent: the client must choose concise or
 	// full. A last write wins.
 	SummaryDetail *string `json:"summary_detail"`
+	// Icon changes the page icon of the entry. It is a pointer so an absent
+	// field does not clear it; an empty string does clear it.
+	Icon *string `json:"icon"`
 	// Versions are the versions of title/recorded_at the client last read.
 	// Fields whose version moved on are not written; they come back as a
 	// conflict so the user decides instead of the last write winning blindly.
@@ -488,7 +494,8 @@ func (s *Server) handlePatchEntry(w http.ResponseWriter, r *http.Request) {
 	hasChapterMeta := req.ChapterStatus != nil || req.ChapterGoalWords != nil ||
 		req.ChapterSynopsis != nil || req.ChapterBeats != nil || req.ChapterNotes != nil
 	if req.Title == nil && recordedAt == nil && req.NotebookID == nil && req.Archived == nil &&
-		req.Author == nil && req.ChapterKind == nil && !hasChapterMeta && req.SummaryDetail == nil {
+		req.Author == nil && req.ChapterKind == nil && !hasChapterMeta && req.SummaryDetail == nil &&
+		req.Icon == nil {
 		writeError(w, http.StatusBadRequest, "empty_patch", "nada para atualizar")
 		return
 	}
@@ -514,6 +521,10 @@ func (s *Server) handlePatchEntry(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.SummaryDetail != nil && !store.ValidSummaryDetail(strings.TrimSpace(*req.SummaryDetail)) {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_summary_detail", "summary_detail deve ser concise ou full")
+		return
+	}
+	if req.Icon != nil && !store.ValidIcon(*req.Icon) {
+		writeError(w, http.StatusUnprocessableEntity, "invalid_icon", "icon invalido")
 		return
 	}
 	versions, conflict, err := s.deps.Store.UpdateEntryFields(r.Context(), id, req.Title, recordedAt,
@@ -564,6 +575,20 @@ func (s *Server) handlePatchEntry(w http.ResponseWriter, r *http.Request) {
 			}
 			if errors.Is(err, store.ErrInvalidSummaryDetail) {
 				writeError(w, http.StatusUnprocessableEntity, "invalid_summary_detail", "summary_detail deve ser concise ou full")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			return
+		}
+	}
+	if req.Icon != nil {
+		if _, err := s.deps.Store.UpdateEntryIcon(r.Context(), id, *req.Icon); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "not_found", "entrada inexistente")
+				return
+			}
+			if errors.Is(err, store.ErrInvalidIcon) {
+				writeError(w, http.StatusUnprocessableEntity, "invalid_icon", "icon invalido")
 				return
 			}
 			writeError(w, http.StatusInternalServerError, "internal", err.Error())

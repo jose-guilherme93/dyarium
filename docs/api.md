@@ -176,6 +176,9 @@ aprende que a nota foi apagada e nao a ressuscita.
   antes do campo vem com os dois vazios.
 - `summary_detail` e o nivel do resumo do projeto MCP daquela entrada:
   `concise` (padrao) ou `full`. Nas notas comuns permanece `concise`.
+- `icon` e o icone de pagina escolhido para a entrada (emoji ou texto curto), do
+  painel de projetos. Vazio e o padrao: o cliente decide o fallback. O servidor
+  nao interpreta o valor.
 - `analysis_at` e quando a analise mais nova foi gravada no servidor (vazio quando
   nao ha analise). E o sinal de atualizacao do app: quando o valor muda, ele busca
   a analise uma vez e guarda no banco; a ficha mostra sempre a copia local, sem
@@ -263,6 +266,7 @@ Atualiza campos editaveis com versao por campo.
   "archived": true,
   "author": "mixed",
   "summary_detail": "full",
+  "icon": "🌿",
   "versions": { "title": "...", "recorded_at": "..." }
 }
 ```
@@ -297,6 +301,10 @@ Resposta 200: `{ "status": "ok", "versions": { "title": "...", "recorded_at": ".
 - `summary_detail` (`concise` ou `full`) muda o nivel do resumo do projeto MCP
   daquela entrada; outro valor responde 422 `invalid_summary_detail`. Nao tem
   versao: a ultima gravacao vence.
+- `icon` troca o icone de pagina da entrada (emoji ou texto curto; vazio limpa).
+  O campo so e gravado quando enviado: um PATCH sem `icon` preserva o valor. Nao
+  tem versao: a ultima gravacao vence. Conteudo com caractere de controle ou
+  acima do limite de tamanho responde 422 `invalid_icon`.
 - Nao altera o audio.
 
 ### POST /api/v1/entries
@@ -361,6 +369,7 @@ Manifesto compacto para reconciliacao. Parametros: `kind` (`entries`, `deleted` 
       "chapter_beats": "",
       "chapter_notes": "",
       "summary_detail": "concise",
+      "icon": "",
       "tags": ["..."]
     }
   ],
