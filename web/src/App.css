@@ -2738,6 +2738,7 @@
   gap: calc(var(--space) * 2);
   margin: 0;
   padding: 0;
+  min-width: 0;
 }
 
 .chip {
@@ -2746,6 +2747,11 @@
   padding: calc(var(--space)) calc(var(--space) * 3);
   font-size: 12px;
   background: var(--color-bg);
+  /* Palavra longa sem espaco (URL, sequencia de teste) estourava o cartao e a
+     pagina: a pílula quebra por qualquer ponto e nunca passa da largura. */
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .chip--swatch {
