@@ -1395,6 +1395,12 @@
   font-size: 13px;
 }
 
+/* O aviso e fixo: sem reservar a altura dele o texto cobre a marca da sidebar
+   e o titulo da tela. O grid encolhe pelo padding (box-sizing: border-box). */
+.app:has(> .offline-banner) {
+  padding-top: calc(var(--space) * 8);
+}
+
 /* ---------- settings cards ---------- */
 
 .card {
