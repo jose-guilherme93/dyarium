@@ -334,5 +334,5 @@ export function formatNoteDate(iso: string | undefined): string {
     ? new Date(Number(dayOnly[1]), Number(dayOnly[2]) - 1, Number(dayOnly[3]))
     : new Date(iso);
   if (Number.isNaN(date.getTime())) return '';
-  return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' });
+  return date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }

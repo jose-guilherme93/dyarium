@@ -10,6 +10,7 @@ import { Text } from '@/components/AppText';
 import { Press } from '@/components/Press';
 
 import { Button } from '@/components/Button';
+import { BottomSheet } from '@/components/BottomSheet';
 import { Screen } from '@/components/Screen';
 import { formatBytes, formatDateTime } from '@/core/format';
 import {
@@ -110,6 +111,7 @@ export default function BackupScreen() {
   const [progress, setProgress] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [loaded, setLoaded] = useState<{ folder: string; info: BackupInfo | null } | null>(null);
   const [reload, setReload] = useState(0);
   // Pedido de parada do centro de atividade. O produtor confere entre notas.
@@ -340,13 +342,16 @@ export default function BackupScreen() {
                   backupLastRunAt ? ` · Último backup: ${formatDateTime(backupLastRunAt)}` : ''
                 }`}
           </Text>
+          <Press
+            style={styles.helpRow}
+            onPress={() => setHelpOpen(true)}
+            accessibilityRole="button"
+            accessibilityLabel="O que entra no backup"
+          >
+            <Ionicons name="information-circle-outline" size={16} color={colors.textSecondary} />
+            <Text style={styles.helpText}>O que entra no backup</Text>
+          </Press>
         </View>
-
-        <Text style={styles.hint}>
-          O backup copia tudo o que você tem para uma pasta do aparelho: notas, áudio, imagens e
-          links, em ordem. Cada arquivo leva um código de verificação, conferido ao restaurar. Use
-          uma pasta dedicada (de preferência vazia) e que fique acessível.
-        </Text>
 
         <Button
           label={backupFolder ? 'Trocar pasta' : 'Escolher pasta'}
@@ -374,6 +379,20 @@ export default function BackupScreen() {
         {message ? <Text style={styles.success}>{message}</Text> : null}
         {error ? <Text style={styles.error}>{error}</Text> : null}
       </ScrollView>
+
+      <BottomSheet
+        visible={helpOpen}
+        onClose={() => setHelpOpen(false)}
+        cardStyle={styles.helpSheet}
+      >
+        <Text style={styles.sheetTitle}>O que entra no backup</Text>
+        <Text style={styles.sheetBody}>
+          O backup copia tudo o que você tem para uma pasta do aparelho: notas, áudio, imagens e
+          links, em ordem. Cada arquivo leva um código de verificação, conferido ao restaurar. Use
+          uma pasta dedicada (de preferência vazia) e que fique acessível.
+        </Text>
+        <Button label="Entendi" onPress={() => setHelpOpen(false)} />
+      </BottomSheet>
     </Screen>
   );
 }
@@ -405,7 +424,31 @@ const baseStyles = defineStyles({
   folder: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
   infoStrong: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
   infoFaint: { color: baseColors.textSecondary, fontSize: fontSize.sm },
-  hint: { color: baseColors.textSecondary, fontSize: fontSize.sm, lineHeight: 20 },
+  helpRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingTop: spacing.sm,
+  },
+  helpText: { color: baseColors.textSecondary, fontSize: fontSize.sm },
+  helpSheet: {
+    paddingHorizontal: spacing.xl,
+    paddingTop: spacing.xl,
+    paddingBottom: spacing.xxl,
+    gap: spacing.sm,
+  },
+  sheetTitle: {
+    color: baseColors.text,
+    fontSize: fontSize.lg,
+    fontWeight: '700',
+    marginBottom: spacing.sm,
+  },
+  sheetBody: {
+    color: baseColors.textSecondary,
+    fontSize: fontSize.md,
+    lineHeight: 22,
+    marginBottom: spacing.lg,
+  },
   status: { color: baseColors.textSecondary, fontSize: fontSize.sm },
   frequencyRow: { flexDirection: 'row', gap: spacing.xs, alignItems: 'center' },
   frequencyButton: {

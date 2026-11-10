@@ -104,8 +104,11 @@ describe('formatDateTime', () => {
 
 describe('formatStamp', () => {
   const now = new Date(2026, 9, 16, 12, 0);
-  it('hoje mostra so a hora', () => {
-    expect(formatStamp(new Date(2026, 9, 16, 9, 5).toISOString(), now)).toBe('09:05');
+  it('hoje fala em palavra e mostra a hora', () => {
+    expect(formatStamp(new Date(2026, 9, 16, 9, 5).toISOString(), now)).toBe('hoje 09:05');
+  });
+  it('ontem tambem fala em palavra', () => {
+    expect(formatStamp(new Date(2026, 9, 15, 23, 52).toISOString(), now)).toBe('ontem 23:52');
   });
   it('mesmo ano mostra dia/mes e hora', () => {
     expect(formatStamp(new Date(2026, 9, 10, 22, 5).toISOString(), now)).toBe('10/10 22:05');

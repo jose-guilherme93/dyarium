@@ -211,8 +211,8 @@ describe('formatExcerptTime', () => {
 });
 
 describe('formatNoteDate', () => {
-  it('mostra dd/mm/aa e ignora data inválida', () => {
-    expect(formatNoteDate('2026-10-20T10:00:00Z')).toMatch(/^20\/10\/26$/);
+  it('mostra dd/mm/aaaa e ignora data inválida', () => {
+    expect(formatNoteDate('2026-10-20T10:00:00Z')).toMatch(/^20\/10\/2026$/);
     expect(formatNoteDate(undefined)).toBe('');
     expect(formatNoteDate('nao-e-data')).toBe('');
   });
