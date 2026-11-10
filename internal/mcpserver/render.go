@@ -1,6 +1,7 @@
 package mcpserver
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
@@ -19,7 +20,8 @@ const (
 // comes right after the date in both modes: it is where the agent puts the
 // numbers that matter (performance, bugs, versions). Then come one-line items.
 // Technical detail, extra commits and links live inside a collapsible block,
-// closed in concise mode and open in full mode.
+// closed in concise mode and open in full mode. After the technical block comes
+// the canonical JSON fence so machine clients can parse the same session.
 func renderBlock(in projectSummaryInput, detail, computer, marker string, now time.Time) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "## %s · %s\n", now.UTC().Format("2006-01-02 15:04"), safeInline(computer))
@@ -35,8 +37,58 @@ func renderBlock(in projectSummaryInput, detail, computer, marker string, now ti
 		renderTechnical(&b, in, detail == store.SummaryDetailFull)
 	}
 	b.WriteString("\n")
+	// The fence sits right before the dedup marker, one blank line after the
+	// technical block and one before the marker. On the (impossible today)
+	// encoding failure the fence is omitted; raw payload types never fail, so
+	// the human block is never rewritten to hunt down a broken fence.
+	if fence := renderPayload(in, computer, detail, now); fence != "" {
+		b.WriteString(fence)
+		b.WriteString("\n\n")
+	}
 	b.WriteString(marker)
 	return b.String()
+}
+
+// payloadBlock is the stable machine contract read by the clients. Optional
+// fields use omitempty so an empty session stays a short single line.
+type payloadBlock struct {
+	Version int             `json:"v"`
+	Project string          `json:"project"`
+	Date    string          `json:"date"`
+	Time    string          `json:"time"`
+	Host    string          `json:"host"`
+	Detail  string          `json:"detail"`
+	Summary string          `json:"summary,omitempty"`
+	Items   []summaryItem   `json:"items,omitempty"`
+	Commits []summaryCommit `json:"commits,omitempty"`
+	Links   []summaryLink   `json:"links,omitempty"`
+}
+
+// renderPayload encodes one session as a single-line JSON fence named
+// dyarium-json. The values are those of the already normalized input, not the
+// escaped human text, and the encoder HTML escaping is off so a round trip
+// returns the original characters. The date and time match the block header.
+func renderPayload(in projectSummaryInput, computer, detail string, now time.Time) string {
+	payload := payloadBlock{
+		Version: 1,
+		Project: in.Project,
+		Date:    now.UTC().Format(dateLayout),
+		Time:    now.UTC().Format("15:04"),
+		Host:    safeInline(computer),
+		Detail:  detail,
+		Summary: in.Summary,
+		Items:   in.Items,
+		Commits: in.Commits,
+		Links:   in.Links,
+	}
+	var raw strings.Builder
+	enc := json.NewEncoder(&raw)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(payload); err != nil {
+		return ""
+	}
+	line := strings.TrimSuffix(raw.String(), "\n")
+	return "```dyarium-json\n" + line + "\n```"
 }
 
 // renderItems writes one line per item. The summary is already written by

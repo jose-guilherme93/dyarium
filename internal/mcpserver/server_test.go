@@ -210,11 +210,20 @@ func TestRecordUsesEntrySummaryDetail(t *testing.T) {
 			t.Fatalf("full body missing %q:\n%s", want, body)
 		}
 	}
-	if strings.Contains(body, "duplicado") {
+	// The commit already shown next to the item stays out of the human commit
+	// list; the canonical fence repeats the raw input on purpose, so the dedup
+	// is checked only before the fence.
+	if fenceAt := strings.Index(body, "```dyarium-json"); strings.Contains(body[:fenceAt], "duplicado") {
 		t.Fatalf("commit already shown per item was repeated:\n%s", body)
 	}
-	// The summary appears once, before the collapsible block in full mode.
-	if strings.Count(body, "resumo completo") != 1 {
+	// The summary appears once in the human part; the canonical JSON fence
+	// repeats the whole session, so count only what comes before the
+	// collapsible block.
+	visible := body
+	if at := strings.Index(body, ":::details"); at >= 0 {
+		visible = body[:at]
+	}
+	if strings.Count(visible, "resumo completo") != 1 {
 		t.Fatalf("summary repeated or missing:\n%s", body)
 	}
 	if strings.Index(body, "resumo completo") > strings.Index(body, ":::details open") {
@@ -239,6 +248,9 @@ func TestRecordDoesNotDuplicateIdenticalCall(t *testing.T) {
 	}
 	if got := strings.Count(body, "## "); got != 1 {
 		t.Fatalf("session blocks = %d, want 1:\n%s", got, body)
+	}
+	if got := strings.Count(body, "```dyarium-json"); got != 1 {
+		t.Fatalf("payload fences = %d, want 1:\n%s", got, body)
 	}
 }
 
