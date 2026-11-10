@@ -11843,6 +11843,50 @@
 .pj-col-c { width: 110px; }
 .pj-col-s { width: 96px; }
 
+/* --- Redimensionamento de coluna -----------------------------------------
+   O th continua "sticky" (o cabecalho gruda no topo do scroll) e, por ser um
+   elemento posicionado, ele tambem serve de bloco contenitor do handle na
+   borda direita da coluna. Trocar por "relative" quebraria o cabecalho. */
+.pj-resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+  z-index: 3;
+}
+
+.pj-resize:hover {
+  background: var(--accent-soft);
+}
+
+.pj-resize:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+/* Linha de 1px na borda da coluna enquanto o arraste acontece. */
+.pj-resize--on::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 1px;
+  background: var(--accent);
+}
+
+.pj-vtable.pj-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.pj-vtable.pj-resizing thead th {
+  user-select: none;
+}
+
 .pj-pcell {
   display: inline-flex;
   align-items: center;

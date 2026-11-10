@@ -1,5 +1,9 @@
-import { useEffect, useState } from "react";
-import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
+import type {
+  MouseEvent as ReactMouseEvent,
+  PointerEvent as ReactPointerEvent,
+  ReactNode,
+} from "react";
 import { EmojiPicker } from "../components/EmojiPicker";
 import { Spinner } from "../components/Status";
 import { ChevronIcon, ExternalIcon, FilterIcon, RefreshIcon, SearchIcon, SlidersIcon } from "../components/icons";
@@ -56,12 +60,23 @@ interface TableCols {
   commit: boolean;
   sess: boolean;
 }
+/** Colunas que o usuario pode redimensionar arrastando a borda. */
+type TableColKey = "proj" | "kind" | "data" | "commit" | "sess";
+/** Arraste em andamento: onde comecou, a largura inicial e a largura viva. */
+interface ResizeState {
+  key: TableColKey;
+  startX: number;
+  startWidth: number;
+  width: number;
+}
 interface TablePrefs {
   width: TableWidth;
   density: TableDensity;
   cols: TableCols;
   appearance: TableAppearance;
   customOpen: boolean;
+  /** Largura fixa por coluna, em px. Ausente = coluna no automatico. */
+  colWidths: Partial<Record<TableColKey, number>>;
 }
 
 const KIND_ORDER = ["feat", "fix", "perf", "test", "docs", "chore"];
@@ -82,8 +97,31 @@ const DEFAULT_TABLE_PREFS: TablePrefs = {
   cols: { proj: true, kind: true, data: true, commit: true, sess: true },
   appearance: "grade",
   customOpen: false,
+  colWidths: {},
 };
 const TABLE_COL_KEYS = ["proj", "kind", "data", "commit", "sess"] as const;
+/** Limites do arraste: abaixo disso a coluna fica inutil, acima disso vira oleo. */
+const MIN_COL_WIDTH = 56;
+const MAX_COL_WIDTH = 640;
+/** Espelhando as classes .pj-col-* do CSS: largura natural de cada coluna. */
+const DEFAULT_COL_WIDTHS: Record<TableColKey, number> = {
+  proj: 150,
+  kind: 72,
+  data: 72,
+  commit: 110,
+  sess: 96,
+};
+/** Passo do teclado: seta move 8px, com Shift 32px. */
+const KEY_STEP = 8;
+const KEY_STEP_FAST = 32;
+/** A coluna Item nunca some: ela ganha o que sobra, mas nunca menos que isto. */
+const ITEM_MIN_WIDTH = 140;
+
+function clampColWidth(value: number): number {
+  if (!Number.isFinite(value)) return MIN_COL_WIDTH;
+  return Math.min(MAX_COL_WIDTH, Math.max(MIN_COL_WIDTH, Math.round(value)));
+}
+
 const TABLE_COL_LABELS: Record<string, string> = {
   proj: "Projeto",
   kind: "Kind",
@@ -98,7 +136,7 @@ const TABLE_DENSITY_VALUES: Record<TableDensity, { rh: number; fs: number }> = {
 };
 
 function normalizeTablePrefs(raw: unknown): TablePrefs {
-  const base = { ...DEFAULT_TABLE_PREFS, cols: { ...DEFAULT_TABLE_PREFS.cols } };
+  const base = { ...DEFAULT_TABLE_PREFS, cols: { ...DEFAULT_TABLE_PREFS.cols }, colWidths: {} };
   if (!raw || typeof raw !== "object") return base;
   const obj = raw as Record<string, unknown>;
   const width = obj.width === "contained" || obj.width === "full" ? obj.width : base.width;
@@ -121,17 +159,31 @@ function normalizeTablePrefs(raw: unknown): TablePrefs {
     for (const key of TABLE_COL_KEYS) cols[key] = DEFAULT_TABLE_PREFS.cols[key];
   }
   const customOpen = typeof obj.customOpen === "boolean" ? obj.customOpen : base.customOpen;
-  return { width, density, cols, appearance, customOpen };
+  // Larguras: numero valido vira largura; o resto (string, negativo, NaN) e
+  // ignorado e a coluna fica no automatico.
+  const widthsRaw =
+    obj.colWidths && typeof obj.colWidths === "object"
+      ? (obj.colWidths as Record<string, unknown>)
+      : {};
+  const colWidths: Partial<Record<TableColKey, number>> = {};
+  for (const key of TABLE_COL_KEYS) {
+    const value = widthsRaw[key];
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+      colWidths[key] = clampColWidth(value);
+    }
+  }
+  return { width, density, cols, appearance, customOpen, colWidths };
 }
 
 function loadTablePrefs(): TablePrefs {
-  if (typeof window === "undefined") return { ...DEFAULT_TABLE_PREFS, cols: { ...DEFAULT_TABLE_PREFS.cols } };
+  const base = { ...DEFAULT_TABLE_PREFS, cols: { ...DEFAULT_TABLE_PREFS.cols }, colWidths: {} };
+  if (typeof window === "undefined") return base;
   try {
     const raw = window.localStorage.getItem(TABLE_PREFS_KEY);
-    if (!raw) return { ...DEFAULT_TABLE_PREFS, cols: { ...DEFAULT_TABLE_PREFS.cols } };
+    if (!raw) return base;
     return normalizeTablePrefs(JSON.parse(raw));
   } catch {
-    return { ...DEFAULT_TABLE_PREFS, cols: { ...DEFAULT_TABLE_PREFS.cols } };
+    return base;
   }
 }
 
@@ -207,6 +259,9 @@ export function ProjectsView({
     typeof window === "undefined" ? false : window.innerWidth <= 720,
   );
   const [picker, setPicker] = useState<PickerSpot | null>(null);
+  /** Arraste de coluna em andamento: guarda a origem e a largura ao vivo. */
+  const [resize, setResizeState] = useState<ResizeState | null>(null);
+  const resizeRef = useRef<ResizeState | null>(null);
 
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
@@ -364,7 +419,90 @@ export function ProjectsView({
     });
   };
   const resetPrefs = () =>
-    setTablePrefs({ ...DEFAULT_TABLE_PREFS, cols: { ...DEFAULT_TABLE_PREFS.cols } });
+    setTablePrefs({
+      ...DEFAULT_TABLE_PREFS,
+      cols: { ...DEFAULT_TABLE_PREFS.cols },
+      colWidths: {},
+    });
+
+  // --- Redimensionamento de coluna ---------------------------------------
+  // A largura vive nas prefs: o <col> recebe o valor e a coluna Item continua
+  // no automatico, absorvendo o que sobrar.
+
+  /** Largura em vigor da coluna: a salva, ou a natural quando nunca foi salva. */
+  const widthOf = (key: TableColKey): number =>
+    tablePrefs.colWidths[key] ?? DEFAULT_COL_WIDTHS[key];
+
+  /** Largura aplicada agora: durante o arraste vale a do mouse. */
+  const liveWidthOf = (key: TableColKey): number =>
+    resize && resize.key === key ? resize.width : widthOf(key);
+
+  /** A coluna Item nunca some: ela ganha o que sobra, mas nunca menos que isto. */
+  const hasCustomWidth =
+    resize !== null ||
+    visibleOptionalCols.some((key) => tablePrefs.colWidths[key] !== undefined);
+  /** Soma das colunas fixas: e o piso da tabela, para o scroll horizontal
+   *  aparecer em vez de espremer a coluna Item ate zero. */
+  const tableMinWidth = hasCustomWidth
+    ? visibleOptionalCols.reduce((sum, key) => sum + liveWidthOf(key), 0) + ITEM_MIN_WIDTH
+    : undefined;
+
+  const setResize = (next: ResizeState | null) => {
+    resizeRef.current = next;
+    setResizeState(next);
+  };
+
+  const beginResize = (key: TableColKey, event: ReactPointerEvent<HTMLSpanElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    // A largura real da coluna manda; o fallback cobre o teste sem layout.
+    const th = event.currentTarget.closest("th");
+    const measured = th ? th.getBoundingClientRect().width : 0;
+    const startWidth = measured > 0 ? measured : widthOf(key);
+    setResize({ key, startX: event.clientX, startWidth, width: startWidth });
+    const target = event.currentTarget;
+    if (typeof target.setPointerCapture === "function") {
+      try {
+        target.setPointerCapture(event.pointerId);
+      } catch {
+        // navegador sem captura de ponteiro: o arraste segue pelos eventos.
+      }
+    }
+  };
+
+  const moveResize = (key: TableColKey, event: ReactPointerEvent<HTMLSpanElement>) => {
+    const state = resizeRef.current;
+    if (!state || state.key !== key) return;
+    event.preventDefault();
+    setResize({
+      ...state,
+      width: clampColWidth(state.startWidth + (event.clientX - state.startX)),
+    });
+  };
+
+  const endResize = (key: TableColKey) => {
+    const state = resizeRef.current;
+    if (!state || state.key !== key) return;
+    setResize(null);
+    // Clique sem mover nao grava: a coluna continua no automatico.
+    if (state.width === widthOf(key)) return;
+    updatePrefs({ colWidths: { ...tablePrefs.colWidths, [key]: state.width } });
+  };
+
+  /** Teclado: setas andam 8px (Shift 32px). */
+  const nudgeWidth = (key: TableColKey, delta: number) => {
+    const state = resizeRef.current;
+    const base = state && state.key === key ? state.width : widthOf(key);
+    updatePrefs({ colWidths: { ...tablePrefs.colWidths, [key]: clampColWidth(base + delta) } });
+  };
+
+  /** Volta a coluna para o automatico (duplo clique ou Home). */
+  const clearWidth = (key: TableColKey) => {
+    const next = { ...tablePrefs.colWidths };
+    delete next[key];
+    updatePrefs({ colWidths: next });
+  };
 
   const toggleCol = (key: string) => {
     setTablePrefs((current) => {
@@ -644,7 +782,7 @@ export function ProjectsView({
                   data-density={tablePrefs.density}
                 >
                   <div
-                    className={`pj-vtable ap-${tablePrefs.appearance} density-${tablePrefs.density} ${tablePrefs.appearance}`}
+                    className={`pj-vtable ap-${tablePrefs.appearance} density-${tablePrefs.density} ${tablePrefs.appearance}${resize ? " pj-resizing" : ""}`}
                     data-density={tablePrefs.density}
                     data-densidade={tablePrefs.density}
                     data-d={tablePrefs.density}
@@ -656,7 +794,7 @@ export function ProjectsView({
                     }}
                     hidden={!tableVisible}
                   >
-                    <table>
+                    <table style={tableMinWidth ? { minWidth: tableMinWidth } : undefined}>
                       <colgroup>
                         {(() => {
                           const visible = new Set(visibleOptionalCols);
@@ -675,7 +813,18 @@ export function ProjectsView({
                                       : key === "commit"
                                         ? "pj-col-c"
                                         : "pj-col-s";
-                              nodes.push(<col key={key} className={cls} />);
+                              // Largura salva pelo usuario; sem ela a coluna fica
+                              // no automatico da tabela.
+                              const saved = tablePrefs.colWidths[key];
+                              const applied = resize && resize.key === key ? resize.width : saved;
+                              nodes.push(
+                                <col
+                                  key={key}
+                                  className={cls}
+                                  style={applied ? { width: applied } : undefined}
+                                  data-col={key}
+                                />,
+                              );
                             }
                           }
                           return nodes;
@@ -691,9 +840,42 @@ export function ProjectsView({
                                 nodes.push(<th key="item">Item</th>);
                               } else if (visible.has(key)) {
                                 const right = key === "data" || key === "commit";
+                                const dragging = resize?.key === key;
                                 nodes.push(
                                   <th key={key} className={right ? "pj-num" : undefined}>
                                     {TABLE_COL_LABELS[key]}
+                                    <span
+                                      className={`pj-resize${dragging ? " pj-resize--on" : ""}`}
+                                      role="separator"
+                                      aria-orientation="vertical"
+                                      aria-label={`Redimensionar ${TABLE_COL_LABELS[key]}`}
+                                      aria-valuenow={liveWidthOf(key)}
+                                      aria-valuemin={MIN_COL_WIDTH}
+                                      aria-valuemax={MAX_COL_WIDTH}
+                                      tabIndex={0}
+                                      onPointerDown={(event) => beginResize(key, event)}
+                                      onPointerMove={(event) => moveResize(key, event)}
+                                      onPointerUp={() => endResize(key)}
+                                      onPointerCancel={() => endResize(key)}
+                                      onDoubleClick={(event) => {
+                                        event.preventDefault();
+                                        event.stopPropagation();
+                                        clearWidth(key);
+                                      }}
+                                      onKeyDown={(event) => {
+                                        const step = event.shiftKey ? KEY_STEP_FAST : KEY_STEP;
+                                        if (event.key === "ArrowLeft") {
+                                          event.preventDefault();
+                                          nudgeWidth(key, -step);
+                                        } else if (event.key === "ArrowRight") {
+                                          event.preventDefault();
+                                          nudgeWidth(key, step);
+                                        } else if (event.key === "Home") {
+                                          event.preventDefault();
+                                          clearWidth(key);
+                                        }
+                                      }}
+                                    />
                                   </th>,
                                 );
                               }

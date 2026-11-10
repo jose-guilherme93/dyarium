@@ -377,3 +377,112 @@ describe("ProjectsView", () => {
     expect(screen.queryAllByText(/terminal do mapa em tres camadas/)).toHaveLength(0);
   });
 });
+
+describe("ProjectsView: coluna redimensionavel", () => {
+  const colOf = (table: HTMLElement, key: string) =>
+    table.querySelector(`col[data-col="${key}"]`) as HTMLTableColElement;
+
+  const handleOf = (name: string) => screen.getByRole("separator", { name });
+
+  it("arrastar a borda da coluna Kind muda a largura e grava no localStorage", async () => {
+    renderView();
+    const table = await screen.findByRole("table");
+    const handle = handleOf("Redimensionar Kind");
+
+    fireEvent.pointerDown(handle, { clientX: 100, pointerId: 1, button: 0 });
+    fireEvent.pointerMove(handle, { clientX: 140, pointerId: 1 });
+    expect(colOf(table, "kind").style.width).toBe("112px");
+
+    fireEvent.pointerUp(handle, { clientX: 140, pointerId: 1 });
+    await waitFor(() => {
+      const saved = JSON.parse(localStorage.getItem("dyarium.projetos.tabela") || "{}");
+      expect(saved.colWidths?.kind).toBe(112);
+    });
+    expect(colOf(table, "kind").style.width).toBe("112px");
+  });
+
+  it("a largura trava em 56px por baixo e em 640px por cima", async () => {
+    renderView();
+    const table = await screen.findByRole("table");
+    const handle = handleOf("Redimensionar Kind");
+
+    fireEvent.pointerDown(handle, { clientX: 100, pointerId: 1, button: 0 });
+    fireEvent.pointerMove(handle, { clientX: 0, pointerId: 1 });
+    expect(colOf(table, "kind").style.width).toBe("56px");
+    fireEvent.pointerUp(handle, { clientX: 0, pointerId: 1 });
+
+    fireEvent.pointerDown(handle, { clientX: 100, pointerId: 1, button: 0 });
+    fireEvent.pointerMove(handle, { clientX: 1000, pointerId: 1 });
+    expect(colOf(table, "kind").style.width).toBe("640px");
+  });
+
+  it("duplo clique devolve a coluna ao automatico", async () => {
+    renderView();
+    const table = await screen.findByRole("table");
+    const handle = handleOf("Redimensionar Kind");
+
+    fireEvent.pointerDown(handle, { clientX: 100, pointerId: 1, button: 0 });
+    fireEvent.pointerMove(handle, { clientX: 160, pointerId: 1 });
+    fireEvent.pointerUp(handle, { clientX: 160, pointerId: 1 });
+    expect(colOf(table, "kind").style.width).toBe("132px");
+
+    fireEvent.doubleClick(handle);
+    expect(colOf(table, "kind").style.width).toBe("");
+    await waitFor(() => {
+      const saved = JSON.parse(localStorage.getItem("dyarium.projetos.tabela") || "{}");
+      expect(saved.colWidths?.kind).toBeUndefined();
+    });
+  });
+
+  it("Restaurar limpa as larguras salvas", async () => {
+    renderView();
+    const table = await screen.findByRole("table");
+    const handle = handleOf("Redimensionar Kind");
+
+    fireEvent.pointerDown(handle, { clientX: 100, pointerId: 1, button: 0 });
+    fireEvent.pointerMove(handle, { clientX: 160, pointerId: 1 });
+    fireEvent.pointerUp(handle, { clientX: 160, pointerId: 1 });
+    expect(colOf(table, "kind").style.width).toBe("132px");
+
+    fireEvent.click(screen.getByRole("button", { name: /Restaurar/i }));
+    expect(colOf(table, "kind").style.width).toBe("");
+    await waitFor(() => {
+      const saved = JSON.parse(localStorage.getItem("dyarium.projetos.tabela") || "{}");
+      expect(saved.colWidths?.kind).toBeUndefined();
+    });
+  });
+
+  it("as setas no handle com foco mudam a largura em 8px", async () => {
+    renderView();
+    const table = await screen.findByRole("table");
+    const handle = handleOf("Redimensionar Kind");
+    handle.focus();
+
+    fireEvent.keyDown(handle, { key: "ArrowRight" });
+    expect(colOf(table, "kind").style.width).toBe("80px");
+
+    fireEvent.keyDown(handle, { key: "ArrowRight", shiftKey: true });
+    expect(colOf(table, "kind").style.width).toBe("112px");
+
+    fireEvent.keyDown(handle, { key: "ArrowLeft" });
+    expect(colOf(table, "kind").style.width).toBe("104px");
+
+    // Home devolve a coluna ao automatico.
+    fireEvent.keyDown(handle, { key: "Home" });
+    expect(colOf(table, "kind").style.width).toBe("");
+  });
+
+  it("largura salva em localStorage volta no remount; valor invalido e ignorado", async () => {
+    localStorage.setItem(
+      "dyarium.projetos.tabela",
+      JSON.stringify({ colWidths: { kind: 200, data: -10, sess: "larga", commit: null } }),
+    );
+    renderView();
+
+    const table = await screen.findByRole("table");
+    expect(colOf(table, "kind").style.width).toBe("200px");
+    expect(colOf(table, "data").style.width).toBe("");
+    expect(colOf(table, "sess").style.width).toBe("");
+    expect(colOf(table, "commit").style.width).toBe("");
+  });
+});
