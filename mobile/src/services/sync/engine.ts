@@ -53,6 +53,7 @@ import {
   removeTombstone,
   touchServerSync,
   upsertEntrySync,
+  upsertEntrySyncMany,
   upsertNotebookSync,
   upsertServer,
   type EntrySyncRow,
@@ -391,6 +392,7 @@ async function backfillSyncRows(
 ): Promise<void> {
   const known = new Set(rows.map((row) => row.recordingId));
   const byId = new Map(remote.map((entry) => [entry.id, entry]));
+  const pending: EntrySyncRow[] = [];
   for (const recording of local) {
     if (!recording.entryId || recording.status !== 'completed' || known.has(recording.id)) {
       continue;
@@ -420,8 +422,9 @@ async function backfillSyncRows(
       syncedAt: entry.updated_at,
     };
     rows.push(row);
-    await upsertEntrySync(row);
+    pending.push(row);
   }
+  await upsertEntrySyncMany(pending);
 }
 
 async function fetchManifest(

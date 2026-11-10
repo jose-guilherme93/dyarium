@@ -110,7 +110,8 @@ export async function syncServerAnalyses(entries: ServerEntry[]): Promise<number
   for (const entry of entries) {
     if (!entry.id || !entry.analysis_at) continue;
     const sourceAt = entry.analysis_at;
-    if ((await getAnalysisSyncAt(entry.id)) === sourceAt) {
+    const last = await getAnalysisSyncAt(entry.id);
+    if (last === sourceAt) {
       marcados += 1;
       continue;
     }
@@ -119,6 +120,13 @@ export async function syncServerAnalyses(entries: ServerEntry[]): Promise<number
     const cached = await getCachedAnalysis(entry.id).catch(() => null);
     if (cached?.origin === 'local') {
       locais += 1;
+      await setAnalysisSyncAt(entry.id, sourceAt);
+      continue;
+    }
+    // Analise do servidor ja guardada, sem marcador (backup restaurado): a
+    // copia local e a deste ambiente. Carimba em vez de baixar de novo; quando
+    // `analysis_at` mudar, a versao nova e buscada normalmente.
+    if (!last && cached) {
       await setAnalysisSyncAt(entry.id, sourceAt);
       continue;
     }
@@ -193,6 +201,11 @@ export async function syncServerAnalysesFor(
     if (cached?.origin === 'local') {
       if (primary) await setAnalysisSyncAt(entry.id, sourceAt);
       else await setAnalysisSyncAtEnv(serverId, entry.id, sourceAt);
+      continue;
+    }
+    // No ambiente primario, analise ja guardada sem marcador veio dele mesmo.
+    if (primary && !last && cached) {
+      await setAnalysisSyncAt(entry.id, sourceAt);
       continue;
     }
 

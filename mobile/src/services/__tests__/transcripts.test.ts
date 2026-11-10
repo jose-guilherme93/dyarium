@@ -269,6 +269,51 @@ describe('syncServerTranscripts', () => {
     expect(mockGetTranscript).not.toHaveBeenCalled();
   });
 
+  it('copia local sem marcador e carimbada sem baixar de novo', async () => {
+    mockGetTranscriptSyncAt.mockResolvedValue(null);
+
+    await expect(
+      syncServerTranscripts(
+        [serverEntry],
+        [
+          {
+            ...recording,
+            transcript: 'ja tenho esta transcricao',
+            transcriptStatus: 'ready',
+            transcriptOrigin: 'server',
+            hasTranscript: true,
+          },
+        ],
+      ),
+    ).resolves.toBe(0);
+    expect(mockGetTranscript).not.toHaveBeenCalled();
+    expect(mockSetTranscriptSyncAt).toHaveBeenCalledWith('e1', serverEntry.transcript_at);
+  });
+
+  it('marcador antigo com copia local ainda busca a versao nova do servidor', async () => {
+    mockGetTranscriptSyncAt.mockResolvedValue('2026-10-20T10:30:00.000Z');
+    mockGetTranscript.mockResolvedValue({
+      model: 'whisper',
+      language: 'pt',
+      text: 'texto revisado',
+      segments: [],
+    });
+
+    await syncServerTranscripts(
+      [serverEntry],
+      [
+        {
+          ...recording,
+          transcript: 'texto antigo',
+          transcriptStatus: 'ready',
+          transcriptOrigin: 'server',
+          hasTranscript: true,
+        },
+      ],
+    );
+    expect(mockGetTranscript).toHaveBeenCalledWith('e1');
+  });
+
   it('falha de rede mantem o sinal para o proximo pull', async () => {
     mockGetTranscript.mockRejectedValue(new Error('network'));
     await syncServerTranscripts([serverEntry], [recording]);

@@ -23,6 +23,14 @@ import { emitRecording } from './uploaderLoop';
 
 const doFetch = globalThis.fetch as unknown as FetchLike;
 
+/** O aparelho ja tem copia da transcricao? (texto ou trechos) */
+function hasLocalTranscript(recording: Recording): boolean {
+  return (
+    (recording.transcript ?? '').trim() !== '' ||
+    (recording.transcriptSegments?.length ?? 0) > 0
+  );
+}
+
 let running = false;
 // Backoff por entrada quando o servidor responde 404 (ainda transcrevendo).
 // Sem isso, cada ciclo de 8 s pedia /transcript de todas as notas pendentes.
@@ -118,9 +126,19 @@ export async function syncServerTranscripts(
   for (const entry of entries) {
     if (!entry.id || !entry.transcript_at) continue;
     const sourceAt = entry.transcript_at;
-    if ((await getTranscriptSyncAt(entry.id)) === sourceAt) continue;
+    const last = await getTranscriptSyncAt(entry.id);
+    if (last === sourceAt) continue;
     const recording = byEntry.get(entry.id);
     if (!recording) {
+      await setTranscriptSyncAt(entry.id, sourceAt);
+      continue;
+    }
+    // Sem marcador (backup restaurado, versao antiga) e com a transcricao ja no
+    // aparelho: a copia local veio deste ambiente. Carimba em vez de baixar de
+    // novo — sincronizar e trocar o que falta, nao rebaixar o que ja se tem.
+    // Quando o servidor mudar a transcricao, `transcript_at` sera outro e a
+    // comparacao volta a pedir a versao nova.
+    if (!last && hasLocalTranscript(recording)) {
       await setTranscriptSyncAt(entry.id, sourceAt);
       continue;
     }
@@ -181,6 +199,11 @@ export async function syncServerTranscriptsFor(
     if (!recording) {
       if (primary) await setTranscriptSyncAt(entry.id, sourceAt);
       else await setTranscriptSyncAtEnv(serverId, entry.id, sourceAt);
+      continue;
+    }
+    // Idem para o ambiente primario: a copia local ja e a deste ambiente.
+    if (primary && !last && hasLocalTranscript(recording)) {
+      await setTranscriptSyncAt(entry.id, sourceAt);
       continue;
     }
     try {
