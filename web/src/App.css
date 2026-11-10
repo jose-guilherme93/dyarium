@@ -11327,6 +11327,9 @@
 .editor-pane--pj .page--projects {
   flex: 1 1 auto;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .pj-back {
@@ -11351,12 +11354,22 @@
 }
 
 .pj-root {
-  min-height: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
 }
 
-.page--projects { padding: 0; }
+.page--projects {
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
 
 /* Caderno MCP: sem lista de previews na sidebar; o espaco da lista empurra o
    rodape de navegacao para baixo, como a .list fazia. */
@@ -11368,15 +11381,44 @@
 .pj-view {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   max-width: none;
   margin: 0 auto;
   padding: 0 24px;
   width: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 .pj-view :focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
+}
+
+.pj-view--center {
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+}
+
+/* Aba Itens: coluna flex de altura cheia; o scroll fica dentro da caixa. */
+.pj-items {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pj-items-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pj-items-body--center {
+  align-items: center;
+  justify-content: center;
 }
 
 .pj-head {
@@ -11625,6 +11667,10 @@
 /* variante tabela */
 .pj-tablewrap {
   width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .pj-tablewrap--contained {
@@ -11639,7 +11685,8 @@
 .pj-vtable {
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  max-height: 560px;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
   background: var(--paper);
 }
@@ -11772,6 +11819,9 @@
 /* variante cartoes */
 .pj-vcards {
   margin-top: 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
 }
 
 .pj-sess {
@@ -11849,9 +11899,7 @@
 
 /* rodape com contagem */
 .pj-foot {
-  position: sticky;
-  bottom: 0;
-  z-index: 10;
+  flex: 0 0 auto;
   margin: 12px -24px 0;
   background: var(--paper);
   border-top: 1px solid var(--line);
@@ -11878,6 +11926,9 @@
 
 /* aba Projetos */
 .pj-projects {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
   padding-top: 12px;
 }
 
