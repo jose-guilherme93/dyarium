@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useDialogFocus } from "../lib/useDialogFocus";
 import type { ChangeEvent } from "react";
 import { CloseIcon, CommentIcon, ImageIcon, ImportIcon, PlusIcon, WritingIcon } from "./icons";
 import { formatDateTime } from "../lib/format";
@@ -240,6 +241,8 @@ export function NotionImportDialog({
       ? Math.min(100, Math.round((progress.done / progress.total) * 100))
       : 0;
 
+  const dialogRef = useDialogFocus<HTMLDivElement>(onClose);
+
   return (
     <div
       className="modal-backdrop"
@@ -247,6 +250,8 @@ export function NotionImportDialog({
       onMouseDown={stage === "running" ? undefined : onClose}
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         className="modal-card notion-import"
         role="dialog"
         aria-modal="true"
