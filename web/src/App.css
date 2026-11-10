@@ -11540,6 +11540,8 @@
   align-items: center;
   gap: 6px;
   height: 28px;
+  flex: none;
+  white-space: nowrap;
   padding: 0 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
