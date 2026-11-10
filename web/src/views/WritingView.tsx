@@ -232,7 +232,15 @@ function BarSeries({
     <div className="chart-card">
       <h3 className="chart-title">{title}</h3>
       {caption ? <p className="muted">{caption}</p> : null}
-      <div className="chart-bars" role="img" aria-label={title}>
+      {/* Com centenas de dias o gap de 2px entre colunas ocupa mais largura que
+          as proprias barras e o grafico some; acima de 60 pontos as barras
+          encostam. */}
+      <div
+        className="chart-bars"
+        role="img"
+        aria-label={title}
+        style={points.length > 60 ? { gap: 0 } : undefined}
+      >
         {points.map((point, index) => (
           <span className="chart-slot" key={index} title={`${point.label}: ${number(point.value)}`}>
             <span
@@ -244,11 +252,16 @@ function BarSeries({
       </div>
       {labelEvery > 0 ? (
         <div className="chart-labels" aria-hidden="true">
-          {points.map((point, index) => (
-            <span className="chart-label" key={index}>
-              {index % labelEvery === 0 ? point.label : ""}
-            </span>
-          ))}
+          {/* Um rotulo a cada passo, e nunca mais que ~10 na largura: 365 dias
+              de um ano nao cabem como 365 <span>, e o texto estourava o cartao. */}
+          {points
+            .map((point, index) => ({ point, index }))
+            .filter(({ index }) => index % Math.max(labelEvery, Math.ceil(points.length / 10)) === 0)
+            .map(({ point, index }) => (
+              <span className="chart-label" key={index}>
+                {point.label}
+              </span>
+            ))}
         </div>
       ) : null}
     </div>

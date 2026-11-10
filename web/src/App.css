@@ -2626,14 +2626,26 @@
   background: var(--color-accent);
 }
 
+/* Com 365 dias no filtro "ano" cada rotulo e uma coluna: sem min-width zero
+   o texto define a largura minima e a serie estoura o cartao, abrindo rolagem
+   horizontal na pagina inteira. */
+.chart-card,
+.chart-grid > * {
+  min-width: 0;
+}
+
 .chart-labels {
   display: flex;
+  justify-content: space-between;
   gap: 2px;
   margin-top: calc(var(--space));
+  min-width: 0;
+  overflow: hidden;
 }
 
 .chart-label {
-  flex: 1;
+  flex: none;
+  white-space: nowrap;
   font-size: 10px;
   color: var(--color-muted);
   text-align: center;
