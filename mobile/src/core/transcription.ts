@@ -82,3 +82,15 @@ export const TRANSCRIPTION_LANGUAGES: { value: TranscriptionLanguage; label: str
 export function whisperLanguage(language: TranscriptionLanguage | undefined): string {
   return language === 'auto' ? 'auto' : 'pt';
 }
+
+/**
+ * Sobra de audio curta demais para virar uma janela de transcricao. Tentar
+ * transcrever os ultimos milissegundos travava a nota em "pendente" com o
+ * checkpoint a 99%: o whisper nao devolve nada util e a passada nunca fecha.
+ */
+export const MIN_TRANSCRIBE_TAIL_MS = 500;
+
+/** Ainda ha audio suficiente depois do checkpoint para uma janela? */
+export function hasTranscribableTail(checkpointMs: number, durationMs: number): boolean {
+  return durationMs - checkpointMs >= MIN_TRANSCRIBE_TAIL_MS;
+}

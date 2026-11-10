@@ -5,6 +5,7 @@ import type { Recording } from '@/core/types';
 import {
   maybeTranscribeLocally,
   releaseTranscriptionContexts,
+  stopTranscription,
   transcribeLocally,
   transcribePendingLocally,
 } from '../localTranscription';
@@ -173,6 +174,26 @@ describe('transcribePendingLocally', () => {
 });
 
 describe('transcribeLocally', () => {
+  it('parada manual nao e refeita sozinha no boot da mesma sessao', async () => {
+    mockListRecordings.mockResolvedValue([localPending]);
+
+    // O usuario parou a passada: o boot nao pode reabrir a mesma nota em loop.
+    await stopTranscription('loc');
+    await transcribePendingLocally();
+
+    expect(mockLoadPrefs).not.toHaveBeenCalled();
+  });
+
+  it('o botao Transcrever vence a parada manual anterior', async () => {
+    mockLoadWhisper.mockReturnValue({});
+    mockDecode.mockRejectedValueOnce(new Error('sem audio'));
+
+    await stopTranscription('loc');
+    await transcribeLocally('loc');
+
+    expect(mockLoadPrefs).toHaveBeenCalled();
+  });
+
   it('retomar a passada nao apaga o texto que ja estava na nota', async () => {
     const withText = { ...localPending, transcript: 'texto antigo' };
     mockGetRecording.mockResolvedValue(withText);

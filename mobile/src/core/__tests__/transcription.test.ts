@@ -1,6 +1,7 @@
 import {
   checkpointPercent,
   DEFAULT_TRANSCRIPTION_MODEL,
+  hasTranscribableTail,
   TRANSCRIPTION_MODELS,
   modelById,
   modelUrl,
@@ -53,5 +54,14 @@ describe('checkpointPercent', () => {
     expect(checkpointPercent({ durationMs: 600_000, transcriptCheckpointMs: 210_000 })).toBe(35);
     expect(checkpointPercent({ durationMs: 600_000, transcriptCheckpointMs: 0 })).toBe(0);
     expect(checkpointPercent({ durationMs: 0, transcriptCheckpointMs: 1000 })).toBe(0);
+  });
+});
+
+describe('hasTranscribableTail', () => {
+  it('nao tenta uma janela quando a sobra e curta demais', () => {
+    expect(hasTranscribableTail(0, 39_559)).toBe(true);
+    expect(hasTranscribableTail(39_232, 39_559)).toBe(false);
+    expect(hasTranscribableTail(39_559, 39_559)).toBe(false);
+    expect(hasTranscribableTail(39_000, 39_500)).toBe(true);
   });
 });

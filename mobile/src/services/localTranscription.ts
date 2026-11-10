@@ -13,7 +13,7 @@
 import { Directory, File, FileMode, Paths } from 'expo-file-system';
 import { AppState } from 'react-native';
 
-import { whisperLanguage } from '@/core/transcription';
+import { hasTranscribableTail, whisperLanguage } from '@/core/transcription';
 import { displayTitle } from '@/core/title';
 import { hasFinalTranscript, shouldAutoTranscribe, type Recording, type TranscriptSegment } from '@/core/types';
 
@@ -74,6 +74,13 @@ const progressListeners = new Map<string, Set<(percent: number) => void>>();
 const runningListeners = new Map<string, Set<(running: boolean) => void>>();
 /** Pedido de parada por gravacao (a janela atual termina e o loop para). */
 const cancelled = new Set<string>();
+
+/**
+ * Notas que o usuario parou nesta sessao. O boot nao tenta de novo sozinho:
+ * uma transcricao lenta nao pode virar um laco a cada abertura. O botao
+ * "Transcrever" limpa a marca e tenta na hora.
+ */
+const manualStops = new Set<string>();
 /** Handle nativo da janela em andamento, para parar na hora quando possivel. */
 const activeRuns = new Map<string, { stop: () => Promise<void> }>();
 /** A notificacao de progresso esta na tela (o servico em primeiro plano roda). */
@@ -145,23 +152,34 @@ function setRunning(id: string, value: boolean): void {
  * segundo plano) retoma de onde parou. O botao do card usa isto para o usuario
  * nunca ficar preso a uma transcricao longa.
  */
-export async function stopTranscription(id: string): Promise<void> {
+export async function stopTranscription(
+  id: string,
+  options: { manual?: boolean } = {},
+): Promise<void> {
   cancelled.add(id);
+  // So a parada pedida pelo usuario marca a nota: uma pausa interna (watchdog,
+  // analise) nao pode impedir a retomada no proximo boot.
+  if (options.manual !== false) manualStops.add(id);
   updateActivity(activityId(id), { detail: 'Parando após o trecho atual' });
   const run = activeRuns.get(id);
-  if (!run) return;
-  try {
-    await run.stop();
-  } catch {
-    // a janela pode ja ter terminado
+  if (!run) {
+    setRunning(id, false);
+    return;
   }
+  // O nativo pode ignorar o pedido de parada; o botao nao pode continuar
+  // dizendo "Transcrevendo" por causa disso.
+  await Promise.race([
+    run.stop().catch(() => undefined),
+    new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
+  ]);
+  setRunning(id, false);
 }
 
 // Analise/revisao pedida pelo usuario tem prioridade: a transcricao em curso
 // para no fim desta janela (o checkpoint fica salvo) em vez de disputar CPU e
 // memoria com o llama.
 registerTranscriptionPause(() => {
-  for (const id of [...running]) void stopTranscription(id);
+  for (const id of [...running]) void stopTranscription(id, { manual: false });
 });
 
 registerEngineReleaser('whisper', releaseTranscriptionContexts);
@@ -379,6 +397,8 @@ function lastSegmentEnd(segments: TranscriptSegment[]): number {
  */
 export async function transcribeLocally(id: string): Promise<void> {
   if (running.has(id)) return;
+  // Qualquer pedido explicito (botao, retry) vence uma parada manual anterior.
+  manualStops.delete(id);
   const recording = await getRecording(id);
   // Nota apagada: nao tenta transcrever; mantem a atividade no historico
   // marcada como interrompida (so o usuario apaga).
@@ -443,7 +463,7 @@ export async function transcribeLocally(id: string): Promise<void> {
   // Mecanismo de segurança: nenhuma transcricao pode ficar para sempre.
   // Se passar de 5 minutos, para a passada e marca como pendente.
   const watchdog = setTimeout(() => {
-    void stopTranscription(id);
+    void stopTranscription(id, { manual: false });
   }, 300_000);
   setProgress(id, knownDuration > 0 ? Math.min(100, (checkpoint / knownDuration) * 100) : 0);
   // Marca a nota como "transcrevendo" so depois de ter a vez: uma nota que
@@ -488,6 +508,11 @@ export async function transcribeLocally(id: string): Promise<void> {
   };
   const textOf = (segments: TranscriptSegment[]) =>
     segments.map((segment) => segment.text).join(' ').trim();
+  /**
+   * Texto mais novo ja conhecido da passada. O parcial aparece e sobrevive a
+   * uma falha: o catch nao pode regravar o texto antigo por cima dele.
+   */
+  let latestText = recording.transcript ?? '';
 
   const activity = activityId(id);
   startActivity({
@@ -519,7 +544,9 @@ export async function transcribeLocally(id: string): Promise<void> {
     const totalChunks = Math.max(1, Math.ceil(durationMs / CHUNK_MS));
     let language = recording.transcriptLanguage ?? '';
     let lastPersist = 0;
-    while (checkpoint < durationMs - 5 && !cancelled.has(id)) {
+    // Sobra curta demais vira lixo: fecha a passada com o que ja existe em vez
+    // de tentar a janela final e ficar preso nela.
+    while (hasTranscribableTail(checkpoint, durationMs) && !cancelled.has(id)) {
       const chunkNumber = Math.min(totalChunks, Math.floor(checkpoint / CHUNK_MS) + 1);
       updateActivity(activity, {
         detail: `Transcrevendo trecho ${chunkNumber} de ${totalChunks}`,
@@ -539,13 +566,14 @@ export async function transcribeLocally(id: string): Promise<void> {
         },
         onNewSegments: (event) => {
           partial.push(...toSegments(event.segments, chunkStart));
+          latestText = textOf([...committed, ...partial]) || latestText;
           // Grava no maximo a cada PERSIST_THROTTLE_MS: evita re-render da nota
           // a cada trecho, mas o texto aparece progressivo.
           const now = Date.now();
           if (now - lastPersist < PERSIST_THROTTLE_MS) return;
           lastPersist = now;
           queuePersist({
-            transcript: textOf([...committed, ...partial]) || recording.transcript,
+            transcript: latestText,
             transcriptSegments: [...committed, ...partial],
             transcriptStatus: 'pending',
             transcriptOrigin: 'local',
@@ -557,19 +585,23 @@ export async function transcribeLocally(id: string): Promise<void> {
       });
       activeRuns.set(id, { stop });
 
-      // Mecanismo de segurança: se o whisper travar em 0%, cancela a janela e
-      // marca a nota como pendente (retomavel), em vez de ficar para sempre.
+      // Mecanismo de segurança: se o whisper travar, cancela a janela e marca
+      // como pendente (retomavel). O prazo acompanha o tamanho do trecho: um
+      // aparelho lento leva mais que os 120 s fixos e nao pode ser morto no
+      // meio de um trecho que ainda esta rendendo.
+      const chunkMs = Math.max(1, chunkEnd - chunkStart);
       const result = await Promise.race([
         promise,
         new Promise<never>((_, reject) => {
-          setTimeout(() => reject(new Error('transcricao travada')), 120_000);
+          setTimeout(() => reject(new Error('transcricao travada')), Math.max(120_000, chunkMs * 8));
         }),
       ]);
       language = result.language || language;
       committed = [...committed, ...toSegments(result.segments, chunkStart)];
+      latestText = textOf(committed) || latestText;
       checkpoint = chunkEnd;
       queuePersist({
-        transcript: textOf(committed) || recording.transcript,
+        transcript: latestText,
         transcriptSegments: committed,
         transcriptStatus: 'pending',
         transcriptOrigin: 'local',
@@ -587,7 +619,7 @@ export async function transcribeLocally(id: string): Promise<void> {
     updateActivity(activity, { detail: 'Salvando transcrição' });
     setProgress(id, 100);
     await persist(recording, {
-      transcript: textOf(committed) || recording.transcript,
+      transcript: textOf(committed) || latestText,
       transcriptLanguage: language || recording.transcriptLanguage,
       transcriptSegments: committed,
       transcriptCheckpointMs: durationMs,
@@ -610,7 +642,7 @@ export async function transcribeLocally(id: string): Promise<void> {
     }
     await chain.catch(() => undefined);
     await persist(recording, {
-      transcript: textOf(committed) || recording.transcript,
+      transcript: latestText || textOf(committed) || recording.transcript,
       transcriptSegments: committed,
       transcriptCheckpointMs: checkpoint,
       transcriptStatus: 'pending',
@@ -690,6 +722,8 @@ export async function transcribePendingLocally(): Promise<void> {
     // parar aqui e retomar quando o app voltar.
     if (AppState.currentState !== 'active') break;
     if (running.has(recording.id)) continue;
+    // Parada manual nesta sessao: o usuario decidiu parar; o boot nao insiste.
+    if (manualStops.has(recording.id)) continue;
     if (!shouldAutoTranscribe(recording)) continue;
     await transcribeLocally(recording.id);
   }

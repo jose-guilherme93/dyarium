@@ -15,7 +15,7 @@ import { displayTitle } from '@/core/title';
 import { checkpointPercent } from '@/core/transcription';
 import { hasFinalTranscript, type Recording } from '@/core/types';
 import { useRenderCount } from '@/dev/perf';
-import { useTranscriptionProgress } from '@/state/useTranscriptionProgress';
+import { useTranscriptionProgress, useTranscriptionRunning } from '@/state/useTranscriptionProgress';
 import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
 import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
 import { defineStyles } from '@/theme/themedStyles';
@@ -61,8 +61,12 @@ export const RecordingCard = memo(function RecordingCard({
     [hasAudio, recording.transcript, recording.text],
   );
   // Transcricao em andamento: mostra um icone discreto + porcentagem no canto.
-  const transcribing =
+  // `pending` sozinho e um checkpoint salvo (parado ou falho); "Transcrevendo"
+  // so quando a passada esta rodando de verdade.
+  const pendingTranscript =
     hasAudio && recording.transcriptStatus === 'pending' && !hasFinalTranscript(recording);
+  const running = useTranscriptionRunning(recording.id, pendingTranscript);
+  const transcribing = pendingTranscript && running;
   const livePercent = useTranscriptionProgress(recording.id, transcribing);
   const percent = livePercent > 0 ? Math.round(livePercent) : checkpointPercent(recording);
   const badge =

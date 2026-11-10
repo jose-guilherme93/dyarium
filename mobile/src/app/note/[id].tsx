@@ -119,9 +119,11 @@ import {
   isTranscribing,
   maybeTranscribeLocally,
   stopTranscription,
+  transcribeLocally,
 } from '@/services/localTranscription';
 import { enterNote, leaveNote } from '@/services/noteVisibility';
 import { getAppFlag } from '@/services/db';
+import { refreshServerTranscript } from '@/services/transcripts';
 import { transcriptionPlace } from '@/services/whisper';
 import { fetchTheirs, syncNoteForcing } from '@/services/noteSync';
 import { pushTranscript } from '@/services/transcriptSync';
@@ -1625,12 +1627,38 @@ export default function NoteScreen() {
       push('/transcription');
       return;
     }
-    if (place.place !== 'device') {
-      // Desligada ou entregue ao servidor: a folha mostra onde mudar.
+    if (place.place === 'disabled') {
+      // Desligada: a folha mostra onde mudar.
       setProcessingOpen(true);
       return;
     }
-    await maybeTranscribeLocally(noteId);
+    if (place.place === 'server') {
+      // O servidor pode ja ter transcrito: puxa o texto uma vez.
+      const fresh = note ? await refreshServerTranscript(note).catch(() => null) : null;
+      if (fresh && hasFinalTranscript(fresh)) {
+        await library.refresh();
+        return;
+      }
+      // Servidor sem texto (fila parada ou offline): o aparelho resolve agora,
+      // em vez de a nota ficar "transcrevendo" para sempre.
+      await transcribeLocally(noteId);
+      const after = await getRecording(noteId);
+      if (after && !hasFinalTranscript(after) && !isTranscribing(noteId)) {
+        // Sem modelo local a passada nem comeca: o usuario precisa saber o que
+        // fazer, em vez de o toque nao fazer nada.
+        Alert.alert(
+          'Transcrição pendente',
+          'O servidor não entregou o texto e o aparelho não tem um modelo pronto. Baixe um modelo para transcrever aqui.',
+          [
+            { text: 'Agora não', style: 'cancel' },
+            { text: 'Abrir modelos', onPress: () => push('/transcription') },
+          ],
+        );
+        return;
+      }
+    } else {
+      await maybeTranscribeLocally(noteId);
+    }
     // Transcricao nova com a revisao ligada: ja sai revisada, sem o usuario
     // precisar abrir a analise.
     if (reviewTranscriptEnabled) {
@@ -1646,6 +1674,8 @@ export default function NoteScreen() {
     }
   }, [
     noteId,
+    note,
+    library,
     reviewTranscriptEnabled,
     analysisModel,
     ensureTranscriptReview,
@@ -1887,9 +1917,9 @@ export default function NoteScreen() {
   // a pilha fica para as notas criadas no servidor (varios audios do
   // dashboard), que nao tem no de audio local.
   const stackAudios = bodyHasAudio ? [] : stack.audios;
-  // Transcricao pedida e ainda sem andamento local (ex.: feita no servidor):
-  // o card mostra que esta em fila, em vez de parecer parado.
-  const serverTranscribing = !hasFinalTranscript(note) && note.transcriptStatus === 'pending';
+  // Transcricao entregue ao servidor: o card nao anuncia execucao. Enquanto
+  // nada chega, ele mostra o botao de transcrever, que puxa do servidor e cai
+  // para o aparelho se a fila do servidor estiver parada.
   const editorPlaceholder = hasAudio ? 'Escreva sobre este áudio...' : 'Comece a escrever...';
   // Em tela estreita o titulo comeca menor; em ambas quebra linha em vez de sumir.
   const titleSize = titleFontSize(title, windowWidth < 380 ? 30 : 34, 24);
@@ -2193,7 +2223,7 @@ export default function NoteScreen() {
             ownAudioRefs={ownAudioRefs}
             ownTranscript={note.transcript}
             ownSegments={note.transcriptSegments}
-            transcribingWait={!transcribing && serverTranscribing}
+            transcribingWait={false}
             transcribingPercent={transcribing ? transcriptionPercent : undefined}
             canTranscribe={Boolean(hasAudio) && !hasFinalTranscript(note)}
             onTranscribe={() => void handleTranscribe()}
