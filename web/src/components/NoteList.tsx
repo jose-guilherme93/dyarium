@@ -403,6 +403,7 @@ export function NoteList({
 
   const row = (entry: Entry) => {
     const isAudio = entry.source !== "text";
+    const title = displayTitle(entry);
     const notebook = notebookById.get(entry.notebook_id ?? "");
     const tags = entry.tags ?? [];
     const isSelected = selected.has(entry.id);
@@ -458,7 +459,7 @@ export function NoteList({
                   title={notebook.name}
                 />
               )}
-              <span className="note-row-title">{displayTitle(entry)}</span>
+              <span className="note-row-title">{title}</span>
               {selected.size > 0 && (
                 <span
                   className={isSelected ? "note-row-check note-row-check--on" : "note-row-check"}
@@ -477,7 +478,11 @@ export function NoteList({
                     : "áudio"}
                 </span>
               )}
-              {entry.preview && <span className="note-row-preview">{entry.preview}</span>}
+              {/* Sem titulo, a linha usa a previa como titulo: repetir o mesmo
+                  trecho logo abaixo duplicava o texto na lista. */}
+              {entry.preview && entry.preview !== title ? (
+                <span className="note-row-preview">{entry.preview}</span>
+              ) : null}
               {(failures[entry.id] || entry.status === "failed") && (
                 <span className="note-row-failed">falhou</span>
               )}

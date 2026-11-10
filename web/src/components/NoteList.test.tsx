@@ -121,6 +121,21 @@ function renderList(notebookId: string, activeId: string | null = null) {
 }
 
 describe("NoteList", () => {
+  it("nota sem titulo nao repete a previa na linha", () => {
+    const entry: Entry = {
+      ...ENTRIES[0],
+      id: "sem-titulo",
+      title: "",
+      preview: "Escopo da sessao com texto no corpo.",
+    } as Entry;
+    vi.mocked(api.listAllEntries).mockResolvedValueOnce({ entries: [entry] } as never);
+    renderList("trabalho");
+
+    return waitFor(() => {
+      expect(screen.getAllByText("Escopo da sessao com texto no corpo.")).toHaveLength(1);
+    });
+  });
+
   it("mostra a previa e as tags da nota aberta", async () => {
     renderList("trabalho", "e1");
     await waitFor(() => expect(screen.getByText("Reunião de segunda")).toBeInTheDocument());
