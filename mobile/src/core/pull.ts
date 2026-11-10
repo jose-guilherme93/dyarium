@@ -137,6 +137,7 @@ export function entryToRecording(entry: ServerEntry, note?: ServerNote): Recordi
     archived: entry.archived,
     author: entry.author ?? '',
     summaryDetail: entry.summary_detail === 'full' ? 'full' : 'concise',
+    icon: entry.icon ?? '',
     notebookId: entry.notebook_id || DEFAULT_NOTEBOOK_ID,
     tags: entry.tags && entry.tags.length > 0 ? entry.tags : undefined,
     titleVersion: entry.versions?.title,
@@ -207,6 +208,10 @@ export function mergeServerNote(
   const serverSummaryDetail = entry.summary_detail === 'full' ? 'full' : 'concise';
   const summaryDetailMoved =
     !local.summaryDetailDirty && serverSummaryDetail !== (local.summaryDetail ?? 'concise');
+  // O icone nao tem edicao local no app: qualquer valor do servidor entra,
+  // menos quando uma escolha local estiver pendente (reenvio em andamento).
+  const serverIcon = entry.icon ?? '';
+  const iconMoved = !local.iconDirty && serverIcon !== (local.icon ?? '');
   const serverNotebook = entry.notebook_id || DEFAULT_NOTEBOOK_ID;
   const notebookMoved = !local.notebookDirty && serverNotebook !== (local.notebookId || DEFAULT_NOTEBOOK_ID);
   const serverTags = entry.tags ?? [];
@@ -243,6 +248,7 @@ export function mergeServerNote(
     !archivedMoved &&
     !authorMoved &&
     !summaryDetailMoved &&
+    !iconMoved &&
     !notebookMoved &&
     !tagsMoved &&
     !attachmentMoved
@@ -276,6 +282,7 @@ export function mergeServerNote(
     ...(archivedMoved ? { archived: entry.archived } : {}),
     ...(authorMoved ? { author: serverAuthor, authorDirty: undefined } : {}),
     ...(summaryDetailMoved ? { summaryDetail: serverSummaryDetail, summaryDetailDirty: undefined } : {}),
+    ...(iconMoved ? { icon: serverIcon, iconDirty: undefined } : {}),
     ...(notebookMoved ? { notebookId: serverNotebook, notebookDirty: undefined } : {}),
     ...(tagsMoved ? { tags: serverTags.length > 0 ? serverTags : undefined, tagsDirty: undefined } : {}),
     // Se o corpo veio do servidor, a pendencia local (texto e conflito) acabou.

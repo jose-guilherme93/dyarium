@@ -166,7 +166,8 @@ export async function reconcileServer(server: StoredServer): Promise<SyncSummary
         recording.tagsDirty ||
         recording.archivedDirty ||
         recording.authorDirty ||
-        recording.summaryDetailDirty,
+        recording.summaryDetailDirty ||
+        recording.iconDirty,
     );
     // Sem linha de sync, a nota e nova naquele ambiente: o plano a coloca em
     // `push` pelo proprio id. Com linha, qualquer mudanca depois do ultimo
@@ -763,6 +764,9 @@ async function pushRecording(
     archivedDirty: true,
     authorDirty: true,
     summaryDetailDirty: true,
+    // O icone nao tem edicao local no app: ele viaja com o estado da nota para
+    // outro ambiente e nunca e zerado por um PATCH de outro campo.
+    iconDirty: true,
   };
   const result = await syncNoteWith(api, view, async () => ({
     markdown,
@@ -861,6 +865,7 @@ function contentChanged(a: Recording, b: Recording): boolean {
     JSON.stringify(a.tags ?? []) !== JSON.stringify(b.tags ?? []) ||
     Boolean(a.archived) !== Boolean(b.archived) ||
     (a.author ?? '') !== (b.author ?? '') ||
+    (a.icon ?? '') !== (b.icon ?? '') ||
     a.serverAttachmentId !== b.serverAttachmentId
   );
 }

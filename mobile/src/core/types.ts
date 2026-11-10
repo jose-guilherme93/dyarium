@@ -109,6 +109,10 @@ export interface Recording {
   summaryDetail?: SummaryDetail;
   /** Escolha local ainda nao enviada ao servidor. */
   summaryDetailDirty?: boolean;
+  /** Icone de pagina da entrada (emoji ou texto curto); vazio usa o fallback. */
+  icon?: string;
+  /** Icone alterado localmente e ainda nao enviado ao servidor. */
+  iconDirty?: boolean;
   /**
    * Nota apagada, esperando o fim da janela da lixeira (7 dias). Enquanto
    * existir, a nota nao aparece em lista nenhuma; o audio local fica guardado

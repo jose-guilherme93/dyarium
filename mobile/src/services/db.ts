@@ -87,6 +87,7 @@ interface Row {
   updated_hlc: string | null;
   summary_detail: string | null;
   summary_detail_dirty: number | null;
+  icon: string | null;
 }
 
 type MigrationDb = Pick<
@@ -801,9 +802,19 @@ const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    version: 41,
+    run: async (db) => {
+      // Icone de pagina da entrada (emoji ou texto curto). Vazio deixa o
+      // fallback para a tela; notas antigas nascem sem icone.
+      if (!(await columnExists(db, 'recordings', 'icon'))) {
+        await db.execAsync("ALTER TABLE recordings ADD COLUMN icon TEXT NOT NULL DEFAULT ''");
+      }
+    },
+  },
 ];
 
-async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
+export async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
   const row = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
   let version = row?.user_version ?? 0;
   for (const migration of MIGRATIONS) {
@@ -1222,6 +1233,7 @@ function rowToRecording(row: Row): Recording {
     authorDirty: row.author_dirty ? true : undefined,
     summaryDetail: (row.summary_detail === 'full' ? 'full' : 'concise') as Recording['summaryDetail'],
     summaryDetailDirty: (row.summary_detail_dirty ?? 0) === 1 ? true : undefined,
+    icon: row.icon ?? '',
     deletedAt: row.deleted_at ?? undefined,
     notebookId: row.notebook_id ?? DEFAULT_NOTEBOOK_ID,
     tags: parseTags(row.tags),
@@ -1296,8 +1308,8 @@ export async function upsertRecording(r: Recording): Promise<void> {
       note_dirty, attachments,
       title_version, recorded_at_version, body_version, sync_conflict, server_audios,
       capture_source_id, capture_start_ms, created_at, updated_at, deleted_at, author, author_dirty,
-      summary_detail, summary_detail_dirty, updated_hlc
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      summary_detail, summary_detail_dirty, icon, updated_hlc
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
       recorded_at = excluded.recorded_at,
@@ -1348,6 +1360,7 @@ export async function upsertRecording(r: Recording): Promise<void> {
       author_dirty = excluded.author_dirty,
       summary_detail = excluded.summary_detail,
       summary_detail_dirty = excluded.summary_detail_dirty,
+      icon = excluded.icon,
       updated_at = excluded.updated_at,
       updated_hlc = excluded.updated_hlc`,
     [
@@ -1404,6 +1417,7 @@ export async function upsertRecording(r: Recording): Promise<void> {
       r.authorDirty ? '1' : null,
       r.summaryDetail ?? 'concise',
       r.summaryDetailDirty ? 1 : 0,
+      r.icon ?? '',
       updatedHlc ?? null,
     ],
   );

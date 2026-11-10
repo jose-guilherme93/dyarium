@@ -124,6 +124,8 @@ export interface UpdateEntryBody {
   author?: AuthorRole;
   /** Detalhe do resumo automatico do projeto. */
   summary_detail?: 'concise' | 'full';
+  /** Icone de pagina da entrada (emoji ou texto curto); vazio limpa. */
+  icon?: string;
   /** Versoes lidas pelo cliente: o servidor recusa o campo que ja mudou. */
   versions?: {
     title?: string;
@@ -255,6 +257,8 @@ export interface SyncManifestEntry {
   archived?: boolean;
   author?: AuthorRole;
   summary_detail?: 'concise' | 'full';
+  /** Icone de pagina da entrada (emoji ou texto curto); vazio usa o fallback. */
+  icon?: string;
   versions?: { title?: string; recorded_at?: string; body?: string };
   body_hash?: string;
   primary_attachment_id?: string;
@@ -410,6 +414,8 @@ export interface ServerEntry {
   author?: AuthorRole;
   /** Detalhe do resumo automatico do projeto. */
   summary_detail?: 'concise' | 'full';
+  /** Icone de pagina da entrada (emoji ou texto curto); vazio usa o fallback. */
+  icon?: string;
   /** Pilha de audios (so no detalhe da entrada), cada um com sua transcricao. */
   audios?: ServerAudio[];
   /** Primeiro audio original da entrada (a listagem traz so o id, nao a pilha). */

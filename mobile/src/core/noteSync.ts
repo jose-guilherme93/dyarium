@@ -26,6 +26,7 @@ export interface NoteSyncApi {
       archived?: boolean;
       author?: string;
       summary_detail?: 'concise' | 'full';
+      icon?: string;
       versions?: { title?: string; recorded_at?: string };
     },
     hlc?: string,
@@ -113,6 +114,7 @@ export async function syncNoteWith(
       ...(note.archivedDirty ? { archived: note.archived ?? false } : {}),
       ...(note.authorDirty ? { author: note.author ?? '' } : {}),
       ...(note.summaryDetailDirty ? { summary_detail: note.summaryDetail ?? 'concise' } : {}),
+      ...(note.iconDirty ? { icon: note.icon ?? '' } : {}),
       versions: baseVersions,
     }, note.updatedHlc);
     versions.title = entryVersions.title;
@@ -127,6 +129,7 @@ export async function syncNoteWith(
       archived?: boolean;
       author?: string;
       summary_detail?: 'concise' | 'full';
+      icon?: string;
       versions?: { title?: string; recorded_at?: string };
     } = {
       versions: {
@@ -139,12 +142,14 @@ export async function syncNoteWith(
     if (note.archivedDirty) retry.archived = note.archived ?? false;
     if (note.authorDirty) retry.author = note.author ?? '';
     if (note.summaryDetailDirty) retry.summary_detail = note.summaryDetail ?? 'concise';
+    if (note.iconDirty) retry.icon = note.icon ?? '';
     if (
       retry.title !== undefined ||
       retry.recorded_at !== undefined ||
       retry.archived !== undefined ||
       retry.author !== undefined ||
-      retry.summary_detail !== undefined
+      retry.summary_detail !== undefined ||
+      retry.icon !== undefined
     ) {
       const entryVersions = await api.updateEntry(note.entryId, retry, note.updatedHlc);
       // O campo em conflito **nao** adota a versao do servidor: assim o pull

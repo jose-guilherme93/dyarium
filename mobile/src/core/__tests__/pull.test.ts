@@ -153,6 +153,12 @@ describe('entryToRecording', () => {
     expect(entryToRecording({ ...ENTRY }).summaryDetail).toBe('concise');
   });
 
+  it('traz o icone da entry; sem icone fica vazio', () => {
+    expect(entryToRecording({ ...ENTRY, icon: '🌿' }).icon).toBe('🌿');
+    expect(entryToRecording({ ...ENTRY, icon: '' }).icon).toBe('');
+    expect(entryToRecording({ ...ENTRY }).icon).toBe('');
+  });
+
   it('traz o primeiro audio do servidor como referencia para o player', () => {
     const byList = entryToRecording({ ...ENTRY, primary_attachment_id: 'at_1' });
     expect(byList.serverAttachmentId).toBe('at_1');
@@ -428,6 +434,18 @@ describe('mergeServerNote', () => {
   it('nao aplica versao de corpo sem o texto (espera o proximo pull)', () => {
     const merged = mergeServerNote(clean(), serverEntry({ versions: { body: 'b2' } }), undefined);
     expect(merged).toBeNull();
+  });
+
+  it('pull aplica o icone da entry sem tocar no resto da nota', () => {
+    const merged = mergeServerNote(clean({ icon: '📘' }), serverEntry({ icon: '🌿' }), undefined);
+    expect(merged?.icon).toBe('🌿');
+    expect(merged?.title).toBe('titulo local');
+    expect(merged?.text).toBe('texto local');
+  });
+
+  it('mantem o icone local enquanto houver escolha pendente', () => {
+    const local = clean({ icon: '📘', iconDirty: true });
+    expect(mergeServerNote(local, serverEntry({ icon: '🌿' }), undefined)).toBeNull();
   });
 
   it('adota caderno e tags do servidor quando nao ha mudanca local pendente', () => {
