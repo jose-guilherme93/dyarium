@@ -209,6 +209,14 @@ function fakeContext() {
 }
 
 describe("MapView insights", () => {
+  it("esconde as camadas do grafo quando nao ha relacoes", async () => {
+    vi.mocked(api.getGraph).mockResolvedValue({ ...graph, nodes: [], edges: [], total_nodes: 0 });
+    const { container } = render(<MapView refreshKey={0} onOpen={() => undefined} />);
+
+    await screen.findByText(/relações ainda/);
+    expect(container.querySelector(".map-layers")).toHaveClass("map-layers--empty");
+  });
+
   it("lista as entidades no trilho e abre o detalhe ao clicar", async () => {
     render(<MapView refreshKey={0} onOpen={() => undefined} />);
 

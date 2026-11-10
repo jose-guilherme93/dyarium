@@ -5466,6 +5466,12 @@
   gap: 2px;
 }
 
+/* Sem relacoes nao ha grafo para mostrar: esconder as camadas evita que o
+   desenho de fundo (o no central) apareca por baixo do texto do estado vazio. */
+.map-layers--empty {
+  visibility: hidden;
+}
+
 .map-overlay--empty strong {
   font-size: 34px;
   font-weight: 400;

@@ -2104,7 +2104,11 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
 
       <div className="map-body">
         <div className="map-canvas-wrap" ref={wrapRef}>
-          <div className="map-layers">
+          <div
+            className={`map-layers${
+              !loading && !error && data && data.nodes.length === 0 ? " map-layers--empty" : ""
+            }`}
+          >
             <canvas
               ref={canvasRef}
               className="map-canvas"
