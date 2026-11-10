@@ -11766,6 +11766,9 @@
   min-height: 0;
   overflow: auto;
   background: var(--paper);
+  /* O handle da ultima coluna e meio pixel para fora da tabela: o espaco
+     de reservation evita que a caixa ganha uma barra de rolagem de 5px. */
+  padding-right: 5px;
 }
 
 .pj-vtable table {
@@ -11846,16 +11849,25 @@
 /* --- Redimensionamento de coluna -----------------------------------------
    O th continua "sticky" (o cabecalho gruda no topo do scroll) e, por ser um
    elemento posicionado, ele tambem serve de bloco contenitor do handle na
-   borda direita da coluna. Trocar por "relative" quebraria o cabecalho. */
+   borda direita da coluna. Trocar por "relative" quebraria o cabecalho.
+   O handle fica centrado na borda (right negativo): e o que o dedo/
+   o mouse precisam acertar. */
 .pj-resize {
   position: absolute;
   top: 0;
   bottom: 0;
-  right: 0;
-  width: 8px;
+  right: -5px;
+  width: 10px;
   cursor: col-resize;
   touch-action: none;
   z-index: 3;
+}
+
+/* O handle fica acima da coluna vizinha quando o mouse esta nele: sem isso a
+   metade de fora da borda fica embaixo do th seguinte e nao pega o clique. */
+.pj-vtable thead th:hover,
+.pj-vtable thead th.pj-drag {
+  z-index: 4;
 }
 
 .pj-resize:hover {
@@ -11867,14 +11879,15 @@
   outline-offset: -2px;
 }
 
-/* Linha de 1px na borda da coluna enquanto o arraste acontece. */
+/* Linha de 1px sobre a borda da coluna enquanto o arraste acontece. */
 .pj-resize--on::after {
   content: "";
   position: absolute;
   top: 0;
   bottom: 0;
-  right: 0;
+  left: calc(50% + 0.5px);
   width: 1px;
+  margin-left: -0.5px;
   background: var(--accent);
 }
 

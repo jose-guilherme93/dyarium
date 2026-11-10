@@ -485,4 +485,107 @@ describe("ProjectsView: coluna redimensionavel", () => {
     expect(colOf(table, "sess").style.width).toBe("");
     expect(colOf(table, "commit").style.width).toBe("");
   });
+
+  it("toda coluna visivel tem handle, inclusive a Item e a ultima", async () => {
+    renderView();
+
+    const table = await screen.findByRole("table");
+    const headers = within(table).getAllByRole("columnheader");
+    expect(headers).toHaveLength(6);
+    for (const header of headers) {
+      expect(header.querySelector(".pj-resize")).not.toBeNull();
+    }
+    // A Item (segunda coluna) e a ultima tambem tem onde pegar.
+    expect(handleOf("Redimensionar Item")).toBeInTheDocument();
+    expect(handleOf("Redimensionar Sessão")).toBeInTheDocument();
+  });
+
+  it("arrastar Kind +100px: so o Kind cresce e a tabela cresce junto", async () => {
+    renderView();
+    const table = await screen.findByRole("table");
+    const handle = handleOf("Redimensionar Kind");
+
+    fireEvent.pointerDown(handle, { clientX: 100, pointerId: 1, button: 0 });
+    // No arraste as colunas ficam congeladas: a Item ganha largura explicita.
+    const itemBefore = colOf(table, "item").style.width;
+    const tableBefore = Number.parseFloat(table.style.width);
+    expect(itemBefore).not.toBe("");
+
+    fireEvent.pointerMove(handle, { clientX: 200, pointerId: 1 });
+    expect(colOf(table, "kind").style.width).toBe("172px");
+    // A Item nao encolhe: a borda arrastada fica onde o cursor esta.
+    expect(colOf(table, "item").style.width).toBe(itemBefore);
+    expect(Number.parseFloat(table.style.width) - tableBefore).toBe(100);
+  });
+
+  it("arrastar a Item +80px muda so a Item", async () => {
+    renderView();
+    const table = await screen.findByRole("table");
+    const handle = handleOf("Redimensionar Item");
+
+    fireEvent.pointerDown(handle, { clientX: 100, pointerId: 1, button: 0 });
+    const kindBefore = colOf(table, "kind").style.width;
+    const tableBefore = Number.parseFloat(table.style.width);
+
+    fireEvent.pointerMove(handle, { clientX: 180, pointerId: 1 });
+    expect(colOf(table, "item").style.width).toBe("320px");
+    expect(colOf(table, "kind").style.width).toBe(kindBefore);
+    expect(Number.parseFloat(table.style.width) - tableBefore).toBe(80);
+  });
+
+  it("a Item trava em 140px por baixo", async () => {
+    renderView();
+    const table = await screen.findByRole("table");
+    const handle = handleOf("Redimensionar Item");
+
+    fireEvent.pointerDown(handle, { clientX: 100, pointerId: 1, button: 0 });
+    fireEvent.pointerMove(handle, { clientX: 0, pointerId: 1 });
+    expect(colOf(table, "item").style.width).toBe("140px");
+  });
+
+  it("a Item trava em 1280px por cima", async () => {
+    renderView();
+    const table = await screen.findByRole("table");
+    const handle = handleOf("Redimensionar Item");
+
+    fireEvent.pointerDown(handle, { clientX: 100, pointerId: 1, button: 0 });
+    fireEvent.pointerMove(handle, { clientX: 3000, pointerId: 1 });
+    expect(colOf(table, "item").style.width).toBe("1280px");
+  });
+
+  it("a largura da Item fica salva no localStorage", async () => {
+    renderView();
+    const table = await screen.findByRole("table");
+    const handle = handleOf("Redimensionar Item");
+
+    fireEvent.pointerDown(handle, { clientX: 100, pointerId: 1, button: 0 });
+    fireEvent.pointerMove(handle, { clientX: 180, pointerId: 1 });
+    fireEvent.pointerUp(handle, { clientX: 180, pointerId: 1 });
+
+    await waitFor(() => {
+      const saved = JSON.parse(localStorage.getItem("dyarium.projetos.tabela") || "{}");
+      expect(saved.colWidths?.item).toBe(320);
+    });
+    expect(colOf(table, "item").style.width).toBe("320px");
+  });
+
+  it("duplo clique na Item devolve a coluna ao automatico", async () => {
+    renderView();
+    const table = await screen.findByRole("table");
+    const handle = handleOf("Redimensionar Item");
+
+    fireEvent.pointerDown(handle, { clientX: 100, pointerId: 1, button: 0 });
+    fireEvent.pointerMove(handle, { clientX: 180, pointerId: 1 });
+    fireEvent.pointerUp(handle, { clientX: 180, pointerId: 1 });
+    expect(colOf(table, "item").style.width).toBe("320px");
+
+    fireEvent.doubleClick(handle);
+    expect(colOf(table, "item").style.width).toBe("");
+    // Sem largura explicita a tabela volta a ocupar a caixa toda.
+    expect(table.style.width).toBe("");
+    await waitFor(() => {
+      const saved = JSON.parse(localStorage.getItem("dyarium.projetos.tabela") || "{}");
+      expect(saved.colWidths?.item).toBeUndefined();
+    });
+  });
 });

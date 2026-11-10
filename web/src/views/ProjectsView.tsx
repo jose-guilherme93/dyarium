@@ -60,14 +60,21 @@ interface TableCols {
   commit: boolean;
   sess: boolean;
 }
-/** Colunas que o usuario pode redimensionar arrastando a borda. */
-type TableColKey = "proj" | "kind" | "data" | "commit" | "sess";
-/** Arraste em andamento: onde comecou, a largura inicial e a largura viva. */
+/** Colunas opcionais: podem ser escondidas no painel de colunas. */
+const TABLE_COL_KEYS = ["proj", "kind", "data", "commit", "sess"] as const;
+type OptionalColKey = (typeof TABLE_COL_KEYS)[number];
+/** Ordem das colunas na tabela. A coluna Item nunca some. */
+const COL_ORDER = ["proj", "item", "kind", "data", "commit", "sess"] as const;
+/** Todas as colunas: a Item tambem e redimensionavel. */
+type TableColKey = (typeof COL_ORDER)[number];
+/** Arraste em andamento: origem, largura inicial, largura viva e o gelo. */
 interface ResizeState {
   key: TableColKey;
   startX: number;
   startWidth: number;
   width: number;
+  /** Larguras medidas no pointerdown de todas as colunas visiveis. */
+  frozen: Partial<Record<TableColKey, number>>;
 }
 interface TablePrefs {
   width: TableWidth;
@@ -99,31 +106,56 @@ const DEFAULT_TABLE_PREFS: TablePrefs = {
   customOpen: false,
   colWidths: {},
 };
-const TABLE_COL_KEYS = ["proj", "kind", "data", "commit", "sess"] as const;
 /** Limites do arraste: abaixo disso a coluna fica inutil, acima disso vira oleo. */
 const MIN_COL_WIDTH = 56;
 const MAX_COL_WIDTH = 640;
+/** A Item e a coluna do texto: ela nasce maior que as outras (absorve o que
+ *  sobra), entao o teto dela e maior que o das demais. */
+const ITEM_MAX_WIDTH = 1280;
 /** Espelhando as classes .pj-col-* do CSS: largura natural de cada coluna. */
-const DEFAULT_COL_WIDTHS: Record<TableColKey, number> = {
+const DEFAULT_COL_WIDTHS: Record<OptionalColKey, number> = {
   proj: 150,
   kind: 72,
   data: 72,
   commit: 110,
   sess: 96,
 };
+/** Classe de largura natural de cada coluna opcional. */
+const COL_CLASS: Record<OptionalColKey, string> = {
+  proj: "pj-col-pj",
+  kind: "pj-col-k",
+  data: "pj-col-d",
+  commit: "pj-col-c",
+  sess: "pj-col-s",
+};
 /** Passo do teclado: seta move 8px, com Shift 32px. */
 const KEY_STEP = 8;
 const KEY_STEP_FAST = 32;
 /** A coluna Item nunca some: ela ganha o que sobra, mas nunca menos que isto. */
 const ITEM_MIN_WIDTH = 140;
+/** Largura de reserva da Item quando o navegador nao devolve medida (teste). */
+const ITEM_FALLBACK_WIDTH = 240;
 
-function clampColWidth(value: number): number {
-  if (!Number.isFinite(value)) return MIN_COL_WIDTH;
-  return Math.min(MAX_COL_WIDTH, Math.max(MIN_COL_WIDTH, Math.round(value)));
+/** Piso de cada coluna: a Item tem piso maior, porque e a coluna do texto. */
+function minWidthFor(key: TableColKey): number {
+  return key === "item" ? ITEM_MIN_WIDTH : MIN_COL_WIDTH;
 }
 
-const TABLE_COL_LABELS: Record<string, string> = {
+/** Teto de cada coluna: a Item nasce maior, entao o teto dela tambem. */
+function maxWidthFor(key: TableColKey): number {
+  return key === "item" ? ITEM_MAX_WIDTH : MAX_COL_WIDTH;
+}
+
+function clampColWidth(value: number, key: TableColKey): number {
+  const min = minWidthFor(key);
+  const max = maxWidthFor(key);
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+const TABLE_COL_LABELS: Record<TableColKey, string> = {
   proj: "Projeto",
+  item: "Item",
   kind: "Kind",
   data: "Data",
   commit: "Commit",
@@ -166,10 +198,10 @@ function normalizeTablePrefs(raw: unknown): TablePrefs {
       ? (obj.colWidths as Record<string, unknown>)
       : {};
   const colWidths: Partial<Record<TableColKey, number>> = {};
-  for (const key of TABLE_COL_KEYS) {
+  for (const key of COL_ORDER) {
     const value = widthsRaw[key];
     if (typeof value === "number" && Number.isFinite(value) && value > 0) {
-      colWidths[key] = clampColWidth(value);
+      colWidths[key] = clampColWidth(value, key);
     }
   }
   return { width, density, cols, appearance, customOpen, colWidths };
@@ -262,6 +294,9 @@ export function ProjectsView({
   /** Arraste de coluna em andamento: guarda a origem e a largura ao vivo. */
   const [resize, setResizeState] = useState<ResizeState | null>(null);
   const resizeRef = useRef<ResizeState | null>(null);
+  /** Larguras medidas na mesa (px). Nao vao para o localStorage: valem so
+   *  para a sessao, para as vizinhas nao pularem quando uma coluna muda. */
+  const [measured, setMeasured] = useState<Partial<Record<TableColKey, number>>>({});
 
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
@@ -418,34 +453,68 @@ export function ProjectsView({
       return next;
     });
   };
-  const resetPrefs = () =>
+  const resetPrefs = () => {
+    setMeasured({});
     setTablePrefs({
       ...DEFAULT_TABLE_PREFS,
       cols: { ...DEFAULT_TABLE_PREFS.cols },
       colWidths: {},
     });
+  };
 
   // --- Redimensionamento de coluna ---------------------------------------
-  // A largura vive nas prefs: o <col> recebe o valor e a coluna Item continua
-  // no automatico, absorvendo o que sobrar.
+  // A coluna arrastada fica emCompanhia de um "gelo": no pointerdown todas as
+  // colunas visiveis sao medidas e congeladas, e a tabela cresce na mesma
+  // medida. Sem isso a coluna vizinha encolhe junto com o arraste e a borda
+  // que o mouse arrasta sai do lugar.
 
-  /** Largura em vigor da coluna: a salva, ou a natural quando nunca foi salva. */
-  const widthOf = (key: TableColKey): number =>
-    tablePrefs.colWidths[key] ?? DEFAULT_COL_WIDTHS[key];
+  /** Colunas visiveis, na ordem em que aparecem na tabela. */
+  const visibleColKeys: TableColKey[] = COL_ORDER.filter(
+    (key) => key === "item" || visibleOptionalCols.includes(key as OptionalColKey),
+  );
 
-  /** Largura aplicada agora: durante o arraste vale a do mouse. */
-  const liveWidthOf = (key: TableColKey): number =>
-    resize && resize.key === key ? resize.width : widthOf(key);
+  /** Largura que a coluna teria se nada fosse medido nem salvo. */
+  const fallbackWidth = (key: TableColKey): number =>
+    tablePrefs.colWidths[key] ??
+    (key === "item" ? ITEM_FALLBACK_WIDTH : DEFAULT_COL_WIDTHS[key]);
 
-  /** A coluna Item nunca some: ela ganha o que sobra, mas nunca menos que isto. */
-  const hasCustomWidth =
-    resize !== null ||
-    visibleOptionalCols.some((key) => tablePrefs.colWidths[key] !== undefined);
-  /** Soma das colunas fixas: e o piso da tabela, para o scroll horizontal
-   *  aparecer em vez de espremer a coluna Item ate zero. */
-  const tableMinWidth = hasCustomWidth
-    ? visibleOptionalCols.reduce((sum, key) => sum + liveWidthOf(key), 0) + ITEM_MIN_WIDTH
-    : undefined;
+  /** Largura explicita da coluna (px), quando existe. Sem isso, a coluna
+   *  fica no automatico: a Item absorve o que sobrar, as outras usam o CSS. */
+  const explicitWidth = (key: TableColKey): number | undefined => {
+    if (resize) {
+      if (resize.key === key) return resize.width;
+      const frozen = resize.frozen[key];
+      if (frozen !== undefined) return frozen;
+    }
+    const measuredWidth = measured[key];
+    if (measuredWidth !== undefined) return measuredWidth;
+    return tablePrefs.colWidths[key];
+  };
+
+  /** Largura em vigor da coluna, para o aria e para os calculos. */
+  const effectiveWidth = (key: TableColKey): number => {
+    const explicit = explicitWidth(key);
+    if (explicit !== undefined) return explicit;
+    if (key === "item") return 0;
+    return DEFAULT_COL_WIDTHS[key];
+  };
+
+  /** Largura total da tabela: a soma das colunas visiveis. Enquanto a Item
+   *  esta no automatico (sem medida), a tabela fica em 100% e quem absorve o
+   *  que sobra e a propria Item. */
+  const tableWidth = ((): number | undefined => {
+    let sum = 0;
+    for (const key of visibleColKeys) {
+      const explicit = explicitWidth(key);
+      if (explicit !== undefined) {
+        sum += explicit;
+        continue;
+      }
+      if (key === "item") return undefined;
+      sum += DEFAULT_COL_WIDTHS[key];
+    }
+    return sum;
+  })();
 
   const setResize = (next: ResizeState | null) => {
     resizeRef.current = next;
@@ -456,11 +525,19 @@ export function ProjectsView({
     if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
-    // A largura real da coluna manda; o fallback cobre o teste sem layout.
-    const th = event.currentTarget.closest("th");
-    const measured = th ? th.getBoundingClientRect().width : 0;
-    const startWidth = measured > 0 ? measured : widthOf(key);
-    setResize({ key, startX: event.clientX, startWidth, width: startWidth });
+    // Mede todas as colunas visiveis: elas ficam congeladas durante o arraste.
+    const table = event.currentTarget.closest("table");
+    const headers = table ? Array.from(table.querySelectorAll<HTMLElement>("thead th")) : [];
+    const frozen: Partial<Record<TableColKey, number>> = {};
+    for (const th of headers) {
+      const col = th.dataset.col as TableColKey | undefined;
+      if (!col) continue;
+      const width = th.getBoundingClientRect().width;
+      frozen[col] = width > 0 ? Math.round(width) : fallbackWidth(col);
+    }
+    const startWidth = frozen[key] ?? fallbackWidth(key);
+    setMeasured((current) => ({ ...current, ...frozen }));
+    setResize({ key, startX: event.clientX, startWidth, width: startWidth, frozen });
     const target = event.currentTarget;
     if (typeof target.setPointerCapture === "function") {
       try {
@@ -477,7 +554,7 @@ export function ProjectsView({
     event.preventDefault();
     setResize({
       ...state,
-      width: clampColWidth(state.startWidth + (event.clientX - state.startX)),
+      width: clampColWidth(state.startWidth + (event.clientX - state.startX), key),
     });
   };
 
@@ -485,22 +562,32 @@ export function ProjectsView({
     const state = resizeRef.current;
     if (!state || state.key !== key) return;
     setResize(null);
+    // As vizinhas ficam com a largura medida; a arrastada vira a largura da
+    // coluna e vai para as prefs.
+    setMeasured((current) => ({ ...current, ...state.frozen, [key]: state.width }));
     // Clique sem mover nao grava: a coluna continua no automatico.
-    if (state.width === widthOf(key)) return;
+    if (state.width === state.startWidth) return;
     updatePrefs({ colWidths: { ...tablePrefs.colWidths, [key]: state.width } });
   };
 
   /** Teclado: setas andam 8px (Shift 32px). */
   const nudgeWidth = (key: TableColKey, delta: number) => {
     const state = resizeRef.current;
-    const base = state && state.key === key ? state.width : widthOf(key);
-    updatePrefs({ colWidths: { ...tablePrefs.colWidths, [key]: clampColWidth(base + delta) } });
+    const base = state && state.key === key ? state.width : explicitWidth(key) ?? fallbackWidth(key);
+    const next = clampColWidth(base + delta, key);
+    setMeasured((current) => ({ ...current, [key]: next }));
+    updatePrefs({ colWidths: { ...tablePrefs.colWidths, [key]: next } });
   };
 
   /** Volta a coluna para o automatico (duplo clique ou Home). */
   const clearWidth = (key: TableColKey) => {
     const next = { ...tablePrefs.colWidths };
     delete next[key];
+    setMeasured((current) => {
+      const cleaned = { ...current };
+      delete cleaned[key];
+      return cleaned;
+    });
     updatePrefs({ colWidths: next });
   };
 
@@ -794,94 +881,66 @@ export function ProjectsView({
                     }}
                     hidden={!tableVisible}
                   >
-                    <table style={tableMinWidth ? { minWidth: tableMinWidth } : undefined}>
+                    <table style={tableWidth !== undefined ? { width: `${tableWidth}px` } : undefined}>
                       <colgroup>
-                        {(() => {
-                          const visible = new Set(visibleOptionalCols);
-                          const nodes: ReactNode[] = [];
-                          for (const key of ["proj", "item", "kind", "data", "commit", "sess"] as const) {
-                            if (key === "item") {
-                              nodes.push(<col key="item" />);
-                            } else if (visible.has(key)) {
-                              const cls =
-                                key === "proj"
-                                  ? "pj-col-pj"
-                                  : key === "kind"
-                                    ? "pj-col-k"
-                                    : key === "data"
-                                      ? "pj-col-d"
-                                      : key === "commit"
-                                        ? "pj-col-c"
-                                        : "pj-col-s";
-                              // Largura salva pelo usuario; sem ela a coluna fica
-                              // no automatico da tabela.
-                              const saved = tablePrefs.colWidths[key];
-                              const applied = resize && resize.key === key ? resize.width : saved;
-                              nodes.push(
-                                <col
-                                  key={key}
-                                  className={cls}
-                                  style={applied ? { width: applied } : undefined}
-                                  data-col={key}
-                                />,
-                              );
-                            }
-                          }
-                          return nodes;
-                        })()}
+                        {visibleColKeys.map((key) => {
+                          const explicit = explicitWidth(key);
+                          return (
+                            <col
+                              key={key}
+                              className={key === "item" ? undefined : COL_CLASS[key]}
+                              style={explicit !== undefined ? { width: `${explicit}px` } : undefined}
+                              data-col={key}
+                            />
+                          );
+                        })}
                       </colgroup>
                       <thead>
                         <tr>
-                          {(() => {
-                            const visible = new Set(visibleOptionalCols);
-                            const nodes: ReactNode[] = [];
-                            for (const key of ["proj", "item", "kind", "data", "commit", "sess"] as const) {
-                              if (key === "item") {
-                                nodes.push(<th key="item">Item</th>);
-                              } else if (visible.has(key)) {
-                                const right = key === "data" || key === "commit";
-                                const dragging = resize?.key === key;
-                                nodes.push(
-                                  <th key={key} className={right ? "pj-num" : undefined}>
-                                    {TABLE_COL_LABELS[key]}
-                                    <span
-                                      className={`pj-resize${dragging ? " pj-resize--on" : ""}`}
-                                      role="separator"
-                                      aria-orientation="vertical"
-                                      aria-label={`Redimensionar ${TABLE_COL_LABELS[key]}`}
-                                      aria-valuenow={liveWidthOf(key)}
-                                      aria-valuemin={MIN_COL_WIDTH}
-                                      aria-valuemax={MAX_COL_WIDTH}
-                                      tabIndex={0}
-                                      onPointerDown={(event) => beginResize(key, event)}
-                                      onPointerMove={(event) => moveResize(key, event)}
-                                      onPointerUp={() => endResize(key)}
-                                      onPointerCancel={() => endResize(key)}
-                                      onDoubleClick={(event) => {
-                                        event.preventDefault();
-                                        event.stopPropagation();
-                                        clearWidth(key);
-                                      }}
-                                      onKeyDown={(event) => {
-                                        const step = event.shiftKey ? KEY_STEP_FAST : KEY_STEP;
-                                        if (event.key === "ArrowLeft") {
-                                          event.preventDefault();
-                                          nudgeWidth(key, -step);
-                                        } else if (event.key === "ArrowRight") {
-                                          event.preventDefault();
-                                          nudgeWidth(key, step);
-                                        } else if (event.key === "Home") {
-                                          event.preventDefault();
-                                          clearWidth(key);
-                                        }
-                                      }}
-                                    />
-                                  </th>,
-                                );
-                              }
-                            }
-                            return nodes;
-                          })()}
+                          {visibleColKeys.map((key) => {
+                            const right = key === "data" || key === "commit";
+                            const dragging = resize?.key === key;
+                            const thClass = [right ? "pj-num" : "", dragging ? "pj-drag" : ""]
+                              .filter(Boolean)
+                              .join(" ");
+                            return (
+                              <th key={key} data-col={key} className={thClass || undefined}>
+                                {TABLE_COL_LABELS[key]}
+                                <span
+                                  className={`pj-resize${dragging ? " pj-resize--on" : ""}`}
+                                  role="separator"
+                                  aria-orientation="vertical"
+                                  aria-label={`Redimensionar ${TABLE_COL_LABELS[key]}`}
+                                  aria-valuenow={effectiveWidth(key)}
+                                  aria-valuemin={minWidthFor(key)}
+                                  aria-valuemax={maxWidthFor(key)}
+                                  tabIndex={0}
+                                  onPointerDown={(event) => beginResize(key, event)}
+                                  onPointerMove={(event) => moveResize(key, event)}
+                                  onPointerUp={() => endResize(key)}
+                                  onPointerCancel={() => endResize(key)}
+                                  onDoubleClick={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    clearWidth(key);
+                                  }}
+                                  onKeyDown={(event) => {
+                                    const step = event.shiftKey ? KEY_STEP_FAST : KEY_STEP;
+                                    if (event.key === "ArrowLeft") {
+                                      event.preventDefault();
+                                      nudgeWidth(key, -step);
+                                    } else if (event.key === "ArrowRight") {
+                                      event.preventDefault();
+                                      nudgeWidth(key, step);
+                                    } else if (event.key === "Home") {
+                                      event.preventDefault();
+                                      clearWidth(key);
+                                    }
+                                  }}
+                                />
+                              </th>
+                            );
+                          })}
                         </tr>
                       </thead>
                       <tbody>
