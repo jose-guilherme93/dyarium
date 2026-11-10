@@ -120,4 +120,66 @@ describe('toAnalysisInsights', () => {
     const [insight] = toAnalysisInsights([source({ title: '   ' })]);
     expect(insight.title).toBe('Nota');
   });
+
+  it('aceita analise sem campo summary', () => {
+    const insights = toAnalysisInsights([
+      source({
+        entryId: 'sem-summary',
+        analysis: analysis({ summary: undefined as any, themes: [{ name: 'foco', confidence: 0.5 }] }),
+      }),
+    ]);
+    expect(insights).toHaveLength(1);
+    expect(insights[0].summary).toBe('');
+    expect(insights[0].themes).toEqual(['foco']);
+  });
+
+  it('aceita summary nulo', () => {
+    const insights = toAnalysisInsights([
+      source({
+        entryId: 'summary-nulo',
+        analysis: analysis({ summary: null as any, themes: [{ name: 'foco', confidence: 0.5 }] }),
+      }),
+    ]);
+    expect(insights).toHaveLength(1);
+    expect(insights[0].summary).toBe('');
+  });
+
+  it('trata summary so com espacos como vazio', () => {
+    const insights = toAnalysisInsights([
+      source({
+        entryId: 'summary-espacos',
+        analysis: analysis({ summary: '   ', themes: [{ name: 'tema', confidence: 0.5 }] }),
+      }),
+    ]);
+    expect(insights).toHaveLength(1);
+    expect(insights[0].summary).toBe('');
+  });
+
+  it('ignora temas sem name', () => {
+    const insights = toAnalysisInsights([
+      source({
+        entryId: 'tema-sem-nome',
+        analysis: analysis({
+          summary: 'resumo',
+          themes: [{ name: null as any, confidence: 0.9 }, { name: '  valido  ', confidence: 0.5 }],
+        }),
+      }),
+    ]);
+    expect(insights).toHaveLength(1);
+    expect(insights[0].themes).toEqual(['valido']);
+  });
+
+  it('normaliza resumo e temas no caso comum', () => {
+    const [insight] = toAnalysisInsights([
+      source({
+        entryId: 'normal',
+        analysis: analysis({
+          summary: '  resumo final  ',
+          themes: [{ name: '  tema  ', confidence: 0.9 }],
+        }),
+      }),
+    ]);
+    expect(insight.summary).toBe('resumo final');
+    expect(insight.themes).toEqual(['tema']);
+  });
 });

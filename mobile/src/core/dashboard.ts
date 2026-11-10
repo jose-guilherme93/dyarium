@@ -69,7 +69,7 @@ export function toAnalysisInsights(items: AnalysisSource[], limit = 6): Analysis
   return [...items]
     .sort((a, b) => Date.parse(b.recordedAt) - Date.parse(a.recordedAt))
     .filter((item) => {
-      const summary = item.analysis.summary.trim();
+      const summary = (item.analysis.summary ?? '').trim();
       const themes = item.analysis.themes ?? [];
       return summary !== '' || themes.length > 0;
     })
@@ -78,8 +78,8 @@ export function toAnalysisInsights(items: AnalysisSource[], limit = 6): Analysis
       entryId: item.entryId,
       title: item.title.trim() || 'Nota',
       recordedAt: item.recordedAt,
-      summary: item.analysis.summary.trim(),
-      themes: (item.analysis.themes ?? []).map((theme) => theme.name.trim()).filter(Boolean),
+      summary: (item.analysis.summary ?? '').trim(),
+      themes: (item.analysis.themes ?? []).map((theme) => (theme.name ?? '').trim()).filter(Boolean),
       sentimentLabel: item.analysis.sentiment_label ?? '',
     }));
 }
