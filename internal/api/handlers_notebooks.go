@@ -108,14 +108,14 @@ func notebookJSON(n store.Notebook) map[string]any {
 func (s *Server) handleListNotebooks(w http.ResponseWriter, r *http.Request) {
 	notebooks, err := s.deps.Store.ListNotebooks(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	includeWords := truthy(r.URL.Query().Get("include_words"))
 	if includeWords {
 		counts, err := s.deps.Store.BookWordCounts(r.Context())
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			s.writeInternal(w, r, "internal", err)
 			return
 		}
 		for i := range notebooks {
@@ -260,12 +260,12 @@ func (s *Server) handleCreateNotebook(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "protected", "caderno padrao protegido")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	notebook, err := s.deps.Store.GetNotebook(r.Context(), notebook.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	s.deps.Events.Publish("notebook.changed", map[string]string{"notebook_id": notebook.ID})
@@ -372,13 +372,13 @@ func (s *Server) handleUpdateNotebook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	if req.Name != nil || req.Color != nil {
 		notebook, err = s.deps.Store.UpdateNotebook(ctx, notebookID, req.Name, req.Color)
 		if err != nil {
-			writeNotebookError(w, err)
+			s.writeNotebookError(w, r, err)
 			return
 		}
 	}
@@ -386,7 +386,7 @@ func (s *Server) handleUpdateNotebook(w http.ResponseWriter, r *http.Request) {
 		notebook, err = s.deps.Store.SetNotebookKind(ctx, notebookID,
 			strings.TrimSpace(*req.Kind), req.ConfirmConvert)
 		if err != nil {
-			writeNotebookError(w, err)
+			s.writeNotebookError(w, r, err)
 			return
 		}
 	}
@@ -451,7 +451,7 @@ func (s *Server) handleUpdateNotebook(w http.ResponseWriter, r *http.Request) {
 		}
 		notebook, err = s.deps.Store.UpdateBookMeta(ctx, notebookID, meta)
 		if err != nil {
-			writeNotebookError(w, err)
+			s.writeNotebookError(w, r, err)
 			return
 		}
 	}
@@ -460,7 +460,7 @@ func (s *Server) handleUpdateNotebook(w http.ResponseWriter, r *http.Request) {
 }
 
 // writeNotebookError maps the store errors of notebook changes to the contract.
-func writeNotebookError(w http.ResponseWriter, err error) {
+func (s *Server) writeNotebookError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "caderno inexistente")
@@ -493,7 +493,7 @@ func writeNotebookError(w http.ResponseWriter, err error) {
 			"chapter_count": chapters,
 		})
 	default:
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 	}
 }
 
@@ -506,7 +506,7 @@ func (s *Server) handleDeleteNotebook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	if notebook.IsBook() {
@@ -531,7 +531,7 @@ func (s *Server) handleDeleteNotebook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	s.deps.Events.Publish("notebook.changed", map[string]string{"notebook_id": id})
@@ -565,7 +565,7 @@ func (s *Server) handleUpdateTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	body := map[string]any{

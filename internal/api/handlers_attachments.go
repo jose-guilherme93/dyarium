@@ -159,7 +159,7 @@ func (s *Server) handleGetEntryAudio(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	s.serveAttachment(w, r, att)
@@ -169,7 +169,7 @@ func (s *Server) handleGetEntryAudio(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleListAttachments(w http.ResponseWriter, r *http.Request) {
 	attachments, err := s.deps.Store.ListAttachments(r.Context(), r.PathValue("id"))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	out := make([]map[string]any, 0, len(attachments))
@@ -202,7 +202,7 @@ func (s *Server) handleCreateAttachment(w http.ResponseWriter, r *http.Request) 
 			writeError(w, ingestErr.Status, ingestErr.Code, ingestErr.Message)
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, attachmentJSON(att))
@@ -216,7 +216,7 @@ func (s *Server) handleGetAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	s.serveAttachment(w, r, att)
@@ -231,11 +231,11 @@ func (s *Server) handleDeleteAttachment(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	if err := s.deps.Store.DeleteAttachment(ctx, att.ID); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	// A analise leu a transcricao deste audio: sem ele, a compreensao e os

@@ -43,13 +43,13 @@ func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusNotFound, "notebook_not_found", "caderno inexistente")
 				return
 			}
-			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			s.writeInternal(w, r, "internal", err)
 			return
 		}
 	}
 	settings, err := s.deps.Store.ListSettings(ctx)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	owner := strings.TrimSpace(settings["owner_name"])
@@ -68,7 +68,7 @@ func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	nodes := make([]map[string]any, 0, len(data.Nodes))
@@ -125,21 +125,21 @@ func (s *Server) handleListEntities(w http.ResponseWriter, r *http.Request) {
 	}
 	entities, err := s.deps.Store.ListEntities(r.Context(), kind)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	// As grafias "sou eu" viajam junto: sem elas o app nao sabe que uma pessoa
 	// reivindicada no painel saiu do mapa e virou o dono.
 	ownerAliases, err := s.deps.Store.ListOwnerAliases(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	// A memoria de rejeicoes viaja junto: o app precisa dela para filtrar a
 	// extracao local com a mesma curadoria do servidor.
 	rejections, err := s.deps.Store.ListEntityRejections(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	out := make([]map[string]any, 0, len(entities))
@@ -175,7 +175,7 @@ func (s *Server) handleGetEntity(w http.ResponseWriter, r *http.Request) {
 	}
 	summary, entries, ok, err := s.deps.Store.GetEntity(r.Context(), kind, r.PathValue("name"))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	if !ok {
@@ -228,7 +228,7 @@ func (s *Server) handleRenameEntity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	body := entitySummaryJSON(summary)
@@ -257,7 +257,7 @@ func (s *Server) handleClaimSelf(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	body := map[string]any{"status": "ok", "owner": owner}
@@ -298,7 +298,7 @@ func (s *Server) handleSetEntityIcon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	body := entitySummaryJSON(summary)
@@ -338,7 +338,7 @@ func (s *Server) handleSetEntityLabel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_label", "rotulo invalido")
 		return
 	case err != nil:
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	body := entitySummaryJSON(summary)
@@ -395,7 +395,7 @@ func (s *Server) handleChangeEntityKind(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid_kind", "kind invalido")
 		return
 	case err != nil:
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	body := entitySummaryJSON(summary)
@@ -431,7 +431,7 @@ func (s *Server) handleDeleteEntity(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_name", "nome invalido")
 		return
 	case err != nil:
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	rejection := map[string]any{
@@ -496,7 +496,7 @@ func (s *Server) handleAddEntityRejection(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	rejection := map[string]any{
@@ -537,7 +537,7 @@ func (s *Server) handleRemoveEntityRejection(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	body := map[string]any{"status": "ok"}
@@ -581,7 +581,7 @@ func (s *Server) handleUndoEntityEdit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "edit_not_latest", "ha uma edicao mais nova")
 		return
 	case err != nil:
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -598,7 +598,7 @@ func (s *Server) handleMood(w http.ResponseWriter, r *http.Request) {
 	points, err := s.deps.Store.MoodSeriesExcludingBooks(r.Context(), from, to,
 		truthy(query.Get("exclude_books")))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	out := make([]map[string]any, 0, len(points))

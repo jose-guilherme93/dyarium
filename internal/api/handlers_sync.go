@@ -37,7 +37,7 @@ func (s *Server) handleSyncManifest(w http.ResponseWriter, r *http.Request) {
 	case "entries":
 		entries, err := s.deps.Store.ListEntriesFilteredNotebook(r.Context(), limit, cursor, "", "", "", nil, "")
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			s.writeInternal(w, r, "internal", err)
 			return
 		}
 		ids := make([]string, 0, len(entries))
@@ -46,12 +46,12 @@ func (s *Server) handleSyncManifest(w http.ResponseWriter, r *http.Request) {
 		}
 		tags, err := s.deps.Store.ListEntryTagNames(r.Context(), ids)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			s.writeInternal(w, r, "internal", err)
 			return
 		}
 		attachments, err := s.deps.Store.ListAttachmentIDsForEntries(r.Context(), ids)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			s.writeInternal(w, r, "internal", err)
 			return
 		}
 		items := make([]map[string]any, 0, len(entries))
@@ -67,7 +67,7 @@ func (s *Server) handleSyncManifest(w http.ResponseWriter, r *http.Request) {
 	case "deleted":
 		entries, err := s.deps.Store.ListDeletedEntries(r.Context(), limit, cursor)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			s.writeInternal(w, r, "internal", err)
 			return
 		}
 		items := make([]map[string]any, 0, len(entries))
@@ -93,7 +93,7 @@ func (s *Server) handleSyncManifest(w http.ResponseWriter, r *http.Request) {
 	case "notebooks":
 		notebooks, err := s.deps.Store.ListNotebooks(r.Context())
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			s.writeInternal(w, r, "internal", err)
 			return
 		}
 		items := make([]map[string]any, 0, len(notebooks))
@@ -102,7 +102,7 @@ func (s *Server) handleSyncManifest(w http.ResponseWriter, r *http.Request) {
 		}
 		deleted, err := s.deps.Store.ListTombstones(r.Context(), store.TombstoneNotebook, 5000, 0)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			s.writeInternal(w, r, "internal", err)
 			return
 		}
 		tombstones := make([]map[string]any, 0, len(deleted))

@@ -54,7 +54,7 @@ func (s *Server) handleEntityMentions(w http.ResponseWriter, r *http.Request) {
 	}
 	summary, entries, ok, err := s.deps.Store.GetEntity(ctx, kind, r.PathValue("name"))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	if !ok {
@@ -63,7 +63,7 @@ func (s *Server) handleEntityMentions(w http.ResponseWriter, r *http.Request) {
 	}
 	aliases, err := s.deps.Store.EntityAliases(ctx, summary.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	terms := append([]string{summary.Name}, aliases...)
@@ -83,7 +83,7 @@ func (s *Server) handleEntityMentions(w http.ResponseWriter, r *http.Request) {
 
 		found, err := s.transcriptMentions(ctx, base, terms)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			s.writeInternal(w, r, "internal", err)
 			return
 		}
 		mentions = append(mentions, found...)
@@ -94,7 +94,7 @@ func (s *Server) handleEntityMentions(w http.ResponseWriter, r *http.Request) {
 
 		found, err = s.noteMentions(ctx, base, terms)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			s.writeInternal(w, r, "internal", err)
 			return
 		}
 		mentions = append(mentions, found...)

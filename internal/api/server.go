@@ -491,6 +491,15 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 	})
 }
 
+// writeInternal registers the detail and answers the generic message: the
+// client never sees a database error, a file path or a library message.
+func (s *Server) writeInternal(w http.ResponseWriter, r *http.Request, code string, err error) {
+	if s.deps.Logger != nil {
+		s.deps.Logger.Error("erro interno", "method", r.Method, "path", r.URL.Path, "code", code, "err", err)
+	}
+	writeError(w, http.StatusInternalServerError, code, "erro interno")
+}
+
 func decodeJSON(r *http.Request, out any) error {
 	defer r.Body.Close()
 	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<20))

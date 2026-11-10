@@ -18,7 +18,7 @@ import (
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	settings, err := s.deps.Store.ListSettings(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	whisperModel := settings["whisper_model"]
@@ -90,7 +90,7 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	set := func(key, value string) bool {
 		if err := s.deps.Store.SetSetting(ctx, key, value); err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			s.writeInternal(w, r, "internal", err)
 			return false
 		}
 		return true
@@ -227,7 +227,7 @@ func toInt(s string) int {
 func (s *Server) handleGetAnalysis(w http.ResponseWriter, r *http.Request) {
 	a, ok, err := s.deps.Store.GetAnalysis(r.Context(), r.PathValue("id"))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	if !ok {
@@ -404,7 +404,7 @@ func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	// A chave e a mesma da analise automatica: um clique enquanto o worker ja
 	// analisa nao pode abrir uma segunda passada concorrente na mesma nota.
 	if _, err := s.deps.Queue.Enqueue(ctx, jobs.TypeAnalyze, jobs.AnalyzeKey(id), jobs.AnalyzePayload{EntryID: id}); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	_ = s.deps.Store.UpdateEntryStatus(ctx, id, store.EntryAnalyzing)

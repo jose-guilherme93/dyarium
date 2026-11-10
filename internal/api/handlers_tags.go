@@ -13,7 +13,7 @@ import (
 func (s *Server) handleListTags(w http.ResponseWriter, r *http.Request) {
 	tags, err := s.deps.Store.ListTags(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	out := make([]map[string]any, 0, len(tags))
@@ -59,7 +59,7 @@ func (s *Server) handleCreateTag(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleListEntryTags(w http.ResponseWriter, r *http.Request) {
 	tags, err := s.deps.Store.ListEntryTags(r.Context(), r.PathValue("id"))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	out := make([]map[string]any, 0, len(tags))
@@ -84,7 +84,7 @@ func (s *Server) handleSetEntryTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.deps.Store.SetEntryTags(ctx, entryID, req.Tags); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -96,7 +96,7 @@ func (s *Server) handleDeleteTag(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "tag inexistente")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

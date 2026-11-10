@@ -17,7 +17,7 @@ func (s *Server) handleListActivities(w http.ResponseWriter, r *http.Request) {
 	}
 	activities, err := s.deps.Store.ListActivities(r.Context(), limit)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"activities": activities})

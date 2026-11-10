@@ -22,7 +22,7 @@ func (s *Server) handleGetBookCover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	etag := `"` + cover.UpdatedAt.UTC().Format(time.RFC3339Nano) + `"`
@@ -49,7 +49,7 @@ func (s *Server) handlePutBookCover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	if !notebook.IsBook() {
@@ -86,7 +86,7 @@ func (s *Server) handlePutBookCover(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:   time.Now().UTC(),
 	}
 	if err := s.deps.Store.SetBookCover(r.Context(), cover); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	s.deps.Events.Publish("notebook.changed", map[string]string{"notebook_id": notebookID})
@@ -100,7 +100,7 @@ func (s *Server) handlePutBookCover(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteBookCover(w http.ResponseWriter, r *http.Request) {
 	notebookID := r.PathValue("id")
 	if err := s.deps.Store.DeleteBookCover(r.Context(), notebookID); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	s.deps.Events.Publish("notebook.changed", map[string]string{"notebook_id": notebookID})

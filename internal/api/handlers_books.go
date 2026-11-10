@@ -51,7 +51,7 @@ func (s *Server) handleReorderChapters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	s.deps.Events.Publish("notebook.changed", map[string]string{"notebook_id": r.PathValue("id")})

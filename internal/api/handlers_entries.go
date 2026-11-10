@@ -167,7 +167,7 @@ func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 	if truthy(query.Get("deleted")) {
 		entries, err := s.deps.Store.ListDeletedEntries(r.Context(), limit, cursor)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			s.writeInternal(w, r, "internal", err)
 			return
 		}
 		out := make([]map[string]any, 0, len(entries))
@@ -187,7 +187,7 @@ func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusNotFound, "notebook_not_found", "caderno inexistente")
 				return
 			}
-			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			s.writeInternal(w, r, "internal", err)
 			return
 		}
 	}
@@ -195,7 +195,7 @@ func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 		query.Get("person"), query.Get("place"), query.Get("theme"), archiveFilter(query),
 		notebookID, truthy(query.Get("exclude_books")))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	if isBook || truthy(query.Get("include_words")) {
@@ -209,7 +209,7 @@ func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 	}
 	tagNames, err := s.deps.Store.ListEntryTagNames(r.Context(), ids)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	// A previa pode vir da transcricao: grafias antigas de uma entidade
@@ -297,7 +297,7 @@ func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnprocessableEntity, "invalid_notebook", "caderno inexistente")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	chapterKind := strings.TrimSpace(req.ChapterKind)
@@ -364,7 +364,7 @@ func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 	if book {
 		position, err := s.deps.Store.NextChapterPosition(r.Context(), notebookID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			s.writeInternal(w, r, "internal", err)
 			return
 		}
 		entry.ChapterPosition = &position
@@ -382,7 +382,7 @@ func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
-			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			s.writeInternal(w, r, "internal", err)
 			return
 		}
 		// A nota pode existir apagada (lixeira) — por exemplo, o app restaurou um
@@ -395,13 +395,13 @@ func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		} else if !errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			s.writeInternal(w, r, "internal", err)
 			return
 		}
 		entry.ID = clientID
 	}
 	if err := s.deps.Store.CreateEntry(r.Context(), entry); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, entryJSON(entry))
@@ -415,7 +415,7 @@ func (s *Server) handleGetEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	body := entryJSON(entry)
@@ -555,7 +555,7 @@ func (s *Server) handlePatchEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	if len(conflict) > 0 {
@@ -577,7 +577,7 @@ func (s *Server) handlePatchEntry(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusUnprocessableEntity, "invalid_summary_detail", "summary_detail deve ser concise ou full")
 				return
 			}
-			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			s.writeInternal(w, r, "internal", err)
 			return
 		}
 	}
@@ -591,7 +591,7 @@ func (s *Server) handlePatchEntry(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusUnprocessableEntity, "invalid_icon", "icon invalido")
 				return
 			}
-			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			s.writeInternal(w, r, "internal", err)
 			return
 		}
 	}
@@ -606,7 +606,7 @@ func (s *Server) handlePatchEntry(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusUnprocessableEntity, "invalid_chapter", "capitulo invalido")
 				return
 			}
-			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			s.writeInternal(w, r, "internal", err)
 			return
 		}
 	}
@@ -621,7 +621,7 @@ func (s *Server) handleDeleteEntry(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "entrada inexistente")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	// The removal is logical; the cleanup job deletes the encrypted objects and
@@ -648,12 +648,12 @@ func (s *Server) handleRestoreEntry(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "entrada inexistente")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	entry, err := s.deps.Store.GetEntry(ctx, id)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	s.deps.Events.Publish("entry.status", map[string]string{"entry_id": id, "status": entry.Status})
@@ -668,7 +668,7 @@ func (s *Server) handleGetTranscript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	// A leitura resolve grafias antigas para a entidade sobrevivente; o texto
@@ -751,7 +751,7 @@ func (s *Server) handlePutTranscript(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:    now,
 	}
 	if err := s.deps.Store.SaveTranscript(ctx, transcript, segments); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	// O app reenvia a transcricao ao abrir a nota. Rebaixar uma nota ja
@@ -808,7 +808,7 @@ func (s *Server) handleEditTranscriptSegment(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	found := false
@@ -831,7 +831,7 @@ func (s *Server) handleEditTranscriptSegment(w http.ResponseWriter, r *http.Requ
 	}
 	transcript.Text = strings.Join(raw, "\n")
 	if err := s.deps.Store.SaveTranscript(ctx, transcript, segments); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	status := store.EntryTranscribed
@@ -910,12 +910,12 @@ func (s *Server) handlePutTranscriptRevisions(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	segments, err := s.deps.Store.ListSegments(ctx, transcript.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	byIndex := make(map[int]store.Segment, len(segments))
@@ -977,7 +977,7 @@ func (s *Server) handlePutTranscriptRevisions(w http.ResponseWriter, r *http.Req
 	}
 	rejected += refused
 	if err := s.deps.Store.SaveRevisions(ctx, transcript.ID, revs, comprehension, rejected, through, model, req.PromptVersion, req.Literal); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"revised_segments": changed, "rejected": rejected})
@@ -1124,7 +1124,7 @@ func (s *Server) handleListSegments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 
@@ -1145,7 +1145,7 @@ func (s *Server) handleListSegments(w http.ResponseWriter, r *http.Request) {
 	}
 	segs, more, err := s.deps.Store.ListSegmentsPage(ctx, t.ID, offset, limit)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	// As paginas da transcricao tambem mostram a grafia atual da entidade.
@@ -1223,13 +1223,13 @@ func (s *Server) handleRetranscribe(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	audios, err := s.deps.Store.ListAudios(ctx, id)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	for _, audio := range audios {
 		if _, err := s.deps.Queue.Enqueue(ctx, jobs.TypeTranscribe, "transcribe:"+audio.ID,
 			jobs.TranscribePayload{EntryID: id, AttachmentID: audio.ID}); err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			s.writeInternal(w, r, "internal", err)
 			return
 		}
 	}
@@ -1245,7 +1245,7 @@ func (s *Server) handleCancelEntry(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	ids, err := s.deps.Queue.CancelEntry(ctx, id)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	if s.deps.Canceller != nil {
