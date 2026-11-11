@@ -9,9 +9,17 @@ const base: ProcessingInput = {
 };
 
 describe('decideProcessing', () => {
-  it('desligado ganha de tudo: nada roda e o servidor nao assume', () => {
+  it('modelo baixado dispensa o interruptor: transcreve no aparelho', () => {
+    expect(decideProcessing({ ...base, enabled: false })).toEqual({
+      place: 'device',
+      runsOnDevice: true,
+      needsModel: false,
+    });
+  });
+
+  it('desligado sem modelo nao roda e o servidor nao assume', () => {
     expect(
-      decideProcessing({ ...base, enabled: false, serverProcessing: true }),
+      decideProcessing({ ...base, enabled: false, deviceReady: false, serverProcessing: true, hasServer: false }),
     ).toEqual({ place: 'disabled', runsOnDevice: false, needsModel: false });
   });
 

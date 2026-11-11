@@ -34,15 +34,26 @@ export interface ProcessingDecision {
 }
 
 /**
- * Decide o lugar de uma etapa. Desligada ganha de tudo; o servidor so entra se
- * existir; o aparelho so entra se o build tiver o motor.
+ * Decide o lugar de uma etapa.
+ *
+ * A pergunta foi respondida uma vez: baixar o modelo **e** autorizar o
+ * aparelho. Depois disso o app nao volta a perguntar. A ordem e:
+ *
+ * 1. servidor escolhido e configurado processa la, sempre;
+ * 2. com modelo baixado, o aparelho resolve sozinho — o interruptor da etapa
+ *    nao bloqueia um modelo que ja esta no disco;
+ * 3. sem modelo, o interruptor decide se a etapa pede o download ou fica
+ *    desligada.
  */
 export function decideProcessing(input: ProcessingInput): ProcessingDecision {
-  if (!input.enabled) {
-    return { place: 'disabled', runsOnDevice: false, needsModel: false };
-  }
   if (input.serverProcessing && input.hasServer) {
     return { place: 'server', runsOnDevice: false, needsModel: false };
+  }
+  if (input.deviceCapable && input.deviceReady) {
+    return { place: 'device', runsOnDevice: true, needsModel: false };
+  }
+  if (!input.enabled) {
+    return { place: 'disabled', runsOnDevice: false, needsModel: false };
   }
   if (!input.deviceCapable) {
     // Sem motor nativo nao ha como rodar aqui. Com servidor, ele e o unico
@@ -51,11 +62,7 @@ export function decideProcessing(input: ProcessingInput): ProcessingDecision {
       ? { place: 'server', runsOnDevice: false, needsModel: false }
       : { place: 'disabled', runsOnDevice: false, needsModel: false };
   }
-  return {
-    place: 'device',
-    runsOnDevice: input.deviceReady,
-    needsModel: !input.deviceReady,
-  };
+  return { place: 'device', runsOnDevice: false, needsModel: true };
 }
 
 /**
