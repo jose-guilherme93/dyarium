@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { StyleSheet } from 'react-native';
 
 import { NoteAudioCard } from '@/components/NoteAudioCard';
 import type { NoteAudioNode } from '@/core/noteDocument';
@@ -39,6 +40,12 @@ const segments: TranscriptSegment[] = [
   { start_ms: 60_000, end_ms: 90_000, text: 'Frase do meio.' },
 ];
 
+/** Altura aplicada ao container do card: o que a nota reserva na lista. */
+function cardHeight(result: ReturnType<typeof render>): number | undefined {
+  const style = StyleSheet.flatten(result.getByTestId('audio-card').props.style);
+  return style?.height;
+}
+
 describe('NoteAudioCard', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -60,6 +67,14 @@ describe('NoteAudioCard', () => {
     // O botao do card sai de cena: o play/pause fica so no transporte.
     expect(screen.queryByLabelText('Tocar áudio')).toBeNull();
     expect(screen.getByLabelText('Tocar')).toBeTruthy();
+    // No lugar dele, so a indicacao de que este audio esta no player.
+    expect(screen.getByTestId('audio-indicator', { includeHiddenElements: true })).toBeTruthy();
+  });
+
+  it('tocando, o topo mostra a posicao e a duracao', () => {
+    render(<NoteAudioCard node={node} active player={player as never} />);
+
+    expect(screen.getByText('00:10 / 02:00')).toBeTruthy();
   });
 
   it('tocando, mantem a previa em texto quando nao ha segmentos', () => {
@@ -76,16 +91,28 @@ describe('NoteAudioCard', () => {
     expect(screen.getByTestId('audio-transcript').props.children).toBe('texto transcrito');
   });
 
-  it('tocar numa linha da transcricao busca aquele trecho e toca', async () => {
+  it('nao mostra as linhas sincronizadas dentro do card', () => {
     render(<NoteAudioCard node={node} active player={player as never} segments={segments} />);
 
+    // A transcricao sincronizada vive atras de `onOpenTranscript`; o card fica
+    // com a previa, a onda e o transporte.
+    expect(screen.queryByLabelText('Ouvir a partir de 01:00')).toBeNull();
+    expect(screen.getByLabelText('Posição do áudio')).toBeTruthy();
+  });
+
+  it('tocando, a onda do card busca o ponto no player', async () => {
+    render(<NoteAudioCard node={node} active player={player as never} segments={segments} />);
+
+    const wave = screen.getByLabelText('Posição do áudio');
+    fireEvent(wave, 'layout', { nativeEvent: { layout: { width: 240, height: 40 } } });
     await act(async () => {
-      fireEvent.press(screen.getByLabelText('Ouvir a partir de 01:00'));
+      fireEvent(wave, 'responderGrant', { nativeEvent: { locationX: 120 } });
+      fireEvent(wave, 'responderRelease', { nativeEvent: { locationX: 120 } });
+      await Promise.resolve();
       await Promise.resolve();
     });
 
     expect(player.seekTo).toHaveBeenCalledWith(60);
-    expect(player.play).toHaveBeenCalled();
   });
 
   it('parado, a onda toca o audio a partir do ponto tocado', () => {
@@ -115,16 +142,85 @@ describe('NoteAudioCard', () => {
     expect(onOpenTranscript).toHaveBeenCalledTimes(1);
   });
 
+  it('mantem 182 dp de altura em todos os estados', () => {
+    const states = [
+      <NoteAudioCard key="sem-transcricao" node={node} />,
+      <NoteAudioCard
+        key="transcrevendo"
+        node={node}
+        transcribingPercent={42}
+        canTranscribe
+        onTranscribe={jest.fn()}
+      />,
+      <NoteAudioCard key="com-transcricao" node={node} transcript="texto transcrito" />,
+      <NoteAudioCard
+        key="tocando"
+        node={node}
+        active
+        player={player as never}
+        transcript="texto transcrito"
+        segments={segments}
+      />,
+      <NoteAudioCard
+        key="erro"
+        node={node}
+        transcribeError
+        canTranscribe
+        onTranscribe={jest.fn()}
+      />,
+    ];
+
+    for (const element of states) {
+      const view = render(element);
+      expect(cardHeight(view)).toBe(182);
+      view.unmount();
+    }
+  });
+
+  it('mostra "Sem transcrição" so quando nao ha transcricao', () => {
+    const withoutTranscript = render(<NoteAudioCard node={node} />);
+    expect(withoutTranscript.getByTestId('audio-empty')).toBeTruthy();
+    expect(withoutTranscript.getByText('Sem transcrição')).toBeTruthy();
+    withoutTranscript.unmount();
+
+    const withTranscript = render(<NoteAudioCard node={node} transcript="texto transcrito" />);
+    expect(withTranscript.queryByTestId('audio-empty')).toBeNull();
+    expect(withTranscript.queryByText('Sem transcrição')).toBeNull();
+  });
+
+  it('mostra a previa da transcricao em tres linhas de 19', () => {
+    render(<NoteAudioCard node={node} transcript="texto transcrito" />);
+
+    const preview = screen.getByTestId('audio-transcript');
+    expect(preview.props.numberOfLines).toBe(3);
+    expect(StyleSheet.flatten(preview.props.style)?.lineHeight).toBe(19);
+  });
+
   it('mostra o progresso da transcricao no proprio audio', () => {
     render(<NoteAudioCard node={node} transcribingPercent={42} />);
 
     expect(screen.getByTestId('audio-transcribing')).toBeTruthy();
     expect(screen.getByText('Transcrevendo 42%')).toBeTruthy();
+    // A barra de 2 dp fica dentro da faixa de texto, sem crescer o card.
+    expect(screen.getByTestId('audio-transcribing-progress')).toBeTruthy();
+    expect(screen.queryByTestId('audio-empty')).toBeNull();
   });
 
   it('sem andamento, ainda avisa que a transcricao esta em curso', () => {
     render(<NoteAudioCard node={node} transcribingWait />);
 
     expect(screen.getByText('Transcrevendo...')).toBeTruthy();
+  });
+
+  it('no erro da transcricao, mostra o aviso e o tentar de novo', () => {
+    const retry = jest.fn();
+    render(<NoteAudioCard node={node} transcribeError canTranscribe onTranscribe={retry} />);
+
+    expect(screen.getByTestId('audio-transcribe-error')).toBeTruthy();
+    expect(screen.getByText('Falha na transcrição')).toBeTruthy();
+    expect(screen.queryByTestId('audio-empty')).toBeNull();
+
+    fireEvent.press(screen.getByLabelText('Tentar de novo'));
+    expect(retry).toHaveBeenCalledTimes(1);
   });
 });
