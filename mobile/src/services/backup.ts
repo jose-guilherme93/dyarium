@@ -33,6 +33,7 @@ import {
   orderNotesForRestore,
   parseManifest,
   toRestoredRecording,
+  validateRestoreEntry,
   type BackupFile,
   type BackupNote,
 } from '@/core/backup';
@@ -321,6 +322,9 @@ export async function runRestore(
     // So entre notas: uma nota em restauracao termina inteira.
     if (options.shouldStop?.()) throw new BackupError('cancelled');
     const entry = notes[i];
+    // Nomes vindos do manifesto viram caminho de arquivo. Um `..` ou uma barra
+    // aqui escaparia da pasta da nota; trata como backup corrompido.
+    if (validateRestoreEntry(entry) !== 'ok') throw new BackupError('corrupt');
     const recording = entry.recording;
     const stage = new Directory(stageRoot, recording.id);
     stage.create({ intermediates: true, idempotent: true });

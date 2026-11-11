@@ -60,6 +60,56 @@ async function freshDatabase(): Promise<Fixture> {
   return { raw, db: adapter(raw) };
 }
 
+function emptyKnowledge(): BackupKnowledge {
+  return {
+    analyses: [],
+    analysisChunks: [],
+    entities: [],
+    entityAliases: [],
+    entryEntities: [],
+    ownerAliases: [],
+    entityRejections: [],
+    graphLayout: [],
+    transcriptSync: [],
+    analysisSync: [],
+    transcriptSyncEnv: [],
+    analysisSyncEnv: [],
+  };
+}
+
+function entity(id: string, kind: string, name: string) {
+  return {
+    id,
+    kind,
+    name,
+    label: '',
+    icon: '',
+    createdAt: '2026-10-11T00:00:00.000Z',
+    updatedAt: '',
+  };
+}
+
+function alias(id: string, kind: string, name: string) {
+  return {
+    id,
+    entityId: 'ent_ok',
+    kind,
+    name,
+    createdAt: '2026-10-11T00:00:00.000Z',
+    updatedAt: '',
+  };
+}
+
+function rejection(kind: string, name: string) {
+  return {
+    kind,
+    name,
+    nameKey: name.trim().toLowerCase(),
+    createdAt: '2026-10-11T00:00:00.000Z',
+    updatedAt: '',
+  };
+}
+
 function seedKnowledge(raw: DatabaseSync): void {
   raw.exec(`
     INSERT INTO analyses
@@ -241,5 +291,62 @@ describe('conhecimento local do backup', () => {
     expect(target.raw.prepare('SELECT COUNT(*) AS n FROM analyses').get()).toEqual({ n: 1 });
     expect(target.raw.prepare('SELECT COUNT(*) AS n FROM entry_entities').get()).toEqual({ n: 1 });
     expect(target.raw.prepare('SELECT COUNT(*) AS n FROM entities').get()).toEqual({ n: 1 });
+  });
+
+  it('nao confia no tipo de entidade que vem no manifesto', async () => {
+    const knowledge = emptyKnowledge();
+    knowledge.entities = [
+      entity('ent_ok', 'person', 'Ana'),
+      entity('ent_admin', 'admin', 'Root'),
+      entity('ent_inject', 'person; DROP TABLE analyses; --', 'Mallory'),
+      entity('ent_empty', 'person', '   '),
+    ];
+    knowledge.entityAliases = [
+      alias('ali_ok', 'person', 'Aninha'),
+      alias('ali_admin', 'admin', 'Aninha'),
+      alias('ali_empty', 'place', ''),
+    ];
+    knowledge.entityRejections = [
+      rejection('person', 'Paulo'),
+      rejection('admin', 'Paulo'),
+      rejection('person', '   '),
+    ];
+
+    const target = await freshDatabase();
+    await importBackupKnowledge(knowledge, target.db);
+
+    expect(target.raw.prepare('SELECT id FROM entities ORDER BY id').all()).toEqual([
+      { id: 'ent_ok' },
+    ]);
+    expect(target.raw.prepare('SELECT id FROM entity_aliases').all()).toEqual([{ id: 'ali_ok' }]);
+    expect(target.raw.prepare('SELECT kind FROM entity_rejections').all()).toEqual([
+      { kind: 'person' },
+    ]);
+  });
+
+  it('grava texto hostil como texto e nao executa nada', async () => {
+    const hostile = "x'); DROP TABLE analyses; --";
+    const knowledge = emptyKnowledge();
+    knowledge.entities = [entity('ent_1', 'person', hostile)];
+    knowledge.analyses = [
+      {
+        entryId: hostile,
+        title: hostile,
+        recordedAt: '2026-10-11T00:00:00.000Z',
+        payload: JSON.stringify({ summary: hostile }),
+        fetchedAt: '2026-10-12T00:00:00.000Z',
+        origin: 'server',
+      },
+    ];
+
+    const target = await freshDatabase();
+    await importBackupKnowledge(knowledge, target.db);
+
+    expect(target.raw.prepare('SELECT name FROM entities').all()).toEqual([{ name: hostile }]);
+    expect(target.raw.prepare('SELECT entry_id, payload FROM analyses').all()).toEqual([
+      { entry_id: hostile, payload: JSON.stringify({ summary: hostile }) },
+    ]);
+    // Se o texto tivesse sido interpretado como SQL, a tabela nao existiria.
+    expect(target.raw.prepare('SELECT COUNT(*) AS n FROM analyses').get()).toEqual({ n: 1 });
   });
 });

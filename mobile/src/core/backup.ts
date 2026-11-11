@@ -206,6 +206,30 @@ export function filterKnowledge(
   };
 }
 
+/**
+ * Um segmento de caminho seguro. Ids e nomes de arquivo chegam do manifesto,
+ * que pode vir de qualquer pasta escolhida pelo usuario: barra, barra invertida,
+ * NUL, `.` e `..` escapariam da pasta da nota — e poderiam sobrescrever o banco.
+ * Recusar o manifesto e mais seguro do que "limpar" o nome e continuar.
+ */
+export function isSafePathSegment(value: string): boolean {
+  if (!value || value === '.' || value === '..') return false;
+  if (value.includes('/') || value.includes('\\') || value.includes('\u0000')) return false;
+  return true;
+}
+
+export type RestoreEntryVerdict = 'ok' | 'unsafe_id' | 'unsafe_file';
+
+/** Confere todo nome que vira caminho, antes de qualquer escrita da restauracao. */
+export function validateRestoreEntry(entry: BackupNote): RestoreEntryVerdict {
+  if (!isSafePathSegment(entry.recording.id)) return 'unsafe_id';
+  if (entry.audioFile !== undefined && !isSafePathSegment(entry.audioFile)) return 'unsafe_file';
+  for (const file of entry.files) {
+    if (!isSafePathSegment(file.originalName)) return 'unsafe_file';
+  }
+  return 'ok';
+}
+
 /** Nome de uma midia de backup: `<id>__<md5 de 32 hex>__<nome>`. */
 const MEDIA_NAME = /^.+__[0-9a-f]{32}__.+$/;
 

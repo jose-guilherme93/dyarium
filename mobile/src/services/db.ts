@@ -2760,13 +2760,19 @@ export async function importBackupKnowledge(
     db.withTransactionAsync(async () => {
       // Entidades antes dos vinculos: um alias/vínculo aponta para o id delas.
       for (const entity of knowledge.entities) {
+        // O manifesto pode vir de qualquer pasta: tipo fora dos quatro
+        // conhecidos e nome vazio nao entram (o mapa e a analise so trabalham
+        // com `EntityKind` fechado).
+        if (!isEntityKind(entity.kind)) continue;
+        const name = entity.name.trim();
+        if (!name) continue;
         await db.runAsync(
           `INSERT OR IGNORE INTO entities (id, kind, name, label, icon, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?)`,
           [
             entity.id,
             entity.kind,
-            entity.name,
+            name,
             entity.label,
             entity.icon,
             entity.createdAt,
@@ -2775,10 +2781,13 @@ export async function importBackupKnowledge(
         );
       }
       for (const alias of knowledge.entityAliases) {
+        if (!isEntityKind(alias.kind)) continue;
+        const name = alias.name.trim();
+        if (!name) continue;
         await db.runAsync(
           `INSERT OR IGNORE INTO entity_aliases (id, entity_id, kind, name, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?)`,
-          [alias.id, alias.entityId, alias.kind, alias.name, alias.createdAt, alias.updatedAt],
+          [alias.id, alias.entityId, alias.kind, name, alias.createdAt, alias.updatedAt],
         );
       }
       for (const link of knowledge.entryEntities) {
@@ -2797,20 +2806,27 @@ export async function importBackupKnowledge(
         );
       }
       for (const owner of knowledge.ownerAliases) {
+        const name = owner.name.trim();
+        if (!name) continue;
         await db.runAsync(
           `INSERT OR IGNORE INTO owner_aliases (name, created_at, updated_at)
            VALUES (?, ?, ?)`,
-          [owner.name, owner.createdAt, owner.updatedAt],
+          [name, owner.createdAt, owner.updatedAt],
         );
       }
       for (const rejection of knowledge.entityRejections) {
+        if (!isEntityKind(rejection.kind)) continue;
+        const name = rejection.name.trim();
+        if (!name) continue;
+        // A chave e derivada do nome, nunca aceita do manifesto: um name_key
+        // arbitrario poderia bloquear entidades que o dono nunca recusou.
         await db.runAsync(
           `INSERT OR IGNORE INTO entity_rejections (kind, name, name_key, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?)`,
           [
             rejection.kind,
-            rejection.name,
-            rejection.nameKey,
+            name,
+            entityNameKey(name),
             rejection.createdAt,
             rejection.updatedAt,
           ],

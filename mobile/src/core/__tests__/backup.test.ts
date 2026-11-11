@@ -7,12 +7,14 @@ import {
   bytesToBase64,
   filterKnowledge,
   isBackupMediaName,
+  isSafePathSegment,
   joinUri,
   nameFromDocumentUri,
   orderForBackup,
   orderNotesForRestore,
   parseManifest,
   toRestoredRecording,
+  validateRestoreEntry,
   type BackupKnowledge,
   type BackupNote,
 } from '../backup';
@@ -347,6 +349,43 @@ describe('conhecimento local no manifesto', () => {
     expect(filtered.analysisChunks).toHaveLength(1);
     expect(filtered.transcriptSync).toHaveLength(1);
     expect(filtered.analysisSyncEnv).toHaveLength(1);
+  });
+});
+
+describe('restauracao de manifesto hostil', () => {
+  it('recusa id que escaparia da pasta da nota', () => {
+    for (const id of ['../outra', 'a/b', 'a\\b', '..', '.', '', 'x\u0000y']) {
+      expect(isSafePathSegment(id)).toBe(false);
+    }
+    for (const id of ['rec_1', 'entry-rec-0000', '01M70YW143YHC2AVDAKM878BFP', 'note-1']) {
+      expect(isSafePathSegment(id)).toBe(true);
+    }
+  });
+
+  it('recusa arquivo cujo nome original traz caminho', () => {
+    const safe = note();
+    expect(validateRestoreEntry(safe)).toBe('ok');
+
+    const traversal = {
+      ...safe,
+      files: [
+        {
+          ...safe.files[0],
+          originalName: '../../files/SQLite/dyarium.db',
+        },
+      ],
+    };
+    expect(validateRestoreEntry(traversal)).toBe('unsafe_file');
+
+    expect(validateRestoreEntry({ ...safe, audioFile: '../x.aac' })).toBe('unsafe_file');
+    expect(validateRestoreEntry({ ...safe, audioFile: 'sub/x.aac' })).toBe('unsafe_file');
+    expect(validateRestoreEntry({ ...safe, audioFile: 'x\\y.aac' })).toBe('unsafe_file');
+
+    const idTraversal = {
+      ...safe,
+      recording: { ...safe.recording, id: '../outra' },
+    };
+    expect(validateRestoreEntry(idTraversal)).toBe('unsafe_id');
   });
 });
 
