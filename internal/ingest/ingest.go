@@ -295,27 +295,16 @@ func (s *Service) CompleteWithOrigin(ctx context.Context, uploadID, attachmentID
 	}
 	defer f.Close()
 
-	tmp, err := os.CreateTemp("", "dyarium-verify-*.bin")
+	// Decifra uma unica vez, alimentando o hash: sem segunda varredura do
+	// arquivo e sem temporario em claro no disco.
+	n, sumArr, err := crypto.DecryptHash(f, s.key)
 	if err != nil {
-		return CompleteResult{}, fmt.Errorf("ingest: temp: %w", err)
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-
-	hasher := sha256.New()
-	n, err := crypto.Decrypt(f, s.key, io.MultiWriter(tmp, hasher))
-	if err != nil {
-		tmp.Close()
 		return CompleteResult{}, newError(422, "corrupt", "falha ao decifrar o upload")
 	}
-	if err := tmp.Close(); err != nil {
-		return CompleteResult{}, fmt.Errorf("ingest: close temp: %w", err)
-	}
-
 	if n != u.SizeBytes {
 		return CompleteResult{}, newError(422, "size_mismatch", "tamanho do conteudo diverge do esperado")
 	}
-	sum := hex.EncodeToString(hasher.Sum(nil))
+	sum := hex.EncodeToString(sumArr[:])
 	if u.SHA256 != "" && sum != u.SHA256 {
 		return CompleteResult{}, newError(422, "integrity", "sha256 do conteudo diverge do informado")
 	}
@@ -345,16 +334,10 @@ func (s *Service) CompleteWithOrigin(ctx context.Context, uploadID, attachmentID
 		return CompleteResult{}, fmt.Errorf("ingest: consultar attachment id: %w", err)
 	}
 
+	// A duracao (ffprobe) sai do caminho critico do Complete: a nota nasce com
+	// duracao 0 e e preenchida em passo posterior (com retry), via
+	// FillAttachmentDuration. Nenhum temporario em claro e criado aqui.
 	var durationSeconds float64
-	if s.prober != nil {
-		d, err := s.prober.DurationSeconds(ctx, tmpPath)
-		if err == nil {
-			durationSeconds = d
-			if s.cfg.MaxDurationSeconds > 0 && d > float64(s.cfg.MaxDurationSeconds) {
-				return CompleteResult{}, newError(422, "too_long", "duracao excede o maximo permitido")
-			}
-		}
-	}
 
 	// Identidade do audio pelo conteudo: a mesma gravacao nunca vira dois audios
 	// da mesma nota. Ao criar uma nota nova (sem EntryID), reaproveita a nota que
@@ -503,6 +486,36 @@ func (s *Service) completedResult(ctx context.Context, u store.Upload) (Complete
 		LocalTranscribe: u.LocalTranscribe,
 		LocalAnalysis:   u.LocalAnalysis,
 	}, nil
+}
+
+// FillAttachmentDuration measures the duration of an attachment's audio (via
+// ffprobe) in a separate step, after the upload has already been completed, and
+// persists it on the attachment and the entry. It is safe to retry: each call
+// re-measures and overwrites. The plaintext temp file is always removed.
+func (s *Service) FillAttachmentDuration(ctx context.Context, att store.Attachment) (float64, error) {
+	if s.prober == nil {
+		return 0, nil
+	}
+	tmp, err := s.DecryptToTemp(ctx, att)
+	if err != nil {
+		return 0, err
+	}
+	defer os.Remove(tmp)
+
+	d, err := s.prober.DurationSeconds(ctx, tmp)
+	if err != nil {
+		return 0, fmt.Errorf("ingest: probe duration: %w", err)
+	}
+	if s.cfg.MaxDurationSeconds > 0 && d > float64(s.cfg.MaxDurationSeconds) {
+		return d, newError(422, "too_long", "duracao excede o maximo permitido")
+	}
+	if err := s.store.SetAttachmentDuration(ctx, att.ID, d); err != nil {
+		return 0, err
+	}
+	if err := s.store.SyncEntryDuration(ctx, att.EntryID); err != nil {
+		return 0, err
+	}
+	return d, nil
 }
 
 // DecryptToTemp decrypts the original audio of an entry into a restricted temp

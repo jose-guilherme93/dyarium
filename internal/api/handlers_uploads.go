@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -159,6 +160,31 @@ func (s *Server) handleCompleteUpload(w http.ResponseWriter, r *http.Request) {
 		"attachment_id": result.Attachment.ID,
 		"status":        status,
 	})
+
+	// A duracao sai do caminho critico: o cliente ja recebeu a resposta antes do
+	// ffprobe rodar. O contexto do request morre aqui, entao a medicao usa um
+	// proprio, com teto de tempo, e tenta de novo antes de desistir. Sem isso a
+	// nota ficaria com duracao 0 para sempre.
+	if result.Attachment.ID != "" {
+		att := result.Attachment
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			for attempt := 0; attempt < 3; attempt++ {
+				if _, err := s.deps.Ingest.FillAttachmentDuration(ctx, att); err == nil {
+					return
+				} else if attempt == 2 {
+					s.deps.Logger.Error("falha: medir duracao do audio", "attachment_id", att.ID, "erro", err)
+					return
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(time.Duration(attempt+1) * time.Second):
+				}
+			}
+		}()
+	}
 }
 
 func (s *Server) writeIngestError(w http.ResponseWriter, err error) {
