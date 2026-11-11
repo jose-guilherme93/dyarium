@@ -64,46 +64,55 @@ export default function RecordScreen() {
       return;
     }
     if (noteId) {
-      // Se a nota sumiu no meio do caminho, o audio nao pode ser perdido: o
-      // anexo falha e a gravacao vira uma nota propria logo abaixo.
-      const movedPath = await moveAudio(finished.id, noteId, audioFileName(finished.id)).catch(
-        (error) => {
-          console.warn('[dyarium] falha ao mover o audio da gravacao', String(error));
-          return null;
-        },
-      );
-      const attached: Recording = {
-        ...finished,
-        dir: movedPath ? sessionDirUri(noteId) : finished.dir,
-        filePath: movedPath ?? finished.filePath,
-      };
-      // A posicao vem guardada pela tela da nota: o no de texto e o offset
-      // do cursor, para o audio entrar no lugar certo.
-      const position = takePendingInsert(noteId);
-      const kept = await attachAudio(noteId, attached, position).catch((error) => {
-        console.warn('[dyarium] falha ao anexar o audio na nota', String(error));
-        return false;
-      });
-      if (kept) {
-        await deleteRecordingRow(finished.id);
-        // A nota nasceu como rascunho (ou ja existia): garante que ela saia do
-        // status invisivel `draft` mesmo se a tela da nota nao abrir agora.
-        await submitNote(noteId);
-        await refresh();
-        // Se a gravacao veio da propria nota, voltar evita duas telas da mesma
-        // nota. Se veio da home, abre a nota para o audio nao ficar escondido
-        // atras de um rascunho sem caderno visivel.
-        if (from === 'note') back();
-        else replace({ pathname: '/note/[id]', params: { id: noteId } });
-        return;
-      }
-      console.warn('[dyarium] nota de destino sumiu; guardando a gravacao como nota');
-      await enqueue(attached);
-      replace({ pathname: '/note/[id]', params: { id: finished.id } });
+      // Navega assim que a gravacao parou: anexar e atualizar a biblioteca
+      // rodam em segundo plano e nao travam o toque em "Parar".
+      if (from === 'note') back();
+      else replace({ pathname: '/note/[id]', params: { id: noteId } });
+
+      void (async () => {
+        try {
+          const movedPath = await moveAudio(finished.id, noteId, audioFileName(finished.id)).catch(
+            (error) => {
+              console.warn('[dyarium] falha ao mover o audio da gravacao', String(error));
+              return null;
+            },
+          );
+          const attached: Recording = {
+            ...finished,
+            dir: movedPath ? sessionDirUri(noteId) : finished.dir,
+            filePath: movedPath ?? finished.filePath,
+          };
+          // A posicao vem guardada pela tela da nota: o no de texto e o offset
+          // do cursor, para o audio entrar no lugar certo.
+          const position = takePendingInsert(noteId);
+          const kept = await attachAudio(noteId, attached, position).catch((error) => {
+            console.warn('[dyarium] falha ao anexar o audio na nota', String(error));
+            return false;
+          });
+          if (kept) {
+            await deleteRecordingRow(finished.id);
+            // A nota nasceu como rascunho (ou ja existia): garante que ela saia do
+            // status invisivel `draft` mesmo se a tela da nota nao abrir agora.
+            await submitNote(noteId);
+            await refresh();
+            return;
+          }
+          console.warn('[dyarium] nota de destino sumiu; guardando a gravacao como nota');
+          setFinishError('A nota ficou sem áudio.');
+          await enqueue(attached);
+          replace({ pathname: '/note/[id]', params: { id: finished.id } });
+        } catch (error) {
+          console.warn('[dyarium] falha ao finalizar a gravacao em segundo plano', String(error));
+          setFinishError('A nota ficou sem áudio.');
+        }
+      })();
       return;
     }
-    await enqueue(finished);
     replace({ pathname: '/note/[id]', params: { id: finished.id } });
+    void enqueue(finished).catch((error) => {
+      console.warn('[dyarium] falha ao guardar a gravacao', String(error));
+      setFinishError('Não foi possível guardar esta gravação. Tente de novo.');
+    });
   }, [stop, noteId, from, attachAudio, enqueue, refresh, submitNote]);
 
   const handleStop = useCallback(async () => {
