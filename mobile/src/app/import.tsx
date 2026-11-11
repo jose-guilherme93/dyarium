@@ -172,6 +172,7 @@ export default function ImportReviewScreen() {
     : (library.notebooks.find((notebook) => notebook.isDefault)?.id ?? DEFAULT_NOTEBOOK_ID);
   const [ignored, setIgnored] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<{ done: number; total: number; name: string } | null>(null);
   const [sending, setSending] = useState(false);
   const [use24h, setUse24h] = useState(true);
   const [year, setYear] = useState(CURRENT_YEAR);
@@ -269,7 +270,25 @@ export default function ImportReviewScreen() {
     if (loadedRef.current) return undefined;
     loadedRef.current = true;
     let alive = true;
-    prepareSharedAudios()
+    const collected: ImportDraft[] = [];
+    prepareSharedAudios(new Date(), {
+      onProgress: (done: number, total: number, name: string) => {
+        if (alive) setProgress({ done, total, name });
+      },
+      onDraft: (draft: ImportDraft) => {
+        if (!alive) return;
+        collected.push(draft);
+        setItems((prev) => {
+          if (prev?.some((it) => it.draft.key === draft.key)) return prev;
+          const initialYear = draft.date?.year ?? importYearRef.current ?? CURRENT_YEAR;
+          const next = [
+            ...(prev ?? []),
+            { draft, title: draft.title, dateText: computeDateText(draft, initialYear, false, true) },
+          ];
+          return next;
+        });
+      },
+    })
       .then(({ drafts, ignored: extra }) => {
         if (!alive) return;
         const named = drafts.find((draft) => draft.date?.year);
@@ -283,6 +302,7 @@ export default function ImportReviewScreen() {
           })),
         );
         setIgnored(extra);
+        setProgress(null);
         void probeDurations(drafts);
       })
       .catch(() => {
@@ -406,7 +426,9 @@ export default function ImportReviewScreen() {
       {loading ? (
         <View style={styles.center}>
           <ActivityIndicator size="large" color={colors.textSecondary} />
-          <Text style={styles.hint}>Lendo o áudio...</Text>
+          <Text style={styles.hint}>
+            {progress ? `Lendo ${progress.done} de ${progress.total}: ${progress.name}` : 'Lendo o áudio...'}
+          </Text>
         </View>
       ) : (
         <>

@@ -235,4 +235,138 @@ describe('prepareSharedAudios', () => {
     expect(draft.filePath).toBeUndefined();
     expect(draft.sizeBytes).toBeUndefined();
   });
+
+  describe('progresso e teto de bytes', () => {
+    beforeEach(() => {
+      mockCopy.mockReset();
+      mockLegacyCopyAsync.mockReset().mockResolvedValue(undefined);
+      mockGetResolvedSharedPayloadsAsync.mockReset();
+      mockClearSharedPayloads.mockReset();
+      mockFiles.clear();
+      mockSizes.clear();
+      mockLastModified.clear();
+      jest.resetModules();
+      files = require('../files') as FilesModule;
+      share = require('../share') as ShareModule;
+    });
+
+    function payload(size: number | null, name = 'a.aac') {
+      return [
+        {
+          contentType: 'audio',
+          contentUri: 'content://media/1',
+          contentMimeType: 'audio/aac',
+          originalName: name,
+          contentSize: size,
+        },
+      ];
+    }
+
+    it('recusa arquivo unico acima do teto antes de copiar', async () => {
+      const cap = 1000;
+      mockGetResolvedSharedPayloadsAsync.mockResolvedValue(payload(cap + 1));
+      await expect(share.prepareSharedAudios(new Date(), { maxBytes: cap })).rejects.toThrow(/a\.aac/);
+      expect(mockLegacyCopyAsync).not.toHaveBeenCalled();
+      expect(mockCopy).not.toHaveBeenCalled();
+    });
+
+    it('trata size invalido como 0 (ausente, 0, negativo, NaN, Infinity)', async () => {
+      for (const size of [null, 0, -5, NaN, Infinity] as (number | null)[]) {
+        mockGetResolvedSharedPayloadsAsync.mockResolvedValue(payload(size));
+        const prepared = await share.prepareSharedAudios(new Date(), { maxBytes: 10 });
+        expect(prepared.drafts).toHaveLength(1);
+      }
+    });
+
+    it('copia quando a soma e exatamente o teto', async () => {
+      const cap = 100;
+      mockGetResolvedSharedPayloadsAsync.mockResolvedValue([
+        { contentType: 'audio', contentUri: 'content://media/1', contentMimeType: 'audio/aac', originalName: 'a.aac', contentSize: 60 },
+        { contentType: 'audio', contentUri: 'content://media/2', contentMimeType: 'audio/aac', originalName: 'b.aac', contentSize: 40 },
+      ]);
+      const prepared = await share.prepareSharedAudios(new Date(), { maxBytes: cap });
+      expect(prepared.drafts).toHaveLength(2);
+    });
+
+    it('recusa 1 byte acima do teto sem copiar nada', async () => {
+      const cap = 100;
+      mockGetResolvedSharedPayloadsAsync.mockResolvedValue([
+        { contentType: 'audio', contentUri: 'content://media/1', contentMimeType: 'audio/aac', originalName: 'a.aac', contentSize: 60 },
+        { contentType: 'audio', contentUri: 'content://media/2', contentMimeType: 'audio/aac', originalName: 'b.aac', contentSize: 41 },
+      ]);
+      await expect(share.prepareSharedAudios(new Date(), { maxBytes: cap })).rejects.toThrow();
+      expect(mockLegacyCopyAsync).not.toHaveBeenCalled();
+    });
+
+    it('maxBytes invalido cai no padrao de 1 GiB', async () => {
+      for (const maxBytes of [0, -1, NaN]) {
+        mockGetResolvedSharedPayloadsAsync.mockResolvedValue(payload(10));
+        const prepared = await share.prepareSharedAudios(new Date(), { maxBytes });
+        expect(prepared.drafts).toHaveLength(1);
+      }
+    });
+
+    it('maxUploadBytes do servidor menor que 1 GiB define o teto efetivo', async () => {
+      mockGetResolvedSharedPayloadsAsync.mockResolvedValue(payload(500));
+      await expect(
+        share.prepareSharedAudios(new Date(), { maxUploadBytes: 100, maxBytes: undefined }),
+      ).rejects.toThrow();
+    });
+
+    it('progresso incremental chama onProgress por arquivo', async () => {
+      mockGetResolvedSharedPayloadsAsync.mockResolvedValue([
+        { contentType: 'audio', contentUri: 'content://media/1', contentMimeType: 'audio/aac', originalName: 'a.aac', contentSize: 1 },
+        { contentType: 'audio', contentUri: 'content://media/2', contentMimeType: 'audio/aac', originalName: 'b.aac', contentSize: 1 },
+      ]);
+      const calls: [number, number, string][] = [];
+      await share.prepareSharedAudios(new Date(), {
+        onProgress: (c, t, n) => calls.push([c, t, n]),
+      });
+      expect(calls).toEqual([
+        [1, 2, 'a.aac'],
+        [2, 2, 'b.aac'],
+      ]);
+    });
+
+    it('onProgress que lanca nao aborta a copia nem vaza erro', async () => {
+      mockGetResolvedSharedPayloadsAsync.mockResolvedValue([
+        { contentType: 'audio', contentUri: 'content://media/1', contentMimeType: 'audio/aac', originalName: 'a.aac', contentSize: 1 },
+        { contentType: 'audio', contentUri: 'content://media/2', contentMimeType: 'audio/aac', originalName: 'b.aac', contentSize: 1 },
+      ]);
+      const prepared = await share.prepareSharedAudios(new Date(), {
+        onProgress: () => {
+          throw new Error('boom');
+        },
+      });
+      expect(prepared.drafts).toHaveLength(2);
+    });
+
+    it('dois lotes seguidos nao herdam contador de progresso', async () => {
+      mockGetResolvedSharedPayloadsAsync.mockResolvedValue([
+        { contentType: 'audio', contentUri: 'content://media/1', contentMimeType: 'audio/aac', originalName: 'a.aac', contentSize: 1 },
+      ]);
+      const first: number[] = [];
+      await share.prepareSharedAudios(new Date(), { onProgress: (c) => first.push(c) });
+
+      mockGetResolvedSharedPayloadsAsync.mockResolvedValue([
+        { contentType: 'audio', contentUri: 'content://media/2', contentMimeType: 'audio/aac', originalName: 'b.aac', contentSize: 1 },
+        { contentType: 'audio', contentUri: 'content://media/3', contentMimeType: 'audio/aac', originalName: 'c.aac', contentSize: 1 },
+      ]);
+      const second: number[] = [];
+      await share.prepareSharedAudios(new Date(), { onProgress: (c) => second.push(c) });
+
+      expect(first).toEqual([1]);
+      expect(second).toEqual([1, 2]);
+    });
+
+    it('nome com traversal nao influencia o caminho de destino', async () => {
+      mockGetResolvedSharedPayloadsAsync.mockResolvedValue([
+        { contentType: 'audio', contentUri: 'content://media/1', contentMimeType: 'audio/aac', originalName: '../evil/../../x.aac', contentSize: 1 },
+      ]);
+      const prepared = await share.prepareSharedAudios();
+      const draft = prepared.drafts[0];
+      expect(draft.filePath).toContain('original.aac');
+      expect(draft.filePath).not.toContain('..');
+    });
+  });
 });

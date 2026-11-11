@@ -78,8 +78,11 @@ export async function copySharedAudio(
   sourceUri: string,
   sessionId: string,
   extension: string,
+  options?: { onProgress?: (copied: number, total: number, name: string) => void },
 ): Promise<{ uri: string; size: number }> {
-  const suffix = extension.startsWith('.') ? extension : `.${extension}`;
+  // A extensao nunca vem do nome do arquivo: so caracteres alfanumericos.
+  const safeExt = (extension || '').replace(/[^a-zA-Z0-9]/g, '');
+  const suffix = safeExt ? `.${safeExt}` : '';
   const destination = new File(sessionDirectory(sessionId), `original${suffix}`);
   if (destination.exists) destination.delete();
 
