@@ -149,7 +149,7 @@ function recorderFiles(): File[] {
   return files;
 }
 
-function newestRecorderFile(): File | null {
+export function newestRecorderFile(): File | null {
   const files = recorderFiles();
   if (files.length === 0) return null;
   files.sort((a, b) => (b.info().modificationTime ?? 0) - (a.info().modificationTime ?? 0));
@@ -161,15 +161,25 @@ function newestRecorderFile(): File | null {
  * existir ou estiver zerado, procura o mais recente em Audio/. Tenta algumas
  * vezes porque o arquivo pode levar um instante para ser finalizado.
  */
-async function findRecording(sourceUri: string | undefined): Promise<File | null> {
+async function findRecording(
+  sourceUri: string | undefined,
+  allowFallback = true,
+): Promise<File | null> {
+  if (!sourceUri && !allowFallback) return null;
   for (let attempt = 0; attempt < 30; attempt += 1) {
     if (sourceUri) {
       const candidate = new File(sourceUri);
       if (candidate.exists && candidate.size > 0) return candidate;
     }
-    const newest = newestRecorderFile();
-    if (newest) return newest;
+    if (allowFallback) {
+      const newest = newestRecorderFile();
+      if (newest) return newest;
+    }
     await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  if (sourceUri) {
+    const candidate = new File(sourceUri);
+    if (candidate.exists && candidate.size > 0) return candidate;
   }
   return null;
 }
@@ -179,8 +189,9 @@ export async function storeSegment(
   sessionId: string,
   index: number,
   sourceUri: string | undefined,
+  allowFallback = true,
 ): Promise<string | null> {
-  const file = await findRecording(sourceUri);
+  const file = await findRecording(sourceUri, allowFallback);
   if (!file) return null;
   const destination = new File(sessionDirectory(sessionId), segmentFileName(index));
   if (destination.exists) destination.delete();

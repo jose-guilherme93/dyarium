@@ -24,7 +24,7 @@ import { formatTitle, toRecordedAt } from '@/core/title';
 import type { Recording } from '@/core/types';
 import { bumpRender, mark } from '@/dev/perf';
 import { listRecordings, markInterruptedRecordings, upsertRecording } from '@/services/db';
-import { concatIO, outputFileUri, sessionDirUri, storeSegment, verifySessionAudio } from '@/services/files';
+import { concatIO, newestRecorderFile, outputFileUri, sessionDirUri, storeSegment, verifySessionAudio } from '@/services/files';
 import { notificationPermissionGranted } from '@/services/notifications';
 
 import { useLibrary } from './LibraryContext';
@@ -75,6 +75,8 @@ interface RecordingValue {
    * por amostra).
    */
   readMetering(): number;
+  /** Rotaciona o segmento atual (uso interno/testes). */
+  rotate?(): Promise<void>;
 }
 
 /**
@@ -112,6 +114,8 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
   const startedAtRef = useRef<number>(0);
   const segmentIndexRef = useRef<number>(0);
   const rotatingRef = useRef(false);
+  const stoppingRef = useRef(false);
+  const pendingSegmentsRef = useRef<Promise<void>[]>([]);
   const startingRef = useRef(false);
   const pausedRef = useRef(false);
   const pausedAtRef = useRef(0);
@@ -125,8 +129,10 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
     (async () => {
       try {
         // Um UPDATE no banco, sem ler a biblioteca inteira no boot.
-        await markInterruptedRecordings();
-        if (alive) await library.refresh();
+        const changed = await markInterruptedRecordings();
+        // A LibraryProvider ja leu a lista; so vale reler se o UPDATE mexeu em
+        // alguma linha (a segunda varredura inteira no boot era desperdicio).
+        if (alive && changed > 0) await library.refresh();
       } catch {
         // Sem banco disponivel: o app segue; a fila fica vazia ate o banco voltar.
       }
@@ -150,40 +156,104 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const rotate = useCallback(async () => {
-    if (rotatingRef.current || !activeRef.current || pausedRef.current) return;
+    if (rotatingRef.current || stoppingRef.current || !activeRef.current || pausedRef.current) return;
     rotatingRef.current = true;
     try {
       await recorder.stop();
       const session = activeRef.current;
-      if (session) {
-        const stored = await storeSegment(
-          session.id,
-          segmentIndexRef.current,
-          recorder.uri ?? undefined,
-        );
-        if (stored) {
-          segmentIndexRef.current += 1;
+      if (!session) return;
+      // Captura o arquivo do segmento antes de reabrir o microfone: depois da
+      // reabertura o expo-audio pode apontar para o arquivo do proximo segmento.
+      let capturedUri = recorder.uri ?? undefined;
+      if (!capturedUri) {
+        const newest = newestRecorderFile();
+        capturedUri = newest?.uri;
+      }
+      const index = segmentIndexRef.current;
+      // Aloca o indice sincronamente: nenhum outro segmento pode tomar o mesmo.
+      segmentIndexRef.current += 1;
+
+      // Reabre o microfone ANTES de qualquer escrita no banco.
+      let reopened = true;
+      try {
+        await recorder.prepareToRecordAsync(RECORDING_OPTIONS);
+        recorder.record();
+      } catch (error) {
+        reopened = false;
+        console.warn('[dyarium] rotate reopen error', String(error));
+        setError('Falha ao rotacionar o segmento de gravação.');
+        activeRef.current = null;
+        setActive(null);
+        clearTimers();
+      }
+
+      // Persistencia do segmento (arquivo + banco) em segundo plano, com retry.
+      const task = (async () => {
+        let storeAttempts = 0;
+        let stored: string | null = null;
+        while (storeAttempts < 8 && !stored) {
+          try {
+            stored = await storeSegment(session.id, index, capturedUri, false);
+          } catch (error) {
+            console.warn('[dyarium] rotate store error', String(error));
+          }
+          if (!stored) {
+            storeAttempts += 1;
+            await new Promise((resolve) => setTimeout(resolve, 200));
+          }
+        }
+        if (!stored) {
+          console.warn('[dyarium] rotate: segmento nao localizado, tentando novamente');
+          // Ultima tentativa com fallback (pode achar o arquivo mais recente).
+          try {
+            stored = await storeSegment(session.id, index, capturedUri, true);
+          } catch (error) {
+            console.warn('[dyarium] rotate store fallback error', String(error));
+          }
+        }
+        if (!stored) return;
+
+        // Atualiza o estado em memoria (sem setState por chunk: so ao concluir).
+        if (activeRef.current && activeRef.current.id === session.id) {
           const updated: Recording = {
-            ...session,
-            segmentCount: segmentIndexRef.current,
+            ...activeRef.current,
+            segmentCount: Math.max(activeRef.current.segmentCount, index + 1),
             updatedAt: new Date().toISOString(),
           };
           activeRef.current = updated;
           setActive(updated);
-          await upsertRecording(updated);
         }
-      }
-      if (activeRef.current) {
-        await recorder.prepareToRecordAsync(RECORDING_OPTIONS);
-        recorder.record();
-      }
+
+        // Persiste no banco com retry; falha nao derruba a gravacao.
+        let dbAttempts = 0;
+        while (dbAttempts < 8) {
+          try {
+            const rec: Recording =
+              activeRef.current && activeRef.current.id === session.id
+                ? activeRef.current
+                : { ...session, segmentCount: index + 1, updatedAt: new Date().toISOString() };
+            await upsertRecording(rec);
+            break;
+          } catch (error) {
+            dbAttempts += 1;
+            console.warn('[dyarium] rotate upsert error', String(error));
+            await new Promise((resolve) => setTimeout(resolve, 200));
+          }
+        }
+      })();
+      pendingSegmentsRef.current.push(task);
+      task.finally(() => {
+        pendingSegmentsRef.current = pendingSegmentsRef.current.filter((t) => t !== task);
+      });
+      // Evita unhandled rejection.
+      void task.catch(() => undefined);
     } catch (error) {
       console.warn('[dyarium] rotate error', String(error));
       setError('Falha ao rotacionar o segmento de gravação.');
     } finally {
       rotatingRef.current = false;
     }
-  }, [recorder]);
+  }, [recorder, clearTimers]);
 
   const startTimers = useCallback(() => {
     clearTimers();
@@ -292,11 +362,18 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
   const stop = useCallback(async (options?: { enqueue?: boolean }): Promise<Recording | null> => {
     const session = activeRef.current;
     if (!session) return null;
+    stoppingRef.current = true;
+    // Espera uma rotacao em andamento terminar (reabertura do microfone).
+    while (rotatingRef.current) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
     clearTimers();
     setBusy(true);
     setError(null);
     try {
       await recorder.stop();
+      // Aguarda segmentos pendentes da fila antes de finalizar.
+      await Promise.allSettled(pendingSegmentsRef.current.slice());
       const stored = await storeSegment(
         session.id,
         segmentIndexRef.current,
@@ -354,6 +431,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
       setError('Falha ao finalizar a gravação.');
       return null;
     } finally {
+      stoppingRef.current = false;
       setBusy(false);
     }
   }, [recorder, library, clearTimers, elapsed]);
@@ -469,6 +547,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
       resume,
       finalizeInterrupted,
       readMetering,
+      rotate,
     }),
     [
       active,
@@ -483,6 +562,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
       resume,
       finalizeInterrupted,
       readMetering,
+      rotate,
     ],
   );
 
