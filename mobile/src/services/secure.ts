@@ -6,6 +6,8 @@
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 
+import { getAppFlag, setAppFlag } from '@/services/db';
+
 import {
   DEFAULT_TRANSCRIPTION_MODEL,
   type TranscriptionLanguage,
@@ -271,6 +273,29 @@ export interface Prefs {
 }
 
 const PREFS_KEY = 'dyarium.prefs';
+
+/**
+ * Preferencias moram no SQLite, nao no cofre.
+ *
+ * O SecureStore do Android amarra cada valor a uma chave do Keystore: quando a
+ * chave e invalidada (troca de PIN, restauracao do sistema, atualizacao do
+ * aparelho) todos os valores somem de uma vez. Preferencia de tema nao e
+ * segredo; o cofre fica so com o token do servidor. O blob antigo e lido uma
+ * vez e copiado para o SQLite, sem perder a escolha de quem ja usava o app.
+ */
+async function readPrefsRaw(): Promise<string | null> {
+  if (Platform.OS === 'web') return readValue(PREFS_KEY);
+  // O banco pode estar abrindo (ou travado por uma migracao) no primeiro
+  // render: nesse caso a leitura cai para o cofre antigo em vez de devolver os
+  // padroes e parecer que o usuario nunca escolheu nada.
+  const stored = await getAppFlag(PREFS_KEY).catch(() => null);
+  if (stored) return stored;
+  const legacy = await readValue(PREFS_KEY).catch(() => null);
+  if (!legacy) return null;
+  await setAppFlag(PREFS_KEY, legacy).catch(() => undefined);
+  await deleteValue(PREFS_KEY).catch(() => undefined);
+  return legacy;
+}
 const DEFAULT_PREFS: Prefs = {
   version: PREFS_VERSION,
   swipeAction: 'delete',
@@ -306,7 +331,7 @@ async function migrateLegacyFlags(parsed: Partial<Prefs>): Promise<Prefs> {
 
 export async function loadPrefs(): Promise<Prefs> {
   try {
-    const raw = await readValue(PREFS_KEY);
+    const raw = await readPrefsRaw();
     if (!raw) return DEFAULT_PREFS;
     const parsed = JSON.parse(raw) as Partial<Prefs>;
     const legacy = parsed.version !== PREFS_VERSION;
@@ -370,8 +395,10 @@ export async function loadPrefs(): Promise<Prefs> {
 export async function savePrefs(prefs: Prefs): Promise<void> {
   // Grava sempre a versao atual: a migracao roda uma vez e nao volta a decidir
   // pelo usuario nas proximas aberturas.
-  await writeValue(
-    PREFS_KEY,
-    JSON.stringify({ ...prefs, version: PREFS_VERSION }),
-  );
+  const raw = JSON.stringify({ ...prefs, version: PREFS_VERSION });
+  if (Platform.OS === 'web') {
+    await writeValue(PREFS_KEY, raw);
+    return;
+  }
+  await setAppFlag(PREFS_KEY, raw);
 }
