@@ -21,7 +21,12 @@ describe("details render", () => {
   it("renders details", () => {
     const schema = createEditorSchema();
     const editor = BlockNoteEditor.create({ schema });
-    editor.replaceBlocks(editor.document, noteMarkdownToBlocks(editor, ":::details open X\nbody line\n:::") as any);
+    editor.replaceBlocks(
+      editor.document,
+      noteMarkdownToBlocks(editor, ":::details open X\nbody line\n:::") as Parameters<
+        typeof editor.replaceBlocks
+      >[1],
+    );
     render(<BlockNoteView editor={editor} />);
     const details = screen.getByText("X").closest("details");
     expect(details).toBeTruthy();
