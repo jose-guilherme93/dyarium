@@ -6,7 +6,7 @@
 import { Directory, File, Paths } from 'expo-file-system';
 import { Platform } from 'react-native';
 
-import { TRANSCRIPTION_MODELS, modelById, modelUrl } from '@/core/transcription';
+import { TRANSCRIPTION_MODELS, modelById, modelUrl, pickInstalledModel } from '@/core/transcription';
 import { cancelActivity, failActivity, finishActivity, startActivity, updateActivity } from './activity';
 
 const DIR_NAME = 'whisper-models';
@@ -47,7 +47,13 @@ export function installedModels(): InstalledModel[] {
     const entry = entries.find((item) => item.name === info.fileName);
     if (!entry) continue;
     try {
-      out.push({ id: info.id, bytes: new File(entry.uri).size });
+      const size = new File(entry.uri).size;
+      // O catalogo e aproximado (o arquivo real do whisper.cpp nao tem o mesmo
+      // tamanho em bytes): exigir igualdade fazia um modelo baixado nunca
+      // contar como instalado. Um parcial obviamente cortado (menos de 90%)
+      // fica de fora; download que falha e apagado no proprio catch.
+      if (size < info.sizeBytes * 0.9) continue;
+      out.push({ id: info.id, bytes: size });
     } catch {
       // arquivo ilegivel: ignora
     }
@@ -57,6 +63,17 @@ export function installedModels(): InstalledModel[] {
 
 export function isModelInstalled(id: string): boolean {
   return installedModels().some((model) => model.id === id);
+}
+
+/**
+ * Modelo da proxima passada: o escolhido quando esta instalado, senao o
+ * primeiro instalado. Nunca devolve um id que nao existe no disco.
+ */
+export function resolveTranscriptionModel(preferred: string | undefined) {
+  return pickInstalledModel(
+    preferred,
+    installedModels().map((model) => model.id),
+  );
 }
 
 export function installedModelsBytes(): number {
@@ -116,6 +133,14 @@ export async function downloadModel(
   } catch (error) {
     if (controller.signal.aborted) cancelActivity(activity, 'Download interrompido');
     else failActivity(activity, 'Não foi possível baixar o modelo');
+    // Arquivo parcial nunca fica no diretorio: ele passaria por instalado na
+    // proxima abertura e quebraria a transcricao no meio.
+    try {
+      const partial = new File(dir, info.fileName);
+      if (partial.exists) partial.delete();
+    } catch {
+      // sem permissao para limpar agora: a checagem de tamanho cobre
+    }
     throw error;
   } finally {
     options.signal?.removeEventListener('abort', forwardAbort);

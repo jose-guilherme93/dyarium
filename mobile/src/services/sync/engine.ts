@@ -37,6 +37,7 @@ import { listNotebooks, deleteLocalNotebook, upsertNotebookFromServer } from '@/
 import { clientOwnsAnalysis } from '@/services/processing';
 import { loadServers, saveServers, type StoredServer } from '@/services/secure';
 import { clientOwnsTranscription } from '@/services/whisper';
+import { trackServerTranscription } from '@/services/remoteTranscription';
 import { pushTranscriptToServer } from '@/services/transcriptSync';
 import { syncServerTranscriptsFor } from '@/services/transcripts';
 import { pushAnalysisToServer, syncServerAnalysesFor } from '@/services/analysis';
@@ -718,6 +719,7 @@ async function pushRecording(
         { api, file: uploadFileIO },
       );
       primaryAttachmentId = result.attachmentId ?? attachmentId;
+      if (!localTranscribe) trackServerTranscription(recording);
       if (primaryAttachmentId) existingAttachments.add(primaryAttachmentId);
     } else if (
       recording.serverAttachmentId &&

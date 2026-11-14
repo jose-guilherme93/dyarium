@@ -559,7 +559,7 @@ export function AnalysisView({
                   style={[styles.analyzeButton, analysisBusy && styles.analyzeButtonDisabled]}
                   onPress={onAnalyzeLocal}
                   disabled={analysisBusy}
-                  accessibilityLabel="Analisar nota no aparelho"
+                  accessibilityLabel="Analisar nota"
                 >
                   {analysisBusy ? (
                     <ActivityIndicator size="small" color={colors.text} />

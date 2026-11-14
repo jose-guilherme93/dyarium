@@ -24,6 +24,7 @@ import { loadServerConfig } from './secure';
 import { pushTranscript } from './transcriptSync';
 import { clientOwnsAnalysis } from './processing';
 import { clientOwnsTranscription } from './whisper';
+import { trackServerTranscription } from './remoteTranscription';
 import { fileSha256 } from './hash';
 
 const doFetch = globalThis.fetch as unknown as FetchLike;
@@ -261,6 +262,14 @@ async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
     );
     await upsertRecording(current);
     emitRecording(current);
+    // O servidor vai transcrever esta nota: o card e o centro de atividade
+    // mostram "No servidor" desde o fim do envio, sem esperar o primeiro poll.
+    if (!localTranscribe && !hasFinalTranscript(current)) {
+      current = { ...current, transcriptStatus: 'pending', transcriptOrigin: 'server' };
+      await upsertRecording(current);
+      emitRecording(current);
+      trackServerTranscription(current);
+    }
     // Rele antes de empurrar o corpo: o usuario pode ter capturado mais um
     // trecho nesta nota enquanto o upload acontecia, e o texto mais novo e o
     // que precisa chegar ao servidor.

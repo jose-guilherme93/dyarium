@@ -117,7 +117,7 @@ function ModelsCard({ summary }: { summary: AnalysisRunSummary }) {
               {model.model}
             </Text>
             <Text style={styles.modelMeta}>
-              {model.runtime === 'local' ? 'aparelho' : 'servidor'} · {model.provider} ·{' '}
+              {model.runtime === 'local' ? 'aparelho' : model.runtime === 'online' ? 'online' : 'servidor'} · {model.provider} ·{' '}
               {model.runs} execuções
             </Text>
           </View>

@@ -209,7 +209,7 @@ describe('NoteAudioCard', () => {
   it('sem andamento, ainda avisa que a transcricao esta em curso', () => {
     render(<NoteAudioCard node={node} transcribingWait />);
 
-    expect(screen.getByText('Transcrevendo...')).toBeTruthy();
+    expect(screen.getByText('Transcrevendo no servidor')).toBeTruthy();
   });
 
   it('no erro da transcricao, mostra o aviso e o tentar de novo', () => {

@@ -13,10 +13,14 @@ import { DyariumApi, type FetchLike } from '@/core/api';
 import { DEFAULT_ANALYSIS_MODEL } from '@/core/analysisModels';
 import { DEFAULT_NOTE_ORDER, normalizeNoteOrder, type NoteOrder } from '@/core/noteOrder';
 import { type BackupFrequency, normalizeBackupFrequency } from '@/core/backupSchedule';
+import { type TranscriptionLanguage } from '@/core/transcription';
+import { normalizePlace, type ProcessingPlace } from '@/core/processing';
 import {
-  DEFAULT_TRANSCRIPTION_MODEL,
-  type TranscriptionLanguage,
-} from '@/core/transcription';
+  DEFAULT_DEEPGRAM_MODEL,
+  normalizeAnalysisProvider,
+  normalizeDeepgramModel,
+  type TranscriptionOnlineProvider,
+} from '@/core/providers';
 import {
   DEFAULT_TYPOGRAPHY,
   normalizeTypography,
@@ -70,24 +74,35 @@ interface SettingsValue {
   /** Tipografia do editor de notas. */
   typography: NoteTypography;
   setTypography(next: NoteTypography): Promise<void>;
-  /** Transcrever as notas (aparelho ou servidor, conforme `serverProcessing`). */
-  transcriptionEnabled: boolean;
-  setTranscriptionEnabled(value: boolean): Promise<void>;
-  /** Analisar as notas (aparelho ou servidor, conforme `serverProcessing`). */
-  analysisEnabled: boolean;
-  setAnalysisEnabled(value: boolean): Promise<void>;
-  /** Processar no servidor. Sem servidor configurado nao tem efeito. */
-  serverProcessing: boolean;
-  setServerProcessing(value: boolean): Promise<void>;
+  /** Onde a transcricao roda (desligada, aparelho, servidor ou online). */
+  transcriptionPlace: ProcessingPlace;
+  setTranscriptionPlace(place: ProcessingPlace): Promise<void>;
+  /** Onde a analise roda. */
+  analysisPlace: ProcessingPlace;
+  setAnalysisPlace(place: ProcessingPlace): Promise<void>;
+  /** Provedor online de transcricao (chamada direta do aparelho). */
+  transcriptionProvider: TranscriptionOnlineProvider;
+  /** Modelo da Deepgram quando a transcricao e online. */
+  transcriptionOnlineModel: string;
+  setTranscriptionOnlineModel(model: string): Promise<void>;
+  /** Preset do provedor de analise online. */
+  analysisProvider: string;
+  setAnalysisProvider(id: string): Promise<void>;
+  /** URL do provedor personalizado de analise. */
+  analysisBaseUrl: string;
+  setAnalysisBaseUrl(url: string): Promise<void>;
+  /** Modelo do provedor de analise online. */
+  analysisOnlineModel: string;
+  setAnalysisOnlineModel(model: string): Promise<void>;
   /** Revisar a transcricao com a IA local antes de analisar. */
   reviewTranscript: boolean;
   setReviewTranscript(value: boolean): Promise<void>;
   /** Manter hesitacoes e gagueira no texto revisado. */
   literalTranscript: boolean;
   setLiteralTranscript(value: boolean): Promise<void>;
-  /** Modelo de transcricao escolhido. */
+  /** Modelo de transcricao escolhido (vazio = nenhum). */
   transcriptionModel: string;
-  setTranscriptionModel(id: string): Promise<void>;
+  setTranscriptionModel(id: string | undefined): Promise<void>;
   /** Idioma da transcricao. */
   transcriptionLanguage: TranscriptionLanguage;
   setTranscriptionLanguage(value: TranscriptionLanguage): Promise<void>;
@@ -160,14 +175,17 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [swipeAction, setSwipeActionState] = useState<SwipeAction>('delete');
   const [importYear, setImportYearState] = useState<number | undefined>(undefined);
   const [typography, setTypographyState] = useState<NoteTypography>(DEFAULT_TYPOGRAPHY);
-  const [transcriptionEnabled, setTranscriptionEnabledState] = useState(false);
-  const [analysisEnabled, setAnalysisEnabledState] = useState(false);
-  const [serverProcessing, setServerProcessingState] = useState(false);
+  const [transcriptionPlace, setTranscriptionPlaceState] = useState<ProcessingPlace>('off');
+  const [analysisPlace, setAnalysisPlaceState] = useState<ProcessingPlace>('off');
+  const [transcriptionProvider] = useState<TranscriptionOnlineProvider>('deepgram');
+  const [transcriptionOnlineModel, setTranscriptionOnlineModelState] =
+    useState(DEFAULT_DEEPGRAM_MODEL);
+  const [analysisProvider, setAnalysisProviderState] = useState('openrouter');
+  const [analysisBaseUrl, setAnalysisBaseUrlState] = useState('');
+  const [analysisOnlineModel, setAnalysisOnlineModelState] = useState('');
   const [reviewTranscript, setReviewTranscriptState] = useState(false);
   const [literalTranscript, setLiteralTranscriptState] = useState(false);
-  const [transcriptionModel, setTranscriptionModelState] = useState(
-    DEFAULT_TRANSCRIPTION_MODEL,
-  );
+  const [transcriptionModel, setTranscriptionModelState] = useState('');
   const [transcriptionLanguage, setTranscriptionLanguageState] =
     useState<TranscriptionLanguage>('pt');
   const [analysisModel, setAnalysisModelState] = useState(DEFAULT_ANALYSIS_MODEL);
@@ -210,12 +228,15 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         setSwipeActionState(prefs.swipeAction);
         setImportYearState(prefs.importYear);
         setTypographyState(normalizeTypography(prefs.typography));
-        setTranscriptionEnabledState(prefs.transcriptionEnabled === true);
-        setAnalysisEnabledState(prefs.analysisEnabled === true);
-        setServerProcessingState(prefs.serverProcessing === true);
+        setTranscriptionPlaceState(normalizePlace(prefs.transcriptionPlace));
+        setAnalysisPlaceState(normalizePlace(prefs.analysisPlace));
+        setTranscriptionOnlineModelState(normalizeDeepgramModel(prefs.transcriptionOnlineModel));
+        setAnalysisProviderState(normalizeAnalysisProvider(prefs.analysisProvider));
+        setAnalysisBaseUrlState(prefs.analysisBaseUrl ?? '');
+        setAnalysisOnlineModelState(prefs.analysisOnlineModel ?? '');
         setReviewTranscriptState(prefs.reviewTranscript === true);
         setLiteralTranscriptState(prefs.literalTranscript === true);
-        setTranscriptionModelState(prefs.transcriptionModel ?? DEFAULT_TRANSCRIPTION_MODEL);
+        setTranscriptionModelState(prefs.transcriptionModel ?? '');
         setTranscriptionLanguageState(prefs.transcriptionLanguage === 'auto' ? 'auto' : 'pt');
         setAnalysisModelState(prefs.analysisModel ?? DEFAULT_ANALYSIS_MODEL);
         setAnalysisLowPowerState(prefs.analysisLowPower === true);
@@ -282,26 +303,56 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     [persistPrefs],
   );
 
-  const setTranscriptionEnabled = useCallback(
-    async (value: boolean) => {
-      setTranscriptionEnabledState(value);
-      await persistPrefs({ transcriptionEnabled: value });
+  const setTranscriptionPlace = useCallback(
+    async (place: ProcessingPlace) => {
+      const next = normalizePlace(place);
+      setTranscriptionPlaceState(next);
+      await persistPrefs({ transcriptionPlace: next });
     },
     [persistPrefs],
   );
 
-  const setAnalysisEnabled = useCallback(
-    async (value: boolean) => {
-      setAnalysisEnabledState(value);
-      await persistPrefs({ analysisEnabled: value });
+  const setAnalysisPlace = useCallback(
+    async (place: ProcessingPlace) => {
+      const next = normalizePlace(place);
+      setAnalysisPlaceState(next);
+      await persistPrefs({ analysisPlace: next });
     },
     [persistPrefs],
   );
 
-  const setServerProcessing = useCallback(
-    async (value: boolean) => {
-      setServerProcessingState(value);
-      await persistPrefs({ serverProcessing: value });
+  const setTranscriptionOnlineModel = useCallback(
+    async (model: string) => {
+      const next = normalizeDeepgramModel(model);
+      setTranscriptionOnlineModelState(next);
+      await persistPrefs({ transcriptionOnlineModel: next });
+    },
+    [persistPrefs],
+  );
+
+  const setAnalysisProvider = useCallback(
+    async (id: string) => {
+      const next = normalizeAnalysisProvider(id);
+      setAnalysisProviderState(next);
+      await persistPrefs({ analysisProvider: next });
+    },
+    [persistPrefs],
+  );
+
+  const setAnalysisBaseUrl = useCallback(
+    async (url: string) => {
+      const next = url.trim();
+      setAnalysisBaseUrlState(next);
+      await persistPrefs({ analysisBaseUrl: next });
+    },
+    [persistPrefs],
+  );
+
+  const setAnalysisOnlineModel = useCallback(
+    async (model: string) => {
+      const next = model.trim();
+      setAnalysisOnlineModelState(next);
+      await persistPrefs({ analysisOnlineModel: next });
     },
     [persistPrefs],
   );
@@ -323,9 +374,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   );
 
   const setTranscriptionModel = useCallback(
-    async (id: string) => {
-      setTranscriptionModelState(id);
-      await persistPrefs({ transcriptionModel: id });
+    async (id: string | undefined) => {
+      const next = id ?? '';
+      setTranscriptionModelState(next);
+      await persistPrefs({ transcriptionModel: next });
     },
     [persistPrefs],
   );
@@ -494,23 +546,19 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         });
         setServers(next);
         setConfig({ baseUrl: next[0].baseUrl, token: next[0].token });
-        setServerProcessingState(true);
-        await persistPrefs({ serverProcessing: true });
       }
       return result;
     },
-    [persistPrefs, test],
+    [test],
   );
 
   const removeServer = useCallback(async (id: string) => {
     const next = await removeStoredServer(id);
     setServers(next);
     setConfig(next[0] ? { baseUrl: next[0].baseUrl, token: next[0].token } : null);
-    if (next.length === 0) {
-      setServerProcessingState(false);
-      await persistPrefs({ serverProcessing: false });
-    }
-  }, [persistPrefs]);
+    // O lugar escolhido nao muda sozinho: uma etapa no servidor sem ambiente
+    // aparece bloqueada e pede a escolha de quem usa o app.
+  }, []);
 
   const disconnect = useCallback(async () => {
     const current = servers[0];
@@ -520,11 +568,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     }
     await clearServerConfig();
     setConfig(null);
-    // Sem servidor nao existe processamento remoto: desligar junto evita uma
-    // escolha salva que nao pode mais ser cumprida.
-    setServerProcessingState(false);
-    await persistPrefs({ serverProcessing: false });
-  }, [persistPrefs, removeServer, servers]);
+  }, [removeServer, servers]);
 
   const value = useMemo<SettingsValue>(
     () => ({
@@ -539,12 +583,19 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setImportYear,
       typography,
       setTypography,
-      transcriptionEnabled,
-      setTranscriptionEnabled,
-      analysisEnabled,
-      setAnalysisEnabled,
-      serverProcessing,
-      setServerProcessing,
+      transcriptionPlace,
+      setTranscriptionPlace,
+      analysisPlace,
+      setAnalysisPlace,
+      transcriptionProvider,
+      transcriptionOnlineModel,
+      setTranscriptionOnlineModel,
+      analysisProvider,
+      setAnalysisProvider,
+      analysisBaseUrl,
+      setAnalysisBaseUrl,
+      analysisOnlineModel,
+      setAnalysisOnlineModel,
       reviewTranscript,
       setReviewTranscript,
       literalTranscript,
@@ -596,12 +647,19 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setImportYear,
       typography,
       setTypography,
-      transcriptionEnabled,
-      setTranscriptionEnabled,
-      analysisEnabled,
-      setAnalysisEnabled,
-      serverProcessing,
-      setServerProcessing,
+      transcriptionPlace,
+      setTranscriptionPlace,
+      analysisPlace,
+      setAnalysisPlace,
+      transcriptionProvider,
+      transcriptionOnlineModel,
+      setTranscriptionOnlineModel,
+      analysisProvider,
+      setAnalysisProvider,
+      analysisBaseUrl,
+      setAnalysisBaseUrl,
+      analysisOnlineModel,
+      setAnalysisOnlineModel,
       reviewTranscript,
       setReviewTranscript,
       literalTranscript,

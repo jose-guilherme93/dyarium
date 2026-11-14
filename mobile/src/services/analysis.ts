@@ -32,6 +32,7 @@ import {
   setAnalysisSyncAtEnv,
   type CachedAnalysis,
 } from './db';
+import { finishActivity } from './activity';
 import { loadServerConfig } from './secure';
 
 const doFetch = globalThis.fetch as unknown as FetchLike;
@@ -223,6 +224,7 @@ export async function syncServerAnalysesFor(
       if (primary) await setAnalysisSyncAt(entry.id, sourceAt);
       else await setAnalysisSyncAtEnv(serverId, entry.id, sourceAt);
       emitAnalysis(localEntryId);
+      if (recording) finishActivity(`analysis:${recording.id}`, 'Análise pronta');
       imported += 1;
     } catch (error) {
       if (error instanceof ApiError && error.status === 404) {

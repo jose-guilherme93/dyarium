@@ -10,8 +10,8 @@ import {
 } from 'react-native';
 import { Text } from '@/components/AppText';
 import { Press } from '@/components/Press';
-import { ProcessingToggles } from '@/components/ProcessingToggles';
 import { Screen } from '@/components/Screen';
+import { placeLabel } from '@/core/processing';
 import { countTrashedRecordings } from '@/services/db';
 import { useLibrary } from '@/state/LibraryContext';
 import { useSettings } from '@/state/SettingsContext';
@@ -23,9 +23,16 @@ export default function SettingsScreen() {
   const styles = useThemedStyles(baseStyles);
   const { colors } = useTheme();
 
-  const { config, ready: settingsReady, swipeAction, setSwipeAction, theme, setTheme } =
-    useSettings();
-  const { ready, recordings } = useLibrary();
+  const {
+    config,
+    ready: settingsReady,
+    swipeAction,
+    setSwipeAction,
+    theme,
+    setTheme,
+    transcriptionPlace,
+    analysisPlace,
+  } = useSettings();  const { ready, recordings } = useLibrary();
   const archived = recordings.filter((r) => r.archived).length;
   const themeLabel = THEME_OPTIONS.find((option) => option.name === theme)?.label ?? 'Preto';
   const [trashCount, setTrashCount] = useState(0);
@@ -189,9 +196,22 @@ export default function SettingsScreen() {
               </View>
             </View>
             <Text style={styles.sectionLabel}>Processamento</Text>
-            <View style={styles.processingBlock}>
-              <ProcessingToggles />
-            </View>
+            {renderRow(
+              'mic-outline',
+              transcriptionPlace === 'server' ? colors.info : colors.textSecondary,
+              'Transcrição',
+              <Text style={styles.trailingValue}>{placeLabel(transcriptionPlace)}</Text>,
+              () => push('/processing'),
+            )}
+            {renderRow(
+              'sparkles-outline',
+              analysisPlace === 'server' ? colors.info : colors.textSecondary,
+              'Análise',
+              <Text style={styles.trailingValue}>{placeLabel(analysisPlace)}</Text>,
+              () => push('/processing'),
+              false,
+              true,
+            )}
 
             <Text style={styles.sectionLabel}>Sistema</Text>
             {renderRow(

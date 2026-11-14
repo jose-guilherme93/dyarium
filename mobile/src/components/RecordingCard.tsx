@@ -31,7 +31,12 @@ interface RecordingCardProps {
   /** Linha compacta da home, sem cartao arredondado e com divisor. */
   dense?: boolean;
   /** Trabalho pesado rodando nesta nota: icone + porcentagem no canto. */
-  busy?: { kind: 'transcription' | 'analysis'; percent?: number; queued?: boolean } | null;
+  busy?: {
+    kind: 'transcription' | 'analysis';
+    percent?: number;
+    queued?: boolean;
+    remote?: boolean;
+  } | null;
 }
 
 /**
@@ -71,18 +76,31 @@ export const RecordingCard = memo(function RecordingCard({
   const percent = livePercent > 0 ? Math.round(livePercent) : checkpointPercent(recording);
   const badge =
     busy ?? (transcribing ? { kind: 'transcription' as const, percent } : null);
-  const badgeLabel = badge?.queued
-    ? 'Na fila'
+  const remote = badge?.remote === true;
+  const badgeLabel = remote
+    ? 'No servidor'
+    : badge?.queued
+      ? 'Na fila'
+      : badge?.kind === 'analysis'
+        ? 'Analisando'
+        : 'Transcrevendo';
+  const badgeColor = remote
+    ? colors.textSecondary
     : badge?.kind === 'analysis'
-      ? 'Analisando'
-      : 'Transcrevendo';
-  const badgeColor = badge?.kind === 'analysis' ? colors.info : colors.accentStrong;
-  const badgeSoft = badge?.kind === 'analysis' ? colors.infoSoft : colors.accentSoft;
-  const badgeIcon = badge?.queued
-    ? 'hourglass-outline'
+      ? colors.info
+      : colors.accentStrong;
+  const badgeSoft = remote
+    ? colors.neutralSoft
     : badge?.kind === 'analysis'
-      ? 'sparkles-outline'
-      : 'sync-outline';
+      ? colors.infoSoft
+      : colors.accentSoft;
+  const badgeIcon = remote
+    ? 'cloud-upload-outline'
+    : badge?.queued
+      ? 'hourglass-outline'
+      : badge?.kind === 'analysis'
+        ? 'sparkles-outline'
+        : 'sync-outline';
 
   return (
     <View style={[styles.wrap, dense ? styles.wrapDense : null]}>
@@ -106,7 +124,7 @@ export const RecordingCard = memo(function RecordingCard({
               }`}
             >
               <Ionicons name={badgeIcon} size={11} color={badgeColor} />
-              {badge.percent !== undefined ? (
+              {badge.percent !== undefined && !remote ? (
                 <Text style={[styles.transcribingText, { color: badgeColor }]}>
                   {Math.round(badge.percent)}%
                 </Text>

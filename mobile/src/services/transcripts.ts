@@ -6,11 +6,12 @@
 
 import { ApiError, DyariumApi, type FetchLike, type ServerEntry, type SyncManifestEntry } from '@/core/api';
 import { mergeServerTranscript, reviewFromServer } from '@/core/transcriptReview';
-import { needsTranscript, type Recording } from '@/core/types';
+import { hasFinalTranscript, needsTranscript, type Recording } from '@/core/types';
 
 import { notify } from './notifications';
 import {
   listRecordings,
+  getRecording,
   setTranscriptSyncAt,
   getTranscriptSyncAt,
   getTranscriptSyncAtEnv,
@@ -18,8 +19,12 @@ import {
   upsertRecording,
 } from './db';
 import { loadServerConfig } from './secure';
-import { willTranscribeLocally } from './localTranscription';
 import { emitRecording } from './uploaderLoop';
+import {
+  failServerTranscription,
+  finishServerTranscription,
+  trackServerTranscription,
+} from './remoteTranscription';
 
 const doFetch = globalThis.fetch as unknown as FetchLike;
 
@@ -38,6 +43,99 @@ const retryAt = new Map<string, number>();
 const retryDelay = new Map<string, number>();
 const MAX_RETRY_MS = 5 * 60_000;
 
+/**
+ * Pede ao servidor que transcreva uma entrada que ja subiu com a etapa nas
+ * maos do aparelho. O audio ja esta la; so a fila precisa ser criada.
+ */
+export async function requestServerTranscript(entryId: string): Promise<{ status: string }> {
+  const config = await loadServerConfig();
+  if (!config) throw new ApiError(0, 'no_server', 'servidor nao configurado');
+  const api = new DyariumApi(config, doFetch);
+  return api.retranscribe(entryId);
+}
+
+export type ServerTranscriptionResult =
+  | { status: 'ready' }
+  | { status: 'queued' }
+  | { status: 'no_entry' }
+  | { status: 'no_server' }
+  | { status: 'rejected'; code: number };
+
+/**
+ * Transcreve uma nota no servidor, do jeito que o usuario escolheu.
+ *
+ * Puxa o texto uma vez (pode ja estar pronto), pede uma fila nova quando o
+ * audio subiu marcado como trabalho do aparelho e marca a nota como `pending`
+ * de origem `server`. Nunca chama o motor do aparelho: se o servidor recusar,
+ * a resposta diz o motivo e nada troca de lado.
+ */
+export async function transcribeRecordingOnServer(
+  recording: Recording,
+): Promise<ServerTranscriptionResult> {
+  if (!recording.entryId) return { status: 'no_entry' };
+  const config = await loadServerConfig();
+  if (!config) return { status: 'no_server' };
+  const fresh = await refreshServerTranscript(recording).catch(() => null);
+  if (fresh && hasFinalTranscript(fresh)) {
+    finishServerTranscription(recording.id);
+    return { status: 'ready' };
+  }
+  try {
+    await requestServerTranscript(recording.entryId);
+  } catch (error) {
+    if (error instanceof ApiError) {
+      failServerTranscription(recording.id, 'O servidor não aceitou a transcrição');
+      return { status: 'rejected', code: error.status };
+    }
+    return { status: 'no_server' };
+  }
+  const current = await getRecording(recording.id).catch(() => null);
+  if (current) {
+    const updated: Recording = {
+      ...current,
+      transcriptStatus: 'pending',
+      transcriptOrigin: 'server',
+      updatedAt: new Date().toISOString(),
+    };
+    await upsertRecording(updated).catch(() => undefined);
+    emitRecording(updated);
+    trackServerTranscription(updated);
+  }
+  return { status: 'queued' };
+}
+
+/**
+ * Move para o servidor as notas com audio ja enviado e sem texto final. Uma por
+ * vez; o servidor recusa entrada que nao existe e a nota continua pendente.
+ */
+export async function sendPendingTranscriptsToServer(): Promise<{ sent: number; failed: number }> {
+  const config = await loadServerConfig();
+  if (!config) return { sent: 0, failed: 0 };
+  const api = new DyariumApi(config, doFetch);
+  let sent = 0;
+  let failed = 0;
+  for (const recording of await listRecordings().catch(() => [])) {
+    const entryId = recording.entryId;
+    if (!entryId || !recording.filePath) continue;
+    if (hasFinalTranscript(recording)) continue;
+    try {
+      await api.retranscribe(entryId);
+      const updated: Recording = {
+        ...recording,
+        transcriptStatus: 'pending',
+        transcriptOrigin: 'server',
+        updatedAt: new Date().toISOString(),
+      };
+      await upsertRecording(updated);
+      trackServerTranscription(updated);
+      sent += 1;
+    } catch {
+      failed += 1;
+    }
+  }
+  return { sent, failed };
+}
+
 export async function fetchTranscriptsOnce(): Promise<void> {
   if (running) return;
   running = true;
@@ -50,6 +148,11 @@ export async function fetchTranscriptsOnce(): Promise<void> {
       if (!needsTranscript(recording)) continue;
       const entryId = recording.entryId as string;
       if ((retryAt.get(entryId) ?? 0) > Date.now()) continue;
+      // Servidor transcrevendo ha mais tempo que o app: o centro de atividade
+      // volta a mostrar a nota, mesmo depois de reabrir o aplicativo.
+      if (recording.transcriptOrigin === 'server' && recording.transcriptStatus === 'pending') {
+        trackServerTranscription(recording);
+      }
       try {
         const transcript = await api.getTranscript(entryId);
         const segments = transcript.segments ?? [];
@@ -76,6 +179,7 @@ export async function fetchTranscriptsOnce(): Promise<void> {
         };
         await upsertRecording(updated);
         emitRecording(updated);
+        finishServerTranscription(recording.id);
         retryAt.delete(entryId);
         retryDelay.delete(entryId);
         // Aviso generico (sem conteudo sensivel).
@@ -88,13 +192,9 @@ export async function fetchTranscriptsOnce(): Promise<void> {
           retryAt.set(entryId, Date.now() + delay);
           continue;
         }
-        // Sem modelo local, nao ha como retomar: marca como falha para nao
-        // ficar preso em "transcrevendo" para sempre.
-        if (!(await willTranscribeLocally())) {
-          const failed: Recording = { ...recording, transcriptStatus: 'failed', updatedAt: new Date().toISOString() };
-          await upsertRecording(failed);
-          emitRecording(failed);
-        }
+        // Sem modelo local, nao ha como retomar: mantem pendente e tenta de
+        // novo no proximo ciclo. Marcar como falha aqui inventava um erro que
+        // o usuario nao tinha: a nota so espera o servidor.
         // outros erros (rede, etc.): mantem pendente e tenta de novo depois
       }
     }

@@ -9,6 +9,11 @@ import {
 } from '@/services/activity';
 import { ActivityCenter } from '../ActivityCenter';
 
+const mockRetryTranscription = jest.fn();
+jest.mock('@/services/localTranscription', () => ({
+  retryTranscription: (...args: [string]) => mockRetryTranscription(...args),
+}));
+
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
 
 afterEach(() => {
@@ -49,6 +54,23 @@ describe('ActivityCenter', () => {
 
     expect(screen.queryByText('Backup local')).toBeNull();
     expect(screen.getByText('Reunião de segunda')).toBeTruthy();
+  });
+
+  it('atividade interrompida voltada do banco ainda oferece continuar', () => {
+    startActivity({
+      id: 'transcription:r9',
+      kind: 'transcription',
+      title: 'Nota interrompida',
+      detail: 'No servidor',
+    });
+    // A hidratacao do SQLite recria sem a acao: o botao vem do id.
+    (getActivitiesSnapshot()[0] as { action?: unknown }).action = undefined;
+    failActivity('transcription:r9', 'Interrompida');
+
+    render(<ActivityCenter visible onClose={jest.fn()} />);
+
+    fireEvent.press(screen.getByLabelText('Continuar: Nota interrompida'));
+    expect(mockRetryTranscription).toHaveBeenCalledWith('r9');
   });
 
   it('oferece parar para o que ainda está rodando', () => {

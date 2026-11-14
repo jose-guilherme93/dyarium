@@ -24,6 +24,7 @@ import {
   updateForegroundTask,
 } from '../../modules/foreground-task';
 import { cancelActivity, failActivity, finishActivity, startActivity, updateActivity } from './activity';
+import { DeepgramError, transcribeDeepgramWindow } from './deepgram';
 import { getRecording, listRecordings, upsertRecording } from './db';
 import {
   acquireHeavyWork,
@@ -33,17 +34,20 @@ import {
 } from './heavyWork';
 import { ensureNotificationPermission, notifyIfHidden } from './notifications';
 import { emitRecording } from './uploaderLoop';
-import { loadPrefs } from './secure';
-import { modelFilePath } from './transcriptionModels';
+import { loadPrefs, loadProviderKey } from './secure';
+import { resolveTranscriptionModel, modelFilePath } from './transcriptionModels';
 import { pushTranscript } from './transcriptSync';
+import { transcribeRecordingOnServer } from './transcripts';
 import {
   loadWhisper,
   localTranscriptionAvailable,
+  transcriptionPlace,
   willTranscribeLocally,
   type WhisperContext,
   type WhisperModule,
   type WhisperSegment,
 } from './whisper';
+import { DEFAULT_DEEPGRAM_MODEL } from '@/core/providers';
 
 export { localTranscriptionAvailable, willTranscribeLocally };
 
@@ -287,14 +291,25 @@ function toSegments(segments: WhisperSegment[], offsetMs = 0): TranscriptSegment
   }));
 }
 
-/** Caminho do WAV temporario (cache) usado na transcricao. */
-function wavPathFor(id: string): string {
-  const dir = new Directory(Paths.cache, 'whisper');
+/**
+ * Diretorio de trabalho da transcricao.
+ *
+ * Documentos, nao cache: o sistema pode limpar o cache no meio de uma passada
+ * longa, e o WAV decodificado sumiria entre uma janela e a seguinte. Os
+ * arquivos sao apagados no fim (ou no inicio da proxima passada da nota).
+ */
+function workDirectory(): Directory {
+  const dir = new Directory(Paths.document, 'whisper-work');
   if (!dir.exists) dir.create({ intermediates: true, idempotent: true });
-  return new File(dir, `${id}.wav`).uri;
+  return dir;
 }
 
-/** Janela de cada chamada do whisper. O checkpoint fica no fim da janela. */
+/** Caminho do WAV decodificado usado na transcricao. */
+function wavPathFor(id: string): string {
+  return new File(workDirectory(), `${id}.wav`).uri;
+}
+
+/** Janela de cada chamada do motor. O checkpoint fica no fim da janela. */
 const CHUNK_MS = 60_000;
 /** WAV do decoder: PCM 16-bit mono a 16 kHz = 32 bytes por ms. */
 const WAV_HEADER_BYTES = 44;
@@ -376,9 +391,31 @@ async function writeWavRange(
 }
 
 function chunkPathFor(id: string): string {
-  const dir = new Directory(Paths.cache, 'whisper');
-  if (!dir.exists) dir.create({ intermediates: true, idempotent: true });
-  return new File(dir, `${id}.chunk.wav`).uri;
+  return new File(workDirectory(), `${id}.chunk.wav`).uri;
+}
+
+/** Le um arquivo inteiro (janela de 60 s = ~2 MB). */
+function readWholeFile(path: string): Uint8Array {
+  const file = new File(path);
+  const handle = file.open(FileMode.ReadOnly);
+  try {
+    return handle.readBytes(file.size ?? 0);
+  } finally {
+    handle.close();
+  }
+}
+
+/** Apaga os arquivos de trabalho desta nota, se existirem. */
+function deleteWorkFiles(id: string, paths: string[]): void {
+  for (const path of paths) {
+    if (!path) continue;
+    try {
+      const file = new File(path);
+      if (file.exists) file.delete();
+    } catch {
+      // arquivo ja removido ou sem permissao: a proxima passada limpa de novo
+    }
+  }
 }
 
 /** Maior fim de segmento (checkpoint de uma transcricao antiga sem campo). */
@@ -391,12 +428,120 @@ function lastSegmentEnd(segments: TranscriptSegment[]): number {
 }
 
 
+/** Motivo de uma transcorrencia que nao terminou. A tela traduz; nada vaza. */
+export type TranscriptionFailure =
+  | 'no_model'
+  | 'no_key'
+  | 'invalid_key'
+  | 'provider'
+  | 'unsupported'
+  | 'cancelled'
+  | 'engine';
+
+export interface TranscriptionOutcome {
+  status: 'ready' | 'pending' | 'skipped';
+  reason?: TranscriptionFailure;
+}
+
+/** Um pedido de parada da janela em andamento (nativo ou HTTP). */
+interface ActiveRun {
+  stop(): Promise<void>;
+}
+
+function failureReason(error: unknown): TranscriptionFailure {
+  if (error instanceof DeepgramError) {
+    if (error.code === 'invalid_key') return 'invalid_key';
+    if (error.code === 'forbidden') return 'invalid_key';
+    return 'provider';
+  }
+  return 'engine';
+}
+
+/** Espera curta entre tentativas de uma janela online. */
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
- * Transcreve a gravacao no aparelho. Idempotente por gravacao: grava o texto a
- * cada trecho (progressivo) e marca `hasTranscript` ao final.
+ * Watchdog de janela: o prazo reinicia a cada progresso do motor. Nao existe
+ * prazo para a passada inteira — um audio de 41 minutos tem 41 janelas e cada
+ * uma vale por si. So para quando o motor fica parado de verdade.
  */
-export async function transcribeLocally(id: string): Promise<void> {
-  if (running.has(id)) return;
+function stallGuard(ms: number): {
+  promise: Promise<never>;
+  tick(): void;
+  clear(): void;
+} {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let rejectFn: ((error: Error) => void) | null = null;
+  const promise = new Promise<never>((_, reject) => {
+    rejectFn = reject;
+  });
+  const arm = () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => rejectFn?.(new Error('motor parado')), ms);
+  };
+  arm();
+  return {
+    promise,
+    tick: arm,
+    clear: () => {
+      if (timer) clearTimeout(timer);
+      timer = null;
+    },
+  };
+}
+
+/** Uma janela na Deepgram, com nova tentativa para falha passageira. */
+async function onlineWindow(
+  id: string,
+  input: Parameters<typeof transcribeDeepgramWindow>[0],
+): Promise<Awaited<ReturnType<typeof transcribeDeepgramWindow>>> {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (cancelled.has(id)) throw new Error('transcricao cancelada');
+    try {
+      return await transcribeDeepgramWindow(input);
+    } catch (error) {
+      lastError = error;
+      const retryable = error instanceof DeepgramError && error.retryable;
+      if (!retryable) throw error;
+      await wait(800 * 2 ** attempt);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('deepgram falhou');
+}
+
+/**
+ * Transcreve no aparelho (whisper.cpp). Idempotente por gravacao: grava o texto
+ * a cada trecho (progressivo) e marca `hasTranscript` ao final.
+ */
+export async function transcribeLocally(id: string): Promise<TranscriptionOutcome> {
+  return runTranscription(id, 'device');
+}
+
+/**
+ * Transcreve no provedor online com a chave do aparelho. Mesmas janelas,
+ * mesmo checkpoint e mesma retomada do motor local.
+ */
+export async function transcribeOnline(id: string): Promise<TranscriptionOutcome> {
+  return runTranscription(id, 'online');
+}
+
+/** Motor conforme o lugar escolhido agora (aparelho ou online). */
+export async function transcribeRecording(id: string): Promise<TranscriptionOutcome> {
+  const place = await transcriptionPlace();
+  if (place.place === 'online') return transcribeOnline(id);
+  if (place.place === 'device') return transcribeLocally(id);
+  // Servidor (ou desligada): quem comeca a etapa e o outro lado, nunca este.
+  return { status: 'skipped', reason: place.place === 'server' ? 'engine' : undefined };
+}
+
+async function runTranscription(
+  id: string,
+  engine: 'device' | 'online',
+): Promise<TranscriptionOutcome> {
+  if (running.has(id)) return { status: 'skipped', reason: 'engine' };
   // Qualquer pedido explicito (botao, retry) vence uma parada manual anterior.
   manualStops.delete(id);
   const recording = await getRecording(id);
@@ -404,22 +549,31 @@ export async function transcribeLocally(id: string): Promise<void> {
   // marcada como interrompida (so o usuario apaga).
   if (!recording) {
     cancelActivity(activityId(id), 'Nota apagada');
-    return;
+    return { status: 'skipped' };
   }
-  if (!recording.filePath) return;
+  if (!recording.filePath) return { status: 'skipped' };
   // Transcricao terminada, local ou do servidor, nao e refeita sozinha.
-  if (hasFinalTranscript(recording)) return;
+  if (hasFinalTranscript(recording)) return { status: 'ready' };
 
   const prefs = await loadPrefs();
-  const modelId = prefs.transcriptionModel;
-  if (!modelId) return;
-  const modelPath = modelFilePath(modelId);
-  if (!modelPath || !new File(modelPath).exists) return;
+  const isOnline = engine === 'online';
+  // O modelo vem dos arquivos instalados: preferencia apontando para um id que
+  // sumiu do disco nao vira "sem modelo" se outro modelo esta la.
+  let model: ReturnType<typeof resolveTranscriptionModel> = null;
+  let modelPath: string | null = null;
+  if (!isOnline) {
+    model = resolveTranscriptionModel(prefs.transcriptionModel);
+    modelPath = model ? modelFilePath(model.id) : null;
+    if (!model || !modelPath) return { status: 'skipped', reason: 'no_model' };
+    if (!new File(modelPath).exists) return { status: 'skipped', reason: 'no_model' };
+  }
+  const onlineKey = isOnline ? await loadProviderKey('transcription') : null;
+  if (isOnline && !onlineKey) return { status: 'skipped', reason: 'no_key' };
+  if (!audioDecodeAvailable()) return { status: 'skipped', reason: 'unsupported' };
+  const whisper = isOnline ? null : loadWhisper();
+  if (!isOnline && !whisper) return { status: 'skipped', reason: 'unsupported' };
 
-  const whisper = loadWhisper();
-  if (!whisper || !audioDecodeAvailable()) return;
-
-  if (__DEV__) console.log('[perf] transcricao.comecou', { id, ms: Date.now() });
+  if (__DEV__) console.log('[perf] transcricao.comecou', { id, engine, ms: Date.now() });
 
   const priorSegments = recording.transcriptSegments ?? [];
   const priorCheckpoint =
@@ -430,6 +584,20 @@ export async function transcribeLocally(id: string): Promise<void> {
   let committed = priorSegments.filter((segment) => segment.start_ms < checkpoint);
   const knownDuration = recording.durationMs ?? 0;
 
+  // A atividade nasce antes da fila: um trabalho que espera a vez (ou uma fila
+  // travada por um lease antigo) precisa aparecer para o usuario. Sem isto, o
+  // toque em "continuar" parecia nao ter feito nada.
+  const activity = activityId(id);
+  startActivity({
+    id: activity,
+    kind: 'transcription',
+    title: displayTitle(recording),
+    detail: checkpoint > 0 ? 'Retomando transcrição' : 'Na fila',
+    progress: transcriptionProgress(id) > 0 ? transcriptionProgress(id) : undefined,
+    action: { label: 'Tentar de novo', run: () => retryTranscription(id) },
+    stop: { label: 'Parar', run: () => stopTranscription(id) },
+  });
+
   // A fila garante um motor por vez. Enquanto espera, a nota pode ter sido
   // transcrita por outro caminho ou o usuario pode ter parado a passada.
   const lease = await acquireHeavyWork('transcription');
@@ -437,8 +605,9 @@ export async function transcribeLocally(id: string): Promise<void> {
   try {
     afterWait = await getRecording(id);
   } catch {
+    cancelActivity(activity, 'Não foi possível ler a nota');
     lease.release();
-    return;
+    return { status: 'skipped', reason: 'engine' };
   }
   if (
     running.has(id) ||
@@ -447,24 +616,21 @@ export async function transcribeLocally(id: string): Promise<void> {
     hasFinalTranscript(afterWait)
   ) {
     cancelled.delete(id);
+    cancelActivity(activity, 'Já não precisa');
     lease.release();
-    return;
+    return { status: 'skipped' };
   }
   // A vez chegou com o app ja em segundo plano: nao inicia uma passada nova
   // sem servico em primeiro plano. O checkpoint fica para a proxima abertura.
   if (AppState.currentState !== 'active') {
     cancelled.delete(id);
+    cancelActivity(activity, 'Aguardando o app');
     lease.release();
-    return;
+    return { status: 'pending', reason: 'engine' };
   }
   cancelled.delete(id);
   cancelContextRelease();
   setRunning(id, true);
-  // Mecanismo de segurança: nenhuma transcricao pode ficar para sempre.
-  // Se passar de 5 minutos, para a passada e marca como pendente.
-  const watchdog = setTimeout(() => {
-    void stopTranscription(id, { manual: false });
-  }, 300_000);
   setProgress(id, knownDuration > 0 ? Math.min(100, (checkpoint / knownDuration) * 100) : 0);
   // Marca a nota como "transcrevendo" so depois de ter a vez: uma nota que
   // ganhou texto final enquanto esperava nao pode voltar para pending.
@@ -480,19 +646,20 @@ export async function transcribeLocally(id: string): Promise<void> {
     });
   } catch {
     setRunning(id, false);
+    cancelActivity(activity, 'Não foi possível marcar a nota');
     lease.release();
-    return;
+    return { status: 'skipped', reason: 'engine' };
   }
   // A gravacao do estado pode ter demorado: se o app saiu da frente nesse
   // meio-tempo, nao tenta abrir o servico em primeiro plano a partir do fundo.
   if (AppState.currentState !== 'active') {
     setRunning(id, false);
+    cancelActivity(activity, 'Aguardando o app');
     lease.release();
-    return;
+    return { status: 'pending', reason: 'engine' };
   }
 
   // Mantem o processo vivo e mostra o progresso na barra de notificacoes.
-  // Duas threads deixam o app utilizavel mesmo com a nota aberta.
   startForegroundTask('Transcrevendo', recording.title || 'Nota', 0);
   foregroundOn = true;
   // O pedido de permissao pode abrir um dialogo; pedir so depois que o servico
@@ -514,7 +681,6 @@ export async function transcribeLocally(id: string): Promise<void> {
    */
   let latestText = recording.transcript ?? '';
 
-  const activity = activityId(id);
   startActivity({
     id: activity,
     kind: 'transcription',
@@ -532,13 +698,22 @@ export async function transcribeLocally(id: string): Promise<void> {
   try {
     wavPath = wavPathFor(id);
     chunkPath = chunkPathFor(id);
+    // Restos de uma passada interrompida nao entram nesta: o WAV e decodificado
+    // de novo a partir do audio original (que nunca muda).
+    deleteWorkFiles(id, [wavPath, chunkPath]);
     await decodeToWav(recording.filePath, wavPath);
     const durationMs = wavDurationMs(wavPath);
     if (durationMs <= 0) {
       throw new Error('wav sem dados');
     }
-    updateActivity(activity, { detail: 'Carregando modelo' });
-    const context = await getContext(whisper, modelId, modelPath);
+
+    let context: WhisperContext | null = null;
+    if (isOnline) {
+      updateActivity(activity, { detail: 'Conferindo a chave' });
+    } else {
+      updateActivity(activity, { detail: 'Carregando modelo' });
+      context = await getContext(whisper as WhisperModule, (model as NonNullable<typeof model>).id, modelPath as string);
+    }
     setProgress(id, Math.min(100, (checkpoint / durationMs) * 100));
 
     const totalChunks = Math.max(1, Math.ceil(durationMs / CHUNK_MS));
@@ -549,57 +724,84 @@ export async function transcribeLocally(id: string): Promise<void> {
     while (hasTranscribableTail(checkpoint, durationMs) && !cancelled.has(id)) {
       const chunkNumber = Math.min(totalChunks, Math.floor(checkpoint / CHUNK_MS) + 1);
       updateActivity(activity, {
-        detail: `Transcrevendo trecho ${chunkNumber} de ${totalChunks}`,
+        detail: isOnline
+          ? `Deepgram · trecho ${chunkNumber} de ${totalChunks}`
+          : `Transcrevendo trecho ${chunkNumber} de ${totalChunks}`,
       });
       const slice = await writeWavRange(wavPath, chunkPath, checkpoint, checkpoint + CHUNK_MS);
       if (slice.endMs <= slice.startMs) break;
       const chunkStart = slice.startMs;
       const chunkEnd = slice.endMs;
-      const partial: TranscriptSegment[] = [];
 
-      const { promise, stop } = context.transcribe(chunkPath, {
-        language: whisperLanguage(prefs.transcriptionLanguage),
-        maxThreads: MAX_THREADS,
-        onProgress: (percent) => {
-          const done = chunkStart + (Math.max(0, Math.min(100, percent)) / 100) * (chunkEnd - chunkStart);
-          setProgress(id, Math.min(100, (done / durationMs) * 100));
-        },
-        onNewSegments: (event) => {
-          partial.push(...toSegments(event.segments, chunkStart));
-          latestText = textOf([...committed, ...partial]) || latestText;
-          // Grava no maximo a cada PERSIST_THROTTLE_MS: evita re-render da nota
-          // a cada trecho, mas o texto aparece progressivo.
-          const now = Date.now();
-          if (now - lastPersist < PERSIST_THROTTLE_MS) return;
-          lastPersist = now;
-          queuePersist({
-            transcript: latestText,
-            transcriptSegments: [...committed, ...partial],
-            transcriptStatus: 'pending',
-            transcriptOrigin: 'local',
-            // A janela atual ainda nao terminou: retomar daqui re-transcreve
-            // este trecho, nunca o anterior.
-            transcriptCheckpointMs: checkpoint,
+      if (isOnline) {
+        const controller = new AbortController();
+        const run: ActiveRun = { stop: async () => controller.abort() };
+        activeRuns.set(id, run);
+        try {
+          const audio = readWholeFile(chunkPath);
+          const result = await onlineWindow(id, {
+            audio,
+            apiKey: onlineKey as string,
+            model: prefs.transcriptionOnlineModel || DEFAULT_DEEPGRAM_MODEL,
+            language: whisperLanguage(prefs.transcriptionLanguage),
+            offsetMs: chunkStart,
+            signal: controller.signal,
           });
-        },
-      });
-      activeRuns.set(id, { stop });
+          language = result.language || language;
+          committed = [...committed, ...result.segments];
+        } finally {
+          activeRuns.delete(id);
+        }
+      } else if (context) {
+        const partial: TranscriptSegment[] = [];
+        const guard = stallGuard(90_000);
+        const { promise, stop } = context.transcribe(chunkPath, {
+          language: whisperLanguage(prefs.transcriptionLanguage),
+          maxThreads: MAX_THREADS,
+          onProgress: (percent) => {
+            // Cada aviso do motor empurra o prazo: so para quem realmente travou.
+            guard.tick();
+            const done =
+              chunkStart + (Math.max(0, Math.min(100, percent)) / 100) * (chunkEnd - chunkStart);
+            setProgress(id, Math.min(100, (done / durationMs) * 100));
+          },
+          onNewSegments: (event) => {
+            guard.tick();
+            partial.push(...toSegments(event.segments, chunkStart));
+            latestText = textOf([...committed, ...partial]) || latestText;
+            // Grava no maximo a cada PERSIST_THROTTLE_MS: evita re-render da nota
+            // a cada trecho, mas o texto aparece progressivo.
+            const now = Date.now();
+            if (now - lastPersist < PERSIST_THROTTLE_MS) return;
+            lastPersist = now;
+            queuePersist({
+              transcript: latestText,
+              transcriptSegments: [...committed, ...partial],
+              transcriptStatus: 'pending',
+              transcriptOrigin: 'local',
+              // A janela atual ainda nao terminou: retomar daqui re-transcreve
+              // este trecho, nunca o anterior.
+              transcriptCheckpointMs: checkpoint,
+            });
+          },
+        });
+        activeRuns.set(id, { stop });
+        try {
+          const result = await Promise.race([promise, guard.promise]);
+          language = result.language || language;
+          committed = [...committed, ...toSegments(result.segments, chunkStart)];
+        } finally {
+          guard.clear();
+          // Se o prazo venceu, o nativo pode continuar rodando; parar aqui
+          // libera a thread. Depois de concluido, parar nao tem efeito.
+          void stop().catch(() => undefined);
+          activeRuns.delete(id);
+        }
+      }
 
-      // Mecanismo de segurança: se o whisper travar, cancela a janela e marca
-      // como pendente (retomavel). O prazo acompanha o tamanho do trecho: um
-      // aparelho lento leva mais que os 120 s fixos e nao pode ser morto no
-      // meio de um trecho que ainda esta rendendo.
-      const chunkMs = Math.max(1, chunkEnd - chunkStart);
-      const result = await Promise.race([
-        promise,
-        new Promise<never>((_, reject) => {
-          setTimeout(() => reject(new Error('transcricao travada')), Math.max(120_000, chunkMs * 8));
-        }),
-      ]);
-      language = result.language || language;
-      committed = [...committed, ...toSegments(result.segments, chunkStart)];
       latestText = textOf(committed) || latestText;
       checkpoint = chunkEnd;
+      setProgress(id, Math.min(100, (checkpoint / durationMs) * 100));
       queuePersist({
         transcript: latestText,
         transcriptSegments: committed,
@@ -608,14 +810,16 @@ export async function transcribeLocally(id: string): Promise<void> {
         transcriptCheckpointMs: checkpoint,
       });
       // Durable antes da proxima janela: se o app morrer agora, retoma daqui.
-      activeRuns.delete(id);
       await chain.catch(() => undefined);
     }
 
     await chain.catch(() => undefined);
     // Cancelada pelo usuario: o que ja foi transcrito fica salvo como pending
     // (checkpoint), nao como concluido.
-    if (cancelled.has(id)) throw new Error('transcricao cancelada');
+    if (cancelled.has(id)) {
+      cancelActivity(activity, 'Transcrição interrompida');
+      return { status: 'pending', reason: 'cancelled' };
+    }
     updateActivity(activity, { detail: 'Salvando transcrição' });
     setProgress(id, 100);
     await persist(recording, {
@@ -632,11 +836,15 @@ export async function transcribeLocally(id: string): Promise<void> {
     // o texto no dashboard. Se o entryId ainda nao existir, tenta apos o upload.
     await pushTranscript(id);
     await notifyTranscriptionDone();
-  } catch {
+    return { status: 'ready' };
+  } catch (error) {
     // Falhou no meio: guarda o que ja foi transcrito e o ponto de retomada.
     // A proxima abertura do app continua daqui em vez de recomecar do zero.
+    const reason = failureReason(error);
     if (cancelled.has(id)) {
       cancelActivity(activity, 'Transcrição interrompida');
+    } else if (reason === 'invalid_key') {
+      failActivity(activity, 'Chave do provedor inválida');
     } else {
       failActivity(activity, 'Não foi possível transcrever');
     }
@@ -648,16 +856,12 @@ export async function transcribeLocally(id: string): Promise<void> {
       transcriptStatus: 'pending',
       transcriptOrigin: 'local',
     });
+    return {
+      status: 'pending',
+      reason: cancelled.has(id) ? 'cancelled' : reason,
+    };
   } finally {
-    clearTimeout(watchdog);
-    if (wavPath) {
-      const wav = new File(wavPath);
-      if (wav.exists) wav.delete();
-    }
-    if (chunkPath) {
-      const chunk = new File(chunkPath);
-      if (chunk.exists) chunk.delete();
-    }
+    deleteWorkFiles(id, [wavPath, chunkPath]);
     activeRuns.delete(id);
     cancelled.delete(id);
     activeModelId = null;
@@ -680,7 +884,36 @@ export async function transcribeLocally(id: string): Promise<void> {
  * salvo continua valendo, entao a retomada nao recomeca o audio inteiro.
  */
 export async function retryTranscription(id: string): Promise<void> {
-  await transcribeLocally(id);
+  const place = await transcriptionPlace();
+  if (place.place === 'server') {
+    // A nota pertence ao servidor: tentar de novo e pedir a fila dele, nunca
+    // rodar o motor do aparelho por conta propria.
+    const recording = await getRecording(id);
+    if (recording) await transcribeRecordingOnServer(recording);
+    return;
+  }
+  await transcribeRecording(id);
+}
+
+/**
+ * Remove WAVs de trabalho de passadas que morreram com o app. Roda so quando
+ * nenhuma passada esta em andamento; o arquivo da nota atual e recriado.
+ */
+function cleanupStaleWorkFiles(): void {
+  if (running.size > 0) return;
+  try {
+    const dir = workDirectory();
+    for (const entry of dir.list()) {
+      try {
+        const file = new File(entry.uri);
+        if (file.exists) file.delete();
+      } catch {
+        // arquivo em uso ou sem permissao: ignora
+      }
+    }
+  } catch {
+    // diretorio ainda nao existe
+  }
 }
 
 /**
@@ -703,13 +936,13 @@ async function notifyTranscriptionDone(): Promise<void> {
 }
 
 /**
- * Transcreve no aparelho as gravacoes pendentes que podem comecar sozinhas
- * (audio no aparelho, sem texto final, fora do servidor). Roda no boot com o
- * app aberto; com o app em segundo plano a passada atual termina sob o servico
- * em primeiro plano, mas a proxima so comeca quando o app volta para a frente.
+ * Transcreve as gravacoes pendentes que podem comecar sozinhas (audio no
+ * aparelho, sem texto final, fora do servidor). Vale para o motor local e para
+ * o online escolhido; roda no boot e ao voltar para a frente.
  */
 export async function transcribePendingLocally(): Promise<void> {
   if (!(await willTranscribeLocally())) return;
+  cleanupStaleWorkFiles();
   let list: Recording[] = [];
   try {
     list = await listRecordings();
@@ -725,20 +958,20 @@ export async function transcribePendingLocally(): Promise<void> {
     // Parada manual nesta sessao: o usuario decidiu parar; o boot nao insiste.
     if (manualStops.has(recording.id)) continue;
     if (!shouldAutoTranscribe(recording)) continue;
-    await transcribeLocally(recording.id);
+    await transcribeRecording(recording.id);
   }
 }
 
 /**
- * Dispara a transcricao local quando faz sentido: ligada nas configuracoes, com
- * modelo baixado e com modulo nativo presente. Caso contrario, nao faz nada (o
- * servidor continua sendo a via).
+ * Dispara a transcricao quando faz sentido: a etapa ligada (aparelho ou
+ * online), com o que ela precisa pronto. Caso contrario nao faz nada; quem
+ * comeca a etapa e o outro lado, nunca uma troca silenciosa de motor.
  */
-export async function maybeTranscribeLocally(id: string): Promise<void> {
-  if (!(await willTranscribeLocally())) return;
+export async function maybeTranscribeLocally(id: string): Promise<TranscriptionOutcome> {
+  if (!(await willTranscribeLocally())) return { status: 'skipped', reason: 'engine' };
   const recording = await getRecording(id);
-  if (!recording?.filePath) return;
+  if (!recording?.filePath) return { status: 'skipped' };
   // Transcricao terminada, local ou do servidor, nao e refeita sozinha.
-  if (hasFinalTranscript(recording)) return;
-  await transcribeLocally(id);
+  if (hasFinalTranscript(recording)) return { status: 'ready' };
+  return transcribeRecording(id);
 }

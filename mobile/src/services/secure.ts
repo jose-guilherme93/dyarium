@@ -9,9 +9,16 @@ import { Platform } from 'react-native';
 import { getAppFlag, setAppFlag } from '@/services/db';
 
 import {
-  DEFAULT_TRANSCRIPTION_MODEL,
   type TranscriptionLanguage,
 } from '@/core/transcription';
+import {
+  DEFAULT_ANALYSIS_PROVIDER,
+  DEFAULT_DEEPGRAM_MODEL,
+  normalizeAnalysisProvider,
+  normalizeDeepgramModel,
+  type TranscriptionOnlineProvider,
+} from '@/core/providers';
+import { normalizePlace, type ProcessingPlace } from '@/core/processing';
 import { normalizeNoteOrder, type NoteOrder } from '@/core/noteOrder';
 import { normalizeTypography, type NoteTypography } from '@/core/typography';
 import { normalizeBackupFrequency, type BackupFrequency } from '@/core/backupSchedule';
@@ -214,8 +221,11 @@ export type SwipeAction = 'delete' | 'archive';
  * Versao do blob de preferencias. Sobe quando uma chave muda de sentido: sem
  * ela nao da para distinguir instalacao nova de instalacao antiga, e a
  * migracao acabaria desligando o que o usuario ja tinha ligado.
+ *
+ * v3 troca os tres interruptores por um lugar por etapa (desligada, aparelho,
+ * servidor ou online).
  */
-export const PREFS_VERSION = 2;
+export const PREFS_VERSION = 3;
 
 export interface Prefs {
   /** Versao do formato gravado; ausente = blob anterior aos tres interruptores. */
@@ -228,19 +238,33 @@ export interface Prefs {
   importYear?: number;
   /** Tipografia do editor de notas. */
   typography?: NoteTypography;
-  /** Transcrever as notas (no aparelho ou no servidor, conforme abaixo). */
+  /** Onde a transcricao roda. */
+  transcriptionPlace?: ProcessingPlace;
+  /** Onde a analise roda. */
+  analysisPlace?: ProcessingPlace;
+  /** Provedor online de transcricao (o aparelho chama a API direto). */
+  transcriptionProvider?: TranscriptionOnlineProvider;
+  /** Modelo da Deepgram quando a transcricao e online. */
+  transcriptionOnlineModel?: string;
+  /** Preset do provedor de analise online. */
+  analysisProvider?: string;
+  /** URL base do provedor personalizado de analise. */
+  analysisBaseUrl?: string;
+  /** Modelo do provedor de analise online. */
+  analysisOnlineModel?: string;
+  /** @deprecated Lido na migracao v2; o lugar agora e `transcriptionPlace`. */
   transcriptionEnabled?: boolean;
-  /** Analisar as notas (no aparelho ou no servidor, conforme abaixo). */
+  /** @deprecated Lido na migracao v2; o lugar agora e `analysisPlace`. */
   analysisEnabled?: boolean;
-  /** Processar no servidor em vez do aparelho. Exige servidor configurado. */
+  /** @deprecated Lido na migracao v2; o lugar agora e por etapa. */
   serverProcessing?: boolean;
-  /** @deprecated Substituido por `transcriptionEnabled` + `serverProcessing`. */
+  /** @deprecated Substituido pelos tres interruptores na v2. */
   localTranscription?: boolean;
   /** Revisar a transcricao com a IA local antes de analisar. */
   reviewTranscript?: boolean;
   /** Manter hesitacoes e gagueira no texto revisado. */
   literalTranscript?: boolean;
-  /** Id do modelo de transcricao escolhido. */
+  /** Id do modelo de transcricao escolhido (vazio = nenhum escolhido). */
   transcriptionModel?: string;
   /** Idioma da transcricao (pt fixo ou detectar). */
   transcriptionLanguage?: TranscriptionLanguage;
@@ -280,8 +304,9 @@ const PREFS_KEY = 'dyarium.prefs';
  * O SecureStore do Android amarra cada valor a uma chave do Keystore: quando a
  * chave e invalidada (troca de PIN, restauracao do sistema, atualizacao do
  * aparelho) todos os valores somem de uma vez. Preferencia de tema nao e
- * segredo; o cofre fica so com o token do servidor. O blob antigo e lido uma
- * vez e copiado para o SQLite, sem perder a escolha de quem ja usava o app.
+ * segredo; o cofre fica so com o token do servidor e com as chaves dos
+ * provedores online. O blob antigo e lido uma vez e copiado para o SQLite, sem
+ * perder a escolha de quem ja usava o app.
  */
 async function readPrefsRaw(): Promise<string | null> {
   if (Platform.OS === 'web') return readValue(PREFS_KEY);
@@ -300,32 +325,57 @@ const DEFAULT_PREFS: Prefs = {
   version: PREFS_VERSION,
   swipeAction: 'delete',
   backupFrequency: 'off',
-  transcriptionEnabled: false,
-  analysisEnabled: false,
-  serverProcessing: false,
+  transcriptionPlace: 'off',
+  analysisPlace: 'off',
+  transcriptionProvider: 'deepgram',
+  transcriptionOnlineModel: DEFAULT_DEEPGRAM_MODEL,
+  analysisProvider: 'openrouter',
+  analysisBaseUrl: '',
+  analysisOnlineModel: '',
   reviewTranscript: false,
   literalTranscript: false,
 };
 
 /**
- * Converte o blob antigo (`localTranscription`) nos tres interruptores.
+ * Converte os formatos antigos no lugar por etapa.
  *
  * A regra preserva o comportamento de quem ja usava: escolha explicita de
  * aparelho continua no aparelho, escolha de servidor continua no servidor, e
  * quem nunca escolheu segue a mesma via de antes (servidor quando existe).
+ * Um modelo escolhido na v2 conta como escolha do aparelho, porque era assim
+ * que o app se comportava depois do download.
  */
-async function migrateLegacyFlags(parsed: Partial<Prefs>): Promise<Prefs> {
-  const explicitLocal = parsed.localTranscription === true;
-  const explicitServer = parsed.localTranscription === false;
-  let serverProcessing = false;
-  if (explicitServer) serverProcessing = true;
-  else if (!explicitLocal) serverProcessing = Boolean(await loadServerConfig());
+async function migratePlaces(parsed: Partial<Prefs>): Promise<{
+  transcriptionPlace: ProcessingPlace;
+  analysisPlace: ProcessingPlace;
+}> {
+  if ((parsed.version ?? 0) >= PREFS_VERSION) {
+    return {
+      transcriptionPlace: normalizePlace(parsed.transcriptionPlace),
+      analysisPlace: normalizePlace(parsed.analysisPlace),
+    };
+  }
+  const server = await loadServerConfig();
+  if ((parsed.version ?? 0) === 0) {
+    const explicitLocal = parsed.localTranscription === true;
+    const explicitServer = parsed.localTranscription === false;
+    const place: ProcessingPlace = explicitLocal
+      ? 'device'
+      : explicitServer
+        ? 'server'
+        : server
+          ? 'server'
+          : 'device';
+    return { transcriptionPlace: place, analysisPlace: place };
+  }
+  const placeFor = (enabled: boolean | undefined, hadModel: boolean): ProcessingPlace => {
+    if (parsed.serverProcessing === true && server) return 'server';
+    if (enabled === true || hadModel) return 'device';
+    return 'off';
+  };
   return {
-    ...DEFAULT_PREFS,
-    transcriptionEnabled: true,
-    analysisEnabled: true,
-    serverProcessing,
-    version: PREFS_VERSION,
+    transcriptionPlace: placeFor(parsed.transcriptionEnabled, parsed.transcriptionModel !== undefined),
+    analysisPlace: placeFor(parsed.analysisEnabled, parsed.analysisModel !== undefined),
   };
 }
 
@@ -334,24 +384,33 @@ export async function loadPrefs(): Promise<Prefs> {
     const raw = await readPrefsRaw();
     if (!raw) return DEFAULT_PREFS;
     const parsed = JSON.parse(raw) as Partial<Prefs>;
-    const legacy = parsed.version !== PREFS_VERSION;
-    const migrated = legacy ? await migrateLegacyFlags(parsed) : null;
+    const places = await migratePlaces(parsed);
     return {
       version: PREFS_VERSION,
       theme: normalizeTheme(parsed.theme),
       swipeAction: parsed.swipeAction === 'archive' ? 'archive' : 'delete',
       importYear: typeof parsed.importYear === 'number' ? parsed.importYear : undefined,
       typography: parsed.typography ? normalizeTypography(parsed.typography) : undefined,
-      transcriptionEnabled:
-        migrated?.transcriptionEnabled ?? parsed.transcriptionEnabled === true,
-      analysisEnabled: migrated?.analysisEnabled ?? parsed.analysisEnabled === true,
-      serverProcessing: migrated?.serverProcessing ?? parsed.serverProcessing === true,
+      transcriptionPlace: places.transcriptionPlace,
+      analysisPlace: places.analysisPlace,
+      transcriptionProvider: 'deepgram',
+      transcriptionOnlineModel: normalizeDeepgramModel(parsed.transcriptionOnlineModel),
+      analysisProvider:
+        parsed.analysisProvider === undefined
+          ? DEFAULT_ANALYSIS_PROVIDER
+          : normalizeAnalysisProvider(parsed.analysisProvider),
+      analysisBaseUrl:
+        typeof parsed.analysisBaseUrl === 'string' ? parsed.analysisBaseUrl.trim() : '',
+      analysisOnlineModel:
+        typeof parsed.analysisOnlineModel === 'string' ? parsed.analysisOnlineModel.trim() : '',
       reviewTranscript: parsed.reviewTranscript === true,
       literalTranscript: parsed.literalTranscript === true,
+      // Sem modelo escolhido nao se inventa um: quem resolve e quem ve os
+      // arquivos instalados, senao uma leitura ruim virava "sem modelo".
       transcriptionModel:
-        typeof parsed.transcriptionModel === 'string'
+        typeof parsed.transcriptionModel === 'string' && parsed.transcriptionModel.trim() !== ''
           ? parsed.transcriptionModel
-          : DEFAULT_TRANSCRIPTION_MODEL,
+          : undefined,
       transcriptionLanguage: parsed.transcriptionLanguage === 'auto' ? 'auto' : 'pt',
       analysisModel:
         typeof parsed.analysisModel === 'string' ? parsed.analysisModel : undefined,
@@ -402,3 +461,35 @@ export async function savePrefs(prefs: Prefs): Promise<void> {
   }
   await setAppFlag(PREFS_KEY, raw);
 }
+
+/** Etapa com provedor online proprio. */
+export type ProviderStage = 'transcription' | 'analysis';
+
+const PROVIDER_KEY: Record<ProviderStage, string> = {
+  transcription: 'dyarium.provider.transcription.key',
+  analysis: 'dyarium.provider.analysis.key',
+};
+
+/**
+ * Chave de um provedor online, no cofre do aparelho. Ela nunca entra no blob de
+ * preferencias, no banco, em log ou em backup.
+ */
+export async function loadProviderKey(stage: ProviderStage): Promise<string | null> {
+  const raw = await readValue(PROVIDER_KEY[stage]).catch(() => null);
+  const key = (raw ?? '').trim();
+  return key === '' ? null : key;
+}
+
+export async function saveProviderKey(stage: ProviderStage, key: string): Promise<void> {
+  const value = key.trim();
+  if (value === '') {
+    await clearProviderKey(stage);
+    return;
+  }
+  await writeValue(PROVIDER_KEY[stage], value);
+}
+
+export async function clearProviderKey(stage: ProviderStage): Promise<void> {
+  await deleteValue(PROVIDER_KEY[stage]);
+}
+

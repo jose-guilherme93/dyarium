@@ -94,7 +94,12 @@ interface NoteRowProps {
   onRemove(id: string): void;
   onArchive(id: string): void;
   onUnarchive(id: string): void;
-  busy?: { kind: 'transcription' | 'analysis'; percent?: number; queued?: boolean } | null;
+  busy?: {
+    kind: 'transcription' | 'analysis';
+    percent?: number;
+    queued?: boolean;
+    remote?: boolean;
+  } | null;
 }
 
 // Linha memoizada: a home re-renderiza quando a fila muda; sem isto, todas as
@@ -163,7 +168,12 @@ export default function NotebookScreen() {
   const busyByNote = useMemo(() => {
     const map = new Map<
       string,
-      { kind: 'transcription' | 'analysis'; percent?: number; queued?: boolean }
+      {
+        kind: 'transcription' | 'analysis';
+        percent?: number;
+        queued?: boolean;
+        remote?: boolean;
+      }
     >();
     for (const activity of activities) {
       if (activity.status !== 'running') continue;
@@ -175,6 +185,7 @@ export default function NotebookScreen() {
         kind: activity.kind,
         percent: activity.progress,
         queued: activity.progress === undefined,
+        remote: activity.detail === 'No servidor',
       };
       // O trabalho mais recente da nota aparece; os demais seguem no centro.
       if (!current || (next.percent ?? 0) >= (current.percent ?? 0)) {

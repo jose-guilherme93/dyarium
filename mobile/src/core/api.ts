@@ -202,6 +202,30 @@ export interface CompleteUploadResponse {
   duplicate?: boolean;
 }
 
+/**
+ * Configuracao da instancia como o app a le. Segredo nunca vem: cada chave vira
+ * um booleano `*_set`.
+ */
+export interface ServerSettings {
+  owner_name: string;
+  all_notes_mine: boolean;
+  trim_silence: boolean;
+  whisper_model: string;
+  whisper_language: string;
+  transcribe_provider: string;
+  deepgram_model: string;
+  deepgram_api_key_set: boolean;
+  analyze_enabled: boolean;
+  analyze_provider: string;
+  analyze_local_runtime: string;
+  analyze_base_url: string;
+  analyze_model: string;
+  analyze_api_key_set: boolean;
+  analysis_themes: string;
+  review_enabled: boolean;
+  literal_transcript: boolean;
+}
+
 export interface TranscriptResponse {
   model: string;
   language: string;
@@ -691,20 +715,70 @@ export class DyariumApi {
 
   /** Configuracao de autor da instancia (nome do dono e padrao das notas). */
   async getAuthorSettings(): Promise<{ owner_name: string; all_notes_mine: boolean }> {
+    const settings = await this.getSettings();
+    return {
+      owner_name: settings.owner_name ?? '',
+      // Chave ausente numa instancia nova significa o padrao ligado.
+      all_notes_mine: settings.all_notes_mine !== false,
+    };
+  }
+
+  /**
+   * Configuracao da instancia. As chaves nunca vem no corpo: o servidor so diz
+   * se cada uma esta definida (`deepgram_api_key_set`, `analyze_api_key_set`).
+   */
+  async getSettings(): Promise<ServerSettings> {
     const res = await this.fetchImpl(this.url('/api/v1/settings'), {
       method: 'GET',
       headers: this.authHeaders(),
     });
     if (!res.ok) throw await this.parseError(res);
-    const parsed = JSON.parse(await res.text()) as {
-      owner_name?: unknown;
-      all_notes_mine?: unknown;
-    };
+    const parsed = JSON.parse(await res.text()) as Record<string, unknown>;
+    const text = (key: string) => (typeof parsed[key] === 'string' ? (parsed[key] as string) : '');
+    const bool = (key: string) => parsed[key] === true;
     return {
-      owner_name: typeof parsed.owner_name === 'string' ? parsed.owner_name : '',
-      // Chave ausente numa instancia nova significa o padrao ligado.
+      owner_name: text('owner_name'),
       all_notes_mine: parsed.all_notes_mine !== false,
+      trim_silence: bool('trim_silence'),
+      whisper_model: text('whisper_model'),
+      whisper_language: text('whisper_language'),
+      transcribe_provider: text('transcribe_provider') || 'whisper',
+      deepgram_model: text('deepgram_model') || 'nova-2',
+      deepgram_api_key_set: bool('deepgram_api_key_set'),
+      analyze_enabled: bool('analyze_enabled'),
+      analyze_provider: text('analyze_provider'),
+      analyze_local_runtime: text('analyze_local_runtime'),
+      analyze_base_url: text('analyze_base_url'),
+      analyze_model: text('analyze_model'),
+      analyze_api_key_set: bool('analyze_api_key_set'),
+      analysis_themes: text('analysis_themes'),
+      review_enabled: bool('review_enabled'),
+      literal_transcript: bool('literal_transcript'),
     };
+  }
+
+  /** Grava a configuracao da instancia; chaves vao em texto e nunca voltam. */
+  async putSettings(body: Record<string, unknown>): Promise<void> {
+    const res = await this.fetchImpl(this.url('/api/v1/settings'), {
+      method: 'PUT',
+      headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw await this.parseError(res);
+  }
+
+  /**
+   * Pede ao servidor uma transcricao nova para a entrada. Usado quando o
+   * usuario escolhe o servidor depois que o audio ja subiu com a transcricao
+   * marcada como responsabilidade do aparelho.
+   */
+  async retranscribe(entryId: string): Promise<{ status: string }> {
+    const res = await this.fetchImpl(this.url(`/api/v1/entries/${entryId}/retranscribe`), {
+      method: 'POST',
+      headers: this.authHeaders(),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    return JSON.parse(await res.text());
   }
 
   /**

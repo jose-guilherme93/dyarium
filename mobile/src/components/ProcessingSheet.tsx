@@ -1,9 +1,9 @@
 /**
- * A folha do icone de IA: transcrever, analisar e processar no servidor.
+ * A folha do icone de IA: mostra onde transcricao e analise rodam e leva a
+ * tela de Processamento. A decisao mora num lugar so.
  *
- * Aparece sozinha uma vez (na primeira nota) e fica disponivel para sempre no
- * icone. "Ocultar" silencia so a abertura automatica — o icone continua
- * abrindo os interruptores, e a escolha fica no banco, fora de qualquer backup.
+ * Aparece sozinha uma vez (na primeira nota); "Ocultar" grava a marca em
+ * `app_flags`, fora de qualquer backup.
  */
 
 import { View } from 'react-native';

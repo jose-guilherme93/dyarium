@@ -112,7 +112,9 @@ export function NoteAudioCard({
   const styles = useThemedStyles(baseStyles);
   const { colors } = useTheme();
 
-  const transcribing = transcribingPercent !== undefined || transcribingWait;
+  const running = transcribingPercent !== undefined;
+  const waiting = transcribingWait && !running;
+  const transcribing = running || waiting;
   // O erro cede o lugar ao progresso: uma nova tentativa ja esta rodando.
   const failed = transcribeError && !transcribing;
   // O transporte so existe com o player, mesmo que o card esteja ativo (o
@@ -169,7 +171,12 @@ export function NoteAudioCard({
           )}
         </View>
         <View style={styles.audioActions}>
-          {failed ? null : transcribing ? (
+          {failed ? null : waiting ? (
+            // No servidor nao ha o que parar daqui: so mostrar que segue la.
+            <View style={styles.iconButton} accessibilityLabel="Transcrevendo no servidor">
+              <ActivityIndicator size="small" color={colors.textSecondary} />
+            </View>
+          ) : running ? (
             <Press
               style={styles.iconButton}
               onPress={onStopTranscribe}
@@ -254,7 +261,9 @@ export function NoteAudioCard({
             <View style={styles.transcribing} testID="audio-transcribing">
               <ActivityIndicator size="small" color={colors.textSecondary} />
               <Text style={styles.audioHint} numberOfLines={1}>
-                Transcrevendo{percent !== null && percent > 0 ? ` ${percent}%` : '...'}
+                {waiting
+                  ? 'Transcrevendo no servidor'
+                  : `Transcrevendo${percent !== null && percent > 0 ? ` ${percent}%` : '...'}`}
               </Text>
             </View>
             {percent !== null ? (
