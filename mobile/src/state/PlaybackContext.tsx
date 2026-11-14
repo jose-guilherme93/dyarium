@@ -40,21 +40,34 @@ export function PlaybackProvider({ children }: { children: ReactNode }) {
   const [player] = useState(() => createAudioPlayer(undefined, PLAYER_OPTIONS));
   /** Fonte que ja foi apontada no player. */
   const loadedRef = useRef<string | null>(null);
+  /**
+   * A fonte atual ainda esta abrindo. Enquanto isso, `currentStatus` pode ser o
+   * retrato da fonte anterior e o seek precisa esperar o estado vivo.
+   */
+  const openingRef = useRef(false);
 
   const playAt = useCallback(
     (uri: string, seconds: number) => {
-      if (loadedRef.current !== uri) {
+      const changed = loadedRef.current !== uri;
+      if (changed) {
         // So troca a fonte quando ela muda: recarregar o mesmo audio o jogaria
         // de volta ao comeco.
         loadedRef.current = uri;
+        openingRef.current = true;
         player.replace(uri);
       }
       // `seekPlayer` espera a fonte ficar pronta antes de pular: buscar durante
       // o buffering fazia a posicao ser descartada quando o ADTS terminava de
-      // abrir. O `replace` acima ja foi agendado antes.
+      // abrir. O `replace` acima ja foi agendado antes, entao o estado vivo do
+      // player ja e o da fonte nova.
       void seekPlayer(player, Math.max(0, Number.isFinite(seconds) ? seconds : 0), {
         autoplay: true,
-      }).catch(() => undefined);
+        freshSource: changed || openingRef.current,
+      })
+        .then(() => {
+          if (player.isLoaded) openingRef.current = false;
+        })
+        .catch(() => undefined);
     },
     [player],
   );
