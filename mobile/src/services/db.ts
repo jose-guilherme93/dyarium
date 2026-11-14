@@ -1273,6 +1273,7 @@ function rowToRecording(row: Row): Recording {
 }
 
 export async function upsertRecording(r: Recording): Promise<void> {
+  invalidateRecordingsCache();
   const db = await getDb();
   // Ja existe: a versao do relogio so avanca quando o conteudo muda. Atualizar
   // progresso de upload ou transcricao nao invalida a edicao que esta la.
@@ -1424,14 +1425,40 @@ export async function upsertRecording(r: Recording): Promise<void> {
   );
 }
 
+/**
+ * Leitura recente da biblioteca.
+ *
+ * Varias etapas da sincronizacao pedem a lista quase juntas (fila, transcricoes,
+ * pull, reconciliacao). Cada uma fazia o `SELECT *` e montava todos os
+ * `Recording` de novo na thread de JS, em rajadas durante a abertura do app.
+ * O cache vale um instante curto e toda escrita o derruba.
+ */
+let recordingsCache: { at: number; includeDeleted: boolean; list: Recording[] } | null = null;
+const RECORDINGS_CACHE_MS = 1_000;
+
+function invalidateRecordingsCache(): void {
+  recordingsCache = null;
+}
+
 export async function listRecordings(includeDeleted = false): Promise<Recording[]> {
+  if (
+    recordingsCache &&
+    recordingsCache.includeDeleted === includeDeleted &&
+    Date.now() - recordingsCache.at < RECORDINGS_CACHE_MS
+  ) {
+    // Copia rasa: o array e compartilhado entre as etapas da sincronizacao e
+    // nenhuma delas pode ordenar/mexer no cache de outra.
+    return recordingsCache.list.slice();
+  }
   const db = await getDb();
   const rows = await db.getAllAsync<Row>(
     includeDeleted
       ? 'SELECT * FROM recordings ORDER BY created_at DESC'
       : 'SELECT * FROM recordings WHERE deleted_at IS NULL ORDER BY created_at DESC',
   );
-  return rows.map(rowToRecording);
+  const list = rows.map(rowToRecording);
+  recordingsCache = { at: Date.now(), includeDeleted, list };
+  return list;
 }
 
 /**
@@ -1442,6 +1469,7 @@ export async function listRecordings(includeDeleted = false): Promise<Recording[
  * trocar um campo. Devolve quantas linhas mudaram.
  */
 export async function markInterruptedRecordings(now = new Date().toISOString()): Promise<number> {
+  invalidateRecordingsCache();
   const db = await getDb();
   const result = await db.runAsync(
     "UPDATE recordings SET status = 'interrupted', updated_at = ? WHERE status = 'recording'",
@@ -1476,6 +1504,7 @@ export async function getRecording(id: string): Promise<Recording | null> {
 
 /** Cache da pilha de audios do servidor para uma entrada (JSON por linha). */
 export async function saveServerAudios(entryId: string, audios: ServerAudio[]): Promise<void> {
+  invalidateRecordingsCache();
   const db = await getDb();
   await db.runAsync(
     'UPDATE recordings SET server_audios = ? WHERE entry_id = ?',
@@ -1489,6 +1518,7 @@ export async function updateRecordingNote(
   patch: { title?: string; text?: string },
 ): Promise<void> {
   if (patch.title === undefined && patch.text === undefined) return;
+  invalidateRecordingsCache();
   const db = await getDb();
   const hasTitle = patch.title !== undefined ? 1 : 0;
   const hasText = patch.text !== undefined ? 1 : 0;
@@ -1524,6 +1554,7 @@ export async function updateRecordingNote(
 }
 
 export async function deleteRecordingRow(id: string): Promise<void> {
+  invalidateRecordingsCache();
   const db = await getDb();
   await withGraphWrite(() =>
     db.withTransactionAsync(async () => {

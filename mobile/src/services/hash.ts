@@ -1,7 +1,16 @@
-// Hash SHA-256 incremental de arquivo: le em pedacos de 1 MiB para nao carregar
-// o arquivo inteiro na memoria. Audios podem chegar a 2 GiB.
+// Hash SHA-256 incremental de arquivo: le em pedacos para nao carregar o
+// arquivo inteiro na memoria nem segurar a thread de JS. Audios podem chegar a
+// 2 GiB; hashear tudo de uma vez travava o toque por segundos a cada envio.
 import { File, FileMode } from 'expo-file-system';
 import { createSha256 } from '@/core/sha256';
+
+/** Tamanho do pedaco lido por vez (meio MiB cabe no orcamento de um quadro). */
+const CHUNK_BYTES = 512 * 1024;
+
+/** Devolve a thread para a interface entre um pedaco e outro. */
+function yieldToUI(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
 
 export async function fileSha256(path: string): Promise<string> {
   const file = new File(path);
@@ -19,7 +28,7 @@ export async function fileSha256(path: string): Promise<string> {
   let total = 0;
   try {
     while (total < expected) {
-      const n = Math.min(1024 * 1024, expected - total);
+      const n = Math.min(CHUNK_BYTES, expected - total);
       const bytes = handle.readBytes(n);
       if (bytes.length === 0) {
         throw new Error('leitura interrompida');
@@ -29,6 +38,9 @@ export async function fileSha256(path: string): Promise<string> {
       }
       hasher.update(bytes);
       total += bytes.length;
+      // Cede a thread: o toque na home e a navegacao continuam respondendo
+      // enquanto um audio grande sobe.
+      await yieldToUI();
     }
     if (total !== expected) {
       throw new Error('total lido diferente do esperado');

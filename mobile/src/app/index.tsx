@@ -495,6 +495,13 @@ export default function NotebookScreen() {
         contentContainerStyle={styles.list}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        // A home abre com 10 linhas, nao com a tela inteira de cards: cada card
+        // monta um Swipeable e o icone da capa. Montar 50 no boot segurava o
+        // primeiro toque do usuario.
+        initialNumToRender={10}
+        maxToRenderPerBatch={8}
+        windowSize={7}
+        updateCellsBatchingPeriod={50}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}

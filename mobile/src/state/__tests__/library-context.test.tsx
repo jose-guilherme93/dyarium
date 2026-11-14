@@ -55,7 +55,7 @@ jest.mock('@/services/files', () => ({
   deleteSessionFiles: jest.fn(async () => undefined),
 }));
 jest.mock('@/services/clock', () => ({ clockNode: jest.fn(async () => 'dev_teste') }));
-jest.mock('@/services/noteVisibility', () => ({ noteIsOpen: () => false }));
+jest.mock('@/services/noteVisibility', () => ({ backgroundPaused: () => false, noteIsOpen: () => false }));
 jest.mock('@/services/pull', () => ({ pullServerEntries: jest.fn(async () => 0) }));
 jest.mock('@/services/transcripts', () => ({ fetchTranscriptsOnce: jest.fn(async () => 0) }));
 jest.mock('@/dev/perf', () => ({ bumpRender: jest.fn() }));
@@ -193,6 +193,12 @@ describe('LibraryProvider.refresh', () => {
       await mount([queued]);
 
       const upload = runUploadQueueOnce as jest.Mock;
+      // Deixa a cadeia do boot (6 s) e a espera do trabalho pesado (10 s)
+      // terminarem: ela roda uma vez mesmo sem servidor para retomar a fila do
+      // aparelho. O que este teste mede e o worker de 15 s depois disso.
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(17_000);
+      });
       upload.mockClear();
 
       await act(async () => {

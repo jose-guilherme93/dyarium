@@ -16,7 +16,7 @@ import {
   writingReminder,
 } from '@/core/writing';
 import { notify, syncWritingReminder } from '@/services/notifications';
-import { noteIsOpen } from '@/services/noteVisibility';
+import { backgroundPaused } from '@/services/noteVisibility';
 
 import { useLibrary } from './LibraryContext';
 import { useSettings } from './SettingsContext';
@@ -25,7 +25,7 @@ import { useSettings } from './SettingsContext';
 const SYNC_INTERVAL_MS = 15 * 60 * 1000;
 
 /** Espera a tela assentar antes de analisar a biblioteca (nunca no toque). */
-const FIRST_SYNC_DELAY_MS = 8_000;
+const FIRST_SYNC_DELAY_MS = 30_000;
 
 /**
  * `enabled` fica falso enquanto o microfone abre ou grava: analisar a
@@ -71,7 +71,7 @@ export function useWritingReminders(enabled = true): void {
   ]);
 
   const sync = useCallback(async () => {
-    if (!enabled || noteIsOpen()) return;
+    if (!enabled || backgroundPaused()) return;
     const state = stateRef.current;
     if (!state.writingReminders) {
       await syncWritingReminder(null, state.reminderHour);
@@ -121,5 +121,8 @@ export function useWritingReminders(enabled = true): void {
       clearInterval(interval);
       subscription.remove();
     };
-  }, [sync, recordings.length, enabled]);
+    // Sem `recordings.length` nas dependencias: cada gravacao nova reiniciava o
+    // timer e a analise da biblioteca inteira caia de novo em cima do toque do
+    // usuario. O intervalo de 15 min e o retorno ao app ja cobrem o caso.
+  }, [sync, enabled]);
 }

@@ -98,6 +98,15 @@ export function readSessionSnapshot(filters: GraphFilters = {}): GraphSnapshot |
 }
 
 /**
+ * Derruba o recorte da sessao. Quem acabou de derivar entidades/vinculos
+ * precisa disso: sem a invalidacao, a releitura devolveria o recorte velho e o
+ * mapa continuaria sem os elos novos (e o cache de 20 s os escondia de novo).
+ */
+export function invalidateSessionSnapshot(): void {
+  sessionSnapshot = null;
+}
+
+/**
  * Le a biblioteca e devolve tudo o que o mapa precisa. Nao parseia payload de
  * analise nem transcricao: o desenho usa so contagens e o tom, e os trechos sao
  * carregados quando uma entidade e aberta (`loadEntityPanel`).

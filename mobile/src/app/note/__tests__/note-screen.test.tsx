@@ -280,6 +280,10 @@ jest.mock('@/services/whisper', () => ({
 jest.mock('@/services/noteVisibility', () => ({
   enterNote: jest.fn(),
   leaveNote: jest.fn(),
+  noteIsOpen: () => false,
+  enterInteractiveView: jest.fn(),
+  leaveInteractiveView: jest.fn(),
+  backgroundPaused: () => false,
 }));
 
 jest.mock('@/services/noteSync', () => ({
