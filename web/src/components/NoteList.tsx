@@ -8,8 +8,6 @@ import { ALL_NOTEBOOKS } from "../lib/notebooks";
 
 const NOTE_ORDER_KEY = "dyarium.noteOrder";
 
-type NoteOrder = "newest" | "oldest";
-
 function readNoteOrder(): NoteOrder {
   try {
     const value = localStorage.getItem(NOTE_ORDER_KEY);
@@ -21,6 +19,7 @@ function readNoteOrder(): NoteOrder {
 import { normalizeSearch } from "../lib/search";
 import { formatDuration, formatShortDate } from "../lib/format";
 import { tagColor } from "../lib/tags";
+import { noteDate, sortNotesByDate, type NoteOrder } from "../lib/noteOrder";
 import { useEscape } from "../lib/useEscape";
 import type { Entry, Notebook } from "../types";
 import {
@@ -74,10 +73,6 @@ function displayTitle(entry: Entry): string {
     return "Áudio";
   }
   return "Sem título";
-}
-
-function noteDate(entry: Entry): string {
-  return entry.recorded_at ?? entry.created_at;
 }
 
 function matches(entry: Entry, query: string): boolean {
@@ -245,18 +240,7 @@ export function NoteList({
   }, [inScope, selectedTags]);
   const visible = useMemo(() => {
     const filtered = term ? withTags.filter((entry) => matches(entry, term)) : withTags;
-    // Comparador consistente: com a mesma data, o id decide (antes dois itens
-    // "iguais" podiam trocar de lugar a cada render).
-    return [...filtered].sort((a, b) => {
-      if (a.updated_at === b.updated_at) {
-        const tie = a.id < b.id ? -1 : 1;
-        return noteOrder === "newest" ? -tie : tie;
-      }
-      if (noteOrder === "newest") {
-        return a.updated_at < b.updated_at ? 1 : -1;
-      }
-      return a.updated_at < b.updated_at ? -1 : 1;
-    });
+    return sortNotesByDate(filtered, noteOrder);
   }, [withTags, term, noteOrder]);
 
   const counts = useMemo(() => tagCounts(inScope, selectedTags), [inScope, selectedTags]);
