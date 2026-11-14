@@ -28,8 +28,8 @@ import { ComposeDialog, type ComposeAnchor } from "./components/ComposeDialog";
 import { useToast } from "./components/Toasts";
 import {
   BookIcon,
+  CalendarIcon,
   ChevronIcon,
-  CpuIcon,
   ExitIcon,
   MapIcon,
   MenuIcon,
@@ -48,13 +48,14 @@ import { ProjectsView } from "./views/ProjectsView";
 import type { ProjectsFilterRequest } from "./views/ProjectsView";
 import { ProjectNote } from "./views/ProjectNote";
 import { LabView } from "./views/LabView";
+import { CalendarView } from "./views/CalendarView";
 import { SettingsView } from "./views/SettingsView";
 import { WritingView } from "./views/WritingView";
 import { BookView } from "./views/BookView";
 import type { ChapterKind, EntityKind, Entry, Notebook, ServerEvent } from "./types";
 import "./App.css";
 
-type ViewId = "notes" | "map" | "writing" | "settings" | "lab";
+type ViewId = "notes" | "map" | "calendar" | "writing" | "settings" | "lab";
 
 const ACTIVE_NOTEBOOK_KEY = "dyarium.notebook";
 
@@ -468,6 +469,15 @@ export function App() {
     }
   };
 
+  // O calendario cria a nota de hoje (data de geracao) e abre no editor.
+  const createCalendarNote = async (title: string) => {
+    const entry = await api.createEntry(title, null, targetNotebookId());
+    setOpenEntryId(entry.id);
+    setView("notes");
+    closeDrawer();
+    refresh();
+  };
+
   const createBookChapter = async (kind: ChapterKind) => {
     if (!activeNotebook) return;
     try {
@@ -764,11 +774,11 @@ export function App() {
       onPress: () => openView("writing"),
     },
     {
-      key: "lab",
-      label: "Processamento",
-      active: view === "lab",
-      icon: <CpuIcon size={17} />,
-      onPress: () => openView("lab"),
+      key: "calendar",
+      label: "Calendário",
+      active: view === "calendar",
+      icon: <CalendarIcon size={17} />,
+      onPress: () => openView("calendar"),
     },
     {
       key: "settings",
@@ -803,10 +813,12 @@ export function App() {
           <MenuIcon size={18} />
         </button>
         <span className="mobile-bar-title">
-          {activeNotebookId === ALL_NOTEBOOKS
-            ? "Notas recentes"
-            : (notebooks.find((notebook) => notebook.id === activeNotebookId)?.name ??
-              "Notas ao acaso")}
+          {view === "calendar"
+            ? "Calendário"
+            : activeNotebookId === ALL_NOTEBOOKS
+              ? "Notas recentes"
+              : (notebooks.find((notebook) => notebook.id === activeNotebookId)?.name ??
+                "Notas ao acaso")}
         </span>
         {!isMcp && (
           <button
@@ -1170,13 +1182,23 @@ export function App() {
             <div className="page">
               <WritingView refreshKey={refreshKey} />
             </div>
+          ) : view === "calendar" ? (
+            <div className="page page--calendar">
+              <CalendarView
+                refreshKey={refreshKey}
+                notebookId={activeNotebookId}
+                notebooks={notebooks}
+                onOpenNote={openFromOtherView}
+                onCreateNote={createCalendarNote}
+              />
+            </div>
           ) : view === "lab" ? (
             <div className="page page--lab">
               <LabView onBack={goBack} />
             </div>
           ) : (
             <div className="page">
-              <SettingsView refreshKey={refreshKey} onBack={goBack} />
+              <SettingsView refreshKey={refreshKey} onBack={goBack} onOpenLab={() => openView("lab")} />
             </div>
           )}
         </ErrorBoundary>

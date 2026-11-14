@@ -286,6 +286,24 @@ export function MapIcon({ size = 18 }: IconProps) {
   );
 }
 
+export function CalendarIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <rect x="3.5" y="5" width="17" height="15.5" rx="2" />
+      <path d="M3.5 9.5h17M8 3v4M16 3v4" />
+      <path d="M8 13.5h.01M12 13.5h.01" strokeWidth="2.2" />
+    </svg>
+  );
+}
+
+export function ArrowUpRightIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M7 17 17 7M9 7h8v8" />
+    </svg>
+  );
+}
+
 export function CpuIcon({ size = 18 }: IconProps) {
   return (
     <svg {...svgProps(size)}>

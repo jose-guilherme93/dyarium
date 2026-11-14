@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, getToken } from "../api";
-import { AllNotebooksIcon, RefreshIcon, SparkIcon, TrashIcon, UserIcon, WaveIcon } from "../components/icons";
+import { AllNotebooksIcon, CpuIcon, RefreshIcon, SparkIcon, TrashIcon, UserIcon, WaveIcon } from "../components/icons";
 import { ListSkeleton } from "../components/Skeleton";
 import { TrashSection } from "../components/TrashSection";
 import { useToast } from "../components/Toasts";
@@ -50,7 +50,16 @@ const SUMMARY_DETAIL_OPTIONS: { value: SummaryDetail; label: string }[] = [
   { value: "full", label: "Completo" },
 ];
 
-export function SettingsView({ refreshKey = 0, onBack }: { refreshKey?: number; onBack?: () => void }) {
+export function SettingsView({
+  refreshKey = 0,
+  onBack,
+  onOpenLab,
+}: {
+  refreshKey?: number;
+  onBack?: () => void;
+  /** Abre a tela de processamento local (fila, modelos e perfil do worker). */
+  onOpenLab?: () => void;
+}) {
   const { notify } = useToast();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [ownerName, setOwnerName] = useState("");
@@ -646,6 +655,18 @@ export function SettingsView({ refreshKey = 0, onBack }: { refreshKey?: number; 
                 </div>
               </div>
             </div>
+            {onOpenLab && (
+              <div className="section-block">
+                <div className="listhead">
+                  <span className="meta">Processamento</span>
+                </div>
+                <button type="button" className="button button--ghost" onClick={onOpenLab}>
+                  <CpuIcon size={12} />
+                  Neste computador
+                  <ChevronIcon size={12} />
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
