@@ -9,7 +9,7 @@ import { Screen } from '@/components/Screen';
 import { TagChip } from '@/components/TagChip';
 import { formatStamp, noteDateIso } from '@/core/format';
 import { recordingNotebookId } from '@/core/notebookFilter';
-import { sortByCreation } from '@/core/noteOrder';
+import { sortByNoteDate } from '@/core/noteOrder';
 import { bookNotebookIds, noteNotebooks } from '@/core/notebooks';
 import { displayTitle } from '@/core/title';
 import type { Recording } from '@/core/types';
@@ -61,7 +61,7 @@ export default function ArchivedScreen() {
           id,
           name: notebook?.name ?? defaultNotebook?.name ?? 'Notas ao acaso',
           color: notebook?.color || colors.textTertiary,
-          notes: sortByCreation(notes, noteOrder),
+          notes: sortByNoteDate(notes, noteOrder),
         };
       })
       .sort((a, b) => (order.get(a.id) ?? 999) - (order.get(b.id) ?? 999));

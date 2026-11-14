@@ -121,7 +121,7 @@ interface SettingsValue {
   /** Ordenar cadernos alfabeticamente em vez da ordem de criacao. */
   notebooksAlphabetical: boolean;
   setNotebooksAlphabetical(value: boolean): Promise<void>;
-  /** Ordem das notas pela data de criacao no app. */
+  /** Ordem das notas pela data da nota (recordedAt, com createdAt de reserva). */
   noteOrder: NoteOrder;
   setNoteOrder(order: NoteOrder): Promise<void>;
   /** Rotina de backup local (off/diario/semanal/mensal). */

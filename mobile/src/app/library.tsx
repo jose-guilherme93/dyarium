@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import { useMemo } from 'react';
 import { back, push } from '@/services/appNavigation';
 import {
   FlatList,
@@ -10,6 +11,7 @@ import { Press } from '@/components/Press';
 import { RecordingCard } from '@/components/RecordingCard';
 import { Screen } from '@/components/Screen';
 import { formatBytes } from '@/core/format';
+import { sortByNoteDate } from '@/core/noteOrder';
 import { useLibrary } from '@/state/LibraryContext';
 import { baseColors, fontSize, spacing } from '@/theme/tokens';
 import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
@@ -21,6 +23,8 @@ export default function LibraryScreen() {
 
   const { recordings } = useLibrary();
   const total = recordings.reduce((sum, r) => sum + (r.sizeBytes ?? 0), 0);
+  // A lista mostra a data da nota no card; a ordem segue a mesma data.
+  const ordered = useMemo(() => sortByNoteDate(recordings, 'newest'), [recordings]);
 
   return (
     <Screen>
@@ -40,7 +44,7 @@ export default function LibraryScreen() {
       </View>
 
       <FlatList
-        data={recordings}
+        data={ordered}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.list}
         ItemSeparatorComponent={() => <View style={styles.separator} />}

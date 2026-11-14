@@ -25,7 +25,7 @@ import { Screen } from '@/components/Screen';
 import { STATUS_LABELS } from '@/components/StatusChip';
 import { TagFilterRow } from '@/components/TagFilterRow';
 import { NoteOrderSheet } from '@/components/NoteOrderSheet';
-import { sortByCreation } from '@/core/noteOrder';
+import { sortByNoteDate } from '@/core/noteOrder';
 import { formatBytes, formatDateTime, noteDateIso } from '@/core/format';
 import {
   notesInNotebook,
@@ -242,7 +242,7 @@ export default function NotebookScreen() {
 
   const noteList = useMemo(
     () =>
-      sortByCreation(
+      sortByNoteDate(
         scopeNotebook
           ? notesInNotebook(diaryRecordings, {
               notebookId: scopeNotebook.id,
