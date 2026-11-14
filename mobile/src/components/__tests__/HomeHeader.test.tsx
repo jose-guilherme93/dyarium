@@ -24,6 +24,7 @@ function setup(overrides: Partial<React.ComponentProps<typeof HomeHeader>> = {})
     onOpenNotebooks: jest.fn(),
     onOpenSync: jest.fn(),
     onOpenMap: jest.fn(),
+    onOpenCalendar: jest.fn(),
     onOpenActivity: jest.fn(),
     onOpenSettings: jest.fn(),
     ...overrides,
@@ -45,6 +46,9 @@ describe('HomeHeader', () => {
 
     fireEvent.press(screen.getByLabelText('Opções'));
     expect(props.onOpenSettings).toHaveBeenCalled();
+
+    fireEvent.press(screen.getByLabelText('Calendário'));
+    expect(props.onOpenCalendar).toHaveBeenCalled();
   });
 
   it('mostra páginas recentes quando nenhum caderno está no escopo', () => {

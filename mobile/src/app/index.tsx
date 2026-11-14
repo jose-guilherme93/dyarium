@@ -445,6 +445,7 @@ export default function NotebookScreen() {
       onOpenNotebooks={() => setNotebookPickerOpen(true)}
       onOpenSync={() => push('/sync')}
       onOpenMap={() => push('/map')}
+      onOpenCalendar={() => push('/calendar')}
       onOpenActivity={() => setActivityOpen(true)}
       onOpenSettings={() => push('/settings')}
     />

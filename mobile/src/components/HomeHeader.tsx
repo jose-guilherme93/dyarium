@@ -24,6 +24,7 @@ interface HomeHeaderProps {
   onOpenNotebooks(): void;
   onOpenSync(): void;
   onOpenMap(): void;
+  onOpenCalendar(): void;
   onOpenActivity(): void;
   onOpenSettings(): void;
 }
@@ -43,6 +44,7 @@ export function HomeHeader({
   onOpenNotebooks,
   onOpenSync,
   onOpenMap,
+  onOpenCalendar,
   onOpenActivity,
   onOpenSettings,
 }: HomeHeaderProps) {
@@ -99,6 +101,13 @@ export function HomeHeader({
             ) : null}
           </Press>
           <HomeActivityButton onPress={onOpenActivity} />
+          <Press
+            style={styles.iconButton}
+            onPress={onOpenCalendar}
+            accessibilityLabel="Calendário"
+          >
+            <Ionicons name="calendar-outline" size={21} color={colors.text} />
+          </Press>
           <Press
             style={styles.iconButton}
             onPress={onOpenMap}
