@@ -1473,6 +1473,12 @@ com "sou eu" no mapa resolvem para esse nome na leitura, mesmo depois de trocar 
 ligado) resolve o autor das notas sem escolha manual: ligado, o autor efetivo e o dono;
 desligado, a nota fica sem autor. A escolha da nota (`author`) sempre vence.
 
+**Segredo nunca volta por aqui.** As chaves aparecem apenas como booleanos
+(`deepgram_api_key_set`, `analyze_api_key_set`). O app importa provedor, modelo, idioma e
+preferencias de revisao do servidor; a chave fica onde foi digitada. Para a mesma chave
+valer nos dois lados, o app envia a chave digitada no `PUT` (nunca uma chave ausente, que
+apagaria a do servidor).
+
 `review_enabled` liga a revisao da transcricao por IA antes da analise (padrao desligado;
 sem ela a analise continua, so perde precisao). `literal_transcript` mantem hesitacoes e
 gagueira no texto revisado. As duas sao por instancia: o app tem preferencias separadas, e

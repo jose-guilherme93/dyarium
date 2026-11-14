@@ -232,13 +232,17 @@ Os perfis do EAS ja definem a variavel; o benchmark continua exigindo
 
 ## Quem analisa
 
-A analise segue os mesmos tres interruptores da transcricao (Opcoes > Processamento):
-ligada/desligada e, quando ha servidor, aparelho ou servidor. Com **Processar no servidor**
-ligado, o app nao inicia analise local: a nota espera o resultado do servidor, e o upload
-leva `local_analysis` para o servidor nao enfileirar quando a etapa e do cliente.
+A analise tem um lugar por etapa (Opcoes > Processamento): desligada, no aparelho, no
+servidor ou online direto. Com **Servidor** escolhido, o app nao inicia analise local: a
+nota espera o resultado do servidor, e o upload leva `local_analysis` para o servidor nao
+enfileirar quando a etapa e do cliente. Com **Online**, o aparelho chama o provedor
+escolhido com a chave do cofre; o mesmo pipeline de blocos, prompts e contrato JSON roda,
+sem carregar o llama.
 
 Analise desligada nao e erro nem pendencia: a nota simplesmente nao recebe analise, e nada
-na interface cobra isso. O botao do menu so aparece quando a analise roda no aparelho.
+na interface cobra isso. O botao do menu aparece quando a analise roda no aparelho ou
+online; no servidor ele aparece como pedido remoto e o centro de atividade mostra
+"No servidor" sem porcentagem.
 
 Analise completa feita no aparelho **sobe** para o servidor por
 `PUT /api/v1/entries/{id}/analysis`, com origem `app`. Sem `replace`, o servidor so grava

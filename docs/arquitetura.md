@@ -240,7 +240,11 @@ isso:
   minutagem de cada trecho, na transcricao completa, e um alvo de toque. Todo
   seek passa pelo `playAt` do player unico: se a fonte ja e a atual o player so
   pula; se mudou, o `replace` aponta a fonte e o seek e pedido **depois** de ela
-  ficar pronta (poll do `currentStatus`), nunca no meio do buffering. O motivo
+  ficar pronta, nunca no meio do buffering. Numa troca de fonte a espera olha o
+  estado vivo do player (`isLoaded`), e nao o `currentStatus` em cache: este
+  ainda e o retrato da fonte anterior por ate 250 ms e liberava o seek cedo
+  demais. Depois do seek, uma conferencia de ~350 ms repete o pedido uma vez se
+  a fonte terminou de preparar e jogou a posicao de volta ao zero. O motivo
   real do "sempre reinicia" era o formato: o AAC **ADTS** nao tem tabela de
   posicoes, o ExoPlayer o trata como fluxo nao buscavel e manda qualquer seek
   para o inicio. O patch em `mobile/patches/expo-audio@57.0.5.patch` liga a
@@ -248,12 +252,12 @@ isso:
   CBR gravado pelo app; depois disso o seek cai no trecho pedido, inclusive num
   audio que ja terminou. O patch tambem remove o `publication` do
   `expo-module.config.json`: sem isso o Expo consome o AAR pre-construido do
-  modulo e o Kotlin patcheado nem chega a ser compilado. Buscar antes de a fonte
-  ficar pronta tambem nao resolvia: o ADTS monta a tabela de posicoes durante a
-  preparacao, e um seek pedido no meio do buffering era aceito e descartado na
-  abertura (a posicao voltava a 0). A fonte so conta como pronta pelo status
-  (`currentStatus.isLoaded`): a propriedade `isLoaded` e falsa quando o audio
-  **terminou**.
+  modulo e o Kotlin patcheado nem chega a ser compilado. **O patch so vale no
+  cliente nativo compilado depois dele**; um development build antigo continua
+  com o player nao buscavel, por mais que o JS mude (`adb` mostra o dex sem
+  `setAdtsExtractorFlags`). Fora da troca de fonte, a fonte conta como pronta
+  pelo status (`currentStatus.isLoaded`): a propriedade `isLoaded` e falsa
+  quando o audio **terminou**, e um seek a partir do fim e valido.
 - **Onda da gravacao em duas camadas.** A tela de gravacao le o medidor do
   microfone (dB, ~28 amostras por segundo) e entrega o nivel numa fila
   compartilhada. A onda inteira e **um unico `Path` SVG**, redesenhado so quando
