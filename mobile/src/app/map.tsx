@@ -70,7 +70,6 @@ import {
   changeEntityKind,
   claimLocalSelf,
   deleteEntityAndReject,
-  ensureEntityDerivation,
   listEntityRejections,
   removeEntityRejection,
   renameLocalEntity,
@@ -82,6 +81,7 @@ import {
 } from '@/services/db';
 import { syncEntities } from '@/services/entitySync';
 import { back, push } from '@/services/appNavigation';
+import { enterInteractiveView, leaveInteractiveView } from '@/services/noteVisibility';
 import { listNotebooks } from '@/services/notebooks';
 import { noteNotebooks, type Notebook } from '@/core/notebooks';
 import { mark, useRenderCount } from '@/dev/perf';
@@ -151,13 +151,6 @@ const OVERVIEW_ROW = 46;
 
 /** Idade em que o cache ainda vale sem ir ao banco. */
 const SNAPSHOT_FRESH_MS = 20_000;
-
-/**
- * A derivacao de entidades antigas e uma varredura da biblioteca (2 s neste
- * aparelho). Ela so precisa rodar uma vez por execucao: rodava a cada abertura
- * do mapa e travava a thread de JS por segundos logo depois do desenho.
- */
-let derivationChecked = false;
 
 /** Mesmo recorte, mesmo desenho: evita remontar o SVG a toa. */
 function sameSnapshot(a: GraphSnapshot, b: GraphSnapshot): boolean {
@@ -253,9 +246,6 @@ export default function MapScreen() {
   const [notebooks, setNotebooks] = useState<Notebook[]>([]);
 
   const [snapshot, setSnapshot] = useState<GraphSnapshot | null>(null);
-  // Espelho do estado para o efeito da derivacao ler o recorte atual sem
-  // reexecutar a cada snapshot novo.
-  const snapshotRef = useRef<GraphSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [kinds, setKinds] = useState<Set<EntityKind>>(new Set(KINDS));
@@ -293,7 +283,6 @@ export default function MapScreen() {
   const selectedRef = useRef<string | null>(null);
   const moodSeq = useRef(0);
   const tabRef = useRef<'detail' | 'mood'>('detail');
-  const loadRef = useRef<(force?: boolean) => Promise<void>>(async () => undefined);
   const loadedOnce = useRef(false);
   const mounted = useRef(true);
 
@@ -452,58 +441,20 @@ export default function MapScreen() {
 
   useEffect(() => {
     mounted.current = true;
+    // Enquanto o mapa esta na frente o trabalho de fundo espera: um pull que
+    // le a biblioteca inteira no meio do arrasto segurava a thread de JS por
+    // centenas de ms (era o engasgo de 20 fps no gesto).
+    enterInteractiveView();
     return () => {
       mounted.current = false;
+      leaveInteractiveView();
     };
   }, []);
-
-  useEffect(() => {
-    loadRef.current = load;
-  }, [load]);
 
   useEffect(() => {
     const timer = setTimeout(() => void load(), 0);
     return () => clearTimeout(timer);
   }, [load]);
-
-  // A derivacao das analises antigas so comeca depois que o mapa esta
-  // desenhado: enquanto ele abre, a leitura do layout tem o banco so para ela.
-  const drawn = Boolean(visible);
-  useEffect(() => {
-    snapshotRef.current = snapshot;
-  }, [snapshot]);
-  useEffect(() => {
-    if (!drawn || derivationChecked) return undefined;
-    derivationChecked = true;
-    let alive = true;
-    // Tempo, e nao `runAfterInteractions`: o mapa tem uma deriva continua e a
-    // fila de interacoes nunca esvazia, o que impedia a derivacao de rodar.
-    const timer = setTimeout(() => {
-        const started = Date.now();
-        // Mapa com notas mas sem nenhum vinculo: o marcador de derivacao pode
-        // estar gravado de uma versao anterior em que nada foi derivado. Nesse
-        // caso, refaz a partir das analises guardadas em vez de desistir.
-        const actual = snapshotRef.current;
-        const force = Boolean(actual && actual.entries.length > 0 && actual.links.length === 0);
-        void ensureEntityDerivation(force)
-          .then((processed) => {
-            if (__DEV__) {
-              console.log(`[map] backfill ${processed} ${Date.now() - started}ms`);
-            }
-            if (alive && processed > 0) {
-              // A leitura fresca em cache esconderia justamente o que acabou de
-              // ser derivado: joga o cache fora antes de reler.
-              snapshotCache = null;
-              void loadRef.current(true);
-            }
-          })
-          .catch(() => undefined);
-    }, 2500);
-    return () => {
-      alive = false;
-      clearTimeout(timer);
-    };
-  }, [drawn]);
 
   useEffect(() => {
     // O foco ja trouxe o layout no proprio toque; o caminho do banco e do mapa

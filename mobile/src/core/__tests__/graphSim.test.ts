@@ -1,9 +1,11 @@
 import {
   ALPHA_MIN,
   DRAG_ALPHA,
+  NEW_NODE_ALPHA,
   createSimState,
   dragNode,
   linkRest,
+  mergeSimState,
   stepSimulation,
   type SimBody,
   type SimLink,
@@ -175,6 +177,44 @@ describe('stepSimulation', () => {
     const compressedMax = Math.max(...compressed.map((p) => Math.hypot(p.x, p.y)));
     expect(radius).toBeGreaterThan(compressedMax * 1.2);
     expect(Math.abs(radius - reference) / reference).toBeLessThan(0.25);
+  });
+});
+
+describe('mergeSimState', () => {
+  const { bodies, seed, links } = graphOf(6);
+  const ids = ['user', 'a', 'b', 'c', 'd', 'e', 'f'];
+
+  it('mantem posicao e velocidade das bolas que ja estavam na tela', () => {
+    const prev = createSimState(bodies, seed, 0);
+    prev.x[2] = 111;
+    prev.y[2] = -222;
+    prev.vx[2] = 1.5;
+    // Mesmo conjunto: nao pode voltar para a semente (era a segunda onda ao
+    // abrir o mapa, quando os elos derivados chegavam depois).
+    const next = mergeSimState(prev, ids, ids, createSimState(bodies, seed, 0));
+    expect(next.x[2]).toBe(111);
+    expect(next.y[2]).toBe(-222);
+    expect(next.vx[2]).toBe(1.5);
+    expect(next.alpha).toBe(0);
+  });
+
+  it('semeia so as bolas novas e acorda so um pouco', () => {
+    const prev = createSimState(bodies, seed, 0);
+    const extendedBodies: SimBody[] = [...bodies, { r: 6, pinned: false }];
+    const extendedSeed = [...seed, { x: 300, y: 40 }];
+    const fresh = createSimState(extendedBodies, extendedSeed, 0);
+    const next = mergeSimState(prev, ids, [...ids, 'g'], fresh);
+    expect(next.x[prev.x.length]).toBe(300);
+    expect(next.y[prev.y.length]).toBe(40);
+    expect(next.x[2]).toBe(prev.x[2]);
+    // Acorda o suficiente para a bola nova se acomodar, mas nao o grafo todo.
+    expect(next.alpha).toBe(NEW_NODE_ALPHA);
+  });
+
+  it('sem estado anterior, entrega o estado novo intacto', () => {
+    const fresh = createSimState(bodies, seed, 0);
+    const next = mergeSimState(null, null, ids, fresh);
+    expect(next).toBe(fresh);
   });
 });
 

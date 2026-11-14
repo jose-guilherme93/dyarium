@@ -54,6 +54,11 @@ export const ALPHA_MIN = 0.008;
  * continua se acomodando em volta do dedo, sem o mapa inteiro explodir.
  */
 export const DRAG_ALPHA = 0.35;
+/**
+ * Temperatura ao entrar uma bola nova num mapa ja assentado: assenta so ela,
+ * sem reaquecer o desenho inteiro.
+ */
+export const NEW_NODE_ALPHA = 0.12;
 const MAX_SPEED = 4;
 const CUTOFF = 260;
 const CUTOFF2 = CUTOFF * CUTOFF;
@@ -85,6 +90,56 @@ export function createSimState(
     ay: anchor.y,
     alpha,
     tick: 0,
+  };
+}
+
+/**
+ * Estado novo reaproveitando o que ja estava na tela.
+ *
+ * Quando o conjunto muda (filtro, foco, elos derivados depois da abertura), o
+ * mapa nao pode voltar para a semente: as bolas conhecidas mantem posicao e
+ * velocidade. So as bolas que entraram agora sao semeadas. A temperatura fica
+ * como estava quando nada entrou -- atualizar um recorte nao reinicia a fisica.
+ */
+export function mergeSimState(
+  prev: SimState | null,
+  prevIds: string[] | null,
+  ids: string[],
+  fresh: SimState,
+): SimState {
+  if (!prev || !prevIds) return fresh;
+  const previousIndex = new Map<string, number>();
+  for (let i = 0; i < prevIds.length; i += 1) previousIndex.set(prevIds[i], i);
+  const n = ids.length;
+  const x = new Array<number>(n);
+  const y = new Array<number>(n);
+  const vx = new Array<number>(n);
+  const vy = new Array<number>(n);
+  let added = 0;
+  for (let i = 0; i < n; i += 1) {
+    const old = previousIndex.get(ids[i]);
+    if (old === undefined) {
+      x[i] = fresh.x[i];
+      y[i] = fresh.y[i];
+      vx[i] = fresh.vx[i];
+      vy[i] = fresh.vy[i];
+      added += 1;
+      continue;
+    }
+    x[i] = prev.x[old];
+    y[i] = prev.y[old];
+    vx[i] = prev.vx[old];
+    vy[i] = prev.vy[old];
+  }
+  return {
+    ...fresh,
+    x,
+    y,
+    vx,
+    vy,
+    // Bola nova merece um assentamento curto; reacender tudo fazia o mapa
+    // inteiro se mexer de novo a cada atualizacao.
+    alpha: added > 0 ? Math.max(prev.alpha, NEW_NODE_ALPHA) : prev.alpha,
   };
 }
 

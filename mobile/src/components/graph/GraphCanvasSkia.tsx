@@ -49,7 +49,7 @@ import type { EntityKind, GraphData, GraphNodeKind } from '@/core/graphModel';
 import type { GraphLayout, VisibleBand, FittedCamera } from '@/core/graphLayout';
 import { fitCamera, visibleBand } from '@/core/graphLayout';
 import type { SimBody, SimLink, SimState } from '@/core/graphSim';
-import { createSimState, dragNode, stepSimulation } from '@/core/graphSim';
+import { createSimState, dragNode, DRAG_ALPHA, mergeSimState, stepSimulation } from '@/core/graphSim';
 import {
   LABEL_FONT,
   LABEL_GAP,
@@ -70,14 +70,11 @@ const MIN_ZOOM_RATIO = 0.35;
 const MAX_ZOOM = 4.5;
 /** Folga extra no encaixe: o conjunto assenta um pouco maior que a semente. */
 const FIT_GROW = 1.22;
-// Assentamento de abertura: o mapa entra 10% menor e um pouco torto e se
-// acomoda em meio segundo, como a simulacao do Obsidian quando esfria. Depois
-// disso nada se move e nenhum quadro e desenhado sem gesto.
-const SETTLE_MS = 620;
-const SETTLE_TILT = 0.014;
-const SETTLE_ZOOM = 0.9;
-// Quando o foco muda (clica numa relacao), a camera desliza suavemente para a
-// nova posicao do desenho em vez de piscar com um pulo instantaneo.
+/**
+ * O mapa abre parado, nas posicoes que o layout ja calculou. A fisica so
+ * acorda no gesto: animar a abertura fazia as bolas cruzarem a tela em alta
+ * velocidade e, como o recorte recarrega logo depois, repetia o estouro.
+ */
 const FOCUS_MS = 500;
 const TAP_SLOP = 14;
 const TAP_RADIUS = 22;
@@ -91,12 +88,6 @@ const MAX_ICONS = 80;
 const LABEL_ZOOM_ON = 1.15;
 /** Quanto da para arrastar o mapa fora do centro quando o desenho cabe na tela. */
 const FREE_PAN = 0.3;
-/**
- * Semente da fisica: o mapa nasce comprimido e se abre no primeiro segundo,
- * como o grafo do Obsidian. Sem isso as bolas ja nasciam no lugar final e a
- * fisica parecia parada.
- */
-const SEED_COMPRESS = 0.62;
 
 type GraphEdgeKind = 'cooccurrence' | 'mention' | 'relation';
 const EDGE_WIDTH: Record<GraphEdgeKind, [number, number]> = {
@@ -186,15 +177,27 @@ const EdgeLayer = memo(function EdgeLayer({
   width: number;
   fitZoom: number;
 }) {
+  // Pool de pontos reaproveitado: alocar dois objetos por ligacao a cada
+  // quadro gerava ~1.500 objetos por frame no pior caso e o GC aparecia como
+  // engasgo no arrasto. O array externo e novo (o Skia precisa ver que mudou),
+  // os pontos dentro dele sao os mesmos.
+  const pool = useMemo(
+    () => Array.from({ length: links.length * 2 }, () => ({ x: 0, y: 0 })),
+    [links],
+  );
   const points = useDerivedValue(() => {
     const state = sim.value;
-    const out: { x: number; y: number }[] = new Array(links.length * 2);
+    const out = pool;
     for (let i = 0; i < links.length; i += 1) {
       const link = links[i];
-      out[i * 2] = { x: state.x[link.a], y: state.y[link.a] };
-      out[i * 2 + 1] = { x: state.x[link.b], y: state.y[link.b] };
+      const start = out[i * 2];
+      const end = out[i * 2 + 1];
+      start.x = state.x[link.a];
+      start.y = state.y[link.a];
+      end.x = state.x[link.b];
+      end.y = state.y[link.b];
     }
-    return out;
+    return out.slice();
   });
   return (
     <Points
@@ -653,11 +656,8 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
       indexById.set(node.id, ids.length);
       ids.push(node.id);
       bodies.push({ r: position.r, pinned: false });
-      // Semente comprimida: o mapa abre menor e se abre no primeiro segundo.
-      // Sem interacao (previa da entidade), o desenho ja nasce no lugar: nao
-      // ha gesto para acompanhar a animacao e a fisica so gastaria quadro.
-      const factor = interactive ? SEED_COMPRESS : 1;
-      seed.push({ x: position.x * factor, y: position.y * factor });
+      // O mapa ja abre no lugar: a fisica so entra quando o usuario mexe.
+      seed.push({ x: position.x, y: position.y });
     }
     const links: SimLink[] = [];
     for (const edge of shown.edges) {
@@ -671,13 +671,16 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
       indexById,
       bodies,
       links,
-      state: createSimState(bodies, seed, interactive ? 1 : 0),
+      state: createSimState(bodies, seed, 0),
     };
-  }, [data.center, shown, layout, interactive]);
+  }, [data.center, shown, layout]);
 
   const sim = useSharedValue<SimState>(graph.state);
   const simParams = useSharedValue({ bodies: graph.bodies, links: graph.links });
   const drag = useSharedValue({ index: -1, x: 0, y: 0 });
+  // Ids e estado da simulacao anterior, para o novo recorte reaproveitar as
+  // posicoes em vez de comecar de novo (era a segunda onda ao abrir o mapa).
+  const previousSim = useRef<{ ids: string[]; state: SimState } | null>(null);
   const onSettled = useCallback(() => {
     if (__DEV__) console.log('[map] fisica assentou');
     labelRef.current?.queue(zoom.value, panX.value, panY.value);
@@ -689,7 +692,10 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
   }, [graph]);
 
   useEffect(() => {
-    sim.value = graph.state;
+    const previous = previousSim.current;
+    const next = mergeSimState(previous?.state ?? null, previous?.ids ?? null, graph.ids, graph.state);
+    previousSim.current = { ids: graph.ids, state: next };
+    sim.value = next;
     simParams.value = { bodies: graph.bodies, links: graph.links };
     drag.value = { index: -1, x: 0, y: 0 };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reinicia so quando o conjunto muda
@@ -698,7 +704,7 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
   // O quadro fica sempre ativo: parado, o worklet sai na primeira linha (custo
   // de um no-op), e arrastar/gesto pode esquentar a fisica sem ida e volta para
   // o JS. Desligar e religar era o que deixava o mapa duro depois de assentar.
-  useFrameCallback((frame) => {
+  useFrameCallback(() => {
     'worklet';
     const state = sim.value;
     const dragged = drag.value;
@@ -714,15 +720,12 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
     }
     const params = simParams.value;
     const before = state.alpha;
-    // Um passo por quadro de 16,7 ms (teto de tres num quadro longo): com o
-    // grafo de 120 bolas, dois passos por quadro custavam metade do orcamento
-    // de 60 fps so na fisica. O alpha cai mais rapido por passo para o mapa
-    // continuar assentando em ~4 s.
-    const elapsed = frame.timeSincePreviousFrame ?? 16.7;
-    const steps = Math.min(3, Math.max(1, Math.round(elapsed / 16.7)));
-    for (let step = 0; step < steps; step += 1) {
-      stepSimulation(state, params.bodies, params.links);
-    }
+    // Um passo por quadro, sempre. O codigo antigo tentava "alcancar" o tempo
+    // perdido rodando ate tres passos num quadro lento -- e cada passo extra
+    // alongava o quadro, num laco que derrubava o arrasto para ~20 fps. Um
+    // passo fixo mantem o custo previsivel; a fisica fica em camera lenta num
+    // aparelho fraco, mas o dedo continua colado na bola.
+    stepSimulation(state, params.bodies, params.links);
     if (dragging) {
       dragNode(state, dragged.index, dragged.x, dragged.y);
     }
@@ -752,25 +755,14 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
     const frame = `${layout.key}|${width}|${visibleHeight.toFixed(0)}|${fitted.zoom.toFixed(3)}`;
     if (framed.current === frame) return;
     framed.current = frame;
-    // Entra menor e torto, assenta na posicao final. Na primeira abertura
-    // nada se move ate a animacao acabar; depois o mapa so desenha com gesto.
-    if (firstFrame.current && !interactive) {
+    // O mapa abre direto no encaixe, sem zoom/tilt de abertura: a unica coisa
+    // que se move ao abrir e a camera seguindo uma nova posicao de foco.
+    if (firstFrame.current) {
       firstFrame.current = false;
       zoom.value = fitted.zoom;
       tilt.value = 0;
       panX.value = fitted.panX;
       panY.value = fitted.panY;
-    } else if (firstFrame.current) {
-      firstFrame.current = false;
-      zoom.value = fitted.zoom * SETTLE_ZOOM;
-      tilt.value = SETTLE_TILT;
-      panX.value = fitted.panX;
-      panY.value = fitted.panY;
-      zoom.value = withTiming(fitted.zoom, {
-        duration: SETTLE_MS,
-        easing: Easing.out(Easing.cubic),
-      });
-      tilt.value = withTiming(0, { duration: SETTLE_MS, easing: Easing.out(Easing.cubic) });
     } else {
       // Foco mudou: o desenho se reposicionou inteiro (espiral com a bola
       // escolhida no topo). Move a camera suavemente para a nova posicao
@@ -875,8 +867,9 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
         }
         if (hit >= 0) {
           drag.value = { index: hit, x: state.x[hit], y: state.y[hit] };
-          // Acorda a fisica na hora; o worklet aplica a posicao do dedo.
-          sim.value = { ...state, alpha: Math.max(state.alpha, 1) };
+          // Acorda a fisica na hora, so o suficiente para a vizinhanca se
+          // acomodar. Aquecer ate 1 fazia o mapa inteiro explodir no toque.
+          sim.value = { ...state, alpha: Math.max(state.alpha, DRAG_ALPHA) };
           runOnJS(logDrag)(hit, true);
           return;
         }
@@ -905,9 +898,10 @@ const GraphCanvasBase = forwardRef<GraphCanvasHandle, GraphCanvasProps>(function
         const dragged = drag.value;
         if (dragged.index < 0) return;
         drag.value = { index: -1, x: 0, y: 0 };
-        // Solta quente: as bolas ligadas se acomodam em volta do novo lugar.
+        // Solta morna: as bolas ligadas se acomodam em volta do novo lugar,
+        // sem reaquecer o desenho inteiro por segundos.
         const state = sim.value;
-        sim.value = { ...state, alpha: 1 };
+        sim.value = { ...state, alpha: DRAG_ALPHA };
         runOnJS(logDrag)(dragged.index, false);
         if (dragged.index === 0) {
           // O dono foi solto longe do centro do mundo: a camera desliza ate
