@@ -1,4 +1,5 @@
 import { cacheClear, cacheGet, cacheSet } from "./lib/idb";
+import * as local from "./local/notes";
 import { shrinkImage } from "./lib/image";
 import { setOffline } from "./lib/offline";
 import type {
@@ -126,6 +127,27 @@ export async function getSetupState(): Promise<{ required: boolean }> {
     return { required: Boolean(body.required) };
   } catch {
     return { required: false };
+  }
+}
+
+/**
+ * A instancia respondeu como servidor? Site estatico nao tem /setup/state: o
+ * fetch cai, ou o host devolve o index.html do SPA com content-type de HTML.
+ * So JSON de verdade conta como servidor.
+ */
+export async function probeServer(): Promise<boolean> {
+  try {
+    const res = await fetch("/setup/state", { headers: { Accept: "application/json" } });
+    if (!res.ok) return false;
+    const type = res.headers?.get?.("content-type") ?? "";
+    // Host de SPA devolve o index.html na mesma rota; HTML nao e servidor.
+    if (type && !type.includes("application/json")) return false;
+    const body = res.json
+      ? await res.json().catch(() => null)
+      : await res.text().then((text) => JSON.parse(text)).catch(() => null);
+    return body !== null && typeof body === "object";
+  } catch {
+    return false;
   }
 }
 
@@ -464,7 +486,7 @@ async function requestAnalysis(id: string): Promise<Analysis> {
   }
 }
 
-export const api = {
+const remoteApi = {
   listEntries: (filters?: EntryFilters) =>
     request<{ entries: Entry[]; next_cursor?: string }>(entriesPath(filters)),
   /** Todas as paginas, para a lista não parar em silêncio no limite do servidor. */
@@ -871,6 +893,96 @@ export const api = {
     request<Link>(`/entries/${entryId}/links`, { method: "POST", body: JSON.stringify(body) }),
   deleteLink: (id: string) => request<void>(`/links/${id}`, { method: "DELETE" }),
 };
+
+/**
+ * Sem token nao existe servidor: a interface fala com o cofre do navegador.
+ * As assinaturas sao as mesmas, entao nenhuma tela sabe a diferenca.
+ */
+export function isLocalMode(): boolean {
+  return !getToken();
+}
+
+const localApi: Partial<typeof remoteApi> = {
+  listEntries: async (filters) => ({ entries: await local.listEntries(filters) }),
+  listAllEntries: async (filters) => ({ entries: await local.listEntries(filters) }),
+  listEntriesCached: async (filters) => ({ entries: await local.listEntries(filters) }),
+  listDeletedEntries: async () => ({ entries: await local.listDeletedEntries() }),
+  createEntry: async (title, _parentId, notebookId) =>
+    local.createEntry({ title, notebookId }),
+  createImportEntry: async (input) => ({
+    entry: await local.createEntry({ title: input.title, notebookId: input.notebookId }),
+    created: true,
+  }),
+  getEntry: async (id) => {
+    const entry = await local.getEntry(id);
+    if (!entry) throw new ApiError("Nota nao encontrada.", 404, "not_found");
+    return entry;
+  },
+  getEntryCached: async (id) => (await local.getEntry(id)) ?? undefined,
+  patchEntry: async (id, patch) => {
+    const entry = await local.patchEntry(id, patch as unknown as local.EntryPatch);
+    if (!entry) throw new ApiError("Nota nao encontrada.", 404, "not_found");
+    return { status: "ok", versions: {} };
+  },
+  updateEntry: async (id, patch) => {
+    await local.patchEntry(id, patch);
+    return { status: "ok" };
+  },
+  deleteEntry: (id) => local.deleteEntry(id),
+  restoreEntry: async (id) => {
+    const entry = await local.restoreEntry(id);
+    if (!entry) throw new ApiError("Nota nao encontrada.", 404, "not_found");
+    return entry;
+  },
+  listNotes: async (id) => ({ notes: await local.listNotes(id) }),
+  listNotesCached: async (id) => ({ notes: await local.listNotes(id) }),
+  createNote: async (id, title, markdown) => {
+    const note = await local.createNote(id, title, markdown);
+    if (!note) throw new ApiError("Nota nao encontrada.", 404, "not_found");
+    return note;
+  },
+  updateNote: async (id, markdown) => {
+    const note = await local.saveNote(id, markdown);
+    if (!note) throw new ApiError("Nota nao encontrada.", 404, "not_found");
+    return { status: "ok", versions: { body: note.body_version } };
+  },
+  listRevisions: async () => ({ revisions: [] }),
+  listTags: async () => ({ tags: await local.listTags() }),
+  listEntryTags: async (entryId) => ({
+    tags: (await local.entryTags(entryId)).map((name) => ({
+      id: name,
+      name,
+      color: "",
+      entry_count: 1,
+    })),
+  }),
+  setEntryTags: async (entryId, tags) => {
+    await local.setEntryTags(entryId, tags);
+    return { status: "ok" };
+  },
+  listNotebooks: async () => ({ notebooks: await local.listNotebooks() }),
+  getSettings: async () => local.settings(),
+  getAnalysis: async () => {
+    throw new ApiError("Sem analise ainda.", 404, "not_found");
+  },
+  getAnalysisCached: async () => undefined,
+  listAttachments: async () => ({ attachments: [] }),
+  listAttachmentsCached: async () => ({ attachments: [] }),
+};
+
+/**
+ * O roteamento acontece no acesso, nao no boot: entrar com token no meio da
+ * sessao volta a falar com o servidor sem recarregar a pagina.
+ */
+export const api: typeof remoteApi = new Proxy(remoteApi, {
+  get(target, prop, receiver) {
+    if (isLocalMode() && typeof prop === "string") {
+      const localFn = localApi[prop as keyof typeof localApi];
+      if (localFn) return localFn;
+    }
+    return Reflect.get(target, prop, receiver);
+  },
+});
 
 // audioUrl builds a playable URL for the decrypted original audio. The token
 // goes in the query because an <audio> element cannot set headers.

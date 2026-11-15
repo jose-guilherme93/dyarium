@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import App from "./App";
+import { registerNodeDatabase } from "./local/__fixtures__/nodeDb";
 
-beforeEach(() => {
+beforeEach(async () => {
   localStorage.clear();
+  // Sem token o app usa o cofre do navegador; no teste ele e em memoria.
+  await registerNodeDatabase();
 });
 
 afterEach(() => {
@@ -11,10 +14,11 @@ afterEach(() => {
 });
 
 describe("App", () => {
-  it("pede o token quando nao ha token salvo", () => {
+  it("abre o cofre local quando nao ha servidor nem token", async () => {
     render(<App />);
-    expect(screen.getByRole("heading", { name: "dyarium" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Entrar" })).toBeInTheDocument();
+    // Site estatico: nenhuma tela de token, o banco do navegador assume.
+    await waitFor(() => expect(screen.getByText("Nenhuma nota ainda.")).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Entrar" })).not.toBeInTheDocument();
   });
 
   it("mostra o estado vazio da lista quando autenticado", async () => {
@@ -63,7 +67,8 @@ describe("App", () => {
       }),
     );
     render(<App />);
-    fireEvent.change(screen.getByLabelText("Token de acesso"), { target: { value: "errado" } });
+    const campo = await waitFor(() => screen.getByLabelText("Token de acesso"));
+    fireEvent.change(campo, { target: { value: "errado" } });
     fireEvent.click(screen.getByRole("button", { name: "Entrar" }));
 
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Token invalido"));
@@ -101,7 +106,8 @@ describe("App", () => {
       })),
     );
     render(<App />);
-    fireEvent.change(screen.getByLabelText("Token de acesso"), { target: { value: "bom" } });
+    const campo = await waitFor(() => screen.getByLabelText("Token de acesso"));
+    fireEvent.change(campo, { target: { value: "bom" } });
     fireEvent.click(screen.getByRole("button", { name: "Entrar" }));
 
     await waitFor(() => expect(screen.getByRole("navigation")).toBeInTheDocument());
@@ -267,7 +273,8 @@ describe("App eventos", () => {
     );
 
     render(<App />);
-    fireEvent.change(screen.getByLabelText("Token de acesso"), { target: { value: "bom" } });
+    const campo = await waitFor(() => screen.getByLabelText("Token de acesso"));
+    fireEvent.change(campo, { target: { value: "bom" } });
     fireEvent.click(screen.getByRole("button", { name: "Entrar" }));
 
     await waitFor(() => expect(screen.getByRole("navigation")).toBeInTheDocument());

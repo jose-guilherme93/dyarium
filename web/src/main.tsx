@@ -1,12 +1,17 @@
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import { ToastProvider } from "./components/Toasts";
+import { connectLocal } from "./local/boot";
 import "./index.css";
 
 const rootElement = document.getElementById("root");
 if (!rootElement) {
   throw new Error("elemento root nao encontrado no documento");
 }
+
+// O cofre do navegador abre em paralelo com a primeira pintura; toda consulta
+// local espera esta mesma promessa.
+void connectLocal();
 
 createRoot(rootElement).render(
   <ToastProvider>

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, api, cachedGet, clearToken, getToken, setToken } from "./api";
 
 describe("token sem storage", () => {
@@ -27,7 +27,13 @@ describe("token sem storage", () => {
 });
 
 describe("GET cache", () => {
+  // Com token o `api` fala com o servidor; sem token ele roteia para o cofre
+  // local e nao haveria HTTP para medir.
+  beforeEach(() => setToken("token-de-teste"));
+
   afterEach(() => {
+    // Sem `clearToken()`: ele limpa o cache HTTP, e um teste deste bloco
+    // depende da copia guardada pelo anterior.
     vi.unstubAllGlobals();
     vi.useRealTimers();
   });

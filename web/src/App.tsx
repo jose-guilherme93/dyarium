@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import {
   api,
@@ -6,11 +6,30 @@ import {
   clearToken,
   getSetupState,
   getToken,
+  probeServer,
   setToken,
   tokenIsPersisted,
   verifyToken,
 } from "./api";
 import { useEvents } from "./useEvents";
+
+/**
+ * O laboratorio (inferencia no navegador) carrega o onnxruntime, cujo wasm
+ * passa de 25 MiB — acima do limite por arquivo do Cloudflare. No build
+ * hospedado ele fica de fora: nao ha servidor para o /lab falar. O build
+ * self-hosted define VITE_ORT=1 e leva tudo, sob demanda.
+ */
+const LAB_ENABLED = import.meta.env.VITE_ORT === "1";
+
+const LabView = LAB_ENABLED
+  ? lazy(() => import("./views/LabView").then((mod) => ({ default: mod.LabView })))
+  : null;
+
+const WorkerKeepAlive = LAB_ENABLED
+  ? lazy(() =>
+      import("./components/WorkerKeepAlive").then((mod) => ({ default: mod.WorkerKeepAlive })),
+    )
+  : null;
 import { TokenGate } from "./components/TokenGate";
 import { SetupGate } from "./components/SetupGate";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -22,9 +41,9 @@ import { BookDialog, type BookForm } from "./components/BookDialog";
 import { BookSidebar } from "./components/BookSidebar";
 import { NotionImportDialog } from "./components/NotionImportDialog";
 import { OfflineBanner } from "./components/OfflineBanner";
-import { WorkerKeepAlive } from "./components/WorkerKeepAlive";
 import { TagManager } from "./components/TagManager";
 import { ComposeDialog, type ComposeAnchor } from "./components/ComposeDialog";
+import { ImportServerDialog } from "./components/ImportServerDialog";
 import { useToast } from "./components/Toasts";
 import {
   BookIcon,
@@ -47,7 +66,6 @@ import { MapView } from "./views/MapView";
 import { ProjectsView } from "./views/ProjectsView";
 import type { ProjectsFilterRequest } from "./views/ProjectsView";
 import { ProjectNote } from "./views/ProjectNote";
-import { LabView } from "./views/LabView";
 import { CalendarView } from "./views/CalendarView";
 import { SettingsView } from "./views/SettingsView";
 import { WritingView } from "./views/WritingView";
@@ -81,6 +99,9 @@ export function App() {
   const [authError, setAuthError] = useState("");
   const [checkingToken, setCheckingToken] = useState(false);
   const [setupRequired, setSetupRequired] = useState(false);
+  /** A instancia respondeu em /setup/state? Sem servidor, o app usa o cofre local. */
+  const [serverChecked, setServerChecked] = useState(false);
+  const [serverAvailable, setServerAvailable] = useState(false);
   const [view, setView] = useState<ViewId>(() =>
     typeof window !== "undefined" && window.location.pathname === "/lab" ? "lab" : "notes",
   );
@@ -112,6 +133,8 @@ export function App() {
   const [ownerName, setOwnerName] = useState("");
   const [tagsOpen, setTagsOpen] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
+  /** Importacao do acervo de uma instancia self-hosted para este cofre. */
+  const [importServerOpen, setImportServerOpen] = useState(false);
   const [composeAnchor, setComposeAnchor] = useState<ComposeAnchor | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   // A busca pedida pela faixa recolhida so vale uma vez: sem isto, reabrir a
@@ -250,11 +273,19 @@ export function App() {
   // reivindicada. Falha de rede cai no portao de token normal.
   useEffect(() => {
     let active = true;
-    getSetupState().then((state) => {
-      if (active && state.required) {
-        setSetupRequired(true);
-      }
-    });
+    probeServer()
+      .then((ok) => {
+        if (!active) return;
+        setServerAvailable(ok);
+        // Site estatico: nao existe /api/v1. O cofre do navegador assume.
+        if (!ok) return;
+        return getSetupState().then((state) => {
+          if (active && state.required) setSetupRequired(true);
+        });
+      })
+      .finally(() => {
+        if (active) setServerChecked(true);
+      });
     return () => {
       active = false;
     };
@@ -288,7 +319,6 @@ export function App() {
   // Cadernos: espelho do servidor. A selecao fica no navegador; se o caderno
   // sumiu, cai no padrao.
   useEffect(() => {
-    if (!token) return;
     let active = true;
     api
       .listNotebooks()
@@ -309,7 +339,6 @@ export function App() {
   }, [token, refreshKey]);
 
   useEffect(() => {
-    if (!token) return;
     void api
       .getSettings()
       .then((settings) => setOwnerName(settings.owner_name ?? ""))
@@ -419,7 +448,12 @@ export function App() {
     );
   }
 
-  if (!token) {
+  // Servidor sem token pede o token; site estatico abre o cofre local.
+  if (!serverChecked) {
+    return null;
+  }
+
+  if (!token && serverAvailable) {
     return (
       <TokenGate
         onSubmit={(value) => void handleLogin(value)}
@@ -801,7 +835,11 @@ export function App() {
 
   return (
     <div className={navOpen ? "app" : "app app--collapsed"}>
-      <WorkerKeepAlive />
+      {WorkerKeepAlive && (
+        <Suspense fallback={null}>
+          <WorkerKeepAlive />
+        </Suspense>
+      )}
       <header className="mobile-bar">
         <button
           type="button"
@@ -1160,6 +1198,13 @@ export function App() {
                       <button
                         type="button"
                         className="button button--ghost"
+                        onClick={() => setImportServerOpen(true)}
+                      >
+                        Importar de um servidor
+                      </button>
+                      <button
+                        type="button"
+                        className="button button--ghost"
                         onClick={() => openView("map")}
                       >
                         Ver mapa
@@ -1192,13 +1237,19 @@ export function App() {
                 onCreateNote={createCalendarNote}
               />
             </div>
-          ) : view === "lab" ? (
+          ) : view === "lab" && LabView ? (
             <div className="page page--lab">
-              <LabView onBack={goBack} />
+              <Suspense fallback={null}>
+                <LabView onBack={goBack} />
+              </Suspense>
             </div>
           ) : (
             <div className="page">
-              <SettingsView refreshKey={refreshKey} onBack={goBack} onOpenLab={() => openView("lab")} />
+              <SettingsView
+                refreshKey={refreshKey}
+                onBack={goBack}
+                onOpenLab={LAB_ENABLED ? () => openView("lab") : undefined}
+              />
             </div>
           )}
         </ErrorBoundary>
@@ -1249,6 +1300,13 @@ export function App() {
         onImport={openNotionImport}
         onCreated={openCreatedEntry}
       />
+
+      {importServerOpen && (
+        <ImportServerDialog
+          onClose={() => setImportServerOpen(false)}
+          onImported={refresh}
+        />
+      )}
 
       {importOpen && (
         <NotionImportDialog
