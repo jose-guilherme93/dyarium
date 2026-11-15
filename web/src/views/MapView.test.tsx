@@ -389,13 +389,18 @@ describe("MapView insights", () => {
       />,
     );
 
-    const group = await screen.findByRole("group", { name: "Tipo da entidade" });
-    expect(applied).toHaveBeenCalled();
-    expect(group).toBeInTheDocument();
+    // O foco seleciona a bola e abre o editor no mesmo lote. O painel nao pode
+    // se fechar na troca de selecao: reconsulta o no depois que os efeitos
+    // assentam, senao a assercao cai num elemento desanexado que so existiu
+    // por um commit.
+    await waitFor(() => expect(applied).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const group = screen.getByRole("group", { name: "Tipo da entidade" });
     expect(within(group).getByRole("button", { name: "Pessoa" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
+    expect(screen.queryByRole("button", { name: "não é isso?" })).not.toBeInTheDocument();
   });
 
   it("'não é isso?' no grafo abre o editor no tipo", async () => {

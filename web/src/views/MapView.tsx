@@ -448,6 +448,8 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
   const manualViewRef = useRef(false);
   // Um foco vindo de uma nota vale uma vez: nao reseleciona a cada filtro.
   const appliedFocusRef = useRef<string | null>(null);
+  // Bola dona do editor aberto: a troca de selecao so fecha o editor de outra bola.
+  const editorNodeRef = useRef<string | null>(null);
 
   const kindSet = useMemo(() => {
     const set = new Set<GraphNode["kind"]>();
@@ -614,6 +616,10 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
   }, [selectedNode]);
 
   useEffect(() => {
+    // O foco vindo de uma nota seleciona a bola e abre o editor no mesmo lote.
+    // Sem esta guarda, a troca de selecao fecharia o editor recem-aberto.
+    if (editorNodeRef.current !== null && editorNodeRef.current === selectedId) return;
+    editorNodeRef.current = null;
     setEditorOpen(false);
     setMenuPos(null);
     setEditorError("");
@@ -1810,6 +1816,7 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
   // Prepara o rascunho do editor a partir do no escolhido e abre a secao pedida.
   const openEditorFor = (node: GraphNode, section: EditorSection) => {
     if (node.kind === "note" || node.kind === "user") return;
+    editorNodeRef.current = node.id;
     const known =
       detail && detail.kind === node.kind && detail.name.toLowerCase() === node.label.toLowerCase();
     setEditName(node.label);
@@ -1831,6 +1838,7 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
   };
 
   const closeEditor = () => {
+    editorNodeRef.current = null;
     setEditorOpen(false);
     setEditorError("");
   };
