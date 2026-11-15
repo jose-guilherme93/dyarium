@@ -9,6 +9,7 @@ import * as localLinks from "./local/links";
 import * as localAudio from "./local/audio";
 import * as localTranscribe from "./local/transcribe";
 import * as localProvider from "./local/providerTranscribe";
+import * as localAnalyze from "./local/analyze";
 import { shrinkImage } from "./lib/image";
 import { setOffline } from "./lib/offline";
 import type {
@@ -1024,10 +1025,21 @@ const localApi: Partial<typeof remoteApi> = {
     }
     return { status: "ok" };
   },
-  getAnalysis: async () => {
-    throw new ApiError("Sem analise ainda.", 404, "not_found");
+  // Analise sem servidor: o provedor configurado le a nota e o resultado fica
+  // no IndexedDB, no mesmo formato que a tela ja desenha.
+  analyze: async (id) => {
+    await localAnalyze.analyzeEntryLocally(id);
+    return { status: "ok" };
   },
-  getAnalysisCached: async () => undefined,
+  getAnalysis: async (id) => {
+    const analysis = await localAnalyze.readLocalAnalysis(id);
+    if (!analysis) throw new ApiError("Sem analise ainda.", 404, "not_found");
+    return analysis;
+  },
+  getAnalysisCached: async (id) => (await localAnalyze.readLocalAnalysis(id)) ?? undefined,
+  invalidateAnalysis: (id) => {
+    void localAnalyze.clearLocalAnalysis(id);
+  },
   listAttachments: async (entryId) => ({ attachments: await localFiles.listLocalAttachments(entryId) }),
   listAttachmentsCached: async (entryId) => ({
     attachments: await localFiles.listLocalAttachments(entryId),

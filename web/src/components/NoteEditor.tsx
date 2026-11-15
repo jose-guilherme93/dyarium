@@ -832,7 +832,10 @@ export function NoteEditor({
       local = await beginWorkerEntry(entryId);
       if (local) replaceWorkerEntry(entryId);
       await api.analyze(entryId);
-      notify("Análise iniciada", "info");
+      // Sem servidor a analise termina antes da resposta: recarrega a ficha para
+      // o painel abrir com o texto em vez de esperar um evento que nao vem.
+      if (isLocalMode()) onChanged();
+      notify(isLocalMode() ? "Análise pronta" : "Análise iniciada", "info");
     } catch (err) {
       if (local) await cancelWorkerEntry(entryId);
       if (err instanceof Error && err.message.includes("desligada")) {
