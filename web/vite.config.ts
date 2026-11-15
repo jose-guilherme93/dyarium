@@ -25,6 +25,11 @@ function ortRuntimeAssets(): Plugin {
     // No build, os arquivos vao direto para dist/ort. Sem public/ort, o dev no
     // host e o container nao disputam arquivos gerados com donos diferentes.
     generateBundle() {
+      // Os arquivos do ORT passam de 25 MiB e o Cloudflare recusa asset desse
+      // tamanho. Eles so servem ao /lab (worker de inferencia), que roda no
+      // servidor Go. No build hospedado (padrao) ficam de fora; para o build
+      // self-hosted, defina VITE_ORT=1.
+      if (process.env.VITE_ORT !== "1") return;
       for (const name of ORT_ASSETS) {
         this.emitFile({
           type: "asset",
@@ -64,6 +69,17 @@ export default defineConfig({
   // o Vite leria `mobile/tsconfig.json`, que estende `expo/tsconfig.base` e nao
   // existe no job do web (que instala so as dependencias do web).
   tsconfig: "./tsconfig.json",
+  // O nucleo (`mobile/src/core`) usa `@/` para si mesmo. O alias vale aqui
+  // tambem, entao `repo`, `schema` e `port` entram sem reescrever import.
+  resolve: {
+    alias: {
+      "@": fileURLToPath(new URL("../mobile/src", import.meta.url)),
+    },
+  },
+  define: {
+    // `__DEV__` e global no React Native; o nucleo puro o usa num log.
+    __DEV__: JSON.stringify(process.env.NODE_ENV !== "production"),
+  },
   server: {
     host: true,
     port: 5173,
@@ -107,6 +123,13 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
+    rollupOptions: {
+      // O worker do /lab carrega o onnxruntime, cujo wasm passa de 25 MiB — o
+      // limite por arquivo do Cloudflare. No build hospedado o /lab nao existe
+      // (nao ha servidor), entao o runtime fica de fora. O build self-hosted
+      // usa VITE_ORT=1 e leva tudo.
+      external: process.env.VITE_ORT === "1" ? [] : [/^onnxruntime-web/],
+    },
   },
   test: {
     environment: "jsdom",

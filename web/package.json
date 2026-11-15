@@ -21,7 +21,8 @@
     "prosemirror-state": "^1.4.4",
     "prosemirror-view": "^1.42.6",
     "react": "^19.3.0",
-    "react-dom": "^19.3.0"
+    "react-dom": "^19.3.0",
+    "wa-sqlite": "1.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
