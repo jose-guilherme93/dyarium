@@ -2,6 +2,7 @@ import { cacheClear, cacheGet, cacheSet } from "./lib/idb";
 import * as local from "./local/notes";
 import * as localFiles from "./local/attachments";
 import * as localSettings from "./local/settings";
+import * as localBooks from "./local/notebooks";
 import { shrinkImage } from "./lib/image";
 import { setOffline } from "./lib/offline";
 import type {
@@ -967,7 +968,17 @@ const localApi: Partial<typeof remoteApi> = {
     await local.setEntryTags(entryId, tags);
     return { status: "ok" };
   },
-  listNotebooks: async () => ({ notebooks: await local.listNotebooks() }),
+  listNotebooks: async () => ({ notebooks: await localBooks.listLocalNotebooks() }),
+  createNotebook: (notebook) => localBooks.createLocalNotebook(notebook),
+  updateNotebook: (id, patch) => localBooks.updateLocalNotebook(id, patch),
+  deleteNotebook: (id) => localBooks.deleteLocalNotebook(id),
+  getWritingRhythm: async () => ({
+    today: 0,
+    days: [],
+    daily_goal: 0,
+    deadline: "",
+    goal_words: 0,
+  }),
   getSettings: () => localSettings.loadLocalSettings(),
   putSettings: async (patch) => {
     await localSettings.saveLocalSettings(patch);

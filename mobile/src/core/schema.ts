@@ -744,6 +744,37 @@ export const MIGRATIONS: Migration[] = [
       }
     },
   },
+
+  {
+    version: 42,
+    run: async (db) => {
+      // Campos do modo escritor. O app ainda nao mostra livro, mas o caderno
+      // viaja com eles; sem estas colunas o dashboard nao consegue criar livro
+      // no cofre local.
+      const colunas: [string, string][] = [
+        ['subtitle', "TEXT NOT NULL DEFAULT ''"],
+        ['author', "TEXT NOT NULL DEFAULT ''"],
+        ['synopsis', "TEXT NOT NULL DEFAULT ''"],
+        ['language', "TEXT NOT NULL DEFAULT ''"],
+        ['goal_words', 'INTEGER NOT NULL DEFAULT 0'],
+        ['book_status', "TEXT NOT NULL DEFAULT 'drafting'"],
+        ['page_size', "TEXT NOT NULL DEFAULT ''"],
+        ['page_margin_mm', 'INTEGER NOT NULL DEFAULT 0'],
+        ['body_px', 'INTEGER NOT NULL DEFAULT 0'],
+        ['body_leading', 'INTEGER NOT NULL DEFAULT 0'],
+        ['body_font', "TEXT NOT NULL DEFAULT ''"],
+        ['daily_goal_words', 'INTEGER NOT NULL DEFAULT 0'],
+        ['deadline', "TEXT NOT NULL DEFAULT ''"],
+        ['has_cover', 'INTEGER NOT NULL DEFAULT 0'],
+        ['cover_updated_at', "TEXT NOT NULL DEFAULT ''"],
+      ];
+      for (const [nome, tipo] of colunas) {
+        if (!(await columnExists(db, 'notebooks', nome))) {
+          await db.execAsync(`ALTER TABLE notebooks ADD COLUMN ${nome} ${tipo}`);
+        }
+      }
+    },
+  },
 ];
 
 /** Versao que o banco tem depois de aplicar a lista inteira. */

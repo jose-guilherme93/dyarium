@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 
 import type * as SQLite from 'expo-sqlite';
 
+import { LATEST_SCHEMA_VERSION } from '@/core/schema';
 import { migrate } from '../db';
 
 /**
@@ -57,6 +58,19 @@ describe('migracoes locais', () => {
         id TEXT PRIMARY KEY NOT NULL,
         title TEXT NOT NULL
       );
+      -- Um banco parado na versao 40 ja tem cadernos (a migracao 3 os cria).
+      CREATE TABLE notebooks (
+        id TEXT PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL,
+        color TEXT NOT NULL DEFAULT '',
+        is_default INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        dirty INTEGER NOT NULL DEFAULT 0,
+        synced INTEGER NOT NULL DEFAULT 1,
+        deleted INTEGER NOT NULL DEFAULT 0,
+        kind TEXT NOT NULL DEFAULT 'notes'
+      );
     `);
     db.exec("INSERT INTO recordings (id, title) VALUES ('r_antiga', 'nota antiga')");
     db.exec('PRAGMA user_version = 40');
@@ -79,7 +93,7 @@ describe('migracoes locais', () => {
     expect(rows).toEqual([{ id: 'r_antiga', title: 'nota antiga', icon: '' }]);
 
     const version = db.prepare('PRAGMA user_version').get() as { user_version: number };
-    expect(version.user_version).toBe(41);
+    expect(version.user_version).toBe(LATEST_SCHEMA_VERSION);
     db.close();
   });
 });
