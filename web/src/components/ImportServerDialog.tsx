@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { useEscape } from "../lib/useEscape";
+import { diagnoseSource } from "../local/diagnose";
 import { importEntries, type ImportProgress, type ImportResult } from "../local/import";
 import { serverSource } from "../local/serverSource";
 import { CloseIcon } from "./icons";
@@ -24,14 +25,25 @@ export function ImportServerDialog({ onClose, onImported }: ImportServerDialogPr
   const [progresso, setProgresso] = useState<ImportProgress | null>(null);
   const [resultado, setResultado] = useState<ImportResult | null>(null);
   const [erro, setErro] = useState("");
+  const [diagnostico, setDiagnostico] = useState<{ hint: string; origin?: string } | null>(null);
 
   useEscape(true, onClose);
 
   const importar = async () => {
     setBusy(true);
     setErro("");
+    setDiagnostico(null);
     setResultado(null);
     setProgresso(null);
+
+    // Antes de importar, separa os quatro motivos de "NetworkError".
+    const check = await diagnoseSource(endereco);
+    if (!check.ok) {
+      setDiagnostico({ hint: check.hint, origin: check.origin });
+      setBusy(false);
+      return;
+    }
+
     try {
       const resumo = await importEntries(serverSource(endereco, token), setProgresso);
       setResultado(resumo);
@@ -106,6 +118,16 @@ export function ImportServerDialog({ onClose, onImported }: ImportServerDialogPr
           </p>
         )}
         {erro && <p className="error">{erro}</p>}
+        {diagnostico && (
+          <div className="settings-note">
+            <p className="error">{diagnostico.hint}</p>
+            {diagnostico.origin && (
+              <p className="muted">
+                Origem para liberar: <code>{diagnostico.origin}</code>
+              </p>
+            )}
+          </div>
+        )}
 
         <div className="modal-actions">
           <button type="button" className="button button--ghost" onClick={onClose} disabled={busy}>
