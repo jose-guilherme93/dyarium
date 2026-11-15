@@ -1,0 +1,19 @@
+{
+  // Publicacao no Cloudflare (Workers com assets estaticos, o que o painel
+  // criou ao conectar o repositorio). O build roda no repositorio inteiro
+  // porque `web/` importa `mobile/src/core`.
+  //
+  // Painel > Workers & Pages > dyarium > Settings > Build:
+  //   Build command:  corepack enable && cd web && pnpm install --frozen-lockfile && pnpm build
+  //   Deploy command: npx wrangler deploy
+  "name": "dyarium",
+  "compatibility_date": "2026-11-13",
+  "observability": {
+    "enabled": true
+  },
+  "assets": {
+    "directory": "./web/dist",
+    // Qualquer rota que nao seja arquivo cai no shell do SPA.
+    "not_found_handling": "single-page-application"
+  }
+}
