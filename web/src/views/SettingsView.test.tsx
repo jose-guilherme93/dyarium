@@ -109,7 +109,7 @@ describe("SettingsView sidebar", () => {
     expect(screen.getByRole("link", { name: "Transcrição" })).toHaveClass("settings-nav-item--on");
   });
 
-  it("tem exatamente cinco seções e nenhuma menção a privacidade", async () => {
+  it("tem exatamente seis seções e nenhuma menção a privacidade", async () => {
     await renderSettings();
 
     const nav = screen.getByRole("navigation", { name: "Seções de configurações" });
@@ -119,6 +119,7 @@ describe("SettingsView sidebar", () => {
       "Análise",
       "Projetos (MCP)",
       "Autor",
+      "Cofre",
       "Dados e lixeira",
     ]);
     expect(screen.queryAllByRole("link", { name: /privacidade/i })).toHaveLength(0);
@@ -147,16 +148,23 @@ describe("SettingsView sidebar", () => {
     expect(document.getElementById("settings-section-analise")).toBeTruthy();
   });
 
-  it("resume as cinco seções e abre só a ativa", async () => {
+  it("resume as seis seções e abre só a ativa", async () => {
     await renderSettings();
 
-    for (const name of ["Transcrição", "Análise", "Projetos (MCP)", "Autor", "Dados e lixeira"]) {
+    for (const name of [
+      "Transcrição",
+      "Análise",
+      "Projetos (MCP)",
+      "Autor",
+      "Cofre",
+      "Dados e lixeira",
+    ]) {
       expect(screen.getByRole("link", { name })).toBeTruthy();
     }
-    expect(document.querySelectorAll(".section-row")).toHaveLength(5);
+    expect(document.querySelectorAll(".section-row")).toHaveLength(6);
     expect(document.querySelectorAll(".section-row--open")).toHaveLength(1);
     expect(document.querySelectorAll(".section-content")).toHaveLength(1);
-    for (const id of ["transcricao", "analise", "projetos", "autor", "dados"]) {
+    for (const id of ["transcricao", "analise", "projetos", "autor", "cofre", "dados"]) {
       expect(document.getElementById(`settings-${id}`)).toBeTruthy();
     }
     // Nada do desenho antigo (barra lateral, painel, layout) sobrou no DOM.
@@ -700,6 +708,7 @@ describe("SettingsView colunas lado a lado", () => {
       "Análise",
       "Projetos (MCP)",
       "Autor",
+      "Cofre",
       "Dados e lixeira",
     ]);
   });

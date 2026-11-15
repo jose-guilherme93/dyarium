@@ -394,3 +394,12 @@ export function SlidersIcon({ size = 18 }: IconProps) {
     </svg>
   );
 }
+
+export function KeyIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <circle cx="8" cy="12" r="3.4" />
+      <path d="M11.4 12H20M17 12v3M14.6 12v2.2" />
+    </svg>
+  );
+}

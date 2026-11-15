@@ -1,7 +1,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, getToken } from "../api";
-import { AllNotebooksIcon, CpuIcon, RefreshIcon, SparkIcon, TrashIcon, UserIcon, WaveIcon } from "../components/icons";
+import { AllNotebooksIcon, CpuIcon, KeyIcon, RefreshIcon, SparkIcon, TrashIcon, UserIcon, WaveIcon } from "../components/icons";
+import {
+  ensureVaultCode,
+  formatRecoveryCode,
+  isValidRecoveryCode,
+  setVaultCode as adoptVaultCode,
+  vaultKeyFromCode,
+} from "../local/vault";
+import { applySnapshot, buildSnapshot, openSnapshot, sealSnapshot, vaultIdFromCode } from "../local/backup";
+import { DriveClient } from "../local/drive";
+import {
+  pickFolder,
+  readVaultFromFolder,
+  rememberFolder,
+  supportsFolder,
+  writeVaultToFolder,
+  type FolderLike,
+} from "../local/folder";
+import { googleClientId, requestDriveToken, tokenIsFresh, type DriveToken } from "../local/google";
 import { ListSkeleton } from "../components/Skeleton";
 import { TrashSection } from "../components/TrashSection";
 import { useToast } from "../components/Toasts";
@@ -31,7 +49,7 @@ interface DownloadProgress {
   error: string;
 }
 
-type TabId = "transcricao" | "analise" | "projetos" | "autor" | "dados";
+type TabId = "transcricao" | "analise" | "projetos" | "autor" | "cofre" | "dados";
 
 type FetchStatus = "idle" | "loading" | "ready" | "error" | "needs-key";
 
@@ -42,6 +60,7 @@ const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
   { id: "analise", label: "Análise", icon: <SparkIcon size={12} /> },
   { id: "projetos", label: "Projetos (MCP)", icon: <AllNotebooksIcon size={12} /> },
   { id: "autor", label: "Autor", icon: <UserIcon size={12} /> },
+  { id: "cofre", label: "Cofre", icon: <KeyIcon size={12} /> },
   { id: "dados", label: "Dados e lixeira", icon: <TrashIcon size={12} /> },
 ];
 
@@ -63,6 +82,17 @@ export function SettingsView({
   const { notify } = useToast();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [ownerName, setOwnerName] = useState("");
+
+  useEffect(() => {
+    void ensureVaultCode()
+      .then(setVaultCode)
+      .catch(() => undefined);
+    // A pasta escolhida antes volta se o navegador ainda der permissao.
+    void rememberFolder()
+      .then(setFolder)
+      .catch(() => undefined);
+  }, []);
+
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [progress, setProgress] = useState<Record<string, DownloadProgress>>({});
   const [ceiling, setCeiling] = useState("0");
@@ -83,6 +113,13 @@ export function SettingsView({
 
   // UI state
   const [activeTab, setActiveTab] = useState<TabId>("analise");
+  /** Codigo de recuperacao do cofre local (a chave e derivada dele). */
+  const [vaultCode, setVaultCode] = useState("");
+  const [vaultShown, setVaultShown] = useState(false);
+  const [drive, setDrive] = useState<DriveToken | null>(null);
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [backupStatus, setBackupStatus] = useState("");
+  const [folder, setFolder] = useState<FolderLike | null>(null);
   const [fetchStatus, setFetchStatus] = useState<FetchStatus>("idle");
   const [fetchError, setFetchError] = useState("");
   const [deepgramBusy, setDeepgramBusy] = useState(false);
@@ -449,6 +486,7 @@ export function SettingsView({
       state: settings?.all_notes_mine ? "ok" : "off",
       stateText: settings?.all_notes_mine ? "minhas" : "por nota",
     },
+    cofre: { text: vaultCode ? "chave neste navegador" : "sem chave", state: vaultCode ? "ok" : "off" },
     // "lixeira" ja esta no nome da secao; o resumo diz o que ha ali.
     dados: { text: "notas excluídas", state: "off" },
   };
@@ -1107,11 +1145,248 @@ export function SettingsView({
     </div>
   );
 
+
+
+  const codigoDoCofre = async (): Promise<string> => {
+    const codigo = vaultCode || (await ensureVaultCode());
+    if (!codigo || codigo !== vaultCode) setVaultCode(codigo);
+    return codigo;
+  };
+
+  const backupToFolder = async () => {
+    setBackupBusy(true);
+    setBackupStatus("");
+    try {
+      const codigo = await codigoDoCofre();
+      const alvo = folder ?? (await pickFolder());
+      setFolder(alvo);
+      const chave = await vaultKeyFromCode(codigo);
+      const retrato = await buildSnapshot(await vaultIdFromCode(codigo));
+      await writeVaultToFolder(alvo, codigo, await sealSnapshot(retrato, chave));
+      setBackupStatus(`pasta "${alvo.name}" · ${retrato.notes.length} notas`);
+    } catch (error) {
+      setBackupStatus(describe(error));
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
+  const restoreFromFolder = async () => {
+    setBackupBusy(true);
+    setBackupStatus("");
+    try {
+      const alvo = folder ?? (await pickFolder());
+      setFolder(alvo);
+      const { code, sealed } = await readVaultFromFolder(alvo);
+      // A pasta manda: a chave dela substitui a que este navegador criou.
+      setVaultCode(await adoptVaultCode(code));
+      setVaultShown(false);
+      const chave = await vaultKeyFromCode(code);
+      const retrato = await openSnapshot(sealed, chave);
+      const resumo = await applySnapshot(retrato);
+      setBackupStatus(
+        `${resumo.created} novas · ${resumo.updated} atualizadas · ${resumo.skipped} mantidas`,
+      );
+    } catch (error) {
+      setBackupStatus(describe(error));
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
+  /** Token do Drive: reaproveita o da sessao enquanto vale, senao pede de novo. */
+  const driveAccess = async (): Promise<DriveToken> => {
+    if (tokenIsFresh(drive)) return drive;
+    const novo = await requestDriveToken();
+    setDrive(novo);
+    return novo;
+  };
+
+  const describe = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+  const backupNow = async () => {
+    setBackupBusy(true);
+    setBackupStatus("");
+    try {
+      const codigo = vaultCode || (await ensureVaultCode());
+      if (!vaultCode) setVaultCode(codigo);
+      const token = await driveAccess();
+      const vaultId = await vaultIdFromCode(codigo);
+      const chave = await vaultKeyFromCode(codigo);
+      const retrato = await buildSnapshot(vaultId);
+      const selado = await sealSnapshot(retrato, chave);
+      const client = new DriveClient(token.accessToken);
+      const pasta = await client.ensureVaultFolder(vaultId);
+      // A chave fica na pasta: e isso que faz o login abrir o cofre em outro
+      // aparelho. Quem tem a conta tem a chave; o conteudo segue cifrado.
+      await client.put(pasta, "key.txt", formatRecoveryCode(codigo), "text/plain");
+      await client.put(pasta, "backup.enc", selado);
+      setBackupStatus(`${retrato.notes.length} notas · ${new Date().toLocaleTimeString()}`);
+    } catch (error) {
+      setBackupStatus(describe(error));
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
+  const restoreFromDrive = async () => {
+    setBackupBusy(true);
+    setBackupStatus("");
+    try {
+      const token = await driveAccess();
+      const client = new DriveClient(token.accessToken);
+      const raiz = await client.ensureFolder("Dyarium");
+      const cofres = await client.list(raiz);
+      if (cofres.length === 0) throw new Error("nenhum cofre no Drive");
+      // Um cofre por conta no v1: a pasta e o proprio cofre.
+      const arquivos = await client.list(cofres[0].id);
+      const chaveArquivo = arquivos.find((file) => file.name === "key.txt");
+      const backupArquivo = arquivos.find((file) => file.name === "backup.enc");
+      if (!chaveArquivo || !backupArquivo) throw new Error("cofre incompleto no Drive");
+
+      const codigo = new TextDecoder().decode(await client.download(chaveArquivo.id)).trim();
+      if (!(await isValidRecoveryCode(codigo))) throw new Error("codigo guardado no Drive e invalido");
+      // Login desbloqueia o cofre: a chave do Drive substitui a deste navegador.
+      setVaultCode(await adoptVaultCode(codigo));
+      setVaultShown(false);
+
+      const chave = await vaultKeyFromCode(codigo);
+      const retrato = await openSnapshot(await client.download(backupArquivo.id), chave);
+      const resumo = await applySnapshot(retrato);
+      setBackupStatus(
+        `${resumo.created} novas · ${resumo.updated} atualizadas · ${resumo.skipped} mantidas`,
+      );
+    } catch (error) {
+      setBackupStatus(describe(error));
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
+  const renderVault = () => (
+    <div className="settings-single">
+      <div className="section-block">
+        <div className="fields">
+          <div className="field">
+            <span className="field-label">Código de recuperação</span>
+            <div className="field-control">
+              <input
+                type="text"
+                readOnly
+                aria-label="Código de recuperação"
+                value={vaultCode ? (vaultShown ? formatRecoveryCode(vaultCode) : "••••-••••-••••-••••-••••-••••-••") : "sem chave"}
+                onFocus={() => setVaultShown(true)}
+              />
+            </div>
+            <span className="field-hint">
+              {vaultShown
+                ? "26 caracteres. Anote fora do navegador: é com ele que o backup abre em outro aparelho."
+                : "Clique no campo para mostrar."}
+            </span>
+          </div>
+          <div className="field">
+            <span className="field-label">Copiar</span>
+            <div className="field-control">
+              <button
+                type="button"
+                className="button button--ghost"
+                disabled={!vaultCode}
+                onClick={() => {
+                  void navigator.clipboard
+                    .writeText(formatRecoveryCode(vaultCode))
+                    .then(() => notify("Código copiado"))
+                    .catch(() => notify("Não foi possível copiar"));
+                }}
+              >
+                Copiar código
+              </button>
+              <button
+                type="button"
+                className="button button--ghost"
+                onClick={() => setVaultShown((value) => !value)}
+                disabled={!vaultCode}
+              >
+                {vaultShown ? "Ocultar" : "Mostrar"}
+              </button>
+            </div>
+            <span className="field-hint">
+              A chave fica neste navegador e não é enviada para lugar nenhum. Sem o código e sem este
+              navegador, o cofre não abre.
+            </span>
+          </div>
+          <div className="field">
+            <span className="field-label">Backup em pasta</span>
+            <div className="field-control">
+              <button
+                type="button"
+                className="button"
+                onClick={() => void backupToFolder()}
+                disabled={backupBusy || !supportsFolder()}
+              >
+                {folder ? `Enviar para "${folder.name}"` : "Escolher pasta e enviar"}
+              </button>
+              <button
+                type="button"
+                className="button button--ghost"
+                onClick={() => void restoreFromFolder()}
+                disabled={backupBusy || !supportsFolder()}
+              >
+                Restaurar da pasta
+              </button>
+            </div>
+            <span className="field-hint">
+              {supportsFolder()
+                ? "Grava key.txt e backup.enc na pasta escolhida. A mesma pasta serve no Drive, num pendrive ou em outro computador."
+                : "Este navegador não abre pasta. Use Chrome ou Edge, ou o app em Flatpak."}
+            </span>
+          </div>
+          <div className="field">
+            <span className="field-label">Backup no Drive</span>
+            <div className="field-control">
+              <button
+                type="button"
+                className="button"
+                onClick={() => void backupNow()}
+                disabled={backupBusy}
+              >
+                {drive ? "Enviar backup" : "Conectar Google Drive"}
+              </button>
+              <button
+                type="button"
+                className="button button--ghost"
+                onClick={() => void restoreFromDrive()}
+                disabled={backupBusy}
+              >
+                Restaurar do Drive
+              </button>
+            </div>
+            <span className="field-hint">
+              {googleClientId()
+                ? "A pasta Dyarium fica na sua conta. A chave também vai para lá: entrar com a mesma conta abre o cofre em outro aparelho."
+                : "Falta configurar VITE_GOOGLE_CLIENT_ID para o login do Google."}
+            </span>
+            {backupStatus && <span className="field-hint">{backupStatus}</span>}
+            {backupStatus && backupStatus.includes("novas") && (
+              <button
+                type="button"
+                className="button button--ghost"
+                onClick={() => window.location.reload()}
+              >
+                Recarregar a lista
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
   const renderSectionContent = (tab: TabId, s: Settings) => {
     if (tab === "transcricao") return renderTranscription(s);
     if (tab === "analise") return renderAnalysis(s);
     if (tab === "projetos") return renderProjects();
     if (tab === "autor") return renderAuthor(s);
+    if (tab === "cofre") return renderVault();
     return renderData();
   };
 
