@@ -1,4 +1,4 @@
-import type { GraphData, GraphEdgeKind, GraphNode } from './graphModel';
+import type { GraphData, GraphEdgeKind } from './graphModel';
 
 export interface NodePosition {
   x: number;
@@ -22,8 +22,6 @@ export interface GraphLayout {
 const GOLDEN_ANGLE = 2.3999632297286533;
 const CENTER_RADIUS = 24;
 const MIN_ENTITY_RADIUS = 4;
-/** Acima disso a previa vira duas colunas: a elipse apertaria os nomes. */
-const RING_MAX = 8;
 const MAX_ENTITY_RADIUS = 10;
 const BASE_RADIUS = 40;
 const NOTE_RING_RADIUS = 160;
@@ -271,7 +269,7 @@ export interface LayoutOptions {
 export function layoutSeeded(
   data: GraphData,
   focus: string,
-  seed: Record<string, NodePosition> | null,
+  _seed: Record<string, NodePosition> | null,
 ): GraphLayout {
   return layoutGraph(data, { focus });
 }

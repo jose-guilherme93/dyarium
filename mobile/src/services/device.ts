@@ -41,10 +41,3 @@ function deviceLabel(): string {
     typeof Platform.Version === 'string' ? Platform.Version : String(Platform.Version ?? '');
   return version ? `${Platform.OS} ${version}` : Platform.OS;
 }
-
-/** Nome curto do aparelho para a versao de um campo. */
-export function nodeFrom(identityId: string): string {
-  // O formato da versao usa `-` como separador; o id do aparelho (`dev_...`) ja
-  // e alfanumerico.
-  return identityId.replace(/[^A-Za-z0-9_]/g, '');
-}
