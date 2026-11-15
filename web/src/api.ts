@@ -3,6 +3,9 @@ import * as local from "./local/notes";
 import * as localFiles from "./local/attachments";
 import * as localSettings from "./local/settings";
 import * as localBooks from "./local/notebooks";
+import * as localChapters from "./local/chapters";
+import * as localCovers from "./local/covers";
+import * as localLinks from "./local/links";
 import { shrinkImage } from "./lib/image";
 import { setOffline } from "./lib/offline";
 import type {
@@ -915,8 +918,8 @@ const localApi: Partial<typeof remoteApi> = {
   listAllEntries: async (filters) => ({ entries: await local.listEntries(filters) }),
   listEntriesCached: async (filters) => ({ entries: await local.listEntries(filters) }),
   listDeletedEntries: async () => ({ entries: await local.listDeletedEntries() }),
-  createEntry: async (title, _parentId, notebookId) =>
-    local.createEntry({ title, notebookId }),
+  createEntry: async (title, _parentId, notebookId, chapterKind) =>
+    local.createEntry({ title, notebookId, kind: chapterKind }),
   createImportEntry: async (input) => ({
     entry: await local.createEntry({ title: input.title, notebookId: input.notebookId }),
     created: true,
@@ -972,13 +975,25 @@ const localApi: Partial<typeof remoteApi> = {
   createNotebook: (notebook) => localBooks.createLocalNotebook(notebook),
   updateNotebook: (id, patch) => localBooks.updateLocalNotebook(id, patch),
   deleteNotebook: (id) => localBooks.deleteLocalNotebook(id),
-  getWritingRhythm: async () => ({
-    today: 0,
-    days: [],
-    daily_goal: 0,
-    deadline: "",
-    goal_words: 0,
-  }),
+  getWritingRhythm: (bookId, days) => localChapters.writingRhythm(bookId, days),
+  reorderChapters: async (notebookId, chapters) => {
+    await localChapters.reorderChapters(notebookId, chapters);
+    return { status: "ok" };
+  },
+  getCover: (bookId) => localCovers.localCoverBlob(bookId),
+  uploadCover: async (bookId, image) => {
+    const { updated_at } = await localCovers.saveLocalCover(bookId, image);
+    await localBooks.markBookCover(bookId, updated_at);
+  },
+  deleteCover: async (bookId) => {
+    await localCovers.deleteLocalCover(bookId);
+    await localBooks.markBookCover(bookId, null);
+  },
+  listLinks: async (entryId) => ({ links: await localLinks.listLocalLinks(entryId) }),
+  createLink: (entryId, body) => localLinks.createLocalLink(entryId, body),
+  deleteLink: (id) => localLinks.deleteLocalLink(id),
+  getBookEntities: async () => ({ entities: [] }),
+  getMetrics: async () => ({ snapshots: [], schema: 2 }),
   getSettings: () => localSettings.loadLocalSettings(),
   putSettings: async (patch) => {
     await localSettings.saveLocalSettings(patch);
@@ -1050,6 +1065,7 @@ export function attachmentUrl(id: string): string {
 
 /** URL da capa do livro; a versao evita reaproveitar a imagem antiga. */
 export function coverUrl(bookId: string, version?: string | null): string {
+  if (isLocalMode()) return localCovers.localCoverUrl(bookId, version);
   const params = new URLSearchParams({ token: getToken() });
   if (version) params.set("v", version);
   return `/api/v1/notebooks/${bookId}/cover?${params.toString()}`;

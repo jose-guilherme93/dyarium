@@ -339,8 +339,8 @@ export function WritingView({ refreshKey }: { refreshKey: number }) {
         <div className="empty-state">
           <p>Nenhuma métrica recebida ainda.</p>
           <p>
-            Abra o app no aparelho com o servidor configurado: as métricas de escrita são
-            calculadas no próprio celular e enviadas para cá.
+            As métricas de escrita são calculadas no aparelho. Elas aparecem aqui quando o app
+            estiver conectado a esta instalação.
           </p>
         </div>
       ) : (

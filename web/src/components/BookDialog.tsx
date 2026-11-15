@@ -4,7 +4,7 @@ import { NOTEBOOK_COLORS } from "../lib/notebooks";
 import { PAGE_SIZE_ORDER, PAGE_SIZES, bookPage, countLabel } from "../lib/books";
 import { BOOK_FONTS, BOOK_FONT_ORDER, bookFont, type BookFontId } from "../lib/bookFonts";
 import { CoverEditor } from "./CoverEditor";
-import { coverUrl } from "../api";
+import { useCoverUrl } from "../lib/useCover";
 import { useEscape } from "../lib/useEscape";
 import { ChevronIcon } from "./icons";
 
@@ -76,6 +76,10 @@ export function BookDialog({
   });
   const [confirmName, setConfirmName] = useState("");
   const [dangerOpen, setDangerOpen] = useState(false);
+  const coverSrc = useCoverUrl(
+    notebook?.has_cover ? notebook.id : null,
+    notebook?.cover_updated_at,
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -285,9 +289,7 @@ export function BookDialog({
               <div className="book-cover-field">
                 <CoverEditor
                   aspect={previewPage.widthMm / previewPage.heightMm}
-                  initialUrl={
-                    notebook.has_cover ? coverUrl(notebook.id, notebook.cover_updated_at) : undefined
-                  }
+                  initialUrl={coverSrc || undefined}
                   onSave={onCoverSave}
                   onRemove={onCoverRemove}
                 />

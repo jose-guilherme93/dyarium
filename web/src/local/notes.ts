@@ -12,13 +12,25 @@ import {
   getRecording,
   listRecordings,
   listTrashedRecordings,
+  nextChapterPosition,
+  updateChapterFields,
   updateRecordingNote,
   upsertRecording,
 } from "../../../mobile/src/core/repo";
 import type { Recording } from "../../../mobile/src/core/types";
 
+import { patchChapter, registerWriting, wordsIn, type ChapterPatch } from "./chapters";
 import type { EntryFilters } from "../api";
-import type { AuthorRole, Entry, Note, Notebook, SummaryDetail, Tag } from "../types";
+import type {
+  AuthorRole,
+  ChapterKind,
+  ChapterStatus,
+  Entry,
+  Note,
+  Notebook,
+  SummaryDetail,
+  Tag,
+} from "../types";
 
 const NOTEBOOK_PADRAO = DEFAULT_NOTEBOOK_ID;
 
@@ -29,8 +41,9 @@ function entryStatus(status: string): string {
   return status;
 }
 
-export function toEntry(recording: Recording): Entry {
+export function toEntry(recording: Recording, withWords = false): Entry {
   const corpo = recording.text ?? recording.transcript ?? "";
+  const capitulo = recording.chapterKind ?? "";
   return {
     id: recording.id,
     title: recording.title,
@@ -57,6 +70,16 @@ export function toEntry(recording: Recording): Entry {
     deleted_at: recording.deletedAt ?? null,
     icon: recording.icon,
     summary_detail: recording.summaryDetail,
+    chapter_kind: capitulo as ChapterKind | "",
+    chapter_position: recording.chapterPosition ?? null,
+    chapter_status: (recording.chapterStatus || undefined) as ChapterStatus | undefined,
+    chapter_goal_words: recording.chapterGoalWords ?? 0,
+    chapter_synopsis: recording.chapterSynopsis ?? "",
+    chapter_beats: recording.chapterBeats ?? "",
+    chapter_notes: recording.chapterNotes ?? "",
+    // Palavras so quando a lista pede (livro) ou quando a nota e capitulo:
+    // a lista do diario nao paga a conta.
+    word_count: withWords || capitulo ? wordsIn(recording.text ?? "") : undefined,
   };
 }
 
@@ -84,26 +107,39 @@ function pertence(recording: Recording, filters?: EntryFilters): boolean {
 
 export async function listEntries(filters?: EntryFilters): Promise<Entry[]> {
   const all = await listRecordings(false);
-  const lista = all.filter((recording) => pertence(recording, filters)).map(toEntry);
+  const pedePalavras = filters?.include_words === true;
+  const lista = all
+    .filter((recording) => pertence(recording, filters))
+    .map((recording) => toEntry(recording, pedePalavras));
   return filters?.limit ? lista.slice(0, filters.limit) : lista;
 }
 
 export async function listDeletedEntries(): Promise<Entry[]> {
-  return (await listTrashedRecordings()).map(toEntry);
+  return (await listTrashedRecordings()).map((recording) => toEntry(recording));
 }
 
 export async function getEntry(id: string): Promise<Entry | null> {
   const recording = await getRecording(id);
-  return recording ? toEntry(recording) : null;
+  return recording ? toEntry(recording, Boolean(recording.chapterKind)) : null;
 }
 
 export interface CreateEntryInput {
   title: string;
   notebookId?: string;
+  /** Tipo do capitulo quando a nota nasce dentro de um livro. */
+  kind?: ChapterKind;
 }
 
-export async function createEntry({ title, notebookId }: CreateEntryInput): Promise<Entry> {
+export async function createEntry({
+  title,
+  notebookId,
+  kind,
+}: CreateEntryInput): Promise<Entry> {
   const agora = new Date().toISOString();
+  const caderno = notebookId ?? NOTEBOOK_PADRAO;
+  // A posicao vem do fim da lista do livro: entrar no meio depende do arrastar,
+  // que reescreve a lista inteira.
+  const posicao = kind ? await nextChapterPosition(caderno) : 0;
   const recording: Recording = {
     id: newId("note_"),
     title,
@@ -114,13 +150,25 @@ export async function createEntry({ title, notebookId }: CreateEntryInput): Prom
     source: "text",
     offset: 0,
     attempts: 0,
-    notebookId: notebookId ?? NOTEBOOK_PADRAO,
+    notebookId: caderno,
     createdAt: agora,
     updatedAt: agora,
     text: "",
+    ...(kind
+      ? { chapterKind: kind, chapterPosition: posicao, chapterStatus: "draft" as ChapterStatus }
+      : {}),
   };
   await upsertRecording(recording);
-  return toEntry(recording);
+  if (kind) {
+    // O upsert nao conhece as colunas do escritor: elas seguem pela escrita
+    // dedicada, para nao mexer no SQL que o app usa todo dia.
+    await updateChapterFields(recording.id, {
+      chapterKind: kind,
+      chapterPosition: posicao,
+      chapterStatus: "draft",
+    });
+  }
+  return toEntry(recording, Boolean(kind));
 }
 
 export interface EntryPatch {
@@ -131,11 +179,26 @@ export interface EntryPatch {
   author?: AuthorRole;
   icon?: string;
   summary_detail?: SummaryDetail;
+  chapter_status?: ChapterStatus;
+  chapter_goal_words?: number;
+  chapter_synopsis?: string;
+  chapter_beats?: string;
+  chapter_notes?: string;
 }
 
 export async function patchEntry(id: string, patch: EntryPatch): Promise<Entry | null> {
   const recording = await getRecording(id);
   if (!recording) return null;
+
+  // Campos do capitulo tem escrita propria; o resto continua no upsert.
+  const capitulo: ChapterPatch = {};
+  if (patch.chapter_status !== undefined) capitulo.chapter_status = patch.chapter_status;
+  if (patch.chapter_goal_words !== undefined) capitulo.chapter_goal_words = patch.chapter_goal_words;
+  if (patch.chapter_synopsis !== undefined) capitulo.chapter_synopsis = patch.chapter_synopsis;
+  if (patch.chapter_beats !== undefined) capitulo.chapter_beats = patch.chapter_beats;
+  if (patch.chapter_notes !== undefined) capitulo.chapter_notes = patch.chapter_notes;
+  if (Object.keys(capitulo).length > 0) await patchChapter(id, capitulo);
+
   const atualizado: Recording = {
     ...recording,
     title: patch.title ?? recording.title,
@@ -181,8 +244,13 @@ export async function listNotes(entryId: string): Promise<Note[]> {
 
 /** O corpo da nota mora em `recordings.text`; a nota nao tem id proprio aqui. */
 export async function saveNote(noteId: string, markdown: string): Promise<Note | null> {
+  const antes = await getRecording(noteId);
   await updateRecordingNote(noteId, { text: markdown });
   const recording = await getRecording(noteId);
+  if (recording) {
+    // O ritmo conta a diferenca da edicao, nao o tamanho do texto.
+    await registerWriting(recording.notebookId ?? NOTEBOOK_PADRAO, antes?.text ?? "", markdown);
+  }
   return recording ? toNote(recording) : null;
 }
 
@@ -193,6 +261,9 @@ export async function createNote(
 ): Promise<Note | null> {
   await updateRecordingNote(entryId, { title, text: markdown });
   const recording = await getRecording(entryId);
+  if (recording) {
+    await registerWriting(recording.notebookId ?? NOTEBOOK_PADRAO, "", markdown);
+  }
   return recording ? toNote(recording) : null;
 }
 

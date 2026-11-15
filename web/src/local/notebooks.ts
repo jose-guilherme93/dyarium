@@ -77,7 +77,11 @@ const COLUNAS = [
   "deadline",
 ] as const;
 
-function toNotebook(row: NotebookRow, counts: Map<string, number>): Notebook {
+function toNotebook(
+  row: NotebookRow,
+  counts: Map<string, number>,
+  chapters: Map<string, number>,
+): Notebook {
   return {
     id: row.id,
     name: row.name,
@@ -100,10 +104,23 @@ function toNotebook(row: NotebookRow, counts: Map<string, number>): Notebook {
     has_cover: row.has_cover !== 0,
     cover_updated_at: row.cover_updated_at || null,
     entry_count: counts.get(row.id) ?? 0,
-    chapter_count: 0,
+    chapter_count: chapters.get(row.id) ?? 0,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
+}
+
+async function chaptersByNotebook(): Promise<Map<string, number>> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<{ notebook_id: string | null; total: number }>(
+    `SELECT notebook_id, COUNT(*) AS total FROM recordings
+     WHERE deleted_at IS NULL AND chapter_kind != '' GROUP BY notebook_id`,
+  );
+  const mapa = new Map<string, number>();
+  for (const row of rows) {
+    mapa.set(row.notebook_id ?? DEFAULT_NOTEBOOK_ID, row.total);
+  }
+  return mapa;
 }
 
 async function countsByNotebook(): Promise<Map<string, number>> {
@@ -125,8 +142,8 @@ export async function listLocalNotebooks(): Promise<Notebook[]> {
     `SELECT * FROM notebooks WHERE deleted = 0
      ORDER BY is_default DESC, created_at ASC, id ASC`,
   );
-  const counts = await countsByNotebook();
-  return rows.map((row) => toNotebook(row, counts));
+  const [counts, chapters] = await Promise.all([countsByNotebook(), chaptersByNotebook()]);
+  return rows.map((row) => toNotebook(row, counts, chapters));
 }
 
 export async function getLocalNotebook(id: string): Promise<Notebook | null> {
@@ -136,7 +153,8 @@ export async function getLocalNotebook(id: string): Promise<Notebook | null> {
     [id],
   );
   if (!row) return null;
-  return toNotebook(row, await countsByNotebook());
+  const [counts, chapters] = await Promise.all([countsByNotebook(), chaptersByNotebook()]);
+  return toNotebook(row, counts, chapters);
 }
 
 export async function createLocalNotebook(input: NotebookInput): Promise<Notebook> {
@@ -208,12 +226,34 @@ export async function deleteLocalNotebook(id: string): Promise<void> {
   if (!row) return;
   if (row.is_default !== 0) throw new Error("o caderno padrao nao pode ser apagado");
   const agora = new Date().toISOString();
-  await db.runAsync(
-    "UPDATE recordings SET notebook_id = ?, updated_at = ? WHERE notebook_id = ?",
-    [DEFAULT_NOTEBOOK_ID, agora, id],
+  const kind = await db.getFirstAsync<{ kind: string }>(
+    "SELECT kind FROM notebooks WHERE id = ?",
+    [id],
   );
+  if (kind?.kind === "book") {
+    // Livro apagado leva os capitulos junto: sem eles nao ha o que ler, e a
+    // lixeira os mantem recuperaveis.
+    await db.runAsync(
+      "UPDATE recordings SET deleted_at = ?, updated_at = ? WHERE notebook_id = ? AND deleted_at IS NULL",
+      [agora, agora, id],
+    );
+  } else {
+    await db.runAsync(
+      "UPDATE recordings SET notebook_id = ?, updated_at = ? WHERE notebook_id = ?",
+      [DEFAULT_NOTEBOOK_ID, agora, id],
+    );
+  }
   await db.runAsync("UPDATE notebooks SET deleted = 1, dirty = 1, updated_at = ? WHERE id = ?", [
     agora,
     id,
   ]);
+}
+
+/** Marca o livro com capa e a versao que a tela usa para nao reaproveitar a antiga. */
+export async function markBookCover(id: string, updatedAt: string | null): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    "UPDATE notebooks SET has_cover = ?, cover_updated_at = ?, dirty = 1 WHERE id = ?",
+    [updatedAt ? 1 : 0, updatedAt ?? "", id],
+  );
 }

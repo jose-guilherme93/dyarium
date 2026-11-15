@@ -1,6 +1,6 @@
 // Minimal IndexedDB cache used to serve GET responses while offline.
 const DB_NAME = "dyarium";
-const DB_VERSION = 6;
+const DB_VERSION = 7;
 const STORE = "http";
 /** Cache dos blocos de analise lidos no navegador. */
 export const ANALYSIS_STORE = "analysis";
@@ -11,6 +11,8 @@ export const CONFLICT_BACKUPS_STORE = "conflictBackups";
 export const VAULT_STORE = "vault";
 /** Imagens da nota (byte + metadados), no cofre local. */
 export const ATTACHMENTS_STORE = "attachments";
+/** Capa do livro (byte + metadados), uma por livro, no cofre local. */
+export const COVERS_STORE = "covers";
 /** Preferencias do cofre: provedor, modelo, chave. */
 export const STORE_SETTINGS = "settings";
 
@@ -19,7 +21,7 @@ function open(): Promise<IDBDatabase> {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onupgradeneeded = () => {
       const db = request.result;
-      for (const store of [STORE, ANALYSIS_STORE, DRAFTS_STORE, CONFLICT_BACKUPS_STORE, VAULT_STORE, ATTACHMENTS_STORE, STORE_SETTINGS]) {
+      for (const store of [STORE, ANALYSIS_STORE, DRAFTS_STORE, CONFLICT_BACKUPS_STORE, VAULT_STORE, ATTACHMENTS_STORE, COVERS_STORE, STORE_SETTINGS]) {
         if (!db.objectStoreNames.contains(store)) {
           db.createObjectStore(store);
         }

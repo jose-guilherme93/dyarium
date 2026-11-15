@@ -399,7 +399,8 @@ export function App() {
   // A lista de capitulos vive na sidebar, no lugar das notas. O App e o dono
   // dela para a sidebar e a casa do livro verem a mesma ordem.
   useEffect(() => {
-    if (!token || !activeNotebook || activeNotebook.kind !== "book") {
+    // Sem token o livro tambem tem capitulos: eles moram no cofre do navegador.
+    if (!activeNotebook || activeNotebook.kind !== "book") {
       setBookChapters([]);
       setBookChaptersLoading(false);
       return;
