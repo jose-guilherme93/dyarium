@@ -390,6 +390,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const url = `/api/v1${path}`;
   if (isGet) {
     const text = await getText(url, headers);
+    // Site estatico devolve o index.html em qualquer rota; sem esta guarda o
+    // JSON.parse estoura com "unexpected character".
+    if (text && /^\s*</.test(text)) {
+      throw new ApiError("Sem servidor para esta acao.", 503, "no_server");
+    }
     return (text ? JSON.parse(text) : {}) as T;
   }
   return (await mutate<T>(path, init)).data;
@@ -968,7 +973,34 @@ const localApi: Partial<typeof remoteApi> = {
   getAnalysisCached: async () => undefined,
   listAttachments: async () => ({ attachments: [] }),
   listAttachmentsCached: async () => ({ attachments: [] }),
+  // O que existe so com servidor responde vazio: a tela mostra estado vazio,
+  // nao um erro de rede.
+  getGraph: async () => ({
+    center: { id: "user", kind: "user" as const, label: "", mentions: 0, notes: 0 },
+    nodes: [],
+    edges: [],
+    total_nodes: 0,
+    total_edges: 0,
+    truncated: false,
+  }),
+  getMood: async () => ({ mood: [] }),
+  listModels: async () => ({ models: [] }),
+  listAnalyzeModels: async () => ({ models: [] }),
+  listActivities: async () => ({ activities: [] }),
+  getLocalAnalysis: async (runtime = "ollama") => ({
+    runtime,
+    available: false,
+    base_url: "",
+    models: [],
+    model: "",
+  }),
+  putSettings: async () => ({ status: "ok" }),
 };
+
+/** Metodo que so existe com instancia conectada. */
+function semServidor(): Promise<never> {
+  return Promise.reject(new ApiError("Disponivel apenas com uma instancia.", 503, "no_server"));
+}
 
 /**
  * O roteamento acontece no acesso, nao no boot: entrar com token no meio da
@@ -979,6 +1011,8 @@ export const api: typeof remoteApi = new Proxy(remoteApi, {
     if (isLocalMode() && typeof prop === "string") {
       const localFn = localApi[prop as keyof typeof localApi];
       if (localFn) return localFn;
+      // Sem servidor, o resto falha com mensagem clara em vez de buscar HTML.
+      return semServidor;
     }
     return Reflect.get(target, prop, receiver);
   },
