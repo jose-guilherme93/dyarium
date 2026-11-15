@@ -6,6 +6,8 @@ import * as localBooks from "./local/notebooks";
 import * as localChapters from "./local/chapters";
 import * as localCovers from "./local/covers";
 import * as localLinks from "./local/links";
+import * as localAudio from "./local/audio";
+import * as localTranscribe from "./local/transcribe";
 import { shrinkImage } from "./lib/image";
 import { setOffline } from "./lib/offline";
 import type {
@@ -927,7 +929,9 @@ const localApi: Partial<typeof remoteApi> = {
   getEntry: async (id) => {
     const entry = await local.getEntry(id);
     if (!entry) throw new ApiError("Nota nao encontrada.", 404, "not_found");
-    return entry;
+    // Os audios moram no IndexedDB; a ficha da nota os recebe aqui, como o
+    // servidor faz na resposta de detalhe.
+    return { ...entry, audios: await localAudio.entryAudios(id) };
   },
   getEntryCached: async (id) => (await local.getEntry(id)) ?? undefined,
   patchEntry: async (id, patch) => {
@@ -1001,6 +1005,18 @@ const localApi: Partial<typeof remoteApi> = {
   },
   listModels: async () => ({ models: localSettings.localWhisperModels() }),
   listAnalyzeModels: async () => ({ models: await localSettings.localAnalyzeModels() }),
+  getTranscript: async (id) => {
+    const transcript = await localTranscribe.transcriptOf(id);
+    if (!transcript) throw new ApiError("Nota sem transcricao.", 404, "not_found");
+    return transcript;
+  },
+  listSegments: async (id) => ({ segments: await localTranscribe.segmentsOf(id) }),
+  // No cofre a transcricao roda aqui mesmo, entao a promessa so resolve no fim:
+  // a tela segura o botao ate o texto existir.
+  retranscribe: async (id) => {
+    await localTranscribe.transcribeEntryLocally(id);
+    return { status: "ok" };
+  },
   getAnalysis: async () => {
     throw new ApiError("Sem analise ainda.", 404, "not_found");
   },
@@ -1122,6 +1138,11 @@ export async function uploadFile(
   onProgress?: (sent: number, total: number) => void,
   entryId?: string,
 ): Promise<{ entry_id: string; attachment_id: string }> {
+  // Sem servidor, o audio nao viaja: ele vira anexo do cofre do navegador e a
+  // nota nasce aqui mesmo.
+  if (isLocalMode()) {
+    return localAudio.uploadLocalAudio(file, { onProgress, entryId });
+  }
   const buffer = await file.arrayBuffer();
   const sha256 = await sha256Hex(buffer);
   const start = await request<{ id: string }>("/uploads", {

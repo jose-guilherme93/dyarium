@@ -72,6 +72,24 @@ export class EngineClient {
     });
   }
 
+  /**
+   * Guarda o plano no worker sem baixar nada e sem esperar resposta.
+   *
+   * Quem chama escolhe o motor depois: a transcricao local carrega so o
+   * Whisper, sem pagar o download do GGUF da analise.
+   */
+  configure(plan: BrowserPlan, allowGpu: boolean, threads = 0): void {
+    const worker = this.ensure();
+    worker.postMessage({
+      type: "configure",
+      id: ++this.seq,
+      plan,
+      allowGpu,
+      threads,
+      contextSize: plan.contextSize,
+    });
+  }
+
   /** Baixa, se preciso, e carrega os dois modelos. */
   load(plan: BrowserPlan, allowGpu: boolean, threads = 0): Promise<{ ready: boolean }> {
     return this.send({ type: "load", plan, allowGpu, threads, contextSize: plan.contextSize });

@@ -94,7 +94,9 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(funct
     <div className="player">
       <audio
         ref={ref}
-        src={src}
+        // Sem URL ainda (o blob local chega depois), o elemento fica sem src em
+        // vez de src="" — que faria o navegador rebaixar a pagina inteira.
+        src={src || undefined}
         preload="metadata"
         onPlay={() => setPlayingState(true)}
         onPause={() => setPlayingState(false)}

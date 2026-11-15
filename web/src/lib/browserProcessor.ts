@@ -15,6 +15,7 @@ import {
   planDownloadBytes,
   type BrowserPlan,
 } from "./browserModels";
+import { decodeAudio, toMono16k } from "./audioDecode";
 import { EngineClient } from "./engineClient";
 import type { DeviceIdentity } from "./deviceIdentity";
 import {
@@ -137,28 +138,6 @@ function workerId(): string {
   } catch {
     return `tab-${randomToken()}`;
   }
-}
-
-async function decodeAudio(data: ArrayBuffer): Promise<AudioBuffer> {
-  const context = new AudioContext();
-  try {
-    return await context.decodeAudioData(data.slice(0));
-  } finally {
-    await context.close();
-  }
-}
-
-/** Audio decodificado para mono 16 kHz, o formato que o Whisper espera. */
-async function toMono16k(buffer: AudioBuffer): Promise<Float32Array> {
-  const seconds = buffer.duration * 16000;
-  const length = Math.max(1, Math.ceil(seconds));
-  const offline = new OfflineAudioContext(1, length, 16000);
-  const source = offline.createBufferSource();
-  source.buffer = buffer;
-  source.connect(offline.destination);
-  source.start(0);
-  const rendered = await offline.startRendering();
-  return rendered.getChannelData(0).slice();
 }
 
 function genericFailure(error: unknown): string {

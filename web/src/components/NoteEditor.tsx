@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PartialBlock } from "@blocknote/core";
-import { api, isConflict } from "../api";
+import { api, isConflict, isLocalMode } from "../api";
 import { AudioTrack } from "./AudioTrack";
 import { NotesEditor, type NotesEditorHandle } from "../editor/NotesEditor";
 import { markdownToPlain, noteBlocksToMarkdown, normalizeLegacyAttachmentImages, audioAttachmentIds } from "../editor/blocknoteMarkdown";
@@ -798,12 +798,17 @@ export function NoteEditor({
   const retranscribe = async () => {
     setBusy("retranscribe");
     setError("");
+    const local = isLocalMode();
     try {
+      if (local) notify("Transcrevendo no navegador...", "info");
       await api.retranscribe(entryId);
-      notify("Transcrição enfileirada", "info");
+      // No cofre a transcricao termina antes da resposta; recarrega a ficha para
+      // o texto aparecer sem esperar o proximo evento.
+      if (local) onChanged();
+      notify(local ? "Transcrição pronta" : "Transcrição enfileirada", "info");
     } catch (err) {
       setError(err instanceof Error ? err.message : "falha");
-      notify("Não foi possível retranscrever", "error");
+      notify(local ? "Não foi possível transcrever" : "Não foi possível retranscrever", "error");
     } finally {
       // O trabalho continua no servidor (ou neste PC); quem mostra o andamento
       // e o status da nota. Sem soltar o botao, o painel ficava girando.
@@ -1112,7 +1117,11 @@ export function NoteEditor({
                           void retranscribe();
                         }}
                       >
-                        <span>Transcrever novamente</span>
+                        <span>
+                          {entry?.audios?.some((audio) => audio.transcript)
+                            ? "Transcrever novamente"
+                            : "Transcrever"}
+                        </span>
                         {busy === "retranscribe" ? <Spinner /> : <MicIcon size={14} />}
                       </button>
                     )}

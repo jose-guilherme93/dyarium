@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
-import { api, attachmentUrl } from "../api";
+import { api } from "../api";
+import { useAttachmentUrl } from "../lib/useAttachment";
 import { formatDuration } from "../lib/format";
 import { rememberAudioTime } from "../lib/noteViewState";
 import { useEscape } from "../lib/useEscape";
@@ -61,6 +62,7 @@ export function AudioTrack({
   initialTime = 0,
   onDelete,
 }: AudioTrackProps) {
+  const src = useAttachmentUrl(audio.id);
   const localRef = useRef<AudioPlayerHandle | null>(null);
   const ref = playerRef ?? localRef;
   const [currentTime, setCurrentTime] = useState(0);
@@ -271,7 +273,7 @@ export function AudioTrack({
       <div className="audio-player-wrap" ref={playerWrapRef}>
         <AudioPlayer
           ref={ref}
-          src={attachmentUrl(audio.id)}
+          src={src}
           initialTime={initialTime}
           onDelete={onDelete}
           onTime={(seconds) => {

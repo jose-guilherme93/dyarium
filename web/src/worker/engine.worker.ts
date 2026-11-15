@@ -32,6 +32,16 @@ interface PrepareRequest {
   threads?: number;
 }
 
+/** Guarda o plano sem baixar modelo; o motor certo carrega no uso. */
+interface ConfigureRequest {
+  id: number;
+  type: "configure";
+  plan: BrowserPlan;
+  allowGpu: boolean;
+  contextSize?: number;
+  threads?: number;
+}
+
 interface TranscribeRequest {
   id: number;
   type: "transcribe";
@@ -61,6 +71,7 @@ interface DisposeRequest {
 type WorkerRequest =
   | LoadRequest
   | PrepareRequest
+  | ConfigureRequest
   | TranscribeRequest
   | AnalyzeRequest
   | StopRequest
@@ -103,6 +114,13 @@ async function handle(request: WorkerRequest): Promise<void> {
   }
   const browser = ensureEngine();
   switch (request.type) {
+    case "configure": {
+      // So guarda o plano: nenhum download aqui. A transcricao carrega o
+      // Whisper e a analise carrega o GGUF quando forem usados.
+      browser.configure(request.plan, request.allowGpu, request.threads, request.contextSize);
+      post({ id: request.id, type: "result", result: null });
+      return;
+    }
     case "load":
     case "prepare": {
       // Ativar o modo local ja baixa os dois modelos, um de cada vez. A nota
