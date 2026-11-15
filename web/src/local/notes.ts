@@ -18,15 +18,7 @@ import {
 import type { Recording } from "../../../mobile/src/core/types";
 
 import type { EntryFilters } from "../api";
-import type {
-  AuthorRole,
-  Entry,
-  Note,
-  Notebook,
-  Settings,
-  SummaryDetail,
-  Tag,
-} from "../types";
+import type { AuthorRole, Entry, Note, Notebook, SummaryDetail, Tag } from "../types";
 
 const NOTEBOOK_PADRAO = DEFAULT_NOTEBOOK_ID;
 
@@ -260,25 +252,3 @@ export async function listNotebooks(): Promise<Notebook[]> {
   return [notebook(NOTEBOOK_PADRAO, "Notas ao acaso"), ...[...vistos].map((id) => notebook(id, id))];
 }
 
-export function settings(): Settings {
-  return {
-    owner_name: "",
-    all_notes_mine: true,
-    trim_silence: false,
-    max_whisper_rss_mb: 0,
-    whisper_model: "",
-    whisper_language: "",
-    transcribe_provider: "",
-    deepgram_model: "",
-    deepgram_api_key_set: false,
-    analyze_enabled: false,
-    analyze_provider: "",
-    analyze_local_runtime: "",
-    analyze_base_url: "",
-    analyze_model: "",
-    analyze_api_key_set: false,
-    analysis_themes: "",
-    review_enabled: false,
-    literal_transcript: false,
-  };
-}

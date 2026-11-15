@@ -1,6 +1,7 @@
 import { cacheClear, cacheGet, cacheSet } from "./lib/idb";
 import * as local from "./local/notes";
 import * as localFiles from "./local/attachments";
+import * as localSettings from "./local/settings";
 import { shrinkImage } from "./lib/image";
 import { setOffline } from "./lib/offline";
 import type {
@@ -967,7 +968,13 @@ const localApi: Partial<typeof remoteApi> = {
     return { status: "ok" };
   },
   listNotebooks: async () => ({ notebooks: await local.listNotebooks() }),
-  getSettings: async () => local.settings(),
+  getSettings: () => localSettings.loadLocalSettings(),
+  putSettings: async (patch) => {
+    await localSettings.saveLocalSettings(patch);
+    return { status: "ok" };
+  },
+  listModels: async () => ({ models: localSettings.localWhisperModels() }),
+  listAnalyzeModels: async () => ({ models: await localSettings.localAnalyzeModels() }),
   getAnalysis: async () => {
     throw new ApiError("Sem analise ainda.", 404, "not_found");
   },
@@ -988,8 +995,6 @@ const localApi: Partial<typeof remoteApi> = {
     truncated: false,
   }),
   getMood: async () => ({ mood: [] }),
-  listModels: async () => ({ models: [] }),
-  listAnalyzeModels: async () => ({ models: [] }),
   listActivities: async () => ({ activities: [] }),
   getLocalAnalysis: async (runtime = "ollama") => ({
     runtime,
@@ -998,7 +1003,6 @@ const localApi: Partial<typeof remoteApi> = {
     models: [],
     model: "",
   }),
-  putSettings: async () => ({ status: "ok" }),
 };
 
 /** Metodo que so existe com instancia conectada. */
