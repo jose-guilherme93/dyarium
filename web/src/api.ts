@@ -8,6 +8,7 @@ import * as localCovers from "./local/covers";
 import * as localLinks from "./local/links";
 import * as localAudio from "./local/audio";
 import * as localTranscribe from "./local/transcribe";
+import * as localProvider from "./local/providerTranscribe";
 import { shrinkImage } from "./lib/image";
 import { setOffline } from "./lib/offline";
 import type {
@@ -1012,9 +1013,15 @@ const localApi: Partial<typeof remoteApi> = {
   },
   listSegments: async (id) => ({ segments: await localTranscribe.segmentsOf(id) }),
   // No cofre a transcricao roda aqui mesmo, entao a promessa so resolve no fim:
-  // a tela segura o botao ate o texto existir.
+  // a tela segura o botao ate o texto existir. O motor do navegador so existe
+  // quando o runtime do ONNX acompanha o build; sem ele, o texto vem de um
+  // provedor com a chave salva em Configuracoes.
   retranscribe: async (id) => {
-    await localTranscribe.transcribeEntryLocally(id);
+    if (await hasBrowserEngine()) {
+      await localTranscribe.transcribeEntryLocally(id);
+    } else {
+      await localProvider.transcribeWithProvider(id);
+    }
     return { status: "ok" };
   },
   getAnalysis: async () => {
@@ -1046,6 +1053,23 @@ const localApi: Partial<typeof remoteApi> = {
     model: "",
   }),
 };
+
+/**
+ * O build leva o runtime do ONNX? O arquivo e a prova: onde ele nao existe (o
+ * site hospedado), transcrever no navegador nao teria como carregar.
+ */
+let browserEngine: boolean | null = null;
+
+async function hasBrowserEngine(): Promise<boolean> {
+  if (browserEngine !== null) return browserEngine;
+  try {
+    const res = await fetch("/ort/ort-wasm-simd-threaded.wasm", { method: "HEAD" });
+    browserEngine = res.ok;
+  } catch {
+    browserEngine = false;
+  }
+  return browserEngine;
+}
 
 /** Metodo que so existe com instancia conectada. */
 function semServidor(): Promise<never> {

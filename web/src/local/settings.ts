@@ -58,6 +58,30 @@ export async function loadLocalSettings(): Promise<Settings> {
   return publicSettings((await storeGet<Stored>(STORE_SETTINGS, CHAVE)) ?? {});
 }
 
+/**
+ * Configuracao do provedor de transcricao, com a chave.
+ *
+ * A leitura fica separada de `loadLocalSettings` de proposito: a chave nao volta
+ * para a interface (`deepgram_api_key_set` basta para a tela), so o caminho que
+ * chama a API enxerga este objeto. Nao expor em nenhum outro lugar.
+ */
+export interface TranscribeConfig {
+  provider: string;
+  apiKey: string;
+  model: string;
+  language: string;
+}
+
+export async function loadTranscribeConfig(): Promise<TranscribeConfig> {
+  const stored = (await storeGet<Stored>(STORE_SETTINGS, CHAVE)) ?? {};
+  return {
+    provider: stored.transcribe_provider || "whisper",
+    apiKey: stored.deepgram_api_key || "",
+    model: stored.deepgram_model || "",
+    language: stored.whisper_language || "pt",
+  };
+}
+
 /** Grava o patch; chave vazia significa "manter a que ja existe". */
 export async function saveLocalSettings(patch: Record<string, unknown>): Promise<Settings> {
   const stored = (await storeGet<Stored>(STORE_SETTINGS, CHAVE)) ?? {};

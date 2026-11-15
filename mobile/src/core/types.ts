@@ -184,8 +184,12 @@ export type SummaryDetail = 'concise' | 'full';
 
 export type TranscriptStatus = 'pending' | 'ready' | 'failed';
 
-/** Origem da transcricao: feita no aparelho ou recebida do servidor. */
-export type TranscriptOrigin = 'local' | 'server';
+/**
+ * Origem da transcricao: feita no aparelho (`local`), recebida do servidor
+ * (`server`) ou pedida a um provedor de transcricao no navegador (`provider`,
+ * o caminho do build hospedado, onde o motor local nao cabe).
+ */
+export type TranscriptOrigin = 'local' | 'server' | 'provider';
 
 /** Trecho da transcricao com a marcacao de tempo no audio original. */
 export interface TranscriptSegment {

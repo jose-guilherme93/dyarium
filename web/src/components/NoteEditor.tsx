@@ -800,7 +800,7 @@ export function NoteEditor({
     setError("");
     const local = isLocalMode();
     try {
-      if (local) notify("Transcrevendo no navegador...", "info");
+      if (local) notify("Transcrevendo...", "info");
       await api.retranscribe(entryId);
       // No cofre a transcricao termina antes da resposta; recarrega a ficha para
       // o texto aparecer sem esperar o proximo evento.
@@ -808,7 +808,12 @@ export function NoteEditor({
       notify(local ? "Transcrição pronta" : "Transcrição enfileirada", "info");
     } catch (err) {
       setError(err instanceof Error ? err.message : "falha");
-      notify(local ? "Não foi possível transcrever" : "Não foi possível retranscrever", "error");
+      // A mensagem do cofre ja diz o que fazer (motor indisponivel, chave
+      // faltando); o toast generico escondia essa acao.
+      notify(
+        local && err instanceof Error ? err.message : local ? "Não foi possível transcrever" : "Não foi possível retranscrever",
+        "error",
+      );
     } finally {
       // O trabalho continua no servidor (ou neste PC); quem mostra o andamento
       // e o status da nota. Sem soltar o botao, o painel ficava girando.
