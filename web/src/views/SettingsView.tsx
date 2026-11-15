@@ -11,6 +11,7 @@ import {
 } from "../local/vault";
 import { applySnapshot, buildSnapshot, openSnapshot, sealSnapshot, vaultIdFromCode } from "../local/backup";
 import { DriveClient } from "../local/drive";
+import { downloadBytes, packVault, unpackVault } from "../local/bundle";
 import {
   pickFolder,
   readVaultFromFolder,
@@ -120,6 +121,7 @@ export function SettingsView({
   const [backupBusy, setBackupBusy] = useState(false);
   const [backupStatus, setBackupStatus] = useState("");
   const [folder, setFolder] = useState<FolderLike | null>(null);
+  const backupFileRef = useRef<HTMLInputElement | null>(null);
   const [fetchStatus, setFetchStatus] = useState<FetchStatus>("idle");
   const [fetchError, setFetchError] = useState("");
   const [deepgramBusy, setDeepgramBusy] = useState(false);
@@ -1194,6 +1196,45 @@ export function SettingsView({
     }
   };
 
+
+  /** Download do pacote: o caminho que funciona em Firefox e Safari. */
+  const downloadBackup = async () => {
+    setBackupBusy(true);
+    setBackupStatus("");
+    try {
+      const codigo = await codigoDoCofre();
+      const vaultId = await vaultIdFromCode(codigo);
+      const chave = await vaultKeyFromCode(codigo);
+      const retrato = await buildSnapshot(vaultId);
+      downloadBytes(`dyarium-${vaultId}.zip`, packVault(codigo, await sealSnapshot(retrato, chave)));
+      setBackupStatus(`${retrato.notes.length} notas · arquivo baixado`);
+    } catch (error) {
+      setBackupStatus(describe(error));
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
+  const restoreFromFile = async (file: File) => {
+    setBackupBusy(true);
+    setBackupStatus("");
+    try {
+      const { code, sealed } = await unpackVault(new Uint8Array(await file.arrayBuffer()));
+      setVaultCode(await adoptVaultCode(code));
+      setVaultShown(false);
+      const chave = await vaultKeyFromCode(code);
+      const retrato = await openSnapshot(sealed, chave);
+      const resumo = await applySnapshot(retrato);
+      setBackupStatus(
+        `${resumo.created} novas · ${resumo.updated} atualizadas · ${resumo.skipped} mantidas`,
+      );
+    } catch (error) {
+      setBackupStatus(describe(error));
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
   /** Token do Drive: reaproveita o da sessao enquanto vale, senao pede de novo. */
   const driveAccess = async (): Promise<DriveToken> => {
     if (tokenIsFresh(drive)) return drive;
@@ -1337,7 +1378,43 @@ export function SettingsView({
             <span className="field-hint">
               {supportsFolder()
                 ? "Grava key.txt e backup.enc na pasta escolhida. A mesma pasta serve no Drive, num pendrive ou em outro computador."
-                : "Este navegador não abre pasta. Use Chrome ou Edge, ou o app em Flatpak."}
+                : "Este navegador não abre pasta. Use o backup em arquivo logo abaixo."}
+            </span>
+          </div>
+          <div className="field">
+            <span className="field-label">Backup em arquivo</span>
+            <div className="field-control">
+              <button
+                type="button"
+                className="button"
+                onClick={() => void downloadBackup()}
+                disabled={backupBusy}
+              >
+                Baixar backup
+              </button>
+              <button
+                type="button"
+                className="button button--ghost"
+                onClick={() => backupFileRef.current?.click()}
+                disabled={backupBusy}
+              >
+                Restaurar de arquivo
+              </button>
+              <input
+                ref={backupFileRef}
+                type="file"
+                accept=".zip,application/zip"
+                hidden
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = "";
+                  if (file) void restoreFromFile(file);
+                }}
+              />
+            </div>
+            <span className="field-hint">
+              Um .zip com key.txt e backup.enc. Funciona em qualquer navegador — é o caminho no
+              Firefox e no Safari, que não abrem pasta.
             </span>
           </div>
           <div className="field">
