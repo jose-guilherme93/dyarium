@@ -8,7 +8,14 @@
  * abertura) e ainda gravava o token da API no conteudo.
  */
 
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { BlockNoteSchema, defaultBlockSpecs, defaultInlineContentSpecs } from "@blocknote/core";
 import {
@@ -17,6 +24,10 @@ import {
   type ReactCustomBlockRenderProps,
 } from "@blocknote/react";
 import { attachmentUrl } from "../api";
+import {
+  attachmentUrlsVersion,
+  subscribeAttachmentUrls,
+} from "../local/attachments";
 import { AudioTrack } from "../components/AudioTrack";
 import { MoreIcon } from "../components/icons";
 import { useEscape } from "../lib/useEscape";
@@ -185,6 +196,9 @@ function aspectValue(value: string): number | undefined {
  * continua sendo o mesmo `{w=N}` que o app le e escreve.
  */
 function ImageBlockView({ block, editor }: ImageRenderProps) {
+  // No cofre local a URL nasce de um blob lido do IndexedDB. A assinatura
+  // garante que a imagem aparece quando o byte chega, sem recarregar a nota.
+  useSyncExternalStore(subscribeAttachmentUrls, attachmentUrlsVersion, attachmentUrlsVersion);
   const { imageDefault } = useContext(MediaContext);
   // A excecao explicita da imagem vence o padrao do editor; sem marcador, o
   // livro mostra preto e branco e a nota comum mostra cor.
@@ -292,7 +306,7 @@ function ImageBlockView({ block, editor }: ImageRenderProps) {
           <img
             className={loaded ? "doc-image doc-image--loaded" : "doc-image"}
             style={grayscale ? { filter: "grayscale(1)" } : undefined}
-            src={attachmentUrl(attachmentId)}
+            src={attachmentUrl(attachmentId) || undefined}
             alt={block.props.caption || "Imagem da nota"}
             loading="lazy"
             onLoad={(event) => {

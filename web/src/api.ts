@@ -1,5 +1,6 @@
 import { cacheClear, cacheGet, cacheSet } from "./lib/idb";
 import * as local from "./local/notes";
+import * as localFiles from "./local/attachments";
 import { shrinkImage } from "./lib/image";
 import { setOffline } from "./lib/offline";
 import type {
@@ -971,8 +972,11 @@ const localApi: Partial<typeof remoteApi> = {
     throw new ApiError("Sem analise ainda.", 404, "not_found");
   },
   getAnalysisCached: async () => undefined,
-  listAttachments: async () => ({ attachments: [] }),
-  listAttachmentsCached: async () => ({ attachments: [] }),
+  listAttachments: async (entryId) => ({ attachments: await localFiles.listLocalAttachments(entryId) }),
+  listAttachmentsCached: async (entryId) => ({
+    attachments: await localFiles.listLocalAttachments(entryId),
+  }),
+  deleteAttachment: (id) => localFiles.deleteLocalAttachment(id),
   // O que existe so com servidor responde vazio: a tela mostra estado vazio,
   // nao um erro de rede.
   getGraph: async () => ({
@@ -1025,6 +1029,7 @@ export function audioUrl(entryId: string): string {
 }
 
 export function attachmentUrl(id: string): string {
+  if (isLocalMode()) return localFiles.localAttachmentUrl(id);
   return `/api/v1/attachments/${id}?token=${encodeURIComponent(getToken())}`;
 }
 
@@ -1050,6 +1055,11 @@ export function blobToDataURL(blob: Blob): Promise<string> {
 // are what every note open has to decrypt.
 export async function uploadAttachment(entryId: string, file: File): Promise<Attachment> {
   const upload = await shrinkImage(file);
+  if (isLocalMode()) {
+    // Sem servidor, o byte fica no IndexedDB; o markdown guarda o mesmo
+    // `attachment:<id>` que o ambiente servidor usaria.
+    return localFiles.saveLocalAttachment(entryId, upload);
+  }
   const res = await fetch(`/api/v1/entries/${entryId}/attachments`, {
     method: "POST",
     headers: {
