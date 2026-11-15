@@ -93,6 +93,13 @@ interface Row {
   summary_detail: string | null;
   summary_detail_dirty: number | null;
   icon: string | null;
+  chapter_kind: string | null;
+  chapter_position: number | null;
+  chapter_status: string | null;
+  chapter_goal_words: number | null;
+  chapter_synopsis: string | null;
+  chapter_beats: string | null;
+  chapter_notes: string | null;
 }
 
 /**
@@ -401,6 +408,13 @@ function rowToRecording(row: Row): Recording {
     summaryDetail: (row.summary_detail === 'full' ? 'full' : 'concise') as Recording['summaryDetail'],
     summaryDetailDirty: (row.summary_detail_dirty ?? 0) === 1 ? true : undefined,
     icon: row.icon ?? '',
+    chapterKind: row.chapter_kind ?? '',
+    chapterPosition: row.chapter_position ?? 0,
+    chapterStatus: row.chapter_status ?? '',
+    chapterGoalWords: row.chapter_goal_words ?? 0,
+    chapterSynopsis: row.chapter_synopsis ?? '',
+    chapterBeats: row.chapter_beats ?? '',
+    chapterNotes: row.chapter_notes ?? '',
     deletedAt: row.deleted_at ?? undefined,
     notebookId: row.notebook_id ?? DEFAULT_NOTEBOOK_ID,
     tags: parseTags(row.tags),
@@ -749,6 +763,217 @@ export async function deleteRecordingRow(id: string): Promise<void> {
       }
     }),
   );
+}
+
+// --- Modo escritor: capitulos, ritmo e links da nota -------------------------
+
+/** Campos de planejamento do capitulo. So as chaves presentes sao gravadas. */
+export interface ChapterFields {
+  chapterKind?: string;
+  chapterPosition?: number;
+  chapterStatus?: string;
+  chapterGoalWords?: number;
+  chapterSynopsis?: string;
+  chapterBeats?: string;
+  chapterNotes?: string;
+}
+
+/** Campo do `ChapterFields` e a coluna correspondente em `recordings`. */
+const CHAPTER_COLUMNS: [keyof ChapterFields, string][] = [
+  ['chapterKind', 'chapter_kind'],
+  ['chapterPosition', 'chapter_position'],
+  ['chapterStatus', 'chapter_status'],
+  ['chapterGoalWords', 'chapter_goal_words'],
+  ['chapterSynopsis', 'chapter_synopsis'],
+  ['chapterBeats', 'chapter_beats'],
+  ['chapterNotes', 'chapter_notes'],
+];
+
+/**
+ * Atualiza so o planejamento do capitulo (um campo por vez, como o painel
+ * manda), sem tocar no texto nem nos JSONs pesados da nota.
+ */
+export async function updateChapterFields(id: string, fields: ChapterFields): Promise<void> {
+  const sets: string[] = [];
+  const params: unknown[] = [];
+  for (const [campo, coluna] of CHAPTER_COLUMNS) {
+    const valor = fields[campo];
+    if (valor === undefined) continue;
+    sets.push(`${coluna} = ?`);
+    params.push(valor);
+  }
+  if (sets.length === 0) return;
+  invalidateRecordingsCache();
+  const db = await getDb();
+  await db.runAsync(`UPDATE recordings SET ${sets.join(', ')} WHERE id = ?`, [...params, id]);
+}
+
+/**
+ * Proxima posicao livre do livro: fim da lista (passo de 1024), contando so as
+ * notas vivas. Entrar no meio depende do arrastar, que reescreve a lista toda.
+ */
+export async function nextChapterPosition(notebookId: string): Promise<number> {
+  if (!notebookId) return 1024;
+  const db = await getDb();
+  const row = await db.getFirstAsync<{ max_position: number | null }>(
+    `SELECT MAX(chapter_position) AS max_position
+       FROM recordings
+      WHERE notebook_id = ? AND deleted_at IS NULL`,
+    [notebookId],
+  );
+  const ultima = Number(row?.max_position ?? 0);
+  return (Number.isFinite(ultima) && ultima > 0 ? ultima : 0) + 1024;
+}
+
+/**
+ * Grava a ordem inteira do livro de uma vez, numa transacao: metade reordenada
+ * nunca aparece. `updated_at` sobe porque a lista mudou no aparelho.
+ */
+export async function replaceChapterOrder(
+  notebookId: string,
+  chapters: Array<{ id: string; chapterKind: string; chapterStatus: string; position: number }>,
+): Promise<void> {
+  if (!notebookId || chapters.length === 0) return;
+  invalidateRecordingsCache();
+  const db = await getDb();
+  const stamp = new Date().toISOString();
+  await db.withTransactionAsync(async () => {
+    for (const chapter of chapters) {
+      await db.runAsync(
+        `UPDATE recordings
+            SET chapter_kind = ?,
+                chapter_status = ?,
+                chapter_position = ?,
+                updated_at = ?
+          WHERE id = ? AND notebook_id = ?`,
+        [
+          chapter.chapterKind,
+          chapter.chapterStatus,
+          chapter.position,
+          stamp,
+          chapter.id,
+          notebookId,
+        ],
+      );
+    }
+  });
+}
+
+/**
+ * Soma (ou desconta) as palavras liquidas de um dia no ritmo do livro. Apagar
+ * tambem conta: o numero mostra o que a sessao escreveu, nao o tamanho do texto.
+ */
+export async function addWritingWords(
+  notebookId: string,
+  day: string,
+  delta: number,
+): Promise<void> {
+  if (!notebookId || !day || !Number.isFinite(delta) || delta === 0) return;
+  const db = await getDb();
+  await db.runAsync(
+    `INSERT INTO writing_days (notebook_id, day, words) VALUES (?, ?, ?)
+     ON CONFLICT(notebook_id, day) DO UPDATE SET words = words + excluded.words`,
+    [notebookId, day, Math.trunc(delta)],
+  );
+}
+
+/**
+ * Chave de dia no relogio do escritor (YYYY-MM-DD). O servidor tambem conta no
+ * dia local: escrever as 22h em UTC-3 e "hoje", nao amanha.
+ */
+function dayKey(date: Date): string {
+  const mes = String(date.getMonth() + 1).padStart(2, '0');
+  const dia = String(date.getDate()).padStart(2, '0');
+  return `${date.getFullYear()}-${mes}-${dia}`;
+}
+
+/**
+ * Ritmo do livro nos ultimos `days` dias (1..90), terminando hoje.
+ * Dias sem escrita vem com zero, do mais antigo ao mais novo, para a faixa nao
+ * encolher; palavra negativa (dia so com corte) aparece como zero.
+ */
+export async function listWritingDays(
+  notebookId: string,
+  days: number,
+  today: Date = new Date(),
+): Promise<Array<{ day: string; words: number }>> {
+  const span = Math.min(90, Math.max(1, Math.trunc(Number.isFinite(days) ? days : 1)));
+  const fim = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const chaves: string[] = [];
+  for (let i = span - 1; i >= 0; i -= 1) {
+    // setDate anda no calendario local, sem erro de fuso nem de horario de verao.
+    const dia = new Date(fim);
+    dia.setDate(fim.getDate() - i);
+    chaves.push(dayKey(dia));
+  }
+  if (!notebookId) return chaves.map((day) => ({ day, words: 0 }));
+  const db = await getDb();
+  const rows = await db.getAllAsync<{ day: string; words: number }>(
+    `SELECT day, words FROM writing_days
+      WHERE notebook_id = ? AND day >= ? AND day <= ?`,
+    [notebookId, chaves[0], chaves[chaves.length - 1]],
+  );
+  const porDia = new Map<string, number>();
+  for (const row of rows) {
+    const palavras = Number(row.words);
+    porDia.set(row.day, Number.isFinite(palavras) ? palavras : 0);
+  }
+  return chaves.map((day) => ({ day, words: Math.max(0, porDia.get(day) ?? 0) }));
+}
+
+/** Link de uma nota: referencia interna (to_entry_id) ou URL externa. */
+export interface EntryLinkRow {
+  id: string;
+  from_entry_id: string;
+  to_entry_id: string;
+  url: string;
+  label: string;
+  title: string;
+  created_at: string;
+}
+
+/** Links que saem da nota, na ordem em que foram criados. */
+export async function listEntryLinks(entryId: string): Promise<EntryLinkRow[]> {
+  if (!entryId) return [];
+  const db = await getDbForUI();
+  return db.getAllAsync<EntryLinkRow>(
+    `SELECT id, from_entry_id, to_entry_id, url, label, title, created_at
+       FROM entry_links
+      WHERE from_entry_id = ?
+      ORDER BY created_at ASC, id ASC`,
+    [entryId],
+  );
+}
+
+/** Grava o link; repetir o mesmo id atualiza em vez de estourar. */
+export async function insertEntryLink(link: EntryLinkRow): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `INSERT INTO entry_links (id, from_entry_id, to_entry_id, url, label, title, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       from_entry_id = excluded.from_entry_id,
+       to_entry_id = excluded.to_entry_id,
+       url = excluded.url,
+       label = excluded.label,
+       title = excluded.title,
+       created_at = excluded.created_at`,
+    [
+      link.id,
+      link.from_entry_id,
+      link.to_entry_id,
+      link.url,
+      link.label,
+      link.title,
+      link.created_at,
+    ],
+  );
+}
+
+export async function deleteEntryLink(id: string): Promise<void> {
+  if (!id) return;
+  const db = await getDb();
+  await db.runAsync('DELETE FROM entry_links WHERE id = ?', [id]);
 }
 
 export interface StoredMetricsSnapshot {

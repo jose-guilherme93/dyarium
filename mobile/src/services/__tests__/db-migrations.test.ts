@@ -96,4 +96,89 @@ describe('migracoes locais', () => {
     expect(version.user_version).toBe(LATEST_SCHEMA_VERSION);
     db.close();
   });
+
+  it('banco na v42 ganha as colunas do modo escritor', async () => {
+    const db = new DatabaseSync(':memory:');
+    db.exec(`
+      CREATE TABLE recordings (
+        id TEXT PRIMARY KEY NOT NULL,
+        title TEXT NOT NULL
+      );
+      CREATE TABLE notebooks (
+        id TEXT PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL,
+        color TEXT NOT NULL DEFAULT '',
+        is_default INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        dirty INTEGER NOT NULL DEFAULT 0,
+        synced INTEGER NOT NULL DEFAULT 1,
+        deleted INTEGER NOT NULL DEFAULT 0,
+        kind TEXT NOT NULL DEFAULT 'notes'
+      );
+    `);
+    db.exec("INSERT INTO recordings (id, title) VALUES ('r_cap', 'capitulo')");
+    db.exec('PRAGMA user_version = 42');
+
+    await migrate(adapter(db));
+
+    const columns = db.prepare('PRAGMA table_info(recordings)').all() as {
+      name: string;
+      notnull: number;
+      dflt_value: string | null;
+    }[];
+    const totais: [string, number, string][] = [
+      ['chapter_kind', 1, "''"],
+      ['chapter_position', 1, '0'],
+      ['chapter_status', 1, "''"],
+      ['chapter_goal_words', 1, '0'],
+      ['chapter_synopsis', 1, "''"],
+      ['chapter_beats', 1, "''"],
+      ['chapter_notes', 1, "''"],
+    ];
+    for (const [nome, notnull, padrao] of totais) {
+      const coluna = columns.find((column) => column.name === nome);
+      expect(coluna).toBeDefined();
+      expect(coluna?.notnull).toBe(notnull);
+      expect(coluna?.dflt_value).toBe(padrao);
+    }
+
+    const rows = db
+      .prepare('SELECT chapter_kind, chapter_position, chapter_goal_words FROM recordings')
+      .all() as { chapter_kind: string; chapter_position: number; chapter_goal_words: number }[];
+    expect(rows).toEqual([{ chapter_kind: '', chapter_position: 0, chapter_goal_words: 0 }]);
+
+    // As tabelas do ritmo e dos links aceitam escrita, como as do servidor.
+    db.prepare('INSERT INTO writing_days (notebook_id, day, words) VALUES (?, ?, ?)').run(
+      'nb_livro',
+      '2026-01-02',
+      320,
+    );
+    db.prepare(
+      `INSERT INTO entry_links
+        (id, from_entry_id, to_entry_id, url, label, title, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run('link_1', 'r_cap', 'r_outro', '', 'capitulo 2', 'Capitulo 2', '2026-01-02T10:00:00Z');
+
+    const dia = db
+      .prepare('SELECT notebook_id, day, words FROM writing_days')
+      .all() as { notebook_id: string; day: string; words: number }[];
+    expect(dia).toEqual([{ notebook_id: 'nb_livro', day: '2026-01-02', words: 320 }]);
+
+    const links = db
+      .prepare('SELECT id, from_entry_id, to_entry_id, created_at FROM entry_links')
+      .all() as { id: string; from_entry_id: string; to_entry_id: string; created_at: string }[];
+    expect(links).toEqual([
+      {
+        id: 'link_1',
+        from_entry_id: 'r_cap',
+        to_entry_id: 'r_outro',
+        created_at: '2026-01-02T10:00:00Z',
+      },
+    ]);
+
+    const version = db.prepare('PRAGMA user_version').get() as { user_version: number };
+    expect(version.user_version).toBe(LATEST_SCHEMA_VERSION);
+    db.close();
+  });
 });

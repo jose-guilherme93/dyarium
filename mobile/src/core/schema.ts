@@ -775,6 +775,48 @@ export const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    version: 43,
+    run: async (db) => {
+      // Modo escritor no cofre local: o capitulo e a propria nota (planejamento
+      // que nao entra no texto), o ritmo do livro vive em `writing_days` e os
+      // links da nota em `entry_links`. As tabelas espelham as do servidor para
+      // que o mesmo dado coexista nos dois clientes e sincronize.
+      const colunas: [string, string][] = [
+        ['chapter_kind', "TEXT NOT NULL DEFAULT ''"],
+        ['chapter_position', 'INTEGER NOT NULL DEFAULT 0'],
+        ['chapter_status', "TEXT NOT NULL DEFAULT ''"],
+        ['chapter_goal_words', 'INTEGER NOT NULL DEFAULT 0'],
+        ['chapter_synopsis', "TEXT NOT NULL DEFAULT ''"],
+        ['chapter_beats', "TEXT NOT NULL DEFAULT ''"],
+        ['chapter_notes', "TEXT NOT NULL DEFAULT ''"],
+      ];
+      for (const [nome, tipo] of colunas) {
+        if (!(await columnExists(db, 'recordings', nome))) {
+          await db.execAsync(`ALTER TABLE recordings ADD COLUMN ${nome} ${tipo}`);
+        }
+      }
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS writing_days (
+          notebook_id TEXT NOT NULL,
+          day         TEXT NOT NULL,
+          words       INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY (notebook_id, day)
+        );
+        CREATE INDEX IF NOT EXISTS idx_writing_days_day ON writing_days (day);
+
+        CREATE TABLE IF NOT EXISTS entry_links (
+          id            TEXT PRIMARY KEY NOT NULL,
+          from_entry_id TEXT NOT NULL,
+          to_entry_id   TEXT NOT NULL DEFAULT '',
+          url           TEXT NOT NULL DEFAULT '',
+          label         TEXT NOT NULL DEFAULT '',
+          title         TEXT NOT NULL DEFAULT '',
+          created_at    TEXT NOT NULL
+        );
+      `);
+    },
+  },
 ];
 
 /** Versao que o banco tem depois de aplicar a lista inteira. */

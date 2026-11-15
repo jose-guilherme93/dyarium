@@ -113,6 +113,21 @@ export interface Recording {
   icon?: string;
   /** Icone alterado localmente e ainda nao enviado ao servidor. */
   iconDirty?: boolean;
+  /* Modo escritor: a nota pode ser um capitulo de um livro. */
+  /** Tipo do capitulo (abertura, cena, interludio); vazio nao classifica. */
+  chapterKind?: string;
+  /** Posicao do capitulo no livro; 0 quando ainda nao foi ordenado. */
+  chapterPosition?: number;
+  /** Estado do capitulo (planejado, escrito, revisado); vazio nao classifica. */
+  chapterStatus?: string;
+  /** Meta de palavras do capitulo. */
+  chapterGoalWords?: number;
+  /** Sinopse do capitulo: planejamento, nao entra no texto. */
+  chapterSynopsis?: string;
+  /** Beats do capitulo, uma linha por beat. */
+  chapterBeats?: string;
+  /** Anotacoes do autor sobre o capitulo. */
+  chapterNotes?: string;
   /**
    * Nota apagada, esperando o fim da janela da lixeira (7 dias). Enquanto
    * existir, a nota nao aparece em lista nenhuma; o audio local fica guardado
