@@ -24,6 +24,10 @@ internal/mcpserver   Servidor MCP (Streamable HTTP): registro de sessoes de proj
 internal/crypto      AES-256-GCM: cifra/decifra em streaming, derivacao de chave.
 internal/telegram    Modulo opcional (envio de audio pelo bot). Stub nesta versao.
 web                  SPA React + Vite + TypeScript com BlockNote.
+mobile/src/core      Nucleo puro compartilhado: schema e migracoes (`schema`), o SQL todo (`repo`),
+                     as portas de plataforma (`port`), HLC, sync, backup, analise.
+                     Nao importa expo, React Native, arquivo nem servico; o web importa daqui direto.
+mobile/src/services  Borda do app: abre o SQLite (expo-sqlite), cifra, arquivos, audio, rede.
 deploy               Dockerfile e compose de desenvolvimento.
 ```
 
