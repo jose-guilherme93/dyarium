@@ -217,7 +217,7 @@ func (s *Server) Handler() http.Handler {
 	if s.deps.MCP != nil {
 		root.Handle("/mcp", s.requireAuth(s.deps.MCP))
 	}
-	root.Handle("/", s.withResponseCache(mux))
+	root.Handle("/", s.withCORS(s.withResponseCache(mux)))
 	return s.withLogging(root)
 }
 
