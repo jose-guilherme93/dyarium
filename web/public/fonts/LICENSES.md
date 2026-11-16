@@ -12,3 +12,7 @@ de licenca estao nos repositorios do Google Fonts.
 - Gelasio — SIL Open Font License 1.1 — https://github.com/google/fonts/tree/main/ofl/gelasio
 - Literata — SIL Open Font License 1.1 — https://github.com/google/fonts/tree/main/ofl/literata
 - Crimson Pro — SIL Open Font License 1.1 — https://github.com/google/fonts/tree/main/ofl/crimsonpro
+
+# Fonte de interface
+
+- Schibsted Grotesk — SIL Open Font License 1.1 — https://github.com/schibsted/schibsted-grotesk

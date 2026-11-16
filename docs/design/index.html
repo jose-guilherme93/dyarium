@@ -1,0 +1,903 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+/* Arquivo gerado por scripts/design-tokens.mjs a partir de docs/design/tokens.json.
+   Nao edite a mao: rode `make tokens` para regerar. */
+
+@font-face {
+  font-family: "Schibsted Grotesk";
+  src: url("./fonts/schibsted-grotesk.woff2") format("woff2");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191,
+    U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Schibsted Grotesk";
+  src: url("./fonts/schibsted-grotesk-ext.woff2") format("woff2");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7,
+    U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F,
+    U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+    U+A720-A7FF;
+}
+
+:root {
+  --dy-surface: #eceee9;
+  --dy-surface-alt: #e3e6e0;
+  --dy-surface-raised: #dadfd7;
+  --dy-line: #d2d6cf;
+  --dy-text: #232622;
+  --dy-text-muted: #6a6f68;
+  --dy-primary: #5b6f66;
+  --dy-primary-soft: #dce3e0;
+  --dy-danger: #9c6259;
+  --dy-success: #5c7a63;
+  --dy-warning: #8b7444;
+  --dy-info: #5a6f80;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --dy-surface: #171a18;
+    --dy-surface-alt: #1f2320;
+    --dy-surface-raised: #272c28;
+    --dy-line: #2f3431;
+    --dy-text: #e4e8e3;
+    --dy-text-muted: #a1a8a2;
+    --dy-primary: #a2b8ae;
+    --dy-primary-soft: #2a3431;
+    --dy-danger: #c78f85;
+    --dy-success: #94b09a;
+    --dy-warning: #c6ab77;
+    --dy-info: #9ab3c4;
+  }
+}
+
+[data-dy-theme="light"] {
+  --dy-surface: #eceee9;
+  --dy-surface-alt: #e3e6e0;
+  --dy-surface-raised: #dadfd7;
+  --dy-line: #d2d6cf;
+  --dy-text: #232622;
+  --dy-text-muted: #6a6f68;
+  --dy-primary: #5b6f66;
+  --dy-primary-soft: #dce3e0;
+  --dy-danger: #9c6259;
+  --dy-success: #5c7a63;
+  --dy-warning: #8b7444;
+  --dy-info: #5a6f80;
+}
+
+[data-dy-theme="dark"] {
+  --dy-surface: #171a18;
+  --dy-surface-alt: #1f2320;
+  --dy-surface-raised: #272c28;
+  --dy-line: #2f3431;
+  --dy-text: #e4e8e3;
+  --dy-text-muted: #a1a8a2;
+  --dy-primary: #a2b8ae;
+  --dy-primary-soft: #2a3431;
+  --dy-danger: #c78f85;
+  --dy-success: #94b09a;
+  --dy-warning: #c6ab77;
+  --dy-info: #9ab3c4;
+}
+
+[data-dy-theme="amoled"] {
+  --dy-surface: #000000;
+  --dy-surface-alt: #0b0d0c;
+  --dy-surface-raised: #151817;
+  --dy-line: #242826;
+  --dy-text: #e4e8e3;
+  --dy-text-muted: #9aa198;
+  --dy-primary: #a2b8ae;
+  --dy-primary-soft: #1e2624;
+  --dy-danger: #c78f85;
+  --dy-success: #94b09a;
+  --dy-warning: #c6ab77;
+  --dy-info: #9ab3c4;
+}
+
+:root {
+  --dy-space-2: 2px;
+  --dy-space-4: 4px;
+  --dy-space-6: 6px;
+  --dy-space-8: 8px;
+  --dy-space-12: 12px;
+  --dy-space-16: 16px;
+  --dy-radius-control: 2px;
+  --dy-radius-surface: 3px;
+  --dy-focus-width: 1px;
+  --dy-focus-offset: 2px;
+  --dy-control-sm: 20px;
+  --dy-control-md: 26px;
+  --dy-control-lg: 30px;
+  --dy-control-pad-sm: 7px;
+  --dy-control-pad-md: 9px;
+  --dy-control-pad-lg: 12px;
+  --dy-meter-height: 2px;
+  --dy-meter-gap: 8px;
+  --dy-font-sans: "Schibsted Grotesk", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.dy-display {
+  font-size: 21px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+
+.dy-title {
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.005em;
+}
+
+.dy-body {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.32;
+  letter-spacing: 0;
+}
+
+.dy-label {
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.dy-mono {
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+*{box-sizing:border-box}
+html{background:var(--dy-surface)}
+body{
+  margin:0;
+  background:var(--dy-surface);
+  color:var(--dy-text);
+  font-family:var(--dy-font-sans);
+  -webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
+}
+h2,h3,p,ul,figure{margin:0}
+button{font:inherit}
+
+.wrap{width:100%;max-width:680px;margin:0 auto;padding:0 var(--dy-space-16)}
+main{display:block;padding:var(--dy-space-16) 0 0}
+
+section{padding:var(--dy-space-12) 0}
+section + section{border-top:1px solid var(--dy-line)}
+.wrap > section:first-child{padding-top:0}
+section > .dy-label{margin:0 0 var(--dy-space-6)}
+
+.dy-muted{color:var(--dy-text-muted)}
+
+/* 1. cores */
+.group + .group{margin-top:var(--dy-space-8)}
+.group > .dy-label{margin:0 0 var(--dy-space-4)}
+.swatches{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(120px,1fr));
+  gap:var(--dy-space-8) var(--dy-space-6);
+}
+.swatch{min-width:0}
+.chip{
+  height:var(--dy-control-md);
+  background:var(--c);
+  border:1px solid var(--dy-line);
+  border-radius:var(--dy-radius-control);
+  margin-bottom:var(--dy-space-2);
+}
+.swatch .dy-mono{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.swatch .hex{color:var(--dy-text-muted);margin-top:var(--dy-space-2)}
+
+/* 2. tipografia */
+.types{display:block}
+.type-row{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  align-items:baseline;
+  gap:var(--dy-space-16);
+  padding:var(--dy-space-4) 0;
+  border-top:1px solid var(--dy-line);
+}
+.type-row:first-child{border-top:0;padding-top:0}
+.type-row:last-child{padding-bottom:0}
+.type-row .meta{color:var(--dy-text-muted);white-space:nowrap}
+
+/* 3. espaço e raio */
+.bars{display:grid;gap:var(--dy-space-4)}
+.bar-row{display:flex;align-items:center;gap:var(--dy-space-8)}
+.bar-row .dy-mono{width:calc(var(--dy-space-16) + var(--dy-space-6));text-align:right;color:var(--dy-text-muted)}
+.bar{
+  height:var(--dy-space-8);
+  flex:none;
+  background:var(--dy-surface-raised);
+  border:1px solid var(--dy-line);
+}
+.radii{
+  display:flex;
+  gap:var(--dy-space-8);
+  margin-top:var(--dy-space-8);
+  padding-top:var(--dy-space-8);
+  border-top:1px solid var(--dy-line);
+}
+.radius{display:flex;flex-direction:column;gap:var(--dy-space-6)}
+.radius .dy-mono{color:var(--dy-text-muted)}
+.sq{
+  width:calc(var(--dy-control-lg) - var(--dy-radius-control));
+  height:calc(var(--dy-control-lg) - var(--dy-radius-control));
+  background:var(--dy-surface-alt);
+  border:1px solid var(--dy-line);
+}
+.r-control{border-radius:var(--dy-radius-control)}
+.r-surface{border-radius:var(--dy-radius-surface)}
+
+/* 4. botões */
+.btn-head,
+.btn-row{
+  display:grid;
+  grid-template-columns:94px repeat(3,minmax(0,1fr));
+  column-gap:var(--dy-space-12);
+}
+.btn-head{padding-bottom:var(--dy-space-4)}
+.btn-head .dy-label,
+.btn-row .state{color:var(--dy-text-muted)}
+.variant{margin-top:var(--dy-space-8);padding-top:var(--dy-space-6);border-top:1px solid var(--dy-line)}
+.btn-head + .variant{margin-top:var(--dy-space-12);padding-top:0;border-top:0}
+.variant > .dy-label{margin:0 0 var(--dy-space-2);color:var(--dy-text-muted)}
+.btn-row{min-height:var(--dy-control-lg);align-items:center}
+.btn-row .cell{display:flex;align-items:center;min-width:0}
+
+.dy-btn{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  max-width:100%;
+  border:1px solid transparent;
+  border-radius:var(--dy-radius-control);
+  white-space:nowrap;
+  cursor:pointer;
+  appearance:none;
+  -webkit-appearance:none;
+}
+.dy-btn--sm{height:var(--dy-control-sm);padding:0 var(--dy-control-pad-sm)}
+.dy-btn--md{height:var(--dy-control-md);padding:0 var(--dy-control-pad-md)}
+.dy-btn--lg{height:var(--dy-control-lg);padding:0 var(--dy-control-pad-lg)}
+.dy-btn:disabled{cursor:not-allowed}
+
+.dy-btn--primary{background:var(--dy-primary);border-color:var(--dy-primary);color:var(--dy-surface)}
+.dy-btn--primary.is-hover{background:var(--dy-primary-soft);border-color:var(--dy-primary);color:var(--dy-text)}
+.dy-btn--primary:disabled{background:var(--dy-primary-soft);border-color:var(--dy-line);color:var(--dy-text-muted)}
+
+.dy-btn--secondary{background:var(--dy-surface-alt);border-color:var(--dy-line);color:var(--dy-text)}
+.dy-btn--secondary.is-hover{background:var(--dy-surface-raised);border-color:var(--dy-line);color:var(--dy-text)}
+.dy-btn--secondary:disabled{background:var(--dy-surface);border-color:var(--dy-line);color:var(--dy-text-muted)}
+
+.dy-btn--ghost{background:transparent;border-color:transparent;color:var(--dy-text)}
+.dy-btn--ghost.is-hover{background:var(--dy-surface-alt);border-color:transparent;color:var(--dy-text)}
+.dy-btn--ghost:disabled{background:transparent;border-color:transparent;color:var(--dy-text-muted)}
+
+.dy-btn.is-focus{outline:var(--dy-focus-width) solid var(--dy-primary);outline-offset:var(--dy-focus-offset)}
+.dy-btn:focus-visible{outline:var(--dy-focus-width) solid var(--dy-primary);outline-offset:var(--dy-focus-offset)}
+
+/* 5. campos */
+.fields{display:grid;grid-template-columns:1fr 1fr;gap:var(--dy-space-8) var(--dy-space-12)}
+.field{display:flex;flex-direction:column;gap:var(--dy-space-2);min-width:0}
+.field > .dy-label{color:var(--dy-text-muted)}
+.input{
+  display:flex;
+  align-items:center;
+  width:100%;
+  height:var(--dy-control-md);
+  padding:0 var(--dy-control-pad-md);
+  background:var(--dy-surface-alt);
+  border:1px solid var(--dy-line);
+  border-radius:var(--dy-radius-control);
+  color:var(--dy-text);
+}
+.input .value{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.input.is-focus{outline:var(--dy-focus-width) solid var(--dy-primary);outline-offset:var(--dy-focus-offset)}
+.caret{
+  width:var(--dy-focus-width);
+  height:var(--dy-space-12);
+  background:var(--dy-primary);
+  margin-left:var(--dy-space-2);
+  flex:none;
+}
+.select{justify-content:space-between;gap:var(--dy-space-8)}
+.select svg{flex:none;color:var(--dy-text-muted)}
+.switch-row{display:flex;align-items:center;gap:var(--dy-space-12);height:var(--dy-control-md)}
+.switch-item{display:inline-flex;align-items:center;gap:var(--dy-space-8)}
+.switch{
+  position:relative;
+  width:calc(var(--dy-space-16) + var(--dy-space-12));
+  height:calc(var(--dy-space-16) - var(--dy-focus-width));
+  flex:none;
+  background:var(--dy-surface-raised);
+  border:1px solid var(--dy-line);
+  border-radius:var(--dy-radius-control);
+}
+.switch::after{
+  content:"";
+  position:absolute;
+  top:var(--dy-space-2);
+  left:var(--dy-space-2);
+  width:calc(var(--dy-space-8) + var(--dy-focus-width));
+  height:calc(var(--dy-space-8) + var(--dy-focus-width));
+  background:var(--dy-text-muted);
+  border-radius:var(--dy-focus-width);
+}
+.switch.is-on{background:var(--dy-primary);border-color:var(--dy-primary)}
+.switch.is-on::after{left:auto;right:var(--dy-space-2);background:var(--dy-surface)}
+
+/* 6. medidores */
+.meter{display:flex;align-items:center;gap:var(--dy-meter-gap)}
+.track{flex:1;height:var(--dy-meter-height);background:var(--dy-line)}
+.fill{height:var(--dy-meter-height);background:var(--dy-primary)}
+.meter .dy-mono{flex:none}
+.note-states{
+  display:flex;
+  flex-wrap:wrap;
+  gap:var(--dy-space-12);
+  margin-top:var(--dy-space-8);
+  padding-top:var(--dy-space-8);
+  border-top:1px solid var(--dy-line);
+}
+.note-state{display:flex;flex-direction:column;gap:var(--dy-space-4);min-width:64px}
+.note-state .dy-label{color:var(--dy-text-muted)}
+.state-glyph{display:inline-flex;width:var(--dy-space-16);height:var(--dy-space-16);flex:none}
+.state-glyph svg{display:block;width:var(--dy-space-16);height:var(--dy-space-16)}
+.state-glyph.done svg{fill:var(--dy-success)}
+.state-glyph.todo svg{fill:none;stroke:var(--dy-text-muted);stroke-width:1.5}
+.state-glyph.out svg{fill:none;stroke:var(--dy-warning);stroke-width:1.5}
+
+/* 7. notas */
+.notes{
+  list-style:none;
+  padding:0;
+  background:var(--dy-surface-alt);
+  border:1px solid var(--dy-line);
+  border-radius:var(--dy-radius-surface);
+  overflow:hidden;
+}
+.note{
+  display:flex;
+  align-items:center;
+  gap:var(--dy-space-8);
+  min-height:var(--dy-control-md);
+  padding:0 var(--dy-space-8);
+}
+.note + .note{border-top:1px solid var(--dy-line)}
+.note .note-name{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.note .date{margin-left:auto;padding-left:var(--dy-space-8);color:var(--dy-text-muted);white-space:nowrap}
+
+/* 8. notificação */
+.notif{
+  display:flex;
+  align-items:center;
+  gap:var(--dy-space-8);
+  width:100%;
+  max-width:380px;
+  padding:var(--dy-space-6) var(--dy-control-pad-md);
+  background:var(--dy-surface-raised);
+  border:1px solid var(--dy-line);
+  border-radius:var(--dy-radius-surface);
+}
+.notif-num{font-variant-numeric:tabular-nums}
+.notif-rule{width:var(--dy-focus-width);height:var(--dy-space-12);flex:none;background:var(--dy-line)}
+.notif-name{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* 9. contraexemplo */
+.forbidden{
+  padding:var(--dy-control-pad-md);
+  background:var(--dy-surface-alt);
+  border:1px solid var(--dy-line);
+  border-radius:var(--dy-radius-surface);
+}
+.forbidden-head{display:flex;align-items:center;gap:var(--dy-space-8);color:var(--dy-danger)}
+.forbidden-head svg{flex:none}
+.forbidden-head .dy-label{color:var(--dy-text)}
+.forbidden-text{
+  margin-top:var(--dy-space-4);
+  color:var(--dy-text-muted);
+  text-decoration:line-through;
+  text-decoration-thickness:1px;
+  text-decoration-color:var(--dy-danger);
+  text-decoration-skip-ink:none;
+}
+
+@media (max-width:480px){
+  .btn-head,
+  .btn-row{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .btn-head .spacer{display:none}
+  .btn-row{row-gap:var(--dy-space-6);padding:var(--dy-space-8) 0;border-top:1px solid var(--dy-line)}
+  .btn-row .state{grid-column:1 / -1}
+  .dy-btn--sm,.dy-btn--md,.dy-btn--lg{padding-left:var(--dy-space-6);padding-right:var(--dy-space-6)}
+}
+
+@media (max-width:560px){
+  .fields{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body class="dy-body">
+
+<main>
+  <div class="wrap">
+
+    <!-- 1. cores -->
+    <section>
+      <h2 class="dy-label dy-muted">cores</h2>
+      <div class="group" data-dy-theme="light">
+        <h3 class="dy-label dy-muted">claro</h3>
+        <div class="swatches">
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-surface)"></div>
+            <span class="dy-mono">surface</span>
+            <span class="dy-mono hex">#eceee9</span>
+          </div>
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-surface-alt)"></div>
+            <span class="dy-mono">surface-alt</span>
+            <span class="dy-mono hex">#e3e6e0</span>
+          </div>
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-surface-raised)"></div>
+            <span class="dy-mono">surface-raised</span>
+            <span class="dy-mono hex">#dadfd7</span>
+          </div>
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-line)"></div>
+            <span class="dy-mono">line</span>
+            <span class="dy-mono hex">#d2d6cf</span>
+          </div>
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-text)"></div>
+            <span class="dy-mono">text</span>
+            <span class="dy-mono hex">#232622</span>
+          </div>
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-text-muted)"></div>
+            <span class="dy-mono">text-muted</span>
+            <span class="dy-mono hex">#6a6f68</span>
+          </div>
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-primary)"></div>
+            <span class="dy-mono">primary</span>
+            <span class="dy-mono hex">#5b6f66</span>
+          </div>
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-primary-soft)"></div>
+            <span class="dy-mono">primary-soft</span>
+            <span class="dy-mono hex">#dce3e0</span>
+          </div>
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-danger)"></div>
+            <span class="dy-mono">danger</span>
+            <span class="dy-mono hex">#9c6259</span>
+          </div>
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-success)"></div>
+            <span class="dy-mono">success</span>
+            <span class="dy-mono hex">#5c7a63</span>
+          </div>
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-warning)"></div>
+            <span class="dy-mono">warning</span>
+            <span class="dy-mono hex">#8b7444</span>
+          </div>
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-info)"></div>
+            <span class="dy-mono">info</span>
+            <span class="dy-mono hex">#5a6f80</span>
+          </div>
+        </div>
+      </div>
+      <div class="group" data-dy-theme="dark">
+        <h3 class="dy-label dy-muted">escuro</h3>
+        <div class="swatches">
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-surface)"></div>
+            <span class="dy-mono">surface</span>
+            <span class="dy-mono hex">#171a18</span>
+          </div>
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-surface-alt)"></div>
+            <span class="dy-mono">surface-alt</span>
+            <span class="dy-mono hex">#1f2320</span>
+          </div>
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-surface-raised)"></div>
+            <span class="dy-mono">surface-raised</span>
+            <span class="dy-mono hex">#272c28</span>
+          </div>
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-line)"></div>
+            <span class="dy-mono">line</span>
+            <span class="dy-mono hex">#2f3431</span>
+          </div>
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-text)"></div>
+            <span class="dy-mono">text</span>
+            <span class="dy-mono hex">#e4e8e3</span>
+          </div>
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-text-muted)"></div>
+            <span class="dy-mono">text-muted</span>
+            <span class="dy-mono hex">#a1a8a2</span>
+          </div>
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-primary)"></div>
+            <span class="dy-mono">primary</span>
+            <span class="dy-mono hex">#a2b8ae</span>
+          </div>
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-primary-soft)"></div>
+            <span class="dy-mono">primary-soft</span>
+            <span class="dy-mono hex">#2a3431</span>
+          </div>
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-danger)"></div>
+            <span class="dy-mono">danger</span>
+            <span class="dy-mono hex">#c78f85</span>
+          </div>
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-success)"></div>
+            <span class="dy-mono">success</span>
+            <span class="dy-mono hex">#94b09a</span>
+          </div>
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-warning)"></div>
+            <span class="dy-mono">warning</span>
+            <span class="dy-mono hex">#c6ab77</span>
+          </div>
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-info)"></div>
+            <span class="dy-mono">info</span>
+            <span class="dy-mono hex">#9ab3c4</span>
+          </div>
+        </div>
+      </div>
+      <div class="group" data-dy-theme="amoled">
+        <h3 class="dy-label dy-muted">amoled</h3>
+        <div class="swatches">
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-surface)"></div>
+            <span class="dy-mono">surface</span>
+            <span class="dy-mono hex">#000000</span>
+          </div>
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-surface-alt)"></div>
+            <span class="dy-mono">surface-alt</span>
+            <span class="dy-mono hex">#0b0d0c</span>
+          </div>
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-surface-raised)"></div>
+            <span class="dy-mono">surface-raised</span>
+            <span class="dy-mono hex">#151817</span>
+          </div>
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-line)"></div>
+            <span class="dy-mono">line</span>
+            <span class="dy-mono hex">#242826</span>
+          </div>
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-text)"></div>
+            <span class="dy-mono">text</span>
+            <span class="dy-mono hex">#e4e8e3</span>
+          </div>
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-text-muted)"></div>
+            <span class="dy-mono">text-muted</span>
+            <span class="dy-mono hex">#9aa198</span>
+          </div>
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-primary)"></div>
+            <span class="dy-mono">primary</span>
+            <span class="dy-mono hex">#a2b8ae</span>
+          </div>
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-primary-soft)"></div>
+            <span class="dy-mono">primary-soft</span>
+            <span class="dy-mono hex">#1e2624</span>
+          </div>
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-danger)"></div>
+            <span class="dy-mono">danger</span>
+            <span class="dy-mono hex">#c78f85</span>
+          </div>
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-success)"></div>
+            <span class="dy-mono">success</span>
+            <span class="dy-mono hex">#94b09a</span>
+          </div>
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-warning)"></div>
+            <span class="dy-mono">warning</span>
+            <span class="dy-mono hex">#c6ab77</span>
+          </div>
+          <div class="swatch">
+            <div class="chip" style="--c:var(--dy-info)"></div>
+            <span class="dy-mono">info</span>
+            <span class="dy-mono hex">#9ab3c4</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. tipografia -->
+    <section>
+      <h2 class="dy-label dy-muted">tipografia</h2>
+      <div class="types">
+        <div class="type-row">
+          <span class="dy-display">Reunião com fornecedor</span>
+          <span class="dy-mono meta">display · 21</span>
+        </div>
+        <div class="type-row">
+          <span class="dy-title">Ideia de captura offline</span>
+          <span class="dy-mono meta">título · 17</span>
+        </div>
+        <div class="type-row">
+          <span class="dy-body">Conversa com o fornecedor sobre a entrega de março e o que ficou pendente na última reunião</span>
+          <span class="dy-mono meta">corpo · 13</span>
+        </div>
+        <div class="type-row">
+          <span class="dy-label">em análise</span>
+          <span class="dy-mono meta">rótulo · 10</span>
+        </div>
+        <div class="type-row">
+          <span class="dy-mono">12 mar · 14:07</span>
+          <span class="dy-mono meta">mono · 11.5</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. espaço e raio -->
+    <section>
+      <h2 class="dy-label dy-muted">espaço e raio</h2>
+      <div class="bars">
+        <div class="bar-row"><span class="dy-mono">2</span><span class="bar" style="width:var(--dy-space-2)"></span></div>
+        <div class="bar-row"><span class="dy-mono">4</span><span class="bar" style="width:var(--dy-space-4)"></span></div>
+        <div class="bar-row"><span class="dy-mono">6</span><span class="bar" style="width:var(--dy-space-6)"></span></div>
+        <div class="bar-row"><span class="dy-mono">8</span><span class="bar" style="width:var(--dy-space-8)"></span></div>
+        <div class="bar-row"><span class="dy-mono">12</span><span class="bar" style="width:var(--dy-space-12)"></span></div>
+        <div class="bar-row"><span class="dy-mono">16</span><span class="bar" style="width:var(--dy-space-16)"></span></div>
+      </div>
+      <div class="radii">
+        <div class="radius">
+          <span class="sq r-control"></span>
+          <span class="dy-mono">2</span>
+        </div>
+        <div class="radius">
+          <span class="sq r-surface"></span>
+          <span class="dy-mono">3</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4. botões -->
+    <section>
+      <h2 class="dy-label dy-muted">botões</h2>
+
+      <div class="btn-head">
+        <span class="spacer"></span>
+        <span class="dy-label">sm · 20</span>
+        <span class="dy-label">md · 26</span>
+        <span class="dy-label">lg · 30</span>
+      </div>
+
+      <div class="variant">
+        <h3 class="dy-label">primário</h3>
+        <div class="btn-row">
+          <span class="dy-label state">padrão</span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--primary dy-btn--sm" type="button">salvar</button></span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--primary dy-btn--md" type="button">salvar</button></span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--primary dy-btn--lg" type="button">salvar</button></span>
+        </div>
+        <div class="btn-row">
+          <span class="dy-label state">hover</span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--primary dy-btn--sm is-hover" type="button">salvar</button></span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--primary dy-btn--md is-hover" type="button">salvar</button></span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--primary dy-btn--lg is-hover" type="button">salvar</button></span>
+        </div>
+        <div class="btn-row">
+          <span class="dy-label state">desabilitado</span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--primary dy-btn--sm" type="button" disabled>salvar</button></span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--primary dy-btn--md" type="button" disabled>salvar</button></span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--primary dy-btn--lg" type="button" disabled>salvar</button></span>
+        </div>
+        <div class="btn-row">
+          <span class="dy-label state">foco</span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--primary dy-btn--sm is-focus" type="button">salvar</button></span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--primary dy-btn--md is-focus" type="button">salvar</button></span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--primary dy-btn--lg is-focus" type="button">salvar</button></span>
+        </div>
+      </div>
+      <div class="variant">
+        <h3 class="dy-label">secundário</h3>
+        <div class="btn-row">
+          <span class="dy-label state">padrão</span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--secondary dy-btn--sm" type="button">editar</button></span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--secondary dy-btn--md" type="button">editar</button></span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--secondary dy-btn--lg" type="button">editar</button></span>
+        </div>
+        <div class="btn-row">
+          <span class="dy-label state">hover</span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--secondary dy-btn--sm is-hover" type="button">editar</button></span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--secondary dy-btn--md is-hover" type="button">editar</button></span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--secondary dy-btn--lg is-hover" type="button">editar</button></span>
+        </div>
+        <div class="btn-row">
+          <span class="dy-label state">desabilitado</span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--secondary dy-btn--sm" type="button" disabled>editar</button></span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--secondary dy-btn--md" type="button" disabled>editar</button></span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--secondary dy-btn--lg" type="button" disabled>editar</button></span>
+        </div>
+        <div class="btn-row">
+          <span class="dy-label state">foco</span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--secondary dy-btn--sm is-focus" type="button">editar</button></span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--secondary dy-btn--md is-focus" type="button">editar</button></span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--secondary dy-btn--lg is-focus" type="button">editar</button></span>
+        </div>
+      </div>
+      <div class="variant">
+        <h3 class="dy-label">fantasma</h3>
+        <div class="btn-row">
+          <span class="dy-label state">padrão</span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--ghost dy-btn--sm" type="button">ver</button></span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--ghost dy-btn--md" type="button">ver</button></span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--ghost dy-btn--lg" type="button">ver</button></span>
+        </div>
+        <div class="btn-row">
+          <span class="dy-label state">hover</span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--ghost dy-btn--sm is-hover" type="button">ver</button></span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--ghost dy-btn--md is-hover" type="button">ver</button></span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--ghost dy-btn--lg is-hover" type="button">ver</button></span>
+        </div>
+        <div class="btn-row">
+          <span class="dy-label state">desabilitado</span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--ghost dy-btn--sm" type="button" disabled>ver</button></span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--ghost dy-btn--md" type="button" disabled>ver</button></span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--ghost dy-btn--lg" type="button" disabled>ver</button></span>
+        </div>
+        <div class="btn-row">
+          <span class="dy-label state">foco</span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--ghost dy-btn--sm is-focus" type="button">ver</button></span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--ghost dy-btn--md is-focus" type="button">ver</button></span>
+          <span class="cell"><button class="dy-btn dy-label dy-btn--ghost dy-btn--lg is-focus" type="button">ver</button></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5. campos -->
+    <section>
+      <h2 class="dy-label dy-muted">campos</h2>
+      <div class="fields">
+        <div class="field">
+          <span class="dy-label">nota</span>
+          <div class="input"><span class="dy-body value">Consulta médica</span></div>
+        </div>
+        <div class="field">
+          <span class="dy-label">nota</span>
+          <div class="input is-focus"><span class="dy-body value">Consulta médica</span><span class="caret"></span></div>
+        </div>
+        <div class="field">
+          <span class="dy-label">coleção</span>
+          <div class="input select">
+            <span class="dy-body value">Saúde</span>
+            <svg width="9" height="6" viewBox="0 0 9 6" aria-hidden="true"><path d="M1 1l3.5 3.5L8 1" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+          </div>
+        </div>
+        <div class="field">
+          <span class="dy-label">sincronizar</span>
+          <div class="switch-row">
+            <span class="switch-item"><span class="switch" aria-hidden="true"></span><span class="dy-label">desligado</span></span>
+            <span class="switch-item"><span class="switch is-on" aria-hidden="true"></span><span class="dy-label">ligado</span></span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6. medidores -->
+    <section>
+      <h2 class="dy-label dy-muted">medidores</h2>
+      <div class="meter">
+        <div class="track"><div class="fill" style="width:64%"></div></div>
+        <span class="dy-mono">18/28</span>
+      </div>
+      <div class="note-states">
+        <div class="note-state">
+          <span class="state-glyph done" role="img" aria-label="feito">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/></svg>
+          </span>
+          <span class="dy-label">feito</span>
+        </div>
+        <div class="note-state">
+          <span class="state-glyph todo" role="img" aria-label="não feito">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/></svg>
+          </span>
+          <span class="dy-label">não feito</span>
+        </div>
+        <div class="note-state">
+          <span class="state-glyph out" role="img" aria-label="ficou de fora">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="M4 8h8"/></svg>
+          </span>
+          <span class="dy-label">ficou de fora</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 7. notas -->
+    <section>
+      <h2 class="dy-label dy-muted">notas</h2>
+      <ul class="notes">
+        <li class="note">
+          <span class="state-glyph done" role="img" aria-label="feito">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/></svg>
+          </span>
+          <span class="dy-body note-name">Reunião com fornecedor</span>
+          <span class="dy-mono date">12 mar</span>
+        </li>
+        <li class="note">
+          <span class="state-glyph todo" role="img" aria-label="não feito">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/></svg>
+          </span>
+          <span class="dy-body note-name">Ideia de captura offline</span>
+          <span class="dy-mono date">9 mar</span>
+        </li>
+        <li class="note">
+          <span class="state-glyph out" role="img" aria-label="ficou de fora">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="M4 8h8"/></svg>
+          </span>
+          <span class="dy-body note-name">Consulta médica</span>
+          <span class="dy-mono date">4 mar</span>
+        </li>
+      </ul>
+    </section>
+
+    <!-- 8. notificação -->
+    <section>
+      <h2 class="dy-label dy-muted">notificação</h2>
+      <div class="notif">
+        <span class="dy-title notif-num">3</span>
+        <span class="notif-rule"></span>
+        <span class="dy-body notif-name">Reunião com fornecedor</span>
+      </div>
+    </section>
+
+    <!-- 9. contraexemplo -->
+    <section>
+      <h2 class="dy-label dy-muted">contraexemplo</h2>
+      <div class="forbidden">
+        <div class="forbidden-head">
+          <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+          <span class="dy-label">proibido</span>
+        </div>
+        <p class="dy-body forbidden-text">Suas ideias ficam organizadas automaticamente, seguras e sempre sincronizadas entre os aparelhos.</p>
+      </div>
+    </section>
+
+  </div>
+</main>
+
+</body>
+</html>

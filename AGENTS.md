@@ -67,6 +67,9 @@ Regra de UX do produto, nao sugestao. Vale para o app, o dashboard e as notifica
 - Notificacao tem no maximo duas linhas curtas: o numero na frente, o nome da nota atras.
 - A aparencia distingue os estados de verdade: preenchido = feito, contorno = nao feito,
   aviso = ficou de fora. "Nao mudou nada" e "nao rodou" nunca podem parecer a mesma coisa.
+- Cor, tipo, espaco, raio e foco vem de `docs/design/tokens.json`, nunca de valor
+  solto no componente. A galeria gerada em `docs/design/index.html` e o contrato
+  visual; `docs/design/README.md` explica a geracao e a migracao.
 
 ## Versoes e releases
 
@@ -166,7 +169,8 @@ estabilidade: testes podem demorar.
 
 ```
 make test        # go test + testes do web (serializados, com tetos de RAM)
-make lint        # go vet, gofmt e eslint
+make lint        # go vet, gofmt, eslint e drift dos tokens gerados
+make tokens      # regenera tokens.css, design.ts e a galeria de docs/design
 make dev         # containers de desenvolvimento (derube antes de testar)
 make build       # imagem de producao (nao rode junto com testes)
 make mobile-dev  # app Expo em desenvolvimento (development build)

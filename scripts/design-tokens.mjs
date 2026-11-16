@@ -1,0 +1,857 @@
+#!/usr/bin/env node
+/**
+ * Gera os artefatos de design a partir de docs/design/tokens.json.
+ *
+ *   node scripts/design-tokens.mjs           escreve os tres arquivos
+ *   node scripts/design-tokens.mjs --check   compara com o disco, sem escrever
+ *
+ * Saida deterministica: ordem fixa de chaves, LF e newline final, sem data nem
+ * versao embutida. O --check depende disso para comparar byte a byte.
+ */
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const tokenFile = join(root, 'docs/design/tokens.json');
+
+const PALETTE_KEYS = [
+  'surface',
+  'surface-alt',
+  'surface-raised',
+  'line',
+  'text',
+  'text-muted',
+  'primary',
+  'primary-soft',
+  'danger',
+  'success',
+  'warning',
+  'info',
+];
+const THEMES = ['light', 'dark', 'amoled'];
+const THEME_LABEL = { light: 'claro', dark: 'escuro', amoled: 'amoled' };
+const TYPE_NAMES = ['display', 'title', 'body', 'label', 'mono'];
+const TYPE_META = {
+  display: 'display',
+  title: 'título',
+  body: 'corpo',
+  label: 'rótulo',
+  mono: 'mono',
+};
+const TYPE_SAMPLE = {
+  display: 'Reunião com fornecedor',
+  title: 'Ideia de captura offline',
+  body: 'Conversa com o fornecedor sobre a entrega de março e o que ficou pendente na última reunião',
+  label: 'em análise',
+  mono: '12 mar · 14:07',
+};
+const BUTTON_VARIANTS = [
+  { key: 'primary', label: 'primário', text: 'salvar' },
+  { key: 'secondary', label: 'secundário', text: 'editar' },
+  { key: 'ghost', label: 'fantasma', text: 'ver' },
+];
+const BUTTON_SIZES = ['sm', 'md', 'lg'];
+const BUTTON_STATES = [
+  { label: 'padrão', cls: '', disabled: false },
+  { label: 'hover', cls: ' is-hover', disabled: false },
+  { label: 'desabilitado', cls: '', disabled: true },
+  { label: 'foco', cls: ' is-focus', disabled: false },
+];
+
+// Mesmos unicode-range do Inter em web/src/index.css: latin e latin-ext.
+const LATIN_RANGE =
+  'U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,\n' +
+  '    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191,\n' +
+  '    U+2193, U+2212, U+2215, U+FEFF, U+FFFD';
+const LATIN_EXT_RANGE =
+  'U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7,\n' +
+  '    U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F,\n' +
+  '    U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,\n' +
+  '    U+A720-A7FF';
+
+function fail(message) {
+  process.stderr.write(`design-tokens: ${message}\n`);
+  process.exit(2);
+}
+
+const args = process.argv.slice(2);
+if (args.length > 0 && !(args.length === 1 && args[0] === '--check')) {
+  fail(`argumento desconhecido: ${args.join(' ')}\nuso: node scripts/design-tokens.mjs [--check]`);
+}
+const checkOnly = args[0] === '--check';
+
+const tokens = JSON.parse(readFileSync(tokenFile, 'utf8'));
+
+for (const theme of THEMES) {
+  const palette = tokens.palettes?.[theme];
+  if (!palette) fail(`paleta ausente no tokens.json: ${theme}`);
+  for (const key of PALETTE_KEYS) {
+    if (typeof palette[key] !== 'string') {
+      fail(`cor ausente na paleta ${theme}: ${key}`);
+    }
+  }
+}
+for (const name of TYPE_NAMES) {
+  if (!tokens.type?.[name]) fail(`tipo ausente no tokens.json: ${name}`);
+}
+if (!Array.isArray(tokens.space) || tokens.space.length === 0) {
+  fail('array "space" ausente no tokens.json');
+}
+
+const num = (value) => String(value);
+
+function letterSpacing(value) {
+  return String(parseFloat(value));
+}
+
+function indent(text, prefix) {
+  return text
+    .split('\n')
+    .map((line) => (line === '' ? line : prefix + line))
+    .join('\n');
+}
+
+function fontFaces(urlBase) {
+  return [
+    '@font-face {',
+    '  font-family: "Schibsted Grotesk";',
+    `  src: url("${urlBase}/schibsted-grotesk.woff2") format("woff2");`,
+    '  font-weight: 400 700;',
+    '  font-style: normal;',
+    '  font-display: swap;',
+    `  unicode-range: ${LATIN_RANGE};`,
+    '}',
+    '',
+    '@font-face {',
+    '  font-family: "Schibsted Grotesk";',
+    `  src: url("${urlBase}/schibsted-grotesk-ext.woff2") format("woff2");`,
+    '  font-weight: 400 700;',
+    '  font-style: normal;',
+    '  font-display: swap;',
+    `  unicode-range: ${LATIN_EXT_RANGE};`,
+    '}',
+  ].join('\n');
+}
+
+function paletteBlock(selector, palette) {
+  const vars = PALETTE_KEYS.map((key) => `  --dy-${key}: ${palette[key]};`).join('\n');
+  return `${selector} {\n${vars}\n}`;
+}
+
+function scaleBlock() {
+  const lines = [];
+  for (const value of tokens.space) {
+    lines.push(`  --dy-space-${value}: ${value}px;`);
+  }
+  lines.push(`  --dy-radius-control: ${tokens.radius.control}px;`);
+  lines.push(`  --dy-radius-surface: ${tokens.radius.surface}px;`);
+  lines.push(`  --dy-focus-width: ${tokens.focus.width}px;`);
+  lines.push(`  --dy-focus-offset: ${tokens.focus.offset}px;`);
+  for (const size of BUTTON_SIZES) {
+    lines.push(`  --dy-control-${size}: ${tokens.control[size]}px;`);
+  }
+  for (const size of BUTTON_SIZES) {
+    lines.push(`  --dy-control-pad-${size}: ${tokens.control.padX[size]}px;`);
+  }
+  lines.push(`  --dy-meter-height: ${tokens.meter.height}px;`);
+  lines.push(`  --dy-meter-gap: ${tokens.meter.gap}px;`);
+  lines.push(`  --dy-font-sans: ${tokens.font.stack};`);
+  return lines.join('\n');
+}
+
+function typeClasses() {
+  return TYPE_NAMES.map((name) => {
+    const type = tokens.type[name];
+    const lines = [
+      `.dy-${name} {`,
+      `  font-size: ${num(type.size)}px;`,
+      `  font-weight: ${type.weight};`,
+      `  line-height: ${type.lineHeight};`,
+      `  letter-spacing: ${type.letterSpacing};`,
+    ];
+    if (type.uppercase) lines.push('  text-transform: uppercase;');
+    if (type.tabular) {
+      lines.push('  font-variant-numeric: tabular-nums;');
+      lines.push('  font-feature-settings: "tnum" 1;');
+    }
+    lines.push('}');
+    return lines.join('\n');
+  }).join('\n\n');
+}
+
+function cssCore(urlBase) {
+  return [
+    fontFaces(urlBase),
+    paletteBlock(':root', tokens.palettes.light),
+    `@media (prefers-color-scheme: dark) {\n${indent(paletteBlock(':root', tokens.palettes.dark), '  ')}\n}`,
+    THEMES.map((theme) => paletteBlock(`[data-dy-theme="${theme}"]`, tokens.palettes[theme])).join('\n\n'),
+    `:root {\n${scaleBlock()}\n}`,
+    typeClasses(),
+  ].join('\n\n');
+}
+
+const HEADER =
+  '/* Arquivo gerado por scripts/design-tokens.mjs a partir de docs/design/tokens.json.\n' +
+  '   Nao edite a mao: rode `make tokens` para regerar. */';
+
+const tokensCss = `${HEADER}\n\n${cssCore('/fonts')}\n`;
+
+function designTs() {
+  const colorLines = THEMES.map((theme) => {
+    const palette = tokens.palettes[theme];
+    const entries = PALETTE_KEYS.map((key) => {
+      const camel = key.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
+      return `    ${camel}: '${palette[key]}',`;
+    }).join('\n');
+    return `  ${theme}: {\n${entries}\n  },`;
+  }).join('\n');
+
+  const typeLines = TYPE_NAMES.map((name) => {
+    const type = tokens.type[name];
+    return (
+      `  ${name}: {\n` +
+      `    size: ${num(type.size)},\n` +
+      `    weight: ${type.weight},\n` +
+      `    lineHeight: ${type.lineHeight},\n` +
+      `    letterSpacing: ${letterSpacing(type.letterSpacing)},\n` +
+      '  },'
+    );
+  }).join('\n');
+
+  const spaceLines = tokens.space.map((value) => `  s${value}: ${value},`).join('\n');
+
+  const fontRegular = tokens.font.mobile.medium.replace(/\.ttf$/, '');
+  const fontSemibold = tokens.font.mobile.semibold.replace(/\.ttf$/, '');
+
+  return `/**
+ * Arquivo gerado por scripts/design-tokens.mjs a partir de docs/design/tokens.json.
+ * Nao edite a mao: rode \`make tokens\` para regerar.
+ */
+
+export type DesignThemeName = '${THEMES.join("' | '")}';
+
+export type DesignColors = {
+${PALETTE_KEYS.map((key) => `  ${key.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase())}: string;`).join('\n')}
+};
+
+export const designColors: Record<DesignThemeName, DesignColors> = {
+${colorLines}
+};
+
+export const designType = {
+${typeLines}
+} as const;
+
+export const designSpace = {
+${spaceLines}
+} as const;
+
+export const designRadius = {
+  control: ${tokens.radius.control},
+  surface: ${tokens.radius.surface},
+} as const;
+
+export const designFocus = {
+  width: ${tokens.focus.width},
+  offset: ${tokens.focus.offset},
+} as const;
+
+export const designControl = {
+  sm: ${tokens.control.sm},
+  md: ${tokens.control.md},
+  lg: ${tokens.control.lg},
+  padSm: ${tokens.control.padX.sm},
+  padMd: ${tokens.control.padX.md},
+  padLg: ${tokens.control.padX.lg},
+} as const;
+
+export const designMeter = {
+  height: ${tokens.meter.height},
+  gap: ${tokens.meter.gap},
+} as const;
+
+export const designFont = {
+  regular: '${fontRegular}',
+  semibold: '${fontSemibold}',
+} as const;
+`;
+}
+
+const STYLE_SAMPLE = indent(
+  TYPE_NAMES.map(
+    (name) => `  <div class="type-row">
+    <span class="dy-${name}">${TYPE_SAMPLE[name]}</span>
+    <span class="dy-mono meta">${TYPE_META[name]} · ${num(tokens.type[name].size)}</span>
+  </div>`,
+  ).join('\n'),
+  '      ',
+);
+
+const SPACE_BARS = indent(
+  tokens.space
+    .map(
+      (value) =>
+        `  <div class="bar-row"><span class="dy-mono">${value}</span><span class="bar" style="width:var(--dy-space-${value})"></span></div>`,
+    )
+    .join('\n'),
+  '      ',
+);
+
+const RADII = indent(
+  [
+    { key: 'control', value: tokens.radius.control },
+    { key: 'surface', value: tokens.radius.surface },
+  ]
+    .map(
+      ({ key, value }) => `  <div class="radius">
+    <span class="sq r-${key}"></span>
+    <span class="dy-mono">${value}</span>
+  </div>`,
+    )
+    .join('\n'),
+  '      ',
+);
+
+const SWATCHES = indent(
+  THEMES.map((theme) => {
+    const palette = tokens.palettes[theme];
+    const items = PALETTE_KEYS.map(
+      (key) => `      <div class="swatch">
+        <div class="chip" style="--c:var(--dy-${key})"></div>
+        <span class="dy-mono">${key}</span>
+        <span class="dy-mono hex">${palette[key]}</span>
+      </div>`,
+    ).join('\n');
+    return `  <div class="group" data-dy-theme="${theme}">
+    <h3 class="dy-label dy-muted">${THEME_LABEL[theme]}</h3>
+    <div class="swatches">
+${items}
+    </div>
+  </div>`;
+  }).join('\n'),
+  '    ',
+);
+
+const BUTTON_HEAD = BUTTON_SIZES.map(
+  (size) => `<span class="dy-label">${size} · ${tokens.control[size]}</span>`,
+).join('\n        ');
+
+const BUTTON_VARIANTS_HTML = BUTTON_VARIANTS.map(({ key, label, text }) => {
+  const rows = BUTTON_STATES.map((state) => {
+    const cells = BUTTON_SIZES.map(
+      (size) =>
+        `          <span class="cell"><button class="dy-btn dy-label dy-btn--${key} dy-btn--${size}${state.cls}" type="button"${
+          state.disabled ? ' disabled' : ''
+        }>${text}</button></span>`,
+    ).join('\n');
+    return `        <div class="btn-row">
+          <span class="dy-label state">${state.label}</span>
+${cells}
+        </div>`;
+  }).join('\n');
+  return `      <div class="variant">
+        <h3 class="dy-label">${label}</h3>
+${rows}
+      </div>`;
+}).join('\n');
+
+const GALLERY_LAYOUT_CSS = `*{box-sizing:border-box}
+html{background:var(--dy-surface)}
+body{
+  margin:0;
+  background:var(--dy-surface);
+  color:var(--dy-text);
+  font-family:var(--dy-font-sans);
+  -webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
+}
+h2,h3,p,ul,figure{margin:0}
+button{font:inherit}
+
+.wrap{width:100%;max-width:680px;margin:0 auto;padding:0 var(--dy-space-16)}
+main{display:block;padding:var(--dy-space-16) 0 0}
+
+section{padding:var(--dy-space-12) 0}
+section + section{border-top:1px solid var(--dy-line)}
+.wrap > section:first-child{padding-top:0}
+section > .dy-label{margin:0 0 var(--dy-space-6)}
+
+.dy-muted{color:var(--dy-text-muted)}
+
+/* 1. cores */
+.group + .group{margin-top:var(--dy-space-8)}
+.group > .dy-label{margin:0 0 var(--dy-space-4)}
+.swatches{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(120px,1fr));
+  gap:var(--dy-space-8) var(--dy-space-6);
+}
+.swatch{min-width:0}
+.chip{
+  height:var(--dy-control-md);
+  background:var(--c);
+  border:1px solid var(--dy-line);
+  border-radius:var(--dy-radius-control);
+  margin-bottom:var(--dy-space-2);
+}
+.swatch .dy-mono{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.swatch .hex{color:var(--dy-text-muted);margin-top:var(--dy-space-2)}
+
+/* 2. tipografia */
+.types{display:block}
+.type-row{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  align-items:baseline;
+  gap:var(--dy-space-16);
+  padding:var(--dy-space-4) 0;
+  border-top:1px solid var(--dy-line);
+}
+.type-row:first-child{border-top:0;padding-top:0}
+.type-row:last-child{padding-bottom:0}
+.type-row .meta{color:var(--dy-text-muted);white-space:nowrap}
+
+/* 3. espaço e raio */
+.bars{display:grid;gap:var(--dy-space-4)}
+.bar-row{display:flex;align-items:center;gap:var(--dy-space-8)}
+.bar-row .dy-mono{width:calc(var(--dy-space-16) + var(--dy-space-6));text-align:right;color:var(--dy-text-muted)}
+.bar{
+  height:var(--dy-space-8);
+  flex:none;
+  background:var(--dy-surface-raised);
+  border:1px solid var(--dy-line);
+}
+.radii{
+  display:flex;
+  gap:var(--dy-space-8);
+  margin-top:var(--dy-space-8);
+  padding-top:var(--dy-space-8);
+  border-top:1px solid var(--dy-line);
+}
+.radius{display:flex;flex-direction:column;gap:var(--dy-space-6)}
+.radius .dy-mono{color:var(--dy-text-muted)}
+.sq{
+  width:calc(var(--dy-control-lg) - var(--dy-radius-control));
+  height:calc(var(--dy-control-lg) - var(--dy-radius-control));
+  background:var(--dy-surface-alt);
+  border:1px solid var(--dy-line);
+}
+.r-control{border-radius:var(--dy-radius-control)}
+.r-surface{border-radius:var(--dy-radius-surface)}
+
+/* 4. botões */
+.btn-head,
+.btn-row{
+  display:grid;
+  grid-template-columns:94px repeat(3,minmax(0,1fr));
+  column-gap:var(--dy-space-12);
+}
+.btn-head{padding-bottom:var(--dy-space-4)}
+.btn-head .dy-label,
+.btn-row .state{color:var(--dy-text-muted)}
+.variant{margin-top:var(--dy-space-8);padding-top:var(--dy-space-6);border-top:1px solid var(--dy-line)}
+.btn-head + .variant{margin-top:var(--dy-space-12);padding-top:0;border-top:0}
+.variant > .dy-label{margin:0 0 var(--dy-space-2);color:var(--dy-text-muted)}
+.btn-row{min-height:var(--dy-control-lg);align-items:center}
+.btn-row .cell{display:flex;align-items:center;min-width:0}
+
+.dy-btn{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  max-width:100%;
+  border:1px solid transparent;
+  border-radius:var(--dy-radius-control);
+  white-space:nowrap;
+  cursor:pointer;
+  appearance:none;
+  -webkit-appearance:none;
+}
+.dy-btn--sm{height:var(--dy-control-sm);padding:0 var(--dy-control-pad-sm)}
+.dy-btn--md{height:var(--dy-control-md);padding:0 var(--dy-control-pad-md)}
+.dy-btn--lg{height:var(--dy-control-lg);padding:0 var(--dy-control-pad-lg)}
+.dy-btn:disabled{cursor:not-allowed}
+
+.dy-btn--primary{background:var(--dy-primary);border-color:var(--dy-primary);color:var(--dy-surface)}
+.dy-btn--primary.is-hover{background:var(--dy-primary-soft);border-color:var(--dy-primary);color:var(--dy-text)}
+.dy-btn--primary:disabled{background:var(--dy-primary-soft);border-color:var(--dy-line);color:var(--dy-text-muted)}
+
+.dy-btn--secondary{background:var(--dy-surface-alt);border-color:var(--dy-line);color:var(--dy-text)}
+.dy-btn--secondary.is-hover{background:var(--dy-surface-raised);border-color:var(--dy-line);color:var(--dy-text)}
+.dy-btn--secondary:disabled{background:var(--dy-surface);border-color:var(--dy-line);color:var(--dy-text-muted)}
+
+.dy-btn--ghost{background:transparent;border-color:transparent;color:var(--dy-text)}
+.dy-btn--ghost.is-hover{background:var(--dy-surface-alt);border-color:transparent;color:var(--dy-text)}
+.dy-btn--ghost:disabled{background:transparent;border-color:transparent;color:var(--dy-text-muted)}
+
+.dy-btn.is-focus{outline:var(--dy-focus-width) solid var(--dy-primary);outline-offset:var(--dy-focus-offset)}
+.dy-btn:focus-visible{outline:var(--dy-focus-width) solid var(--dy-primary);outline-offset:var(--dy-focus-offset)}
+
+/* 5. campos */
+.fields{display:grid;grid-template-columns:1fr 1fr;gap:var(--dy-space-8) var(--dy-space-12)}
+.field{display:flex;flex-direction:column;gap:var(--dy-space-2);min-width:0}
+.field > .dy-label{color:var(--dy-text-muted)}
+.input{
+  display:flex;
+  align-items:center;
+  width:100%;
+  height:var(--dy-control-md);
+  padding:0 var(--dy-control-pad-md);
+  background:var(--dy-surface-alt);
+  border:1px solid var(--dy-line);
+  border-radius:var(--dy-radius-control);
+  color:var(--dy-text);
+}
+.input .value{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.input.is-focus{outline:var(--dy-focus-width) solid var(--dy-primary);outline-offset:var(--dy-focus-offset)}
+.caret{
+  width:var(--dy-focus-width);
+  height:var(--dy-space-12);
+  background:var(--dy-primary);
+  margin-left:var(--dy-space-2);
+  flex:none;
+}
+.select{justify-content:space-between;gap:var(--dy-space-8)}
+.select svg{flex:none;color:var(--dy-text-muted)}
+.switch-row{display:flex;align-items:center;gap:var(--dy-space-12);height:var(--dy-control-md)}
+.switch-item{display:inline-flex;align-items:center;gap:var(--dy-space-8)}
+.switch{
+  position:relative;
+  width:calc(var(--dy-space-16) + var(--dy-space-12));
+  height:calc(var(--dy-space-16) - var(--dy-focus-width));
+  flex:none;
+  background:var(--dy-surface-raised);
+  border:1px solid var(--dy-line);
+  border-radius:var(--dy-radius-control);
+}
+.switch::after{
+  content:"";
+  position:absolute;
+  top:var(--dy-space-2);
+  left:var(--dy-space-2);
+  width:calc(var(--dy-space-8) + var(--dy-focus-width));
+  height:calc(var(--dy-space-8) + var(--dy-focus-width));
+  background:var(--dy-text-muted);
+  border-radius:var(--dy-focus-width);
+}
+.switch.is-on{background:var(--dy-primary);border-color:var(--dy-primary)}
+.switch.is-on::after{left:auto;right:var(--dy-space-2);background:var(--dy-surface)}
+
+/* 6. medidores */
+.meter{display:flex;align-items:center;gap:var(--dy-meter-gap)}
+.track{flex:1;height:var(--dy-meter-height);background:var(--dy-line)}
+.fill{height:var(--dy-meter-height);background:var(--dy-primary)}
+.meter .dy-mono{flex:none}
+.note-states{
+  display:flex;
+  flex-wrap:wrap;
+  gap:var(--dy-space-12);
+  margin-top:var(--dy-space-8);
+  padding-top:var(--dy-space-8);
+  border-top:1px solid var(--dy-line);
+}
+.note-state{display:flex;flex-direction:column;gap:var(--dy-space-4);min-width:64px}
+.note-state .dy-label{color:var(--dy-text-muted)}
+.state-glyph{display:inline-flex;width:var(--dy-space-16);height:var(--dy-space-16);flex:none}
+.state-glyph svg{display:block;width:var(--dy-space-16);height:var(--dy-space-16)}
+.state-glyph.done svg{fill:var(--dy-success)}
+.state-glyph.todo svg{fill:none;stroke:var(--dy-text-muted);stroke-width:1.5}
+.state-glyph.out svg{fill:none;stroke:var(--dy-warning);stroke-width:1.5}
+
+/* 7. notas */
+.notes{
+  list-style:none;
+  padding:0;
+  background:var(--dy-surface-alt);
+  border:1px solid var(--dy-line);
+  border-radius:var(--dy-radius-surface);
+  overflow:hidden;
+}
+.note{
+  display:flex;
+  align-items:center;
+  gap:var(--dy-space-8);
+  min-height:var(--dy-control-md);
+  padding:0 var(--dy-space-8);
+}
+.note + .note{border-top:1px solid var(--dy-line)}
+.note .note-name{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.note .date{margin-left:auto;padding-left:var(--dy-space-8);color:var(--dy-text-muted);white-space:nowrap}
+
+/* 8. notificação */
+.notif{
+  display:flex;
+  align-items:center;
+  gap:var(--dy-space-8);
+  width:100%;
+  max-width:380px;
+  padding:var(--dy-space-6) var(--dy-control-pad-md);
+  background:var(--dy-surface-raised);
+  border:1px solid var(--dy-line);
+  border-radius:var(--dy-radius-surface);
+}
+.notif-num{font-variant-numeric:tabular-nums}
+.notif-rule{width:var(--dy-focus-width);height:var(--dy-space-12);flex:none;background:var(--dy-line)}
+.notif-name{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* 9. contraexemplo */
+.forbidden{
+  padding:var(--dy-control-pad-md);
+  background:var(--dy-surface-alt);
+  border:1px solid var(--dy-line);
+  border-radius:var(--dy-radius-surface);
+}
+.forbidden-head{display:flex;align-items:center;gap:var(--dy-space-8);color:var(--dy-danger)}
+.forbidden-head svg{flex:none}
+.forbidden-head .dy-label{color:var(--dy-text)}
+.forbidden-text{
+  margin-top:var(--dy-space-4);
+  color:var(--dy-text-muted);
+  text-decoration:line-through;
+  text-decoration-thickness:1px;
+  text-decoration-color:var(--dy-danger);
+  text-decoration-skip-ink:none;
+}
+
+@media (max-width:480px){
+  .btn-head,
+  .btn-row{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .btn-head .spacer{display:none}
+  .btn-row{row-gap:var(--dy-space-6);padding:var(--dy-space-8) 0;border-top:1px solid var(--dy-line)}
+  .btn-row .state{grid-column:1 / -1}
+  .dy-btn--sm,.dy-btn--md,.dy-btn--lg{padding-left:var(--dy-space-6);padding-right:var(--dy-space-6)}
+}
+
+@media (max-width:560px){
+  .fields{grid-template-columns:1fr}
+}`;
+
+const GALLERY = `<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+${HEADER}
+
+${cssCore('./fonts')}
+
+${GALLERY_LAYOUT_CSS}
+</style>
+</head>
+<body class="dy-body">
+
+<main>
+  <div class="wrap">
+
+    <!-- 1. cores -->
+    <section>
+      <h2 class="dy-label dy-muted">cores</h2>
+${SWATCHES}
+    </section>
+
+    <!-- 2. tipografia -->
+    <section>
+      <h2 class="dy-label dy-muted">tipografia</h2>
+      <div class="types">
+${STYLE_SAMPLE}
+      </div>
+    </section>
+
+    <!-- 3. espaço e raio -->
+    <section>
+      <h2 class="dy-label dy-muted">espaço e raio</h2>
+      <div class="bars">
+${SPACE_BARS}
+      </div>
+      <div class="radii">
+${RADII}
+      </div>
+    </section>
+
+    <!-- 4. botões -->
+    <section>
+      <h2 class="dy-label dy-muted">botões</h2>
+
+      <div class="btn-head">
+        <span class="spacer"></span>
+        ${BUTTON_HEAD}
+      </div>
+
+${BUTTON_VARIANTS_HTML}
+    </section>
+
+    <!-- 5. campos -->
+    <section>
+      <h2 class="dy-label dy-muted">campos</h2>
+      <div class="fields">
+        <div class="field">
+          <span class="dy-label">nota</span>
+          <div class="input"><span class="dy-body value">Consulta médica</span></div>
+        </div>
+        <div class="field">
+          <span class="dy-label">nota</span>
+          <div class="input is-focus"><span class="dy-body value">Consulta médica</span><span class="caret"></span></div>
+        </div>
+        <div class="field">
+          <span class="dy-label">coleção</span>
+          <div class="input select">
+            <span class="dy-body value">Saúde</span>
+            <svg width="9" height="6" viewBox="0 0 9 6" aria-hidden="true"><path d="M1 1l3.5 3.5L8 1" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+          </div>
+        </div>
+        <div class="field">
+          <span class="dy-label">sincronizar</span>
+          <div class="switch-row">
+            <span class="switch-item"><span class="switch" aria-hidden="true"></span><span class="dy-label">desligado</span></span>
+            <span class="switch-item"><span class="switch is-on" aria-hidden="true"></span><span class="dy-label">ligado</span></span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6. medidores -->
+    <section>
+      <h2 class="dy-label dy-muted">medidores</h2>
+      <div class="meter">
+        <div class="track"><div class="fill" style="width:64%"></div></div>
+        <span class="dy-mono">18/28</span>
+      </div>
+      <div class="note-states">
+        <div class="note-state">
+          <span class="state-glyph done" role="img" aria-label="feito">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/></svg>
+          </span>
+          <span class="dy-label">feito</span>
+        </div>
+        <div class="note-state">
+          <span class="state-glyph todo" role="img" aria-label="não feito">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/></svg>
+          </span>
+          <span class="dy-label">não feito</span>
+        </div>
+        <div class="note-state">
+          <span class="state-glyph out" role="img" aria-label="ficou de fora">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="M4 8h8"/></svg>
+          </span>
+          <span class="dy-label">ficou de fora</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 7. notas -->
+    <section>
+      <h2 class="dy-label dy-muted">notas</h2>
+      <ul class="notes">
+        <li class="note">
+          <span class="state-glyph done" role="img" aria-label="feito">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/></svg>
+          </span>
+          <span class="dy-body note-name">Reunião com fornecedor</span>
+          <span class="dy-mono date">12 mar</span>
+        </li>
+        <li class="note">
+          <span class="state-glyph todo" role="img" aria-label="não feito">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/></svg>
+          </span>
+          <span class="dy-body note-name">Ideia de captura offline</span>
+          <span class="dy-mono date">9 mar</span>
+        </li>
+        <li class="note">
+          <span class="state-glyph out" role="img" aria-label="ficou de fora">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="M4 8h8"/></svg>
+          </span>
+          <span class="dy-body note-name">Consulta médica</span>
+          <span class="dy-mono date">4 mar</span>
+        </li>
+      </ul>
+    </section>
+
+    <!-- 8. notificação -->
+    <section>
+      <h2 class="dy-label dy-muted">notificação</h2>
+      <div class="notif">
+        <span class="dy-title notif-num">3</span>
+        <span class="notif-rule"></span>
+        <span class="dy-body notif-name">Reunião com fornecedor</span>
+      </div>
+    </section>
+
+    <!-- 9. contraexemplo -->
+    <section>
+      <h2 class="dy-label dy-muted">contraexemplo</h2>
+      <div class="forbidden">
+        <div class="forbidden-head">
+          <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+          <span class="dy-label">proibido</span>
+        </div>
+        <p class="dy-body forbidden-text">Suas ideias ficam organizadas automaticamente, seguras e sempre sincronizadas entre os aparelhos.</p>
+      </div>
+    </section>
+
+  </div>
+</main>
+
+</body>
+</html>
+`;
+
+const OUTPUTS = [
+  { path: 'web/src/ui/tokens.css', body: tokensCss },
+  { path: 'mobile/src/theme/design.ts', body: designTs() },
+  { path: 'docs/design/index.html', body: GALLERY },
+];
+
+function firstDivergence(expected, actual) {
+  const wanted = expected.split('\n');
+  const found = actual.split('\n');
+  const total = Math.max(wanted.length, found.length);
+  for (let index = 0; index < total; index += 1) {
+    if (wanted[index] !== found[index]) {
+      return { line: index + 1, expected: wanted[index], actual: found[index] };
+    }
+  }
+  return null;
+}
+
+if (checkOnly) {
+  let drifted = 0;
+  for (const output of OUTPUTS) {
+    let actual;
+    try {
+      actual = readFileSync(join(root, output.path), 'utf8');
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      actual = null;
+    }
+
+    if (actual === output.body) continue;
+
+    drifted += 1;
+    if (actual === null) {
+      process.stdout.write(`${output.path}: arquivo ausente\n`);
+      continue;
+    }
+
+    const diff = firstDivergence(output.body, actual);
+    process.stdout.write(`${output.path}: linha ${diff.line} divergente\n`);
+    process.stdout.write(`  esperado: ${JSON.stringify(diff.expected ?? '')}\n`);
+    process.stdout.write(`  atual:    ${JSON.stringify(diff.actual ?? '')}\n`);
+  }
+
+  if (drifted > 0) {
+    process.stdout.write(`\n${drifted} arquivo(s) fora de sincronia. Rode \`make tokens\`.\n`);
+    process.exit(1);
+  }
+
+  process.stdout.write(`tokens em sincronia: ${OUTPUTS.length} arquivos\n`);
+  process.exit(0);
+}
+
+for (const output of OUTPUTS) {
+  const target = join(root, output.path);
+  mkdirSync(dirname(target), { recursive: true });
+  writeFileSync(target, output.body, 'utf8');
+  process.stdout.write(`gerado ${output.path}\n`);
+}
