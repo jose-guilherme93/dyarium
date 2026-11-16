@@ -3,6 +3,8 @@ import App from "./App";
 import { ToastProvider } from "./components/Toasts";
 import { connectLocal } from "./local/boot";
 import "./index.css";
+import "./ui/tokens.css";
+import "./ui/ui.css";
 
 const rootElement = document.getElementById("root");
 if (!rootElement) {
