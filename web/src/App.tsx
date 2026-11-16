@@ -499,16 +499,6 @@ export function App() {
     markVaultDirty();
   };
 
-  // Digitar no capitulo so muda a contagem dele: a lista fica como esta e
-  // nenhuma recarga (refreshKey) e disparada por texto.
-  const patchChapterWords = (entryId: string, wordCount: number) => {
-    setBookChapters((current) =>
-      current.map((chapter) =>
-        chapter.id === entryId ? { ...chapter, word_count: wordCount } : chapter,
-      ),
-    );
-  };
-
   const closeDrawer = () => {
     if (window.innerWidth <= 900) setNavOpen(false);
   };
@@ -1114,7 +1104,6 @@ export function App() {
               onCreateChapterAfter={(id) => void createBookChapterAfter(id)}
               onReorderChapter={(source, target) => void reorderBookChapters(source, target)}
               onChanged={refresh}
-              onWordsSaved={patchChapterWords}
               onOpenSettings={() => setBookDialog({ notebook: activeNotebook })}
             />
           ) : view === "notes" ? (
