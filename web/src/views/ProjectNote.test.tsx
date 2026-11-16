@@ -1,267 +1,286 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { ProjectNote } from "./ProjectNote";
-vi.mock("../api", () => ({
-  api: {
-    getEntry: vi.fn(),
-    listNotes: vi.fn(),
-    updateEntry: vi.fn(),
+import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { ActivityLine, DayColumns, FolderPane, SessionPane } from "./ProjectNote";
+import { buildIndex, findFolder, findSessionNode } from "../lib/useProjectsIndex";
+import type { Entry, Note } from "../types";
+
+const NOW = Date.parse("2026-11-16T12:00:00Z");
+
+const entry = (id: string, title: string) => ({ id, title }) as unknown as Entry;
+
+function v2Note(
+  id: string,
+  entryId: string,
+  spec: {
+    machine: string;
+    path: string;
+    session: string;
+    state: "open" | "closed";
+    date: string;
+    time: string;
+    closed?: string;
+    summary?: string;
+    items: Array<{ kind: string; title: string; commit?: string }>;
+    updatedAt: string;
+    title: string;
   },
-}));
-
-import { api } from "../api";
-
-const entry = (id: string, title: string, icon?: string) =>
-  ({ id, title, icon }) as never;
-
-const note = (id: string, entryId: string, body: string) =>
-  ({ id, entry_id: entryId, title: "Resumo", content_markdown: body }) as never;
-
-/** Data AAAA-MM-DD deslocada de hoje, para o range relativo do filtro. */
-function isoDaysAgo(days: number): string {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() - days);
-  return d.toISOString().slice(0, 10);
+): Note {
+  const fence = JSON.stringify({
+    v: 2,
+    kind: "session",
+    machine: spec.machine,
+    path: spec.path,
+    session: spec.session,
+    state: spec.state,
+    opened: `${spec.date}T${spec.time}:00Z`,
+    ...(spec.closed ? { closed: spec.closed } : {}),
+    date: spec.date,
+    time: spec.time,
+    ...(spec.summary ? { summary: spec.summary } : {}),
+    items: spec.items.map((item) => ({ kind: item.kind, title: item.title, commit: item.commit })),
+    commits: spec.items
+      .filter((item) => item.commit)
+      .map((item) => ({ hash: item.commit })),
+  });
+  const lines = [
+    `## ${spec.date} ${spec.time} · ${spec.machine}`,
+    spec.summary ?? "",
+    ...spec.items.map(
+      (item) => `- **${item.kind}** ${item.title}${item.commit ? ` · ${item.commit}` : ""}`,
+    ),
+    "```dyarium-json",
+    fence,
+    "```",
+  ];
+  return {
+    id,
+    entry_id: entryId,
+    title: spec.title,
+    content_markdown: lines.join("\n"),
+    updated_at: spec.updatedAt,
+  } as unknown as Note;
 }
 
-const D0 = isoDaysAgo(0);
-const D10 = isoDaysAgo(10);
-
-/** Nota com duas sessoes: fence canonico na primeira, bloco humano com
- * :::details na segunda. Nenhum dos dois formatos deve aparecer cru. */
-const twoSessions = () => {
-  const fence = JSON.stringify({
-    v: 1,
-    project: "dyarium",
-    date: D0,
-    time: "14:58",
-    host: "vps-dev",
-    detail: "concise",
-    summary: "Fechar a leitura da nota do projeto.",
-    items: [
-      {
-        kind: "feat",
-        title: "leitura da nota com tabela por kind",
-        commit: "abc1234",
-        url: "https://example.com/commit/abc1234",
-      },
-      {
-        kind: "feat",
-        title: "botoes de acao declarativos",
-        commit: "def5678",
-        url: "https://example.com/commit/def5678",
-      },
-      {
-        kind: "fix",
-        title: "fence oculto na leitura",
-        commit: "0ldhash",
-        url: "https://example.com/commit/0ldhash",
-      },
+function fixture() {
+  const entries = [entry("e-a", "syncwin")];
+  const noteLists = [
+    [
+      v2Note("n1", "e-a", {
+        machine: "work-notebook",
+        path: "/home/joseti/projects/syncwin",
+        session: "ses_a",
+        state: "closed",
+        date: "2026-11-12",
+        time: "14:02",
+        closed: "2026-11-13T10:15:00Z",
+        summary: "Trocar o painel web por um html estatico escrito pelo roteador.",
+        items: [
+          { kind: "feat", title: "coletor pega uptime e carga", commit: "a1f3c9e" },
+          { kind: "fix", title: "fuso errado nos rotulos", commit: "3c8b77f" },
+          { kind: "feat", title: "reescreve o html a cada 5 minutos", commit: "d94f1a2" },
+        ],
+        updatedAt: "2026-11-13T10:15:00Z",
+        title: "painel estatico no roteador",
+      }),
+      v2Note("n2", "e-a", {
+        machine: "work-notebook",
+        path: "/home/joseti/projects/syncwin",
+        session: "ses_b",
+        state: "open",
+        date: "2026-11-16",
+        time: "09:00",
+        items: [],
+        updatedAt: "2026-11-16T11:59:00Z",
+        title: "migra o backup para o s3",
+      }),
     ],
-    commits: [{ hash: "abc1234", message: "leitura", url: "https://example.com/commit/abc1234" }],
-    links: [{ label: "docs", url: "https://example.com/docs" }],
-  });
-  return [
-    note(
-      "n-1",
-      "entry-a",
-      [
-        `## ${D0} 14:58 · vps-dev`,
-        "Fechar a leitura da nota do projeto.",
-        "- **feat** leitura da nota com tabela por kind · [abc1234](https://example.com/commit/abc1234)",
-        "- **feat** botoes de acao declarativos · [def5678](https://example.com/commit/def5678)",
-        "- **fix** fence oculto na leitura · [0ldhash](https://example.com/commit/0ldhash)",
-        ":::details",
-        "Commits:",
-        "- abc1234 — leitura https://example.com/commit/abc1234",
-        ":::",
-        "```dyarium-json",
-        fence,
-        "```",
-      ].join("\n"),
-    ),
-    note(
-      "n-2",
-      "entry-a",
-      [
-        `## ${D10} 09:00 · notebook`,
-        "Sessao anterior sem url nos commits.",
-        "- **chore** limpar estilos soltos · 9999888",
-        "- **docs** contrato do fence v1 · 7777666",
-      ].join("\n"),
-    ),
   ];
-};
+  return buildIndex(entries, noteLists, NOW);
+}
 
-const setup = (
-  notes: ReturnType<typeof twoSessions>,
-  options?: { entryIcon?: string },
-) => {
-  vi.mocked(api.getEntry).mockResolvedValue(
-    entry("entry-a", "dyarium", options?.entryIcon ?? "✒️"),
-  );
-  vi.mocked(api.listNotes).mockResolvedValue({ notes } as never);
-  const onFilterItems = vi.fn();
-  const onEdit = vi.fn();
-  render(
-    <ProjectNote
-      entryId="entry-a"
-      notebookName="Projetos"
-      refreshKey={0}
-      onFilterItems={onFilterItems}
-      onEdit={onEdit}
-    />,
-  );
-  return { onFilterItems, onEdit };
-};
+describe("SessionPane: leitura da nota de sessao", () => {
+  it("caminho em mono como titulo, nome como subtitulo, meta e resumo", () => {
+    const index = fixture();
+    const node = findSessionNode(index.tree, "work-notebook|/home/joseti/projects/syncwin|ses_a");
+    expect(node).not.toBeNull();
+    render(<SessionPane sessionNode={node!} onEdit={vi.fn()} />);
 
-const clipboardDescriptor = Object.getOwnPropertyDescriptor(Navigator.prototype, "clipboard") ??
-  Object.getOwnPropertyDescriptor(navigator, "clipboard") ??
-  null;
+    const title = screen.getByRole("heading", { level: 1 });
+    expect(title).toHaveTextContent("/home/joseti/projects/syncwin");
+    expect(title.className).toContain("dy-display");
+    expect(screen.getByText("painel estatico no roteador")).toBeInTheDocument();
 
-beforeEach(() => {
-  vi.mocked(api.getEntry).mockReset();
-  vi.mocked(api.listNotes).mockReset();
-  vi.mocked(api.updateEntry).mockReset();
-});
+    const meta = document.querySelector(".pjx-nmeta");
+    expect(meta?.textContent).toContain("work-notebook");
+    expect(meta?.textContent).toContain("14:02");
+    expect(meta?.textContent).toContain("10:15");
+    expect(meta?.textContent).toContain("3 itens");
+    expect(meta?.textContent).toContain("3 commits");
 
-afterEach(() => {
-  if (clipboardDescriptor) {
-    Object.defineProperty(navigator, "clipboard", clipboardDescriptor);
-  } else {
-    delete (navigator as { clipboard?: unknown }).clipboard;
-  }
-  vi.useRealTimers();
-});
-
-describe("ProjectNote", () => {
-  it("mostra as duas sessoes com a tabela por kind e os numeros certos", async () => {
-    setup(twoSessions());
-
-    const tables = await screen.findAllByRole("table");
-    expect(tables).toHaveLength(2);
-
-    // Cabecalhos discretos das duas sessoes: host e numero de itens.
-    expect(screen.getAllByText(/vps-dev/).length).toBeGreaterThanOrEqual(2);
-    expect(screen.getAllByText(/notebook/).length).toBeGreaterThanOrEqual(1);
-    expect(document.body.textContent).toContain("3 itens");
-    expect(document.body.textContent).toContain("2 itens");
-
-    // Primeira sessao (a mais nova): feat 2/67%, fix 1/33%, total 3/100%.
-    const first = tables[0];
-    expect(within(first).getByText("feat")).toBeInTheDocument();
-    expect(within(first).getByText("2")).toBeInTheDocument();
-    expect(within(first).getByText("67%")).toBeInTheDocument();
-    expect(within(first).getByText("33%")).toBeInTheDocument();
-    expect(within(first).getByText("Total").closest("tr")?.textContent).toBe("Total3100%");
-
-    // Segunda sessao: chore e docs, uma linha cada.
-    const second = tables[1];
-    expect(within(second).getByText("chore")).toBeInTheDocument();
-    expect(within(second).getByText("docs")).toBeInTheDocument();
-    expect(within(second).getByText("Total").closest("tr")?.textContent).toBe("Total2100%");
-
-    // Itens visiveis como lista de leitura, com o commit mono.
-    expect(screen.getByText("leitura da nota com tabela por kind")).toBeInTheDocument();
-    expect(screen.getByText("limpar estilos soltos")).toBeInTheDocument();
-    expect(screen.getByText("abc1234")).toBeInTheDocument();
+    expect(
+      screen.getByText("Trocar o painel web por um html estatico escrito pelo roteador."),
+    ).toBeInTheDocument();
   });
 
-  it("fence dyarium-json e :::details nunca aparecem na leitura", async () => {
-    setup(twoSessions());
-    await screen.findAllByRole("table");
+  it("tabela de itens com kind mono neutro, titulo e commit curto; fence oculto", () => {
+    const index = fixture();
+    const node = findSessionNode(index.tree, "work-notebook|/home/joseti/projects/syncwin|ses_a");
+    render(<SessionPane sessionNode={node!} onEdit={vi.fn()} />);
+
+    const table = screen.getByRole("table");
+    expect(within(table).getAllByRole("row")).toHaveLength(4);
+    expect(within(table).getByText("coletor pega uptime e carga")).toBeInTheDocument();
+    expect(within(table).getByText("a1f3c9e")).toBeInTheDocument();
+    // kind e rotulo mono, nunca cor de kind.
+    const kindCell = within(table).getAllByText("feat")[0].closest("td");
+    expect(kindCell?.className).toContain("dy-mono");
 
     const text = document.body.textContent ?? "";
     expect(text).not.toContain("dyarium-json");
-    expect(text).not.toContain(":::details");
-    expect(text).not.toContain("```");
-    expect(text).not.toContain('"v":1');
-    expect(text).not.toContain("## " + D0);
+    expect(text).not.toContain('"v":2');
   });
 
-  it("Filtrar itens dispara a callback com projeto e periodo da sessao", async () => {
-    const { onFilterItems } = setup(twoSessions());
-    await screen.findAllByRole("table");
+  it("grafico de colunas no fim, com o valor no hover", () => {
+    const index = fixture();
+    const node = findSessionNode(index.tree, "work-notebook|/home/joseti/projects/syncwin|ses_a");
+    const { container } = render(<SessionPane sessionNode={node!} onEdit={vi.fn()} />);
 
-    const filterButtons = screen.getAllByRole("button", { name: "Filtrar itens" });
-    expect(filterButtons).toHaveLength(2);
-
-    fireEvent.click(filterButtons[0]);
-    await waitFor(() =>
-      expect(onFilterItems).toHaveBeenCalledWith("dyarium", "7"),
-    );
-
-    fireEvent.click(filterButtons[1]);
-    await waitFor(() =>
-      expect(onFilterItems).toHaveBeenLastCalledWith("dyarium", "30"),
-    );
+    const chart = container.querySelector('svg[aria-label="itens por dia"]') as Element;
+    expect(chart).not.toBeNull();
+    // Os itens da sessao v2 sao do dia da sessao: um slot preenchido.
+    expect(container.querySelectorAll("rect.pjx-col:not(.pjx-col--empty)")).toHaveLength(1);
+    expect(container.querySelector("rect.pjx-col")).not.toHaveClass("pjx-col--hollow");
+    expect(chart.querySelector("title")?.textContent).toMatch(/12 nov · 3 itens/);
+    // Sem eixo y numerico.
+    expect(chart.querySelector("text")?.textContent).toContain("12 nov");
   });
 
-  it("Copiar link chama o clipboard, mostra o feedback e se desabilita sem url", async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(navigator, "clipboard", {
-      value: { writeText },
-      configurable: true,
-    });
-    setup(twoSessions());
-    await screen.findAllByRole("table");
-
-    const copyButtons = screen.getAllByRole("button", { name: /Copiar link/ });
-    expect(copyButtons).toHaveLength(2);
-
-    // Segunda sessao nao tem url em nenhum commit: pill desabilitado com title.
-    expect(copyButtons[1]).toBeDisabled();
-    expect(copyButtons[1]).toHaveAttribute("aria-disabled", "true");
-    expect(copyButtons[1]).toHaveAttribute("title", "Sem link para copiar");
-
-    vi.useFakeTimers();
-    fireEvent.click(copyButtons[0]);
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(200);
-    });
-    expect(writeText).toHaveBeenCalledWith("https://example.com/commit/abc1234");
-    expect(screen.getByText("Copiado")).toBeInTheDocument();
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1600);
-    });
-    expect(screen.queryByText("Copiado")).not.toBeInTheDocument();
-  });
-
-  it("Editar chama onEdit e o cabecalho mostra o icone e a meta do caderno", async () => {
-    const { onEdit } = setup(twoSessions());
-    await screen.findAllByRole("table");
-
-    expect(
-      screen.getByRole("heading", { level: 1, name: "dyarium" }),
-    ).toBeInTheDocument();
-    expect(screen.getByLabelText("trocar ícone de dyarium")).toHaveTextContent("✒️");
-    expect(screen.getByText("Projetos")).toBeInTheDocument();
-    expect(screen.getByText("vps-dev")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Editar" }));
-    expect(onEdit).toHaveBeenCalledTimes(1);
-  });
-
-  it("nota sem sessao mostra o estado vazio sem quebrar", async () => {
-    vi.mocked(api.getEntry).mockResolvedValue(entry("entry-a", "projeto solto"));
-    vi.mocked(api.listNotes).mockResolvedValue({
-      notes: [note("n-1", "entry-a", "")],
-    } as never);
-    render(
-      <ProjectNote
-        entryId="entry-a"
-        notebookName="Projetos"
-        refreshKey={0}
-        onFilterItems={vi.fn()}
-        onEdit={vi.fn()}
+  it("sessao aberta fecha a coluna do dia atual em contorno e o ultimo tempo e 'em curso'", () => {
+    const index = fixture();
+    const node = findSessionNode(index.tree, "work-notebook|/home/joseti/projects/syncwin|ses_b");
+    expect(node?.session.state).toBe("open");
+    const { container } = render(
+      <DayColumns
+        days={[
+          { date: "2026-11-15", items: 2 },
+          { date: "2026-11-16", items: 1 },
+        ]}
+        open
       />,
     );
+    const columns = container.querySelectorAll("rect.pjx-col:not(.pjx-col--empty)");
+    expect(columns).toHaveLength(2);
+    expect(columns[1]).toHaveClass("pjx-col--hollow");
+  });
 
-    await waitFor(() =>
-      expect(screen.getByText("Sem sessões registradas.")).toBeInTheDocument(),
-    );
+  it("sessao aberta sem itens ainda: uma forma de slot, nao uma frase", () => {
+    const index = fixture();
+    const node = findSessionNode(index.tree, "work-notebook|/home/joseti/projects/syncwin|ses_b");
+    const { container } = render(<SessionPane sessionNode={node!} onEdit={vi.fn()} />);
+
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Editar" })).toBeInTheDocument();
+    const shape = container.querySelector(".pjx-slotshape");
+    expect(shape).not.toBeNull();
+    expect(shape?.querySelectorAll("span")).toHaveLength(3);
+    // A faixa de tempo ainda diz "em curso".
+    expect(document.querySelector(".pjx-nmeta")?.textContent).toContain("em curso");
+  });
+
+  it("Editar devolve a entry da nota ao App", () => {
+    const index = fixture();
+    const node = findSessionNode(index.tree, "work-notebook|/home/joseti/projects/syncwin|ses_a");
+    const onEdit = vi.fn();
+    render(<SessionPane sessionNode={node!} onEdit={onEdit} />);
+    fireEvent.click(screen.getByRole("button", { name: /Editar/ }));
+    expect(onEdit).toHaveBeenCalledWith("e-a");
+  });
+});
+
+describe("FolderPane: leitura agregada da pasta", () => {
+  it("numeros de sessoes, itens e commits, composicao e lista ordenada", () => {
+    const index = fixture();
+    const folder = findFolder(index.tree, "work-notebook", "/home/joseti/projects/syncwin");
+    expect(folder).not.toBeNull();
+    const onOpenSession = vi.fn();
+    const { container } = render(<FolderPane folder={folder!} onOpenSession={onOpenSession} />);
+
+    expect(container.querySelector(".pjx-stats")?.textContent).toContain("2");
+    expect(container.querySelector(".pjx-stats")?.textContent).toContain("3");
+
+    // Legenda de composicao: numero na frente, kind como esta, hairline no
+    // meio. Sem plural: legenda nao e prosa.
+    const legend = container.querySelector(".pjx-flegend")?.textContent ?? "";
+    expect(legend).toContain("2 feat");
+    expect(legend).toContain("·");
+    expect(legend).not.toMatch(/feats|fixs|tests/);
+
+    // Lista ordenada (mais nova primeiro) ligando de volta para cada sessao.
+    const rows = screen.getAllByRole("button", { name: /migra o backup|painel estatico/ });
+    expect(rows.map((row) => row.textContent)).toEqual([
+      expect.stringContaining("migra o backup"),
+      expect.stringContaining("painel estatico"),
+    ]);
+    fireEvent.click(rows[1]);
+    expect(onOpenSession).toHaveBeenCalledWith(
+      "work-notebook|/home/joseti/projects/syncwin|ses_a",
+    );
+  });
+
+  it("linha de atividade cobre o intervalo real com buraco de dias sem item", () => {
+    const { container } = render(
+      <ActivityLine
+        days={[
+          { date: "2026-11-12", items: 2 },
+          { date: "2026-11-13", items: 1 },
+          { date: "2026-11-14", items: 0 },
+          { date: "2026-11-15", items: 0 },
+          { date: "2026-11-16", items: 3 },
+        ]}
+      />,
+    );
+    const points = container.querySelectorAll("circle.pjx-pt");
+    expect(points).toHaveLength(3);
+    expect(container.querySelector("polyline")).not.toBeNull();
+    const titles = Array.from(container.querySelectorAll("title")).map((t) => t.textContent);
+    expect(titles).toContain("16 nov · 3 itens");
+  });
+
+  it("pasta com sessoes mas nenhum item: forma de slot, nunca frase", () => {
+    const entries = [entry("e-b", "vazio")];
+    const index = buildIndex(
+      entries,
+      [
+        [
+          v2Note("n1", "e-b", {
+            machine: "work",
+            path: "/srv/so",
+            session: "s1",
+            state: "open",
+            date: "2026-11-16",
+            time: "10:00",
+            items: [],
+            updatedAt: "2026-11-16T10:00:00Z",
+            title: "sem nada ainda",
+          }),
+          v2Note("n2", "e-b", {
+            machine: "work",
+            path: "/srv/so",
+            session: "s2",
+            state: "closed",
+            date: "2026-11-15",
+            time: "10:00",
+            items: [],
+            updatedAt: "2026-11-15T10:00:00Z",
+            title: "nem abriu direito",
+          }),
+        ],
+      ],
+      NOW,
+    );
+    const folder = findFolder(index.tree, "work", "/srv/so");
+    const { container } = render(<FolderPane folder={folder!} onOpenSession={vi.fn()} />);
+    expect(container.querySelector(".pjx-slotshape")).not.toBeNull();
+    expect(container.querySelector(".pjx-stats")?.textContent).toContain("0");
+    expect(screen.getAllByRole("button", { name: /sem nada ainda|nem abriu/ })).toHaveLength(2);
   });
 });

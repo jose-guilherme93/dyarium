@@ -1,453 +1,378 @@
-import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { api } from "../api";
-import { EmojiPicker } from "../components/EmojiPicker";
-import { Spinner } from "../components/Status";
+import { Button } from "../ui";
 import {
-  BookIcon,
-  CheckIcon,
-  ExternalIcon,
-  FilterIcon,
-  LinkIcon,
-  PencilIcon,
-} from "../components/icons";
-import {
-  itemKindCounts,
-  parseProjectLogs,
-  type LogItem,
-  type LogSession,
+  daySeries,
+  type DayBucket,
 } from "../../../mobile/src/core/projetoLog";
-import { isNoteCommand, type NoteAction, type NoteActionIcon, type ProjectsRange } from "../lib/actions";
-import type { Entry } from "../types";
+import {
+  KindMeter,
+  StateMark,
+  TypeIcon,
+  kindKeys,
+  shortDay,
+} from "../components/projectui";
+import { folderReading, type PjFolderNode, type PjSessionNode } from "../lib/useProjectsIndex";
 
 /**
- * Leitura da nota de um projeto no caderno MCP (docs/projetos.md): o corpo em
- * markdown e parseado pelo modulo projetoLog e vira a superficie do prototipo
- * (proto-resumos.html, aba Nota) - titulo, resumo, um bloco por sessao com a
- * tabela por kind e os botoes de acao declarativos. O fence e o ":::details"
- * nunca aparecem; "Editar" devolve ao editor de markdown de sempre.
+ * Leitura da nota no painel da superficie Projetos (docs/projetos.md): para a
+ * sessao selecionada, o caminho em mono como titulo display, o nome da sessao,
+ * a linha de meta, o resumo, a tabela de itens e, no fim, o grafico de colunas
+ * por dia de calendario. Para o no de pasta, o agregado: sessoes, itens e
+ * commits em numero, composicao por kind, linha de atividade no intervalo real
+ * e a lista das sessoes. O fence fica oculto.
  */
 
-interface ProjectNoteProps {
-  entryId: string;
-  /** Nome do caderno na linha de meta ("Projetos"). */
-  notebookName: string;
-  /** Muda quando a nota pode ler de novo (voltou da edicao, sincronizou). */
-  refreshKey: number;
-  /** Aba Itens ja filtrada pelo projeto e pelo periodo da sessao. */
-  onFilterItems: (project: string, range: ProjectsRange) => void;
-  /** Abre o editor de markdown com o corpo completo. */
-  onEdit: () => void;
+const shortDate = shortDay;
+
+function clockOf(iso: string | undefined): string {
+  if (!iso) return "";
+  const at = iso.indexOf("T");
+  return at > 0 ? iso.slice(at + 1, at + 6) : "";
 }
 
-const KIND_ORDER = ["feat", "fix", "perf", "test", "docs", "chore"];
-const KIND_CLASS: Record<string, string> = {
-  feat: "pj-kc--feat",
-  fix: "pj-kc--fix",
-  perf: "pj-kc--perf",
-  test: "pj-kc--test",
-  docs: "pj-kc--muted",
-  chore: "pj-kc--muted",
-};
-const MONTHS = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
-
-/** Dia como numero, para comparar datas sem nesta horario. */
-function dayNumber(date: string): number {
-  const parts = date.split("-").map(Number);
-  if (parts.length < 3 || parts.some((part) => Number.isNaN(part))) return Number.NaN;
-  return Date.UTC(parts[0], parts[1] - 1, parts[2]) / 864e5;
+function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
 }
 
-function todayNumber(): number {
-  const now = new Date();
-  return Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) / 864e5;
-}
-
-/** "9 nov" como no prototipo; entrada vem AAAA-MM-DD. */
-function shortDate(date: string): string {
-  const day = dayNumber(date);
-  if (Number.isNaN(day)) return date;
-  const d = new Date(day * 864e5);
-  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
-}
-
-/** Periodo da aba Itens que garante a sessao visivel: 7 dias, 30 dias ou tudo. */
-function rangeForDate(date: string): ProjectsRange {
-  const day = dayNumber(date);
-  if (Number.isNaN(day)) return "all";
-  const diff = todayNumber() - day;
-  if (diff <= 6) return "7";
-  if (diff <= 29) return "30";
-  return "all";
-}
-
-/** Url do commit mais recente da sessao: item primeiro (ordem do arquivo),
- * depois o bloco tecnico; sem remoto, nada a copiar. */
-function newestCommitUrl(session: LogSession): string {
-  for (const item of session.items) {
-    if (item.url) return item.url;
+/** Faixa de tempo da sessao: aberta ate "em curso". */
+function timeRange(session: PjSessionNode["session"]): string {
+  const start = `${shortDate(session.date)} ${session.time}`;
+  if (session.state === "closed" && session.closed) {
+    return `${start} – ${shortDate(session.closed.slice(0, 10))} ${clockOf(session.closed)}`;
   }
-  for (const commit of session.commits) {
-    if (commit.url) return commit.url;
+  return `${start} – em curso`;
+}
+
+/**
+ * Colunas por dia de calendario: dia sem item continua slot vazio, sem eixo y,
+ * rotulos nas pontas e o valor no hover. Sessao sem fechamento tem a ultima
+ * coluna com dados em contorno, nao preenchida.
+ */
+export function DayColumns({
+  days,
+  open,
+}: {
+  days: DayBucket[];
+  open: boolean;
+}) {
+  if (days.length === 0) {
+    return (
+      <div className="pjx-chart-empty" aria-hidden="true">
+        <span />
+        <span className="pjx-chart-empty--off" />
+        <span />
+      </div>
+    );
   }
-  return "";
-}
-
-/** Kinds presentes na sessao, na ordem canonica; desconhecidos depois. */
-function kindsOf(items: LogItem[]): string[] {
-  const counts = itemKindCounts(items);
-  const keys = Object.keys(counts);
-  const known = KIND_ORDER.filter((kind) => keys.includes(kind));
-  const extra = keys.filter((kind) => !KIND_ORDER.includes(kind));
-  return [...known, ...extra];
-}
-
-interface PickerSpot {
-  current: string;
-  anchor: DOMRect;
-}
-
-export function ProjectNote({
-  entryId,
-  notebookName,
-  refreshKey,
-  onFilterItems,
-  onEdit,
-}: ProjectNoteProps) {
-  const [entry, setEntry] = useState<Entry | null>(null);
-  const [sessions, setSessions] = useState<LogSession[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [iconChoice, setIconChoice] = useState<string | null>(null);
-  const [picker, setPicker] = useState<PickerSpot | null>(null);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-  const copyTimer = useRef<number | null>(null);
-
-  // Rede sempre: a variante Cached chegou vazias no primeiro acesso do caderno
-  // MCP (mesma decisao da superficie de projetos). Cancelamento local: trocar
-  // de nota no meio da leitura nao pode marcar estado tardiamente.
-  useEffect(() => {
-    if (!entryId) {
-      setLoading(false);
-      setSessions([]);
-      return;
-    }
-    let active = true;
-    setLoading(true);
-    setIconChoice(null);
-    void (async () => {
-      try {
-        const [entryRes, notesRes] = await Promise.all([
-          api.getEntry(entryId),
-          api.listNotes(entryId),
-        ]);
-        if (!active) return;
-        const currentEntry = entryRes ?? null;
-        const notes = notesRes?.notes ?? [];
-        const projectByNoteId: Record<string, string> = {};
-        notes.forEach((note) => {
-          if (note?.id) projectByNoteId[note.id] = currentEntry?.title ?? "";
-        });
-        setEntry(currentEntry);
-        setSessions(
-          parseProjectLogs(
-            notes.map((note) => ({ id: note.id, body: note.content_markdown ?? "" })),
-            projectByNoteId,
-          ),
-        );
-        setError("");
-      } catch (err) {
-        if (active) {
-          setSessions([]);
-          setError(err instanceof Error ? err.message : "falha ao carregar a nota");
-        }
-      } finally {
-        if (active) setLoading(false);
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, [entryId, refreshKey]);
-
-  // O feedback de copia dura 1,5 s; desmontar no meio nao deixa timer pendurado.
-  useEffect(
-    () => () => {
-      if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
-    },
-    [],
-  );
-
-  const title = entry?.title ?? "";
-  const icon = iconChoice ?? entry?.icon ?? "";
-
-  const chooseIcon = (value: string) => {
-    setIconChoice(value);
-    setPicker(null);
-    // O icone persiste na entry; se a gravacao falhar, a tela nao quebra e a
-    // escolha fica nesta sessao.
-    void api.updateEntry(entryId, { icon: value }).catch(() => undefined);
-  };
-
-  const copyLink = (session: LogSession, url: string) => {
-    if (!url) return;
-    void (async () => {
-      try {
-        await navigator.clipboard.writeText(url);
-      } catch {
-        return;
-      }
-      setCopiedId(session.sessionId);
-      if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
-      copyTimer.current = window.setTimeout(() => setCopiedId(null), 1500);
-    })();
-  };
-
-  // Lista fechada de comandos (docs/projetos.md): cada comando tem uma funcao
-  // aqui; nada do documento vira codigo executado.
-  const commandHandlers: Record<
-    NoteAction["command"],
-    (session: LogSession, action: NoteAction) => void
-  > = {
-    "filter-items": (session, action) => {
-      onFilterItems(
-        action.params.project || session.project,
-        rangeForDate(action.params.date || session.date),
+  const W = 640;
+  const H = 108;
+  const topY = 10;
+  const baseY = 84;
+  const labY = 100;
+  const slot = W / days.length;
+  const yMax = Math.max(1, ...days.map((d) => d.items));
+  const colW = Math.max(6, Math.min(24, slot * 0.52));
+  const plotH = baseY - topY;
+  let lastData = -1;
+  days.forEach((bucket, index) => {
+    if (bucket.items > 0) lastData = index;
+  });
+  const nodes: ReactNode[] = [];
+  days.forEach((bucket, index) => {
+    const x = (slot * index + slot / 2 - colW / 2).toFixed(1);
+    if (bucket.items > 0) {
+      const h = Math.max(3, (bucket.items / yMax) * plotH);
+      const hollow = open && index === lastData;
+      nodes.push(
+        <rect
+          key={bucket.date}
+          className={hollow ? "pjx-col pjx-col--hollow" : "pjx-col"}
+          x={x}
+          y={(baseY - h).toFixed(1)}
+          width={colW.toFixed(1)}
+          height={h.toFixed(1)}
+        >
+          <title>{`${shortDay(bucket.date)} · ${plural(bucket.items, "item", "itens")}`}</title>
+        </rect>,
       );
-    },
-    "copy-link": (session, action) => {
-      copyLink(session, action.params.url || "");
-    },
-  };
-
-  const actionsFor = (session: LogSession): NoteAction[] => {
-    const url = newestCommitUrl(session);
-    const actions: NoteAction[] = [
-      {
-        id: "filter-items",
-        label: "Filtrar itens",
-        icon: "filter",
-        command: "filter-items",
-        params: { project: session.project, date: session.date },
-      },
-    ];
-    if (url) {
-      actions.push({
-        id: "copy-link",
-        label: "Copiar link",
-        icon: "link",
-        command: "copy-link",
-        params: { url },
-      });
     } else {
-      actions.push({
-        id: "copy-link",
-        label: "Copiar link",
-        icon: "link",
-        command: "copy-link",
-        params: {},
-      });
+      nodes.push(
+        <rect
+          key={bucket.date}
+          className="pjx-col pjx-col--empty"
+          x={x}
+          y={topY}
+          width={colW.toFixed(1)}
+          height={plotH}
+        />,
+      );
     }
-    return actions;
-  };
-
-  const actionIcon: Record<NoteActionIcon, ReactNode> = {
-    filter: <FilterIcon size={13} />,
-    link: <LinkIcon size={13} />,
-  };
-
-  const actionEnabled = (session: LogSession, action: NoteAction): boolean => {
-    if (action.command === "copy-link") return Boolean(action.params.url);
-    return session.items.length > 0;
-  };
-
-  const actionTitle = (session: LogSession, action: NoteAction): string | undefined => {
-    if (actionEnabled(session, action)) return undefined;
-    if (action.command === "copy-link") return "Sem link para copiar";
-    return "Sem itens nesta sessão";
-  };
-
-  if (loading && sessions.length === 0 && !entry) {
-    return (
-      <section className="pjn">
-        <p className="muted">
-          <Spinner /> Carregando...
-        </p>
-      </section>
-    );
-  }
-
-  if (error) {
-    return (
-      <section className="pjn">
-        <p className="error">{error}</p>
-      </section>
-    );
-  }
-
-  const newest = sessions[0] ?? null;
-
+  });
+  const n = days.length;
   return (
-    <section className="pjn">
-      <header>
-        <div className="pjn-title">
-          <button
-            type="button"
-            className="pjn-emojibtn"
-            aria-label={`trocar ícone de ${title}`}
-            onClick={(event) =>
-              setPicker({ current: icon, anchor: event.currentTarget.getBoundingClientRect() })
-            }
-          >
-            <span className="pjn-mark" aria-hidden="true">
-              {icon || (title.charAt(0) || "?")}
-            </span>
-          </button>
-          <h1>{title}</h1>
-        </div>
-        <div className="pjn-meta">
-          <span>{notebookName}</span>
-          {newest ? (
-            <>
-              <span aria-hidden="true">·</span>
-              <span>{shortDate(newest.date)}</span>
-              <span aria-hidden="true">·</span>
-              <span className="pjn-host">{newest.host}</span>
-            </>
+    <svg className="pjx-chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="itens por dia">
+      <line className="pjx-base" x1="0" x2={W} y1={baseY + 0.5} y2={baseY + 0.5} />
+      {nodes}
+      {n === 1 ? (
+        <text className="dy-mono" x={W / 2} y={labY} textAnchor="middle">
+          {shortDay(days[0].date)}
+        </text>
+      ) : (
+        <>
+          <text className="dy-mono" x="2" y={labY} textAnchor="start">
+            {shortDay(days[0].date)}
+          </text>
+          <text className="dy-mono" x={W - 2} y={labY} textAnchor="end">
+            {shortDay(days[n - 1].date)}
+          </text>
+          {n >= 8 ? (
+            <text className="dy-mono" x={(slot * Math.floor((n - 1) / 2) + slot / 2).toFixed(1)} y={labY} textAnchor="middle">
+              {shortDay(days[Math.floor((n - 1) / 2)].date)}
+            </text>
           ) : null}
+        </>
+      )}
+    </svg>
+  );
+}
+
+/** Linha de atividade no intervalo real da pasta: dia vazio desce a base. */
+export function ActivityLine({ days }: { days: DayBucket[] }) {
+  if (days.length === 0) {
+    return (
+      <div className="pjx-chart-empty" aria-hidden="true">
+        <span />
+        <span className="pjx-chart-empty--off" />
+        <span />
+      </div>
+    );
+  }
+  const W = 640;
+  const H = 108;
+  const padL = 14;
+  const padR = 14;
+  const padT = 10;
+  const padB = 24;
+  const iw = W - padL - padR;
+  const ih = H - padT - padB;
+  const yMax = Math.max(1, ...days.map((d) => d.items));
+  const span = Math.max(1, days.length - 1);
+  const x = (index: number) => padL + (index / span) * iw;
+  const y = (value: number) => padT + ih - (value / yMax) * ih;
+  const points = days.map((bucket, index) => `${x(index).toFixed(1)},${y(bucket.items).toFixed(1)}`);
+  return (
+    <svg className="pjx-chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="atividade por dia">
+      <line className="pjx-base" x1="0" x2={W} y1={y(0) + 0.5} y2={y(0) + 0.5} />
+      <polyline className="pjx-line" points={points.join(" ")} />
+      {days.map((bucket, index) =>
+        bucket.items > 0 ? (
+          <circle key={bucket.date} className="pjx-pt" cx={x(index)} cy={y(bucket.items)} r="3">
+            <title>{`${shortDay(bucket.date)} · ${plural(bucket.items, "item", "itens")}`}</title>
+          </circle>
+        ) : null,
+      )}
+      <text className="dy-mono" x={x(0)} y={H - 8} textAnchor="start">
+        {shortDay(days[0].date)}
+      </text>
+      <text className="dy-mono" x={x(days.length - 1)} y={H - 8} textAnchor="end">
+        {shortDay(days[days.length - 1].date)}
+      </text>
+    </svg>
+  );
+}
+
+/** Leitura da nota de uma sessao: caminho, nome, meta, resumo, itens e grafico. */
+export function SessionPane({
+  sessionNode,
+  onEdit,
+}: {
+  sessionNode: PjSessionNode;
+  onEdit: (entryId: string) => void;
+}) {
+  const session = sessionNode.session;
+  const items = session.items;
+  const commits = session.commits.length;
+  const days = daySeries(items);
+  const open = session.state !== "closed";
+  return (
+    <div className="pjx-pane" data-testid="session-pane">
+      <h1 className="pjx-npath dy-display">{session.path}</h1>
+      <div className="pjx-nname dy-title">
+        <TypeIcon kind="session" small /> {sessionNode.title}
+      </div>
+      <p className="pjx-nmeta dy-mono">
+        <span>{session.machine}</span>
+        <span aria-hidden="true">·</span>
+        <span>{timeRange(session)}</span>
+        <span aria-hidden="true">·</span>
+        <span>{plural(items.length, "item", "itens")}</span>
+        {commits > 0 ? (
+          <>
+            <span aria-hidden="true">·</span>
+            <span>
+              {commits} {commits === 1 ? "commit" : "commits"}
+            </span>
+          </>
+        ) : null}
+      </p>
+      {session.summary ? <p className="pjx-nlede dy-body">{session.summary}</p> : null}
+
+      {items.length > 0 ? (
+        <>
+          <div className="pjx-clab dy-label">itens</div>
+          <table className="pjx-ntbl">
+            <thead>
+              <tr>
+                <th className="dy-label">kind</th>
+                <th className="dy-label">item</th>
+                <th className="dy-label pjx-right">commit</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item, at) => (
+                <tr key={`${item.title}:${at}`} title={item.title}>
+                  <td className="pjx-kcell dy-mono">{item.kind}</td>
+                  <td className="pjx-tcell">{item.title}</td>
+                  <td className="pjx-right">
+                    {item.commit ? (
+                      item.url ? (
+                        <a className="pjx-cc dy-mono" href={item.url} target="_blank" rel="noreferrer">
+                          {item.commit}
+                        </a>
+                      ) : (
+                        <span className="pjx-cc pjx-cc--plain dy-mono">{item.commit}</span>
+                      )
+                    ) : null}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      ) : (
+        <div className="pjx-slotshape" aria-hidden="true">
+          <span />
+          <span />
+          <span />
         </div>
-      </header>
+      )}
 
-      {newest?.summary ? <p className="pjn-lede">{newest.summary}</p> : null}
-
-      {sessions.length === 0 ? <p className="pjn-empty">Sem sessões registradas.</p> : null}
-
-      {sessions.map((session) => {
-        const counts = itemKindCounts(session.items);
-        const kinds = kindsOf(session.items);
-        const total = session.items.length;
-        const actions = actionsFor(session);
-        return (
-          <section className="pjn-blk" key={session.sessionId}>
-            <div className="pjn-cap">
-              <BookIcon size={13} />
-              <b>{shortDate(session.date)}</b>
-              <span>· {session.host}</span>
-              <span>
-                · <span className="pjn-n">{total}</span> {total === 1 ? "item" : "itens"}
-              </span>
-            </div>
-            <div className="pjn-grid">
-              <div className="pjn-main">
-                {total > 0 ? (
-                  <ul className="pjn-items">
-                    {session.items.map((item, at) => (
-                      <li className="pjn-it" key={`${item.title}:${at}`}>
-                        <span className="pjn-kw">
-                          <span className={`pj-kb ${KIND_CLASS[item.kind] ?? ""}`}>
-                            {item.kind}
-                          </span>
-                        </span>
-                        <span className="pjn-tt" title={item.title}>
-                          {item.title}
-                        </span>
-                        <span className="pjn-cc">
-                          {item.commit ? <span className="pj-ch">{item.commit}</span> : null}
-                          {item.url ? (
-                            <a
-                              className="pj-opc"
-                              href={item.url}
-                              target="_blank"
-                              rel="noreferrer"
-                              title="Abrir commit"
-                            >
-                              <ExternalIcon size={13} />
-                            </a>
-                          ) : null}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-                {total > 0 ? (
-                  <table className="pjn-tbl">
-                    <caption className="pjn-sr">
-                      {`Itens por kind da sessão de ${shortDate(session.date)} em ${session.host}`}
-                    </caption>
-                    <thead>
-                      <tr>
-                        <th>Kind</th>
-                        <th className="pjn-num">Itens</th>
-                        <th className="pjn-num">%</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {kinds.map((kind) => (
-                        <tr key={kind}>
-                          <td>{kind}</td>
-                          <td className="pjn-num">{counts[kind]}</td>
-                          <td className="pjn-num">
-                            {((counts[kind] / total) * 100).toFixed(0)}%
-                          </td>
-                        </tr>
-                      ))}
-                      <tr className="pjn-tot">
-                        <td>Total</td>
-                        <td className="pjn-num">{total}</td>
-                        <td className="pjn-num">100%</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                ) : null}
-              </div>
-              <div className="pjn-act">
-                {actions.map((action) => {
-                  const enabled = actionEnabled(session, action);
-                  return (
-                    <button
-                      type="button"
-                      key={action.id}
-                      className="pjn-ab"
-                      disabled={!enabled}
-                      aria-disabled={enabled ? undefined : "true"}
-                      title={actionTitle(session, action)}
-                      onClick={() => {
-                        if (!isNoteCommand(action.command)) return;
-                        commandHandlers[action.command](session, action);
-                      }}
-                    >
-                      {actionIcon[action.icon]}
-                      <span>{action.label}</span>
-                    </button>
-                  );
-                })}
-                {copiedId === session.sessionId ? (
-                  <span className="pjn-stx" aria-live="polite">
-                    <CheckIcon size={13} />
-                    <span>Copiado</span>
-                  </span>
-                ) : null}
-              </div>
-            </div>
-          </section>
-        );
-      })}
-
-      <footer className="pjn-foot">
-        <button type="button" className="pjn-edit" onClick={onEdit}>
-          <PencilIcon size={13} />
-          Editar
-        </button>
-      </footer>
-
-      {picker ? (
-        <EmojiPicker
-          anchor={picker.anchor}
-          current={picker.current}
-          onPick={chooseIcon}
-          onClose={() => setPicker(null)}
-        />
+      {items.length > 0 ? (
+        <>
+          <div className="pjx-clab dy-label">itens por dia</div>
+          <DayColumns days={days} open={open} />
+        </>
       ) : null}
-    </section>
+
+      {sessionNode.entryId ? (
+        <div className="pjx-pane-foot">
+          <Button variant="ghost" size="sm" onClick={() => onEdit(sessionNode.entryId as string)}>
+            <span className="pjx-ico pjx-ico--sm" aria-hidden="true">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M11.3 2.4 13.6 4.7 5.4 12.9l-3.2.9.9-3.2z" />
+              </svg>
+            </span>
+            Editar
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Leitura do no de pasta: numeros, composicao, atividade e sessoes. */
+export function FolderPane({
+  folder,
+  onOpenSession,
+}: {
+  folder: PjFolderNode;
+  onOpenSession: (id: string) => void;
+}) {
+  const agg = folderReading(folder);
+  const counts = agg.kindCounts;
+  const keys = kindKeys(counts);
+  return (
+    <div className="pjx-pane" data-testid="folder-pane">
+      <h1 className="pjx-npath dy-display">{folder.path}</h1>
+      <p className="pjx-nmeta dy-mono">
+        <span>{folder.machine}</span>
+        {agg.from && agg.to ? (
+          <>
+            <span aria-hidden="true">·</span>
+            <span>
+              {shortDate(agg.from)} – {shortDate(agg.to)}
+            </span>
+          </>
+        ) : null}
+      </p>
+
+      <div className="pjx-stats">
+        <span className="pjx-stat">
+          <b className="dy-display">{agg.sessionCount}</b>
+          <span className="dy-label">sessões</span>
+        </span>
+        <span className="pjx-stat">
+          <b className="dy-display">{agg.itemCount}</b>
+          <span className="dy-label">itens</span>
+        </span>
+        <span className="pjx-stat">
+          <b className="dy-display">{agg.commitCount}</b>
+          <span className="dy-label">commits</span>
+        </span>
+      </div>
+
+      {agg.itemCount > 0 ? (
+        <>
+          <div className="pjx-fbar">
+            <span className="pjx-flegend">
+              {keys.map((kind, index) => (
+                <span key={kind} className="dy-mono">
+                  {index > 0 ? <span aria-hidden="true" className="pjx-sepd"> · </span> : null}
+                  {counts[kind]} {kind}
+                </span>
+              ))}
+            </span>
+            <KindMeter counts={counts} total={agg.itemCount} widthClass="pjx-mbar--wide" />
+          </div>
+          <div className="pjx-clab dy-label">itens por dia</div>
+          <ActivityLine days={agg.days} />
+        </>
+      ) : (
+        <div className="pjx-slotshape" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </div>
+      )}
+
+      <div className="pjx-clab dy-label">sessões</div>
+      <ul className="pjx-slist">
+        {agg.sessions.map((session) => {
+          const node = folder.sessions.find((one) => one.session.id === session.id);
+          return (
+            <li key={session.id}>
+              <button
+                type="button"
+                className="pjx-srow"
+                title={node?.title ?? session.session}
+                onClick={() => onOpenSession(session.id)}
+              >
+                <span className="pjx-sname">{node?.title ?? session.session}</span>
+                <span className="pjx-smeta">
+                  <span className="dy-mono">
+                    {shortDate(session.date)} {session.time}
+                  </span>
+                  <span aria-hidden="true">·</span>
+                  <span className="dy-mono">
+                    {plural(session.items.length, "item", "itens")}
+                  </span>
+                </span>
+                <StateMark state={session.state} />
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }

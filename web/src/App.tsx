@@ -48,7 +48,6 @@ import { ComposeDialog, type ComposeAnchor } from "./components/ComposeDialog";
 import { ImportServerDialog } from "./components/ImportServerDialog";
 import { useToast } from "./components/Toasts";
 import {
-  BookIcon,
   CalendarIcon,
   ChevronIcon,
   ExitIcon,
@@ -61,13 +60,11 @@ import {
 } from "./components/icons";
 import { ALL_NOTEBOOKS, DEFAULT_NOTEBOOK_ID } from "./lib/notebooks";
 import { orderedChapters } from "./lib/books";
-import { aggregate, useProjectsIndex } from "./lib/useProjectsIndex";
+import { useProjectsIndex, type ProjectsNode } from "./lib/useProjectsIndex";
 import { ProjectList } from "./components/ProjectList";
 import type { NotionImportResult } from "./lib/notionImport";
 import { MapView } from "./views/MapView";
 import { ProjectsView } from "./views/ProjectsView";
-import type { ProjectsFilterRequest } from "./views/ProjectsView";
-import { ProjectNote } from "./views/ProjectNote";
 import { CalendarView } from "./views/CalendarView";
 import { SettingsView } from "./views/SettingsView";
 import { WritingView } from "./views/WritingView";
@@ -160,24 +157,11 @@ export function App() {
     openEntryRef.current = openEntryId;
   }, [openEntryId]);
   const [failures, setFailures] = useState<Record<string, string>>({});
-  // A nota do caderno MCP abre em leitura (ProjectNote); "Editar" liga o editor
-  // de markdown de sempre, e a faixa "Leitura" devolve para a leitura.
-  const [pjEditing, setPjEditing] = useState(false);
+  // No caderno MCP o no escolhido na arvore dirige a superficie inteira. A
+  // selecao e estado do App, nao URL: arvore e superficie leem o mesmo valor.
+  const [pjNode, setPjNode] = useState<ProjectsNode>({ kind: "all" });
   useEffect(() => {
-    setPjEditing(false);
-  }, [openEntryId, activeNotebookId]);
-  // "Filtrar itens" fecha a nota e pede a superficie de projetos a filtrar
-  // aquele projeto e periodo; o nonce re-aplica o mesmo pedido duas vezes.
-  const [pjFilter, setPjFilter] = useState<ProjectsFilterRequest | null>(null);
-  // Projeto aberto na lista da sidebar do caderno MCP; null = "Todos". A
-  // selecao e estado do App, nao URL: lista e superficie leem o mesmo valor.
-  const [pjProject, setPjProject] = useState<string | null>(null);
-  // Icones escolhidos nesta sessao (a escolha local vence a entry persistida);
-  // vivem no App para a lista e a superficie mostrarem o mesmo icone.
-  const [pjIcons, setPjIcons] = useState<Record<string, string>>({});
-  useEffect(() => {
-    setPjProject(null);
-    setPjIcons({});
+    setPjNode({ kind: "all" });
   }, [activeNotebookId]);
   // /lab e uma pagina de verdade: recarregar a aba continua no processamento,
   // e o endereco fica estavel para deixar a aba aberta no PC.
@@ -408,17 +392,9 @@ export function App() {
   const isBook = activeNotebook?.kind === "book";
   const isMcp = activeNotebook?.kind === "mcp";
 
-  // Uma unica carga do indice de projetos serve as duas superficies: a lista
+  // Uma unica carga do indice de projetos serve as duas superficies: a arvore
   // da sidebar e a area principal. Fora do caderno MCP nao busca nada.
   const projectsData = useProjectsIndex(isMcp ? activeNotebookId : "", refreshKey);
-  const projectAggs = projectsData.index ? aggregate(projectsData.index) : [];
-
-  const chooseProjectIcon = (entryId: string, icon: string) => {
-    setPjIcons((current) => ({ ...current, [entryId]: icon }));
-    // O icone persiste na entry; se a gravacao falhar, a tela nao quebra e a
-    // escolha fica nesta sessao.
-    void api.updateEntry(entryId, { icon }).catch(() => undefined);
-  };
 
   // A lista de capitulos vive na sidebar, no lugar das notas. O App e o dono
   // dela para a sidebar e a casa do livro verem a mesma ordem.
@@ -521,6 +497,16 @@ export function App() {
     // Toda escrita passa por aqui: o cofre em pasta espera alguns minutos de
     // silencio para gravar so o que mudou.
     markVaultDirty();
+  };
+
+  // Digitar no capitulo so muda a contagem dele: a lista fica como esta e
+  // nenhuma recarga (refreshKey) e disparada por texto.
+  const patchChapterWords = (entryId: string, wordCount: number) => {
+    setBookChapters((current) =>
+      current.map((chapter) =>
+        chapter.id === entryId ? { ...chapter, word_count: wordCount } : chapter,
+      ),
+    );
   };
 
   const closeDrawer = () => {
@@ -1000,16 +986,15 @@ export function App() {
               />
             ) : isMcp ? (
               <ProjectList
-                projects={projectAggs}
-                totalCount={projectsData.index?.rows.length ?? 0}
-                selectedProject={pjProject}
-                onSelect={(project) => {
-                  setPjProject(project);
+                index={projectsData.index}
+                node={pjNode}
+                onSelect={(node) => {
+                  setPjNode(node);
                   setOpenEntryId(null);
                   setView("notes");
                   closeDrawer();
                 }}
-                icons={pjIcons}
+                icons={{}}
                 loading={projectsData.loading}
                 error={projectsData.error}
               />
@@ -1129,65 +1114,38 @@ export function App() {
               onCreateChapterAfter={(id) => void createBookChapterAfter(id)}
               onReorderChapter={(source, target) => void reorderBookChapters(source, target)}
               onChanged={refresh}
+              onWordsSaved={patchChapterWords}
               onOpenSettings={() => setBookDialog({ notebook: activeNotebook })}
             />
           ) : view === "notes" ? (
-            <div className={isMcp ? "editor-pane editor-pane--pj" : "editor-pane"}>
+            <div className={isMcp ? "editor-pane editor-pane--pjx" : "editor-pane"}>
               {openEntryId && isMcp ? (
                 // Caderno de projetos: a nota abre por cima da superficie; a
-                // faixa devolve para a tabela, como o menu faz com o livro.
-                <div className="pj-backbar">
+                // faixa devolve para a leitura do no, como o menu faz com o livro.
+                <div className="pjx-backbar">
                   <button
                     type="button"
-                    className="pj-back"
+                    className="pjx-back dy-label"
                     onClick={() => setOpenEntryId(null)}
                     aria-label="Voltar para projetos"
                     title="Projetos"
                   >
-                    <span className="pj-backic" aria-hidden="true">
-                      <ChevronIcon size={14} />
+                    <span className="pjx-ico pjx-ico--sm" aria-hidden="true">
+                      <svg
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M10 3 5 8l5 5" />
+                      </svg>
                     </span>
                     Projetos
                   </button>
-                  {pjEditing ? (
-                    <button
-                      type="button"
-                      className="pj-back"
-                      onClick={() => {
-                        setPjEditing(false);
-                        refresh();
-                      }}
-                      aria-label="Voltar para a leitura"
-                      title="Leitura"
-                    >
-                      <BookIcon size={14} />
-                      Leitura
-                    </button>
-                  ) : null}
                 </div>
               ) : null}
-              {openEntryId && isMcp && !pjEditing ? (
-                // Leitura da nota do projeto, como o prototipo; a edicao fica
-                // a um toque (Editar), e ao voltar da edicao le de novo.
-                <ProjectNote
-                  key={openEntryId}
-                  entryId={openEntryId}
-                  notebookName={activeNotebook?.name ?? "Projetos"}
-                  refreshKey={noteRefreshKey}
-                  onFilterItems={(project, range) => {
-                    setOpenEntryId(null);
-                    // O pedido de fora escolhe o projeto na lista (estado do
-                    // App) e so o periodo vai como pedido a superficie.
-                    setPjProject(project);
-                    setPjFilter((current) => ({
-                      project,
-                      range,
-                      nonce: (current?.nonce ?? 0) + 1,
-                    }));
-                  }}
-                  onEdit={() => setPjEditing(true)}
-                />
-              ) : openEntryId ? (
+              {openEntryId ? (
                 <NoteEditor
                   key={openEntryId}
                   entryId={openEntryId}
@@ -1220,10 +1178,8 @@ export function App() {
                     index={projectsData.index}
                     loading={projectsData.loading}
                     error={projectsData.error}
-                    selectedProject={pjProject}
-                    icons={pjIcons}
-                    onChooseIcon={chooseProjectIcon}
-                    filterRequest={pjFilter}
+                    node={pjNode}
+                    onSelectNode={setPjNode}
                     onOpenEntry={(id) => {
                       setView("notes");
                       setOpenEntryId(id);

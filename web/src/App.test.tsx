@@ -191,14 +191,19 @@ describe("App caderno MCP", () => {
     );
     render(<App />);
 
-    // Sidebar: Todos + cada projeto no seu lugar, com a contagem. A busca e
-    // dentro da sidebar: a tabela tambem contem o nome do projeto.
+    // Sidebar: arvore de projetos. Sem sessoes v2, os projetos v1 mora no
+    // grupo `sem pasta`, que comeca recolhido com 2+ projetos; "Todos" marca
+    // o escopo inteiro.
     const sidebar = await screen.findByRole("complementary", { name: /Navegação principal/ });
     const list = within(sidebar);
-    const todos = await list.findByRole("button", { name: /^Todos/ });
-    expect(todos).toHaveAttribute("aria-pressed", "true");
-    const caixa = list.getByRole("button", { name: /caixa/ });
-    expect(list.getByRole("button", { name: /dyarium/ })).toBeInTheDocument();
+    const todos = await list.findByRole("treeitem", { name: /^Todos/ });
+    expect(todos).toHaveAttribute("aria-selected", "true");
+    const group = list.getByRole("treeitem", { name: /^sem pasta/ });
+    expect(group).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(group);
+    expect(group).toHaveAttribute("aria-expanded", "true");
+    const caixa = list.getByRole("treeitem", { name: /caixa/ });
+    expect(list.getByRole("treeitem", { name: /dyarium/ })).toBeInTheDocument();
 
     // Sem projeto escolhido a tabela mostra os dois projetos e a coluna Projeto.
     const allTable = await screen.findByRole("table");
@@ -218,7 +223,7 @@ describe("App caderno MCP", () => {
     );
 
     // Todos devolve a vista completa.
-    fireEvent.click(list.getByRole("button", { name: /^Todos/ }));
+    fireEvent.click(list.getByRole("treeitem", { name: /^Todos/ }));
     const back = await screen.findByRole("table");
     expect(within(back).getAllByRole("columnheader").map((h) => h.textContent)).toContain("Projeto");
     expect(screen.getByText("2 itens · 2 projetos")).toBeInTheDocument();

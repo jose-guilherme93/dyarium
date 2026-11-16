@@ -1,54 +1,42 @@
 import { useEffect, useRef, useState } from "react";
 import type {
-  MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
   ReactNode,
 } from "react";
-import { EmojiPicker } from "../components/EmojiPicker";
 import { Spinner } from "../components/Status";
-import { ChevronIcon, ExternalIcon, FilterIcon, RefreshIcon, SearchIcon, SlidersIcon } from "../components/icons";
-import { ProjectMark } from "../components/ProjectList";
+import {
+  findFolder,
+  findSessionNode,
+  scopeRows,
+  type ProjectsIndex,
+  type ProjectsNode,
+} from "../lib/useProjectsIndex";
 import type { LogItem } from "../../../mobile/src/core/projetoLog";
-import type { ProjectAgg, ProjectsIndex } from "../lib/useProjectsIndex";
-import type { ProjectsRange } from "../lib/actions";
+import { FolderPane, SessionPane } from "./ProjectNote";
+import "./projects.css";
 
 /**
- * Superficie "Projetos" do caderno MCP (docs/projetos.md). Um notebook de
- * kind=mcp substitui a lista de notas: o corpo das entradas e lido pelo
- * modulo projetoLog e vira duas vistas, Itens (tabela/cartoes) e Projetos.
- * O prototipo aprovado (proto-resumos.html) e a fonte da verdade visual.
- *
- * A carga do indice nao mora mais aqui: o App chama useProjectsIndex uma vez
- * e passa o mesmo indice para esta vista e para a lista da sidebar. A
- * selecao de projeto tambem vive no App: a lista escolhe, a vista respeita.
+ * Superficie "Projetos" do caderno MCP (docs/projetos.md). A navegacao vive na
+ * arvore da sidebar (ProjectList); aqui esta a leitura do no escolhido: o
+ * painel da nota da sessao, o agregado da pasta, e a tabela Itens sobre o
+ * mesmo indice, escopada ao no. O prototipo aprovado (sessoes-v2.html) e a
+ * referencia de estrutura; todo valor visual vem do sistema de interface.
  */
-
-/** Pedido de filtro vindo de fora (nota do projeto): abre Itens filtrada. */
-export interface ProjectsFilterRequest extends Record<string, unknown> {
-  project: string;
-  range: ProjectsRange;
-  /** Muda a cada pedido; o mesmo filtro repetido precisa re-aplicar. */
-  nonce: number;
-}
 
 export interface ProjectsViewProps {
   index: ProjectsIndex | null;
   loading: boolean;
   error: string;
-  /** Projeto escolhido na lista da sidebar; null = todos. */
-  selectedProject: string | null;
-  /** Icones escolhidos nesta sessao (a escolha local vence a entry). */
-  icons: Record<string, string>;
-  /** Trocou icone: o App guarda a escolha e persiste na entry. */
-  onChooseIcon: (entryId: string, icon: string) => void;
-  /** Abre a nota do projeto no editor que ja existe; nao cria rota nova. */
+  /** No escolhido na arvore; nullavel nao existe: "all" e o padrao. */
+  node: ProjectsNode;
+  /** O painel linka de volta para uma sessao (lista da pasta). */
+  onSelectNode: (node: ProjectsNode) => void;
+  /** Abre o editor de markdown da nota; nao cria rota nova. */
   onOpenEntry: (entryId: string) => void;
-  /** Filtro aplicado de fora (acao "Filtrar itens" da nota do projeto). */
-  filterRequest?: ProjectsFilterRequest | null;
 }
 
-type TabId = "items" | "projects";
-type RangeId = ProjectsRange;
+type ViewId = "nota" | "itens";
+type RangeId = "7" | "30" | "all";
 type VariantId = "table" | "cards";
 type TableWidth = "contained" | "full";
 type TableDensity = "compact" | "comfortable" | "wide";
@@ -65,7 +53,6 @@ const TABLE_COL_KEYS = ["proj", "kind", "data", "commit", "sess"] as const;
 type OptionalColKey = (typeof TABLE_COL_KEYS)[number];
 /** Ordem das colunas na tabela. A coluna Item nunca some. */
 const COL_ORDER = ["proj", "item", "kind", "data", "commit", "sess"] as const;
-/** Todas as colunas: a Item tambem e redimensionavel. */
 type TableColKey = (typeof COL_ORDER)[number];
 /** Arraste em andamento: origem, largura inicial, largura viva e o gelo. */
 interface ResizeState {
@@ -86,15 +73,6 @@ interface TablePrefs {
   colWidths: Partial<Record<TableColKey, number>>;
 }
 
-const KIND_ORDER = ["feat", "fix", "perf", "test", "docs", "chore"];
-const KIND_CLASS: Record<string, string> = {
-  feat: "pj-kc--feat",
-  fix: "pj-kc--fix",
-  perf: "pj-kc--perf",
-  test: "pj-kc--test",
-  docs: "pj-kc--muted",
-  chore: "pj-kc--muted",
-};
 const MONTHS = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
 
 const TABLE_PREFS_KEY = "dyarium.projetos.tabela";
@@ -112,7 +90,7 @@ const MAX_COL_WIDTH = 640;
 /** A Item e a coluna do texto: ela nasce maior que as outras (absorve o que
  *  sobra), entao o teto dela e maior que o das demais. */
 const ITEM_MAX_WIDTH = 1280;
-/** Espelhando as classes .pj-col-* do CSS: largura natural de cada coluna. */
+/** Espelhando as classes .pjx-col-* do CSS: largura natural de cada coluna. */
 const DEFAULT_COL_WIDTHS: Record<OptionalColKey, number> = {
   proj: 150,
   kind: 72,
@@ -122,11 +100,11 @@ const DEFAULT_COL_WIDTHS: Record<OptionalColKey, number> = {
 };
 /** Classe de largura natural de cada coluna opcional. */
 const COL_CLASS: Record<OptionalColKey, string> = {
-  proj: "pj-col-pj",
-  kind: "pj-col-k",
-  data: "pj-col-d",
-  commit: "pj-col-c",
-  sess: "pj-col-s",
+  proj: "pjx-col-pj",
+  kind: "pjx-col-k",
+  data: "pjx-col-d",
+  commit: "pjx-col-c",
+  sess: "pjx-col-s",
 };
 /** Passo do teclado: seta move 8px, com Shift 32px. */
 const KEY_STEP = 8;
@@ -161,10 +139,11 @@ const TABLE_COL_LABELS: Record<TableColKey, string> = {
   commit: "Commit",
   sess: "Sessão",
 };
-const TABLE_DENSITY_VALUES: Record<TableDensity, { rh: number; fs: number }> = {
-  compact: { rh: 28, fs: 12.5 },
-  comfortable: { rh: 36, fs: 13.5 },
-  wide: { rh: 44, fs: 14 },
+/** Densidade so muda a geometria da linha (26 / 30 / 36); o tipo nao muda. */
+const TABLE_DENSITY_VALUES: Record<TableDensity, number> = {
+  compact: 26,
+  comfortable: 30,
+  wide: 36,
 };
 
 function normalizeTablePrefs(raw: unknown): TablePrefs {
@@ -187,7 +166,6 @@ function normalizeTablePrefs(raw: unknown): TablePrefs {
   }
   // Garante ao menos 3 opcionais marcadas.
   if (Object.values(cols).filter(Boolean).length < 3) {
-    // restaura padrao
     for (const key of TABLE_COL_KEYS) cols[key] = DEFAULT_TABLE_PREFS.cols[key];
   }
   const customOpen = typeof obj.customOpen === "boolean" ? obj.customOpen : base.customOpen;
@@ -219,7 +197,6 @@ function loadTablePrefs(): TablePrefs {
   }
 }
 
-/** Dia como numero, para comparar datas sem nesta horario. */
 /** Compara sem acento e sem caixa: a busca nao deve exigir o acerto exato. */
 function foldText(value: string): string {
   return value
@@ -228,7 +205,8 @@ function foldText(value: string): string {
     .toLowerCase();
 }
 
-function dayNumber(date: string): number {  const parts = date.split("-").map(Number);
+function dayNumber(date: string): number {
+  const parts = date.split("-").map(Number);
   if (parts.length < 3 || parts.some((part) => Number.isNaN(part))) return Number.NaN;
   return Date.UTC(parts[0], parts[1] - 1, parts[2]) / 864e5;
 }
@@ -242,41 +220,67 @@ function todayNumber(): number {
 function shortDate(date: string): string {
   const day = dayNumber(date);
   if (Number.isNaN(day)) return date;
-  const ms = day * 864e5;
-  const d = new Date(ms);
+  const d = new Date(day * 864e5);
   return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
 }
 
-/** "hoje", "ontem" ou "ha N dias"; sem trabalho quando nunca houve. */
-function relativeLabel(date: string | null): string {
-  if (!date) return "sem trabalho";
-  const diff = todayNumber() - dayNumber(date);
-  if (diff <= 0) return "hoje";
-  if (diff === 1) return "ontem";
-  return `há ${diff} dias`;
-}
-
+/** Rotulo de kind na tabela: mono neutro, nunca cor de kind. */
 function KindBadge({ kind }: { kind: string }) {
-  return <span className={`pj-kb ${KIND_CLASS[kind] ?? ""}`}>{kind}</span>;
+  return <span className="pjx-kb dy-mono">{kind}</span>;
 }
 
-interface PickerSpot {
-  entryId: string;
-  current: string;
-  anchor: DOMRect;
+function SearchGlyph() {
+  return (
+    <span className="pjx-ico pjx-ico--sm" aria-hidden="true">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeLinecap="round">
+        <circle cx="7" cy="7" r="4.5" />
+        <path d="m14 14-3.2-3.2" />
+      </svg>
+    </span>
+  );
+}
+
+function FilterGlyph() {
+  return (
+    <span className="pjx-ico pjx-ico--sm" aria-hidden="true">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeLinecap="round">
+        <path d="M2.5 4h11M4.5 8h7M6.5 12h3" />
+      </svg>
+    </span>
+  );
+}
+
+function SlidersGlyph() {
+  return (
+    <span className="pjx-ico pjx-ico--sm" aria-hidden="true">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeLinecap="round">
+        <path d="M3 5h10M3 11h10" />
+        <circle cx="6" cy="5" r="1.8" />
+        <circle cx="10" cy="11" r="1.8" />
+      </svg>
+    </span>
+  );
+}
+
+function RefreshGlyph() {
+  return (
+    <span className="pjx-ico pjx-ico--sm" aria-hidden="true">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M13 8a5 5 0 1 1-1.5-3.5M13 1.5V5h-3.5" />
+      </svg>
+    </span>
+  );
 }
 
 export function ProjectsView({
   index,
   loading,
   error,
-  selectedProject,
-  icons,
-  onChooseIcon,
+  node,
+  onSelectNode,
   onOpenEntry,
-  filterRequest,
 }: ProjectsViewProps) {
-  const [tab, setTab] = useState<TabId>("items");
+  const [view, setView] = useState<ViewId>("nota");
   const [kindFilter, setKindFilter] = useState<Set<string>>(new Set());
   const [range, setRange] = useState<RangeId>("all");
   const [variant, setVariant] = useState<VariantId>("table");
@@ -285,12 +289,10 @@ export function ProjectsView({
   const [filtersOpen, setFiltersOpen] = useState(true);
   const [tablePrefs, setTablePrefs] = useState<TablePrefs>(loadTablePrefs);
   const [colsPanelOpen, setColsPanelOpen] = useState(false);
-  const [openProjects, setOpenProjects] = useState<Record<string, boolean>>({});
   /** Janela estreita (<720px): so cartoes, e o segmento fica desabilitado. */
   const [narrow, setNarrow] = useState(() =>
     typeof window === "undefined" ? false : window.innerWidth <= 720,
   );
-  const [picker, setPicker] = useState<PickerSpot | null>(null);
   /** Arraste de coluna em andamento: guarda a origem e a largura ao vivo. */
   const [resize, setResizeState] = useState<ResizeState | null>(null);
   const resizeRef = useRef<ResizeState | null>(null);
@@ -315,54 +317,38 @@ export function ProjectsView({
     }
   }, [tablePrefs]);
 
-  // Filtro pedido de fora (nota do projeto): abre a aba Itens ja filtrada
-  // pelo periodo da sessao. O projeto em si ja foi escolhido na lista da
-  // sidebar pelo App; aqui só muda a vista e o periodo.
-  useEffect(() => {
-    if (!filterRequest) return;
-    setTab("items");
-    setRange(filterRequest.range);
-  }, [filterRequest]);
-
-  if (loading && !index) {
-    return (
-      <section className="pj-view pj-view--center">
-        <p className="muted">
-          <Spinner /> Carregando...
-        </p>
-      </section>
-    );
-  }
-
-  if (error) {
-    return (
-      <section className="pj-view pj-view--center">
-        <p className="error">{error}</p>
-      </section>
-    );
-  }
-
   const data: ProjectsIndex = index ?? {
     rows: [],
     sessions: [],
     entries: [],
     entryByProject: {},
     kinds: [],
+    tree: { machines: [], sessions: [], count: 0 },
+    v1Projects: [],
   };
-  const projects: ProjectAgg[] = data.entries
-    .filter((entry) => Boolean(entry.title))
-    .map((entry) => ({
-      project: entry.title,
-      entryId: entry.id,
-      icon: entry.icon ?? "",
-      sessions: data.sessions.filter((row) => row.session.project === entry.title),
-    }));
 
-  // Filtro vigente: escopo da lista + chips de kind + periodo + busca.
+  // O no escolhido pode ou nao ter painel de leitura (sessao/pasta). Ao
+  // trocar de no, a vista vai para o painel quando ele existe; senao, para a
+  // tabela.
+  const sessionNode = node.kind === "session" ? findSessionNode(data.tree, node.id) : null;
+  const folderNode = node.kind === "folder" ? findFolder(data.tree, node.machine, node.path) : null;
+  const paneKind: "session" | "folder" | null = sessionNode
+    ? "session"
+    : folderNode
+      ? "folder"
+      : null;
+
+  useEffect(() => {
+    setView(node.kind === "session" || node.kind === "folder" ? "nota" : "itens");
+  }, [node]);
+
+  const effectiveView: ViewId = paneKind ? view : "itens";
+
+  // Filtro vigente: escopo do no + chips de kind + periodo + busca.
   // Derivado por render, o indice pesado e construido uma vez so (no hook).
+  const scoped = scopeRows(data, node);
   const limit = range === "all" ? 0 : range === "7" ? 6 : 29;
-  const keep = (row: { project: string; kind: string; date: string; title: string; commit?: string }) => {
-    if (selectedProject && row.project !== selectedProject) return false;
+  const keep = (row: LogItem) => {
     if (search.trim()) {
       const needle = foldText(search);
       const haystack = foldText(`${row.title} ${row.project} ${row.kind} ${row.commit ?? ""}`);
@@ -375,20 +361,13 @@ export function ProjectsView({
     }
     return true;
   };
-  const filtered = data.rows.filter(keep);
+  const filtered = scoped.filter(keep);
+  const scopedSessionIds = new Set(scoped.map((row) => row.sessionId));
   const filteredSessions = data.sessions
+    .filter((row) => scopedSessionIds.has(row.session.sessionId))
     .map((row) => ({ ...row, items: row.session.items.filter(keep) }))
     .filter((row) => row.items.length > 0);
   const filteredProjects = new Set(filtered.map((row) => row.project)).size;
-
-  /** Icone de um projeto no estado atual (escolha local vence a entry). */
-  const iconFor = (agg: ProjectAgg): string => icons[agg.entryId] || agg.icon || "";
-
-  /** Icone pelo nome do projeto, para linhas de sessao (cartoes). */
-  const iconForName = (project: string): string => {
-    const agg = projects.find((p) => p.project === project);
-    return agg ? iconFor(agg) : "";
-  };
 
   const openRow = (row: LogItem & { entryId?: string | null }): void => {
     if (row.entryId) onOpenEntry(row.entryId);
@@ -404,39 +383,27 @@ export function ProjectsView({
     setter(next);
   };
 
-  /** Abre o seletor colado no botao de icone, como no prototipo. */
-  const openPicker = (event: ReactMouseEvent<HTMLElement>, agg: ProjectAgg) => {
-    event.stopPropagation();
-    setPicker({
-      entryId: agg.entryId,
-      current: iconFor(agg),
-      anchor: event.currentTarget.getBoundingClientRect(),
-    });
-  };
-
   const commitCell = (row: { commit?: string; url?: string }): ReactNode => {
     if (!row.commit) return "";
-    return (
-      <>
-        <span className="pj-ch">{row.commit}</span>
-        {row.url ? (
-          <a className="pj-opc" href={row.url} target="_blank" rel="noreferrer" title="Abrir commit">
-            <ExternalIcon size={13} />
-          </a>
-        ) : null}
-      </>
-    );
+    if (row.url) {
+      return (
+        <a className="pjx-cc dy-mono" href={row.url} target="_blank" rel="noreferrer" title="abrir commit">
+          {row.commit}
+        </a>
+      );
+    }
+    return <span className="pjx-cc pjx-cc--plain dy-mono">{row.commit}</span>;
   };
 
-  const activeChip = (on: boolean) => `pj-chip${on ? " pj-chip--on" : ""}`;
+  const activeChip = (on: boolean) => `pjx-chip${on ? " pjx-chip--on" : ""}`;
 
   const tableVisible = !narrow && variant === "table";
   const cardsVisible = narrow || variant === "cards";
 
-  // Projeto escolhido: a coluna "Projeto" so repetiria o nome que ja esta
-  // fixado na lista da sidebar; ela sai da tabela neste escopo.
+  // Projeto escolhido (no de projeto v1): a coluna "Projeto" so repetiria o
+  // nome que ja esta fixado na arvore; ela sai da tabela neste escopo.
   const visibleOptionalCols = TABLE_COL_KEYS.filter(
-    (key) => tablePrefs.cols[key] && !(key === "proj" && selectedProject),
+    (key) => tablePrefs.cols[key] && !(key === "proj" && node.kind === "project"),
   );
   const canUncheckCol = (key: string) =>
     !(tablePrefs.cols[key as keyof TableCols] && visibleOptionalCols.length <= 3);
@@ -463,7 +430,7 @@ export function ProjectsView({
   };
 
   // --- Redimensionamento de coluna ---------------------------------------
-  // A coluna arrastada fica emCompanhia de um "gelo": no pointerdown todas as
+  // A coluna arrastada fica em companhia de um "gelo": no pointerdown todas as
   // colunas visiveis sao medidas e congeladas, e a tabela cresce na mesma
   // medida. Sem isso a coluna vizinha encolhe junto com o arraste e a borda
   // que o mouse arrasta sai do lugar.
@@ -605,51 +572,87 @@ export function ProjectsView({
     });
   };
 
-  const densityStyle = TABLE_DENSITY_VALUES[tablePrefs.density];
+  if (loading && !index) {
+    return (
+      <section className="pjx-root pjx-view--center dy-body">
+        <p className="muted">
+          <Spinner /> Carregando...
+        </p>
+      </section>
+    );
+  }
 
-  const emptyState = (
-    <p className="pj-empty">Sem sessões registradas.</p>
+  if (error) {
+    return (
+      <section className="pjx-root pjx-view--center dy-body">
+        <p className="error">{error}</p>
+      </section>
+    );
+  }
+
+  const emptyShape = (
+    <div className="pjx-slotshape" role="status">
+      <span />
+      <span />
+      <span />
+      <span className="dy-label">sem sessões</span>
+    </div>
   );
 
   return (
-    <div className="pj-root">
-      <section className="pj-view">
-        <header className="pj-head">
-          <nav className="pj-tabs" role="tablist" aria-label="Vistas de projetos">
+    <div className="pjx-root dy-body">
+      <section className="pjx-view">
+        <header className="pjx-head">
+          <nav className="pjx-tabs" role="tablist" aria-label="Vistas de projetos">
+            {paneKind ? (
+              <button
+                type="button"
+                role="tab"
+                id="pjx-tab-nota"
+                className="dy-label"
+                aria-selected={effectiveView === "nota"}
+                onClick={() => setView("nota")}
+              >
+                Nota
+              </button>
+            ) : null}
             <button
               type="button"
               role="tab"
-              id="pj-tab-itens"
-              aria-selected={tab === "items"}
-              onClick={() => setTab("items")}
+              id="pjx-tab-itens"
+              className="dy-label"
+              aria-selected={effectiveView === "itens"}
+              onClick={() => setView("itens")}
             >
               Itens
-              <span className="pj-tabn">{filtered.length}</span>
-            </button>
-            <button
-              type="button"
-              role="tab"
-              id="pj-tab-projetos"
-              aria-selected={tab === "projects"}
-              onClick={() => setTab("projects")}
-            >
-              Projetos
+              <span className="pjx-tabn">{filtered.length}</span>
             </button>
           </nav>
         </header>
 
-        {tab === "items" ? (
-          <div className="pj-items" role="tabpanel" aria-labelledby="pj-tab-itens">
+        {effectiveView === "nota" && paneKind === "session" && sessionNode ? (
+          <div className="pjx-note" role="tabpanel" aria-labelledby="pjx-tab-nota">
+            <SessionPane sessionNode={sessionNode} onEdit={onOpenEntry} />
+          </div>
+        ) : effectiveView === "nota" && paneKind === "folder" && folderNode ? (
+          <div className="pjx-note" role="tabpanel" aria-labelledby="pjx-tab-nota">
+            <FolderPane
+              folder={folderNode}
+              onOpenSession={(id) => onSelectNode({ kind: "session", id })}
+            />
+          </div>
+        ) : (
+          <div className="pjx-items" role="tabpanel" aria-labelledby="pjx-tab-itens">
             {data.rows.length > 0 ? (
-              <div className="pj-toolbar">
+              <div className="pjx-toolbar">
                 {filtersOpen ? (
-                  <div className="pj-filters">
-                    <span className="pj-chips">
+                  <div className="pjx-filters">
+                    <span className="pjx-chips">
                       {data.kinds.map((kind) => (
                         <button
                           key={kind}
                           type="button"
-                          className={`${activeChip(kindFilter.has(kind))} pj-kchip`}
+                          className={`dy-label ${activeChip(kindFilter.has(kind))}`}
                           aria-pressed={kindFilter.has(kind)}
                           onClick={() => toggleSet(kind, setKindFilter, kindFilter)}
                         >
@@ -659,9 +662,9 @@ export function ProjectsView({
                     </span>
                   </div>
                 ) : null}
-                <span className="pj-push" />
-                <span className="pj-sep" aria-hidden="true" />
-                <div className="pj-seg" role="group" aria-label="Período">
+                <span className="pjx-push" />
+                <span className="pjx-sep" aria-hidden="true" />
+                <div className="pjx-seg" role="group" aria-label="Período">
                   {(
                     [
                       ["7", "7 dias"],
@@ -680,8 +683,8 @@ export function ProjectsView({
                   ))}
                 </div>
                 {searchOpen ? (
-                  <label className="pj-search">
-                    <SearchIcon size={15} />
+                  <label className="pjx-search">
+                    <SearchGlyph />
                     <input
                       autoFocus
                       value={search}
@@ -699,58 +702,58 @@ export function ProjectsView({
                 ) : (
                   <button
                     type="button"
-                    className="pj-iconbtn"
+                    className="pjx-iconbtn"
                     title="Buscar"
                     aria-label="Buscar itens"
                     onClick={() => setSearchOpen(true)}
                   >
-                    <SearchIcon size={15} />
+                    <SearchGlyph />
                   </button>
                 )}
                 <button
                   type="button"
-                  className={`pj-iconbtn${filtersOpen ? " pj-iconbtn--on" : ""}`}
+                  className={`pjx-iconbtn${filtersOpen ? " pjx-iconbtn--on" : ""}`}
                   title="Filtros"
                   aria-label="Mostrar filtros"
                   aria-pressed={filtersOpen}
                   onClick={() => setFiltersOpen((open) => !open)}
                 >
-                  <FilterIcon size={15} />
+                  <FilterGlyph />
                 </button>
                 <button
                   type="button"
-                  className={`pj-iconbtn${tablePrefs.customOpen ? " pj-iconbtn--on" : ""}`}
+                  className={`pjx-iconbtn${tablePrefs.customOpen ? " pjx-iconbtn--on" : ""}`}
                   title="Personalizar"
                   aria-label="Personalizar tabela"
                   aria-pressed={tablePrefs.customOpen}
                   onClick={toggleCustom}
                 >
-                  <SlidersIcon size={15} />
+                  <SlidersGlyph />
                 </button>
                 <button
                   type="button"
-                  className="pj-iconbtn"
+                  className="pjx-iconbtn"
                   title="Restaurar"
                   aria-label="Restaurar padrao"
                   onClick={resetPrefs}
                 >
-                  <RefreshIcon size={15} />
+                  <RefreshGlyph />
                 </button>
                 <div
-                  className={`pj-seg${narrow ? " pj-seg--off" : ""}`}
+                  className={`pjx-seg${narrow ? " pjx-seg--off" : ""}`}
                   role="group"
                   aria-label="Variante"
                   aria-disabled={narrow}
                 >
-                  <button
-                    type="button"
+                  <button                    type="button"
+                          className="dy-label"
                     aria-pressed={!narrow && variant === "table"}
                     onClick={() => setVariant("table")}
                   >
                     Tabela
                   </button>
-                  <button
-                    type="button"
+                  <button                    type="button"
+                          className="dy-label"
                     aria-pressed={narrow || variant === "cards"}
                     onClick={() => setVariant("cards")}
                   >
@@ -761,19 +764,19 @@ export function ProjectsView({
             ) : null}
 
             {tablePrefs.customOpen ? (
-              <section className="pj-custom">
-                <div className="pj-ctrl">
-                  <span className="pj-ctrl-lbl">Largura</span>
-                  <div className="pj-seg" role="group" aria-label="Largura">
-                    <button
-                      type="button"
+              <section className="pjx-custom">
+                <div className="pjx-ctrl">
+                  <span className="pjx-ctrl-lbl">Largura</span>
+                  <div className="pjx-seg" role="group" aria-label="Largura">
+                    <button                      type="button"
+                            className="dy-label"
                       aria-pressed={tablePrefs.width === "contained"}
                       onClick={() => setWidth("contained")}
                     >
                       Contida
                     </button>
-                    <button
-                      type="button"
+                    <button                      type="button"
+                            className="dy-label"
                       aria-pressed={tablePrefs.width === "full"}
                       onClick={() => setWidth("full")}
                     >
@@ -781,25 +784,25 @@ export function ProjectsView({
                     </button>
                   </div>
                 </div>
-                <div className="pj-ctrl">
-                  <span className="pj-ctrl-lbl">Densidade</span>
-                  <div className="pj-seg" role="group" aria-label="Densidade">
-                    <button
-                      type="button"
+                <div className="pjx-ctrl">
+                  <span className="pjx-ctrl-lbl">Densidade</span>
+                  <div className="pjx-seg" role="group" aria-label="Densidade">
+                    <button                      type="button"
+                            className="dy-label"
                       aria-pressed={tablePrefs.density === "compact"}
                       onClick={() => setDensity("compact")}
                     >
                       Compacta
                     </button>
-                    <button
-                      type="button"
+                    <button                      type="button"
+                            className="dy-label"
                       aria-pressed={tablePrefs.density === "comfortable"}
                       onClick={() => setDensity("comfortable")}
                     >
                       Confortável
                     </button>
-                    <button
-                      type="button"
+                    <button                      type="button"
+                            className="dy-label"
                       aria-pressed={tablePrefs.density === "wide"}
                       onClick={() => setDensity("wide")}
                     >
@@ -807,16 +810,16 @@ export function ProjectsView({
                     </button>
                   </div>
                 </div>
-                <div className="pj-ctrl pj-menucols">
-                  <span className="pj-ctrl-lbl">Colunas</span>
+                <div className="pjx-ctrl pjx-menucols">
+                  <span className="pjx-ctrl-lbl">Colunas</span>
                   <button
                     type="button"
-                    className="pj-btn"
+                    className="dy-label pjx-chip"
                     onClick={() => setColsPanelOpen((open) => !open)}
                   >
-                    Colunas ▾
+                    Colunas
                   </button>
-                  <div className="pj-colspanel" hidden={!colsPanelOpen}>
+                  <div className="pjx-colspanel" hidden={!colsPanelOpen}>
                     {TABLE_COL_KEYS.map((key) => (
                       <label key={key}>
                         <input
@@ -830,25 +833,25 @@ export function ProjectsView({
                     ))}
                   </div>
                 </div>
-                <div className="pj-ctrl">
-                  <span className="pj-ctrl-lbl">Aparência</span>
-                  <div className="pj-seg" role="group" aria-label="Aparência">
-                    <button
-                      type="button"
+                <div className="pjx-ctrl">
+                  <span className="pjx-ctrl-lbl">Aparência</span>
+                  <div className="pjx-seg" role="group" aria-label="Aparência">
+                    <button                      type="button"
+                            className="dy-label"
                       aria-pressed={tablePrefs.appearance === "lines"}
                       onClick={() => setAppearance("lines")}
                     >
                       Linhas
                     </button>
-                    <button
-                      type="button"
+                    <button                      type="button"
+                            className="dy-label"
                       aria-pressed={tablePrefs.appearance === "grade"}
                       onClick={() => setAppearance("grade")}
                     >
                       Grade
                     </button>
-                    <button
-                      type="button"
+                    <button                      type="button"
+                            className="dy-label"
                       aria-pressed={tablePrefs.appearance === "zebra"}
                       onClick={() => setAppearance("zebra")}
                     >
@@ -860,25 +863,20 @@ export function ProjectsView({
             ) : null}
 
             {filtered.length === 0 ? (
-              <div className="pj-items-body pj-items-body--center">{emptyState}</div>
+              <div className="pjx-items-body pjx-items-body--center">{emptyShape}</div>
             ) : (
-              <div className="pj-items-body">
+              <div className="pjx-items-body">
                 <div
-                  className={`pj-tablewrap pj-tablewrap--${tablePrefs.width}`}
+                  className={`pjx-tablewrap pjx-tablewrap--${tablePrefs.width}`}
                   data-width={tablePrefs.width}
                   data-density={tablePrefs.density}
                 >
                   <div
-                    className={`pj-vtable ap-${tablePrefs.appearance} density-${tablePrefs.density} ${tablePrefs.appearance}${resize ? " pj-resizing" : ""}`}
+                    className={`pjx-vtable ap-${tablePrefs.appearance} ${tablePrefs.appearance}${resize ? " pjx-resizing" : ""}`}
                     data-density={tablePrefs.density}
-                    data-densidade={tablePrefs.density}
-                    data-d={tablePrefs.density}
                     data-appearance={tablePrefs.appearance}
                     data-width={tablePrefs.width}
-                    style={{
-                      ["--rh" as string]: `${densityStyle.rh}px`,
-                      ["--fs" as string]: `${densityStyle.fs}px`,
-                    }}
+                    style={{ ["--rh" as string]: `${TABLE_DENSITY_VALUES[tablePrefs.density]}px` }}
                     hidden={!tableVisible}
                   >
                     <table style={tableWidth !== undefined ? { width: `${tableWidth}px` } : undefined}>
@@ -900,14 +898,18 @@ export function ProjectsView({
                           {visibleColKeys.map((key) => {
                             const right = key === "data" || key === "commit";
                             const dragging = resize?.key === key;
-                            const thClass = [right ? "pj-num" : "", dragging ? "pj-drag" : ""]
+                            const thClass = [right ? "pjx-num" : "", dragging ? "pjx-drag" : ""]
                               .filter(Boolean)
                               .join(" ");
                             return (
-                              <th key={key} data-col={key} className={thClass || undefined}>
+                              <th
+                                key={key}
+                                data-col={key}
+                                className={["dy-label", thClass].filter(Boolean).join(" ")}
+                              >
                                 {TABLE_COL_LABELS[key]}
                                 <span
-                                  className={`pj-resize${dragging ? " pj-resize--on" : ""}`}
+                                  className={`pjx-resize${dragging ? " pjx-resize--on" : ""}`}
                                   role="separator"
                                   aria-orientation="vertical"
                                   aria-label={`Redimensionar ${TABLE_COL_LABELS[key]}`}
@@ -963,19 +965,14 @@ export function ProjectsView({
                               for (const key of ["proj", "item", "kind", "data", "commit", "sess"] as const) {
                                 if (key === "item") {
                                   nodes.push(
-                                    <td key="item" title={row.title}>
+                                    <td key="item" title={row.title} className="dy-body">
                                       {row.title}
                                     </td>,
                                   );
                                 } else if (visible.has(key)) {
                                   let v: ReactNode = null;
                                   if (key === "proj") {
-                                    v = (
-                                      <span className="pj-pcell">
-                                        <ProjectMark icon={iconForName(row.project)} project={row.project} />
-                                        {row.project}
-                                      </span>
-                                    );
+                                    v = row.project;
                                   } else if (key === "kind") {
                                     v = <KindBadge kind={row.kind} />;
                                   } else if (key === "data") {
@@ -986,8 +983,15 @@ export function ProjectsView({
                                     v = row.host ?? "";
                                   }
                                   const right = key === "data" || key === "commit";
+                                  const kindClass =
+                                    key === "data" || key === "commit" ? "dy-mono" : key === "proj" || key === "sess" ? "dy-body" : undefined;
                                   nodes.push(
-                                    <td key={key} className={right ? "pj-num" : undefined}>
+                                    <td
+                                      key={key}
+                                      className={[right ? "pjx-num" : "", kindClass ?? ""]
+                                        .filter(Boolean)
+                                        .join(" ") || undefined}
+                                    >
                                       {v}
                                     </td>,
                                   );
@@ -1001,25 +1005,21 @@ export function ProjectsView({
                     </table>
                   </div>
                 </div>
-                <div className="pj-vcards" hidden={!cardsVisible}>
+                <div className="pjx-vcards" hidden={!cardsVisible}>
                   {filteredSessions.map((row) => (
-                    <section className="pj-sess" key={row.session.sessionId}>
-                      <div className="pj-ssh">
-                        <ProjectMark
-                          icon={iconForName(row.session.project)}
-                          project={row.session.project}
-                        />
+                    <section className="pjx-sess" key={row.session.sessionId}>
+                      <div className="pjx-ssh">
                         <b>{row.session.project}</b>
-                        <span className="pj-m">
+                        <span className="pjx-ssub">
                           · {shortDate(row.session.date)} · {row.session.host}
                         </span>
-                        <span className="pj-cnt">
+                        <span className="pjx-cnt">
                           {row.items.length} {row.items.length === 1 ? "item" : "itens"}
                         </span>
                       </div>
                       {row.items.map((item, at) => (
                         <div
-                          className="pj-ci"
+                          className="pjx-ci"
                           role="button"
                           tabIndex={0}
                           key={`${item.title}:${at}`}
@@ -1031,13 +1031,13 @@ export function ProjectsView({
                             }
                           }}
                         >
-                          <span className="pj-kw">
+                          <span className="pjx-kw">
                             <KindBadge kind={item.kind} />
                           </span>
-                          <span className="pj-tt" title={item.title}>
+                          <span className="pjx-tt" title={item.title}>
                             {item.title}
                           </span>
-                          <span className="pj-cc">{commitCell(item)}</span>
+                          <span className="pjx-cc">{commitCell(item)}</span>
                         </div>
                       ))}
                     </section>
@@ -1046,202 +1046,17 @@ export function ProjectsView({
               </div>
             )}
 
-            <footer className="pj-foot">
-              <p className="pj-foot-row">
+            <footer className="pjx-foot">
+              <p>
                 <span>
-                  {filtered.length} {filtered.length === 1 ? "item" : "itens"} · {filteredProjects}{" "}
-                  {filteredProjects === 1 ? "projeto" : "projetos"}
+                  {filtered.length} {filtered.length === 1 ? "item" : "itens"} ·{" "}
+                  {filteredProjects} {filteredProjects === 1 ? "projeto" : "projetos"}
                 </span>
               </p>
             </footer>
           </div>
-        ) : null}
-
-        {tab === "projects" ? (
-          <div className="pj-projects" role="tabpanel" aria-labelledby="pj-tab-projetos">
-            {projects.length === 0 ? emptyState : null}
-            {(selectedProject ? projects.filter((agg) => agg.project === selectedProject) : projects).map(
-              (agg) => {
-                // A janela de 35 dias do prototipo: o resumo do projeto olha o
-                // trabalho recente; sessoes mais antigas ficam fora da linha e da
-                // expansao.
-                const recentSessions = agg.sessions.filter((row) =>
-                  row.session.items.some((item) => {
-                    const day = dayNumber(item.date);
-                    return !Number.isNaN(day) && day >= todayNumber() - 34;
-                  }),
-                );
-                const recent = recentSessions.flatMap((row) => row.session.items);
-                const last = recentSessions[0]?.session.date ?? null;
-                const state =
-                  last === null
-                    ? ""
-                    : todayNumber() - dayNumber(last) <= 1
-                      ? " pj-dot--ok"
-                      : todayNumber() - dayNumber(last) <= 8
-                        ? " pj-dot--warn"
-                        : "";
-                // Projeto escolhido na lista: a superficie dele ja e expandida.
-                const open = selectedProject ? true : Boolean(openProjects[agg.entryId]);
-                return (
-                  <div className="pj" key={agg.entryId}>
-                    <div
-                      className="pj-row"
-                      role="button"
-                      tabIndex={0}
-                      aria-expanded={open}
-                      onClick={() => setOpenProjects((current) => ({ ...current, [agg.entryId]: !open }))}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" || event.key === " ") {
-                          event.preventDefault();
-                          setOpenProjects((current) => ({ ...current, [agg.entryId]: !open }));
-                        }
-                      }}
-                    >
-                      <button
-                        type="button"
-                        className="pj-emojibtn"
-                        aria-label={`trocar ícone de ${agg.project}`}
-                        onClick={(event) => openPicker(event, agg)}
-                      >
-                        <ProjectMark icon={iconFor(agg)} project={agg.project} />
-                      </button>
-                      <div className="pj-name">
-                        <div className="pj-pnm">{agg.project}</div>
-                        <div className="pj-psub">
-                          {relativeLabel(last)} · {recent.length} {recent.length === 1 ? "item" : "itens"}
-                        </div>
-                      </div>
-                      <span className="pj-plast">{relativeLabel(last)}</span>
-                      <span className="pj-pnum">
-                        <span className="pj-n">{recent.length}</span> {recent.length === 1 ? "item" : "itens"}
-                      </span>
-                      <span className="pj-mbar" aria-hidden="true">
-                        {KIND_ORDER.map((kind) => {
-                          const count = recent.filter((row) => row.kind === kind).length;
-                          if (count === 0) return null;
-                          return (
-                            <i
-                              key={kind}
-                              className={KIND_CLASS[kind] ?? ""}
-                              style={{ width: `${((count / recent.length) * 100).toFixed(1)}%` }}
-                            />
-                          );
-                        })}
-                      </span>
-                      <span>
-                        <span className={`pj-dot${state}`} title={relativeLabel(last)} />
-                      </span>
-                      <span className="pj-chev">
-                        <ChevronIcon size={15} />
-                      </span>
-                    </div>
-                    {open
-                      ? recentSessions.map((row) => (
-                          <div className="pj-sz" key={row.session.sessionId}>
-                            <div className="pj-sline">
-                              <b>{shortDate(row.session.date)}</b>
-                              <span>· {row.session.host}</span>
-                              <span>
-                                · {row.session.items.length}{" "}
-                                {row.session.items.length === 1 ? "item" : "itens"}
-                              </span>
-                              <span className="pj-push" />
-                              {row.entryId ? (
-                                <button
-                                  type="button"
-                                  className="pj-notabtn"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    onOpenEntry(row.entryId as string);
-                                  }}
-                                >
-                                  Nota
-                                </button>
-                              ) : null}
-                            </div>
-                            {row.session.items.map((item, at) => (
-                              <div
-                                className="pj-it2"
-                                role="button"
-                                tabIndex={0}
-                                key={`${item.title}:${at}`}
-                                onClick={() => openRow(item)}
-                                onKeyDown={(event) => {
-                                  if (event.key === "Enter" || event.key === " ") {
-                                    event.preventDefault();
-                                    openRow(item);
-                                  }
-                                }}
-                              >
-                                <span className="pj-kw">
-                                  <KindBadge kind={item.kind} />
-                                </span>
-                                <span className="pj-tt" title={item.title}>
-                                  {item.title}
-                                </span>
-                                <span className="pj-cc">{commitCell(item)}</span>
-                              </div>
-                            ))}
-                            {row.session.commits.length > 0 || row.session.links.length > 0 ? (
-                              <details className="pj-det">
-                                <summary>
-                                  <span className="pj-chev pj-chev--sm">
-                                    <ChevronIcon size={13} />
-                                  </span>
-                                  Detalhes técnicos
-                                </summary>
-                                <div className="pj-db">
-                                  {row.session.commits.map((commit, at) => (
-                                    <span key={`${commit.hash}:${at}`}>
-                                      {commit.hash ? `${commit.hash} — ` : ""}
-                                      {commit.message}
-                                      {commit.url ? (
-                                        <a
-                                          className="pj-opc"
-                                          href={commit.url}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                          title="Abrir commit"
-                                        >
-                                          <ExternalIcon size={13} />
-                                        </a>
-                                      ) : null}
-                                    </span>
-                                  ))}
-                                  {row.session.links.map((link, at) => (
-                                    <span key={`${link.url}:${at}`}>
-                                      {link.label ? `${link.label}: ` : ""}
-                                      <a href={link.url} target="_blank" rel="noreferrer">
-                                        {link.url}
-                                      </a>
-                                    </span>
-                                  ))}
-                                </div>
-                              </details>
-                            ) : null}
-                          </div>
-                        ))
-                      : null}
-                  </div>
-                );
-              },
-            )}
-          </div>
-        ) : null}
+        )}
       </section>
-
-      {picker ? (
-        <EmojiPicker
-          anchor={picker.anchor}
-          current={picker.current}
-          onPick={(emoji) => {
-            onChooseIcon(picker.entryId, emoji);
-            setPicker(null);
-          }}
-          onClose={() => setPicker(null)}
-        />
-      ) : null}
     </div>
   );
 }

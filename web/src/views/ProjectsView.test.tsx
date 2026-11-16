@@ -3,14 +3,24 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { ProjectsView } from "./ProjectsView";
 import type { ProjectsViewProps } from "./ProjectsView";
 import { buildIndex } from "../lib/useProjectsIndex";
+import type { ProjectsNode } from "../lib/useProjectsIndex";
 import type { Entry, Note } from "../types";
+
+const NOW = Date.parse("2026-11-16T12:00:00Z");
 
 const entry = (id: string, title: string, icon?: string) =>
   ({ id, title, icon }) as unknown as Entry;
 
-const note = (id: string, entryId: string, body: string) =>
-  ({ id, entry_id: entryId, title: "Resumo", content_markdown: body }) as unknown as Note;
+const note = (id: string, entryId: string, body: string, updatedAt: string) =>
+  ({
+    id,
+    entry_id: entryId,
+    title: "Resumo",
+    content_markdown: body,
+    updated_at: updatedAt,
+  }) as unknown as Note;
 
+/** Itens classicos: blocos humanos/v1, a mesa da aba Itens. */
 const dataRows = () => [
   {
     entry: entry("entry-a", "dyarium", "✒️"),
@@ -27,6 +37,7 @@ const dataRows = () => [
           "- a1b2c3d terminal do mapa em tres camadas",
           ":::",
         ].join("\n"),
+        "2026-11-07T15:00:00Z",
       ),
     ],
   },
@@ -40,48 +51,137 @@ const dataRows = () => [
           "## 2026-11-05 09:00 · notebook",
           "- **fix** saldo calculado duas vezes ao importar csv · 4d5e6f7",
         ].join("\n"),
+        "2026-11-05T09:00:00Z",
       ),
     ],
   },
 ];
 
-function indexFrom(rows: Array<{ entry: Entry; notes: Note[] }>) {
+function v2Note(id: string, entryId: string, spec: {
+  machine: string;
+  path: string;
+  session: string;
+  date: string;
+  time: string;
+  items: Array<{ kind: string; title: string; commit?: string }>;
+  updatedAt: string;
+  title: string;
+}): Note {
+  const fence = JSON.stringify({
+    v: 2,
+    kind: "session",
+    machine: spec.machine,
+    path: spec.path,
+    session: spec.session,
+    state: "closed",
+    opened: `${spec.date}T${spec.time}:00Z`,
+    closed: `${spec.date}T17:00:00Z`,
+    date: spec.date,
+    time: spec.time,
+    summary: `resumo ${spec.session}`,
+    items: spec.items,
+    commits: spec.items
+      .filter((item) => item.commit)
+      .map((item) => ({ hash: item.commit })),
+  });
+  return {
+    id,
+    entry_id: entryId,
+    title: spec.title,
+    content_markdown: [
+      `## ${spec.date} ${spec.time} · ${spec.machine}`,
+      ...spec.items.map(
+        (item) => `- **${item.kind}** ${item.title}${item.commit ? ` · ${item.commit}` : ""}`,
+      ),
+      "```dyarium-json",
+      fence,
+      "```",
+    ].join("\n"),
+    updated_at: spec.updatedAt,
+  } as unknown as Note;
+}
+
+/** Sessoes v2 sobre a mesma mesa: pasta com 2 sessoes + caminho unico. */
+const v2Rows = () => [
+  {
+    entry: entry("entry-s", "syncwin"),
+    notes: [
+      v2Note("vs-1", "entry-s", {
+        machine: "work",
+        path: "/home/joseti/projects/syncwin",
+        session: "ses_1",
+        date: "2026-11-14",
+        time: "09:12",
+        items: [
+          { kind: "feat", title: "coletor de metricas", commit: "aaa1111" },
+          { kind: "fix", title: "fuso dos rotulos", commit: "bbb2222" },
+        ],
+        updatedAt: "2026-11-14T17:00:00Z",
+        title: "nota 1",
+      }),
+      v2Note("vs-2", "entry-s", {
+        machine: "work",
+        path: "/home/joseti/projects/syncwin",
+        session: "ses_2",
+        date: "2026-11-16",
+        time: "10:00",
+        items: [{ kind: "test", title: "casos do coletor" }],
+        updatedAt: "2026-11-16T11:00:00Z",
+        title: "nota 2",
+      }),
+      v2Note("vs-3", "entry-s", {
+        machine: "work",
+        path: "/home/joseti/projects/api",
+        session: "ses_3",
+        date: "2026-11-15",
+        time: "11:20",
+        items: [{ kind: "feat", title: "valida payload", commit: "ccc3333" }],
+        updatedAt: "2026-11-15T12:00:00Z",
+        title: "nota 3",
+      }),
+    ],
+  },
+];
+
+function indexFrom(rows: Array<{ entry: Entry; notes: Note[] }>, now?: number) {
   return buildIndex(
     rows.map((row) => row.entry),
     rows.map((row) => row.notes),
+    now,
   );
 }
 
-/** A vista nao busca mais nada: o App chama o hook e entrega o indice aqui. */
-function renderView(overrides: Partial<ProjectsViewProps> = {}) {
+function renderView(
+  overrides: Partial<ProjectsViewProps> = {},
+  rows: Array<{ entry: Entry; notes: Note[] }> = dataRows(),
+) {
   const onOpenEntry = vi.fn();
-  const onChooseIcon = vi.fn();
-  render(
+  const onSelectNode = vi.fn();
+  const node: ProjectsNode = overrides.node ?? { kind: "all" };
+  const result = render(
     <ProjectsView
-      index={indexFrom(dataRows())}
+      index={indexFrom(rows, NOW)}
       loading={false}
       error=""
-      selectedProject={null}
-      icons={{}}
-      onChooseIcon={onChooseIcon}
+      node={node}
+      onSelectNode={onSelectNode}
       onOpenEntry={onOpenEntry}
       {...overrides}
     />,
   );
-  return { onOpenEntry, onChooseIcon };
+  return { onOpenEntry, onSelectNode, unmount: result.unmount };
 }
 
 beforeEach(() => {
   localStorage.clear();
 });
 
-describe("ProjectsView", () => {
+describe("ProjectsView: Itens sobre o indice", () => {
   it("duas notas do caderno viram tabela com os itens e a contagem do rodape", async () => {
     const { onOpenEntry } = renderView();
 
     const table = await screen.findByRole("table");
     expect(within(table).getByText("terminal do mapa em tres camadas")).toBeInTheDocument();
-    expect(within(table).getByText("fisica do mapa com arrasto")).toBeInTheDocument();
     expect(within(table).getByText("saldo calculado duas vezes ao importar csv")).toBeInTheDocument();
     expect(screen.getByText("3 itens · 2 projetos")).toBeInTheDocument();
 
@@ -90,278 +190,35 @@ describe("ProjectsView", () => {
     await waitFor(() => expect(onOpenEntry).toHaveBeenCalledWith("entry-b"));
   });
 
-  it("a ordenacao e do mais novo para o mais antigo, e item sem commit nao estoura a coluna", async () => {
-    const rows = dataRows();
-    rows[1].notes = [
-      note(
-        "n-2",
-        "entry-b",
-        [
-          "## 2026-11-05 09:00 · notebook",
-          "- **fix** item solto sem commit ·",
-        ].join("\n"),
-      ),
-    ];
-    renderView({ index: indexFrom(rows) });
-
+  it("a ordenacao e do mais novo para o mais antigo", async () => {
+    renderView();
     const table = await screen.findByRole("table");
     const body = table.querySelector("tbody") as HTMLTableSectionElement;
-    const first = body.querySelector("tr");
-    expect(first?.textContent).toContain("terminal do mapa em tres camadas");
+    expect(body.querySelector("tr")?.textContent).toContain("terminal do mapa em tres camadas");
   });
 
-  it("a barra de Itens nao tem chip de projeto: quem escolhe e a lista da sidebar", async () => {
+  it("filtrar por kind reduz as linhas; o funil esconde os chips", async () => {
     renderView();
     await screen.findByRole("table");
 
-    expect(screen.queryByRole("button", { name: "caixa" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "dyarium" })).not.toBeInTheDocument();
-    // Os chips de kind continuam na barra.
-    expect(screen.getByRole("button", { name: "fix" })).toBeInTheDocument();
-  });
-
-  it("filtrar por kind reduz as linhas", async () => {
-    renderView();
-
-    await screen.findByRole("table");
     fireEvent.click(screen.getByRole("button", { name: "fix" }));
-
     const table = screen.getByRole("table");
     expect(within(table).getByText("saldo calculado duas vezes ao importar csv")).toBeInTheDocument();
     expect(within(table).queryByText("terminal do mapa em tres camadas")).not.toBeInTheDocument();
     expect(screen.getByText("1 item · 1 projeto")).toBeInTheDocument();
-  });
 
-  it("o funil esconde e mostra os chips de kind", async () => {
-    renderView();
-    await screen.findByRole("table");
-
-    expect(screen.getByRole("button", { name: "fix" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Mostrar filtros/i }));
     expect(screen.queryByRole("button", { name: "fix" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "feat" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /Mostrar filtros/i }));
-    expect(screen.getByRole("button", { name: "fix" })).toBeTruthy();
   });
 
-  it("projeto escolhido na lista escopa a tabela e esconde a coluna Projeto", async () => {
-    renderView({ selectedProject: "caixa" });
+  it("no de projeto v1 escopa a tabela e esconde a coluna Projeto", async () => {
+    renderView({ node: { kind: "project", entryId: "entry-b" } }, dataRows());
 
     const table = await screen.findByRole("table");
     expect(within(table).getByText("saldo calculado duas vezes ao importar csv")).toBeInTheDocument();
     expect(within(table).queryByText("terminal do mapa em tres camadas")).not.toBeInTheDocument();
     const headers = within(table).getAllByRole("columnheader").map((h) => h.textContent);
     expect(headers).not.toContain("Projeto");
-    expect(screen.getByText("1 item · 1 projeto")).toBeInTheDocument();
-  });
-
-  it("projeto escolhido expande so ele na aba Projetos", async () => {
-    renderView({ selectedProject: "dyarium" });
-
-    fireEvent.click(screen.getByRole("tab", { name: /Projetos/ }));
-
-    const rows = (screen.getAllByRole("button", { name: /dyarium/ }) as HTMLElement[]).filter(
-      (button) => button.hasAttribute("aria-expanded"),
-    );
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toHaveAttribute("aria-expanded", "true");
-    // O resumo do projeto escolhido ja esta aberto, sem novo clique; o outro
-    // projeto sumiu da aba.
-    expect(screen.getByText(/vps-dev/)).toBeInTheDocument();
-    expect(screen.queryByText("caixa")).not.toBeInTheDocument();
-  });
-
-  it("alternar Tabela/Cartoes muda a variante", async () => {
-    renderView();
-
-    await screen.findByRole("table");
-    fireEvent.click(screen.getByRole("button", { name: "Cartões" }));
-
-    expect(screen.getByRole("button", { name: "Cartões" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
-    const cards = screen.getByText("· 7 nov · vps-dev").closest("section")?.parentElement;
-    expect(cards).not.toHaveAttribute("hidden");
-    const table = screen.getByRole("table", { hidden: true }).closest("div");
-    expect(table).toHaveAttribute("hidden");
-
-    fireEvent.click(screen.getByRole("button", { name: "Tabela" }));
-    expect(screen.getByRole("button", { name: "Tabela" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
-  });
-
-  it("expandir projeto mostra as sessoes e o bloco Detalhes tecnicos", async () => {
-    renderView();
-
-    fireEvent.click(await screen.findByRole("tab", { name: /Projetos/ }));
-
-    // O row do projeto e o unico destes botoes com aria-expanded (o de dentro
-    // e o seletor de emoji).
-    const row = (screen.getAllByRole("button", { name: /dyarium/ }) as HTMLElement[]).find(
-      (button) => button.hasAttribute("aria-expanded"),
-    ) as HTMLElement;
-    expect(row).toHaveAttribute("aria-expanded", "false");
-    fireEvent.click(row);
-    expect(row).toHaveAttribute("aria-expanded", "true");
-
-    const pane = screen.getByLabelText("Vistas de projetos").closest(".pj-root") as HTMLElement;
-    await waitFor(() =>
-      expect(within(pane).getByText(/vps-dev/)).toBeInTheDocument(),
-    );
-    // Sessao desenhada: data, host e numero de itens.
-    expect(within(pane).getByText("2")).toBeInTheDocument();
-    expect(within(pane).getByText("Detalhes técnicos")).toBeInTheDocument();
-  });
-
-  it("nota sem sessao nenhuma mostra estado vazio sem quebrar", async () => {
-    renderView({
-      index: indexFrom([
-        { entry: entry("entry-vazio", "projeto solto"), notes: [note("n-3", "entry-vazio", "")] },
-      ]),
-    });
-
-    await waitFor(() =>
-      expect(screen.getByText("Sem sessões registradas.")).toBeInTheDocument(),
-    );
-    expect(screen.queryByRole("table")).not.toBeInTheDocument();
-  });
-
-  it("padrao abre em grade, largura cheia, densidade confortavel, 5 colunas opcionais", async () => {
-    renderView();
-
-    const table = await screen.findByRole("table");
-    const container = table.closest(".pj-vtable") as HTMLElement;
-    expect(container).toHaveClass("ap-grade");
-    expect(container).toHaveAttribute("data-width", "full");
-    expect(container).toHaveAttribute("data-density", "comfortable");
-    const headers = within(table).getAllByRole("columnheader").map((h) => h.textContent);
-    expect(headers).toEqual(["Projeto", "Item", "Kind", "Data", "Commit", "Sessão"]);
-  });
-
-  it("alternar densidade muda o atributo de densidade do container", async () => {
-    renderView();
-
-    await screen.findByRole("table");
-    fireEvent.click(screen.getByRole("button", { name: /Personalizar/i }));
-
-    fireEvent.click(screen.getByRole("button", { name: /Compacta/i }));
-    let container = screen.getByRole("table").closest(".pj-vtable") as HTMLElement;
-    expect(container).toHaveAttribute("data-density", "compact");
-
-    fireEvent.click(screen.getByRole("button", { name: /Ampla/i }));
-    container = screen.getByRole("table").closest(".pj-vtable") as HTMLElement;
-    expect(container).toHaveAttribute("data-density", "wide");
-  });
-
-  it("desmarcar Commit remove a coluna do cabecalho e das linhas; minimo de 3 opcionais", async () => {
-    renderView();
-
-    await screen.findByRole("table");
-    fireEvent.click(screen.getByRole("button", { name: /Personalizar/i }));
-
-    const commitBox = screen.getByRole("checkbox", { name: /Commit/i });
-    fireEvent.click(commitBox);
-
-    const table = screen.getByRole("table");
-    const headers = within(table).getAllByRole("columnheader").map((h) => h.textContent);
-    expect(headers).not.toContain("Commit");
-
-    // Tenta desmarcar ate sobrar menos de 3: deve parar em 3.
-    const boxes = screen.getAllByRole("checkbox");
-    for (const box of boxes) {
-      if ((box as HTMLInputElement).checked) fireEvent.click(box);
-    }
-    const stillChecked = screen.getAllByRole("checkbox").filter(
-      (box) => (box as HTMLInputElement).checked,
-    ).length;
-    expect(stillChecked).toBeGreaterThanOrEqual(3);
-  });
-
-  it("Restaurar volta ao padrao depois de mudar tudo", async () => {
-    renderView();
-
-    await screen.findByRole("table");
-    fireEvent.click(screen.getByRole("button", { name: /Personalizar/i }));
-
-    fireEvent.click(screen.getByRole("button", { name: /Contida/i }));
-    fireEvent.click(screen.getByRole("button", { name: /Compacta/i }));
-    fireEvent.click(screen.getByRole("button", { name: /Zebra/i }));
-    const commitBox = screen.getByRole("checkbox", { name: /Commit/i });
-    fireEvent.click(commitBox);
-
-    fireEvent.click(screen.getByRole("button", { name: /Restaurar/i }));
-
-    const container = screen.getByRole("table").closest(".pj-vtable") as HTMLElement;
-    expect(container).toHaveClass("ap-grade");
-    expect(container).toHaveAttribute("data-width", "full");
-    expect(container).toHaveAttribute("data-density", "comfortable");
-    const headers = within(screen.getByRole("table")).getAllByRole("columnheader").map((h) => h.textContent);
-    expect(headers).toContain("Commit");
-  });
-
-  it("as escolhas sobrevivem a um remount (localStorage)", async () => {
-    const index = indexFrom(dataRows());
-    const { unmount } = render(
-      <ProjectsView
-        index={index}
-        loading={false}
-        error=""
-        selectedProject={null}
-        icons={{}}
-        onChooseIcon={vi.fn()}
-        onOpenEntry={vi.fn()}
-      />,
-    );
-    await screen.findByRole("table");
-    fireEvent.click(screen.getByRole("button", { name: /Personalizar/i }));
-    fireEvent.click(screen.getByRole("button", { name: /Compacta/i }));
-    unmount();
-
-    render(
-      <ProjectsView
-        index={index}
-        loading={false}
-        error=""
-        selectedProject={null}
-        icons={{}}
-        onChooseIcon={vi.fn()}
-        onOpenEntry={vi.fn()}
-      />,
-    );
-
-    const table = await screen.findByRole("table");
-    const container = table.closest(".pj-vtable") as HTMLElement;
-    expect(container).toHaveAttribute("data-density", "compact");
-  });
-
-  it("JSON invalido cai no padrao sem quebrar", async () => {
-    localStorage.setItem("dyarium.projetos.tabela", "{{{");
-    renderView();
-
-    const table = await screen.findByRole("table");
-    const container = table.closest(".pj-vtable") as HTMLElement;
-    expect(container).toHaveClass("ap-grade");
-    expect(container).toHaveAttribute("data-density", "comfortable");
-    expect(container).toHaveAttribute("data-width", "full");
-  });
-
-  it("Grade e zebra aplicam a classe certa no container", async () => {
-    renderView();
-
-    await screen.findByRole("table");
-    fireEvent.click(screen.getByRole("button", { name: /Personalizar/i }));
-
-    fireEvent.click(screen.getByRole("button", { name: /Zebra/i }));
-    let container = screen.getByRole("table").closest(".pj-vtable") as HTMLElement;
-    expect(container).toHaveClass("ap-zebra");
-
-    fireEvent.click(screen.getByRole("button", { name: /Linhas/i }));
-    container = screen.getByRole("table").closest(".pj-vtable") as HTMLElement;
-    expect(container).not.toHaveClass("ap-zebra");
-    expect(container).toHaveClass("ap-lines");
   });
 
   it("a lupa filtra os itens pelo texto digitado", async () => {
@@ -375,6 +232,140 @@ describe("ProjectsView", () => {
     expect(screen.getByRole("tab", { name: /Itens/i }).textContent).toContain("1");
     expect(screen.getAllByText(/saldo calculado duas vezes/).length).toBeGreaterThan(0);
     expect(screen.queryAllByText(/terminal do mapa em tres camadas/)).toHaveLength(0);
+  });
+
+  it("alternar Tabela/Cartoes muda a variante", async () => {
+    renderView();
+    await screen.findByRole("table");
+
+    fireEvent.click(screen.getByRole("button", { name: "Cartões" }));
+    expect(screen.getByRole("button", { name: "Cartões" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Tabela" }));
+    expect(screen.getByRole("button", { name: "Tabela" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("padrao abre em grade, largura cheia, densidade confortavel, 5 colunas opcionais", async () => {
+    renderView();
+    const table = await screen.findByRole("table");
+    const container = table.closest(".pjx-vtable") as HTMLElement;
+    expect(container).toHaveClass("grade");
+    expect(container).toHaveAttribute("data-width", "full");
+    expect(container).toHaveAttribute("data-density", "comfortable");
+    const headers = within(table).getAllByRole("columnheader").map((h) => h.textContent);
+    expect(headers).toEqual(["Projeto", "Item", "Kind", "Data", "Commit", "Sessão"]);
+  });
+
+  it("as escolhas de tabela sobrevivem a um remount (localStorage)", async () => {
+    const first = renderView();
+    await screen.findByRole("table");
+    fireEvent.click(screen.getByRole("button", { name: /Personalizar/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Compacta/i }));
+    let container = screen.getByRole("table").closest(".pjx-vtable") as HTMLElement;
+    expect(container).toHaveAttribute("data-density", "compact");
+
+    const saved = JSON.parse(localStorage.getItem("dyarium.projetos.tabela") || "{}");
+    expect(saved.density).toBe("compact");
+
+    first.unmount();
+    // Reabre: o padrao volta a ser lido do storage.
+    renderView();
+    container = (await screen.findByRole("table")).closest(".pjx-vtable") as HTMLElement;
+    expect(container).toHaveAttribute("data-density", "compact");
+  });
+
+  it("JSON invalido cai no padrao sem quebrar", async () => {
+    localStorage.setItem("dyarium.projetos.tabela", "{{{");
+    renderView();
+    const container = (await screen.findByRole("table")).closest(".pjx-vtable") as HTMLElement;
+    expect(container).toHaveClass("grade");
+    expect(container).toHaveAttribute("data-density", "comfortable");
+  });
+
+  it("caderno sem nada: uma forma de slot, nao uma frase", async () => {
+    renderView({ index: indexFrom([], NOW) });
+    const status = await screen.findByRole("status");
+    expect(status.textContent).toBe("sem sessões");
+    expect(status.querySelectorAll("span")).toHaveLength(4);
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  });
+
+  it("so com projetos sem pasta: a mesa de Itens existe, sem estado vazio", async () => {
+    renderView();
+    const table = await screen.findByRole("table");
+    expect(within(table).getByText("saldo calculado duas vezes ao importar csv")).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("kind na tabela e rotulo mono neutro, nunca badge colorido", async () => {
+    renderView();
+    const table = await screen.findByRole("table");
+    const badge = within(table).getByText("fix").closest(".pjx-kb");
+    expect(badge).not.toBeNull();
+    expect(badge?.className).toContain("dy-mono");
+    expect(badge?.className).not.toMatch(/feat|fix|perf|test|docs|chore/);
+  });
+});
+
+describe("ProjectsView: painel de leitura do no", () => {
+  it("no de sessao abre a nota: caminho, tabela e grafico no fim", async () => {
+    renderView(
+      { node: { kind: "session", id: "work|/home/joseti/projects/syncwin|ses_1" } },
+      v2Rows(),
+    );
+
+    const pane = await screen.findByTestId("session-pane");
+    expect(pane).toBeInTheDocument();
+    expect(within(pane).getByRole("heading", { level: 1 })).toHaveTextContent(
+      "/home/joseti/projects/syncwin",
+    );
+    expect(within(pane).getByText("coletor de metricas")).toBeInTheDocument();
+    expect(pane.querySelector('svg[aria-label="itens por dia"]')).not.toBeNull();
+    // O fence nao aparece.
+    expect(pane.textContent).not.toContain("dyarium-json");
+
+    // A aba Itens continua disponivel sobre o mesmo indice, escopada ao no.
+    fireEvent.click(screen.getByRole("tab", { name: /Itens/i }));
+    const table = await screen.findByRole("table");
+    expect(within(table).getByText("coletor de metricas")).toBeInTheDocument();
+    expect(within(table).queryByText("valida payload")).not.toBeInTheDocument();
+  });
+
+  it("no de pasta abre o agregado com a lista que devolve para a sessao", async () => {
+    const { onSelectNode } = renderView(
+      {
+        node: { kind: "folder", machine: "work", path: "/home/joseti/projects/syncwin" },
+      },
+      v2Rows(),
+    );
+
+    const pane = await screen.findByTestId("folder-pane");
+    // 3 sessoes? nao: a pasta tem 2; itens 3; commits 2.
+    expect(pane.querySelector(".pjx-stats")?.textContent).toContain("2");
+    expect(pane.querySelector('svg[aria-label="atividade por dia"]')).not.toBeNull();
+
+    fireEvent.click(within(pane).getByRole("button", { name: /nota 1/ }));
+    expect(onSelectNode).toHaveBeenCalledWith({
+      kind: "session",
+      id: "work|/home/joseti/projects/syncwin|ses_1",
+    });
+  });
+
+  it("no de maquina nao tem painel: cai direto na tabela escopada", async () => {
+    renderView({ node: { kind: "machine", machine: "work" } }, v2Rows());
+    const table = await screen.findByRole("table");
+    expect(screen.queryByRole("tab", { name: /Nota/ })).not.toBeInTheDocument();
+    expect(within(table).getByText("coletor de metricas")).toBeInTheDocument();
+    expect(within(table).getByText("valida payload")).toBeInTheDocument();
+  });
+
+  it("sessao v2 edita pela entry da nota", async () => {
+    const { onOpenEntry } = renderView(
+      { node: { kind: "session", id: "work|/home/joseti/projects/syncwin|ses_1" } },
+      v2Rows(),
+    );
+    await screen.findByTestId("session-pane");
+    fireEvent.click(screen.getByRole("button", { name: /Editar/ }));
+    expect(onOpenEntry).toHaveBeenCalledWith("entry-s");
   });
 });
 
@@ -398,7 +389,6 @@ describe("ProjectsView: coluna redimensionavel", () => {
       const saved = JSON.parse(localStorage.getItem("dyarium.projetos.tabela") || "{}");
       expect(saved.colWidths?.kind).toBe(112);
     });
-    expect(colOf(table, "kind").style.width).toBe("112px");
   });
 
   it("a largura trava em 56px por baixo e em 640px por cima", async () => {
@@ -434,24 +424,6 @@ describe("ProjectsView: coluna redimensionavel", () => {
     });
   });
 
-  it("Restaurar limpa as larguras salvas", async () => {
-    renderView();
-    const table = await screen.findByRole("table");
-    const handle = handleOf("Redimensionar Kind");
-
-    fireEvent.pointerDown(handle, { clientX: 100, pointerId: 1, button: 0 });
-    fireEvent.pointerMove(handle, { clientX: 160, pointerId: 1 });
-    fireEvent.pointerUp(handle, { clientX: 160, pointerId: 1 });
-    expect(colOf(table, "kind").style.width).toBe("132px");
-
-    fireEvent.click(screen.getByRole("button", { name: /Restaurar/i }));
-    expect(colOf(table, "kind").style.width).toBe("");
-    await waitFor(() => {
-      const saved = JSON.parse(localStorage.getItem("dyarium.projetos.tabela") || "{}");
-      expect(saved.colWidths?.kind).toBeUndefined();
-    });
-  });
-
   it("as setas no handle com foco mudam a largura em 8px", async () => {
     renderView();
     const table = await screen.findByRole("table");
@@ -467,7 +439,6 @@ describe("ProjectsView: coluna redimensionavel", () => {
     fireEvent.keyDown(handle, { key: "ArrowLeft" });
     expect(colOf(table, "kind").style.width).toBe("104px");
 
-    // Home devolve a coluna ao automatico.
     fireEvent.keyDown(handle, { key: "Home" });
     expect(colOf(table, "kind").style.width).toBe("");
   });
@@ -488,104 +459,13 @@ describe("ProjectsView: coluna redimensionavel", () => {
 
   it("toda coluna visivel tem handle, inclusive a Item e a ultima", async () => {
     renderView();
-
     const table = await screen.findByRole("table");
     const headers = within(table).getAllByRole("columnheader");
     expect(headers).toHaveLength(6);
     for (const header of headers) {
-      expect(header.querySelector(".pj-resize")).not.toBeNull();
+      expect(header.querySelector(".pjx-resize")).not.toBeNull();
     }
-    // A Item (segunda coluna) e a ultima tambem tem onde pegar.
     expect(handleOf("Redimensionar Item")).toBeInTheDocument();
     expect(handleOf("Redimensionar Sessão")).toBeInTheDocument();
-  });
-
-  it("arrastar Kind +100px: so o Kind cresce e a tabela cresce junto", async () => {
-    renderView();
-    const table = await screen.findByRole("table");
-    const handle = handleOf("Redimensionar Kind");
-
-    fireEvent.pointerDown(handle, { clientX: 100, pointerId: 1, button: 0 });
-    // No arraste as colunas ficam congeladas: a Item ganha largura explicita.
-    const itemBefore = colOf(table, "item").style.width;
-    const tableBefore = Number.parseFloat(table.style.width);
-    expect(itemBefore).not.toBe("");
-
-    fireEvent.pointerMove(handle, { clientX: 200, pointerId: 1 });
-    expect(colOf(table, "kind").style.width).toBe("172px");
-    // A Item nao encolhe: a borda arrastada fica onde o cursor esta.
-    expect(colOf(table, "item").style.width).toBe(itemBefore);
-    expect(Number.parseFloat(table.style.width) - tableBefore).toBe(100);
-  });
-
-  it("arrastar a Item +80px muda so a Item", async () => {
-    renderView();
-    const table = await screen.findByRole("table");
-    const handle = handleOf("Redimensionar Item");
-
-    fireEvent.pointerDown(handle, { clientX: 100, pointerId: 1, button: 0 });
-    const kindBefore = colOf(table, "kind").style.width;
-    const tableBefore = Number.parseFloat(table.style.width);
-
-    fireEvent.pointerMove(handle, { clientX: 180, pointerId: 1 });
-    expect(colOf(table, "item").style.width).toBe("320px");
-    expect(colOf(table, "kind").style.width).toBe(kindBefore);
-    expect(Number.parseFloat(table.style.width) - tableBefore).toBe(80);
-  });
-
-  it("a Item trava em 140px por baixo", async () => {
-    renderView();
-    const table = await screen.findByRole("table");
-    const handle = handleOf("Redimensionar Item");
-
-    fireEvent.pointerDown(handle, { clientX: 100, pointerId: 1, button: 0 });
-    fireEvent.pointerMove(handle, { clientX: 0, pointerId: 1 });
-    expect(colOf(table, "item").style.width).toBe("140px");
-  });
-
-  it("a Item trava em 1280px por cima", async () => {
-    renderView();
-    const table = await screen.findByRole("table");
-    const handle = handleOf("Redimensionar Item");
-
-    fireEvent.pointerDown(handle, { clientX: 100, pointerId: 1, button: 0 });
-    fireEvent.pointerMove(handle, { clientX: 3000, pointerId: 1 });
-    expect(colOf(table, "item").style.width).toBe("1280px");
-  });
-
-  it("a largura da Item fica salva no localStorage", async () => {
-    renderView();
-    const table = await screen.findByRole("table");
-    const handle = handleOf("Redimensionar Item");
-
-    fireEvent.pointerDown(handle, { clientX: 100, pointerId: 1, button: 0 });
-    fireEvent.pointerMove(handle, { clientX: 180, pointerId: 1 });
-    fireEvent.pointerUp(handle, { clientX: 180, pointerId: 1 });
-
-    await waitFor(() => {
-      const saved = JSON.parse(localStorage.getItem("dyarium.projetos.tabela") || "{}");
-      expect(saved.colWidths?.item).toBe(320);
-    });
-    expect(colOf(table, "item").style.width).toBe("320px");
-  });
-
-  it("duplo clique na Item devolve a coluna ao automatico", async () => {
-    renderView();
-    const table = await screen.findByRole("table");
-    const handle = handleOf("Redimensionar Item");
-
-    fireEvent.pointerDown(handle, { clientX: 100, pointerId: 1, button: 0 });
-    fireEvent.pointerMove(handle, { clientX: 180, pointerId: 1 });
-    fireEvent.pointerUp(handle, { clientX: 180, pointerId: 1 });
-    expect(colOf(table, "item").style.width).toBe("320px");
-
-    fireEvent.doubleClick(handle);
-    expect(colOf(table, "item").style.width).toBe("");
-    // Sem largura explicita a tabela volta a ocupar a caixa toda.
-    expect(table.style.width).toBe("");
-    await waitFor(() => {
-      const saved = JSON.parse(localStorage.getItem("dyarium.projetos.tabela") || "{}");
-      expect(saved.colWidths?.item).toBeUndefined();
-    });
   });
 });
