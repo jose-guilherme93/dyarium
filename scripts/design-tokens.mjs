@@ -98,6 +98,29 @@ for (const name of TYPE_NAMES) {
 if (!Array.isArray(tokens.space) || tokens.space.length === 0) {
   fail('array "space" ausente no tokens.json');
 }
+if (typeof tokens.font?.monoStack !== 'string') {
+  fail('font.monoStack ausente no tokens.json');
+}
+for (const key of ['sm', 'md', 'lg', 'stroke', 'strokeDetail']) {
+  if (typeof tokens.icon?.[key] !== 'number') {
+    fail(`icon.${key} ausente no tokens.json`);
+  }
+}
+for (const [section, keys] of [
+  ['row', ['touch', 'dense']],
+  ['tree', ['cell', 'rail', 'guide']],
+  ['mark', ['size', 'stroke', 'tick']],
+  ['chart', ['height', 'top', 'base', 'labels', 'barMin', 'colMin', 'colMax', 'colRatio', 'sessionMin', 'sessionBarMin']],
+]) {
+  for (const key of keys) {
+    if (typeof tokens[section]?.[key] !== 'number') {
+      fail(`${section}.${key} ausente no tokens.json`);
+    }
+  }
+}
+if (typeof tokens.meter?.compose !== 'number') {
+  fail('meter.compose ausente no tokens.json');
+}
 
 const num = (value) => String(value);
 
@@ -156,7 +179,32 @@ function scaleBlock() {
   }
   lines.push(`  --dy-meter-height: ${tokens.meter.height}px;`);
   lines.push(`  --dy-meter-gap: ${tokens.meter.gap}px;`);
+  lines.push(`  --dy-meter-compose: ${tokens.meter.compose}px;`);
+  lines.push(`  --dy-row-touch: ${tokens.row.touch}px;`);
+  lines.push(`  --dy-row-dense: ${tokens.row.dense}px;`);
+  lines.push(`  --dy-tree-cell: ${tokens.tree.cell}px;`);
+  lines.push(`  --dy-tree-rail: ${tokens.tree.rail}px;`);
+  lines.push(`  --dy-tree-guide: ${tokens.tree.guide}px;`);
+  lines.push(`  --dy-mark-size: ${tokens.mark.size}px;`);
+  lines.push(`  --dy-mark-stroke: ${tokens.mark.stroke}px;`);
+  lines.push(`  --dy-mark-tick: ${tokens.mark.tick}px;`);
+  lines.push(`  --dy-chart-height: ${tokens.chart.height}px;`);
+  lines.push(`  --dy-chart-top: ${tokens.chart.top}px;`);
+  lines.push(`  --dy-chart-base: ${tokens.chart.base}px;`);
+  lines.push(`  --dy-chart-labels: ${tokens.chart.labels}px;`);
+  lines.push(`  --dy-chart-bar-min: ${tokens.chart.barMin}px;`);
+  lines.push(`  --dy-chart-col-min: ${tokens.chart.colMin}px;`);
+  lines.push(`  --dy-chart-col-max: ${tokens.chart.colMax}px;`);
+  lines.push(`  --dy-chart-col-ratio: ${tokens.chart.colRatio};`);
+  lines.push(`  --dy-chart-session-min: ${tokens.chart.sessionMin}px;`);
+  lines.push(`  --dy-chart-session-bar-min: ${tokens.chart.sessionBarMin}px;`);
+  lines.push(`  --dy-icon-sm: ${tokens.icon.sm}px;`);
+  lines.push(`  --dy-icon-md: ${tokens.icon.md}px;`);
+  lines.push(`  --dy-icon-lg: ${tokens.icon.lg}px;`);
+  lines.push(`  --dy-icon-stroke: ${tokens.icon.stroke};`);
+  lines.push(`  --dy-icon-stroke-detail: ${tokens.icon.strokeDetail};`);
   lines.push(`  --dy-font-sans: ${tokens.font.stack};`);
+  lines.push(`  --dy-font-mono: ${tokens.font.monoStack};`);
   return lines.join('\n');
 }
 
@@ -171,6 +219,7 @@ function typeClasses() {
       `  letter-spacing: ${type.letterSpacing};`,
     ];
     if (type.uppercase) lines.push('  text-transform: uppercase;');
+    if (name === 'mono') lines.push('  font-family: var(--dy-font-mono);');
     if (type.tabular) {
       lines.push('  font-variant-numeric: tabular-nums;');
       lines.push('  font-feature-settings: "tnum" 1;');
@@ -269,11 +318,51 @@ export const designControl = {
 export const designMeter = {
   height: ${tokens.meter.height},
   gap: ${tokens.meter.gap},
+  compose: ${tokens.meter.compose},
+} as const;
+
+export const designRow = {
+  touch: ${tokens.row.touch},
+  dense: ${tokens.row.dense},
+} as const;
+
+export const designTree = {
+  cell: ${tokens.tree.cell},
+  rail: ${tokens.tree.rail},
+  guide: ${tokens.tree.guide},
+} as const;
+
+export const designMark = {
+  size: ${tokens.mark.size},
+  stroke: ${tokens.mark.stroke},
+  tick: ${tokens.mark.tick},
+} as const;
+
+export const designChart = {
+  height: ${tokens.chart.height},
+  top: ${tokens.chart.top},
+  base: ${tokens.chart.base},
+  labels: ${tokens.chart.labels},
+  barMin: ${tokens.chart.barMin},
+  colMin: ${tokens.chart.colMin},
+  colMax: ${tokens.chart.colMax},
+  colRatio: ${tokens.chart.colRatio},
+  sessionMin: ${tokens.chart.sessionMin},
+  sessionBarMin: ${tokens.chart.sessionBarMin},
+} as const;
+
+export const designIcon = {
+  sm: ${tokens.icon.sm},
+  md: ${tokens.icon.md},
+  lg: ${tokens.icon.lg},
+  stroke: ${tokens.icon.stroke},
+  strokeDetail: ${tokens.icon.strokeDetail},
 } as const;
 
 export const designFont = {
   regular: '${fontRegular}',
   semibold: '${fontSemibold}',
+  monoStack: ${JSON.stringify(tokens.font.monoStack)},
 } as const;
 `;
 }
@@ -311,6 +400,22 @@ const RADII = indent(
     )
     .join('\n'),
   '      ',
+);
+
+const ICONES = indent(
+  [
+    { label: 'maquina', d: '<rect x="1.75" y="2" width="12.5" height="4.75" rx="1.2"/><rect x="1.75" y="9.25" width="12.5" height="4.75" rx="1.2"/><path class="d" d="M4 4.4h2.2M4 11.6h2.2"/>' },
+    { label: 'pasta', d: '<path d="M1.75 4.4c0-.9.72-1.6 1.6-1.6h2.9l1.7 1.9h4.7c.88 0 1.6.72 1.6 1.6v5.9c0 .88-.72 1.6-1.6 1.6H3.35c-.88 0-1.6-.72-1.6-1.6z"/>' },
+    { label: 'sessao', d: '<path d="M3.25 1.75h6l3.5 3.5v9h-9.5z"/><path class="d" d="M9.4 1.9v3.2h3.2"/><path class="d" d="M5.5 8.3h4.9M5.5 10.9h3.2"/>' },
+  ]
+    .map(
+      ({ label, d }) => `  <div class="ico">
+    <svg viewBox="0 0 16 16" role="img" aria-label="${label}" stroke-linejoin="round">${d}</svg>
+    <span class="dy-mono">${label}</span>
+  </div>`,
+    )
+    .join('\n'),
+  '    ',
 );
 
 const SWATCHES = indent(
@@ -439,6 +544,26 @@ section > .dy-label{margin:0 0 var(--dy-space-6)}
 }
 .r-control{border-radius:var(--dy-radius-control)}
 .r-surface{border-radius:var(--dy-radius-surface)}
+
+/* icones: escala e traco vem dos tokens */
+.icones{
+  display:flex;
+  gap:var(--dy-space-16);
+  margin-top:var(--dy-space-8);
+  padding-top:var(--dy-space-8);
+  border-top:1px solid var(--dy-line);
+}
+.ico{display:flex;flex-direction:column;align-items:flex-start;gap:var(--dy-space-4)}
+.ico svg{
+  width:var(--dy-icon-md);
+  height:var(--dy-icon-md);
+  fill:none;
+  stroke:currentColor;
+  stroke-width:var(--dy-icon-stroke);
+  color:var(--dy-text);
+}
+.ico svg .d{stroke-width:var(--dy-icon-stroke-detail);stroke-linecap:round}
+.ico .dy-mono{color:var(--dy-text-muted)}
 
 /* 4. botões */
 .btn-head,
@@ -667,6 +792,9 @@ ${SPACE_BARS}
       </div>
       <div class="radii">
 ${RADII}
+      </div>
+      <div class="icones">
+${ICONES}
       </div>
     </section>
 

@@ -129,9 +129,49 @@ export const designControl = {
 export const designMeter = {
   height: 2,
   gap: 8,
+  compose: 44,
+} as const;
+
+export const designRow = {
+  touch: 44,
+  dense: 26,
+} as const;
+
+export const designTree = {
+  cell: 14,
+  rail: 6,
+  guide: 1,
+} as const;
+
+export const designMark = {
+  size: 8,
+  stroke: 1.5,
+  tick: 4,
+} as const;
+
+export const designChart = {
+  height: 84,
+  top: 8,
+  base: 64,
+  labels: 78,
+  barMin: 3,
+  colMin: 5,
+  colMax: 16,
+  colRatio: 0.52,
+  sessionMin: 10,
+  sessionBarMin: 6,
+} as const;
+
+export const designIcon = {
+  sm: 12,
+  md: 14,
+  lg: 24,
+  stroke: 1.5,
+  strokeDetail: 1.3,
 } as const;
 
 export const designFont = {
   regular: 'SchibstedGrotesk-Medium',
   semibold: 'SchibstedGrotesk-SemiBold',
+  monoStack: "ui-monospace, \"SF Mono\", SFMono-Regular, Menlo, Consolas, \"Liberation Mono\", monospace",
 } as const;
