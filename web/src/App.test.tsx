@@ -14,7 +14,20 @@ afterEach(() => {
 });
 
 describe("App", () => {
+  it("primeira visita apresenta o produto e pergunta onde o cofre mora", async () => {
+    render(<App />);
+    // Sem servidor e sem cofre escolhido, a tela de apresentacao vem primeiro.
+    await waitFor(() => expect(screen.getByRole("button", { name: /Continuar com Google/ })).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: /Continuar com Google/ })).toBeDisabled();
+    // No jsdom nao existe seletor de pasta: a tela oferece o modo sem pasta.
+    expect(
+      screen.getByRole("button", { name: /(Usar só neste navegador|Seguir neste navegador)/ }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Nenhuma nota ainda.")).not.toBeInTheDocument();
+  });
+
   it("abre o cofre local quando nao ha servidor nem token", async () => {
+    localStorage.setItem("dyarium.onboarded", "1");
     render(<App />);
     // Site estatico: nenhuma tela de token, o banco do navegador assume.
     await waitFor(() => expect(screen.getByText("Nenhuma nota ainda.")).toBeInTheDocument());

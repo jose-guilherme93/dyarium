@@ -30,6 +30,8 @@ const WorkerKeepAlive = LAB_ENABLED
       import("./components/WorkerKeepAlive").then((mod) => ({ default: mod.WorkerKeepAlive })),
     )
   : null;
+import { FirstRun } from "./components/FirstRun";
+import { markVaultDirty, runVaultSync } from "./local/folderSync";
 import { TokenGate } from "./components/TokenGate";
 import { SetupGate } from "./components/SetupGate";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -101,6 +103,16 @@ export function App() {
   const [setupRequired, setSetupRequired] = useState(false);
   /** A instancia respondeu em /setup/state? Sem servidor, o app usa o cofre local. */
   const [serverChecked, setServerChecked] = useState(false);
+  // Primeira visita ao site: a tela de apresentacao decide onde o cofre mora.
+  const [onboarded, setOnboarded] = useState(() => {
+    try {
+      return localStorage.getItem("dyarium.onboarded") === "1";
+    } catch {
+      return false;
+    }
+  });
+  // "Ja tenho uma instalacao propria" troca a apresentacao pelo portao do token.
+  const [forceTokenGate, setForceTokenGate] = useState(false);
   const [serverAvailable, setServerAvailable] = useState(false);
   const [view, setView] = useState<ViewId>(() =>
     typeof window !== "undefined" && window.location.pathname === "/lab" ? "lab" : "notes",
@@ -291,6 +303,18 @@ export function App() {
     };
   }, []);
 
+  // Cofre em pasta: grava o pendente ao abrir e ao fechar a aba. Sem pasta
+  // lembrada, `runVaultSync` nao faz nada.
+  useEffect(() => {
+    if (!onboarded) return;
+    const flush = () => {
+      void runVaultSync().catch(() => undefined);
+    };
+    flush();
+    window.addEventListener("pagehide", flush);
+    return () => window.removeEventListener("pagehide", flush);
+  }, [onboarded]);
+
   // A token already stored may be stale (rotated on the server) or simply
   // wrong; validate it on load and fall back to the gate. A network failure
   // keeps the token so the app can still be used offline with cached data.
@@ -454,7 +478,34 @@ export function App() {
     return null;
   }
 
-  if (!token && serverAvailable) {
+  const finishOnboarding = () => {
+    try {
+      localStorage.setItem("dyarium.onboarded", "1");
+    } catch {
+      // sem localStorage a apresentacao volta na proxima abertura; nada se perde
+    }
+    setOnboarded(true);
+  };
+
+  // Site estatico ainda sem cofre escolhido: a primeira tela apresenta o
+  // produto e pergunta onde as notas vao morar.
+  if (!token && !serverAvailable && !onboarded && !forceTokenGate) {
+    return (
+      <FirstRun
+        googleReady={false}
+        onFolderChosen={async (folder) => {
+          // O primeiro backup e parte de "criar o cofre": se a pasta recusar a
+          // escrita, a tela mostra o erro em vez de seguir como se tivesse dado.
+          await runVaultSync(folder);
+          finishOnboarding();
+        }}
+        onUseBrowserOnly={finishOnboarding}
+        onSelfHosted={() => setForceTokenGate(true)}
+      />
+    );
+  }
+
+  if (!token && (serverAvailable || forceTokenGate)) {
     return (
       <TokenGate
         onSubmit={(value) => void handleLogin(value)}
@@ -467,6 +518,9 @@ export function App() {
   const refresh = () => {
     setRefreshKey((key) => key + 1);
     setNoteRefreshKey((key) => key + 1);
+    // Toda escrita passa por aqui: o cofre em pasta espera alguns minutos de
+    // silencio para gravar so o que mudou.
+    markVaultDirty();
   };
 
   const closeDrawer = () => {
