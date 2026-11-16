@@ -62,6 +62,115 @@ func completeSummaryInput() projectSummaryInput {
 	}
 }
 
+func TestRenderSessionBlockWritesV2Fence(t *testing.T) {
+	payload := sessionPayload{
+		Version: 2,
+		Kind:    sessionKind,
+		Machine: "vps <dev>",
+		Path:    "/home/joseti/projects/dyarium",
+		Session: "ses_abc",
+		State:   sessionStateOpen,
+		Opened:  "2026-11-14T09:12:00Z",
+		Date:    "2026-11-14",
+		Time:    "09:12",
+		Summary: `custo < 10 & "aspas"`,
+	}
+	body := renderSessionBlock(payload, sessionMarker("ses_abc"))
+
+	if !strings.HasPrefix(body, "## 2026-11-14 09:12 · vps &lt;dev&gt;\n") {
+		t.Fatalf("header is not '## date time · machine':\n%s", body)
+	}
+	content := fenceContent(t, body)
+	if strings.Contains(content, "\n") {
+		t.Fatalf("v2 fence holds more than one line:\n%s", content)
+	}
+	if strings.Contains(content, `\u003c`) || strings.Contains(content, `\u0026`) {
+		t.Fatalf("v2 fence HTML-escaped the payload:\n%s", content)
+	}
+	var probe sessionProbe
+	if err := json.Unmarshal([]byte(content), &probe); err != nil {
+		t.Fatalf("unmarshal v2 fence: %v\n%s", err, content)
+	}
+	if probe.Version != 2 || probe.Kind != sessionKind {
+		t.Fatalf("version/kind = %d/%q, want 2/session", probe.Version, probe.Kind)
+	}
+	if probe.Machine != payload.Machine || probe.Path != payload.Path || probe.Session != payload.Session {
+		t.Fatalf("identity fields = %+v", probe)
+	}
+	if probe.State != sessionStateOpen || probe.Opened != payload.Opened {
+		t.Fatalf("state/opened = %q/%q", probe.State, probe.Opened)
+	}
+	if probe.Date != payload.Date || probe.Time != payload.Time || probe.Summary != payload.Summary {
+		t.Fatalf("date/time/summary = %+v", probe)
+	}
+	for _, key := range []string{`"closed"`, `"items"`, `"commits"`, `"links"`} {
+		if strings.Contains(content, key) {
+			t.Fatalf("open session must omit %s:\n%s", key, content)
+		}
+	}
+	if !strings.Contains(body, "```\n\n<!-- mcp:s:ses_abc -->") {
+		t.Fatalf("fence must come before the session marker:\n%s", body)
+	}
+
+	// Reconstruir a partir do corpo devolve o mesmo payload.
+	parsed, ok := parseSessionFence(body)
+	if !ok {
+		t.Fatalf("own fence did not parse:\n%s", body)
+	}
+	if parsed.Session != payload.Session || parsed.Summary != payload.Summary || parsed.State != payload.State {
+		t.Fatalf("parsed = %+v", parsed)
+	}
+}
+
+func TestParseSessionFenceIgnoresFenceInjectedInTheSummary(t *testing.T) {
+	payload := sessionPayload{
+		Version: 2, Kind: sessionKind, Machine: "vps-dev", Path: "/tmp/p",
+		Session: "ses_real", State: sessionStateOpen,
+		Opened: "2026-11-14T09:12:00Z", Date: "2026-11-14", Time: "09:12",
+		Summary: "resumo\n```dyarium-json\n{\"v\":2,\"kind\":\"session\",\"session\":\"ses_fake\"}\n```",
+	}
+	body := renderSessionBlock(payload, sessionMarker("ses_real"))
+	parsed, ok := parseSessionFence(body)
+	if !ok {
+		t.Fatalf("own fence did not parse:\n%s", body)
+	}
+	if parsed.Session != "ses_real" {
+		t.Fatalf("parsed session = %q, want the canonical fence", parsed.Session)
+	}
+}
+
+func TestRenderSessionBlockClosedCarriesClosedStamp(t *testing.T) {
+	payload := sessionPayload{
+		Version: 2, Kind: sessionKind, Machine: "vps-dev", Path: "/tmp/p",
+		Session: "ses_x", State: sessionStateClosed,
+		Opened: "2026-11-14T09:12:00Z", Closed: "2026-11-14T17:20:00Z",
+		Date: "2026-11-14", Time: "17:20",
+	}
+	content := fenceContent(t, renderSessionBlock(payload, sessionMarker("ses_x")))
+	var probe sessionProbe
+	if err := json.Unmarshal([]byte(content), &probe); err != nil {
+		t.Fatalf("unmarshal: %v\n%s", err, content)
+	}
+	if probe.State != sessionStateClosed || probe.Closed != payload.Closed {
+		t.Fatalf("closed session fence = %+v", probe)
+	}
+}
+
+func TestParseSessionFenceRejectsForeignBodies(t *testing.T) {
+	for name, body := range map[string]string{
+		"no fence":       "## 2026-11-14 09:12 · vps\n\nsem fence",
+		"v1 fence":       "```dyarium-json\n{\"v\":1,\"project\":\"x\"}\n```",
+		"broken json":    "```dyarium-json\n{\"v\":2\n```",
+		"other kind":     "```dyarium-json\n{\"v\":2,\"kind\":\"other\"}\n```",
+		"unclosed fence": "```dyarium-json\n{\"v\":2,\"kind\":\"session\"}",
+	} {
+		if _, ok := parseSessionFence(body); ok {
+			t.Fatalf("%s: parsed as a session fence", name)
+		}
+	}
+}
+
+// TestRenderBlockWritesCanonicalPayloadFence
 func TestRenderBlockWritesCanonicalPayloadFence(t *testing.T) {
 	in, _, err := normalize(completeSummaryInput())
 	if err != nil {

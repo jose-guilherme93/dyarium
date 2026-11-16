@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -274,6 +275,36 @@ func (s *Store) UpdateNoteBody(ctx context.Context, id, markdown, readVersion st
 		return "", false, fmt.Errorf("store: update note body: %w", err)
 	}
 	return stamp, false, nil
+}
+
+// TouchNote bumps only the updated_at of a note. It is the heartbeat of a
+// session: an agent that keeps working keeps the note recent without rewriting
+// the body or issuing a new body version. The entry is not touched, so a
+// heartbeat never moves the project in "recentes".
+func (s *Store) TouchNote(ctx context.Context, id string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE notes SET updated_at = ? WHERE id = ?`, ts(time.Now().UTC()), id)
+	if err != nil {
+		return fmt.Errorf("store: touch note: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// UpdateNoteTitle renames a note. It does not touch the body, its version or the
+// note clock: the caller decides whether the change is also activity.
+func (s *Store) UpdateNoteTitle(ctx context.Context, id, title string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE notes SET title = ? WHERE id = ?`, strings.TrimSpace(title), id)
+	if err != nil {
+		return fmt.Errorf("store: update note title: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // DeleteNote removes a note and its revisions.

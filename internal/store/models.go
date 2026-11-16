@@ -102,12 +102,16 @@ type Upload struct {
 	ExpiresAt     time.Time
 }
 
-// Quem criou um objeto. `Kind` e `device` (um aparelho com o app) ou `server`
-// (o proprio ambiente, pelo dashboard ou pela API). Proveniencia apenas: nao
-// muda permissao nem impede edicao em nenhum ambiente.
+// Quem criou um objeto. `Kind` e `device` (um aparelho com o app), `server`
+// (o proprio ambiente, pelo dashboard ou pela API) ou `mcp` (uma pasta de
+// projeto registrada pelo servidor MCP). Proveniencia apenas: nao muda
+// permissao nem impede edicao em nenhum ambiente.
 const (
 	OriginKindDevice = "device"
 	OriginKindServer = "server"
+	// OriginKindMCP marks an entry created by the MCP server for a project
+	// folder (one entry per machine and path).
+	OriginKindMCP = "mcp"
 )
 
 // Origin identifies who created an object. Empty means the row predates the

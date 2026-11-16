@@ -97,59 +97,101 @@ func normalize(in projectSummaryInput) (projectSummaryInput, time.Time, error) {
 	if utf8.RuneCountInString(in.Project) > maxProjectRunes {
 		return in, time.Time{}, fmt.Errorf("project maior que %d caracteres", maxProjectRunes)
 	}
-	in.Summary = strings.TrimSpace(in.Summary)
-	if utf8.RuneCountInString(in.Summary) > maxSummaryRunes {
-		return in, time.Time{}, fmt.Errorf("summary maior que %d caracteres", maxSummaryRunes)
+	summary, err := normalizeSummary(in.Summary)
+	if err != nil {
+		return in, time.Time{}, err
 	}
-	if len(in.Items) > maxItems {
-		return in, time.Time{}, fmt.Errorf("items acima do limite de %d", maxItems)
+	in.Summary = summary
+	if err := normalizeItems(in.Items); err != nil {
+		return in, time.Time{}, err
 	}
-	for i := range in.Items {
-		item := &in.Items[i]
+	if err := normalizeCommits(in.Commits); err != nil {
+		return in, time.Time{}, err
+	}
+	if err := normalizeLinks(in.Links); err != nil {
+		return in, time.Time{}, err
+	}
+	day, err := normalizeDate(in.Date)
+	if err != nil {
+		return in, time.Time{}, err
+	}
+	in.Date = day.Format(dateLayout)
+	return in, day, nil
+}
+
+// normalizeSummary trims and bounds the objective summary shared by both
+// contracts.
+func normalizeSummary(summary string) (string, error) {
+	summary = strings.TrimSpace(summary)
+	if utf8.RuneCountInString(summary) > maxSummaryRunes {
+		return "", fmt.Errorf("summary maior que %d caracteres", maxSummaryRunes)
+	}
+	return summary, nil
+}
+
+// normalizeItems validates the structured items in place: title required,
+// unknown kind becomes chore and every field is trimmed and bounded.
+func normalizeItems(items []summaryItem) error {
+	if len(items) > maxItems {
+		return fmt.Errorf("items acima do limite de %d", maxItems)
+	}
+	for i := range items {
+		item := &items[i]
 		item.Kind = strings.TrimSpace(item.Kind)
 		if item.Kind == "" {
 			item.Kind = defaultItemKind
 		}
 		item.Title = strings.TrimSpace(item.Title)
 		if item.Title == "" {
-			return in, time.Time{}, fmt.Errorf("items[%d].title obrigatorio", i)
+			return fmt.Errorf("items[%d].title obrigatorio", i)
 		}
 		item.Detail = strings.TrimSpace(item.Detail)
 		if utf8.RuneCountInString(item.Detail) > maxItemDetail {
-			return in, time.Time{}, fmt.Errorf("items[%d].detail maior que %d caracteres", i, maxItemDetail)
+			return fmt.Errorf("items[%d].detail maior que %d caracteres", i, maxItemDetail)
 		}
 		item.Commit = strings.TrimSpace(item.Commit)
 		item.URL = strings.TrimSpace(item.URL)
 	}
-	if len(in.Commits) > maxCommits {
-		return in, time.Time{}, fmt.Errorf("commits acima do limite de %d", maxCommits)
-	}
-	for i := range in.Commits {
-		in.Commits[i].Hash = strings.TrimSpace(in.Commits[i].Hash)
-		in.Commits[i].Message = strings.TrimSpace(in.Commits[i].Message)
-		in.Commits[i].URL = strings.TrimSpace(in.Commits[i].URL)
-	}
-	if len(in.Links) > maxLinks {
-		return in, time.Time{}, fmt.Errorf("links acima do limite de %d", maxLinks)
-	}
-	for i := range in.Links {
-		in.Links[i].Label = strings.TrimSpace(in.Links[i].Label)
-		in.Links[i].URL = strings.TrimSpace(in.Links[i].URL)
-	}
+	return nil
+}
 
-	rawDate := strings.TrimSpace(in.Date)
-	var day time.Time
-	if rawDate == "" {
-		day = startOfDay(time.Now().UTC())
-	} else {
-		parsed, err := time.Parse(dateLayout, rawDate)
-		if err != nil {
-			return in, time.Time{}, errors.New("date deve ser YYYY-MM-DD")
-		}
-		day = parsed.UTC()
+// normalizeCommits trims the commits that do not belong to an item.
+func normalizeCommits(commits []summaryCommit) error {
+	if len(commits) > maxCommits {
+		return fmt.Errorf("commits acima do limite de %d", maxCommits)
 	}
-	in.Date = day.Format(dateLayout)
-	return in, day, nil
+	for i := range commits {
+		commits[i].Hash = strings.TrimSpace(commits[i].Hash)
+		commits[i].Message = strings.TrimSpace(commits[i].Message)
+		commits[i].URL = strings.TrimSpace(commits[i].URL)
+	}
+	return nil
+}
+
+// normalizeLinks trims the reference links of a session.
+func normalizeLinks(links []summaryLink) error {
+	if len(links) > maxLinks {
+		return fmt.Errorf("links acima do limite de %d", maxLinks)
+	}
+	for i := range links {
+		links[i].Label = strings.TrimSpace(links[i].Label)
+		links[i].URL = strings.TrimSpace(links[i].URL)
+	}
+	return nil
+}
+
+// normalizeDate turns the optional YYYY-MM-DD day into a UTC midnight; an empty
+// value means today.
+func normalizeDate(rawDate string) (time.Time, error) {
+	rawDate = strings.TrimSpace(rawDate)
+	if rawDate == "" {
+		return startOfDay(time.Now().UTC()), nil
+	}
+	parsed, err := time.Parse(dateLayout, rawDate)
+	if err != nil {
+		return time.Time{}, errors.New("date deve ser YYYY-MM-DD")
+	}
+	return parsed.UTC(), nil
 }
 
 func startOfDay(t time.Time) time.Time {
@@ -328,10 +370,20 @@ func summaryMarker(in projectSummaryInput, computer string) (string, error) {
 
 // computerFromRequest sanitizes the host header into a display name. Anything
 // outside [A-Za-z0-9_-] is dropped and the value never reaches a path or an
-// identity decision.
+// identity decision. A missing header reads as "unknown", the v1 behaviour.
 func computerFromRequest(req *mcp.CallToolRequest) string {
+	if machine := machineFromRequest(req); machine != "" {
+		return machine
+	}
+	return "unknown"
+}
+
+// machineFromRequest is the sanitized host header of the MCP call. Unlike the v1
+// computer name, a missing header stays empty: the session contract records the
+// machine as provenance and does not invent one.
+func machineFromRequest(req *mcp.CallToolRequest) string {
 	if req == nil || req.Extra == nil {
-		return "unknown"
+		return ""
 	}
 	raw := strings.TrimSpace(req.Extra.Header.Get(hostHeader))
 	var b strings.Builder
@@ -348,9 +400,6 @@ func computerFromRequest(req *mcp.CallToolRequest) string {
 			break
 		}
 		b.WriteRune(r)
-	}
-	if b.Len() == 0 {
-		return "unknown"
 	}
 	return b.String()
 }

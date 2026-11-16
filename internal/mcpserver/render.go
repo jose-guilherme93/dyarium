@@ -16,6 +16,102 @@ const (
 	detailsClose = ":::\n"
 )
 
+// sessionPayload is the canonical v2 fence of a session note: the same content
+// as the human block, in one line. Optional fields use omitempty so an empty
+// session stays short; `closed` only exists in a closed session.
+type sessionPayload struct {
+	Version int             `json:"v"`
+	Kind    string          `json:"kind"`
+	Machine string          `json:"machine"`
+	Path    string          `json:"path"`
+	Session string          `json:"session"`
+	State   string          `json:"state"`
+	Opened  string          `json:"opened"`
+	Closed  string          `json:"closed,omitempty"`
+	Date    string          `json:"date"`
+	Time    string          `json:"time"`
+	Summary string          `json:"summary,omitempty"`
+	Items   []summaryItem   `json:"items,omitempty"`
+	Commits []summaryCommit `json:"commits,omitempty"`
+	Links   []summaryLink   `json:"links,omitempty"`
+}
+
+// renderSessionBlock produces the body of a session note: the header with date,
+// time and machine, the summary, one line per item, the collapsible technical
+// block, the v2 fence and the session marker. The session note has no
+// concise/full mode: the agent always reports the whole session, so the details
+// are always present, collapsed.
+func renderSessionBlock(p sessionPayload, marker string) string {
+	var b strings.Builder
+	if p.Machine != "" {
+		fmt.Fprintf(&b, "## %s %s · %s\n", p.Date, p.Time, safeInline(p.Machine))
+	} else {
+		fmt.Fprintf(&b, "## %s %s\n", p.Date, p.Time)
+	}
+	in := projectSummaryInput{
+		Summary: p.Summary,
+		Items:   p.Items,
+		Commits: p.Commits,
+		Links:   p.Links,
+	}
+	if summary := strings.TrimSpace(in.Summary); summary != "" {
+		b.WriteString("\n")
+		b.WriteString(safeBlock(summary))
+		b.WriteString("\n")
+	}
+	renderItems(&b, in)
+	if len(in.Items) > 0 || strings.TrimSpace(in.Summary) != "" {
+		renderTechnical(&b, in, false)
+	}
+	b.WriteString("\n")
+	if fence := renderSessionPayload(p); fence != "" {
+		b.WriteString(fence)
+		b.WriteString("\n\n")
+	}
+	b.WriteString(marker)
+	return b.String()
+}
+
+// renderSessionPayload encodes the v2 fence. It follows the v1 rules: one line,
+// no indentation and HTML not escaped, so a round trip returns the original
+// characters.
+func renderSessionPayload(p sessionPayload) string {
+	var raw strings.Builder
+	enc := json.NewEncoder(&raw)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(p); err != nil {
+		return ""
+	}
+	line := strings.TrimSuffix(raw.String(), "\n")
+	return "```dyarium-json\n" + line + "\n```"
+}
+
+// parseSessionFence reads the v2 fence of an existing note. It is used on reopen
+// and on close to preserve what is already sealed; a hand-edited body without a
+// valid v2 fence reports false and is left alone. The last fence of the body is
+// read: our renderer always writes it after the human text, so a "```" typed
+// inside the summary cannot pass for the canonical one.
+func parseSessionFence(body string) (sessionPayload, bool) {
+	const open = "```dyarium-json\n"
+	start := strings.LastIndex(body, open)
+	if start < 0 {
+		return sessionPayload{}, false
+	}
+	rest := body[start+len(open):]
+	end := strings.Index(rest, "\n```")
+	if end < 0 {
+		return sessionPayload{}, false
+	}
+	var p sessionPayload
+	if err := json.Unmarshal([]byte(rest[:end]), &p); err != nil {
+		return sessionPayload{}, false
+	}
+	if p.Version != 2 || p.Kind != sessionKind {
+		return sessionPayload{}, false
+	}
+	return p, true
+}
+
 // renderBlock produces the markdown block of one session. The objective summary
 // comes right after the date in both modes: it is where the agent puts the
 // numbers that matter (performance, bugs, versions). Then come one-line items.
