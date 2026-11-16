@@ -7,7 +7,6 @@ import * as localChapters from "./local/chapters";
 import * as localCovers from "./local/covers";
 import * as localLinks from "./local/links";
 import * as localAudio from "./local/audio";
-import * as localTranscribe from "./local/transcribe";
 import * as localProvider from "./local/providerTranscribe";
 import * as localAnalyze from "./local/analyze";
 import { shrinkImage } from "./lib/image";
@@ -1008,21 +1007,16 @@ const localApi: Partial<typeof remoteApi> = {
   listModels: async () => ({ models: localSettings.localWhisperModels() }),
   listAnalyzeModels: async () => ({ models: await localSettings.localAnalyzeModels() }),
   getTranscript: async (id) => {
-    const transcript = await localTranscribe.transcriptOf(id);
+    const transcript = await transcriptOfEntry(id);
     if (!transcript) throw new ApiError("Nota sem transcricao.", 404, "not_found");
     return transcript;
   },
-  listSegments: async (id) => ({ segments: await localTranscribe.segmentsOf(id) }),
-  // No cofre a transcricao roda aqui mesmo, entao a promessa so resolve no fim:
-  // a tela segura o botao ate o texto existir. O motor do navegador so existe
-  // quando o runtime do ONNX acompanha o build; sem ele, o texto vem de um
-  // provedor com a chave salva em Configuracoes.
+  listSegments: async (id) => ({ segments: await transcriptSegmentsOf(id) }),
+  // Transcricao no cofre local: sempre pelo provedor com a chave salva em
+  // Configuracoes. O motor no navegador ficou desligado no site (o runtime do
+  // ONNX passa do limite de asset do Cloudflare).
   retranscribe: async (id) => {
-    if (await hasBrowserEngine()) {
-      await localTranscribe.transcribeEntryLocally(id);
-    } else {
-      await localProvider.transcribeWithProvider(id);
-    }
+    await localProvider.transcribeWithProvider(id);
     return { status: "ok" };
   },
   // Analise sem servidor: o provedor configurado le a nota e o resultado fica
@@ -1067,20 +1061,17 @@ const localApi: Partial<typeof remoteApi> = {
 };
 
 /**
- * O build leva o runtime do ONNX? O arquivo e a prova: onde ele nao existe (o
- * site hospedado), transcrever no navegador nao teria como carregar.
+ * Leitura da transcricao ja gravada no cofre, sem carregar o motor de
+ * inferencia (que fica fora do pacote).
  */
-let browserEngine: boolean | null = null;
+async function transcriptOfEntry(id: string) {
+  const { transcriptOf } = await import("./local/transcribe");
+  return transcriptOf(id);
+}
 
-async function hasBrowserEngine(): Promise<boolean> {
-  if (browserEngine !== null) return browserEngine;
-  try {
-    const res = await fetch("/ort/ort-wasm-simd-threaded.wasm", { method: "HEAD" });
-    browserEngine = res.ok;
-  } catch {
-    browserEngine = false;
-  }
-  return browserEngine;
+async function transcriptSegmentsOf(id: string) {
+  const { segmentsOf } = await import("./local/transcribe");
+  return segmentsOf(id);
 }
 
 /** Metodo que so existe com instancia conectada. */

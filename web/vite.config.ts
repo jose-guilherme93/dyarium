@@ -18,6 +18,30 @@ const ORT_ASSETS = [
   "ort-wasm-simd-threaded.jsep.wasm",
 ];
 
+/**
+ * O Worker recusa asset acima de 25 MiB. O wasm do ONNX (variante asyncify,
+ * 25,6 MiB) entra no bundle pelo worker de inferencia, que no site hospedado
+ * esta desligado — a transcricao vai pelo provedor do usuario. O arquivo fica
+ * de fora do pacote: nenhuma rota do site o carrega.
+ */
+function dropOversizedAssets(): Plugin {
+  return {
+    name: "drop-oversized-assets",
+    generateBundle(_options, bundle) {
+      const limite = 25 * 1024 * 1024;
+      for (const [name, item] of Object.entries(bundle)) {
+        if (item.type !== "asset") continue;
+        const tamanho =
+          typeof item.source === "string" ? Buffer.byteLength(item.source) : item.source.byteLength;
+        if (tamanho > limite) {
+          this.warn(`asset acima do limite do Cloudflare removido: ${name} (${Math.round(tamanho / 1048576)} MiB)`);
+          delete bundle[name];
+        }
+      }
+    },
+  };
+}
+
 function ortRuntimeAssets(): Plugin {
   const dir = fileURLToPath(new URL("./node_modules/onnxruntime-web/dist", import.meta.url));
   return {
@@ -64,7 +88,7 @@ function ortRuntimeAssets(): Plugin {
 // The dev server proxies API and health calls to the Go backend so the SPA and
 // the API share an origin while developing.
 export default defineConfig({
-  plugins: [react(), ortRuntimeAssets()],
+  plugins: [react(), dropOversizedAssets(), ortRuntimeAssets()],
   // O worker importa o nucleo puro de `mobile/src/core`. Sem um tsconfig fixo,
   // o Vite leria `mobile/tsconfig.json`, que estende `expo/tsconfig.base` e nao
   // existe no job do web (que instala so as dependencias do web).
