@@ -329,6 +329,8 @@ describe("importNotionSource", () => {
       client: fake.client,
     });
     expect(fake.client.createNote).toHaveBeenCalledTimes(1);
+    // O titulo acompanha a nota: um "" aqui apagava o nome no cofre local.
+    expect(fake.client.createNote).toHaveBeenCalledWith(PAGE_ID, "Nota de exemplo", expect.any(String));
     expect(result.imported).toBe(1);
   });
 

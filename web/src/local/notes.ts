@@ -128,12 +128,18 @@ export interface CreateEntryInput {
   notebookId?: string;
   /** Tipo do capitulo quando a nota nasce dentro de um livro. */
   kind?: ChapterKind;
+  /** Id vindo de fora (import do Notion): reimportar cai na mesma nota. */
+  id?: string;
+  /** Data do evento, quando o import ja a conhece. */
+  recordedAt?: string;
 }
 
 export async function createEntry({
   title,
   notebookId,
   kind,
+  id,
+  recordedAt,
 }: CreateEntryInput): Promise<Entry> {
   const agora = new Date().toISOString();
   const caderno = notebookId ?? NOTEBOOK_PADRAO;
@@ -141,9 +147,9 @@ export async function createEntry({
   // que reescreve a lista inteira.
   const posicao = kind ? await nextChapterPosition(caderno) : 0;
   const recording: Recording = {
-    id: newId("note_"),
+    id: id?.trim() || newId("note_"),
     title,
-    recordedAt: agora,
+    recordedAt: recordedAt ?? agora,
     dir: "",
     segmentCount: 0,
     status: "completed",
@@ -259,7 +265,10 @@ export async function createNote(
   title: string,
   markdown: string,
 ): Promise<Note | null> {
-  await updateRecordingNote(entryId, { title, text: markdown });
+  // No servidor o titulo da nota e um campo separado da entrada; aqui os dois
+  // sao o mesmo. Titulo vazio significa "nao mexe", nunca "apaga o nome".
+  const corpo = title.trim() ? { title, text: markdown } : { text: markdown };
+  await updateRecordingNote(entryId, corpo);
   const recording = await getRecording(entryId);
   if (recording) {
     await registerWriting(recording.notebookId ?? NOTEBOOK_PADRAO, "", markdown);

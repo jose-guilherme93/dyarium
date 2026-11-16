@@ -7,6 +7,7 @@ import * as localChapters from "./local/chapters";
 import * as localCovers from "./local/covers";
 import * as localLinks from "./local/links";
 import * as localAudio from "./local/audio";
+import { importEntryLocally } from "./local/notionClient";
 import * as localProvider from "./local/providerTranscribe";
 import * as localAnalyze from "./local/analyze";
 import { shrinkImage } from "./lib/image";
@@ -923,10 +924,7 @@ const localApi: Partial<typeof remoteApi> = {
   listDeletedEntries: async () => ({ entries: await local.listDeletedEntries() }),
   createEntry: async (title, _parentId, notebookId, chapterKind) =>
     local.createEntry({ title, notebookId, kind: chapterKind }),
-  createImportEntry: async (input) => ({
-    entry: await local.createEntry({ title: input.title, notebookId: input.notebookId }),
-    created: true,
-  }),
+  createImportEntry: (input) => importEntryLocally(input),
   getEntry: async (id) => {
     const entry = await local.getEntry(id);
     if (!entry) throw new ApiError("Nota nao encontrada.", 404, "not_found");
