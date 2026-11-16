@@ -38,6 +38,10 @@ const FONT_SOURCES = {
   Inter_600SemiBold: require('../../assets/fonts/Inter-SemiBold.ttf'),
   Inter_700Bold: require('../../assets/fonts/Inter-Bold.ttf'),
   Inter_800ExtraBold: require('../../assets/fonts/Inter-ExtraBold.ttf'),
+  // Familias do design: a chave e o proprio `fontFamily` dos tokens em
+  // `src/theme/design.ts`, por isso o hifen.
+  'SchibstedGrotesk-Medium': require('../../assets/fonts/SchibstedGrotesk-Medium.ttf'),
+  'SchibstedGrotesk-SemiBold': require('../../assets/fonts/SchibstedGrotesk-SemiBold.ttf'),
 } as const;
 
 /** Agenda os lembretes de escrita (precisa dos providers de biblioteca/config). */
