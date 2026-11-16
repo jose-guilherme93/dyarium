@@ -1,15 +1,59 @@
 import {
+  buildProjectTree,
+  daySeries,
+  folderAggregate,
   groupBySession,
   itemKindCounts,
   parseProjectLog,
   parseProjectLogs,
+  parseSessionNote,
   stripLogFences,
+  type LogItem,
   type LogSession,
 } from '../projetoLog';
 
 const fenceOpen = "```dyarium-json";
 const fenceClose = "```";
 const fence = (payload: string) => [fenceOpen, payload, fenceClose].join("\n");
+
+// Contrato v2 (docs/projetos.md): uma sessao por nota, maquina + caminho.
+const sessionPayload = (overrides: Record<string, unknown> = {}) =>
+  JSON.stringify({
+    v: 2,
+    kind: "session",
+    machine: "work-notebook",
+    path: "/home/joseti/projects/syncwin",
+    session: "ses_abc",
+    state: "open",
+    opened: "2026-11-14T09:12:00Z",
+    date: "2026-11-14",
+    time: "09:12",
+    summary: "Resumo da sessao.",
+    items: [
+      { kind: "feat", title: "parser", detail: "fence v2", commit: "abc1234" },
+      { kind: "test", title: "suite" },
+    ],
+    commits: [
+      { hash: "def5678", message: "commit extra", url: "https://example.com/commit/def5678" },
+    ],
+    links: [{ label: "spec", url: "https://example.com/spec" }],
+    ...overrides,
+  });
+
+// Nota como o dashboard entrega (content_markdown + updated_at).
+const sessionNote = (
+  payload: string,
+  updated: string | null = "2026-11-14T17:20:00Z",
+  id = "note-session",
+) => ({
+  id,
+  entry_id: "entry-1",
+  content_markdown: fence(payload),
+  updated_at: updated,
+});
+
+const sessionId = "work-notebook|/home/joseti/projects/syncwin|ses_abc";
+const SESSION_NOW = Date.parse("2026-11-14T22:00:00Z");
 
 const fullPayload = JSON.stringify({
   v: 1,
@@ -457,5 +501,343 @@ describe("groupBySession e itemKindCounts", () => {
     const sessions = parseProjectLog(note, "dyarium");
     const flat = sessions.flatMap((session) => session.items);
     expect(itemKindCounts(flat)).toEqual({ feat: 3, test: 1, perf: 1 });
+  });
+});
+
+describe("parseSessionNote (fence v2)", () => {
+  it("le o fence v2 completo e mantem itens, commits e links", () => {
+    const session = parseSessionNote(sessionNote(sessionPayload()), SESSION_NOW);
+    expect(session).not.toBeNull();
+    expect(session).toEqual(
+      expect.objectContaining({
+        v: 2,
+        kind: "session",
+        machine: "work-notebook",
+        path: "/home/joseti/projects/syncwin",
+        session: "ses_abc",
+        fenceState: "open",
+        state: "open",
+        opened: "2026-11-14T09:12:00Z",
+        date: "2026-11-14",
+        time: "09:12",
+        summary: "Resumo da sessao.",
+      }),
+    );
+    expect(session?.id).toEqual(sessionId);
+    expect(session?.items).toHaveLength(2);
+    expect(session?.items[0]).toEqual(
+      expect.objectContaining({
+        kind: "feat",
+        title: "parser",
+        detail: "fence v2",
+        commit: "abc1234",
+        project: "syncwin",
+        date: "2026-11-14",
+        time: "09:12",
+        sessionId,
+      }),
+    );
+    expect(session?.items[1]).toEqual(
+      expect.objectContaining({ kind: "test", title: "suite" }),
+    );
+    expect(session?.commits).toEqual([
+      { hash: "def5678", message: "commit extra", url: "https://example.com/commit/def5678" },
+    ]);
+    expect(session?.links).toEqual([{ label: "spec", url: "https://example.com/spec" }]);
+  });
+
+  it("le a nota do app (text + updatedAt) e deriva o estado sem Date.now", () => {
+    const note = { id: "rec-1", text: fence(sessionPayload()), updatedAt: "2026-11-14T10:00:00Z" };
+    const session = parseSessionNote(note, Date.parse("2026-11-14T23:00:00Z"));
+    expect(session?.state).toEqual("interrupted");
+    // O mesmo payload com now proximo da atualizacao continua aberto.
+    expect(parseSessionNote(note, Date.parse("2026-11-14T11:00:00Z"))?.state).toEqual("open");
+  });
+
+  it("ignora campo desconhecido do fence e do item", () => {
+    const payload = sessionPayload({
+      futuro: { dado: "novo" },
+      meta: [1, 2, 3],
+      items: [{ kind: "chore", title: "t", novidade: 1 }],
+    });
+    const session = parseSessionNote(sessionNote(payload), SESSION_NOW);
+    expect(session).not.toBeNull();
+    expect(session?.items).toEqual([expect.objectContaining({ kind: "chore", title: "t" })]);
+  });
+
+  it("fence malformado, v1 ou corpo vazio nao viram sessao e nao explodem", () => {
+    const semFechamento = {
+      id: "n1",
+      content_markdown: [fenceOpen, sessionPayload()].join("\n"),
+      updated_at: "2026-11-14T10:00:00Z",
+    };
+    const jsonQuebrado = {
+      id: "n2",
+      content_markdown: fence('{"v":2,"kind":"session"'),
+      updated_at: "2026-11-14T10:00:00Z",
+    };
+    const v1 = { id: "n3", content_markdown: fullBlock, updated_at: "2026-11-14T10:00:00Z" };
+    expect(() => parseSessionNote(jsonQuebrado, SESSION_NOW)).not.toThrow();
+    expect(parseSessionNote(semFechamento, SESSION_NOW)).toBeNull();
+    expect(parseSessionNote(jsonQuebrado, SESSION_NOW)).toBeNull();
+    expect(parseSessionNote(v1, SESSION_NOW)).toBeNull();
+    expect(parseSessionNote({ id: "n4", content_markdown: "" }, SESSION_NOW)).toBeNull();
+    expect(parseSessionNote(null, SESSION_NOW)).toBeNull();
+  });
+
+  it("state ausente rejeita; closed so vale quando a sessao fechou", () => {
+    const semState = sessionPayload({ state: undefined });
+    expect(parseSessionNote(sessionNote(semState), SESSION_NOW)).toBeNull();
+
+    const fechadaSemData = sessionPayload({ state: "closed", closed: undefined });
+    const fechada = parseSessionNote(sessionNote(fechadaSemData), SESSION_NOW);
+    expect(fechada?.state).toEqual("closed");
+    expect(fechada?.fenceState).toEqual("closed");
+    expect(fechada?.closed).toBeUndefined();
+
+    const abertaComData = sessionPayload({ state: "open", closed: "2026-11-14T10:00:00Z" });
+    const aberta = parseSessionNote(sessionNote(abertaComData), SESSION_NOW);
+    expect(aberta?.state).toEqual("open");
+    expect(aberta?.closed).toBeUndefined();
+  });
+
+  it("interrompe so depois de 12h sem atividade, respeitando o now injetado", () => {
+    const at = (updated: string | null) =>
+      parseSessionNote(sessionNote(sessionPayload(), updated), SESSION_NOW)?.state;
+
+    // 11h59 antes de now (22:00): continua aberta.
+    expect(at("2026-11-14T10:01:00Z")).toEqual("open");
+    // Exatamente 12h: o limite e "mais de 12h", ainda aberta.
+    expect(at("2026-11-14T10:00:00Z")).toEqual("open");
+    // 12h01: interrompida.
+    expect(at("2026-11-14T09:59:00Z")).toEqual("interrupted");
+    // Sem data de atualizacao nao ha como derivar: fica aberta.
+    expect(at(null)).toEqual("open");
+
+    // Fechada continua fechada mesmo velha.
+    const velha = sessionNote(
+      sessionPayload({ state: "closed", closed: "2026-11-14T09:30:00Z" }),
+      "2026-11-01T00:00:00Z",
+    );
+    expect(parseSessionNote(velha, SESSION_NOW)?.state).toEqual("closed");
+  });
+});
+
+describe("buildProjectTree", () => {
+  const entries = [{ id: "entry-1", title: "Projetos" }];
+  const noteOf = (id: string, payload: string, updated: string, entryId = "entry-1") => ({
+    id,
+    entry_id: entryId,
+    content_markdown: fence(payload),
+    updated_at: updated,
+  });
+  const at = (overrides: Record<string, unknown>) => sessionPayload(overrides);
+
+  it("o mesmo caminho em maquinas diferentes sao dois nos, maquinas em ordem", () => {
+    const notes = [
+      noteOf(
+        "beta-1",
+        at({ machine: "beta", session: "s-beta", opened: "2026-11-14T09:00:00Z" }),
+        "2026-11-14T10:00:00Z",
+      ),
+      noteOf(
+        "alfa-1",
+        at({ machine: "alfa", session: "s-alfa", opened: "2026-11-14T11:00:00Z" }),
+        "2026-11-14T12:00:00Z",
+      ),
+    ];
+    const tree = buildProjectTree({ entries, notes, now: SESSION_NOW });
+    expect(tree.machines.map((machine) => machine.machine)).toEqual(["alfa", "beta"]);
+    expect(tree.machines[0].sessions).toHaveLength(1);
+    expect(tree.machines[1].sessions).toHaveLength(1);
+    expect(tree.machines[0].sessions[0].path).toEqual("/home/joseti/projects/syncwin");
+    expect(tree.machines[1].sessions[0].path).toEqual("/home/joseti/projects/syncwin");
+    expect(tree.count).toEqual(2);
+  });
+
+  it("pasta so com 2+ sessoes; sessao unica fica solta com o caminho", () => {
+    const notes = [
+      noteOf(
+        "a1",
+        at({ machine: "work", session: "s1", date: "2026-11-10", time: "09:00" }),
+        "2026-11-10T10:00:00Z",
+      ),
+      noteOf(
+        "a2",
+        at({ machine: "work", session: "s2", date: "2026-11-14", time: "09:00" }),
+        "2026-11-14T10:00:00Z",
+      ),
+      noteOf(
+        "b1",
+        at({ machine: "work", path: "/srv/outro", session: "s3", date: "2026-11-12", time: "09:00" }),
+        "2026-11-12T10:00:00Z",
+      ),
+    ];
+    const tree = buildProjectTree({ entries, notes, now: SESSION_NOW });
+    expect(tree.machines).toHaveLength(1);
+    const machine = tree.machines[0];
+    expect(machine.count).toEqual(3);
+    expect(machine.folders).toHaveLength(1);
+    expect(machine.folders[0].path).toEqual("/home/joseti/projects/syncwin");
+    expect(machine.folders[0].label).toEqual("projects/syncwin");
+    expect(machine.folders[0].count).toEqual(2);
+    expect(machine.folders[0].sessions.map((node) => node.session.session)).toEqual(["s2", "s1"]);
+    expect(machine.sessions).toHaveLength(1);
+    expect(machine.sessions[0].kind).toEqual("session");
+    expect(machine.sessions[0].path).toEqual("/srv/outro");
+    expect(machine.sessions[0].noteId).toEqual("b1");
+    expect(machine.sessions[0].entryId).toEqual("entry-1");
+    expect(tree.sessions.map((node) => node.session.session)).toEqual(["s2", "s3", "s1"]);
+  });
+
+  it("ordena as sessoes soltas da mais nova para a mais antiga", () => {
+    const notes = [
+      noteOf(
+        "velha",
+        at({ path: "/srv/antigo", session: "s-antigo", date: "2026-11-01", time: "09:00" }),
+        "2026-11-01T10:00:00Z",
+      ),
+      noteOf(
+        "nova",
+        at({ path: "/srv/novo", session: "s-novo", date: "2026-11-13", time: "09:00" }),
+        "2026-11-13T10:00:00Z",
+      ),
+    ];
+    const tree = buildProjectTree({ entries, notes, now: SESSION_NOW });
+    expect(tree.machines[0].sessions.map((node) => node.path)).toEqual(["/srv/novo", "/srv/antigo"]);
+    expect(tree.sessions.map((node) => node.session.session)).toEqual(["s-novo", "s-antigo"]);
+  });
+
+  it("nota v1 fica fora da arvore e continua no indice v1", () => {
+    const notes = [
+      { id: "v1", content_markdown: fullBlock, updated_at: "2026-11-14T10:00:00Z" },
+      noteOf("v2", sessionPayload(), "2026-11-14T10:00:00Z"),
+    ];
+    const tree = buildProjectTree({ entries, notes, now: SESSION_NOW });
+    expect(tree.count).toEqual(1);
+    expect(tree.machines).toHaveLength(1);
+    expect(tree.machines[0].sessions[0].noteId).toEqual("v2");
+    expect(parseProjectLog(fullBlock, "dyarium")).toHaveLength(1);
+  });
+
+  it("preserva <, &, aspas e acento em maquina, caminho e titulo", () => {
+    const payload = at({
+      machine: 'maquina <b> & "x"',
+      path: '</tmp/a & b>/ção',
+      items: [{ kind: "feat", title: 'tag <i> & "fim"' }],
+    });
+    const notes = [noteOf("h1", payload, "2026-11-14T10:00:00Z")];
+    const tree = buildProjectTree({ entries, notes, now: SESSION_NOW });
+    const machine = tree.machines[0];
+    expect(machine.machine).toEqual('maquina <b> & "x"');
+    expect(machine.sessions[0].path).toEqual('</tmp/a & b>/ção');
+    expect(machine.sessions[0].session.items[0].title).toEqual('tag <i> & "fim"');
+  });
+
+  it("entrada vazia devolve arvore vazia", () => {
+    expect(buildProjectTree({ entries: [], notes: [], now: SESSION_NOW })).toEqual({
+      machines: [],
+      sessions: [],
+      count: 0,
+    });
+  });
+});
+
+describe("daySeries", () => {
+  const itemAt = (date: string): LogItem => ({
+    kind: "feat",
+    title: "t",
+    project: "p",
+    date,
+    time: "09:00",
+    sessionId: "s",
+  });
+
+  it("preenche os dias vazios e nao estica o intervalo", () => {
+    const days = daySeries([
+      itemAt("2026-11-01"),
+      itemAt("2026-11-01"),
+      itemAt("2026-11-08"),
+    ]);
+    expect(days).toHaveLength(8);
+    expect(days[0]).toEqual({ date: "2026-11-01", items: 2 });
+    expect(days.slice(1, 7).map((day) => day.items)).toEqual([0, 0, 0, 0, 0, 0]);
+    expect(days[7]).toEqual({ date: "2026-11-08", items: 1 });
+  });
+
+  it("respeita os limites explicitos do intervalo", () => {
+    const days = daySeries([itemAt("2026-11-03")], { from: "2026-11-01", to: "2026-11-05" });
+    expect(days.map((day) => day.date)).toEqual([
+      "2026-11-01",
+      "2026-11-02",
+      "2026-11-03",
+      "2026-11-04",
+      "2026-11-05",
+    ]);
+    expect(days.map((day) => day.items)).toEqual([0, 0, 1, 0, 0]);
+  });
+
+  it("sem item nao inventa serie", () => {
+    expect(daySeries([])).toEqual([]);
+    expect(daySeries([{ ...itemAt(""), date: "2026-13-40" }])).toEqual([]);
+  });
+});
+
+describe("folderAggregate", () => {
+  const sessionOf = (overrides: Record<string, unknown>) => {
+    const session = parseSessionNote(sessionNote(sessionPayload(overrides)), SESSION_NOW);
+    if (!session) throw new Error("sessao de teste invalida");
+    return session;
+  };
+
+  it("soma sessoes, itens, commits, kinds e o intervalo inteiro da pasta", () => {
+    const primeira = sessionOf({
+      session: "s1",
+      date: "2026-11-01",
+      time: "08:00",
+      opened: "2026-11-01T08:00:00Z",
+      state: "closed",
+      closed: "2026-11-01T09:00:00Z",
+      items: [
+        { kind: "feat", title: "a" },
+        { kind: "fix", title: "b" },
+      ],
+      commits: [{ hash: "aaa1111" }],
+      links: [],
+    });
+    const segunda = sessionOf({
+      session: "s2",
+      date: "2026-11-08",
+      time: "08:00",
+      opened: "2026-11-08T08:00:00Z",
+      items: [{ kind: "feat", title: "c" }],
+      commits: [{ hash: "bbb2222" }, { hash: "ccc3333" }],
+      links: [],
+    });
+    const aggregate = folderAggregate([primeira, segunda]);
+    expect(aggregate.sessionCount).toEqual(2);
+    expect(aggregate.itemCount).toEqual(3);
+    expect(aggregate.commitCount).toEqual(3);
+    expect(aggregate.kindCounts).toEqual({ feat: 2, fix: 1 });
+    expect(aggregate.sessions.map((session) => session.session)).toEqual(["s2", "s1"]);
+    expect(aggregate.from).toEqual("2026-11-01");
+    expect(aggregate.to).toEqual("2026-11-08");
+    expect(aggregate.days).toHaveLength(8);
+    expect(aggregate.days[0]).toEqual({ date: "2026-11-01", items: 2 });
+    expect(aggregate.days[4]).toEqual({ date: "2026-11-05", items: 0 });
+    expect(aggregate.days[7]).toEqual({ date: "2026-11-08", items: 1 });
+  });
+
+  it("pasta sem sessao devolve agregado vazio", () => {
+    expect(folderAggregate([])).toEqual({
+      sessions: [],
+      sessionCount: 0,
+      itemCount: 0,
+      commitCount: 0,
+      kindCounts: {},
+      days: [],
+      from: "",
+      to: "",
+    });
   });
 });

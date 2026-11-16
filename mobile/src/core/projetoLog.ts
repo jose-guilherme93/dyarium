@@ -696,3 +696,547 @@ export function groupBySession(sessions: LogSession[]): LogSession[] {
   const tabbed = sessions.filter(Boolean).map((session, seq) => ({ session, seq }));
   return dedupe(sortSessions(tabbed));
 }
+
+// ---------------------------------------------------------------------------
+// Fence v2: uma sessao por nota, maquina + caminho completo (docs/projetos.md).
+// O estado "interrupted" e derivado do updated_at da nota; nenhuma funcao daqui
+// chama Date.now(), entao dois clientes chegam ao mesmo resultado com o mesmo
+// `now`.
+// ---------------------------------------------------------------------------
+
+export type SessionNoteState = "open" | "closed" | "interrupted";
+
+/**
+ * Nota como cada cliente entrega: o dashboard manda `content_markdown` e
+ * `updated_at`; o app manda `text` e `updatedAt`. Campo desconhecido e
+ * ignorado; qualquer um dos nomes serve.
+ */
+export interface SessionNoteSource {
+  id?: string;
+  title?: string;
+  body?: string;
+  content_markdown?: string;
+  text?: string;
+  updated_at?: string | null;
+  updatedAt?: string | null;
+  entry_id?: string | null;
+  entryId?: string | null;
+}
+
+/** Sessao lida do fence v2, com o estado ja derivado. */
+export interface SessionNote {
+  v: 2;
+  kind: "session";
+  machine: string;
+  path: string;
+  session: string;
+  /** Estado de leitura: `interrupted` quando `open` ficou 12h sem atividade. */
+  state: SessionNoteState;
+  /** Estado do fence, antes da derivacao por tempo. */
+  fenceState: "open" | "closed";
+  opened: string;
+  closed?: string;
+  date: string;
+  time: string;
+  summary?: string;
+  items: LogItem[];
+  commits: LogCommit[];
+  links: LogLink[];
+  /** `machine|path|session`: identidade estavel para dedupe e agrupamento. */
+  id: string;
+  /** updated_at/updatedAt da nota quando existir, base do estado derivado. */
+  updatedAt?: string;
+}
+
+const sessionKind = "session";
+const dayPattern = /^\d{4}-\d{2}-\d{2}$/;
+const clockPattern = /^\d{2}:\d{2}(?::\d{2})?$/;
+const dayMs = 864e5;
+const twelveHoursMs = 12 * 60 * 60 * 1000;
+const maxDaySeries = 3660;
+
+function readNoteMarkdown(note: unknown): string {
+  if (typeof note === "string") return note;
+  if (!isRecord(note)) return "";
+  for (const key of ["body", "content_markdown", "text"]) {
+    const value = note[key];
+    if (typeof value === "string" && value.trim() !== "") return value;
+  }
+  return "";
+}
+
+function readNoteUpdated(note: unknown): string | undefined {
+  if (!isRecord(note)) return undefined;
+  for (const key of ["updated_at", "updatedAt"]) {
+    const value = note[key];
+    if (nonEmpty(value)) return value;
+  }
+  return undefined;
+}
+
+// Primeiro fence dyarium-json com payload v2 de sessao. Fence sem fechamento,
+// JSON quebrado ou v1 sao pulados sem interromper a leitura dos demais.
+function findSessionPayload(markdown: string): Record<string, unknown> | null {
+  const lines = splitLines(markdown);
+  for (const span of findFenceSpans(lines, 0)) {
+    if (span.close < 0) continue;
+    let data: unknown;
+    try {
+      data = JSON.parse(lines.slice(span.open + 1, span.close).join("\n").trim());
+    } catch {
+      continue;
+    }
+    if (!isRecord(data)) continue;
+    if (data.v !== 2 || data.kind !== sessionKind) continue;
+    return data;
+  }
+  return null;
+}
+
+function pathSegments(path: string): string[] {
+  return path.split(/[/\\]+/).filter((segment) => segment !== "");
+}
+
+/** Rotulo de pasta: os dois ultimos segmentos do caminho (contrato do no). */
+export function pathLabel(path: string): string {
+  if (typeof path !== "string") return "";
+  const segments = pathSegments(path);
+  if (segments.length === 0) return path.trim();
+  return segments.slice(-2).join("/");
+}
+
+function pathName(path: string): string {
+  const segments = pathSegments(path);
+  return segments.length > 0 ? segments[segments.length - 1] : path;
+}
+
+function timeValue(now: number | Date | undefined): number | null {
+  if (typeof now === "number") return Number.isFinite(now) ? now : null;
+  if (now instanceof Date) {
+    const value = now.getTime();
+    return Number.isFinite(value) ? value : null;
+  }
+  return null;
+}
+
+function deriveSessionState(
+  fenceState: "open" | "closed",
+  updatedAt: string | undefined,
+  now: number | Date | undefined,
+): SessionNoteState {
+  if (fenceState === "closed") return "closed";
+  const at = timeValue(now);
+  const seen = updatedAt ? Date.parse(updatedAt) : Number.NaN;
+  if (at === null || !Number.isFinite(seen)) return "open";
+  return at - seen > twelveHoursMs ? "interrupted" : "open";
+}
+
+function readSessionNote(
+  data: Record<string, unknown>,
+  updatedAt: string | undefined,
+  now: number | Date | undefined,
+): SessionNote | null {
+  if (!nonEmpty(data.machine) || !nonEmpty(data.path) || !nonEmpty(data.session)) return null;
+  if (!nonEmpty(data.opened) || !nonEmpty(data.date) || !nonEmpty(data.time)) return null;
+  if (!dayPattern.test(data.date) || !clockPattern.test(data.time)) return null;
+  const fenceState: "open" | "closed" | null =
+    data.state === "closed" ? "closed" : data.state === "open" ? "open" : null;
+  if (!fenceState) return null;
+
+  const machine = data.machine;
+  const path = data.path;
+  const session = data.session;
+  const date = data.date;
+  const time = data.time;
+  const id = [machine, path, session].join("|");
+  const project = pathName(path);
+
+  const items: LogItem[] = [];
+  if (Array.isArray(data.items)) {
+    for (const entry of data.items) {
+      if (!isRecord(entry) || !nonEmpty(entry.title)) continue;
+      items.push({
+        kind: nonEmpty(entry.kind) ? entry.kind : "",
+        title: entry.title,
+        detail: nonEmpty(entry.detail) ? entry.detail : undefined,
+        commit: nonEmpty(entry.commit) ? entry.commit : undefined,
+        url: nonEmpty(entry.url) ? entry.url : undefined,
+        project,
+        date,
+        time,
+        sessionId: id,
+      });
+    }
+  }
+  const commits: LogCommit[] = [];
+  if (Array.isArray(data.commits)) {
+    for (const entry of data.commits) {
+      if (!isRecord(entry)) continue;
+      const hash = nonEmpty(entry.hash) ? entry.hash : "";
+      const message = nonEmpty(entry.message) ? entry.message : undefined;
+      const url = nonEmpty(entry.url) ? entry.url : undefined;
+      if (!hash && !message) continue;
+      commits.push({ hash, message, url });
+    }
+  }
+  const links: LogLink[] = [];
+  if (Array.isArray(data.links)) {
+    for (const entry of data.links) {
+      if (!isRecord(entry) || !nonEmpty(entry.url)) continue;
+      links.push({ label: nonEmpty(entry.label) ? entry.label : undefined, url: entry.url });
+    }
+  }
+
+  // "closed so existe com state closed": aberta com data de fechamento no
+  // payload e lida como aberta, sem inventar fechamento.
+  const closed =
+    fenceState === "closed" && nonEmpty(data.closed) ? data.closed : undefined;
+
+  const note: SessionNote = {
+    v: 2,
+    kind: "session",
+    machine,
+    path,
+    session,
+    state: deriveSessionState(fenceState, updatedAt, now),
+    fenceState,
+    opened: data.opened,
+    date,
+    time,
+    items,
+    commits: dedupeCommits(commits),
+    links: dedupeLinks(links),
+    id,
+  };
+  if (nonEmpty(data.summary)) note.summary = data.summary;
+  if (closed) note.closed = closed;
+  if (updatedAt) note.updatedAt = updatedAt;
+  return note;
+}
+
+/**
+ * Le a nota de uma sessao v2. Devolve `null` para nota sem fence v2 valido
+ * (v1, fence quebrado, nota livre), sem lancar. `now` entra por parametro: o
+ * estado `interrupted` depende dele e o modulo nao olha o relogio.
+ */
+export function parseSessionNote(
+  note: SessionNoteSource | string | null | undefined,
+  now?: number | Date,
+): SessionNote | null {
+  const markdown = readNoteMarkdown(note);
+  if (markdown.trim() === "") return null;
+  const payload = findSessionPayload(markdown);
+  if (!payload) return null;
+  return readSessionNote(payload, readNoteUpdated(note), now);
+}
+
+export interface ProjectTreeEntry {
+  id: string;
+  title?: string;
+}
+
+export interface ProjectTreeInput {
+  /** Entries do caderno, para resolver `entryId` de uma nota sem entry_id. */
+  entries?: ProjectTreeEntry[];
+  notes: (SessionNoteSource | string)[];
+  now?: number | Date;
+}
+
+export interface ProjectTreeSessionNode {
+  kind: "session";
+  machine: string;
+  path: string;
+  session: SessionNote;
+  noteId: string;
+  entryId: string | null;
+  /** Ultima atividade conhecida (updated_at da nota ou opened). */
+  activity: string;
+}
+
+export interface ProjectTreeFolderNode {
+  kind: "folder";
+  machine: string;
+  path: string;
+  /** Dois ultimos segmentos do caminho; o caminho completo fica em `path`. */
+  label: string;
+  sessions: ProjectTreeSessionNode[];
+  count: number;
+  lastActivity: string;
+}
+
+export interface ProjectTreeMachineNode {
+  kind: "machine";
+  machine: string;
+  count: number;
+  /** Caminhos com 2+ sessoes. */
+  folders: ProjectTreeFolderNode[];
+  /** Sessoes de caminho unico, com o caminho preservado. */
+  sessions: ProjectTreeSessionNode[];
+}
+
+export interface ProjectTree {
+  machines: ProjectTreeMachineNode[];
+  /** Todas as sessoes da arvore, mais novas primeiro. */
+  sessions: ProjectTreeSessionNode[];
+  count: number;
+}
+
+function activityRank(value: string): number {
+  const at = Date.parse(value);
+  return Number.isFinite(at) ? at : 0;
+}
+
+function newestNodeFirst(a: ProjectTreeSessionNode, b: ProjectTreeSessionNode): number {
+  const diff = activityRank(b.activity) - activityRank(a.activity);
+  if (diff !== 0) return diff;
+  const keyA = `${a.session.date}T${a.session.time}`;
+  const keyB = `${b.session.date}T${b.session.time}`;
+  if (keyA !== keyB) return keyB > keyA ? 1 : -1;
+  return a.session.id < b.session.id ? -1 : a.session.id > b.session.id ? 1 : 0;
+}
+
+function newestActivityFirst(a: string, b: string): number {
+  const diff = activityRank(b) - activityRank(a);
+  if (diff !== 0) return diff;
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function noteIdOf(note: unknown): string {
+  if (!isRecord(note)) return "";
+  return nonEmpty(note.id) ? note.id : "";
+}
+
+function entryIdOf(note: unknown, byTitle: Map<string, string>): string | null {
+  if (!isRecord(note)) return null;
+  const direct = nonEmpty(note.entry_id) ? note.entry_id : nonEmpty(note.entryId) ? note.entryId : "";
+  if (direct) return direct;
+  const title = nonEmpty(note.title) ? note.title : "";
+  return title && byTitle.has(title) ? (byTitle.get(title) ?? null) : null;
+}
+
+function activityOf(session: SessionNote, updatedAt: string | undefined): string {
+  if (updatedAt && Number.isFinite(Date.parse(updatedAt))) return updatedAt;
+  return session.opened;
+}
+
+/**
+ * Monta a arvore da superficie Projetos: maquinas em ordem de nome, pastas so
+ * quando aquele (maquina, caminho) tem 2+ sessoes, sessoes soltas com o caminho
+ * preservado. O mesmo caminho em maquinas diferentes sao dois nos. Notas v1 nao
+ * entram (seguem no indice da tabela, via parseProjectLogs).
+ */
+export function buildProjectTree(input: ProjectTreeInput): ProjectTree {
+  const entries = Array.isArray(input?.entries) ? input.entries : [];
+  const byTitle = new Map<string, string>();
+  for (const entry of entries) {
+    if (!entry || !nonEmpty(entry.title) || !nonEmpty(entry.id)) continue;
+    if (!byTitle.has(entry.title)) byTitle.set(entry.title, entry.id);
+  }
+
+  const notes = Array.isArray(input?.notes) ? input.notes : [];
+  const collected: ProjectTreeSessionNode[] = [];
+  for (const note of notes) {
+    const session = parseSessionNote(note, input?.now);
+    if (!session) continue;
+    collected.push({
+      kind: "session",
+      machine: session.machine,
+      path: session.path,
+      session,
+      noteId: noteIdOf(note),
+      entryId: entryIdOf(note, byTitle),
+      activity: activityOf(session, readNoteUpdated(note)),
+    });
+  }
+  collected.sort(newestNodeFirst);
+
+  // Dedupe pela identidade da sessao: a atividade mais nova veio primeiro.
+  const unique: ProjectTreeSessionNode[] = [];
+  const seen = new Set<string>();
+  for (const node of collected) {
+    if (seen.has(node.session.id)) continue;
+    seen.add(node.session.id);
+    unique.push(node);
+  }
+
+  const byMachine = new Map<string, Map<string, ProjectTreeSessionNode[]>>();
+  for (const node of unique) {
+    let paths = byMachine.get(node.machine);
+    if (!paths) {
+      paths = new Map();
+      byMachine.set(node.machine, paths);
+    }
+    const list = paths.get(node.path);
+    if (list) {
+      list.push(node);
+    } else {
+      paths.set(node.path, [node]);
+    }
+  }
+
+  const machines: ProjectTreeMachineNode[] = [];
+  for (const [machine, paths] of byMachine) {
+    const folders: ProjectTreeFolderNode[] = [];
+    const flat: ProjectTreeSessionNode[] = [];
+    for (const [path, nodes] of paths) {
+      if (nodes.length >= 2) {
+        const ordered = [...nodes].sort(newestNodeFirst);
+        folders.push({
+          kind: "folder",
+          machine,
+          path,
+          label: pathLabel(path),
+          sessions: ordered,
+          count: ordered.length,
+          lastActivity: ordered[0].activity,
+        });
+      } else {
+        flat.push(nodes[0]);
+      }
+    }
+    folders.sort((a, b) => newestActivityFirst(a.lastActivity, b.lastActivity));
+    flat.sort(newestNodeFirst);
+    machines.push({
+      kind: "machine",
+      machine,
+      count: folders.reduce((sum, folder) => sum + folder.count, 0) + flat.length,
+      folders,
+      sessions: flat,
+    });
+  }
+  machines.sort((a, b) => (a.machine < b.machine ? -1 : a.machine > b.machine ? 1 : 0));
+
+  const all = [...unique].sort(newestNodeFirst);
+  return { machines, sessions: all, count: all.length };
+}
+
+export interface DayBucket {
+  /** `YYYY-MM-DD`. */
+  date: string;
+  items: number;
+}
+
+export interface DayBounds {
+  from?: string;
+  to?: string;
+}
+
+// Dia de calendario como numero inteiro; data impossivel (2026-13-40) e null.
+function dayIndex(date: unknown): number | null {
+  if (typeof date !== "string" || !dayPattern.test(date)) return null;
+  const [year, month, day] = date.split("-").map(Number);
+  const at = Date.UTC(year, month - 1, day);
+  const check = new Date(at);
+  if (
+    check.getUTCFullYear() !== year ||
+    check.getUTCMonth() !== month - 1 ||
+    check.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  return at / dayMs;
+}
+
+function dateOfDay(index: number): string {
+  return new Date(index * dayMs).toISOString().slice(0, 10);
+}
+
+/**
+ * Itens por dia de calendario. O intervalo vai do primeiro ao ultimo dia com
+ * item (ou dos limites recebidos) e dias sem item entram como zero: o grafico
+ * nao estica a serie. Sem item valido a serie e vazia.
+ */
+export function daySeries(items: LogItem[], bounds?: DayBounds): DayBucket[] {
+  if (!Array.isArray(items)) return [];
+  const counts = new Map<number, number>();
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
+  for (const item of items) {
+    const day = dayIndex(item?.date);
+    if (day === null) continue;
+    counts.set(day, (counts.get(day) ?? 0) + 1);
+    if (day < min) min = day;
+    if (day > max) max = day;
+  }
+  let from = dayIndex(bounds?.from) ?? min;
+  let to = dayIndex(bounds?.to) ?? max;
+  if (!Number.isFinite(from) || !Number.isFinite(to) || to < from) return [];
+  // Limite duro: uma data absurda na nota nao pode gerar serie sem fim.
+  if (to - from >= maxDaySeries) from = to - (maxDaySeries - 1);
+  const out: DayBucket[] = [];
+  for (let day = from; day <= to; day += 1) {
+    out.push({ date: dateOfDay(day), items: counts.get(day) ?? 0 });
+  }
+  return out;
+}
+
+export interface FolderAggregate {
+  /** Sessoes da pasta, mais novas primeiro. */
+  sessions: SessionNote[];
+  sessionCount: number;
+  itemCount: number;
+  commitCount: number;
+  kindCounts: Record<string, number>;
+  /** Atividade por dia de calendario no intervalo inteiro da pasta. */
+  days: DayBucket[];
+  from: string;
+  to: string;
+}
+
+function newestSessionFirst(a: SessionNote, b: SessionNote): number {
+  const keyA = `${a.date}T${a.time}`;
+  const keyB = `${b.date}T${b.time}`;
+  if (keyA !== keyB) return keyB > keyA ? 1 : -1;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+/**
+ * Agregado da nota de pasta: sessoes, itens, commits, composicao por kind e a
+ * serie por dia cobrindo o intervalo inteiro (do primeiro ao ultimo dia com
+ * sessao), para o grafico de atividade.
+ */
+export function folderAggregate(sessions: SessionNote[]): FolderAggregate {
+  const list: SessionNote[] = [];
+  const seen = new Set<string>();
+  if (Array.isArray(sessions)) {
+    for (const session of sessions) {
+      if (!session || typeof session.id !== "string" || seen.has(session.id)) continue;
+      seen.add(session.id);
+      list.push(session);
+    }
+  }
+  list.sort(newestSessionFirst);
+  const items = list.flatMap((session) => session.items);
+
+  let fromIndex = Number.POSITIVE_INFINITY;
+  let toIndex = Number.NEGATIVE_INFINITY;
+  let from = "";
+  let to = "";
+  for (const session of list) {
+    const day = dayIndex(session.date);
+    if (day === null) continue;
+    if (day < fromIndex) {
+      fromIndex = day;
+      from = session.date;
+    }
+    if (day > toIndex) {
+      toIndex = day;
+      to = session.date;
+    }
+  }
+  const days =
+    Number.isFinite(fromIndex) && Number.isFinite(toIndex)
+      ? daySeries(items, { from, to })
+      : [];
+
+  return {
+    sessions: list,
+    sessionCount: list.length,
+    itemCount: items.length,
+    commitCount: list.reduce((sum, session) => sum + session.commits.length, 0),
+    kindCounts: itemKindCounts(items),
+    days,
+    from,
+    to,
+  };
+}
