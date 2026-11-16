@@ -190,6 +190,11 @@ aprende que a nota foi apagada e nao a ressuscita.
   markdown vira texto, imagens, marcadores de audio e escapes somem e a frase nao
   e cortada no meio de uma palavra. E so para desenhar a lista; o corpo continua
   em `notes`.
+- Com `include_text=1` cada entrada traz tambem `text` (o corpo completo em
+  markdown, sem passar pela previa) e `transcript` (o texto da transcricao mais
+  nova). E opt-in: sem o parametro os dois campos ficam de fora e o payload
+  continua pequeno. O dashboard usa esses campos para calcular a propria analise
+  localmente, sem pedir nota por nota.
 - Em um livro, cada entrada traz `chapter_kind` (`chapter`, `part`, `front` ou
   `back`), `chapter_position`, `chapter_status` (`draft`, `revising`, `done`),
   `chapter_goal_words`, `chapter_synopsis`, `chapter_beats` (um beat por linha)
@@ -1137,8 +1142,11 @@ entidade, as notas dela (ate 100), as entidades dessas notas e as arestas
 ## Metricas de escrita
 
 O app calcula as metricas da escrita **offline** (as mesmas do Painel no celular) e
-envia o documento pronto. O servidor guarda o ultimo snapshot de cada aparelho e o
-painel web desenha exatamente o que o aparelho calculou — sem recalcular nada.
+envia o documento pronto. O servidor guarda o ultimo snapshot de cada aparelho;
+esse endpoint continua sendo o caminho do app. O dashboard **nao consome** esses
+snapshots: ele calcula a propria analise sobre as notas que tem (cofre local ou
+`GET /entries?include_text=1`), com o mesmo nucleo puro de metricas. Cada cliente
+faz a sua analise.
 
 O contrato tem duas versoes aceitas:
 - **schema 1** (legado): `writing` com todas as notas + `history`.
@@ -1581,6 +1589,70 @@ agente chama a ferramenta, sem pedir confirmacao.
 - Uma chamada identica (mesmo projeto, dia, conteudo e computador) nao duplica:
   o bloco carrega um marcador invisivel `<!-- mcp:<sha256-12> -->` e a segunda
   chamada responde sem escrever.
+
+`record_project_summary` continua sendo o caminho para trabalho sem diretorio.
+Sessao que acontece numa pasta usa `session_open` e `session_close`.
+
+#### Ferramenta `session_open`
+```json
+{
+  "name": "session_open",
+  "arguments": {
+    "directory": "/home/joseti/projects/syncwin",
+    "name": "pfsense manda metricas para um html",
+    "summary": "o que a sessao vai fazer, em uma ou duas linhas"
+  }
+}
+```
+- `directory` (obrigatorio) e o caminho absoluto da pasta aberta no cliente: ate
+  512 caracteres, normalizado, sem `..` e sem caractere de controle. A pasta e a
+  chave do projeto junto com a maquina.
+- A maquina vem do header `X-Dyarium-Host`. Sem o header o projeto fica sem
+  maquina e nao entra na arvore por maquina.
+- O id da sessao vem de `_meta["ai.opencode/sessionID"]` quando o cliente manda
+  (o OpenCode manda em toda chamada de ferramenta); senao, do argumento
+  `session` (ate 64 caracteres, `[A-Za-z0-9_-]`); senao, o servidor gera
+  `ses_<12 hex>`.
+- O servidor cria a entrada do projeto (uma por maquina + caminho, titulo = o
+  caminho completo) se ela nao existir, e uma **nota por sessao** (titulo = o
+  nome da sessao). Reabrir a mesma sessao nao duplica: atualiza nome e resumo e
+  toca a nota.
+- O resultado abre com `sessao <id> aberta em <caminho>` — e o unico jeito de
+  um cliente que nao manda `_meta` saber o id para fechar a mesma sessao — e
+  segue com o historico da pasta, para o agente ja saber o que foi feito ali: as
+  3 ultimas sessoes, uma linha cada (`AAAA-MM-DD nome (N itens)`), com o total.
+  A mensagem tem teto de 2048 bytes.
+
+#### Ferramenta `session_close`
+```json
+{
+  "name": "session_close",
+  "arguments": {
+    "directory": "/home/joseti/projects/syncwin",
+    "summary": "resumo objetivo do que foi feito",
+    "date": "2026-11-14",
+    "items": [ { "kind": "feat", "title": "coletor de metricas", "commit": "abc1234" } ],
+    "commits": [ { "hash": "def5678", "message": "teste" } ],
+    "links": [ { "label": "spec", "url": "https://..." } ]
+  }
+}
+```
+- Fecha a sessao daquele id e responde `sessao <id> fechada` (ou `sessao <id>
+  criada e fechada`, quando criou a nota). Sem `session_open` correspondente e
+  com `directory`, cria a nota ja fechada (um cliente pode so relatar no fim);
+  sem `directory`, responde erro acionavel.
+- Resumo, itens, commits e links vazios preservam o que a nota ja tem; nao vazios
+  vencem. Os limites sao os mesmos de `record_project_summary` (100 itens, 100
+  commits, 50 links, `kind` vazio vira `chore`).
+- O estado vira `closed` com o horario real do fechamento; `date` e o dia
+  relatado, como no outro caminho.
+
+#### Estado da sessao
+`open` na abertura e `closed` no fechamento. Sessao `open` com mais de **12
+horas** sem atividade le como **interrompida**: a atividade e a data de
+atualizacao da nota, e qualquer chamada com o mesmo id de sessao toca a nota sem
+reescrever o corpo. Nao existe rotina periodica no servidor; o estado e derivado
+na leitura, pelo cliente.
 
 #### Conexao do cliente
 No OpenCode de cada maquina, registre o servidor remoto uma vez. O token e o
