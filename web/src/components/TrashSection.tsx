@@ -22,9 +22,11 @@ const RETENTION_DAYS = 7;
 interface TrashSectionProps {
   /** Muda quando algo fora daqui mexe nas notas (criar, apagar, restaurar). */
   refreshKey?: number;
+  /** Desenho enxuto de Configuracoes: uma linha e a lista, sem cartao. */
+  bare?: boolean;
 }
 
-export function TrashSection({ refreshKey = 0 }: TrashSectionProps) {
+export function TrashSection({ refreshKey = 0, bare = false }: TrashSectionProps) {
   const { notify } = useToast();
   const [entries, setEntries] = useState<Entry[]>([]);
   const [error, setError] = useState("");
@@ -66,6 +68,64 @@ export function TrashSection({ refreshKey = 0 }: TrashSectionProps) {
 
   // A contagem vem do servidor, e o painel so e carregado quando aberto: a
   // lixeira não e lugar de passagem.
+  if (bare) {
+    return (
+      <div>
+        <div className="cfg-field">
+          <span className="cfg-state">{open ? (loading ? "carregando" : `${entries.length} nota${entries.length === 1 ? "" : "s"}`) : "notas apagadas"}</span>
+          <span className="cfg-grow" />
+          <button
+            type="button"
+            className="cfg-btn"
+            onClick={() => setOpen((value) => !value)}
+            aria-expanded={open}
+          >
+            {open ? "Fechar lixeira" : "Abrir lixeira"}
+          </button>
+          <details className="cfg-why">
+            <summary aria-label="Explicação">?</summary>
+            <p>
+              Nota apagada não some na hora: fica aqui por {RETENTION_DAYS} dias, com áudio e texto intactos. Depois
+              disso o servidor apaga de verdade.
+            </p>
+          </details>
+        </div>
+
+        {error && <p className="cfg-state" data-state="bad">{error}</p>}
+
+        {open && (
+          loading ? (
+            <ListSkeleton rows={2} compact />
+          ) : entries.length === 0 ? (
+            <p className="cfg-state">Lixeira vazia.</p>
+          ) : (
+            <ul className="cfg-trash-list">
+              {entries.map((entry) => (
+                <li key={entry.id} className="cfg-item">
+                  <span className="cfg-grow">{titleOf(entry)}</span>
+                  <span className="cfg-meta">
+                    {formatDateTime(entry.deleted_at ?? entry.updated_at)}
+                    {entry.duration_seconds > 0 ? ` · ${Math.round(entry.duration_seconds)}s` : ""}
+                  </span>
+                  <button
+                    type="button"
+                    className="cfg-btn cfg-btn--quiet"
+                    disabled={busyId === entry.id || entry.purged === true}
+                    onClick={() => void restore(entry)}
+                    aria-label={`Restaurar ${titleOf(entry)}`}
+                  >
+                    {busyId === entry.id ? <Spinner /> : null}
+                    {entry.purged ? "expirada" : busyId === entry.id ? "restaurando" : "restaurar"}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="card">
       <div className="card-head">

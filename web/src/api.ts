@@ -30,6 +30,7 @@ import type {
   Link,
   LocalAnalysis,
   LocalAnalysisSetup,
+  McpProject,
   MetricsResponse,
   ModelInfo,
   MoodPoint,
@@ -782,6 +783,8 @@ const remoteApi = {
   getSettings: () => request<Settings>("/settings"),
   putSettings: (patch: Record<string, unknown>) =>
     request<{ status: string }>("/settings", { method: "PUT", body: JSON.stringify(patch) }),
+  /** Projetos do MCP com contagem e estado das sessoes. */
+  mcpProjects: () => request<{ projects: McpProject[] }>("/mcp/projects"),
   listModels: () => request<{ models: ModelInfo[] }>("/models"),
   downloadModel: (name: string) =>
     request<{ status: string }>("/models/download", { method: "POST", body: JSON.stringify({ name }) }),
@@ -1002,6 +1005,8 @@ const localApi: Partial<typeof remoteApi> = {
     await localSettings.saveLocalSettings(patch);
     return { status: "ok" };
   },
+  // O MCP depende do servidor; no modo local a tela mostra o bloco vazio.
+  mcpProjects: async () => ({ projects: [] }),
   listModels: async () => ({ models: localSettings.localWhisperModels() }),
   listAnalyzeModels: async () => ({ models: await localSettings.localAnalyzeModels() }),
   getTranscript: async (id) => {

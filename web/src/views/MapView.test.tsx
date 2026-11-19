@@ -43,9 +43,17 @@ const settings: Settings = {
   analyze_base_url: "https://openrouter.ai/api/v1",
   analyze_model: "google/gemini-2.5-flash",
   analyze_api_key_set: true,
+  analyze_concurrency: 0,
   analysis_themes: "",
   review_enabled: false,
   literal_transcript: false,
+  mcp_paused: false,
+  mcp_idle_hours: 12,
+  mcp_history_sessions: 3,
+  mcp_include_commits: true,
+  mcp_include_links: true,
+  mcp_store_full_path: false,
+  mcp_machine_alias: "",
 };
 
 const graph: GraphResponse = {

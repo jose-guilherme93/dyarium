@@ -468,11 +468,37 @@ export interface Settings {
   analyze_base_url: string;
   analyze_model: string;
   analyze_api_key_set: boolean;
+  /** Notas analisadas ao mesmo tempo; 0 deixa o servidor decidir. */
+  analyze_concurrency: number;
   analysis_themes: string;
   /** Revise the transcript with the same model before analysing it. */
   review_enabled: boolean;
   /** Keep hesitations and stutters in the revised text. */
   literal_transcript: boolean;
+  /** MCP: endpoint recusa chamadas enquanto ligado. */
+  mcp_paused: boolean;
+  /** Horas sem atividade ate uma sessao aberta ler como interrompida. */
+  mcp_idle_hours: number;
+  /** Quantas sessoes anteriores o agente ve ao abrir. */
+  mcp_history_sessions: number;
+  mcp_include_commits: boolean;
+  mcp_include_links: boolean;
+  /** Guarda e mostra o caminho absoluto; desligado, so o nome da pasta. */
+  mcp_store_full_path: boolean;
+  /** Apelido da maquina no lugar do hostname real. */
+  mcp_machine_alias: string;
+}
+
+/** Um projeto do caderno MCP com o estado das suas sessoes. */
+export interface McpProject {
+  id: string;
+  title: string;
+  path: string;
+  sessions: number;
+  last_session_at: string;
+  state: "open" | "closed" | "interrupted" | "";
+  summary_detail: SummaryDetail;
+  archived: boolean;
 }
 
 export interface EntryProgress {

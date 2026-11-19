@@ -1249,6 +1249,12 @@ export function App() {
                 refreshKey={refreshKey}
                 onBack={goBack}
                 onOpenLab={LAB_ENABLED ? () => openView("lab") : undefined}
+                onOpenProject={(notebookId, entryId) => {
+                  setActiveNotebookId(notebookId);
+                  writeActiveNotebook(notebookId);
+                  setOpenEntryId(entryId);
+                  setView("notes");
+                }}
               />
             </div>
           )}
