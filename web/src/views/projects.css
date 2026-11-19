@@ -7,6 +7,10 @@
 
 .pjx-list {
   color: var(--dy-text);
+  /* Tom das guias: a hairline de --dy-line some sobre o fundo escuro e a
+     arvore deixa de ler como arvore. Um degrau acima do texto secundario
+     resolve nos tres temas sem virar cor decorativa. */
+  --pjx-guide: color-mix(in srgb, var(--dy-text-muted) 45%, transparent);
 }
 
 .pjx-tree {
@@ -69,36 +73,42 @@
 
 .pjx-tcell {
   position: relative;
-  width: var(--dy-space-16);
+  width: var(--dy-tree-cell);
   flex: none;
 }
 
+/* Uma linha por nivel, centrada na celula do token (14) e com o traco do
+   token (1). O cotovelo alcanca o icone do no, que comeca uma celula e um
+   espaco a direita: sem isso a guia termina no vazio e nao liga nada. */
 .pjx-tcell--v::before,
 .pjx-tcell--T::before {
   content: "";
   position: absolute;
-  left: 7px;
+  left: var(--dy-tree-rail);
   top: 0;
   bottom: 0;
-  border-left: 1px solid var(--dy-line);
+  width: var(--dy-tree-guide);
+  background: var(--pjx-guide);
 }
 
 .pjx-tcell--L::before {
   content: "";
   position: absolute;
-  left: 7px;
+  left: var(--dy-tree-rail);
   top: 0;
   height: 50%;
-  border-left: 1px solid var(--dy-line);
+  width: var(--dy-tree-guide);
+  background: var(--pjx-guide);
 }
 
 .pjx-tcell--e::after {
   content: "";
   position: absolute;
-  left: 7px;
-  right: calc(-1 * var(--dy-space-2));
+  left: var(--dy-tree-rail);
+  right: calc(-1 * var(--dy-space-6));
   top: 50%;
-  border-top: 1px solid var(--dy-line);
+  height: var(--dy-tree-guide);
+  background: var(--pjx-guide);
 }
 
 /* icones e chevron */
@@ -140,11 +150,13 @@
   width: var(--dy-icon-sm);
   height: var(--dy-icon-sm);
   stroke-width: var(--dy-icon-stroke);
-  transform: rotate(-90deg);
+  /* Fechado aponta para a direita, aberto para baixo: a seta diz o que o
+     clique faz, nao o contrario. */
+  transform: none;
 }
 
 .pjx-chev--open svg {
-  transform: rotate(0deg);
+  transform: rotate(90deg);
 }
 
 /* conteudo da linha */
@@ -496,7 +508,7 @@
   white-space: nowrap;
 }
 
-.pjx-tcell {
+.pjx-ncell {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

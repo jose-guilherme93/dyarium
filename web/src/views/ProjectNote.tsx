@@ -232,7 +232,7 @@ export function SessionPane({
               {items.map((item, at) => (
                 <tr key={`${item.title}:${at}`} title={item.title}>
                   <td className="pjx-kcell dy-mono">{item.kind}</td>
-                  <td className="pjx-tcell">{item.title}</td>
+                  <td className="pjx-ncell">{item.title}</td>
                   <td className="pjx-right">
                     {item.commit ? (
                       item.url ? (

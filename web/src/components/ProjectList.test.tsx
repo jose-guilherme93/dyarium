@@ -198,6 +198,22 @@ describe("ProjectList: arvore do caderno de projetos", () => {
     expect(container.textContent).not.toMatch(/[├└│─╭╰]/);
   });
 
+  it("ligam a subtree: nivel continua em T e o ultimo no fecha em L", () => {
+    renderList();
+
+    // s2 e s1 sao as duas sessoes da pasta syncwin, na ordem da atividade.
+    const s2 = screen.getByRole("treeitem", { name: /item s2/ });
+    const s1 = screen.getByRole("treeitem", { name: /item s1/ });
+
+    const s2cells = s2.querySelectorAll(".pjx-tcell");
+    expect(s2cells).toHaveLength(2);
+    expect(s2cells[0]).toHaveClass("pjx-tcell--v");
+    expect(s2cells[1]).toHaveClass("pjx-tcell--T");
+
+    const s1cells = s1.querySelectorAll(".pjx-tcell");
+    expect(s1cells[1]).toHaveClass("pjx-tcell--L");
+  });
+
   it("escolher um no entrega o no certo; Todos e o padrao", () => {
     const { onSelect } = renderList();
 
@@ -231,7 +247,10 @@ describe("ProjectList: arvore do caderno de projetos", () => {
   it("recolher a maquina esconde os filhos", () => {
     renderList();
     const machine = screen.getByRole("treeitem", { name: /work/ });
+    // Aberta: a seta aponta para baixo (gira 90 graus); fechada, para a direita.
+    expect(machine.querySelector(".pjx-chev")).toHaveClass("pjx-chev--open");
     fireEvent.click(machine);
+    expect(machine.querySelector(".pjx-chev")).not.toHaveClass("pjx-chev--open");
     expect(machine).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByRole("treeitem", { name: /item s2/ })).not.toBeInTheDocument();
     fireEvent.click(machine);

@@ -172,8 +172,8 @@ function FolderLine({
         }}
       >
         <Guides ancestors={ancestors} elbow={elbow} />
-        <TypeIcon kind="folder" />
         <Chevron open={open} />
+        <TypeIcon kind="folder" />
         <span className="dy-mono pjx-ell pjx-flabel">{folder.label}</span>
         <span className="pjx-num">{folder.count}</span>
       </button>
@@ -345,8 +345,8 @@ export function ProjectList({
                     onSelect({ kind: "machine", machine: machine.machine });
                   }}
                 >
-                  <TypeIcon kind="machine" />
                   <Chevron open={open} />
+                  <TypeIcon kind="machine" />
                   <span className="pjx-ell">{machine.machine}</span>
                   <span className="pjx-num">{machine.count}</span>
                 </button>
