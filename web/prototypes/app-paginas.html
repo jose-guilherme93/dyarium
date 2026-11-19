@@ -1,0 +1,578 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dyarium — capítulo paginado no app (protótipo)</title>
+<!--
+  Protótipo descartável de aprovação. Não faz parte do bundle de produção.
+  Tokens copiados de docs/design/tokens.json e mobile/src/theme/tokens.ts.
+  Fonte sans pela pilha local do projeto; serifada é a do sistema.
+
+  NOTA DE FONTE: para ficar igual ao web no aparelho, a fonte do livro
+  (Newsreader, etc., que hoje vive em web/public/fonts como woff2) precisa
+  ser empacotada em TTF no app. Este protótipo usa Georgia / "Times New Roman"
+  / serif para não mascarar essa dependência.
+-->
+<style>
+@font-face {
+  font-family: "Schibsted Grotesk";
+  src: url("../public/fonts/schibsted-grotesk.woff2") format("woff2");
+  font-weight: 400 700;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: dark;
+  --font-sans: "Schibsted Grotesk", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-book: Georgia, "Times New Roman", serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+  --space-2: 2px;
+  --space-4: 4px;
+  --space-6: 6px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+
+  --radius-control: 2px;
+  --radius-surface: 3px;
+  --row-touch: 44px;
+
+  --type-display-size: 21px;
+  --type-display-weight: 600;
+  --type-display-line: 1.2;
+  --type-display-spacing: -0.01em;
+
+  --type-title-size: 17px;
+  --type-title-weight: 600;
+  --type-title-line: 1.3;
+  --type-title-spacing: -0.005em;
+
+  --type-body-size: 13px;
+  --type-body-weight: 500;
+  --type-body-line: 1.32;
+
+  --type-label-size: 10px;
+  --type-label-weight: 500;
+  --type-label-line: 1.2;
+  --type-label-spacing: 0.12em;
+
+  --type-mono-size: 11.5px;
+  --type-mono-weight: 500;
+  --type-mono-line: 1.2;
+  --type-mono-spacing: 0.02em;
+
+  /* folha 14x21 escalada para a largura útil do celular */
+  --phone-width: 390px;
+  --phone-scroll-pad: var(--space-16);
+  --page-width: calc(var(--phone-width) - var(--phone-scroll-pad) * 2); /* 358px */
+  --page-height: calc(var(--page-width) * 210 / 140); /* ~537px */
+  --page-margin: calc(var(--page-width) * 19 / 140); /* ~48.6px */
+  --page-content-width: calc(var(--page-width) - var(--page-margin) * 2); /* ~260.8px */
+  --page-content-height: calc(var(--page-height) - var(--page-margin) * 2); /* ~439.8px */
+  --page-body: 12.5px; /* 18px * 358/529 arredondado */
+  --page-leading: 1.6;
+
+  --sheet-paper: #1a1d22;
+  --sheet-ink: #e4e8e3;
+  --sheet-ink-muted: #9aa198;
+}
+
+body[data-theme="light"] {
+  color-scheme: light;
+  --bg: #eceee9;
+  --bg-alt: #e3e6e0;
+  --bg-raised: #dadfd7;
+  --line: #d2d6cf;
+  --text: #232622;
+  --text-muted: #5c615a;
+  --primary: #5b6f66;
+  --primary-soft: #dce3e0;
+  --success: #5c7a63;
+  --warning: #8b7444;
+  --info: #5a6f80;
+  --danger: #9c6259;
+  --sheet-paper: #fbf9f4;
+  --sheet-ink: #2a2621;
+  --sheet-ink-muted: #8a8379;
+}
+
+:root, body[data-theme="amoled"] {
+  color-scheme: dark;
+  --bg: #000000;
+  --bg-alt: #0b0d0c;
+  --bg-raised: #151817;
+  --line: #242826;
+  --text: #e4e8e3;
+  --text-muted: #9aa198;
+  --primary: #a2b8ae;
+  --primary-soft: #1e2624;
+  --success: #94b09a;
+  --warning: #c6ab77;
+  --info: #9ab3c4;
+  --danger: #c78f85;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
+  font-weight: var(--type-body-weight);
+  -webkit-font-smoothing: antialiased;
+}
+
+button, input, textarea {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+}
+button { cursor: pointer; }
+
+:focus-visible { outline: 1px solid var(--primary); outline-offset: 2px; }
+
+/* ---------- andaime da página ---------- */
+.scaffold {
+  position: fixed;
+  top: var(--space-12);
+  right: var(--space-12);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-6) var(--space-12);
+  border: 1px dashed color-mix(in srgb, var(--text-muted) 45%, transparent);
+  border-radius: 999px;
+  font-size: var(--type-mono-size);
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--bg) 85%, transparent);
+}
+.scaffold .tag {
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  letter-spacing: var(--type-label-spacing);
+  text-transform: uppercase;
+  opacity: 0.9;
+}
+.pills { display: flex; gap: var(--space-2); align-items: center; }
+.pill {
+  padding: var(--space-4) var(--space-12);
+  border-radius: 999px;
+  font-size: var(--type-body-size);
+  color: var(--text-muted);
+}
+.pill:hover { background: var(--bg-raised); }
+.pill[aria-pressed="true"] { background: var(--primary-soft); color: var(--primary); font-weight: 600; }
+
+.page {
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 72px var(--space-16) var(--space-16);
+}
+
+/* ---------- moldura do celular ---------- */
+.phone {
+  width: var(--phone-width);
+  height: 844px;
+  flex: none;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 40px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+.phone-notch {
+  height: 28px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.phone-notch::before {
+  content: "";
+  width: 96px;
+  height: 18px;
+  background: var(--bg-raised);
+  border-radius: 0 0 12px 12px;
+}
+.phone-scroll {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: var(--space-8) var(--phone-scroll-pad) var(--space-16);
+}
+
+/* ---------- tela do capítulo ---------- */
+.chapter-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: var(--row-touch);
+  margin: calc(var(--space-8) * -1) calc(var(--phone-scroll-pad) * -1) var(--space-12);
+  padding: 0 var(--phone-scroll-pad);
+}
+.chapter-back {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  color: var(--primary);
+  font-weight: 600;
+  font-size: var(--type-body-size);
+}
+.chapter-back svg { flex: none; }
+.chapter-menu {
+  width: var(--row-touch);
+  height: var(--row-touch);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: var(--text);
+}
+.chapter-menu:hover { background: var(--bg-raised); }
+
+.chapter-head {
+  margin-bottom: var(--space-16);
+}
+.chapter-title {
+  font-size: var(--type-display-size);
+  font-weight: var(--type-display-weight);
+  line-height: var(--type-display-line);
+  letter-spacing: var(--type-display-spacing);
+  margin: 0 0 var(--space-8);
+}
+.chapter-meta {
+  color: var(--text-muted);
+  margin-bottom: var(--space-6);
+}
+.chapter-date {
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+.chapter-edit {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  color: var(--text-muted);
+  margin-left: auto;
+}
+.chapter-edit:hover { background: var(--bg-raised); }
+
+/* ---------- páginas de papel ---------- */
+.pages {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.page-sheet {
+  width: var(--page-width);
+  height: var(--page-height);
+  padding: var(--page-margin);
+  background: var(--sheet-paper);
+  color: var(--sheet-ink);
+  border-radius: var(--radius-control);
+  position: relative;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+}
+.page-content {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--font-book);
+  font-size: var(--page-body);
+  line-height: var(--page-leading);
+  text-align: justify;
+  hyphens: none;
+}
+.page-content p {
+  margin: 0;
+  text-indent: 1.4em;
+}
+.page-content p:first-of-type,
+.page-content p.continued {
+  text-indent: 0;
+}
+.page-number {
+  position: absolute;
+  right: var(--page-margin);
+  bottom: calc(var(--page-margin) - 18px);
+  font-family: var(--font-sans);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: var(--sheet-ink-muted);
+}
+.page-gap {
+  width: var(--page-width);
+  height: calc(var(--page-margin) * 1.15);
+  position: relative;
+  flex: none;
+  background: var(--bg);
+}
+.page-gap::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 18px;
+  transform: translateY(-50%);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+}
+
+/* ---------- medida oculta ---------- */
+#measure {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  width: var(--page-content-width);
+  height: var(--page-content-height);
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
+}
+#measure p {
+  margin: 0;
+  font-family: var(--font-book);
+  font-size: var(--page-body);
+  line-height: var(--page-leading);
+  text-align: justify;
+  hyphens: none;
+  text-indent: 1.4em;
+}
+#measure p:first-of-type,
+#measure p.continued {
+  text-indent: 0;
+}
+
+/* ---------- responsividade da página ---------- */
+@media (max-width: 420px) {
+  .page { padding: 64px var(--space-8) var(--space-8); }
+  .scaffold { top: var(--space-8); right: var(--space-8); }
+  .scaffold .tag { display: none; }
+}
+
+@media (max-width: 360px) {
+  .phone-scroll { padding: var(--space-12); }
+}
+
+@media (min-width: 1280px) {
+  .page { padding: 84px var(--space-16) var(--space-16); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+</style>
+</head>
+<body data-theme="amoled">
+
+<div class="scaffold" aria-label="Andaime do protótipo">
+  <span class="tag">Protótipo</span>
+  <div class="pills" role="group" aria-label="Tema">
+    <button class="pill" data-theme-toggle="amoled" aria-pressed="true">AMOLED</button>
+    <span aria-hidden="true">·</span>
+    <button class="pill" data-theme-toggle="light" aria-pressed="false">Claro</button>
+  </div>
+</div>
+
+<main class="page">
+  <div class="phone">
+    <div class="phone-notch" aria-hidden="true"></div>
+    <div class="phone-scroll">
+      <header class="chapter-topbar">
+        <button class="chapter-back" type="button" aria-label="Voltar ao livro">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+          <span>O nome do vento</span>
+        </button>
+        <button class="chapter-menu" type="button" aria-label="Opções do capítulo">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+        </button>
+      </header>
+
+      <section class="chapter-head">
+        <h1 class="chapter-title">A ponte de pedra</h1>
+        <div class="chapter-meta">Capítulo 6 · Rascunho · 66 / 2.000 palavras · <span id="page-count">… páginas</span></div>
+        <div class="chapter-date">
+          <span>01/11/2026 00:31</span>
+          <button class="chapter-edit" type="button" aria-label="Editar">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+          </button>
+        </div>
+      </section>
+
+      <div class="pages" id="pages" aria-label="Páginas do capítulo">
+        <!-- preenchido pelo script -->
+      </div>
+    </div>
+  </div>
+</main>
+
+<div id="measure" aria-hidden="true"></div>
+
+<script>
+const CHAPTER_PARAGRAPHS = [
+  "A neblina subia do rio como se o mundo tivesse esquecido de respirar. Kael parou na cabeceira da ponte e contou as pedras: doze, como no mapa do celeiro, mas a décima terceira estava fora do lugar.",
+  "— Você demorou — disse a mulher do casaco cinza, sem se virar.",
+  "Ele não respondeu. Havia aprendido, naquela semana, que o silêncio também era uma forma de chegar. O vento trazia o cheiro de madeira molhada e de algo mais doce, quase medicinal, que o fazia lembrar do quarto de infusões da mãe. A mulher apoiava as mãos no parapeito da ponte, e Kael notou que ela usava um anel de ferro no dedo mínimo, igual ao que o velho desenhara no mapa.",
+  "— A décima terceira — disse ele, finalmente — não é pedra.",
+  "— Nunca foi — ela concordou. — É porta.",
+  "Kael aproximou-se. A pedra, vista de perto, tinha uma rachadura tão fina que parecia um fio de cabelo preso no granito. A mulher passou o dedo pela fenda e o ar ao redor estremeceu, como se a própria ponte tivesse sussurrado. Do outro lado do rio, as luzes da cidade começaram a apagar-se uma a uma, em ordem, como contas de um rosário.",
+  "— Eles sabem que você veio — ela disse. — As luzes nunca mentem.",
+  "Ele olhou para o mapa dobrado no bolso. As linhas que o velho traçara com tinta verde já não coincidiam com as ruas, mas ainda apontavam para a ponte. Isso bastava. Kael respirou fundo, sentindo o frio subir pelo colarinho, e colocou a palma da mão sobre a rachadura. A pedra estava quente, viva, e por um instante ele ouviu dentro do peito o mesmo som que fazia a ponte: uma vibração antiga, quase um nome.",
+  "— Para abrir — sussurrou a mulher — você precisa dizer o nome da primeira pessoa que você matou.",
+  "Kael retirou a mão. O vento parou. A neblina, que até então subira do rio, agora pairava imóvel, esperando.",
+  "— Eu não matei ninguém — disse ele.",
+  "A mulher riu, um som baixo e sem alegria, e apontou para a água. — O rio não esquece. A ponte tampouco. Você pisa aqui, e quem você foi fica gravado nas pedras. Fale o nome, ou fique do lado de cá para sempre.",
+  "Kael olhou para o rio. Lá embaixo, a correnteza passava preta e silenciosa, carregando reflexos das luzes que ainda não se apagavam. Ele pensou na mãe, no quarto de infusões, no velho dizendo que o mapa só mostrava o caminho de ida. Não havia volta desenhada. Então ele disse o nome, baixo, quase para si mesmo, e a décima terceira pedra se abriu como uma pálpebra."
+];
+
+const measure = document.getElementById('measure');
+const pagesContainer = document.getElementById('pages');
+const pageCountLabel = document.getElementById('page-count');
+
+function escapeHtml(text) {
+  return text.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function renderParas(paras, opts = {}) {
+  return paras.map((t, i) => {
+    const isFirst = (i === 0 && opts.pageIndex === 0);
+    const isContinued = (i === 0 && opts.continued);
+    const cls = isFirst || isContinued ? ' class="continued"' : '';
+    return `<p${cls}>${escapeHtml(t)}</p>`;
+  }).join('');
+}
+
+function fits(paras, continued) {
+  measure.innerHTML = renderParas(paras, { continued, pageIndex: -1 });
+  return measure.scrollHeight <= measure.clientHeight + 0.5;
+}
+
+function fitPrefix(baseParas, remainingText, continued) {
+  const words = remainingText.split(' ').filter(Boolean);
+  if (words.length === 0) return '';
+  let lo = 0;
+  let hi = words.length;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi + 1) / 2);
+    const candidate = [...baseParas, words.slice(0, mid).join(' ')];
+    if (fits(candidate, continued)) lo = mid;
+    else hi = mid - 1;
+  }
+  return words.slice(0, lo).join(' ');
+}
+
+function buildPages(paragraphs) {
+  const pages = [];
+  let pIdx = 0;
+  let offset = 0;
+  let isContinued = false;
+
+  while (pIdx < paragraphs.length) {
+    const pageParas = [];
+
+    while (pIdx < paragraphs.length) {
+      const paraText = paragraphs[pIdx].slice(offset).trimStart();
+      if (!paraText) {
+        offset = 0;
+        pIdx++;
+        isContinued = false;
+        continue;
+      }
+      const candidate = [...pageParas, paraText];
+      if (fits(candidate, isContinued)) {
+        pageParas.push(paraText);
+        offset = 0;
+        pIdx++;
+        isContinued = false;
+      } else {
+        break;
+      }
+    }
+
+    if (pIdx < paragraphs.length) {
+      const remaining = paragraphs[pIdx].slice(offset).trimStart();
+      const prefix = fitPrefix(pageParas, remaining, isContinued);
+      if (prefix.trim()) {
+        pageParas.push(prefix);
+        offset += paragraphs[pIdx].slice(offset).indexOf(prefix) + prefix.length;
+        while (offset < paragraphs[pIdx].length && paragraphs[pIdx][offset] === ' ') offset++;
+        if (offset >= paragraphs[pIdx].length) {
+          offset = 0;
+          pIdx++;
+          isContinued = false;
+        } else {
+          isContinued = true;
+        }
+      }
+    }
+
+    if (pageParas.length === 0 || pageParas.every(p => !p.trim())) break;
+    pages.push({ paras: pageParas, continued: pages.length > 0 && !pageParas[0].startsWith(paragraphs[0]) });
+  }
+
+  return pages;
+}
+
+function renderPages() {
+  const pages = buildPages(CHAPTER_PARAGRAPHS);
+  const total = pages.length;
+
+  pagesContainer.innerHTML = pages.map((page, i) => {
+    const content = renderParas(page.paras, { pageIndex: i, continued: page.continued });
+    const gap = i > 0 ? '<div class="page-gap" aria-hidden="true"></div>' : '';
+    return `${gap}<article class="page-sheet" aria-label="Página ${i + 1}"><div class="page-content">${content}</div><span class="page-number">${i + 1}</span></article>`;
+  }).join('');
+
+  pageCountLabel.textContent = `${total} ${total === 1 ? 'página' : 'páginas'}`;
+  document.body.dataset.pageTotal = String(total);
+}
+
+function init() {
+  renderPages();
+
+  document.querySelectorAll('[data-theme-toggle]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const theme = btn.dataset.themeToggle;
+      document.body.dataset.theme = theme;
+      document.querySelectorAll('[data-theme-toggle]').forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
+      requestAnimationFrame(renderPages);
+    });
+  });
+
+  let resizeTimer = 0;
+  window.addEventListener('resize', () => {
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(renderPages, 150);
+  });
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
+</script>
+</body>
+</html>
