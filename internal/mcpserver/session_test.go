@@ -650,15 +650,17 @@ func TestSessionOpenReportStartsWithSessionID(t *testing.T) {
 		t.Fatalf("report has no second line:\n%s", report)
 	}
 	prefix := "sessao "
-	suffix := " aberta em " + path
+	// Com mcp_store_full_path desligado (o padrao), o relatorio mostra so o
+	// nome da pasta; o caminho absoluto continua na nota.
+	suffix := " aberta em com-id"
 	if !strings.HasPrefix(first, prefix) || !strings.HasSuffix(first, suffix) {
-		t.Fatalf("first line = %q, want 'sessao <id> aberta em %s'", first, path)
+		t.Fatalf("first line = %q, want 'sessao <id> aberta em com-id'", first)
 	}
 	reported := strings.TrimSuffix(strings.TrimPrefix(first, prefix), suffix)
 	if !strings.HasPrefix(reported, "ses_") {
 		t.Fatalf("reported session = %q", reported)
 	}
-	if !strings.Contains(rest, "primeira sessao em "+path) {
+	if !strings.Contains(rest, "primeira sessao em com-id") {
 		t.Fatalf("history was not kept after the id line:\n%s", report)
 	}
 
@@ -724,8 +726,8 @@ func TestSessionRoundTripWithoutMetaSealsTheSameNote(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	first, _, _ := strings.Cut(report, "\n")
-	sessionID := strings.TrimSuffix(strings.TrimPrefix(first, "sessao "), " aberta em "+path)
-	if !strings.HasPrefix(sessionID, "ses_") {
+	sessionID, rest, ok := strings.Cut(strings.TrimPrefix(first, "sessao "), " aberta em ")
+	if !ok || rest == "" || !strings.HasPrefix(sessionID, "ses_") {
 		t.Fatalf("could not read the session id from %q", first)
 	}
 	if _, ok, err := svc.store.FindSessionNote(ctx, store.MCPNotebookID, sessionID); err != nil || !ok {
@@ -863,7 +865,7 @@ func TestSessionOpenHistoryOfFirstSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	if !strings.Contains(report, path) {
+	if !strings.Contains(report, "primeira sessao em primeira") {
 		t.Fatalf("report does not name the folder:\n%s", report)
 	}
 	if len(report) > maxHistoryBytes {

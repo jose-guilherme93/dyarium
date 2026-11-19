@@ -40,8 +40,13 @@ type sessionPayload struct {
 // time and machine, the summary, one line per item, the collapsible technical
 // block, the v2 fence and the session marker. The session note has no
 // concise/full mode: the agent always reports the whole session, so the details
-// are always present, collapsed.
-func renderSessionBlock(p sessionPayload, marker string) string {
+// are always present, collapsed. The optional settings decide whether the
+// commits and links sections exist; without them both stay on.
+func renderSessionBlock(p sessionPayload, marker string, settings ...Settings) string {
+	cfg := DefaultSettings()
+	if len(settings) > 0 {
+		cfg = settings[0]
+	}
 	var b strings.Builder
 	if p.Machine != "" {
 		fmt.Fprintf(&b, "## %s %s · %s\n", p.Date, p.Time, safeInline(p.Machine))
@@ -59,9 +64,9 @@ func renderSessionBlock(p sessionPayload, marker string) string {
 		b.WriteString(safeBlock(summary))
 		b.WriteString("\n")
 	}
-	renderItems(&b, in)
+	renderItems(&b, in, cfg)
 	if len(in.Items) > 0 || strings.TrimSpace(in.Summary) != "" {
-		renderTechnical(&b, in, false)
+		renderTechnical(&b, in, false, cfg)
 	}
 	b.WriteString("\n")
 	if fence := renderSessionPayload(p); fence != "" {
@@ -117,8 +122,14 @@ func parseSessionFence(body string) (sessionPayload, bool) {
 // numbers that matter (performance, bugs, versions). Then come one-line items.
 // Technical detail, extra commits and links live inside a collapsible block,
 // closed in concise mode and open in full mode. After the technical block comes
-// the canonical JSON fence so machine clients can parse the same session.
-func renderBlock(in projectSummaryInput, detail, computer, marker string, now time.Time) string {
+// the canonical JSON fence so machine clients can parse the same session. The
+// optional settings decide whether the commits and links sections exist; without
+// them both stay on.
+func renderBlock(in projectSummaryInput, detail, computer, marker string, now time.Time, settings ...Settings) string {
+	cfg := DefaultSettings()
+	if len(settings) > 0 {
+		cfg = settings[0]
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "## %s · %s\n", now.UTC().Format("2006-01-02 15:04"), safeInline(computer))
 	if summary := strings.TrimSpace(in.Summary); summary != "" {
@@ -126,11 +137,11 @@ func renderBlock(in projectSummaryInput, detail, computer, marker string, now ti
 		b.WriteString(safeBlock(summary))
 		b.WriteString("\n")
 	}
-	renderItems(&b, in)
+	renderItems(&b, in, cfg)
 	// With no items and no summary, renderItems already showed commits or links
 	// in the visible part; repeating them in the collapsible would be noise.
 	if len(in.Items) > 0 || strings.TrimSpace(in.Summary) != "" {
-		renderTechnical(&b, in, detail == store.SummaryDetailFull)
+		renderTechnical(&b, in, detail == store.SummaryDetailFull, cfg)
 	}
 	b.WriteString("\n")
 	// The fence sits right before the dedup marker, one blank line after the
@@ -189,18 +200,20 @@ func renderPayload(in projectSummaryInput, computer, detail string, now time.Tim
 
 // renderItems writes one line per item. The summary is already written by
 // renderBlock. When there are no items and no summary, commits or links stand in
-// so the block is not empty.
-func renderItems(b *strings.Builder, in projectSummaryInput) {
+// so the block is not empty; a section disabled in the settings never stands in.
+func renderItems(b *strings.Builder, in projectSummaryInput, settings Settings) {
 	if len(in.Items) == 0 {
 		if strings.TrimSpace(in.Summary) != "" {
 			return
 		}
 		var content strings.Builder
-		for _, commit := range in.Commits {
-			content.WriteString(plainCommit(commit))
-			content.WriteString("\n")
+		if settings.IncludeCommits {
+			for _, commit := range in.Commits {
+				content.WriteString(plainCommit(commit))
+				content.WriteString("\n")
+			}
 		}
-		if content.Len() == 0 {
+		if content.Len() == 0 && settings.IncludeLinks {
 			for _, link := range in.Links {
 				content.WriteString(plainLink(link))
 				content.WriteString("\n")
@@ -229,8 +242,9 @@ func renderItems(b *strings.Builder, in projectSummaryInput) {
 
 // renderTechnical writes the collapsible "Detalhes técnicos" block: item
 // details, commits not already shown next to an item, and links. It is emitted
-// in both modes; `open` decides whether the block starts expanded.
-func renderTechnical(b *strings.Builder, in projectSummaryInput, open bool) {
+// in both modes; `open` decides whether the block starts expanded. A disabled
+// section is omitted entirely: no header is left with nothing under it.
+func renderTechnical(b *strings.Builder, in projectSummaryInput, open bool, settings Settings) {
 	var content strings.Builder
 	for _, item := range in.Items {
 		detail := strings.TrimSpace(item.Detail)
@@ -243,38 +257,42 @@ func renderTechnical(b *strings.Builder, in projectSummaryInput, open bool) {
 		content.WriteString(strings.ReplaceAll(safeBlock(detail), "\n", " "))
 		content.WriteString("\n")
 	}
-	shown := map[string]bool{}
-	for _, item := range in.Items {
-		if item.Commit != "" {
-			shown[item.Commit] = true
+	if settings.IncludeCommits {
+		shown := map[string]bool{}
+		for _, item := range in.Items {
+			if item.Commit != "" {
+				shown[item.Commit] = true
+			}
+		}
+		var commits strings.Builder
+		for _, commit := range in.Commits {
+			if commit.Hash != "" && shown[commit.Hash] {
+				continue
+			}
+			commits.WriteString(plainCommit(commit))
+			commits.WriteString("\n")
+		}
+		if commits.Len() > 0 {
+			if content.Len() > 0 {
+				content.WriteString("\n")
+			}
+			content.WriteString("Commits:\n")
+			content.WriteString(commits.String())
 		}
 	}
-	var commits strings.Builder
-	for _, commit := range in.Commits {
-		if commit.Hash != "" && shown[commit.Hash] {
-			continue
+	if settings.IncludeLinks {
+		var links strings.Builder
+		for _, link := range in.Links {
+			links.WriteString(plainLink(link))
+			links.WriteString("\n")
 		}
-		commits.WriteString(plainCommit(commit))
-		commits.WriteString("\n")
-	}
-	if commits.Len() > 0 {
-		if content.Len() > 0 {
-			content.WriteString("\n")
+		if links.Len() > 0 {
+			if content.Len() > 0 {
+				content.WriteString("\n")
+			}
+			content.WriteString("Links:\n")
+			content.WriteString(links.String())
 		}
-		content.WriteString("Commits:\n")
-		content.WriteString(commits.String())
-	}
-	var links strings.Builder
-	for _, link := range in.Links {
-		links.WriteString(plainLink(link))
-		links.WriteString("\n")
-	}
-	if links.Len() > 0 {
-		if content.Len() > 0 {
-			content.WriteString("\n")
-		}
-		content.WriteString("Links:\n")
-		content.WriteString(links.String())
 	}
 	if content.Len() == 0 {
 		return

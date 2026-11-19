@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/joseti/dyarium/internal/analyze"
 	"github.com/joseti/dyarium/internal/jobs"
+	"github.com/joseti/dyarium/internal/mcpserver"
 	"github.com/joseti/dyarium/internal/store"
 )
 
@@ -51,6 +53,9 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	if allNotesMine == "" {
 		allNotesMine = "true"
 	}
+	// O pacote do MCP e o dono dos padroes: a tela e as ferramentas leem os
+	// mesmos numeros, sem copia de constante na API.
+	mcp := mcpserver.SettingsFromValues(settings)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"owner_name":            settings["owner_name"],
 		"all_notes_mine":        allNotesMine == "true",
@@ -71,6 +76,13 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		"analysis_themes":       analysisThemes,
 		"review_enabled":        settings["review_enabled"] == "true",
 		"literal_transcript":    settings["literal_transcript"] == "true",
+		"mcp_paused":            mcp.Paused,
+		"mcp_idle_hours":        mcp.IdleHours,
+		"mcp_history_sessions":  mcp.HistorySessions,
+		"mcp_include_commits":   mcp.IncludeCommits,
+		"mcp_include_links":     mcp.IncludeLinks,
+		"mcp_store_full_path":   mcp.StoreFullPath,
+		"mcp_machine_alias":     mcp.MachineAlias,
 	})
 }
 
@@ -182,6 +194,63 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if !set(key, strconv.FormatBool(b)) {
+				return
+			}
+		case mcpserver.SettingPaused:
+			b, err := toBool(value)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid_value", "mcp_paused deve ser booleano")
+				return
+			}
+			if !set(key, strconv.FormatBool(b)) {
+				return
+			}
+		case mcpserver.SettingIncludeCommits, mcpserver.SettingIncludeLinks, mcpserver.SettingStoreFullPath:
+			b, err := toBool(value)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid_value", key+" deve ser booleano")
+				return
+			}
+			if !set(key, strconv.FormatBool(b)) {
+				return
+			}
+		case mcpserver.SettingIdleHours:
+			n, err := toNumber(value)
+			if err != nil || n < mcpserver.MinIdleHours || n > mcpserver.MaxIdleHours {
+				writeError(w, http.StatusBadRequest, "invalid_value",
+					fmt.Sprintf("mcp_idle_hours deve ser inteiro entre %d e %d", mcpserver.MinIdleHours, mcpserver.MaxIdleHours))
+				return
+			}
+			if !set(key, strconv.Itoa(n)) {
+				return
+			}
+		case mcpserver.SettingHistorySessions:
+			n, err := toNumber(value)
+			if err != nil || n < mcpserver.MinHistorySessions || n > mcpserver.MaxHistorySessions {
+				writeError(w, http.StatusBadRequest, "invalid_value",
+					fmt.Sprintf("mcp_history_sessions deve ser inteiro entre %d e %d", mcpserver.MinHistorySessions, mcpserver.MaxHistorySessions))
+				return
+			}
+			if !set(key, strconv.Itoa(n)) {
+				return
+			}
+		case mcpserver.SettingMachineAlias:
+			str, ok := value.(string)
+			if !ok {
+				writeError(w, http.StatusBadRequest, "invalid_value", "mcp_machine_alias deve ser texto")
+				return
+			}
+			str = strings.TrimSpace(str)
+			if len([]rune(str)) > mcpserver.MaxMachineAliasRunes {
+				writeError(w, http.StatusBadRequest, "invalid_value",
+					fmt.Sprintf("mcp_machine_alias tem no maximo %d caracteres", mcpserver.MaxMachineAliasRunes))
+				return
+			}
+			if strings.IndexFunc(str, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
+				writeError(w, http.StatusBadRequest, "invalid_value", "mcp_machine_alias com caracter de controle")
+				return
+			}
+			if !set(key, str) {
 				return
 			}
 		}

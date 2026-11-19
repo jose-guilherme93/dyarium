@@ -1527,6 +1527,58 @@ Atualiza configuracoes. Alterar `trim_silence` invalida o artefato derivado em c
 (regenerado na proxima transcricao). `analyze_concurrency` aceita inteiro de 0 a 16; fora
 desse intervalo a requisicao responde 400 e nenhuma configuracao e gravada.
 
+As chaves `mcp_*` configuram o servidor MCP; os padroes e os limites vivem em
+`internal/mcpserver`, entao a tela e as ferramentas leem os mesmos numeros:
+
+- `mcp_paused` (booleano, padrao `false`): pausado, `session_open`, `session_close` e
+  `record_project_summary` respondem erro de ferramenta "MCP pausado nas configurações"
+  sem gravar nada.
+- `mcp_idle_hours` (inteiro de 1 a 168, padrao 12): janela sem atividade em que uma
+  sessao aberta ainda aparece como `open`; depois dela o estado derivado vira
+  `interrupted`.
+- `mcp_history_sessions` (inteiro de 0 a 10, padrao 3): quantas sessoes anteriores o
+  `session_open` lista; 0 desliga o historico, os totais continuam.
+- `mcp_include_commits` e `mcp_include_links` (booleanos, padrao `true`): desligados,
+  a secao correspondente some do bloco tecnico, sem cabecalho vazio. O fence JSON
+  continua completo para os clientes.
+- `mcp_store_full_path` (booleano, padrao `false`): ligado, o relatorio, o historico e
+  a lista de projetos mostram o caminho absoluto; desligado, so o nome da pasta. A nota
+  gravada sempre guarda o caminho completo.
+- `mcp_machine_alias` (texto, ate 80 caracteres, padrao vazio): quando nao vazio,
+  substitui o host sanitizado no cabecalho e no fence de `record_project_summary`.
+  Valor fora do contrato responde 400 `invalid_value` e nada e gravado.
+
+### GET /api/v1/mcp/projects
+Lista as entradas do caderno interno "Projetos" (`projetos-mcp`) com o que a tela de
+Configuracoes > Projetos mostra. O formato do fence de sessao e a derivacao do estado
+ficam em `internal/mcpserver`; o handler so serializa.
+
+```json
+{
+  "projects": [
+    {
+      "id": "0f3...",
+      "title": "/home/usuario/projetos/dyarium",
+      "path": "dyarium",
+      "sessions": 4,
+      "last_session_at": "2026-11-19T10:12:00Z",
+      "state": "closed",
+      "summary_detail": "concise",
+      "archived": false
+    }
+  ]
+}
+```
+
+- `sessions` conta as notas da entrada que carregam um fence de sessao valido.
+- `last_session_at` e o RFC3339 da nota de sessao mais recente; vazio quando nao ha
+  sessao.
+- `state` e `open`, `closed`, `interrupted` ou vazio (sem sessao); `interrupted` usa a
+  janela de `mcp_idle_hours` e nunca e gravado na nota.
+- `path` respeita `mcp_store_full_path` e cai no titulo da entrada quando a sessao nao
+  registrou caminho.
+- Resposta 401 sem Bearer, como o resto de `/api/v1`.
+
 ## Servidor MCP
 
 ### POST /mcp

@@ -45,16 +45,11 @@ const (
 
 	// maxHistoryBytes caps the folder history returned by session_open.
 	maxHistoryBytes = 2048
-	// historySessions is how many previous sessions the agent sees.
-	historySessions = 3
 	// historyReserveBytes stays free so the totals line always fits.
 	historyReserveBytes = 64
 	// maxHistoryPathBytes caps how much of the path the history header shows, so
 	// a pathological path cannot eat the budget of the totals.
 	maxHistoryPathBytes = 256
-	// sessionIdleLimit is when an open session reads as interrupted. The state
-	// is derived on read: the server never writes it and has no periodic job.
-	sessionIdleLimit = 12 * time.Hour
 )
 
 // sessionOpenInput is the contract of session_open.
@@ -80,11 +75,15 @@ func (s *service) sessionOpen(ctx context.Context, req *mcp.CallToolRequest, in 
 	if s.store == nil {
 		return nil, nil, errors.New("diario indisponivel")
 	}
+	settings := SettingsFrom(ctx, s.store)
+	if settings.Paused {
+		return nil, nil, errPaused
+	}
 	sessionID, err := resolveSessionID(req, in.Session)
 	if err != nil {
 		return nil, nil, err
 	}
-	message, err := s.openSession(ctx, in, machineFromRequest(req), sessionID)
+	message, err := s.openSession(ctx, in, machineFromRequest(req), sessionID, settings)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -97,11 +96,15 @@ func (s *service) sessionClose(ctx context.Context, req *mcp.CallToolRequest, in
 	if s.store == nil {
 		return nil, nil, errors.New("diario indisponivel")
 	}
+	settings := SettingsFrom(ctx, s.store)
+	if settings.Paused {
+		return nil, nil, errPaused
+	}
 	sessionID, err := resolveSessionID(req, in.Session)
 	if err != nil {
 		return nil, nil, err
 	}
-	message, err := s.closeSession(ctx, in, machineFromRequest(req), sessionID)
+	message, err := s.closeSession(ctx, in, machineFromRequest(req), sessionID, settings)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -111,7 +114,7 @@ func (s *service) sessionClose(ctx context.Context, req *mcp.CallToolRequest, in
 }
 
 // openSession opens (or reopens) the note of one session.
-func (s *service) openSession(ctx context.Context, in sessionOpenInput, machine, sessionID string) (string, error) {
+func (s *service) openSession(ctx context.Context, in sessionOpenInput, machine, sessionID string, settings Settings) (string, error) {
 	dir, err := normalizeSessionPath(in.Directory)
 	if err != nil {
 		return "", err
@@ -141,10 +144,10 @@ func (s *service) openSession(ctx context.Context, in sessionOpenInput, machine,
 	if found {
 		// So um nome enviado explicitamente renomeia a nota; sem nome o titulo
 		// atual e o nome escolhido na abertura.
-		if err := s.reopenSession(ctx, existing, sessionID, strings.TrimSpace(in.Name), summary); err != nil {
+		if err := s.reopenSession(ctx, existing, sessionID, strings.TrimSpace(in.Name), summary, settings); err != nil {
 			return "", err
 		}
-		return s.pathHistory(ctx, entry.ID, dir, existing.ID, sessionReportLine(sessionID, dir))
+		return s.pathHistory(ctx, entry.ID, dir, existing.ID, sessionReportLine(sessionID, dir, settings), settings)
 	}
 
 	payload := sessionPayload{
@@ -163,28 +166,28 @@ func (s *service) openSession(ctx context.Context, in sessionOpenInput, machine,
 		ID:              id.New(),
 		EntryID:         entry.ID,
 		Title:           name,
-		ContentMarkdown: renderSessionBlock(payload, sessionMarker(sessionID)),
+		ContentMarkdown: renderSessionBlock(payload, sessionMarker(sessionID), settings),
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
 	if err := s.store.CreateNote(ctx, note); err != nil {
 		return "", fmt.Errorf("criar nota da sessao: %w", err)
 	}
-	return s.pathHistory(ctx, entry.ID, dir, note.ID, sessionReportLine(sessionID, dir))
+	return s.pathHistory(ctx, entry.ID, dir, note.ID, sessionReportLine(sessionID, dir, settings), settings)
 }
 
 // sessionReportLine is the first line of the session_open result. It always
 // carries the session id, even when the client sent it in _meta: it is the only
 // way a client that did not name the session can close the same note later.
-func sessionReportLine(sessionID, dir string) string {
-	return "sessao " + sessionID + " aberta em " + historyPath(dir)
+func sessionReportLine(sessionID, dir string, settings Settings) string {
+	return "sessao " + sessionID + " aberta em " + displayPath(dir, settings)
 }
 
 // reopenSession keeps the identity of the first open: the same note, the same
 // opened stamp and the same fence. It updates the name when one was sent and,
 // when a new summary arrives, the rendered body; a body edited by hand (without
 // a valid v2 fence) is only touched, never rewritten.
-func (s *service) reopenSession(ctx context.Context, note store.Note, sessionID, name, summary string) error {
+func (s *service) reopenSession(ctx context.Context, note store.Note, sessionID, name, summary string, settings Settings) error {
 	if name != "" && name != note.Title {
 		if err := s.store.UpdateNoteTitle(ctx, note.ID, name); err != nil {
 			return err
@@ -200,7 +203,7 @@ func (s *service) reopenSession(ctx context.Context, note store.Note, sessionID,
 		}
 		if payload.Summary != summary {
 			payload.Summary = summary
-			body := renderSessionBlock(payload, sessionMarker(payload.Session))
+			body := renderSessionBlock(payload, sessionMarker(payload.Session), settings)
 			if err := s.replaceSessionBody(ctx, note, body); err != nil {
 				return err
 			}
@@ -211,7 +214,7 @@ func (s *service) reopenSession(ctx context.Context, note store.Note, sessionID,
 
 // closeSession seals the session note with the closing report. A session that
 // was never opened is created already closed when the caller knows the folder.
-func (s *service) closeSession(ctx context.Context, in sessionCloseInput, machine, sessionID string) (string, error) {
+func (s *service) closeSession(ctx context.Context, in sessionCloseInput, machine, sessionID string, settings Settings) (string, error) {
 	dir, err := normalizeOptionalSessionPath(in.Directory)
 	if err != nil {
 		return "", err
@@ -284,11 +287,11 @@ func (s *service) closeSession(ctx context.Context, in sessionCloseInput, machin
 		if len(in.Links) > 0 {
 			payload.Links = in.Links
 		}
-		body := renderSessionBlock(payload, sessionMarker(payload.Session))
+		body := renderSessionBlock(payload, sessionMarker(payload.Session), settings)
 		if err := s.replaceSessionBody(ctx, existing, body); err != nil {
 			return "", err
 		}
-		return "sessao " + payload.Session + " fechada em " + payload.Path, nil
+		return "sessao " + payload.Session + " fechada em " + displayPath(payload.Path, settings), nil
 	}
 	if dir == "" {
 		return "", fmt.Errorf("sessao %s nao encontrada; informe o directory do projeto para registrar o fechamento", sessionID)
@@ -317,14 +320,14 @@ func (s *service) closeSession(ctx context.Context, in sessionCloseInput, machin
 		ID:              id.New(),
 		EntryID:         entry.ID,
 		Title:           defaultSessionName(dir),
-		ContentMarkdown: renderSessionBlock(payload, sessionMarker(sessionID)),
+		ContentMarkdown: renderSessionBlock(payload, sessionMarker(sessionID), settings),
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
 	if err := s.store.CreateNote(ctx, note); err != nil {
 		return "", fmt.Errorf("criar nota da sessao: %w", err)
 	}
-	return "sessao " + sessionID + " fechada em " + dir + " (nota criada, sem abertura previa)", nil
+	return "sessao " + sessionID + " fechada em " + displayPath(dir, settings) + " (nota criada, sem abertura previa)", nil
 }
 
 // replaceSessionBody writes a new body over the note, retrying once when another
@@ -355,7 +358,7 @@ func (s *service) replaceSessionBody(ctx context.Context, note store.Note, body 
 // carries the session id: the last sessions of the folder, newest first, one
 // line each, plus the totals. The opening line is passed in and counts against
 // the cap, so a long id or path never pushes the totals out of the result.
-func (s *service) pathHistory(ctx context.Context, entryID, dir, currentNoteID, firstLine string) (string, error) {
+func (s *service) pathHistory(ctx context.Context, entryID, dir, currentNoteID, firstLine string, settings Settings) (string, error) {
 	notes, err := s.store.ListNotes(ctx, entryID)
 	if err != nil {
 		return "", fmt.Errorf("ler historico do projeto: %w", err)
@@ -390,7 +393,7 @@ func (s *service) pathHistory(ctx context.Context, entryID, dir, currentNoteID, 
 		items += count
 		state := ""
 		if ok {
-			state = sessionState(payload, note, now)
+			state = sessionState(payload, note, now, settings.IdleLimit())
 		}
 		past = append(past, pastSession{
 			name:  note.Title,
@@ -407,16 +410,21 @@ func (s *service) pathHistory(ctx context.Context, entryID, dir, currentNoteID, 
 	}
 	if len(past) == 0 {
 		out.WriteString("primeira sessao em ")
-		out.WriteString(historyPath(dir))
+		out.WriteString(displayPath(dir, settings))
+		return capBytes(out.String(), maxHistoryBytes), nil
+	}
+	// Historico desligado: os totais continuam, sem cabecalho vazio.
+	if settings.HistorySessions <= 0 {
+		writeHistoryTotals(&out, len(past), items)
 		return capBytes(out.String(), maxHistoryBytes), nil
 	}
 	out.WriteString("sessoes anteriores em ")
-	out.WriteString(historyPath(dir))
+	out.WriteString(displayPath(dir, settings))
 	out.WriteString(":\n")
 
 	var lines strings.Builder
 	for i, session := range past {
-		if i >= historySessions {
+		if i >= settings.HistorySessions {
 			break
 		}
 		name := session.name
@@ -434,21 +442,26 @@ func (s *service) pathHistory(ctx context.Context, entryID, dir, currentNoteID, 
 		lines.WriteString(line)
 	}
 	out.WriteString(lines.String())
-	out.WriteString("\ntotal: ")
-	out.WriteString(sessionLabel(len(past)))
-	out.WriteString(", ")
-	out.WriteString(itemLabel(items))
+	writeHistoryTotals(&out, len(past), items)
 	return capBytes(out.String(), maxHistoryBytes), nil
 }
 
+// writeHistoryTotals appends the closing totals line of the history report.
+func writeHistoryTotals(out *strings.Builder, sessions, items int) {
+	out.WriteString("\ntotal: ")
+	out.WriteString(sessionLabel(sessions))
+	out.WriteString(", ")
+	out.WriteString(itemLabel(items))
+}
+
 // sessionState derives the state the client reads. An open session with more
-// than 12 hours without activity reads as interrupted; the fence is never
-// rewritten because of it.
-func sessionState(payload sessionPayload, note store.Note, now time.Time) string {
+// than the configured idle window without activity reads as interrupted; the
+// fence is never rewritten because of it.
+func sessionState(payload sessionPayload, note store.Note, now time.Time, idleLimit time.Duration) string {
 	if payload.State != sessionStateOpen {
 		return payload.State
 	}
-	if now.Sub(note.UpdatedAt) > sessionIdleLimit {
+	if now.Sub(note.UpdatedAt) > idleLimit {
 		return sessionStateInterrupted
 	}
 	return sessionStateOpen
@@ -502,6 +515,19 @@ func historyPath(dir string) string {
 		cut++
 	}
 	return "..." + value[cut:]
+}
+
+// displayPath is the folder as the report and the projects list show it. With
+// mcp_store_full_path off only the folder name appears: nothing displayed
+// reveals the absolute path, even though the note body still stores it.
+func displayPath(dir string, settings Settings) string {
+	if settings.StoreFullPath {
+		return historyPath(dir)
+	}
+	if base := path.Base(dir); base != "" && base != "." && base != "/" {
+		return historyPath(base)
+	}
+	return historyPath(dir)
 }
 
 // resolveSessionID picks the session identity: the id the client announces in

@@ -78,8 +78,12 @@ func (s *service) recordProjectSummary(ctx context.Context, req *mcp.CallToolReq
 	if s.store == nil {
 		return nil, nil, errors.New("diario indisponivel")
 	}
-	computer := computerFromRequest(req)
-	message, err := s.record(ctx, in, computer)
+	settings := SettingsFrom(ctx, s.store)
+	if settings.Paused {
+		return nil, nil, errPaused
+	}
+	computer := computerFromRequest(req, settings)
+	message, err := s.record(ctx, in, computer, settings)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -208,7 +212,7 @@ func sessionStamp(day time.Time) time.Time {
 }
 
 // record performs the upsert. It returns a short pt-BR message for the agent.
-func (s *service) record(ctx context.Context, in projectSummaryInput, computer string) (string, error) {
+func (s *service) record(ctx context.Context, in projectSummaryInput, computer string, settings Settings) (string, error) {
 	in, day, err := normalize(in)
 	if err != nil {
 		return "", err
@@ -229,7 +233,7 @@ func (s *service) record(ctx context.Context, in projectSummaryInput, computer s
 	if err != nil {
 		return "", err
 	}
-	block := renderBlock(in, entry.SummaryDetail, computer, marker, sessionStamp(day))
+	block := renderBlock(in, entry.SummaryDetail, computer, marker, sessionStamp(day), settings)
 
 	if found {
 		body := noteBody(note)
@@ -368,10 +372,14 @@ func summaryMarker(in projectSummaryInput, computer string) (string, error) {
 	return fmt.Sprintf("<!-- mcp:%s -->", hex.EncodeToString(sum[:])[:12]), nil
 }
 
-// computerFromRequest sanitizes the host header into a display name. Anything
-// outside [A-Za-z0-9_-] is dropped and the value never reaches a path or an
-// identity decision. A missing header reads as "unknown", the v1 behaviour.
-func computerFromRequest(req *mcp.CallToolRequest) string {
+// computerFromRequest is the computer name of a summary block: the configured
+// machine alias when there is one, otherwise the sanitized host header. A
+// missing header reads as "unknown", the v1 behaviour. The alias is already
+// trimmed and capped by the settings parser; the note renderer still escapes it.
+func computerFromRequest(req *mcp.CallToolRequest, settings Settings) string {
+	if alias := strings.TrimSpace(settings.MachineAlias); alias != "" {
+		return alias
+	}
 	if machine := machineFromRequest(req); machine != "" {
 		return machine
 	}

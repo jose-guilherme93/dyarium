@@ -182,6 +182,7 @@ func (s *Server) Handler() http.Handler {
 
 	protected.HandleFunc("GET /api/v1/settings", s.handleGetSettings)
 	protected.HandleFunc("PUT /api/v1/settings", s.handlePutSettings)
+	protected.HandleFunc("GET /api/v1/mcp/projects", s.handleMCPProjects)
 	protected.HandleFunc("GET /api/v1/analyze/models", s.handleListAnalyzeModels)
 	protected.HandleFunc("GET /api/v1/analyze/local", s.handleLocalAnalysis)
 	protected.HandleFunc("POST /api/v1/analyze/local", s.handleSetupLocalAnalysis)
