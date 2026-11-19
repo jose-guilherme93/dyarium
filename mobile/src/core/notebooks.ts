@@ -19,12 +19,15 @@ export const NOTEBOOK_COLORS = [
   '#EEC7DE',
 ] as const;
 
+/** Estado editorial de um livro. */
+export type BookStatus = 'drafting' | 'revising' | 'done';
+
 export interface Notebook {
   id: string;
   name: string;
   color: string;
   isDefault: boolean;
-  /** `book` esconde o caderno do app no v1; `mcp` e o caderno automatico de projetos; o sync continua guardando. */
+  /** `book` e o caderno de um livro; `mcp` e o caderno automatico de projetos; o sync continua guardando. */
   kind?: 'notes' | 'book' | 'mcp';
   createdAt: string;
   updatedAt: string;
@@ -32,6 +35,27 @@ export interface Notebook {
   dirty?: boolean;
   /** Ainda nao existe no servidor (criado offline). */
   synced?: boolean;
+  /* Metadados do livro. Vazios num caderno comum. */
+  subtitle?: string;
+  author?: string;
+  synopsis?: string;
+  language?: string;
+  goalWords?: number;
+  bookStatus?: BookStatus;
+  pageSize?: string;
+  pageMarginMm?: number;
+  bodyPx?: number;
+  bodyLeading?: number;
+  bodyFont?: string;
+  dailyGoalWords?: number;
+  deadline?: string;
+  hasCover?: boolean;
+  coverUpdatedAt?: string;
+}
+
+/** Normaliza o estado do livro; valor desconhecido cai no rascunho. */
+export function normalizeBookStatus(value?: string): BookStatus {
+  return value === 'revising' || value === 'done' ? value : 'drafting';
 }
 
 export function notebookColor(notebook: Pick<Notebook, 'color' | 'isDefault'>): string {
@@ -58,7 +82,22 @@ export function sameNotebooks(a: Notebook[], b: Notebook[]): boolean {
       left.createdAt !== right.createdAt ||
       left.updatedAt !== right.updatedAt ||
       Boolean(left.dirty) !== Boolean(right.dirty) ||
-      Boolean(left.synced) !== Boolean(right.synced)
+      Boolean(left.synced) !== Boolean(right.synced) ||
+      (left.subtitle ?? '') !== (right.subtitle ?? '') ||
+      (left.author ?? '') !== (right.author ?? '') ||
+      (left.synopsis ?? '') !== (right.synopsis ?? '') ||
+      (left.language ?? '') !== (right.language ?? '') ||
+      (left.goalWords ?? 0) !== (right.goalWords ?? 0) ||
+      (left.bookStatus ?? 'drafting') !== (right.bookStatus ?? 'drafting') ||
+      (left.pageSize ?? '') !== (right.pageSize ?? '') ||
+      (left.pageMarginMm ?? 0) !== (right.pageMarginMm ?? 0) ||
+      (left.bodyPx ?? 0) !== (right.bodyPx ?? 0) ||
+      (left.bodyLeading ?? 0) !== (right.bodyLeading ?? 0) ||
+      (left.bodyFont ?? '') !== (right.bodyFont ?? '') ||
+      (left.dailyGoalWords ?? 0) !== (right.dailyGoalWords ?? 0) ||
+      (left.deadline ?? '') !== (right.deadline ?? '') ||
+      Boolean(left.hasCover) !== Boolean(right.hasCover) ||
+      (left.coverUpdatedAt ?? '') !== (right.coverUpdatedAt ?? '')
     ) {
       return false;
     }
@@ -66,9 +105,17 @@ export function sameNotebooks(a: Notebook[], b: Notebook[]): boolean {
   return true;
 }
 
-/** Cadernos que o app mostra. Livros existem so no dashboard no v1. */
+/**
+ * Cadernos que a lista de notas mostra. Livros ficam de fora; a tela de livros
+ * usa `bookNotebooks`.
+ */
 export function noteNotebooks(notebooks: Notebook[]): Notebook[] {
   return notebooks.filter((notebook) => notebook.kind !== 'book');
+}
+
+/** Livros vivos, para a tela de livros. */
+export function bookNotebooks(notebooks: Notebook[]): Notebook[] {
+  return notebooks.filter((notebook) => notebook.kind === 'book');
 }
 
 /** Ids dos livros, para tirar as notas deles das metricas e da biblioteca. */

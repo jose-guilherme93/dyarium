@@ -230,6 +230,50 @@ describe('DyariumApi', () => {
     );
   });
 
+  it('updateNotebook envia os metadados do livro e omite os ausentes', async () => {
+    const { api, calls } = makeApi(() => resp(200, { id: 'nb_livro' }));
+
+    await api.updateNotebook('nb_livro', {
+      name: 'O nome do vento',
+      author: 'Ana',
+      goal_words: 90000,
+      page_size: '14x21',
+      daily_goal_words: 500,
+    });
+
+    expect(calls[0].init?.method).toBe('PATCH');
+    expect(calls[0].url).toBe('http://host:8080/api/v1/notebooks/nb_livro');
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+      name: 'O nome do vento',
+      author: 'Ana',
+      goal_words: 90000,
+      page_size: '14x21',
+      daily_goal_words: 500,
+    });
+  });
+
+  it('createNotebook leva kind e metadados sem enviar campos indefinidos', async () => {
+    const { api, calls } = makeApi(() => resp(201, { id: 'nb_livro' }));
+
+    await api.createNotebook({
+      id: 'nb_livro',
+      name: 'O nome do vento',
+      color: '',
+      kind: 'book',
+      goal_words: 90000,
+      subtitle: undefined,
+    });
+
+    expect(calls[0].init?.method).toBe('POST');
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+      id: 'nb_livro',
+      name: 'O nome do vento',
+      color: '',
+      kind: 'book',
+      goal_words: 90000,
+    });
+  });
+
   it('mapeia erro do servidor para ApiError com codigo', async () => {
     const { api } = makeApi(() =>
       resp(401, { error: { code: 'unauthorized', message: 'token invalido' } }),

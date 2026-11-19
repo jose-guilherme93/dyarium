@@ -7,10 +7,61 @@
  * conseguir recusar uma gravacao que sobrescreveria trabalho de outro lugar.
  */
 
-import type { ServerEntry, ServerNote } from './api';
+import type { ServerEntry, ServerNote, SyncManifestEntry } from './api';
 import { latestVersion, versionAfter, versionTime } from './hlc';
 import { DEFAULT_NOTEBOOK_ID } from './notebooks';
 import type { Recording, RecordingSource } from './types';
+
+/** Planejamento do capitulo como a nota local guarda. */
+export interface ServerChapterFields {
+  chapterKind?: string;
+  chapterPosition?: number;
+  chapterStatus?: string;
+  chapterGoalWords?: number;
+  chapterSynopsis?: string;
+  chapterBeats?: string;
+  chapterNotes?: string;
+}
+
+/** O que a nota local pode ter de planejamento (vazio/zero sao os defaults). */
+export type LocalChapterFields = Partial<ServerChapterFields>;
+
+/**
+ * Copia o planejamento do capitulo do servidor. Ausente continua ausente; vazio
+ * continua vazio (o dashboard e quem decide o valor canonico).
+ */
+export function chapterFieldsOf(
+  entry: ServerEntry | SyncManifestEntry,
+): ServerChapterFields {
+  return {
+    chapterKind: entry.chapter_kind,
+    chapterPosition: entry.chapter_position,
+    chapterStatus: entry.chapter_status,
+    chapterGoalWords: entry.chapter_goal_words,
+    chapterSynopsis: entry.chapter_synopsis,
+    chapterBeats: entry.chapter_beats,
+    chapterNotes: entry.chapter_notes,
+  };
+}
+
+/**
+ * O planejamento do servidor difere do que esta no aparelho? Vazio e ausente
+ * sao o mesmo default, para nota comum nao gerar escrita.
+ */
+export function chapterFieldsDiffer(
+  local: LocalChapterFields,
+  fields: ServerChapterFields,
+): boolean {
+  return (
+    (local.chapterKind ?? '') !== (fields.chapterKind ?? '') ||
+    (local.chapterPosition ?? 0) !== (fields.chapterPosition ?? 0) ||
+    (local.chapterStatus ?? '') !== (fields.chapterStatus ?? '') ||
+    (local.chapterGoalWords ?? 0) !== (fields.chapterGoalWords ?? 0) ||
+    (local.chapterSynopsis ?? '') !== (fields.chapterSynopsis ?? '') ||
+    (local.chapterBeats ?? '') !== (fields.chapterBeats ?? '') ||
+    (local.chapterNotes ?? '') !== (fields.chapterNotes ?? '')
+  );
+}
 
 function toSource(entry: ServerEntry): RecordingSource {
   // O servidor guarda `share` para audio importado; sem isso, audio e microfone
@@ -140,6 +191,7 @@ export function entryToRecording(entry: ServerEntry, note?: ServerNote): Recordi
     icon: entry.icon ?? '',
     notebookId: entry.notebook_id || DEFAULT_NOTEBOOK_ID,
     tags: entry.tags && entry.tags.length > 0 ? entry.tags : undefined,
+    ...chapterFieldsOf(entry),
     titleVersion: entry.versions?.title,
     recordedAtVersion: entry.versions?.recorded_at,
     bodyVersion: note?.body_version,

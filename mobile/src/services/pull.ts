@@ -16,6 +16,8 @@
 
 import { DyariumApi, type FetchLike, type ServerEntry } from '@/core/api';
 import {
+  chapterFieldsDiffer,
+  chapterFieldsOf,
   duplicateEntryRecordings,
   entryToRecording,
   isBlankServerEntry,
@@ -25,7 +27,12 @@ import {
 import type { Recording } from '@/core/types';
 
 import { observeVersion } from './clock';
-import { deleteRecordingRow, listRecordings, upsertRecording } from './db';
+import {
+  deleteRecordingRow,
+  listRecordings,
+  updateChapterFields,
+  upsertRecording,
+} from './db';
 import { refreshAuthorSettings } from './authorSettings';
 import { syncServerAnalyses } from './analysis';
 import { syncServerTranscripts } from './transcripts';
@@ -163,8 +170,18 @@ async function pullOnce(): Promise<number> {
         }
       }
       const merged = mergeServerNote(existing, entry, note);
+      const chapterFields = chapterFieldsOf(entry);
       if (merged) {
         await upsertRecording(merged);
+        // O planejamento do capitulo e editado no dashboard: o servidor vence.
+        if (chapterFieldsDiffer(merged, chapterFields)) {
+          await updateChapterFields(merged.id, chapterFields);
+        }
+        changed += 1;
+      } else if (chapterFieldsDiffer(existing, chapterFields)) {
+        // Instalacao antiga: a versao da entrada nao mudou, mas o capitulo
+        // nunca chegou ao SQLite. Grava so quando o planejamento difere.
+        await updateChapterFields(existing.id, chapterFields);
         changed += 1;
       }
       continue;
@@ -183,7 +200,9 @@ async function pullOnce(): Promise<number> {
     if (isBlankServerEntry(entry, note)) {
       continue;
     }
-    await upsertRecording(entryToRecording(entry, note));
+    const recording = entryToRecording(entry, note);
+    await upsertRecording(recording);
+    await updateChapterFields(recording.id, chapterFieldsOf(entry));
     changed += 1;
   }
 

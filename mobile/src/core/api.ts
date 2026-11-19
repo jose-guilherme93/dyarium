@@ -3,6 +3,7 @@
  * com um transporte falso. Nao ha estado aqui: cada chamada e independente.
  */
 
+import type { BookStatus } from './notebooks';
 import type {
   AuthorRole, ConflictField, ServerAudio, ServerConfig, TranscriptSegment } from './types';
 import { entityNameKey, type EntityRejection } from './entities';
@@ -126,6 +127,14 @@ export interface UpdateEntryBody {
   summary_detail?: 'concise' | 'full';
   /** Icone de pagina da entrada (emoji ou texto curto); vazio limpa. */
   icon?: string;
+  /* Planejamento do capitulo (modo escritor). */
+  chapter_kind?: 'chapter' | 'part' | 'front' | 'back' | '';
+  chapter_position?: number;
+  chapter_status?: 'draft' | 'revising' | 'done' | '';
+  chapter_goal_words?: number;
+  chapter_synopsis?: string;
+  chapter_beats?: string;
+  chapter_notes?: string;
   /** Versoes lidas pelo cliente: o servidor recusa o campo que ja mudou. */
   versions?: {
     title?: string;
@@ -293,6 +302,15 @@ export interface SyncManifestEntry {
   /** Quem criou a nota: `device` ou `server`. Proveniencia, nao permissao. */
   origin_kind?: 'device' | 'server' | '';
   origin_instance?: string;
+  /* Estrutura do livro: vazios numa nota comum. */
+  chapter_kind?: 'chapter' | 'part' | 'front' | 'back' | '';
+  chapter_position?: number;
+  chapter_status?: 'draft' | 'revising' | 'done' | '';
+  chapter_goal_words?: number;
+  chapter_synopsis?: string;
+  chapter_beats?: string;
+  chapter_notes?: string;
+  word_count?: number;
 }
 
 /** Manifesto paginado de um tipo de objeto em um ambiente. */
@@ -460,6 +478,15 @@ export interface ServerEntry {
   analysis_at?: string;
   /** O mesmo sinal para a transcricao (inclusive uma revisao feita no servidor). */
   transcript_at?: string;
+  /* Estrutura do livro: vazios numa nota comum. */
+  chapter_kind?: 'chapter' | 'part' | 'front' | 'back' | '';
+  chapter_position?: number;
+  chapter_status?: 'draft' | 'revising' | 'done' | '';
+  chapter_goal_words?: number;
+  chapter_synopsis?: string;
+  chapter_beats?: string;
+  chapter_notes?: string;
+  word_count?: number;
 }
 
 export interface AnalysisTheme {
@@ -561,10 +588,59 @@ export interface ServerNotebook {
   color: string;
   is_default: boolean;
   kind?: 'notes' | 'book' | 'mcp';
+  /* Metadados do livro; vazios num caderno comum. */
+  subtitle?: string;
+  author?: string;
+  synopsis?: string;
+  language?: string;
+  goal_words?: number;
+  book_status?: BookStatus;
+  page_size?: string;
+  page_margin_mm?: number;
+  body_px?: number;
+  body_leading?: number;
+  body_font?: string;
+  daily_goal_words?: number;
+  deadline?: string;
+  has_cover?: boolean;
+  cover_updated_at?: string | null;
+  /** Contagem de capitulos vivos e soma de palavras (so em livros). */
+  chapter_count?: number;
+  words?: number;
   entry_count: number;
   last_entry_at?: string;
   created_at: string;
   updated_at: string;
+}
+
+/** Metadados do livro aceitos ao criar/atualizar um caderno. */
+export interface NotebookBookFields {
+  subtitle?: string;
+  author?: string;
+  synopsis?: string;
+  language?: string;
+  goal_words?: number;
+  book_status?: BookStatus;
+  page_size?: string;
+  page_margin_mm?: number;
+  body_px?: number;
+  body_leading?: number;
+  body_font?: string;
+  daily_goal_words?: number;
+  deadline?: string;
+}
+
+export interface CreateNotebookInput extends NotebookBookFields {
+  id?: string;
+  name: string;
+  color: string;
+  kind?: 'notes' | 'book';
+}
+
+export interface UpdateNotebookInput extends NotebookBookFields {
+  name?: string;
+  color?: string;
+  kind?: 'notes' | 'book';
 }
 
 /** Nota (corpo rico) de uma entrada. `document` e o JSON de blocos do BlockNote. */
@@ -593,6 +669,15 @@ export interface ServerAttachment {
 
 function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.trim().replace(/\/+$/, '');
+}
+
+/** Remove chaves indefinidas: o corpo carrega so o que o chamador definiu. */
+function omitUndefined(value: object): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (item !== undefined) out[key] = item;
+  }
+  return out;
 }
 
 function isEntityKindValue(value: unknown): value is EntityKind {
@@ -1418,29 +1503,22 @@ export class DyariumApi {
   }
 
   /** Cria um caderno. O id do app (offline) e preservado quando enviado. */
-  async createNotebook(notebook: {
-    id?: string;
-    name: string;
-    color: string;
-  }): Promise<ServerNotebook> {
+  async createNotebook(notebook: CreateNotebookInput): Promise<ServerNotebook> {
     const res = await this.fetchImpl(this.url('/api/v1/notebooks'), {
       method: 'POST',
       headers: this.authHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify(notebook),
+      body: JSON.stringify(omitUndefined(notebook)),
     });
     if (!res.ok) throw await this.parseError(res);
     return JSON.parse(await res.text());
   }
 
-  /** Renomeia e/ou recolore um caderno. */
-  async updateNotebook(
-    id: string,
-    body: { name?: string; color?: string },
-  ): Promise<ServerNotebook> {
+  /** Renomeia/recolore um caderno e/ou grava os metadados do livro. */
+  async updateNotebook(id: string, body: UpdateNotebookInput): Promise<ServerNotebook> {
     const res = await this.fetchImpl(this.url(`/api/v1/notebooks/${id}`), {
       method: 'PATCH',
       headers: this.authHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify(body),
+      body: JSON.stringify(omitUndefined(body)),
     });
     if (!res.ok) throw await this.parseError(res);
     return JSON.parse(await res.text());
