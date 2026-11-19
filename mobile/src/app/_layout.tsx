@@ -42,6 +42,12 @@ const FONT_SOURCES = {
   // `src/theme/design.ts`, por isso o hifen.
   'SchibstedGrotesk-Medium': require('../../assets/fonts/SchibstedGrotesk-Medium.ttf'),
   'SchibstedGrotesk-SemiBold': require('../../assets/fonts/SchibstedGrotesk-SemiBold.ttf'),
+  // Fonte do corpo dos livros (Newsreader, a mesma do dashboard). O texto do
+  // capitulo em paginas usa esta familia; as outras opcoes do escritor ainda
+  // nao viajam no bundle.
+  Newsreader: require('../../assets/fonts/Newsreader-Regular.ttf'),
+  'Newsreader-Italic': require('../../assets/fonts/Newsreader-Italic.ttf'),
+  'Newsreader-SemiBold': require('../../assets/fonts/Newsreader-SemiBold.ttf'),
 } as const;
 
 /** Agenda os lembretes de escrita (precisa dos providers de biblioteca/config). */
@@ -83,6 +89,7 @@ function ThemedRoot() {
               {/* Desliza pro lado (como antes), mas na variante rapida do Android
                   (`ios_from_right` = 150 ms); o `slide_from_*` e fixo em 300 ms. */}
               <Stack.Screen name="note/[id]" options={{ animation: 'ios_from_right' }} />
+              <Stack.Screen name="books/[id]" options={{ animation: 'ios_from_right' }} />
               <Stack.Screen name="transcript/[id]" options={{ animation: 'ios_from_right' }} />
               <Stack.Screen name="record" options={{ animation: 'slide_from_bottom' }} />
               <Stack.Screen name="map" options={{ animation: 'slide_from_bottom' }} />

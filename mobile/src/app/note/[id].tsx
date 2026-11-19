@@ -24,6 +24,7 @@ import { ConflictDialog } from '@/components/ConflictDialog';
 import { AudioTransport } from '@/components/AudioTransport';
 import { AudioWaveform } from '@/components/AudioWaveform';
 import { FastModal } from '@/components/FastModal';
+import { ChapterPages, isChapterPaginable } from '@/components/ChapterPages';
 import { NoteBody } from '@/components/NoteBody';
 import type { NoteBodyHandle } from '@/components/noteBodyTypes';
 import { NoteMetaRow } from '@/components/NoteMetaRow';
@@ -39,6 +40,7 @@ import { CAPTURE_NOTEBOOK } from '@/core/transcriptCapture';
 import { Screen } from '@/components/Screen';
 import { STATUS_LABELS } from '@/components/StatusChip';
 import { SyncedTranscript } from '@/components/SyncedTranscript';
+import { bookPage, chapterNumber, CHAPTER_LABELS, formatWords } from '@/core/books';
 import { toNoteAnalysis, toServerAnalysis } from '@/core/analysis';
 import type { AnalysisRun } from '@/core/analysisRuns';
 import { CHUNK_PROMPT_VERSION } from '@/core/analysisChunk';
@@ -308,6 +310,8 @@ export default function NoteScreen() {
   // (anexos, pilha de audios, segmentos) entra depois, porque e o JSON mais
   // pesado da nota, mas o texto e o campo nativo ja estao no lugar.
   const [body, setBody] = useState(() => (note ? noteBodyWithAudio(note) : ''));
+  const isChapter = Boolean(note?.chapterKind);
+  const chapterPaginable = isChapter && isChapterPaginable(body);
   const [mediaReady, setMediaReady] = useState(false);
 
   // Pilha de audios do servidor. O app nao grava varios audios numa nota, mas
@@ -377,6 +381,15 @@ export default function NoteScreen() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const [processingOpen, setProcessingOpen] = useState(false);
+  const [chapterReading, setChapterReading] = useState(() => chapterPaginable);
+  const [chapterPages, setChapterPages] = useState<number | null>(null);
+  // O corpo pode chegar depois do primeiro render (nota vinda do sync): o
+  // capitulo passa a paginar assim que o texto existe, mas uma escolha manual
+  // do leitor (lapis) manda mais que a automacao.
+  const chapterToggledRef = useRef(false);
+  useEffect(() => {
+    if (chapterPaginable && !chapterToggledRef.current) setChapterReading(true);
+  }, [chapterPaginable]);
   // A folha de processamento se apresenta sozinha uma vez. Depois disso o
   // icone continua abrindo os interruptores, mas nada aparece sem ser chamado.
   const offeredRef = useRef(false);
@@ -1640,11 +1653,12 @@ export default function NoteScreen() {
   // Vindo do centro de atividade: abre a tela de analise ja com o resultado.
   const analysisParamDoneRef = useRef(false);
   useEffect(() => {
-    if (analysisParam !== '1' || !note?.id || analysisParamDoneRef.current) return undefined;
+    if (analysisParam !== '1' || !note?.id || analysisParamDoneRef.current || note?.chapterKind)
+      return undefined;
     analysisParamDoneRef.current = true;
     const timer = setTimeout(() => setAnalysisOpen(true), 350);
     return () => clearTimeout(timer);
-  }, [analysisParam, note?.id]);
+  }, [analysisParam, note?.id, note?.chapterKind]);
 
   // Contagens da ficha: calculadas quando a folha abre, com o texto que esta
   // na tela. Sem isso os campos "Palavras" e "Caracteres" ficavam em "..." para
@@ -1948,6 +1962,41 @@ export default function NoteScreen() {
   // inteiro nao precisa ser varrido de novo a cada letra.
   const bodyHasAudio = useMemo(() => /(^|\n)!audio\[/.test(body), [body]);
 
+  const bookNotebook = useMemo(
+    () => library.notebooks.find((n) => n.id === note?.notebookId && n.kind === 'book'),
+    [library.notebooks, note?.notebookId],
+  );
+  const bookRecordings = useMemo(
+    () => library.recordings.filter((r) => r.notebookId === note?.notebookId),
+    [library.recordings, note?.notebookId],
+  );
+  const chapterNumberValue = useMemo(
+    () => (note ? chapterNumber(bookRecordings, note.id) : 0),
+    [bookRecordings, note],
+  );
+  const chapterWords = useMemo(() => noteStats(body).words, [body]);
+  const chapterPage = useMemo(
+    () => (bookNotebook ? bookPage(bookNotebook) : bookPage({})),
+    [bookNotebook],
+  );
+  const chapterPageWidth = Math.max(1, windowWidth - spacing.xl * 2);
+  const chapterMetaText = useMemo(() => {
+    if (!isChapter || !note) return null;
+    const kindLabel =
+      CHAPTER_LABELS.kind[(note.chapterKind as keyof typeof CHAPTER_LABELS.kind) ?? 'chapter'];
+    const statusLabel =
+      CHAPTER_LABELS.status[(note.chapterStatus as keyof typeof CHAPTER_LABELS.status) ?? 'draft'];
+    const goal = note.chapterGoalWords ?? 0;
+    const pageSuffix =
+      chapterPaginable && chapterPages !== null && chapterPages > 0
+        ? ` · ${chapterPages} ${chapterPages === 1 ? 'página' : 'páginas'}`
+        : '';
+    if (goal > 0) {
+      return `${kindLabel} ${chapterNumberValue} · ${statusLabel} · ${formatWords(chapterWords)} / ${formatWords(goal)} palavras${pageSuffix}`;
+    }
+    return `${kindLabel} ${chapterNumberValue} · ${statusLabel} · ${formatWords(chapterWords)} palavras${pageSuffix}`;
+  }, [isChapter, note, chapterNumberValue, chapterWords, chapterPages, chapterPaginable]);
+
   if (!note) {
     // A lista pode ainda estar carregando (abertura por link/atalho). Mostrar
     // "nota nao encontrada" antes disso piscava na tela e parecia perda de dado.
@@ -2002,6 +2051,7 @@ export default function NoteScreen() {
       (notebook) => notebook.id === (note.notebookId ?? DEFAULT_NOTEBOOK_ID),
     ) ?? library.notebooks.find((notebook) => notebook.isDefault);
   const notebookName = currentNotebook?.name ?? 'Notas ao acaso';
+  const bookName = bookNotebook?.name ?? notebookName;
   // Caderno de capturas: a nota ganha o check de "feito" ao lado da data. Marcar
   // arquiva; desmarcar devolve para a lista do caderno.
   const isCaptureNotebook =
@@ -2053,37 +2103,133 @@ export default function NoteScreen() {
     }
   };
 
+  const chapterHeader = note ? (
+    <View style={styles.titleBlock}>
+      <TextInput
+        value={title}
+        onChangeText={handleTitleChange}
+        placeholder="título da nota"
+        placeholderTextColor={colors.textTertiary}
+        selectionColor={colors.accent}
+        multiline
+        scrollEnabled={false}
+        submitBehavior="blurAndSubmit"
+        returnKeyType="next"
+        editable={!chapterReading}
+        onSubmitEditing={() => editorRef.current?.focus()}
+        style={[
+          styles.titleInput,
+          { fontFamily: fontFamilyNative(typography.family, typography.weight) },
+          {
+            fontSize: titleSize,
+            lineHeight: Math.round(titleSize * 1.25),
+            // Inter ja tem um arquivo por peso; ver o comentario do corpo.
+            fontWeight: typography.family === 'system' ? 'normal' : '700',
+          },
+        ]}
+      />
+      {isChapter && chapterMetaText ? (
+        <Text style={styles.chapterMeta}>{chapterMetaText}</Text>
+      ) : null}
+      <View style={styles.dateRow}>
+        {noteDateShown ? <Text style={styles.noteDate}>{noteDateShown}</Text> : <View />}
+        {isCaptureNotebook && !isChapter ? (
+          <Press
+            style={styles.doneButton}
+            onPress={() => {
+              void Haptics.selectionAsync().catch(() => undefined);
+              void (note.archived
+                ? library.unarchiveNote(note.id)
+                : library.archiveNote(note.id));
+            }}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: Boolean(note.archived) }}
+            accessibilityLabel={note.archived ? 'Reabrir captura' : 'Concluir captura'}
+            hitSlop={6}
+          >
+            <Ionicons
+              name={note.archived ? 'checkmark-circle' : 'ellipse-outline'}
+              size={22}
+              color={note.archived ? colors.success : colors.textTertiary}
+            />
+          </Press>
+        ) : null}
+      </View>
+      <NoteMetaRow
+        note={note}
+        onAddTag={() => setTagPickerOpen(true)}
+        onRemoveTag={(tag) =>
+          void library.setNoteTags(
+            note.id,
+            (note.tags ?? []).filter((item) => item.toLowerCase() !== tag.toLowerCase()),
+          )
+        }
+      />
+    </View>
+  ) : null;
+
   return (
     <Screen>
       <View style={styles.header}>
-        <Press onPress={goBack} style={styles.iconButton} accessibilityLabel="Voltar">
+        <Press
+          onPress={goBack}
+          style={styles.iconButton}
+          accessibilityLabel={isChapter ? `Voltar para ${bookName}` : 'Voltar'}
+        >
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Press>
-        <Press
-          style={styles.headerNotebook}
-          onPress={() => setNotebookPickerOpen(true)}
-          accessibilityRole="button"
-          accessibilityLabel={`Caderno ${notebookName}. Trocar de caderno`}
-        >
-          <View
-            style={[
-              styles.headerNotebookDot,
-              { backgroundColor: currentNotebook?.color || colors.textTertiary },
-            ]}
-          />
-          <Text style={styles.headerNotebookName} numberOfLines={1}>
-            {notebookName}
-          </Text>
-          <Ionicons name="chevron-down" size={13} color={colors.textTertiary} />
-        </Press>
-        <View style={styles.headerActions}>
+        {isChapter ? (
+          <View style={styles.headerNotebook}>
+            <Ionicons name="book-outline" size={14} color={colors.textTertiary} />
+            <Text style={styles.headerNotebookName} numberOfLines={1}>
+              {bookName}
+            </Text>
+          </View>
+        ) : (
           <Press
-            style={styles.circleButton}
-            onPress={() => setAnalysisOpen(true)}
-            accessibilityLabel="Análise da nota"
+            style={styles.headerNotebook}
+            onPress={() => setNotebookPickerOpen(true)}
+            accessibilityRole="button"
+            accessibilityLabel={`Caderno ${notebookName}. Trocar de caderno`}
           >
-            <Ionicons name="sparkles-outline" size={17} color={colors.text} />
+            <View
+              style={[
+                styles.headerNotebookDot,
+                { backgroundColor: currentNotebook?.color || colors.textTertiary },
+              ]}
+            />
+            <Text style={styles.headerNotebookName} numberOfLines={1}>
+              {notebookName}
+            </Text>
+            <Ionicons name="chevron-down" size={13} color={colors.textTertiary} />
           </Press>
+        )}
+        <View style={styles.headerActions}>
+          {!isChapter && (
+            <Press
+              style={styles.circleButton}
+              onPress={() => setAnalysisOpen(true)}
+              accessibilityLabel="Análise da nota"
+            >
+              <Ionicons name="sparkles-outline" size={17} color={colors.text} />
+            </Press>
+          )}
+          {isChapter && chapterPaginable && (
+            <Press
+              style={styles.circleButton}
+              onPress={() => {
+                chapterToggledRef.current = true;
+                setChapterReading((value) => !value);
+              }}
+              accessibilityLabel={chapterReading ? 'Editar capítulo' : 'Ler capítulo'}
+            >
+              <Ionicons
+                name={chapterReading ? 'create-outline' : 'book-outline'}
+                size={18}
+                color={colors.text}
+              />
+            </Press>
+          )}
           <Press
             style={styles.circleButton}
             onPress={openMenu}
@@ -2094,77 +2240,26 @@ export default function NoteScreen() {
         </View>
       </View>
 
-      {/* A nota e uma peca so: titulo, data, tags, audios, transcricao e corpo
-          rolam juntos nesta ScrollView. O cabecalho (voltar/caderno/menu)
-          continua fixo. */}
-      <ScrollView
-        testID="note-scroll"
-        style={styles.scroll}
-        contentContainerStyle={styles.content}
-        // "always": o toque no campo nativo do editor tem de chegar nele,
-        // senao o teclado nao sobe e nao da para digitar.
-        keyboardShouldPersistTaps="always"
-        nestedScrollEnabled
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.titleBlock}>
-          <TextInput
-            value={title}
-            onChangeText={handleTitleChange}
-            placeholder="título da nota"
-            placeholderTextColor={colors.textTertiary}
-            selectionColor={colors.accent}
-            multiline
-            scrollEnabled={false}
-            submitBehavior="blurAndSubmit"
-            returnKeyType="next"
-            onSubmitEditing={() => editorRef.current?.focus()}
-            style={[
-              styles.titleInput,
-              { fontFamily: fontFamilyNative(typography.family, typography.weight) },
-              {
-                fontSize: titleSize,
-                lineHeight: Math.round(titleSize * 1.25),
-                // Inter ja tem um arquivo por peso; ver o comentario do corpo.
-                fontWeight: typography.family === 'system' ? 'normal' : '700',
-              },
-            ]}
-          />
-          <View style={styles.dateRow}>
-            {noteDateShown ? <Text style={styles.noteDate}>{noteDateShown}</Text> : <View />}
-            {isCaptureNotebook ? (
-              <Press
-                style={styles.doneButton}
-                onPress={() => {
-                  void Haptics.selectionAsync().catch(() => undefined);
-                  void (note.archived
-                    ? library.unarchiveNote(note.id)
-                    : library.archiveNote(note.id));
-                }}
-                accessibilityRole="checkbox"
-                accessibilityState={{ checked: Boolean(note.archived) }}
-                accessibilityLabel={note.archived ? 'Reabrir captura' : 'Concluir captura'}
-                hitSlop={6}
-              >
-                <Ionicons
-                  name={note.archived ? 'checkmark-circle' : 'ellipse-outline'}
-                  size={22}
-                  color={note.archived ? colors.success : colors.textTertiary}
-                />
-              </Press>
-            ) : null}
-          </View>
-          <NoteMetaRow
-            note={note}
-            onAddTag={() => setTagPickerOpen(true)}
-            onRemoveTag={(tag) =>
-              void library.setNoteTags(
-                note.id,
-                (note.tags ?? []).filter((item) => item.toLowerCase() !== tag.toLowerCase()),
-              )
-            }
-          />
-        </View>
+      {isChapter && chapterReading && chapterPaginable ? (
+        <ChapterPages
+          markdown={body}
+          page={chapterPage}
+          width={chapterPageWidth}
+          onPageCount={setChapterPages}
+          ListHeaderComponent={chapterHeader}
+        />
+      ) : (
+        <ScrollView
+          testID="note-scroll"
+          style={styles.scroll}
+          contentContainerStyle={styles.content}
+          // "always": o toque no campo nativo do editor tem de chegar nele,
+          // senao o teclado nao sobe e nao da para digitar.
+          keyboardShouldPersistTaps="always"
+          nestedScrollEnabled
+          showsVerticalScrollIndicator={false}
+        >
+          {chapterHeader}
 
         {/* Nota que nasceu de um trecho de transcricao: volta ao ponto exato. */}
         {note.captureSourceId && typeof note.captureStartMs === 'number' ? (
@@ -2297,7 +2392,7 @@ export default function NoteScreen() {
             ownSegments={note.transcriptSegments}
             transcribingWait={transcribingWait}
             transcribingPercent={transcribing && !transcribingWait ? transcriptionPercent : undefined}
-            canTranscribe={Boolean(hasAudio) && !hasFinalTranscript(note)}
+            canTranscribe={!isChapter && Boolean(hasAudio) && !hasFinalTranscript(note)}
             onTranscribe={() => void handleTranscribe()}
             onStopTranscribe={handleStopTranscribe}
             onPlayAudio={handlePlayAudio}
@@ -2307,8 +2402,10 @@ export default function NoteScreen() {
           />
         </View>
       </ScrollView>
+      )}
 
-      <View style={[styles.toolbarHost, { paddingBottom: keyboardPad }]}>
+      {!chapterReading && (
+        <View style={[styles.toolbarHost, { paddingBottom: keyboardPad }]}>
         <View style={styles.toolbar}>
           <ScrollView
             horizontal
@@ -2318,9 +2415,11 @@ export default function NoteScreen() {
           >
             {/* Gravar entra primeiro: e a acao mais usada dentro da nota. O
                 microfone do cabecalho saiu para nao duplicar o comando. */}
-            <ToolButton label="Gravar áudio" onPress={handleRecord}>
-              <Ionicons name="mic-outline" size={18} color={colors.text} />
-            </ToolButton>
+            {!isChapter && (
+              <ToolButton label="Gravar áudio" onPress={handleRecord}>
+                <Ionicons name="mic-outline" size={18} color={colors.text} />
+              </ToolButton>
+            )}
             <ToolButton label="Adicionar foto" onPress={() => void handleAddImage()}>
               <Ionicons name="image-outline" size={18} color={colors.text} />
             </ToolButton>
@@ -2371,6 +2470,7 @@ export default function NoteScreen() {
           />
         </View>
       </View>
+      )}
 
       {conflictOpen ? (
         <ConflictDialog
@@ -2613,6 +2713,10 @@ const baseStyles = defineStyles({
     color: baseColors.textSecondary,
     fontSize: fontSize.sm,
     paddingBottom: spacing.xs,
+  },
+  chapterMeta: {
+    color: baseColors.textTertiary,
+    fontSize: fontSize.sm,
   },
   dateRow: {
     flexDirection: 'row',

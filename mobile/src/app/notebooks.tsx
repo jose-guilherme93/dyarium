@@ -22,10 +22,17 @@ import {
 } from '@/core/notebookFilter';
 import {
   bookNotebookIds,
+  bookNotebooks,
   noteNotebooks,
   sortNotebooks,
   type Notebook,
 } from '@/core/notebooks';
+import {
+  bookProgress,
+  bookWords,
+  formatWords,
+  orderedChapters,
+} from '@/core/books';
 import { useLibrary } from '@/state/LibraryContext';
 import { useSettings } from '@/state/SettingsContext';
 import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
@@ -58,6 +65,10 @@ export default function NotebooksScreen() {
   const ordered = useMemo(
     () => sortNotebooks(shown, notebooksAlphabetical),
     [shown, notebooksAlphabetical],
+  );
+  const books = useMemo(
+    () => sortNotebooks(bookNotebooks(notebooks), notebooksAlphabetical),
+    [notebooks, notebooksAlphabetical],
   );
   const term = query.trim();
   const results = useMemo(() => searchRecordings(diaryRecordings, term), [diaryRecordings, term]);
@@ -219,6 +230,16 @@ export default function NotebooksScreen() {
           contentContainerStyle={styles.list}
           keyboardShouldPersistTaps="handled"
           ItemSeparatorComponent={() => <View style={styles.separator} />}
+          ListHeaderComponent={
+            books.length > 0 ? (
+              <View style={styles.bookSection}>
+                <Text style={styles.sectionLabel}>Livros</Text>
+                {books.map((notebook) => (
+                  <BookRow key={notebook.id} notebook={notebook} />
+                ))}
+              </View>
+            ) : null
+          }
           renderItem={({ item }) => (
             <NotebookRow
               notebook={item}
@@ -347,6 +368,83 @@ function NotebookRow({
   );
 }
 
+const BOOK_THUMB_WIDTH = 36;
+const BOOK_THUMB_HEIGHT = (BOOK_THUMB_WIDTH * 21) / 14;
+const DEFAULT_THUMB_COVER = '#b8c4c8';
+
+function coverInk(color: string): string {
+  const match = /^#([0-9a-f]{6})$/i.exec(color.trim());
+  if (!match) return '#f6f4ef';
+  const value = Number.parseInt(match[1], 16);
+  const r = (value >> 16) & 255;
+  const g = (value >> 8) & 255;
+  const b = value & 255;
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance > 0.62 ? '#211e1a' : '#f6f4ef';
+}
+
+function countLabel(count: number, singular: string, plural: string): string {
+  return `${formatWords(count)} ${count === 1 ? singular : plural}`;
+}
+
+function BookRow({ notebook }: { notebook: Notebook }) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+  const { recordings } = useLibrary();
+
+  const chapters = useMemo(
+    () => orderedChapters(recordings.filter((recording) => recording.notebookId === notebook.id)),
+    [recordings, notebook.id],
+  );
+  const chapterCount = chapters.filter((chapter) => chapter.chapterKind === 'chapter').length;
+  const words = bookWords(chapters);
+  const progress = bookProgress(words, notebook.goalWords ?? 0);
+
+  return (
+    <Press
+      onPress={() => push({ pathname: '/books/[id]', params: { id: notebook.id } })}
+      style={[styles.bookRow]}
+      accessibilityRole="button"
+      accessibilityLabel={`${notebook.name}, ${countLabel(chapterCount, 'capítulo', 'capítulos')}, ${countLabel(words, 'palavra', 'palavras')}`}
+    >
+      <View
+        style={[
+          styles.bookThumb,
+          {
+            width: BOOK_THUMB_WIDTH,
+            height: BOOK_THUMB_HEIGHT,
+            backgroundColor: notebook.color || DEFAULT_THUMB_COVER,
+          },
+        ]}
+      >
+        <Text style={[styles.bookThumbKind, { color: coverInk(notebook.color || DEFAULT_THUMB_COVER) }]}>
+          Livro
+        </Text>
+      </View>
+      <View style={styles.bookMain}>
+        <Text testID="book-name" style={styles.bookName} numberOfLines={1}>
+          {notebook.name}
+        </Text>
+        <Text testID="book-meta" style={styles.bookMeta}>
+          {countLabel(chapterCount, 'capítulo', 'capítulos')} · {countLabel(words, 'palavra', 'palavras')}
+        </Text>
+        <View style={styles.bookMeter}>
+          <View style={[styles.bookTrack, { backgroundColor: colors.border }]}>
+            <View
+              style={[
+                styles.bookFill,
+                { backgroundColor: colors.accent, width: `${progress}%` },
+              ]}
+            />
+          </View>
+          <Text style={styles.bookPercent}>{progress}%</Text>
+        </View>
+      </View>
+      <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
+    </Press>
+  );
+}
+
 const baseStyles = defineStyles({
   header: {
     flexDirection: 'row',
@@ -374,6 +472,54 @@ const baseStyles = defineStyles({
   searchInput: { flex: 1, color: baseColors.text, fontSize: fontSize.sm, paddingVertical: 0 },
   list: { paddingHorizontal: spacing.xl, paddingBottom: spacing.xxxl },
   separator: { height: spacing.sm },
+  bookSection: { marginBottom: spacing.md },
+  sectionLabel: {
+    color: baseColors.textSecondary,
+    fontSize: fontSize.xs,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginBottom: spacing.sm,
+  },
+  bookRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    backgroundColor: baseColors.surface,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  bookThumb: {
+    borderRadius: 3,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.xs,
+  },
+  bookThumbKind: {
+    fontSize: 7,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  bookMain: { flex: 1, gap: 2 },
+  bookName: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
+  bookMeta: { color: baseColors.textTertiary, fontSize: fontSize.xs },
+  bookMeter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: 4,
+    maxWidth: 220,
+  },
+  bookTrack: {
+    flex: 1,
+    height: 2,
+    borderRadius: 1,
+    overflow: 'hidden',
+  },
+  bookFill: { height: 2, borderRadius: 1 },
+  bookPercent: { color: baseColors.textTertiary, fontSize: fontSize.xs },
   row: {
     flexDirection: 'row',
     alignItems: 'center',

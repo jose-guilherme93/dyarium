@@ -108,6 +108,25 @@ jest.mock('@/components/NoteBody', () => {
   };
 });
 
+jest.mock('@/components/ChapterPages', () => ({
+  isChapterPaginable: (markdown: string) => typeof markdown === 'string' && markdown.trim().length > 0 && !markdown.includes('!'),
+  ChapterPages: function MockChapterPages(props: any) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const React = require('react');
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { View, Text } = require('react-native');
+    props.onPageCount(3);
+    const header =
+      typeof props.ListHeaderComponent === 'function'
+        ? React.createElement(props.ListHeaderComponent)
+        : props.ListHeaderComponent;
+    return React.createElement(View, { testID: 'chapter-pages' },
+      header,
+      React.createElement(Text, null, 'Páginas do capítulo'),
+    );
+  },
+}));
+
 jest.mock('@/state/LibraryContext', () => ({
   useLibrary: () => ({
     recordings: [mockNote],
@@ -850,6 +869,287 @@ describe('tela da nota', () => {
       mockUpdateNote.mockImplementation(async () => undefined);
       mockRefresh.mockImplementation(async () => undefined);
       mockKick.mockImplementation(() => undefined);
+    }
+  });
+
+  it('capitulo mostra meta do livro e esconde acoes de nota comum', async () => {
+    const library = jest.requireMock('@/state/LibraryContext') as {
+      useLibrary: () => Record<string, unknown>;
+    };
+    const original = library.useLibrary;
+    const chapter = {
+      ...mockNote,
+      notebookId: 'livro-1',
+      chapterKind: 'chapter' as const,
+      chapterPosition: 1,
+      chapterStatus: 'draft' as const,
+      chapterGoalWords: 2000,
+      text: 'corpo do capitulo',
+    };
+    library.useLibrary = () => ({
+      ...original(),
+      recordings: [chapter],
+      notebooks: [
+        {
+          id: 'livro-1',
+          name: 'Meu livro',
+          kind: 'book',
+          color: '',
+          isDefault: false,
+          createdAt: chapter.createdAt,
+          updatedAt: chapter.updatedAt,
+          dirty: false,
+          synced: true,
+        },
+      ],
+    });
+    try {
+      await renderNote();
+
+      expect(screen.getByText('Capítulo 1 · Rascunho · 3 / 2.000 palavras · 3 páginas')).toBeTruthy();
+      expect(screen.getByLabelText('Voltar para Meu livro')).toBeTruthy();
+      expect(screen.queryByTestId('note-body')).toBeNull();
+      expect(screen.queryByLabelText('Caderno Notas ao acaso. Trocar de caderno')).toBeNull();
+      expect(screen.queryByLabelText('Análise da nota')).toBeNull();
+      expect(screen.queryByLabelText('Concluir captura')).toBeNull();
+      expect(screen.queryByLabelText('Reabrir captura')).toBeNull();
+      expect(screen.queryByLabelText('Gravar áudio')).toBeNull();
+    } finally {
+      library.useLibrary = original;
+    }
+  });
+
+  it('capitulo sem meta de palavras mostra so a contagem', async () => {
+    const library = jest.requireMock('@/state/LibraryContext') as {
+      useLibrary: () => Record<string, unknown>;
+    };
+    const original = library.useLibrary;
+    const chapter = {
+      ...mockNote,
+      notebookId: 'livro-1',
+      chapterKind: 'chapter' as const,
+      chapterPosition: 1,
+      chapterStatus: 'draft' as const,
+      chapterGoalWords: 0,
+      text: 'texto curto',
+    };
+    library.useLibrary = () => ({
+      ...original(),
+      recordings: [chapter],
+      notebooks: [
+        {
+          id: 'livro-1',
+          name: 'Meu livro',
+          kind: 'book',
+          color: '',
+          isDefault: false,
+          createdAt: chapter.createdAt,
+          updatedAt: chapter.updatedAt,
+          dirty: false,
+          synced: true,
+        },
+      ],
+    });
+    try {
+      await renderNote();
+
+      expect(screen.getByText('Capítulo 1 · Rascunho · 2 palavras · 3 páginas')).toBeTruthy();
+    } finally {
+      library.useLibrary = original;
+    }
+  });
+
+  it('nota comum continua mostrando o seletor de caderno e analise', async () => {
+    await renderNote();
+
+    expect(screen.getByLabelText('Caderno Notas ao acaso. Trocar de caderno')).toBeTruthy();
+    expect(screen.getByLabelText('Análise da nota')).toBeTruthy();
+  });
+
+  it('capítulo abre em leitura e não monta o editor', async () => {
+    const library = jest.requireMock('@/state/LibraryContext') as {
+      useLibrary: () => Record<string, unknown>;
+    };
+    const original = library.useLibrary;
+    const chapter = {
+      ...mockNote,
+      notebookId: 'livro-1',
+      chapterKind: 'chapter' as const,
+      chapterPosition: 1,
+      chapterStatus: 'draft' as const,
+      chapterGoalWords: 2000,
+      text: 'corpo do capitulo',
+    };
+    library.useLibrary = () => ({
+      ...original(),
+      recordings: [chapter],
+      notebooks: [
+        {
+          id: 'livro-1',
+          name: 'Meu livro',
+          kind: 'book',
+          color: '',
+          isDefault: false,
+          createdAt: chapter.createdAt,
+          updatedAt: chapter.updatedAt,
+          dirty: false,
+          synced: true,
+        },
+      ],
+    });
+    try {
+      await renderNote();
+
+      expect(screen.getByTestId('chapter-pages')).toBeTruthy();
+      expect(screen.queryByTestId('note-body')).toBeNull();
+      expect(screen.getByLabelText('Editar capítulo')).toBeTruthy();
+    } finally {
+      library.useLibrary = original;
+    }
+  });
+
+  it('lápis alterna o capítulo para edição', async () => {
+    const library = jest.requireMock('@/state/LibraryContext') as {
+      useLibrary: () => Record<string, unknown>;
+    };
+    const original = library.useLibrary;
+    const chapter = {
+      ...mockNote,
+      notebookId: 'livro-1',
+      chapterKind: 'chapter' as const,
+      chapterPosition: 1,
+      chapterStatus: 'draft' as const,
+      chapterGoalWords: 2000,
+      text: 'corpo do capitulo',
+    };
+    library.useLibrary = () => ({
+      ...original(),
+      recordings: [chapter],
+      notebooks: [
+        {
+          id: 'livro-1',
+          name: 'Meu livro',
+          kind: 'book',
+          color: '',
+          isDefault: false,
+          createdAt: chapter.createdAt,
+          updatedAt: chapter.updatedAt,
+          dirty: false,
+          synced: true,
+        },
+      ],
+    });
+    try {
+      await renderNote();
+
+      expect(screen.queryByTestId('note-body')).toBeNull();
+
+      fireEvent.press(screen.getByLabelText('Editar capítulo'));
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(screen.getByTestId('note-body')).toBeTruthy();
+      expect(screen.getByLabelText('Ler capítulo')).toBeTruthy();
+    } finally {
+      library.useLibrary = original;
+    }
+  });
+
+  it('capítulo não paginável mantém editor e esconde o lápis', async () => {
+    const library = jest.requireMock('@/state/LibraryContext') as {
+      useLibrary: () => Record<string, unknown>;
+    };
+    const original = library.useLibrary;
+    const chapter = {
+      ...mockNote,
+      notebookId: 'livro-1',
+      chapterKind: 'chapter' as const,
+      chapterPosition: 1,
+      chapterStatus: 'draft' as const,
+      chapterGoalWords: 2000,
+      text: 'Texto.\n\n![foto](attachment:abc)',
+    };
+    library.useLibrary = () => ({
+      ...original(),
+      recordings: [chapter],
+      notebooks: [
+        {
+          id: 'livro-1',
+          name: 'Meu livro',
+          kind: 'book',
+          color: '',
+          isDefault: false,
+          createdAt: chapter.createdAt,
+          updatedAt: chapter.updatedAt,
+          dirty: false,
+          synced: true,
+        },
+      ],
+    });
+    try {
+      await renderNote();
+
+      expect(screen.getByTestId('note-body')).toBeTruthy();
+      expect(screen.queryByLabelText('Editar capítulo')).toBeNull();
+      expect(screen.queryByText(/página/)).toBeNull();
+    } finally {
+      library.useLibrary = original;
+    }
+  });
+
+  it('salva titulo e corpo ao editar um capitulo', async () => {
+    const library = jest.requireMock('@/state/LibraryContext') as {
+      useLibrary: () => Record<string, unknown>;
+    };
+    const original = library.useLibrary;
+    const chapter = {
+      ...mockNote,
+      notebookId: 'livro-1',
+      chapterKind: 'chapter' as const,
+      chapterPosition: 1,
+      chapterStatus: 'draft' as const,
+      chapterGoalWords: 2000,
+      text: 'corpo',
+    };
+    library.useLibrary = () => ({
+      ...original(),
+      recordings: [chapter],
+      notebooks: [
+        {
+          id: 'livro-1',
+          name: 'Meu livro',
+          kind: 'book',
+          color: '',
+          isDefault: false,
+          createdAt: chapter.createdAt,
+          updatedAt: chapter.updatedAt,
+          dirty: false,
+          synced: true,
+        },
+      ],
+    });
+    try {
+      await renderNote();
+
+      fireEvent.press(screen.getByLabelText('Editar capítulo'));
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      fireEvent.changeText(screen.getByPlaceholderText('título da nota'), 'Novo título');
+      fireEvent.changeText(screen.getByTestId('note-body'), 'novo corpo');
+      await act(async () => {
+        jest.advanceTimersByTime(2000);
+        await Promise.resolve();
+      });
+
+      expect(mockUpdateNote).toHaveBeenCalledWith(
+        'note-1',
+        expect.objectContaining({ title: 'Novo título', text: 'novo corpo' }),
+      );
+    } finally {
+      library.useLibrary = original;
     }
   });
 });
