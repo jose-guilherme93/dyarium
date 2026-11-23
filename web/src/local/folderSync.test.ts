@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const pasta = { name: "Dyarium" } as never;
 const remember = vi.fn();
@@ -13,10 +13,18 @@ vi.mock("./vaultLayout", () => ({
   readVaultManifest: () => lerManifest(),
 }));
 
-import { lastSyncSummary, markVaultDirty, runVaultSync } from "./folderSync";
+import {
+  flushVaultSync,
+  isVaultDirty,
+  lastSyncSummary,
+  markVaultDirty,
+  runVaultSync,
+  setVaultTarget,
+} from "./folderSync";
 
 beforeEach(() => {
   vi.useFakeTimers();
+  setVaultTarget(null);
   localStorage.clear();
   remember.mockReset();
   plano.mockReset();
@@ -26,6 +34,11 @@ beforeEach(() => {
   plano.mockResolvedValue({ manifest: {}, writes: [], deletes: [], unchanged: 0 });
   gravar.mockResolvedValue(undefined);
   lerManifest.mockResolvedValue(null);
+});
+
+afterEach(() => {
+  setVaultTarget(null);
+  vi.useRealTimers();
 });
 
 describe("backup automatico na pasta", () => {
@@ -45,6 +58,44 @@ describe("backup automatico na pasta", () => {
     const resultado = await runVaultSync();
     expect(resultado).toBeNull();
     expect(plano).not.toHaveBeenCalled();
+  });
+
+  it("flushVaultSync grava na hora o que estava sujo e limpa o timer", async () => {
+    plano.mockResolvedValueOnce({
+      manifest: {},
+      writes: [{ path: "notes/a.md.enc", bytes: new Uint8Array() }],
+      deletes: [],
+      unchanged: 0,
+    } as never);
+    markVaultDirty();
+    expect(isVaultDirty()).toBe(true);
+
+    const resultado = await flushVaultSync();
+
+    expect(plano).toHaveBeenCalledTimes(1);
+    expect(gravar).toHaveBeenCalledTimes(1);
+    expect(resultado).toMatchObject({ written: 1 });
+    expect(isVaultDirty()).toBe(false);
+
+    // O timer de dois minutos foi cancelado: nada roda de novo depois.
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(plano).toHaveBeenCalledTimes(1);
+    expect(gravar).toHaveBeenCalledTimes(1);
+  });
+
+  it("duas chamadas de flush compartilham a mesma escrita", async () => {
+    plano.mockResolvedValueOnce({
+      manifest: {},
+      writes: [{ path: "notes/a.md.enc", bytes: new Uint8Array() }],
+      deletes: [],
+      unchanged: 0,
+    } as never);
+
+    const [primeiro, segundo] = await Promise.all([flushVaultSync(), flushVaultSync()]);
+
+    expect(plano).toHaveBeenCalledTimes(1);
+    expect(gravar).toHaveBeenCalledTimes(1);
+    expect(primeiro).toBe(segundo);
   });
 
   it("grava o que mudou e guarda o resumo", async () => {
@@ -74,5 +125,65 @@ describe("backup automatico na pasta", () => {
     const chamadas = plano.mock.calls.length;
     await vi.advanceTimersByTimeAsync(120_000);
     expect(plano.mock.calls.length).toBeGreaterThan(chamadas);
+  });
+
+  it("usa o alvo configurado quando nenhuma pasta e passada", async () => {
+    const drive = { name: "Dyarium no Drive" };
+    setVaultTarget(async () => drive as never);
+    plano.mockResolvedValueOnce({
+      manifest: {},
+      writes: [{ path: "notes/a.md.enc", bytes: new Uint8Array() }],
+      deletes: [],
+      unchanged: 1,
+    } as never);
+
+    const resultado = await runVaultSync();
+
+    expect(resultado).toMatchObject({ written: 1, unchanged: 1 });
+    expect(gravar).toHaveBeenCalledTimes(1);
+    // Com alvo configurado, a pasta lembrada do File System Access nao entra.
+    expect(remember).not.toHaveBeenCalled();
+  });
+
+  it("pasta explicita vence o alvo configurado", async () => {
+    setVaultTarget(async () => null);
+
+    await runVaultSync(pasta);
+
+    expect(plano).toHaveBeenCalledTimes(1);
+  });
+
+  it("alvo nulo devolve null sem sujar o cofre", async () => {
+    setVaultTarget(async () => null);
+
+    expect(await runVaultSync()).toBeNull();
+    expect(plano).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(plano).not.toHaveBeenCalled();
+  });
+
+  it("flush com provider nulo limpa a sujeira e nao repete para sempre", async () => {
+    setVaultTarget(async () => null);
+    markVaultDirty();
+    expect(isVaultDirty()).toBe(true);
+
+    expect(await flushVaultSync()).toBeNull();
+
+    // Sem sessao nao ha destino: a sujeira some para o proximo refresh nao
+    // reagendar uma escrita que nunca teria para onde ir.
+    expect(isVaultDirty()).toBe(false);
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(plano).not.toHaveBeenCalled();
+  });
+
+  it("alvo que lanca devolve null sem reagendar", async () => {
+    setVaultTarget(async () => {
+      throw new Error("Drive nao conectado");
+    });
+
+    expect(await runVaultSync()).toBeNull();
+    expect(plano).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(plano).not.toHaveBeenCalled();
   });
 });

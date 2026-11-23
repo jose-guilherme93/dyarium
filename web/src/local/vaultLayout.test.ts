@@ -49,6 +49,7 @@ import { createLocalNotebook } from "./notebooks";
 import * as local from "./notes";
 import { ensureVaultCode, vaultKeyFromCode } from "./vault";
 import {
+  MANIFEST_FILE,
   planVaultLayout,
   readVaultFile,
   readVaultManifest,
@@ -60,6 +61,16 @@ import {
 
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
+
+/** Abre o envelope `iv||ciphertext` do cofre, como o navegador le um `.enc`. */
+async function decifrar(selado: Uint8Array, chave: CryptoKey): Promise<Uint8Array> {
+  const plain = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: selado.slice(0, 12) },
+    chave,
+    selado.slice(12),
+  );
+  return new Uint8Array(plain);
+}
 
 beforeEach(async () => {
   idb.stores.clear();
@@ -144,12 +155,17 @@ describe("layout do cofre em pasta", () => {
 
     const write = plano.writes.find((w) => w.path === caminho);
     expect(write).toBeDefined();
-    expect(decoder.decode(write!.bytes)).not.toContain("leite");
-    expect(write!.bytes.length).toBeGreaterThan(12);
+    // `size` e o envelope fechado: iv (12) + ciphertext + tag (16).
+    expect(write!.size).toBe(encoder.encode("leite, cafe e pao").length + 28);
+    const chave = await vaultKeyFromCode(await ensureVaultCode());
+    const selado = await write!.load();
+    expect(selado).toHaveLength(write!.size);
+    expect(decoder.decode(selado)).not.toContain("leite");
+    expect(decoder.decode(await decifrar(selado, chave))).toBe("leite, cafe e pao");
 
     const entrada = plano.manifest.files.find((arquivo) => arquivo.path === caminho);
     expect(entrada?.sha256).toMatch(/^[0-9a-f]{64}$/);
-    expect(plano.manifest.version).toBe(3);
+    expect(plano.manifest.version).toBe(4);
     expect(plano.manifest.vault_id).toMatch(/^[0-9a-f]{10}$/);
     expect(JSON.stringify(plano.manifest)).not.toContain("leite");
   });
@@ -246,7 +262,7 @@ describe("layout do cofre em pasta", () => {
     ).toEqual(["books/sonhos/001-sem-titulo.md.enc"]);
   });
 
-  it("audio local vira attachments/<id>.<ext>.enc", async () => {
+  it("audio local vira attachments/<id>.<ext>.enc com entry_id e content_type", async () => {
     const id = await novaNota("Com voz", "transcricao aqui");
     const anexo = await saveLocalAttachment(
       id,
@@ -256,8 +272,105 @@ describe("layout do cofre em pasta", () => {
 
     const entrada = plano.manifest.files.find((arquivo) => arquivo.kind === "attachment");
     expect(entrada?.path).toBe(`attachments/${anexo.id}.m4a.enc`);
+    expect(entrada?.entry_id).toBe(id);
+    expect(entrada?.content_type).toBe("audio/mp4");
     const write = plano.writes.find((w) => w.path === entrada?.path);
-    expect(decoder.decode(write!.bytes)).not.toContain("transcricao");
+    expect(write?.size).toBe(4 + 28);
+    const chave = await vaultKeyFromCode(await ensureVaultCode());
+    const selado = await write!.load();
+    expect(decoder.decode(selado)).not.toContain("transcricao");
+    expect([...(await decifrar(selado, chave))]).toEqual([1, 2, 3, 4]);
+    // O sha do anexo novo nasce com o selo, quando o blob e lido de verdade.
+    expect(entrada?.sha256).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("manifest v3 anterior reescreve tudo para entrar entry_id e content_type", async () => {
+    const id = await novaNota("Com voz", "texto");
+    const anexo = await saveLocalAttachment(
+      id,
+      new File([new Uint8Array([1, 2, 3, 4])], "voz.aac", { type: "audio/aac" }),
+    );
+    const planoV4 = await planVaultLayout();
+    const planoV3 = {
+      ...planoV4.manifest,
+      version: 3 as const,
+      files: planoV4.manifest.files.map((arquivo) => ({
+        path: arquivo.path,
+        id: arquivo.id,
+        kind: arquivo.kind,
+        sha256: arquivo.sha256,
+        size: arquivo.size,
+        updated_at: arquivo.updated_at,
+      })),
+    };
+
+    const novo = await planVaultLayout(planoV3);
+
+    // O sha continuaria casando, mas a base v3 nao serve: sem reescrever, o
+    // entry_id nunca entraria no manifest.
+    expect(novo.unchanged).toBe(0);
+    expect(novo.writes).toHaveLength(planoV4.manifest.files.length);
+    const entrada = novo.manifest.files.find((arquivo) => arquivo.id === anexo.id);
+    expect(entrada?.entry_id).toBe(id);
+    expect(entrada?.content_type).toBe("audio/aac");
+  });
+
+  it("segundo plano com o manifest v4 nao le o blob nem reescreve o anexo", async () => {
+    const id = await novaNota("Com voz", "texto");
+    const audio = new File([new Uint8Array([1, 2, 3, 4])], "voz.aac", { type: "audio/aac" });
+    const anexo = await saveLocalAttachment(id, audio);
+    const pasta = pastaEmMemoria();
+    await writeVaultLayout(pasta as unknown as FolderLike, await planVaultLayout());
+    const manifest = await readVaultManifest(pasta);
+    const ler = vi.spyOn(audio, "arrayBuffer");
+
+    const deNovo = await planVaultLayout(manifest);
+
+    // O caminho do anexo carrega o id e o conteudo nao muda: o sha do manifest
+    // anterior basta, sem abrir o audio a cada sync.
+    expect(ler).not.toHaveBeenCalled();
+    expect(deNovo.writes).toEqual([]);
+    expect(deNovo.unchanged).toBe(manifest!.files.length);
+    const entrada = deNovo.manifest.files.find((arquivo) => arquivo.id === anexo.id);
+    const anterior = manifest!.files.find((arquivo) => arquivo.id === anexo.id);
+    expect(entrada?.sha256).toBe(anterior?.sha256);
+    expect(entrada?.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(entrada?.entry_id).toBe(id);
+  });
+
+  it("plano com 2 anexos nao le os blobs; a escrita le um por vez", async () => {
+    const id = await novaNota("Dois audios", "transcricao");
+    const primeiro = new File([new Uint8Array([1, 2, 3])], "a.aac", { type: "audio/aac" });
+    const segundo = new File([new Uint8Array([4, 5, 6])], "b.m4a", { type: "audio/mp4" });
+    const anexoA = await saveLocalAttachment(id, primeiro);
+    const anexoB = await saveLocalAttachment(id, segundo);
+    const lerA = vi.spyOn(primeiro, "arrayBuffer");
+    const lerB = vi.spyOn(segundo, "arrayBuffer");
+
+    const plano = await planVaultLayout();
+    expect(lerA).not.toHaveBeenCalled();
+    expect(lerB).not.toHaveBeenCalled();
+    // O tamanho sai do `blob.size`, que nao carrega o conteudo.
+    expect(plano.writes.find((w) => w.path === `attachments/${anexoA.id}.aac.enc`)?.size).toBe(
+      3 + 28,
+    );
+    expect(plano.writes.find((w) => w.path === `attachments/${anexoB.id}.m4a.enc`)?.size).toBe(
+      3 + 28,
+    );
+
+    const pasta = pastaEmMemoria();
+    await writeVaultLayout(pasta as unknown as FolderLike, plano);
+    expect(lerA).toHaveBeenCalledTimes(1);
+    expect(lerB).toHaveBeenCalledTimes(1);
+
+    const manifest = await readVaultManifest(pasta);
+    const entradaA = manifest?.files.find(
+      (arquivo) => arquivo.path === `attachments/${anexoA.id}.aac.enc`,
+    );
+    expect(entradaA?.sha256).toMatch(/^[0-9a-f]{64}$/);
+    const chave = await vaultKeyFromCode(await ensureVaultCode());
+    const voltou = await readVaultFile(pasta, `attachments/${anexoB.id}.m4a.enc`, chave);
+    expect([...voltou]).toEqual([4, 5, 6]);
   });
 
   it("escreve na pasta, grava o manifest e le de volta o texto original", async () => {
@@ -287,7 +400,7 @@ describe("layout do cofre em pasta", () => {
 
     await writeVaultLayout(pasta as unknown as FolderLike, {
       manifest: {
-        version: 99 as unknown as 3,
+        version: 99 as unknown as 4,
         vault_id: "x",
         updated_at: "agora",
         files: [],
@@ -297,6 +410,30 @@ describe("layout do cofre em pasta", () => {
       unchanged: 0,
     });
     await expect(readVaultManifest(pasta)).rejects.toThrow(/versao de manifest desconhecida/);
+  });
+
+  it("le manifest v3 antigo e v4 novo", async () => {
+    const pasta = pastaEmMemoria();
+    const v3 = {
+      version: 3,
+      vault_id: "cofre-antigo",
+      updated_at: "2026-01-01T00:00:00.000Z",
+      files: [
+        {
+          path: "attachments/att_1.aac.enc",
+          id: "att_1",
+          kind: "attachment",
+          sha256: "0".repeat(64),
+          size: 10,
+          updated_at: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    };
+    pasta.arquivos.set(MANIFEST_FILE, encoder.encode(JSON.stringify(v3)));
+
+    const lido = await readVaultManifest(pasta);
+    expect(lido?.version).toBe(3);
+    expect(lido?.files[0].entry_id).toBeUndefined();
   });
 
   it("caminho com .. e recusado, para ler e para escrever", async () => {
@@ -309,7 +446,9 @@ describe("layout do cofre em pasta", () => {
     await expect(
       writeVaultLayout(pasta as unknown as FolderLike, {
         manifest: { version: 3, vault_id: "v", updated_at: "agora", files: [] },
-        writes: [{ path: "notes/../mal.md.enc", bytes: new Uint8Array(16) }],
+        writes: [
+          { path: "notes/../mal.md.enc", size: 16, load: async () => new Uint8Array(16) },
+        ],
         deletes: [],
         unchanged: 0,
       }),

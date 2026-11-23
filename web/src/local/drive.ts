@@ -19,6 +19,7 @@ const FOLDER_MIME = "application/vnd.google-apps.folder";
 export interface DriveFile {
   id: string;
   name: string;
+  mimeType?: string;
   modifiedTime?: string;
   size?: string;
 }
@@ -31,6 +32,7 @@ export interface DriveOptions {
 
 interface FileList {
   files?: DriveFile[];
+  nextPageToken?: string;
 }
 
 export class DriveClient {
@@ -40,7 +42,10 @@ export class DriveClient {
 
   constructor(accessToken: string, options: DriveOptions = {}) {
     this.#token = accessToken;
-    this.#fetch = options.fetchImpl ?? fetch;
+    // `fetch` precisa continuar preso ao global: chamado como `this.#fetch`,
+    // um `window.fetch` cru vira "illegal invocation" ("called on an object
+    // that does not implement interface Window") e toda chamada ao Drive morre.
+    this.#fetch = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.#signal = options.signal;
   }
 
@@ -61,15 +66,50 @@ export class DriveClient {
     return (await res.json()) as T;
   }
 
+  /**
+   * Lista paginada. O Drive devolve 100 arquivos por pagina; sem seguir
+   * `nextPageToken` um cofre com 400 notas pareceria ter 100, e arquivos
+   * apagados nunca seriam removidos (o sync so ve o que aparece na listagem).
+   */
+  async #queryAll(
+    q: string,
+    orderBy?: string,
+    limit?: number,
+  ): Promise<DriveFile[]> {
+    const saida: DriveFile[] = [];
+    let pageToken: string | undefined;
+    // Teto de seguranca: 50 paginas de 1000 cobrem qualquer cofre real.
+    for (let pagina = 0; pagina < 50; pagina += 1) {
+      const busca = new URLSearchParams({
+        q,
+        spaces: "drive",
+        pageSize: "1000",
+        fields: "nextPageToken,files(id,name,mimeType,modifiedTime,size)",
+      });
+      if (orderBy) busca.set("orderBy", orderBy);
+      if (pageToken) busca.set("pageToken", pageToken);
+      const lote = await this.#json<FileList>(`${API}/files?${busca.toString()}`);
+      saida.push(...(lote.files ?? []));
+      pageToken = lote.nextPageToken;
+      if (!pageToken) break;
+      if (limit && saida.length >= limit) break;
+    }
+    return limit ? saida.slice(0, limit) : saida;
+  }
+
   async #find(name: string, parent?: string): Promise<DriveFile | undefined> {
     const q = [
       `name = '${name.replace(/'/g, "\\'")}'`,
       "trashed = false",
       parent ? `'${parent}' in parents` : "'root' in parents",
     ].join(" and ");
-    const url = `${API}/files?q=${encodeURIComponent(q)}&fields=files(id,name,modifiedTime,size)&spaces=drive`;
-    const lista = await this.#json<FileList>(url);
-    return lista.files?.[0];
+    const lista = await this.#queryAll(q, undefined, 1);
+    return lista[0];
+  }
+
+  /** Filho direto da pasta com esse nome, se existir. */
+  findChild(folderId: string, name: string): Promise<DriveFile | undefined> {
+    return this.#find(name, folderId);
   }
 
   async #createFolder(name: string, parent?: string): Promise<string> {
@@ -98,9 +138,7 @@ export class DriveClient {
   }
 
   async list(folderId: string): Promise<DriveFile[]> {
-    const url = `${API}/files?q=${encodeURIComponent(`'${folderId}' in parents and trashed = false`)}&fields=files(id,name,modifiedTime,size)&orderBy=name`;
-    const lista = await this.#json<FileList>(url);
-    return lista.files ?? [];
+    return this.#queryAll(`'${folderId}' in parents and trashed = false`, "name");
   }
 
   /** Cria ou substitui o arquivo de mesmo nome na pasta. */
@@ -109,9 +147,13 @@ export class DriveClient {
     name: string,
     body: Uint8Array | string,
     mimeType = "application/octet-stream",
+    /** Id ja conhecido (cache da pasta): evita uma busca por arquivo antes de subir. */
+    options: { fileId?: string } = {},
   ): Promise<DriveFile> {
     const bytes = typeof body === "string" ? new TextEncoder().encode(body) : body;
-    const existente = await this.#find(name, folderId);
+    const existente = options.fileId
+      ? { id: options.fileId }
+      : await this.#find(name, folderId);
     const metadata = existente
       ? JSON.stringify({ name })
       : JSON.stringify({ name, parents: [folderId] });
@@ -151,6 +193,21 @@ export class DriveClient {
     });
     if (!res.ok) throw new Error(`Drive ${res.status} ao baixar ${fileId}`);
     return new Uint8Array(await res.arrayBuffer());
+  }
+
+  /**
+   * Apaga o arquivo de vez (nao manda para a lixeira). A resposta boa e 204 sem
+   * corpo, entao nao passa por `#json`, que sempre le JSON.
+   */
+  async remove(fileId: string): Promise<void> {
+    const res = await this.#fetch(`${API}/files/${fileId}`, {
+      method: "DELETE",
+      signal: this.#signal,
+      headers: { Authorization: `Bearer ${this.#token}` },
+    });
+    if (!res.ok) {
+      throw new Error(`Drive ${res.status}: ${await res.text().catch(() => "")}`.trim());
+    }
   }
 }
 

@@ -22,6 +22,11 @@
  * Cada cifrao usa IV aleatorio novo (12 bytes, AES-256-GCM, envelope
  * `iv||ciphertext`, o mesmo do backup) — nonce nunca e reutilizado, nem
  * derivado do conteudo ou do caminho.
+ *
+ * O plano nao guarda os bytes selados: cada `LayoutWrite` traz `load`, que le o
+ * conteudo (o blob do anexo, no IndexedDB), sela e devolve o envelope na hora
+ * da escrita. `writeVaultLayout` carrega um arquivo por vez, entao a primeira
+ * subida de um cofre grande nao segura todo o audio na memoria.
  */
 
 import type { FileHandleLike, FolderLike } from "./folder";
@@ -51,23 +56,41 @@ export interface VaultFileEntry {
   sha256: string;
   size: number;
   updated_at: string;
+  /** Nota dona do anexo; so anexos usam. */
+  entry_id?: string;
+  /** Tipo do byte do anexo, para reconstruir o blob na restauracao. */
+  content_type?: string;
 }
 
 export interface VaultManifest {
-  version: 3;
+  /**
+   * O plano novo sempre escreve 4. O 3 e aceito na leitura porque cofres
+   * antigos nao tem `entry_id` nem `content_type` nos anexos.
+   */
+  version: 3 | 4;
   vault_id: string;
   updated_at: string;
   files: VaultFileEntry[];
 }
 
+/** Um arquivo que falta escrever; o selo so nasce quando `load` e chamado. */
+export interface LayoutWrite {
+  path: string;
+  /** Tamanho do envelope (iv 12 + ciphertext + tag 16), sem selar. */
+  size: number;
+  /** Sela na hora da escrita; quem chama nao guarda o resultado. */
+  load: () => Promise<Uint8Array>;
+}
+
 export interface LayoutPlan {
   manifest: VaultManifest;
-  writes: { path: string; bytes: Uint8Array }[];
+  writes: LayoutWrite[];
   deletes: string[];
   unchanged: number;
 }
 
 const IV_BYTES = 12;
+const GCM_TAG_BYTES = 16;
 const SEM_TITULO = "sem-titulo";
 const encoder = new TextEncoder();
 
@@ -184,12 +207,32 @@ interface ArquivoPlano {
   path: string;
   id: string;
   kind: VaultFileEntry["kind"];
-  plain: Uint8Array;
+  /** Conteudo em claro ja em memoria (texto de nota/capitulo e capa). */
+  plain?: Uint8Array;
+  /** Anexo: o blob fica no IndexedDB e so e lido na escrita. */
+  blob?: Blob;
   updatedAt: string;
   /** Titulo de onde o slug do arquivo vem (nota, capitulo ou projeto). */
   titulo: string;
   /** Ordem dentro do caderno (livro/projeto); nota solta nao usa. */
   ordem?: number;
+  /** Anexo: a nota dona e o tipo do byte, guardados no manifest. */
+  entryId?: string;
+  contentType?: string;
+}
+
+/** Tamanho do conteudo em claro sem carrega-lo: o blob ja sabe o `size`. */
+function tamanhoEmClaro(arquivo: ArquivoPlano): number {
+  if (arquivo.plain) return arquivo.plain.length;
+  if (arquivo.blob) return arquivo.blob.size;
+  throw new Error(`arquivo do cofre sem conteudo: ${arquivo.path}`);
+}
+
+/** Bytes em claro: do texto em memoria ou do blob do anexo, quando carregado. */
+async function plainDe(arquivo: ArquivoPlano): Promise<Uint8Array> {
+  if (arquivo.plain) return arquivo.plain;
+  if (!arquivo.blob) throw new Error(`arquivo do cofre sem conteudo: ${arquivo.path}`);
+  return new Uint8Array(await arquivo.blob.arrayBuffer());
 }
 
 /** Ordem do capitulo: `chapter_position` primeiro, sem posicao vai pro fim. */
@@ -318,16 +361,22 @@ export async function planVaultLayout(previous?: VaultManifest | null): Promise<
       path: `attachments/${alocar("attachments", `${anexo.id}.${ext}`, ".enc")}`,
       id: anexo.id,
       kind: "attachment",
-      plain: new Uint8Array(await anexo.blob.arrayBuffer()),
+      // O blob nao e lido aqui: so `load`, um anexo por vez na escrita.
+      blob: anexo.blob,
       updatedAt: anexo.created_at,
       titulo: anexo.id,
+      entryId: anexo.entry_id,
+      contentType: anexo.content_type,
     });
   }
 
   // Deteccao de mudanca pelo sha do conteudo em claro (ver comentario do topo).
   // Manifest de outro cofre (outra chave) nao serve de base: tudo reescreve.
+  // v3 tambem nao serve: os anexos antigos nao tem `entry_id` nem
+  // `content_type`, e pular pelo sha deixaria o manifest sem esses campos para
+  // sempre.
   const anteriores = new Map<string, VaultFileEntry>();
-  if (previous && previous.version === 3 && previous.vault_id === vaultId) {
+  if (previous && previous.version === 4 && previous.vault_id === vaultId) {
     for (const arquivo of previous.files) {
       if (typeof arquivo.path === "string" && typeof arquivo.sha256 === "string") {
         anteriores.set(arquivo.path, arquivo);
@@ -336,25 +385,42 @@ export async function planVaultLayout(previous?: VaultManifest | null): Promise<
   }
 
   const entradas: VaultFileEntry[] = [];
-  const writes: { path: string; bytes: Uint8Array }[] = [];
+  const writes: LayoutWrite[] = [];
   let unchanged = 0;
   for (const arquivo of arquivos.sort((a, b) => a.path.localeCompare(b.path))) {
-    const digest = await sha256(arquivo.plain);
     const anterior = anteriores.get(arquivo.path);
+    // O anexo e imutavel e o caminho carrega o id, entao o sha do manifest
+    // anterior continua valendo: nao ha por que abrir o audio so para conferir.
+    // Texto e capa ja estao em memoria, e o sha sai do conteudo atual.
+    const digest = arquivo.plain ? await sha256(arquivo.plain) : (anterior?.sha256 ?? "");
     if (anterior && anterior.sha256 === digest) {
       unchanged += 1;
       entradas.push({ ...anterior, updated_at: arquivo.updatedAt });
       continue;
     }
-    const selado = await sealBytes(arquivo.plain, chave);
-    writes.push({ path: arquivo.path, bytes: selado });
-    entradas.push({
+    const tamanho = tamanhoEmClaro(arquivo) + IV_BYTES + GCM_TAG_BYTES;
+    const entrada: VaultFileEntry = {
       path: arquivo.path,
       id: arquivo.id,
       kind: arquivo.kind,
       sha256: digest,
-      size: selado.length,
+      size: tamanho,
       updated_at: arquivo.updatedAt,
+      ...(arquivo.entryId ? { entry_id: arquivo.entryId } : {}),
+      ...(arquivo.contentType ? { content_type: arquivo.contentType } : {}),
+    };
+    entradas.push(entrada);
+    writes.push({
+      path: arquivo.path,
+      size: tamanho,
+      // Sela so na escrita e deixa o envelope ser descartado antes do proximo
+      // arquivo. Anexo novo tem o sha do conteudo preenchido aqui, junto com o
+      // selo, antes de o manifest ser gravado.
+      load: async () => {
+        const plain = await plainDe(arquivo);
+        if (!arquivo.plain) entrada.sha256 = await sha256(plain);
+        return sealBytes(plain, chave);
+      },
     });
   }
   const atuais = new Set(entradas.map((entrada) => entrada.path));
@@ -362,7 +428,7 @@ export async function planVaultLayout(previous?: VaultManifest | null): Promise<
 
   return {
     manifest: {
-      version: 3,
+      version: 4,
       vault_id: vaultId,
       updated_at: new Date().toISOString(),
       files: entradas.sort((a, b) => a.path.localeCompare(b.path)),
@@ -389,8 +455,9 @@ async function subpasta(
 }
 
 /**
- * Grava o plano na pasta: subpastas quando o handle permitir, os `writes`, a
- * remocao dos `deletes` e, por ultimo, o `manifest.json` em claro.
+ * Grava o plano na pasta: subpastas quando o handle permitir, os `writes` (um
+ * arquivo selado por vez), a remocao dos `deletes` e, por ultimo, o
+ * `manifest.json` em claro.
  */
 export async function writeVaultLayout(folder: FolderLike, plan: LayoutPlan): Promise<void> {
   const root = folder as VaultFolderLike;
@@ -405,8 +472,11 @@ export async function writeVaultLayout(folder: FolderLike, plan: LayoutPlan): Pr
     const segmentos = write.path.split("/");
     const pasta = await subpasta(root, segmentos.slice(0, -1), true);
     const handle = await pasta.getFileHandle(segmentos[segmentos.length - 1], { create: true });
+    // Sela e grava um arquivo por vez: o envelope vive so nesta volta do laco,
+    // entao o audio do proximo anexo so e carregado depois deste ser liberado.
+    const sealed = await write.load();
     const writable = await handle.createWritable();
-    await writable.write(write.bytes);
+    await writable.write(sealed);
     await writable.close();
   }
   for (const path of plan.deletes) {
@@ -434,7 +504,7 @@ export async function readVaultManifest(folder: FolderLike): Promise<VaultManife
   }
   const texto = await (await handle.getFile()).text();
   const lido = JSON.parse(texto) as VaultManifest;
-  if (lido.version !== 3) {
+  if (lido.version !== 3 && lido.version !== 4) {
     throw new Error(`versao de manifest desconhecida: ${String(lido.version)}`);
   }
   if (!Array.isArray(lido.files)) throw new Error("manifest sem lista de arquivos");

@@ -84,10 +84,25 @@ export async function requestDriveToken(): Promise<DriveToken> {
   if (!oauth2) throw new Error("login do Google indisponivel neste navegador");
 
   return new Promise<DriveToken>((resolve, reject) => {
+    let encerrado = false;
+    // Janela fechada ou bloqueada nao chama nem o callback nem o error_callback.
+    // Sem prazo, a tela ficaria "conectando" para sempre; com prazo, o erro
+    // aparece e o usuario tenta de novo.
+    const prazo = setTimeout(() => {
+      if (encerrado) return;
+      encerrado = true;
+      reject(new Error("o login do Google nao respondeu; a janela foi bloqueada ou fechada"));
+    }, 120_000);
+    const encerrar = (): void => {
+      encerrado = true;
+      clearTimeout(prazo);
+    };
     const client = oauth2.initTokenClient({
       client_id: clientId,
       scope: DRIVE_SCOPE,
       callback: (response) => {
+        if (encerrado) return;
+        encerrar();
         const token = response.access_token;
         if (!token) {
           reject(new Error(response.error_description || response.error || "login recusado"));
@@ -96,7 +111,11 @@ export async function requestDriveToken(): Promise<DriveToken> {
         const segundos = response.expires_in ?? 3600;
         resolve({ accessToken: token, expiresAt: Date.now() + segundos * 1000 });
       },
-      error_callback: (error) => reject(new Error(error.message || error.type || "login cancelado")),
+      error_callback: (error) => {
+        if (encerrado) return;
+        encerrar();
+        reject(new Error(error.message || error.type || "login cancelado"));
+      },
     });
     client.requestAccessToken({ prompt: "" });
   });
@@ -106,3 +125,18 @@ export async function requestDriveToken(): Promise<DriveToken> {
 export function tokenIsFresh(token: DriveToken | null): token is DriveToken {
   return !!token && token.expiresAt - Date.now() > 60_000;
 }
+
+/**
+ * Carrega o script do GIS antes do clique.
+ *
+ * O navegador so abre a janela do Google dentro do gesto do usuario. Baixar o
+ * script no clique gasta esse gesto numa requisicao de rede e o popup pode ser
+ * bloqueado — a janela nao aparece e o callback nunca chega, que na tela parece
+ * "nada aconteceu". Carregando antes, o clique chega ao `requestAccessToken`
+ * ainda dentro do gesto.
+ */
+export function preloadGoogle(): Promise<void> {
+  if (!googleClientId()) return Promise.resolve();
+  return loadGis().catch(() => undefined);
+}
+

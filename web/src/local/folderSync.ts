@@ -7,8 +7,13 @@
  * fechamento da aba. Sem pasta escolhida (ou sem permissao), nada acontece.
  */
 
-import { rememberFolder, type FolderLike } from "./folder";
-import { planVaultLayout, readVaultManifest, writeVaultLayout } from "./vaultLayout";
+import { rememberFolder } from "./folder";
+import {
+  planVaultLayout,
+  readVaultManifest,
+  writeVaultLayout,
+  type VaultFolderLike,
+} from "./vaultLayout";
 
 const LAST_KEY = "dyarium.vault.lastSync";
 const SILENCE_MS = 2 * 60 * 1000;
@@ -27,6 +32,19 @@ let dirty = false;
 let primeiraSujeira = 0;
 let emAndamento: Promise<SyncResult | null> | null = null;
 let ultimo: SyncResult | null = null;
+/**
+ * De onde vem a pasta quando ninguem passa uma: o File System Access (pasta
+ * lembrada) ou um provedor de nuvem, como a sessao do Drive. O provedor pode
+ * devolver null quando nao ha sessao; nesse caso o sync so termina.
+ */
+let targetProvider: (() => Promise<VaultFolderLike | null>) | null = null;
+
+/** Troca a origem do alvo padrao; `null` volta para a pasta lembrada. */
+export function setVaultTarget(
+  provider: (() => Promise<VaultFolderLike | null>) | null,
+): void {
+  targetProvider = provider;
+}
 
 function agora(): string {
   return new Date().toISOString();
@@ -75,13 +93,52 @@ export function markVaultDirty(): void {
   }, SILENCE_MS);
 }
 
-/** Grava o cofre agora, se houver pasta lembrada e algo pendente. */
-export async function runVaultSync(folder?: FolderLike | null): Promise<SyncResult | null> {
-  if (emAndamento) return emAndamento;
-  const alvo = folder ?? (await rememberFolder());
-  if (!alvo) return null;
+/** Ha escrita local esperando o proximo backup. */
+export function isVaultDirty(): boolean {
+  return dirty;
+}
 
-  emAndamento = (async () => {
+/**
+ * Forca a gravacao agora, sem esperar os dois minutos de silencio.
+ *
+ * Reaproveita a mesma fila do `runVaultSync` (uma escrita por vez) e cancela o
+ * timer pendente: quem acabou de importar um cofre nao fica esperando.
+ */
+export async function flushVaultSync(): Promise<SyncResult | null> {
+  limparTimer();
+  return runVaultSync();
+}
+
+/** Grava o cofre agora, se houver pasta lembrada e algo pendente. */
+export function runVaultSync(folder?: VaultFolderLike | null): Promise<SyncResult | null> {
+  if (emAndamento) return emAndamento;
+
+  // A fila e reservada antes de qualquer `await`: dois chamadores no mesmo
+  // tique (um flush e um timer, por exemplo) veem a mesma escrita.
+  const execucao = (async (): Promise<SyncResult | null> => {
+    let alvo: VaultFolderLike | null;
+    if (folder) {
+      alvo = folder;
+    } else if (targetProvider) {
+      try {
+        alvo = await targetProvider();
+      } catch {
+        // Sem sessao (ou sessao vencida) nao ha o que gravar nem por que reagendar.
+        return null;
+      }
+    } else {
+      alvo = await rememberFolder();
+    }
+    if (!alvo) {
+      // Sem destino (nem pasta lembrada, nem sessao do Drive) nao ha o que
+      // gravar. Limpar a sujeira evita que a proxima abertura do app agende
+      // uma escrita que nunca teria para onde ir.
+      dirty = false;
+      primeiraSujeira = 0;
+      limparTimer();
+      return null;
+    }
+
     try {
       const previous = await readVaultManifest(alvo);
       const plan = await planVaultLayout(previous);
@@ -117,10 +174,17 @@ export async function runVaultSync(folder?: FolderLike | null): Promise<SyncResu
         }, SILENCE_MS);
       }
       throw error;
-    } finally {
-      emAndamento = null;
     }
   })();
 
-  return emAndamento;
+  emAndamento = execucao;
+  void execucao.then(
+    () => {
+      emAndamento = null;
+    },
+    () => {
+      emAndamento = null;
+    },
+  );
+  return execucao;
 }
