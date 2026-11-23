@@ -22,6 +22,7 @@ import type {
   ChapterKind,
   ChapterStatus,
   EntityDetail,
+  EntityKind,
   EntityMention,
   EntityRejection,
   EntitySummary,
@@ -915,9 +916,22 @@ const remoteApi = {
 /**
  * Sem token nao existe servidor: a interface fala com o cofre do navegador.
  * As assinaturas sao as mesmas, entao nenhuma tela sabe a diferenca.
+ *
+ * Em desenvolvimento (`VITE_LOCAL_ONLY=1`) o cofre do navegador vale mesmo
+ * com um token guardado: sem isto a tela mostrava as notas do servidor e o
+ * cofre do Drive era montado do banco local vazio — tudo "0 gravadas".
  */
 export function isLocalMode(): boolean {
+  if (import.meta.env.VITE_LOCAL_ONLY === "1") return true;
   return !getToken();
+}
+
+/** Carrega o construtor do mapa so quando alguem abre o mapa. */
+let graphLocalModulo: Promise<typeof import("./local/graphLocal")> | null = null;
+
+function graphLocal(): Promise<typeof import("./local/graphLocal")> {
+  graphLocalModulo ??= import("./local/graphLocal");
+  return graphLocalModulo;
 }
 
 const localApi: Partial<typeof remoteApi> = {
@@ -1042,15 +1056,33 @@ const localApi: Partial<typeof remoteApi> = {
     attachments: await localFiles.listLocalAttachments(entryId),
   }),
   deleteAttachment: (id) => localFiles.deleteLocalAttachment(id),
-  // O que existe so com servidor responde vazio: a tela mostra estado vazio,
-  // nao um erro de rede.
-  getGraph: async () => ({
-    center: { id: "user", kind: "user" as const, label: "", mentions: 0, notes: 0 },
-    nodes: [],
-    edges: [],
-    total_nodes: 0,
-    total_edges: 0,
-    truncated: false,
+  // O grafo do cofre e derivado das analises locais; sem elas o mapa fica
+  // vazio, nunca um erro de rede. O import e tardio para a tela de notas nao
+  // carregar o construtor do mapa so por abrir.
+  getGraph: (
+    options: {
+      notebookId?: string;
+      from?: string;
+      to?: string;
+      focus?: string;
+      excludeBooks?: boolean;
+    } = {},
+  ) =>
+    graphLocal().then((modulo) =>
+      modulo.buildLocalGraph({
+        notebookId: options.notebookId,
+        period: options.from,
+        focus: options.focus,
+        excludeBooks: options.excludeBooks,
+      }),
+    ),
+  getEntity: async (kind, name) => {
+    const detail = await (await graphLocal()).buildLocalEntityDetail(kind as EntityKind, name);
+    if (!detail) throw new ApiError("Entidade nao encontrada.", 404, "not_found");
+    return detail;
+  },
+  getEntityMentions: async (kind, name) => ({
+    mentions: await (await graphLocal()).buildLocalEntityMentions(kind as EntityKind, name),
   }),
   getMood: async () => ({ mood: [] }),
   listActivities: async () => ({ activities: [] }),

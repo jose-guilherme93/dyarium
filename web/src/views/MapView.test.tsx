@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MapView } from "./MapView";
-import { api } from "../api";
+import { api, isLocalMode } from "../api";
 import { ToastProvider } from "../components/Toasts";
 import type { GraphResponse, Settings } from "../types";
 
 vi.mock("../api", () => ({
+  isLocalMode: vi.fn(() => false),
   api: {
     getGraph: vi.fn(),
     listNotebooks: vi.fn(),
@@ -483,5 +484,29 @@ describe("MapView insights", () => {
       },
       { timeout: 3000 },
     );
+  });
+
+  it("no cofre esconde a curadoria e mantem leitura, foco e filtros", async () => {
+    vi.mocked(isLocalMode).mockReturnValue(true);
+    render(<MapView refreshKey={0} onOpen={() => undefined} />);
+
+    // O que e leitura continua: filtros e abas do trilho.
+    expect(await screen.findByRole("tab", { name: /Lugares/ })).toBeInTheDocument();
+    expect(screen.getByLabelText("Caderno do mapa")).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /Memória/ })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: /Pessoas/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Ana/ }));
+
+    expect(await screen.findByRole("heading", { name: "Ana" })).toBeInTheDocument();
+    // O que depende de servidor de entidades some.
+    expect(screen.queryByRole("button", { name: "Editar entidade" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Ícone da bola" })).not.toBeInTheDocument();
+    expect(screen.queryByText("não é isso?")).not.toBeInTheDocument();
+    // Expandir (foco) e o zoom seguem valendo.
+    expect(await screen.findByRole("button", { name: "Expandir" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Aproximar" })).toBeInTheDocument();
+
+    vi.mocked(isLocalMode).mockReturnValue(false);
   });
 });

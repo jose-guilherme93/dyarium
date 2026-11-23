@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api } from "../api";
+import { api, isLocalMode } from "../api";
 import { ContextMenu, type ContextMenuItem } from "../components/ContextMenu";
 import { FitIcon, InsightsIcon, PencilIcon, SearchIcon, TrashIcon } from "../components/icons";
 import { Spinner } from "../components/Status";
@@ -352,6 +352,10 @@ function formatMs(ms: number): string {
 // stops once it settles; the server only sends nodes and edges.
 export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewProps) {
   const { notify } = useToast();
+  // No cofre nao existe servidor de entidades: a curadoria (renomear, fundir,
+  // icone, tipo, apagar, "sou eu") nao tem onde gravar, entao fica escondida.
+  // Leitura, zoom, foco e filtros continuam.
+  const localMode = isLocalMode();
   const [data, setData] = useState<GraphResponse | null>(null);
   const [graphVersion, setGraphVersion] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -484,6 +488,10 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
     ? (iconOverrides[entityNode.id] ?? entityNode.icon ?? "")
     : "";
   const hasNotes = Boolean(data?.nodes.some((node) => node.kind === "note"));
+  // Memoria e curadoria: sem servidor nao ha onde gravar rejeicoes nem rotulos.
+  const insightTabs = localMode
+    ? INSIGHT_TABS.filter((tab) => tab.id !== "memory")
+    : INSIGHT_TABS;
   const mentionGroups = useMemo(() => {
     const groups = new Map<
       string,
@@ -1505,10 +1513,11 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
     appliedFocusRef.current = key;
     setInsightTab(focus.kind);
     selectEntity(node);
-    // O lapis da ficha pede o editor ja no seletor de tipo.
-    if (focus.edit === "kind") openEditorFor(node, "kind");
+    // O lapis da ficha pede o editor ja no seletor de tipo. No cofre nao ha
+    // curadoria: o foco so acende e centraliza a bola.
+    if (focus.edit === "kind" && !localMode) openEditorFor(node, "kind");
     onFocusApplied?.();
-  }, [focus, data, selectEntity, onFocusApplied]);
+  }, [focus, data, selectEntity, onFocusApplied, localMode]);
 
   useEffect(() => {
     const wrap = wrapRef.current;
@@ -2174,7 +2183,7 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
               </button>
             </header>
             <div className="map-detail-title">
-              {entityNode && (
+              {entityNode && !localMode && (
                 <div className="map-icon-anchor" ref={iconBoxRef}>
                   <button
                     type="button"
@@ -2233,7 +2242,7 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
                 </div>
               )}
               <h2>{selection.label || "Sem título"}</h2>
-              {entityNode && (
+              {entityNode && !localMode && (
                 <button
                   ref={pencilRef}
                   type="button"
@@ -2250,7 +2259,7 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
             {entityNode && detail?.label && !editorOpen && (
               <p className="map-detail-label">{detail.label}</p>
             )}
-            {entityNode && !editorOpen && (
+            {entityNode && !editorOpen && !localMode && (
               <button
                 type="button"
                 className="map-not-this"
@@ -2261,7 +2270,7 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
                 não é isso?
               </button>
             )}
-            {editorOpen && entityNode && (
+            {editorOpen && entityNode && !localMode && (
               <div className="map-editor" role="group" aria-label="Editor da entidade">
                 <label className="map-editor-field">
                   Nome real
@@ -2599,7 +2608,7 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
               </span>
             </header>
             <div className="map-insights-tabs" role="tablist" aria-label="Tipo de insight">
-              {INSIGHT_TABS.map((tab) => (
+              {insightTabs.map((tab) => (
                 <button
                   key={tab.id}
                   type="button"
@@ -2629,7 +2638,7 @@ export function MapView({ refreshKey, onOpen, focus, onFocusApplied }: MapViewPr
               </p>
             ) : insightEntities.length === 0 ? (
               <p className="map-insights-empty">
-                0 {INSIGHT_TABS.find((tab) => tab.id === insightTab)?.label.toLocaleLowerCase()}
+                0 {insightTabs.find((tab) => tab.id === insightTab)?.label.toLocaleLowerCase()}
               </p>
             ) : (
               <ul className="map-insights-list stagger-in">
