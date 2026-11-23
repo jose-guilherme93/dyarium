@@ -64,6 +64,29 @@ describe("backup em pasta", () => {
     expect(await readVaultFromFolder(folder)).toEqual({ code, sealed: new Uint8Array([9, 9]) });
   });
 
+  it("grava e le o state.enc ao lado da chave e do backup", async () => {
+    const folder = memoryFolder();
+    const code = await newRecoveryCode();
+    await writeVaultToFolder(folder, code, new Uint8Array([1, 2]), new Uint8Array([7, 8, 9]));
+
+    expect([...folder.files.keys()].sort()).toEqual(["backup.enc", "key.txt", "state.enc"]);
+    expect(await readVaultFromFolder(folder)).toEqual({
+      code,
+      sealed: new Uint8Array([1, 2]),
+      state: new Uint8Array([7, 8, 9]),
+    });
+  });
+
+  it("pasta antiga sem state.enc continua abrindo so com key e backup", async () => {
+    const folder = memoryFolder();
+    const code = await newRecoveryCode();
+    await writeVaultToFolder(folder, code, new Uint8Array([3, 4]));
+
+    const lido = await readVaultFromFolder(folder);
+    expect(lido).toEqual({ code, sealed: new Uint8Array([3, 4]) });
+    expect(lido.state).toBeUndefined();
+  });
+
   it("recusa pasta com chave invalida", async () => {
     const folder = memoryFolder({ "key.txt": "isso-nao-e-codigo", "backup.enc": "x" });
     await expect(readVaultFromFolder(folder)).rejects.toThrow(/codigo valido/);

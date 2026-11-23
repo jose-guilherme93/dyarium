@@ -12,7 +12,14 @@
  * antes de qualquer chamada.
  */
 
-import { ANALYSIS_STORE, STORE_SETTINGS, storeDelete, storeGet, storeSet } from "../lib/idb";
+import {
+  ANALYSIS_STORE,
+  STORE_SETTINGS,
+  storeDelete,
+  storeGet,
+  storeList,
+  storeSet,
+} from "../lib/idb";
 import { PROVIDER_PRESETS, providerFromSettings } from "../lib/modelCatalog";
 
 import { getEntry, listNotes } from "./notes";
@@ -426,6 +433,31 @@ function analysisKey(entryId: string): string {
   return `analysis:${entryId}`;
 }
 
+/** Prefixo da chave de analise no `ANALYSIS_STORE`. */
+const ANALYSIS_KEY_PREFIX = "analysis:";
+
+export interface LocalAnalysisRecord {
+  entry_id: string;
+  analysis: Analysis;
+}
+
+/**
+ * Todas as analises guardadas no cofre, no formato do retrato.
+ *
+ * O store e lido inteiro e filtrado pelo prefixo da chave: chaves de outro
+ * dono (versao antiga do cache) ficam de fora do backup.
+ */
+export async function listLocalAnalyses(): Promise<LocalAnalysisRecord[]> {
+  const registros = await storeList<Analysis>(ANALYSIS_STORE);
+  return registros
+    .filter(([chave]) => chave.startsWith(ANALYSIS_KEY_PREFIX))
+    .map(([chave, analysis]) => ({
+      entry_id: chave.slice(ANALYSIS_KEY_PREFIX.length),
+      analysis,
+    }))
+    .filter((registro) => registro.entry_id.length > 0);
+}
+
 export interface LocalAnalyzeOptions {
   /** Injetavel nos testes; por padrao o `fetch` do navegador. */
   fetchImpl?: typeof fetch;
@@ -538,8 +570,18 @@ export async function analyzeEntryLocally(
     comprehension: parsed.comprehension,
   };
 
-  await storeSet(ANALYSIS_STORE, analysisKey(entryId), analysis);
+  await saveAnalysisSnapshot(entryId, analysis);
   return analysis;
+}
+
+/**
+ * Grava uma analise pronta vinda de fora (import de um servidor).
+ *
+ * A chave e a mesma que `readLocalAnalysis` le e que a analise local usa: a
+ * ficha nao sabe de onde veio, so desenha o documento.
+ */
+export async function saveAnalysisSnapshot(entryId: string, analysis: Analysis): Promise<void> {
+  await storeSet(ANALYSIS_STORE, analysisKey(entryId), analysis);
 }
 
 /** Analise ja gravada no cofre; null quando a nota ainda nao foi analisada. */

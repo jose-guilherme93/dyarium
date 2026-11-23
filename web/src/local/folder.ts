@@ -1,9 +1,9 @@
 /**
  * Backup em pasta do computador, pelo File System Access.
  *
- * Mesmo layout do Drive, e de proposito: `key.txt` + `backup.enc`. Assim a
- * pasta pode ser copiada para o Drive, para um pendrive ou para outro
- * computador sem converter nada.
+ * Mesmo layout do Drive, e de proposito: `key.txt` + `backup.enc` (v1
+ * compartilhado) + `state.enc` (v2 do web). Assim a pasta pode ser copiada para
+ * o Drive, para um pendrive ou para outro computador sem converter nada.
  *
  * O acesso a pasta e do Chromium (e do Electron, que embrulha o mesmo build).
  * Onde nao existe, a tela diz em vez de oferecer um botao que nao funciona.
@@ -15,7 +15,10 @@ import { storeGet, storeSet, VAULT_STORE } from "../lib/idb";
 const FOLDER_KEY = "pasta";
 
 export const KEY_FILE = "key.txt";
+/** Retrato compartilhado v1: so notas, lido pelo app e pelo web. */
 export const BACKUP_FILE = "backup.enc";
+/** Estado extra do web (v2): cadernos, analises, configuracoes e transcricao. */
+export const STATE_FILE = "state.enc";
 
 /** O minimo que a copia de pasta precisa; o teste usa uma pasta em memoria. */
 export interface FileHandleLike {
@@ -66,6 +69,7 @@ export async function writeVaultToFolder(
   folder: FolderLike,
   code: string,
   sealed: Uint8Array,
+  state?: Uint8Array,
 ): Promise<void> {
   const chave = await folder.getFileHandle(KEY_FILE, { create: true });
   const escritaChave = await chave.createWritable();
@@ -76,12 +80,25 @@ export async function writeVaultToFolder(
   const escritaBackup = await backup.createWritable();
   await escritaBackup.write(sealed);
   await escritaBackup.close();
+
+  // O estado extra e opcional: pasta antiga nao tem e continua abrindo.
+  if (state) {
+    const estado = await folder.getFileHandle(STATE_FILE, { create: true });
+    const escritaEstado = await estado.createWritable();
+    await escritaEstado.write(state);
+    await escritaEstado.close();
+  }
 }
 
-/** Le a pasta e devolve o codigo e o envelope cifrado, ja validados. */
-export async function readVaultFromFolder(
-  folder: FolderLike,
-): Promise<{ code: string; sealed: Uint8Array }> {
+export interface FolderVaultRead {
+  code: string;
+  sealed: Uint8Array;
+  /** Retrato v2 do web; ausente em pasta antiga, que so tem o v1. */
+  state?: Uint8Array;
+}
+
+/** Le a pasta e devolve o codigo e os envelopes, ja validados. */
+export async function readVaultFromFolder(folder: FolderLike): Promise<FolderVaultRead> {
   const chave = await folder.getFileHandle(KEY_FILE);
   const code = normalizeRecoveryCode((await (await chave.getFile()).text()).trim());
   if (!(await isValidRecoveryCode(code))) {
@@ -90,5 +107,16 @@ export async function readVaultFromFolder(
   const backup = await folder.getFileHandle(BACKUP_FILE);
   const sealed = new Uint8Array(await (await backup.getFile()).arrayBuffer());
   if (sealed.length === 0) throw new Error(`${BACKUP_FILE} esta vazio`);
-  return { code, sealed };
+  const state = await lerEstado(folder);
+  return state ? { code, sealed, state } : { code, sealed };
+}
+
+/** `state.enc` quando existe; arquivo ausente nao e erro. */
+async function lerEstado(folder: FolderLike): Promise<Uint8Array | undefined> {
+  try {
+    const handle = await folder.getFileHandle(STATE_FILE);
+    return new Uint8Array(await (await handle.getFile()).arrayBuffer());
+  } catch {
+    return undefined;
+  }
 }

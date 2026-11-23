@@ -87,6 +87,13 @@ function novoId(): string {
   return `att_${crypto.randomUUID().replace(/-/g, "")}`;
 }
 
+/** Grava um anexo inteiro (metadados + byte) no store local. */
+export async function saveAttachmentBlob(anexo: StoredAttachment): Promise<void> {
+  await storeSet(ATTACHMENTS_STORE, anexo.id, anexo);
+  lembrar(anexo.id, anexo.blob);
+  avisar();
+}
+
 export async function saveLocalAttachment(entryId: string, file: Blob): Promise<Attachment> {
   const anexo: StoredAttachment = {
     id: novoId(),
@@ -97,9 +104,7 @@ export async function saveLocalAttachment(entryId: string, file: Blob): Promise<
     created_at: new Date().toISOString(),
     blob: file,
   };
-  await storeSet(ATTACHMENTS_STORE, anexo.id, anexo);
-  lembrar(anexo.id, file);
-  avisar();
+  await saveAttachmentBlob(anexo);
   return metadataOf(anexo);
 }
 

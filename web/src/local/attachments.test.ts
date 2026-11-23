@@ -18,6 +18,7 @@ import {
   deleteLocalAttachment,
   listLocalAttachments,
   localAttachmentUrl,
+  saveAttachmentBlob,
   saveLocalAttachment,
 } from "./attachments";
 
@@ -51,6 +52,26 @@ describe("anexos locais", () => {
   it("a imagem recem-enviada ja tem URL", async () => {
     const anexo = await saveLocalAttachment("nota-1", imagem());
     expect(localAttachmentUrl(anexo.id)).toMatch(/^blob:local-/);
+  });
+
+  it("saveAttachmentBlob grava um anexo restaurado com o id que veio do cofre", async () => {
+    const blob = new Blob([new Uint8Array([7, 8, 9])], { type: "audio/aac" });
+    await saveAttachmentBlob({
+      id: "att_restaurado",
+      entry_id: "nota-1",
+      kind: "original",
+      content_type: "audio/aac",
+      size_bytes: 3,
+      created_at: "2026-11-18T10:00:00.000Z",
+      blob,
+    });
+
+    expect(banco.get("att_restaurado")).toMatchObject({
+      id: "att_restaurado",
+      entry_id: "nota-1",
+      content_type: "audio/aac",
+    });
+    expect(localAttachmentUrl("att_restaurado")).toMatch(/^blob:local-/);
   });
 
   it("depois de recarregar, a URL chega no primeiro render e avisa", async () => {

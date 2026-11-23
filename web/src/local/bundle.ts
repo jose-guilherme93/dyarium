@@ -1,29 +1,39 @@
 /**
  * Backup num arquivo unico, para navegador sem acesso a pasta (Firefox, Safari).
  *
- * O `.zip` carrega exatamente o que a pasta carrega — `key.txt` e
- * `backup.enc` —, entao serve para guardar, copiar para o Drive ou restaurar em
- * qualquer navegador. Nada aqui e especifico de plataforma.
+ * O `.zip` carrega exatamente o que a pasta carrega — `key.txt`, `backup.enc`
+ * (v1 compartilhado) e, quando existe, `state.enc` (v2 do web) —, entao serve
+ * para guardar, copiar para o Drive ou restaurar em qualquer navegador. Nada
+ * aqui e especifico de plataforma.
  */
 
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 
+import { BACKUP_FILE, KEY_FILE, STATE_FILE } from "./folder";
 import { isValidRecoveryCode, normalizeRecoveryCode } from "./vault";
 
-export const KEY_FILE = "key.txt";
-export const BACKUP_FILE = "backup.enc";
+export { BACKUP_FILE, KEY_FILE, STATE_FILE };
 
-export function packVault(code: string, sealed: Uint8Array): Uint8Array {
+export function packVault(code: string, sealed: Uint8Array, state?: Uint8Array): Uint8Array {
   return zipSync(
     {
       [KEY_FILE]: strToU8(normalizeRecoveryCode(code)),
       [BACKUP_FILE]: sealed,
+      // Estado extra e opcional: zip antigo continua abrindo sem ele.
+      ...(state ? { [STATE_FILE]: state } : {}),
     },
     { level: 6 },
   );
 }
 
-export async function unpackVault(bytes: Uint8Array): Promise<{ code: string; sealed: Uint8Array }> {
+export interface BundleVault {
+  code: string;
+  sealed: Uint8Array;
+  /** Retrato v2 do web; ausente em zip antigo, que so tem o v1. */
+  state?: Uint8Array;
+}
+
+export async function unpackVault(bytes: Uint8Array): Promise<BundleVault> {
   let arquivos: Record<string, Uint8Array>;
   try {
     arquivos = unzipSync(bytes);
@@ -37,7 +47,8 @@ export async function unpackVault(bytes: Uint8Array): Promise<{ code: string; se
   }
   const code = normalizeRecoveryCode(strFromU8(chave).trim());
   if (!(await isValidRecoveryCode(code))) throw new Error("codigo do backup e invalido");
-  return { code, sealed: backup };
+  const state = arquivos[STATE_FILE];
+  return state ? { code, sealed: backup, state } : { code, sealed: backup };
 }
 
 /** Baixa o arquivo pelo proprio navegador; funciona onde a pasta nao existe. */

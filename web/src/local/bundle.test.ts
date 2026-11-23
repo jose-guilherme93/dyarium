@@ -14,6 +14,30 @@ describe("backup num arquivo unico", () => {
     const aberto = await unpackVault(pacote);
     expect(aberto.code).toBe(code);
     expect(Array.from(aberto.sealed)).toEqual([4, 5, 6, 7]);
+    expect(aberto.state).toBeUndefined();
+  });
+
+  it("zip com state.enc devolve o estado ao lado do v1", async () => {
+    const code = await newRecoveryCode();
+    const pacote = packVault(code, new Uint8Array([1, 2]), new Uint8Array([7, 8, 9]));
+
+    const aberto = await unpackVault(pacote);
+    expect(aberto.code).toBe(code);
+    expect(Array.from(aberto.sealed)).toEqual([1, 2]);
+    expect(Array.from(aberto.state ?? [])).toEqual([7, 8, 9]);
+  });
+
+  it("zip antigo sem state.enc continua abrindo", async () => {
+    const code = await newRecoveryCode();
+    const antigo = zipSync({
+      "key.txt": strToU8(code),
+      "backup.enc": new Uint8Array([3, 4]),
+    });
+
+    const aberto = await unpackVault(antigo);
+    expect(aberto.code).toBe(code);
+    expect(Array.from(aberto.sealed)).toEqual([3, 4]);
+    expect(aberto.state).toBeUndefined();
   });
 
   it("recusa arquivo que nao e zip", async () => {
