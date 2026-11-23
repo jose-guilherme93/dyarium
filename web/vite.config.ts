@@ -113,8 +113,13 @@ export default defineConfig({
     fs: { allow: [".."] },
     // O laboratorio (/lab) precisa de isolamento para SharedArrayBuffer. Em
     // producao o servidor Go manda estes headers apenas nessa rota.
+    //
+    // COOP `same-origin-allow-popups` em vez de `same-origin`: o isolamento
+    // continua valendo, mas a janela do Google (GIS) mantem o vinculo com a
+    // pagina e consegue devolver o token. Com `same-origin` ela fecha sem
+    // falar nada e o login morre com "Popup window closed".
     headers: {
-      "Cross-Origin-Opener-Policy": "same-origin",
+      "Cross-Origin-Opener-Policy": "same-origin-allow-popups",
       "Cross-Origin-Embedder-Policy": "require-corp",
     },
     proxy: {

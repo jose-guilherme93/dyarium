@@ -19,6 +19,10 @@ services:
       DIARY_WHISPER_MODEL: "${DIARY_WHISPER_MODEL:-/models/ggml-small-q5_1.bin}"
       DIARY_MAX_WHISPER_RSS_MB: "${DIARY_MAX_WHISPER_RSS_MB:-0}"
       DIARY_LOG_LEVEL: "${DIARY_LOG_LEVEL:-debug}"
+      # Dev: deixa o site em localhost:5173 importar o acervo desta instancia
+      # (botao "Importar de um servidor"). Em producao a lista fica vazia, e
+      # sem ela a API so responde para a propria origem.
+      DIARY_CORS_ORIGINS: "${DIARY_CORS_ORIGINS:-http://localhost:5173}"
     ports:
       - "${DIARY_API_PORT:-8080}:8080"
     volumes:
@@ -37,6 +41,11 @@ services:
     command: sh -c "npm install -g pnpm@12.6.0 && pnpm install && pnpm dev --host 0.0.0.0"
     environment:
       VITE_API_URL: "http://api:8080"
+      # Prende o dev ao cofre do navegador: com a API de pe, o app acha o
+      # servidor em /setup/state e mostra o portao do token, escondendo o
+      # caminho estatico (primeira tela, login Google, cofre no Drive).
+      # Tire daqui para testar o modo instancia.
+      VITE_LOCAL_ONLY: "1"
     ports:
       - "${DIARY_WEB_PORT:-5173}:5173"
     volumes:
