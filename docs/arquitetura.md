@@ -897,3 +897,83 @@ uniao, tombstone permanente, versoes, anexos portateis e falha/retomada) esta em
   arquivo, e restauram apenas as notas.
 - Nada do conhecimento restaurado sobrescreve o que ja existe no aparelho: restaurar
   duas vezes, ou depois de uma analise nova, mantem o trabalho mais recente.
+
+## Cofre no Google Drive (web)
+
+O web e um cliente local-first: o banco vive no navegador (wa-sqlite sobre OPFS) e o
+Drive do proprio usuario e a copia que sobrevive a troca de aparelho. Nao existe banco
+por usuario no backend, e o Worker nao ve conteudo de nota.
+
+**Login.** Modelo de token do Google Identity Services (`google.accounts.oauth2`), com o
+escopo `drive.file`: o app so enxerga os arquivos que ele mesmo criou. O navegador recebe
+um access token de cerca de uma hora e o guarda apenas em memoria (`web/src/local/driveSession.ts`).
+Nao ha refresh token, client secret nem credencial em disco: quando o token vence, a tela
+pede um toque em "Conectar" e o Google devolve outro sem passar pelo consentimento. O
+client ID fica em `VITE_GOOGLE_CLIENT_ID` (`web/.env.example`); ele e publico.
+
+**Layout.** A pasta `Dyarium/` na raiz do Drive e o cofre, sem subpasta por cofre:
+
+```
+Dyarium/
+  key.txt                    codigo de recuperacao (26 caracteres), claro
+  manifest.json              caminho, id, kind, sha256 do conteudo, tamanho e data; claro
+  backup.enc                 retrato v1, so as notas: o formato que app e web entendem
+  state.enc                  retrato v2 do web: notas ricas, cadernos, analises e ajustes
+  notes/<AAAA-MM-DD>-<slug>.md.enc
+  books/<livro>/<NNN>-<capitulo>.md.enc
+  books/<livro>/capa.bin.enc
+  projects/<projeto>/<NNN>-<slug>.md.enc
+  attachments/<id>.<ext>.enc
+```
+
+Cada arquivo e selado com AES-256-GCM e IV aleatorio proprio. O `sha256` do manifest e do
+conteudo em claro: e o que permite saber, entre uma sincronizacao e outra, o que nao mudou
+sem decifrar nada. Titulo e corpo nunca aparecem em claro fora do nome do arquivo.
+
+**Dois retratos, um por cliente.** `backup.enc` e o contrato que app e web entendem (versao
+1: notas com titulo, datas, caderno, tags e texto) e o app o le com validador estrito. O
+estado completo do web vai em `state.enc` (versao 2: notas com transcricao e capitulo,
+cadernos, analises e configuracoes), selado com a mesma chave. Restaurar prefere `state.enc`
+e cai para `backup.enc` quando o cofre e antigo, sem erro. A separacao existe porque os dois
+clientes escrevem na mesma pasta: um formato unico faria o app apagar o que nao conhece, e o
+web quebrar a restauracao do app. Pasta e `.zip` seguem a mesma divisao.
+
+**A chave nao aparece na interface.** O `key.txt` guarda o codigo de 26 caracteres que
+deriva a chave, e ele existe para o login abrir o mesmo cofre em outro aparelho — nao para
+o usuario anotar. Decisao de 23/11: quem tem a conta Google tem a prova de posse e a
+responsabilidade sobre a senha dela; o app nao mostra mais o codigo em Configuracoes. A
+consequencia aceita e que perder a conta Google (e as pastas ou zip com `key.txt`) significa
+perder o cofre: nao existe segunda via fora do Drive.
+
+**Sincronizacao.** `planVaultLayout` compara o banco com o manifest anterior e devolve so o
+que mudou; `folderSync` agenda a gravacao depois de dois minutos de silencio (maximo de
+quinze). O mesmo plano serve para a pasta do computador (File System Access) e para o Drive
+(`DriveFolder`, em `web/src/local/driveFolder.ts`), porque as duas superficies expoem a mesma
+interface de pastas e arquivos. Nada e reescrito quando nada mudou.
+
+**Outro aparelho.** Entrar com o Google num navegador novo le `key.txt`, adota o codigo,
+baixa `state.enc` (ou `backup.enc`, no cofre antigo), decifra com a chave derivada e aplica
+com `applySnapshot`, que nunca sobrescreve nota local mais nova que o retrato, nem analise
+feita aqui, nem configuracao ja alterada. Cadernos voltam com nome, tipo e ordem; a capa dos
+livros vem de `books/<livro>/capa.bin.enc`. O cofre por tipo serve para inspecao e para
+restauracao futura arquivo a arquivo; o retrato e o caminho de restauracao completa, porque
+carrega titulo, datas, caderno e texto de cada nota. Os anexos (audio e imagem) voltam de
+`attachments/<id>.<ext>.enc`, guiados por `entry_id` e `content_type` no `manifest.json`
+(versao 4); o que ja existe no IndexedDB e pulado, e um arquivo corrompido nao interrompe o
+resto.
+
+**Abrir o cofre e restaurar e sincronizar.** `openDriveVault` restaura quando ha `key.txt`
+e, em seguida, sempre sincroniza. Restaurar sem sincronizar deixava as notas locais fora do
+Drive quando o retrato remoto estava vazio ou mais antigo — o cofre nunca ficava "sujo" e
+nada subia. O `manifest.json` e o `backup.enc` sao reescritos quando o plano muda, entao
+uma vez que o banco local tem as notas, elas estao no Drive.
+
+**Sessao e reconexao.** O token dura cerca de uma hora e nao sobrevive ao reload (nao ha
+refresh token sem servidor). Por isso o navegador guarda apenas uma marca de que o cofre
+mora no Drive (`localStorage["dyarium.drive"]`) e o ultimo resumo (bytes, notas), nunca a
+credencial. Sem sessao, uma linha acima da area das notas mostra `Google Drive`, o tamanho
+do cofre e um botao `conectar`: um toque refaz o login, abre o cofre e grava o pendente
+(`flushVaultSync`) na mesma passada. Com sessao viva a linha nao aparece.
+
+**Custo.** O acervo ocupa a cota do Drive de cada usuario (15 GB no plano gratuito); o app
+nao paga armazenamento e nao cobra nada.
