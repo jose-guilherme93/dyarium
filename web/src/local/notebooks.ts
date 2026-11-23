@@ -157,6 +157,99 @@ export async function getLocalNotebook(id: string): Promise<Notebook | null> {
   return toNotebook(row, counts, chapters);
 }
 
+/** Resultado do upsert: `unchanged` quando o local ja e mais novo ou igual. */
+export type NotebookUpsert = "created" | "updated" | "unchanged";
+
+/**
+ * Grava um caderno vindo do servidor com o mesmo id.
+ *
+ * Diferente de `createLocalNotebook`, que gera id proprio: a importacao precisa
+ * que as notas encontrem o caderno delas pelo id. O remoto so sobrescreve
+ * quando a data dele e mais nova; um caderno editado aqui depois fica. A linha
+ * entra como espelho (`dirty = 0`), sem empurrar de volta para o servidor.
+ */
+export async function upsertLocalNotebook(notebook: Notebook): Promise<NotebookUpsert> {
+  const db = await getDb();
+  const atual = await db.getFirstAsync<NotebookRow>("SELECT * FROM notebooks WHERE id = ?", [
+    notebook.id,
+  ]);
+  const campos: unknown[] = [
+    notebook.name,
+    notebook.color ?? "",
+    notebook.kind === "book" ? "book" : notebook.kind === "mcp" ? "mcp" : "notes",
+    notebook.subtitle ?? "",
+    notebook.author ?? "",
+    notebook.synopsis ?? "",
+    notebook.language ?? "",
+    notebook.goal_words ?? 0,
+    notebook.book_status ?? "drafting",
+    notebook.page_size ?? "",
+    notebook.page_margin_mm ?? 0,
+    notebook.body_px ?? 0,
+    notebook.body_leading ?? 0,
+    notebook.body_font ?? "",
+    notebook.daily_goal_words ?? 0,
+    notebook.deadline ?? "",
+    notebook.has_cover ? 1 : 0,
+    notebook.cover_updated_at ?? "",
+    notebook.created_at,
+    notebook.updated_at,
+  ];
+
+  if (atual) {
+    // Data invalida conta como zero: sem carimbo confiavel, o local fica.
+    const localNova = Date.parse(atual.updated_at) || 0;
+    const remotaNova =
+      Date.parse(notebook.updated_at || notebook.created_at) || 0;
+    if (remotaNova <= localNova) return "unchanged";
+    // `is_default` e invariante local (o caderno padrao nasce aqui); o resto
+    // vem do servidor, inclusive a ordem (`created_at`) e a capa.
+    await db.runAsync(
+      `UPDATE notebooks SET name = ?, color = ?, kind = ?, subtitle = ?, author = ?,
+         synopsis = ?, language = ?, goal_words = ?, book_status = ?, page_size = ?,
+         page_margin_mm = ?, body_px = ?, body_leading = ?, body_font = ?,
+         daily_goal_words = ?, deadline = ?, has_cover = ?, cover_updated_at = ?,
+         created_at = ?, updated_at = ?
+       WHERE id = ?`,
+      [...campos, notebook.id],
+    );
+    return "updated";
+  }
+
+  await db.runAsync(
+    `INSERT INTO notebooks (
+       id, name, color, is_default, kind, created_at, updated_at, dirty, synced, deleted,
+       subtitle, author, synopsis, language, goal_words, book_status, page_size, page_margin_mm,
+       body_px, body_leading, body_font, daily_goal_words, deadline, has_cover, cover_updated_at
+     ) VALUES (?,?,?,?,?,?,?,0,1,0,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [
+      notebook.id,
+      notebook.name,
+      notebook.color ?? "",
+      notebook.is_default ? 1 : 0,
+      notebook.kind === "book" ? "book" : notebook.kind === "mcp" ? "mcp" : "notes",
+      notebook.created_at,
+      notebook.updated_at,
+      notebook.subtitle ?? "",
+      notebook.author ?? "",
+      notebook.synopsis ?? "",
+      notebook.language ?? "",
+      notebook.goal_words ?? 0,
+      notebook.book_status ?? "drafting",
+      notebook.page_size ?? "",
+      notebook.page_margin_mm ?? 0,
+      notebook.body_px ?? 0,
+      notebook.body_leading ?? 0,
+      notebook.body_font ?? "",
+      notebook.daily_goal_words ?? 0,
+      notebook.deadline ?? "",
+      notebook.has_cover ? 1 : 0,
+      notebook.cover_updated_at ?? "",
+    ],
+  );
+  return "created";
+}
+
 export async function createLocalNotebook(input: NotebookInput): Promise<Notebook> {
   const db = await getDb();
   const agora = new Date().toISOString();

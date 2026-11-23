@@ -1,63 +1,35 @@
 import { useState } from "react";
 
 import { useEscape } from "../lib/useEscape";
-import { diagnoseSource } from "../local/diagnose";
-import { importEntries, type ImportProgress, type ImportResult } from "../local/import";
-import { serverSource } from "../local/serverSource";
+import { startServerImport } from "../local/importJob";
 import { CloseIcon } from "./icons";
 
 interface ImportServerDialogProps {
   onClose: () => void;
-  /** Chamado quando algo entrou no cofre, para a lista recarregar. */
-  onImported: () => void;
 }
 
 /**
  * Traz o acervo de uma instancia self-hosted para o cofre do navegador.
  *
  * Endereco + token: o mesmo par que o usuario ja usa para entrar no servidor
- * dele. Nada sai daqui; o token fica so nesta chamada.
+ * dele. O token fica so nesta chamada. Quem importa e a tarefa em segundo
+ * plano: este dialogo entrega o par e fecha na hora; a faixa da area das notas
+ * conta o progresso e avisa o fim.
  */
-export function ImportServerDialog({ onClose, onImported }: ImportServerDialogProps) {
+export function ImportServerDialog({ onClose }: ImportServerDialogProps) {
   const [endereco, setEndereco] = useState("");
   const [token, setToken] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [progresso, setProgresso] = useState<ImportProgress | null>(null);
-  const [resultado, setResultado] = useState<ImportResult | null>(null);
-  const [erro, setErro] = useState("");
-  const [diagnostico, setDiagnostico] = useState<{ hint: string; origin?: string } | null>(null);
 
   useEscape(true, onClose);
 
-  const importar = async () => {
-    setBusy(true);
-    setErro("");
-    setDiagnostico(null);
-    setResultado(null);
-    setProgresso(null);
-
-    // Antes de importar, separa os quatro motivos de "NetworkError".
-    const check = await diagnoseSource(endereco);
-    if (!check.ok) {
-      setDiagnostico({ hint: check.hint, origin: check.origin });
-      setBusy(false);
-      return;
-    }
-
-    try {
-      const resumo = await importEntries(serverSource(endereco, token), setProgresso);
-      setResultado(resumo);
-      if (resumo.created + resumo.updated + resumo.trashed > 0) onImported();
-    } catch (error) {
-      // CORS fechado, token errado ou servidor fora do ar caem todos aqui.
-      setErro(error instanceof Error ? error.message : String(error));
-    } finally {
-      setBusy(false);
-    }
+  const importar = () => {
+    if (!endereco.trim() || !token.trim()) return;
+    startServerImport(endereco, token);
+    onClose();
   };
 
   return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={busy ? undefined : onClose}>
+    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <div
         className="modal-card"
         role="dialog"
@@ -71,7 +43,6 @@ export function ImportServerDialog({ onClose, onImported }: ImportServerDialogPr
             type="button"
             className="icon-button"
             onClick={onClose}
-            disabled={busy}
             aria-label="Fechar"
             title="Fechar"
           >
@@ -90,7 +61,6 @@ export function ImportServerDialog({ onClose, onImported }: ImportServerDialogPr
             onChange={(event) => setEndereco(event.target.value)}
             placeholder="https://diario.exemplo"
             autoComplete="off"
-            disabled={busy}
           />
         </div>
 
@@ -103,43 +73,20 @@ export function ImportServerDialog({ onClose, onImported }: ImportServerDialogPr
             onChange={(event) => setToken(event.target.value)}
             placeholder="o token da instância"
             autoComplete="off"
-            disabled={busy}
           />
         </div>
 
-        {progresso && (
-          <p className="muted">
-            {progresso.done} de {progresso.total}
-          </p>
-        )}
-        {resultado && (
-          <p>
-            {resultado.created} novas · {resultado.updated} atualizadas · {resultado.trashed} na lixeira
-          </p>
-        )}
-        {erro && <p className="error">{erro}</p>}
-        {diagnostico && (
-          <div className="settings-note">
-            <p className="error">{diagnostico.hint}</p>
-            {diagnostico.origin && (
-              <p className="muted">
-                Origem para liberar: <code>{diagnostico.origin}</code>
-              </p>
-            )}
-          </div>
-        )}
-
         <div className="modal-actions">
-          <button type="button" className="button button--ghost" onClick={onClose} disabled={busy}>
+          <button type="button" className="button button--ghost" onClick={onClose}>
             Fechar
           </button>
           <button
             type="button"
             className="button button--primary"
-            onClick={() => void importar()}
-            disabled={busy || !endereco.trim() || !token.trim()}
+            onClick={importar}
+            disabled={!endereco.trim() || !token.trim()}
           >
-            {busy ? "Importando..." : "Importar"}
+            Importar
           </button>
         </div>
       </div>
