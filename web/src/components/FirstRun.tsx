@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { preloadGoogle } from "../local/google";
 import { pickFolder, supportsFolder, type FolderLike } from "../local/folder";
 
 interface FirstRunProps {
@@ -10,6 +11,8 @@ interface FirstRunProps {
   onSelfHosted: () => void;
   /** Google ainda desligado: botão visível e inerte. */
   googleReady?: boolean;
+  /** Login no Google deu certo e o cofre precisa abrir no Drive. */
+  onDriveChosen?: () => Promise<void>;
 }
 
 type View = "entry" | "folder" | "browser";
@@ -36,20 +39,41 @@ function isAbortError(error: unknown): boolean {
   );
 }
 
+/**
+ * Causa do Drive em uma linha. As mensagens do DriveClient comecam com o
+ * status HTTP, entao o caso comum (API desligada no projeto) tem texto proprio
+ * em vez do JSON cru.
+ *
+ * Exportada porque a linha de reconectar (`DriveReconnect`) fala a mesma coisa
+ * quando o login ou o cofre falham. O movimento menor e este: primeiro acesso e
+ * reconexao sao as duas unicas telas que traduzem erro do Drive, e um modulo
+ * proprio so para nove linhas nao pagaria o arquivo novo.
+ */
+export function describeDriveError(causa: unknown): string {
+  const texto = causa instanceof Error ? causa.message : "";
+  if (/^Drive 403/.test(texto)) return "Sem permissão no Drive. A Drive API pode estar desligada no projeto.";
+  if (/^Drive 401/.test(texto)) return "A sessão do Google venceu. Conecte de novo.";
+  if (/nao respondeu|popup|bloquead/i.test(texto)) return "A janela do Google não abriu. Tente de novo.";
+  if (/recusad|cancelad/i.test(texto)) return "Login cancelado.";
+  return "Não foi possível abrir o cofre do Drive. Tente de novo.";
+}
+
 // FirstRun é a primeira tela do site: o produto à esquerda, o acesso à direita.
-// O login por Google ainda não existe — o botão aparece desligado, como a
-// promessa aprovada no protótipo. Quem decide o que vem depois de cada escolha
-// é o App.
+// Com client id configurado o Google abre o cofre no Drive; sem ele o botão
+// aparece desligado, como a promessa aprovada no protótipo. Quem decide o que
+// vem depois de cada escolha é o App.
 export function FirstRun({
   onFolderChosen,
   onUseBrowserOnly,
   onSelfHosted,
   googleReady = false,
+  onDriveChosen,
 }: FirstRunProps) {
   const [view, setView] = useState<View>("entry");
   const [folder, setFolder] = useState<FolderLike | null>(null);
   const [picking, setPicking] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [driveBusy, setDriveBusy] = useState(false);
   const [error, setError] = useState("");
 
   const folderCapable = supportsFolder();
@@ -63,6 +87,12 @@ export function FirstRun({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [view]);
+
+  // O popup do Google so abre dentro do gesto do usuario: o script do GIS
+  // precisa chegar antes do clique, nao durante.
+  useEffect(() => {
+    if (googleReady) void preloadGoogle();
+  }, [googleReady]);
 
   const chooseFolder = async () => {
     setError("");
@@ -101,6 +131,22 @@ export function FirstRun({
       setError("Não foi possível criar o cofre. Tente de novo.");
     } finally {
       setCreating(false);
+    }
+  };
+
+  const chooseDrive = async () => {
+    if (!onDriveChosen) return;
+    setDriveBusy(true);
+    setError("");
+    try {
+      await onDriveChosen();
+    } catch (causa) {
+      // O motivo tecnico fica no console; na tela vai a causa em uma linha,
+      // porque "tente de novo" nao diz o que consertar.
+      console.error("[drive] falha ao abrir o cofre", causa);
+      setError(describeDriveError(causa));
+    } finally {
+      setDriveBusy(false);
     }
   };
 
@@ -377,7 +423,8 @@ export function FirstRun({
                   <button
                     type="button"
                     className="first-run-btn first-run-btn-primary"
-                    disabled={!googleReady}
+                    disabled={!googleReady || driveBusy}
+                    onClick={googleReady ? () => void chooseDrive() : undefined}
                   >
                     <svg width="17" height="17" viewBox="0 0 48 48" aria-hidden="true">
                       <g fill="currentColor">
@@ -387,7 +434,7 @@ export function FirstRun({
                         <path d="M24 10.75c3.23 0 6.13 1.11 8.41 3.29l6.31-6.31C34.91 4.18 29.93 2 24 2A21.96 21.96 0 0 0 4.34 14.12l7.35 5.7c1.73-5.2 6.58-9.07 12.31-9.07z" />
                       </g>
                     </svg>
-                    Continuar com Google
+                    {driveBusy ? "Conectando ao Drive…" : "Continuar com Google"}
                   </button>
                   {!googleReady && <span className="first-run-soon">em breve</span>}
                 </div>

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import "./settings.css";
-import { api, getToken } from "../api";
+import { api, getToken, isLocalMode } from "../api";
 import {
   AllNotebooksIcon,
   CpuIcon,
@@ -13,13 +13,19 @@ import {
 } from "../components/icons";
 import {
   ensureVaultCode,
-  formatRecoveryCode,
-  isValidRecoveryCode,
   setVaultCode as adoptVaultCode,
   vaultKeyFromCode,
 } from "../local/vault";
-import { applySnapshot, buildSnapshot, openSnapshot, sealSnapshot, vaultIdFromCode } from "../local/backup";
-import { DriveClient } from "../local/drive";
+import {
+  applySnapshot,
+  buildNotesSnapshot,
+  buildSnapshot,
+  openSnapshot,
+  sealSnapshot,
+  vaultIdFromCode,
+} from "../local/backup";
+import { lastSyncSummary } from "../local/folderSync";
+import { restoreVaultFromDrive, syncVaultToDrive } from "../local/vaultCloud";
 import { downloadBytes, packVault, unpackVault } from "../local/bundle";
 import {
   pickFolder,
@@ -29,7 +35,14 @@ import {
   writeVaultToFolder,
   type FolderLike,
 } from "../local/folder";
-import { googleClientId, requestDriveToken, tokenIsFresh, type DriveToken } from "../local/google";
+import {
+  connectDrive,
+  disconnectDrive,
+  driveConfigured,
+  driveSessionState,
+  onDriveSessionChange,
+  type DriveSessionState,
+} from "../local/driveSession";
 import { ListSkeleton } from "../components/Skeleton";
 import { TrashSection } from "../components/TrashSection";
 import { useToast } from "../components/Toasts";
@@ -108,6 +121,10 @@ export function SettingsView({
       .catch(() => undefined);
   }, []);
 
+  // A sessao do Drive vive fora do React: ouvir mantem botao e marcas em dia
+  // quando conecta, vence ou desconecta.
+  useEffect(() => onDriveSessionChange(() => setDriveState(driveSessionState())), []);
+
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [progress, setProgress] = useState<Record<string, DownloadProgress>>({});
   const [ceiling, setCeiling] = useState("0");
@@ -135,8 +152,7 @@ export function SettingsView({
   const [modelFilter, setModelFilter] = useState("");
   /** Codigo de recuperacao do cofre local (a chave e derivada dele). */
   const [vaultCode, setVaultCode] = useState("");
-  const [vaultShown, setVaultShown] = useState(false);
-  const [drive, setDrive] = useState<DriveToken | null>(null);
+  const [driveState, setDriveState] = useState<DriveSessionState>(() => driveSessionState());
   const [backupBusy, setBackupBusy] = useState(false);
   const [backupStatus, setBackupStatus] = useState("");
   const [folder, setFolder] = useState<FolderLike | null>(null);
@@ -1347,9 +1363,17 @@ export function SettingsView({
       const alvo = folder ?? (await pickFolder());
       setFolder(alvo);
       const chave = await vaultKeyFromCode(codigo);
-      const retrato = await buildSnapshot(await vaultIdFromCode(codigo));
-      await writeVaultToFolder(alvo, codigo, await sealSnapshot(retrato, chave));
-      setBackupStatus(`pasta "${alvo.name}" · ${retrato.notes.length} notas`);
+      const vaultId = await vaultIdFromCode(codigo);
+      // `backup.enc` fica v1 (o app tambem le); o estado completo vai ao lado.
+      const notas = await buildNotesSnapshot(vaultId);
+      const estado = await buildSnapshot(vaultId);
+      await writeVaultToFolder(
+        alvo,
+        codigo,
+        await sealSnapshot(notas, chave),
+        await sealSnapshot(estado, chave),
+      );
+      setBackupStatus(`pasta "${alvo.name}" · ${notas.notes.length} notas`);
     } catch (error) {
       setBackupStatus(describe(error));
     } finally {
@@ -1363,12 +1387,12 @@ export function SettingsView({
     try {
       const alvo = folder ?? (await pickFolder());
       setFolder(alvo);
-      const { code, sealed } = await readVaultFromFolder(alvo);
+      const { code, sealed, state } = await readVaultFromFolder(alvo);
       // A pasta manda: a chave dela substitui a que este navegador criou.
       setVaultCode(await adoptVaultCode(code));
-      setVaultShown(false);
       const chave = await vaultKeyFromCode(code);
-      const retrato = await openSnapshot(sealed, chave);
+      // `state.enc` quando existe; pasta antiga cai no v1 sem erro.
+      const retrato = await openSnapshot(state ?? sealed, chave);
       const resumo = await applySnapshot(retrato);
       setBackupStatus(`${resumo.created} novas · ${resumo.updated} atualizadas · ${resumo.skipped} mantidas`);
     } catch (error) {
@@ -1386,9 +1410,14 @@ export function SettingsView({
       const codigo = await codigoDoCofre();
       const vaultId = await vaultIdFromCode(codigo);
       const chave = await vaultKeyFromCode(codigo);
-      const retrato = await buildSnapshot(vaultId);
-      downloadBytes(`dyarium-${vaultId}.zip`, packVault(codigo, await sealSnapshot(retrato, chave)));
-      setBackupStatus(`${retrato.notes.length} notas · arquivo baixado`);
+      // Mesma divisao da pasta e do Drive: v1 no `backup.enc`, v2 no `state.enc`.
+      const notas = await buildNotesSnapshot(vaultId);
+      const estado = await buildSnapshot(vaultId);
+      downloadBytes(
+        `dyarium-${vaultId}.zip`,
+        packVault(codigo, await sealSnapshot(notas, chave), await sealSnapshot(estado, chave)),
+      );
+      setBackupStatus(`${notas.notes.length} notas · arquivo baixado`);
     } catch (error) {
       setBackupStatus(describe(error));
     } finally {
@@ -1400,11 +1429,11 @@ export function SettingsView({
     setBackupBusy(true);
     setBackupStatus("");
     try {
-      const { code, sealed } = await unpackVault(new Uint8Array(await file.arrayBuffer()));
+      const { code, sealed, state } = await unpackVault(new Uint8Array(await file.arrayBuffer()));
       setVaultCode(await adoptVaultCode(code));
-      setVaultShown(false);
       const chave = await vaultKeyFromCode(code);
-      const retrato = await openSnapshot(sealed, chave);
+      // Zip novo traz `state.enc`; zip antigo so tem o v1 e abre igual.
+      const retrato = await openSnapshot(state ?? sealed, chave);
       const resumo = await applySnapshot(retrato);
       setBackupStatus(`${resumo.created} novas · ${resumo.updated} atualizadas · ${resumo.skipped} mantidas`);
     } catch (error) {
@@ -1412,36 +1441,32 @@ export function SettingsView({
     } finally {
       setBackupBusy(false);
     }
-  };
-
-  /** Token do Drive: reaproveita o da sessao enquanto vale, senao pede de novo. */
-  const driveAccess = async (): Promise<DriveToken> => {
-    if (tokenIsFresh(drive)) return drive;
-    const novo = await requestDriveToken();
-    setDrive(novo);
-    return novo;
   };
 
   const describe = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-  const backupNow = async () => {
+  const driveConfigurado = driveConfigured();
+  const driveConectado = driveState === "connected";
+  const driveMark = !driveConfigurado
+    ? "warn"
+    : driveConectado
+      ? "on"
+      : driveState === "expired"
+        ? "warn"
+        : "off";
+  const driveLabel = !driveConfigurado
+    ? "sem client id"
+    : driveConectado
+      ? "conectado"
+      : driveState === "expired"
+        ? "sessão vencida"
+        : "desconectado";
+
+  const connectDriveNow = async () => {
     setBackupBusy(true);
     setBackupStatus("");
     try {
-      const codigo = vaultCode || (await ensureVaultCode());
-      if (!vaultCode) setVaultCode(codigo);
-      const token = await driveAccess();
-      const vaultId = await vaultIdFromCode(codigo);
-      const chave = await vaultKeyFromCode(codigo);
-      const retrato = await buildSnapshot(vaultId);
-      const selado = await sealSnapshot(retrato, chave);
-      const client = new DriveClient(token.accessToken);
-      const pasta = await client.ensureVaultFolder(vaultId);
-      // A chave fica na pasta: e isso que faz o login abrir o cofre em outro
-      // aparelho. Quem tem a conta tem a chave; o conteudo segue cifrado.
-      await client.put(pasta, "key.txt", formatRecoveryCode(codigo), "text/plain");
-      await client.put(pasta, "backup.enc", selado);
-      setBackupStatus(`${retrato.notes.length} notas · ${new Date().toLocaleTimeString()}`);
+      await connectDrive();
     } catch (error) {
       setBackupStatus(describe(error));
     } finally {
@@ -1449,31 +1474,47 @@ export function SettingsView({
     }
   };
 
-  const restoreFromDrive = async () => {
+  const disconnectDriveNow = () => {
+    disconnectDrive();
+    setBackupStatus("");
+  };
+
+  const saveToDrive = async () => {
     setBackupBusy(true);
     setBackupStatus("");
     try {
-      const token = await driveAccess();
-      const client = new DriveClient(token.accessToken);
-      const raiz = await client.ensureFolder("Dyarium");
-      const cofres = await client.list(raiz);
-      if (cofres.length === 0) throw new Error("nenhum cofre no Drive");
-      // Um cofre por conta no v1: a pasta e o proprio cofre.
-      const arquivos = await client.list(cofres[0].id);
-      const chaveArquivo = arquivos.find((file) => file.name === "key.txt");
-      const backupArquivo = arquivos.find((file) => file.name === "backup.enc");
-      if (!chaveArquivo || !backupArquivo) throw new Error("cofre incompleto no Drive");
+      const resultado = await syncVaultToDrive();
+      const resumo = lastSyncSummary() ?? resultado;
+      if (resumo && resumo.written === 0 && resumo.deleted === 0 && resumo.unchanged === 0) {
+        // Plano vazio: nao ha nota neste navegador. Dizer "0 gravadas" sem
+        // explicar mandaria o dono procurar defeito no Drive.
+        setBackupStatus(isLocalMode() ? "cofre vazio neste navegador · nada para gravar" : "nada para gravar");
+      } else {
+        setBackupStatus(
+          resumo
+            ? `${resumo.written} gravadas · ${resumo.deleted} apagadas · ${resumo.unchanged} sem mudança`
+            : "cofre salvo",
+        );
+      }
+    } catch (error) {
+      setBackupStatus(describe(error));
+    } finally {
+      setBackupBusy(false);
+    }
+  };
 
-      const codigo = new TextDecoder().decode(await client.download(chaveArquivo.id)).trim();
-      if (!(await isValidRecoveryCode(codigo))) throw new Error("codigo guardado no Drive e invalido");
-      // Login desbloqueia o cofre: a chave do Drive substitui a deste navegador.
-      setVaultCode(await adoptVaultCode(codigo));
-      setVaultShown(false);
-
-      const chave = await vaultKeyFromCode(codigo);
-      const retrato = await openSnapshot(await client.download(backupArquivo.id), chave);
-      const resumo = await applySnapshot(retrato);
-      setBackupStatus(`${resumo.created} novas · ${resumo.updated} atualizadas · ${resumo.skipped} mantidas`);
+  const restoreDriveVault = async () => {
+    setBackupBusy(true);
+    setBackupStatus("");
+    try {
+      const resumo = await restoreVaultFromDrive();
+      const codigo = await ensureVaultCode().catch(() => "");
+      if (codigo) {
+        setVaultCode(codigo);
+        }
+      setBackupStatus(
+        `${resumo.created} novas · ${resumo.updated} atualizadas · ${resumo.skipped} mantidas`,
+      );
     } catch (error) {
       setBackupStatus(describe(error));
     } finally {
@@ -1483,35 +1524,6 @@ export function SettingsView({
 
   const renderVault = () => (
     <>
-      <div className="cfg-block">
-        <p className="cfg-label">Código de recuperação</p>
-        <div className="cfg-field">
-          <code className="cfg-grow cfg-meta">
-            {vaultCode ? (vaultShown ? formatRecoveryCode(vaultCode) : "••••-••••-••••-••••-••••-••••-••") : "sem chave"}
-          </code>
-          <button type="button" className="cfg-btn" onClick={() => setVaultShown((value) => !value)} disabled={!vaultCode}>
-            {vaultShown ? "ocultar" : "mostrar"}
-          </button>
-          <button
-            type="button"
-            className="cfg-btn"
-            disabled={!vaultCode}
-            onClick={() => {
-              void navigator.clipboard
-                .writeText(formatRecoveryCode(vaultCode))
-                .then(() => {
-                  setCopied("code");
-                  window.setTimeout(() => setCopied(null), 1500);
-                })
-                .catch(() => notify("Não foi possível copiar", "error"));
-            }}
-          >
-            {copied === "code" ? "copiado" : "copiar"}
-          </button>
-          <Why>26 caracteres. É com ele que o backup abre em outro aparelho. Fica só neste navegador.</Why>
-        </div>
-      </div>
-
       <div className="cfg-block">
         <p className="cfg-label">Backup</p>
         <div className="cfg-item">
@@ -1548,13 +1560,21 @@ export function SettingsView({
           />
         </div>
         <div className="cfg-item">
-          <span className="cfg-mark" data-state={googleClientId() ? (drive ? "on" : "off") : "warn"} />
+          <span className="cfg-mark" data-state={driveMark} />
           <span className="cfg-grow">Google Drive</span>
-          <span className="cfg-meta">{googleClientId() ? (drive ? "conectado" : "sem sessão") : "sem client id"}</span>
-          <button type="button" className="cfg-btn cfg-btn--quiet" disabled={backupBusy || !googleClientId()} onClick={() => void backupNow()}>
-            {drive ? "enviar" : "conectar"}
+          <span className="cfg-meta">{driveLabel}</span>
+          <button
+            type="button"
+            className="cfg-btn cfg-btn--quiet"
+            disabled={backupBusy || (!driveConectado && !driveConfigurado)}
+            onClick={() => void (driveConectado ? disconnectDriveNow() : connectDriveNow())}
+          >
+            {driveConectado ? "desconectar" : "conectar"}
           </button>
-          <button type="button" className="cfg-btn cfg-btn--quiet" disabled={backupBusy || !googleClientId()} onClick={() => void restoreFromDrive()}>
+          <button type="button" className="cfg-btn cfg-btn--quiet" disabled={backupBusy || !driveConectado} onClick={() => void saveToDrive()}>
+            salvar
+          </button>
+          <button type="button" className="cfg-btn cfg-btn--quiet" disabled={backupBusy || !driveConectado} onClick={() => void restoreDriveVault()}>
             restaurar
           </button>
         </div>

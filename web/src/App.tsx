@@ -31,7 +31,15 @@ const WorkerKeepAlive = LAB_ENABLED
     )
   : null;
 import { FirstRun } from "./components/FirstRun";
-import { markVaultDirty, runVaultSync } from "./local/folderSync";
+import { VaultBoot } from "./components/VaultBoot";
+import { DriveReconnect, rememberDriveVault } from "./components/DriveReconnect";
+import { ImportJobStrip } from "./components/ImportJobStrip";
+import { importJobState, subscribeImportJob, type ImportJobState } from "./local/importJob";
+import { markVaultDirty, runVaultSync, setVaultTarget } from "./local/folderSync";
+import { rememberFolder } from "./local/folder";
+import { connectDrive, driveClient, driveConfigured, driveSessionState, driveVaultRoot, onDriveSessionChange } from "./local/driveSession";
+import { openDriveVault, type VaultStage } from "./local/vaultCloud";
+import type { StepProgress } from "./local/backup";
 import { TokenGate } from "./components/TokenGate";
 import { SetupGate } from "./components/SetupGate";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -76,6 +84,13 @@ type ViewId = "notes" | "map" | "calendar" | "writing" | "settings" | "lab";
 
 const ACTIVE_NOTEBOOK_KEY = "dyarium.notebook";
 
+/** O "pronto" fica na tela antes de o app entrar, como no prototipo. */
+const VAULT_READY_HOLD_MS = 1200;
+
+function aguardar(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 /** Caderno salvo neste navegador; a selecao e local, não sincronizada. */
 function readActiveNotebook(): string {
   try {
@@ -94,7 +109,15 @@ function writeActiveNotebook(id: string): void {
 }
 
 export function App() {
-  const [token, setTokenState] = useState(getToken());
+  /**
+   * Desenvolvimento preso ao cofre do navegador (`VITE_LOCAL_ONLY=1`):
+   * ignora o token guardado e nem pergunta /setup/state, para o site estatico
+   * ser testavel em localhost com a API de pe. So vale a partir do ambiente
+   * (web/.env.local, que nao entra no repositorio); nenhum build publico
+   * define a variavel.
+   */
+  const localOnly = import.meta.env.VITE_LOCAL_ONLY === "1";
+  const [token, setTokenState] = useState(() => (localOnly ? "" : getToken()));
   const [authError, setAuthError] = useState("");
   const [checkingToken, setCheckingToken] = useState(false);
   const [setupRequired, setSetupRequired] = useState(false);
@@ -110,6 +133,13 @@ export function App() {
   });
   // "Ja tenho uma instalacao propria" troca a apresentacao pelo portao do token.
   const [forceTokenGate, setForceTokenGate] = useState(false);
+  // Cofre do Drive abrindo: em vez do botao parado, a tela conta a etapa.
+  // `done` e o fim do trabalho; quem desmonta e a entrada no app.
+  const [vaultBoot, setVaultBoot] = useState<{
+    stage: VaultStage;
+    progress?: StepProgress;
+    done: boolean;
+  } | null>(null);
   const [serverAvailable, setServerAvailable] = useState(false);
   const [view, setView] = useState<ViewId>(() =>
     typeof window !== "undefined" && window.location.pathname === "/lab" ? "lab" : "notes",
@@ -185,6 +215,34 @@ export function App() {
       refreshTimer.current = null;
       setRefreshKey((key) => key + 1);
     }, 350);
+  }, []);
+
+  /**
+   * Recarrega lista e nota aberta. Toda escrita passa por aqui: o cofre em
+   * pasta espera alguns minutos de silencio para gravar so o que mudou.
+   *
+   * Fica entre os hooks (antes dos retornos condicionais) porque a assinatura
+   * da importacao em segundo plano tambem precisa dele quando a tarefa termina.
+   */
+  const refresh = () => {
+    setRefreshKey((key) => key + 1);
+    setNoteRefreshKey((key) => key + 1);
+    markVaultDirty();
+  };
+
+  // A importacao do servidor roda fora do dialogo. Quando a tarefa termina —
+  // com resultado ou com erro, porque notas podem ter entrado antes de falhar —
+  // a lista recarrega, como o antigo `onImported` fazia. O flush do cofre agora
+  // e da propria tarefa (5 s depois do fim), nao de quem abriu o dialogo.
+  useEffect(() => {
+    let visto: ImportJobState | null = null;
+    return subscribeImportJob(() => {
+      const estado = importJobState();
+      if (visto === estado) return;
+      visto = estado;
+      if (estado.status === "done" || estado.status === "error") refresh();
+    });
+    // `refresh` so mexe em setters e na marca do cofre: a assinatura e a mesma.
   }, []);
 
   const handleEvent = useCallback(
@@ -268,6 +326,12 @@ export function App() {
   // O primeiro acesso e publico: sem token, a instancia ainda nao foi
   // reivindicada. Falha de rede cai no portao de token normal.
   useEffect(() => {
+    if (localOnly) {
+      // Dev sem servidor: a resposta ja e conhecida e o portao do token nao
+      // pode esconder o cofre do navegador.
+      setServerChecked(true);
+      return;
+    }
     let active = true;
     probeServer()
       .then((ok) => {
@@ -285,12 +349,13 @@ export function App() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [localOnly]);
 
-  // Cofre em pasta: grava o pendente ao abrir e ao fechar a aba. Sem pasta
-  // lembrada, `runVaultSync` nao faz nada.
+  // Cofre em pasta: grava o pendente ao abrir e ao fechar a aba. O alvo e o
+  // Drive quando ha sessao viva; sem sessao, cai na pasta lembrada.
   useEffect(() => {
     if (!onboarded) return;
+    setVaultTarget(async () => (driveClient() ? driveVaultRoot() : rememberFolder()));
     const flush = () => {
       void runVaultSync().catch(() => undefined);
     };
@@ -299,10 +364,23 @@ export function App() {
     return () => window.removeEventListener("pagehide", flush);
   }, [onboarded]);
 
+  // A sessao do Google vive so na memoria e morre no reload. Todo login que
+  // termina — da primeira tela, das Configuracoes ou da linha de reconectar —
+  // deixa a marca local de que este navegador tem cofre no Drive. E ela que faz
+  // a linha aparecer quando a sessao se perder.
+  useEffect(
+    () =>
+      onDriveSessionChange(() => {
+        if (driveSessionState() === "connected") rememberDriveVault();
+      }),
+    [],
+  );
+
   // A token already stored may be stale (rotated on the server) or simply
   // wrong; validate it on load and fall back to the gate. A network failure
   // keeps the token so the app can still be used offline with cached data.
   useEffect(() => {
+    if (localOnly) return;
     const stored = getToken();
     if (!stored) {
       return;
@@ -322,7 +400,7 @@ export function App() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [localOnly]);
 
   // Cadernos: espelho do servidor. A selecao fica no navegador; se o caderno
   // sumiu, cai no padrao.
@@ -467,19 +545,71 @@ export function App() {
   // produto e pergunta onde as notas vao morar.
   if (!token && !serverAvailable && !onboarded && !forceTokenGate) {
     return (
-      <FirstRun
-        googleReady={false}
-        onFolderChosen={async (folder) => {
-          // O primeiro backup e parte de "criar o cofre": se a pasta recusar a
-          // escrita, a tela mostra o erro em vez de seguir como se tivesse dado.
-          await runVaultSync(folder);
-          finishOnboarding();
-        }}
-        onUseBrowserOnly={finishOnboarding}
-        onSelfHosted={() => setForceTokenGate(true)}
-      />
+      <>
+        {/* A primeira tela fica montada e escondida enquanto o cofre abre: e
+            ela que guarda a linha de erro do Drive (o FirstRun mostra o
+            motivo da falha), e desmonta-la perderia a mensagem. */}
+        <div className="vault-boot-underlay" hidden={vaultBoot !== null}>
+          <FirstRun
+            googleReady={driveConfigured()}
+            onFolderChosen={async (folder) => {
+              // O primeiro backup e parte de "criar o cofre": se a pasta recusar a
+              // escrita, a tela mostra o erro em vez de seguir como se tivesse dado.
+              await runVaultSync(folder);
+              finishOnboarding();
+            }}
+            onDriveChosen={async () => {
+              // "conectando" entra antes do clique virar promessa: a tela de
+              // carregamento nao espera o Google responder para aparecer.
+              setVaultBoot({ stage: "conectando", done: false });
+              try {
+                await connectDrive();
+                // Login deu certo: a partir daqui este navegador tem cofre no
+                // Drive, e a linha de reconectar passa a valer quando a sessao
+                // (que so vive na memoria) morrer no proximo reload.
+                rememberDriveVault();
+                const root = await driveVaultRoot();
+                const options = {
+                  // Cada etapa chega sem o progresso da anterior: a contagem
+                  // de notas nao pode aparecer no passo dos anexos.
+                  onStage: (stage: VaultStage) =>
+                    setVaultBoot({ stage, done: false }),
+                  onProgress: (progress: StepProgress) =>
+                    setVaultBoot((current) =>
+                      current ? { ...current, progress } : current,
+                    ),
+                };
+                // Restaura o cofre que ja existe e SEMPRE sobe o banco local:
+                // restaurar sem sincronizar era o que deixava as notas locais
+                // fora do Drive quando o `backup.enc` ainda estava vazio.
+                const aberto = await openDriveVault(root, options);
+                rememberDriveVault(aberto.summary);
+                setVaultTarget(() => driveVaultRoot().catch(() => null));
+                setVaultBoot((current) => (current ? { ...current, done: true } : current));
+                await aguardar(VAULT_READY_HOLD_MS);
+                setVaultBoot(null);
+                finishOnboarding();
+              } catch (causa) {
+                // De volta a primeira tela, que mostra a causa em uma linha.
+                setVaultBoot(null);
+                throw causa;
+              }
+            }}
+            onUseBrowserOnly={finishOnboarding}
+            onSelfHosted={() => setForceTokenGate(true)}
+          />
+        </div>
+        {vaultBoot && (
+          <VaultBoot
+            stage={vaultBoot.stage}
+            progress={vaultBoot.progress}
+            done={vaultBoot.done}
+          />
+        )}
+      </>
     );
   }
+
 
   if (!token && (serverAvailable || forceTokenGate)) {
     return (
@@ -490,14 +620,6 @@ export function App() {
       />
     );
   }
-
-  const refresh = () => {
-    setRefreshKey((key) => key + 1);
-    setNoteRefreshKey((key) => key + 1);
-    // Toda escrita passa por aqui: o cofre em pasta espera alguns minutos de
-    // silencio para gravar so o que mudou.
-    markVaultDirty();
-  };
 
   const closeDrawer = () => {
     if (window.innerWidth <= 900) setNavOpen(false);
@@ -1087,7 +1209,12 @@ export function App() {
       </aside>
 
       <main className="workspace" aria-label="Conteúdo">
-        <ErrorBoundary resetKey={`${view}:${openEntryId ?? ""}`}>
+        {/* A importacao continua depois do dialogo fechar e nao pertence a
+            nenhuma tela: fica acima do conteudo para sobreviver a troca de
+            Mapa, Calendario ou Configuracoes. */}
+        <div className="workspace-stack">
+          <ImportJobStrip />
+          <ErrorBoundary resetKey={`${view}:${openEntryId ?? ""}`}>
           {view === "notes" && isBook && activeNotebook ? (
             <BookView
               book={activeNotebook}
@@ -1107,112 +1234,118 @@ export function App() {
               onOpenSettings={() => setBookDialog({ notebook: activeNotebook })}
             />
           ) : view === "notes" ? (
-            <div className={isMcp ? "editor-pane editor-pane--pjx" : "editor-pane"}>
-              {openEntryId && isMcp ? (
-                // Caderno de projetos: a nota abre por cima da superficie; a
-                // faixa devolve para a leitura do no, como o menu faz com o livro.
-                <div className="pjx-backbar">
-                  <button
-                    type="button"
-                    className="pjx-back dy-label"
-                    onClick={() => setOpenEntryId(null)}
-                    aria-label="Voltar para projetos"
-                    title="Projetos"
-                  >
-                    <span className="pjx-ico pjx-ico--sm" aria-hidden="true">
-                      <svg
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <path d="M10 3 5 8l5 5" />
-                      </svg>
-                    </span>
-                    Projetos
-                  </button>
-                </div>
-              ) : null}
-              {openEntryId ? (
-                <NoteEditor
-                  key={openEntryId}
-                  entryId={openEntryId}
-                  refreshKey={noteRefreshKey}
-                  failureReason={failures[openEntryId]}
-                  progress={entryProgress[openEntryId]}
-                  onChanged={refresh}
-                  onDeleted={() => {
-                    // So apaga a nota aberta se ela ainda for a que foi
-                    // deletada; ao navegar para outra nota no meio, nao
-                    // fecha a que acabou de abrir.
-                    setOpenEntryId((current) =>
-                      current === openEntryId ? null : current,
-                    );
-                    refresh();
-                  }}
-                  onOpenEntity={(kind, name, edit) => {
-                    setEntityFocus({ kind, name, edit });
-                    setView("map");
-                  }}
-                  onOpenEntry={(id) => setOpenEntryId(id)}
-                  notebooks={notebooks}
-                />
-              ) : isMcp ? (
-                // Caderno de projetos MCP: a lista da sidebar sao os projetos;
-                // abrir um escopa esta area. Clicar numa linha abre a nota
-                // daquele projeto no mesmo editor, como a lista de notas faz.
-                <div className="page page--projects">
-                  <ProjectsView
-                    index={projectsData.index}
-                    loading={projectsData.loading}
-                    error={projectsData.error}
-                    node={pjNode}
-                    onSelectNode={setPjNode}
-                    onOpenEntry={(id) => {
-                      setView("notes");
-                      setOpenEntryId(id);
-                      closeDrawer();
+            <div className="notes-shell">
+              {/* A linha de reconectar fica acima da area das notas, na area
+                  principal: e aqui que a pessoa esta olhando as notas quando a
+                  sessao do Google morre, nao dentro das Configuracoes. */}
+              {!isMcp && <DriveReconnect />}
+              <div className={isMcp ? "editor-pane editor-pane--pjx" : "editor-pane"}>
+                {openEntryId && isMcp ? (
+                  // Caderno de projetos: a nota abre por cima da superficie; a
+                  // faixa devolve para a leitura do no, como o menu faz com o livro.
+                  <div className="pjx-backbar">
+                    <button
+                      type="button"
+                      className="pjx-back dy-label"
+                      onClick={() => setOpenEntryId(null)}
+                      aria-label="Voltar para projetos"
+                      title="Projetos"
+                    >
+                      <span className="pjx-ico pjx-ico--sm" aria-hidden="true">
+                        <svg
+                          viewBox="0 0 16 16"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <path d="M10 3 5 8l5 5" />
+                        </svg>
+                      </span>
+                      Projetos
+                    </button>
+                  </div>
+                ) : null}
+                {openEntryId ? (
+                  <NoteEditor
+                    key={openEntryId}
+                    entryId={openEntryId}
+                    refreshKey={noteRefreshKey}
+                    failureReason={failures[openEntryId]}
+                    progress={entryProgress[openEntryId]}
+                    onChanged={refresh}
+                    onDeleted={() => {
+                      // So apaga a nota aberta se ela ainda for a que foi
+                      // deletada; ao navegar para outra nota no meio, nao
+                      // fecha a que acabou de abrir.
+                      setOpenEntryId((current) =>
+                        current === openEntryId ? null : current,
+                      );
+                      refresh();
                     }}
+                    onOpenEntity={(kind, name, edit) => {
+                      setEntityFocus({ kind, name, edit });
+                      setView("map");
+                    }}
+                    onOpenEntry={(id) => setOpenEntryId(id)}
+                    notebooks={notebooks}
                   />
-                </div>
-              ) : (
-                <div className="empty-editor">
-                  <div className="empty-inner">
-                    <h2>Um lugar para as suas notas</h2>
-                    <p className="muted">
-                      Escolha uma nota na lista, ou comece uma nova. Áudios viram texto,
-                      imagens entram no corpo e a análise encontra pessoas, lugares e temas.
-                    </p>
-                    <div className="empty-actions">
-                      <button type="button" className="button button--primary" onClick={openCompose}>
-                        Nova nota
-                      </button>
-                      <button
-                        type="button"
-                        className="button button--ghost"
-                        onClick={openNotionImport}
-                      >
-                        Importar do Notion
-                      </button>
-                      <button
-                        type="button"
-                        className="button button--ghost"
-                        onClick={() => setImportServerOpen(true)}
-                      >
-                        Importar de um servidor
-                      </button>
-                      <button
-                        type="button"
-                        className="button button--ghost"
-                        onClick={() => openView("map")}
-                      >
-                        Ver mapa
-                      </button>
+                ) : isMcp ? (
+                  // Caderno de projetos MCP: a lista da sidebar sao os projetos;
+                  // abrir um escopa esta area. Clicar numa linha abre a nota
+                  // daquele projeto no mesmo editor, como a lista de notas faz.
+                  <div className="page page--projects">
+                    <ProjectsView
+                      index={projectsData.index}
+                      loading={projectsData.loading}
+                      error={projectsData.error}
+                      node={pjNode}
+                      onSelectNode={setPjNode}
+                      onOpenEntry={(id) => {
+                        setView("notes");
+                        setOpenEntryId(id);
+                        closeDrawer();
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <div className="empty-editor">
+                    <div className="empty-inner">
+                      <h2>Um lugar para as suas notas</h2>
+                      <p className="muted">
+                        Escolha uma nota na lista, ou comece uma nova. Áudios viram texto,
+                        imagens entram no corpo e a análise encontra pessoas, lugares e temas.
+                      </p>
+                      <div className="empty-actions">
+                        <button type="button" className="button button--primary" onClick={openCompose}>
+                          Nova nota
+                        </button>
+                        <button
+                          type="button"
+                          className="button button--ghost"
+                          onClick={openNotionImport}
+                        >
+                          Importar do Notion
+                        </button>
+                        <button
+                          type="button"
+                          className="button button--ghost"
+                          onClick={() => setImportServerOpen(true)}
+                        >
+                          Importar de um servidor
+                        </button>
+                        <button
+                          type="button"
+                          className="button button--ghost"
+                          onClick={() => openView("map")}
+                        >
+                          Ver mapa
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           ) : view === "map" ? (
             <div className="page page--map">
@@ -1258,7 +1391,8 @@ export function App() {
               />
             </div>
           )}
-        </ErrorBoundary>
+          </ErrorBoundary>
+        </div>
       </main>
 
       <NotebookDialog
@@ -1308,10 +1442,7 @@ export function App() {
       />
 
       {importServerOpen && (
-        <ImportServerDialog
-          onClose={() => setImportServerOpen(false)}
-          onImported={refresh}
-        />
+        <ImportServerDialog onClose={() => setImportServerOpen(false)} />
       )}
 
       {importOpen && (

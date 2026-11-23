@@ -25,6 +25,35 @@ vi.mock("../api", () => ({
   },
 }));
 
+const drive = vi.hoisted(() => ({
+  configured: vi.fn(() => false),
+  state: vi.fn(() => "off" as "off" | "connected" | "expired"),
+  onChange: vi.fn((cb: () => void) => {
+    void cb;
+    return () => undefined;
+  }),
+  connect: vi.fn(async () => undefined),
+  disconnect: vi.fn(),
+}));
+const cloud = vi.hoisted(() => ({
+  sync: vi.fn(async () => ({ written: 2, deleted: 0, unchanged: 1, at: new Date().toISOString() })),
+  restore: vi.fn(async () => ({ created: 1, updated: 0, skipped: 0 })),
+  exists: vi.fn(async () => true),
+}));
+
+vi.mock("../local/driveSession", () => ({
+  driveConfigured: () => drive.configured(),
+  driveSessionState: () => drive.state(),
+  onDriveSessionChange: (cb: () => void) => drive.onChange(cb),
+  connectDrive: () => drive.connect(),
+  disconnectDrive: () => drive.disconnect(),
+}));
+vi.mock("../local/vaultCloud", () => ({
+  syncVaultToDrive: () => cloud.sync(),
+  restoreVaultFromDrive: () => cloud.restore(),
+  driveVaultExists: () => cloud.exists(),
+}));
+
 const baseSettings: Settings = {
   owner_name: "joseti",
   all_notes_mine: true,
@@ -72,6 +101,8 @@ const whisperModels = [
 
 beforeEach(() => {
   vi.clearAllMocks();
+  drive.configured.mockReturnValue(false);
+  drive.state.mockReturnValue("off");
   vi.mocked(api.getSettings).mockResolvedValue(baseSettings);
   vi.mocked(api.listModels).mockResolvedValue({ models: whisperModels });
   vi.mocked(api.listAnalyzeModels).mockResolvedValue({ models: ["longcat-2.5-free", "glm-5.3"] });
@@ -209,5 +240,37 @@ describe("SettingsView projetos do MCP", () => {
 
     fireEvent.click(pause!.querySelector("summary") as HTMLElement);
     expect(pause!.open).toBe(true);
+  });
+});
+
+describe("SettingsView cofre no Drive", () => {
+  async function abrirCofre() {
+    await renderSettings();
+    fireEvent.click(screen.getByRole("tab", { name: "Cofre" }));
+    const linha = (await screen.findByText("Google Drive")).closest(".cfg-item") as HTMLElement;
+    return linha;
+  }
+
+  it("sem VITE_GOOGLE_CLIENT_ID o botao do Drive fica desabilitado", async () => {
+    drive.configured.mockReturnValue(false);
+    const linha = await abrirCofre();
+
+    expect(within(linha).getByText("sem client id")).toBeTruthy();
+    expect(within(linha).getByRole("button", { name: "conectar" })).toBeDisabled();
+    expect(within(linha).getByRole("button", { name: "salvar" })).toBeDisabled();
+    expect(within(linha).getByRole("button", { name: "restaurar" })).toBeDisabled();
+  });
+
+  it("com sessao conectada, salvar envia o cofre ao Drive", async () => {
+    drive.configured.mockReturnValue(true);
+    drive.state.mockReturnValue("connected");
+    const linha = await abrirCofre();
+
+    expect(within(linha).getByText("conectado")).toBeTruthy();
+    const salvar = within(linha).getByRole("button", { name: "salvar" });
+    expect(salvar).not.toBeDisabled();
+    fireEvent.click(salvar);
+
+    await waitFor(() => expect(cloud.sync).toHaveBeenCalledTimes(1));
   });
 });

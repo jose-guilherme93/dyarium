@@ -1238,7 +1238,9 @@
   display: inline-block;
   width: 12px;
   height: 12px;
-  border: 2px solid var(--color-border);
+  /* A hairline da borda sumia no papel: um degrau acima em cima do texto
+     mudo, sem competir com o acento do topo. */
+  border: 2px solid color-mix(in srgb, var(--color-muted) 42%, transparent);
   border-top-color: var(--color-accent);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
@@ -12324,4 +12326,332 @@ button.save-glyph:focus-visible {
   .calendar-today {
     transition: none;
   }
+}
+
+/* ---------- abrindo o cofre (VaultBoot) ----------
+   Desenho aprovado em web/prototypes/vault-boot.html, na paleta desta folha:
+   o mesmo circulo de 12 px do carregamento de nota (acento e trilho iguais aos
+   do .spinner), a linha de 14 px, o detalhe da etapa em 13 px e o medidor de
+   2 px so quando ha contagem. Sem card, sombra ou emoji. */
+
+/* A primeira tela continua montada (e guarda a linha de erro do Drive)
+   enquanto a tela de carregamento ocupa o lugar dela. */
+.vault-boot-underlay {
+  height: 100%;
+}
+
+.vault-boot-page {
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  padding-block: calc(var(--space) * 10);
+  padding-inline: clamp(calc(var(--space) * 5), 5vw, calc(var(--space) * 16));
+}
+
+/* A coluna e a mesma do texto: quando a nota entra, o texto comeca onde o
+   circulo estava. */
+.vault-boot-column {
+  width: 100%;
+  max-width: var(--note-measure, 760px);
+  margin-inline: auto;
+}
+
+.vault-boot {
+  width: min(320px, 100%);
+  display: flex;
+  flex-direction: column;
+}
+
+/* "pronto" fica na tela por 0,9 s e o bloco sai em 0,3 s: o App desmonta
+   depois de ~1,2 s, entao a saida cabe no tempo dele. */
+.vault-boot[data-done="true"] {
+  animation: vault-boot-out 0.3s ease 0.9s forwards;
+}
+
+@keyframes vault-boot-out {
+  to {
+    opacity: 0;
+  }
+}
+
+.vault-boot-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 2);
+  /* Reserva a altura da linha: no "pronto" o texto sai e o circulo nao pula. */
+  min-height: 18px;
+  margin: 0;
+  color: var(--color-text);
+  font-size: 14px;
+  line-height: 1.3;
+}
+
+/* Mesmo circulo do .spinner, inclusive o trilho um degrau acima da borda. */
+.vault-boot-glyph {
+  position: relative;
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border: 2px solid color-mix(in srgb, var(--color-muted) 42%, transparent);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+/* Fim: disco cheio com o traco, no mesmo 12 px. */
+.vault-boot-glyph.is-done {
+  animation: none;
+  border: 0;
+  background: var(--color-accent);
+}
+
+.vault-boot-glyph.is-done::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 2.5px;
+  width: 3px;
+  height: 6px;
+  border-right: 1.5px solid var(--color-bg);
+  border-bottom: 1.5px solid var(--color-bg);
+  transform: rotate(42deg);
+}
+
+.vault-boot-detail {
+  margin: calc(var(--space) * 3) 0 0;
+  min-height: 17px;
+  color: var(--color-muted);
+  font-size: 13px;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: break-word;
+}
+
+.vault-boot-detail b {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+/* A linha da etapa entra sem quicar: so um aceno de opacidade. */
+.vault-boot-fresh {
+  display: inline;
+  animation: vault-detail-in 0.22s ease-out;
+}
+
+@keyframes vault-detail-in {
+  from {
+    opacity: 0.3;
+  }
+}
+
+.vault-boot-meter {
+  margin-top: calc(var(--space) * 2);
+  height: 2px;
+  background: var(--color-border);
+  overflow: hidden;
+}
+
+/* Sem contagem o medidor sai da vista, mas o espaco fica. */
+.vault-boot-meter[data-idle="true"] {
+  visibility: hidden;
+}
+
+.vault-boot-meter span {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: var(--color-accent);
+  transition: width 0.12s linear;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vault-boot,
+  .vault-boot-glyph,
+  .vault-boot-fresh {
+    animation: none;
+  }
+
+  .vault-boot-meter span {
+    transition: none;
+  }
+}
+
+/* ---------- reconectar o Drive (linha acima da area das notas) ----------
+   Mesma peca do `.cfg-item` das Configuracoes: marca, nome, o numero que
+   importa e um botao. A area das notas e uma coluna; a linha fica no topo dela
+   para a pessoa ver que a sessao do Google morreu sem sair da nota. */
+
+.notes-shell {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+/* O editor rola por dentro; a linha fica parada acima dele. */
+.notes-shell > .editor-pane {
+  height: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.drive-reconnect {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--dy-space-4);
+  padding: var(--dy-space-6) calc(var(--space) * 3) var(--dy-space-8);
+  border-bottom: 1px solid var(--color-border);
+  font-family: var(--dy-font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.32;
+  color: var(--dy-text);
+}
+
+.drive-reconnect :focus-visible {
+  outline: var(--dy-focus-width) solid var(--dy-primary);
+  outline-offset: var(--dy-focus-offset);
+}
+
+/* A linha herda a peca das Configuracoes; a borda e a do bloco, nao a da
+   ultima linha da lista. */
+.drive-reconnect .cfg-item {
+  padding: 0;
+  border-bottom: 0;
+}
+
+.drive-reconnect .cfg-grow {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drive-reconnect-num {
+  white-space: nowrap;
+}
+
+.drive-reconnect-error {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--dy-danger);
+}
+
+/* O `VaultBoot` aprovado, sem a pagina: circulo, linha da etapa e medidor
+   cabem abaixo da linha do Drive durante o trabalho. Recuado da marca para
+   alinhar com o nome, como uma continuacao da mesma linha. */
+.drive-reconnect-boot {
+  padding-left: calc(var(--dy-mark-size) + var(--dy-space-8));
+}
+
+.drive-reconnect-boot .vault-boot-page {
+  min-height: 0;
+  padding: 0;
+  display: block;
+}
+
+.drive-reconnect-boot .vault-boot-column {
+  max-width: none;
+  margin: 0;
+}
+
+.drive-reconnect-boot .vault-boot {
+  width: 100%;
+}
+
+.drive-reconnect-boot .vault-boot-head {
+  min-height: 0;
+  font-size: 12.5px;
+}
+
+.drive-reconnect-boot .vault-boot-detail {
+  margin-top: var(--dy-space-4);
+  font-size: 12.5px;
+}
+
+.drive-reconnect-boot .vault-boot-meter {
+  margin-top: var(--dy-space-6);
+}
+
+/* ---------- importacao do servidor (faixa abaixo da linha do Drive) ----------
+   A tarefa roda fora do dialogo; esta linha e o unico lugar que conta o
+   progresso sem prender a tela. Mesma peca das Configuracoes, como a linha do
+   Drive: marca, o que esta acontecendo e o numero que importa. O medidor e o do
+   VaultBoot (2 px, `--color-accent`), so que rente a linha. */
+
+.import-job-strip {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--dy-space-4);
+  padding: var(--dy-space-6) calc(var(--space) * 3) var(--dy-space-8);
+  border-bottom: 1px solid var(--color-border);
+  font-family: var(--dy-font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.32;
+  color: var(--dy-text);
+}
+
+.import-job-strip :focus-visible {
+  outline: var(--dy-focus-width) solid var(--dy-primary);
+  outline-offset: var(--dy-focus-offset);
+}
+
+.import-job-strip .cfg-item {
+  padding: 0;
+  border-bottom: 0;
+}
+
+.import-job-strip .cfg-grow {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.import-job-num {
+  white-space: nowrap;
+}
+
+.import-job-error {
+  color: var(--dy-danger);
+}
+
+/* Enquanto trabalha a marca gira como o circulo do carregamento da nota; no fim
+   ela fica preenchida e, se parou, vira a marca de aviso das Configuracoes. */
+.import-job-mark[data-state="run"] {
+  border-color: var(--color-accent);
+  border-top-color: transparent;
+  animation: import-job-spin 0.9s linear infinite;
+}
+
+@keyframes import-job-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* O medidor acompanha o texto, como a contagem do VaultBoot na linha do Drive. */
+.import-job-strip .import-job-meter {
+  margin-top: 0;
+  margin-left: calc(var(--dy-mark-size) + var(--dy-space-8));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .import-job-mark[data-state="run"] {
+    animation: none;
+  }
+}
+
+/* A faixa da importacao fica acima de qualquer tela: o conteudo continua
+   ocupando o resto do espaco, sem a faixa empurrar o layout quando some. */
+.workspace-stack {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }

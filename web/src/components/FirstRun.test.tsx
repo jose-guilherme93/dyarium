@@ -103,4 +103,55 @@ describe("FirstRun", () => {
     fireEvent.click(screen.getByRole("button", { name: "Já tenho uma instalação própria" }));
     expect(onSelfHosted).toHaveBeenCalledTimes(1);
   });
+
+  it("com googleReady e onDriveChosen, conectar mostra ocupado e o erro", async () => {
+    let rejeitar: (erro: Error) => void = () => undefined;
+    const onDriveChosen = vi.fn(
+      () =>
+        new Promise<void>((_, reject) => {
+          rejeitar = reject;
+        }),
+    );
+    render(
+      <FirstRun
+        onFolderChosen={vi.fn()}
+        onUseBrowserOnly={vi.fn()}
+        onSelfHosted={vi.fn()}
+        googleReady
+        onDriveChosen={onDriveChosen}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Continuar com Google" }));
+
+    expect(onDriveChosen).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: /Conectando/ })).toBeDisabled();
+
+    rejeitar(new Error("sem permissao"));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Não foi possível abrir o cofre do Drive. Tente de novo.",
+    );
+  });
+
+  it("erro 403 do Drive aparece como permissao, nao como 'tente de novo'", async () => {
+    const onDriveChosen = vi.fn(async () => {
+      throw new Error('Drive 403: {"error":{"message":"Google Drive API has not been used"}}');
+    });
+    render(
+      <FirstRun
+        onFolderChosen={vi.fn()}
+        onUseBrowserOnly={vi.fn()}
+        onSelfHosted={vi.fn()}
+        googleReady
+        onDriveChosen={onDriveChosen}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Continuar com Google" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Sem permissão no Drive. A Drive API pode estar desligada no projeto.",
+    );
+  });
 });

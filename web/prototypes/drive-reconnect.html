@@ -1,0 +1,661 @@
+<!doctype html>
+<html lang="pt-BR" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dyarium — reconectar o Drive (protótipo)</title>
+<!--
+  Protótipo descartável de aprovação. Não faz parte do bundle de produção.
+  Tokens copiados de docs/design/tokens.json e das folhas do app
+  (web/src/views/settings.css, web/src/App.css). A linha é a mesma peça do
+  `.cfg-item` das Configurações, no topo da área principal das notas.
+
+  Estados: sem sessão, conectando (o número continua na linha) e erro.
+  No celular a linha aparece abaixo da barra do topo, na área principal — não
+  dentro da gaveta.
+-->
+<style>
+@font-face {
+  font-family: "Schibsted Grotesk";
+  src: url("../public/fonts/schibsted-grotesk.woff2") format("woff2");
+  font-weight: 400 700;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: light;
+  --dy-surface: #eceee9;
+  --dy-surface-alt: #e3e6e0;
+  --dy-surface-raised: #dadfd7;
+  --dy-line: #d2d6cf;
+  --dy-text: #232622;
+  --dy-text-muted: #6a6f68;
+  --dy-primary: #5b6f66;
+  --dy-primary-soft: #dce3e0;
+  --dy-danger: #9c6259;
+  --dy-success: #5c7a63;
+  --dy-warning: #8b7444;
+
+  --paper: #f6f4ef;
+  --paper-2: #efece4;
+  --paper-3: #e7e2d7;
+  --ink: #211e1a;
+  --ink-soft: #6b655c;
+  --line: #ded8cc;
+  --accent: #2c4a63;
+
+  --dy-space-2: 2px;
+  --dy-space-4: 4px;
+  --dy-space-6: 6px;
+  --dy-space-8: 8px;
+  --dy-space-12: 12px;
+  --dy-space-16: 16px;
+  --dy-radius-control: 2px;
+  --dy-radius-surface: 3px;
+  --dy-focus-width: 1px;
+  --dy-focus-offset: 2px;
+  --dy-control-md: 26px;
+  --dy-control-pad-md: 9px;
+  --dy-row-dense: 26px;
+  --dy-mark-size: 8px;
+  --dy-mark-stroke: 1.5px;
+  --dy-font-sans: "Schibsted Grotesk", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --dy-font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+  --space: 4px;
+  --color-bg: var(--paper);
+  --color-surface: var(--paper-2);
+  --color-border: var(--line);
+  --color-text: var(--ink);
+  --color-muted: var(--ink-soft);
+  --color-accent: var(--accent);
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --dy-surface: #171a18;
+  --dy-surface-alt: #1f2320;
+  --dy-surface-raised: #272c28;
+  --dy-line: #2f3431;
+  --dy-text: #e4e8e3;
+  --dy-text-muted: #a1a8a2;
+  --dy-primary: #a2b8ae;
+  --dy-primary-soft: #2a3431;
+  --dy-danger: #c78f85;
+  --dy-success: #94b09a;
+  --dy-warning: #c6ab77;
+
+  --paper: #14161a;
+  --paper-2: #1c1f24;
+  --paper-3: #272d36;
+  --ink: #eceae3;
+  --ink-soft: #b7bcc4;
+  --line: #363c45;
+  --accent: #9cc0e8;
+}
+
+* { box-sizing: border-box; }
+
+html, body { margin: 0; height: 100%; }
+
+body {
+  font-family: var(--dy-font-sans);
+  background: var(--color-bg);
+  color: var(--color-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+button { font: inherit; color: inherit; }
+
+/* ---------- andaime do protótipo (fora do app) ---------- */
+.scaffold {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--color-muted);
+}
+
+.scaffold .tag {
+  font-family: var(--dy-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+.scaffold .pills { display: flex; gap: 4px; margin-left: auto; }
+
+.scaffold .pill {
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--dy-line);
+  border-radius: var(--dy-radius-control);
+  background: transparent;
+  color: var(--color-muted);
+  cursor: pointer;
+}
+
+.scaffold .pill[aria-pressed="true"] {
+  background: var(--dy-surface-raised);
+  color: var(--dy-text);
+}
+
+body.shot .scaffold { display: none; }
+
+/* ---------- shell do app ---------- */
+.app {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  height: calc(100vh - 45px);
+  overflow: hidden;
+}
+
+body.shot .app { height: 100vh; }
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  padding: 6px 10px 0;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-surface);
+  overflow: hidden;
+}
+
+.brand {
+  padding: 4px 8px;
+  font-family: var(--font-serif, inherit);
+  font-size: 17px;
+  letter-spacing: 0.02em;
+}
+
+.brand small {
+  margin-left: 4px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--color-muted);
+}
+
+.caderno {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--dy-line);
+  border-radius: var(--dy-radius-control);
+  font-size: 13px;
+}
+
+.caderno .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--dy-primary);
+}
+
+.caderno .chev { margin-left: auto; color: var(--color-muted); }
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--dy-line);
+  border-radius: var(--dy-radius-control);
+  color: var(--color-muted);
+  font-size: 12.5px;
+}
+
+.notas { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; overflow: hidden; }
+
+.nota {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px 8px;
+  border-radius: var(--dy-radius-control);
+}
+
+.nota .t { font-size: 13px; }
+
+.nota .m {
+  font-family: var(--dy-font-mono);
+  font-size: 11px;
+  color: var(--color-muted);
+}
+
+.nota[aria-current="true"] { background: var(--dy-surface-raised); }
+
+.sidebar-foot {
+  display: flex;
+  gap: 2px;
+  margin-top: auto;
+  padding: 8px 0;
+  border-top: 1px solid var(--dy-line);
+}
+
+.foot {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: var(--dy-radius-control);
+  background: transparent;
+  color: var(--color-muted);
+  cursor: pointer;
+}
+
+.foot:first-child { color: var(--color-text); background: var(--dy-surface-raised); }
+
+/* ---------- área principal ---------- */
+.workspace { display: flex; min-width: 0; min-height: 0; }
+
+.notes-shell {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.note-area {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 40px clamp(16px, 5vw, 64px);
+}
+
+.note-title {
+  margin: 0 0 6px;
+  font-family: var(--font-serif, inherit);
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.note-meta {
+  margin: 0 0 26px;
+  font-family: var(--dy-font-mono);
+  font-size: 11.5px;
+  color: var(--color-muted);
+}
+
+.note-body { max-width: 68ch; font-size: 15px; line-height: 1.6; color: var(--color-text); }
+
+.note-body p { margin: 0 0 14px; }
+
+/* ---------- a linha do Drive (mesma peça do .cfg-item) ---------- */
+.drive-reconnect {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--dy-space-4);
+  padding: var(--dy-space-6) calc(var(--space) * 3) var(--dy-space-8);
+  border-bottom: 1px solid var(--color-border);
+  font-family: var(--dy-font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.32;
+  color: var(--dy-text);
+}
+
+.drive-reconnect :focus-visible {
+  outline: var(--dy-focus-width) solid var(--dy-primary);
+  outline-offset: var(--dy-focus-offset);
+}
+
+.cfg-item {
+  display: flex;
+  align-items: center;
+  gap: var(--dy-space-8);
+  min-height: var(--dy-row-dense);
+  padding: 3px 0;
+  border-bottom: 1px solid var(--dy-line);
+}
+
+.drive-reconnect .cfg-item { border-bottom: 0; padding: 0; }
+
+.cfg-grow { flex: 1; min-width: 0; }
+
+.drive-reconnect .cfg-grow {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cfg-meta {
+  font-family: var(--dy-font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--dy-text-muted);
+  white-space: nowrap;
+}
+
+.cfg-mark {
+  width: var(--dy-mark-size);
+  height: var(--dy-mark-size);
+  flex: none;
+  border: var(--dy-mark-stroke) solid var(--dy-line);
+  border-radius: 50%;
+}
+
+.cfg-mark[data-state="on"] { background: var(--dy-primary); border-color: var(--dy-primary); }
+
+.cfg-mark[data-state="warn"] { border-color: var(--dy-warning); }
+
+.cfg-mark[data-state="warn"]::after {
+  content: "";
+  display: block;
+  width: 100%;
+  height: 1px;
+  background: var(--dy-warning);
+  transform: translateY(2px) rotate(-45deg);
+}
+
+.cfg-btn {
+  height: var(--dy-control-md);
+  padding: 0 var(--dy-control-pad-md);
+  border: 1px solid var(--dy-line);
+  border-radius: var(--dy-radius-control);
+  background: transparent;
+  color: var(--dy-text);
+  cursor: pointer;
+}
+
+.cfg-btn:hover { border-color: var(--dy-primary); color: var(--dy-primary); }
+
+.cfg-btn--quiet { color: var(--dy-text-muted); }
+
+.drive-reconnect-error {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--dy-danger);
+}
+
+/* O VaultBoot aprovado, apertado na altura da linha: mesma peça, sem a página.
+   Recuado da marca para alinhar com o nome. */
+.drive-reconnect-boot { padding-left: calc(var(--dy-mark-size) + var(--dy-space-8)); }
+
+.drive-reconnect-boot .vault-boot-page {
+  min-height: 0;
+  padding: 0;
+  display: block;
+}
+
+.drive-reconnect-boot .vault-boot-column { max-width: none; margin: 0; }
+.drive-reconnect-boot .vault-boot { width: 100%; }
+
+.drive-reconnect-boot .vault-boot-head {
+  min-height: 0;
+  font-size: 12.5px;
+}
+
+.drive-reconnect-boot .vault-boot-detail {
+  margin-top: var(--dy-space-4);
+  font-size: 12.5px;
+}
+
+.drive-reconnect-boot .vault-boot-meter { margin-top: var(--dy-space-6); }
+
+.vault-boot { width: min(320px, 100%); display: flex; flex-direction: column; }
+
+.vault-boot-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 2);
+  min-height: 18px;
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.3;
+}
+
+.vault-boot-glyph {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  border: 1.5px solid var(--dy-line);
+  border-top-color: var(--dy-primary);
+  border-radius: 50%;
+  animation: vault-spin 0.9s linear infinite;
+}
+
+@keyframes vault-spin { to { transform: rotate(360deg); } }
+
+.vault-boot-detail {
+  margin: calc(var(--space) * 3) 0 0;
+  min-height: 17px;
+  color: var(--color-muted);
+  font-size: 13px;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+}
+
+.vault-boot-detail b { color: var(--color-text); font-weight: 600; }
+
+.vault-boot-fresh { display: inline; animation: vault-detail-in 0.22s ease-out; }
+
+@keyframes vault-detail-in { from { opacity: 0.3; } }
+
+.vault-boot-meter {
+  margin-top: calc(var(--space) * 2);
+  height: 2px;
+  background: var(--color-border);
+  overflow: hidden;
+}
+
+.vault-boot-meter[data-idle="true"] { visibility: hidden; }
+
+.vault-boot-meter span {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: var(--color-accent);
+}
+
+/* ---------- celular ---------- */
+@media (max-width: 900px) {
+  .app { grid-template-columns: 1fr; }
+
+  .sidebar { display: none; }
+
+  .mobile-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 52px;
+    padding: 0 12px;
+    background: var(--color-surface);
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .mobile-bar .icon-button {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border: 0;
+    background: transparent;
+    color: var(--color-text);
+  }
+
+  .mobile-bar-title {
+    flex: 1;
+    min-width: 0;
+    font-size: 15px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mobile-bar .novo {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 28px;
+    padding: 0 9px;
+    border: 1px solid var(--dy-primary);
+    border-radius: var(--dy-radius-control);
+    background: var(--dy-primary);
+    color: var(--color-bg);
+    font-size: 12px;
+  }
+
+  .note-area { padding: 22px 16px; }
+  .note-title { font-size: 24px; }
+
+  .drive-reconnect { padding: var(--dy-space-6) 12px var(--dy-space-8); }
+}
+
+@media (min-width: 901px) {
+  .mobile-bar { display: none; }
+}
+</style>
+</head>
+<body>
+
+<div class="scaffold" aria-label="Andaime do protótipo">
+  <span class="tag">Protótipo</span>
+  <span>linha de reconectar o Drive</span>
+  <div class="pills" role="group" aria-label="Tema">
+    <button class="pill" type="button" data-theme-toggle="light" aria-pressed="true">Claro</button>
+    <button class="pill" type="button" data-theme-toggle="dark" aria-pressed="false">Escuro</button>
+  </div>
+</div>
+
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">dyarium <small>tinta e papel</small></div>
+    <div class="caderno"><span class="dot"></span>Notas ao acaso<span class="chev">▾</span></div>
+    <div class="search">
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="7" cy="7" r="4.6"/><path d="m10.6 10.6 3 3"/></svg>
+      Buscar
+    </div>
+    <div class="notas">
+      <div class="nota" aria-current="true"><span class="t">Reunião de sexta</span><span class="m">hoje · 00:41</span></div>
+      <div class="nota"><span class="t">Ideias para o livro</span><span class="m">ontem · 00:12</span></div>
+      <div class="nota"><span class="t">Mudança de casa</span><span class="m">18/11 · 04:12</span></div>
+      <div class="nota"><span class="t">Orçamento do Rui</span><span class="m">17/11 · 02:07</span></div>
+      <div class="nota"><span class="t">Lista de compras</span><span class="m">16/11 · 00:38</span></div>
+    </div>
+    <div class="sidebar-foot">
+      <button class="foot" type="button" aria-label="Mapa">
+        <svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><path d="M2 4.5 6 3l4 1.5L14 3v8.5L10 13l-4-1.5L2 13z"/><path d="M6 3v8.5M10 4.5V13"/></svg>
+      </button>
+      <button class="foot" type="button" aria-label="Calendário">
+        <svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><rect x="2.2" y="3.4" width="11.6" height="10.4" rx="1.4"/><path d="M5.2 1.8v3M10.8 1.8v3M2.2 6.6h11.6"/></svg>
+      </button>
+      <button class="foot" type="button" aria-label="Configurações">
+        <svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v1.6M8 12.6v1.6M1.8 8h1.6M12.6 8h1.6M3.6 3.6l1.1 1.1M11.3 11.3l1.1 1.1M12.4 3.6l-1.1 1.1M4.7 11.3l-1.1 1.1"/></svg>
+      </button>
+    </div>
+  </aside>
+
+  <main class="workspace">
+    <div class="notes-shell">
+      <header class="mobile-bar">
+        <button class="icon-button" type="button" aria-label="Abrir menu">
+          <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M2.4 4.2h11.2M2.4 8h11.2M2.4 11.8h11.2"/></svg>
+        </button>
+        <span class="mobile-bar-title">Notas recentes</span>
+        <span class="novo"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>Nova nota</span>
+      </header>
+
+      <!-- ESTADO -->
+      <div id="drive-slot"></div>
+
+      <div class="note-area">
+        <h1 class="note-title">Reunião de sexta</h1>
+        <p class="note-meta">00:41 · Notas ao acaso</p>
+        <div class="note-body">
+          <p>A <b>Marina</b> confirmou sábado de manhã para a mudança, lá em Pinheiros. O Rui fecha o orçamento até sexta.</p>
+          <p>Falta decidir o que vai no primeiro caminhão e o que fica para a segunda viagem.</p>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+  const slots = {
+    idle: `
+      <div class="drive-reconnect" data-state="idle">
+        <div class="cfg-item">
+          <span class="cfg-mark" data-state="warn" aria-hidden="true"></span>
+          <span class="cfg-grow">Google Drive</span>
+          <span class="cfg-meta">12,4 MB · 400 notas</span>
+          <button type="button" class="cfg-btn cfg-btn--quiet">conectar</button>
+        </div>
+      </div>`,
+    working: `
+      <div class="drive-reconnect" data-state="working">
+        <div class="cfg-item">
+          <span class="cfg-mark" data-state="warn" aria-hidden="true"></span>
+          <span class="cfg-grow">Google Drive</span>
+          <span class="cfg-meta">12,4 MB · 400 notas</span>
+        </div>
+        <div class="drive-reconnect-boot">
+          <div class="vault-boot-page">
+            <div class="vault-boot-column">
+              <div class="vault-boot">
+                <p class="vault-boot-head">
+                  <span class="vault-boot-glyph" aria-hidden="true"></span>
+                  <span>Carregando…</span>
+                </p>
+                <p class="vault-boot-detail">
+                  <span class="vault-boot-fresh"><b>338</b> de 400 notas</span>
+                </p>
+                <div class="vault-boot-meter" data-idle="false" aria-hidden="true"><span style="width:84.5%"></span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>`,
+    error: `
+      <div class="drive-reconnect" data-state="error">
+        <div class="cfg-item">
+          <span class="cfg-mark" data-state="warn" aria-hidden="true"></span>
+          <span class="cfg-grow">Google Drive</span>
+          <span class="cfg-meta">12,4 MB · 400 notas</span>
+          <button type="button" class="cfg-btn cfg-btn--quiet">conectar</button>
+        </div>
+        <p class="drive-reconnect-error" role="alert">A sessão do Google venceu. Conecte de novo.</p>
+      </div>`
+  };
+
+  const params = new URLSearchParams(location.search);
+  const state = slots[params.get("state")] ? params.get("state") : "idle";
+  document.getElementById("drive-slot").innerHTML = slots[state];
+
+  const theme = params.get("theme") === "dark" ? "dark" : "light";
+  document.documentElement.dataset.theme = theme;
+  document.querySelectorAll("[data-theme-toggle]").forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.themeToggle === theme));
+    button.addEventListener("click", () => {
+      const next = button.dataset.themeToggle;
+      document.documentElement.dataset.theme = next;
+      history.replaceState(null, "", `?state=${state}&theme=${next}`);
+      document.querySelectorAll("[data-theme-toggle]").forEach((other) => {
+        other.setAttribute("aria-pressed", String(other.dataset.themeToggle === next));
+      });
+    });
+  });
+
+  document.querySelectorAll(".cfg-btn").forEach((button) => {
+    button.addEventListener("click", () => {
+      document.getElementById("drive-slot").innerHTML = slots.working;
+    });
+  });
+
+  if (params.get("shot") === "1") document.body.classList.add("shot");
+</script>
+</body>
+</html>
