@@ -1,15 +1,12 @@
-import { Ionicons } from '@expo/vector-icons';
-import {
-  StyleSheet,
-  View,
-} from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { Text } from '@/components/AppText';
 import { Press } from '@/components/Press';
 
-import { tagColor, withAlpha } from '@/core/tags';
-import { fontSize, radius, spacing } from '@/theme/tokens';
-import { useThemedStyles } from '@/theme/ThemeContext';
-import { defineStyles } from '@/theme/themedStyles';
+import { tagColor } from '@/core/tags';
+import { designRadius, designSpace, designType } from '@/theme/design';
+
+import { Icon } from '@/ui/icons';
+import { useDesign } from '@/ui/useDesign';
 
 interface TagChipProps {
   name: string;
@@ -23,9 +20,9 @@ interface TagChipProps {
 }
 
 /**
- * Chip pastel de tag. Sem selecao fica um tom translucido com o texto na cor
- * suave; selecionado, o fundo sobe e o texto fica escuro, para o estado ser
- * visivel sem competir com o resto da interface.
+ * Chip de tag. A cor da tag e dado do usuario, nao decoracao: ela vive num
+ * ponto de 4px ao lado do nome. O estado vem do contorno e do degrau tonal,
+ * como em todo chip do sistema.
  */
 export function TagChip({
   name,
@@ -36,38 +33,36 @@ export function TagChip({
   size = 'md',
   storedColor,
 }: TagChipProps) {
-  const styles = useThemedStyles(baseStyles);
-
+  const colors = useDesign();
   const color = tagColor(name, storedColor);
+  const small = size === 'sm';
+
   const body = (
     <View
       style={[
         styles.chip,
-        size === 'sm' ? styles.chipSm : null,
+        small ? styles.chipSm : null,
         {
-          backgroundColor: withAlpha(color, selected ? 0.88 : 0.16),
-          borderColor: withAlpha(color, selected ? 0.95 : 0.28),
+          borderColor: selected ? colors.primary : colors.line,
+          backgroundColor: selected ? colors.primarySoft : 'transparent',
         },
       ]}
     >
+      <View style={[styles.dot, { backgroundColor: color }]} />
       <Text
         style={[
           styles.label,
-          size === 'sm' ? styles.labelSm : null,
-          { color: selected ? '#141416' : color },
+          small ? styles.labelSm : null,
+          { color: selected ? colors.text : colors.textMuted },
         ]}
         numberOfLines={1}
       >
         {name}
       </Text>
       {typeof count === 'number' ? (
-        <Text style={[styles.count, { color: selected ? '#2C2C2E' : withAlpha(color, 0.75) }]}>
-          {count}
-        </Text>
+        <Text style={[styles.count, { color: colors.textMuted }]}>{count}</Text>
       ) : null}
-      {onRemove ? (
-        <Ionicons name="close" size={12} color={selected ? '#141416' : color} />
-      ) : null}
+      {onRemove ? <Icon name="close" size={10} color={colors.textMuted} /> : null}
     </View>
   );
 
@@ -98,23 +93,32 @@ export function TagChip({
   return body;
 }
 
-const baseStyles = defineStyles({
+const styles = StyleSheet.create({
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.xs,
-    borderRadius: radius.pill,
-    borderWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 5,
+    gap: designSpace.s6,
+    height: designType.label.size + 16,
+    borderRadius: designRadius.control,
+    borderWidth: 1,
+    paddingHorizontal: designSpace.s8,
     maxWidth: 180,
   },
   chipSm: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
-    gap: 3,
+    height: designType.label.size + 10,
+    gap: designSpace.s4,
+    paddingHorizontal: designSpace.s6,
   },
-  label: { fontSize: fontSize.xs, fontWeight: '600' },
-  labelSm: { fontSize: 10, fontWeight: '600' },
-  count: { fontSize: 10, fontVariant: ['tabular-nums'] },
+  dot: { width: 4, height: 4, borderRadius: 2 },
+  label: {
+    fontSize: designType.label.size,
+    fontWeight: '500',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  labelSm: { fontSize: 9 },
+  count: {
+    fontSize: designType.label.size,
+    fontVariant: ['tabular-nums'],
+  },
 });

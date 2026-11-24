@@ -1,17 +1,14 @@
-import { Ionicons } from '@expo/vector-icons';
-import {
-  StyleSheet,
-  View,
-} from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { Text } from '@/components/AppText';
 import { Press } from '@/components/Press';
 
 import type { NoteOrder } from '@/core/noteOrder';
 import { TagChip } from '@/components/TagChip';
 import { TagStrip } from '@/components/TagStrip';
-import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
-import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
-import { defineStyles } from '@/theme/themedStyles';
+import { designRadius, designSpace, designType } from '@/theme/design';
+
+import { Icon } from '@/ui/icons';
+import { useDesign } from '@/ui/useDesign';
 
 interface TagFilterRowProps {
   tags: { name: string; count: number }[];
@@ -24,6 +21,11 @@ interface TagFilterRowProps {
   onPressOrder(): void;
 }
 
+/**
+ * Filtros da home: todas, tags com contagem, atalho de gerenciar e a ordem da
+ * lista. O chip e o mesmo do resto do sistema; o gerenciar e o ordenar ficam
+ * no fim da faixa, como estavam.
+ */
 export function TagFilterRow({
   tags,
   selected,
@@ -33,8 +35,8 @@ export function TagFilterRow({
   order,
   onPressOrder,
 }: TagFilterRowProps) {
-  const styles = useThemedStyles(baseStyles);
-  const { colors } = useTheme();
+  const colors = useDesign();
+  const all = selected.length === 0;
 
   return (
     <View style={styles.row}>
@@ -42,10 +44,16 @@ export function TagFilterRow({
         <Press
           onPress={onClear}
           accessibilityRole="button"
-          accessibilityState={{ selected: selected.length === 0 }}
-          style={[styles.all, selected.length === 0 ? styles.allOn : null]}
+          accessibilityState={{ selected: all }}
+          style={[
+            styles.all,
+            {
+              borderColor: all ? colors.primary : colors.line,
+              backgroundColor: all ? colors.primarySoft : 'transparent',
+            },
+          ]}
         >
-          <Text style={[styles.allText, selected.length === 0 ? styles.allTextOn : null]}>
+          <Text style={[styles.allText, { color: all ? colors.text : colors.textMuted }]}>
             Todas
           </Text>
         </Press>
@@ -62,10 +70,12 @@ export function TagFilterRow({
           onPress={onManage}
           accessibilityRole="button"
           accessibilityLabel="Gerenciar tags"
-          style={styles.manage}
+          style={[styles.manage, { borderColor: colors.line }]}
         >
-          <Ionicons name="pricetags-outline" size={14} color={colors.textSecondary} />
-          <Text style={styles.manageText}>{tags.length > 0 ? 'Tags' : 'Gerenciar tags'}</Text>
+          <Icon name="tag" size={12} color={colors.textMuted} />
+          <Text style={[styles.manageText, { color: colors.textMuted }]}>
+            {tags.length > 0 ? 'Tags' : 'Gerenciar tags'}
+          </Text>
         </Press>
       </TagStrip>
       <Press
@@ -75,52 +85,54 @@ export function TagFilterRow({
         accessibilityLabel={
           order === 'oldest' ? 'Ordenar notas: mais antigas primeiro' : 'Ordenar notas: mais recentes primeiro'
         }
-        hitSlop={6}
+        hitSlop={8}
       >
-        <Ionicons name="swap-vertical" size={16} color={colors.textSecondary} />
+        <Icon name="sort" size={16} color={colors.textMuted} />
       </Press>
     </View>
   );
 }
 
-const baseStyles = defineStyles({
+const styles = StyleSheet.create({
   row: {
-    marginBottom: spacing.xs,
+    marginBottom: designSpace.s4,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.sm,
+    gap: designSpace.s4,
+    paddingHorizontal: designSpace.s4,
   },
   strip: { flex: 1 },
   all: {
-    borderRadius: radius.pill,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: baseColors.borderStrong,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 5,
-    backgroundColor: baseColors.surface,
+    height: designType.label.size + 16,
+    borderRadius: designRadius.control,
+    borderWidth: 1,
+    justifyContent: 'center',
+    paddingHorizontal: designSpace.s8,
   },
-  allOn: { backgroundColor: baseColors.text, borderColor: baseColors.text },
-  allText: { color: baseColors.textSecondary, fontSize: fontSize.xs, fontWeight: '700' },
-  allTextOn: { color: baseColors.bg },
+  allText: {
+    fontSize: designType.label.size,
+    fontWeight: '500',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
   manage: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    borderRadius: radius.pill,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: baseColors.border,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 5,
+    gap: designSpace.s4,
+    height: designType.label.size + 16,
+    borderRadius: designRadius.control,
+    borderWidth: 1,
+    paddingHorizontal: designSpace.s6,
   },
-  manageText: { color: baseColors.textSecondary, fontSize: fontSize.xs, fontWeight: '600' },
+  manageText: {
+    fontSize: designType.label.size,
+    fontWeight: '500',
+    letterSpacing: 0.8,
+  },
   order: {
     width: 34,
     height: 30,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: radius.pill,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: baseColors.borderStrong,
-    backgroundColor: baseColors.surface,
   },
 });
