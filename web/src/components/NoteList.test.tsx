@@ -120,6 +120,21 @@ function renderList(notebookId: string, activeId: string | null = null) {
   );
 }
 
+function renderListOpen(onOpen: (id: string) => void) {
+  return render(
+    <NoteList
+      refreshKey={0}
+      activeId={null}
+      failures={{}}
+      notebookId={ALL_NOTEBOOKS}
+      notebooks={NOTEBOOKS}
+      onOpen={onOpen}
+      onCreate={() => undefined}
+      onManageTags={() => undefined}
+    />,
+  );
+}
+
 describe("NoteList", () => {
   it("nota sem titulo nao repete a previa na linha", () => {
     const entry: Entry = {
@@ -286,5 +301,172 @@ describe("NoteList", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Desarquivar" }));
 
     await waitFor(() => expect(api.patchEntry).toHaveBeenCalledWith("e2", { archived: false }));
+  });
+
+  it("entra no modo de selecao pelo botao e marca duas notas sem abrir", async () => {
+    const onOpen = vi.fn();
+    renderListOpen(onOpen);
+    await waitFor(() => expect(screen.getByText("Reunião de segunda")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Selecionar notas" }));
+    expect(screen.getByRole("button", { name: "Cancelar seleção" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Reunião de segunda"));
+    fireEvent.click(screen.getByText("Viagem de fim de ano"));
+
+    expect(screen.getByText("2 notas")).toBeInTheDocument();
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it("alterna notas no modo de selecao sem substituir a selecao", async () => {
+    renderListOpen(vi.fn());
+    await waitFor(() => expect(screen.getByText("Reunião de segunda")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Selecionar notas" }));
+
+    const reuniao = screen.getByRole("button", { name: /Reunião de segunda/ });
+    const viagem = screen.getByRole("button", { name: /Viagem de fim de ano/ });
+
+    fireEvent.click(screen.getByText("Reunião de segunda"));
+    expect(reuniao).toHaveAttribute("aria-selected", "true");
+
+    fireEvent.click(screen.getByText("Viagem de fim de ano"));
+    expect(screen.getByText("2 notas")).toBeInTheDocument();
+    expect(reuniao).toHaveAttribute("aria-selected", "true");
+    expect(viagem).toHaveAttribute("aria-selected", "true");
+
+    // Clicar de novo numa marcada remove sem substituir a selecao.
+    fireEvent.click(screen.getByText("Reunião de segunda"));
+    expect(reuniao).toHaveAttribute("aria-selected", "false");
+    expect(viagem).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("1 nota")).toBeInTheDocument();
+  });
+
+  it("arquiva duas notas selecionadas e sai do modo", async () => {
+    vi.mocked(api.patchEntry).mockClear();
+    renderListOpen(vi.fn());
+    await waitFor(() => expect(screen.getByText("Reunião de segunda")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Selecionar notas" }));
+    fireEvent.click(screen.getByText("Reunião de segunda"));
+    fireEvent.click(screen.getByText("Viagem de fim de ano"));
+    expect(screen.getByText("2 notas")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Arquivar" }));
+
+    await waitFor(() => expect(api.patchEntry).toHaveBeenCalledTimes(2));
+    expect(api.patchEntry).toHaveBeenCalledWith("e1", { archived: true });
+    expect(api.patchEntry).toHaveBeenCalledWith("e3", { archived: true });
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Apagar" })).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole("button", { name: "Selecionar notas" })).toBeInTheDocument();
+  });
+
+  it("apaga duas notas selecionadas e sai do modo", async () => {
+    vi.mocked(api.deleteEntry).mockClear();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const onMutated = vi.fn();
+    render(
+      <NoteList
+        refreshKey={0}
+        activeId={null}
+        failures={{}}
+        notebookId={ALL_NOTEBOOKS}
+        notebooks={NOTEBOOKS}
+        onOpen={vi.fn()}
+        onCreate={() => undefined}
+        onManageTags={() => undefined}
+        onMutated={onMutated}
+      />,
+    );
+    await waitFor(() => expect(screen.getByText("Reunião de segunda")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Selecionar notas" }));
+    fireEvent.click(screen.getByText("Reunião de segunda"));
+    fireEvent.click(screen.getByText("Viagem de fim de ano"));
+    fireEvent.click(screen.getByRole("button", { name: "Apagar" }));
+
+    await waitFor(() => expect(api.deleteEntry).toHaveBeenCalledTimes(2));
+    expect(api.deleteEntry).toHaveBeenCalledWith("e1");
+    expect(api.deleteEntry).toHaveBeenCalledWith("e3");
+    expect(onMutated).toHaveBeenCalledWith(["e1", "e3"]);
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Apagar" })).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole("button", { name: "Selecionar notas" })).toBeInTheDocument();
+    confirmSpy.mockRestore();
+  });
+
+  it("Escape sai do modo e limpa a selecao", async () => {
+    renderListOpen(vi.fn());
+    await waitFor(() => expect(screen.getByText("Reunião de segunda")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Selecionar notas" }));
+    fireEvent.click(screen.getByText("Reunião de segunda"));
+    expect(screen.getByText("1 nota")).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    expect(screen.getByRole("button", { name: "Selecionar notas" })).toBeInTheDocument();
+    expect(screen.queryByText("1 nota")).not.toBeInTheDocument();
+  });
+
+  it("o item Selecionar do menu de contexto entra no modo", async () => {
+    renderListOpen(vi.fn());
+    await waitFor(() => expect(screen.getByText("Viagem de fim de ano")).toBeInTheDocument());
+    fireEvent.contextMenu(screen.getByText("Viagem de fim de ano"), {
+      clientX: 10,
+      clientY: 10,
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Selecionar" }));
+
+    expect(screen.getByRole("button", { name: "Cancelar seleção" })).toBeInTheDocument();
+    expect(screen.getByText("1 nota")).toBeInTheDocument();
+  });
+
+  it("Selecionar todas entra no modo", async () => {
+    renderListOpen(vi.fn());
+    await waitFor(() => expect(screen.getByText("Viagem de fim de ano")).toBeInTheDocument());
+    fireEvent.contextMenu(screen.getByText("Viagem de fim de ano"), {
+      clientX: 10,
+      clientY: 10,
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Selecionar todas" }));
+
+    expect(screen.getByRole("button", { name: "Cancelar seleção" })).toBeInTheDocument();
+    expect(screen.getByText("2 notas")).toBeInTheDocument();
+  });
+
+  it("Limpar selecao apos Selecionar todas sai do modo", async () => {
+    const { container } = renderListOpen(vi.fn());
+    await waitFor(() => expect(screen.getByText("Viagem de fim de ano")).toBeInTheDocument());
+    fireEvent.contextMenu(screen.getByText("Viagem de fim de ano"), {
+      clientX: 10,
+      clientY: 10,
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Selecionar todas" }));
+    expect(screen.getByText("2 notas")).toBeInTheDocument();
+    expect(container.querySelectorAll(".note-row-check").length).toBeGreaterThan(0);
+
+    // Reabre o menu: com tudo marcado a acao vira "Limpar seleção".
+    fireEvent.contextMenu(screen.getByText("Viagem de fim de ano"), {
+      clientX: 10,
+      clientY: 10,
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Limpar seleção" }));
+
+    expect(screen.getByRole("button", { name: "Selecionar notas" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(screen.queryByRole("button", { name: "Cancelar seleção" })).not.toBeInTheDocument();
+    expect(screen.queryByText("2 notas")).not.toBeInTheDocument();
+    expect(container.querySelectorAll(".note-row-check").length).toBe(0);
+  });
+
+  it("Ctrl+clique a partir do modo normal entra no modo", async () => {
+    renderListOpen(vi.fn());
+    await waitFor(() => expect(screen.getByText("Viagem de fim de ano")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("Viagem de fim de ano"), { ctrlKey: true });
+
+    expect(screen.getByRole("button", { name: "Cancelar seleção" })).toBeInTheDocument();
+    expect(screen.getByText("1 nota")).toBeInTheDocument();
   });
 });

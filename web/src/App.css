@@ -3155,6 +3155,21 @@
   color: var(--color-danger) !important;
 }
 
+/* Submenu do "Novo": mesmo cartao das acoes da linha, com as duas opcoes de
+   criacao. */
+.notebook-submenu--new {
+  min-width: 176px;
+}
+
+/* Estreito (<=900px): o cartao vira uma faixa opaca que preenche a regiao da
+   lista, do topo rolavel ate o rodape, com as opcoes no topo. Sem raio nem
+   borda para a lista nao espiar pelas margens nem pelo canto. */
+.notebook-submenu--fill {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
 /* Em toque o "…" fica sempre visivel e as linhas ganham altura de alvo. */
 @media (max-width: 900px) {
   .notebook-menu-row,
@@ -4587,14 +4602,32 @@
   flex: none;
 }
 
-.notebook-menu-new + .notebook-menu-new {
-  border-top: 1px solid var(--color-border);
+/* Sinal do submenu no "Novo": chevron para a direita; quando aberto, vira
+   para cima porque o submenu aparece acima/ao lado do rodape. */
+.notebook-menu-caret {
+  margin-left: auto;
+  display: flex;
+  color: var(--color-muted);
+  transform: rotate(-90deg);
+  transition: transform 120ms ease;
+}
+
+.notebook-menu-new[aria-expanded="true"] .notebook-menu-caret {
+  transform: rotate(-180deg);
 }
 
 .notebook-menu-new:hover,
 .notebook-menu-new:focus-visible {
   background: var(--color-accent-soft);
   color: var(--color-text);
+}
+
+/* Refeito depois do min-height compacto: a regra da "Coluna compacta" acima
+   desta seção viria perdendo por ordem de fonte em telas de toque. */
+@media (max-width: 900px) {
+  .notebook-menu-new {
+    min-height: 44px;
+  }
 }
 
 .sidebar-toggle {

@@ -29,6 +29,7 @@ import {
   MicIcon,
   PlusIcon,
   SearchIcon,
+  SelectIcon,
   SortIcon,
   TagIcon,
 } from "./icons";
@@ -136,6 +137,7 @@ export function NoteList({
   const [searchingOpen, setSearchingOpen] = useState(false);
   const [tagsOpen, setTagsOpen] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [selecting, setSelecting] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number; id: string } | null>(null);
   const [noteOrder, setNoteOrder] = useState<NoteOrder>(() => readNoteOrder());
   const [busy, setBusy] = useState(false);
@@ -169,6 +171,7 @@ export function NoteList({
     setQuery("");
     setTagsOpen(false);
     setSelected(new Set());
+    setSelecting(false);
     setMenu(null);
   }, [notebookId, archived]);
 
@@ -260,7 +263,17 @@ export function NoteList({
     [visible, selected],
   );
 
+  // Sair do modo de selecao sempre limpa a selecao; entrar deixa o conjunto
+  // vazio para o usuario marcar a partir de um estado previsivel.
+  const clearSelection = useCallback(() => {
+    setSelected(new Set());
+    setSelecting(false);
+  }, []);
+
   const toggleSelected = (id: string) => {
+    // Selecionar por atalho, menu ou clique deixa o modo ativo: assim os
+    // quadradinhos ficam visiveis e o toque (sem modificador) alterna.
+    setSelecting(true);
     setSelected((current) => {
       const next = new Set(current);
       if (next.has(id)) next.delete(id);
@@ -269,7 +282,7 @@ export function NoteList({
     });
   };
 
-  useEscape(selected.size > 0 && menu === null, () => setSelected(new Set()));
+  useEscape(selecting && menu === null, clearSelection);
 
   const archiveEntries = async (targets: Entry[], next: boolean) => {
     if (targets.length === 0) return;
@@ -284,7 +297,7 @@ export function NoteList({
       }
     }
     setBusy(false);
-    setSelected(new Set());
+    clearSelection();
     if (changed > 0) {
       notify(
         changed === 1
@@ -320,7 +333,7 @@ export function NoteList({
       }
     }
     setBusy(false);
-    setSelected(new Set());
+    clearSelection();
     if (removed.length > 0) {
       notify(removed.length === 1 ? "Nota apagada" : `${removed.length} notas apagadas`, "success");
     }
@@ -339,7 +352,7 @@ export function NoteList({
         key: "open",
         label: "Abrir",
         onSelect: () => {
-          setSelected(new Set());
+          clearSelection();
           onOpen(entry.id);
         },
       },
@@ -352,8 +365,14 @@ export function NoteList({
         key: "select-all",
         label: allSelected ? "Limpar seleção" : "Selecionar todas",
         disabled: visible.length === 0,
-        onSelect: () =>
-          setSelected(allSelected ? new Set() : new Set(visible.map((item) => item.id))),
+        onSelect: () => {
+          if (allSelected) {
+            clearSelection();
+          } else {
+            setSelecting(true);
+            setSelected(new Set(visible.map((item) => item.id)));
+          }
+        },
       },
       {
         key: "archive",
@@ -417,17 +436,8 @@ export function NoteList({
             aria-selected={isSelected}
             onClick={(event) => {
               const additive = event.metaKey || event.ctrlKey || event.shiftKey;
-              if (additive) {
+              if (selecting || additive) {
                 toggleSelected(entry.id);
-                return;
-              }
-              if (selected.size > 0) {
-                if (selected.size === 1 && isSelected) {
-                  setSelected(new Set());
-                  onOpen(entry.id);
-                  return;
-                }
-                setSelected(new Set([entry.id]));
                 return;
               }
               onOpen(entry.id);
@@ -444,7 +454,7 @@ export function NoteList({
                 />
               )}
               <span className="note-row-title">{title}</span>
-              {selected.size > 0 && (
+              {selecting && (
                 <span
                   className={isSelected ? "note-row-check note-row-check--on" : "note-row-check"}
                   aria-hidden
@@ -543,6 +553,19 @@ export function NoteList({
                 title={archived ? "Voltar para as notas" : "Arquivadas"}
               >
                 <ArchiveIcon size={16} />
+              </button>
+              <button
+                type="button"
+                className={selecting ? "icon-button icon-button--active" : "icon-button"}
+                onClick={() => {
+                  if (selecting) clearSelection();
+                  else setSelecting(true);
+                }}
+                aria-pressed={selecting}
+                aria-label={selecting ? "Cancelar seleção" : "Selecionar notas"}
+                title={selecting ? "Cancelar seleção" : "Selecionar notas"}
+              >
+                <SelectIcon size={16} />
               </button>
               <div className="tag-menu" ref={tagMenu}>
                 <button
@@ -670,7 +693,7 @@ export function NoteList({
               className="button button--ghost button--small"
               onClick={() => {
                 const id = [...selected][0];
-                setSelected(new Set());
+                clearSelection();
                 onOpen(id);
               }}
               disabled={busy}
