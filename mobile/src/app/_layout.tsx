@@ -20,9 +20,13 @@ import { PlaybackProvider } from '@/state/PlaybackContext';
 import { RecordingProvider, useRecording } from '@/state/RecordingContext';
 import { SettingsProvider } from '@/state/SettingsContext';
 import { useWritingReminders } from '@/state/useWritingReminders';
+import { initDiagnostics } from '@/services/diagnostics';
 import { useTheme, ThemeProvider } from '@/theme/ThemeContext';
 
 SplashScreen.preventAutoHideAsync().catch(() => undefined);
+
+// Antes do primeiro render: sem DSN ou com a opcao desligada ele nao faz nada.
+void initDiagnostics();
 
 /**
  * Inter e a familia do app inteiro. Os arquivos ficam no bundle: carregar da
