@@ -1,10 +1,5 @@
-import { Ionicons } from '@expo/vector-icons';
 import { memo, useMemo } from 'react';
-import {
-  StyleSheet,
-  View,
-  type GestureResponderEvent,
-} from 'react-native';
+import { StyleSheet, View, type GestureResponderEvent } from 'react-native';
 import { Text } from '@/components/AppText';
 import { Press } from '@/components/Press';
 
@@ -16,9 +11,15 @@ import { checkpointPercent } from '@/core/transcription';
 import { hasFinalTranscript, type Recording } from '@/core/types';
 import { useRenderCount } from '@/dev/perf';
 import { useTranscriptionProgress, useTranscriptionRunning } from '@/state/useTranscriptionProgress';
-import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
-import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
-import { defineStyles } from '@/theme/themedStyles';
+import {
+  designIcon,
+  designRadius,
+  designSpace,
+  designType,
+} from '@/theme/design';
+
+import { Icon, type IconName } from '@/ui/icons';
+import { useDesign } from '@/ui/useDesign';
 
 interface RecordingCardProps {
   recording: Recording;
@@ -37,13 +38,17 @@ interface RecordingCardProps {
     queued?: boolean;
     remote?: boolean;
   } | null;
+  /** Glifo a esquerda (variante A da lista Recentes). */
+  glyphIcon?: IconName;
+  glyphColor?: string;
 }
 
 /**
- * Card da lista. Sem botao de play nem tres pontinhos: o audio so toca dentro da
- * nota, e as opcoes abrem com um toque longo (menu bonito, igual ao da nota).
- * Memoizado e com callbacks estaveis (recebe o item/ancora) para nao re-renderizar
- * junto com a lista.
+ * Linha da lista. Sem botao de play nem tres pontinhos: o audio so toca dentro
+ * da nota, e as opcoes abrem com um toque longo.
+ *
+ * A linha densa tem duas linhas de texto e o estado a direita; o cartao (busca
+ * e biblioteca) mantem a mesma anatomia com superficie em volta.
  */
 export const RecordingCard = memo(function RecordingCard({
   recording,
@@ -52,9 +57,10 @@ export const RecordingCard = memo(function RecordingCard({
   notebookLabel,
   dense = false,
   busy = null,
+  glyphIcon,
+  glyphColor,
 }: RecordingCardProps) {
-  const styles = useThemedStyles(baseStyles);
-  const { colors } = useTheme();
+  const colors = useDesign();
 
   useRenderCount('RecordingCard');
   const hasAudio = Boolean(recording.filePath);
@@ -84,135 +90,192 @@ export const RecordingCard = memo(function RecordingCard({
       : badge?.kind === 'analysis'
         ? 'Analisando'
         : 'Transcrevendo';
+  const badgeIcon: IconName = remote
+    ? 'cloud'
+    : badge?.queued
+      ? 'clock'
+      : badge?.kind === 'analysis'
+        ? 'chart'
+        : 'sync';
   const badgeColor = remote
-    ? colors.textSecondary
+    ? colors.textMuted
     : badge?.kind === 'analysis'
       ? colors.info
-      : colors.accentStrong;
-  const badgeSoft = remote
-    ? colors.neutralSoft
-    : badge?.kind === 'analysis'
-      ? colors.infoSoft
-      : colors.accentSoft;
-  const badgeIcon = remote
-    ? 'cloud-upload-outline'
-    : badge?.queued
-      ? 'hourglass-outline'
-      : badge?.kind === 'analysis'
-        ? 'sparkles-outline'
-        : 'sync-outline';
+      : colors.primary;
+
+  const showGlyph = glyphIcon != null;
 
   return (
-    <View style={[styles.wrap, dense ? styles.wrapDense : null]}>
+    <View
+      style={[
+        styles.wrap,
+        dense
+          ? [styles.wrapDense, { borderBottomColor: colors.line }]
+          : { backgroundColor: colors.surfaceAlt, borderWidth: 1, borderColor: colors.line },
+      ]}
+    >
       <Press
-        style={[styles.content, dense ? styles.contentDense : null]}
+        style={[
+          styles.content,
+          dense ? styles.contentDense : null,
+          showGlyph ? styles.contentWithGlyph : null,
+        ]}
         onPress={() => onOpen?.(recording.id)}
         onLongPress={(event: GestureResponderEvent) =>
           onLongPress?.(recording, { x: event.nativeEvent.pageX, y: event.nativeEvent.pageY })
         }
         delayLongPress={350}
       >
-        <View style={styles.titleRow}>
-          <Text style={styles.title} numberOfLines={1}>
-            {displayTitle(recording)}
-          </Text>
-          {badge ? (
-            <View
-              style={[styles.transcribing, { backgroundColor: badgeSoft }]}
-              accessibilityLabel={`${badgeLabel}${
-                badge.percent !== undefined ? ` ${Math.round(badge.percent)}%` : ''
-              }`}
-            >
-              <Ionicons name={badgeIcon} size={11} color={badgeColor} />
-              {badge.percent !== undefined && !remote ? (
-                <Text style={[styles.transcribingText, { color: badgeColor }]}>
-                  {Math.round(badge.percent)}%
+        {showGlyph ? (
+          <View style={[styles.glyph, { borderColor: colors.line }]}>
+            <Icon
+              name={glyphIcon}
+              size={designIcon.sm}
+              color={glyphColor ?? colors.textMuted}
+            />
+          </View>
+        ) : null}
+
+        <View style={[styles.body, dense ? styles.bodyDense : null]}>
+          <View style={styles.titleRow}>
+            <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>
+              {displayTitle(recording)}
+            </Text>
+            {badge ? (
+              <View
+                style={[styles.badge, { borderColor: badgeColor }]}
+                accessibilityLabel={`${badgeLabel}${
+                  badge.percent !== undefined ? ` ${Math.round(badge.percent)}%` : ''
+                }`}
+              >
+                <Icon name={badgeIcon} size={9} color={badgeColor} />
+                {badge.percent !== undefined && !remote ? (
+                  <Text style={[styles.badgeText, { color: badgeColor }]}>
+                    {Math.round(badge.percent)}%
+                  </Text>
+                ) : null}
+              </View>
+            ) : null}
+          </View>
+
+          <View style={styles.subRow}>
+            <Icon
+              name={hasAudio ? 'mic' : 'doc'}
+              size={9}
+              color={colors.textMuted}
+            />
+            {recording.source === 'share' ? (
+              <Icon name="cloud" size={9} color={colors.info} />
+            ) : null}
+            {recording.durationMs ? (
+              <Text style={[styles.sub, { color: colors.textMuted }]}>
+                {formatDuration(recording.durationMs)}
+              </Text>
+            ) : null}
+            {recording.archived ? (
+              <Text style={[styles.sub, { color: colors.textMuted }]}>· arquivada</Text>
+            ) : null}
+            {notebookLabel ? (
+              <Text style={[styles.sub, { color: colors.textMuted }]} numberOfLines={1}>
+                · {notebookLabel}
+              </Text>
+            ) : null}
+            <View style={styles.grow} />
+            <Text style={[styles.stamp, { color: colors.textMuted }]}>
+              {formatStamp(noteDateIso(recording))}
+            </Text>
+          </View>
+
+          {tags.length > 0 ? (
+            <View style={styles.tags}>
+              {tags.slice(0, 2).map((tag) => (
+                <TagChip key={tag.toLowerCase()} name={tag} size="sm" />
+              ))}
+              {tags.length > 2 ? (
+                <Text style={[styles.more, { color: colors.textMuted }]}>
+                  +{tags.length - 2}
                 </Text>
               ) : null}
             </View>
           ) : null}
-        </View>
 
-        <View style={styles.subRow}>
-          <Ionicons
-            name={hasAudio ? 'mic-outline' : 'document-text-outline'}
-            size={11}
-            color={colors.textTertiary}
-          />
-          {recording.source === 'share' ? (
-            <Ionicons name="download-outline" size={12} color={colors.info} />
-          ) : null}
-          {recording.durationMs ? (
-            <Text style={styles.sub}>{formatDuration(recording.durationMs)}</Text>
-          ) : null}
-          {recording.archived ? <Text style={styles.sub}>· arquivada</Text> : null}
-          {notebookLabel ? (
-            <Text style={styles.sub} numberOfLines={1}>
-              · {notebookLabel}
-            </Text>
-          ) : null}
-        </View>
-
-        {tags.length > 0 ? (
-          <View style={styles.tags}>
-            {tags.slice(0, 2).map((tag) => (
-              <TagChip key={tag.toLowerCase()} name={tag} size="sm" />
-            ))}
-            {tags.length > 2 ? <Text style={styles.more}>+{tags.length - 2}</Text> : null}
-          </View>
-        ) : null}
-
-        <View style={styles.footer}>
           {preview ? (
-            <Text style={styles.preview} numberOfLines={1}>
+            <Text style={[styles.preview, { color: colors.textMuted }]} numberOfLines={1}>
               {preview}
             </Text>
-          ) : (
-            <View style={styles.grow} />
-          )}
-          <Text style={styles.stamp}>{formatStamp(noteDateIso(recording))}</Text>
+          ) : null}
         </View>
       </Press>
     </View>
   );
 });
 
-const baseStyles = defineStyles({
+const styles = StyleSheet.create({
   wrap: {
-    backgroundColor: baseColors.surface,
-    borderRadius: radius.md,
+    borderRadius: designRadius.surface,
     overflow: 'hidden',
   },
   wrapDense: {
-    backgroundColor: baseColors.bg,
     borderRadius: 0,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: baseColors.border,
+    borderBottomWidth: 1,
   },
-  content: { padding: spacing.md, gap: 3 },
-  contentDense: { paddingHorizontal: spacing.lg, paddingVertical: 10, gap: 2 },
-  titleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  title: { flex: 1, color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
-  transcribing: {
+  content: { padding: designSpace.s8, gap: designSpace.s2 },
+  contentDense: { paddingHorizontal: designSpace.s12, paddingVertical: designSpace.s6 },
+  contentWithGlyph: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: designSpace.s8,
+  },
+  glyph: {
+    width: 22,
+    height: 22,
+    borderRadius: designRadius.control,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  body: { flex: 1, gap: designSpace.s2 },
+  bodyDense: { gap: designSpace.s2 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: designSpace.s6 },
+  title: {
+    flex: 1,
+    fontSize: designType.body.size,
+    fontWeight: '500',
+    lineHeight: designType.body.size * designType.body.lineHeight,
+  },
+  badge: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 3,
-    backgroundColor: baseColors.accentSoft,
-    borderRadius: radius.pill,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
+    gap: designSpace.s2,
+    borderWidth: 1,
+    borderRadius: designRadius.control,
+    paddingHorizontal: designSpace.s4,
+    height: 16,
   },
-  transcribingText: {
-    color: baseColors.accentStrong,
-    fontSize: fontSize.xs,
+  badgeText: {
+    fontSize: 9,
     fontVariant: ['tabular-nums'],
   },
-  subRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  sub: { color: baseColors.textSecondary, fontSize: fontSize.xs },
-  tags: { flexDirection: 'row', alignItems: 'center', gap: 4, flexWrap: 'wrap', marginTop: 2 },
-  more: { color: baseColors.textTertiary, fontSize: 10, fontWeight: '600' },
-  footer: { flexDirection: 'row', alignItems: 'flex-end', gap: spacing.sm, marginTop: 2 },
+  subRow: { flexDirection: 'row', alignItems: 'center', gap: designSpace.s4 },
+  sub: {
+    fontSize: designType.mono.size,
+    fontVariant: ['tabular-nums'],
+  },
+  stamp: {
+    fontSize: designType.mono.size,
+    fontVariant: ['tabular-nums'],
+  },
+  tags: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: designSpace.s2,
+    flexWrap: 'wrap',
+    marginTop: designSpace.s2,
+  },
+  more: { fontSize: 9, fontWeight: '500' },
   grow: { flex: 1 },
-  preview: { flex: 1, color: baseColors.textTertiary, fontSize: fontSize.sm },
-  stamp: { color: baseColors.textTertiary, fontSize: fontSize.xs, fontVariant: ['tabular-nums'] },
+  preview: {
+    fontSize: designType.mono.size,
+    marginTop: designSpace.s2,
+  },
 });

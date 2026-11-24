@@ -1,15 +1,19 @@
-import { Ionicons } from '@expo/vector-icons';
-import {
-  View,
-} from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { Text, TextInput } from '@/components/AppText';
 
 import { HomeActivityButton } from '@/components/HomeActivityButton';
 import { Press } from '@/components/Press';
 import type { Notebook } from '@/core/notebooks';
-import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
-import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
-import { defineStyles } from '@/theme/themedStyles';
+import {
+  designControl,
+  designIcon,
+  designRadius,
+  designSpace,
+  designType,
+} from '@/theme/design';
+
+import { Icon } from '@/ui/icons';
+import { useDesign } from '@/ui/useDesign';
 
 export type SyncState = 'ok' | 'syncing' | 'error';
 
@@ -32,6 +36,9 @@ interface HomeHeaderProps {
 /**
  * Cabecalho compacto da home. O caderno vira um botao de icone (o nome grande
  * saiu) e a busca so ocupa espaco quando o usuario pede.
+ *
+ * Nada saiu daqui na migracao: caderno e troca, estado de sync com ponto,
+ * atividade, calendario, mapa, busca e opcoes continuam no mesmo lugar.
  */
 export function HomeHeader({
   notebook,
@@ -48,17 +55,10 @@ export function HomeHeader({
   onOpenActivity,
   onOpenSettings,
 }: HomeHeaderProps) {
-  const styles = useThemedStyles(baseStyles);
-  const { colors } = useTheme();
-
+  const colors = useDesign();
   const recent = !notebook;
-  const syncIcon =
-    syncState === 'error'
-      ? 'cloud-offline-outline'
-      : syncState === 'syncing'
-        ? 'cloud-upload-outline'
-        : 'cloud-done-outline';
-  const syncColor = syncState === 'error' ? colors.danger : colors.textTertiary;
+  const syncGlyph = syncState === 'syncing' ? 'sync' : 'cloud';
+  const syncColor = syncState === 'error' ? colors.danger : colors.textMuted;
 
   return (
     <View>
@@ -69,33 +69,38 @@ export function HomeHeader({
           accessibilityRole="button"
           accessibilityLabel={
             recent
-              ? 'Páginas recentes. Escolher caderno'
+              ? 'Recentes. Escolher caderno'
               : `Caderno ${notebook.name}. Trocar de caderno`
           }
         >
-          <Ionicons
-            name={recent ? 'time-outline' : 'book-outline'}
-            size={19}
-            color={notebook?.color || colors.textSecondary}
+          <Icon
+            name={recent ? 'clock' : 'book'}
+            size={designIcon.box}
+            color={notebook?.color || colors.textMuted}
           />
-          <Text style={styles.notebookName} numberOfLines={1}>
-            {notebook?.name ?? 'Páginas recentes'}
+          <Text style={[styles.notebookName, { color: colors.text }]} numberOfLines={1}>
+            {notebook?.name ?? 'Recentes'}
           </Text>
-          <Ionicons name="chevron-down" size={14} color={colors.textTertiary} />
+          <Icon name="chevron" size={designIcon.sm} color={colors.textMuted} />
         </Press>
 
         <View style={styles.actions}>
           <Press
             style={styles.iconButton}
+            hitSlop={4}
             onPress={onOpenSync}
             accessibilityLabel="Sincronização"
           >
-            <Ionicons name={syncIcon} size={21} color={syncColor} />
+            <Icon name={syncGlyph} size={designIcon.box} color={syncColor} />
             {syncState !== 'ok' ? (
               <View
                 style={[
                   styles.syncDot,
-                  { backgroundColor: syncState === 'error' ? colors.danger : colors.accent },
+                  {
+                    backgroundColor:
+                      syncState === 'error' ? colors.danger : colors.primary,
+                    borderColor: colors.surface,
+                  },
                 ]}
               />
             ) : null}
@@ -103,52 +108,65 @@ export function HomeHeader({
           <HomeActivityButton onPress={onOpenActivity} />
           <Press
             style={styles.iconButton}
+            hitSlop={4}
             onPress={onOpenCalendar}
             accessibilityLabel="Calendário"
           >
-            <Ionicons name="calendar-outline" size={21} color={colors.text} />
+            <Icon name="calendar" size={designIcon.box} color={colors.text} />
           </Press>
           <Press
             style={styles.iconButton}
+            hitSlop={4}
             onPress={onOpenMap}
             accessibilityLabel="Mapa de relações"
           >
-            <Ionicons name="git-network-outline" size={22} color={colors.text} />
+            <Icon name="network" size={designIcon.box} color={colors.text} />
           </Press>
           <Press
             style={styles.iconButton}
+            hitSlop={4}
             onPress={onToggleSearch}
             accessibilityLabel={searchOpen ? 'Fechar busca' : 'Buscar notas'}
           >
-            <Ionicons name="search" size={22} color={searchOpen ? colors.accent : colors.text} />
+            <Icon
+              name="search"
+              size={designIcon.box}
+              color={searchOpen ? colors.primary : colors.text}
+            />
           </Press>
           <Press
             style={styles.iconButton}
+            hitSlop={4}
             onPress={onOpenSettings}
             accessibilityLabel="Opções"
           >
-            <Ionicons name="settings-outline" size={22} color={colors.text} />
+            <Icon name="gear" size={designIcon.box} color={colors.text} />
           </Press>
         </View>
       </View>
 
       {searchOpen ? (
-        <View style={styles.searchWrap}>
-          <Ionicons name="search" size={15} color={colors.textTertiary} />
+        <View
+          style={[
+            styles.searchWrap,
+            { backgroundColor: colors.surfaceAlt, borderColor: colors.line },
+          ]}
+        >
+          <Icon name="search" size={designIcon.sm} color={colors.textMuted} />
           <TextInput
             value={query}
             onChangeText={onChangeQuery}
             placeholder={searchPlaceholder}
-            placeholderTextColor={colors.textTertiary}
-            selectionColor={colors.accent}
-            style={styles.searchInput}
+            placeholderTextColor={colors.textMuted}
+            selectionColor={colors.primary}
+            style={[styles.searchInput, { color: colors.text }]}
             autoFocus
             returnKeyType="search"
             accessibilityLabel="Buscar notas"
           />
           {query ? (
             <Press onPress={() => onChangeQuery('')} accessibilityLabel="Limpar busca" hitSlop={8}>
-              <Ionicons name="close-circle" size={16} color={colors.textTertiary} />
+              <Icon name="close" size={designIcon.sm} color={colors.textMuted} />
             </Press>
           ) : null}
         </View>
@@ -157,51 +175,58 @@ export function HomeHeader({
   );
 }
 
-const baseStyles = defineStyles({
+const styles = StyleSheet.create({
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.sm,
-    paddingHorizontal: spacing.sm,
-    paddingTop: spacing.xs,
-    paddingBottom: spacing.xs,
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'space-between' as const,
+    gap: designSpace.s4,
+    paddingHorizontal: designSpace.s4,
+    paddingVertical: designSpace.s2,
   },
   notebook: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: designSpace.s6,
     flexShrink: 1,
     minHeight: 40,
+    paddingHorizontal: designSpace.s4,
   },
   notebookName: {
     flexShrink: 1,
-    color: baseColors.text,
-    fontSize: fontSize.md,
-    fontWeight: '600',
+    fontSize: designType.body.size,
+    fontWeight: '600' as const,
   },
-  actions: { flexDirection: 'row', alignItems: 'center' },
-  iconButton: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center' },
+  actions: { flexDirection: 'row' as const, alignItems: 'center' as const },
+  iconButton: {
+    width: 36,
+    height: 36,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+  },
   syncDot: {
-    position: 'absolute',
-    top: 7,
-    right: 7,
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    borderWidth: 1.5,
-    borderColor: baseColors.bg,
+    position: 'absolute' as const,
+    top: 6,
+    right: 6,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    borderWidth: 1,
   },
   searchWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    marginHorizontal: spacing.sm,
-    marginBottom: spacing.xs,
-    paddingHorizontal: spacing.md,
-    height: 38,
-    borderRadius: radius.pill,
-    backgroundColor: baseColors.surface,
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: designSpace.s6,
+    marginHorizontal: designSpace.s6,
+    marginBottom: designSpace.s4,
+    paddingHorizontal: designSpace.s8,
+    height: designControl.lg,
+    borderRadius: designRadius.control,
+    borderWidth: 1,
   },
-  searchInput: { flex: 1, color: baseColors.text, fontSize: fontSize.sm, paddingVertical: 0 },
+  searchInput: {
+    flex: 1,
+    fontSize: designType.body.size,
+    paddingVertical: 0,
+  },
 });

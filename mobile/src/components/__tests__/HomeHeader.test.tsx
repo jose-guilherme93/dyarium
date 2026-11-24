@@ -51,11 +51,11 @@ describe('HomeHeader', () => {
     expect(props.onOpenCalendar).toHaveBeenCalled();
   });
 
-  it('mostra páginas recentes quando nenhum caderno está no escopo', () => {
+  it('mostra Recentes quando nenhum caderno está no escopo', () => {
     const props = setup({ notebook: undefined });
 
-    expect(screen.getByText('Páginas recentes')).toBeTruthy();
-    fireEvent.press(screen.getByLabelText('Páginas recentes. Escolher caderno'));
+    expect(screen.getByText('Recentes')).toBeTruthy();
+    fireEvent.press(screen.getByLabelText('Recentes. Escolher caderno'));
     expect(props.onOpenNotebooks).toHaveBeenCalled();
   });
 
@@ -84,6 +84,18 @@ describe('HomeHeader', () => {
     expect(props.onChangeQuery).toHaveBeenCalledWith('');
 
     fireEvent.press(screen.getByLabelText('Fechar busca'));
+    expect(props.onToggleSearch).toHaveBeenCalled();
+  });
+});
+
+describe('HomeHeader, paridade da barra', () => {
+  it('mantem mapa e busca entre as acoes do topo', () => {
+    const props = setup();
+
+    fireEvent.press(screen.getByLabelText('Mapa de relações'));
+    expect(props.onOpenMap).toHaveBeenCalled();
+
+    fireEvent.press(screen.getByLabelText('Buscar notas'));
     expect(props.onToggleSearch).toHaveBeenCalled();
   });
 });
