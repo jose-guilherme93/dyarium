@@ -269,4 +269,37 @@ describe('pull de uma entrada com capitulo', () => {
 
     expect(mockUpdateChapterFields).not.toHaveBeenCalled();
   });
+  it('adota a nota do Drive sem entryId e a entrega a transcricao e analise', async () => {
+    mockListRecordings.mockResolvedValue([
+      localRecording({
+        id: 'e1',
+        entryId: undefined,
+        title: 'Copia do Drive',
+        recordedAt: ENTRY.created_at,
+        updatedAt: ENTRY.updated_at,
+      }),
+    ]);
+    mockListEntriesPage.mockResolvedValue({
+      entries: [
+        {
+          ...ENTRY,
+          transcript_at: '2026-10-11T14:06:00Z',
+          analysis_at: '2026-10-11T14:07:00Z',
+        },
+      ],
+      complete: true,
+    });
+
+    await pullServerEntries();
+
+    expect(mockUpsertRecording).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'e1', entryId: 'e1' }),
+    );
+    expect(mockSyncServerTranscripts).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.arrayContaining([expect.objectContaining({ id: 'e1', entryId: 'e1' })]),
+    );
+    expect(mockSyncServerAnalyses).toHaveBeenCalled();
+  });
+
 });

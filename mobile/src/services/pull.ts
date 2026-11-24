@@ -135,12 +135,14 @@ async function pullOnce(): Promise<number> {
   }
 
   const known = new Set<string>();
+  const localById = new Map<string, Recording>();
   const localByEntry = new Map<string, Recording>();
   for (const recording of local) {
     if (removed.has(recording.id)) continue;
     // Notas na lixeira entram no `known` para o pull nao criar uma copia ativa,
     // mas nao sao mescladas: quem manda nelas e a restauracao do usuario.
     known.add(recording.id);
+    localById.set(recording.id, recording);
     if (recording.entryId) {
       known.add(recording.entryId);
       if (!recording.deletedAt) localByEntry.set(recording.entryId, recording);
@@ -158,7 +160,21 @@ async function pullOnce(): Promise<number> {
       entry.updated_at,
     );
 
-    const existing = localByEntry.get(entry.id);
+    let existing = localByEntry.get(entry.id);
+    let adopted = false;
+    if (!existing) {
+      // Nota que veio de um cofre do Drive: o id local e o id da entrada no
+      // servidor, mas o vinculo `entryId` nunca existiu. Sem adotar aqui, o
+      // `known.has(entry.id)` abaixo pulava a entrada para sempre e a nota
+      // ficava sem transcricao nem analise do servidor.
+      const candidate = localById.get(entry.id);
+      if (candidate && !candidate.deletedAt && !candidate.entryId) {
+        existing = { ...candidate, entryId: entry.id };
+        localByEntry.set(entry.id, existing);
+        localById.set(existing.id, existing);
+        adopted = true;
+      }
+    }
     if (existing) {
       let note;
       // A listagem traz a versao do corpo; so busca o texto quando ela mudou.
@@ -171,11 +187,14 @@ async function pullOnce(): Promise<number> {
       }
       const merged = mergeServerNote(existing, entry, note);
       const chapterFields = chapterFieldsOf(entry);
-      if (merged) {
-        await upsertRecording(merged);
+      // Nota adotada: mesmo sem merge de campo, o vinculo precisa ser gravado
+      // para o sync buscar transcricao e analise nas proximas passadas.
+      const next = merged ?? (adopted ? { ...existing, noteId: existing.noteId ?? note?.id } : null);
+      if (next) {
+        await upsertRecording(next);
         // O planejamento do capitulo e editado no dashboard: o servidor vence.
-        if (chapterFieldsDiffer(merged, chapterFields)) {
-          await updateChapterFields(merged.id, chapterFields);
+        if (chapterFieldsDiffer(next, chapterFields)) {
+          await updateChapterFields(next.id, chapterFields);
         }
         changed += 1;
       } else if (chapterFieldsDiffer(existing, chapterFields)) {
@@ -209,7 +228,7 @@ async function pullOnce(): Promise<number> {
   // Transcricoes e analises novas do servidor: `transcript_at` e `analysis_at`
   // sao os sinais. Guarda no banco e avisa a nota aberta; nao e o caminho de
   // exibicao.
-  await syncServerTranscripts(entries, local).catch(() => undefined);
+  await syncServerTranscripts(entries, [...localById.values()]).catch(() => undefined);
   await syncServerAnalyses(entries).catch(() => undefined);
 
   return changed;
