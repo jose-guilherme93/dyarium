@@ -70,6 +70,10 @@ Regra de UX do produto, nao sugestao. Vale para o app, o dashboard e as notifica
 - Cor, tipo, espaco, raio e foco vem de `docs/design/tokens.json`, nunca de valor
   solto no componente. A galeria gerada em `docs/design/index.html` e o contrato
   visual; `docs/design/README.md` explica a geracao e a migracao.
+- **Paridade antes de aparencia.** A tela migrada mostra tudo que a tela atual
+  mostra: data, hora, pausa, filtros, menus e atalhos continuam. Extraia essa
+  lista do codigo antes do prototipo e use-a como roteiro do teste depois. O
+  sistema completo esta em `docs/design/system.md`.
 
 ## Versoes e releases
 
