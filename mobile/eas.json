@@ -13,7 +13,8 @@
       },
       "env": {
         "EXPO_PUBLIC_LOCAL_ANALYSIS": "1",
-        "ORG_GRADLE_PROJECT_rnllamaVariants": "rnllama_v8,rnllama_v8_2,rnllama_v8_2_dotprod_i8mm"
+        "ORG_GRADLE_PROJECT_rnllamaVariants": "rnllama_v8,rnllama_v8_2,rnllama_v8_2_dotprod_i8mm",
+        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "629798939070-ed93ipv9b6ds6s151q3ld9rkbkqvtuo3.apps.googleusercontent.com"
       }
     },
     "preview": {
@@ -36,7 +37,8 @@
       },
       "env": {
         "DYARIUM_EMULATOR": "1",
-        "EXPO_PUBLIC_LOCAL_ANALYSIS": "1"
+        "EXPO_PUBLIC_LOCAL_ANALYSIS": "1",
+        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "629798939070-ed93ipv9b6ds6s151q3ld9rkbkqvtuo3.apps.googleusercontent.com"
       }
     },
     "production": {

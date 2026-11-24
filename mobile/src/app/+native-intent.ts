@@ -11,5 +11,8 @@ export async function redirectSystemPath({
 }): Promise<string> {
   // Deep link do expo-sharing: <scheme>://expo-sharing/...
   if (/:\/\/expo-sharing(\/|$|\?)/.test(path)) return '/import';
+  // Volta do login do Google: o codigo e consumido pelo Linking/WebBrowser;
+  // a rota nao deve cair num 404.
+  if (/oauthredirect/.test(path)) return '/drive';
   return path;
 }

@@ -102,6 +102,53 @@ async function cacheLocalCopy(noteId: string, name: string, id: string): Promise
   }
 }
 
+const EXTENSION_BY_TYPE: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+  'image/heic': 'heic',
+  'image/avif': 'avif',
+};
+
+/**
+ * Guarda no cache um byte de imagem vindo do cofre.
+ *
+ * O markdown do web referencia `attachment:<id>`; com o arquivo no cache o app
+ * mostra a imagem sem servidor. A escrita vai para um `.tmp` e so entra no
+ * nome final depois de completa, para uma queda no meio nao deixar um arquivo
+ * truncado que a UI trataria como valido.
+ */
+export async function saveCachedAttachment(
+  id: string,
+  bytes: Uint8Array,
+  contentType: string,
+): Promise<void> {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(id) || id.includes('..')) {
+    throw new Error('id de anexo invalido');
+  }
+  if (bytes.length === 0) throw new Error('anexo vazio');
+  const extension = EXTENSION_BY_TYPE[contentType.split(';')[0]?.trim().toLowerCase() ?? ''];
+  if (!extension) throw new Error('tipo de imagem desconhecido');
+
+  const dir = attachmentsDir();
+  const destination = new File(dir, `${id}.${extension}`);
+  if (destination.exists) return;
+
+  const temporary = new File(dir, `${id}.${extension}.tmp`);
+  if (temporary.exists) temporary.delete();
+  temporary.create({ intermediates: true, overwrite: true });
+  const handle = temporary.open(FileMode.Append);
+  try {
+    handle.writeBytes(bytes);
+  } finally {
+    handle.close();
+  }
+  await temporary.move(destination);
+  invalidateAttachmentIndex();
+}
+
+
 // Extensoes que o app grava no cache. A busca e por arquivo direto (poucos
 // `exists`), nunca por `Directory.list()`: listar a pasta inteira na thread de
 // JS travava a abertura da nota quando o cache crescia.
