@@ -12655,3 +12655,11 @@ button.save-glyph:focus-visible {
   display: flex;
   flex-direction: column;
 }
+
+/* Ponte ate a lista migrar: o "+" da coluna usa o sistema, nao o azul antigo. */
+.list-head .icon-button.list-new,
+.list-head .icon-button.list-new:hover {
+  background: var(--dy-primary);
+  color: var(--dy-surface);
+  border-radius: var(--dy-radius-control);
+}

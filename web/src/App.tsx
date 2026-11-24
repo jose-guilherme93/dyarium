@@ -45,6 +45,8 @@ import { SetupGate } from "./components/SetupGate";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { NoteList } from "./components/NoteList";
 import { NoteEditor } from "./components/NoteEditor";
+import { HomeStart } from "./views/HomeStart";
+import { Icon } from "./ui";
 import { NotebookDialog } from "./components/NotebookDialog";
 import { NotebookSwitcher } from "./components/NotebookSwitcher";
 import { BookDialog, type BookForm } from "./components/BookDialog";
@@ -748,6 +750,15 @@ export function App() {
     setComposeOpen(true);
   };
 
+  // Abre o compose sem um botao de origem (inicio do web): ancora no centro.
+  const openComposeHere = () => {
+    const width = 320;
+    const left = Math.max(12, (window.innerWidth - width) / 2);
+    const top = Math.max(12, window.innerHeight / 2 - 120);
+    setComposeAnchor({ top, bottom: top + 40, left, right: left + width });
+    setComposeOpen(true);
+  };
+
   const createTextNote = () => {
     setComposeOpen(false);
     void createNote();
@@ -1162,6 +1173,28 @@ export function App() {
                 <SearchIcon size={17} />
               </button>
             )}
+            {!isMcp && (
+              <button
+                type="button"
+                className="rail-action"
+                onClick={openNotionImport}
+                aria-label="Importar do Notion"
+                title="Importar do Notion"
+              >
+                <Icon name="cloud" size={16} />
+              </button>
+            )}
+            {!isMcp && (
+              <button
+                type="button"
+                className="rail-action"
+                onClick={() => setImportServerOpen(true)}
+                aria-label="Importar de um servidor"
+                title="Importar de um servidor"
+              >
+                <Icon name="server" size={16} />
+              </button>
+            )}
             <button
               type="button"
               className="rail-action rail-expand"
@@ -1309,41 +1342,10 @@ export function App() {
                     />
                   </div>
                 ) : (
-                  <div className="empty-editor">
-                    <div className="empty-inner">
-                      <h2>Um lugar para as suas notas</h2>
-                      <p className="muted">
-                        Escolha uma nota na lista, ou comece uma nova. Áudios viram texto,
-                        imagens entram no corpo e a análise encontra pessoas, lugares e temas.
-                      </p>
-                      <div className="empty-actions">
-                        <button type="button" className="button button--primary" onClick={openCompose}>
-                          Nova nota
-                        </button>
-                        <button
-                          type="button"
-                          className="button button--ghost"
-                          onClick={openNotionImport}
-                        >
-                          Importar do Notion
-                        </button>
-                        <button
-                          type="button"
-                          className="button button--ghost"
-                          onClick={() => setImportServerOpen(true)}
-                        >
-                          Importar de um servidor
-                        </button>
-                        <button
-                          type="button"
-                          className="button button--ghost"
-                          onClick={() => openView("map")}
-                        >
-                          Ver mapa
-                        </button>
-                      </div>
-                    </div>
-                  </div>
+                  <HomeStart
+                    onNewNote={openComposeHere}
+                    onOpenAnalysis={() => openView("writing")}
+                  />
                 )}
               </div>
             </div>
