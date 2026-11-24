@@ -1,0 +1,703 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dyarium — Recentes: três opções de sinal (protótipo)</title>
+<!--
+  Protótipo descartável de aprovação. Não faz parte do bundle de produção.
+  Tokens copiados de docs/design/tokens.json e mobile/src/theme/tokens.ts.
+  Não toca em mobile/ nem web/src.
+-->
+<style>
+@font-face {
+  font-family: "Schibsted Grotesk";
+  src: url("../public/fonts/schibsted-grotesk.woff2") format("woff2");
+  font-weight: 400 700;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: dark;
+  --font-sans: "Schibsted Grotesk", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+  --space-2: 2px;
+  --space-4: 4px;
+  --space-6: 6px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+
+  --radius-control: 2px;
+  --radius-surface: 3px;
+  --row-touch: 44px;
+
+  --type-display-size: 21px;
+  --type-display-weight: 600;
+  --type-display-line: 1.2;
+  --type-display-spacing: -0.01em;
+
+  --type-title-size: 17px;
+  --type-title-weight: 600;
+  --type-title-line: 1.3;
+  --type-title-spacing: -0.005em;
+
+  --type-body-size: 13px;
+  --type-body-weight: 500;
+  --type-body-line: 1.32;
+
+  --type-label-size: 10px;
+  --type-label-weight: 500;
+  --type-label-line: 1.2;
+  --type-label-spacing: 0.12em;
+
+  --type-mono-size: 11.5px;
+  --type-mono-weight: 500;
+  --type-mono-line: 1.2;
+  --type-mono-spacing: 0.02em;
+
+  --phone-width: 390px;
+  --phone-scroll-pad: var(--space-16);
+}
+
+:root, body[data-theme="amoled"] {
+  color-scheme: dark;
+  --bg: #000000;
+  --bg-alt: #0b0d0c;
+  --bg-raised: #151817;
+  --line: #242826;
+  --text: #e4e8e3;
+  --text-muted: #9aa198;
+  --primary: #a2b8ae;
+  --primary-soft: #1e2624;
+  --success: #94b09a;
+  --warning: #c6ab77;
+  --info: #9ab3c4;
+  --danger: #c78f85;
+}
+
+body[data-theme="light"] {
+  color-scheme: light;
+  --bg: #eceee9;
+  --bg-alt: #e3e6e0;
+  --bg-raised: #dadfd7;
+  --line: #d2d6cf;
+  --text: #232622;
+  --text-muted: #5c615a;
+  --primary: #5b6f66;
+  --primary-soft: #dce3e0;
+  --success: #5c7a63;
+  --warning: #8b7444;
+  --info: #5a6f80;
+  --danger: #9c6259;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
+  font-weight: var(--type-body-weight);
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+:focus-visible { outline: 1px solid var(--primary); outline-offset: 2px; }
+
+/* ---------- andaime ---------- */
+.scaffold {
+  position: fixed;
+  top: var(--space-12);
+  right: var(--space-12);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-6) var(--space-12);
+  border: 1px dashed color-mix(in srgb, var(--text-muted) 45%, transparent);
+  border-radius: 999px;
+  font-size: var(--type-mono-size);
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--bg) 85%, transparent);
+}
+.scaffold .tag {
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  letter-spacing: var(--type-label-spacing);
+  text-transform: uppercase;
+  opacity: 0.9;
+}
+.pills { display: flex; gap: var(--space-2); align-items: center; }
+.pill {
+  padding: var(--space-4) var(--space-12);
+  border-radius: 999px;
+  font-size: var(--type-body-size);
+  color: var(--text-muted);
+}
+.pill:hover { background: var(--bg-raised); }
+.pill[aria-pressed="true"] { background: var(--primary-soft); color: var(--primary); font-weight: 600; }
+
+.page {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 72px var(--space-16) var(--space-32);
+  gap: var(--space-32);
+}
+
+.options {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--phone-width), 1fr));
+  justify-items: center;
+  gap: var(--space-32);
+}
+
+.option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-16);
+  width: 100%;
+  max-width: var(--phone-width);
+}
+.option-label {
+  font-size: var(--type-title-size);
+  font-weight: var(--type-title-weight);
+  letter-spacing: var(--type-title-spacing);
+  color: var(--text);
+}
+
+/* ---------- moldura do celular ---------- */
+.phone {
+  width: 100%;
+  max-width: var(--phone-width);
+  height: 844px;
+  flex: none;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 40px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+.phone-notch {
+  height: 28px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.phone-notch::before {
+  content: "";
+  width: 96px;
+  height: 18px;
+  background: var(--bg-raised);
+  border-radius: 0 0 12px 12px;
+}
+.phone-scroll {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: var(--space-8) 0 var(--space-16);
+}
+
+/* ---------- cabeçalho ---------- */
+.home-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+  padding: var(--space-4) var(--phone-scroll-pad) var(--space-8);
+  min-height: var(--row-touch);
+}
+.home-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  flex-shrink: 1;
+  min-width: 0;
+}
+.home-title svg { flex: none; }
+.home-title-text {
+  font-size: var(--type-title-size);
+  font-weight: var(--type-title-weight);
+  letter-spacing: var(--type-title-spacing);
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.home-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text);
+}
+.icon-button {
+  width: var(--row-touch);
+  height: var(--row-touch);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+.icon-button:hover { background: var(--bg-raised); }
+
+/* ---------- lista ---------- */
+.list {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------- cartão base (modo denso) ---------- */
+.card {
+  padding: 10px var(--phone-scroll-pad);
+  gap: var(--space-2);
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  cursor: pointer;
+}
+.card:hover { background: var(--bg-alt); }
+
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+}
+.title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--type-body-size);
+  font-weight: 600;
+  line-height: var(--type-body-line);
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.meta-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  min-width: 0;
+}
+.meta-row svg { flex: none; }
+.meta {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--type-mono-size);
+  font-weight: var(--type-mono-weight);
+  line-height: var(--type-mono-line);
+  letter-spacing: var(--type-mono-spacing);
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.footer {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-8);
+  min-width: 0;
+}
+.preview {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.stamp {
+  flex: none;
+  font-size: var(--type-mono-size);
+  font-weight: var(--type-mono-weight);
+  line-height: var(--type-mono-line);
+  letter-spacing: var(--type-mono-spacing);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- variante A: glifo à esquerda ---------- */
+.a .card {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: var(--space-8);
+}
+.a .card-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.a .glyph {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-raised);
+  border-radius: var(--radius-surface);
+}
+.a .glyph svg { stroke-width: 1.5; }
+.a .glyph.note { color: var(--text-muted); }
+.a .glyph.book,
+.a .glyph.project { color: var(--primary); }
+
+/* ---------- variante B: selo ao lado do título ---------- */
+.b .title-row { gap: var(--space-8); }
+.b .badge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-8);
+  background: var(--primary-soft);
+  border-radius: 999px;
+  color: var(--primary);
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  line-height: var(--type-label-line);
+  letter-spacing: var(--type-label-spacing);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.b .badge svg { flex: none; stroke-width: 1.5; }
+.b .meta-row .icon-primary { color: var(--primary); }
+
+/* ---------- variante C: só a linha meta ---------- */
+.c .meta-row .icon-primary { color: var(--primary); }
+
+/* ---------- botão de escolha ---------- */
+.choose {
+  padding: var(--space-12) var(--space-24);
+  border-radius: var(--radius-surface);
+  background: var(--bg-raised);
+  color: var(--text);
+  font-size: var(--type-body-size);
+  font-weight: 600;
+  border: 1px solid var(--line);
+}
+.choose:hover { background: var(--line); }
+
+/* ---------- responsividade ---------- */
+@media (max-width: 420px) {
+  .page { padding: 64px 0 var(--space-16); }
+  .options { gap: var(--space-24); }
+  .option { max-width: none; }
+  .phone { max-width: none; }
+  .scaffold { top: var(--space-8); right: var(--space-8); }
+  .scaffold .tag { display: none; }
+}
+
+@media (max-width: 360px) {
+  .phone-scroll { padding: var(--space-12); }
+}
+
+@media (min-width: 1280px) {
+  .page { padding: 84px var(--space-16) var(--space-16); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+</style>
+</head>
+<body data-theme="amoled">
+
+<div class="scaffold" aria-label="Andaime do protótipo">
+  <span class="tag">Protótipo</span>
+  <div class="pills" role="group" aria-label="Tema">
+    <button class="pill" data-theme-toggle="amoled" aria-pressed="true">AMOLED</button>
+    <span aria-hidden="true">·</span>
+    <button class="pill" data-theme-toggle="light" aria-pressed="false">Claro</button>
+  </div>
+</div>
+
+<main class="page">
+  <div class="options" role="list" aria-label="Variantes visuais">
+
+    <!-- Variante A -->
+    <section class="option a" role="listitem" aria-label="Variante A: glifo à esquerda">
+      <h2 class="option-label">A — glifo à esquerda</h2>
+      <div class="phone">
+        <div class="phone-notch" aria-hidden="true"></div>
+        <div class="phone-scroll">
+          <header class="home-header">
+            <div class="home-title">
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="10"/></svg>
+              <span class="home-title-text">Recentes</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+            </div>
+            <div class="home-actions">
+              <button class="icon-button" aria-label="Sincronização"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 0 1 8-8V2l4 4-4 4V8a6 6 0 0 0-6 6"/><path d="M20 12a8 8 0 0 1-8 8v2l-4-4 4-4v2a6 6 0 0 0 6-6"/></svg></button>
+              <button class="icon-button" aria-label="Calendário"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></button>
+              <button class="icon-button" aria-label="Buscar"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>
+            </div>
+          </header>
+
+          <div class="list">
+            <!-- Livro -->
+            <article class="card" aria-label="Livro O nome do vento">
+              <div class="glyph book" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></div>
+              <div class="card-body">
+                <div class="title-row"><h3 class="title">O nome do vento</h3></div>
+                <div class="meta-row">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                  <span class="meta">8 capítulos · 608 palavras</span>
+                </div>
+                <div class="footer"><div class="grow"></div><time class="stamp">18/11 21:10</time></div>
+              </div>
+            </article>
+
+            <!-- Projeto -->
+            <article class="card" aria-label="Projeto dyarium">
+              <div class="glyph project" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg></div>
+              <div class="card-body">
+                <div class="title-row"><h3 class="title">dyarium</h3></div>
+                <div class="meta-row">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                  <span class="meta">Projetos · 5 sessões</span>
+                </div>
+                <div class="footer"><div class="grow"></div><time class="stamp">18/11 18:02</time></div>
+              </div>
+            </article>
+
+            <!-- Nota -->
+            <article class="card" aria-label="Nota Escopo da sessão">
+              <div class="glyph note" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></div>
+              <div class="card-body">
+                <div class="title-row"><h3 class="title">Escopo da sessão</h3></div>
+                <div class="meta-row">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                  <span class="meta">00:39 · Notas ao acaso</span>
+                </div>
+                <div class="footer">
+                  <span class="preview">fechamos o fluxo de seleção e o livro no app</span>
+                  <time class="stamp">18/11 14:00</time>
+                </div>
+              </div>
+            </article>
+
+            <!-- Nota arquivada -->
+            <article class="card" aria-label="Nota Ideias soltas, arquivada">
+              <div class="glyph note" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></div>
+              <div class="card-body">
+                <div class="title-row"><h3 class="title">Ideias soltas</h3></div>
+                <div class="meta-row">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                  <span class="meta">00:12 · Notas ao acaso · arquivada</span>
+                </div>
+                <div class="footer"><div class="grow"></div><time class="stamp">16/11 09:40</time></div>
+              </div>
+            </article>
+          </div>
+        </div>
+      </div>
+      <button class="choose" type="button" data-choose="A">Escolher A</button>
+    </section>
+
+    <!-- Variante B -->
+    <section class="option b" role="listitem" aria-label="Variante B: selo ao lado do título">
+      <h2 class="option-label">B — selo ao lado do título</h2>
+      <div class="phone">
+        <div class="phone-notch" aria-hidden="true"></div>
+        <div class="phone-scroll">
+          <header class="home-header">
+            <div class="home-title">
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="10"/></svg>
+              <span class="home-title-text">Recentes</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+            </div>
+            <div class="home-actions">
+              <button class="icon-button" aria-label="Sincronização"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 0 1 8-8V2l4 4-4 4V8a6 6 0 0 0-6 6"/><path d="M20 12a8 8 0 0 1-8 8v2l-4-4 4-4v2a6 6 0 0 0 6-6"/></svg></button>
+              <button class="icon-button" aria-label="Calendário"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></button>
+              <button class="icon-button" aria-label="Buscar"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>
+            </div>
+          </header>
+
+          <div class="list">
+            <!-- Livro -->
+            <article class="card" aria-label="Livro O nome do vento">
+              <div class="title-row">
+                <h3 class="title">O nome do vento</h3>
+                <span class="badge"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>Livro</span>
+              </div>
+              <div class="meta-row">
+                <svg class="icon-primary" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+                <span class="meta">8 capítulos · 608 palavras</span>
+              </div>
+              <div class="footer"><div class="grow"></div><time class="stamp">18/11 21:10</time></div>
+            </article>
+
+            <!-- Projeto -->
+            <article class="card" aria-label="Projeto dyarium">
+              <div class="title-row">
+                <h3 class="title">dyarium</h3>
+                <span class="badge"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>MCP</span>
+              </div>
+              <div class="meta-row">
+                <svg class="icon-primary" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+                <span class="meta">Projetos · 5 sessões</span>
+              </div>
+              <div class="footer"><div class="grow"></div><time class="stamp">18/11 18:02</time></div>
+            </article>
+
+            <!-- Nota -->
+            <article class="card" aria-label="Nota Escopo da sessão">
+              <div class="title-row"><h3 class="title">Escopo da sessão</h3></div>
+              <div class="meta-row">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                <span class="meta">00:39 · Notas ao acaso</span>
+              </div>
+              <div class="footer">
+                <span class="preview">fechamos o fluxo de seleção e o livro no app</span>
+                <time class="stamp">18/11 14:00</time>
+              </div>
+            </article>
+
+            <!-- Nota arquivada -->
+            <article class="card" aria-label="Nota Ideias soltas, arquivada">
+              <div class="title-row"><h3 class="title">Ideias soltas</h3></div>
+              <div class="meta-row">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                <span class="meta">00:12 · Notas ao acaso · arquivada</span>
+              </div>
+              <div class="footer"><div class="grow"></div><time class="stamp">16/11 09:40</time></div>
+            </article>
+          </div>
+        </div>
+      </div>
+      <button class="choose" type="button" data-choose="B">Escolher B</button>
+    </section>
+
+    <!-- Variante C -->
+    <section class="option c" role="listitem" aria-label="Variante C: só a linha meta">
+      <h2 class="option-label">C — só a linha meta</h2>
+      <div class="phone">
+        <div class="phone-notch" aria-hidden="true"></div>
+        <div class="phone-scroll">
+          <header class="home-header">
+            <div class="home-title">
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="10"/></svg>
+              <span class="home-title-text">Recentes</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+            </div>
+            <div class="home-actions">
+              <button class="icon-button" aria-label="Sincronização"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 0 1 8-8V2l4 4-4 4V8a6 6 0 0 0-6 6"/><path d="M20 12a8 8 0 0 1-8 8v2l-4-4 4-4v2a6 6 0 0 0 6-6"/></svg></button>
+              <button class="icon-button" aria-label="Calendário"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></button>
+              <button class="icon-button" aria-label="Buscar"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>
+            </div>
+          </header>
+
+          <div class="list">
+            <!-- Livro -->
+            <article class="card" aria-label="Livro O nome do vento">
+              <div class="title-row"><h3 class="title">O nome do vento</h3></div>
+              <div class="meta-row">
+                <svg class="icon-primary" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+                <span class="meta">Livro · 8 capítulos · 608 palavras</span>
+              </div>
+              <div class="footer"><div class="grow"></div><time class="stamp">18/11 21:10</time></div>
+            </article>
+
+            <!-- Projeto -->
+            <article class="card" aria-label="Projeto dyarium">
+              <div class="title-row"><h3 class="title">dyarium</h3></div>
+              <div class="meta-row">
+                <svg class="icon-primary" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+                <span class="meta">MCP · 5 sessões</span>
+              </div>
+              <div class="footer"><div class="grow"></div><time class="stamp">18/11 18:02</time></div>
+            </article>
+
+            <!-- Nota -->
+            <article class="card" aria-label="Nota Escopo da sessão">
+              <div class="title-row"><h3 class="title">Escopo da sessão</h3></div>
+              <div class="meta-row">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                <span class="meta">00:39 · Notas ao acaso</span>
+              </div>
+              <div class="footer">
+                <span class="preview">fechamos o fluxo de seleção e o livro no app</span>
+                <time class="stamp">18/11 14:00</time>
+              </div>
+            </article>
+
+            <!-- Nota arquivada -->
+            <article class="card" aria-label="Nota Ideias soltas, arquivada">
+              <div class="title-row"><h3 class="title">Ideias soltas</h3></div>
+              <div class="meta-row">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                <span class="meta">00:12 · Notas ao acaso · arquivada</span>
+              </div>
+              <div class="footer"><div class="grow"></div><time class="stamp">16/11 09:40</time></div>
+            </article>
+          </div>
+        </div>
+      </div>
+      <button class="choose" type="button" data-choose="C">Escolher C</button>
+    </section>
+
+  </div>
+</main>
+
+<script>
+function init() {
+  // troca de tema (o padrão é AMOLED, como pedido)
+  document.querySelectorAll('[data-theme-toggle]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const theme = btn.dataset.themeToggle;
+      document.body.dataset.theme = theme;
+      document.querySelectorAll('[data-theme-toggle]').forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
+    });
+  });
+
+  // botões de escolha
+  document.querySelectorAll('[data-choose]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const variante = btn.dataset.choose;
+      if (typeof window.openchamber !== 'undefined' && window.openchamber.submit) {
+        window.openchamber.submit({ variante }, 'Variante ' + variante);
+      }
+    });
+  });
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
+</script>
+</body>
+</html>
