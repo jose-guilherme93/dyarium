@@ -215,17 +215,26 @@ func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 	// A previa pode vir da transcricao: grafias antigas de uma entidade
 	// mesclada aparecem com o nome atual, como no painel da transcricao.
 	aliasPairs, _ := s.deps.Store.EntityAliasPairs(r.Context())
-	body := pageJSON(entriesJSON(entries, tagNames, aliasPairs), len(entries))
+	body := pageJSON(entriesJSON(entries, tagNames, aliasPairs, truthy(query.Get("include_text"))), len(entries))
 	writeJSON(w, http.StatusOK, body)
 }
 
 // entriesJSON converte as entradas e anexa os nomes das tags num lugar so.
-func entriesJSON(entries []store.Entry, tagNames map[string][]string, aliasPairs []store.EntityNamePair) []map[string]any {
+// `includeText` e opt-in (`include_text=1`): o dashboard pede o corpo e a
+// transcricao completos para calcular a analise local, e a lista normal fica
+// pequena.
+func entriesJSON(entries []store.Entry, tagNames map[string][]string, aliasPairs []store.EntityNamePair, includeText bool) []map[string]any {
 	out := make([]map[string]any, 0, len(entries))
 	for _, e := range entries {
 		item := entryJSON(e)
 		if names := tagNames[e.ID]; len(names) > 0 {
 			item["tags"] = names
+		}
+		if includeText {
+			// O corpo chega em markdown cru do banco; a previa curta continua
+			// sendo a versao em prosa para a lista.
+			item["text"] = e.Preview
+			item["transcript"] = e.SpokenPreview
 		}
 		// A lista mostra duas linhas do corpo (ou da transcricao). O texto chega
 		// em markdown cru do banco e vira prosa aqui, para a interface nao exibir

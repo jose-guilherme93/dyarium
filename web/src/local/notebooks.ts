@@ -110,6 +110,16 @@ function toNotebook(
   };
 }
 
+/**
+ * Ids dos cadernos que sao livro. Lido uma vez para o diario deixar os livros
+ * de fora sem consultar o banco por nota.
+ */
+export async function bookNotebookIds(): Promise<Set<string>> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<{ id: string }>("SELECT id FROM notebooks WHERE kind = 'book'");
+  return new Set(rows.map((row) => row.id));
+}
+
 async function chaptersByNotebook(): Promise<Map<string, number>> {
   const db = await getDb();
   const rows = await db.getAllAsync<{ notebook_id: string | null; total: number }>(

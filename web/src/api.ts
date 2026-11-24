@@ -12,6 +12,8 @@ import * as localProvider from "./local/providerTranscribe";
 import * as localAnalyze from "./local/analyze";
 import { shrinkImage } from "./lib/image";
 import { setOffline } from "./lib/offline";
+import { buildWebSnapshot, recordingFromEntry, webDeviceId, type EntryWithText } from "./lib/metrics";
+import { listRecordings } from "../../mobile/src/core/repo";
 import type {
   Activity,
   Analysis,
@@ -428,6 +430,8 @@ export interface EntryFilters {
   exclude_books?: boolean;
   /** Pede a contagem de palavras por entrada (lista de um livro). */
   include_words?: boolean;
+  /** Pede o corpo completo (`text`) e a transcricao (`transcript`) por entrada. */
+  include_text?: boolean;
 }
 
 /** Campo que briguou quando o servidor recusou a gravacao. */
@@ -480,8 +484,55 @@ function entriesPath(filters?: EntryFilters): string {
   if (filters?.include_words) {
     params.set("include_words", "1");
   }
+  if (filters?.include_text) {
+    params.set("include_text", "1");
+  }
   const query = params.toString();
   return `/entries${query ? `?${query}` : ""}`;
+}
+
+/**
+ * Todas as paginas com o texto completo, para a analise do dashboard. O
+ * `include_text=1` e opt-in: a lista normal continua sem corpo e sem
+ * transcricao. O teto de 20 paginas evita um laco se o servidor repetir o
+ * cursor.
+ */
+async function listAllEntriesWithText(filters?: EntryFilters): Promise<EntryWithText[]> {
+  const entries: EntryWithText[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < 20; page += 1) {
+    const result = await request<{ entries: EntryWithText[]; next_cursor?: string }>(
+      entriesPath({ ...filters, limit: 1000, cursor, include_text: true }),
+    );
+    entries.push(...(result.entries ?? []));
+    cursor = result.next_cursor;
+    if (!cursor) break;
+  }
+  return entries;
+}
+
+/**
+ * Analise do dashboard, calculada neste cliente nos dois modos. Sem token le o
+ * cofre do navegador; com token le as entradas com texto do servidor. Cofre
+ * vazio devolve `snapshots: []` — a tela so mostra o estado vazio quando nao
+ * existe nota nenhuma.
+ */
+export async function computeWebMetrics(): Promise<MetricsResponse> {
+  const now = new Date();
+  const deviceId = webDeviceId();
+
+  if (isLocalMode()) {
+    const recordings = await listRecordings(false);
+    if (recordings.length === 0) return { snapshots: [], schema: 2 };
+    return { snapshots: [buildWebSnapshot(recordings, { deviceId, now })], schema: 2 };
+  }
+
+  const entries = await listAllEntriesWithText();
+  if (entries.length === 0) return { snapshots: [], schema: 2 };
+  return {
+    snapshots: [buildWebSnapshot(entries.map(recordingFromEntry), { deviceId, now })],
+    schema: 2,
+  };
 }
 
 // analysisMisses remembers entries that answered 404 for analysis in this
@@ -899,7 +950,7 @@ const remoteApi = {
     const query = params.toString();
     return request<GraphResponse>(`/graph${query ? `?${query}` : ""}`);
   },
-  getMetrics: () => request<MetricsResponse>("/metrics"),
+  getMetrics: () => computeWebMetrics(),
   /** Processos concluidos (transcricoes e analises), do mais recente ao antigo. */
   listActivities: () => request<{ activities: Activity[] }>("/activities"),
   listAttachments: (entryId: string) =>
@@ -1013,7 +1064,7 @@ const localApi: Partial<typeof remoteApi> = {
   createLink: (entryId, body) => localLinks.createLocalLink(entryId, body),
   deleteLink: (id) => localLinks.deleteLocalLink(id),
   getBookEntities: async () => ({ entities: [] }),
-  getMetrics: async () => ({ snapshots: [], schema: 2 }),
+  getMetrics: () => computeWebMetrics(),
   getSettings: () => localSettings.loadLocalSettings(),
   putSettings: async (patch) => {
     await localSettings.saveLocalSettings(patch);

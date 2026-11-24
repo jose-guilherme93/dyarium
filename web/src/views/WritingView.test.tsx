@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { api } from "../api";
 import { WritingView } from "./WritingView";
 import type { MetricsSnapshot, MetricsWindow } from "../types";
 
@@ -177,8 +178,8 @@ function v2Window(words: number): MetricsWindow {
 }
 
 const V2_SNAPSHOT: MetricsSnapshot = {
-  device_id: "dev_2",
-  device_name: "celular",
+  device_id: "web-teste",
+  device_name: "Navegador",
   schema: 2,
   generated_at: "2026-10-19T12:00:00Z",
   received_at: "2026-10-19T12:01:00Z",
@@ -191,14 +192,15 @@ const V2_SNAPSHOT: MetricsSnapshot = {
   history: SNAPSHOT.history,
 };
 
-function mockApi(snapshots: unknown[]) {
+/** O dashboard le as entradas com texto do servidor e calcula aqui mesmo. */
+function mockEntries(entries: unknown[]) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async () => ({
       ok: true,
       status: 200,
       headers: new Headers(),
-      text: async () => JSON.stringify({ snapshots, schema: 1 }),
+      text: async () => JSON.stringify({ entries }),
     })),
   );
 }
@@ -209,22 +211,12 @@ describe("WritingView", () => {
     vi.unstubAllGlobals();
   });
 
-  it("mostra as métricas e os graficos enviados pelo app", async () => {
-    mockApi([SNAPSHOT]);
-    render(<WritingView refreshKey={0} />);
-
-    await waitFor(() => expect(screen.getByText("120")).toBeInTheDocument());
-    expect(screen.getByText("Palavras por semana")).toBeInTheDocument();
-    expect(screen.getByText("Palavras por mês")).toBeInTheDocument();
-    expect(screen.getByText("Histórico de escrita")).toBeInTheDocument();
-    expect(screen.getByText("Quando você escreve (dia × hora)")).toBeInTheDocument();
-    expect(screen.getByText("Você escreveu 120 palavras em 2 notas.")).toBeInTheDocument();
-    expect(screen.getByText("emulador")).toBeInTheDocument();
-    expect(screen.getByText(/projeto · 4/)).toBeInTheDocument();
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
-  it("desenha o schema 2 e troca de janela", async () => {
-    mockApi([V2_SNAPSHOT]);
+  it("desenha o snapshot calculado que recebe", async () => {
+    vi.spyOn(api, "getMetrics").mockResolvedValue({ snapshots: [V2_SNAPSHOT], schema: 2 });
     render(<WritingView refreshKey={0} />);
 
     await waitFor(() => expect(screen.getByText("200")).toBeInTheDocument());
@@ -233,6 +225,7 @@ describe("WritingView", () => {
     expect(screen.getByText("Sobre o que você escreveu")).toBeInTheDocument();
     expect(screen.getByText("Imagens")).toBeInTheDocument();
     expect(screen.getByText(/trabalho · 2/)).toBeInTheDocument();
+    expect(screen.queryByText(/schema/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "7 dias" })).toBeInTheDocument();
     expect(screen.getAllByText("↑").length).toBeGreaterThan(0);
     expect(screen.getAllByText("↓").length).toBeGreaterThan(0);
@@ -242,10 +235,38 @@ describe("WritingView", () => {
     expect(screen.getByText("Resumo 70.")).toBeInTheDocument();
   });
 
-  it("avisa quando nenhum aparelho enviou métricas", async () => {
-    mockApi([]);
+  it("calcula as métricas no navegador a partir das entradas do servidor", async () => {
+    const now = new Date().toISOString();
+    mockEntries([
+      {
+        id: "e1",
+        title: "Nota do servidor",
+        status: "ready",
+        source: "text",
+        original_filename: "",
+        content_type: "",
+        size_bytes: 0,
+        duration_seconds: 0,
+        sha256: "",
+        recorded_at: now,
+        created_at: now,
+        updated_at: now,
+        text: "cinco palavras para a nota",
+      },
+    ]);
     render(<WritingView refreshKey={0} />);
 
-    await waitFor(() => expect(screen.getByText("Nenhuma métrica recebida ainda.")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText("Você escreveu 5 palavras em 1 nota.")).toBeInTheDocument(),
+    );
+    expect(screen.queryByText(/aparelho|navegador|schema/i)).not.toBeInTheDocument();
+  });
+
+  it("mostra o estado vazio quando o cofre não tem nota nenhuma", async () => {
+    vi.spyOn(api, "getMetrics").mockResolvedValue({ snapshots: [], schema: 2 });
+    render(<WritingView refreshKey={0} />);
+
+    await waitFor(() => expect(screen.getByText("Nenhuma métrica ainda.")).toBeInTheDocument());
+    expect(screen.queryByText(/aparelho|celular/i)).not.toBeInTheDocument();
   });
 });

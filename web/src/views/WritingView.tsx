@@ -13,9 +13,10 @@ import type {
 } from "../types";
 
 /**
- * Painel "Estatísticas": mostra as métricas que o app calcula offline. O celular
- * envia o documento pronto (contrato em docs/api.md); aqui so desenhamos, sem
- * recalcular nada, para os numeros baterem exatamente com o app.
+ * Painel "Estatísticas": a análise é calculada aqui mesmo, sobre as notas que
+ * este cliente tem (cofre do navegador ou entradas do servidor). O documento
+ * schema 2 vem pronto do núcleo puro do app; a tela só escolhe a janela e
+ * desenha. Nada chega calculado de fora.
  */
 
 const WEEKDAY_INITIALS = ["D", "S", "T", "Q", "Q", "S", "S"];
@@ -172,13 +173,6 @@ function number(value: number): string {
   return value.toLocaleString("pt-BR");
 }
 
-function shortDate(iso: string): string {
-  if (!iso) return "";
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  return date.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
-}
-
 /** Parte sobre o total, em porcentagem inteira e sem passar de 100. */
 function percentOf(part: number, total: number): number {
   if (total <= 0) return 0;
@@ -279,7 +273,6 @@ function heatColor(value: number, max: number): string {
 
 export function WritingView({ refreshKey }: { refreshKey: number }) {
   const [snapshots, setSnapshots] = useState<MetricsSnapshot[]>([]);
-  const [selected, setSelected] = useState<string>("");
   const [windowKey, setWindowKey] = useState<WindowKey>("30d");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -301,8 +294,7 @@ export function WritingView({ refreshKey }: { refreshKey: number }) {
     void load();
   }, [load, refreshKey]);
 
-  const snapshot =
-    snapshots.find((item) => item.device_id === selected) ?? snapshots[0];
+  const snapshot = snapshots[0];
 
   if (loading && snapshots.length === 0) {
     return (
@@ -324,9 +316,6 @@ export function WritingView({ refreshKey }: { refreshKey: number }) {
       <header className="page-head">
         <div>
           <h1>Estatísticas</h1>
-          <p>
-            Métricas calculadas no aparelho, sobre as suas notas. O dashboard só desenha os números.
-          </p>
         </div>
         <button type="button" className="button button--ghost" onClick={() => void load()}>
           Atualizar
@@ -337,17 +326,11 @@ export function WritingView({ refreshKey }: { refreshKey: number }) {
 
       {!snapshot ? (
         <div className="empty-state">
-          <p>Nenhuma métrica recebida ainda.</p>
-          <p>
-            As métricas de escrita são calculadas no aparelho. Elas aparecem aqui quando o app
-            estiver conectado a esta instalação.
-          </p>
+          <p>Nenhuma métrica ainda.</p>
         </div>
       ) : (
         <WritingBody
           snapshot={snapshot}
-          devices={snapshots}
-          onSelect={setSelected}
           windowKey={windowKey}
           onWindow={setWindowKey}
         />
@@ -358,14 +341,10 @@ export function WritingView({ refreshKey }: { refreshKey: number }) {
 
 function WritingBody({
   snapshot,
-  devices,
-  onSelect,
   windowKey,
   onWindow,
 }: {
   snapshot: MetricsSnapshot;
-  devices: MetricsSnapshot[];
-  onSelect: (deviceId: string) => void;
   windowKey: WindowKey;
   onWindow: (key: WindowKey) => void;
 }) {
@@ -381,27 +360,6 @@ function WritingBody({
 
   return (
     <>
-      <div className="writing-meta">
-        {devices.length > 1 ? (
-          <label className="writing-device">
-            <span className="muted">Aparelho</span>
-            <select value={snapshot.device_id} onChange={(event) => onSelect(event.target.value)}>
-              {devices.map((item) => (
-                <option key={item.device_id} value={item.device_id}>
-                  {item.device_name || item.device_id}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : (
-          <span className="muted">{snapshot.device_name || snapshot.device_id}</span>
-        )}
-        <span className="muted">
-          Calculado no aparelho em {shortDate(snapshot.generated_at)} · recebido em{" "}
-          {shortDate(snapshot.received_at)} · schema {snapshot.schema}
-        </span>
-      </div>
-
       {snapshot.schema === 2 ? (
         <div className="window-filter" role="group" aria-label="Janela">
           {WINDOW_KEYS.map((key) => (

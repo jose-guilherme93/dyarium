@@ -1,7 +1,8 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { registerNodeDatabase } from "./__fixtures__/nodeDb";
 
+import { createLocalNotebook } from "./notebooks";
 import * as local from "./notes";
 
 beforeAll(async () => {
@@ -68,5 +69,45 @@ describe("camada local da web", () => {
   it("lista o caderno padrao mesmo sem nota nenhuma", async () => {
     const cadernos = await local.listNotebooks();
     expect(cadernos.some((caderno) => caderno.is_default)).toBe(true);
+  });
+});
+
+describe("livros fora das notas recentes no cofre local", () => {
+  beforeEach(async () => {
+    await registerNodeDatabase();
+  });
+
+  it("exclude_books tira o capitulo e mantem a nota do diario", async () => {
+    const livro = await createLocalNotebook({ name: "Livro", color: "", kind: "book" });
+    const nota = await local.createEntry({ title: "Nota do diario" });
+    const capitulo = await local.createEntry({
+      title: "Cap 1",
+      notebookId: livro.id,
+      kind: "chapter",
+    });
+
+    const recentes = (await local.listEntries({ exclude_books: true })).map((item) => item.id);
+    expect(recentes).toContain(nota.id);
+    expect(recentes).not.toContain(capitulo.id);
+
+    // Sem o filtro o capitulo continua na lista, e o caderno do livro o mostra.
+    expect((await local.listEntries()).map((item) => item.id)).toContain(capitulo.id);
+    expect((await local.listEntries({ exclude_books: false })).map((item) => item.id)).toContain(
+      capitulo.id,
+    );
+    expect(
+      (await local.listEntries({ notebook_id: livro.id })).map((item) => item.id),
+    ).toContain(capitulo.id);
+  });
+
+  it("exclui nota comum que mora num caderno de livro", async () => {
+    const livro = await createLocalNotebook({ name: "Livro", color: "", kind: "book" });
+    const caderno = await createLocalNotebook({ name: "Diario", color: "" });
+    const ficha = await local.createEntry({ title: "Ficha", notebookId: livro.id });
+    const nota = await local.createEntry({ title: "Nota", notebookId: caderno.id });
+
+    const recentes = (await local.listEntries({ exclude_books: true })).map((item) => item.id);
+    expect(recentes).not.toContain(ficha.id);
+    expect(recentes).toContain(nota.id);
   });
 });

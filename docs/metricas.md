@@ -11,12 +11,16 @@ sobre o que falei", nao "qual modelo rodou". Metricas de execucao (modelo,
 tokens/s, threads, bateria) sao instrumentacao para diagnosticar e vivem em
 Configs > Avancado, nunca no Painel.
 
-O app e a superficie principal: ele tem o corpus local, a bateria, os modelos e a
-analise no aparelho. O web espelha o snapshot; nao recalcula metrica.
+Nenhum cliente depende do outro para analisar. O app calcula sobre o corpus local,
+com bateria, modelos e analise no aparelho. O web calcula sobre as notas que tem
+(cofre do navegador ou entradas do servidor) usando o mesmo nucleo puro. O
+documento do app existe para o Painel do app e para o servidor guardar; o
+dashboard nao desenha esse documento.
 
 ## Decisoes
 
-- Superficie: app mobile (Painel e Configs). O web apenas desenha o snapshot.
+- Superficie: app mobile (Painel e Configs) e dashboard web (Estatisticas). Cada
+  um calcula o proprio snapshot sobre as notas que tem.
 - Calculo local, offline e deterministico. Nenhuma frase de resumo usa LLM.
 - Contrato: `MetricsSnapshot` schema 2, um documento por aparelho (o mesmo
   `PUT /api/v1/metrics`).
@@ -88,10 +92,10 @@ muda: `device_id`, `device_name`, `schema`, `generated_at` e o documento.
 }
 ```
 
-As tres janelas vao prontas no documento. O web escolhe a janela e desenha; nao
-filtra nem recalcula. O app monta uma vez, com um unico `now`, e usa o mesmo
-documento no Painel e no upload. `history` permanece como no schema 1 (todas as
-notas) e alimenta os graficos de constancia.
+As tres janelas vao prontas no documento. Cada cliente monta o documento uma vez,
+com um unico `now`, e usa o mesmo resultado no Painel e no upload (app) ou na tela
+de Estatisticas (web). `history` permanece como no schema 1 (todas as notas) e
+alimenta os graficos de constancia.
 
 ### `writing`
 
@@ -151,8 +155,9 @@ nenhuma analise, cai para a estimativa lexica de `writing.ts`, com
 - O servidor aceita schema 1 e 2 e preserva o documento inteiro, inclusive
   secoes que ainda nao conhece. So o envelope (`device_id`, `device_name`) sai do
   payload.
-- O web desenha schema 2 (com filtro de janela) e cai no layout atual (todas as
-  notas) para schema 1.
+- O servidor continua aceitando schema 1 e 2 do app. O dashboard nao le esses
+  snapshots: ele calcula schema 2 localmente a partir das notas do proprio
+  cliente.
 - O documento nao carrega texto de nota, transcricao, audio, caminho de arquivo
   nem segredo. O teto de 256 KiB continua valendo; as tres janelas ficam muito
   abaixo.

@@ -20,6 +20,7 @@ import {
 import type { Recording } from "../../../mobile/src/core/types";
 
 import { patchChapter, registerWriting, wordsIn, type ChapterPatch } from "./chapters";
+import { bookNotebookIds } from "./notebooks";
 import type { EntryFilters } from "../api";
 import type {
   AuthorRole,
@@ -108,8 +109,12 @@ function pertence(recording: Recording, filters?: EntryFilters): boolean {
 export async function listEntries(filters?: EntryFilters): Promise<Entry[]> {
   const all = await listRecordings(false);
   const pedePalavras = filters?.include_words === true;
+  // O diario nao mostra livro. Os ids sao lidos uma vez; filtrar nota a nota
+  // pagaria uma consulta por entrada.
+  const livros = filters?.exclude_books === true ? await bookNotebookIds() : null;
   const lista = all
     .filter((recording) => pertence(recording, filters))
+    .filter((recording) => !livros?.has(recording.notebookId ?? NOTEBOOK_PADRAO))
     .map((recording) => toEntry(recording, pedePalavras));
   return filters?.limit ? lista.slice(0, filters.limit) : lista;
 }
