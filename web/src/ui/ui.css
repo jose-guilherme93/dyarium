@@ -161,3 +161,74 @@
 .dy-meter__value {
   flex: none;
 }
+
+/* icone */
+
+.dy-icon {
+  display: block;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: var(--dy-icon-stroke);
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+}
+
+.dy-icon[data-fill="true"] {
+  stroke: none;
+}
+
+/* marca de estado */
+
+.dy-mark {
+  display: inline-block;
+  flex: none;
+  width: var(--dy-mark-size);
+  height: var(--dy-mark-size);
+  border-radius: 50%;
+  border: var(--dy-mark-stroke) solid var(--dy-text-muted);
+}
+
+.dy-mark[data-state="done"] {
+  background: var(--dy-success);
+  border-color: var(--dy-success);
+}
+
+.dy-mark[data-state="out"] {
+  border-color: var(--dy-warning);
+  position: relative;
+}
+
+.dy-mark[data-state="out"]::after {
+  content: "";
+  position: absolute;
+  left: var(--dy-space-2);
+  right: var(--dy-space-2);
+  top: 50%;
+  border-top: var(--dy-mark-stroke) solid var(--dy-warning);
+  transform: translateY(-50%) rotate(-45deg);
+}
+
+/* onda */
+
+.dy-wave {
+  display: flex;
+  align-items: center;
+  gap: var(--dy-wave-gap);
+  width: 100%;
+  height: var(--dy-wave-height);
+  overflow: hidden;
+}
+
+.dy-wave b {
+  flex: 1;
+  min-width: var(--dy-wave-bar);
+  border-radius: 0.5px;
+  background: var(--dy-text);
+  opacity: var(--dy-wave-idle);
+}
+
+.dy-wave b[data-played="true"] {
+  background: var(--dy-primary);
+  opacity: var(--dy-wave-played);
+}
