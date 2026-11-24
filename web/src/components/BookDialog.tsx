@@ -76,6 +76,7 @@ export function BookDialog({
   });
   const [confirmName, setConfirmName] = useState("");
   const [dangerOpen, setDangerOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const coverSrc = useCoverUrl(
     notebook?.has_cover ? notebook.id : null,
     notebook?.cover_updated_at,
@@ -85,6 +86,7 @@ export function BookDialog({
     if (!open) return;
     setConfirmName("");
     setDangerOpen(false);
+    setAdvancedOpen(false);
     if (notebook) {
       setForm({
         name: notebook.name,
@@ -141,6 +143,7 @@ export function BookDialog({
   const previewTitle = form.name.trim() || "um livro";
   const isNotes = notebook !== undefined && notebook.kind === "notes";
   const isBook = notebook?.kind === "book";
+  const creating = notebook === undefined;
   const occupied = isNotes && notebook.entry_count > 0;
 
   return (
@@ -222,7 +225,74 @@ export function BookDialog({
           </div>
         ) : null}
 
-        {!isNotes ? (
+        {creating ? (
+          <div className="book-fields book-create">
+            <label className="modal-field">
+              <span>Título</span>
+              <input
+                value={form.name}
+                autoFocus
+                maxLength={80}
+                placeholder="Sobre o que é o livro?"
+                onChange={(event) => patch({ name: event.target.value })}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") save();
+                }}
+              />
+            </label>
+            <button
+              type="button"
+              className="book-advanced-toggle"
+              aria-expanded={advancedOpen}
+              onClick={() => setAdvancedOpen((value) => !value)}
+            >
+              <ChevronIcon size={13} />
+              Mais opções
+            </button>
+            {advancedOpen ? (
+              <div className="book-advanced">
+                <div className="book-advanced-grid">
+                  <label className="modal-field">
+                    <span>Autor</span>
+                    <input value={form.author} onChange={(event) => patch({ author: event.target.value })} />
+                  </label>
+                  <label className="modal-field">
+                    <span>Idioma</span>
+                    <input value={form.language} onChange={(event) => patch({ language: event.target.value })} />
+                  </label>
+                  <label
+                    className="modal-field"
+                    title="Tamanho total que você quer que o livro tenha. A casa do livro compara o texto com essa meta."
+                  >
+                    <span>Meta do livro</span>
+                    <input
+                      type="number"
+                      min={0}
+                      inputMode="numeric"
+                      value={form.goal_words || ""}
+                      onChange={(event) => patch({ goal_words: Math.max(0, Number(event.target.value) || 0) })}
+                      placeholder="ex.: 80000"
+                    />
+                  </label>
+                  <label
+                    className="modal-field"
+                    title="Data em que você quer terminar. A casa do livro calcula o ritmo até lá."
+                  >
+                    <span>Prazo</span>
+                    <input
+                      type="date"
+                      value={form.deadline}
+                      onChange={(event) => patch({ deadline: event.target.value })}
+                    />
+                  </label>
+                </div>
+                <p className="book-advanced-hint">
+                  Tipografia, formato e margens ficam nas configurações do livro depois.
+                </p>
+              </div>
+            ) : null}
+          </div>
+        ) : !isNotes ? (
         <>
         <div className="book-fields">
           <label className="modal-field">

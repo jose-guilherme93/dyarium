@@ -146,6 +146,16 @@ export function CheckIcon({ size = 18 }: IconProps) {
   );
 }
 
+/** Quadrado com check: entra/sai do modo de selecao de notas. */
+export function SelectIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <rect x="4" y="4" width="16" height="16" rx="3" />
+      <path d="m8 12 3 3 5-6" />
+    </svg>
+  );
+}
+
 export function SparkIcon({ size = 18 }: IconProps) {
   return (
     <svg {...svgProps(size)}>

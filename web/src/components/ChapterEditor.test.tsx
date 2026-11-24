@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { Entry, Notebook } from "../types";
 
 const api = vi.hoisted(() => ({
@@ -21,7 +21,26 @@ const api = vi.hoisted(() => ({
 vi.mock("../api", () => ({ api, isConflict: () => false }));
 // O BlockNote nao e o assunto do teste: a folha e a gaveta sao.
 vi.mock("../editor/NotesEditor", () => ({
-  NotesEditor: () => <div data-testid="chapter-body" />,
+  NotesEditor: ({ onChange }: { onChange: (value: string) => void }) => (
+    <div data-testid="chapter-body">
+      <textarea
+        aria-label="Corpo do capítulo"
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </div>
+  ),
+}));
+// O rascunho e IndexedDB; aqui interessa que ele seja escrito na hora certa.
+const drafts = vi.hoisted(() => ({
+  writeDraft: vi.fn(async () => {}),
+  readDraft: vi.fn(async (): Promise<unknown> => undefined),
+  clearDraft: vi.fn(async () => {}),
+}));
+vi.mock("../lib/bookDrafts", () => ({
+  ...drafts,
+  backupConflict: vi.fn(async () => {}),
+  listDrafts: vi.fn(async () => []),
+  cleanupConflictBackups: vi.fn(async () => {}),
 }));
 
 import { ChapterEditor } from "./ChapterEditor";
@@ -86,16 +105,29 @@ function renderChapter(overrides: Partial<Parameters<typeof ChapterEditor>[0]> =
     onCreateAfter: vi.fn(),
     onFocusChange: vi.fn(),
     onChanged: vi.fn(),
+    onWordsSaved: vi.fn(),
     onDeleted: vi.fn(),
     ...overrides,
   };
   return { props, ...render(<ChapterEditor {...props} />) };
 }
 
+function setOnline(value: boolean) {
+  Object.defineProperty(navigator, "onLine", { configurable: true, value });
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+  setOnline(true);
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
+  setOnline(true);
   api.getEntry.mockResolvedValue(current);
   api.listNotes.mockResolvedValue({ notes: [] });
+  api.createNote.mockResolvedValue({ id: "n1", body_version: "v1" });
+  api.updateNote.mockResolvedValue({ id: "n1", versions: { body: "v2" } });
   api.listRevisions.mockResolvedValue({ revisions: [] });
   api.patchEntry.mockResolvedValue({ status: "ok", versions: {} });
   api.getWritingRhythm.mockResolvedValue({
@@ -196,5 +228,202 @@ describe("editor do capitulo", () => {
     fireEvent.click(screen.getByRole("button", { name: "Painel" }));
     fireEvent.click(screen.getByRole("button", { name: "Analisar capítulo" }));
     await waitFor(() => expect(api.analyze).toHaveBeenCalledWith("e1"));
+  });
+
+  it("grava o corpo sem pedir a lista de capitulos e informa a contagem", async () => {
+    const { props } = renderChapter();
+    const body = await screen.findByLabelText("Corpo do capítulo");
+
+    fireEvent.change(body, { target: { value: "Uma frase com cinco palavras" } });
+    fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+
+    await waitFor(() => expect(props.onWordsSaved).toHaveBeenCalledWith("e1", 5));
+    expect(api.createNote).toHaveBeenCalledWith("e1", "Uma vida", "Uma frase com cinco palavras");
+    expect(props.onChanged).not.toHaveBeenCalled();
+  });
+
+  it("salva o texto mais recente no tique de 60 s mesmo com o debounce reiniciado", async () => {
+    vi.useFakeTimers();
+    renderChapter();
+    // Com timers falsos, deixa a carga inicial assentar sem `findBy`.
+    await act(async () => {});
+    const body = screen.getByLabelText("Corpo do capítulo");
+
+    // Uma tecla a cada 500 ms: o debounce de 800 ms nunca dispara.
+    for (let i = 0; i < 121; i += 1) {
+      fireEvent.change(body, { target: { value: `palavra ${i}` } });
+      await vi.advanceTimersByTimeAsync(500);
+    }
+
+    expect(api.createNote).toHaveBeenCalledTimes(1);
+    expect(api.createNote.mock.calls[0][2]).toMatch(/^palavra 1\d\d$/);
+  });
+
+  it("sem rede guarda o rascunho e tenta de novo no tique seguinte", async () => {
+    vi.useFakeTimers();
+    setOnline(false);
+    api.createNote
+      .mockRejectedValueOnce(new Error("sem rede"))
+      .mockResolvedValue({ id: "n1", body_version: "v1" });
+    renderChapter();
+    await act(async () => {});
+    const body = screen.getByLabelText("Corpo do capítulo");
+
+    fireEvent.change(body, { target: { value: "duas palavras" } });
+    // O debounce tenta gravar e falha; o tique offline mantem o rascunho.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(drafts.writeDraft).toHaveBeenLastCalledWith(
+      "e1",
+      expect.objectContaining({ markdown: "duas palavras", state: "offline" }),
+    );
+    expect(api.createNote).toHaveBeenCalledTimes(1);
+
+    setOnline(true);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(api.createNote).toHaveBeenCalledTimes(2);
+    expect(api.createNote).toHaveBeenLastCalledWith("e1", "Uma vida", "duas palavras");
+  });
+
+  it("nao salva depois de desmontar", async () => {
+    vi.useFakeTimers();
+    api.createNote.mockRejectedValue(new Error("sem rede"));
+    const { unmount } = renderChapter();
+    await act(async () => {});
+    const body = screen.getByLabelText("Corpo do capítulo");
+
+    fireEvent.change(body, { target: { value: "texto pendente" } });
+    unmount();
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    // So a tentativa do debounce, que ja estava armada; o tique de fundo sumiu.
+    expect(api.createNote).toHaveBeenCalledTimes(1);
+  });
+
+  it("Ctrl+S grava na hora", async () => {
+    vi.useFakeTimers();
+    const { props } = renderChapter();
+    await act(async () => {});
+    const body = screen.getByLabelText("Corpo do capítulo");
+
+    fireEvent.change(body, { target: { value: "salvar agora" } });
+    fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(api.createNote).toHaveBeenCalledWith("e1", "Uma vida", "salvar agora");
+    expect(props.onWordsSaved).toHaveBeenCalledWith("e1", 2);
+  });
+});
+
+describe("glifo de salvamento", () => {
+  it("nenhum texto de salvamento fica visivel no cabeçalho", async () => {
+    const { container } = renderChapter();
+    await screen.findByLabelText("Título do capítulo");
+    expect(container.querySelector(".save-state")).toBeNull();
+    const visible = Array.from(container.querySelectorAll(".chapter-top *")).some(
+      (el) =>
+        el.children.length === 0 &&
+        !el.classList.contains("sr-only") &&
+        /salv|sem rede/i.test(el.textContent ?? ""),
+    );
+    expect(visible).toBe(false);
+  });
+
+  it("sem nada pendente, o glifo e o disco de Salvo com explicacao no titulo", async () => {
+    renderChapter();
+    await screen.findByLabelText("Título do capítulo");
+    const glyph = screen.getByRole("img", { name: "Salvo" });
+    expect(glyph.getAttribute("title")).toMatch(/Grava sozinho a cada 1 minuto/);
+    expect(glyph.querySelector("svg")).not.toBeNull();
+    // aria-live sem texto visivel
+    const live = document.querySelector(".chapter-top .sr-only[aria-live='polite']");
+    expect(live).not.toBeNull();
+    expect(live?.textContent).toBe("Salvo");
+  });
+
+  it("durante a gravacao o arco gira e o rotulo e Salvando", async () => {
+    vi.useFakeTimers();
+    api.createNote.mockReturnValue(new Promise(() => {}));
+    renderChapter();
+    await act(async () => {});
+    fireEvent.change(screen.getByLabelText("Corpo do capítulo"), { target: { value: "alpha beta" } });
+    fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const glyph = screen.getByRole("img", { name: "Salvando" });
+    expect(glyph.querySelector("svg.save-glyph-spin")).not.toBeNull();
+  });
+
+  it("com alteracao ainda nao gravada o anel fica vazio e diz pendentes", async () => {
+    vi.useFakeTimers();
+    renderChapter();
+    await act(async () => {});
+    fireEvent.change(screen.getByLabelText("Corpo do capítulo"), { target: { value: "uma mudanca" } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200);
+    });
+    const glyph = screen.getByRole("img", { name: "Alterações pendentes" });
+    expect(glyph).toBeInTheDocument();
+    expect(api.createNote).not.toHaveBeenCalled();
+  });
+
+  it("sem rede: anel tracejado e clicavel, e o clique tenta de novo", async () => {
+    vi.useFakeTimers();
+    setOnline(false);
+    api.createNote.mockRejectedValueOnce(new Error("sem rede"));
+    renderChapter();
+    await act(async () => {});
+    fireEvent.change(screen.getByLabelText("Corpo do capítulo"), { target: { value: "duas palavras" } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(800);
+    });
+    const btn = screen.getByRole("button", { name: "Sem rede" });
+    expect(api.createNote).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(btn);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(api.createNote).toHaveBeenCalledTimes(2);
+  });
+
+  it("falha com rede ativa vira triangulo de erro clicavel", async () => {
+    vi.useFakeTimers();
+    api.createNote.mockRejectedValueOnce(new Error("500"));
+    renderChapter();
+    await act(async () => {});
+    fireEvent.change(screen.getByLabelText("Corpo do capítulo"), { target: { value: "duas palavras" } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(800);
+    });
+    const btn = screen.getByRole("button", { name: "Erro ao salvar" });
+    expect(btn.querySelector("svg path")).not.toBeNull();
+    fireEvent.click(btn);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(api.createNote).toHaveBeenCalledTimes(2);
+  });
+
+  it("conflito mantem a faixa e nao tenta gravar sozinho", async () => {
+    vi.useFakeTimers();
+    drafts.readDraft.mockResolvedValueOnce({
+      markdown: "texto local",
+      baseVersion: "v1",
+      noteId: "n1",
+      updatedAt: 1,
+      state: "conflict",
+    });
+    renderChapter();
+    await act(async () => {});
+    expect(screen.getByRole("img", { name: "Conflito ao salvar" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Sem rede|Erro ao salvar/ })).toBeNull();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120_000);
+    });
+    expect(api.createNote).not.toHaveBeenCalled();
+    expect(api.updateNote).not.toHaveBeenCalled();
   });
 });

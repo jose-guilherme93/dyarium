@@ -49,6 +49,8 @@ interface BookViewProps {
   onCreateChapterAfter?: (currentId: string) => void;
   onReorderChapter?: (sourceId: string, targetId: string) => void;
   onChanged: () => void;
+  /** So a contagem de um capitulo mudou; a lista nao deve ser recarregada. */
+  onWordsSaved?: (entryId: string, words: number) => void;
   onOpenSettings: () => void;
 }
 
@@ -64,6 +66,7 @@ export function BookView({
   onCreateChapterAfter,
   onReorderChapter,
   onChanged,
+  onWordsSaved,
   onOpenSettings,
 }: BookViewProps) {
   const [reading, setReading] = useState<BookExportInput | null>(null);
@@ -261,6 +264,7 @@ export function BookView({
             onCreateAfter={onCreateChapterAfter ? () => onCreateChapterAfter(active.id) : undefined}
             onFocusChange={setFocus}
             onChanged={onChanged}
+            onWordsSaved={onWordsSaved}
             onDeleted={() => {
               onCloseChapter();
               onChanged();
