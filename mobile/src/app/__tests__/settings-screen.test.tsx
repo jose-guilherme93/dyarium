@@ -46,6 +46,14 @@ jest.mock('@/state/LibraryContext', () => ({
   }),
 }));
 
+jest.mock('@/state/useDrive', () => ({
+  useDrive: () => ({
+    configured: false,
+    status: 'off',
+    summary: null,
+  }),
+}));
+
 jest.mock('@/state/SettingsContext', () => ({
   useSettings: () => ({
     config: null,

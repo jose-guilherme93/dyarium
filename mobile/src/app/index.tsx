@@ -22,6 +22,7 @@ import type { NoteProperty } from '@/components/NoteMenu';
 import { NotebookPicker } from '@/components/NotebookPicker';
 import { RecordingCard } from '@/components/RecordingCard';
 import { Screen } from '@/components/Screen';
+import { DriveExpiredBanner } from '@/components/DriveExpiredBanner';
 import { STATUS_LABELS } from '@/components/StatusChip';
 import { TagFilterRow } from '@/components/TagFilterRow';
 import { NoteOrderSheet } from '@/components/NoteOrderSheet';
@@ -475,6 +476,8 @@ export default function NotebookScreen() {
   return (
     <Screen style={styles.screen}>
       {header}
+
+      <DriveExpiredBanner />
 
       {interrupted > 0 ? (
         <Press style={styles.alert} onPress={() => push('/recovery')}>

@@ -15,6 +15,8 @@ import { placeLabel } from '@/core/processing';
 import { countTrashedRecordings } from '@/services/db';
 import { useLibrary } from '@/state/LibraryContext';
 import { useSettings } from '@/state/SettingsContext';
+import { useDrive } from '@/state/useDrive';
+import { formatBytes } from '@/core/format';
 import { THEMES, THEME_OPTIONS, baseColors, fontSize, radius, spacing } from '@/theme/tokens';
 import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
 import { defineStyles } from '@/theme/themedStyles';
@@ -33,6 +35,7 @@ export default function SettingsScreen() {
     transcriptionPlace,
     analysisPlace,
   } = useSettings();  const { ready, recordings } = useLibrary();
+  const drive = useDrive();
   const archived = recordings.filter((r) => r.archived).length;
   const themeLabel = THEME_OPTIONS.find((option) => option.name === theme)?.label ?? 'Preto';
   const [trashCount, setTrashCount] = useState(0);
@@ -238,6 +241,39 @@ export default function SettingsScreen() {
               'Backup local',
               null,
               () => push('/backup'),
+            )}
+            {renderRow(
+              'logo-google',
+              colors.textSecondary,
+              'Google Drive',
+              drive.status === 'connected' ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <View
+                    style={{
+                      width: 6,
+                      height: 6,
+                      borderRadius: 3,
+                      backgroundColor: colors.success,
+                    }}
+                  />
+                  <Text style={styles.trailingValue}>
+                    {drive.summary && drive.summary.notes > 0
+                      ? `${drive.summary.notes} notas`
+                      : drive.summary
+                        ? formatBytes(drive.summary.bytes)
+                        : 'Conectado'}
+                  </Text>
+                </View>
+              ) : drive.status === 'expired' ? (
+                <Text style={[styles.trailingValue, { color: colors.warning }]}>
+                  Sessão vencida
+                </Text>
+              ) : drive.configured && drive.status !== 'unsupported' ? (
+                <Text style={styles.trailingValue}>Não conectado</Text>
+              ) : (
+                <Text style={styles.trailingValue}>Indisponível</Text>
+              ),
+              () => push('/drive'),
             )}
             {renderRow(
               'mic-circle-outline',
