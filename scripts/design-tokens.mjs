@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const tokenFile = join(root, 'docs/design/tokens.json');
+const iconFile = join(root, 'docs/design/icons.json');
 
 const PALETTE_KEYS = [
   'surface',
@@ -28,11 +29,14 @@ const PALETTE_KEYS = [
   'success',
   'warning',
   'info',
+  'overlay',
 ];
 const THEMES = ['light', 'dark', 'amoled'];
 const THEME_LABEL = { light: 'claro', dark: 'escuro', amoled: 'amoled' };
-const TYPE_NAMES = ['display', 'title', 'body', 'label', 'mono'];
+const TYPE_NAMES = ['greeting', 'clock', 'display', 'title', 'body', 'label', 'mono'];
 const TYPE_META = {
+  greeting: 'saudação',
+  clock: 'relógio',
   display: 'display',
   title: 'título',
   body: 'corpo',
@@ -40,6 +44,8 @@ const TYPE_META = {
   mono: 'mono',
 };
 const TYPE_SAMPLE = {
+  greeting: 'Bom dia',
+  clock: '14:07',
   display: 'Reunião com fornecedor',
   title: 'Ideia de captura offline',
   body: 'Conversa com o fornecedor sobre a entrega de março e o que ficou pendente na última reunião',
@@ -82,6 +88,7 @@ if (args.length > 0 && !(args.length === 1 && args[0] === '--check')) {
 const checkOnly = args[0] === '--check';
 
 const tokens = JSON.parse(readFileSync(tokenFile, 'utf8'));
+const icons = JSON.parse(readFileSync(iconFile, 'utf8'));
 
 for (const theme of THEMES) {
   const palette = tokens.palettes?.[theme];
@@ -95,13 +102,16 @@ for (const theme of THEMES) {
 for (const name of TYPE_NAMES) {
   if (!tokens.type?.[name]) fail(`tipo ausente no tokens.json: ${name}`);
 }
+for (const key of ['family', 'stack', 'size', 'weight', 'lineHeight', 'measure']) {
+  if (tokens.reading?.[key] === undefined) fail(`reading.${key} ausente no tokens.json`);
+}
 if (!Array.isArray(tokens.space) || tokens.space.length === 0) {
   fail('array "space" ausente no tokens.json');
 }
 if (typeof tokens.font?.monoStack !== 'string') {
   fail('font.monoStack ausente no tokens.json');
 }
-for (const key of ['sm', 'md', 'lg', 'stroke', 'strokeDetail']) {
+for (const key of ['sm', 'md', 'lg', 'box', 'stroke', 'strokeDetail']) {
   if (typeof tokens.icon?.[key] !== 'number') {
     fail(`icon.${key} ausente no tokens.json`);
   }
@@ -110,6 +120,12 @@ for (const [section, keys] of [
   ['row', ['touch', 'dense']],
   ['tree', ['cell', 'rail', 'guide']],
   ['mark', ['size', 'stroke', 'tick']],
+  ['layout', ['page', 'measure', 'gutter', 'sidebar', 'rail', 'toolbar', 'tab', 'spread', 'phone']],
+  ['layer', ['content', 'rail', 'toolbar', 'sheet', 'dialog', 'notice', 'tooltip']],
+  ['motion', ['fast', 'base']],
+  ['notice', ['dwell']],
+  ['wave', ['height', 'bar', 'gap', 'min', 'idle', 'played']],
+  ['state', ['bar', 'disabled']],
   ['chart', ['height', 'top', 'base', 'labels', 'barMin', 'colMin', 'colMax', 'colRatio', 'sessionMin', 'sessionBarMin']],
 ]) {
   for (const key of keys) {
@@ -120,6 +136,14 @@ for (const [section, keys] of [
 }
 if (typeof tokens.meter?.compose !== 'number') {
   fail('meter.compose ausente no tokens.json');
+}
+if (!icons.glyphs || Object.keys(icons.glyphs).length === 0) {
+  fail('docs/design/icons.json precisa declarar glyphs');
+}
+for (const [name, glyph] of Object.entries(icons.glyphs)) {
+  if (typeof glyph.d !== 'string' || !glyph.d.startsWith('M')) {
+    fail(`icone ${name} precisa de um caminho SVG`);
+  }
 }
 
 const num = (value) => String(value);
@@ -153,6 +177,22 @@ function fontFaces(urlBase) {
     '  font-style: normal;',
     '  font-display: swap;',
     `  unicode-range: ${LATIN_EXT_RANGE};`,
+    '}',
+    '',
+    '@font-face {',
+    '  font-family: "Newsreader";',
+    `  src: url("${urlBase}/newsreader-roman-400-700.woff2") format("woff2");`,
+    '  font-weight: 400 700;',
+    '  font-style: normal;',
+    '  font-display: swap;',
+    '}',
+    '',
+    '@font-face {',
+    '  font-family: "Newsreader";',
+    `  src: url("${urlBase}/newsreader-italic-400-700.woff2") format("woff2");`,
+    '  font-weight: 400 700;',
+    '  font-style: italic;',
+    '  font-display: swap;',
     '}',
   ].join('\n');
 }
@@ -201,15 +241,56 @@ function scaleBlock() {
   lines.push(`  --dy-icon-sm: ${tokens.icon.sm}px;`);
   lines.push(`  --dy-icon-md: ${tokens.icon.md}px;`);
   lines.push(`  --dy-icon-lg: ${tokens.icon.lg}px;`);
+  lines.push(`  --dy-icon-box: ${tokens.icon.box}px;`);
   lines.push(`  --dy-icon-stroke: ${tokens.icon.stroke};`);
   lines.push(`  --dy-icon-stroke-detail: ${tokens.icon.strokeDetail};`);
+  lines.push(`  --dy-font-reading: ${tokens.reading.stack};`);
+  lines.push(`  --dy-reading-size: ${tokens.reading.size}px;`);
+  lines.push(`  --dy-reading-weight: ${tokens.reading.weight};`);
+  lines.push(`  --dy-reading-line-height: ${tokens.reading.lineHeight};`);
+  lines.push(`  --dy-reading-measure: ${tokens.reading.measure}ch;`);
+  lines.push(`  --dy-page-max: ${tokens.layout.page}px;`);
+  lines.push(`  --dy-measure: ${tokens.layout.measure}ch;`);
+  lines.push(`  --dy-gutter: ${tokens.layout.gutter}px;`);
+  lines.push(`  --dy-sidebar: ${tokens.layout.sidebar}px;`);
+  lines.push(`  --dy-rail: ${tokens.layout.rail}px;`);
+  lines.push(`  --dy-toolbar: ${tokens.layout.toolbar}px;`);
+  lines.push(`  --dy-tab: ${tokens.layout.tab}px;`);
+  lines.push(`  --dy-spread: ${tokens.layout.spread}px;`);
+  lines.push(`  --dy-phone: ${tokens.layout.phone}px;`);
+  for (const [name, value] of Object.entries(tokens.layer)) {
+    lines.push(`  --dy-layer-${name}: ${value};`);
+  }
+  lines.push(`  --dy-motion-fast: ${tokens.motion.fast}ms;`);
+  lines.push(`  --dy-motion-base: ${tokens.motion.base}ms;`);
+  lines.push(`  --dy-motion-ease: ${tokens.motion.ease};`);
+  lines.push(`  --dy-notice-dwell: ${tokens.notice.dwell}ms;`);
+  lines.push(`  --dy-wave-height: ${tokens.wave.height}px;`);
+  lines.push(`  --dy-wave-bar: ${tokens.wave.bar}px;`);
+  lines.push(`  --dy-wave-gap: ${tokens.wave.gap}px;`);
+  lines.push(`  --dy-wave-min: ${tokens.wave.min}px;`);
+  lines.push(`  --dy-wave-idle: ${tokens.wave.idle};`);
+  lines.push(`  --dy-wave-played: ${tokens.wave.played};`);
+  lines.push(`  --dy-state-bar: ${tokens.state.bar}px;`);
+  lines.push(`  --dy-state-disabled: ${tokens.state.disabled};`);
   lines.push(`  --dy-font-sans: ${tokens.font.stack};`);
   lines.push(`  --dy-font-mono: ${tokens.font.monoStack};`);
   return lines.join('\n');
 }
 
 function typeClasses() {
-  return TYPE_NAMES.map((name) => {
+  const reading = [
+    '.dy-reading {',
+    `  font-family: var(--dy-font-reading);`,
+    `  font-size: var(--dy-reading-size);`,
+    `  font-weight: var(--dy-reading-weight);`,
+    `  line-height: var(--dy-reading-line-height);`,
+    `  letter-spacing: 0;`,
+    `  max-width: var(--dy-reading-measure);`,
+    '}',
+  ].join('\n');
+
+  return `${TYPE_NAMES.map((name) => {
     const type = tokens.type[name];
     const lines = [
       `.dy-${name} {`,
@@ -219,14 +300,14 @@ function typeClasses() {
       `  letter-spacing: ${type.letterSpacing};`,
     ];
     if (type.uppercase) lines.push('  text-transform: uppercase;');
-    if (name === 'mono') lines.push('  font-family: var(--dy-font-mono);');
+    if (name === 'mono' || type.mono) lines.push('  font-family: var(--dy-font-mono);');
     if (type.tabular) {
       lines.push('  font-variant-numeric: tabular-nums;');
       lines.push('  font-feature-settings: "tnum" 1;');
     }
     lines.push('}');
     return lines.join('\n');
-  }).join('\n\n');
+  }).join('\n\n')}\n\n${reading}`;
 }
 
 function cssCore(urlBase) {
@@ -355,8 +436,59 @@ export const designIcon = {
   sm: ${tokens.icon.sm},
   md: ${tokens.icon.md},
   lg: ${tokens.icon.lg},
+  box: ${tokens.icon.box},
   stroke: ${tokens.icon.stroke},
   strokeDetail: ${tokens.icon.strokeDetail},
+  set: ${JSON.stringify(Object.keys(icons.glyphs))},
+} as const;
+
+export const designReading = {
+  family: '${tokens.reading.family}',
+  stack: ${JSON.stringify(tokens.reading.stack)},
+  size: ${tokens.reading.size},
+  weight: ${tokens.reading.weight},
+  lineHeight: ${tokens.reading.lineHeight},
+  measure: ${tokens.reading.measure},
+} as const;
+
+export const designLayout = {
+  page: ${tokens.layout.page},
+  measure: ${tokens.layout.measure},
+  gutter: ${tokens.layout.gutter},
+  sidebar: ${tokens.layout.sidebar},
+  rail: ${tokens.layout.rail},
+  toolbar: ${tokens.layout.toolbar},
+  tab: ${tokens.layout.tab},
+  spread: ${tokens.layout.spread},
+  phone: ${tokens.layout.phone},
+} as const;
+
+export const designLayer = {
+${Object.entries(tokens.layer).map(([name, value]) => `  ${name}: ${value},`).join('\n')}
+} as const;
+
+export const designMotion = {
+  fast: ${tokens.motion.fast},
+  base: ${tokens.motion.base},
+  ease: ${JSON.stringify(tokens.motion.ease)},
+} as const;
+
+export const designNotice = {
+  dwell: ${tokens.notice.dwell},
+} as const;
+
+export const designWave = {
+  height: ${tokens.wave.height},
+  bar: ${tokens.wave.bar},
+  gap: ${tokens.wave.gap},
+  min: ${tokens.wave.min},
+  idle: ${tokens.wave.idle},
+  played: ${tokens.wave.played},
+} as const;
+
+export const designState = {
+  bar: ${tokens.state.bar},
+  disabled: ${tokens.state.disabled},
 } as const;
 
 export const designFont = {
@@ -460,6 +592,66 @@ ${cells}
 ${rows}
       </div>`;
 }).join('\n');
+
+const READING_HTML = `      <p class="dy-reading reading-note">O primeiro registro veio de uma caminhada, sem intenção de virar capítulo. A ideia era só guardar o que não podia ser dito em voz alta naquele dia.</p>
+      <span class="dy-mono reading-meta">${tokens.reading.family} · ${tokens.reading.size}/${tokens.reading.lineHeight} · ${tokens.reading.measure}ch</span>`;
+
+function waveBars(count, played) {
+  let seed = 41;
+  const next = () => {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    return seed / 2147483648;
+  };
+  const bars = [];
+  for (let index = 0; index < count; index += 1) {
+    const envelope = 0.4 + 0.6 * Math.sin((index / count) * Math.PI);
+    const height = Math.max(tokens.wave.min, Math.round((2 + next() * 38) * envelope));
+    const playedClass = index / count < played ? ' class="played"' : '';
+    bars.push(`        <b${playedClass} style="height:${height}px"></b>`);
+  }
+  return bars.join('\n');
+}
+
+const WAVE_HTML = `      <div class="wave" role="img" aria-label="onda do áudio, parte tocada em primária">
+${waveBars(96, 0.38)}
+      </div>
+      <span class="dy-mono reading-meta">barra ${tokens.wave.bar} · vão ${tokens.wave.gap} · altura ${tokens.wave.height} · ociosa ${tokens.wave.idle}</span>`;
+
+const ICONS_HTML = indent(
+  Object.entries(icons.glyphs)
+    .map(
+      ([name, glyph]) => `  <div class="glyph">
+    <svg viewBox="0 0 ${icons.viewBox} ${icons.viewBox}" role="img" aria-label="${name}"><path d="${glyph.d}"${glyph.fill ? ' fill="currentColor" stroke="none"' : ''}/></svg>
+    <span class="dy-mono">${name}</span>
+  </div>`,
+    )
+    .join('\n'),
+  '      ',
+);
+
+const LAYERS_HTML = indent(
+  Object.entries(tokens.layer)
+    .map(
+      ([name, value]) =>
+        `  <div class="row"><span class="dy-mono">${name}</span><span class="step" style="width:${Math.max(8, value * 2)}px"></span><span class="dy-mono">${value}</span></div>`,
+    )
+    .join('\n'),
+  '      ',
+);
+
+const START_HTML = `      <div class="start">
+        <h3 class="dy-greeting">Bom dia</h3>
+        <p class="summary dy-body">34 notas neste mês, 18% mais que no anterior. Você escreveu em 22 dias e está há 5 dias seguidos.</p>
+        <div class="facts">
+          <span class="dy-mono">palavra</span><span class="dy-body value">reunião</span>
+          <span class="dy-mono">assunto</span><span class="dy-body value">entrega</span>
+          <span class="dy-mono">24.180</span><span class="dy-mono">palavras</span>
+        </div>
+        <div class="acts">
+          <button class="dy-btn dy-label dy-btn--primary dy-btn--lg" type="button">nova nota</button>
+          <button class="dy-btn dy-label dy-btn--secondary dy-btn--lg" type="button">análise</button>
+        </div>
+      </div>`;
 
 const GALLERY_LAYOUT_CSS = `*{box-sizing:border-box}
 html{background:var(--dy-surface)}
@@ -720,7 +912,91 @@ section > .dy-label{margin:0 0 var(--dy-space-6)}
 .notif-rule{width:var(--dy-focus-width);height:var(--dy-space-12);flex:none;background:var(--dy-line)}
 .notif-name{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
-/* 9. contraexemplo */
+/* 9. leitura */
+.reading-note{color:var(--dy-text)}
+.reading-meta{display:block;margin-top:var(--dy-space-8);color:var(--dy-text-muted)}
+
+/* 10. onda */
+.wave{
+  display:flex;
+  align-items:center;
+  gap:var(--dy-wave-gap);
+  height:var(--dy-wave-height);
+  margin-top:var(--dy-space-8);
+}
+.wave b{
+  flex:1;
+  min-width:var(--dy-wave-bar);
+  background:var(--dy-text);
+  opacity:var(--dy-wave-idle);
+  border-radius:0.5px;
+}
+.wave b.played{background:var(--dy-primary);opacity:var(--dy-wave-played)}
+
+/* 11. icones */
+.set{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(64px,1fr));
+  gap:var(--dy-space-4);
+  margin-top:var(--dy-space-8);
+}
+.set .glyph{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:var(--dy-space-4);
+  padding:var(--dy-space-8) 0;
+  background:var(--dy-surface-alt);
+  border:1px solid var(--dy-line);
+  border-radius:var(--dy-radius-surface);
+}
+.set svg{
+  width:var(--dy-icon-box);
+  height:var(--dy-icon-box);
+  fill:none;
+  stroke:currentColor;
+  stroke-width:var(--dy-icon-stroke);
+  stroke-linecap:square;
+  stroke-linejoin:miter;
+  color:var(--dy-text);
+}
+.set .dy-mono{color:var(--dy-text-muted);font-size:9px}
+
+/* 12. camadas */
+.layers{display:grid;gap:var(--dy-space-2);margin-top:var(--dy-space-4)}
+.layers .row{display:flex;align-items:center;gap:var(--dy-space-8)}
+.layers .row .dy-mono:first-child{width:calc(var(--dy-space-16) * 3);color:var(--dy-text-muted)}
+.layers .step{height:var(--dy-space-8);background:var(--dy-surface-raised);border:1px solid var(--dy-line)}
+
+/* 13. inicio */
+.start{
+  margin-top:var(--dy-space-8);
+  padding:var(--dy-space-24) var(--dy-space-16);
+  background:var(--dy-surface-alt);
+  border:1px solid var(--dy-line);
+  border-radius:var(--dy-radius-surface);
+  text-align:center;
+}
+.start .dy-greeting{margin:0 0 var(--dy-space-8)}
+.start .summary{
+  margin:0 auto var(--dy-space-12);
+  max-width:38ch;
+  color:var(--dy-text-muted);
+}
+.start .facts{
+  display:flex;
+  flex-wrap:wrap;
+  justify-content:center;
+  gap:var(--dy-space-8);
+  padding:var(--dy-space-8) 0;
+  border-top:1px solid var(--dy-line);
+  border-bottom:1px solid var(--dy-line);
+  margin-bottom:var(--dy-space-12);
+}
+.start .value{font-weight:600}
+.start .acts{display:flex;justify-content:center;gap:var(--dy-space-6);flex-wrap:wrap}
+
+/* 14. contraexemplo */
 .forbidden{
   padding:var(--dy-control-pad-md);
   background:var(--dy-surface-alt);
@@ -906,7 +1182,41 @@ ${BUTTON_VARIANTS_HTML}
       </div>
     </section>
 
-    <!-- 9. contraexemplo -->
+    <!-- 9. leitura -->
+    <section>
+      <h2 class="dy-label dy-muted">leitura</h2>
+${READING_HTML}
+    </section>
+
+    <!-- 10. onda -->
+    <section>
+      <h2 class="dy-label dy-muted">onda</h2>
+${WAVE_HTML}
+    </section>
+
+    <!-- 11. ícones -->
+    <section>
+      <h2 class="dy-label dy-muted">ícones</h2>
+      <div class="set">
+${ICONS_HTML}
+      </div>
+    </section>
+
+    <!-- 12. camadas -->
+    <section>
+      <h2 class="dy-label dy-muted">camadas</h2>
+      <div class="layers">
+${LAYERS_HTML}
+      </div>
+    </section>
+
+    <!-- 13. início -->
+    <section>
+      <h2 class="dy-label dy-muted">início</h2>
+${START_HTML}
+    </section>
+
+    <!-- 14. contraexemplo -->
     <section>
       <h2 class="dy-label dy-muted">contraexemplo</h2>
       <div class="forbidden">
@@ -925,8 +1235,41 @@ ${BUTTON_VARIANTS_HTML}
 </html>
 `;
 
+function iconGlyphsTs() {
+  const entries = Object.entries(icons.glyphs)
+    .map(([name, glyph]) => {
+      const lines = [
+        `  ${name}: {`,
+        `    d: ${JSON.stringify(glyph.d)},`,
+        `    fill: ${glyph.fill ? 'true' : 'false'},`,
+        '  },',
+      ];
+      return lines.join('\n');
+    })
+    .join('\n');
+  const names = Object.keys(icons.glyphs)
+    .map((name) => `  '${name}',`)
+    .join('\n');
+
+  return `${HEADER}
+
+export const iconViewBox = ${icons.viewBox};
+
+export const iconGlyphs = {
+${entries}
+} as const;
+
+export type IconName = keyof typeof iconGlyphs;
+
+export const iconNames = [
+${names}
+] as const;
+`;
+}
+
 const OUTPUTS = [
   { path: 'web/src/ui/tokens.css', body: tokensCss },
+  { path: 'web/src/ui/iconGlyphs.ts', body: iconGlyphsTs() },
   { path: 'mobile/src/theme/design.ts', body: designTs() },
   { path: 'docs/design/index.html', body: GALLERY },
 ];

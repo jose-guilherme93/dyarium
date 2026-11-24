@@ -1,0 +1,187 @@
+/* Arquivo gerado por scripts/design-tokens.mjs a partir de docs/design/tokens.json.
+   Nao edite a mao: rode `make tokens` para regerar. */
+
+export const iconViewBox = 14;
+
+export const iconGlyphs = {
+  menu: {
+    d: "M2 4h10M2 7h10M2 10h10",
+    fill: false,
+  },
+  plus: {
+    d: "M7 2v10M2 7h10",
+    fill: false,
+  },
+  back: {
+    d: "M9 2 4 7l5 5",
+    fill: false,
+  },
+  forward: {
+    d: "M5 2l5 5-5 5",
+    fill: false,
+  },
+  search: {
+    d: "M6 2.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7ZM8.6 8.6 12 12",
+    fill: false,
+  },
+  mic: {
+    d: "M5 3.5a2 2 0 0 1 4 0v2a2 2 0 0 1-4 0zM3 6.5a4 4 0 0 0 8 0M7 10.5V13M4.5 13h5",
+    fill: false,
+  },
+  panel: {
+    d: "M1.5 2h11v10h-11zM9 2v10",
+    fill: false,
+  },
+  theme: {
+    d: "M7 2a5 5 0 1 0 0 10 5 5 0 0 0 0-10ZM7 2v10",
+    fill: false,
+  },
+  more: {
+    d: "M2.5 7a1 1 0 1 0 2 0 1 1 0 1 0-2 0M6 7a1 1 0 1 0 2 0 1 1 0 1 0-2 0M9.5 7a1 1 0 1 0 2 0 1 1 0 1 0-2 0",
+    fill: true,
+  },
+  tree: {
+    d: "M3 2v10M3 4.5h4M3 9.5h4M9.5 3a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3ZM9.5 8a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3Z",
+    fill: false,
+  },
+  book: {
+    d: "M2 3c2-1 3.5-1 5 0 1.5-1 3-1 5 0v8c-2-1-3.5-1-5 0-1.5-1-3-1-5 0zM7 3v8",
+    fill: false,
+  },
+  grid: {
+    d: "M1.5 1.5h4.5v4.5h-4.5zM8 1.5h4.5v4.5h-4.5zM1.5 8h4.5v4.5h-4.5zM8 8h4.5v4.5h-4.5z",
+    fill: false,
+  },
+  sync: {
+    d: "M11.5 6A4.5 4.5 0 0 0 3 4M2.5 8A4.5 4.5 0 0 0 11 10M11.5 2.5v3h-3M2.5 11.5v-3h3",
+    fill: false,
+  },
+  close: {
+    d: "M3 3l8 8M11 3l-8 8",
+    fill: false,
+  },
+  chevron: {
+    d: "M4 5.5 7 8.5l3-3",
+    fill: false,
+  },
+  check: {
+    d: "M2 7.5 5.5 11 12 3.5",
+    fill: false,
+  },
+  pin: {
+    d: "M5 1.5h4l-1 3.5 2.5 3h-8L5 5zM7 7.5V13",
+    fill: false,
+  },
+  tag: {
+    d: "M1.5 2.5h5l6 6-4.5 4.5-6-6zM4.5 4.5v.5",
+    fill: false,
+  },
+  alert: {
+    d: "M7 1.5 13 12.5H1zM7 5v3.5M7 10v.5",
+    fill: false,
+  },
+  cloud: {
+    d: "M4 11.5h6.5a2.2 2.2 0 0 0 .3-4.4A3.6 3.6 0 0 0 4 6.6 2.4 2.4 0 0 0 4 11.5z",
+    fill: false,
+  },
+  server: {
+    d: "M2 2h10v4h-10zM2 8h10v4h-10zM4 3.5v1M4 9.5v1",
+    fill: false,
+  },
+  sort: {
+    d: "M3 2v10M1.5 10.5 3 12l1.5-1.5M7 4h5M7 7.5h4M7 11h3",
+    fill: false,
+  },
+  chart: {
+    d: "M2 12V7M6 12V3M10 12V9M1 12h12",
+    fill: false,
+  },
+  image: {
+    d: "M1.5 2.5h11v9h-11zM3.5 8l2.5-2.5 3 3 1.5-1.5 2 2M5 5.5v.5",
+    fill: false,
+  },
+  link: {
+    d: "M6.5 9.5 9.5 6.5M6 4.5 7.5 3a2.5 2.5 0 0 1 3.5 3.5L9.5 8M10 11.5 8.5 13A2.5 2.5 0 0 1 5 9.5L6.5 8",
+    fill: false,
+  },
+  doc: {
+    d: "M3.5 1.5h5l3 3v8h-11zM8.5 1.5v3h3M5.5 8h5M5.5 10.5h5",
+    fill: false,
+  },
+  clock: {
+    d: "M7 1.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11ZM7 4.5V7l2 1.5",
+    fill: false,
+  },
+  bell: {
+    d: "M3 11h8l-1-2.5V6.5a3 3 0 0 0-6 0V8.5zM6 12.5h2",
+    fill: false,
+  },
+  calendar: {
+    d: "M1.5 3h11v9h-11zM1.5 6h11M4 1.5V4M10 1.5V4",
+    fill: false,
+  },
+  network: {
+    d: "M7 1.5a1.8 1.8 0 1 0 0 3.6 1.8 1.8 0 0 0 0-3.6ZM2.5 9.4a1.8 1.8 0 1 0 0 3.6 1.8 1.8 0 0 0 0-3.6ZM11.5 9.4a1.8 1.8 0 1 0 0 3.6 1.8 1.8 0 0 0 0-3.6ZM7 5.1v2.6M7 7.7 3.6 9.8M7 7.7l3.4 2.1",
+    fill: false,
+  },
+  trash: {
+    d: "M2.5 4h9M5.5 4V2.5h3V4M4 4l.5 8.5h5L10 4",
+    fill: false,
+  },
+  play: {
+    d: "M4.5 3l6 4-6 4z",
+    fill: true,
+  },
+  pause: {
+    d: "M5 3v8M9 3v8",
+    fill: false,
+  },
+  stop: {
+    d: "M4 4h6v6H4z",
+    fill: true,
+  },
+  gear: {
+    d: "M7 5.2a1.8 1.8 0 1 0 0 3.6 1.8 1.8 0 0 0 0-3.6ZM7 1.5v2M7 10.5v2M1.5 7h2M10.5 7h2M3.1 3.1l1.4 1.4M9.5 9.5l1.4 1.4M10.9 3.1 9.5 4.5M4.5 9.5 3.1 10.9",
+    fill: false,
+  },
+} as const;
+
+export type IconName = keyof typeof iconGlyphs;
+
+export const iconNames = [
+  'menu',
+  'plus',
+  'back',
+  'forward',
+  'search',
+  'mic',
+  'panel',
+  'theme',
+  'more',
+  'tree',
+  'book',
+  'grid',
+  'sync',
+  'close',
+  'chevron',
+  'check',
+  'pin',
+  'tag',
+  'alert',
+  'cloud',
+  'server',
+  'sort',
+  'chart',
+  'image',
+  'link',
+  'doc',
+  'clock',
+  'bell',
+  'calendar',
+  'network',
+  'trash',
+  'play',
+  'pause',
+  'stop',
+  'gear',
+] as const;
