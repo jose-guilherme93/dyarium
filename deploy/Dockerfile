@@ -84,12 +84,15 @@ RUN if [ "$WITH_LLAMA" = "1" ]; then \
         mkdir -p /llama; \
     fi
 WORKDIR /llama
+# Servidor so de inferencia, sem Web UI: o padrao do llama.cpp baixa a UI
+# pre-compilada por HTTPS, o que falha sem OpenSSL neste estagio de build.
 RUN mkdir -p build/bin && \
     if [ "$WITH_LLAMA" = "1" ]; then \
         cmake -B build -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_SHARED_LIBS=OFF \
             -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_APP=OFF \
             -DLLAMA_BUILD_TOOLS=ON -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_UI=OFF \
+            -DLLAMA_USE_PREBUILT_UI=OFF \
         && cmake --build build --config Release -j"${BUILD_JOBS}" --target llama-server; \
     else \
         printf '#!/bin/sh\necho "llama.cpp embutido nao foi compilado nesta imagem (WITH_LLAMA=0)" >&2\nexit 1\n' \
