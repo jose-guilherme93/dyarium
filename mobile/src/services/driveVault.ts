@@ -1,17 +1,21 @@
 /**
  * O cofre do Drive visto pelo app.
  *
- * Le o formato que o web ja grava (`key.txt`, `backup.enc`, `manifest.json` e
- * os `.enc` por arquivo), aplica as notas e os anexos no banco do aparelho e
- * sobe de volta o retrato unido. Nao reescreve o layout do web: o app nao e
- * dono do `manifest.json` nem dos arquivos por nota, e sim um segundo leitor e
- * escritor do retrato.
+ * Le o formato que o web ja grava (`key.txt`, `backup.enc` v1, `state.enc` v2,
+ * `manifest.json` e os `.enc` por arquivo), aplica as notas e os anexos no
+ * banco do aparelho e sobe de volta o retrato unido. Nao reescreve o layout do
+ * web: o app nao e dono do `manifest.json` nem dos arquivos por nota, e sim um
+ * segundo leitor e escritor do retrato.
  *
  * Regras duras:
  * - nada e apagado por ausencia;
+ * - a uniao e por id (nota e caderno): o `updated_at` mais novo vence, ids
+ *   diferentes coexistem;
+ * - o v1 (`backup.enc`) continua existindo para o app antigo; o v2
+ *   (`state.enc`) leva notas completas, cadernos e preserva analises/ajustes
+ *   que o app nao interpreta;
  * - a chave do Drive precisa pertencer ao mesmo cofre ja usado neste aparelho;
- * - o retrato so e gravado quando existe diferenca, e sempre com a uniao dos
- *   dois lados (o mais novo por nota vence);
+ * - o retrato so e gravado quando existe diferenca;
  * - nenhum token, codigo ou caminho de conta aparece em erro ou log.
  */
 
@@ -35,15 +39,24 @@ import {
 } from '@/core/vaultManifest';
 import { planVaultRestore } from '@/core/vaultRestore';
 import {
-  mergeSnapshotNotes,
+  MAX_STATE_BYTES,
+  mergeStateNotebooks,
+  mergeStateNotes,
+  notebookFromState,
+  notebooksToState,
+  notesSnapshotNoteFromState,
+  parseVaultState,
   parseVaultSnapshot,
   recordingFromSnapshotNote,
-  snapshotFromRecordings,
+  stateNotesFromRecordings,
   type VaultSnapshot,
   type VaultSnapshotNote,
+  type VaultState,
+  type VaultStateNotebook,
+  type VaultStateNote,
 } from '@/core/vaultSnapshot';
 import type { Recording } from '@/core/types';
-import type { Notebook } from '@/core/notebooks';
+import { DEFAULT_NOTEBOOK_ID, type Notebook } from '@/core/notebooks';
 
 import {
   clockNow,
@@ -57,11 +70,12 @@ import { DriveClient, DriveError } from './driveClient';
 import { getDriveAccessToken } from './driveAuth';
 import { cachedAttachmentUri, saveCachedAttachment } from './attachments';
 import { sessionDirUri, sessionDirectory } from './files';
-import { listNotebooks, restoreLocalNotebook } from './notebooks';
+import { listNotebooks, mergeNotebookFromDrive, restoreLocalNotebook } from './notebooks';
 
 export const VAULT_FOLDER = 'Dyarium';
 export const KEY_FILE = 'key.txt';
 export const BACKUP_FILE = 'backup.enc';
+export const STATE_FILE = 'state.enc';
 export const MANIFEST_FILE = 'manifest.json';
 export const SUMMARY_FLAG = 'drive.summary';
 export const VAULT_ID_FLAG = 'drive.vaultId';
@@ -186,6 +200,9 @@ function asVaultError(error: unknown): VaultSyncError {
   if (error instanceof Error && /codigo de recuperacao invalido/.test(error.message)) {
     return new VaultSyncError('corrupt', 'o cofre do Drive esta corrompido');
   }
+  if (error instanceof Error && /Drive nao conectado/.test(error.message)) {
+    return new VaultSyncError('auth', 'sessao do Google vencida');
+  }
   return new VaultSyncError('corrupt', 'nao foi possivel abrir o cofre do Drive');
 }
 
@@ -194,10 +211,28 @@ interface VaultFiles {
   code: string;
   key: Uint8Array;
   vaultId: string;
-  snapshot: VaultSnapshot;
+  /** Uniao das notas do v2 com as do v1, para aplicar e regravar. */
+  notes: VaultStateNote[];
+  /** Notas exatamente como estavam no `backup.enc` (v1), para comparar. */
+  legacyNotes: VaultSnapshotNote[];
+  notebooks: VaultStateNotebook[];
+  analyses: VaultState['analyses'];
+  settings: VaultState['settings'];
   manifest: VaultManifest | null;
   created: boolean;
   keyWritten: boolean;
+  backupWritten: boolean;
+  stateWritten: boolean;
+  legacyBytes: number;
+  stateBytes: number;
+}
+
+function sortNotes<T extends { id: string }>(notes: readonly T[]): T[] {
+  return [...notes].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
+function sortNotebooks(notebooks: readonly VaultStateNotebook[]): VaultStateNotebook[] {
+  return [...notebooks].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
 async function readKey(
@@ -231,21 +266,39 @@ async function readFiles(client: DriveClient, rootId: string, options: VaultOpti
   notifyStage(options, 'decrypting');
   notifyProgress(options, { stage: 'decrypting', done: 0, total: 1 });
 
-  let snapshot: VaultSnapshot = {
-    version: 1,
-    vaultId,
-    createdAt: new Date().toISOString(),
-    notes: [],
-  };
+  // O v1 e o arquivo que o app antigo entende. Le primeiro para o caso de o
+  // `state.enc` ainda nao existir (cofre criado por uma versao anterior).
+  let legacyNotes: VaultSnapshotNote[] = [];
+  let legacyBytes = 0;
   const backup = await client.findChild(rootId, BACKUP_FILE);
   if (backup) {
     const sealed = await client.download(backup.id, MAX_BACKUP_BYTES);
+    legacyBytes = sealed.length;
     const opened = openBytes(sealed, key);
-    snapshot = parseVaultSnapshot(decoder.decode(opened));
+    const snapshot = parseVaultSnapshot(decoder.decode(opened));
     if (snapshot.vaultId && snapshot.vaultId !== vaultId) {
       throw new VaultSyncError('corrupt', 'o retrato do Drive e de outro cofre');
     }
+    legacyNotes = snapshot.notes;
   }
+
+  // O `state.enc` e o retrato completo do web (notas com transcricao, cadernos,
+  // analises e ajustes). Ele manda quando existe; o v1 entra junto na uniao para
+  // nao perder o que o app antigo escreveu depois da ultima vez.
+  let state: VaultState | null = null;
+  let stateBytes = 0;
+  const stateFile = await client.findChild(rootId, STATE_FILE);
+  if (stateFile) {
+    const sealed = await client.download(stateFile.id, MAX_STATE_BYTES);
+    stateBytes = sealed.length;
+    state = parseVaultState(decoder.decode(openBytes(sealed, key)));
+    if (state.vaultId && state.vaultId !== vaultId) {
+      throw new VaultSyncError('corrupt', 'o retrato do Drive e de outro cofre');
+    }
+  }
+
+  const notes = mergeStateNotes(state?.notes ?? [], legacyNotes);
+  const notebooks = state?.notebooks ?? [];
 
   let manifest: VaultManifest | null = null;
   const manifestFile = await client.findChild(rootId, MANIFEST_FILE);
@@ -260,7 +313,24 @@ async function readFiles(client: DriveClient, rootId: string, options: VaultOpti
   }
 
   notifyProgress(options, { stage: 'decrypting', done: 1, total: 1 });
-  return { rootId, code, key, vaultId, snapshot, manifest, created, keyWritten: !created };
+  return {
+    rootId,
+    code,
+    key,
+    vaultId,
+    notes,
+    legacyNotes,
+    notebooks,
+    analyses: state?.analyses,
+    settings: state?.settings,
+    manifest,
+    created,
+    keyWritten: !created,
+    backupWritten: backup !== undefined,
+    stateWritten: stateFile !== undefined,
+    legacyBytes,
+    stateBytes,
+  };
 }
 
 async function applyPlan(
@@ -409,18 +479,64 @@ function summarize(
   };
 }
 
-async function pushSnapshot(
+/** Contagem por caderno para o retrato, igual ao que o web deriva do banco. */
+function notebookCounts(
+  notes: readonly VaultStateNote[],
+): Map<string, { notes: number; chapters: number }> {
+  const counts = new Map<string, { notes: number; chapters: number }>();
+  for (const note of notes) {
+    const id = note.notebookId ?? DEFAULT_NOTEBOOK_ID;
+    const current = counts.get(id) ?? { notes: 0, chapters: 0 };
+    current.notes += 1;
+    if (note.chapterKind) current.chapters += 1;
+    counts.set(id, current);
+  }
+  return counts;
+}
+
+interface PushResult {
+  pushed: { notes: number; bytes: number } | null;
+  mergedNotes: VaultStateNote[];
+  mergedNotebooks: VaultStateNotebook[];
+  legacyBytes: number;
+  stateBytes: number;
+}
+
+/**
+ * Sobe o retrato unido: o v1 (so notas, para o app antigo) e o v2 completo no
+ * `state.enc`. Analises e ajustes que ja estavam no Drive voltam intactos: o
+ * app nao os interpreta, mas tambem nao os apaga.
+ */
+async function pushVault(
   client: DriveClient,
   files: VaultFiles,
   options: VaultOptions,
-): Promise<{ pushed: { notes: number; bytes: number } | null; merged: VaultSnapshotNote[]; backupBytes: number }> {
+): Promise<PushResult> {
   notifyStage(options, 'sending');
   notifyProgress(options, { stage: 'sending', done: 0, total: 1 });
 
-  const local = snapshotFromRecordings(await listRecordings(false));
-  const merged = mergeSnapshotNotes(local, files.snapshot.notes);
-  const remoteSorted = [...files.snapshot.notes].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  const unchanged = JSON.stringify(merged) === JSON.stringify(remoteSorted);
+  const localNotes = stateNotesFromRecordings(await listRecordings(false));
+  const mergedNotes = mergeStateNotes(localNotes, files.notes);
+  const localNotebooks = notebooksToState(
+    await listNotebooks(),
+    notebookCounts(localNotes),
+  );
+  const mergedNotebooks = mergeStateNotebooks(localNotebooks, files.notebooks);
+
+  const legacy = sortNotes(mergedNotes.map(notesSnapshotNoteFromState));
+  const remoteLegacy = sortNotes(files.legacyNotes);
+  const legacyChanged =
+    !files.backupWritten || JSON.stringify(legacy) !== JSON.stringify(remoteLegacy);
+
+  const remoteCanonical = JSON.stringify({
+    notes: sortNotes(files.notes),
+    notebooks: sortNotebooks(files.notebooks),
+  });
+  const localCanonical = JSON.stringify({
+    notes: mergedNotes,
+    notebooks: mergedNotebooks,
+  });
+  const stateChanged = !files.stateWritten || remoteCanonical !== localCanonical;
 
   if (!files.keyWritten) {
     await client.put(
@@ -432,34 +548,158 @@ async function pushSnapshot(
     files.keyWritten = true;
   }
 
-  let backupBytes = 0;
-  let pushed: { notes: number; bytes: number } | null = null;
-  if (!unchanged) {
+  let legacyBytes = files.legacyBytes;
+  let stateBytes = files.stateBytes;
+
+  if (legacyChanged) {
     const snapshot: VaultSnapshot = {
       version: 1,
       vaultId: files.vaultId,
       createdAt: new Date().toISOString(),
-      notes: merged,
+      notes: legacy,
     };
-    const sealed = sealBytes(encoder.encode(JSON.stringify(snapshot)), files.key, randomBytes);
+    const plain = encoder.encode(JSON.stringify(snapshot));
+    if (plain.length > MAX_BACKUP_BYTES) {
+      throw new VaultSyncError('limit', 'o retrato de notas e grande demais');
+    }
+    const sealed = sealBytes(plain, files.key, randomBytes);
     await client.put(files.rootId, BACKUP_FILE, sealed);
-    backupBytes = sealed.length;
-    pushed = { notes: merged.length, bytes: sealed.length };
-  } else {
-    const backup = await client.findChild(files.rootId, BACKUP_FILE);
-    const size = backup?.size ? Number(backup.size) : 0;
-    backupBytes = Number.isFinite(size) ? size : 0;
+    legacyBytes = sealed.length;
+    files.backupWritten = true;
+    files.legacyNotes = legacy;
+  }
+
+  if (stateChanged) {
+    const state: VaultState = {
+      version: 2,
+      vaultId: files.vaultId,
+      createdAt: new Date().toISOString(),
+      notes: mergedNotes,
+      notebooks: mergedNotebooks,
+      ...(files.analyses !== undefined ? { analyses: files.analyses } : {}),
+      ...(files.settings !== undefined ? { settings: files.settings } : {}),
+    };
+    const plain = encoder.encode(JSON.stringify(state));
+    if (plain.length > MAX_STATE_BYTES) {
+      throw new VaultSyncError('limit', 'o retrato completo e grande demais');
+    }
+    const sealed = sealBytes(plain, files.key, randomBytes);
+    await client.put(files.rootId, STATE_FILE, sealed);
+    stateBytes = sealed.length;
+    files.stateWritten = true;
   }
 
   notifyProgress(options, { stage: 'sending', done: 1, total: 1 });
-  return { pushed, merged, backupBytes };
+  return {
+    pushed:
+      legacyChanged || stateChanged
+        ? { notes: mergedNotes.length, bytes: legacyBytes + stateBytes }
+        : null,
+    mergedNotes,
+    mergedNotebooks,
+    legacyBytes,
+    stateBytes,
+  };
+}
+
+/**
+ * Aplica os cadernos do retrato antes das notas: a nota restaurada precisa de
+ * um caderno que exista. O mais novo por `updated_at` vence; caderno local mais
+ * novo (ou apagado depois) fica como esta.
+ */
+async function applyVaultNotebooks(
+  remote: readonly VaultStateNotebook[],
+  known: Set<string>,
+): Promise<number> {
+  if (remote.length === 0) return 0;
+  const local = new Map((await listNotebooks()).map((notebook) => [notebook.id, notebook]));
+  let applied = 0;
+  for (const item of remote) {
+    const existing = local.get(item.id);
+    if (existing && Date.parse(existing.updatedAt) >= Date.parse(item.updated_at)) {
+      known.add(existing.id);
+      continue;
+    }
+    try {
+      await mergeNotebookFromDrive(notebookFromState(item));
+      known.add(item.id);
+      applied += 1;
+    } catch {
+      // Caderno que falhou nao impede as notas; a nota cai no padrao.
+    }
+  }
+  return applied;
+}
+
+/** Etapas do passo de sincronizacao; auto-sync sobe sem reaplicar o retrato. */
+export interface VaultOpenOptions extends VaultOptions {
+  /** Falso no envio automatico: le, une e grava, sem reaplicar no aparelho. */
+  apply?: boolean;
+}
+
+/**
+ * Fila unica das operacoes do cofre. Duas leituras seguidas de gravacao (auto e
+ * manual) precisam ver o que a outra deixou; em paralelo, a uniao calculada por
+ * uma poderia nao incluir a mudanca da outra.
+ */
+let vaultQueue: Promise<unknown> = Promise.resolve();
+
+function withVaultLock<T>(task: () => Promise<T>): Promise<T> {
+  const run = vaultQueue.then(task, task);
+  vaultQueue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+async function applyVaultNotes(
+  client: DriveClient,
+  files: VaultFiles,
+  options: VaultOptions,
+): Promise<VaultRestoreCounts> {
+  const allNotes = await listRecordings(true);
+  const localNotes = new Map(allNotes.map((note) => [note.id, note]));
+  const knownNotebooks = new Set((await listNotebooks()).map((notebook) => notebook.id));
+  const notebooks = await applyVaultNotebooks(files.notebooks, knownNotebooks);
+
+  const plan = planVaultRestore({
+    // A uniao v2+v1 e a lista de notas vivas do cofre.
+    snapshot: {
+      version: 1,
+      vaultId: files.vaultId,
+      createdAt: new Date().toISOString(),
+      notes: files.notes,
+    },
+    manifest: files.manifest,
+    localNotes,
+    knownNotebooks,
+    // A checagem do cache e feita no download, onde o id ja e candidato e o
+    // custo de olhar o disco e pequeno.
+    existingAttachmentIds: new Set(),
+  });
+
+  const counts = await applyPlan(plan, localNotes, options);
+  counts.notebooks += notebooks;
+  const attachments = await restoreAttachments(client, files.rootId, plan, options);
+  counts.attachments = attachments.restored;
+  counts.failedAttachments = attachments.failed;
+  return counts;
 }
 
 /**
  * Abre o cofre: le, aplica e sobe a uniao. Tambem cria o cofre quando o Drive
  * ainda nao tem `key.txt` (primeiro login de todos).
+ *
+ * Uma fila unica serializa abertura, envio automatico e o "sair": dois clientes
+ * do mesmo aparelho lendo e gravando o mesmo retrato ao mesmo tempo poderiam
+ * gravar por cima da uniao que o outro acabou de calcular.
  */
-export async function openDriveVault(options: VaultOptions = {}): Promise<VaultOpenResult> {
+export async function openDriveVault(options: VaultOpenOptions = {}): Promise<VaultOpenResult> {
+  return withVaultLock(() => openDriveVaultLocked(options));
+}
+
+async function openDriveVaultLocked(options: VaultOpenOptions): Promise<VaultOpenResult> {
   try {
     const client = new DriveClient((force) => getDriveAccessToken(force));
     notifyStage(options, 'reading');
@@ -468,30 +708,68 @@ export async function openDriveVault(options: VaultOptions = {}): Promise<VaultO
     const files = await readFiles(client, rootId, options);
     const backup = await client.findChild(rootId, BACKUP_FILE);
 
-    const allNotes = await listRecordings(true);
-    const localNotes = new Map(allNotes.map((note) => [note.id, note]));
-    const knownNotebooks = new Set((await listNotebooks()).map((notebook) => notebook.id));
-    const plan = planVaultRestore({
-      snapshot: files.snapshot,
-      manifest: files.manifest,
-      localNotes,
-      knownNotebooks,
-      // A checagem do cache e feita no download, onde o id ja e candidato e o
-      // custo de olhar o disco e pequeno.
-      existingAttachmentIds: new Set(),
-    });
+    let restored: VaultRestoreCounts = {
+      notes: 0,
+      skipped: 0,
+      notebooks: 0,
+      attachments: 0,
+      failedAttachments: 0,
+    };
+    if (options.apply !== false) {
+      restored = await applyVaultNotes(client, files, options);
+    }
 
-    const counts = await applyPlan(plan, localNotes, options);
-    const attachments = await restoreAttachments(client, files.rootId, plan, options);
-    counts.attachments = attachments.restored;
-    counts.failedAttachments = attachments.failed;
-
-    const { pushed, merged, backupBytes } = await pushSnapshot(client, files, options);
-    const summary = summarize(files.manifest, merged.length, backupBytes || Number(backup?.size ?? 0));
+    const { pushed, mergedNotes, legacyBytes, stateBytes } = await pushVault(
+      client,
+      files,
+      options,
+    );
+    const summary = summarize(
+      files.manifest,
+      mergedNotes.length,
+      legacyBytes + stateBytes || Number(backup?.size ?? 0),
+    );
     await setAppFlag(VAULT_ID_FLAG, files.vaultId);
     await setAppFlag(SUMMARY_FLAG, JSON.stringify(summary));
 
-    return { summary, restored: counts, pushed, created: files.created };
+    return { summary, restored, pushed, created: files.created };
+  } catch (error) {
+    throw asVaultError(error);
+  }
+}
+
+/**
+ * Antes de sair da conta: sobe o retrato completo, le de volta e confere que
+ * toda nota e caderno locais chegaram. Qualquer falha vira erro e nada e
+ * apagado; a verificacao e o que permite apagar o cache com seguranca.
+ */
+export async function ensureVaultBackedUp(): Promise<{ notes: number; notebooks: number }> {
+  return withVaultLock(() => ensureVaultBackedUpLocked());
+}
+
+async function ensureVaultBackedUpLocked(): Promise<{ notes: number; notebooks: number }> {
+  try {
+    const client = new DriveClient((force) => getDriveAccessToken(force));
+    const rootId = await client.ensureFolder(VAULT_FOLDER);
+    const files = await readFiles(client, rootId, {});
+    const pushed = await pushVault(client, files, {});
+
+    const check = await readFiles(client, rootId, {});
+    const remoteNotes = new Map(check.notes.map((note) => [note.id, note]));
+    for (const note of stateNotesFromRecordings(await listRecordings(false))) {
+      const remote = remoteNotes.get(note.id);
+      if (!remote || Date.parse(remote.updatedAt) < Date.parse(note.updatedAt)) {
+        throw new VaultSyncError('http', 'o Drive nao confirmou o retrato');
+      }
+    }
+    const remoteNotebooks = new Map(check.notebooks.map((notebook) => [notebook.id, notebook]));
+    for (const notebook of notebooksToState(await listNotebooks())) {
+      const remote = remoteNotebooks.get(notebook.id);
+      if (!remote || Date.parse(remote.updated_at) < Date.parse(notebook.updated_at)) {
+        throw new VaultSyncError('http', 'o Drive nao confirmou os cadernos');
+      }
+    }
+    return { notes: pushed.mergedNotes.length, notebooks: pushed.mergedNotebooks.length };
   } catch (error) {
     throw asVaultError(error);
   }

@@ -88,3 +88,58 @@ describe('rowToNotebook', () => {
     });
   });
 });
+
+describe('mergeNotebookFromDrive', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { getDatabase } = require('../db') as { getDatabase: jest.Mock };
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { mergeNotebookFromDrive } = require('../notebooks') as typeof import('../notebooks');
+
+  it('grava o caderno do Drive com um valor por coluna e entra pendente de push', async () => {
+    const runAsync = jest.fn(async () => undefined);
+    getDatabase.mockResolvedValue({
+      getFirstAsync: jest.fn(async () => null),
+      runAsync,
+    });
+
+    await mergeNotebookFromDrive({
+      id: 'nb_drive',
+      name: 'Do Drive',
+      color: '#C7D8F2',
+      isDefault: false,
+      kind: 'book',
+      createdAt: '2026-11-20T00:00:00.000Z',
+      updatedAt: '2026-11-24T00:00:00.000Z',
+      subtitle: 'Sub',
+      goalWords: 1000,
+      bookStatus: 'drafting',
+    });
+
+    const [sql, params] = runAsync.mock.calls[0] as unknown as [string, unknown[]];
+    expect(params).toHaveLength((sql.match(/\?/g) ?? []).length);
+    expect(params).toHaveLength(24);
+    expect(params[22]).toBe(1);
+    expect(params[23]).toBe(0);
+  });
+
+  it('caderno padrao novo entra sem pendencia', async () => {
+    const runAsync = jest.fn(async () => undefined);
+    getDatabase.mockResolvedValue({
+      getFirstAsync: jest.fn(async () => null),
+      runAsync,
+    });
+
+    await mergeNotebookFromDrive({
+      id: 'notas-ao-acaso',
+      name: 'Notas ao acaso',
+      color: '',
+      isDefault: true,
+      createdAt: '2026-11-20T00:00:00.000Z',
+      updatedAt: '2026-11-24T00:00:00.000Z',
+    });
+
+    const [, params] = runAsync.mock.calls[0] as unknown as [string, unknown[]];
+    expect(params[22]).toBe(0);
+    expect(params[23]).toBe(0);
+  });
+});

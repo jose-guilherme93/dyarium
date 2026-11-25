@@ -16,11 +16,12 @@ const mockStore = {
 
 const mockLocal = {
   notes: new Map<string, Recording>(),
-  notebooks: new Set<string>(),
+  notebooks: new Map<string, { id: string; name: string; color: string; isDefault: boolean; kind?: string; createdAt: string; updatedAt: string }>(),
 };
 
 const mockFlags = new Map<string, string>();
 const mockCreatedNotebooks: { id: string; name: string; kind?: string }[] = [];
+const mockAppliedNotebooks: { id: string; name: string; updatedAt: string }[] = [];
 
 jest.mock('../driveClient', () => {
   class DriveError extends Error {
@@ -73,11 +74,35 @@ jest.mock('../db', () => ({
 }));
 
 jest.mock('../notebooks', () => ({
-  listNotebooks: jest.fn(async () => [...mockLocal.notebooks].map((id) => ({ id }))),
+  listNotebooks: jest.fn(async () => [...mockLocal.notebooks.values()]),
   restoreLocalNotebook: jest.fn(async (notebook: { id: string; name: string; kind?: string }) => {
-    mockLocal.notebooks.add(notebook.id);
+    if (!mockLocal.notebooks.has(notebook.id)) {
+      mockLocal.notebooks.set(notebook.id, {
+        id: notebook.id,
+        name: notebook.name,
+        color: '',
+        isDefault: false,
+        kind: notebook.kind,
+        createdAt: '2026-11-22T00:00:00.000Z',
+        updatedAt: '2026-11-22T00:00:00.000Z',
+      });
+    }
     mockCreatedNotebooks.push(notebook);
   }),
+  mergeNotebookFromDrive: jest.fn(
+    async (notebook: {
+      id: string;
+      name: string;
+      color: string;
+      isDefault: boolean;
+      kind?: string;
+      createdAt: string;
+      updatedAt: string;
+    }) => {
+      mockLocal.notebooks.set(notebook.id, notebook);
+      mockAppliedNotebooks.push({ id: notebook.id, name: notebook.name, updatedAt: notebook.updatedAt });
+    },
+  ),
 }));
 
 jest.mock('../files', () => ({
@@ -109,6 +134,7 @@ jest.mock('expo-crypto', () => ({
 }));
 
 import { openDriveVault, readVaultSummary, VaultSyncError } from '../driveVault';
+import { parseVaultSnapshot } from '@/core/vaultSnapshot';
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -150,6 +176,83 @@ function putVault(notes: unknown[], manifest?: unknown): void {
   if (manifest) mockStore.files.set('manifest.json', encoder.encode(JSON.stringify(manifest)));
 }
 
+/** Nota no formato que o web grava no `state.enc`. */
+function stateNote(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: 'n1',
+    title: 'local',
+    recordedAt: '2026-11-20T00:00:00.000Z',
+    updatedAt: '2026-11-20T00:00:00.000Z',
+    notebookId: 'notas-ao-acaso',
+    icon: '',
+    author: '',
+    text: 'corpo',
+    chapterKind: '',
+    chapterPosition: 0,
+    chapterStatus: '',
+    chapterGoalWords: 0,
+    chapterSynopsis: '',
+    chapterBeats: '',
+    chapterNotes: '',
+    ...overrides,
+  };
+}
+
+function stateNotebook(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: 'nbL',
+    name: 'Caderno',
+    color: '',
+    is_default: false,
+    kind: 'notes',
+    subtitle: '',
+    author: '',
+    synopsis: '',
+    language: '',
+    goal_words: 0,
+    book_status: 'drafting',
+    deadline: '',
+    has_cover: false,
+    cover_updated_at: null,
+    entry_count: 0,
+    chapter_count: 0,
+    created_at: '2026-11-20T00:00:00.000Z',
+    updated_at: '2026-11-20T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function putState(state: Record<string, unknown>): void {
+  mockStore.files.set(
+    'state.enc',
+    sealBytes(
+      encoder.encode(JSON.stringify(state)),
+      key,
+      () => new Uint8Array(12).fill(3),
+    ),
+  );
+}
+
+function stateBody(notes: unknown[], extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    version: 2,
+    vaultId: vaultIdFromCode(code),
+    createdAt: '2026-11-22T00:00:00.000Z',
+    notes,
+    notebooks: [],
+    ...extra,
+  };
+}
+
+function readState(raw: Uint8Array): {
+  notes: { id: string; title: string; text?: string; transcript?: string }[];
+  notebooks: { id: string; name: string; updated_at: string }[];
+  analyses?: unknown;
+  settings?: unknown;
+} {
+  return JSON.parse(decoder.decode(openBytes(raw, key)));
+}
+
 beforeEach(() => {
   mockStore.files.clear();
   mockStore.driveFiles.clear();
@@ -158,6 +261,7 @@ beforeEach(() => {
   mockLocal.notebooks.clear();
   mockFlags.clear();
   mockCreatedNotebooks.length = 0;
+  mockAppliedNotebooks.length = 0;
 });
 
 describe('abrir o cofre do Drive', () => {
@@ -232,6 +336,16 @@ describe('abrir o cofre do Drive', () => {
         text: 'corpo',
       },
     ]);
+    putState(
+      stateBody([
+        stateNote({
+          title: 'igual',
+          recordedAt: '2026-11-21T00:00:00.000Z',
+          updatedAt: '2026-11-22T00:00:00.000Z',
+          text: 'corpo',
+        }),
+      ]),
+    );
     mockLocal.notes.set(
       'n1',
       recording({
@@ -245,7 +359,7 @@ describe('abrir o cofre do Drive', () => {
 
     const result = await openDriveVault();
     expect(result.pushed).toBeNull();
-    expect(mockStore.puts.filter((put) => put.name === 'backup.enc')).toHaveLength(0);
+    expect(mockStore.puts).toHaveLength(0);
   });
 
   it('cria o cofre quando o Drive ainda nao tem key.txt', async () => {
@@ -342,3 +456,151 @@ describe('abrir o cofre do Drive', () => {
     expect(result.restored.failedAttachments).toBe(0);
     expect(mockLocal.notes.get('n1')?.status).toBe('completed');
   });
+
+describe('retrato v2 no Drive', () => {
+  it('une A e B locais com B mais novo e C do Drive, sem duplicar', async () => {
+    mockLocal.notes.set(
+      'a',
+      recording({ id: 'a', title: 'A local', text: 'a', notebookId: 'nbL', updatedAt: '2026-11-20T00:00:00.000Z' }),
+    );
+    mockLocal.notes.set(
+      'b',
+      recording({ id: 'b', title: 'B local', text: 'b', notebookId: 'nbL', updatedAt: '2026-11-21T00:00:00.000Z' }),
+    );
+    mockLocal.notebooks.set('nbL', {
+      id: 'nbL',
+      name: 'Caderno local',
+      color: '',
+      isDefault: false,
+      kind: 'notes',
+      createdAt: '2026-11-20T00:00:00.000Z',
+      updatedAt: '2026-11-21T00:00:00.000Z',
+    });
+    mockStore.files.set('key.txt', encoder.encode(formatRecoveryCode(code)));
+    putState(
+      stateBody(
+        [
+          stateNote({
+            id: 'b',
+            title: 'B remoto',
+            text: 'b remoto',
+            notebookId: 'nbL',
+            updatedAt: '2026-11-23T00:00:00.000Z',
+          }),
+          stateNote({
+            id: 'c',
+            title: 'C',
+            text: 'c',
+            notebookId: 'nbR',
+            updatedAt: '2026-11-22T00:00:00.000Z',
+          }),
+        ],
+        {
+          notebooks: [
+            stateNotebook({
+              id: 'nbL',
+              name: 'Caderno remoto',
+              updated_at: '2026-11-24T00:00:00.000Z',
+              entry_count: 2,
+            }),
+            stateNotebook({
+              id: 'nbR',
+              name: 'Novo',
+              updated_at: '2026-11-22T00:00:00.000Z',
+              entry_count: 1,
+            }),
+          ],
+          analyses: [{ entry_id: 'c', analysis: { reading: 'ok' } }],
+          settings: { owner_name: 'Ana' },
+        },
+      ),
+    );
+
+    const result = await openDriveVault();
+
+    // Nada duplicado e o mais novo vence em cada id.
+    expect([...mockLocal.notes.keys()].sort()).toEqual(['a', 'b', 'c']);
+    expect(mockLocal.notes.get('a')?.title).toBe('A local');
+    expect(mockLocal.notes.get('b')?.title).toBe('B remoto');
+    expect(mockLocal.notes.get('b')?.text).toBe('b remoto');
+    expect(mockLocal.notes.get('c')?.title).toBe('C');
+    expect(result.restored).toMatchObject({ notes: 2, skipped: 0, notebooks: 2 });
+    expect(mockAppliedNotebooks.map((notebook) => notebook.id).sort()).toEqual(['nbL', 'nbR']);
+    expect(mockLocal.notebooks.get('nbL')?.name).toBe('Caderno remoto');
+
+    const written = readState(mockStore.files.get('state.enc')!);
+    expect(written.notes.map((note) => note.id)).toEqual(['a', 'b', 'c']);
+    expect(written.notes.find((note) => note.id === 'b')?.title).toBe('B remoto');
+    expect(written.notebooks.map((notebook) => notebook.id)).toEqual(['nbL', 'nbR']);
+    expect(written.notebooks.find((notebook) => notebook.id === 'nbL')?.name).toBe('Caderno remoto');
+    // Analises e ajustes do web nao sao apagados por quem nao os interpreta.
+    expect(written.analyses).toEqual([{ entry_id: 'c', analysis: { reading: 'ok' } }]);
+    expect(written.settings).toEqual({ owner_name: 'Ana' });
+
+    // O v1 continua sendo v1 e ja leva a uniao.
+    const legacy = parseVaultSnapshot(decoder.decode(openBytes(mockStore.files.get('backup.enc')!, key)));
+    expect(legacy.version).toBe(1);
+    expect(legacy.notes.map((note) => note.id)).toEqual(['a', 'b', 'c']);
+    expect((legacy.notes.find((note) => note.id === 'b') as unknown as Record<string, unknown>).transcript).toBeUndefined();
+
+    // Estavel: a segunda abertura nao reescreve nada.
+    const again = await openDriveVault();
+    expect(again.pushed).toBeNull();
+  });
+
+  it('envio automatico sobe a uniao sem aplicar o retrato no aparelho', async () => {
+    mockLocal.notes.set('a', recording({ id: 'a', title: 'A local' }));
+    mockStore.files.set('key.txt', encoder.encode(formatRecoveryCode(code)));
+    putState(stateBody([stateNote({ id: 'c', title: 'C do Drive', updatedAt: '2026-11-23T00:00:00.000Z' })]));
+
+    const result = await openDriveVault({ apply: false });
+
+    // Nada do Drive entra no banco local; a uniao sobe mesmo assim.
+    expect([...mockLocal.notes.keys()]).toEqual(['a']);
+    expect(result.restored.notes).toBe(0);
+    const written = readState(mockStore.files.get('state.enc')!);
+    expect(written.notes.map((note) => note.id)).toEqual(['a', 'c']);
+  });
+
+  it('cofre v1 antigo ganha state.enc sem reescrever o backup.enc', async () => {
+    putVault([
+      {
+        id: 'n1',
+        title: 'igual',
+        recordedAt: '2026-11-21T00:00:00.000Z',
+        updatedAt: '2026-11-22T00:00:00.000Z',
+        notebookId: 'notas-ao-acaso',
+        text: 'corpo',
+      },
+    ]);
+    mockLocal.notes.set(
+      'n1',
+      recording({
+        title: 'igual',
+        text: 'corpo',
+        notebookId: 'notas-ao-acaso',
+        recordedAt: '2026-11-21T00:00:00.000Z',
+        updatedAt: '2026-11-22T00:00:00.000Z',
+      }),
+    );
+
+    const result = await openDriveVault();
+
+    expect(mockStore.puts.map((put) => put.name)).toEqual(['state.enc']);
+    expect(result.pushed).not.toBeNull();
+    const written = readState(mockStore.files.get('state.enc')!);
+    expect(written.notes.map((note) => note.id)).toEqual(['n1']);
+  });
+
+  it('nao aplica nem grava nada quando o state.enc esta corrompido', async () => {
+    mockStore.files.set('key.txt', encoder.encode(formatRecoveryCode(code)));
+    mockStore.files.set('state.enc', new Uint8Array([1, 2, 3, 4]));
+    mockLocal.notes.set('n1', recording({ title: 'local' }));
+
+    const error = await openDriveVault().catch((caught) => caught as VaultSyncError);
+    expect(error).toBeInstanceOf(VaultSyncError);
+    expect((error as VaultSyncError).kind).toBe('corrupt');
+    expect(mockLocal.notes.get('n1')?.title).toBe('local');
+    expect(mockStore.puts).toHaveLength(0);
+  });
+});

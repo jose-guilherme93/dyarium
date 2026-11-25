@@ -620,6 +620,21 @@ function invalidateRecordingsCache(): void {
   recordingsCache = null;
 }
 
+/**
+ * Esquece tudo o que o repositorio guardou em memoria. Chamado depois de apagar
+ * o banco (sair da conta): os caches de lista e do relogio HLC pertenciam ao
+ * arquivo que nao existe mais.
+ */
+export function resetRepositoryState(): void {
+  recordingsCache = null;
+  clockState = null;
+  clockLoaded = false;
+  clockPersistedPhysical = 0;
+  clockPersistInFlight = false;
+  clockNodeCache = '';
+  graphWriteQueue = Promise.resolve();
+}
+
 export async function listRecordings(includeDeleted = false): Promise<Recording[]> {
   if (
     recordingsCache &&

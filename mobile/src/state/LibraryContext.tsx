@@ -18,6 +18,7 @@ import { deleteRecordingRow, ensureEntityDerivation, getRecording, listRecording
 import { invalidateSessionSnapshot } from '@/services/graphData';
 import { deleteServerEntry, restoreServerEntry } from '@/services/entries';
 import { deleteSessionAudioFiles, deleteSessionFiles } from '@/services/files';
+import { notifyLocalChange } from '@/services/localChange';
 import {
   deleteLocalNotebook,
   insertLocalNotebook,
@@ -456,6 +457,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
         const exists = prev.some((r) => r.id === queued.id);
         return exists ? prev.map((r) => (r.id === queued.id ? queued : r)) : [queued, ...prev];
       });
+      notifyLocalChange();
       kick();
       // A transcricao no aparelho comeca aqui, logo depois de a nota existir:
       // esperar o proximo boot fazia o texto so aparecer minutos depois.
@@ -486,6 +488,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       };
       await upsertRecording(note);
       setRecordings((prev) => [note, ...prev]);
+      notifyLocalChange();
       kick();
       return note;
     },
@@ -501,6 +504,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     };
     await upsertRecording(note);
     setRecordings((prev) => [note, ...prev]);
+    notifyLocalChange();
     return note;
   }, []);
 
@@ -509,6 +513,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       // Update direcionado: o autosave nao pode ler e reescrever a linha inteira
       // (transcricao, segmentos e anexos) a cada pausa da digitacao.
       await updateRecordingNote(id, patch);
+      notifyLocalChange();
     },
     [],
   );
@@ -533,6 +538,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       );
       await upsertRecording(updated);
       setRecordings((prev) => prev.map((r) => (r.id === id ? updated : r)));
+      notifyLocalChange();
       return true;
     },
     [],
@@ -573,6 +579,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
         origin: await clockNode(),
       });
       setRecordings((prev) => prev.filter((r) => r.id !== id));
+      notifyLocalChange();
       // O servidor tem a mesma lixeira de 7 dias; a chamada e best-effort para
       // apagar offline nao impedir a nota de sair da lista local agora.
       if (current.entryId) {
@@ -587,6 +594,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     deleteSessionFiles(id);
     await deleteRecordingRow(id);
     setRecordings((prev) => prev.filter((r) => r.id !== id));
+    notifyLocalChange();
   }, []);
 
   const restoreFromTrash = useCallback(
@@ -601,6 +609,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       await upsertRecording(restored);
       await removeTombstone(current.entryId ?? current.id, 'entry');
       await refresh();
+      notifyLocalChange();
       // Desfaz a exclusao logica no servidor. Sem isso o proximo pull veria a
       // entrada na lixeira dele e apagaria a nota de novo.
       if (current.entryId) {
@@ -624,6 +633,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
           ? current
           : { ...current, transcript: current.text, transcriptStatus: 'ready' };
         await enqueue(ready);
+        notifyLocalChange();
         return;
       }
       if (current.status === 'completed') {
@@ -636,6 +646,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
         };
         await upsertRecording(updated);
         setRecordings((prev) => prev.map((r) => (r.id === id ? updated : r)));
+        notifyLocalChange();
         kick();
       }
     },
@@ -656,6 +667,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     };
     await upsertRecording(updated);
     setRecordings((prev) => prev.map((r) => (r.id === id ? updated : r)));
+    notifyLocalChange();
     if (current.entryId) kick();
   }, [kick]);
 
@@ -680,6 +692,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       };
       await insertLocalNotebook(notebook);
       setNotebooks((prev) => [...prev, notebook]);
+      notifyLocalChange();
       void pushNotebooks().then(refreshNotebooks).catch(() => undefined);
       return notebook;
     },
@@ -693,6 +706,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     ) => {
       await updateLocalNotebook(id, patch);
       await refreshNotebooks();
+      notifyLocalChange();
       void pushNotebooks().then(refreshNotebooks).catch(() => undefined);
     },
     [refreshNotebooks],
@@ -710,6 +724,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       });
       await deleteLocalNotebook(id);
       await Promise.all([refresh(), refreshNotebooks()]);
+      notifyLocalChange();
       void pushNotebooks().then(refreshNotebooks).catch(() => undefined);
     },
     [refresh, refreshNotebooks],
@@ -729,6 +744,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       };
       await upsertRecording(updated);
       setRecordings((prev) => prev.map((r) => (r.id === id ? updated : r)));
+      notifyLocalChange();
       if (current.entryId) kick();
     },
     [kick],
@@ -760,6 +776,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       };
       await upsertRecording(updated);
       setRecordings((prev) => prev.map((r) => (r.id === id ? updated : r)));
+      notifyLocalChange();
       if (current.entryId) kick();
     },
     [kick],
@@ -780,6 +797,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       };
       await upsertRecording(updated);
       setRecordings((prev) => prev.map((r) => (r.id === id ? updated : r)));
+      notifyLocalChange();
       if (current.entryId) kick();
     },
     [kick],

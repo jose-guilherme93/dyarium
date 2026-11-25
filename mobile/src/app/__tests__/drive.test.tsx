@@ -128,7 +128,7 @@ describe('tela do Google Drive', () => {
     expect(screen.getByText('Google')).toBeTruthy();
     expect(screen.getByText('Último envio')).toBeTruthy();
     expect(screen.getByLabelText('Sincronizar agora')).toBeTruthy();
-    expect(screen.getByLabelText('Desconectar')).toBeTruthy();
+    expect(screen.getByLabelText('Sair desta conta')).toBeTruthy();
   });
 
   it('conectado com cofre novo mostra aviso', async () => {

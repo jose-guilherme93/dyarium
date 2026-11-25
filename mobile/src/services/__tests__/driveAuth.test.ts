@@ -13,7 +13,6 @@ const REFRESH_KEY = 'dyarium.drive.refresh';
 const CLIENT_KEY = 'dyarium.drive.client';
 const AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
-const REVOKE_ENDPOINT = 'https://oauth2.googleapis.com/revoke';
 
 const mockOpenAuth = jest.fn();
 const mockSecret = new Map<string, string>();
@@ -269,6 +268,19 @@ describe('getDriveAccessToken', () => {
     expect(changes).toHaveBeenCalled();
   });
 
+  it('a sessao vencida sobrevive ao reinicio do app', async () => {
+    mockSecret.set(REFRESH_KEY, 'refresh-old');
+    mockSecret.set(CLIENT_KEY, 'client-1');
+    const auth = freshAuth();
+    installFetch(async () => tokenResponse({ error: 'invalid_grant' }, 400));
+    await expect(auth.getDriveAccessToken()).rejects.toThrow();
+
+    const restarted = freshAuth();
+    await restarted.loadDriveSession();
+    expect(restarted.driveSessionState()).toBe('expired');
+    expect(restarted.driveProfile()).toBeNull();
+  });
+
   it('descarta o refresh quando o client id mudou', async () => {
     mockSecret.set(REFRESH_KEY, 'refresh-old');
     mockSecret.set(CLIENT_KEY, 'client-velho');
@@ -292,7 +304,7 @@ describe('getDriveAccessToken', () => {
 });
 
 describe('disconnectDrive', () => {
-  it('revoga pelo corpo do POST, limpa a sessao e avisa', async () => {
+  it('limpa a sessao local sem revogar a concessao Google', async () => {
     const auth = freshAuth();
     authorize();
     await auth.connectDrive();
@@ -300,29 +312,11 @@ describe('disconnectDrive', () => {
     const fetchMock = installFetch(async () => tokenResponse({}, 200));
     await auth.disconnectDrive();
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe(REVOKE_ENDPOINT);
-    expect(url).not.toContain('refresh-1');
-    expect(init.method).toBe('POST');
-    expect(String(init.body)).toContain('token=refresh-1');
+    // Revogar aqui derrubaria a sessao dos outros clientes; o sair e local.
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(mockSecret.size).toBe(0);
     expect(auth.driveSessionState()).toBe('off');
     await expect(auth.getDriveAccessToken()).rejects.toThrow();
-  });
-
-  it('falha de rede na revogacao nao impede limpar', async () => {
-    const auth = freshAuth();
-    authorize();
-    await auth.connectDrive();
-
-    installFetch(async () => {
-      throw new Error('sem rede');
-    });
-    await expect(auth.disconnectDrive()).resolves.toBeUndefined();
-
-    expect(mockSecret.size).toBe(0);
-    expect(auth.driveSessionState()).toBe('off');
   });
 });
 
@@ -385,6 +379,53 @@ describe('perfil Google', () => {
     const hydrated = freshAuth();
     await hydrated.loadDriveSession();
     expect(hydrated.driveProfile()).toEqual({ name: 'Ana', email: 'a@b.com', picture: 'pic' });
+  });
+
+  it('a renovacao do token tambem busca e persiste o perfil', async () => {
+    mockSecret.set(REFRESH_KEY, 'refresh-old');
+    mockSecret.set(CLIENT_KEY, 'client-1');
+    const auth = freshAuth();
+    const calls: string[] = [];
+    installFetch(async (url: string) => {
+      calls.push(url);
+      if (url === TOKEN_ENDPOINT) return tokenResponse({ access_token: 'access-2', expires_in: 1800 });
+      return tokenResponse({ name: 'Ana', email: 'a@b.com', picture: 'pic' });
+    });
+
+    await auth.loadDriveSession();
+    expect(auth.driveProfile()).toBeNull();
+    await expect(auth.getDriveAccessToken()).resolves.toBe('access-2');
+    expect(calls).toContain('https://www.googleapis.com/oauth2/v3/userinfo');
+    expect(auth.driveProfile()).toEqual({ name: 'Ana', email: 'a@b.com', picture: 'pic' });
+
+    const restarted = freshAuth();
+    await restarted.loadDriveSession();
+    expect(restarted.driveProfile()).toEqual({ name: 'Ana', email: 'a@b.com', picture: 'pic' });
+  });
+
+  it('sem consentimento de email/perfil o login continua e as iniciais aparecem', async () => {
+    const auth = freshAuth();
+    mockOpenAuth.mockImplementationOnce(async (url: string) => {
+      const state = new URL(url).searchParams.get('state');
+      return { type: 'success', url: `dyarium://oauth?state=${state}&code=code-1` };
+    });
+    installFetch(async (url: string) => {
+      if (url === TOKEN_ENDPOINT) {
+        return tokenResponse({
+          access_token: 'access-1',
+          refresh_token: 'refresh-1',
+          expires_in: 3600,
+        });
+      }
+      // userinfo sem name/email/picture: o escopo `profile`/`email` foi negado.
+      return tokenResponse({ sub: '123' });
+    });
+
+    await expect(auth.connectDrive()).resolves.toBeUndefined();
+    expect(auth.driveSessionState()).toBe('connected');
+    expect(auth.driveProfile()).toBeNull();
+    expect(mockSecret.get(REFRESH_KEY)).toBe('refresh-1');
+    expect(mockSecret.has('dyarium.drive.profile')).toBe(false);
   });
 
   it('disconnect limpa o perfil', async () => {

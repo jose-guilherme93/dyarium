@@ -16,6 +16,7 @@ import {
   registerDatabase,
   registerDeviceIdentity,
 } from '@/core/port';
+import { resetRepositoryState } from '@/core/repo';
 import { applyMigrations } from '@/core/schema';
 
 import { deviceIdentity } from './device';
@@ -124,6 +125,36 @@ async function openDatabase(): Promise<SQLite.SQLiteDatabase> {
     await db.closeAsync().catch(() => undefined);
     throw error;
   }
+}
+
+
+/**
+ * Apaga o banco local inteiro (notas, cadernos, analises e flags). Usado no
+ * "sair da conta" do Drive, depois de o retrato ser sincronizado e conferido.
+ *
+ * Fecha as duas conexoes antes de remover o arquivo: no Android um descritor
+ * aberto mantem o WAL e o `deleteDatabaseAsync` falharia. Os caches de memoria
+ * do repositorio sao zerados para a proxima leitura nao devolver dados do
+ * arquivo que nao existe mais.
+ */
+export async function wipeLocalDatabase(): Promise<void> {
+  const main = dbPromise;
+  const ui = dbUiPromise;
+  dbPromise = null;
+  dbUiPromise = null;
+
+  for (const pending of [main, ui]) {
+    if (!pending) continue;
+    try {
+      const db = await pending;
+      await db.closeAsync();
+    } catch {
+      // Conexao que nunca abriu ou ja fechada: o arquivo ainda pode ser apagado.
+    }
+  }
+
+  await SQLite.deleteDatabaseAsync('dyarium.db');
+  resetRepositoryState();
 }
 
 

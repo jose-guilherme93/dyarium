@@ -30,10 +30,11 @@ export interface GoogleProfile {
 const REFRESH_KEY = 'dyarium.drive.refresh';
 const CLIENT_KEY = 'dyarium.drive.client';
 const PROFILE_KEY = 'dyarium.drive.profile';
+/** Marca que a conta existia e o Google revogou a sessao; nao e segredo. */
+const EXPIRED_KEY = 'dyarium.drive.expired';
 
 const AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
-const REVOKE_ENDPOINT = 'https://oauth2.googleapis.com/revoke';
 
 /** Margem para nao entregar um token que vence durante a chamada. */
 const FRESH_MS = 60_000;
@@ -143,14 +144,19 @@ function hydrate(): Promise<void> {
         await deleteSecret(REFRESH_KEY);
         await deleteSecret(CLIENT_KEY);
         await deleteSecret(PROFILE_KEY);
+        await deleteSecret(EXPIRED_KEY);
         refresh = null;
         profile = null;
+        expired = false;
         return;
       }
       refresh = stored;
     } else if (!stored) {
       refresh = null;
     }
+    // A revogacao do Google sobrevive ao reinicio: sem esta marca, o app abriria
+    // como "sem conta" e esconderia que o cache pertence a uma conta vencida.
+    expired = refresh ? false : (await readSecret(EXPIRED_KEY)) === '1';
     // Perfil e dado de exibicao: hidrata junto, sem quebrar se corrompido.
     const storedProfile = await readSecret(PROFILE_KEY);
     if (storedProfile) {
@@ -262,7 +268,12 @@ async function clearSession(): Promise<void> {
   refresh = null;
   access = null;
   profile = null;
-  await Promise.all([deleteSecret(REFRESH_KEY), deleteSecret(CLIENT_KEY), deleteSecret(PROFILE_KEY)]);
+  await Promise.all([
+    deleteSecret(REFRESH_KEY),
+    deleteSecret(CLIENT_KEY),
+    deleteSecret(PROFILE_KEY),
+    deleteSecret(EXPIRED_KEY),
+  ]);
 }
 
 export function driveSessionState(): DriveSessionState {
@@ -347,6 +358,7 @@ export async function connectDrive(): Promise<void> {
   expired = false;
   await writeSecret(REFRESH_KEY, grant.refreshToken);
   await writeSecret(CLIENT_KEY, clientId);
+  await deleteSecret(EXPIRED_KEY);
 
   // Identidade e best-effort: nunca bloqueia nem quebra o login.
   profile = null;
@@ -419,6 +431,7 @@ export async function getDriveAccessToken(forceRefresh = false): Promise<string>
     if (error instanceof InvalidGrant) {
       await clearSession();
       expired = true;
+      await writeSecret(EXPIRED_KEY, '1');
       notify();
       throw new Error('a conexao com o Google expirou');
     }
@@ -461,21 +474,9 @@ export function driveProfile(): GoogleProfile | null {
 
 export async function disconnectDrive(): Promise<void> {
   await hydrate();
-  const stored = refresh;
-
-  if (stored) {
-    try {
-      await (globalThis.fetch as typeof fetch)(REVOKE_ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ token: stored }).toString(),
-      });
-    } catch {
-      // Sem rede: o token guardado sai do aparelho do mesmo jeito e expira
-      // sozinho do lado do Google.
-    }
-  }
-
+  // Sair neste aparelho nao revoga a concessao Google: revogar o token derruba
+  // a sessao dos outros clientes (web e app sao independentes). O token local
+  // sai; a conta continua autorizada para quem ainda estiver conectado.
   await clearSession();
   expired = false;
   notify();

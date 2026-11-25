@@ -12,13 +12,10 @@ import type { VaultRestoreCounts, VaultStage, VaultSummary } from '@/services/dr
 import {
   openDriveVault,
   readVaultSummary,
-  SUMMARY_FLAG,
-  VAULT_ID_FLAG,
   VaultSyncError,
 } from '@/services/driveVault';
 import {
   connectDrive,
-  disconnectDrive,
   driveProfile,
   driveSessionState,
   loadDriveSession,
@@ -27,8 +24,9 @@ import {
   type GoogleProfile,
 } from '@/services/driveAuth';
 import { driveConfigured } from '@/services/driveConfig';
+import { onDriveAutoSync } from '@/services/driveAutoSync';
+import { DriveLeaveError, leaveDriveAccount } from '@/services/driveLeave';
 import { useLibrary } from '@/state/LibraryContext';
-import { setAppFlag } from '@/services/db';
 
 export type DriveStage = 'auth' | VaultStage;
 
@@ -78,6 +76,17 @@ function describe(error: unknown): string {
   return 'Não foi possível conectar ao Drive.';
 }
 
+function describeLeave(code: DriveLeaveError['code']): string {
+  switch (code) {
+    case 'unsynced':
+      return 'Reconecte e sincronize antes de sair.';
+    case 'sync_failed':
+      return 'Não foi possível enviar tudo ao Drive.';
+    default:
+      return 'Não foi possível apagar os dados da conta.';
+  }
+}
+
 export function useDrive(): DriveValue {
   const { refresh, refreshNotebooks } = useLibrary();
   const [configured] = useState(() => driveConfigured());
@@ -108,12 +117,18 @@ export function useDrive(): DriveValue {
 
   useEffect(() => {
     void loadDriveSession().then(() => {
-      if (alive.current) {
-        setStatus(driveSessionState());
-        setProfile(driveProfile());
+      if (!alive.current) return;
+      setStatus(driveSessionState());
+      setProfile(driveProfile());
+      // O envio de abertura corre no layout raiz, antes desta tela montar; uma
+      // leitura do banco aqui garante que as notas que chegaram do Drive
+      // aparecem sem esperar o proximo ciclo.
+      if (driveSessionState() === 'connected') {
+        void refresh().catch(() => undefined);
+        void refreshNotebooks().catch(() => undefined);
       }
     });
-  }, []);
+  }, [refresh, refreshNotebooks]);
 
   useEffect(
     () =>
@@ -124,6 +139,23 @@ export function useDrive(): DriveValue {
         }
       }),
     [],
+  );
+
+  // Envio automatico (mudanca local e primeiro plano): o resumo e a lista
+  // precisam refletir o que chegou do outro cliente.
+  useEffect(
+    () =>
+      onDriveAutoSync((opened) => {
+        if (!alive.current) return;
+        setSummary(opened.summary);
+        setStatus(driveSessionState());
+        setProfile(driveProfile());
+        if (opened.restored.notes > 0 || opened.restored.notebooks > 0) {
+          void refresh().catch(() => undefined);
+          void refreshNotebooks().catch(() => undefined);
+        }
+      }),
+    [refresh, refreshNotebooks],
   );
 
   const run = useCallback(
@@ -185,25 +217,32 @@ export function useDrive(): DriveValue {
   }, [run]);
 
   const disconnect = useCallback(async () => {
+    if (busy || running.current) return;
+    running.current = true;
     setBusy(true);
     setError('');
+    setStage(null);
+    setProgress(null);
     try {
-      await disconnectDrive();
+      await leaveDriveAccount();
       setSummary(null);
       setProfile(null);
       setRestored(null);
       setCreated(false);
-      await setAppFlag(SUMMARY_FLAG, '').catch(() => undefined);
-      await setAppFlag(VAULT_ID_FLAG, '').catch(() => undefined);
-    } catch {
-      setError('Não foi possível desconectar.');
+      // A conta saiu: a biblioteca local foi apagada. Reler o banco (agora
+      // vazio) e o que deixa o app no modo local-first, sem tela de login.
+      await refresh().catch(() => undefined);
+      await refreshNotebooks().catch(() => undefined);
+    } catch (caught) {
+      setError(caught instanceof DriveLeaveError ? describeLeave(caught.code) : 'Não foi possível desconectar.');
     } finally {
       if (alive.current) {
         setStatus(driveSessionState());
         setBusy(false);
       }
+      running.current = false;
     }
-  }, []);
+  }, [busy, refresh, refreshNotebooks]);
 
   const clearError = useCallback(() => setError(''), []);
 

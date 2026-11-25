@@ -299,6 +299,65 @@ export async function markNotebookSynced(id: string): Promise<void> {
   );
 }
 
+/**
+ * Caderno vindo do retrato do Drive (`state.enc`), quando ele e mais novo que o
+ * local. Entra sem `deleted` e sem mexer em `dirty`/`synced`: o push ao
+ * servidor continua sendo decisao de quem ja era local; um caderno que so
+ * existia no Drive entra pendente de push.
+ */
+export async function mergeNotebookFromDrive(notebook: Notebook): Promise<void> {
+  const db = await getDatabase();
+  const existing = await db.getFirstAsync<{ dirty: number; synced: number }>(
+    'SELECT dirty, synced FROM notebooks WHERE id = ?',
+    [notebook.id],
+  );
+  const dirty = existing ? existing.dirty : notebook.isDefault ? 0 : 1;
+  const synced = existing ? existing.synced : 0;
+  await db.runAsync(
+    `INSERT INTO notebooks
+      (id, name, color, is_default, kind, created_at, updated_at,
+       subtitle, author, synopsis, language, goal_words, book_status, page_size,
+       page_margin_mm, body_px, body_leading, body_font, daily_goal_words, deadline,
+       has_cover, cover_updated_at, dirty, synced, deleted)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+     ON CONFLICT(id) DO UPDATE SET
+       name = excluded.name,
+       color = excluded.color,
+       is_default = excluded.is_default,
+       kind = excluded.kind,
+       created_at = excluded.created_at,
+       updated_at = excluded.updated_at,
+       subtitle = excluded.subtitle,
+       author = excluded.author,
+       synopsis = excluded.synopsis,
+       language = excluded.language,
+       goal_words = excluded.goal_words,
+       book_status = excluded.book_status,
+       page_size = excluded.page_size,
+       page_margin_mm = excluded.page_margin_mm,
+       body_px = excluded.body_px,
+       body_leading = excluded.body_leading,
+       body_font = excluded.body_font,
+       daily_goal_words = excluded.daily_goal_words,
+       deadline = excluded.deadline,
+       has_cover = excluded.has_cover,
+       cover_updated_at = excluded.cover_updated_at,
+       deleted = 0`,
+    [
+      notebook.id,
+      notebook.name,
+      notebook.color,
+      notebook.isDefault ? 1 : 0,
+      notebookKind(notebook.kind),
+      notebook.createdAt,
+      notebook.updatedAt,
+      ...bookValues(notebook),
+      dirty,
+      synced,
+    ],
+  );
+}
+
 export async function removeNotebookRow(id: string): Promise<void> {
   const db = await getDatabase();
   await db.runAsync('DELETE FROM notebooks WHERE id = ?', [id]);

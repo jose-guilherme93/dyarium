@@ -366,11 +366,11 @@ export default function DriveScreen() {
                   { backgroundColor: colors.surfaceAlt, borderColor: colors.line },
                 ]}
                 accessibilityRole="button"
-                accessibilityLabel="Desconectar"
+                accessibilityLabel="Sair desta conta"
                 accessibilityState={{ disabled: drive.busy }}
               >
                 <Text style={[styles.buttonText, { color: colors.text }]}>
-                  Desconectar
+                  Sair desta conta
                 </Text>
               </Press>
             </>

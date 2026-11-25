@@ -4,7 +4,7 @@ import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import * as SystemUI from 'expo-system-ui';
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { AppState } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -14,8 +14,7 @@ import { stopForegroundTask } from '../../modules/foreground-task';
 import { loadStoredActivities } from '@/services/activity';
 import { registerUploadTask, registerBackupTaskFromPrefs } from '@/services/background';
 import { runScheduledBackupIfDue } from '@/services/backupScheduler';
-import { driveSessionState, loadDriveSession } from '@/services/driveAuth';
-import { openDriveVault, readVaultSummary } from '@/services/driveVault';
+import { startDriveAutoSync } from '@/services/driveAutoSync';
 import { configureNotifications } from '@/services/notifications';
 import { LibraryProvider } from '@/state/LibraryContext';
 import { PlaybackProvider } from '@/state/PlaybackContext';
@@ -152,41 +151,10 @@ export default function RootLayout() {
     return () => subscription.remove();
   }, []);
 
-  const driveSyncing = useRef(false);
-  const driveLastAttempt = useRef(0);
-  useEffect(() => {
-    const TEN_MIN = 10 * 60 * 1000;
-    const runForeground = async () => {
-      if (driveSyncing.current) return;
-      if (Date.now() - driveLastAttempt.current < TEN_MIN) return;
-      // No boot o SecureStore ainda nao respondeu: sem esperar a hidratacao a
-      // sessao pareceria desligada e o primeiro plano nunca sincronizaria.
-      await loadDriveSession();
-      if (driveSessionState() !== 'connected') return;
-      let lastSync = 0;
-      try {
-        const summary = await readVaultSummary();
-        if (summary?.at) lastSync = Date.parse(summary.at);
-      } catch {
-        lastSync = 0;
-      }
-      if (Number.isFinite(lastSync) && Date.now() - lastSync < TEN_MIN) return;
-      driveSyncing.current = true;
-      driveLastAttempt.current = Date.now();
-      try {
-        await openDriveVault();
-      } catch {
-        // Erros esperados ja atualizam o estado do Drive.
-      } finally {
-        driveSyncing.current = false;
-      }
-    };
-    if (AppState.currentState === 'active') void runForeground();
-    const subscription = AppState.addEventListener('change', (state) => {
-      if (state === 'active') void runForeground();
-    });
-    return () => subscription.remove();
-  }, []);
+  // Drive: envio automatico com debounce depois de uma mudanca local e ao
+  // voltar ao primeiro plano (que tambem aplica o retrato remoto). Sessao
+  // vencida so mantem o banner; o cache local nunca e apagado por aqui.
+  useEffect(() => startDriveAutoSync(), []);
 
   if (!fontsLoaded && !fontError) {
     return null;
