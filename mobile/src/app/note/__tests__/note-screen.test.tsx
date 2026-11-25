@@ -228,9 +228,19 @@ jest.mock('@/core/features', () => ({
 jest.mock('@/services/attachments', () => ({
   attachmentUri: jest.fn(async () => null),
   downloadMissingImageSources: jest.fn(async () => undefined),
+  localAudioSource: jest.fn(() => null),
   localImageUri: (...args: unknown[]) => mockLocalImageUri(...args),
+  resolveAudioSource: jest.fn(async () => null),
   resolveImageSourcesLocal: () => ({}),
   saveLocalImage: (...args: unknown[]) => mockSaveLocalImage(...args),
+}));
+
+jest.mock('@/services/driveAuth', () => ({
+  driveSessionState: () => 'off',
+}));
+
+jest.mock('@/services/driveVault', () => ({
+  ensureAttachmentFromDrive: jest.fn(async () => ({ downloaded: 0, failed: 0, uri: null })),
 }));
 
 jest.mock('@/services/analysis', () => ({

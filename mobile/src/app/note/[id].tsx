@@ -82,16 +82,20 @@ import {
   speechCounts,
 } from '@/core/transcriptReview';
 import { clearNoteConflict, keepMine } from '@/core/noteSync';
+import { attachmentRefTarget } from '@/core/attachments';
 import { BUILD_STAMP, mark, useRenderCount } from '@/dev/perf';
 
 import {
   attachmentUri,
   downloadMissingImageSources,
+  localAudioSource,
   localImageUri,
   resolveAudioSource,
   resolveImageSourcesLocal,
   saveLocalImage,
 } from '@/services/attachments';
+import { ensureAttachmentFromDrive } from '@/services/driveVault';
+import { driveSessionState } from '@/services/driveAuth';
 import { setPendingInsert } from '@/services/noteInsert';
 import {
   fetchNoteAnalysis,
@@ -326,6 +330,10 @@ export default function NoteScreen() {
   const [activeAudioRef, setActiveAudioRef] = useState<string | null>(null);
   /** Trecho inicial, quando a reproducao comecou por uma linha da transcricao. */
   const [activeAudioStartMs, setActiveAudioStartMs] = useState<number | null>(null);
+  /** Audio cujo anexo esta sendo buscado agora (o card mostra o giro). */
+  const [audioLoadingRef, setAudioLoadingRef] = useState<string | null>(null);
+  /** Ultimo audio que nao pode ser aberto (o card mostra o aviso; tocar tenta de novo). */
+  const [audioFailedRef, setAudioFailedRef] = useState<string | null>(null);
 
   const activateAudio = useCallback(
     (ref: string, uri: string, startMs?: number) => {
@@ -847,14 +855,29 @@ export default function NoteScreen() {
     };
   }, [navigation, noteId]);
 
-  // Fonte de cada audio do documento: arquivo local da nota ou anexo do
-  // servidor. Resolvido so quando o usuario toca em tocar.
+  // Fonte de cada audio do documento: arquivo local da nota, cache local, o
+  // cofre do Drive (sob demanda) ou o servidor. Resolvido so quando o usuario
+  // toca em tocar; o login nao baixa audio nenhum.
   const attachmentsRef = useRef<Record<string, string>>({});
   useEffect(() => {
     attachmentsRef.current = mediaReady ? (note?.attachments ?? {}) : {};
   }, [mediaReady, note]);
-  const resolveAudio = useCallback(
-    (ref: string) => resolveAudioSource(noteId ?? '', ref, attachmentsRef.current),
+  const resolveRemoteAudio = useCallback(
+    async (ref: string): Promise<string | null> => {
+      // O cofre vem antes do servidor: quem entrou pelo Drive tem a nota la, e
+      // o servidor pode nem estar configurado.
+      if (noteId && driveSessionState() === 'connected') {
+        try {
+          const fromDrive = await ensureAttachmentFromDrive(noteId, attachmentRefTarget(ref));
+          const uri = fromDrive.uri ?? localAudioSource(noteId, ref, attachmentsRef.current);
+          if (uri) return uri;
+        } catch {
+          // Cofre vencido/indisponivel agora: a nota ainda pode ter o audio no
+          // servidor, entao a busca continua em vez de desistir.
+        }
+      }
+      return resolveAudioSource(noteId ?? '', ref, attachmentsRef.current);
+    },
     [noteId],
   );
 
@@ -915,20 +938,40 @@ export default function NoteScreen() {
 
   const playBodyAudio = useCallback(
     async (ref: string, startMs?: number) => {
-      const uri = await resolveAudio(ref);
-      if (!uri) {
+      const play = (uri: string) => {
+        if (activeAudioRef === ref) {
+          // Mesmo audio: so pula para o trecho. Trocar a fonte de novo faria o
+          // player voltar ao comeco (o "sempre reinicia" da transcricao).
+          playAt(uri, (startMs ?? 0) / 1000);
+          return;
+        }
+        activateAudio(ref, uri, startMs);
+      };
+
+      // O que ja esta no aparelho toca na hora, sem piscar carregando.
+      const local = localAudioSource(noteId ?? '', ref, attachmentsRef.current);
+      if (local) {
+        setAudioFailedRef(null);
+        play(local);
+        return;
+      }
+
+      setAudioFailedRef(null);
+      setAudioLoadingRef(ref);
+      try {
+        const uri = await resolveRemoteAudio(ref);
+        if (!uri) throw new Error('audio indisponivel');
+        play(uri);
+      } catch {
+        // A nota guarda a falha e tenta de novo no proximo toque/abertura; o
+        // anexo nao e marcado como baixado, entao a nova tentativa vale.
+        setAudioFailedRef(ref);
         Alert.alert('Áudio indisponível', 'Não foi possível abrir este áudio neste aparelho.');
-        return;
+      } finally {
+        setAudioLoadingRef((current) => (current === ref ? null : current));
       }
-      if (activeAudioRef === ref) {
-        // Mesmo audio: so pula para o trecho. Trocar a fonte de novo faria o
-        // player voltar ao comeco (o "sempre reinicia" da transcricao).
-        playAt(uri, (startMs ?? 0) / 1000);
-        return;
-      }
-      activateAudio(ref, uri, startMs);
     },
-    [activateAudio, activeAudioRef, playAt, resolveAudio],
+    [activateAudio, activeAudioRef, playAt, resolveRemoteAudio],
   );
 
   // Callback estavel: o NoteBody e memoizado e um lambda inline anularia a
@@ -1018,6 +1061,14 @@ export default function NoteScreen() {
       bodyRef.current,
       attachments,
       queueImageSource,
+      // Imagem de nota restaurada do cofre nao esta no servidor: busca no
+      // Drive, so aquele anexo, com o mesmo estado de erro do audio.
+      (id) =>
+        driveSessionState() === 'connected'
+          ? ensureAttachmentFromDrive(note.id, id)
+              .then((loaded) => loaded.uri)
+              .catch(() => null)
+          : Promise.resolve(null),
     ).catch(() => undefined);
     mark('note.images_ms', Date.now() - openedAt);
     return undefined;
@@ -2387,6 +2438,8 @@ export default function NoteScreen() {
             activeAudioRef={activeAudioRef}
             audioPlayer={player}
             audioStartMs={activeAudioStartMs}
+            audioLoadingRef={audioLoadingRef}
+            audioFailedRef={audioFailedRef}
             ownAudioRefs={ownAudioRefs}
             ownTranscript={note.transcript}
             ownSegments={note.transcriptSegments}

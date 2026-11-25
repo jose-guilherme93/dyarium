@@ -61,6 +61,23 @@ describe('NoteAudioCard', () => {
     expect(screen.queryByLabelText('Tocar')).toBeNull();
   });
 
+  it('buscando o anexo, o play vira giro e nao dispara outra busca', () => {
+    const onPlay = jest.fn();
+    render(<NoteAudioCard node={node} onPlay={onPlay} loading />);
+
+    expect(screen.getByTestId('audio-loading')).toBeTruthy();
+    expect(screen.queryByLabelText('Tocar áudio')).toBeNull();
+  });
+
+  it('anexo que falhou vira aviso e o toque tenta de novo', () => {
+    const onPlay = jest.fn();
+    render(<NoteAudioCard node={node} onPlay={onPlay} loadFailed />);
+
+    fireEvent.press(screen.getByLabelText('Tentar abrir o áudio de novo'));
+    expect(onPlay).toHaveBeenCalledTimes(1);
+    expect(screen.queryByLabelText('Tocar áudio')).toBeNull();
+  });
+
   it('tocando, o transporte e o unico controle do audio', () => {
     render(<NoteAudioCard node={node} active player={player as never} segments={segments} />);
 

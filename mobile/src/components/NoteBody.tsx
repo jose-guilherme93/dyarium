@@ -150,6 +150,8 @@ const NativeNoteBody = memo(
       activeAudioRef,
       audioPlayer,
       audioStartMs,
+      audioLoadingRef,
+      audioFailedRef,
       ownAudioRefs = EMPTY_REFS,
       ownTranscript,
       ownSegments,
@@ -890,6 +892,8 @@ const NativeNoteBody = memo(
           active={activeAudioRef === node.ref}
           player={activeAudioRef === node.ref ? audioPlayer : null}
           startMs={activeAudioRef === node.ref ? audioStartMs : null}
+          loading={audioLoadingRef === node.ref}
+          loadFailed={audioFailedRef === node.ref}
           transcribingPercent={own ? transcribingPercent : undefined}
           transcribingWait={own && transcribingWait}
           canTranscribe={own && canTranscribe}

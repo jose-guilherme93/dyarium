@@ -28,10 +28,13 @@ import {
   type CaptureKind,
 } from '@/core/transcriptCapture';
 import { activeSegmentIndex } from '@/core/transcript';
+import { attachmentRefTarget } from '@/core/attachments';
 import { useRenderCount } from '@/dev/perf';
 import { resolveAudioSource } from '@/services/attachments';
 import { releaseAudioFocus } from '@/services/audioFocus';
 import { getRecording, upsertRecording } from '@/services/db';
+import { driveSessionState } from '@/services/driveAuth';
+import { ensureAttachmentFromDrive } from '@/services/driveVault';
 import { loadServerConfig } from '@/services/secure';
 import { pushTranscript } from '@/services/transcriptSync';
 import { emitRecording } from '@/services/uploaderLoop';
@@ -331,7 +334,18 @@ export default function TranscriptScreen() {
   const resolveUri = useCallback(async () => {
     if (uriRef.current) return uriRef.current;
     if (!note || !audioRef) return null;
-    const uri = await resolveAudioSource(note.id, audioRef, note.attachments ?? {});
+    const local = await resolveAudioSource(note.id, audioRef, note.attachments ?? {});
+    let uri = local;
+    if (!uri && driveSessionState() === 'connected') {
+      // Nota restaurada do cofre: o audio nunca esteve no servidor. Uma falha
+      // do cofre nao impede a tela: o audio so nao toca.
+      try {
+        const fromDrive = await ensureAttachmentFromDrive(note.id, attachmentRefTarget(audioRef));
+        uri = fromDrive.uri;
+      } catch {
+        uri = null;
+      }
+    }
     if (uri) uriRef.current = uri;
     return uri;
   }, [audioRef, note]);

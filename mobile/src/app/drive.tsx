@@ -25,7 +25,6 @@ const STEPS: { key: DriveStage; label: string }[] = [
   { key: 'reading', label: 'Lendo cofre' },
   { key: 'decrypting', label: 'Decifrando' },
   { key: 'applying', label: 'Aplicando' },
-  { key: 'attachments', label: 'Anexos' },
   { key: 'sending', label: 'Enviando' },
 ];
 
@@ -390,13 +389,7 @@ export default function DriveScreen() {
               { color: colors.textMuted, fontFamily: designFont.monoStack },
             ]}
           >
-            {`${drive.restored.notes} notas · ${drive.restored.attachments} anexos · ${drive.restored.notebooks} cadernos`}
-          </Text>
-        ) : null}
-
-        {connected && drive.restored && drive.restored.failedAttachments > 0 ? (
-          <Text style={[styles.warningLine, { color: colors.warning }]}>
-            {`${drive.restored.failedAttachments} anexos falharam`}
+            {`${drive.restored.notes} notas · ${drive.restored.notebooks} cadernos`}
           </Text>
         ) : null}
       </ScrollView>

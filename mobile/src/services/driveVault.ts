@@ -2,13 +2,16 @@
  * O cofre do Drive visto pelo app.
  *
  * Le o formato que o web ja grava (`key.txt`, `backup.enc` v1, `state.enc` v2,
- * `manifest.json` e os `.enc` por arquivo), aplica as notas e os anexos no
+ * `manifest.json` e os `.enc` por arquivo), aplica as notas e os cadernos no
  * banco do aparelho e sobe de volta o retrato unido. Nao reescreve o layout do
  * web: o app nao e dono do `manifest.json` nem dos arquivos por nota, e sim um
  * segundo leitor e escritor do retrato.
  *
  * Regras duras:
  * - nada e apagado por ausencia;
+ * - abrir o cofre nao baixa anexo: o login so aplica os metadados e a midia de
+ *   uma nota chega sob demanda (`ensureAttachmentFromDrive`), quando o usuario
+ *   toca no audio ou abre a imagem;
  * - a uniao e por id (nota e caderno): o `updated_at` mais novo vence, ids
  *   diferentes coexistem;
  * - o v1 (`backup.enc`) continua existindo para o app antigo; o v2
@@ -19,7 +22,6 @@
  * - nenhum token, codigo ou caminho de conta aparece em erro ou log.
  */
 
-import { Directory, File, FileMode } from 'expo-file-system';
 import { getRandomBytes } from 'expo-crypto';
 
 import {
@@ -34,7 +36,10 @@ import {
   type RandomBytes,
 } from '@/core/vaultCode';
 import {
+  attachmentKind,
   parseVaultManifest,
+  restoreAttachments as listVaultAttachments,
+  type VaultFileEntry,
   type VaultManifest,
 } from '@/core/vaultManifest';
 import { planVaultRestore } from '@/core/vaultRestore';
@@ -61,7 +66,6 @@ import { DEFAULT_NOTEBOOK_ID, type Notebook } from '@/core/notebooks';
 import {
   clockNow,
   getAppFlag,
-  getRecording,
   listRecordings,
   setAppFlag,
   upsertRecording,
@@ -69,7 +73,6 @@ import {
 import { DriveClient, DriveError } from './driveClient';
 import { getDriveAccessToken } from './driveAuth';
 import { cachedAttachmentUri, saveCachedAttachment } from './attachments';
-import { sessionDirUri, sessionDirectory } from './files';
 import { listNotebooks, mergeNotebookFromDrive, restoreLocalNotebook } from './notebooks';
 
 export const VAULT_FOLDER = 'Dyarium';
@@ -89,7 +92,7 @@ const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const randomBytes: RandomBytes = (length) => getRandomBytes(length);
 
-export type VaultStage = 'reading' | 'decrypting' | 'applying' | 'attachments' | 'sending';
+export type VaultStage = 'reading' | 'decrypting' | 'applying' | 'sending';
 
 export interface VaultProgress {
   stage: VaultStage;
@@ -113,7 +116,9 @@ export interface VaultRestoreCounts {
   notes: number;
   skipped: number;
   notebooks: number;
+  /** Anexos baixados no proprio open; hoje sempre 0 (midia vem sob demanda). */
   attachments: number;
+  /** Anexos que falharam no open; hoje sempre 0 (a nota avisa por anexo). */
   failedAttachments: number;
 }
 
@@ -150,42 +155,6 @@ function notifyProgress(options: VaultOptions, progress: VaultProgress): void {
   } catch {
     // idem
   }
-}
-
-const EXTENSION_BY_TYPE: Record<string, string> = {
-  'audio/aac': 'aac',
-  'audio/adts': 'aac',
-  'audio/flac': 'flac',
-  'audio/mp4': 'm4a',
-  'audio/mpeg': 'mp3',
-  'audio/ogg': 'ogg',
-  'audio/wav': 'wav',
-  'audio/webm': 'weba',
-  'audio/x-wav': 'wav',
-  'image/avif': 'avif',
-  'image/gif': 'gif',
-  'image/heic': 'heic',
-  'image/jpeg': 'jpg',
-  'image/png': 'png',
-  'image/webp': 'webp',
-};
-
-function extensionFor(contentType: string | undefined): string {
-  const base = contentType?.split(';')[0]?.trim().toLowerCase() ?? '';
-  return EXTENSION_BY_TYPE[base] ?? 'bin';
-}
-
-function writeBytes(directory: Directory, name: string, bytes: Uint8Array): boolean {
-  const file = new File(directory, name);
-  if (file.exists) return false;
-  file.create({ intermediates: true, overwrite: true });
-  const handle = file.open(FileMode.Append);
-  try {
-    handle.writeBytes(bytes);
-  } finally {
-    handle.close();
-  }
-  return true;
 }
 
 function asVaultError(error: unknown): VaultSyncError {
@@ -374,83 +343,195 @@ async function applyPlan(
   };
 }
 
-async function restoreAttachments(
-  client: DriveClient,
-  rootId: string,
-  plan: ReturnType<typeof planVaultRestore>,
-  options: VaultOptions,
-): Promise<{ restored: number; failed: number }> {
-  if (plan.attachments.length === 0) return { restored: 0, failed: 0 };
-  notifyStage(options, 'attachments');
-  notifyProgress(options, { stage: 'attachments', done: 0, total: plan.attachments.length });
+/**
+ * Midia do cofre disponivel para uma nota. A midia nunca entra no caminho do
+ * login: `ensureAttachmentFromDrive` le a chave e o manifest e baixa somente o
+ * anexo pedido, quando o usuario toca no audio ou abre a imagem.
+ */
+interface VaultMedia {
+  vaultId: string;
+  key: Uint8Array;
+  manifest: VaultManifest;
+  /** Nome do arquivo em `attachments/` -> id no Drive. */
+  driveIds: Map<string, string>;
+}
+
+/**
+ * O manifest e claro e pequeno; guardar por alguns segundos evita baixa-lo de
+ * novo quando a nota abre varias imagens de uma vez. Curto de proposito: um
+ * anexo enviado agora pelo outro cliente precisa aparecer na proxima abertura.
+ */
+const MEDIA_TTL_MS = 15_000;
+
+let mediaCache: { at: number; value: VaultMedia } | null = null;
+let mediaPending: Promise<VaultMedia | null> | null = null;
+
+/** Esquece a chave e o manifest guardados (sair da conta, trocar de cofre). */
+export function resetVaultMediaCache(): void {
+  mediaCache = null;
+  mediaPending = null;
+}
+
+async function loadVaultMedia(client: DriveClient): Promise<VaultMedia | null> {
+  const root = await client.findChild('root', VAULT_FOLDER);
+  if (!root) return null;
+
+  const keyFile = await client.findChild(root.id, KEY_FILE);
+  // Sem `key.txt` nao ha cofre para ler: a criacao e papel do login.
+  if (!keyFile) return null;
+  const code = normalizeRecoveryCode(decoder.decode(await client.download(keyFile.id, MAX_KEY_BYTES)).trim());
+  if (!isValidRecoveryCode(code)) throw new VaultSyncError('corrupt', 'o cofre do Drive esta corrompido');
+  const key = deriveVaultKey(code);
+  const vaultId = vaultIdFromCode(code);
+  const known = await getAppFlag(VAULT_ID_FLAG);
+  if (known && known !== vaultId) {
+    throw new VaultSyncError('mismatch', 'este Drive tem outro cofre');
+  }
+
+  const manifestFile = await client.findChild(root.id, MANIFEST_FILE);
+  if (!manifestFile) return null;
+  let manifest: VaultManifest;
+  try {
+    manifest = parseVaultManifest(decoder.decode(await client.download(manifestFile.id, MAX_MANIFEST_BYTES)));
+  } catch {
+    // Manifest ilegivel nao vira erro de player: a nota avisa que o audio nao
+    // carregou e tenta de novo na proxima abertura.
+    return null;
+  }
 
   // O `id` do manifest e o id do anexo no produto, nao o id do arquivo no
   // Drive. O que liga os dois e o nome do arquivo dentro de `attachments/`.
-  const folderId = await client.ensureFolder('attachments', rootId);
-  const listed = await client.list(folderId);
+  const folder = await client.findChild(root.id, 'attachments');
+  const listed = folder ? await client.list(folder.id) : [];
   const driveIds = new Map(listed.map((file) => [file.name, file.id]));
 
-  let restored = 0;
-  let failed = 0;
+  return { vaultId, key, manifest, driveIds };
+}
 
-  for (const [index, entry] of plan.attachments.entries()) {
-    const owner = entry.entry_id;
-    const kind = entry.content_type?.startsWith('audio/') ? 'audio' : 'image';
-    try {
-      if (!owner) throw new Error('anexo sem dono');
-      if (kind === 'image' && cachedAttachmentUri(entry.id)) {
-        notifyProgress(options, {
-          stage: 'attachments',
-          done: index + 1,
-          total: plan.attachments.length,
-        });
-        continue;
-      }
-      const name = entry.path.split('/').pop() ?? '';
-      const driveId = driveIds.get(name);
-      if (!driveId) throw new Error('anexo ausente no Drive');
-      if (kind === 'audio') {
-        const localName = `drive-${entry.id}.${extensionFor(entry.content_type)}`;
-        const directory = sessionDirectory(owner);
-        if (new File(directory, localName).exists) {
-          notifyProgress(options, {
-            stage: 'attachments',
-            done: index + 1,
-            total: plan.attachments.length,
-          });
-          continue;
-        }
-        const bytes = await client.download(driveId, MAX_ATTACHMENT_BYTES);
-        writeBytes(directory, localName, bytes);
-        const note = await getRecording(owner);
-        if (note) {
-          await upsertRecording({
-            ...note,
-            dir: sessionDirUri(owner),
-            filePath: new File(directory, localName).uri,
-            fileName: localName,
-            contentType: entry.content_type,
-            sizeBytes: bytes.length,
-            status: 'completed',
-            source: note.source ?? 'share',
-          });
-        }
-      } else {
-        const bytes = await client.download(driveId, MAX_ATTACHMENT_BYTES);
-        await saveCachedAttachment(entry.id, bytes, entry.content_type ?? '');
-      }
-      restored += 1;
-    } catch (error) {
-      if (error instanceof DriveError && error.kind === 'auth') throw error;
-      failed += 1;
-    }
-    notifyProgress(options, {
-      stage: 'attachments',
-      done: index + 1,
-      total: plan.attachments.length,
+/** Uma leitura de chave/manifest por vez; os anexos de uma nota dividem a mesma. */
+async function mediaFor(client: DriveClient): Promise<VaultMedia | null> {
+  if (mediaCache && Date.now() - mediaCache.at < MEDIA_TTL_MS) return mediaCache.value;
+  if (!mediaPending) {
+    const pending = loadVaultMedia(client).then((value) => {
+      if (value) mediaCache = { at: Date.now(), value };
+      return value;
     });
+    mediaPending = pending;
+    pending
+      .catch(() => undefined)
+      .finally(() => {
+        if (mediaPending === pending) mediaPending = null;
+      });
   }
-  return { restored, failed };
+  return mediaPending;
+}
+
+/**
+ * Baixa o anexo do cofre, decifra e grava no cache local com o id do produto.
+ * O `<id>.<ext>` e exatamente o que `attachmentUri` procura, entao o player e o
+ * editor encontram o arquivo sem saber que ele veio do Drive.
+ */
+async function storeVaultAttachment(
+  client: DriveClient,
+  media: VaultMedia,
+  entry: VaultFileEntry,
+): Promise<string> {
+  const cached = cachedAttachmentUri(entry.id);
+  if (cached) return cached;
+  if (!attachmentKind(entry.content_type)) throw new Error('anexo sem tipo conhecido');
+
+  const name = entry.path.split('/').pop() ?? '';
+  const driveId = media.driveIds.get(name);
+  if (!driveId) throw new Error('anexo ausente no Drive');
+
+  const sealed = await client.download(driveId, MAX_ATTACHMENT_BYTES);
+  const plain = openBytes(sealed, media.key);
+  // O aparelho pode ter trocado de cofre entre o toque e o fim do download.
+  // Sem esta conferencia, um anexo do cofre antigo cairia no cache do novo.
+  const known = await getAppFlag(VAULT_ID_FLAG);
+  if (known && known !== media.vaultId) {
+    throw new VaultSyncError('mismatch', 'este Drive tem outro cofre');
+  }
+  await saveCachedAttachment(entry.id, plain, entry.content_type ?? '');
+  const uri = cachedAttachmentUri(entry.id);
+  if (!uri) throw new Error('anexo nao gravado no aparelho');
+  return uri;
+}
+
+export interface DriveAttachmentResult {
+  /** Anexos que ficaram disponiveis no aparelho agora. */
+  downloaded: number;
+  /** Anexos do cofre que nao puderam ser baixados (a nota mostra o aviso). */
+  failed: number;
+  /** URI local do anexo pedido, quando `attachmentId` foi informado. */
+  uri: string | null;
+}
+
+/** Um pedido identico em andamento e compartilhado; a falha nao fica guardada. */
+const attachmentLoads = new Map<string, Promise<DriveAttachmentResult>>();
+
+/**
+ * Traz do cofre o anexo de uma nota, so quando ele e preciso.
+ *
+ * Com `attachmentId`, baixa somente aquele anexo (o audio que o usuario tocou).
+ * Sem, baixa os anexos daquela nota (as imagens do corpo). Nada aqui toca no
+ * banco de notas nem na fila do cofre: abrir o app e o login nao esperam por
+ * isto, e uma falha de um anexo nao derruba os outros.
+ */
+export function ensureAttachmentFromDrive(
+  entryId: string,
+  attachmentId?: string,
+): Promise<DriveAttachmentResult> {
+  const cached = attachmentId ? cachedAttachmentUri(attachmentId) : null;
+  if (cached) return Promise.resolve({ downloaded: 0, failed: 0, uri: cached });
+  const key = `${entryId}\n${attachmentId ?? ''}`;
+  const running = attachmentLoads.get(key);
+  if (running) return running;
+  const task = loadVaultAttachments(entryId, attachmentId);
+  attachmentLoads.set(key, task);
+  void task
+    .catch(() => undefined)
+    .finally(() => {
+      if (attachmentLoads.get(key) === task) attachmentLoads.delete(key);
+    });
+  return task;
+}
+
+async function loadVaultAttachments(
+  entryId: string,
+  attachmentId?: string,
+): Promise<DriveAttachmentResult> {
+  try {
+    const client = new DriveClient((force) => getDriveAccessToken(force));
+    const media = await mediaFor(client);
+    if (!media) return { downloaded: 0, failed: 0, uri: null };
+
+    const entries = listVaultAttachments(media.manifest).filter(
+      (entry) =>
+        entry.entry_id === entryId && (attachmentId === undefined || entry.id === attachmentId),
+    );
+
+    let downloaded = 0;
+    let failed = 0;
+    let uri: string | null = null;
+    for (const entry of entries) {
+      try {
+        const saved = await storeVaultAttachment(client, media, entry);
+        downloaded += 1;
+        if (entry.id === attachmentId) uri = saved;
+      } catch (error) {
+        // Sessao vencida e do app inteiro; arquivo ausente ou corrompido e so
+        // daquele anexo.
+        if (error instanceof VaultSyncError || (error instanceof DriveError && error.kind === 'auth')) {
+          throw error;
+        }
+        failed += 1;
+      }
+    }
+    return { downloaded, failed, uri };
+  } catch (error) {
+    throw asVaultError(error);
+  }
 }
 
 function summarize(
@@ -635,6 +716,11 @@ async function applyVaultNotebooks(
 export interface VaultOpenOptions extends VaultOptions {
   /** Falso no envio automatico: le, une e grava, sem reaplicar no aparelho. */
   apply?: boolean;
+  /**
+   * Espera o envio do retrato antes de voltar. O login passa `false`: a tela
+   * abre com as notas e o envio (com o resumo novo) segue no auto-sync.
+   */
+  push?: boolean;
 }
 
 /**
@@ -653,8 +739,11 @@ function withVaultLock<T>(task: () => Promise<T>): Promise<T> {
   return run;
 }
 
+/**
+ * Aplica cadernos e notas do retrato. Anexo nenhum e baixado aqui: a midia de
+ * uma nota vem sob demanda, quando o usuario toca no audio ou abre a imagem.
+ */
 async function applyVaultNotes(
-  client: DriveClient,
   files: VaultFiles,
   options: VaultOptions,
 ): Promise<VaultRestoreCounts> {
@@ -674,26 +763,25 @@ async function applyVaultNotes(
     manifest: files.manifest,
     localNotes,
     knownNotebooks,
-    // A checagem do cache e feita no download, onde o id ja e candidato e o
-    // custo de olhar o disco e pequeno.
+    // O cache local so e consultado quando o usuario pede um anexo.
     existingAttachmentIds: new Set(),
   });
 
   const counts = await applyPlan(plan, localNotes, options);
   counts.notebooks += notebooks;
-  const attachments = await restoreAttachments(client, files.rootId, plan, options);
-  counts.attachments = attachments.restored;
-  counts.failedAttachments = attachments.failed;
   return counts;
 }
 
 /**
- * Abre o cofre: le, aplica e sobe a uniao. Tambem cria o cofre quando o Drive
- * ainda nao tem `key.txt` (primeiro login de todos).
+ * Abre o cofre: le, aplica e (por padrao) sobe a uniao. Tambem cria o cofre
+ * quando o Drive ainda nao tem `key.txt` (primeiro login de todos).
  *
  * Uma fila unica serializa abertura, envio automatico e o "sair": dois clientes
  * do mesmo aparelho lendo e gravando o mesmo retrato ao mesmo tempo poderiam
  * gravar por cima da uniao que o outro acabou de calcular.
+ *
+ * O login usa `push: false`: a tela abre assim que as notas sao aplicadas e o
+ * envio do retrato continua em segundo plano.
  */
 export async function openDriveVault(options: VaultOpenOptions = {}): Promise<VaultOpenResult> {
   return withVaultLock(() => openDriveVaultLocked(options));
@@ -706,7 +794,6 @@ async function openDriveVaultLocked(options: VaultOpenOptions): Promise<VaultOpe
     notifyProgress(options, { stage: 'reading', done: 0, total: 0 });
     const rootId = await client.ensureFolder(VAULT_FOLDER);
     const files = await readFiles(client, rootId, options);
-    const backup = await client.findChild(rootId, BACKUP_FILE);
 
     let restored: VaultRestoreCounts = {
       notes: 0,
@@ -715,20 +802,43 @@ async function openDriveVaultLocked(options: VaultOpenOptions): Promise<VaultOpe
       attachments: 0,
       failedAttachments: 0,
     };
-    if (options.apply !== false) {
-      restored = await applyVaultNotes(client, files, options);
+    const apply = options.apply !== false;
+    if (apply) {
+      restored = await applyVaultNotes(files, options);
     }
 
-    const { pushed, mergedNotes, legacyBytes, stateBytes } = await pushVault(
-      client,
-      files,
-      options,
-    );
-    const summary = summarize(
-      files.manifest,
-      mergedNotes.length,
-      legacyBytes + stateBytes || Number(backup?.size ?? 0),
-    );
+    // O cofre lido pertence a outro id? A midia guardada nao serve mais.
+    if (mediaCache && mediaCache.value.vaultId !== files.vaultId) resetVaultMediaCache();
+
+    let pushed: VaultOpenResult['pushed'] = null;
+    let notesInVault = files.notes.length;
+    let bytes = files.legacyBytes + files.stateBytes;
+
+    if (options.push === false) {
+      // Caminho do login: nada de esperar o retrato inteiro subir. O envio de
+      // fundo (auto-sync) grava o retrato e atualiza o resumo.
+      if (files.created) {
+        // A chave e a identidade do cofre e custa uma requisicao pequena; sem
+        // ela, um login novo criaria outro cofre a cada abertura.
+        await client.put(
+          rootId,
+          KEY_FILE,
+          encoder.encode(formatRecoveryCode(files.code)),
+          'text/plain',
+        );
+        files.keyWritten = true;
+      }
+      if (apply) {
+        notesInVault = Math.max(notesInVault, (await listRecordings(false)).length);
+      }
+    } else {
+      const result = await pushVault(client, files, options);
+      pushed = result.pushed;
+      notesInVault = result.mergedNotes.length;
+      bytes = result.legacyBytes + result.stateBytes;
+    }
+
+    const summary = summarize(files.manifest, notesInVault, bytes);
     await setAppFlag(VAULT_ID_FLAG, files.vaultId);
     await setAppFlag(SUMMARY_FLAG, JSON.stringify(summary));
 

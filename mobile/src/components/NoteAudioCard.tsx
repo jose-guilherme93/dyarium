@@ -52,6 +52,10 @@ export interface NoteAudioCardProps {
   player?: AudioPlayer | null;
   /** Trecho inicial quando a reproducao comecou pela transcricao. */
   startMs?: number | null;
+  /** O anexo esta sendo buscado (Drive/servidor): o play vira giro. */
+  loading?: boolean;
+  /** A ultima tentativa de abrir o audio falhou: o play vira aviso e tenta de novo. */
+  loadFailed?: boolean;
   /** Progresso (0..100) da transcricao, enquanto ela roda. */
   transcribingPercent?: number;
   /** Transcricao pedida e ainda sem andamento (ex.: feita no servidor). */
@@ -97,6 +101,8 @@ export function NoteAudioCard({
   active = false,
   player,
   startMs,
+  loading = false,
+  loadFailed = false,
   transcribingPercent,
   transcribingWait = false,
   transcribeError = false,
@@ -150,13 +156,23 @@ export function NoteAudioCard({
           >
             <Ionicons name="pulse" size={18} color={colors.textSecondary} />
           </View>
+        ) : loading ? (
+          // O anexo do Drive ainda esta chegando: o card mostra que esta indo,
+          // sem texto e sem deixar o toque sem resposta.
+          <View style={styles.audioPlay} testID="audio-loading">
+            <ActivityIndicator size="small" color={colors.textSecondary} />
+          </View>
         ) : (
-          <Press style={styles.audioPlay} onPress={onPlay} accessibilityLabel="Tocar áudio">
+          <Press
+            style={styles.audioPlay}
+            onPress={onPlay}
+            accessibilityLabel={loadFailed ? 'Tentar abrir o áudio de novo' : 'Tocar áudio'}
+          >
             <Ionicons
-              name="play"
+              name={loadFailed ? 'cloud-offline-outline' : 'play'}
               size={18}
-              color={colors.text}
-              style={{ marginLeft: 2 }}
+              color={loadFailed ? colors.danger : colors.text}
+              style={loadFailed ? undefined : { marginLeft: 2 }}
             />
           </Press>
         )}

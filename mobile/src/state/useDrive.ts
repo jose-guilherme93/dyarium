@@ -24,7 +24,7 @@ import {
   type GoogleProfile,
 } from '@/services/driveAuth';
 import { driveConfigured } from '@/services/driveConfig';
-import { onDriveAutoSync } from '@/services/driveAutoSync';
+import { onDriveAutoSync, scheduleDriveSync } from '@/services/driveAutoSync';
 import { DriveLeaveError, leaveDriveAccount } from '@/services/driveLeave';
 import { useLibrary } from '@/state/LibraryContext';
 
@@ -170,6 +170,9 @@ export function useDrive(): DriveValue {
       try {
         if (login) await connectDrive();
         const opened = await openDriveVault({
+          // O login nao espera anexo nem o retrato subir: le, aplica os
+          // metadados e volta. O envio automatico faz o resto em segundo plano.
+          ...(login ? { push: false } : {}),
           onStage: (next) => {
             if (alive.current) setStage(next);
           },
@@ -183,6 +186,11 @@ export function useDrive(): DriveValue {
           setCreated(opened.created);
           setStatus(driveSessionState());
           setProfile(driveProfile());
+        }
+        if (login) {
+          // Depois do apply a fila do cofre esta livre: o auto-sync envia o
+          // retrato e devolve o resumo atualizado a esta tela.
+          scheduleDriveSync(false, 0);
         }
         await refresh();
         await refreshNotebooks();

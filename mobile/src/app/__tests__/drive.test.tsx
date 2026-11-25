@@ -109,7 +109,6 @@ describe('tela do Google Drive', () => {
     expect(screen.getByText('Lendo cofre')).toBeTruthy();
     expect(screen.getByText('Decifrando')).toBeTruthy();
     expect(screen.getByText('Aplicando')).toBeTruthy();
-    expect(screen.getByText('Anexos')).toBeTruthy();
     expect(screen.getByText('Enviando')).toBeTruthy();
     expect(screen.getByText('84 / 128')).toBeTruthy();
   });
@@ -161,12 +160,13 @@ describe('tela do Google Drive', () => {
     setDrive({
       status: 'connected',
       summary: { notes: 128, attachments: 312, bytes: 1024, at: new Date().toISOString() },
-      restored: { notes: 128, skipped: 0, notebooks: 3, attachments: 312, failedAttachments: 1 },
+      restored: { notes: 128, skipped: 0, notebooks: 3, attachments: 0, failedAttachments: 0 },
     });
     await renderDrive();
 
-    expect(screen.getByText('128 notas · 312 anexos · 3 cadernos')).toBeTruthy();
-    expect(screen.getByText('1 anexos falharam')).toBeTruthy();
+    expect(screen.getByText('128 notas · 3 cadernos')).toBeTruthy();
+    // O login nao baixa anexo: a tela nao promete um numero de anexos baixados.
+    expect(screen.queryByText(/anexos$/)).toBeNull();
   });
 
   it('nao mostra codigo de recuperacao nem senha', async () => {

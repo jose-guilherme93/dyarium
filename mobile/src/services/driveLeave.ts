@@ -9,7 +9,7 @@
 
 import { listRecordings } from './db';
 import { driveSessionState, disconnectDrive, loadDriveSession, type DriveSessionState } from './driveAuth';
-import { ensureVaultBackedUp } from './driveVault';
+import { ensureVaultBackedUp, resetVaultMediaCache } from './driveVault';
 import { pauseDriveAutoSync, resumeDriveAutoSync } from './driveAutoSync';
 import { listNotebooks } from './notebooks';
 import { wipeLocalAccountData } from './localWipe';
@@ -66,6 +66,9 @@ const defaults: DriveLeaveDeps = {
 export async function leaveDriveAccount(overrides: Partial<DriveLeaveDeps> = {}): Promise<void> {
   const deps: DriveLeaveDeps = { ...defaults, ...overrides };
   await deps.pause();
+  // A midia de outra conta nao pode sobreviver ao "sair": o proximo login pode
+  // ser outro cofre.
+  resetVaultMediaCache();
   try {
     await deps.loadSession();
     const state = deps.sessionState();

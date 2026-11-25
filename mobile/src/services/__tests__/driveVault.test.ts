@@ -12,12 +12,17 @@ const mockStore = {
   files: new Map<string, Uint8Array>(),
   driveFiles: new Map<string, { name: string; bytes: Uint8Array }>(),
   puts: [] as { name: string; bytes: Uint8Array }[],
+  downloads: [] as string[],
+  lists: [] as string[],
 };
 
 const mockLocal = {
   notes: new Map<string, Recording>(),
   notebooks: new Map<string, { id: string; name: string; color: string; isDefault: boolean; kind?: string; createdAt: string; updatedAt: string }>(),
 };
+
+const mockAttachmentCache = new Map<string, string>();
+const mockSavedAttachments: { id: string; bytes: Uint8Array; type: string }[] = [];
 
 const mockFlags = new Map<string, string>();
 const mockCreatedNotebooks: { id: string; name: string; kind?: string }[] = [];
@@ -33,14 +38,22 @@ jest.mock('../driveClient', () => {
       return name === 'attachments' ? 'attachments-folder' : 'root';
     }
     async list(folder: string) {
+      mockStore.lists.push(folder);
       if (folder !== 'attachments-folder') return [];
       return [...mockStore.driveFiles.entries()].map(([id, file]) => ({ id, name: file.name }));
     }
     async findChild(_root: string, name: string) {
+      if (name === 'Dyarium') return { id: 'root', name, size: '0' };
+      if (name === 'attachments') {
+        return mockStore.driveFiles.size > 0
+          ? { id: 'attachments-folder', name, size: '0' }
+          : undefined;
+      }
       const bytes = mockStore.files.get(name);
       return bytes ? { id: name, name, size: String(bytes.length) } : undefined;
     }
     async download(id: string): Promise<Uint8Array> {
+      mockStore.downloads.push(id);
       const bytes = mockStore.files.get(id) ?? mockStore.driveFiles.get(id)?.bytes;
       if (!bytes) throw new DriveError('Drive 404');
       return bytes;
@@ -111,8 +124,11 @@ jest.mock('../files', () => ({
 }));
 
 jest.mock('../attachments', () => ({
-  cachedAttachmentUri: jest.fn(() => null),
-  saveCachedAttachment: jest.fn(async () => undefined),
+  cachedAttachmentUri: jest.fn((id: string) => mockAttachmentCache.get(id) ?? null),
+  saveCachedAttachment: jest.fn(async (id: string, bytes: Uint8Array, type: string) => {
+    mockSavedAttachments.push({ id, bytes, type });
+    mockAttachmentCache.set(id, `file:///cache/${id}`);
+  }),
 }));
 
 jest.mock('expo-file-system', () => ({
@@ -133,7 +149,13 @@ jest.mock('expo-crypto', () => ({
   getRandomBytes: (length: number) => new Uint8Array(length).fill(7),
 }));
 
-import { openDriveVault, readVaultSummary, VaultSyncError } from '../driveVault';
+import {
+  ensureAttachmentFromDrive,
+  openDriveVault,
+  readVaultSummary,
+  resetVaultMediaCache,
+  VaultSyncError,
+} from '../driveVault';
 import { parseVaultSnapshot } from '@/core/vaultSnapshot';
 
 const encoder = new TextEncoder();
@@ -257,11 +279,16 @@ beforeEach(() => {
   mockStore.files.clear();
   mockStore.driveFiles.clear();
   mockStore.puts.length = 0;
+  mockStore.downloads.length = 0;
+  mockStore.lists.length = 0;
   mockLocal.notes.clear();
   mockLocal.notebooks.clear();
+  mockAttachmentCache.clear();
+  mockSavedAttachments.length = 0;
   mockFlags.clear();
   mockCreatedNotebooks.length = 0;
   mockAppliedNotebooks.length = 0;
+  resetVaultMediaCache();
 });
 
 describe('abrir o cofre do Drive', () => {
@@ -402,8 +429,213 @@ describe('abrir o cofre do Drive', () => {
   });
 });
 
+/** Anexo selado no Drive, do jeito que o web grava (`<id>.<ext>.enc`). */
+function putAttachment(
+  id: string,
+  entryId: string,
+  contentType: string,
+  plain: Uint8Array,
+): Record<string, unknown> {
+  const extension =
+    contentType === 'audio/aac' ? 'aac' : contentType === 'audio/mp4' ? 'm4a' : 'jpg';
+  const sealed = sealBytes(plain, key, () => new Uint8Array(12).fill(9));
+  mockStore.driveFiles.set(`drive-${id}`, {
+    name: `${id}.${extension}.enc`,
+    bytes: sealed,
+  });
+  return {
+    path: `attachments/${id}.${extension}.enc`,
+    id,
+    kind: 'attachment',
+    entry_id: entryId,
+    content_type: contentType,
+    sha256: 'a'.repeat(64),
+    size: sealed.length,
+    updated_at: '2026-11-22T00:00:00.000Z',
+  };
+}
 
-  it('baixa anexo pelo nome no Drive, nao pelo id do produto', async () => {
+describe('anexos sob demanda', () => {
+  it('abre 400 notas e 400 anexos sem baixar anexo e sem esperar o envio', async () => {
+    const notes = Array.from({ length: 400 }, (_, index) => ({
+      id: `n${index + 1}`,
+      title: `nota ${index + 1}`,
+      recordedAt: '2026-11-21T00:00:00.000Z',
+      updatedAt: '2026-11-22T00:00:00.000Z',
+    }));
+    const attachments = notes.map((note, index) =>
+      putAttachment(`att_${index + 1}`, note.id, 'audio/aac', new Uint8Array([1, 2, 3])),
+    );
+    putVault(notes, {
+      version: 4,
+      updated_at: '2026-11-22T00:00:00.000Z',
+      files: attachments,
+    });
+
+    const result = await openDriveVault({ push: false });
+
+    // A lista abriu inteira, so com os metadados.
+    expect(result.restored.notes).toBe(400);
+    expect(result.restored.attachments).toBe(0);
+    expect(mockLocal.notes.size).toBe(400);
+    expect(await readVaultSummary()).toMatchObject({ notes: 400, attachments: 400 });
+
+    // Anexo nenhum foi tocado no caminho do login, e o retrato nao subiu.
+    expect(mockStore.downloads.some((id) => id.startsWith('drive-'))).toBe(false);
+    expect(mockStore.lists).toEqual([]);
+    expect(mockStore.puts).toHaveLength(0);
+    expect(result.pushed).toBeNull();
+
+    // Abrir uma nota baixa um anexo, nao os 400.
+    const opened = await ensureAttachmentFromDrive('n7', 'att_7');
+    expect(opened).toMatchObject({ downloaded: 1, failed: 0 });
+    expect(opened.uri).toBe('file:///cache/att_7');
+    expect(mockStore.downloads.filter((id) => id.startsWith('drive-'))).toEqual(['drive-att_7']);
+    expect(mockSavedAttachments.map((saved) => saved.id)).toEqual(['att_7']);
+    expect([...mockSavedAttachments[0].bytes]).toEqual([1, 2, 3]);
+  });
+
+  it('login de cofre novo grava a chave e deixa o retrato para o envio de fundo', async () => {
+    mockLocal.notes.set('n1', recording({ title: 'primeira' }));
+
+    const result = await openDriveVault({ push: false });
+
+    expect(result.created).toBe(true);
+    expect(result.pushed).toBeNull();
+    expect(mockStore.puts.map((put) => put.name)).toEqual(['key.txt']);
+  });
+
+  it('sem key.txt nao inventa anexo nem cria cofre', async () => {
+    const result = await ensureAttachmentFromDrive('n1', 'att_1');
+
+    expect(result).toEqual({ downloaded: 0, failed: 0, uri: null });
+    expect(mockStore.puts).toHaveLength(0);
+  });
+
+  it('falha de um anexo nao derruba os outros e a nova tentativa vale', async () => {
+    putVault(
+      [
+        {
+          id: 'n1',
+          title: 'com audio e foto',
+          recordedAt: '2026-11-21T00:00:00.000Z',
+          updatedAt: '2026-11-22T00:00:00.000Z',
+        },
+      ],
+      {
+        version: 4,
+        updated_at: '2026-11-22T00:00:00.000Z',
+        files: [
+          putAttachment('att_audio', 'n1', 'audio/aac', new Uint8Array([1, 2, 3])),
+        ],
+      },
+    );
+    // A foto esta no manifest mas o arquivo sumiu do Drive.
+    const manifest = JSON.parse(
+      decoder.decode(mockStore.files.get('manifest.json')!),
+    ) as { files: Record<string, unknown>[] };
+    manifest.files.push({
+      path: 'attachments/att_img.jpg.enc',
+      id: 'att_img',
+      kind: 'attachment',
+      entry_id: 'n1',
+      content_type: 'image/jpeg',
+      sha256: 'b'.repeat(64),
+      size: 40,
+      updated_at: '2026-11-22T00:00:00.000Z',
+    });
+    mockStore.files.set('manifest.json', encoder.encode(JSON.stringify(manifest)));
+
+    const first = await ensureAttachmentFromDrive('n1');
+    expect(first).toMatchObject({ downloaded: 1, failed: 1 });
+    expect(mockSavedAttachments.map((saved) => saved.id)).toEqual(['att_audio']);
+
+    // O outro cliente subiu a foto: a nova tentativa acha, sem cache negativo.
+    putAttachment('att_img', 'n1', 'image/jpeg', new Uint8Array([5, 6, 7]));
+    resetVaultMediaCache();
+    const retry = await ensureAttachmentFromDrive('n1', 'att_img');
+    expect(retry).toMatchObject({ downloaded: 1, failed: 0 });
+    expect(retry.uri).toBe('file:///cache/att_img');
+  });
+
+  it('pedir um anexo especifico nao baixa os outros da nota', async () => {
+    putVault(
+      [
+        {
+          id: 'n1',
+          title: 'com audio e foto',
+          recordedAt: '2026-11-21T00:00:00.000Z',
+          updatedAt: '2026-11-22T00:00:00.000Z',
+        },
+      ],
+      {
+        version: 4,
+        updated_at: '2026-11-22T00:00:00.000Z',
+        files: [
+          putAttachment('att_audio', 'n1', 'audio/aac', new Uint8Array([1, 2, 3])),
+          putAttachment('att_img', 'n1', 'image/jpeg', new Uint8Array([5, 6, 7])),
+        ],
+      },
+    );
+
+    const result = await ensureAttachmentFromDrive('n1', 'att_audio');
+
+    expect(result).toMatchObject({ downloaded: 1, failed: 0 });
+    expect(mockStore.downloads.filter((id) => id.startsWith('drive-'))).toEqual(['drive-att_audio']);
+  });
+
+  it('anexo do cache nao e baixado de novo', async () => {
+    putVault(
+      [
+        {
+          id: 'n1',
+          title: 'com audio',
+          recordedAt: '2026-11-21T00:00:00.000Z',
+          updatedAt: '2026-11-22T00:00:00.000Z',
+        },
+      ],
+      {
+        version: 4,
+        updated_at: '2026-11-22T00:00:00.000Z',
+        files: [putAttachment('att_audio', 'n1', 'audio/aac', new Uint8Array([1, 2, 3]))],
+      },
+    );
+    mockAttachmentCache.set('att_audio', 'file:///cache/att_audio');
+
+    const result = await ensureAttachmentFromDrive('n1', 'att_audio');
+
+    expect(result).toEqual({ downloaded: 0, failed: 0, uri: 'file:///cache/att_audio' });
+    expect(mockStore.downloads).toEqual([]);
+  });
+
+  it('le chave e manifest uma vez so para os anexos seguidos', async () => {
+    putVault(
+      [
+        {
+          id: 'n1',
+          title: 'com dois audios',
+          recordedAt: '2026-11-21T00:00:00.000Z',
+          updatedAt: '2026-11-22T00:00:00.000Z',
+        },
+      ],
+      {
+        version: 4,
+        updated_at: '2026-11-22T00:00:00.000Z',
+        files: [
+          putAttachment('att_a', 'n1', 'audio/aac', new Uint8Array([1, 2, 3])),
+          putAttachment('att_b', 'n1', 'audio/aac', new Uint8Array([4, 5, 6])),
+        ],
+      },
+    );
+
+    await ensureAttachmentFromDrive('n1', 'att_a');
+    await ensureAttachmentFromDrive('n1', 'att_b');
+
+    expect(mockStore.downloads.filter((id) => id === 'key.txt')).toHaveLength(1);
+    expect(mockStore.downloads.filter((id) => id === 'manifest.json')).toHaveLength(1);
+  });
+
+  it('anexo corrompido vira falha isolada, sem derrubar a abertura', async () => {
     putVault(
       [
         {
@@ -418,44 +650,29 @@ describe('abrir o cofre do Drive', () => {
         updated_at: '2026-11-22T00:00:00.000Z',
         files: [
           {
-            path: 'attachments/att_audio.aac.enc',
-            id: 'att_audio',
+            path: 'attachments/att_bad.aac.enc',
+            id: 'att_bad',
             kind: 'attachment',
             entry_id: 'n1',
             content_type: 'audio/aac',
-            sha256: 'a'.repeat(64),
-            size: 4,
-            updated_at: '2026-11-22T00:00:00.000Z',
-          },
-          {
-            path: 'attachments/att_img.jpg.enc',
-            id: 'att_img',
-            kind: 'attachment',
-            entry_id: 'n1',
-            content_type: 'image/jpeg',
-            sha256: 'b'.repeat(64),
-            size: 4,
+            sha256: 'c'.repeat(64),
+            size: 30,
             updated_at: '2026-11-22T00:00:00.000Z',
           },
         ],
       },
     );
-    // O id do produto nao e o id do arquivo no Drive; o nome e o que liga.
-    mockStore.driveFiles.set('drive-id-audio', {
-      name: 'att_audio.aac.enc',
+    mockStore.driveFiles.set('drive-att_bad', {
+      name: 'att_bad.aac.enc',
       bytes: new Uint8Array([1, 2, 3, 4]),
     });
-    mockStore.driveFiles.set('drive-id-img', {
-      name: 'att_img.jpg.enc',
-      bytes: new Uint8Array([5, 6, 7, 8]),
-    });
 
-    const result = await openDriveVault();
+    const result = await ensureAttachmentFromDrive('n1', 'att_bad');
 
-    expect(result.restored.attachments).toBe(2);
-    expect(result.restored.failedAttachments).toBe(0);
-    expect(mockLocal.notes.get('n1')?.status).toBe('completed');
+    expect(result).toEqual({ downloaded: 0, failed: 1, uri: null });
+    expect(mockSavedAttachments).toHaveLength(0);
   });
+});
 
 describe('retrato v2 no Drive', () => {
   it('une A e B locais com B mais novo e C do Drive, sem duplicar', async () => {

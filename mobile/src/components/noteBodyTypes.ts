@@ -61,6 +61,10 @@ export interface NoteBodyProps {
   audioPlayer?: AudioPlayer | null;
   /** Trecho inicial do audio ativo, quando a reproducao veio da transcricao. */
   audioStartMs?: number | null;
+  /** Referencia de um audio cujo anexo esta sendo buscado agora (giro no card). */
+  audioLoadingRef?: string | null;
+  /** Referencia de um audio que falhou ao abrir (o card mostra o aviso). */
+  audioFailedRef?: string | null;
   /**
    * Referencias do audio da propria nota (pode aparecer como `local:` ou como
    * `attachment:`). So ele tem transcricao completa e recebe o progresso.

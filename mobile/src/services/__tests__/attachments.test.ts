@@ -138,4 +138,15 @@ describe('attachments', () => {
       }),
     ).resolves.toBe('file:///docs/nota/audio_1.aac');
   });
+
+  it('decide a fonte local do audio sem tocar na rede', () => {
+    mockFiles.add('file:///cache/attachments/at_audio.mp3');
+
+    expect(attachments.localAudioSource('nota', 'attachment:at_audio')).toBe(
+      'file:///cache/attachments/at_audio.mp3',
+    );
+    // Sem arquivo no aparelho o player sabe que precisa buscar o anexo.
+    expect(attachments.localAudioSource('nota', 'attachment:at_ausente')).toBeNull();
+    expect(mockList).not.toHaveBeenCalled();
+  });
 });
