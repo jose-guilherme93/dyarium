@@ -44,6 +44,14 @@ module.exports = () => {
     googleWebClientId: (process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ?? '').trim(),
     sentryDsn: (process.env.EXPO_PUBLIC_SENTRY_DSN ?? '').trim(),
   };
+  // O build de desenvolvimento se identifica na gaveta do aparelho: o nome leva
+  // o sufixo para nao ser confundido com o app publicado. So o development
+  // client (perfil `development`/`emulator`) recebe.
+  const perfil = process.env.EAS_BUILD_PROFILE ?? '';
+  if (perfil === 'development' || perfil === 'emulator' || process.env.DYARIUM_DEV === '1') {
+    expo.name = 'dyarium - dev';
+  }
+
   if (process.env.DYARIUM_EMULATOR !== '1') return expo;
 
   const buildProperties = expo.plugins.find(
