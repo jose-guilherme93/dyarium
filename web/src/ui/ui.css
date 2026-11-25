@@ -232,3 +232,10 @@
   background: var(--dy-primary);
   opacity: var(--dy-wave-played);
 }
+
+/* Marca em desenvolvimento: o nome ganha o sufixo "dev" e a cor `dev` da
+   paleta. So o build de desenvolvimento aplica a classe. A classe aparece
+   duas vezes para vencer a cor que cada porta define no proprio titulo. */
+.dy-dev.dy-dev {
+  color: var(--dy-dev);
+}

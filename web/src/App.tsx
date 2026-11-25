@@ -12,6 +12,7 @@ import {
   verifyToken,
 } from "./api";
 import { useEvents } from "./useEvents";
+import { BRAND, brandClass } from "./lib/brand";
 
 /**
  * O laboratorio (inferencia no navegador) carrega o onnxruntime, cujo wasm
@@ -1518,8 +1519,8 @@ export function App() {
       {navOpen && (
         <aside className="sidebar" aria-label="Navegação principal">
             <div className="sidebar-brand-row">
-              <div className="brand">
-                dyarium
+              <div className={brandClass("brand")}>
+                {BRAND.name}
                 <small>tinta e papel</small>
               </div>
               <button

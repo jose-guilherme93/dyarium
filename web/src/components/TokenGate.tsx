@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { BRAND, brandClass } from "../lib/brand";
 
 interface TokenGateProps {
   onSubmit: (token: string) => void;
@@ -13,7 +14,7 @@ export function TokenGate({ onSubmit, error, checking = false }: TokenGateProps)
   return (
     <div className="token-gate">
       <div className="token-card">
-        <h1>dyarium</h1>
+        <h1 className={brandClass()}>{BRAND.name}</h1>
         <p>Um diário que fica no seu servidor. Informe o token para entrar.</p>
         <form
           onSubmit={(event) => {

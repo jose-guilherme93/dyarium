@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { Button } from "../ui";
 import type { GoogleProfile } from "../local/account";
 import { accountInitials } from "./AccountSheet";
+import { BRAND, brandClass } from "../lib/brand";
 import { ExitIcon, UserIcon } from "./icons";
 import "./AccountGate.css";
 
@@ -60,7 +61,7 @@ export function AccountGate({
       }}
     >
       <header className="account-gate-top">
-        <h1 className="account-gate-brand dy-title">dyarium</h1>
+        <h1 className={brandClass("account-gate-brand dy-title")}>{BRAND.name}</h1>
         <span className="account-gate-brand-note dy-label">tinta e papel</span>
       </header>
 

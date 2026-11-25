@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { preloadGoogle } from "../local/google";
+import { BRAND, brandClass } from "../lib/brand";
 import { pickFolder, supportsFolder, type FolderLike } from "../local/folder";
 
 interface FirstRunProps {
@@ -153,7 +154,7 @@ export function FirstRun({
   return (
     <main className="first-run-page">
       <section className="first-run-pitch">
-        <h1 className="first-run-title">dyarium</h1>
+        <h1 className={brandClass("first-run-title")}>{BRAND.name}</h1>
         <p className="first-run-position">
           Notas e áudios que viram texto, análise e grafo, no seu Drive.
         </p>
