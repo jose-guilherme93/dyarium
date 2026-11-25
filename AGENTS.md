@@ -7,8 +7,27 @@ O projeto tem tres superficies: o binario Go (`cmd/`, `internal/`), o dashboard
 (`web/`) e o app de captura (`mobile/`). A documentacao de referencia fica em
 `docs/`.
 
+## Arquitetura de clientes (regra dura)
+
+- **O app (`mobile/`) e o dashboard (`web/`) sao dois clientes independentes do
+  mesmo produto.** Nao existe "servidor" como superficie de usuario: o binario Go
+  e o backend que ambos consomem, mas o usuario pode usar so o app, so o web, ou
+  os dois. Nunca trate o "servidor" como dono da verdade nem como superficie.
+- Cada cliente tem seu proprio banco (SQLite no app, IndexedDB/SQLite no web via
+  sync) e eles **sincronizam quando conectados**. Tudo que um faz, o outro faz:
+  analise local existe nos dois, curadoria de entidades existe nos dois.
+- Uma nota que existe so no app passa a existir no web ao conectar (e vice-versa),
+  porque o usuario pode usar um cliente por meses sem abrir o outro.
+- Qualquer funcionalidade nova (memoria de correcoes de entidades, preferencias,
+  etc.) deve existir em **ambos** os clientes e sincronizar pelo mesmo mecanismo
+  das entidades/aliases/owner_aliases. Nao criar fonte unica no backend.
+
 ## Como trabalhar
 
+- **Mudanca visual ou funcionalidade nova comeca por prototipo navegavel.** Antes de
+  tocar no editor, no layout ou na API, monte um HTML com dados reais, abra no
+  navegador e deixe o mantenedor julgar usabilidade e aparencia. Codigo vem depois
+  do "sim" — o prototipo e descartavel e nao usa o bundle de producao.
 - **Trabalhe direto no checkout e na branch `develop`**, sem worktree. Um
   worktree por tarefa so quando o mantenedor pedir explicitamente.
 - Antes de mudar algo, leia `docs/` e os arquivos envolvidos. Trate mudancas nao
@@ -18,6 +37,22 @@ O projeto tem tres superficies: o binario Go (`cmd/`, `internal/`), o dashboard
 - Nunca use `git add -A`/`git add .` as cegas; revise o que vai entrar.
 - Nao edite codigo gerado (`web/dist/`, `web/node_modules/`, migrations ja
   aplicadas, `models/`). Migrations sao append-only.
+
+## Entrega: nada sai sem ver rodando no aparelho
+
+- **O emulador esta em `hp240-debian` (ssh, usuario `joseti`) e fica a disposicao.**
+  Antes de dizer que uma mudanca do app esta pronta, conecte nele e rode a tela
+  la; "sem aparelho por perto" nao vale enquanto esse emulador estiver no ar.
+- **Nenhuma mudanca esta pronta sem ter sido vista rodando no aparelho** (ou no
+  emulador). Teste de unidade nao mostra tela quebrada, gesto travado nem
+  layout errado. Se o aparelho nao estiver acessivel, diga que a mudanca esta
+  sem verificacao no aparelho; nunca apresente como pronta.
+- Comportamento novo vem com **teste novo**; bug corrigido vem com teste que
+  falhava antes. Sem isso a mudanca nao esta pronta.
+- Performance se mede, nao se supoe: antes e depois, no aparelho, **mexendo no
+  que ficou lento** (pan, pinca, abrir bola), nao so abrindo a tela. Sem numero
+  de quadro, nao ha prova.
+- Nunca entregue "deve funcionar". Diga o que foi rodado, onde e o resultado.
 
 ## Interface: mostre, nao escreva
 
@@ -32,6 +67,13 @@ Regra de UX do produto, nao sugestao. Vale para o app, o dashboard e as notifica
 - Notificacao tem no maximo duas linhas curtas: o numero na frente, o nome da nota atras.
 - A aparencia distingue os estados de verdade: preenchido = feito, contorno = nao feito,
   aviso = ficou de fora. "Nao mudou nada" e "nao rodou" nunca podem parecer a mesma coisa.
+- Cor, tipo, espaco, raio e foco vem de `docs/design/tokens.json`, nunca de valor
+  solto no componente. A galeria gerada em `docs/design/index.html` e o contrato
+  visual; `docs/design/README.md` explica a geracao e a migracao.
+- **Paridade antes de aparencia.** A tela migrada mostra tudo que a tela atual
+  mostra: data, hora, pausa, filtros, menus e atalhos continuam. Extraia essa
+  lista do codigo antes do prototipo e use-a como roteiro do teste depois. O
+  sistema completo esta em `docs/design/system.md`.
 
 ## Versoes e releases
 
@@ -131,7 +173,8 @@ estabilidade: testes podem demorar.
 
 ```
 make test        # go test + testes do web (serializados, com tetos de RAM)
-make lint        # go vet, gofmt e eslint
+make lint        # go vet, gofmt, eslint e drift dos tokens gerados
+make tokens      # regenera tokens.css, design.ts e a galeria de docs/design
 make dev         # containers de desenvolvimento (derube antes de testar)
 make build       # imagem de producao (nao rode junto com testes)
 make mobile-dev  # app Expo em desenvolvimento (development build)

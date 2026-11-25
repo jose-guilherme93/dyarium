@@ -42,7 +42,7 @@ func noteJSON(n store.Note) map[string]any {
 func (s *Server) handleListNotes(w http.ResponseWriter, r *http.Request) {
 	notes, err := s.deps.Store.ListNotes(r.Context(), r.PathValue("id"))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	out := make([]map[string]any, 0, len(notes))
@@ -88,20 +88,20 @@ func (s *Server) handleCreateNote(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
-			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			s.writeInternal(w, r, "internal", err)
 			return
 		}
 		n.ID = clientID
 	}
 	if err := s.deps.Store.CreateNote(r.Context(), n); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	// Relê para devolver a versão do corpo gravada (o cliente precisa dela para
 	// a próxima gravação não virar conflito consigo mesmo).
 	created, err := s.deps.Store.GetNote(r.Context(), n.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, noteJSON(created))
@@ -114,7 +114,7 @@ func (s *Server) handleGetNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, noteJSON(n))
@@ -138,7 +138,7 @@ func (s *Server) handleUpdateNote(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			s.writeInternal(w, r, "internal", err)
 			return
 		}
 		if conflict {
@@ -166,7 +166,7 @@ func (s *Server) handleUpdateNote(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeleteNote(w http.ResponseWriter, r *http.Request) {
 	if err := s.deps.Store.DeleteNote(r.Context(), r.PathValue("id")); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -191,7 +191,7 @@ func (s *Server) handleListRevisions(w http.ResponseWriter, r *http.Request) {
 	}
 	revs, more, err := s.deps.Store.ListRevisionsPage(r.Context(), r.PathValue("id"), offset, limit)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	out := make([]map[string]any, 0, len(revs))

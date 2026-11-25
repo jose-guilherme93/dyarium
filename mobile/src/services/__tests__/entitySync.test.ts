@@ -6,6 +6,11 @@ const mockRename = jest.fn();
 const mockSetIcon = jest.fn();
 const mockClaimSelf = jest.fn();
 const mockCatalog = jest.fn();
+const mockSetLabel = jest.fn();
+const mockChangeKind = jest.fn();
+const mockDeleteEntity = jest.fn();
+const mockAddRejection = jest.fn();
+const mockRemoveRejection = jest.fn();
 
 jest.mock('@/core/api', () => {
   const actual = jest.requireActual('@/core/api');
@@ -16,6 +21,11 @@ jest.mock('@/core/api', () => {
       setEntityIcon: (...args: unknown[]) => mockSetIcon(...args),
       claimSelf: (...args: unknown[]) => mockClaimSelf(...args),
       getEntityCatalog: () => mockCatalog(),
+      setEntityLabel: (...args: unknown[]) => mockSetLabel(...args),
+      changeEntityKind: (...args: unknown[]) => mockChangeKind(...args),
+      deleteEntity: (...args: unknown[]) => mockDeleteEntity(...args),
+      addEntityRejection: (...args: unknown[]) => mockAddRejection(...args),
+      removeEntityRejection: (...args: unknown[]) => mockRemoveRejection(...args),
     })),
   };
 });
@@ -35,7 +45,8 @@ jest.mock('../db', () => ({
   listEntityOutbox: (limit: number) => mockOutbox(limit),
   deleteEntityOutbox: (id: string) => mockDeleteOutbox(id),
   markEntityOutboxAttempt: (id: string, error: string) => mockMarkAttempt(id, error),
-  applyRemoteEntities: (remote: unknown, pending: unknown) => mockApplyEntities(remote, pending),
+  applyRemoteEntities: (remote: unknown, pending: unknown, rejections: unknown) =>
+    mockApplyEntities(remote, pending, rejections),
   applyRemoteOwnerAliases: (names: unknown) => mockApplyOwnerAliases(names),
 }));
 
@@ -65,6 +76,7 @@ describe('syncEntities', () => {
           id: 'server-1',
           kind: 'person',
           name: 'Mariana',
+          label: 'gata',
           icon: 'star',
           updated_at: '2026-10-20T10:00:00Z',
           aliases: ['Maria'],
@@ -75,6 +87,7 @@ describe('syncEntities', () => {
         },
       ],
       ownerAliases: ['João'],
+      rejections: [],
     });
     mockDeleteOutbox.mockResolvedValue(undefined);
     mockMarkAttempt.mockResolvedValue(undefined);
@@ -84,6 +97,11 @@ describe('syncEntities', () => {
     mockRename.mockResolvedValue({});
     mockSetIcon.mockResolvedValue({});
     mockClaimSelf.mockResolvedValue({ status: 'ok', owner: 'João' });
+    mockSetLabel.mockResolvedValue({});
+    mockChangeKind.mockResolvedValue({});
+    mockDeleteEntity.mockResolvedValue({ status: 'ok' });
+    mockAddRejection.mockResolvedValue({ status: 'ok' });
+    mockRemoveRejection.mockResolvedValue(undefined);
   });
 
   it('empurra a outbox em ordem e aplica o catálogo', async () => {
@@ -107,13 +125,37 @@ describe('syncEntities', () => {
           id: 'server-1',
           kind: 'person',
           name: 'Mariana',
+          label: 'gata',
           icon: 'star',
           updatedAt: '2026-10-20T10:00:00Z',
           aliases: ['Maria'],
         },
       ],
       new Set(),
+      [],
     );
+  });
+
+  it('empurra rótulo, tipo, exclusão e rejeição da outbox', async () => {
+    mockOutbox
+      .mockResolvedValueOnce([op({ id: 'op1', operation: 'label', label: 'escola' })])
+      .mockResolvedValueOnce([
+        op({ id: 'op2', operation: 'kind', kind: 'place', nextKind: 'theme' }),
+      ])
+      .mockResolvedValueOnce([op({ id: 'op3', operation: 'delete', kind: 'decision' })])
+      .mockResolvedValueOnce([op({ id: 'op4', operation: 'reject', kind: 'theme' })])
+      .mockResolvedValueOnce([op({ id: 'op5', operation: 'unreject', kind: 'decision' })])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    await syncEntities();
+
+    expect(mockSetLabel).toHaveBeenCalledWith('person', 'Maria', 'escola');
+    expect(mockChangeKind).toHaveBeenCalledWith('place', 'Maria', 'theme');
+    expect(mockDeleteEntity).toHaveBeenCalledWith('decision', 'Maria');
+    expect(mockAddRejection).toHaveBeenCalledWith('theme', 'Maria');
+    expect(mockRemoveRejection).toHaveBeenCalledWith('decision', 'Maria');
+    expect(mockDeleteOutbox).toHaveBeenCalledTimes(5);
   });
 
   it('descarta a operação quando a entidade não existe mais no servidor', async () => {

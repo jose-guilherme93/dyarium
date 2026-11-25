@@ -4,13 +4,14 @@ import * as Legacy from 'expo-file-system/legacy';
 import { useFocusEffect } from 'expo-router';
 import { back } from '@/services/appNavigation';
 import * as Sharing from 'expo-sharing';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   RefreshControl,
   ScrollView,
   StyleSheet,
+  Switch,
   View,
 } from 'react-native';
 import { Text } from '@/components/AppText';
@@ -35,6 +36,12 @@ import {
   type CachedAnalysis,
 } from '@/services/db';
 import { scanImageBytes } from '@/services/storageScan';
+import {
+  diagnosticsConfigured,
+  diagnosticsEnabled,
+  readDiagnosticsEnabled,
+  setDiagnosticsEnabled,
+} from '@/services/diagnostics';
 import { installedModels } from '@/services/transcriptionModels';
 import { useLibrary } from '@/state/LibraryContext';
 import { useSettings } from '@/state/SettingsContext';
@@ -117,7 +124,7 @@ function ModelsCard({ summary }: { summary: AnalysisRunSummary }) {
               {model.model}
             </Text>
             <Text style={styles.modelMeta}>
-              {model.runtime === 'local' ? 'aparelho' : 'servidor'} · {model.provider} ·{' '}
+              {model.runtime === 'local' ? 'aparelho' : model.runtime === 'online' ? 'online' : 'servidor'} · {model.provider} ·{' '}
               {model.runs} execuções
             </Text>
           </View>
@@ -190,6 +197,16 @@ export default function DiagnosticsScreen() {
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState('');
+  const [diagnosticsOn, setDiagnosticsOn] = useState(() => diagnosticsEnabled());
+
+  useEffect(() => {
+    void readDiagnosticsEnabled().then(setDiagnosticsOn);
+  }, []);
+
+  const toggleDiagnostics = useCallback(async (next: boolean) => {
+    setDiagnosticsOn(next);
+    await setDiagnosticsEnabled(next);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -306,6 +323,26 @@ export default function DiagnosticsScreen() {
       >
         {error ? <Text style={styles.error}>{error}</Text> : null}
 
+        <Card style={styles.card}>
+          <View style={styles.switchRow}>
+            <View style={styles.switchText}>
+              <Text style={styles.cardTitle}>Enviar diagnóstico</Text>
+              {!diagnosticsConfigured() ? (
+                <Text style={styles.muted}>Sem destino</Text>
+              ) : null}
+            </View>
+            <Switch
+              value={diagnosticsOn}
+              onValueChange={(next) => void toggleDiagnostics(next)}
+              trackColor={{ false: colors.surfaceElevated, true: colors.success }}
+              thumbColor={colors.text}
+              accessibilityRole="switch"
+              accessibilityLabel="Enviar diagnóstico"
+              accessibilityState={{ checked: diagnosticsOn }}
+            />
+          </View>
+        </Card>
+
         <SummaryCard summary={local} />
         <ModelsCard summary={local} />
 
@@ -363,6 +400,13 @@ const baseStyles = defineStyles({
   headerTitle: { color: baseColors.text, fontSize: fontSize.lg, fontWeight: '700' },
   content: { padding: spacing.xl, gap: spacing.lg, paddingBottom: spacing.xxxl },
   card: { gap: spacing.sm },
+  switchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+  },
+  switchText: { flex: 1, gap: 2 },
   cardTitle: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
   muted: { color: baseColors.textSecondary, fontSize: fontSize.sm, lineHeight: 20 },
   health: { fontSize: fontSize.md, fontWeight: '600' },

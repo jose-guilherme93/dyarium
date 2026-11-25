@@ -3,6 +3,7 @@
  * trabalho pesado e continua vivo enquanto a aba estiver aberta.
  */
 
+import type { EntityMemoryEntry } from "../../../mobile/src/core/entities";
 import type { BrowserPlan } from "./browserModels";
 import type { AnalysisProgress, WorkerNote, WorkerAnalysis } from "../worker/analysis";
 import type { EngineProgress, Transcription } from "../worker/engine";
@@ -71,6 +72,24 @@ export class EngineClient {
     });
   }
 
+  /**
+   * Guarda o plano no worker sem baixar nada e sem esperar resposta.
+   *
+   * Quem chama escolhe o motor depois: a transcricao local carrega so o
+   * Whisper, sem pagar o download do GGUF da analise.
+   */
+  configure(plan: BrowserPlan, allowGpu: boolean, threads = 0): void {
+    const worker = this.ensure();
+    worker.postMessage({
+      type: "configure",
+      id: ++this.seq,
+      plan,
+      allowGpu,
+      threads,
+      contextSize: plan.contextSize,
+    });
+  }
+
   /** Baixa, se preciso, e carrega os dois modelos. */
   load(plan: BrowserPlan, allowGpu: boolean, threads = 0): Promise<{ ready: boolean }> {
     return this.send({ type: "load", plan, allowGpu, threads, contextSize: plan.contextSize });
@@ -84,8 +103,12 @@ export class EngineClient {
     );
   }
 
-  analyze(note: WorkerNote, modelId: string): Promise<WorkerAnalysis> {
-    return this.send({ type: "analyze", note, modelId });
+  analyze(
+    note: WorkerNote,
+    modelId: string,
+    memory?: readonly EntityMemoryEntry[],
+  ): Promise<WorkerAnalysis> {
+    return this.send({ type: "analyze", note, modelId, memory });
   }
 
   stop(): void {

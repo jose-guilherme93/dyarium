@@ -1,11 +1,13 @@
 import { modelShortLabel } from "../lib/browserModels";
 import { formatDuration } from "../lib/format";
 import type { Analysis, EntityKind } from "../types";
+import { PencilIcon } from "./icons";
 import { NoteRelations } from "./NoteRelations";
 
 interface InsightsBodyProps {
   analysis: Analysis;
-  onOpenEntity: (kind: EntityKind, name: string) => void;
+  /** `edit: "kind"` abre o editor da entidade ja no seletor de tipo. */
+  onOpenEntity: (kind: EntityKind, name: string, edit?: "kind") => void;
   /** Ligado enquanto o worker da aba ainda esta compondo o documento. */
   live?: boolean;
 }
@@ -45,6 +47,34 @@ function ListBlock({
         ))}
       </ul>
     </div>
+  );
+}
+
+/** Chip da entidade com um lapis colado no nome: abre a curadoria ja no tipo. */
+function EntityChip({
+  kind,
+  name,
+  onOpenEntity,
+}: {
+  kind: EntityKind;
+  name: string;
+  onOpenEntity: InsightsBodyProps["onOpenEntity"];
+}) {
+  return (
+    <>
+      <button type="button" className="chip-button" onClick={() => onOpenEntity(kind, name)}>
+        {name}
+      </button>
+      <button
+        type="button"
+        className="entity-edit"
+        aria-label="Editar entidade"
+        title="Editar entidade"
+        onClick={() => onOpenEntity(kind, name, "kind")}
+      >
+        <PencilIcon size={12} />
+      </button>
+    </>
   );
 }
 
@@ -168,13 +198,7 @@ export function InsightsBody({ analysis, onOpenEntity, live = false }: InsightsB
           <ul className="chips stagger-in">
             {themes.map((theme) => (
               <li key={theme.name}>
-                <button
-                  type="button"
-                  className="chip-button"
-                  onClick={() => onOpenEntity("theme", theme.name)}
-                >
-                  {theme.name}
-                </button>
+                <EntityChip kind="theme" name={theme.name} onOpenEntity={onOpenEntity} />
               </li>
             ))}
           </ul>
@@ -187,13 +211,7 @@ export function InsightsBody({ analysis, onOpenEntity, live = false }: InsightsB
           <ul className="chips stagger-in">
             {people.map((person) => (
               <li key={person.name}>
-                <button
-                  type="button"
-                  className="chip-button"
-                  onClick={() => onOpenEntity("person", person.name)}
-                >
-                  {person.name}
-                </button>
+                <EntityChip kind="person" name={person.name} onOpenEntity={onOpenEntity} />
               </li>
             ))}
           </ul>
@@ -206,13 +224,7 @@ export function InsightsBody({ analysis, onOpenEntity, live = false }: InsightsB
           <ul className="chips stagger-in">
             {places.map((place) => (
               <li key={place.name}>
-                <button
-                  type="button"
-                  className="chip-button"
-                  onClick={() => onOpenEntity("place", place.name)}
-                >
-                  {place.name}
-                </button>
+                <EntityChip kind="place" name={place.name} onOpenEntity={onOpenEntity} />
               </li>
             ))}
           </ul>

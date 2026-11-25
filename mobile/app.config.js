@@ -8,8 +8,50 @@
  */
 const appJson = require('./app.json');
 
+/**
+ * O login do Google devolve o codigo para um esquema do proprio client:
+ * `com.googleusercontent.apps.<numero>://oauthredirect`. Sem esse esquema o
+ * Android nao abre o app de volta depois do consentimento. O valor do client
+ * id nao e segredo; ele so precisa entrar no build como variavel publica.
+ */
+function googleSchemes() {
+  const ids = [
+    process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID,
+    process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
+  ];
+  const schemes = [];
+  for (const raw of ids) {
+    const id = (raw ?? '').trim();
+    if (!id) continue;
+    const prefix = id.endsWith('.apps.googleusercontent.com')
+      ? id.slice(0, -'.apps.googleusercontent.com'.length)
+      : id;
+    if (prefix) schemes.push(`com.googleusercontent.apps.${prefix}`);
+  }
+  return schemes;
+}
+
 module.exports = () => {
   const expo = JSON.parse(JSON.stringify(appJson.expo));
+  const existing = Array.isArray(expo.scheme) ? expo.scheme : [expo.scheme ?? 'dyarium'];
+  expo.scheme = [...new Set([...existing, ...googleSchemes()])];
+  // O client id viaja no binario nativo (extra), entao um Metro sem .env.local
+  // ainda encontra o valor. O esquema de retorno ja foi montado acima.
+  expo.extra = {
+    ...(expo.extra ?? {}),
+    googleAndroidClientId: (process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID ?? '').trim(),
+    googleIosClientId: (process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ?? '').trim(),
+    googleWebClientId: (process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ?? '').trim(),
+    sentryDsn: (process.env.EXPO_PUBLIC_SENTRY_DSN ?? '').trim(),
+  };
+  // O build de desenvolvimento se identifica na gaveta do aparelho: o nome leva
+  // o sufixo para nao ser confundido com o app publicado. So o development
+  // client (perfil `development`/`emulator`) recebe.
+  const perfil = process.env.EAS_BUILD_PROFILE ?? '';
+  if (perfil === 'development' || perfil === 'emulator' || process.env.DYARIUM_DEV === '1') {
+    expo.name = 'dyarium - dev';
+  }
+
   if (process.env.DYARIUM_EMULATOR !== '1') return expo;
 
   const buildProperties = expo.plugins.find(

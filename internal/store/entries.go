@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 func ts(t time.Time) string { return t.UTC().Format(time.RFC3339) }
@@ -163,18 +164,29 @@ func (s *Store) CreateEntry(ctx context.Context, e Entry) error {
 		return fmt.Errorf("store: create entry: %w", err)
 	}
 	defer tx.Rollback()
+	summaryDetail := strings.TrimSpace(e.SummaryDetail)
+	if summaryDetail == "" {
+		summaryDetail = SummaryDetailConcise
+	}
+	if !ValidSummaryDetail(summaryDetail) {
+		return fmt.Errorf("store: create entry: summary_detail invalido %q", summaryDetail)
+	}
+	icon, err := normalizeIcon(e.Icon)
+	if err != nil {
+		return fmt.Errorf("store: create entry: %w", err)
+	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO entries (id, title, status, source, parent_id, notebook_id, original_filename, content_type,
 			size_bytes, duration_seconds, sha256, recorded_at, created_at, updated_at, deleted_at,
 			title_updated_at, recorded_at_updated_at, author, origin_instance, origin_kind,
 			chapter_kind, chapter_position, chapter_status, chapter_goal_words, chapter_synopsis, chapter_beats,
-			chapter_notes)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			chapter_notes, summary_detail, icon)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.ID, e.Title, e.Status, e.Source, nullString(e.ParentID), notebookID, e.OriginalFilename, e.ContentType,
 		e.SizeBytes, e.DurationSeconds, e.SHA256, nullTS(e.RecordedAt), ts(e.CreatedAt), ts(e.UpdatedAt),
 		nullTS(e.DeletedAt), stamp, stamp, e.Author, originInstance, originKind,
 		e.ChapterKind, nullFloat(e.ChapterPosition), e.ChapterStatus, e.ChapterGoalWords, e.ChapterSynopsis,
-		e.ChapterBeats, e.ChapterNotes); err != nil {
+		e.ChapterBeats, e.ChapterNotes, summaryDetail, icon); err != nil {
 		return fmt.Errorf("store: create entry: %w", err)
 	}
 	// Recriar uma nota com o mesmo id depois de uma exclusao antiga e a forma
@@ -209,14 +221,15 @@ func (s *Store) GetEntry(ctx context.Context, id string) (Entry, error) {
 				ORDER BY t.created_at DESC LIMIT 1), ''),
 			COALESCE(chapter_kind, ''), chapter_position, COALESCE(chapter_status, ''),
 			COALESCE(chapter_goal_words, 0), COALESCE(chapter_synopsis, ''),
-			COALESCE(chapter_beats, ''), COALESCE(chapter_notes, '')
+			COALESCE(chapter_beats, ''), COALESCE(chapter_notes, ''),
+			COALESCE(summary_detail, 'concise'), COALESCE(icon, '')
 		FROM entries WHERE id = ? AND deleted_at IS NULL`, AttachmentOriginal, id).Scan(
 		&e.ID, &e.Title, &e.Status, &e.Source, &e.ParentID, &e.NotebookID, &e.OriginalFilename, &e.ContentType,
 		&e.SizeBytes, &e.DurationSeconds, &e.SHA256, &recordedAt, &createdAt, &updatedAt, &deletedAt, &archived,
 		&titleVersion, &recordedVersion, &e.Author, &e.OriginInstance, &e.OriginKind,
 		&bodyVersion, &e.PrimaryAttachmentID, &e.AnalysisAt, &e.TranscriptAt,
 		&e.ChapterKind, &chapterPosition, &e.ChapterStatus, &e.ChapterGoalWords, &e.ChapterSynopsis,
-		&e.ChapterBeats, &e.ChapterNotes)
+		&e.ChapterBeats, &e.ChapterNotes, &e.SummaryDetail, &e.Icon)
 	if err != nil {
 		return Entry{}, err
 	}
@@ -237,6 +250,84 @@ func (s *Store) GetEntry(ctx context.Context, id string) (Entry, error) {
 	e.CreatedAt = parseTS(createdAt)
 	e.UpdatedAt = parseTS(updatedAt)
 	return e, nil
+}
+
+// FindEntryByNotebookAndTitle returns the newest live entry with an exact title
+// inside a notebook. The bool reports whether one was found; a missing entry is
+// not an error. The order is deterministic so recreating the same day always
+// finds the same row.
+func (s *Store) FindEntryByNotebookAndTitle(ctx context.Context, notebookID, title string) (Entry, bool, error) {
+	return s.findEntryByNotebookAndTitle(ctx, notebookID, title, false)
+}
+
+// FindEntryByNotebookAndTitleFold is the case-insensitive variant. The MCP
+// server uses it because an agent may send the same project with different
+// capitalization; the existing project entry must be reused, not duplicated.
+func (s *Store) FindEntryByNotebookAndTitleFold(ctx context.Context, notebookID, title string) (Entry, bool, error) {
+	return s.findEntryByNotebookAndTitle(ctx, notebookID, title, true)
+}
+
+func (s *Store) findEntryByNotebookAndTitle(ctx context.Context, notebookID, title string, fold bool) (Entry, bool, error) {
+	var e Entry
+	var recordedAt, deletedAt, titleVersion, recordedVersion, bodyVersion sql.NullString
+	var chapterPosition sql.NullFloat64
+	var archived int
+	var createdAt, updatedAt string
+	titleMatch := `title = ?`
+	if fold {
+		titleMatch = `title = ? COLLATE NOCASE`
+	}
+	query := `
+		SELECT id, COALESCE(title,''), status, source, COALESCE(parent_id,''), COALESCE(notebook_id,''),
+			COALESCE(original_filename,''), COALESCE(content_type,''), size_bytes, duration_seconds, COALESCE(sha256,''),
+			recorded_at, created_at, updated_at, deleted_at, archived,
+			title_updated_at, recorded_at_updated_at, COALESCE(author,''),
+			COALESCE(origin_instance,''), COALESCE(origin_kind,''),
+			COALESCE((SELECT body_updated_at FROM notes n WHERE n.entry_id = entries.id ORDER BY n.created_at DESC LIMIT 1), ''),
+			COALESCE((SELECT id FROM attachments a WHERE a.entry_id = entries.id AND a.kind = ?
+				ORDER BY a.created_at ASC LIMIT 1), ''),
+			COALESCE((SELECT a.created_at FROM analyses a WHERE a.entry_id = entries.id
+				ORDER BY a.created_at DESC, a.rowid DESC LIMIT 1), ''),
+			COALESCE((SELECT t.created_at FROM transcripts t WHERE t.entry_id = entries.id
+				ORDER BY t.created_at DESC LIMIT 1), ''),
+			COALESCE(chapter_kind, ''), chapter_position, COALESCE(chapter_status, ''),
+			COALESCE(chapter_goal_words, 0), COALESCE(chapter_synopsis, ''),
+			COALESCE(chapter_beats, ''), COALESCE(chapter_notes, ''),
+			COALESCE(summary_detail, 'concise'), COALESCE(icon, '')
+		FROM entries
+		WHERE notebook_id = ? AND ` + titleMatch + ` AND deleted_at IS NULL
+		ORDER BY created_at DESC, id DESC LIMIT 1`
+	err := s.db.QueryRowContext(ctx, query,
+		AttachmentOriginal, notebookID, title).Scan(
+		&e.ID, &e.Title, &e.Status, &e.Source, &e.ParentID, &e.NotebookID, &e.OriginalFilename, &e.ContentType,
+		&e.SizeBytes, &e.DurationSeconds, &e.SHA256, &recordedAt, &createdAt, &updatedAt, &deletedAt, &archived,
+		&titleVersion, &recordedVersion, &e.Author, &e.OriginInstance, &e.OriginKind,
+		&bodyVersion, &e.PrimaryAttachmentID, &e.AnalysisAt, &e.TranscriptAt,
+		&e.ChapterKind, &chapterPosition, &e.ChapterStatus, &e.ChapterGoalWords, &e.ChapterSynopsis,
+		&e.ChapterBeats, &e.ChapterNotes, &e.SummaryDetail, &e.Icon)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Entry{}, false, nil
+	}
+	if err != nil {
+		return Entry{}, false, fmt.Errorf("store: find entry by title: %w", err)
+	}
+	if chapterPosition.Valid {
+		position := chapterPosition.Float64
+		e.ChapterPosition = &position
+	}
+	if recordedAt.Valid {
+		t := parseTS(recordedAt.String)
+		e.RecordedAt = &t
+	}
+	if deletedAt.Valid {
+		t := parseTS(deletedAt.String)
+		e.DeletedAt = &t
+	}
+	e.Archived = archived != 0
+	setVersions(&e, titleVersion, recordedVersion, bodyVersion)
+	e.CreatedAt = parseTS(createdAt)
+	e.UpdatedAt = parseTS(updatedAt)
+	return e, true, nil
 }
 
 // EntryIsDeleted reports whether an entry is soft-deleted. It returns
@@ -349,7 +440,8 @@ func (s *Store) ListEntriesFilteredScope(ctx context.Context, limit, offset int,
 				ORDER BY t.created_at DESC LIMIT 1), ''),
 			COALESCE(e.chapter_kind, ''), e.chapter_position, COALESCE(e.chapter_status, ''),
 			COALESCE(e.chapter_goal_words, 0), COALESCE(e.chapter_synopsis, ''),
-			COALESCE(e.chapter_beats, ''), COALESCE(e.chapter_notes, '')
+			COALESCE(e.chapter_beats, ''), COALESCE(e.chapter_notes, ''),
+			COALESCE(e.summary_detail, 'concise'), COALESCE(e.icon, '')
 		FROM entries e WHERE e.deleted_at IS NULL`
 	args := []any{AttachmentOriginal}
 	if notebookID = strings.TrimSpace(notebookID); notebookID != "" {
@@ -397,7 +489,8 @@ func (s *Store) ListEntriesFilteredScope(ctx context.Context, limit, offset int,
 			&archived, &e.Author, &e.OriginInstance, &e.OriginKind, &titleVersion, &recordedVersion,
 			&bodyVersion, &e.PrimaryAttachmentID, &e.Preview, &e.SpokenPreview, &e.AnalysisAt,
 			&e.TranscriptAt, &e.ChapterKind, &chapterPosition, &e.ChapterStatus,
-			&e.ChapterGoalWords, &e.ChapterSynopsis, &e.ChapterBeats, &e.ChapterNotes); err != nil {
+			&e.ChapterGoalWords, &e.ChapterSynopsis, &e.ChapterBeats, &e.ChapterNotes,
+			&e.SummaryDetail, &e.Icon); err != nil {
 			return nil, fmt.Errorf("store: scan entry: %w", err)
 		}
 		if chapterPosition.Valid {
@@ -489,6 +582,73 @@ func (s *Store) UpdateEntryStatus(ctx context.Context, id, status string) error 
 		return fmt.Errorf("store: update entry status: %w", err)
 	}
 	return nil
+}
+
+// ErrInvalidIcon is returned when an entry icon exceeds the size limit or
+// carries control characters.
+var ErrInvalidIcon = errors.New("store: icone invalido")
+
+// MaxIconRunes is the largest icon accepted: generous for an emoji sequence or a
+// short label, small enough to keep the column and the sync payload bounded.
+const MaxIconRunes = 64
+
+// ValidIcon reports whether icon can be stored: trimmed, within the size limit
+// and free of control characters. The value itself is not interpreted: the
+// client decides whether it is an emoji, a letter or empty.
+func ValidIcon(icon string) bool {
+	icon = strings.TrimSpace(icon)
+	if utf8.RuneCountInString(icon) > MaxIconRunes {
+		return false
+	}
+	return strings.IndexFunc(icon, func(r rune) bool { return r < 0x20 }) < 0
+}
+
+func normalizeIcon(icon string) (string, error) {
+	icon = strings.TrimSpace(icon)
+	if !ValidIcon(icon) {
+		return "", ErrInvalidIcon
+	}
+	return icon, nil
+}
+
+// UpdateEntryIcon sets the page icon of one entry. An empty value is valid and
+// means "let the client choose the fallback". It only writes when the caller
+// sends the field, so an unrelated patch never clears the icon.
+func (s *Store) UpdateEntryIcon(ctx context.Context, id, icon string) (Entry, error) {
+	icon, err := normalizeIcon(icon)
+	if err != nil {
+		return Entry{}, err
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE entries SET icon = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
+		icon, ts(time.Now().UTC()), id)
+	if err != nil {
+		return Entry{}, fmt.Errorf("store: update entry icon: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return Entry{}, ErrNotFound
+	}
+	return s.GetEntry(ctx, id)
+}
+
+// UpdateEntrySummaryDetail sets how MCP project summaries are rendered for one
+// project entry. The value is validated here so a bad client cannot store an
+// unknown level. It is a per-entry preference: concise or full.
+func (s *Store) UpdateEntrySummaryDetail(ctx context.Context, id, detail string) (Entry, error) {
+	detail = strings.TrimSpace(detail)
+	if !ValidSummaryDetail(detail) {
+		return Entry{}, ErrInvalidSummaryDetail
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE entries SET summary_detail = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
+		detail, ts(time.Now().UTC()), id)
+	if err != nil {
+		return Entry{}, fmt.Errorf("store: update entry summary detail: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return Entry{}, ErrNotFound
+	}
+	return s.GetEntry(ctx, id)
 }
 
 func nullTS(t *time.Time) any {

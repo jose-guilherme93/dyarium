@@ -32,6 +32,8 @@ import { defineStyles } from '@/theme/themedStyles';
 const HOLD_MS = 1200;
 /** Distancia (s) a partir da qual consideramos que o player chegou ao alvo. */
 const REACHED = 0.6;
+/** Altura da faixa no card da nota: o card reserva 40 dp para o transporte. */
+const COMPACT_BAND = 40;
 
 interface AudioTransportProps {
   player: AudioPlayer;
@@ -46,6 +48,12 @@ interface AudioTransportProps {
   transcript?: string;
   onOpenTranscript?: () => void;
   onEditTranscript?: (startMs: number) => void;
+  /**
+   * Versao de uma faixa, para caber nos 40 dp do card da nota: play/pause e a
+   * onda lado a lado, sem tempo nem previa. O tempo fica no topo do card e a
+   * previa na faixa de texto.
+   */
+  compact?: boolean;
 }
 
 export function AudioTransport({
@@ -57,6 +65,7 @@ export function AudioTransport({
   transcript,
   onOpenTranscript,
   onEditTranscript,
+  compact = false,
 }: AudioTransportProps) {
   const styles = useThemedStyles(baseStyles);
   const { colors } = useTheme();
@@ -99,6 +108,37 @@ export function AudioTransport({
     }
     playPlayer(player);
   };
+
+  if (compact) {
+    return (
+      <View style={styles.compact}>
+        <Press
+          style={styles.compactToggle}
+          onPress={toggle}
+          accessibilityLabel={status.playing ? 'Pausar' : 'Tocar'}
+          hitSlop={6}
+        >
+          <Ionicons
+            name={status.playing ? 'pause' : 'play'}
+            size={16}
+            color={colors.text}
+          />
+        </Press>
+        <View style={styles.compactWave}>
+          <AudioWaveform
+            seed={seed}
+            current={shown}
+            duration={duration}
+            segments={segments}
+            height={COMPACT_BAND}
+            // Parado (ou no fim), tocar na onda ja toca dali; tocando, so pula.
+            onSeek={(seconds) => seek(seconds, !status.playing)}
+            onScrubChange={setScrub}
+          />
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.transport}>
@@ -156,6 +196,21 @@ export function AudioTransport({
 const baseStyles = defineStyles({
   transport: { gap: spacing.xs },
   row: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  compact: {
+    height: COMPACT_BAND,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  compactToggle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: baseColors.surfaceElevated,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  compactWave: { flex: 1, minWidth: 0 },
   time: { color: baseColors.text, fontSize: 13, fontVariant: ['tabular-nums'] },
   transcript: { color: baseColors.textSecondary, fontSize: 13, lineHeight: 19 },
 });

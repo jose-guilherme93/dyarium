@@ -1,19 +1,27 @@
 // Minimal IndexedDB cache used to serve GET responses while offline.
 const DB_NAME = "dyarium";
-const DB_VERSION = 3;
+const DB_VERSION = 7;
 const STORE = "http";
 /** Cache dos blocos de analise lidos no navegador. */
 export const ANALYSIS_STORE = "analysis";
 /** Rascunhos locais por capitulo e backups de conflito. */
 export const DRAFTS_STORE = "drafts";
 export const CONFLICT_BACKUPS_STORE = "conflictBackups";
+/** Codigo de recuperacao do cofre (a chave e derivada dele). */
+export const VAULT_STORE = "vault";
+/** Imagens da nota (byte + metadados), no cofre local. */
+export const ATTACHMENTS_STORE = "attachments";
+/** Capa do livro (byte + metadados), uma por livro, no cofre local. */
+export const COVERS_STORE = "covers";
+/** Preferencias do cofre: provedor, modelo, chave. */
+export const STORE_SETTINGS = "settings";
 
 function open(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onupgradeneeded = () => {
       const db = request.result;
-      for (const store of [STORE, ANALYSIS_STORE, DRAFTS_STORE, CONFLICT_BACKUPS_STORE]) {
+      for (const store of [STORE, ANALYSIS_STORE, DRAFTS_STORE, CONFLICT_BACKUPS_STORE, VAULT_STORE, ATTACHMENTS_STORE, COVERS_STORE, STORE_SETTINGS]) {
         if (!db.objectStoreNames.contains(store)) {
           db.createObjectStore(store);
         }
@@ -49,6 +57,37 @@ async function writeRaw(store: string, key: string, value: unknown): Promise<voi
     });
   } catch {
     // caching is best-effort
+  }
+}
+
+async function writeManyRaw(store: string, entries: Array<[string, unknown]>): Promise<void> {
+  try {
+    const db = await open();
+    await new Promise<void>((resolve) => {
+      const tx = db.transaction(store, "readwrite");
+      const objectStore = tx.objectStore(store);
+      for (const [key, value] of entries) objectStore.put(value, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+      tx.onabort = () => resolve();
+    });
+  } catch {
+    // caching is best-effort
+  }
+}
+
+async function clearStore(store: string): Promise<void> {
+  try {
+    const db = await open();
+    await new Promise<void>((resolve) => {
+      const tx = db.transaction(store, "readwrite");
+      tx.objectStore(store).clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
+    db.close();
+  } catch {
+    // best-effort
   }
 }
 
@@ -99,8 +138,25 @@ export function storeSet(store: string, key: string, value: unknown): Promise<vo
   return writeRaw(store, key, value);
 }
 
+/**
+ * Grava varias entradas numa transacao so.
+ *
+ * O login de um cofre grande guarda o metadado de centenas de anexos de uma
+ * vez; uma transacao por anexo abriria o banco centenas de vezes no caminho
+ * que precisa ser curto.
+ */
+export function storeSetMany(store: string, entries: Array<[string, unknown]>): Promise<void> {
+  if (entries.length === 0) return Promise.resolve();
+  return writeManyRaw(store, entries);
+}
+
 export function storeDelete(store: string, key: string): Promise<void> {
   return deleteRaw(store, key);
+}
+
+/** Esvazia um store inteiro (sair da conta apaga anexos e capas). */
+export function storeClear(store: string): Promise<void> {
+  return clearStore(store);
 }
 
 /** Todas as entradas de um store, como pares chave/valor. */

@@ -20,14 +20,46 @@ internal/jobs        Fila de jobs, leases, heartbeat, retries com backoff, agend
 internal/transcribe  Orquestracao do whisper-cli: chunking, checkpoints, metricas de audio.
 internal/analyze     Cliente de API compativel com OpenAI: sentimento, emocoes, pessoas, lugares, resumo.
 internal/store       Repositorio: SQLite (WAL), migrations, interface de dados.
+internal/mcpserver   Servidor MCP (Streamable HTTP): registro de sessoes de projetos enviado por agentes.
 internal/crypto      AES-256-GCM: cifra/decifra em streaming, derivacao de chave.
 internal/telegram    Modulo opcional (envio de audio pelo bot). Stub nesta versao.
 web                  SPA React + Vite + TypeScript com BlockNote.
+mobile/src/core      Nucleo puro compartilhado: schema e migracoes (`schema`), o SQL todo (`repo`),
+                     as portas de plataforma (`port`), HLC, sync, backup, analise.
+                     Nao importa expo, React Native, arquivo nem servico; o web importa daqui direto.
+mobile/src/services  Borda do app: abre o SQLite (expo-sqlite), cifra, arquivos, audio, rede.
 deploy               Dockerfile e compose de desenvolvimento.
 ```
 
 Cada pacote `internal` expoe interfaces pequenas e concretiza as dependencias externas
 (SQLite, ffmpeg, HTTP) na borda, para permitir testes com dublês.
+
+## Servidor MCP
+
+`internal/mcpserver` expoe `POST /mcp` em Streamable HTTP, montado fora do cache
+de resposta e atras do mesmo `requireAuth` do resto da API. Na inicializacao ele
+devolve instrucoes que entram no system prompt do agente: e o diario central dos
+projetos do dono e, ao concluir trabalho relevante, o agente chama
+`record_project_summary` sem pedir confirmacao.
+
+A ferramenta guarda os projetos no caderno interno "Projetos" (`projetos-mcp`,
+`kind = mcp`), criado pela migracao 0040. Cada projeto e uma **entry** desse
+caderno: o titulo e o nome do projeto, procurado sem diferenciar maiusculas para
+nao duplicar ao mudar a caixa. A entrada do projeto tem uma unica nota, e cada
+chamada anexa um bloco de sessao a ela, com cabecalho
+`## AAAA-MM-DD HH:MM · <computador>`. O computador vem do header
+`X-Dyarium-Host`, sanitizado, e nunca decide permissao. Chamadas identicas nao
+duplicam: o bloco carrega um marcador `<!-- mcp:<sha256-12> -->`.
+
+O nivel de detalhe e uma preferencia da **entry do projeto** (`summary_detail`:
+`concise` ou `full`), nao do caderno nem da chamada. Como e um campo da nota, ele
+sincroniza entre app e web pelo mesmo mecanismo das entradas; as duas superficies
+editam o mesmo valor. Mudar a preferencia so afeta resumos futuros daquele
+projeto. O caderno do MCP e protegido contra exclusao e troca de tipo.
+
+O protocolo nao tem gatilho de fim de sessao: quem decide quando chamar e o
+modelo, guiado pelas instrucoes. Um hook no cliente pode chamar a mesma
+ferramenta para garantir o disparo.
 
 ## Formato do corpo da nota
 
@@ -212,7 +244,11 @@ isso:
   minutagem de cada trecho, na transcricao completa, e um alvo de toque. Todo
   seek passa pelo `playAt` do player unico: se a fonte ja e a atual o player so
   pula; se mudou, o `replace` aponta a fonte e o seek e pedido **depois** de ela
-  ficar pronta (poll do `currentStatus`), nunca no meio do buffering. O motivo
+  ficar pronta, nunca no meio do buffering. Numa troca de fonte a espera olha o
+  estado vivo do player (`isLoaded`), e nao o `currentStatus` em cache: este
+  ainda e o retrato da fonte anterior por ate 250 ms e liberava o seek cedo
+  demais. Depois do seek, uma conferencia de ~350 ms repete o pedido uma vez se
+  a fonte terminou de preparar e jogou a posicao de volta ao zero. O motivo
   real do "sempre reinicia" era o formato: o AAC **ADTS** nao tem tabela de
   posicoes, o ExoPlayer o trata como fluxo nao buscavel e manda qualquer seek
   para o inicio. O patch em `mobile/patches/expo-audio@57.0.5.patch` liga a
@@ -220,12 +256,12 @@ isso:
   CBR gravado pelo app; depois disso o seek cai no trecho pedido, inclusive num
   audio que ja terminou. O patch tambem remove o `publication` do
   `expo-module.config.json`: sem isso o Expo consome o AAR pre-construido do
-  modulo e o Kotlin patcheado nem chega a ser compilado. Buscar antes de a fonte
-  ficar pronta tambem nao resolvia: o ADTS monta a tabela de posicoes durante a
-  preparacao, e um seek pedido no meio do buffering era aceito e descartado na
-  abertura (a posicao voltava a 0). A fonte so conta como pronta pelo status
-  (`currentStatus.isLoaded`): a propriedade `isLoaded` e falsa quando o audio
-  **terminou**.
+  modulo e o Kotlin patcheado nem chega a ser compilado. **O patch so vale no
+  cliente nativo compilado depois dele**; um development build antigo continua
+  com o player nao buscavel, por mais que o JS mude (`adb` mostra o dex sem
+  `setAdtsExtractorFlags`). Fora da troca de fonte, a fonte conta como pronta
+  pelo status (`currentStatus.isLoaded`): a propriedade `isLoaded` e falsa
+  quando o audio **terminou**, e um seek a partir do fim e valido.
 - **Onda da gravacao em duas camadas.** A tela de gravacao le o medidor do
   microfone (dB, ~28 amostras por segundo) e entrega o nivel numa fila
   compartilhada. A onda inteira e **um unico `Path` SVG**, redesenhado so quando
@@ -418,7 +454,10 @@ um minuto e o lease expirar.
 ## Fluxo de dados
 
 1. Cliente inicia um upload: `POST /uploads` com metadados e o SHA-256 esperado do arquivo.
-   O servidor reserva um `Upload` e responde com um id e o offset atual (0).
+   O app calcula o hash em pedacos de 1 MiB antes da primeira requisicao (o arquivo pode
+   ter GiB), de modo que um audio local corrompido e recusado no `complete` em vez de
+   virar uma entrada valida. O servidor reserva um `Upload` e responde com um id e o
+   offset atual (0).
 2. O cliente envia os bytes em partes: `PUT /uploads/{id}` com o header de offset. O servidor
    cifra o fluxo em streaming (AES-256-GCM) e grava o ciphertext no diretorio de dados.
    Nenhum byte em claro chega ao disco persistente.
@@ -428,6 +467,8 @@ um minuto e o lease expirar.
    Em caso de sucesso, cria uma `Entry` e enfileira um job `transcribe`. Se o SHA-256 ja
    corresponde a uma `Entry` ativa, o servidor nao duplica: descarta o objeto recem-recebido
    e devolve a entrada existente (o audio e imutavel, entao o hash e a sua identidade).
+   O mesmo vale para imagem: `POST /entries/{id}/attachments` aceita `X-Content-Sha256`;
+   divergindo, o objeto cifrado e removido e a resposta e 422 `integrity`.
 5. O worker pega o job, decifra para um diretorio temporario com permissao restrita, deriva
    a copia 16 kHz mono (e, opcionalmente, remove silencios), transcreve por trechos com
    checkpoint, grava `Transcript` e `Segment`, calcula metricas de audio e, se a analise
@@ -522,6 +563,13 @@ secao (`analysisInput` monta `TextSections` + a secao da fala). O pipeline anali
 secao com o texto inteiro dela e depois faz uma sintese da nota, que liga as leituras — por
 isso `Result.Sections` existe ao lado de `summary`/`reading`. Uma secao maior que o limite
 de uma chamada e dividida em janelas (entre paragrafos ou palavras), nunca truncada.
+
+As secoes e as janelas independentes sao analisadas em paralelo, com concorrencia limitada
+(`analyze_concurrency`; zero escolhe o padrao do runtime: uma chamada para llama.cpp, Ollama
+ou o servidor OpenCode, tres para uma API hospedada). A ordem do merge nao muda, porque cada
+chamada escreve no proprio indice. Um provedor que recusa o schema JSON estrito uma vez e
+lembrado pelo resto da execucao: sem isso, cada janela gastava uma requisicao recusada antes
+de cair no objeto JSON simples.
 
 O que a analise entrega sao metricas: sentimento, emocoes, pessoas, lugares, temas,
 momentos-chave e compreensao. A prosa e legenda disso, e o servidor a corta em codigo
@@ -632,6 +680,10 @@ entrar na exportacao.
 - Dedupe por SHA-256 no `complete`: como o audio nunca muda, o hash e a identidade do
   conteudo. Reimportar o mesmo arquivo (por exemplo, compartilhado duas vezes no app) nao
   cria entrada nem transcricao duplicadas; entradas removidas nao contam para o dedupe.
+- Integridade conferida nas duas pontas: o app valida os segmentos AAC (tamanho e cabecalho
+  ADTS) antes de concatenar e falha o fechamento em vez de marcar como gravado um audio
+  truncado; e envia o SHA-256 do arquivo final no inicio do upload, para o servidor recusar
+  o que chegou diferente do que foi gravado. Nenhum dos dois lado "conserta em silencio".
 - Toda `Entry` tem titulo e dia: quando o cliente nao informa, o servidor deriva o titulo do
   nome original do arquivo (ou da data/hora) e usa a hora de criacao como `recorded_at`.
   Isso mantem a linha do tempo e o calendario do dashboard sempre preenchidos, inclusive
@@ -710,26 +762,86 @@ entrar na exportacao.
   dono) e o mesmo tamanho relativo por mencoes, entao as duas telas tem a mesma cara. O
   dono liga so as bolas mais mencionadas e sao elas que puxam o resto pela co-ocorrencia,
   o que da a teia em vez de um leque de raios; o
-  resultado e deterministico e fica em cache no SQLite. A cena e desenhada uma vez em SVG,
-  com bolas, icones e linhas em unidades do grafo; o pan e a pinca so aplicam outra matriz
-  ao container nativo. Ampliar e reduzir e zoom em pixels: nenhum estado do React muda e
-  nenhum elemento e remontado. Os nomes ficam fora do SVG, em texto de tela de tamanho
-  fixo, posicionados por transform na thread de UI: o `react-native-svg` descarta o bitmap
-  da cena a cada prop que muda, entao um nome por quadro custaria um redesenho de tela
-  cheia por nome. O
-  encaixe mostra o conjunto inteiro dentro da faixa acima da folha, com o que e periferico
-  pequeno, e o arrasto nunca tira o desenho da area disponivel. Abrir uma bola troca a
+  resultado e deterministico. A relaxacao nao e pre-calculada: `graphSim` roda na thread de
+  UI (`useFrameCallback`) e assenta em cerca de quatro segundos, devagar e sem parar de
+  repente, como a simulacao do Obsidian; e **um** passo por quadro de 16,7 ms (tres num
+  quadro longo), com o `alpha` caindo a 0,98 por passo. Dois passos por quadro custavam
+  metade do orcamento de 60 fps so na fisica quando o mapa tem 120 bolas. A semente entra comprimida -- o mapa
+  nasce menor e se abre --, senao as bolas ja nasciam no lugar final e a fisica parecia
+  parada. O passo puro e testavel em Jest; o teto de trabalho por quadro tambem
+  (`graphPerf.test.ts`).
+- **Zoom e so a camera.** Bolas e ligacoes vivem sob a matriz da camera; um gesto de pinca
+  muda uma matriz e nao reconstroi geometria nenhuma. Foi essa a causa do zoom a 5--10 fps: o fator de abertura reconstruia
+  dezenas de caminhos do Skia por quadro, e os rotulos recalculavam posicao e opacidade por
+  quadro. Ficou como no grafo do Obsidian, cujo zoom tambem e a camera: os nomes
+  aparecem com um limiar (1,15x o encaixe), entao no encaixe o mapa e so bolas e ligacoes. O texto e desenhado em **pixels de tela, com fonte fixa**, e nao em unidades do
+  grafo: escalar o texto pela camera muda o tamanho em pixels a cada quadro do zoom, o Skia
+  perde o cache de glifos e re-rasteriza todos os nomes por quadro -- era o que derrubava o
+  gesto para ~45 fps com os nomes na tela. A camada de nomes tem estado proprio, filha do
+  canvas: trocar a lista re-renderiza so ela, nunca as bolas e as arestas.
+- **Arrastar um no.** Dedo em cima de uma bola prende a bola sob o dedo (`dragNode`) e a
+  fisica roda em volta dela com a temperatura elevada, entao a vizinhanca acompanha; soltar
+  reaquece a simulacao e as ligadas se acomodam. Dedo no fundo move a camera, com folga de
+  30% alem do desenho. Arrastar o dono move a ancora da simulacao e, ao soltar, a camera
+  desliza ate ele -- o mesmo comportamento do mapa do dashboard web.
+- A cena e desenhada em poucos nos do Skia na thread de UI -- um caminho por tipo e
+  opacidade para as bolas e um `Points` em modo linha por tipo e faixa de peso para as
+  arestas --; nenhum componente do React re-renderiza durante o movimento e nenhuma
+  opacidade de grupo e animada (camada por quadro derrubava o mapa). As arestas eram
+  `moveTo`/`lineTo` num `SkPath`: com 425 ligacoes davam 850 chamadas JSI por quadro e
+  derrubavam a thread de UI para ~15 fps durante a fisica; um `Points` leva um array de
+  pontos e uma chamada. Foi por isso que o tracejado da mencao saiu: `DashPathEffect`
+  obriga o Skia a recontar o caminho no CPU a cada quadro, e o grafo do Obsidian nao
+  traceja ligacoes. A camera vai ao Skia como array de numeros derivado das shared values,
+  com a translacao do centro da tela explicita: o Skia nao tem origem no centro da view como
+  o RN, e shared value solto dentro do array vira erro de JSI.
+- **Quem mede o gesto e o aparelho.** Em desenvolvimento, `src/dev/frameMeter.ts` registra o
+  intervalo entre quadros da thread de UI e imprime `[frame] ... p50 p95 max >16` a cada 120
+  quadros no log do Metro. E o numero que vale para dizer se o gesto esta a 60 fps; tempo de
+  render do React nao diz nada sobre o desenho. O controle e o pan: um pan nao reconstroi
+  geometria nem recalcula nome nenhum, entao se o pan e o zoom medem parecido, o gargalo e
+  rasterizacao do aparelho e nao o app. No emulador sem GPU (SwiftShader) isso ficou
+  evidente: pan p95 183 ms e zoom p95 100 ms com p50 16,7 ms nos dois -- mesmo trabalho de
+  app, mesmo custo de raster. Numa GPU de verdade a matriz da camera e gratuita.
+- A lista de nomes e recalculada uma vez, 60 ms depois da ultima mudanca de zoom
+  (`LabelLayer`): numa rajada de toques nos botoes, trocar a lista a cada toque
+  re-renderizava o canvas no meio do gesto. O encaixe mostra o conjunto inteiro dentro da
+  faixa acima da folha, com o que e periferico pequeno, e o arrasto nunca tira o desenho da
+  area disponivel. Abrir uma bola troca a
   visao: ela, as relacoes dela e as notas que a citam passam a ser o desenho inteiro, com
-  as arestas de nota pontilhadas, como no foco do `GET /graph`. O tamanho de cada bola e
+  as arestas de nota mais finas e apagadas (o tracejado saiu: `DashPathEffect` recontava o
+  caminho no CPU a cada quadro), como no foco do `GET /graph`. O tamanho de cada bola e
   relativo ao maior da visao e o dono fica sempre maior que a entidade aberta, para marcar
-  de onde parte tudo; tocar no dono devolve o mapa inteiro. A ligacao nao tem cor: usa a cor
+  de onde parte tudo; tocar no dono devolve o mapa inteiro. O dono e so a maior bola do
+  desenho -- o dobro da segunda maior, **com a cor dela**, o mesmo preenchimento e o mesmo
+  traco; o disco translucido a parte saiu. A colisao separa por posicao (metade da
+  sobreposicao por passo, com teto de 2,5 unidades), nao so empurrando a velocidade: com a
+  fisica fria varias bolas ficavam encostadas. A ligacao nao tem cor: usa a cor
   do texto do tema e a grossura mostra a proximidade, em tres faixas de peso. O encaixe
   aproveita a faixa inteira, entao as bolas quase se encostam, com o dono sempre maior. A
   folha tem tres alturas e
   a altura cheia rola todos os trechos da entidade.
   Para o desenho nao crescer sem limite, o app desenha no maximo 120 entidades (as mais
   mencionadas) e 120 notas no foco, como os limites do servidor; o painel de detalhe lista
-  todas as notas e trechos. Abrir o mapa nao parseia payload de analise nem transcricao:
+  todas as notas e trechos. A tela da entidade carrega em tres camadas, na ordem em que se
+  le: o humor sai direto das ligacoes que ja vieram no recorte, os trechos (texto e
+  transcricao) so da entidade escolhida -- 15 na primeira pagina, mais 30 a cada "Ver mais"
+  no fim da lista, porque uma nota pode render centenas de trechos -- e o grafo focado entra
+  por ultimo, so quando o painel assenta. Cada camada reserva o lugar
+  com um esqueleto estatico (sem shimmer: animacao de carregamento custa quadro) e nao
+  desmonta a tela anterior. A previa do mapa dentro da tela da entidade e estatica
+  (`interactive={false}`): semente sem compressao e sem animacao de camera, porque nao ha
+  gesto para acompanhar e um segundo canvas animando custava quadro a toa. La o desenho nao
+  e o mapa inteiro: `buildEntityPreview` deixa so a entidade e ate 25 relacoes dela, e
+  `layoutRelationPreview` usa a mesma espiral do mapa geral -- angulo aureo e raio crescente,
+  entao algumas bolas ficam mais para dentro e outras mais para fora. Os nomes aparecem sem
+  zoom (`showLabels`) no mesmo sentido do no em relacao ao centro: bola de baixo, nome
+  embaixo; de cima, nome em cima; da esquerda, a esquerda. Quando o nome encosta em outro
+  ele anda mais para fora, no mesmo sentido, e na borda da tela desliza para dentro sem
+  mudar de lado; o deslocamento vai junto para o desenho. Sem gesto para
+  aproximar, o limiar de zoom do mapa interativo nunca seria cruzado; e o nome ao lado de
+  uma bola boiava entre duas, sem dizer a qual pertencia. Abrir o mapa nao
+  parseia payload de analise nem transcricao:
   so identificacao, caderno e chaves sao lidos; os trechos e o tom do Humor sao carregados
   sob demanda, e analises antigas sao derivadas em segundo plano, em lotes curtos, sem
   bloquear o primeiro gesto.
@@ -758,3 +870,257 @@ uniao, tombstone permanente, versoes, anexos portateis e falha/retomada) esta em
 - Analise local no servidor: minimo realista de 2 GB de RAM para transcrever e analisar no
   mesmo host; em 1 GB, apenas transcricao com `tiny` e analise no aparelho ou hospedada.
 - Corte de silencio na transcricao: booleano em `Settings`, desligado por padrao.
+
+## Backup local
+
+- O backup copia todas as notas (texto, transcricao, audio e imagens) para uma pasta
+  escolhida pelo usuario (SAF), com manifesto e md5 por arquivo. A rotina automatica
+  (desligado/diario/semanal/mensal) confere, ao abrir o app ou acordar o sistema, se o
+  limite (00:00 local) ja passou; a hora exata nao e garantida pelo sistema operacional.
+- O manifesto carrega `textSha256` (SHA-256 do texto da nota). Ao restaurar, o hash e
+  conferido; divergencia aborta com `BackupError('corrupt')`. Backups antigos sem o campo
+  seguem compativeis (o campo e opcional).
+- Desde a versao 3, o manifesto carrega tambem o conhecimento local do aparelho: as
+  analises guardadas, os blocos ja lidos da analise local, as entidades e aliases do
+  mapa, os vinculos nota-entidade, as rejeicoes, os nomes "sou eu", as posicoes do mapa
+  e o nome do dono. Restaurar um backup devolve a ficha e o mapa sem sincronizar nada:
+  o app e um cliente independente e o que ele ja sabia tem de estar na pasta.
+- O manifesto leva ainda os marcadores do que ja foi trocado com cada ambiente
+  (`transcript_sync`, `analysis_sync` e as versoes por ambiente). Sem eles, o primeiro
+  sync depois de uma restauracao acharia que nunca viu transcricao nem analise e baixaria
+  tudo de novo — o oposto de trocar so o que falta.
+- Restaurar **nao e editar**: o `updatedAt` da nota continua sendo o da ultima mudanca
+  real, e so o carimbo do relogio hibrido e refeito (o que protege a nota de um tombstone
+  antigo do servidor). Sem isso a reconciliacao veria a biblioteca inteira como alterada
+  e reenviaria tudo.
+- Manifestos v2 continuam legiveis. Eles nao tem esse bloco, porque ele nunca esteve no
+  arquivo, e restauram apenas as notas.
+- Nada do conhecimento restaurado sobrescreve o que ja existe no aparelho: restaurar
+  duas vezes, ou depois de uma analise nova, mantem o trabalho mais recente.
+
+## Cofre no Google Drive (web)
+
+O web e um cliente local-first: o banco vive no navegador (wa-sqlite sobre OPFS) e o
+Drive do proprio usuario e a copia que sobrevive a troca de aparelho. Nao existe banco
+por usuario no backend, e o Worker nao ve conteudo de nota.
+
+**Login.** Modelo de token do Google Identity Services (`google.accounts.oauth2`), pedindo
+`openid email profile` junto do escopo `drive.file`: o app so enxerga os arquivos que ele
+mesmo criou, e recebe do userinfo (`oauth2/v3/userinfo`) nome, e-mail e foto. O navegador
+recebe um access token de cerca de uma hora e o guarda na sessao da aba
+(`sessionStorage`, `dyarium.drive.session`) e na memoria do modulo
+(`web/src/local/driveSession.ts`): o F5 abre o app ja conectado, sem passar pelo login, e a
+credencial some quando a aba fecha. Nunca vai para `localStorage`, IndexedDB, cookie ou log.
+Nao ha refresh token nem client secret: quando o token vence, o app pede um novo sem tela
+(`prompt: "none"`) ao carregar a pagina e no proximo gesto antes de vencer; se o Google
+recusar (usuario deslogado, janela bloqueada), a tela de conta oferece o Entrar. O client ID
+fica em `VITE_GOOGLE_CLIENT_ID` (`web/.env.example`); ele e publico.
+
+**Primeiro acesso.** O Google e a acao principal da primeira tela; escolher uma pasta ou
+seguir so naquele navegador sao caminhos secundarios, em link discreto. Quem entra com Google
+ganha identidade e cofre no Drive na mesma passada.
+
+**Identidade.** O perfil (`name`, `email`, `picture`) e so exibicao, nunca autorizacao: fica
+no `localStorage` (`dyarium.account`) para a foto pintar antes de qualquer rede e e apagado
+ao sair. A foto vive no canto (rodape da barra lateral, trilho recolhido e barra do celular)
+com um ponto de estado — cheio: Drive conectado; anel: sessao vencida; tracejado: sem conta.
+Tocar abre a folha da conta, com nome, e-mail, tamanho do cofre, ultima sincronizacao e as
+duas acoes deste navegador: sincronizar e sair. Sair encerra a sessao, apaga o perfil, a
+marca do Drive e revoga o token em melhor esforco. Nome e foto so mudam na conta Google; a
+folha tem o link para la.
+
+**Renovacao silenciosa.** O Google exige gesto para emitir token: nao existe refresh em
+segundo plano no navegador. Entao, quando este navegador ja tem cofre no Drive, perfil
+guardado e a sessao morreu, a tela travada da conta pede o token no primeiro toque com
+`prompt: "none"` — sem tela, sem escolha de conta. Se o Google estiver ativo naquele
+navegador, a sessao volta e o cofre abre antes de o app aparecer; se nao estiver, o pedido
+falha em silencio e o botao `Entrar com Google` continua ali para o login interativo. Sem
+perfil guardado o primeiro toque nao tenta nada: o silencioso nao pede consentimento de
+identidade, entao a foto nunca chegaria — esse caso e do `Entrar com Google`, que pede o
+consentimento uma vez, busca o userinfo e deixa o perfil em cache para os proximos
+silenciosos. O script do GIS e pre-carregado para o gesto nao gastar ativacao do usuario
+baixando script.
+
+**Layout.** A pasta `Dyarium/` na raiz do Drive e o cofre, sem subpasta por cofre:
+
+```
+Dyarium/
+  key.txt                    codigo de recuperacao (26 caracteres), claro
+  manifest.json              caminho, id, kind, sha256 do conteudo, tamanho e data; claro
+  backup.enc                 retrato v1, so as notas: o formato que app e web entendem
+  state.enc                  retrato v2: notas ricas, cadernos, analises e ajustes
+  notes/<AAAA-MM-DD>-<slug>.md.enc
+  books/<livro>/<NNN>-<capitulo>.md.enc
+  books/<livro>/capa.bin.enc
+  projects/<projeto>/<NNN>-<slug>.md.enc
+  attachments/<id>.<ext>.enc
+```
+
+Cada arquivo e selado com AES-256-GCM e IV aleatorio proprio. O `sha256` do manifest e do
+conteudo em claro: e o que permite saber, entre uma sincronizacao e outra, o que nao mudou
+sem decifrar nada. Titulo e corpo nunca aparecem em claro fora do nome do arquivo.
+
+**Dois retratos, um por cliente.** `backup.enc` e o contrato que app e web entendem (versao
+1: notas com titulo, datas, caderno, tags e texto) e os dois o leem com validador estrito. O
+estado completo vai em `state.enc` (versao 2: notas com transcricao e capitulo, cadernos,
+analises e configuracoes), selado com a mesma chave. Restaurar prefere `state.enc` e cai para
+`backup.enc` quando o cofre e antigo, sem erro. A separacao existe porque os dois clientes
+escrevem na mesma pasta: um formato unico faria um cliente apagar o que nao conhece, e o
+outro quebrar a restauracao. Pasta e `.zip` seguem a mesma divisao.
+
+**Os dois clientes gravam o v2.** O app le `state.enc` quando existe e sobe a uniao por id:
+nota e caderno com `updated_at` mais novo vencem, ids diferentes coexistem. Ele regrava as
+notas ricas e os cadernos que entende e devolve intactas as analises e as configuracoes que
+nao interpreta — ausencia nunca apaga. O `backup.enc` v1 continua sendo escrito com a mesma
+uniao projetada, para uma versao antiga do app nao ficar de fora. No aparelho, o envio
+automatico e debounced depois de uma edicao e roda tambem ao voltar ao primeiro plano; o
+botao "sincronizar" faz o mesmo caminho.
+
+**Sair apaga o cache da conta.** O "sair" do Drive no app sobe o retrato completo, le de
+volta e confere que toda nota e caderno locais chegaram; so entao apaga o SQLite, os audios,
+as imagens e as capas em cache, e limpa a sessao e o perfil. Sem sessao e com dados
+pendentes, ele recusa e pede para reconectar: expiracao de token nunca apaga nada. Sem
+conta, o app abre vazio no modo local-first, sem tela de login.
+
+**A chave nao aparece na interface.** O `key.txt` guarda o codigo de 26 caracteres que
+deriva a chave, e ele existe para o login abrir o mesmo cofre em outro aparelho — nao para
+o usuario anotar. Decisao de 23/11: quem tem a conta Google tem a prova de posse e a
+responsabilidade sobre a senha dela; o app nao mostra mais o codigo em Configuracoes. A
+consequencia aceita e que perder a conta Google (e as pastas ou zip com `key.txt`) significa
+perder o cofre: nao existe segunda via fora do Drive.
+
+**Sincronizacao.** `planVaultLayout` compara o banco com o manifest anterior e devolve so o
+que mudou; `folderSync` agenda a gravacao depois de dois minutos de silencio (maximo de
+quinze). O mesmo plano serve para a pasta do computador (File System Access) e para o Drive
+(`DriveFolder`, em `web/src/local/driveFolder.ts`), porque as duas superficies expoem a mesma
+interface de pastas e arquivos. Nada e reescrito quando nada mudou.
+
+**Retrato acompanha o layout.** Depois de toda gravacao que escreve ou apaga arquivo,
+`folderSync` chama o gancho registrado por `vaultCloud` e re-sela `key.txt`, `backup.enc` e
+`state.enc` na mesma pasta. Sem isso o layout ficava novo e o retrato velho: a restauracao
+em outro aparelho lia `state.enc` e nao via a nota recem-criada; pior, o plano seguinte
+comparava o manifest do Drive com o banco local e apagava o arquivo que nao tinha restaurado.
+Se o selo falhar, o cofre continua sujo e uma flag de snapshot pendente faz a proxima
+sincronizacao re-selar mesmo sem mudanca de layout. Escrever o retrato a cada rajada custa
+ler e selar o acervo uma vez por rajada, o mesmo custo do "salvar" manual.
+
+**Outro aparelho.** Entrar com o Google num navegador novo le `key.txt`, adota o codigo,
+baixa `state.enc` (ou `backup.enc`, no cofre antigo), decifra com a chave derivada e aplica
+com `applySnapshot`, que nunca sobrescreve nota local mais nova que o retrato, nem analise
+feita aqui, nem configuracao ja alterada. Cadernos voltam com nome, tipo e ordem. O cofre por
+tipo serve para inspecao e para restauracao futura arquivo a arquivo; o retrato e o caminho
+de restauracao completa, porque carrega titulo, datas, caderno e texto de cada nota.
+
+**Anexo nao segura o login.** O retrato so tem metadado: o que o login guarda de cada anexo
+(ou de cada capa) e id, nota dona, tipo, tamanho e o caminho do `.enc`, sem baixar byte
+nenhum. A nota aberta ja mostra o player e a imagem como pendentes; o audio ou a imagem
+desce quando o usuario toca nela (`attachmentFetch`, em `web/src/local/attachmentFetch.ts`),
+guiado pelo `manifest.json` v4 (`entry_id` e `content_type`), e o byte fica no IndexedDB como
+qualquer anexo local. Um arquivo corrompido falha so naquele anexo, e a proxima abertura
+tenta de novo. O metadado com caminho tambem e o que impede o sync de tratar "ainda nao
+baixado" como "apagado": o plano preserva a entrada remota enquanto o registro local
+existir, e so apaga quando o anexo (ou a nota dona) sai de verdade do banco. Capas seguem a
+mesma regra de metadado; os bytes voltam no fim do segundo plano, porque sao poucos e
+pequenos.
+
+**Abrir o cofre: casca agora, cofre depois.** `openDriveVault` restaura quando ha `key.txt`,
+aplica o retrato e le o resumo do `manifest.json`, e so entao devolve: a lista ja pode
+aparecer. As opcoes sao explicitas — `attachments: "skip" | "all"` e
+`sync: "background" | "now"`. O login (primeira tela, tela travada, pagina do cofre,
+Configuracoes e menu da conta) usa `skip` + `background`: anexo nenhum desce e o sync
+termina atras, como sinal discreto na pagina do cofre, sem overlay; uma falha ali vira uma
+linha e nao derruba a tela. Cofre novo e a excecao, porque e o sync que cria `key.txt`.
+Restaurar sem sincronizar deixava as notas locais fora do Drive, entao o sync continua
+acontecendo em toda abertura; a restauracao manual das Configuracoes pede `all` e baixa os
+bytes. O botao "sincronizar" e o sair seguem o caminho completo — o sair so apaga o cache
+depois de conferir os tres snapshots e esperar o segundo plano.
+
+**Sem conta e com conta.** Sem conta Google, o navegador e local-first: banco local, sem
+Drive e sem login. Com conta, o Drive e o banco e o cache local e copia de trabalho: a marca
+`localStorage["dyarium.drive"]` decide o modo. Entrar pela conta passa por um unico caminho
+(`connectAccount`): abre o Drive, aplica o retrato mantendo a nota local mais nova, sobe a
+uniao e grava a marca. O mesmo caminho vale para o primeiro acesso, Configuracoes, a pagina
+do cofre e o menu da conta — nenhum deles sobe o local sem abrir o Drive.
+
+**O cofre tem uma tela propria (25/11).** No web, a nuvem do trilho abre a pagina do Google
+Drive: coluna de 420 px centrada no espaco, com contagem de notas, anexos e tamanho do cofre
+local, audios e duracao, conta, pasta, ultimo envio e o bloco de backup (pasta e `.zip`). A
+linha que ficava acima da lista saiu: quando a sessao vence ou um envio falha, o aviso e um
+ponto no icone de nuvem mais a propria pagina, e nada ocupa a area de leitura. O importador
+do Notion passa a viver so no `+`, junto com o texto e o audio. No app, o mesmo conteudo ja
+vive na tela do Drive.
+
+**Painel do dono (25/11).** O site hospedado manda um pulso anonimo para um
+Worker separado (`worker/`, D1 `dyarium-admin`): id aleatorio de instalacao,
+evento do dia, versao, navegador, contagem de notas/tamanho e, SO no login com
+Google, o e-mail da conta. Nada de conteudo, token ou IP. O e-mail e o unico
+dado pessoal e fica no D1 ate ser removido pelo `/admin`; a pagina
+`/privacidade` diz apenas que o e-mail identifica a sessao e nao cita o painel. O painel
+le `/admin-api/stats` com Bearer (segredo do
+Worker); a chave fica so na sessao da aba. O Google nao entrega a lista de
+usuarios ao dono: e o app que manda o e-mail quando a pessoa entra. O app mobile
+ainda nao pulsa; quando pulsar, entra como `platform: "android"|"ios"`.
+
+**Sessao e reconexao.** O token dura cerca de uma hora e nao sobrevive ao reload (nao ha
+refresh token no navegador). O navegador guarda a marca e o ultimo resumo (bytes, notas),
+nunca a credencial. O reload com a conta marcada e sem sessao viva abre a tela travada da
+conta, no lugar do cofre: o perfil em cache pinta nome, e-mail e foto, e, quando ele existe,
+o primeiro toque tenta o token em silencio (`prompt: "none"`). So quando o cofre abre o app
+entra; se o pedido falhar, a tela continua travada, sem janela do Google e sem erro parado.
+Sem perfil guardado nao ha primeiro toque silencioso (o silencioso nao pede identidade e a
+foto nunca viria): o botao `Entrar com Google` faz o login interativo (`connectAccount`),
+pede o consentimento de identidade uma vez e guarda o perfil, e `Sair desta conta` segue o
+fluxo de saida que grava, confere e apaga o cache. Sem a marca, o navegador continua
+local-first e nenhuma trava aparece. A foto vem do userinfo; o `scope` real do Google traz
+email/profile como URLs de userinfo, e so um consentimento explicito e pedido quando eles
+faltam de verdade.
+
+**Sair da conta.** O sair grava o cofre inteiro e confere os tres snapshots no Drive; se a
+gravacao falhar, nada e apagado e a folha oferece tentar de novo ou descartar explicitamente.
+Depois apaga o cache local da conta (SQLite/OPFS, anexos e capas do IndexedDB; os modelos
+ficam), limpa perfil e marca e recarrega no modo local-first vazio. O sair **nao revoga** a
+concessao Google: revogar derrubaria a sessao do app, e web e app sao clientes independentes.
+Expiracao de token nunca apaga nada; so o sair explicito apaga.
+
+**App.** O cliente mobile nao depende do navegador para continuar logado: o refresh token
+fica no `expo-secure-store` e a sessao e restaurada no boot. O login pede os mesmos
+`openid email profile` + `drive.file`; a identidade e guardada ao lado do refresh token (dado
+de exibicao, nunca credencial) e aparece como avatar no canto do cabecalho, com o mesmo ponto
+de estado do web. A tela `/perfil` mostra nome, e-mail, tamanho do cofre, ultimo envio e as
+acoes sincronizar/conectar, trocar de conta e sair. O Drive sobe sozinho: ao voltar para o
+primeiro plano, se a sessao esta viva e o ultimo envio tem mais de dez minutos, o app abre o
+cofre em silencio (restaura o que veio e empurra o que mudou). Sem sessao, nada e tentado.
+O login nao espera o cofre inteiro: `openDriveVault` le chave, backup e `state.enc`, aplica
+notas e cadernos e volta; anexo nenhum e baixado e o envio do retrato segue no auto-sync
+(o resumo atualiza quando ele termina). Audio e imagem de uma nota chegam sob demanda
+(`ensureAttachmentFromDrive`), quando o usuario toca no audio ou abre a imagem, e a falha de
+um anexo fica so naquela nota — a proxima abertura tenta de novo. O "sincronizar" explicito
+faz o caminho completo (aplica e espera o envio); o "sair" continua esperando o envio
+conferido antes de apagar o cache.
+
+**Custo.** O acervo ocupa a cota do Drive de cada usuario (15 GB no plano gratuito); o app
+nao paga armazenamento e nao cobra nada.
+
+## Casca e navegacao
+
+A interface dos dois clientes segue `docs/design`: Schibsted Grotesk (exceto leitura longa,
+em Newsreader), a paleta do sistema em claro e escuro, densidade de 26 no web e toque de 44
+no app. No web, o trilho de 34 fica **sempre** visivel e a sidebar de 238 abre ao lado dele;
+abaixo de 900 o trilho sai e a barra do celular leva a gaveta com as mesmas acoes. A conta
+mora no pe do trilho, num menu ancorado (camada de folha, hairline, sem veu nem sombra) com
+os estados conectado, sessao vencida e sem conta.
+
+**Abas de notas.** Aba não nasce de clique: toda nota aberta pela lista, mapa, calendário,
+busca, Notion ou por um link interno chega em visão única, e um clique normal fecha as abas
+que houvessem. A única ação que cria aba é **Abrir em nova aba**, no menu da nota: sem abas,
+a nota que estava aberta (quando for outra) vira a primeira e a escolhida a segunda; com
+abas, a escolhida entra no fim, ou só é ativada se já for aba — nunca duplica. A barra de 34
+só aparece com **duas ou mais** abas: com uma, é só o editor. Fechar a ativa ativa a vizinha
+da direita (senão a da esquerda); sobrando uma, a barra sai e a nota fica; fechando a última,
+o editor volta ao início. Nota apagada/arquivada fecha a aba dela. As abas e a ativa ficam em
+`localStorage["dyarium.tabs"]`; ids que não existem mais caem fora quando a lista chega.
+Livro e caderno de projetos abrem na própria superfície, sem aba.
+
+**App.** O cabecalho da home tem duas linhas: o caderno (nome inteiro) e, abaixo, as seis
+acoes mais o avatar no canto. O FAB de nova nota e o circulo de 44 previsto no sistema; o
+perfil segue a mesma linguagem do menu do web e a linha destrutiva so aparece quando ha conta.

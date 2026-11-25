@@ -8,6 +8,7 @@
  */
 
 import type { BrowserPlan } from "../lib/browserModels";
+import type { EntityMemoryEntry } from "../../../mobile/src/core/entities";
 import type { AnalysisProgress, WorkerNote } from "./analysis";
 import { analyzeNoteInBrowser } from "./analysis";
 import { BrowserEngine, type EngineProgress, type Transcription } from "./engine";
@@ -31,6 +32,16 @@ interface PrepareRequest {
   threads?: number;
 }
 
+/** Guarda o plano sem baixar modelo; o motor certo carrega no uso. */
+interface ConfigureRequest {
+  id: number;
+  type: "configure";
+  plan: BrowserPlan;
+  allowGpu: boolean;
+  contextSize?: number;
+  threads?: number;
+}
+
 interface TranscribeRequest {
   id: number;
   type: "transcribe";
@@ -43,6 +54,8 @@ interface AnalyzeRequest {
   type: "analyze";
   note: WorkerNote;
   modelId: string;
+  /** Dicionario do diario (nome real, rotulo, apelidos, rejeicoes). */
+  memory?: EntityMemoryEntry[];
 }
 
 interface StopRequest {
@@ -58,6 +71,7 @@ interface DisposeRequest {
 type WorkerRequest =
   | LoadRequest
   | PrepareRequest
+  | ConfigureRequest
   | TranscribeRequest
   | AnalyzeRequest
   | StopRequest
@@ -100,6 +114,13 @@ async function handle(request: WorkerRequest): Promise<void> {
   }
   const browser = ensureEngine();
   switch (request.type) {
+    case "configure": {
+      // So guarda o plano: nenhum download aqui. A transcricao carrega o
+      // Whisper e a analise carrega o GGUF quando forem usados.
+      browser.configure(request.plan, request.allowGpu, request.threads, request.contextSize);
+      post({ id: request.id, type: "result", result: null });
+      return;
+    }
     case "load":
     case "prepare": {
       // Ativar o modo local ja baixa os dois modelos, um de cada vez. A nota
@@ -128,6 +149,7 @@ async function handle(request: WorkerRequest): Promise<void> {
         {
           shouldStop: () => stopped,
           onProgress: (progress) => post({ id: request.id, type: "analysis-progress", progress }),
+          memory: request.memory,
         },
       );
       post({ id: request.id, type: "result", result });

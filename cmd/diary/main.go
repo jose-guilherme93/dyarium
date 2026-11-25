@@ -25,6 +25,7 @@ import (
 	"github.com/joseti/dyarium/internal/ingest"
 	"github.com/joseti/dyarium/internal/jobs"
 	"github.com/joseti/dyarium/internal/llm"
+	"github.com/joseti/dyarium/internal/mcpserver"
 	"github.com/joseti/dyarium/internal/models"
 	"github.com/joseti/dyarium/internal/store"
 	"github.com/joseti/dyarium/internal/telegram"
@@ -238,6 +239,7 @@ func serve() error {
 		Canceller: canceller,
 		Tokens:    tokens,
 		Presence:  presence,
+		MCP:       mcpserver.New(st, logger, version),
 	})
 
 	httpServer := &http.Server{

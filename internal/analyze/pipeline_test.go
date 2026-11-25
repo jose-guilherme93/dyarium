@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestBuildWindowsSinglePass(t *testing.T) {
@@ -96,9 +98,9 @@ func TestMergeResults(t *testing.T) {
 }
 
 func TestPipelineRunMergesAndSummarizes(t *testing.T) {
-	var calls int
+	var calls atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
+		calls.Add(1)
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		messages, _ := body["messages"].([]any)
@@ -129,8 +131,8 @@ func TestPipelineRunMergesAndSummarizes(t *testing.T) {
 		t.Fatalf("meta-resumo nao aplicado: %q", result.Summary)
 	}
 	// N janelas + 1 meta-resumo.
-	if calls < 3 {
-		t.Fatalf("chamadas = %d, queria multiplas janelas + meta-resumo", calls)
+	if calls.Load() < 3 {
+		t.Fatalf("chamadas = %d, queria multiplas janelas + meta-resumo", calls.Load())
 	}
 }
 
@@ -138,5 +140,55 @@ func TestPipelineRunEmpty(t *testing.T) {
 	client := New(Config{Enabled: true, BaseURL: "http://127.0.0.1:0"})
 	if _, err := NewPipeline(client).Run(context.Background(), nil, nil); err == nil {
 		t.Fatal("esperava erro para transcricao vazia")
+	}
+}
+
+// As janelas de uma nota longa nao podem esperar uma pela outra: um provedor
+// hospedado aceita algumas chamadas em paralelo e o ganho e o que tira a nota
+// de 15 mil palavras do minuto por minuto. A ordem do merge continua a mesma.
+func TestPipelineRunUsesConfiguredConcurrency(t *testing.T) {
+	var inFlight, peak atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		current := inFlight.Add(1)
+		for {
+			seen := peak.Load()
+			if current <= seen || peak.CompareAndSwap(seen, current) {
+				break
+			}
+		}
+		time.Sleep(30 * time.Millisecond)
+		inFlight.Add(-1)
+		reply := `{"sentiment":{"score":0.2,"label":"positivo"},"emotions":[],"people":[],"places":[],"themes":[],"summary":"parte","key_moments":[],"questions":[],"decisions":[]}`
+		resp := map[string]any{"choices": []map[string]any{{"message": map[string]string{"content": reply}}}}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	client := New(Config{Enabled: true, BaseURL: server.URL, Model: "llama", Concurrency: 3})
+	var segments []Segment
+	for i := 0; i < 300; i++ {
+		segments = append(segments, Segment{StartMS: i * 1000, Text: strings.Repeat("conteudo ", 15)})
+	}
+	if _, err := NewPipeline(client).Run(context.Background(), segments, nil); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if peak.Load() < 2 {
+		t.Fatalf("pico de chamadas simultaneas = %d, queria >= 2", peak.Load())
+	}
+}
+
+// Um runtime local processa uma chamada por vez: paralelizar so cria fila.
+func TestClientConcurrencyFollowsRuntime(t *testing.T) {
+	hosted := New(Config{Enabled: true})
+	if got := hosted.concurrency(); got != defaultHostedConcurrency {
+		t.Fatalf("concorrencia hospedada = %d, queria %d", got, defaultHostedConcurrency)
+	}
+	local := New(Config{Enabled: true, LocalRuntime: "embedded"})
+	if got := local.concurrency(); got != 1 {
+		t.Fatalf("concorrencia local = %d, queria 1", got)
+	}
+	forced := New(Config{Enabled: true, Concurrency: 2})
+	if got := forced.concurrency(); got != 2 {
+		t.Fatalf("concorrencia configurada = %d, queria 2", got)
 	}
 }

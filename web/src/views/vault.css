@@ -1,0 +1,190 @@
+.vault-page {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: var(--dy-space-32) var(--dy-space-24);
+  font-family: var(--dy-font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.32;
+  color: var(--dy-text);
+}
+
+.vault-column {
+  width: 100%;
+  max-width: 420px;
+  margin-inline: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--dy-space-24);
+}
+
+.vault-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: var(--dy-space-8);
+  padding: var(--dy-space-8) 0;
+  background: var(--color-bg);
+  border-bottom: 1px solid var(--dy-line);
+}
+
+.vault-title {
+  font-size: 21px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+.vault-state {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dy-space-6);
+  font-family: var(--dy-font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  color: var(--dy-text-muted);
+}
+
+.vault-state-word {
+  text-transform: none;
+}
+
+.vault-numbers {
+  display: flex;
+  gap: var(--dy-space-24);
+}
+
+.vault-number {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dy-space-4);
+}
+
+.vault-number-value {
+  font-family: var(--dy-font-mono, ui-monospace, monospace);
+  font-size: 21px;
+  font-weight: 600;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.vault-number-legend {
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--dy-text-muted);
+}
+
+.vault-audio {
+  margin: 0;
+  font-family: var(--dy-font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  color: var(--dy-text-muted);
+}
+
+.vault-error-row {
+  display: flex;
+  align-items: center;
+  gap: var(--dy-space-8);
+}
+
+.vault-error {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--dy-danger);
+}
+
+.vault-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dy-space-4);
+}
+
+.vault-block-label {
+  margin: 0 0 var(--dy-space-4) 0;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--dy-text-muted);
+}
+
+.vault-line {
+  display: flex;
+  align-items: center;
+  gap: var(--dy-space-8);
+  min-height: 26px;
+  border-bottom: 1px solid var(--dy-line);
+}
+
+.vault-line:last-child {
+  border-bottom: 0;
+}
+
+.vault-line-label {
+  font-size: 13px;
+  color: var(--dy-text);
+}
+
+.vault-line-muted {
+  color: var(--dy-text-muted);
+}
+
+.vault-line-value {
+  margin-left: auto;
+  font-family: var(--dy-font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  color: var(--dy-text);
+}
+
+.vault-footer {
+  display: flex;
+  justify-content: flex-start;
+}
+
+/* Reaproveita o desenho do VaultBoot sem a pagina, como no .drive-reconnect-boot. */
+.vault-progress {
+  padding-left: calc(var(--dy-mark-size) + var(--dy-space-8));
+}
+
+.vault-progress .vault-boot-page {
+  min-height: 0;
+  padding: 0;
+  display: block;
+}
+
+.vault-progress .vault-boot-column {
+  max-width: none;
+  margin: 0;
+}
+
+.vault-progress .vault-boot {
+  width: 100%;
+}
+
+.vault-progress .vault-boot-head {
+  min-height: 0;
+  font-size: 12.5px;
+}
+
+.vault-progress .vault-boot-detail {
+  margin-top: var(--dy-space-4);
+  font-size: 12.5px;
+}
+
+.vault-progress .vault-boot-meter {
+  margin-top: var(--dy-space-6);
+}

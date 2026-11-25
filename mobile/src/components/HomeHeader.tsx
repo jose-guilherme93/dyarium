@@ -1,15 +1,25 @@
-import { Ionicons } from '@expo/vector-icons';
-import {
-  View,
-} from 'react-native';
+import { Image, StyleSheet, View } from 'react-native';
 import { Text, TextInput } from '@/components/AppText';
+
+import type { GoogleProfile } from '@/services/driveAuth';
 
 import { HomeActivityButton } from '@/components/HomeActivityButton';
 import { Press } from '@/components/Press';
 import type { Notebook } from '@/core/notebooks';
-import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
-import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
-import { defineStyles } from '@/theme/themedStyles';
+import {
+  designControl,
+  designFocus,
+  designFont,
+  designIcon,
+  designMark,
+  designRadius,
+  designRow,
+  designSpace,
+  designType,
+} from '@/theme/design';
+
+import { Icon } from '@/ui/icons';
+import { useDesign } from '@/ui/useDesign';
 
 export type SyncState = 'ok' | 'syncing' | 'error';
 
@@ -19,18 +29,28 @@ interface HomeHeaderProps {
   searchOpen: boolean;
   query: string;
   searchPlaceholder?: string;
+  profile?: GoogleProfile | null;
+  accountState?: 'connected' | 'expired' | 'off';
   onToggleSearch(): void;
   onChangeQuery(value: string): void;
   onOpenNotebooks(): void;
   onOpenSync(): void;
   onOpenMap(): void;
+  onOpenCalendar(): void;
   onOpenActivity(): void;
   onOpenSettings(): void;
+  onOpenProfile?(): void;
 }
 
 /**
- * Cabecalho compacto da home. O caderno vira um botao de icone (o nome grande
- * saiu) e a busca so ocupa espaco quando o usuario pede.
+ * Cabecalho da home em duas linhas, como o prototipo: o caderno ocupa a
+ * primeira (icone, nome inteiro e chevron) e as seis acoes mais o avatar
+ * ocupam a segunda, com alvos de 44. O avatar fica por ultimo e leva a marca
+ * do estado da conta dentro dele.
+ *
+ * Nada saiu daqui na migracao: caderno e troca, estado de sync com ponto,
+ * atividade, calendario, mapa, busca, opcoes e perfil continuam na mesma
+ * ordem.
  */
 export function HomeHeader({
   notebook,
@@ -38,62 +58,73 @@ export function HomeHeader({
   searchOpen,
   query,
   searchPlaceholder = 'Buscar em todos os cadernos',
+  profile = null,
+  accountState = 'off',
   onToggleSearch,
   onChangeQuery,
   onOpenNotebooks,
   onOpenSync,
   onOpenMap,
+  onOpenCalendar,
   onOpenActivity,
   onOpenSettings,
+  onOpenProfile,
 }: HomeHeaderProps) {
-  const styles = useThemedStyles(baseStyles);
-  const { colors } = useTheme();
-
+  const colors = useDesign();
   const recent = !notebook;
-  const syncIcon =
-    syncState === 'error'
-      ? 'cloud-offline-outline'
-      : syncState === 'syncing'
-        ? 'cloud-upload-outline'
-        : 'cloud-done-outline';
-  const syncColor = syncState === 'error' ? colors.danger : colors.textTertiary;
+  const syncGlyph = syncState === 'syncing' ? 'sync' : 'cloud';
+  const syncColor = syncState === 'error' ? colors.danger : colors.textMuted;
+
+  const initials = (() => {
+    const source = (profile?.name || profile?.email || '').trim();
+    if (!source) return '?';
+    const parts = source.split(/\s+/).filter(Boolean);
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  })();
 
   return (
     <View>
       <View style={styles.header}>
         <Press
+          testID="home-header-notebook"
           style={styles.notebook}
           onPress={onOpenNotebooks}
           accessibilityRole="button"
           accessibilityLabel={
             recent
-              ? 'Páginas recentes. Escolher caderno'
+              ? 'Recentes. Escolher caderno'
               : `Caderno ${notebook.name}. Trocar de caderno`
           }
         >
-          <Ionicons
-            name={recent ? 'time-outline' : 'book-outline'}
-            size={19}
-            color={notebook?.color || colors.textSecondary}
+          <Icon
+            name={recent ? 'clock' : 'book'}
+            size={designIcon.box}
+            color={colors.textMuted}
           />
-          <Text style={styles.notebookName} numberOfLines={1}>
-            {notebook?.name ?? 'Páginas recentes'}
+          <Text style={[styles.notebookName, { color: colors.text }]}>
+            {notebook?.name ?? 'Recentes'}
           </Text>
-          <Ionicons name="chevron-down" size={14} color={colors.textTertiary} />
+          <Icon name="chevron" size={designIcon.sm} color={colors.textMuted} />
         </Press>
 
-        <View style={styles.actions}>
+        <View testID="home-header-actions" style={styles.actions}>
           <Press
             style={styles.iconButton}
             onPress={onOpenSync}
+            accessibilityRole="button"
             accessibilityLabel="Sincronização"
           >
-            <Ionicons name={syncIcon} size={21} color={syncColor} />
+            <Icon name={syncGlyph} size={designIcon.box} color={syncColor} />
             {syncState !== 'ok' ? (
               <View
                 style={[
                   styles.syncDot,
-                  { backgroundColor: syncState === 'error' ? colors.danger : colors.accent },
+                  {
+                    backgroundColor:
+                      syncState === 'error' ? colors.danger : colors.primary,
+                    borderColor: colors.surface,
+                  },
                 ]}
               />
             ) : null}
@@ -101,45 +132,111 @@ export function HomeHeader({
           <HomeActivityButton onPress={onOpenActivity} />
           <Press
             style={styles.iconButton}
+            onPress={onOpenCalendar}
+            accessibilityRole="button"
+            accessibilityLabel="Calendário"
+          >
+            <Icon name="calendar" size={designIcon.box} color={colors.text} />
+          </Press>
+          <Press
+            style={styles.iconButton}
             onPress={onOpenMap}
+            accessibilityRole="button"
             accessibilityLabel="Mapa de relações"
           >
-            <Ionicons name="git-network-outline" size={22} color={colors.text} />
+            <Icon name="network" size={designIcon.box} color={colors.text} />
           </Press>
           <Press
             style={styles.iconButton}
             onPress={onToggleSearch}
+            accessibilityRole="button"
             accessibilityLabel={searchOpen ? 'Fechar busca' : 'Buscar notas'}
           >
-            <Ionicons name="search" size={22} color={searchOpen ? colors.accent : colors.text} />
+            <Icon
+              name="search"
+              size={designIcon.box}
+              color={searchOpen ? colors.primary : colors.text}
+            />
           </Press>
           <Press
             style={styles.iconButton}
             onPress={onOpenSettings}
+            accessibilityRole="button"
             accessibilityLabel="Opções"
           >
-            <Ionicons name="settings-outline" size={22} color={colors.text} />
+            <Icon name="gear" size={designIcon.box} color={colors.text} />
+          </Press>
+          <Press
+            testID="home-header-avatar"
+            style={styles.avatarButton}
+            onPress={() => onOpenProfile?.()}
+            accessibilityLabel="Perfil"
+            accessibilityRole="button"
+          >
+            <View style={styles.avatar}>
+              {profile?.picture ? (
+                <Image
+                  testID="home-header-avatar-photo"
+                  source={{ uri: profile.picture }}
+                  style={[styles.avatarImage, { borderColor: colors.line }]}
+                />
+              ) : (
+                <View
+                  style={[
+                    styles.avatarInitials,
+                    { backgroundColor: colors.surfaceAlt, borderColor: colors.line },
+                  ]}
+                >
+                  <Text style={[styles.avatarInitialsText, { color: colors.text }]}>
+                    {initials}
+                  </Text>
+                </View>
+              )}
+              <View
+                testID="home-header-state"
+                style={[
+                  styles.stateMark,
+                  accountState === 'connected'
+                    ? { backgroundColor: colors.success, borderColor: colors.success }
+                    : accountState === 'expired'
+                      ? {
+                          backgroundColor: 'transparent',
+                          borderColor: colors.warning,
+                        }
+                      : {
+                          backgroundColor: 'transparent',
+                          borderStyle: 'dashed',
+                          borderColor: colors.textMuted,
+                        },
+                ]}
+              />
+            </View>
           </Press>
         </View>
       </View>
 
       {searchOpen ? (
-        <View style={styles.searchWrap}>
-          <Ionicons name="search" size={15} color={colors.textTertiary} />
+        <View
+          style={[
+            styles.searchWrap,
+            { backgroundColor: colors.surfaceAlt, borderColor: colors.line },
+          ]}
+        >
+          <Icon name="search" size={designIcon.sm} color={colors.textMuted} />
           <TextInput
             value={query}
             onChangeText={onChangeQuery}
             placeholder={searchPlaceholder}
-            placeholderTextColor={colors.textTertiary}
-            selectionColor={colors.accent}
-            style={styles.searchInput}
+            placeholderTextColor={colors.textMuted}
+            selectionColor={colors.primary}
+            style={[styles.searchInput, { color: colors.text }]}
             autoFocus
             returnKeyType="search"
             accessibilityLabel="Buscar notas"
           />
           {query ? (
             <Press onPress={() => onChangeQuery('')} accessibilityLabel="Limpar busca" hitSlop={8}>
-              <Ionicons name="close-circle" size={16} color={colors.textTertiary} />
+              <Icon name="close" size={designIcon.sm} color={colors.textMuted} />
             </Press>
           ) : null}
         </View>
@@ -148,51 +245,105 @@ export function HomeHeader({
   );
 }
 
-const baseStyles = defineStyles({
+const styles = StyleSheet.create({
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.sm,
-    paddingHorizontal: spacing.sm,
-    paddingTop: spacing.xs,
-    paddingBottom: spacing.xs,
+    paddingHorizontal: designSpace.s8,
+    paddingTop: designSpace.s8,
+    gap: designSpace.s2,
   },
   notebook: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    flexShrink: 1,
-    minHeight: 40,
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: designSpace.s6,
+    alignSelf: 'stretch' as const,
+    minHeight: designRow.touch,
+    borderRadius: designRadius.control,
   },
   notebookName: {
-    flexShrink: 1,
-    color: baseColors.text,
-    fontSize: fontSize.md,
-    fontWeight: '600',
+    flex: 1,
+    fontFamily: designFont.semibold,
+    fontSize: designType.title.size,
+    lineHeight: Math.round(designType.title.size * designType.title.lineHeight),
+    letterSpacing: designType.title.letterSpacing,
+    fontWeight: 'normal' as const,
   },
-  actions: { flexDirection: 'row', alignItems: 'center' },
-  iconButton: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center' },
+  actions: {
+    // Sete alvos de 44 (seis acoes e o avatar) somam 308; com 8 de margem em
+    // cada lado o cabecalho cabe inteiro numa tela de 324 sem encolher nada.
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'space-between' as const,
+    alignSelf: 'stretch' as const,
+  },
+  iconButton: {
+    width: designRow.touch,
+    height: designRow.touch,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+  },
   syncDot: {
-    position: 'absolute',
-    top: 7,
-    right: 7,
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    borderWidth: 1.5,
-    borderColor: baseColors.bg,
+    position: 'absolute' as const,
+    top: designSpace.s8 + designSpace.s2,
+    right: designSpace.s8 + designSpace.s2,
+    width: designSpace.s6,
+    height: designSpace.s6,
+    borderRadius: designRadius.surface,
+    borderWidth: designFocus.width,
+  },
+  avatarButton: {
+    width: designRow.touch,
+    height: designRow.touch,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+  },
+  avatar: {
+    width: designControl.md,
+    height: designControl.md,
+    position: 'relative' as const,
+  },
+  avatarImage: {
+    width: designControl.md,
+    height: designControl.md,
+    borderRadius: designRadius.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  avatarInitials: {
+    width: designControl.md,
+    height: designControl.md,
+    borderRadius: designRadius.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+  },
+  avatarInitialsText: {
+    fontFamily: designFont.semibold,
+    fontSize: designType.label.size,
+    lineHeight: Math.round(designType.label.size * designType.title.lineHeight),
+    fontWeight: 'normal' as const,
+  },
+  stateMark: {
+    position: 'absolute' as const,
+    right: designSpace.s2,
+    bottom: designSpace.s2,
+    width: designMark.size,
+    height: designMark.size,
+    borderRadius: designMark.size / 2,
+    borderWidth: designMark.stroke,
   },
   searchWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    marginHorizontal: spacing.sm,
-    marginBottom: spacing.xs,
-    paddingHorizontal: spacing.md,
-    height: 38,
-    borderRadius: radius.pill,
-    backgroundColor: baseColors.surface,
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: designSpace.s6,
+    marginHorizontal: designSpace.s8,
+    marginBottom: designSpace.s4,
+    paddingHorizontal: designSpace.s8,
+    height: designControl.lg,
+    borderRadius: designRadius.control,
+    borderWidth: 1,
   },
-  searchInput: { flex: 1, color: baseColors.text, fontSize: fontSize.sm, paddingVertical: 0 },
+  searchInput: {
+    flex: 1,
+    fontSize: designType.body.size,
+    paddingVertical: 0,
+  },
 });

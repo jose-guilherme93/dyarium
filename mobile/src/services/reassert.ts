@@ -76,10 +76,11 @@ function isNotFound(error: unknown): boolean {
 }
 
 /**
- * Reafirma todas as notas restauradas. Todas entram na fila de sincronizacao: o
- * backup e a versao mais nova do conteudo, entao titulo, data e corpo vao de novo
- * para o servidor (e as imagens voltam a subir junto). Devolve o resumo para a
- * tela de backup.
+ * Reafirma todas as notas restauradas. So a nota que o servidor **nao conhecia
+ * mais** (recriada agora como entrada de texto) volta para a fila: o corpo dela
+ * precisa subir. A nota que o servidor apenas tinha na lixeira volta inteira pelo
+ * `restore` e nao e uma edicao — marca-la suja faria a primeira sincronizacao
+ * reenviar a biblioteca toda, o oposto de trocar so o que falta.
  */
 export async function reassertNotesOnServer(recordings: Recording[]): Promise<ReassertResult> {
   const result: ReassertResult = { restored: 0, recreated: 0, unchanged: 0, failed: 0 };
@@ -90,7 +91,7 @@ export async function reassertNotesOnServer(recordings: Recording[]): Promise<Re
   for (const recording of recordings) {
     const state = await reassertEntry(api, recording);
     result[state] += 1;
-    if (state === 'restored' || state === 'recreated') {
+    if (state === 'recreated') {
       await upsertRecording({ ...recording, noteDirty: true }).catch(() => undefined);
     }
   }

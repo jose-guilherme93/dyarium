@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { claimSetup } from "../api";
+import { BRAND, brandClass } from "../lib/brand";
 
 interface SetupGateProps {
   onDone: (token: string) => void;
@@ -39,7 +40,7 @@ export function SetupGate({ onDone }: SetupGateProps) {
     <div className="token-gate">
       <div className="token-card">
         <div>
-          <h1>dyarium</h1>
+          <h1 className={brandClass()}>{BRAND.name}</h1>
           <p>
             Bem-vindo. Defina o token que protege este diario. Voce vai usa-lo para entrar
             aqui e no app do celular.

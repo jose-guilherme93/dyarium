@@ -2,17 +2,23 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { AppState } from 'react-native';
 
 import { newId } from '@/core/id';
-import { DEFAULT_NOTEBOOK_ID, sameNotebooks, type Notebook } from '@/core/notebooks';
+import {
+  DEFAULT_NOTEBOOK_ID,
+  sameNotebooks,
+  type Notebook,
+} from '@/core/notebooks';
 import { buildDraftNote, buildTextNote, noteHasContent } from '@/core/note';
 import { attachAudioToNote, audioRefFromPath, canFreeLocalAudio } from '@/core/noteAudio';
 import type { NoteInsertPosition } from '@/core/noteDocument';
 import { markQueued } from '@/core/queue';
-import { isUploadable, needsNoteSync, needsTranscript, type AuthorRole, type Recording } from '@/core/types';
+import { isUploadable, needsNoteSync, needsTranscript, type AuthorRole, type Recording, type SummaryDetail } from '@/core/types';
 import { bumpRender } from '@/dev/perf';
 import { clockNode } from '@/services/clock';
-import { deleteRecordingRow, getRecording, listRecordings, updateRecordingNote, upsertRecording } from '@/services/db';
+import { deleteRecordingRow, ensureEntityDerivation, getRecording, listRecordings, updateRecordingNote, upsertRecording } from '@/services/db';
+import { invalidateSessionSnapshot } from '@/services/graphData';
 import { deleteServerEntry, restoreServerEntry } from '@/services/entries';
 import { deleteSessionAudioFiles, deleteSessionFiles } from '@/services/files';
+import { notifyLocalChange } from '@/services/localChange';
 import {
   deleteLocalNotebook,
   insertLocalNotebook,
@@ -27,7 +33,7 @@ import { isAnalysisModelInstalled } from '@/services/analysisModels';
 import { localAnalysisAvailable } from '@/services/localAnalysis';
 import { maybeTranscribeLocally, transcribePendingLocally } from '@/services/localTranscription';
 import { reviewRecording } from '@/services/transcriptReview';
-import { noteIsOpen } from '@/services/noteVisibility';
+import { backgroundPaused } from '@/services/noteVisibility';
 import { pullServerEntries } from '@/services/pull';
 import { putTombstone, removeTombstone } from '@/services/sync/state';
 import { reconcileAllServers } from '@/services/sync/engine';
@@ -46,9 +52,15 @@ interface LibraryValue {
   refresh(): Promise<Recording[]>;
   refreshNotebooks(): Promise<void>;
   /** Cria um caderno local; o push ao servidor e best-effort. */
-  createNotebook(input: { name: string; color?: string }): Promise<Notebook>;
-  /** Renomeia/recolore um caderno. */
-  renameNotebook(id: string, patch: { name?: string; color?: string }): Promise<void>;
+  createNotebook(input: {
+    name: string;
+    color?: string;
+  }): Promise<Notebook>;
+  /** Renomeia, recolore ou ajusta o detalhe do resumo de um caderno. */
+  renameNotebook(
+    id: string,
+    patch: { name?: string; color?: string },
+  ): Promise<void>;
   /** Exclui um caderno; as notas vao para "Notas ao acaso". */
   removeNotebook(id: string): Promise<void>;
   /** Move uma nota de caderno. */
@@ -57,6 +69,8 @@ interface LibraryValue {
   setNoteTags(id: string, tags: string[]): Promise<void>;
   /** Troca o autor da nota (vazio volta ao padrao da instancia). */
   setNoteAuthor(id: string, author: AuthorRole): Promise<void>;
+  /** Ajusta o detalhe do resumo do projeto (entrada MCP). */
+  setNoteSummaryDetail(id: string, detail: SummaryDetail): Promise<void>;
   /** Coloca uma gravacao recem-finalizada na fila e dispara o envio. */
   enqueue(recording: Recording): Promise<void>;
   /** Cria uma nota somente texto e a coloca na fila. */
@@ -130,6 +144,15 @@ function mergeRecordings(prev: Recording[], next: Recording[]): Recording[] {
 /** Enquanto houver itens na fila, tenta enviar neste intervalo. */
 const WORKER_INTERVAL_MS = 15_000;
 
+/** Espera a home assentar antes de qualquer sincronizacao no boot. */
+const BOOT_SYNC_DELAY_MS = 6_000;
+
+/**
+ * Pausa antes do trabalho pesado (reconciliacao, transcricao, analise) dentro
+ * da cadeia. Fora da janela em que o usuario abre o app e toca numa nota.
+ */
+const HEAVY_SYNC_DELAY_MS = 10_000;
+
 /** Intervalo de busca da transcricao enquanto houver alguma pendente. */
 const TRANSCRIPT_INTERVAL_MS = 8_000;
 
@@ -185,16 +208,16 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     bumpRender('kick.called');
     // Enquanto a nota esta aberta, upload/rede/SQLite esperam: eles competem
     // com a leitura e a digitacao. A fila e persistente e retoma ao sair.
-    if (noteIsOpen()) return;
+    if (backgroundPaused()) return Promise.resolve();
     // Cadernos pendentes (criados/renomeados/excluidos offline) sobem **antes**
     // da fila: uma nota que aponta para um caderno ainda inexistente no servidor
     // levaria 422 invalid_notebook e ficaria falha para sempre.
-    void pushNotebooks()
+    // Devolve a promessa para o boot poder encadear uma etapa depois da outra.
+    return pushNotebooks()
       .then(refreshNotebooks)
       .catch(() => undefined)
-      .finally(() => {
-        void runUploadQueueOnce().then(refresh).catch(() => undefined);
-      });
+      .then(() => runUploadQueueOnce().then(refresh))
+      .catch(() => undefined);
   }, [refresh, refreshNotebooks]);
 
   useEffect(() => {
@@ -238,9 +261,11 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
 
   const pullTranscripts = useCallback(() => {
     // A nota aberta e local-first: nada de rede/SQLite de fundo competindo.
-    if (noteIsOpen()) return;
+    if (backgroundPaused()) return Promise.resolve();
     bumpRender('transcripts.called');
-    void fetchTranscriptsOnce().then(refresh).catch(() => undefined);
+    return fetchTranscriptsOnce()
+      .then(refresh)
+      .catch(() => undefined);
   }, [refresh]);
 
   // Traz notas do servidor para o app (best-effort). Se nada novo chegou, nao
@@ -249,17 +274,19 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   // envio que falhou offline) sobe para o servidor. Sem isso o dashboard
   // mostrava a nota transcrita sem texto.
   const pushTranscripts = useCallback(() => {
-    if (noteIsOpen()) return;
+    if (backgroundPaused()) return Promise.resolve();
     // O envio pode adotar a transcricao refeita no servidor: recarrega a lista
     // para o texto certo aparecer sem esperar o proximo ciclo.
-    void pushPendingTranscriptsOnce().then(refresh).catch(() => undefined);
+    return pushPendingTranscriptsOnce()
+      .then(refresh)
+      .catch(() => undefined);
   }, [refresh]);
 
   // Uma revisao interrompida (app morto no meio) retoma no boot, como a
   // transcricao. Sem isso o chip ficava em "revisando" para sempre e o texto
   // nunca terminava de ser limpo.
   const resumeReviews = useCallback(async () => {
-    if (!reviewEnabled || noteIsOpen()) return;
+    if (!reviewEnabled || backgroundPaused()) return;
     // Revisao e trabalho pesado: sem o app na frente nao da para abrir o
     // servico em primeiro plano (Android 12+) e o processo seria encerrado.
     if (AppState.currentState !== 'active') return;
@@ -285,9 +312,9 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   }, [reviewEnabled, literalTranscript, analysisModel, analysisLowPower]);
 
   const pullServer = useCallback(() => {
-    if (noteIsOpen()) return;
+    if (backgroundPaused()) return Promise.resolve();
     bumpRender('pullserver.called');
-    void pullServerEntries()
+    return pullServerEntries()
       .then(async (changed) => {
         await refreshNotebooks();
         if (changed > 0) return refresh();
@@ -300,8 +327,8 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   // tombstones. Roda ao conectar, ao voltar para o app e num intervalo lento;
   // nao a cada 20 s, porque o manifesto percorre a biblioteca inteira.
   const reconcile = useCallback(() => {
-    if (noteIsOpen()) return;
-    void reconcileAllServers()
+    if (backgroundPaused()) return Promise.resolve();
+    return reconcileAllServers()
       .then((summaries) => {
         if (summaries.some((summary) => summary.pulled + summary.pushed > 0)) {
           return refresh();
@@ -311,40 +338,74 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       .catch(() => undefined);
   }, [refresh]);
 
-  useEffect(() => {
-    if (!ready || !config) return undefined;
-    // A lista e a prioridade do boot. Envio, transcricao e pull entram depois
-    // que a tela assentou, e cada um desiste se uma nota abrir no meio.
-    const timer = setTimeout(() => {
-      kick();
-      pullTranscripts();
-      pushTranscripts();
-      pullServer();
-      reconcile();
+  // Sincronizacao de fundo em serie. Uma etapa por vez (cada uma rele a
+  // biblioteca) e as pesadas so depois da janela de abertura: abrir o app,
+  // tocar numa nota e esperar quase 10 s era o resultado de reconciliacao,
+  // transcricao e analise de escrita partindo em cima do primeiro toque.
+  const syncing = useRef(false);
+  const runSyncChain = useCallback(async () => {
+    if (syncing.current) return;
+    syncing.current = true;
+    try {
+      await kick();
+      await pullTranscripts();
+      await pushTranscripts();
+      await pullServer();
+      // Daqui para baixo o trabalho le a biblioteca inteira e pode abrir
+      // whisper/llama. Espera a tela ficar parada antes de encostar nisso.
+      await new Promise<void>((resolve) => setTimeout(resolve, HEAVY_SYNC_DELAY_MS));
+      if (backgroundPaused()) return;
+      await reconcile();
+      if (backgroundPaused()) return;
+      // Deriva as entidades das analises antigas. Antes isso rodava 2,5 s
+      // depois de o mapa aparecer: a varredura travava a thread de JS e um
+      // recorte novo reiniciava o desenho na frente do usuario. Aqui e
+      // manutencao de dados, feita com a home parada; o mapa seguinte ja le o
+      // resultado.
+      const derived = await ensureEntityDerivation().catch(() => 0);
+      if (derived > 0) invalidateSessionSnapshot();
+      if (backgroundPaused()) return;
       // O que ficou pela metade antes de o app morrer continua de onde parou.
       // A fila local so roda com o app na frente: trabalho pesado iniciado do
       // fundo nao consegue abrir o servico em primeiro plano no Android 12+.
-      void transcribePendingLocally().catch(() => undefined);
-      void resumeReviews().catch(() => undefined);
+      await transcribePendingLocally().catch(() => undefined);
+      if (backgroundPaused()) return;
+      await resumeReviews().catch(() => undefined);
       // Analises feitas no aparelho antes da conexao sobem agora (idempotente).
-      void pushLocalAnalyses().catch(() => undefined);
-    }, 2000);
-    return () => clearTimeout(timer);
-  }, [ready, config, kick, pullTranscripts, pushTranscripts, pullServer, reconcile, resumeReviews]);
+      await pushLocalAnalyses().catch(() => undefined);
+    } finally {
+      syncing.current = false;
+    }
+  }, [kick, pullTranscripts, pushTranscripts, pullServer, reconcile, resumeReviews]);
 
   useEffect(() => {
-    if (!hasPending) return undefined;
+    if (!ready) return undefined;
+    // A lista e a prioridade do boot. Envio, transcricao e pull entram depois
+    // que a tela assentou, e cada um desiste se uma nota abrir no meio. Sem
+    // servidor o mesmo fluxo roda: a fila do aparelho (ou online) tambem
+    // precisa continuar sozinha.
+    const timer = setTimeout(() => {
+      void runSyncChain().catch(() => undefined);
+    }, BOOT_SYNC_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [ready, runSyncChain]);
+
+  useEffect(() => {
+    // Sem servidor nao ha para onde enviar: pendentes ficam no banco e sao
+    // tentadas ao conectar, no boot ou ao voltar ao app. Um timer de 15 s aqui
+    // so relia o SQLite e re-renderizava a home parada.
+    if (!config || !hasPending) return undefined;
     const id = setInterval(() => kick(), WORKER_INTERVAL_MS);
     return () => clearInterval(id);
-  }, [hasPending, kick]);
+  }, [config, hasPending, kick]);
 
   // Caderno criado/alterado offline tambem tenta de novo periodicamente, mesmo
   // sem nota pendente.
   useEffect(() => {
-    if (!notebooks.some((notebook) => notebook.dirty)) return undefined;
+    if (!config || !notebooks.some((notebook) => notebook.dirty)) return undefined;
     const id = setInterval(() => kick(), WORKER_INTERVAL_MS);
     return () => clearInterval(id);
-  }, [notebooks, kick]);
+  }, [config, notebooks, kick]);
 
   useEffect(() => {
     if (!hasPendingTranscripts) return undefined;
@@ -355,15 +416,13 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
-        kick();
-        pullTranscripts();
-        pushTranscripts();
-        pullServer();
-        reconcile();
+        // Em serie: antes as cinco etapas partiam juntas ao voltar para o app,
+        // cada uma varrendo a biblioteca e disputando a thread de JS.
+        void runSyncChain().catch(() => undefined);
       }
     });
     return () => subscription.remove();
-  }, [kick, pullTranscripts, pushTranscripts, pullServer, reconcile]);
+  }, [runSyncChain]);
 
   // Nota editada no dashboard aparece no app sem precisar reabrir: com o app em
   // primeiro plano, busca as versoes novas a cada intervalo. Fora de foco, o
@@ -398,6 +457,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
         const exists = prev.some((r) => r.id === queued.id);
         return exists ? prev.map((r) => (r.id === queued.id ? queued : r)) : [queued, ...prev];
       });
+      notifyLocalChange();
       kick();
       // A transcricao no aparelho comeca aqui, logo depois de a nota existir:
       // esperar o proximo boot fazia o texto so aparecer minutos depois.
@@ -428,6 +488,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       };
       await upsertRecording(note);
       setRecordings((prev) => [note, ...prev]);
+      notifyLocalChange();
       kick();
       return note;
     },
@@ -443,6 +504,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     };
     await upsertRecording(note);
     setRecordings((prev) => [note, ...prev]);
+    notifyLocalChange();
     return note;
   }, []);
 
@@ -451,6 +513,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       // Update direcionado: o autosave nao pode ler e reescrever a linha inteira
       // (transcricao, segmentos e anexos) a cada pausa da digitacao.
       await updateRecordingNote(id, patch);
+      notifyLocalChange();
     },
     [],
   );
@@ -475,6 +538,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       );
       await upsertRecording(updated);
       setRecordings((prev) => prev.map((r) => (r.id === id ? updated : r)));
+      notifyLocalChange();
       return true;
     },
     [],
@@ -515,6 +579,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
         origin: await clockNode(),
       });
       setRecordings((prev) => prev.filter((r) => r.id !== id));
+      notifyLocalChange();
       // O servidor tem a mesma lixeira de 7 dias; a chamada e best-effort para
       // apagar offline nao impedir a nota de sair da lista local agora.
       if (current.entryId) {
@@ -529,6 +594,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     deleteSessionFiles(id);
     await deleteRecordingRow(id);
     setRecordings((prev) => prev.filter((r) => r.id !== id));
+    notifyLocalChange();
   }, []);
 
   const restoreFromTrash = useCallback(
@@ -543,6 +609,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       await upsertRecording(restored);
       await removeTombstone(current.entryId ?? current.id, 'entry');
       await refresh();
+      notifyLocalChange();
       // Desfaz a exclusao logica no servidor. Sem isso o proximo pull veria a
       // entrada na lixeira dele e apagaria a nota de novo.
       if (current.entryId) {
@@ -566,6 +633,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
           ? current
           : { ...current, transcript: current.text, transcriptStatus: 'ready' };
         await enqueue(ready);
+        notifyLocalChange();
         return;
       }
       if (current.status === 'completed') {
@@ -578,6 +646,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
         };
         await upsertRecording(updated);
         setRecordings((prev) => prev.map((r) => (r.id === id ? updated : r)));
+        notifyLocalChange();
         kick();
       }
     },
@@ -598,6 +667,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     };
     await upsertRecording(updated);
     setRecordings((prev) => prev.map((r) => (r.id === id ? updated : r)));
+    notifyLocalChange();
     if (current.entryId) kick();
   }, [kick]);
 
@@ -605,7 +675,10 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   const unarchiveNote = useCallback((id: string) => setArchived(id, false), [setArchived]);
 
   const createNotebook = useCallback(
-    async (input: { name: string; color?: string }) => {
+    async (input: {
+      name: string;
+      color?: string;
+    }) => {
       const now = new Date().toISOString();
       const notebook: Notebook = {
         id: newId('nb_'),
@@ -619,6 +692,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       };
       await insertLocalNotebook(notebook);
       setNotebooks((prev) => [...prev, notebook]);
+      notifyLocalChange();
       void pushNotebooks().then(refreshNotebooks).catch(() => undefined);
       return notebook;
     },
@@ -626,9 +700,13 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
   );
 
   const renameNotebook = useCallback(
-    async (id: string, patch: { name?: string; color?: string }) => {
+    async (
+      id: string,
+      patch: { name?: string; color?: string },
+    ) => {
       await updateLocalNotebook(id, patch);
       await refreshNotebooks();
+      notifyLocalChange();
       void pushNotebooks().then(refreshNotebooks).catch(() => undefined);
     },
     [refreshNotebooks],
@@ -646,6 +724,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       });
       await deleteLocalNotebook(id);
       await Promise.all([refresh(), refreshNotebooks()]);
+      notifyLocalChange();
       void pushNotebooks().then(refreshNotebooks).catch(() => undefined);
     },
     [refresh, refreshNotebooks],
@@ -665,6 +744,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       };
       await upsertRecording(updated);
       setRecordings((prev) => prev.map((r) => (r.id === id ? updated : r)));
+      notifyLocalChange();
       if (current.entryId) kick();
     },
     [kick],
@@ -696,6 +776,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       };
       await upsertRecording(updated);
       setRecordings((prev) => prev.map((r) => (r.id === id ? updated : r)));
+      notifyLocalChange();
       if (current.entryId) kick();
     },
     [kick],
@@ -712,6 +793,25 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
         // O pull respeita a escolha pendente: trocar no aparelho nao volta
         // atras antes de o servidor confirmar.
         authorDirty: true,
+        updatedAt: new Date().toISOString(),
+      };
+      await upsertRecording(updated);
+      setRecordings((prev) => prev.map((r) => (r.id === id ? updated : r)));
+      notifyLocalChange();
+      if (current.entryId) kick();
+    },
+    [kick],
+  );
+
+  const setNoteSummaryDetail = useCallback(
+    async (id: string, detail: SummaryDetail) => {
+      const current = await getRecording(id);
+      if (!current) return;
+      if ((current.summaryDetail ?? 'concise') === detail) return;
+      const updated: Recording = {
+        ...current,
+        summaryDetail: detail,
+        summaryDetailDirty: true,
         updatedAt: new Date().toISOString(),
       };
       await upsertRecording(updated);
@@ -781,6 +881,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       moveNoteToNotebook,
       setNoteTags,
       setNoteAuthor,
+      setNoteSummaryDetail,
       enqueue,
       createTextNote,
       createDraftNote,
@@ -809,6 +910,7 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
       moveNoteToNotebook,
       setNoteTags,
       setNoteAuthor,
+      setNoteSummaryDetail,
       enqueue,
       createTextNote,
       createDraftNote,

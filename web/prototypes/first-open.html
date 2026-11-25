@@ -1,0 +1,747 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dyarium — primeira abertura (protótipo)</title>
+<!-- Protótipo descartável de aprovação, não faz parte do bundle de produção.
+     Tokens copiados de web/src/index.css ("Tinta e papel"), fonte pela pilha
+     do projeto sem @font-face, tudo desenhado em HTML/CSS/SVG inline. -->
+<style>
+:root {
+  color-scheme: light dark;
+
+  --paper: #f6f4ef;
+  --paper-2: #efece4;
+  --paper-3: #e7e2d7;
+  --ink: #211e1a;
+  --ink-soft: #6b655c;
+  --line: #ded8cc;
+  --accent: #2c4a63;
+  --accent-soft: #e3e9ee;
+  --accent-fg: #fbfaf7;
+  --danger: #9c3b2e;
+  --ok: #2f7d4f;
+  --warn: #8a5a16;
+  --info: #2f5f8f;
+
+  --graph-person: #858c93;
+  --graph-place: #88918a;
+  --graph-theme: #96918a;
+  --graph-note: #948f8a;
+
+  --font-sans: "Inter", ui-sans-serif, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
+  --radius: 8px;
+  --radius-sm: 5px;
+  --focus-ring: color-mix(in srgb, var(--ink-soft) 55%, transparent);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #14161a;
+    --paper-2: #1c1f24;
+    --paper-3: #272d36;
+    --ink: #eceae3;
+    --ink-soft: #b7bcc4;
+    --line: #363c45;
+    --accent: #9cc0e8;
+    --accent-soft: #2b3f55;
+    --accent-fg: #14161a;
+    --danger: #ee8a7c;
+    --ok: #7fc79a;
+    --warn: #e0b26a;
+    --info: #8db8e0;
+    --graph-person: #9aa1a8;
+    --graph-place: #9aa39c;
+    --graph-theme: #aaa49c;
+    --graph-note: #a6a19b;
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.6;
+  font-optical-sizing: auto;
+  -webkit-font-smoothing: antialiased;
+}
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+h1, h2, h3 { font-weight: 600; letter-spacing: -0.015em; margin: 0; }
+:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: 3px; }
+
+/* ---------- andaime do protótipo ---------- */
+.scaffold {
+  position: fixed;
+  top: 14px;
+  right: 16px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 1px dashed color-mix(in srgb, var(--ink-soft) 45%, transparent);
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+.scaffold .tag { font-size: 10px; letter-spacing: 0.06em; text-transform: lowercase; opacity: 0.85; }
+.pills { display: flex; gap: 2px; align-items: center; }
+.pills .sep { opacity: 0.45; padding: 0 1px; }
+.pill {
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--ink-soft);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.pill:hover { background: var(--paper-3); }
+.pill[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 500; }
+
+/* ---------- página ---------- */
+.page {
+  min-height: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 64px 40px 48px;
+  display: grid;
+  grid-template-columns: 1.08fr 0.92fr;
+  gap: 72px;
+  align-items: center;
+}
+
+/* ---------- esquerda: o que é ---------- */
+.pitch h1 {
+  font-size: clamp(27px, 3.2vw, 34px);
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 1.1;
+}
+.position {
+  margin: 10px 0 0;
+  font-size: 17px;
+  font-weight: 450;
+  line-height: 1.5;
+  max-width: 33ch;
+  color: var(--ink);
+}
+.facts {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+}
+.facts li {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.facts svg { flex: none; color: var(--ink-soft); }
+
+/* ---------- o desenho do produto ---------- */
+.scene {
+  margin: 26px 0 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper-2);
+}
+.scene-inner { display: flex; flex-direction: column; }
+
+.panel {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px 14px 13px;
+}
+.plabel {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+  margin: 0 0 9px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.plabel .mono { font-family: var(--font-mono); font-size: 10px; font-weight: 400; opacity: 0.85; }
+
+/* nota de áudio: waveform + transcrição */
+.note-head { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; }
+.note-ic {
+  width: 24px; height: 24px; flex: none;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  display: flex; align-items: center; justify-content: center;
+}
+.note-name { font-size: 13px; font-weight: 600; letter-spacing: -0.005em; }
+.note-dur { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-soft); margin-left: 2px; }
+.note-when { margin-left: auto; font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-soft); }
+.wave-row { display: flex; align-items: center; gap: 10px; }
+.wave { width: 100%; height: 44px; display: block; }
+.w-on { fill: var(--ink); }
+.w-off { fill: var(--ink-soft); opacity: 0.32; }
+.w-head { stroke: var(--accent); stroke-width: 1.4; }
+.wave-time {
+  flex: none; font-family: var(--font-mono); font-size: 10px; color: var(--ink-soft);
+  letter-spacing: -0.01em;
+}
+.trill { display: grid; grid-template-columns: 38px 1fr; gap: 4px 10px; margin-top: 11px; }
+.trill time { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-soft); padding-top: 1px; }
+.trill p { margin: 0; font-size: 12.5px; line-height: 1.45; }
+.ent { border-bottom: 1px solid color-mix(in srgb, var(--accent) 55%, transparent); }
+
+/* conectores de fluxo */
+.flow { width: 100%; height: 24px; display: block; }
+.flow path {
+  fill: none;
+  stroke: color-mix(in srgb, var(--ink-soft) 40%, transparent);
+  stroke-width: 1.2;
+  stroke-dasharray: 3 4;
+}
+.scene-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.scene-row .panel { display: flex; flex-direction: column; }
+
+/* painel de análise */
+.arow { display: grid; grid-template-columns: 64px 1fr; gap: 8px; align-items: baseline; padding: 4px 0; }
+.arow + .arow { border-top: 1px solid color-mix(in srgb, var(--line) 65%, transparent); }
+.alabel { font-size: 11px; color: var(--ink-soft); }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.chip {
+  display: inline-flex; align-items: baseline; gap: 5px;
+  padding: 1px 7px 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--paper-2);
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.chip b { font-family: var(--font-mono); font-weight: 500; font-size: 10px; color: var(--ink-soft); }
+.chip.more { color: var(--ink-soft); }
+.meter { display: flex; align-items: center; gap: 8px; }
+.track {
+  flex: 1; height: 5px; border-radius: 3px;
+  background: var(--paper-3);
+  border: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
+  position: relative; overflow: hidden;
+}
+.fill { position: absolute; inset: 0 auto 0 0; width: 72%; background: var(--ok); border-radius: 3px; }
+.meter .num { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-soft); }
+
+/* painel do grafo */
+.graph-panel svg { width: 100%; height: auto; display: block; }
+.g-edge { stroke: color-mix(in srgb, var(--ink-soft) 30%, transparent); stroke-width: 1; }
+.g-label { font-size: 8.5px; fill: var(--ink-soft); text-anchor: middle; }
+.legend { display: flex; gap: 12px; margin-top: auto; padding-top: 8px; }
+.legend span { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; color: var(--ink-soft); }
+.dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+
+/* ---------- direita: o acesso ---------- */
+.access { display: flex; flex-direction: column; }
+.access-inner { width: 100%; max-width: 384px; margin: 0 auto; }
+
+.stage { display: none; }
+body[data-view="entry"]  #stage-entry  { display: block; }
+body[data-view="folder"] #stage-folder { display: block; }
+body[data-view="google"] #stage-google { display: block; }
+body[data-view="entry"] #stage-entry,
+body[data-view="folder"] #stage-folder,
+body[data-view="google"] #stage-google { animation: rise 0.22s ease-out both; }
+@keyframes rise { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+
+.btn {
+  width: 100%;
+  min-height: 44px;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  font-size: 14.5px;
+  font-weight: 550;
+  letter-spacing: -0.005em;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.btn-primary { background: var(--accent); color: var(--accent-fg); }
+.btn-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 87%, var(--ink)); }
+.btn-outline { border-color: var(--line); color: var(--ink); background: transparent; }
+.btn-outline:hover { border-color: var(--ink-soft); background: var(--paper-2); }
+.btn:disabled { opacity: 0.75; cursor: default; }
+
+.rule {
+  display: flex; align-items: center; gap: 12px;
+  margin: 22px 0 14px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+.rule::before, .rule::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+
+.fine { margin: 10px 0 0; font-size: 12px; line-height: 1.55; color: var(--ink-soft); }
+.fine code, .card .loc { font-family: var(--font-mono); }
+
+.own {
+  display: inline-block;
+  margin-top: 26px;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+.own:hover { color: var(--ink); border-bottom-color: var(--ink-soft); }
+.own-row { text-align: center; }
+
+.linkbtn { font-size: 12.5px; color: var(--ink-soft); padding: 0; }
+.linkbtn:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+.back { display: inline-flex; align-items: center; gap: 4px; margin-bottom: 14px; }
+
+/* sub-estados */
+.subview { display: none; }
+#stage-folder[data-sub="sim"] #folder-sim     { display: flex; }
+#stage-folder[data-sub="picked"] #folder-picked { display: block; }
+#stage-google[data-sub="connect"] #google-connect { display: flex; }
+#stage-google[data-sub="found"]   #google-found   { display: block; }
+#stage-google[data-sub="empty"]   #google-empty   { display: block; }
+
+.thinking {
+  align-items: center; gap: 10px;
+  min-height: 44px;
+  font-size: 13.5px; color: var(--ink-soft);
+}
+.spinner {
+  width: 15px; height: 15px; flex: none;
+  border: 2px solid color-mix(in srgb, var(--ink-soft) 30%, transparent);
+  border-top-color: var(--ink-soft);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(1turn); } }
+
+.pathbox {
+  display: flex; align-items: center; gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper-2);
+  padding: 11px 13px;
+  margin-bottom: 12px;
+}
+.pathbox .p { font-family: var(--font-mono); font-size: 13px; letter-spacing: -0.01em; }
+.pathbox .state {
+  margin-left: auto;
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11.5px; color: var(--ok); white-space: nowrap;
+}
+.folder-actions { display: flex; align-items: center; gap: 14px; margin-top: 14px; }
+.folder-actions .btn { width: auto; padding: 0 22px; flex: 1; }
+
+.card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper-2);
+  padding: 14px;
+  margin-bottom: 12px;
+}
+.card h2 { font-size: 14.5px; font-weight: 600; }
+.card .loc { font-size: 11px; color: var(--ink-soft); margin: 3px 0 0; }
+.stats { display: flex; align-items: baseline; gap: 18px; margin: 10px 0 0; }
+.stats .s { display: inline-flex; align-items: baseline; gap: 6px; font-size: 12.5px; color: var(--ink-soft); }
+.stats .n {
+  font-family: var(--font-mono); font-size: 17px; font-weight: 600;
+  color: var(--ink); font-variant-numeric: tabular-nums; letter-spacing: -0.02em;
+}
+.tiny-links { display: flex; gap: 14px; margin-top: 14px; }
+.empty-line { margin: 0 0 12px; font-size: 13px; color: var(--ink-soft); }
+
+@media (max-width: 1020px) {
+  .page { gap: 48px; padding: 64px 28px 40px; }
+}
+@media (max-width: 760px) {
+  .page {
+    grid-template-columns: 1fr;
+    gap: 36px;
+    padding: 76px 20px 36px;
+    align-items: start;
+  }
+  .position { font-size: 16px; }
+  .scene { margin-top: 20px; }
+  .access-inner { max-width: 440px; }
+}
+@media (max-width: 460px) {
+  .scene { padding: 10px; }
+  .scene-row { grid-template-columns: 1fr; }
+  .scaffold { top: 10px; right: 10px; padding: 4px 8px; gap: 6px; }
+  .scaffold .tag { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+</style>
+</head>
+<body data-view="entry">
+
+<div class="scaffold" aria-label="Seletor de estados do protótipo">
+  <span class="tag">andaime do protótipo</span>
+  <div class="pills" role="group" aria-label="Estados">
+    <button class="pill" data-go="entry" aria-pressed="true">Entrada</button>
+    <span class="sep" aria-hidden="true">·</span>
+    <button class="pill" data-go="folder" aria-pressed="false">Pasta</button>
+    <span class="sep" aria-hidden="true">·</span>
+    <button class="pill" data-go="google" aria-pressed="false">Google</button>
+  </div>
+</div>
+
+<main class="page">
+
+  <!-- ===================== esquerda: o que é ===================== -->
+  <section class="pitch">
+    <h1>dyarium</h1>
+    <p class="position">Notas e áudios que viram texto, análise e grafo, no seu Drive.</p>
+
+    <ul class="facts">
+      <li>
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4.6 11.2a2.9 2.9 0 0 1-.3-5.8A3.6 3.6 0 0 1 11 4.7a2.6 2.6 0 0 1 .4 5.2"/>
+          <path d="M5.5 13.5h5.8M6.8 15.2h3.2"/>
+        </svg>
+        fica no seu Drive
+      </li>
+      <li>
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true">
+          <path d="M2 6v4M4.2 4.2v7.6M6.4 7v2M8.6 3.4v9.2"/>
+          <path d="M11.4 5h3M11.4 8h3M11.4 11h2"/>
+        </svg>
+        áudio vira texto
+      </li>
+      <li>
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="2.4" y="2.4" width="11.2" height="4.4" rx="1.2"/>
+          <rect x="2.4" y="9.2" width="11.2" height="4.4" rx="1.2"/>
+          <path d="M4.6 4.6h.01M4.6 11.4h.01M12.8 3.2 3.2 12.8"/>
+        </svg>
+        nada fica num servidor nosso
+      </li>
+    </ul>
+
+    <!-- imagem mental do produto: áudio → transcrição → análise → grafo -->
+    <figure class="scene" role="img" aria-label="Nota de áudio com waveform virando transcrição; a transcrição alimenta um painel de análise com pessoas, lugares, temas e sentimento, e um grafo de relações entre eles.">
+      <div class="scene-inner">
+
+        <div class="panel">
+          <div class="note-head">
+            <span class="note-ic" aria-hidden="true">
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+                <rect x="6" y="1.8" width="4" height="7.4" rx="2"/>
+                <path d="M3.6 7.6a4.4 4.4 0 0 0 8.8 0M8 12v2.2"/>
+              </svg>
+            </span>
+            <span class="note-name">Gravação da manhã</span>
+            <span class="note-dur">4:12</span>
+            <span class="note-when">hoje 08:12</span>
+          </div>
+
+          <div class="wave-row">
+            <svg class="wave" viewBox="0 0 280 44" preserveAspectRatio="none" aria-hidden="true">
+              <g id="wave-bars"></g>
+              <line class="w-head" x1="124.5" y1="1" x2="124.5" y2="43"/>
+            </svg>
+            <span class="wave-time">1:47</span>
+          </div>
+
+          <div class="trill">
+            <time>00:04</time><p>Liguei para a <span class="ent">Marina</span> sobre a mudança.</p>
+            <time>00:21</time><p>Ela prefere sábado de manhã, lá em <span class="ent">Pinheiros</span>.</p>
+            <time>00:46</time><p>Fechar o <span class="ent">orçamento</span> com o <span class="ent">Rui</span> até sexta.</p>
+          </div>
+        </div>
+
+        <svg class="flow" viewBox="0 0 400 24" preserveAspectRatio="none" aria-hidden="true">
+          <path d="M200 0 V6"/>
+          <path d="M200 6 Q200 12 194 12 H110 Q104 12 104 18 V24"/>
+          <path d="M200 6 Q200 12 206 12 H290 Q296 12 296 18 V24"/>
+        </svg>
+
+        <div class="scene-row">
+          <div class="panel">
+            <div class="plabel">Análise <span class="mono">4 itens</span></div>
+
+            <div class="arow">
+              <span class="alabel">Pessoas</span>
+              <div class="chips">
+                <span class="chip">Marina <b>12</b></span>
+                <span class="chip">Rui <b>5</b></span>
+              </div>
+            </div>
+            <div class="arow">
+              <span class="alabel">Lugares</span>
+              <div class="chips">
+                <span class="chip">Pinheiros <b>3</b></span>
+                <span class="chip more">+2</span>
+              </div>
+            </div>
+            <div class="arow">
+              <span class="alabel">Temas</span>
+              <div class="chips">
+                <span class="chip">mudança <b>8</b></span>
+                <span class="chip">orçamento <b>4</b></span>
+                <span class="chip more">+3</span>
+              </div>
+            </div>
+            <div class="arow">
+              <span class="alabel">Sentimento</span>
+              <div class="meter">
+                <span class="track"><span class="fill"></span></span>
+                <span class="num">7,2</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel graph-panel">
+            <div class="plabel">Grafo <span class="mono">312 nós</span></div>
+            <svg viewBox="0 0 280 128" aria-hidden="true">
+              <g class="g-edge">
+                <line x1="112" y1="58" x2="46"  y2="30"/>
+                <line x1="112" y1="58" x2="196" y2="34"/>
+                <line x1="112" y1="58" x2="186" y2="98"/>
+                <line x1="112" y1="58" x2="64"  y2="100"/>
+                <line x1="112" y1="58" x2="136" y2="22"/>
+                <line x1="136" y1="22" x2="196" y2="34"/>
+                <line x1="196" y1="34" x2="246" y2="66"/>
+                <line x1="186" y1="98" x2="246" y2="66"/>
+                <line x1="64"  y1="100" x2="46" y2="30"/>
+                <line x1="186" y1="98" x2="228" y2="108"/>
+                <line x1="246" y1="66" x2="228" y2="108"/>
+              </g>
+              <circle cx="46"  cy="30"  r="6.5" fill="var(--graph-person)"/>
+              <circle cx="112" cy="58"  r="10"  fill="var(--graph-person)"/>
+              <circle cx="196" cy="34"  r="7.5" fill="var(--graph-place)"/>
+              <circle cx="246" cy="66"  r="5.5" fill="var(--graph-place)"/>
+              <circle cx="186" cy="98"  r="6.5" fill="var(--graph-theme)"/>
+              <circle cx="64"  cy="100" r="6.5" fill="var(--graph-theme)"/>
+              <circle cx="136" cy="22"  r="3"   fill="var(--graph-note)"/>
+              <circle cx="228" cy="108" r="3"   fill="var(--graph-note)"/>
+              <g class="g-label">
+                <text x="112" y="82">Marina</text>
+                <text x="46"  y="20">Rui</text>
+                <text x="196" y="22">Pinheiros</text>
+                <text x="246" y="55">Padaria</text>
+                <text x="186" y="114">mudança</text>
+                <text x="64"  y="116">orçamento</text>
+              </g>
+            </svg>
+            <div class="legend">
+              <span><i class="dot" style="background: var(--graph-person)"></i>pessoa</span>
+              <span><i class="dot" style="background: var(--graph-place)"></i>lugar</span>
+              <span><i class="dot" style="background: var(--graph-theme)"></i>tema</span>
+              <span><i class="dot" style="background: var(--graph-note)"></i>nota</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </figure>
+  </section>
+
+  <!-- ===================== direita: o acesso ===================== -->
+  <section class="access" aria-live="polite">
+    <div class="access-inner">
+
+      <!-- a) entrada -->
+      <div class="stage" id="stage-entry">
+        <button class="btn btn-primary" data-go="google" data-autofocus>
+          <svg width="17" height="17" viewBox="0 0 48 48" aria-hidden="true">
+            <g fill="currentColor">
+              <path d="M45.12 24.5c0-1.56-.14-3.06-.4-4.5H24v8.51h11.84c-.51 2.75-2.06 5.08-4.39 6.64v5.52h7.11c4.16-3.83 6.56-9.47 6.56-16.17z"/>
+              <path d="M24 46c5.94 0 10.92-1.97 14.56-5.33l-7.11-5.52c-1.97 1.32-4.49 2.1-7.45 2.1-5.73 0-10.58-3.87-12.31-9.07H4.34v5.7C7.96 41.07 15.4 46 24 46z"/>
+              <path d="M11.69 28.18C11.25 26.86 11 25.45 11 24s.25-2.86.69-4.18v-5.7H4.34A21.96 21.96 0 0 0 2 24c0 3.55.85 6.91 2.34 9.88l7.35-5.7z"/>
+              <path d="M24 10.75c3.23 0 6.13 1.11 8.41 3.29l6.31-6.31C34.91 4.18 29.93 2 24 2A21.96 21.96 0 0 0 4.34 14.12l7.35 5.7c1.73-5.2 6.58-9.07 12.31-9.07z"/>
+            </g>
+          </svg>
+          Continuar com Google
+        </button>
+
+        <div class="rule">ou use só neste computador</div>
+
+        <button class="btn btn-outline" data-go="folder">Escolher pasta&hellip;</button>
+
+        <p class="fine">As notas ficam só neste navegador; outro computador não as
+        recupera. Entrar com Google depois leva tudo para o Drive.</p>
+      </div>
+
+      <!-- b) pasta local -->
+      <div class="stage" id="stage-folder" data-sub="picked">
+        <button class="linkbtn back" data-go="entry">&#8592; Voltar</button>
+
+        <div class="subview thinking" id="folder-sim">
+          <span class="spinner" aria-hidden="true"></span>
+          Abrindo seletor de pasta&hellip;
+        </div>
+
+        <div class="subview" id="folder-picked">
+          <div class="pathbox">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M1.8 12.6V3.4c0-.6.5-1.2 1.2-1.2h3l1.6 1.8h4.8c.7 0 1.2.6 1.2 1.2v7.4c0 .7-.5 1.2-1.2 1.2H3c-.7 0-1.2-.5-1.2-1.2z"/>
+            </svg>
+            <span class="p">~/Documentos/Dyarium</span>
+            <span class="state">
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M3 8.5 6.3 12 13 4.8"/>
+              </svg>
+              escolhida
+            </span>
+          </div>
+
+          <p class="fine">O cofre fica espelhado em <code>~/Documentos/Dyarium</code>.
+          Nada sobe enquanto você não entrar com Google.</p>
+
+          <div class="folder-actions">
+            <button class="btn btn-primary" data-autofocus>Criar cofre aqui</button>
+            <button class="linkbtn" id="link-repick">Trocar pasta</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- c) google -->
+      <div class="stage" id="stage-google" data-sub="found">
+        <button class="linkbtn back" data-go="entry">&#8592; Voltar</button>
+
+        <div class="subview thinking" id="google-connect">
+          <span class="spinner" aria-hidden="true"></span>
+          Conectando&hellip;
+        </div>
+
+        <div class="subview" id="google-found">
+          <div class="card">
+            <h2>Cofre encontrado no seu Drive</h2>
+            <p class="loc">Drive &#8250; Dyarium &#8250; diario</p>
+            <div class="stats">
+              <span class="s"><span class="n">128</span> notas</span>
+              <span class="s"><span class="n">41</span> áudios</span>
+            </div>
+          </div>
+
+          <button class="btn btn-primary" data-autofocus>Abrir meu diário</button>
+
+          <div class="tiny-links">
+            <button class="linkbtn" id="link-empty">não é meu cofre</button>
+          </div>
+        </div>
+
+        <div class="subview" id="google-empty">
+          <p class="empty-line">Criar um cofre vazio na pasta <code>Dyarium</code> do seu Drive.</p>
+          <button class="btn btn-outline" data-autofocus>Começar vazio</button>
+          <div class="tiny-links">
+            <button class="linkbtn" id="link-backfound">voltar ao cofre encontrado</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="own-row">
+        <a class="own" href="#" id="link-own">Já tenho uma instalação própria</a>
+      </div>
+
+    </div>
+  </section>
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  var body = document.body;
+  var folder = document.getElementById("stage-folder");
+  var google = document.getElementById("stage-google");
+  var pills = Array.prototype.slice.call(document.querySelectorAll(".pill"));
+  var timers = [];
+
+  function later(fn, ms) { timers.push(setTimeout(fn, ms)); }
+  function clearTimers() { timers.forEach(clearTimeout); timers = []; }
+
+  var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  function speed(ms) { return reduced ? 0 : ms; }
+
+  function show(stage, fast) {
+    clearTimers();
+    body.dataset.view = stage;
+    pills.forEach(function (p) {
+      p.setAttribute("aria-pressed", String(p.dataset.go === stage));
+    });
+
+    if (stage === "folder") {
+      folder.dataset.sub = "sim";
+      later(function () {
+        folder.dataset.sub = "picked";
+        focusFirst(stage);
+      }, fast ? speed(250) : speed(900));
+    } else if (stage === "google") {
+      google.dataset.sub = "connect";
+      later(function () {
+        google.dataset.sub = "found";
+        focusFirst(stage);
+      }, fast ? speed(400) : speed(1500));
+    } else {
+      focusFirst(stage);
+    }
+  }
+
+  function focusFirst(stage) {
+    var root = document.getElementById("stage-" + stage);
+    if (!root) return;
+    var visible = Array.prototype.slice.call(root.querySelectorAll("[data-autofocus]"))
+      .filter(function (b) { return b.offsetParent !== null; });
+    if (visible[0]) visible[0].focus({ preventScroll: true });
+  }
+
+  Array.prototype.slice.call(document.querySelectorAll("[data-go]")).forEach(function (b) {
+    b.addEventListener("click", function () { show(b.dataset.go, b.classList.contains("pill")); });
+  });
+
+  document.getElementById("link-repick").addEventListener("click", function () {
+    folder.dataset.sub = "sim";
+    later(function () { folder.dataset.sub = "picked"; focusFirst("folder"); }, speed(700));
+  });
+  document.getElementById("link-empty").addEventListener("click", function () {
+    google.dataset.sub = "empty";
+    focusFirst("google");
+  });
+  document.getElementById("link-backfound").addEventListener("click", function () {
+    google.dataset.sub = "found";
+    focusFirst("google");
+  });
+
+  document.getElementById("link-own").addEventListener("click", function (e) {
+    e.preventDefault(); // tela de token: fora do escopo deste protótipo
+  });
+
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") show("entry");
+  });
+
+  // waveform determinística: barras crescentes, trecho tocado em tinta cheia
+  var NS = "http://www.w3.org/2000/svg";
+  var host = document.getElementById("wave-bars");
+  var N = 54;
+  for (var i = 0; i < N; i++) {
+    var env = Math.abs(Math.sin(i * 0.55)) * 0.8 + Math.abs(Math.sin(i * 0.21 + 1.3)) * 0.55;
+    var h = Math.min(40, Math.max(4, 5 + env * 20 + (i % 9 === 0 ? 4 : 0)));
+    var r = document.createElementNS(NS, "rect");
+    r.setAttribute("x", (2 + i * 5).toFixed(1));
+    r.setAttribute("y", ((44 - h) / 2).toFixed(1));
+    r.setAttribute("width", "2.6");
+    r.setAttribute("height", h.toFixed(1));
+    r.setAttribute("rx", "1.3");
+    r.setAttribute("class", i < 24 ? "w-on" : "w-off");
+    host.appendChild(r);
+  }
+})();
+</script>
+</body>
+</html>

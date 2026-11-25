@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import {
   api,
@@ -6,29 +6,74 @@ import {
   clearToken,
   getSetupState,
   getToken,
+  probeServer,
   setToken,
   tokenIsPersisted,
   verifyToken,
 } from "./api";
 import { useEvents } from "./useEvents";
+import { BRAND, brandClass } from "./lib/brand";
+
+/**
+ * O laboratorio (inferencia no navegador) carrega o onnxruntime, cujo wasm
+ * passa de 25 MiB — acima do limite por arquivo do Cloudflare. No build
+ * hospedado ele fica de fora: nao ha servidor para o /lab falar. O build
+ * self-hosted define VITE_ORT=1 e leva tudo, sob demanda.
+ */
+const LAB_ENABLED = import.meta.env.VITE_ORT === "1";
+
+const LabView = LAB_ENABLED
+  ? lazy(() => import("./views/LabView").then((mod) => ({ default: mod.LabView })))
+  : null;
+
+const WorkerKeepAlive = LAB_ENABLED
+  ? lazy(() =>
+      import("./components/WorkerKeepAlive").then((mod) => ({ default: mod.WorkerKeepAlive })),
+    )
+  : null;
+import { FirstRun, describeDriveError } from "./components/FirstRun";
+import { VaultBoot } from "./components/VaultBoot";
+import { PulseBoot } from "./components/PulseBoot";
+import { AccountGate } from "./components/AccountGate";
+import { VaultView } from "./views/VaultView";
+import { subscribeVaultActivity, vaultActivity } from "./local/vaultActivity";
+import { AccountAvatar, AccountSheet, accountState } from "./components/AccountSheet";
+import { NoteTabs } from "./components/NoteTabs";
+import { readTabs, writeTabs, openInNewTab, activateTab, closeTab, closeTabs, reconcileTabs, setTabTitle, EMPTY_TABS, type TabsState } from "./lib/tabs";
+import { noteTitle } from "./lib/noteTitle";
+import { ImportJobStrip } from "./components/ImportJobStrip";
+import { importJobState, subscribeImportJob, type ImportJobState } from "./local/importJob";
+import { markVaultDirty, runVaultSync, setVaultTarget, flushVaultSync } from "./local/folderSync";
+import { rememberFolder } from "./local/folder";
+import { connectDrive, driveClient, driveConfigured, driveProfile, driveSessionExpiresAt, driveSessionState, driveVaultRoot, onDriveSessionChange, signOutAccount } from "./local/driveSession";
+import { cachedProfile as cachedAccountProfile, onAccountChange } from "./local/account";
+import { preloadGoogle } from "./local/google";
+import { driveMarked, rememberDriveVault } from "./local/driveMark";
+import { connectAccount } from "./local/accountConnect";
+import { openDriveVault, type VaultStage } from "./local/vaultCloud";
+import { reloadPage } from "./lib/page";
+import type { StepProgress } from "./local/backup";
 import { TokenGate } from "./components/TokenGate";
 import { SetupGate } from "./components/SetupGate";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { trackView } from "./lib/telemetry";
 import { NoteList } from "./components/NoteList";
 import { NoteEditor } from "./components/NoteEditor";
+import { HomeStart } from "./views/HomeStart";
+import { Icon } from "./ui";
 import { NotebookDialog } from "./components/NotebookDialog";
 import { NotebookSwitcher } from "./components/NotebookSwitcher";
 import { BookDialog, type BookForm } from "./components/BookDialog";
 import { BookSidebar } from "./components/BookSidebar";
 import { NotionImportDialog } from "./components/NotionImportDialog";
 import { OfflineBanner } from "./components/OfflineBanner";
-import { WorkerKeepAlive } from "./components/WorkerKeepAlive";
 import { TagManager } from "./components/TagManager";
 import { ComposeDialog, type ComposeAnchor } from "./components/ComposeDialog";
+import { ImportServerDialog } from "./components/ImportServerDialog";
 import { useToast } from "./components/Toasts";
 import {
+  CalendarIcon,
   ChevronIcon,
-  CpuIcon,
   ExitIcon,
   MapIcon,
   MenuIcon,
@@ -39,18 +84,28 @@ import {
 } from "./components/icons";
 import { ALL_NOTEBOOKS, DEFAULT_NOTEBOOK_ID } from "./lib/notebooks";
 import { orderedChapters } from "./lib/books";
+import { useProjectsIndex, type ProjectsNode } from "./lib/useProjectsIndex";
+import { ProjectList } from "./components/ProjectList";
 import type { NotionImportResult } from "./lib/notionImport";
 import { MapView } from "./views/MapView";
-import { LabView } from "./views/LabView";
+import { ProjectsView } from "./views/ProjectsView";
+import { CalendarView } from "./views/CalendarView";
 import { SettingsView } from "./views/SettingsView";
 import { WritingView } from "./views/WritingView";
 import { BookView } from "./views/BookView";
 import type { ChapterKind, EntityKind, Entry, Notebook, ServerEvent } from "./types";
 import "./App.css";
 
-type ViewId = "notes" | "map" | "writing" | "settings" | "lab";
+type ViewId = "notes" | "map" | "calendar" | "writing" | "settings" | "vault" | "lab";
 
 const ACTIVE_NOTEBOOK_KEY = "dyarium.notebook";
+
+/** O "pronto" fica na tela antes de o app entrar, como no prototipo. */
+const VAULT_READY_HOLD_MS = 1200;
+
+function aguardar(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
 
 /** Caderno salvo neste navegador; a selecao e local, não sincronizada. */
 function readActiveNotebook(): string {
@@ -70,10 +125,89 @@ function writeActiveNotebook(id: string): void {
 }
 
 export function App() {
-  const [token, setTokenState] = useState(getToken());
+  /**
+   * Desenvolvimento preso ao cofre do navegador (`VITE_LOCAL_ONLY=1`):
+   * ignora o token guardado e nem pergunta /setup/state, para o site estatico
+   * ser testavel em localhost com a API de pe. So vale a partir do ambiente
+   * (web/.env.local, que nao entra no repositorio); nenhum build publico
+   * define a variavel.
+   */
+  const localOnly = import.meta.env.VITE_LOCAL_ONLY === "1";
+  const [token, setTokenState] = useState(() => (localOnly ? "" : getToken()));
   const [authError, setAuthError] = useState("");
   const [checkingToken, setCheckingToken] = useState(false);
   const [setupRequired, setSetupRequired] = useState(false);
+  /** A instancia respondeu em /setup/state? Sem servidor, o app usa o cofre local. */
+  const [serverChecked, setServerChecked] = useState(false);
+  // Primeira visita ao site: a tela de apresentacao decide onde o cofre mora.
+  const [onboarded, setOnboarded] = useState(() => {
+    try {
+      return localStorage.getItem("dyarium.onboarded") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [account, setAccount] = useState(() => driveProfile() ?? cachedAccountProfile());
+  /**
+   * Sessao do Google como o React ve. A pagina do cofre e o sinal do trilho
+   * dependem dela: sem esta copia, o icone de nuvem so saberia da sessao no
+   * proximo render por outro motivo.
+   */
+  const [driveLive, setDriveLive] = useState(() => driveSessionState());
+  /** Trabalho de segundo plano do cofre, o mesmo sinal da pagina. */
+  const vaultWork = useSyncExternalStore(
+    subscribeVaultActivity,
+    vaultActivity,
+    vaultActivity,
+  );
+  /**
+   * Conta lembrada neste navegador: a marca do Drive mais o perfil em cache.
+   * O reload nunca volta a primeira tela nesse caso; abre o cache e tenta o
+   * Google em silencio.
+   */
+  const accountRemembered = driveMarked() && account !== null;
+  /**
+   * Conta travada: a marca do Drive diz que este navegador tem cofre na conta,
+   * mas a sessao do Google (que vive so na memoria) nao esta viva. Sem token,
+   * o cache da conta nao pode virar o app: a tela trava ate entrar ou sair.
+   */
+  const [accountLocked, setAccountLocked] = useState(
+    () => driveMarked() && driveSessionState() !== "connected",
+  );
+  /**
+   * Com token de servidor as notas vem da API, nao do cache da conta: a trava
+   * e do modo local-first. O token tem o proprio portao (TokenGate).
+   */
+  const locked = !token && accountLocked;
+  /** Tentativa de abertura em curso: a sessao nao destrava antes do cofre. */
+  const unlockInFlight = useRef(false);
+  /** O primeiro toque da tela travada tenta o Google uma vez. */
+  const silentTried = useRef(false);
+  /** A tentativa silenciosa de carregamento roda uma vez por pagina. */
+  const autoSilentTried = useRef(false);
+  /** Aponta para `renovarContaEmSilencio`, definida junto do resto da trava. */
+  const renovarSilenciosoRef = useRef<((auto?: boolean) => void) | null>(null);
+  const [gateError, setGateError] = useState("");
+  const [accountSheetOpen, setAccountSheetOpen] = useState(false);
+  // "Ja tenho uma instalacao propria" troca a apresentacao pelo portao do token.
+  const [forceTokenGate, setForceTokenGate] = useState(false);
+  // Cofre do Drive abrindo: em vez do botao parado, a tela conta a etapa.
+  // `done` e o fim do trabalho; quem desmonta e a entrada no app.
+  const [vaultBoot, setVaultBoot] = useState<{
+    stage: VaultStage;
+    progress?: StepProgress;
+    done: boolean;
+  } | null>(() => {
+    // Conta lembrada sem sessao viva: ja comeca contando a tentativa
+    // silenciosa, para a trava nao piscar antes de o Google responder.
+    const tentandoSozinho =
+      driveMarked() &&
+      driveSessionState() !== "connected" &&
+      driveConfigured() &&
+      Boolean(cachedAccountProfile()?.picture);
+    return tentandoSozinho ? { stage: "conectando", done: false } : null;
+  });
+  const [serverAvailable, setServerAvailable] = useState(false);
   const [view, setView] = useState<ViewId>(() =>
     typeof window !== "undefined" && window.location.pathname === "/lab" ? "lab" : "notes",
   );
@@ -81,12 +215,48 @@ export function App() {
   const [navOpen, setNavOpen] = useState(() =>
     typeof window === "undefined" ? true : window.innerWidth > 900,
   );
-  const [openEntryId, setOpenEntryId] = useState<string | null>(null);
+  // Abaixo de 900 o trilho nao existe: a barra do celular e a gaveta assumem,
+  // e as acoes globais moram no pe da gaveta. O estado acompanha a janela para
+  // o DOM nao ter dois conjuntos de acoes ao mesmo tempo.
+  const [compact, setCompact] = useState(() =>
+    typeof window === "undefined" ? false : window.innerWidth <= 900,
+  );
+  useEffect(() => {
+    const sync = () => setCompact(window.innerWidth <= 900);
+    sync();
+    window.addEventListener("resize", sync);
+    return () => window.removeEventListener("resize", sync);
+  }, []);
+  const [openEntryId, setOpenEntryId] = useState<string | null>(
+    () => readTabs().activeId,
+  );
+  // Abas das notas comuns. O estado vive num ref junto com o React para as
+  // acoes encadeadas (abrir, fechar, apagar) verem sempre o valor mais novo.
+  const [tabsState, setTabsState] = useState<TabsState>(() => readTabs());
+  const tabsRef = useRef<TabsState>(tabsState);
+  /** Ids que vieram do localStorage: so eles podem ser descartados na lista. */
+  const tabsIniciais = useRef<string[]>(tabsState.tabs.map((tab) => tab.id));
+  const atualizarAbas = useCallback((atualizar: (atual: TabsState) => TabsState) => {
+    const proximo = atualizar(tabsRef.current);
+    tabsRef.current = proximo;
+    setTabsState(proximo);
+    return proximo;
+  }, []);
+  // A lista so reconcilia as abas restauradas uma vez: abrir uma nota nova
+  // antes de a lista chegar nao pode ser confundido com id invalido.
+  const abasReconciliadas = useRef(false);
+  /** Conta aberta no pe do trilho: guarda o botao para ancorar e devolver foco. */
+  const [accountAnchor, setAccountAnchor] = useState<HTMLElement | null>(null);
   // Voltar de uma tela aberta por dentro de outra (processamento a partir da
   // nota, por exemplo) precisa devolver para onde o usuario estava, e nao para
   // a primeira tela do menu.
   const [returnView, setReturnView] = useState<ViewId | null>(null);
-  const [entityFocus, setEntityFocus] = useState<{ kind: EntityKind; name: string } | null>(null);
+  const [entityFocus, setEntityFocus] = useState<{
+    kind: EntityKind;
+    name: string;
+    /** "kind": abre o editor da entidade ja no seletor de tipo (lapis da ficha). */
+    edit?: "kind";
+  } | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [notebooks, setNotebooks] = useState<Notebook[]>([]);
   const [bookChapters, setBookChapters] = useState<Entry[]>([]);
@@ -100,6 +270,8 @@ export function App() {
   const [ownerName, setOwnerName] = useState("");
   const [tagsOpen, setTagsOpen] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
+  /** Importacao do acervo de uma instancia self-hosted para este cofre. */
+  const [importServerOpen, setImportServerOpen] = useState(false);
   const [composeAnchor, setComposeAnchor] = useState<ComposeAnchor | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   // A busca pedida pela faixa recolhida so vale uma vez: sem isto, reabrir a
@@ -113,6 +285,12 @@ export function App() {
     openEntryRef.current = openEntryId;
   }, [openEntryId]);
   const [failures, setFailures] = useState<Record<string, string>>({});
+  // No caderno MCP o no escolhido na arvore dirige a superficie inteira. A
+  // selecao e estado do App, nao URL: arvore e superficie leem o mesmo valor.
+  const [pjNode, setPjNode] = useState<ProjectsNode>({ kind: "all" });
+  useEffect(() => {
+    setPjNode({ kind: "all" });
+  }, [activeNotebookId]);
   // /lab e uma pagina de verdade: recarregar a aba continua no processamento,
   // e o endereco fica estavel para deixar a aba aberta no PC.
   useEffect(() => {
@@ -120,6 +298,12 @@ export function App() {
     if (window.location.pathname !== path) {
       window.history.replaceState(null, "", path);
     }
+  }, [view]);
+
+  // Cada tela virada vira log e metrica do diagnostico (nome tecnico, sem
+  // conteudo). A primeira tambem conta: o modulo guarda a pendente.
+  useEffect(() => {
+    trackView(view);
   }, [view]);
 
   const [entryProgress, setEntryProgress] = useState<Record<string, { stage: string; done: number; total: number }>>({});
@@ -135,6 +319,34 @@ export function App() {
       refreshTimer.current = null;
       setRefreshKey((key) => key + 1);
     }, 350);
+  }, []);
+
+  /**
+   * Recarrega lista e nota aberta. Toda escrita passa por aqui: o cofre em
+   * pasta espera alguns minutos de silencio para gravar so o que mudou.
+   *
+   * Fica entre os hooks (antes dos retornos condicionais) porque a assinatura
+   * da importacao em segundo plano tambem precisa dele quando a tarefa termina.
+   */
+  const refresh = () => {
+    setRefreshKey((key) => key + 1);
+    setNoteRefreshKey((key) => key + 1);
+    markVaultDirty();
+  };
+
+  // A importacao do servidor roda fora do dialogo. Quando a tarefa termina —
+  // com resultado ou com erro, porque notas podem ter entrado antes de falhar —
+  // a lista recarrega, como o antigo `onImported` fazia. O flush do cofre agora
+  // e da propria tarefa (5 s depois do fim), nao de quem abriu o dialogo.
+  useEffect(() => {
+    let visto: ImportJobState | null = null;
+    return subscribeImportJob(() => {
+      const estado = importJobState();
+      if (visto === estado) return;
+      visto = estado;
+      if (estado.status === "done" || estado.status === "error") refresh();
+    });
+    // `refresh` so mexe em setters e na marca do cofre: a assinatura e a mesma.
   }, []);
 
   const handleEvent = useCallback(
@@ -218,21 +430,146 @@ export function App() {
   // O primeiro acesso e publico: sem token, a instancia ainda nao foi
   // reivindicada. Falha de rede cai no portao de token normal.
   useEffect(() => {
+    if (localOnly) {
+      // Dev sem servidor: a resposta ja e conhecida e o portao do token nao
+      // pode esconder o cofre do navegador.
+      setServerChecked(true);
+      return;
+    }
     let active = true;
-    getSetupState().then((state) => {
-      if (active && state.required) {
-        setSetupRequired(true);
-      }
-    });
+    probeServer()
+      .then((ok) => {
+        if (!active) return;
+        setServerAvailable(ok);
+        // Site estatico: nao existe /api/v1. O cofre do navegador assume.
+        if (!ok) return;
+        return getSetupState().then((state) => {
+          if (active && state.required) setSetupRequired(true);
+        });
+      })
+      .finally(() => {
+        if (active) setServerChecked(true);
+      });
     return () => {
       active = false;
     };
-  }, []);
+  }, [localOnly]);
+
+  // Cofre em pasta: grava o pendente ao abrir e ao fechar a aba. O alvo e o
+  // Drive quando ha sessao viva; sem sessao, cai na pasta lembrada. Enquanto a
+  // conta esta travada nada e gravado: o alvo e o proprio Drive, e o sync so
+  // volta quando o cofre abrir.
+  useEffect(() => {
+    if (locked) return;
+    if (!onboarded && !accountRemembered) return;
+    setVaultTarget(async () => (driveClient() ? driveVaultRoot() : rememberFolder()));
+    const flush = () => {
+      void runVaultSync().catch(() => undefined);
+    };
+    flush();
+    window.addEventListener("pagehide", flush);
+    return () => window.removeEventListener("pagehide", flush);
+  }, [onboarded, accountRemembered, locked]);
+
+  // A sessao do Google vive so na memoria e morre no reload. Todo login que
+  // termina — da primeira tela, das Configuracoes ou da linha de reconectar —
+  // deixa a marca local de que este navegador tem cofre no Drive. E ela que faz
+  // a linha aparecer quando a sessao se perder.
+  useEffect(
+    () =>
+      onDriveSessionChange(() => {
+        if (driveSessionState() === "connected") rememberDriveVault();
+        setAccount(driveProfile() ?? cachedAccountProfile());
+        setDriveLive(driveSessionState());
+        // Durante uma abertura, o cofre ainda nao esta pronto: quem destrava e
+        // o fim de `openDriveVault`, nao o token que acabou de chegar.
+        if (unlockInFlight.current) return;
+        setAccountLocked(driveMarked() && driveSessionState() !== "connected");
+      }),
+    [],
+  );
+
+  useEffect(() => onAccountChange((p) => setAccount(p ?? driveProfile())), []);
+
+  // Na tela travada o gesto nao pode renovar por fora: o cofre precisa abrir
+  // antes de o app aparecer. O script do GIS chega antes do primeiro toque.
+  useEffect(() => {
+    if (!locked) return;
+    if (!driveConfigured()) return;
+    void preloadGoogle();
+  }, [locked]);
+
+  // Uma trava nova (expiracao depois de um periodo conectado) volta a aceitar
+  // a primeira tentativa silenciosa; a falha da mesma trava nao repete sozinha.
+  useEffect(() => {
+    if (locked) silentTried.current = false;
+  }, [locked]);
+
+  // Renovacao silenciosa da sessao do Google: perto de vencer (ou ja vencida),
+  // o proximo gesto pede um token novo sem tela. E o que mantem a aba aberta
+  // por horas sem passar pelo login; falha nao muda nada na tela.
+  useEffect(() => {
+    if (locked) return;
+    if (!onboarded && !accountRemembered) return;
+    if (!driveMarked()) return;
+    if (!driveConfigured()) return;
+    // O script precisa chegar antes do gesto: baixar durante o clique gasta a
+    // ativacao do usuario e o pedido silencioso morre bloqueado.
+    void preloadGoogle();
+    let encerrado = false;
+    let tentando = false;
+    let proxima = 0;
+    const precisa = () => {
+      const expira = driveSessionExpiresAt();
+      return expira === null || expira - Date.now() < 10 * 60_000;
+    };
+    const tentar = async () => {
+      if (encerrado || tentando || !precisa() || Date.now() < proxima) return;
+      tentando = true;
+      try {
+        await connectDrive({ silent: true, timeoutMs: 8000 });
+        await flushVaultSync();
+        refresh();
+      } catch {
+        // Sem gesto valido ou sem sessao no Google: tenta de novo mais tarde,
+        // sem insistir a cada clique.
+        proxima = Date.now() + 60_000;
+      } finally {
+        tentando = false;
+      }
+    };
+    const tratador = () => void tentar();
+    document.addEventListener("pointerdown", tratador, true);
+    document.addEventListener("keydown", tratador, true);
+    return () => {
+      encerrado = true;
+      document.removeEventListener("pointerdown", tratador, true);
+      document.removeEventListener("keydown", tratador, true);
+    };
+  }, [onboarded, accountRemembered, locked]);
+
+  // Carregamento com conta lembrada e sem sessao: tenta o silencioso sozinho
+  // antes de mostrar a trava. Sem gesto o navegador pode recusar; ai a trava
+  // oferece o Entrar, e o primeiro toque tenta o silencioso de novo.
+  useLayoutEffect(() => {
+    if (!locked) return;
+    // A referencia para a rotina da trava so existe depois do portao do
+    // servidor; nesse primeiro render o app ainda nem desenhou.
+    if (!serverChecked) return;
+    if (!driveConfigured()) return;
+    if (!cachedAccountProfile()?.picture) return;
+    if (autoSilentTried.current) return;
+    const tentar = renovarSilenciosoRef.current;
+    if (!tentar) return;
+    autoSilentTried.current = true;
+    tentar(true);
+  }, [locked, serverChecked]);
 
   // A token already stored may be stale (rotated on the server) or simply
   // wrong; validate it on load and fall back to the gate. A network failure
   // keeps the token so the app can still be used offline with cached data.
   useEffect(() => {
+    if (localOnly) return;
     const stored = getToken();
     if (!stored) {
       return;
@@ -252,12 +589,11 @@ export function App() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [localOnly]);
 
   // Cadernos: espelho do servidor. A selecao fica no navegador; se o caderno
   // sumiu, cai no padrao.
   useEffect(() => {
-    if (!token) return;
     let active = true;
     api
       .listNotebooks()
@@ -278,7 +614,6 @@ export function App() {
   }, [token, refreshKey]);
 
   useEffect(() => {
-    if (!token) return;
     void api
       .getSettings()
       .then((settings) => setOwnerName(settings.owner_name ?? ""))
@@ -322,11 +657,17 @@ export function App() {
       ? null
       : (notebooks.find((notebook) => notebook.id === activeNotebookId) ?? null);
   const isBook = activeNotebook?.kind === "book";
+  const isMcp = activeNotebook?.kind === "mcp";
+
+  // Uma unica carga do indice de projetos serve as duas superficies: a arvore
+  // da sidebar e a area principal. Fora do caderno MCP nao busca nada.
+  const projectsData = useProjectsIndex(isMcp ? activeNotebookId : "", refreshKey);
 
   // A lista de capitulos vive na sidebar, no lugar das notas. O App e o dono
   // dela para a sidebar e a casa do livro verem a mesma ordem.
   useEffect(() => {
-    if (!token || !activeNotebook || activeNotebook.kind !== "book") {
+    // Sem token o livro tambem tem capitulos: eles moram no cofre do navegador.
+    if (!activeNotebook || activeNotebook.kind !== "book") {
       setBookChapters([]);
       setBookChaptersLoading(false);
       return;
@@ -360,6 +701,60 @@ export function App() {
     };
   }, [token, activeNotebook?.id, activeNotebook?.kind, refreshKey]);
 
+  // Abas: grava sempre que a mesa muda, para o recarregamento devolver o mesmo.
+  useEffect(() => {
+    writeTabs(tabsState);
+  }, [tabsState]);
+
+  // Abas restauradas: a primeira lista completa que chega descarta os ids que
+  // nao existem mais e confirma o titulo das que ficaram. Abrir uma nota nova
+  // enquanto isso nao a marca como invalida: so os ids restaurados sao
+  // reconciliados, uma vez.
+  useEffect(() => {
+    if (tabsState.tabs.length === 0) return undefined;
+    let active = true;
+    const aplicar = (entries: Entry[], completo: boolean) => {
+      if (!active) return;
+      const porId = new Map(entries.map((entry) => [entry.id, noteTitle(entry)]));
+      atualizarAbas((atual) => {
+        let proximo = atual;
+        for (const tab of atual.tabs) {
+          const titulo = porId.get(tab.id);
+          if (titulo) proximo = setTabTitle(proximo, tab.id, titulo);
+        }
+        if (completo && !abasReconciliadas.current) {
+          const sumiram = new Set(tabsIniciais.current.filter((id) => !porId.has(id)));
+          if (sumiram.size > 0) {
+            proximo = reconcileTabs(proximo, (id) => !sumiram.has(id));
+          }
+        }
+        return proximo;
+      });
+      if (completo && !abasReconciliadas.current) {
+        abasReconciliadas.current = true;
+        const sumiram = tabsIniciais.current;
+        setOpenEntryId((atual) => {
+          if (!atual || !sumiram.includes(atual) || porId.has(atual)) return atual;
+          return tabsRef.current.activeId;
+        });
+      }
+    };
+    // O cache pinta os titulos antes da rede; a lista completa reconcilia.
+    void api
+      .listEntriesCached({ limit: 1000, exclude_books: true })
+      .then((resultado) => {
+        if (resultado?.entries) aplicar(resultado.entries, false);
+      })
+      .catch(() => undefined);
+    void api
+      .listAllEntries({ exclude_books: true })
+      .then((resultado) => aplicar(resultado.entries ?? [], true))
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [atualizarAbas, tabsState.tabs.length, refreshKey]);
+
   if (setupRequired) {
     return (
       <SetupGate
@@ -375,7 +770,143 @@ export function App() {
     );
   }
 
-  if (!token) {
+  // Servidor sem token pede o token; site estatico abre o cofre local.
+  if (!serverChecked) {
+    return null;
+  }
+
+  const finishOnboarding = () => {
+    try {
+      localStorage.setItem("dyarium.onboarded", "1");
+    } catch {
+      // sem localStorage a apresentacao volta na proxima abertura; nada se perde
+    }
+    setOnboarded(true);
+  };
+
+  /**
+   * Sair da conta: grava o pendente, apaga o cache local e recarrega vazio. Se
+   * a gravacao falhar, so a confirmacao destrutiva passa.
+   */
+  const sairDaConta = async () => {
+    if (!account && !driveMarked()) return;
+    const confirmado = window.confirm(
+      "Sair da conta? O cofre continua no Drive. O cache deste navegador será apagado.",
+    );
+    if (!confirmado) return;
+    let resultado = await signOutAccount();
+    if (!resultado.ok) {
+      const descartar = window.confirm(
+        `${resultado.message}. Sair mesmo assim? O que não subiu será perdido.`,
+      );
+      if (!descartar) return;
+      resultado = await signOutAccount({ discard: true });
+    }
+    if (resultado.ok) {
+      reloadPage();
+      return;
+    }
+    notify(resultado.message, "error");
+  };
+
+  /**
+   * O cofre abriu: a tela travada sai e o app entra com o banco ja restaurado.
+   * O onboarding fica gravado como em qualquer entrada pela conta.
+   */
+  const desbloquear = () => {
+    // O alvo volta a ser o Drive antes de o app aparecer: nenhuma gravacao
+    // pendente pode cair na pasta lembrada por causa da trava.
+    setVaultTarget(async () => driveVaultRoot());
+    setVaultBoot(null);
+    setGateError("");
+    setAccountLocked(false);
+    setAccount(driveProfile() ?? cachedAccountProfile());
+    finishOnboarding();
+  };
+
+  /**
+   * Entrada interativa da tela travada: o mesmo caminho unico de sempre
+   * (`connectAccount`), com a janela do Google quando ela for necessaria.
+   */
+  const entrarPelaContaTravada = async () => {
+    if (unlockInFlight.current) return;
+    unlockInFlight.current = true;
+    setGateError("");
+    setVaultBoot({ stage: "conectando", done: false });
+    try {
+      await connectAccount({
+        // Login da trava: a tela destrava no fim do apply, e o resto (sync e
+        // capas) segue no sinal discreto da linha do Drive.
+        attachments: "skip",
+        sync: "background",
+        onStage: (stage: VaultStage) => setVaultBoot({ stage, done: false }),
+        onProgress: (progress: StepProgress) =>
+          setVaultBoot((atual) => (atual ? { ...atual, progress } : atual)),
+      });
+      desbloquear();
+    } catch (causa) {
+      // O motivo tecnico fica no console; na tela, uma linha acionavel.
+      console.error("[drive] falha ao entrar pela conta", causa);
+      setVaultBoot(null);
+      setGateError(describeDriveError(causa));
+    } finally {
+      unlockInFlight.current = false;
+    }
+  };
+
+  /**
+   * Primeiro toque na tela travada: tenta a sessao sem tela (`prompt: none`) e
+   * so destrava quando o cofre abre. Falha em silencio; o Entrar faz o caminho
+   * interativo e a tela continua sendo a mesma.
+   *
+   * So vale quando ha perfil guardado: o silencioso nao pede consentimento de
+   * identidade, entao sem perfil a foto nunca chegaria. Esse caso e do Entrar
+   * com Google, que pede o consentimento uma vez e guarda o perfil.
+   */
+  const renovarContaEmSilencio = (auto = false) => {
+    if (unlockInFlight.current) return;
+    if (!auto && silentTried.current) return;
+    if (!driveConfigured()) return;
+    // Sem foto em cache o consentimento de identidade nunca foi dado; destravar
+    // em silencio aqui pularia o unico momento em que a foto pode chegar.
+    if (!cachedAccountProfile()?.picture) return;
+    if (!auto) silentTried.current = true;
+    unlockInFlight.current = true;
+    setGateError("");
+    setVaultBoot({ stage: "conectando", done: false });
+    void (async () => {
+      try {
+        // Sem gesto, a janela do Google pode ser bloqueada: o prazo curto faz a
+        // trava voltar em segundos em vez de deixar a tela em "conectando".
+        await connectDrive(
+          auto ? { silent: true, timeoutMs: 8000 } : { silent: true },
+        );
+        const raiz = await driveVaultRoot();
+        const aberto = await openDriveVault(raiz, {
+          // Mesmo caminho rapido do Entrar: a lista aparece com o apply.
+          attachments: "skip",
+          sync: "background",
+          onStage: (stage: VaultStage) => setVaultBoot({ stage, done: false }),
+          onProgress: (progress: StepProgress) =>
+            setVaultBoot((atual) => (atual ? { ...atual, progress } : atual)),
+        });
+        rememberDriveVault(aberto.summary);
+        desbloquear();
+      } catch {
+        // Sem token ou sem cofre: continua na tela, sem tela do Google e sem
+        // erro parado. O botao Entrar refaz o caminho com a janela; a falha do
+        // silencioso nao vira mensagem.
+        setVaultBoot(null);
+      } finally {
+        unlockInFlight.current = false;
+      }
+    })();
+  };
+  // Referencia mais nova para o efeito de carregamento, que roda antes desta
+  // definicao no codigo mas depois dela no render.
+  renovarSilenciosoRef.current = renovarContaEmSilencio;
+
+  if (!token && (serverAvailable || forceTokenGate)) {
     return (
       <TokenGate
         onSubmit={(value) => void handleLogin(value)}
@@ -385,13 +916,148 @@ export function App() {
     );
   }
 
-  const refresh = () => {
-    setRefreshKey((key) => key + 1);
-    setNoteRefreshKey((key) => key + 1);
-  };
+  // Marca do Drive sem sessao viva: o cache da conta nao vira o app. A trava
+  // vem antes da apresentacao para quem ja tem conta nunca ver a primeira tela.
+  if (locked) {
+    if (vaultBoot) {
+      return (
+        <div className="account-gate-boot">
+          <VaultBoot
+            stage={vaultBoot.stage}
+            progress={vaultBoot.progress}
+            done={vaultBoot.done}
+          />
+        </div>
+      );
+    }
+    return (
+      <AccountGate
+        profile={account}
+        configured={driveConfigured()}
+        error={gateError}
+        onFirstTouch={renovarContaEmSilencio}
+        onConnect={() => void entrarPelaContaTravada()}
+        onSignOut={() => void sairDaConta()}
+      />
+    );
+  }
+
+  // Site estatico ainda sem cofre escolhido: a primeira tela apresenta o
+  // produto e pergunta onde as notas vao morar. Com conta lembrada (marca do
+  // Drive + perfil), o reload abre o cache em vez de voltar a apresentacao.
+  if (!token && !serverAvailable && !onboarded && !forceTokenGate && !accountRemembered) {
+    return (
+      <>
+        {/* A primeira tela fica montada e escondida enquanto o cofre abre: e
+            ela que guarda a linha de erro do Drive (o FirstRun mostra o
+            motivo da falha), e desmonta-la perderia a mensagem. */}
+        <div className="vault-boot-underlay" hidden={vaultBoot !== null}>
+          <FirstRun
+            googleReady={driveConfigured()}
+            onFolderChosen={async (folder) => {
+              // O primeiro backup e parte de "criar o cofre": se a pasta recusar a
+              // escrita, a tela mostra o erro em vez de seguir como se tivesse dado.
+              await runVaultSync(folder);
+              finishOnboarding();
+            }}
+            onDriveChosen={async () => {
+              // "conectando" entra antes do clique virar promessa: a tela de
+              // carregamento nao espera o Google responder para aparecer.
+              setVaultBoot({ stage: "conectando", done: false });
+              try {
+                // Entrada unica: login, abertura (Drive + local unidos, sem
+                // passar por cima do mais novo) e o sync da uniao. A marca do
+                // Drive nasce aqui, no fim. O caminho e o rapido: a primeira
+                // tela sai com o retrato aplicado, e o sync/capas continuam.
+                await connectAccount({
+                  attachments: "skip",
+                  sync: "background",
+                  // Cada etapa chega sem o progresso da anterior: a contagem
+                  // de notas nao pode aparecer no passo dos anexos.
+                  onStage: (stage: VaultStage) => setVaultBoot({ stage, done: false }),
+                  onProgress: (progress: StepProgress) =>
+                    setVaultBoot((current) =>
+                      current ? { ...current, progress } : current,
+                    ),
+                });
+                setVaultTarget(() => driveVaultRoot().catch(() => null));
+                setVaultBoot((current) => (current ? { ...current, done: true } : current));
+                await aguardar(VAULT_READY_HOLD_MS);
+                setVaultBoot(null);
+                finishOnboarding();
+              } catch (causa) {
+                // De volta a primeira tela, que mostra a causa em uma linha.
+                setVaultBoot(null);
+                throw causa;
+              }
+            }}
+            onUseBrowserOnly={finishOnboarding}
+            onSelfHosted={() => setForceTokenGate(true)}
+          />
+        </div>
+        {vaultBoot && (
+          <VaultBoot
+            stage={vaultBoot.stage}
+            progress={vaultBoot.progress}
+            done={vaultBoot.done}
+          />
+        )}
+      </>
+    );
+  }
 
   const closeDrawer = () => {
     if (window.innerWidth <= 900) setNavOpen(false);
+  };
+
+  /**
+   * Abre uma nota comum em visao unica. Todo clique normal — lista, mapa,
+   * calendario, busca, Notion, link interno — passa por aqui e nao cria aba:
+   * se havia abas, elas fecham e a nota escolhida fica sozinha no editor.
+   */
+  const openNote = (id: string) => {
+    if (tabsRef.current.tabs.length > 0) atualizarAbas(() => EMPTY_TABS);
+    setOpenEntryId(id);
+    setView("notes");
+    closeDrawer();
+  };
+
+  /**
+   * "Abrir em nova aba" (menu da lista) e o unico gesto que cria aba. Sem abas,
+   * a nota aberta vira a primeira e a escolhida a segunda; com abas, a escolhida
+   * entra no fim (ou so e ativada, se ja for aba).
+   */
+  const openNoteInNewTab = (id: string, title = "") => {
+    atualizarAbas((atual) => openInNewTab(atual, id, title, openEntryRef.current));
+    setOpenEntryId(id);
+    setView("notes");
+    closeDrawer();
+  };
+
+  const selectNoteTab = (id: string) => {
+    atualizarAbas((atual) => activateTab(atual, id));
+    setOpenEntryId(id);
+    setView("notes");
+  };
+
+  /** Fecha a aba; se era a ativa, a vizinha assume (ou o inicio). */
+  const closeNoteTab = (id: string) => {
+    const proximo = atualizarAbas((atual) => closeTab(atual, id));
+    if (openEntryRef.current === id) setOpenEntryId(proximo.activeId);
+  };
+
+  /** Notas apagadas ou arquivadas levam a aba delas junto. */
+  const closeTabsFor = (ids: string[]) => {
+    if (ids.length === 0) return;
+    const proximo = atualizarAbas((atual) => closeTabs(atual, ids));
+    if (openEntryRef.current && ids.includes(openEntryRef.current)) {
+      setOpenEntryId(proximo.activeId);
+    }
+  };
+
+  const toggleAccountMenu = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    setAccountAnchor(event.currentTarget);
+    setAccountSheetOpen((aberto) => !aberto);
   };
 
   const selectNotebook = (id: string) => {
@@ -415,14 +1081,19 @@ export function App() {
         return;
       }
       const entry = await api.createEntry("", null, targetNotebookId());
-      setOpenEntryId(entry.id);
-      setView("notes");
-      closeDrawer();
+      openNote(entry.id);
       refresh();
     } catch {
       notify(isBook ? "Não foi possível criar o capítulo." : "Não foi possível criar a nota.", "error");
       refresh();
     }
+  };
+
+  // O calendario cria a nota de hoje (data de geracao) e abre no editor.
+  const createCalendarNote = async (title: string) => {
+    const entry = await api.createEntry(title, null, targetNotebookId());
+    openNote(entry.id);
+    refresh();
   };
 
   const createBookChapter = async (kind: ChapterKind) => {
@@ -508,6 +1179,15 @@ export function App() {
     setComposeOpen(true);
   };
 
+  // Abre o compose sem um botao de origem (inicio do web): ancora no centro.
+  const openComposeHere = () => {
+    const width = 320;
+    const left = Math.max(12, (window.innerWidth - width) / 2);
+    const top = Math.max(12, window.innerHeight / 2 - 120);
+    setComposeAnchor({ top, bottom: top + 40, left, right: left + width });
+    setComposeOpen(true);
+  };
+
   const createTextNote = () => {
     setComposeOpen(false);
     void createNote();
@@ -515,10 +1195,8 @@ export function App() {
 
   const openCreatedEntry = (id: string) => {
     setComposeOpen(false);
-    setOpenEntryId(id);
-    setView("notes");
+    openNote(id);
     refresh();
-    closeDrawer();
   };
 
   const openNotionImport = () => {
@@ -537,10 +1215,8 @@ export function App() {
 
   const openNotionEntry = (id: string) => {
     setImportOpen(false);
-    setOpenEntryId(id);
-    setView("notes");
+    openNote(id);
     refresh();
-    closeDrawer();
   };
 
   const expandSearch = () => {
@@ -686,9 +1362,7 @@ export function App() {
   };
 
   const openFromOtherView = (id: string) => {
-    setOpenEntryId(id);
-    setView("notes");
-    closeDrawer();
+    openNote(id);
   };
 
   const openView = (id: ViewId) => {
@@ -705,50 +1379,91 @@ export function App() {
     setView(target);
   };
 
+  // A barra do celular nomeia a tela atual: sem isto, Mapa e Configurações
+  // continuavam aparecendo como "Notas recentes" no topo.
+  const mobileTitle =
+    view === "map"
+      ? "Mapa"
+      : view === "calendar"
+        ? "Calendário"
+        : view === "writing"
+          ? "Estatísticas"
+          : view === "settings"
+            ? "Configurações"
+            : view === "vault"
+              ? "Google Drive"
+              : view === "lab"
+                ? "Laboratório"
+                : activeNotebookId === ALL_NOTEBOOKS
+                  ? "Notas recentes"
+                  : (notebooks.find((notebook) => notebook.id === activeNotebookId)?.name ??
+                    "Notas ao acaso");
+
+  // A barra de abas so vale com duas ou mais, e so na superficie de notas
+  // comuns: com uma aba e so o editor, e livro/caderno de projetos abrem a nota
+  // dentro da propria tela, sem aba.
+  const showTabs = view === "notes" && !isBook && !isMcp && tabsState.tabs.length > 1;
+
+  // O icone de nuvem so pede atencao quando ha o que reconectar ou um envio
+  // que falhou. Trabalho em curso aparece na propria pagina do cofre.
+  const vaultNeedsYou =
+    driveMarked() &&
+    driveConfigured() &&
+    (driveLive !== "connected" || vaultWork.error !== "");
+
   const footerItems = [
     {
       key: "map",
       label: "Mapa",
       active: view === "map",
-      icon: <MapIcon size={17} />,
+      icon: <MapIcon size={16} />,
       onPress: () => openView("map"),
     },
     {
       key: "writing",
       label: "Estatísticas",
       active: view === "writing",
-      icon: <WritingIcon size={17} />,
+      icon: <WritingIcon size={16} />,
       onPress: () => openView("writing"),
     },
     {
-      key: "lab",
-      label: "Processamento",
-      active: view === "lab",
-      icon: <CpuIcon size={17} />,
-      onPress: () => openView("lab"),
+      key: "calendar",
+      label: "Calendário",
+      active: view === "calendar",
+      icon: <CalendarIcon size={16} />,
+      onPress: () => openView("calendar"),
     },
     {
       key: "settings",
       label: "Configurações",
       active: view === "settings",
-      icon: <SettingsIcon size={17} />,
+      icon: <SettingsIcon size={16} />,
       onPress: () => openView("settings"),
     },
     {
       key: "logout",
       label: "Sair",
       active: false,
-      icon: <ExitIcon size={17} />,
+      icon: <ExitIcon size={16} />,
       onPress: () => {
-        clearToken();
-        setTokenState("");
+        if (token) {
+          clearToken();
+          setTokenState("");
+          return;
+        }
+        void sairDaConta();
       },
     },
   ];
 
   return (
     <div className={navOpen ? "app" : "app app--collapsed"}>
-      <WorkerKeepAlive />
+      {WorkerKeepAlive && (
+        <Suspense fallback={null}>
+          <WorkerKeepAlive />
+        </Suspense>
+      )}
+      <PulseBoot />
       <header className="mobile-bar">
         <button
           type="button"
@@ -759,20 +1474,28 @@ export function App() {
         >
           <MenuIcon size={18} />
         </button>
-        <span className="mobile-bar-title">
-          {activeNotebookId === ALL_NOTEBOOKS
-            ? "Todos os cadernos"
-            : (notebooks.find((notebook) => notebook.id === activeNotebookId)?.name ??
-              "Notas ao acaso")}
-        </span>
+        <span className="mobile-bar-title">{mobileTitle}</span>
+        {!isMcp && (
+          <button
+            type="button"
+            className="button button--primary button--small"
+            onClick={isBook ? () => void createNote() : openCompose}
+            aria-label={isBook ? "Novo capítulo" : "Nova nota"}
+          >
+            <PlusIcon size={15} />
+            {isBook ? "Capítulo" : "Nova nota"}
+          </button>
+        )}
         <button
           type="button"
-          className="button button--primary button--small"
-          onClick={isBook ? () => void createNote() : openCompose}
-          aria-label={isBook ? "Novo capítulo" : "Nova nota"}
+          className="account-avatar-button account-avatar-button--bar"
+          aria-label="Conta"
+          title="Conta"
+          aria-haspopup="menu"
+          aria-expanded={accountSheetOpen}
+          onClick={toggleAccountMenu}
         >
-          <PlusIcon size={15} />
-          {isBook ? "Capítulo" : "Nova nota"}
+          <AccountAvatar profile={account} state={accountState(account)} />
         </button>
       </header>
       {navOpen && (
@@ -784,12 +1507,102 @@ export function App() {
         />
       )}
       <OfflineBanner />
-      <aside className="sidebar" aria-label="Navegação principal">
-        {navOpen ? (
-          <>
+      {/* O trilho nao recolhe: ele e a navegacao global e continua na tela com
+          a sidebar aberta ou fechada. Abaixo de 900 ele sai de cena e a gaveta
+          leva as mesmas acoes no pe. */}
+      {!compact && (
+        <nav className="side-rail" aria-label="Trilho">
+          <button
+            type="button"
+            className="rail-action rail-expand"
+            onClick={() => setNavOpen((open) => !open)}
+            aria-label={navOpen ? "Recolher menu" : "Expandir menu"}
+            title={navOpen ? "Recolher menu" : "Expandir menu"}
+            aria-expanded={navOpen}
+          >
+            <ChevronIcon size={16} />
+          </button>
+          <span className="rail-sep" aria-hidden="true" />
+          {!isMcp && (
+            <button
+              type="button"
+              className="rail-action rail-action--new"
+              onClick={isBook ? () => void createNote() : openCompose}
+              aria-label={isBook ? "Novo capítulo" : "Nova nota"}
+              title={isBook ? "Novo capítulo" : "Nova nota"}
+            >
+              <PlusIcon size={16} />
+            </button>
+          )}
+          {!isMcp && (
+            <button
+              type="button"
+              className="rail-action"
+              onClick={expandSearch}
+              aria-label="Buscar nas notas"
+              title="Buscar"
+            >
+              <SearchIcon size={16} />
+            </button>
+          )}
+          {!isMcp && (
+            <button
+              type="button"
+              className={view === "vault" ? "rail-action rail-action--active" : "rail-action"}
+              onClick={() => openView("vault")}
+              aria-label="Google Drive"
+              aria-pressed={view === "vault"}
+              title="Google Drive"
+            >
+              <Icon name="cloud" size={16} />
+              {vaultNeedsYou && <span className="rail-dot" data-state="warn" aria-hidden="true" />}
+            </button>
+          )}
+          {!isMcp && (
+            <button
+              type="button"
+              className="rail-action"
+              onClick={() => setImportServerOpen(true)}
+              aria-label="Importar de um servidor"
+              title="Importar de um servidor"
+            >
+              <Icon name="server" size={16} />
+            </button>
+          )}
+          <div className="rail-foot">
+            {footerItems.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                className={item.active ? "foot-item foot-item--active" : "foot-item"}
+                onClick={item.onPress}
+                aria-label={item.label}
+                aria-pressed={item.key === "logout" ? undefined : item.active}
+                title={item.label}
+              >
+                {item.icon}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            className="account-avatar-button account-avatar-button--rail"
+            aria-label="Conta"
+            title="Conta"
+            aria-haspopup="menu"
+            aria-expanded={accountSheetOpen}
+            onClick={toggleAccountMenu}
+          >
+            <AccountAvatar profile={account} state={accountState(account)} />
+          </button>
+        </nav>
+      )}
+
+      {navOpen && (
+        <aside className="sidebar" aria-label="Navegação principal">
             <div className="sidebar-brand-row">
-              <div className="brand">
-                dyarium
+              <div className={brandClass("brand")}>
+                {BRAND.name}
                 <small>tinta e papel</small>
               </div>
               <button
@@ -830,8 +1643,10 @@ export function App() {
               />
             </div>
 
-            {/* O menu e a lista de notas: não ha "Notas" aqui, porque a lista e
-                as notas. As demais telas viram icones pequenos no rodape. */}
+            {/* O menu e a lista do escopo. No caderno de projetos (MCP) a
+                lista da sidebar sao os proprios projetos: cada um no seu
+                lugar, abrir um escopa a area principal. Nas listas comuns a
+                busca, tags e arquivadas ficam no topo da propria lista. */}
             {isBook && activeNotebook ? (
               <BookSidebar
                 book={activeNotebook}
@@ -846,6 +1661,20 @@ export function App() {
                 onCreate={(kind) => void createBookChapter(kind)}
                 onReorder={(source, target) => void reorderBookChapters(source, target)}
               />
+            ) : isMcp ? (
+              <ProjectList
+                index={projectsData.index}
+                node={pjNode}
+                onSelect={(node) => {
+                  setPjNode(node);
+                  setOpenEntryId(null);
+                  setView("notes");
+                  closeDrawer();
+                }}
+                icons={{}}
+                loading={projectsData.loading}
+                error={projectsData.error}
+              />
             ) : (
             <NoteList
               refreshKey={refreshKey}
@@ -853,57 +1682,39 @@ export function App() {
               failures={failures}
               notebookId={activeNotebookId}
               notebooks={notebooks}
+              showSearch={compact}
               autoSearch={pendingSearch}
               onSearchOpened={() => setPendingSearch(false)}
-              onOpen={(id) => {
-                setOpenEntryId(id);
-                setView("notes");
-                closeDrawer();
-              }}
+              onOpen={(id) => openNote(id)}
+              onOpenInNewTab={
+                isMcp ? undefined : (id, title) => openNoteInNewTab(id, title)
+              }
               onCreate={openCompose}
               onManageTags={() => {
                 closeDrawer();
                 setTagsOpen(true);
               }}
               onMutated={(removed) => {
-                if (openEntryId && removed.includes(openEntryId)) {
-                  setOpenEntryId(null);
-                }
+                closeTabsFor(removed);
                 refresh();
               }}
             />
             )}
-          </>
-        ) : (
-          <div className="side-rail">
-            <button
-              type="button"
-              className="rail-action rail-action--new"
-              onClick={isBook ? () => void createNote() : openCompose}
-              aria-label={isBook ? "Novo capítulo" : "Nova nota"}
-              title={isBook ? "Novo capítulo" : "Nova nota"}
-            >
-              <PlusIcon size={18} />
-            </button>
-            <button
-              type="button"
-              className="rail-action"
-              onClick={expandSearch}
-              aria-label="Buscar nas notas"
-              title="Buscar"
-            >
-              <SearchIcon size={17} />
-            </button>
-            <button
-              type="button"
-              className="rail-action rail-expand"
-              onClick={() => setNavOpen(true)}
-              aria-label="Expandir menu"
-              title="Expandir menu"
-            >
-              <ChevronIcon size={16} />
-            </button>
-            <nav className="rail-foot" aria-label="Telas do dyarium">
+          {/* No celular a gaveta e a unica navegacao: as acoes globais moram
+              no pe dela, como antes. No desktop o trilho ja as mostra e a
+              sidebar nao as repete. */}
+          {compact && (
+            <nav className="sidebar-foot" aria-label="Telas do dyarium">
+              <button
+                type="button"
+                className={view === "vault" ? "foot-item foot-item--active" : "foot-item"}
+                onClick={() => openView("vault")}
+                aria-label="Google Drive"
+                aria-pressed={view === "vault"}
+                title="Google Drive"
+              >
+                <Icon name="cloud" size={16} />
+              </button>
               {footerItems.map((item) => (
                 <button
                   key={item.key}
@@ -918,30 +1729,17 @@ export function App() {
                 </button>
               ))}
             </nav>
-          </div>
-        )}
-
-        {navOpen && (
-          <nav className="sidebar-foot" aria-label="Telas do dyarium">
-            {footerItems.map((item) => (
-              <button
-                key={item.key}
-                type="button"
-                className={item.active ? "foot-item foot-item--active" : "foot-item"}
-                onClick={item.onPress}
-                aria-label={item.label}
-                aria-pressed={item.key === "logout" ? undefined : item.active}
-                title={item.label}
-              >
-                {item.icon}
-              </button>
-            ))}
-          </nav>
-        )}
-      </aside>
+          )}
+        </aside>
+      )}
 
       <main className="workspace" aria-label="Conteúdo">
-        <ErrorBoundary resetKey={`${view}:${openEntryId ?? ""}`}>
+        {/* A importacao continua depois do dialogo fechar e nao pertence a
+            nenhuma tela: fica acima do conteudo para sobreviver a troca de
+            Mapa, Calendario ou Configuracoes. */}
+        <div className="workspace-stack">
+          <ImportJobStrip />
+          <ErrorBoundary resetKey={`${view}:${openEntryId ?? ""}`}>
           {view === "notes" && isBook && activeNotebook ? (
             <BookView
               book={activeNotebook}
@@ -961,57 +1759,100 @@ export function App() {
               onOpenSettings={() => setBookDialog({ notebook: activeNotebook })}
             />
           ) : view === "notes" ? (
-            <div className="editor-pane">
-              {openEntryId ? (
-                <NoteEditor
-                  key={openEntryId}
-                  entryId={openEntryId}
-                  refreshKey={noteRefreshKey}
-                  failureReason={failures[openEntryId]}
-                  progress={entryProgress[openEntryId]}
-                  onChanged={refresh}
-                  onDeleted={() => {
-                    setOpenEntryId(null);
-                    refresh();
-                  }}
-                  onOpenEntity={(kind, name) => {
-                    setEntityFocus({ kind, name });
-                    setView("map");
-                  }}
-                  onOpenEntry={(id) => setOpenEntryId(id)}
-                  notebooks={notebooks}
-                />
-              ) : (
-                <div className="empty-editor">
-                  <div className="empty-inner">
-                    <h2>Um lugar para as suas notas</h2>
-                    <p className="muted">
-                      Escolha uma nota na lista, ou comece uma nova. Áudios viram texto,
-                      imagens entram no corpo e a análise encontra pessoas, lugares e temas.
-                    </p>
-                    <div className="empty-actions">
-                      <button type="button" className="button button--primary" onClick={openCompose}>
-                        Nova nota
-                      </button>
-                      <button
-                        type="button"
-                        className="button button--ghost"
-                        onClick={openNotionImport}
-                      >
-                        Importar do Notion
-                      </button>
-                      <button
-                        type="button"
-                        className="button button--ghost"
-                        onClick={() => openView("map")}
-                      >
-                        Ver mapa
-                      </button>
-                    </div>
+            <div className="notes-shell">
+              <div
+                className={
+                  showTabs
+                    ? "editor-pane editor-pane--tabs"
+                    : isMcp
+                      ? "editor-pane editor-pane--pjx"
+                      : "editor-pane"
+                }
+              >
+                {showTabs && (
+                  <NoteTabs
+                    tabs={tabsState.tabs}
+                    activeId={openEntryId}
+                    onSelect={selectNoteTab}
+                    onClose={closeNoteTab}
+                  />
+                )}
+                {openEntryId && isMcp ? (
+                  // Caderno de projetos: a nota abre por cima da superficie; a
+                  // faixa devolve para a leitura do no, como o menu faz com o livro.
+                  <div className="pjx-backbar">
+                    <button
+                      type="button"
+                      className="pjx-back dy-label"
+                      onClick={() => setOpenEntryId(null)}
+                      aria-label="Voltar para projetos"
+                      title="Projetos"
+                    >
+                      <span className="pjx-ico pjx-ico--sm" aria-hidden="true">
+                        <svg
+                          viewBox="0 0 16 16"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <path d="M10 3 5 8l5 5" />
+                        </svg>
+                      </span>
+                      Projetos
+                    </button>
                   </div>
-                </div>
-              )}
+                ) : null}
+                {openEntryId ? (
+                  <NoteEditor
+                    key={openEntryId}
+                    entryId={openEntryId}
+                    refreshKey={noteRefreshKey}
+                    failureReason={failures[openEntryId]}
+                    progress={entryProgress[openEntryId]}
+                    onChanged={refresh}
+                    onDeleted={() => {
+                      // A nota que foi apagada leva a aba dela; a vizinha assume
+                      // se era a ativa, e navegar no meio do caminho nao troca
+                      // a nota que ja esta aberta.
+                      closeNoteTab(openEntryId);
+                      refresh();
+                    }}
+                    onOpenEntity={(kind, name, edit) => {
+                      setEntityFocus({ kind, name, edit });
+                      setView("map");
+                    }}
+                    onOpenEntry={(id) => openNote(id)}
+                    notebooks={notebooks}
+                  />
+                ) : isMcp ? (
+                  // Caderno de projetos MCP: a lista da sidebar sao os projetos;
+                  // abrir um escopa esta area. Clicar numa linha abre a nota
+                  // daquele projeto no mesmo editor, como a lista de notas faz.
+                  <div className="page page--projects">
+                    <ProjectsView
+                      index={projectsData.index}
+                      loading={projectsData.loading}
+                      error={projectsData.error}
+                      node={pjNode}
+                      onSelectNode={setPjNode}
+                      onOpenEntry={(id) => {
+                        setView("notes");
+                        setOpenEntryId(id);
+                        closeDrawer();
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <HomeStart
+                    onNewNote={openComposeHere}
+                    onOpenAnalysis={() => openView("writing")}
+                  />
+                )}
+              </div>
             </div>
+          ) : view === "vault" ? (
+            <VaultView onBack={goBack} />
           ) : view === "map" ? (
             <div className="page page--map">
               <MapView
@@ -1025,16 +1866,40 @@ export function App() {
             <div className="page">
               <WritingView refreshKey={refreshKey} />
             </div>
-          ) : view === "lab" ? (
+          ) : view === "calendar" ? (
+            <div className="page page--calendar">
+              <CalendarView
+                refreshKey={refreshKey}
+                notebookId={activeNotebookId}
+                notebooks={notebooks}
+                onOpenNote={openFromOtherView}
+                onCreateNote={createCalendarNote}
+              />
+            </div>
+          ) : view === "lab" && LabView ? (
             <div className="page page--lab">
-              <LabView onBack={goBack} />
+              <Suspense fallback={null}>
+                <LabView onBack={goBack} />
+              </Suspense>
             </div>
           ) : (
             <div className="page">
-              <SettingsView refreshKey={refreshKey} onBack={goBack} />
+              <SettingsView
+                refreshKey={refreshKey}
+                onBack={goBack}
+                onOpenLab={LAB_ENABLED ? () => openView("lab") : undefined}
+                onOpenProject={(notebookId, entryId) => {
+                  setActiveNotebookId(notebookId);
+                  writeActiveNotebook(notebookId);
+                  // Qualquer nota aberta por fora da lista chega em visao unica:
+                  // abas nascem so pelo menu da lista.
+                  openNote(entryId);
+                }}
+              />
             </div>
           )}
-        </ErrorBoundary>
+          </ErrorBoundary>
+        </div>
       </main>
 
       <NotebookDialog
@@ -1083,6 +1948,10 @@ export function App() {
         onCreated={openCreatedEntry}
       />
 
+      {importServerOpen && (
+        <ImportServerDialog onClose={() => setImportServerOpen(false)} />
+      )}
+
       {importOpen && (
         <NotionImportDialog
           open
@@ -1091,6 +1960,16 @@ export function App() {
           onClose={() => setImportOpen(false)}
           onFinished={finishNotionImport}
           onOpenEntry={openNotionEntry}
+        />
+      )}
+      {accountSheetOpen && (
+        <AccountSheet
+          open
+          onClose={() => setAccountSheetOpen(false)}
+          profile={account}
+          anchor={accountAnchor}
+          onSync={refresh}
+          onSignedOut={() => reloadPage()}
         />
       )}
     </div>

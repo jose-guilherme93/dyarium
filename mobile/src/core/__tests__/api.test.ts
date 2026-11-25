@@ -149,6 +149,131 @@ describe('DyariumApi', () => {
     expect(JSON.parse(String(calls[3].init?.body)).icon).toBe('heart');
   });
 
+  it('fala o contrato de curadoria: rotulo, tipo, exclusao e rejeicoes', async () => {
+    const entity = {
+      kind: 'person',
+      name: 'Paulo Ramos',
+      label: 'gata',
+      icon: '',
+      entries: 1,
+      mentions: 1,
+      sentiment: 0,
+      last_seen: null,
+      updated_at: '2026-11-09T10:00:00Z',
+    };
+    const rejection = {
+      kind: 'person',
+      name: 'Paulo Ramos',
+      name_key: 'paulo ramos',
+      updated_at: '2026-11-09T10:00:00Z',
+    };
+    const { api, calls } = makeApi((call) => {
+      if (call.url.endsWith('/api/v1/entities')) {
+        return resp(200, {
+          entities: [entity],
+          owner_aliases: [],
+          rejections: [rejection],
+        });
+      }
+      if (call.url.endsWith('/entity-rejections')) {
+        return resp(200, { status: 'ok', rejection });
+      }
+      if (call.init?.method === 'DELETE') {
+        return resp(200, { status: 'ok', rejection });
+      }
+      return resp(200, entity);
+    });
+
+    const catalog = await api.getEntityCatalog();
+    expect(catalog.rejections).toEqual([
+      {
+        kind: 'person',
+        name: 'Paulo Ramos',
+        nameKey: 'paulo ramos',
+        updatedAt: '2026-11-09T10:00:00Z',
+      },
+    ]);
+
+    await api.setEntityLabel('person', 'Paulo Ramos', 'gata');
+    expect(calls[1].init?.method).toBe('PUT');
+    expect(calls[1].url).toBe(
+      'http://host:8080/api/v1/entities/person/Paulo%20Ramos/label',
+    );
+    expect(JSON.parse(String(calls[1].init?.body)).label).toBe('gata');
+
+    await api.changeEntityKind('person', 'Paulo Ramos', 'place');
+    expect(calls[2].init?.method).toBe('POST');
+    expect(calls[2].url).toBe(
+      'http://host:8080/api/v1/entities/person/Paulo%20Ramos/kind',
+    );
+    expect(JSON.parse(String(calls[2].init?.body)).kind).toBe('place');
+
+    const deleted = await api.deleteEntity('person', 'Paulo Ramos');
+    expect(calls[3].init?.method).toBe('DELETE');
+    expect(calls[3].url).toBe(
+      'http://host:8080/api/v1/entities/person/Paulo%20Ramos',
+    );
+    expect(deleted.rejection?.nameKey).toBe('paulo ramos');
+
+    await api.addEntityRejection('person', 'Paulo Ramos');
+    expect(calls[4].init?.method).toBe('POST');
+    expect(calls[4].url).toBe('http://host:8080/api/v1/entity-rejections');
+    expect(JSON.parse(String(calls[4].init?.body))).toEqual({
+      kind: 'person',
+      name: 'Paulo Ramos',
+    });
+
+    await api.removeEntityRejection('person', 'Paulo Ramos');
+    expect(calls[5].init?.method).toBe('DELETE');
+    expect(calls[5].url).toBe(
+      'http://host:8080/api/v1/entity-rejections/person/Paulo%20Ramos',
+    );
+  });
+
+  it('updateNotebook envia os metadados do livro e omite os ausentes', async () => {
+    const { api, calls } = makeApi(() => resp(200, { id: 'nb_livro' }));
+
+    await api.updateNotebook('nb_livro', {
+      name: 'O nome do vento',
+      author: 'Ana',
+      goal_words: 90000,
+      page_size: '14x21',
+      daily_goal_words: 500,
+    });
+
+    expect(calls[0].init?.method).toBe('PATCH');
+    expect(calls[0].url).toBe('http://host:8080/api/v1/notebooks/nb_livro');
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+      name: 'O nome do vento',
+      author: 'Ana',
+      goal_words: 90000,
+      page_size: '14x21',
+      daily_goal_words: 500,
+    });
+  });
+
+  it('createNotebook leva kind e metadados sem enviar campos indefinidos', async () => {
+    const { api, calls } = makeApi(() => resp(201, { id: 'nb_livro' }));
+
+    await api.createNotebook({
+      id: 'nb_livro',
+      name: 'O nome do vento',
+      color: '',
+      kind: 'book',
+      goal_words: 90000,
+      subtitle: undefined,
+    });
+
+    expect(calls[0].init?.method).toBe('POST');
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+      id: 'nb_livro',
+      name: 'O nome do vento',
+      color: '',
+      kind: 'book',
+      goal_words: 90000,
+    });
+  });
+
   it('mapeia erro do servidor para ApiError com codigo', async () => {
     const { api } = makeApi(() =>
       resp(401, { error: { code: 'unauthorized', message: 'token invalido' } }),
@@ -228,5 +353,28 @@ describe('DyariumApi', () => {
 
     await api.listEntriesPage(500, '500');
     expect(calls[1].url).toBe('http://host:8080/api/v1/entries?limit=500&cursor=500');
+  });
+
+  it('uploadAttachment envia X-Content-Sha256 e X-Attachment-Id quando sha256 informado', async () => {
+    const { api, calls } = makeApi(() => resp(201, { id: 'at_1' }));
+    const bytes = new Uint8Array([72, 101, 108, 108, 111]); // "Hello"
+    const sha = '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08';
+    const out = await api.uploadAttachment('e1', bytes, 'image/jpeg', 'at_1', sha);
+
+    expect(calls[0].url).toBe('http://host:8080/api/v1/entries/e1/attachments');
+    expect(calls[0].init?.method).toBe('POST');
+    expect(calls[0].init?.headers?.['X-Attachment-Id']).toBe('at_1');
+    expect(calls[0].init?.headers?.['X-Content-Sha256']).toBe(sha);
+    expect(calls[0].init?.body).toBe(bytes);
+    expect(out.id).toBe('at_1');
+  });
+
+  it('uploadAttachment nao envia X-Content-Sha256 sem o quinto argumento', async () => {
+    const { api, calls } = makeApi(() => resp(201, { id: 'at_1' }));
+    const bytes = new Uint8Array([1, 2, 3]);
+    await api.uploadAttachment('e1', bytes, 'image/jpeg');
+
+    expect(calls[0].init?.headers?.['X-Content-Sha256']).toBeUndefined();
+    expect(calls[0].init?.headers?.['X-Attachment-Id']).toBeUndefined();
   });
 });

@@ -295,27 +295,16 @@ func (s *Service) CompleteWithOrigin(ctx context.Context, uploadID, attachmentID
 	}
 	defer f.Close()
 
-	tmp, err := os.CreateTemp("", "dyarium-verify-*.bin")
+	// Decifra uma unica vez, alimentando o hash: sem segunda varredura do
+	// arquivo e sem temporario em claro no disco.
+	n, sumArr, err := crypto.DecryptHash(f, s.key)
 	if err != nil {
-		return CompleteResult{}, fmt.Errorf("ingest: temp: %w", err)
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-
-	hasher := sha256.New()
-	n, err := crypto.Decrypt(f, s.key, io.MultiWriter(tmp, hasher))
-	if err != nil {
-		tmp.Close()
 		return CompleteResult{}, newError(422, "corrupt", "falha ao decifrar o upload")
 	}
-	if err := tmp.Close(); err != nil {
-		return CompleteResult{}, fmt.Errorf("ingest: close temp: %w", err)
-	}
-
 	if n != u.SizeBytes {
 		return CompleteResult{}, newError(422, "size_mismatch", "tamanho do conteudo diverge do esperado")
 	}
-	sum := hex.EncodeToString(hasher.Sum(nil))
+	sum := hex.EncodeToString(sumArr[:])
 	if u.SHA256 != "" && sum != u.SHA256 {
 		return CompleteResult{}, newError(422, "integrity", "sha256 do conteudo diverge do informado")
 	}
@@ -345,16 +334,10 @@ func (s *Service) CompleteWithOrigin(ctx context.Context, uploadID, attachmentID
 		return CompleteResult{}, fmt.Errorf("ingest: consultar attachment id: %w", err)
 	}
 
+	// A duracao (ffprobe) sai do caminho critico do Complete: a nota nasce com
+	// duracao 0 e e preenchida em passo posterior (com retry), via
+	// FillAttachmentDuration. Nenhum temporario em claro e criado aqui.
 	var durationSeconds float64
-	if s.prober != nil {
-		d, err := s.prober.DurationSeconds(ctx, tmpPath)
-		if err == nil {
-			durationSeconds = d
-			if s.cfg.MaxDurationSeconds > 0 && d > float64(s.cfg.MaxDurationSeconds) {
-				return CompleteResult{}, newError(422, "too_long", "duracao excede o maximo permitido")
-			}
-		}
-	}
 
 	// Identidade do audio pelo conteudo: a mesma gravacao nunca vira dois audios
 	// da mesma nota. Ao criar uma nota nova (sem EntryID), reaproveita a nota que
@@ -505,6 +488,36 @@ func (s *Service) completedResult(ctx context.Context, u store.Upload) (Complete
 	}, nil
 }
 
+// FillAttachmentDuration measures the duration of an attachment's audio (via
+// ffprobe) in a separate step, after the upload has already been completed, and
+// persists it on the attachment and the entry. It is safe to retry: each call
+// re-measures and overwrites. The plaintext temp file is always removed.
+func (s *Service) FillAttachmentDuration(ctx context.Context, att store.Attachment) (float64, error) {
+	if s.prober == nil {
+		return 0, nil
+	}
+	tmp, err := s.DecryptToTemp(ctx, att)
+	if err != nil {
+		return 0, err
+	}
+	defer os.Remove(tmp)
+
+	d, err := s.prober.DurationSeconds(ctx, tmp)
+	if err != nil {
+		return 0, fmt.Errorf("ingest: probe duration: %w", err)
+	}
+	if s.cfg.MaxDurationSeconds > 0 && d > float64(s.cfg.MaxDurationSeconds) {
+		return d, newError(422, "too_long", "duracao excede o maximo permitido")
+	}
+	if err := s.store.SetAttachmentDuration(ctx, att.ID, d); err != nil {
+		return 0, err
+	}
+	if err := s.store.SyncEntryDuration(ctx, att.EntryID); err != nil {
+		return 0, err
+	}
+	return d, nil
+}
+
 // DecryptToTemp decrypts the original audio of an entry into a restricted temp
 // file and returns its path. The caller must remove it.
 func (s *Service) DecryptToTemp(ctx context.Context, att store.Attachment) (string, error) {
@@ -540,14 +553,32 @@ func (s *Service) PutAttachment(ctx context.Context, entryID, kind, contentType 
 // used in every environment, so a body that references it stays valid when the
 // note is pushed to another server. Empty keeps the generated id. A repeated id
 // with the same bytes is idempotent; different bytes under the same id is a
-// conflict.
+// conflict. Sem hash esperado, nao ha integridade a verificar.
 func (s *Service) PutAttachmentWithID(ctx context.Context, entryID, kind, contentType, attachmentID string, data io.Reader, maxBytes int64) (store.Attachment, error) {
+	return s.PutAttachmentWithHashAndID(ctx, entryID, kind, contentType, attachmentID, "", data, maxBytes)
+}
+
+// PutAttachmentWithHashAndID is PutAttachmentWithID with an integrity check.
+// When expectedSHA256 is not empty it must be 64 hex chars, and the hash of
+// the received content is compared with it; on mismatch the encrypted object
+// is removed and a 422 integrity error is returned, without creating the
+// attachment. Neither the hash nor the content is ever logged.
+func (s *Service) PutAttachmentWithHashAndID(ctx context.Context, entryID, kind, contentType, attachmentID, expectedSHA256 string, data io.Reader, maxBytes int64) (store.Attachment, error) {
 	if maxBytes <= 0 {
 		maxBytes = s.cfg.MaxUploadBytes
 	}
 	attachmentID = strings.TrimSpace(attachmentID)
 	if attachmentID != "" && !id.Valid(attachmentID) {
 		return store.Attachment{}, newError(400, "invalid_attachment_id", "attachment_id invalido")
+	}
+	expectedSHA256 = strings.ToLower(strings.TrimSpace(expectedSHA256))
+	if expectedSHA256 != "" {
+		if len(expectedSHA256) != 64 {
+			return store.Attachment{}, newError(400, "invalid_sha256", "sha256 deve ter 64 caracteres hexadecimais")
+		}
+		if _, err := hex.DecodeString(expectedSHA256); err != nil {
+			return store.Attachment{}, newError(400, "invalid_sha256", "sha256 invalido")
+		}
 	}
 	attID := attachmentID
 	if attID == "" {
@@ -595,6 +626,11 @@ func (s *Service) PutAttachmentWithID(ctx context.Context, entryID, kind, conten
 		os.Remove(path)
 		return store.Attachment{}, newError(413, "too_large", "anexo excede o tamanho maximo")
 	}
+	sum := hex.EncodeToString(hasher.Sum(nil))
+	if expectedSHA256 != "" && sum != expectedSHA256 {
+		os.Remove(path)
+		return store.Attachment{}, newError(422, "integrity", "sha256 do conteudo diverge do informado")
+	}
 	att := store.Attachment{
 		ID:          attID,
 		EntryID:     entryID,
@@ -602,7 +638,7 @@ func (s *Service) PutAttachmentWithID(ctx context.Context, entryID, kind, conten
 		StorageKey:  storageKey,
 		ContentType: contentType,
 		SizeBytes:   size,
-		SHA256:      hex.EncodeToString(hasher.Sum(nil)),
+		SHA256:      sum,
 		Cipher:      "aes-256-gcm",
 		CreatedAt:   time.Now().UTC(),
 	}

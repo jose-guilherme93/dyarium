@@ -1,5 +1,5 @@
 /**
- * Escolha da ordem da lista de notas. Vale a data de criacao no app.
+ * Escolha da ordem da lista de notas. Vale a data da nota (recordedAt).
  */
 
 import { Ionicons } from '@expo/vector-icons';

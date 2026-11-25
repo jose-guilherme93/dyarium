@@ -1,6 +1,8 @@
 # Configuracao do pnpm para este pacote.
 # unrs-resolver (usado pelo eslint) compila um binario nativo; permitimos o build.
 allowBuilds:
+  '@sentry/cli': false
+  '@shopify/react-native-skia': true
   llama.rn: true
   unrs-resolver: true
 minimumReleaseAgeExclude:

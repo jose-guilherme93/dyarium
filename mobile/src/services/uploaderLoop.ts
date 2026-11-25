@@ -24,6 +24,8 @@ import { loadServerConfig } from './secure';
 import { pushTranscript } from './transcriptSync';
 import { clientOwnsAnalysis } from './processing';
 import { clientOwnsTranscription } from './whisper';
+import { trackServerTranscription } from './remoteTranscription';
+import { fileSha256 } from './hash';
 
 const doFetch = globalThis.fetch as unknown as FetchLike;
 
@@ -164,6 +166,9 @@ async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
   await upsertRecording(current);
   emitRecording(current);
 
+  // Ultimo percentual persistido neste envio; ver onProgress abaixo.
+  let lastStoredPercent = -1;
+
   try {
     // Quem se responsabiliza pela transcricao e pela analise? Quando e o
     // cliente (aparelho ou etapa desligada), o servidor nao enfileira nada.
@@ -171,6 +176,8 @@ async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
       clientOwnsTranscription(),
       clientOwnsAnalysis(),
     ]);
+    // Calcula o hash somente em uploads novos; em retomadas nao rele o arquivo.
+    const sha256 = current.uploadId ? undefined : await fileSha256(current.filePath as string);
     const result = await uploadRecording(
       {
         clientKey: current.id,
@@ -189,6 +196,7 @@ async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
           : undefined,
         uploadId: current.uploadId,
         offset: current.offset,
+        sha256,
         // O id da nota e do aparelho e vale igual em todo ambiente. Sem ele o
         // servidor gerava outro id, e a mesma nota tinha identidades diferentes
         // em cada servidor.
@@ -209,8 +217,14 @@ async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
             await upsertRecording(current);
             emitRecording(current);
           },
-          onProgress: async (sent) => {
+          // O envio avisa a cada 4 MB: gravar a linha inteira e re-renderizar a
+          // lista nesse ritmo custa 125 escritas e 125 re-renders num audio de
+          // 500 MB. Persiste so quando o percentual inteiro muda.
+          onProgress: async (sent, total) => {
             current = { ...current, offset: sent, updatedAt: new Date().toISOString() };
+            const percent = total > 0 ? Math.floor((sent / total) * 100) : 0;
+            if (percent === lastStoredPercent) return;
+            lastStoredPercent = percent;
             await upsertRecording(current);
             emitRecording(current);
           },
@@ -234,18 +248,28 @@ async function uploadOne(api: DyariumApi, recording: Recording): Promise<void> {
     // subir o mesmo audio de novo.
     current = withUploadedAudio(
       {
-        ...mergeTranscript(markCompleted(current, result.entryId, new Date()), fresh),
+        ...mergeTranscript(current, markCompleted(fresh, result.entryId, new Date())),
         transcriptOrigin,
         serverAttachmentId: attachmentId,
         duplicate: result.duplicate ? true : undefined,
         // O upload cria a entrada no servidor; o caderno local e enviado no
         // sync da nota logo abaixo (o endpoint de upload nao carrega o caderno).
-        notebookDirty: current.notebookId ? true : undefined,
+        // Usa a leitura mais nova: o usuario pode ter mudado de caderno durante
+        // o envio.
+        notebookDirty: fresh.notebookId ? true : undefined,
       },
       attachmentId ?? '',
     );
     await upsertRecording(current);
     emitRecording(current);
+    // O servidor vai transcrever esta nota: o card e o centro de atividade
+    // mostram "No servidor" desde o fim do envio, sem esperar o primeiro poll.
+    if (!localTranscribe && !hasFinalTranscript(current)) {
+      current = { ...current, transcriptStatus: 'pending', transcriptOrigin: 'server' };
+      await upsertRecording(current);
+      emitRecording(current);
+      trackServerTranscription(current);
+    }
     // Rele antes de empurrar o corpo: o usuario pode ter capturado mais um
     // trecho nesta nota enquanto o upload acontecia, e o texto mais novo e o
     // que precisa chegar ao servidor.

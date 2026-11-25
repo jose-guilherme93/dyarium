@@ -27,7 +27,7 @@ func linkJSON(l store.Link) map[string]any {
 func (s *Server) handleListLinks(w http.ResponseWriter, r *http.Request) {
 	links, err := s.deps.Store.ListLinks(r.Context(), r.PathValue("id"))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	out := make([]map[string]any, 0, len(links))
@@ -47,7 +47,7 @@ func (s *Server) handleCreateLink(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "entrada inexistente")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	var req struct {
@@ -85,7 +85,7 @@ func (s *Server) handleCreateLink(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusUnprocessableEntity, "invalid_target", "nota de destino inexistente")
 				return
 			}
-			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			s.writeInternal(w, r, "internal", err)
 			return
 		}
 		link.ToEntryID = to
@@ -97,7 +97,7 @@ func (s *Server) handleCreateLink(w http.ResponseWriter, r *http.Request) {
 		link.URL = rawURL
 	}
 	if err := s.deps.Store.CreateLink(ctx, link); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, linkJSON(link))
@@ -109,7 +109,7 @@ func (s *Server) handleDeleteLink(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "link inexistente")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

@@ -49,7 +49,8 @@ export interface MetricsRange {
   to: Date;
 }
 
-export type MetricsAnalysisOrigin = 'local' | 'server';
+/** 'provider' e o build hospedado, onde o texto vem de um servico externo. */
+export type MetricsAnalysisOrigin = 'local' | 'server' | 'provider';
 
 /**
  * Analise ja carregada, no formato que o Painel consegue agregar. A tela monta

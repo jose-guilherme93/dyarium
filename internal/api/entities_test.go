@@ -241,4 +241,23 @@ func TestSettingsExposeThemes(t *testing.T) {
 	}
 }
 
+func TestSettingsExposeAnalyzeConcurrency(t *testing.T) {
+	srv := newTestServer(t)
+	rec, _ := doJSON(t, srv, http.MethodPut, "/api/v1/settings",
+		strings.NewReader(`{"analyze_concurrency":2}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("put status = %d", rec.Code)
+	}
+	_, body := doJSON(t, srv, http.MethodGet, "/api/v1/settings", nil)
+	if body["analyze_concurrency"] != float64(2) {
+		t.Fatalf("analyze_concurrency = %v", body["analyze_concurrency"])
+	}
+
+	rec, _ = doJSON(t, srv, http.MethodPut, "/api/v1/settings",
+		strings.NewReader(`{"analyze_concurrency":99}`))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("put invalido status = %d, queria 400", rec.Code)
+	}
+}
+
 func floatPtr(v float64) *float64 { return &v }

@@ -7,6 +7,8 @@ type ToastKind = "info" | "success" | "error";
 export interface ToastAction {
   label: string;
   onClick: () => void | Promise<void>;
+  /** Janela (ms) para usar a acao; sem ela, uma acao fica 9 s no ar. */
+  duration?: number;
 }
 
 interface Toast {
@@ -39,7 +41,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         () => {
           setToasts((list) => list.filter((toast) => toast.id !== id));
         },
-        action ? 9000 : 4500,
+        action?.duration ?? (action ? 9000 : 4500),
       );
     },
     [],

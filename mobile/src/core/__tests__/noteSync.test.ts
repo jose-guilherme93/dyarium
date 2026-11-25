@@ -345,6 +345,17 @@ describe('o que a nota guarda depois do envio', () => {
     expect(updated.archivedDirty).toBeUndefined();
   });
 
+  it('limpa a pendencia de detalhe do resumo depois de enviada', () => {
+    const sent = nota({ summaryDetailDirty: true, summaryDetail: 'full' });
+    const updated = applySyncResult(sent, sent, {
+      noteId: 'n1',
+      attachments: {},
+      versions: { body: 'v2-corpo' },
+    });
+
+    expect(updated.summaryDetailDirty).toBeUndefined();
+  });
+
   it('mantem a pendencia que nao foi enviada nesta rodada', () => {
     const sent = nota({ tagsDirty: true });
     const updated = applySyncResult(sent, { ...sent, tagsDirty: false }, {

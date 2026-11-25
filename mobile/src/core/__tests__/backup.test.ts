@@ -1,17 +1,24 @@
 import {
+  BACKUP_VERSION,
+  backupEntryKeys,
   backupMediaName,
   baseName,
   buildManifest,
   bytesToBase64,
+  filterKnowledge,
   isBackupMediaName,
+  isSafePathSegment,
   joinUri,
   nameFromDocumentUri,
   orderForBackup,
   orderNotesForRestore,
   parseManifest,
   toRestoredRecording,
+  validateRestoreEntry,
+  type BackupKnowledge,
   type BackupNote,
 } from '../backup';
+import { sha256Hex } from '../sha256';
 import type { Recording } from '../types';
 
 function base(overrides: Partial<Recording> = {}): Recording {
@@ -143,9 +150,297 @@ describe('toRestoredRecording', () => {
     expect(restored.status).toBe('recorded');
   });
 
+  it('restaurar nao e editar: preserva a data real e solta o carimbo antigo', () => {
+    const restored = toRestoredRecording(
+      base({
+        updatedAt: '2026-10-01T10:00:00.000Z',
+        updatedHlc: '2026-10-01T10-0-abcd',
+      }),
+      'file:///novo/r1/',
+    );
+    expect(restored.updatedAt).toBe('2026-10-01T10:00:00.000Z');
+    expect(restored.updatedHlc).toBeUndefined();
+  });
+
   it('sem audio, limpa o filePath', () => {
     const restored = toRestoredRecording(base({ status: 'draft' }), 'file:///novo/r1/');
     expect(restored.filePath).toBeUndefined();
     expect(restored.status).toBe('draft');
+  });
+});
+
+function knowledge(overrides: Partial<BackupKnowledge> = {}): BackupKnowledge {
+  return {
+    analyses: [
+      {
+        entryId: 'r1',
+        title: 'Nota',
+        recordedAt: '2026-10-11T00:00:00.000Z',
+        payload: '{"summary":"ok"}',
+        fetchedAt: '2026-10-12T00:00:00.000Z',
+        origin: 'local',
+        contentHash: 'abc',
+      },
+    ],
+    analysisChunks: [
+      {
+        entryId: 'r1',
+        blockIndex: 0,
+        blockHash: 'h0',
+        promptVersion: 3,
+        model: 'modelo',
+        status: 'ok',
+        dropped: 1,
+        payload: '{"items":[]}',
+        updatedAt: '2026-10-12T00:00:00.000Z',
+      },
+    ],
+    entities: [
+      {
+        id: 'ent_1',
+        kind: 'person',
+        name: 'Ana',
+        label: '',
+        icon: 'star',
+        createdAt: '2026-10-11T00:00:00.000Z',
+        updatedAt: '2026-10-12T00:00:00.000Z',
+      },
+    ],
+    entityAliases: [
+      {
+        id: 'ali_1',
+        entityId: 'ent_1',
+        kind: 'person',
+        name: 'Aninha',
+        createdAt: '2026-10-11T00:00:00.000Z',
+        updatedAt: '2026-10-12T00:00:00.000Z',
+      },
+    ],
+    entryEntities: [
+      {
+        entryId: 'r1',
+        entityId: 'ent_1',
+        count: 2,
+        relation: 'irma',
+        sentiment: 0.5,
+        createdAt: '2026-10-11T00:00:00.000Z',
+      },
+    ],
+    ownerAliases: [{ name: 'Eu', createdAt: '2026-10-11T00:00:00.000Z', updatedAt: '' }],
+    entityRejections: [
+      {
+        kind: 'person',
+        name: 'Paulo',
+        nameKey: 'paulo',
+        createdAt: '2026-10-11T00:00:00.000Z',
+        updatedAt: '',
+      },
+    ],
+    graphLayout: [
+      { key: 'default', data: '{"nodes":[]}', updatedAt: '2026-10-12T00:00:00.000Z' },
+    ],
+    transcriptSync: [{ entryId: 'r1', sourceAt: '2026-10-12T00:00:00.000Z' }],
+    analysisSync: [{ entryId: 'r1', sourceAt: '2026-10-12T00:00:00.000Z' }],
+    transcriptSyncEnv: [
+      {
+        serverId: 'srv_1',
+        entryId: 'r1',
+        sourceAt: '2026-10-12T00:00:00.000Z',
+      },
+    ],
+    analysisSyncEnv: [
+      {
+        serverId: 'srv_1',
+        entryId: 'r1',
+        sourceAt: '2026-10-12T00:00:00.000Z',
+      },
+    ],
+    author: { ownerName: 'Ana', allNotesMine: true },
+    ...overrides,
+  };
+}
+
+describe('conhecimento local no manifesto', () => {
+  it('o manifesto atual leva analises, blocos e o mapa', () => {
+    expect(BACKUP_VERSION).toBe(3);
+    const manifest = buildManifest(
+      [note()],
+      new Date('2026-10-16T12:00:00.000Z'),
+      '0.5.1',
+      undefined,
+      knowledge(),
+    );
+    const parsed = parseManifest(JSON.stringify(manifest));
+    expect(parsed?.knowledge?.analyses[0]).toMatchObject({
+      entryId: 'r1',
+      origin: 'local',
+      contentHash: 'abc',
+    });
+    expect(parsed?.knowledge?.analysisChunks).toHaveLength(1);
+    expect(parsed?.knowledge?.entryEntities[0]).toMatchObject({
+      entryId: 'r1',
+      entityId: 'ent_1',
+      count: 2,
+      relation: 'irma',
+    });
+    expect(parsed?.knowledge?.author).toEqual({ ownerName: 'Ana', allNotesMine: true });
+    expect(parsed?.knowledge?.transcriptSync).toEqual([
+      { entryId: 'r1', sourceAt: '2026-10-12T00:00:00.000Z' },
+    ]);
+    expect(parsed?.knowledge?.analysisSyncEnv?.[0]?.serverId).toBe('srv_1');
+  });
+
+  it('backup v2 continua legivel, so que sem conhecimento', () => {
+    const parsed = parseManifest(
+      JSON.stringify({
+        version: 2,
+        createdAt: '2026-10-16T12:00:00.000Z',
+        notes: [{ recording: { id: 'r1' }, files: [] }],
+      }),
+    );
+    expect(parsed?.notes).toHaveLength(1);
+    expect(parsed?.knowledge).toBeUndefined();
+  });
+
+  it('descarta linhas malformadas sem perder o resto', () => {
+    const parsed = parseManifest(
+      JSON.stringify({
+        version: 3,
+        createdAt: '2026-10-16T12:00:00.000Z',
+        notes: [],
+        knowledge: {
+          analyses: [{ entryId: 'r1' }, { entryId: 'r2', payload: '{}' }],
+          entities: [{ id: 'ent_1', kind: 'person' }, 42],
+          entryEntities: [{ entryId: 'r1' }],
+          graphLayout: [{ key: 'default', data: '{}' }],
+        },
+      }),
+    );
+    expect(parsed?.knowledge?.analyses.map((item) => item.entryId)).toEqual(['r2']);
+    expect(parsed?.knowledge?.entities).toEqual([]);
+    expect(parsed?.knowledge?.entryEntities).toEqual([]);
+    expect(parsed?.knowledge?.graphLayout).toHaveLength(1);
+  });
+
+  it('o backup leva so o conhecimento das notas que estao nele', () => {
+    const keys = backupEntryKeys([
+      { recording: base({ id: 'r1', entryId: 'entrada-1' }) },
+    ]);
+    expect(keys).toEqual(new Set(['r1', 'entrada-1']));
+
+    const filtered = filterKnowledge(
+      knowledge({
+        analyses: [
+          ...knowledge().analyses,
+          {
+            entryId: 'outra',
+            title: 'Fora',
+            recordedAt: '',
+            payload: '{}',
+            fetchedAt: '',
+            origin: 'server',
+          },
+        ],
+      }),
+      keys,
+    );
+    expect(filtered.analyses.map((item) => item.entryId)).toEqual(['r1']);
+    expect(filtered.entryEntities).toHaveLength(1);
+    expect(filtered.analysisChunks).toHaveLength(1);
+    expect(filtered.transcriptSync).toHaveLength(1);
+    expect(filtered.analysisSyncEnv).toHaveLength(1);
+  });
+});
+
+describe('restauracao de manifesto hostil', () => {
+  it('recusa id que escaparia da pasta da nota', () => {
+    for (const id of ['../outra', 'a/b', 'a\\b', '..', '.', '', 'x\u0000y']) {
+      expect(isSafePathSegment(id)).toBe(false);
+    }
+    for (const id of ['rec_1', 'entry-rec-0000', '01M70YW143YHC2AVDAKM878BFP', 'note-1']) {
+      expect(isSafePathSegment(id)).toBe(true);
+    }
+  });
+
+  it('recusa arquivo cujo nome original traz caminho', () => {
+    const safe = note();
+    expect(validateRestoreEntry(safe)).toBe('ok');
+
+    const traversal = {
+      ...safe,
+      files: [
+        {
+          ...safe.files[0],
+          originalName: '../../files/SQLite/dyarium.db',
+        },
+      ],
+    };
+    expect(validateRestoreEntry(traversal)).toBe('unsafe_file');
+
+    expect(validateRestoreEntry({ ...safe, audioFile: '../x.aac' })).toBe('unsafe_file');
+    expect(validateRestoreEntry({ ...safe, audioFile: 'sub/x.aac' })).toBe('unsafe_file');
+    expect(validateRestoreEntry({ ...safe, audioFile: 'x\\y.aac' })).toBe('unsafe_file');
+
+    const idTraversal = {
+      ...safe,
+      recording: { ...safe.recording, id: '../outra' },
+    };
+    expect(validateRestoreEntry(idTraversal)).toBe('unsafe_id');
+  });
+});
+
+describe('integridade do texto', () => {
+  const text = 'hello';
+  const textSha = sha256Hex(new TextEncoder().encode(text));
+
+  it('buildManifest preserva textSha256 quando o BackupNote tem', () => {
+    const manifest = buildManifest([
+      note({ recording: base({ id: 'r1', text }), textSha256: textSha }),
+    ], new Date('2026-10-16T12:00:00.000Z'), '0.2.1');
+
+    expect(manifest.notes[0].textSha256).toBe(textSha);
+  });
+
+  it('parseManifest devolve textSha256 quando o JSON tem', () => {
+    const parsed = parseManifest(JSON.stringify({
+      version: 2,
+      createdAt: '2026-10-16T12:00:00.000Z',
+      notes: [{
+        recording: { id: 'r1' },
+        audioFile: 'recording.aac',
+        textSha256: textSha,
+        files: [{ name: 'r1__abc__recording.aac', originalName: 'recording.aac', md5: 'abc', size: 10 }],
+      }],
+    }));
+
+    expect(parsed?.notes[0].textSha256).toBe(textSha);
+  });
+
+  it('parseManifest devolve undefined quando o JSON nao tem (compatibilidade)', () => {
+    const parsed = parseManifest(JSON.stringify({
+      version: 2,
+      createdAt: '2026-10-16T12:00:00.000Z',
+      notes: [{
+        recording: { id: 'r1' },
+        audioFile: 'recording.aac',
+        files: [{ name: 'r1__abc__recording.aac', originalName: 'recording.aac', md5: 'abc', size: 10 }],
+      }],
+    }));
+
+    expect(parsed?.notes[0].textSha256).toBeUndefined();
+  });
+
+  it('buildManifest/parseManifest arredondam textSha256 sem perda', () => {
+    // Garante que o valor fixado na nota e reprisado em buildManifest e recoverado
+    // imediatamente depois por parseManifest, com a cadeia intacta.
+    const noteWithText: BackupNote = {
+      recording: base({ id: 'r1', text }),
+      audioFile: 'recording.aac',
+      textSha256: textSha,
+      files: [{ name: 'r1__abc__recording.aac', originalName: 'recording.aac', md5: 'abc', size: 10 }],
+    };
+    const manifest = buildManifest([noteWithText], new Date());
+    const roundTrip = parseManifest(JSON.stringify(manifest));
+    expect(roundTrip?.notes[0].textSha256).toBe(textSha);
   });
 });

@@ -27,8 +27,16 @@ export const GRAPH_ICONS: Record<string, GraphIcon> = {
     paths: ['M3 10.5 12 3l9 7.5', 'M5 9.5V21h14V9.5'],
   },
   hash: {
-    label: 'Tema',
+    label: 'Cerquilha',
     paths: ['M4 9h16M4 15h16M10 3 8 21M16 3l-2 18'],
+  },
+  // Peca de quebra-cabeca do Tabler Icons (MIT):
+  // https://github.com/tabler/tabler-icons/blob/main/icons/outline/puzzle.svg
+  puzzle: {
+    label: 'Tema',
+    paths: [
+      'M4 7h3a1 1 0 0 0 1 -1v-1a2 2 0 0 1 4 0v1a1 1 0 0 0 1 1h3a1 1 0 0 1 1 1v3a1 1 0 0 0 1 1h1a2 2 0 0 1 0 4h-1a1 1 0 0 0 -1 1v3a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-1a2 2 0 0 0 -4 0v1a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-3a1 1 0 0 1 1 -1h1a2 2 0 0 0 0 -4h-1a1 1 0 0 1 -1 -1v-3a1 1 0 0 1 1 -1',
+    ],
   },
   check: {
     label: 'Decisão',
@@ -111,7 +119,7 @@ const KIND_ICON: Record<GraphNodeKind, string> = {
   user: 'person',
   person: 'person',
   place: 'home',
-  theme: 'hash',
+  theme: 'puzzle',
   decision: 'check',
   note: 'document',
 };

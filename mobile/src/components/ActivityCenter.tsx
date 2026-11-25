@@ -15,10 +15,12 @@ import {
   clearFinishedActivities,
   markActivitiesSeen,
   type Activity,
+  type ActivityAction,
   type ActivityKind,
   type ActivityStatus,
 } from '@/services/activity';
 import { push } from '@/services/appNavigation';
+import { retryTranscription } from '@/services/localTranscription';
 import { useActivities } from '@/state/useActivities';
 import { baseColors, fontSize, radius, spacing, type ThemeColors } from '@/theme/tokens';
 import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
@@ -69,13 +71,38 @@ function statusMeta(
   return { icon: 'alert-circle', color: colors.danger };
 }
 
-function runAction(item: Activity): void {
-  if (!item.action) return;
+function runAction(item: Activity, resolved?: ActivityAction): void {
+  const action = resolved ?? item.action;
+  if (!action) return;
   try {
-    void Promise.resolve(item.action.run()).catch(() => undefined);
+    void Promise.resolve(action.run()).catch(() => undefined);
   } catch {
     // O produtor registra a falha na propria atividade.
   }
+}
+
+/**
+ * A atividade hidratada do SQLite perde a acao (funcoes nao vao para o banco).
+ * Sem isto, uma transcricao interrompida aparecia no centro sem nenhum botao:
+ * tocar em "continuar" nao fazia nada. O id carrega a nota e o tipo.
+ */
+function resumeAction(item: Activity): ActivityAction | undefined {
+  if (item.status !== 'cancelled' && item.status !== 'error') return undefined;
+  const prefix = 'transcription:';
+  if (item.id.startsWith(prefix)) {
+    const noteId = item.id.slice(prefix.length);
+    return { label: 'Continuar', run: () => retryTranscription(noteId) };
+  }
+  const analysisPrefix = 'analysis:';
+  if (item.id.startsWith(analysisPrefix)) {
+    const noteId = item.id.slice(analysisPrefix.length);
+    return {
+      label: 'Continuar',
+      run: () =>
+        push({ pathname: '/note/[id]', params: { id: noteId, analysis: '1' } }),
+    };
+  }
+  return undefined;
 }
 
 function runStop(item: Activity): void {
@@ -105,7 +132,7 @@ function ActivityRow({
   const status = item.status === 'running' ? null : statusMeta(item.status, colors);
   const action =
     !running && (item.status === 'error' || item.status === 'cancelled')
-      ? item.action
+      ? item.action ?? resumeAction(item)
       : undefined;
   // Tarefa concluida com destino: o toque leva para o resultado.
   const destination = !running && item.status === 'done' ? activityDestination(item) : null;
@@ -169,7 +196,7 @@ function ActivityRow({
         {action ? (
           <Press
             style={styles.action}
-            onPress={() => runAction(item)}
+            onPress={() => runAction(item, action)}
             hitSlop={6}
             accessibilityRole="button"
             accessibilityLabel={`${action.label}: ${item.title}`}

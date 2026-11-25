@@ -24,6 +24,7 @@ import { ConflictDialog } from '@/components/ConflictDialog';
 import { AudioTransport } from '@/components/AudioTransport';
 import { AudioWaveform } from '@/components/AudioWaveform';
 import { FastModal } from '@/components/FastModal';
+import { ChapterPages, isChapterPaginable } from '@/components/ChapterPages';
 import { NoteBody } from '@/components/NoteBody';
 import type { NoteBodyHandle } from '@/components/noteBodyTypes';
 import { NoteMetaRow } from '@/components/NoteMetaRow';
@@ -39,12 +40,20 @@ import { CAPTURE_NOTEBOOK } from '@/core/transcriptCapture';
 import { Screen } from '@/components/Screen';
 import { STATUS_LABELS } from '@/components/StatusChip';
 import { SyncedTranscript } from '@/components/SyncedTranscript';
+import { bookPage, chapterNumber, CHAPTER_LABELS, formatWords } from '@/core/books';
 import { toNoteAnalysis, toServerAnalysis } from '@/core/analysis';
 import type { AnalysisRun } from '@/core/analysisRuns';
 import { CHUNK_PROMPT_VERSION } from '@/core/analysisChunk';
 import type { AnalysisStage } from '@/core/analysisStages';
 import { ApiError, type ServerAnalysis } from '@/core/api';
+import {
+  cancelActivity,
+  failActivity,
+  finishActivity,
+  startActivity,
+} from '@/services/activity';
 import { analysisModelById, type AnalysisModelInfo } from '@/core/analysisModels';
+import { resolveAnalysisBaseUrl } from '@/core/providers';
 import { analysisContentHash } from '@/core/analysisPrompt';
 import { localAnalysisEnabled } from '@/core/features';
 import { newId } from '@/core/id';
@@ -73,16 +82,20 @@ import {
   speechCounts,
 } from '@/core/transcriptReview';
 import { clearNoteConflict, keepMine } from '@/core/noteSync';
+import { attachmentRefTarget } from '@/core/attachments';
 import { BUILD_STAMP, mark, useRenderCount } from '@/dev/perf';
 
 import {
   attachmentUri,
   downloadMissingImageSources,
+  localAudioSource,
   localImageUri,
   resolveAudioSource,
   resolveImageSourcesLocal,
   saveLocalImage,
 } from '@/services/attachments';
+import { ensureAttachmentFromDrive } from '@/services/driveVault';
+import { driveSessionState } from '@/services/driveAuth';
 import { setPendingInsert } from '@/services/noteInsert';
 import {
   fetchNoteAnalysis,
@@ -119,9 +132,11 @@ import {
   isTranscribing,
   maybeTranscribeLocally,
   stopTranscription,
+  transcribeOnline,
 } from '@/services/localTranscription';
 import { enterNote, leaveNote } from '@/services/noteVisibility';
 import { getAppFlag } from '@/services/db';
+import { transcribeRecordingOnServer } from '@/services/transcripts';
 import { transcriptionPlace } from '@/services/whisper';
 import { fetchTheirs, syncNoteForcing } from '@/services/noteSync';
 import { pushTranscript } from '@/services/transcriptSync';
@@ -129,6 +144,7 @@ import { useLibrary } from '@/state/LibraryContext';
 import { useRecording } from '@/state/RecordingContext';
 import { useAudioStack } from '@/state/useAudioStack';
 import { usePlayAt, usePauseOnUnmount, usePlayback } from '@/state/PlaybackContext';
+import { useNoteWork } from '@/state/useNoteWork';
 import { useSettings } from '@/state/SettingsContext';
 import {
   useTranscriptionProgress,
@@ -219,8 +235,10 @@ export default function NoteScreen() {
     analysisLowPower,
     setAnalysisLowPower,
     ready: settingsReady,
-    analysisEnabled,
-    serverProcessing,
+    analysisPlace,
+    analysisProvider,
+    analysisBaseUrl,
+    analysisOnlineModel,
     reviewTranscript: reviewTranscriptEnabled,
     literalTranscript,
   } = useSettings();
@@ -275,11 +293,20 @@ export default function NoteScreen() {
   }, []);
 
   const liveTranscriptionPercent = useTranscriptionProgress(noteId);
-  const transcribing = useTranscriptionRunning(noteId);
+  const localTranscribing = useTranscriptionRunning(noteId);
+  // O trabalho pode estar no servidor: nesse caso nao ha porcentagem, mas o
+  // card precisa dizer que algo esta acontecendo.
+  const noteWork = useNoteWork(noteId);
+  const transcribing = localTranscribing || noteWork?.kind === 'transcription';
+  const transcribingWait =
+    (noteWork?.kind === 'transcription' && noteWork.remote && noteWork.waiting) ||
+    // O servidor pode estar transcrevendo sem atividade viva (app reaberto,
+    // "parar de acompanhar"): a propria nota ainda diz que e dele e esta pendente.
+    (note?.transcriptOrigin === 'server' && note?.transcriptStatus === 'pending');
   const transcriptionPercent =
     liveTranscriptionPercent > 0
       ? liveTranscriptionPercent
-      : checkpointPercent(note ?? {});
+      : noteWork?.percent ?? checkpointPercent(note ?? {});
   // Player unico do app: um audio toca por vez, seja ele um no do corpo ou um
   // audio da pilha do servidor. O card de audio nao cria player proprio.
   // O corpo ja nasce com o documento migrado e o editor rico monta no primeiro
@@ -287,6 +314,8 @@ export default function NoteScreen() {
   // (anexos, pilha de audios, segmentos) entra depois, porque e o JSON mais
   // pesado da nota, mas o texto e o campo nativo ja estao no lugar.
   const [body, setBody] = useState(() => (note ? noteBodyWithAudio(note) : ''));
+  const isChapter = Boolean(note?.chapterKind);
+  const chapterPaginable = isChapter && isChapterPaginable(body);
   const [mediaReady, setMediaReady] = useState(false);
 
   // Pilha de audios do servidor. O app nao grava varios audios numa nota, mas
@@ -301,6 +330,10 @@ export default function NoteScreen() {
   const [activeAudioRef, setActiveAudioRef] = useState<string | null>(null);
   /** Trecho inicial, quando a reproducao comecou por uma linha da transcricao. */
   const [activeAudioStartMs, setActiveAudioStartMs] = useState<number | null>(null);
+  /** Audio cujo anexo esta sendo buscado agora (o card mostra o giro). */
+  const [audioLoadingRef, setAudioLoadingRef] = useState<string | null>(null);
+  /** Ultimo audio que nao pode ser aberto (o card mostra o aviso; tocar tenta de novo). */
+  const [audioFailedRef, setAudioFailedRef] = useState<string | null>(null);
 
   const activateAudio = useCallback(
     (ref: string, uri: string, startMs?: number) => {
@@ -356,6 +389,15 @@ export default function NoteScreen() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const [processingOpen, setProcessingOpen] = useState(false);
+  const [chapterReading, setChapterReading] = useState(() => chapterPaginable);
+  const [chapterPages, setChapterPages] = useState<number | null>(null);
+  // O corpo pode chegar depois do primeiro render (nota vinda do sync): o
+  // capitulo passa a paginar assim que o texto existe, mas uma escolha manual
+  // do leitor (lapis) manda mais que a automacao.
+  const chapterToggledRef = useRef(false);
+  useEffect(() => {
+    if (chapterPaginable && !chapterToggledRef.current) setChapterReading(true);
+  }, [chapterPaginable]);
   // A folha de processamento se apresenta sozinha uma vez. Depois disso o
   // icone continua abrindo os interruptores, mas nada aparece sem ser chamado.
   const offeredRef = useRef(false);
@@ -813,14 +855,29 @@ export default function NoteScreen() {
     };
   }, [navigation, noteId]);
 
-  // Fonte de cada audio do documento: arquivo local da nota ou anexo do
-  // servidor. Resolvido so quando o usuario toca em tocar.
+  // Fonte de cada audio do documento: arquivo local da nota, cache local, o
+  // cofre do Drive (sob demanda) ou o servidor. Resolvido so quando o usuario
+  // toca em tocar; o login nao baixa audio nenhum.
   const attachmentsRef = useRef<Record<string, string>>({});
   useEffect(() => {
     attachmentsRef.current = mediaReady ? (note?.attachments ?? {}) : {};
   }, [mediaReady, note]);
-  const resolveAudio = useCallback(
-    (ref: string) => resolveAudioSource(noteId ?? '', ref, attachmentsRef.current),
+  const resolveRemoteAudio = useCallback(
+    async (ref: string): Promise<string | null> => {
+      // O cofre vem antes do servidor: quem entrou pelo Drive tem a nota la, e
+      // o servidor pode nem estar configurado.
+      if (noteId && driveSessionState() === 'connected') {
+        try {
+          const fromDrive = await ensureAttachmentFromDrive(noteId, attachmentRefTarget(ref));
+          const uri = fromDrive.uri ?? localAudioSource(noteId, ref, attachmentsRef.current);
+          if (uri) return uri;
+        } catch {
+          // Cofre vencido/indisponivel agora: a nota ainda pode ter o audio no
+          // servidor, entao a busca continua em vez de desistir.
+        }
+      }
+      return resolveAudioSource(noteId ?? '', ref, attachmentsRef.current);
+    },
     [noteId],
   );
 
@@ -881,20 +938,40 @@ export default function NoteScreen() {
 
   const playBodyAudio = useCallback(
     async (ref: string, startMs?: number) => {
-      const uri = await resolveAudio(ref);
-      if (!uri) {
+      const play = (uri: string) => {
+        if (activeAudioRef === ref) {
+          // Mesmo audio: so pula para o trecho. Trocar a fonte de novo faria o
+          // player voltar ao comeco (o "sempre reinicia" da transcricao).
+          playAt(uri, (startMs ?? 0) / 1000);
+          return;
+        }
+        activateAudio(ref, uri, startMs);
+      };
+
+      // O que ja esta no aparelho toca na hora, sem piscar carregando.
+      const local = localAudioSource(noteId ?? '', ref, attachmentsRef.current);
+      if (local) {
+        setAudioFailedRef(null);
+        play(local);
+        return;
+      }
+
+      setAudioFailedRef(null);
+      setAudioLoadingRef(ref);
+      try {
+        const uri = await resolveRemoteAudio(ref);
+        if (!uri) throw new Error('audio indisponivel');
+        play(uri);
+      } catch {
+        // A nota guarda a falha e tenta de novo no proximo toque/abertura; o
+        // anexo nao e marcado como baixado, entao a nova tentativa vale.
+        setAudioFailedRef(ref);
         Alert.alert('Áudio indisponível', 'Não foi possível abrir este áudio neste aparelho.');
-        return;
+      } finally {
+        setAudioLoadingRef((current) => (current === ref ? null : current));
       }
-      if (activeAudioRef === ref) {
-        // Mesmo audio: so pula para o trecho. Trocar a fonte de novo faria o
-        // player voltar ao comeco (o "sempre reinicia" da transcricao).
-        playAt(uri, (startMs ?? 0) / 1000);
-        return;
-      }
-      activateAudio(ref, uri, startMs);
     },
-    [activateAudio, activeAudioRef, playAt, resolveAudio],
+    [activateAudio, activeAudioRef, playAt, resolveRemoteAudio],
   );
 
   // Callback estavel: o NoteBody e memoizado e um lambda inline anularia a
@@ -984,6 +1061,14 @@ export default function NoteScreen() {
       bodyRef.current,
       attachments,
       queueImageSource,
+      // Imagem de nota restaurada do cofre nao esta no servidor: busca no
+      // Drive, so aquele anexo, com o mesmo estado de erro do audio.
+      (id) =>
+        driveSessionState() === 'connected'
+          ? ensureAttachmentFromDrive(note.id, id)
+              .then((loaded) => loaded.uri)
+              .catch(() => null)
+          : Promise.resolve(null),
     ).catch(() => undefined);
     mark('note.images_ms', Date.now() - openedAt);
     return undefined;
@@ -1178,17 +1263,13 @@ export default function NoteScreen() {
     [reviewTranscriptEnabled, literalTranscript, analysisLowPower],
   );
 
-  // Analise no aparelho so quando o usuario escolheu o aparelho e ligou a
-  // analise. Com "processar no servidor" a nota espera o resultado do servidor.
-  const localAnalysisAllowed = localAnalysisEnabled() && analysisEnabled && !serverProcessing;
-  // O botao remoto aparece quando a analise esta ligada, a nota ja existe no
-  // servidor e ha servidor configurado. Sem o motor local, o servidor e a
-  // unica opcao mesmo com "processar no aparelho" desligado.
+  // Analise no aparelho so quando o usuario escolheu o aparelho. Nos outros
+  // lugares a nota espera quem foi escolhido; nada troca de motor em silencio.
+  const localAnalysisAllowed = localAnalysisEnabled() && analysisPlace === 'device';
+  // O botao remoto aparece quando o servidor e o lugar escolhido, a nota ja
+  // existe la e ha servidor configurado.
   const serverAnalysisAllowed =
-    analysisEnabled &&
-    Boolean(note?.entryId) &&
-    hasServer &&
-    (serverProcessing || !localAnalysisAvailable());
+    analysisPlace === 'server' && Boolean(note?.entryId) && hasServer;
   // Enquanto o cache local nao foi lido, a ficha mostra carregamento em vez de
   // "sem analise" piscando.
   const analysisLoading = !analysisChecked && !analysisView && !analysisBusy;
@@ -1201,42 +1282,55 @@ export default function NoteScreen() {
   const handleAnalyzeLocal = useCallback(async () => {
     const target = note;
     if (!target || analysisBusy) return;
-    if (!localAnalysisAllowed) {
+    const online = analysisPlace === 'online';
+    if (analysisPlace !== 'device' && !online) {
       setProcessingOpen(true);
+      return;
+    }
+    if (online && (analysisOnlineModel.trim() === '' || resolveAnalysisBaseUrl(analysisProvider, analysisBaseUrl) === '')) {
+      setAnalysisError('Escolha o provedor e o modelo em Opções > Processamento.');
       return;
     }
     // Diagnostico sem conteudo: so os booleanos que decidem o botao.
     if (__DEV__) {
       console.log('[analysis] press', {
+        online,
         available: localAnalysisAvailable(),
         model: analysisModel,
         installed: isAnalysisModelInstalled(analysisModel),
         resume: analysisPartial,
       });
     }
-    if (!localAnalysisAvailable()) {
+    if (!online && !localAnalysisAvailable()) {
       setAnalysisError(
         'Este build não tem o motor de análise local. Instale o development build mais recente.',
       );
       return;
     }
     // Usa o modelo escolhido; se ele nao estiver baixado, cai para qualquer
-    // modelo instalado em vez de deixar o botao sem resposta.
-    const selected = analysisModelById(analysisModel);
-    const installed = installedAnalysisModels().map((item) => item.id);
-    const model =
-      selected && installed.includes(selected.id)
-        ? selected
-        : installed.length > 0
-          ? analysisModelById(installed[0])
-          : null;
-    if (!model) {
-      setAnalysisError('Baixe um modelo de análise em Ajustes > Transcrição e modelos.');
-      return;
+    // modelo instalado em vez de deixar o botao sem resposta. Online nao usa
+    // modelo no aparelho.
+    let model: AnalysisModelInfo | null = null;
+    if (!online) {
+      const selected = analysisModelById(analysisModel);
+      const installed = installedAnalysisModels().map((item) => item.id);
+      model =
+        selected && installed.includes(selected.id)
+          ? selected
+          : installed.length > 0
+            ? analysisModelById(installed[0]) ?? null
+            : null;
+      if (!model) {
+        setAnalysisError('Baixe um modelo de análise em Ajustes > Transcrição e modelos.');
+        return;
+      }
+      if (model.id !== analysisModel) {
+        void setAnalysisModel(model.id).catch(() => undefined);
+      }
     }
-    if (model.id !== analysisModel) {
-      void setAnalysisModel(model.id).catch(() => undefined);
-    }
+    const engineModelId = online
+      ? `${analysisProvider}:${analysisOnlineModel}`
+      : (model as AnalysisModelInfo).id;
     // Usa o que esta na tela agora, nao a copia que a biblioteca carregou:
     // o texto digitado ainda pode nao ter sido salvo, e a analise precisa dele.
     const liveTitle = titleRef.current.trim() || target.title;
@@ -1273,9 +1367,10 @@ export default function NoteScreen() {
       // de todos eles.
       let fresh = await getRecording(target.id).catch(() => null);
       // A revisao roda antes: e o texto revisado que a analise le. Sem revisao
-      // ligada, ou sem modelo, a nota analisa o texto cru.
+      // ligada, ou sem modelo local, a nota analisa o texto cru. Online nao
+      // revisa no aparelho.
       try {
-        if (fresh) fresh = await ensureTranscriptReview(fresh, model);
+        if (fresh && model) fresh = await ensureTranscriptReview(fresh, model);
       } catch (error) {
         console.warn(
           '[review] falhou',
@@ -1321,6 +1416,8 @@ export default function NoteScreen() {
           entryKey: key,
           title: liveTitle,
           lowPower: analysisLowPower,
+          online,
+          engineKey: online ? engineModelId : undefined,
           restart: !analysisPartial,
           failureAction: {
             label: 'Abrir nota',
@@ -1346,7 +1443,7 @@ export default function NoteScreen() {
           },
           // Cada bloco composto aparece na ficha antes do fim da passada.
           onPartial: (doc) => {
-            const live = toServerAnalysis(doc, model.id, extras);
+            const live = toServerAnalysis(doc, engineModelId, extras);
             analysisLiveDocRef.current = live;
             if (analysisOpenRef.current) setLiveAnalysis(live);
           },
@@ -1363,16 +1460,16 @@ export default function NoteScreen() {
         });
       }
 
-      const analysis = toServerAnalysis(pass.doc, model.id, extras);
+      const analysis = toServerAnalysis(pass.doc, engineModelId, extras);
 
       if (pass.doc.blocksRead === 0) {
         // Nenhum bloco utilizavel: nao ha analise. A leitura simplificada nao
         // substitui: nao sobe ao servidor nem entra no historico como analise.
         setAnalysisError('Não foi possível analisar esta nota. Tente de novo ou troque o modelo.');
         run = {
-          runtime: 'local',
-          provider: 'llama.cpp',
-          model: model.id,
+          runtime: online ? 'online' : 'local',
+          provider: online ? analysisProvider : 'llama.cpp',
+          model: engineModelId,
           attempt: 1,
           outcome: 'invalid_json',
           startedAt: attemptStarted.toISOString(),
@@ -1422,9 +1519,9 @@ export default function NoteScreen() {
       }
 
       run = {
-        runtime: 'local',
-        provider: 'llama.cpp',
-        model: model.id,
+        runtime: online ? 'online' : 'local',
+        provider: online ? analysisProvider : 'llama.cpp',
+        model: engineModelId,
         attempt: 1,
         outcome: pass.complete ? 'ok' : 'partial',
         startedAt: attemptStarted.toISOString(),
@@ -1436,7 +1533,7 @@ export default function NoteScreen() {
         promptTokens: pass.promptTokens,
         completionTokens: pass.completionTokens,
         tokensPerSecond: pass.predictedPerSecond,
-        threads: analysisThreads(analysisLowPower),
+        threads: online ? 0 : analysisThreads(analysisLowPower),
         batteryDeltaPct: batteryDelta ?? undefined,
       };
     } catch (error) {
@@ -1472,6 +1569,10 @@ export default function NoteScreen() {
     ensureTranscriptReview,
     localAnalysisAllowed,
     setProcessingOpen,
+    analysisPlace,
+    analysisProvider,
+    analysisBaseUrl,
+    analysisOnlineModel,
   ]);
 
   // Analise remota a pedido: o servidor enfileira e responde 202. O resultado
@@ -1480,7 +1581,7 @@ export default function NoteScreen() {
   const handleAnalyzeServer = useCallback(async () => {
     const target = note;
     if (!target?.entryId || serverAnalysisBusy) return;
-    if (!analysisEnabled) {
+    if (!analysisPlace || analysisPlace === 'off') {
       setProcessingOpen(true);
       return;
     }
@@ -1495,6 +1596,19 @@ export default function NoteScreen() {
     setServerStartedAt(Date.now());
     setServerPending(true);
     setServerAnalysisBusy(true);
+    const analysisActivity = `analysis:${target.id}`;
+    // O servidor nao relata progresso: a atividade existe para o usuario ver
+    // que a analise esta rodando la, no card e no centro de atividade.
+    startActivity({
+      id: analysisActivity,
+      kind: 'analysis',
+      title: entryTitle,
+      detail: 'No servidor',
+      stop: {
+        label: 'Parar de acompanhar',
+        run: () => cancelActivity(analysisActivity, 'Segue no servidor'),
+      },
+    });
     try {
       // O servidor valida o provedor antes de enfileirar; nada do conteudo da
       // nota sai daqui, so o id que ele ja tem.
@@ -1520,6 +1634,7 @@ export default function NoteScreen() {
           setAnalysisChecked(true);
           setServerPending(false);
           setServerInfo(null);
+          finishActivity(analysisActivity, 'Análise pronta');
           return;
         }
       }
@@ -1541,6 +1656,7 @@ export default function NoteScreen() {
       } else {
         setAnalysisError('Sem conexão com o servidor.');
       }
+      failActivity(analysisActivity, 'A análise não chegou');
     } finally {
       if (aliveRef.current) {
         setServerAnalysisBusy(false);
@@ -1548,7 +1664,7 @@ export default function NoteScreen() {
         setServerStartedAt(null);
       }
     }
-  }, [note, serverAnalysisBusy, analysisEnabled, hasServer, setProcessingOpen]);
+  }, [note, serverAnalysisBusy, analysisPlace, hasServer, setProcessingOpen]);
 
   const handleStopAnalysis = useCallback(() => {
     analysisStopRef.current();
@@ -1588,11 +1704,12 @@ export default function NoteScreen() {
   // Vindo do centro de atividade: abre a tela de analise ja com o resultado.
   const analysisParamDoneRef = useRef(false);
   useEffect(() => {
-    if (analysisParam !== '1' || !note?.id || analysisParamDoneRef.current) return undefined;
+    if (analysisParam !== '1' || !note?.id || analysisParamDoneRef.current || note?.chapterKind)
+      return undefined;
     analysisParamDoneRef.current = true;
     const timer = setTimeout(() => setAnalysisOpen(true), 350);
     return () => clearTimeout(timer);
-  }, [analysisParam, note?.id]);
+  }, [analysisParam, note?.id, note?.chapterKind]);
 
   // Contagens da ficha: calculadas quando a folha abre, com o texto que esta
   // na tela. Sem isso os campos "Palavras" e "Caracteres" ficavam em "..." para
@@ -1619,18 +1736,66 @@ export default function NoteScreen() {
   const handleTranscribe = useCallback(async () => {
     if (!noteId) return;
     const place = await transcriptionPlace();
+    if (place.place === 'disabled') {
+      // Desligada: a tela de processamento mostra onde mudar.
+      setProcessingOpen(true);
+      return;
+    }
     if (place.place === 'device' && place.needsModel) {
       // Escolhido para o aparelho, mas falta o modelo: um toque leva direto ao
       // download, sem repetir a folha que o usuario ja respondeu.
       push('/transcription');
       return;
     }
-    if (place.place !== 'device') {
-      // Desligada ou entregue ao servidor: a folha mostra onde mudar.
+    if (place.place === 'online' && place.needsKey) {
       setProcessingOpen(true);
       return;
     }
-    await maybeTranscribeLocally(noteId);
+    if (place.place === 'server') {
+      const result = await transcribeRecordingOnServer(note);
+      if (result.status === 'ready') {
+        await library.refresh();
+        return;
+      }
+      if (result.status === 'queued') {
+        Alert.alert('Transcrição no servidor', 'A fila do servidor foi criada. O texto chega pelo sync.');
+        return;
+      }
+      if (result.status === 'no_entry') {
+        // A nota ainda nao chegou la. O upload enfileira a transcricao no
+        // servidor sozinho (o lugar e servidor); nao ha o que adiantar aqui.
+        Alert.alert(
+          'Transcrição no servidor',
+          'A nota ainda não chegou ao servidor. Ela será transcrita assim que o envio terminar.',
+        );
+        return;
+      }
+      if (result.status === 'no_server') {
+        Alert.alert('Transcrição no servidor', 'Sem conexão com o servidor.');
+        return;
+      }
+      if (result.code === 409) {
+        Alert.alert('Transcrição no servidor', 'A transcrição está desligada no servidor.');
+      } else if (result.code === 502) {
+        Alert.alert(
+          'Transcrição no servidor',
+          'O provedor de transcrição do servidor não respondeu. Verifique a chave na web.',
+        );
+      } else if (result.code === 404) {
+        Alert.alert('Transcrição no servidor', 'O servidor não encontrou o áudio desta nota.');
+      } else {
+        Alert.alert('Transcrição no servidor', 'O servidor não aceitou o pedido. Tente de novo.');
+      }
+      return;
+    }
+    // Aparelho ou online: este cliente transcreve agora.
+    const outcome =
+      place.place === 'online'
+        ? await transcribeOnline(noteId)
+        : await maybeTranscribeLocally(noteId);
+    if (outcome && outcome.reason === 'invalid_key') {
+      Alert.alert('Provedor online', 'A chave do provedor não foi aceita. Confira em Opções > Processamento.');
+    }
     // Transcricao nova com a revisao ligada: ja sai revisada, sem o usuario
     // precisar abrir a analise.
     if (reviewTranscriptEnabled) {
@@ -1646,6 +1811,8 @@ export default function NoteScreen() {
     }
   }, [
     noteId,
+    note,
+    library,
     reviewTranscriptEnabled,
     analysisModel,
     ensureTranscriptReview,
@@ -1846,6 +2013,41 @@ export default function NoteScreen() {
   // inteiro nao precisa ser varrido de novo a cada letra.
   const bodyHasAudio = useMemo(() => /(^|\n)!audio\[/.test(body), [body]);
 
+  const bookNotebook = useMemo(
+    () => library.notebooks.find((n) => n.id === note?.notebookId && n.kind === 'book'),
+    [library.notebooks, note?.notebookId],
+  );
+  const bookRecordings = useMemo(
+    () => library.recordings.filter((r) => r.notebookId === note?.notebookId),
+    [library.recordings, note?.notebookId],
+  );
+  const chapterNumberValue = useMemo(
+    () => (note ? chapterNumber(bookRecordings, note.id) : 0),
+    [bookRecordings, note],
+  );
+  const chapterWords = useMemo(() => noteStats(body).words, [body]);
+  const chapterPage = useMemo(
+    () => (bookNotebook ? bookPage(bookNotebook) : bookPage({})),
+    [bookNotebook],
+  );
+  const chapterPageWidth = Math.max(1, windowWidth - spacing.xl * 2);
+  const chapterMetaText = useMemo(() => {
+    if (!isChapter || !note) return null;
+    const kindLabel =
+      CHAPTER_LABELS.kind[(note.chapterKind as keyof typeof CHAPTER_LABELS.kind) ?? 'chapter'];
+    const statusLabel =
+      CHAPTER_LABELS.status[(note.chapterStatus as keyof typeof CHAPTER_LABELS.status) ?? 'draft'];
+    const goal = note.chapterGoalWords ?? 0;
+    const pageSuffix =
+      chapterPaginable && chapterPages !== null && chapterPages > 0
+        ? ` · ${chapterPages} ${chapterPages === 1 ? 'página' : 'páginas'}`
+        : '';
+    if (goal > 0) {
+      return `${kindLabel} ${chapterNumberValue} · ${statusLabel} · ${formatWords(chapterWords)} / ${formatWords(goal)} palavras${pageSuffix}`;
+    }
+    return `${kindLabel} ${chapterNumberValue} · ${statusLabel} · ${formatWords(chapterWords)} palavras${pageSuffix}`;
+  }, [isChapter, note, chapterNumberValue, chapterWords, chapterPages, chapterPaginable]);
+
   if (!note) {
     // A lista pode ainda estar carregando (abertura por link/atalho). Mostrar
     // "nota nao encontrada" antes disso piscava na tela e parecia perda de dado.
@@ -1887,9 +2089,9 @@ export default function NoteScreen() {
   // a pilha fica para as notas criadas no servidor (varios audios do
   // dashboard), que nao tem no de audio local.
   const stackAudios = bodyHasAudio ? [] : stack.audios;
-  // Transcricao pedida e ainda sem andamento local (ex.: feita no servidor):
-  // o card mostra que esta em fila, em vez de parecer parado.
-  const serverTranscribing = !hasFinalTranscript(note) && note.transcriptStatus === 'pending';
+  // Transcricao entregue ao servidor: o card nao anuncia execucao. Enquanto
+  // nada chega, ele mostra o botao de transcrever, que puxa do servidor e cai
+  // para o aparelho se a fila do servidor estiver parada.
   const editorPlaceholder = hasAudio ? 'Escreva sobre este áudio...' : 'Comece a escrever...';
   // Em tela estreita o titulo comeca menor; em ambas quebra linha em vez de sumir.
   const titleSize = titleFontSize(title, windowWidth < 380 ? 30 : 34, 24);
@@ -1900,6 +2102,7 @@ export default function NoteScreen() {
       (notebook) => notebook.id === (note.notebookId ?? DEFAULT_NOTEBOOK_ID),
     ) ?? library.notebooks.find((notebook) => notebook.isDefault);
   const notebookName = currentNotebook?.name ?? 'Notas ao acaso';
+  const bookName = bookNotebook?.name ?? notebookName;
   // Caderno de capturas: a nota ganha o check de "feito" ao lado da data. Marcar
   // arquiva; desmarcar devolve para a lista do caderno.
   const isCaptureNotebook =
@@ -1951,37 +2154,133 @@ export default function NoteScreen() {
     }
   };
 
+  const chapterHeader = note ? (
+    <View style={styles.titleBlock}>
+      <TextInput
+        value={title}
+        onChangeText={handleTitleChange}
+        placeholder="título da nota"
+        placeholderTextColor={colors.textTertiary}
+        selectionColor={colors.accent}
+        multiline
+        scrollEnabled={false}
+        submitBehavior="blurAndSubmit"
+        returnKeyType="next"
+        editable={!chapterReading}
+        onSubmitEditing={() => editorRef.current?.focus()}
+        style={[
+          styles.titleInput,
+          { fontFamily: fontFamilyNative(typography.family, typography.weight) },
+          {
+            fontSize: titleSize,
+            lineHeight: Math.round(titleSize * 1.25),
+            // Inter ja tem um arquivo por peso; ver o comentario do corpo.
+            fontWeight: typography.family === 'system' ? 'normal' : '700',
+          },
+        ]}
+      />
+      {isChapter && chapterMetaText ? (
+        <Text style={styles.chapterMeta}>{chapterMetaText}</Text>
+      ) : null}
+      <View style={styles.dateRow}>
+        {noteDateShown ? <Text style={styles.noteDate}>{noteDateShown}</Text> : <View />}
+        {isCaptureNotebook && !isChapter ? (
+          <Press
+            style={styles.doneButton}
+            onPress={() => {
+              void Haptics.selectionAsync().catch(() => undefined);
+              void (note.archived
+                ? library.unarchiveNote(note.id)
+                : library.archiveNote(note.id));
+            }}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: Boolean(note.archived) }}
+            accessibilityLabel={note.archived ? 'Reabrir captura' : 'Concluir captura'}
+            hitSlop={6}
+          >
+            <Ionicons
+              name={note.archived ? 'checkmark-circle' : 'ellipse-outline'}
+              size={22}
+              color={note.archived ? colors.success : colors.textTertiary}
+            />
+          </Press>
+        ) : null}
+      </View>
+      <NoteMetaRow
+        note={note}
+        onAddTag={() => setTagPickerOpen(true)}
+        onRemoveTag={(tag) =>
+          void library.setNoteTags(
+            note.id,
+            (note.tags ?? []).filter((item) => item.toLowerCase() !== tag.toLowerCase()),
+          )
+        }
+      />
+    </View>
+  ) : null;
+
   return (
     <Screen>
       <View style={styles.header}>
-        <Press onPress={goBack} style={styles.iconButton} accessibilityLabel="Voltar">
+        <Press
+          onPress={goBack}
+          style={styles.iconButton}
+          accessibilityLabel={isChapter ? `Voltar para ${bookName}` : 'Voltar'}
+        >
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Press>
-        <Press
-          style={styles.headerNotebook}
-          onPress={() => setNotebookPickerOpen(true)}
-          accessibilityRole="button"
-          accessibilityLabel={`Caderno ${notebookName}. Trocar de caderno`}
-        >
-          <View
-            style={[
-              styles.headerNotebookDot,
-              { backgroundColor: currentNotebook?.color || colors.textTertiary },
-            ]}
-          />
-          <Text style={styles.headerNotebookName} numberOfLines={1}>
-            {notebookName}
-          </Text>
-          <Ionicons name="chevron-down" size={13} color={colors.textTertiary} />
-        </Press>
-        <View style={styles.headerActions}>
+        {isChapter ? (
+          <View style={styles.headerNotebook}>
+            <Ionicons name="book-outline" size={14} color={colors.textTertiary} />
+            <Text style={styles.headerNotebookName} numberOfLines={1}>
+              {bookName}
+            </Text>
+          </View>
+        ) : (
           <Press
-            style={styles.circleButton}
-            onPress={() => setAnalysisOpen(true)}
-            accessibilityLabel="Análise da nota"
+            style={styles.headerNotebook}
+            onPress={() => setNotebookPickerOpen(true)}
+            accessibilityRole="button"
+            accessibilityLabel={`Caderno ${notebookName}. Trocar de caderno`}
           >
-            <Ionicons name="sparkles-outline" size={17} color={colors.text} />
+            <View
+              style={[
+                styles.headerNotebookDot,
+                { backgroundColor: currentNotebook?.color || colors.textTertiary },
+              ]}
+            />
+            <Text style={styles.headerNotebookName} numberOfLines={1}>
+              {notebookName}
+            </Text>
+            <Ionicons name="chevron-down" size={13} color={colors.textTertiary} />
           </Press>
+        )}
+        <View style={styles.headerActions}>
+          {!isChapter && (
+            <Press
+              style={styles.circleButton}
+              onPress={() => setAnalysisOpen(true)}
+              accessibilityLabel="Análise da nota"
+            >
+              <Ionicons name="sparkles-outline" size={17} color={colors.text} />
+            </Press>
+          )}
+          {isChapter && chapterPaginable && (
+            <Press
+              style={styles.circleButton}
+              onPress={() => {
+                chapterToggledRef.current = true;
+                setChapterReading((value) => !value);
+              }}
+              accessibilityLabel={chapterReading ? 'Editar capítulo' : 'Ler capítulo'}
+            >
+              <Ionicons
+                name={chapterReading ? 'create-outline' : 'book-outline'}
+                size={18}
+                color={colors.text}
+              />
+            </Press>
+          )}
           <Press
             style={styles.circleButton}
             onPress={openMenu}
@@ -1992,77 +2291,26 @@ export default function NoteScreen() {
         </View>
       </View>
 
-      {/* A nota e uma peca so: titulo, data, tags, audios, transcricao e corpo
-          rolam juntos nesta ScrollView. O cabecalho (voltar/caderno/menu)
-          continua fixo. */}
-      <ScrollView
-        testID="note-scroll"
-        style={styles.scroll}
-        contentContainerStyle={styles.content}
-        // "always": o toque no campo nativo do editor tem de chegar nele,
-        // senao o teclado nao sobe e nao da para digitar.
-        keyboardShouldPersistTaps="always"
-        nestedScrollEnabled
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.titleBlock}>
-          <TextInput
-            value={title}
-            onChangeText={handleTitleChange}
-            placeholder="título da nota"
-            placeholderTextColor={colors.textTertiary}
-            selectionColor={colors.accent}
-            multiline
-            scrollEnabled={false}
-            submitBehavior="blurAndSubmit"
-            returnKeyType="next"
-            onSubmitEditing={() => editorRef.current?.focus()}
-            style={[
-              styles.titleInput,
-              { fontFamily: fontFamilyNative(typography.family, typography.weight) },
-              {
-                fontSize: titleSize,
-                lineHeight: Math.round(titleSize * 1.25),
-                // Inter ja tem um arquivo por peso; ver o comentario do corpo.
-                fontWeight: typography.family === 'system' ? 'normal' : '700',
-              },
-            ]}
-          />
-          <View style={styles.dateRow}>
-            {noteDateShown ? <Text style={styles.noteDate}>{noteDateShown}</Text> : <View />}
-            {isCaptureNotebook ? (
-              <Press
-                style={styles.doneButton}
-                onPress={() => {
-                  void Haptics.selectionAsync().catch(() => undefined);
-                  void (note.archived
-                    ? library.unarchiveNote(note.id)
-                    : library.archiveNote(note.id));
-                }}
-                accessibilityRole="checkbox"
-                accessibilityState={{ checked: Boolean(note.archived) }}
-                accessibilityLabel={note.archived ? 'Reabrir captura' : 'Concluir captura'}
-                hitSlop={6}
-              >
-                <Ionicons
-                  name={note.archived ? 'checkmark-circle' : 'ellipse-outline'}
-                  size={22}
-                  color={note.archived ? colors.success : colors.textTertiary}
-                />
-              </Press>
-            ) : null}
-          </View>
-          <NoteMetaRow
-            note={note}
-            onAddTag={() => setTagPickerOpen(true)}
-            onRemoveTag={(tag) =>
-              void library.setNoteTags(
-                note.id,
-                (note.tags ?? []).filter((item) => item.toLowerCase() !== tag.toLowerCase()),
-              )
-            }
-          />
-        </View>
+      {isChapter && chapterReading && chapterPaginable ? (
+        <ChapterPages
+          markdown={body}
+          page={chapterPage}
+          width={chapterPageWidth}
+          onPageCount={setChapterPages}
+          ListHeaderComponent={chapterHeader}
+        />
+      ) : (
+        <ScrollView
+          testID="note-scroll"
+          style={styles.scroll}
+          contentContainerStyle={styles.content}
+          // "always": o toque no campo nativo do editor tem de chegar nele,
+          // senao o teclado nao sobe e nao da para digitar.
+          keyboardShouldPersistTaps="always"
+          nestedScrollEnabled
+          showsVerticalScrollIndicator={false}
+        >
+          {chapterHeader}
 
         {/* Nota que nasceu de um trecho de transcricao: volta ao ponto exato. */}
         {note.captureSourceId && typeof note.captureStartMs === 'number' ? (
@@ -2190,12 +2438,14 @@ export default function NoteScreen() {
             activeAudioRef={activeAudioRef}
             audioPlayer={player}
             audioStartMs={activeAudioStartMs}
+            audioLoadingRef={audioLoadingRef}
+            audioFailedRef={audioFailedRef}
             ownAudioRefs={ownAudioRefs}
             ownTranscript={note.transcript}
             ownSegments={note.transcriptSegments}
-            transcribingWait={!transcribing && serverTranscribing}
-            transcribingPercent={transcribing ? transcriptionPercent : undefined}
-            canTranscribe={Boolean(hasAudio) && !hasFinalTranscript(note)}
+            transcribingWait={transcribingWait}
+            transcribingPercent={transcribing && !transcribingWait ? transcriptionPercent : undefined}
+            canTranscribe={!isChapter && Boolean(hasAudio) && !hasFinalTranscript(note)}
             onTranscribe={() => void handleTranscribe()}
             onStopTranscribe={handleStopTranscribe}
             onPlayAudio={handlePlayAudio}
@@ -2205,8 +2455,10 @@ export default function NoteScreen() {
           />
         </View>
       </ScrollView>
+      )}
 
-      <View style={[styles.toolbarHost, { paddingBottom: keyboardPad }]}>
+      {!chapterReading && (
+        <View style={[styles.toolbarHost, { paddingBottom: keyboardPad }]}>
         <View style={styles.toolbar}>
           <ScrollView
             horizontal
@@ -2216,9 +2468,11 @@ export default function NoteScreen() {
           >
             {/* Gravar entra primeiro: e a acao mais usada dentro da nota. O
                 microfone do cabecalho saiu para nao duplicar o comando. */}
-            <ToolButton label="Gravar áudio" onPress={handleRecord}>
-              <Ionicons name="mic-outline" size={18} color={colors.text} />
-            </ToolButton>
+            {!isChapter && (
+              <ToolButton label="Gravar áudio" onPress={handleRecord}>
+                <Ionicons name="mic-outline" size={18} color={colors.text} />
+              </ToolButton>
+            )}
             <ToolButton label="Adicionar foto" onPress={() => void handleAddImage()}>
               <Ionicons name="image-outline" size={18} color={colors.text} />
             </ToolButton>
@@ -2269,6 +2523,7 @@ export default function NoteScreen() {
           />
         </View>
       </View>
+      )}
 
       {conflictOpen ? (
         <ConflictDialog
@@ -2315,6 +2570,9 @@ export default function NoteScreen() {
           authorExplicit={noteAuthorExplicit}
           authorHint={noteAuthorHint}
           onChangeAuthor={(next: AuthorRole) => void library.setNoteAuthor(note.id, next)}
+          mcp={currentNotebook?.kind === 'mcp'}
+          summaryDetail={note.summaryDetail ?? 'concise'}
+          onChangeSummaryDetail={(detail) => void library.setNoteSummaryDetail(note.id, detail)}
           typography={typography}
           onChangeTypography={(next) => void setTypography(next)}
           onClose={() => setMenuOpen(false)}
@@ -2331,7 +2589,7 @@ export default function NoteScreen() {
         analysis={analysisLoading ? undefined : analysisView}
         analysisLoading={analysisLoading}
         analysisOrigin={analysisOrigin}
-        analysisEnabled={localAnalysisAllowed}
+        analysisEnabled={analysisPlace === 'device' || analysisPlace === 'online'}
         analysisServerEnabled={serverAnalysisAllowed}
         analysisReady={localAnalysisReady}
         analysisBusy={analysisBusy}
@@ -2345,7 +2603,11 @@ export default function NoteScreen() {
         analysisSimplified={analysisSimplified}
         analysisLowPower={analysisLowPower}
         onChangeAnalysisLowPower={(next) => void setAnalysisLowPower(next)}
-        analysisModelLabel={analysisModelById(analysisModel)?.label ?? analysisModel}
+        analysisModelLabel={
+          analysisPlace === 'online'
+            ? `${analysisProvider} · ${analysisOnlineModel || 'sem modelo'}`
+            : analysisModelById(analysisModel)?.label ?? analysisModel
+        }
         analysisLive={analysisLive}
         analysisStartedAt={analysisStartedAt}
         analysisLast={analysisLast}
@@ -2364,6 +2626,13 @@ export default function NoteScreen() {
         onOpenEntity={(kind, name) => {
           setAnalysisOpen(false);
           push({ pathname: '/map', params: { focusKind: kind, focusName: name } });
+        }}
+        onEditEntity={(kind, name) => {
+          setAnalysisOpen(false);
+          push({
+            pathname: '/map',
+            params: { focusKind: kind, focusName: name, edit: 'kind' },
+          });
         }}
         onClose={() => setAnalysisOpen(false)}
       />
@@ -2497,6 +2766,10 @@ const baseStyles = defineStyles({
     color: baseColors.textSecondary,
     fontSize: fontSize.sm,
     paddingBottom: spacing.xs,
+  },
+  chapterMeta: {
+    color: baseColors.textTertiary,
+    fontSize: fontSize.sm,
   },
   dateRow: {
     flexDirection: 'row',

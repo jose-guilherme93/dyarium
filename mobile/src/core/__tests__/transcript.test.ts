@@ -32,6 +32,28 @@ describe('needsTranscript', () => {
     expect(needsTranscript(base({ entryId: 'en1', transcriptStatus: 'ready' }))).toBe(false);
   });
 
+  it('nota do servidor sem pending nao entra na fila de transcricao', () => {
+    // O texto de nota puxada do servidor chega por `transcript_at`
+    // (syncServerTranscripts); a fila de poll nao pode pedir /transcript para
+    // sempre quando o servidor nao transcreve.
+    expect(
+      needsTranscript(
+        base({ entryId: 'en1', contentType: 'audio/aac', transcriptOrigin: 'server' }),
+      ),
+    ).toBe(false);
+    // Com pending explicito (havia transcript_at a buscar) ela entra.
+    expect(
+      needsTranscript(
+        base({
+          entryId: 'en1',
+          contentType: 'audio/aac',
+          transcriptOrigin: 'server',
+          transcriptStatus: 'pending',
+        }),
+      ),
+    ).toBe(true);
+  });
+
   it('nao precisa em nota escrita (sem audio)', () => {
     expect(
       needsTranscript(
@@ -101,6 +123,30 @@ describe('mergeTranscript', () => {
   it('trata texto sem status como pronto', () => {
     const merged = mergeTranscript(base({}), base({ transcript: 'oi' }));
     expect(merged.transcriptStatus).toBe('ready');
+  });
+
+  it('nao ressuscita nota apagada durante o upload', () => {
+    // `previous` é o registro que entrou na fila (sem deletedAt); `latest` é a
+    // leitura nova do banco, já com a exclusão do usuário.
+    const previous = base({ status: 'queued' });
+    const latest = base({ status: 'queued', deletedAt: '2026-10-11T00:05:00.000Z' });
+    const merged = mergeTranscript(previous, latest);
+    expect(merged.deletedAt).toBe('2026-10-11T00:05:00.000Z');
+  });
+
+  it('mantem a edicao feita durante o upload', () => {
+    const previous = base({ title: '11/10/2026 00:00', tags: [] });
+    const latest = base({
+      title: 'Reuniao de sexta',
+      tags: ['trabalho'],
+      notebookId: 'projetos',
+      archived: true,
+    });
+    const merged = mergeTranscript(previous, latest);
+    expect(merged.title).toBe('Reuniao de sexta');
+    expect(merged.tags).toEqual(['trabalho']);
+    expect(merged.notebookId).toBe('projetos');
+    expect(merged.archived).toBe(true);
   });
 });
 

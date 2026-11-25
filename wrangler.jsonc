@@ -1,0 +1,26 @@
+{
+  // Publicacao no Cloudflare (Workers com assets estaticos, o que o painel
+  // criou ao conectar o repositorio). O build roda no repositorio inteiro
+  // porque `web/` importa `mobile/src/core`.
+  //
+  // A API do /admin (pulso e painel) vive no Worker separado `worker/`, com o
+  // proprio wrangler.jsonc; este arquivo publica so os assets do site.
+  //
+  // Painel > Workers & Pages > dyarium > Settings > Build:
+  //   Build command:  corepack enable && cd web && pnpm install --frozen-lockfile && pnpm build
+  //   Deploy command: npx wrangler deploy
+  "name": "dyarium",
+  "compatibility_date": "2026-11-13",
+  "observability": {
+    "enabled": true
+  },
+  "assets": {
+    "directory": "./web/dist",
+    // Qualquer rota que nao seja arquivo cai no shell do SPA.
+    "not_found_handling": "single-page-application"
+  },
+  // Habilita `npx wrangler preview`, usado pelo build da branch `develop` para
+  // publicar a previa em develop.preview.josetilabs.com. O bloco pode ficar
+  // vazio: assets e compatibilidade continuam no topo.
+  "previews": {}
+}

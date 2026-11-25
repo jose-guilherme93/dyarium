@@ -125,4 +125,80 @@ describe("dialogo do livro", () => {
     fireEvent.click(button);
     expect(onDelete).toHaveBeenCalledWith("O nome do vento");
   });
+
+  it("criacao pede so o titulo; nao ha capa, formato, letra nem cor", () => {
+    render(<BookDialog open onClose={() => {}} onSave={() => {}} />);
+    expect(screen.getByRole("heading", { name: "Novo livro" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Título")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Criar livro" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Mais opções" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    for (const label of ["Subtítulo", "Estado", "Sinopse", "Autor", "Idioma", "Prazo"]) {
+      expect(screen.queryByLabelText(label)).not.toBeInTheDocument();
+    }
+    for (const section of ["Capa", "Formato", "Letra", "Cor"]) {
+      expect(screen.queryByText(section)).not.toBeInTheDocument();
+    }
+    expect(screen.queryByLabelText("Margem (mm)")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Corpo (px)")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Entrelinha (%)")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Prévia da página")).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /Garamond/ })).not.toBeInTheDocument();
+  });
+
+  it("mais opções revela autor, idioma, meta e prazo sem tipografia nem formato", () => {
+    render(<BookDialog open onClose={() => {}} onSave={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Mais opções" }));
+    expect(screen.getByLabelText("Autor")).toBeInTheDocument();
+    expect(screen.getByLabelText("Idioma")).toBeInTheDocument();
+    expect(screen.getByLabelText("Meta do livro")).toBeInTheDocument();
+    expect(screen.getByLabelText("Prazo")).toBeInTheDocument();
+    expect(screen.getByText(/configurações do livro depois/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Margem (mm)")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Corpo (px)")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Fonte do livro")).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /Garamond/ })).not.toBeInTheDocument();
+  });
+
+  it("criar livro envia os mesmos padroes do formulario", () => {
+    const onSave = vi.fn();
+    render(<BookDialog open defaultAuthor="Josa" onClose={() => {}} onSave={onSave} />);
+    fireEvent.change(screen.getByLabelText("Título"), { target: { value: "Maré alta" } });
+    fireEvent.click(screen.getByRole("button", { name: "Criar livro" }));
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "Maré alta",
+        author: "Josa",
+        language: "pt-BR",
+        goal_words: 0,
+        daily_goal_words: 0,
+        deadline: "",
+        book_status: "drafting",
+        page_size: "14x21",
+        page_margin_mm: 19,
+        body_px: 18,
+        body_leading: 160,
+        body_font: "newsreader",
+      }),
+    );
+  });
+
+  it("edicao de livro continua com o formulario completo", () => {
+    render(
+      <BookDialog
+        open
+        notebook={notebook({ kind: "book", name: "O nome do vento" })}
+        onClose={() => {}}
+        onSave={() => {}}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Mais opções" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Subtítulo")).toBeInTheDocument();
+    expect(screen.getByLabelText("Margem (mm)")).toBeInTheDocument();
+    expect(screen.getByLabelText("Entrelinha (%)")).toBeInTheDocument();
+    expect(screen.getByLabelText("Fonte do livro")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Salvar" })).toBeInTheDocument();
+  });
 });

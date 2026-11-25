@@ -25,12 +25,12 @@ func (s *Server) handleGetWriting(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	items, err := s.deps.Store.WritingDays(r.Context(), id, days)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	out := make([]map[string]any, 0, len(items))
@@ -52,7 +52,7 @@ func (s *Server) handleGetWriting(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleBookEntities(w http.ResponseWriter, r *http.Request) {
 	items, err := s.deps.Store.BookEntities(r.Context(), r.PathValue("id"), 30)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	out := make([]map[string]any, 0, len(items))

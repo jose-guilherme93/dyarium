@@ -349,6 +349,7 @@ func (s *Store) SetEntryTags(ctx context.Context, entryID string, names []string
 // outside a transaction.
 type execer interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
@@ -410,8 +411,17 @@ func (s *Store) SaveRichAnalysis(ctx context.Context, a Analysis, links []Entity
 	if err != nil {
 		return err
 	}
+	// Rejeicoes do dono: o nome rejeitado nunca e uma entidade daquele tipo. O
+	// filtro roda antes de persistir, entao o vinculo nem chega ao banco.
+	rejected, err := entityRejectionKeys(ctx, tx)
+	if err != nil {
+		return err
+	}
 	for _, link := range links {
 		if link.Kind == EntityPerson && ownerKeys[strings.ToLower(strings.TrimSpace(link.Name))] {
+			continue
+		}
+		if rejected[rejectionKey{kind: link.Kind, nameKey: EntityRejectionKey(link.Name)}] {
 			continue
 		}
 		entityID, err := upsertEntity(ctx, tx, link.Kind, link.Name, a.CreatedAt)

@@ -4,7 +4,7 @@ import type { GraphNode } from "../types";
 export const KIND_ICON: Record<string, string> = {
   person: "person",
   place: "home",
-  theme: "hash",
+  theme: "puzzle",
   decision: "check",
   note: "document",
   user: "person",
@@ -17,7 +17,8 @@ export const KIND_ICON: Record<string, string> = {
 export const GRAPH_ICONS: { key: string; label: string }[] = [
   { key: "person", label: "Pessoa" },
   { key: "home", label: "Casa" },
-  { key: "hash", label: "Tema" },
+  { key: "hash", label: "Cerquilha" },
+  { key: "puzzle", label: "Tema" },
   { key: "check", label: "Feito" },
   { key: "heart", label: "Afeto" },
   { key: "star", label: "Destaque" },
@@ -97,6 +98,48 @@ export function drawGraphIcon(
       ctx.lineTo(18.8, 9.5);
       ctx.moveTo(4.8, 14.5);
       ctx.lineTo(18.4, 14.5);
+      ctx.stroke();
+      break;
+    }
+    case "puzzle": {
+      // Peca de quebra-cabeca do Tabler Icons (MIT):
+      // https://github.com/tabler/tabler-icons/blob/main/icons/outline/puzzle.svg
+      // A mesma geometria do SVG, comando a comando, para o canvas.
+      ctx.beginPath();
+      ctx.moveTo(4, 7);
+      ctx.lineTo(7, 7);
+      ctx.arc(7, 6, 1, Math.PI / 2, 0, true);
+      ctx.lineTo(8, 5);
+      ctx.arc(10, 5, 2, Math.PI, 0, false);
+      ctx.lineTo(12, 6);
+      ctx.arc(13, 6, 1, Math.PI, Math.PI / 2, true);
+      ctx.lineTo(16, 7);
+      ctx.arc(16, 8, 1, -Math.PI / 2, 0, false);
+      ctx.lineTo(17, 11);
+      ctx.arc(18, 11, 1, Math.PI, Math.PI / 2, true);
+      ctx.lineTo(19, 12);
+      ctx.arc(19, 14, 2, -Math.PI / 2, Math.PI / 2, false);
+      ctx.lineTo(18, 16);
+      ctx.arc(18, 17, 1, -Math.PI / 2, Math.PI, true);
+      ctx.lineTo(17, 20);
+      ctx.arc(16, 20, 1, 0, Math.PI / 2, false);
+      ctx.lineTo(13, 21);
+      ctx.arc(13, 20, 1, Math.PI / 2, Math.PI, false);
+      ctx.lineTo(12, 19);
+      ctx.arc(10, 19, 2, 0, Math.PI, true);
+      ctx.lineTo(8, 20);
+      ctx.arc(7, 20, 1, 0, Math.PI / 2, false);
+      ctx.lineTo(4, 21);
+      ctx.arc(4, 20, 1, Math.PI / 2, Math.PI, false);
+      ctx.lineTo(3, 17);
+      ctx.arc(4, 17, 1, Math.PI, -Math.PI / 2, false);
+      ctx.lineTo(5, 16);
+      ctx.arc(5, 14, 2, Math.PI / 2, -Math.PI / 2, true);
+      ctx.lineTo(4, 12);
+      ctx.arc(4, 11, 1, Math.PI / 2, Math.PI, false);
+      ctx.lineTo(3, 8);
+      ctx.arc(4, 8, 1, Math.PI, -Math.PI / 2, false);
+      ctx.closePath();
       ctx.stroke();
       break;
     }

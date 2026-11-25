@@ -156,7 +156,7 @@ func (s *Server) setupOllama(w http.ResponseWriter, r *http.Request, model strin
 		"analyze_model":         model,
 		"analyze_local_runtime": localRuntimeOllama,
 	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 
@@ -210,7 +210,7 @@ func (s *Server) setupEmbedded(w http.ResponseWriter, r *http.Request, model str
 		"analyze_model":         model,
 		"analyze_local_runtime": localRuntimeEmbedded,
 	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 

@@ -53,6 +53,31 @@ describe("largura da imagem", () => {
   });
 });
 
+describe("detalhes tecnicos no editor do dashboard", () => {
+  it("exporta o fence canonico, sem HTML", () => {
+    const instance = editor();
+    const markdown = "Antes\n\n:::details Detalhes técnicos\nlinha\n:::\n\nDepois";
+    const out = blocksToNoteMarkdown(instance, noteMarkdownToBlocks(instance, markdown));
+
+    expect(out).toContain(":::details Detalhes técnicos");
+    expect(out).toContain("linha");
+    expect(out).toContain(":::");
+    expect(out).not.toContain("<details");
+    expect(out).not.toContain("DYARIUMDETAILS");
+  });
+
+  it(":::details open mapeia para open: true", () => {
+    const instance = editor();
+    const blocks = noteMarkdownToBlocks(instance, ":::details open X\nb\n:::") as never as {
+      type: string;
+      props?: Record<string, unknown>;
+    }[];
+    const details = blocks.find((block) => block.type === "details");
+    expect(details?.props?.open).toBe(true);
+    expect(details?.props?.summary).toBe("X");
+  });
+});
+
 describe("audio da nota no editor do dashboard", () => {
   it("exporta o mesmo marcador que o app le, sem o texto temporario", () => {
     const instance = editor();

@@ -4,10 +4,13 @@
  */
 
 import { DyariumApi, type FetchLike } from '@/core/api';
+import type { Notebook } from '@/core/notebooks';
 import { loadServerConfig } from './secure';
 import {
   listDirtyNotebooks,
   markNotebookSynced,
+  notebookBookPayload,
+  notebookFromServer,
   pruneNotebooks,
   removeNotebookRow,
   upsertNotebookFromServer,
@@ -18,6 +21,12 @@ let pushPromise: Promise<number> | null = null;
 
 function isMissing(error: unknown): boolean {
   return typeof error === 'object' && error !== null && (error as { status?: number }).status === 404;
+}
+
+/** `kind` e os metadados viajam so quando o caderno e livro. */
+function bookFields(notebook: Notebook) {
+  if (notebook.kind !== 'book') return {};
+  return { kind: 'book' as const, ...notebookBookPayload(notebook) };
 }
 
 /** Envia cadernos criados/alterados/excluidos offline. */
@@ -54,11 +63,13 @@ async function doPushNotebooks(): Promise<number> {
         id: notebook.id,
         name: notebook.name,
         color: notebook.color,
+        ...bookFields(notebook),
       });
     } else {
       await api.updateNotebook(notebook.id, {
         name: notebook.name,
         color: notebook.color,
+        ...bookFields(notebook),
       });
     }
     await markNotebookSynced(notebook.id);
@@ -74,17 +85,7 @@ export async function pullNotebooks(): Promise<number> {
   const api = new DyariumApi(config, doFetch);
   const notebooks = await api.listNotebooks();
   for (const notebook of notebooks) {
-    await upsertNotebookFromServer({
-      id: notebook.id,
-      name: notebook.name,
-      color: notebook.color,
-      isDefault: notebook.is_default,
-      kind: notebook.kind === 'book' ? 'book' : 'notes',
-      createdAt: notebook.created_at,
-      updatedAt: notebook.updated_at,
-      dirty: false,
-      synced: true,
-    });
+    await upsertNotebookFromServer(notebookFromServer(notebook));
   }
   await pruneNotebooks(new Set(notebooks.map((notebook) => notebook.id)));
   return notebooks.length;

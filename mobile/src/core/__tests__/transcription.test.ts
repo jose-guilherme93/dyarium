@@ -1,9 +1,11 @@
 import {
   checkpointPercent,
   DEFAULT_TRANSCRIPTION_MODEL,
+  hasTranscribableTail,
   TRANSCRIPTION_MODELS,
   modelById,
   modelUrl,
+  pickInstalledModel,
   recommendModel,
   whisperLanguage,
 } from '../transcription';
@@ -53,5 +55,29 @@ describe('checkpointPercent', () => {
     expect(checkpointPercent({ durationMs: 600_000, transcriptCheckpointMs: 210_000 })).toBe(35);
     expect(checkpointPercent({ durationMs: 600_000, transcriptCheckpointMs: 0 })).toBe(0);
     expect(checkpointPercent({ durationMs: 0, transcriptCheckpointMs: 1000 })).toBe(0);
+  });
+});
+
+describe('hasTranscribableTail', () => {
+  it('nao tenta uma janela quando a sobra e curta demais', () => {
+    expect(hasTranscribableTail(0, 39_559)).toBe(true);
+    expect(hasTranscribableTail(39_232, 39_559)).toBe(false);
+    expect(hasTranscribableTail(39_559, 39_559)).toBe(false);
+    expect(hasTranscribableTail(39_000, 39_500)).toBe(true);
+  });
+});
+
+describe('pickInstalledModel', () => {
+  it('prefere o modelo escolhido quando ele esta no disco', () => {
+    expect(pickInstalledModel('small', ['base', 'small'])?.id).toBe('small');
+  });
+
+  it('modelo escolhido ausente cai no primeiro instalado, nunca em "sem modelo"', () => {
+    expect(pickInstalledModel('large', ['tiny', 'base'])?.id).toBe('tiny');
+  });
+
+  it('sem nenhum arquivo nao inventa modelo', () => {
+    expect(pickInstalledModel('small', [])).toBeNull();
+    expect(pickInstalledModel(undefined, [])).toBeNull();
   });
 });

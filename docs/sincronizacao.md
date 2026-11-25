@@ -149,8 +149,17 @@ so. Nao existe copia da biblioteca por servidor.
   se a exclusao for mais nova que a ultima mudanca local.
 - Restaurar: `POST /entries/{id}/restore`; se o ambiente ja purgou a entrada, o
   app recria com o mesmo id (audio local e reenviado quando existe).
-- Restaurar um backup: o estado por ambiente e reconstruido pela reconciliacao;
-  nada e reenviado a toa porque criar por id e idempotente.
+- Restaurar um backup: as notas, as analises e o estado do mapa voltam da propria
+  pasta; o estado por ambiente (ids remotos, versoes, offsets) e reconstruido pela
+  reconciliacao; nada e reenviado a toa porque criar por id e idempotente. Nenhuma
+  analise precisa vir do servidor para a ficha e o mapa aparecerem.
+- Restaurar nao e editar: a nota volta com o `updatedAt` real, sem entrar na fila (so
+  a nota que o ambiente perdeu de vez, recriada como texto, volta suja). O manifesto
+  leva os marcadores de transcricao e analise ja trocadas; se um marcador faltar (backup
+  antigo) e a copia local existir, o app carimba em vez de baixar de novo. So o que o
+  outro ambiente nao tem atravessa a rede.
+- A ausencia de marcador nunca apaga nem rebaixa conteudo local: sem sinal confiavel, o
+  app mantem o que tem e espera a proxima versao do ambiente para atualizar.
 
 ## Relogio de versao (HLC)
 

@@ -1,18 +1,6 @@
-/**
- * Rotulos do mapa.
- *
- * O nome e texto de tela: tamanho fixo e legivel em qualquer zoom, colado na
- * bola por uma ancora em coordenadas do grafo. Quem decide quais aparecem e
- * uma condicao de espaco -- se o nome cabe entre as bolas, ele entra, e quanto
- * mais perto o mapa estiver, mais nomes cabem.
- *
- * A escolha roda uma vez no fim do gesto, nunca por quadro.
- */
-
 import type { GraphData, GraphNode } from './graphModel';
 import type { GraphLayout } from './graphLayout';
 
-/** De que lado da bola o nome fica. */
 export type LabelSide = 'below' | 'above' | 'right' | 'left';
 
 export interface LabelCamera {
@@ -20,7 +8,6 @@ export interface LabelCamera {
   panX: number;
   panY: number;
   width: number;
-  /** Centro vertical da faixa visivel. */
   centerY: number;
   bandTop: number;
   bandBottom: number;
@@ -32,183 +19,246 @@ export interface LabelOptions {
   camera: LabelCamera;
   selectedId?: string | null;
   budget?: number;
+  /**
+   * No grafo estatico da entidade o que importa e o nome das relacoes; as
+   * notas so entram se sobrar espaco. No mapa interativo a ordem e a de antes.
+   */
+  preferEntities?: boolean;
+  /** Nomes so destes nos (as relacoes da entidade aberta). */
+  onlyIds?: ReadonlySet<string>;
+  /**
+   * Nome no sentido do no a partir do centro: quem esta embaixo tem o nome
+   * embaixo, quem esta em cima tem o nome em cima, e assim por diante.
+   */
+  radialSides?: boolean;
 }
 
 export interface GraphLabel {
   id: string;
   text: string;
-  /** Centro da bola, em coordenadas do grafo. */
   x: number;
   y: number;
-  /** Raio da bola, em unidades do grafo. */
   r: number;
   side: LabelSide;
+  /** Deslocamento do nome em relacao ao lugar natural do lado, em pixels. */
+  dx: number;
+  dy: number;
   kind: GraphNode['kind'];
   selected: boolean;
 }
 
-interface Box {
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
-}
-
-function overlaps(a: Box, b: Box): boolean {
-  return a.x1 < b.x2 && a.x2 > b.x1 && a.y1 < b.y2 && a.y2 > b.y1;
-}
-
-/** Medidas do nome, em pontos de tela. */
 export const LABEL_FONT = 10;
 export const LABEL_LINE_HEIGHT = 13;
 export const LABEL_GAP = 6;
-/** Largura media de um caractere nesta fonte, para prever a caixa. */
-export const LABEL_CHAR = 0.56;
-
-const MARGIN = 6;
-const CELL = 24;
-const MAX_LABELS = 24;
+const LABEL_CHAR = 0.56;
 
 export function labelWidth(text: string): number {
+  'worklet';
   return text.length * LABEL_FONT * LABEL_CHAR;
 }
 
-export function shortLabel(node: GraphNode): string {
-  const text = node.label.trim();
-  if (text.length <= 26) return text;
-  return `${text.slice(0, 25)}…`;
+function toScreen(camera: LabelCamera, x: number, y: number): { sx: number; sy: number } {
+  const zoom = camera.zoom > 0 ? camera.zoom : 1;
+  return {
+    sx: camera.width / 2 + camera.panX + (x - camera.originX) * zoom,
+    sy: camera.centerY + camera.panY + (y - camera.originY) * zoom,
+  };
 }
-
-/** Caixa do nome na tela, para a posicao escolhida. */
-function labelBox(
-  sx: number,
-  sy: number,
-  sr: number,
-  width: number,
-  side: LabelSide,
-): Box {
-  const half = LABEL_LINE_HEIGHT / 2;
-  switch (side) {
-    case 'below':
-      return {
-        x1: sx - width / 2,
-        y1: sy + sr + LABEL_GAP,
-        x2: sx + width / 2,
-        y2: sy + sr + LABEL_GAP + LABEL_LINE_HEIGHT,
-      };
-    case 'above':
-      return {
-        x1: sx - width / 2,
-        y1: sy - sr - LABEL_GAP - LABEL_LINE_HEIGHT,
-        x2: sx + width / 2,
-        y2: sy - sr - LABEL_GAP,
-      };
-    case 'right':
-      return {
-        x1: sx + sr + LABEL_GAP,
-        y1: sy - half,
-        x2: sx + sr + LABEL_GAP + width,
-        y2: sy + half,
-      };
-    default:
-      return {
-        x1: sx - sr - LABEL_GAP - width,
-        y1: sy - half,
-        x2: sx - sr - LABEL_GAP,
-        y2: sy + half,
-      };
-  }
-}
-
-const SIDES: LabelSide[] = ['below', 'above', 'right', 'left'];
 
 export function pickLabels(
   data: GraphData,
   layout: GraphLayout,
   options: LabelOptions,
 ): GraphLabel[] {
-  const { camera } = options;
+  const { camera, selectedId = null, budget = 200, preferEntities = false, onlyIds, radialSides = false } = options;
   const zoom = camera.zoom > 0 ? camera.zoom : 1;
-  const selectedId = options.selectedId ?? null;
-  const budget = options.budget ?? MAX_LABELS;
 
-  const toScreenX = (x: number) => camera.width / 2 + camera.panX + (x - camera.originX) * zoom;
-  const toScreenY = (y: number) => camera.centerY + camera.panY + (y - camera.originY) * zoom;
-
-  // Bolas e nomes ja desenhados, para nao encostar.
-  const balls: Box[] = [];
+  // Bolas de todos os nos, para detectar sobreposicao.
+  const balls: { x1: number; y1: number; x2: number; y2: number; id: string }[] = [];
   for (const node of [data.center, ...data.nodes]) {
     const position = layout.positions[node.id];
     if (!position) continue;
-    const sx = toScreenX(position.x);
-    const sy = toScreenY(position.y);
+    const { sx, sy } = toScreen(camera, position.x, position.y);
     const sr = position.r * zoom;
-    balls.push({ x1: sx - sr, y1: sy - sr, x2: sx + sr, y2: sy + sr });
+    balls.push({ x1: sx - sr, y1: sy - sr, x2: sx + sr, y2: sy + sr, id: node.id });
   }
 
-  const occupied = new Set<string>();
-  const inside = (box: Box) =>
-    box.x1 >= MARGIN &&
-    box.x2 <= camera.width - MARGIN &&
-    box.y1 >= camera.bandTop + MARGIN &&
-    box.y2 <= camera.bandBottom - MARGIN;
-
+  // Ordem: centro, selecionado, entidades por menções, notas
   const ordered = [
     data.center,
-    ...data.nodes.filter((node) => node.id !== data.center.id),
+    ...data.nodes.filter((n) => n.id !== data.center.id),
   ].sort((a, b) => {
     if (a.id === data.center.id) return -1;
     if (b.id === data.center.id) return 1;
     if (a.id === selectedId) return -1;
     if (b.id === selectedId) return 1;
-    // A nota e a prova da relacao aberta: entra antes das entidades, senao
-    // fica sem nome justo na visao em que ela e o ponto.
-    if (a.kind === 'note' && b.kind !== 'note') return -1;
-    if (b.kind === 'note' && a.kind !== 'note') return 1;
-    return b.mentions - a.mentions || a.label.localeCompare(b.label);
+    if (a.kind === 'note' && b.kind !== 'note') return preferEntities ? 1 : -1;
+    if (b.kind === 'note' && a.kind !== 'note') return preferEntities ? -1 : 1;
+    return b.mentions - a.mentions || a.label.localeCompare(b.label, 'pt-BR');
   });
 
+  // Na previa da entidade o no do dono ("Voce") nao e relacao nenhuma: o nome
+  // dele so ocupa o melhor lugar, ao lado da entidade focada.
+  let candidates = preferEntities
+    ? ordered.filter((node) => node.id !== data.center.id || node.id === selectedId)
+    : ordered;
+  if (onlyIds) candidates = candidates.filter((node) => onlyIds.has(node.id));
+
   const out: GraphLabel[] = [];
-  for (const node of ordered) {
+  // Nomes ja postos: dois nomes nunca se encostam.
+  const taken: { x1: number; y1: number; x2: number; y2: number }[] = [];
+  const overlaps = (
+    a: { x1: number; y1: number; x2: number; y2: number },
+    b: { x1: number; y1: number; x2: number; y2: number },
+  ) => a.x1 < b.x2 && a.x2 > b.x1 && a.y1 < b.y2 && a.y2 > b.y1;
+
+  for (const node of candidates) {
     if (out.length >= budget) break;
     const position = layout.positions[node.id];
     if (!position) continue;
-    const text = shortLabel(node);
+    // Nome inteiro ou nada: cortar com reticencias mentia sobre o que a bola e.
+    const text = node.label.trim();
     if (!text) continue;
 
-    const sx = toScreenX(position.x);
-    const sy = toScreenY(position.y);
+    const { sx, sy } = toScreen(camera, position.x, position.y);
     const sr = position.r * zoom;
-    // Bola fora da faixa nao precisa de nome.
+
+    // Bola fora da faixa nao precisa de rotulo
     if (sx + sr < 0 || sx - sr > camera.width) continue;
     if (sy + sr < camera.bandTop || sy - sr > camera.bandBottom) continue;
 
     const width = labelWidth(text);
-    const selected = node.id === selectedId;
-    const side = SIDES.find((candidate) => {
-      const box = labelBox(sx, sy, sr, width, candidate);
-      if (!inside(box)) return false;
-      if (selected) return true;
-      if (balls.some((ball) => overlaps(ball, box))) return false;
-      const minCellX = Math.floor(box.x1 / CELL);
-      const maxCellX = Math.floor(box.x2 / CELL);
-      const minCellY = Math.floor(box.y1 / CELL);
-      const maxCellY = Math.floor(box.y2 / CELL);
-      for (let gx = minCellX; gx <= maxCellX; gx += 1) {
-        for (let gy = minCellY; gy <= maxCellY; gy += 1) {
-          if (occupied.has(`${gx}:${gy}`)) return false;
-        }
-      }
-      return true;
-    });
-    if (!side) continue;
+    const half = LABEL_LINE_HEIGHT / 2;
+    // O rótulo nunca fica acima da bola. Escolhe o lado oposto ao da tela:
+    // bola na metade esquerda -> rótulo à direita; bola na metade direita ->
+    // rótulo à esquerda; centro -> abaixo.
+    // Na previa o nome sai no mesmo sentido do no em relacao ao centro: a bola
+    // de baixo tem o nome embaixo, a de cima em cima, a da esquerda a esquerda.
+    // Assim o nome fica do lado de fora do desenho, colado no dono.
+    const radial: LabelSide =
+      Math.abs(position.x) >= Math.abs(position.y)
+        ? position.x >= 0
+          ? 'right'
+          : 'left'
+        : position.y >= 0
+          ? 'below'
+          : 'above';
+    const preferred: LabelSide[] = radialSides
+      ? // O lado certo primeiro; se nao couber de jeito nenhum, ainda tenta os
+        // outros antes de deixar a relacao sem nome.
+        ([radial, 'right', 'below', 'left', 'above'] as LabelSide[]).filter(
+          (side, index, list) => list.indexOf(side) === index,
+        )
+      : sx < camera.width / 2 ? ['right', 'below', 'left']
+        : sx > camera.width / 2 ? ['left', 'below', 'right']
+        : ['below', 'right', 'left'];
 
-    const box = labelBox(sx, sy, sr, width, side);
-    for (let gx = Math.floor(box.x1 / CELL); gx <= Math.floor(box.x2 / CELL); gx += 1) {
-      for (let gy = Math.floor(box.y1 / CELL); gy <= Math.floor(box.y2 / CELL); gy += 1) {
-        occupied.add(`${gx}:${gy}`);
+    let chosenSide: LabelSide | null = null;
+    let chosenDx = 0;
+    let chosenDy = 0;
+    // Se o nome encosta em outro ou sai da tela, ele anda mais para fora (no
+    // mesmo sentido) em vez de pular para outro lado da bola.
+    const stepSize = LABEL_LINE_HEIGHT + 4;
+    const steps = radialSides ? [0, stepSize, stepSize * 2, stepSize * 3] : [0];
+    const natural = (side: LabelSide) => {
+      switch (side) {
+        case 'below':
+          return {
+            x1: sx - width / 2,
+            y1: sy + sr + LABEL_GAP,
+            x2: sx + width / 2,
+            y2: sy + sr + LABEL_GAP + LABEL_LINE_HEIGHT,
+          };
+        case 'above':
+          return {
+            x1: sx - width / 2,
+            y1: sy - sr - LABEL_GAP - LABEL_LINE_HEIGHT,
+            x2: sx + width / 2,
+            y2: sy - sr - LABEL_GAP,
+          };
+        case 'right':
+          return {
+            x1: sx + sr + LABEL_GAP,
+            y1: sy - half,
+            x2: sx + sr + LABEL_GAP + width,
+            y2: sy + half,
+          };
+        default: // left
+          return {
+            x1: sx - sr - LABEL_GAP - width,
+            y1: sy - half,
+            x2: sx - sr - LABEL_GAP,
+            y2: sy + half,
+          };
       }
+    };
+
+    for (const candidate of preferred) {
+      for (const step of steps) {
+        const base = natural(candidate);
+        const b = { ...base };
+        if (candidate === 'below') {
+          b.y1 += step;
+          b.y2 += step;
+        } else if (candidate === 'above') {
+          b.y1 -= step;
+          b.y2 -= step;
+        } else if (candidate === 'right') {
+          b.x1 += step;
+          b.x2 += step;
+        } else {
+          b.x1 -= step;
+          b.x2 -= step;
+        }
+
+        // Na previa o nome desliza para dentro da tela em vez de sumir: ele
+        // continua no mesmo lado da bola, so um pouco mais para dentro.
+        if (radialSides) {
+          if (b.x1 < 2) {
+            const shift = 2 - b.x1;
+            b.x1 += shift;
+            b.x2 += shift;
+          }
+          if (b.x2 > camera.width - 2) {
+            const shift = b.x2 - (camera.width - 2);
+            b.x1 -= shift;
+            b.x2 -= shift;
+          }
+          if (b.y1 < camera.bandTop + 2) {
+            const shift = camera.bandTop + 2 - b.y1;
+            b.y1 += shift;
+            b.y2 += shift;
+          }
+          if (b.y2 > camera.bandBottom - 2) {
+            const shift = b.y2 - (camera.bandBottom - 2);
+            b.y1 -= shift;
+            b.y2 -= shift;
+          }
+        }
+
+        // Cabe inteiro na faixa visível?
+        if (b.x1 < 2 || b.x2 > camera.width - 2) continue;
+        if (b.y1 < camera.bandTop + 2 || b.y2 > camera.bandBottom - 2) continue;
+
+        // Na previa o resto do mapa esta apagado: o nome pode passar por cima de
+        // uma bola de contexto para ficar colado na bola dele. Nome contra nome
+        // continua proibido -- dois textos sobrepostos ninguem le.
+        if (!radialSides && balls.some((ball) => overlaps(ball, b))) continue;
+        const padded = radialSides
+          ? { x1: b.x1 - 3, y1: b.y1 - 2, x2: b.x2 + 3, y2: b.y2 + 2 }
+          : b;
+        if (taken.some((box) => overlaps(box, padded))) continue;
+
+        chosenSide = candidate;
+        chosenDx = b.x1 - base.x1;
+        chosenDy = b.y1 - base.y1;
+        taken.push(padded);
+        break;
+      }
+      if (chosenSide) break;
     }
+
+    if (!chosenSide) continue;
 
     out.push({
       id: node.id,
@@ -216,9 +266,11 @@ export function pickLabels(
       x: position.x,
       y: position.y,
       r: position.r,
-      side,
+      side: chosenSide,
+      dx: chosenDx,
+      dy: chosenDy,
       kind: node.kind,
-      selected,
+      selected: node.id === selectedId,
     });
   }
 

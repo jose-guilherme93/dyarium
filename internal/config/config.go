@@ -45,10 +45,13 @@ type Config struct {
 	MaxUploadBytes     int64
 	MaxDurationSeconds int
 	AllowedFormats     []string
-	MaxWhisperRSSMB    int
-	TrimSilence        bool
-	WorkerConcurrency  int
-	JobLeaseSeconds    int
+	// CORSOrigins lista as origens (ex.: o dashboard hospedado) que podem ler a
+	// API de outro dominio. Vazio fecha: sem cabecalho CORS.
+	CORSOrigins       []string
+	MaxWhisperRSSMB   int
+	TrimSilence       bool
+	WorkerConcurrency int
+	JobLeaseSeconds   int
 	// BrowserWorkerEnabled allows the optional dashboard worker. Off means the
 	// endpoints are closed and the behavior is exactly the server-only one.
 	BrowserWorkerEnabled bool
@@ -71,35 +74,38 @@ type Config struct {
 // Load reads configuration from the environment, applying safe defaults.
 func Load() (Config, error) {
 	cfg := Config{
-		HTTPAddr:             env("DIARY_HTTP_ADDR", ":8080"),
-		Token:                env("DIARY_TOKEN", ""),
-		MasterKey:            env("DIARY_MASTER_KEY", ""),
-		DBPath:               env("DIARY_DB_PATH", "data/diary.db"),
-		DataDir:              env("DIARY_DATA_DIR", "data"),
-		ModelsDir:            env("DIARY_MODELS_DIR", "models"),
-		ModelsBaseURL:        env("DIARY_MODELS_BASE_URL", "https://huggingface.co/ggerganov/whisper.cpp/resolve/main"),
-		WhisperBin:           env("DIARY_WHISPER_BIN", "whisper-cli"),
-		WhisperModel:         env("DIARY_WHISPER_MODEL", "models/ggml-small-q5_1.bin"),
-		WhisperLanguage:      env("DIARY_WHISPER_LANGUAGE", ""),
-		AutoDownloadModel:    envBool("DIARY_AUTO_DOWNLOAD_MODEL", true),
-		DeepgramBaseURL:      env("DIARY_DEEPGRAM_BASE_URL", "https://api.deepgram.com"),
-		FFmpegBin:            env("DIARY_FFMPEG_BIN", "ffmpeg"),
-		FFprobeBin:           env("DIARY_FFPROBE_BIN", "ffprobe"),
-		AnalyzeEnabled:       envBool("DIARY_ANALYZE_ENABLED", false),
-		AnalyzeProvider:      env("DIARY_ANALYZE_PROVIDER", "openai"),
-		AnalyzeBaseURL:       env("DIARY_ANALYZE_BASE_URL", "http://localhost:11434/v1"),
-		AnalyzeAPIKey:        env("DIARY_ANALYZE_API_KEY", ""),
-		AnalyzeModel:         env("DIARY_ANALYZE_MODEL", ""),
-		OllamaURL:            env("DIARY_OLLAMA_URL", "http://ollama:11434"),
-		OllamaModel:          env("DIARY_OLLAMA_MODEL", "qwen2.5:0.5b"),
-		LlamaServerBin:       env("DIARY_LLAMA_SERVER_BIN", "llama-server"),
-		LlamaPort:            envInt("DIARY_LLAMA_PORT", 11435),
-		LlamaThreads:         envInt("DIARY_LLAMA_THREADS", 2),
-		LlamaIdleSeconds:     envInt("DIARY_LLAMA_IDLE_SECONDS", 300),
-		LlamaModel:           env("DIARY_LLAMA_MODEL", "qwen2.5-0.5b-instruct-q4_k_m"),
-		MaxUploadBytes:       envInt64("DIARY_MAX_UPLOAD_BYTES", 2<<30),
-		MaxDurationSeconds:   envInt("DIARY_MAX_DURATION_SECONDS", 3000),
-		AllowedFormats:       splitList(env("DIARY_ALLOWED_FORMATS", "wav,mp3,m4a,ogg,flac,aac,adts,webm")),
+		HTTPAddr:           env("DIARY_HTTP_ADDR", ":8080"),
+		Token:              env("DIARY_TOKEN", ""),
+		MasterKey:          env("DIARY_MASTER_KEY", ""),
+		DBPath:             env("DIARY_DB_PATH", "data/diary.db"),
+		DataDir:            env("DIARY_DATA_DIR", "data"),
+		ModelsDir:          env("DIARY_MODELS_DIR", "models"),
+		ModelsBaseURL:      env("DIARY_MODELS_BASE_URL", "https://huggingface.co/ggerganov/whisper.cpp/resolve/main"),
+		WhisperBin:         env("DIARY_WHISPER_BIN", "whisper-cli"),
+		WhisperModel:       env("DIARY_WHISPER_MODEL", "models/ggml-small-q5_1.bin"),
+		WhisperLanguage:    env("DIARY_WHISPER_LANGUAGE", ""),
+		AutoDownloadModel:  envBool("DIARY_AUTO_DOWNLOAD_MODEL", true),
+		DeepgramBaseURL:    env("DIARY_DEEPGRAM_BASE_URL", "https://api.deepgram.com"),
+		FFmpegBin:          env("DIARY_FFMPEG_BIN", "ffmpeg"),
+		FFprobeBin:         env("DIARY_FFPROBE_BIN", "ffprobe"),
+		AnalyzeEnabled:     envBool("DIARY_ANALYZE_ENABLED", false),
+		AnalyzeProvider:    env("DIARY_ANALYZE_PROVIDER", "openai"),
+		AnalyzeBaseURL:     env("DIARY_ANALYZE_BASE_URL", "http://localhost:11434/v1"),
+		AnalyzeAPIKey:      env("DIARY_ANALYZE_API_KEY", ""),
+		AnalyzeModel:       env("DIARY_ANALYZE_MODEL", ""),
+		OllamaURL:          env("DIARY_OLLAMA_URL", "http://ollama:11434"),
+		OllamaModel:        env("DIARY_OLLAMA_MODEL", "qwen2.5:0.5b"),
+		LlamaServerBin:     env("DIARY_LLAMA_SERVER_BIN", "llama-server"),
+		LlamaPort:          envInt("DIARY_LLAMA_PORT", 11435),
+		LlamaThreads:       envInt("DIARY_LLAMA_THREADS", 2),
+		LlamaIdleSeconds:   envInt("DIARY_LLAMA_IDLE_SECONDS", 300),
+		LlamaModel:         env("DIARY_LLAMA_MODEL", "qwen2.5-0.5b-instruct-q4_k_m"),
+		MaxUploadBytes:     envInt64("DIARY_MAX_UPLOAD_BYTES", 2<<30),
+		MaxDurationSeconds: envInt("DIARY_MAX_DURATION_SECONDS", 3000),
+		AllowedFormats:     splitList(env("DIARY_ALLOWED_FORMATS", "wav,mp3,m4a,ogg,flac,aac,adts,webm")),
+		// Origens que podem ler a API de outro dominio (o dashboard hospedado).
+		// Vazio fecha: nenhum cabecalho CORS e enviado.
+		CORSOrigins:          splitList(env("DIARY_CORS_ORIGINS", "")),
 		MaxWhisperRSSMB:      envInt("DIARY_MAX_WHISPER_RSS_MB", 0),
 		TrimSilence:          envBool("DIARY_TRIM_SILENCE", false),
 		WorkerConcurrency:    envInt("DIARY_WORKER_CONCURRENCY", 1),

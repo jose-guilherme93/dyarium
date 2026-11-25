@@ -6,8 +6,9 @@
  * (`device_id`, `device_name`) e do servico; aqui vive so o conteudo versionado.
  * Chaves em snake_case para casar com o resto da API.
  *
- * Schema 2: as tres janelas (7d/30d/365d) vao prontas. O web escolhe a janela e
- * desenha, sem recalcular nada, para os numeros baterem com o app.
+ * Schema 2: as tres janelas (7d/30d/365d) vao prontas. Cada cliente monta o
+ * proprio documento com este mesmo nucleo puro: o app envia ao servidor para o
+ * Painel; o dashboard calcula o seu sobre as notas que tem.
  */
 
 import {

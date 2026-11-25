@@ -7,6 +7,12 @@
 import type { ServerAnalysis } from './api';
 import { CHUNK_PROMPT_VERSION } from './analysisChunk';
 import type { ComposedAnalysis, ToneLabel } from './analysisCompose';
+import {
+  canonicalEntityName,
+  isEntityRejected,
+  type CanonicalNameMap,
+  type EntityRejection,
+} from './entities';
 
 export interface NoteAnalysisMoment {
   startMs: number;
@@ -213,6 +219,10 @@ export interface ServerAnalysisExtras {
   stutterRate?: number;
   hesitationRate?: number;
   revisedSegments?: number;
+  /** Rejeicoes do dono: pessoa/lugar/tema/decisao some antes de persistir. */
+  rejections?: readonly EntityRejection[];
+  /** Mapa de nomes canonicos, para exibir o nome real. */
+  canonical?: CanonicalNameMap;
 }
 
 /**
@@ -229,6 +239,27 @@ export function toServerAnalysis(
     typeof extras.comprehension === 'number' && extras.comprehension >= 0
       ? Math.round(extras.comprehension)
       : -1;
+  const people = doc.people
+    .filter((person) => !isEntityRejected('person', person.name, extras.rejections))
+    .map((person) => ({
+      ...person,
+      name: canonicalEntityName(extras.canonical, 'person', person.name),
+    }));
+  const places = doc.places
+    .filter((place) => !isEntityRejected('place', place.name, extras.rejections))
+    .map((place) => ({
+      ...place,
+      name: canonicalEntityName(extras.canonical, 'place', place.name),
+    }));
+  const themes = doc.themes.filter(
+    (theme) => !isEntityRejected('theme', theme.name, extras.rejections),
+  );
+  const decisions = doc.decisions
+    .filter((item) => !isEntityRejected('decision', item.text, extras.rejections))
+    .map((item) => ({
+      ...item,
+      text: canonicalEntityName(extras.canonical, 'decision', item.text),
+    }));
   return {
     model,
     origin: 'app',
@@ -237,17 +268,17 @@ export function toServerAnalysis(
     sentiment: round2(doc.tone / 100),
     sentiment_label: doc.toneLabel,
     emotions: Object.fromEntries(doc.emotions.map((emotion) => [emotion.name, round2(emotion.share)])),
-    people: doc.people.map((person) => person.name),
-    people_detail: doc.people.map((person) => ({
+    people: people.map((person) => person.name),
+    people_detail: people.map((person) => ({
       name: person.name,
       count: person.mentions,
       sentiment: round2(person.tone / 100),
     })),
-    places: doc.places.map((place) => place.name),
-    places_detail: doc.places.map((place) => ({ name: place.name, count: place.mentions })),
+    places: places.map((place) => place.name),
+    places_detail: places.map((place) => ({ name: place.name, count: place.mentions })),
     summary: doc.sentence,
     sentence_source: doc.sentenceSource,
-    themes: doc.themes.map((theme) => ({
+    themes: themes.map((theme) => ({
       name: theme.name,
       confidence: round2(theme.blocks / Math.max(1, doc.blocksRead)),
     })),
@@ -255,7 +286,7 @@ export function toServerAnalysis(
       .filter((moment) => moment.startMs !== null)
       .map((moment) => ({ start_ms: moment.startMs ?? 0, text: moment.text })),
     questions: null,
-    decisions: doc.decisions.map((item) => item.text),
+    decisions: decisions.map((item) => item.text),
     tasks: doc.tasks.map((item) => item.text),
     ideas: doc.ideas.map((item) => item.text),
     events: doc.events.map((event) => event.name),
@@ -278,14 +309,29 @@ export function toServerAnalysis(
 }
 
 /**
+ * Memoria de curadoria opcional na leitura: descarta nomes rejeitados e resolve
+ * o nome real/canonico. Sem ela, o comportamento e o de antes.
+ */
+export interface NoteAnalysisOptions {
+  rejections?: readonly EntityRejection[];
+  canonical?: CanonicalNameMap;
+}
+
+/**
  * Converte a analise do servidor (ou do cache) para a ficha da nota. Devolve
  * null quando ainda nao ha nada de conteudo: o menu mostra "sem analise" em vez
  * de uma secao vazia.
  */
 export function toNoteAnalysis(
   analysis: ServerAnalysis | null | undefined,
+  options: NoteAnalysisOptions = {},
 ): NoteAnalysisView | null {
   if (!analysis) return null;
+
+  const resolveName = (kind: 'person' | 'place' | 'theme' | 'decision', name: string) =>
+    canonicalEntityName(options.canonical, kind, name);
+  const keepName = (kind: 'person' | 'place' | 'theme' | 'decision', name: string) =>
+    !isEntityRejected(kind, name, options.rejections);
 
   const summary = (analysis.summary ?? '').trim();
   const reading = (analysis.reading ?? '').trim();
@@ -298,19 +344,27 @@ export function toNoteAnalysis(
       sentimentLabel: (section.sentiment?.label ?? '').trim(),
     }))
     .filter((section) => section.heading !== '' || section.reading !== '' || section.summary !== '');
-  const themes = cleanList((analysis.themes ?? []).map((theme) => theme.name));
+  const themes = cleanList((analysis.themes ?? []).map((theme) => theme.name))
+    .filter((theme) => keepName('theme', theme))
+    .map((theme) => resolveName('theme', theme));
   const emotions = toEmotions(analysis.emotions);
-  const people = cleanList(analysis.people);
-  const places = cleanList(analysis.places);
+  const people = cleanList(analysis.people)
+    .filter((person) => keepName('person', person))
+    .map((person) => resolveName('person', person));
+  const places = cleanList(analysis.places)
+    .filter((place) => keepName('place', place))
+    .map((place) => resolveName('place', place));
   const peopleDetail = (analysis.people_detail ?? [])
+    .filter((person) => (person.name ?? '').trim() !== '' && keepName('person', person.name))
     .map((person) => ({
-      name: (person.name ?? '').trim(),
+      name: resolveName('person', (person.name ?? '').trim()),
       count: Math.max(1, Math.round(person.count ?? 1)),
     }))
     .filter((person) => person.name !== '');
   const placesDetail = (analysis.places_detail ?? [])
+    .filter((place) => (place.name ?? '').trim() !== '' && keepName('place', place.name))
     .map((place) => ({
-      name: (place.name ?? '').trim(),
+      name: resolveName('place', (place.name ?? '').trim()),
       count: Math.max(1, Math.round(place.count ?? 1)),
     }))
     .filter((place) => place.name !== '');
@@ -323,7 +377,9 @@ export function toNoteAnalysis(
     .map((moment) => ({ startMs: moment.start_ms, text: (moment.text ?? '').trim() }))
     .filter((moment) => moment.text !== '');
   const questions = cleanList(analysis.questions);
-  const decisions = cleanList(analysis.decisions);
+  const decisions = cleanList(analysis.decisions)
+    .filter((decision) => keepName('decision', decision))
+    .map((decision) => resolveName('decision', decision));
   const tasks = cleanList(analysis.tasks);
   const ideas = cleanList(analysis.ideas);
   const events = cleanList(analysis.events);

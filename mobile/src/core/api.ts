@@ -3,10 +3,12 @@
  * com um transporte falso. Nao ha estado aqui: cada chamada e independente.
  */
 
+import type { BookStatus } from './notebooks';
 import type {
   AuthorRole, ConflictField, ServerAudio, ServerConfig, TranscriptSegment } from './types';
+import { entityNameKey, type EntityRejection } from './entities';
 
-export type { ConflictField, ServerAudio, TranscriptSegment };
+export type { ConflictField, ServerAudio, TranscriptSegment, EntityRejection };
 
 /**
  * Nome do aparelho anexado a toda requisicao autenticada (`X-Origin-Instance`).
@@ -121,6 +123,18 @@ export interface UpdateEntryBody {
   archived?: boolean;
   /** Papel do autor da nota (ultima gravacao vence). */
   author?: AuthorRole;
+  /** Detalhe do resumo automatico do projeto. */
+  summary_detail?: 'concise' | 'full';
+  /** Icone de pagina da entrada (emoji ou texto curto); vazio limpa. */
+  icon?: string;
+  /* Planejamento do capitulo (modo escritor). */
+  chapter_kind?: 'chapter' | 'part' | 'front' | 'back' | '';
+  chapter_position?: number;
+  chapter_status?: 'draft' | 'revising' | 'done' | '';
+  chapter_goal_words?: number;
+  chapter_synopsis?: string;
+  chapter_beats?: string;
+  chapter_notes?: string;
   /** Versoes lidas pelo cliente: o servidor recusa o campo que ja mudou. */
   versions?: {
     title?: string;
@@ -197,6 +211,30 @@ export interface CompleteUploadResponse {
   duplicate?: boolean;
 }
 
+/**
+ * Configuracao da instancia como o app a le. Segredo nunca vem: cada chave vira
+ * um booleano `*_set`.
+ */
+export interface ServerSettings {
+  owner_name: string;
+  all_notes_mine: boolean;
+  trim_silence: boolean;
+  whisper_model: string;
+  whisper_language: string;
+  transcribe_provider: string;
+  deepgram_model: string;
+  deepgram_api_key_set: boolean;
+  analyze_enabled: boolean;
+  analyze_provider: string;
+  analyze_local_runtime: string;
+  analyze_base_url: string;
+  analyze_model: string;
+  analyze_api_key_set: boolean;
+  analysis_themes: string;
+  review_enabled: boolean;
+  literal_transcript: boolean;
+}
+
 export interface TranscriptResponse {
   model: string;
   language: string;
@@ -251,6 +289,9 @@ export interface SyncManifestEntry {
   notebook_id?: string;
   archived?: boolean;
   author?: AuthorRole;
+  summary_detail?: 'concise' | 'full';
+  /** Icone de pagina da entrada (emoji ou texto curto); vazio usa o fallback. */
+  icon?: string;
   versions?: { title?: string; recorded_at?: string; body?: string };
   body_hash?: string;
   primary_attachment_id?: string;
@@ -261,6 +302,15 @@ export interface SyncManifestEntry {
   /** Quem criou a nota: `device` ou `server`. Proveniencia, nao permissao. */
   origin_kind?: 'device' | 'server' | '';
   origin_instance?: string;
+  /* Estrutura do livro: vazios numa nota comum. */
+  chapter_kind?: 'chapter' | 'part' | 'front' | 'back' | '';
+  chapter_position?: number;
+  chapter_status?: 'draft' | 'revising' | 'done' | '';
+  chapter_goal_words?: number;
+  chapter_synopsis?: string;
+  chapter_beats?: string;
+  chapter_notes?: string;
+  word_count?: number;
 }
 
 /** Manifesto paginado de um tipo de objeto em um ambiente. */
@@ -352,6 +402,8 @@ export interface EntitySummary {
   id?: string;
   kind: EntityKind;
   name: string;
+  /** Rotulo livre de exibicao (escola, gata, personagem); so exibicao. */
+  label?: string;
   /** Icone monocromatico; vazio segue o do tipo. */
   icon?: string;
   entries: number;
@@ -375,6 +427,13 @@ export interface EntityDetail extends EntitySummary {
   entry_list: EntityEntry[];
 }
 
+/** Resposta das rotas que gravam rejeicao (excluir entidade, rejeitar nome). */
+export interface EntityRejectionResult {
+  status: string;
+  rejection?: EntityRejection;
+  edit_id?: string;
+}
+
 export interface ServerEntry {
   id: string;
   title: string;
@@ -395,6 +454,10 @@ export interface ServerEntry {
   archived?: boolean;
   /** Papel do autor da nota; vazio segue o padrao do app. */
   author?: AuthorRole;
+  /** Detalhe do resumo automatico do projeto. */
+  summary_detail?: 'concise' | 'full';
+  /** Icone de pagina da entrada (emoji ou texto curto); vazio usa o fallback. */
+  icon?: string;
   /** Pilha de audios (so no detalhe da entrada), cada um com sua transcricao. */
   audios?: ServerAudio[];
   /** Primeiro audio original da entrada (a listagem traz so o id, nao a pilha). */
@@ -415,6 +478,15 @@ export interface ServerEntry {
   analysis_at?: string;
   /** O mesmo sinal para a transcricao (inclusive uma revisao feita no servidor). */
   transcript_at?: string;
+  /* Estrutura do livro: vazios numa nota comum. */
+  chapter_kind?: 'chapter' | 'part' | 'front' | 'back' | '';
+  chapter_position?: number;
+  chapter_status?: 'draft' | 'revising' | 'done' | '';
+  chapter_goal_words?: number;
+  chapter_synopsis?: string;
+  chapter_beats?: string;
+  chapter_notes?: string;
+  word_count?: number;
 }
 
 export interface AnalysisTheme {
@@ -515,11 +587,60 @@ export interface ServerNotebook {
   name: string;
   color: string;
   is_default: boolean;
-  kind?: 'notes' | 'book';
+  kind?: 'notes' | 'book' | 'mcp';
+  /* Metadados do livro; vazios num caderno comum. */
+  subtitle?: string;
+  author?: string;
+  synopsis?: string;
+  language?: string;
+  goal_words?: number;
+  book_status?: BookStatus;
+  page_size?: string;
+  page_margin_mm?: number;
+  body_px?: number;
+  body_leading?: number;
+  body_font?: string;
+  daily_goal_words?: number;
+  deadline?: string;
+  has_cover?: boolean;
+  cover_updated_at?: string | null;
+  /** Contagem de capitulos vivos e soma de palavras (so em livros). */
+  chapter_count?: number;
+  words?: number;
   entry_count: number;
   last_entry_at?: string;
   created_at: string;
   updated_at: string;
+}
+
+/** Metadados do livro aceitos ao criar/atualizar um caderno. */
+export interface NotebookBookFields {
+  subtitle?: string;
+  author?: string;
+  synopsis?: string;
+  language?: string;
+  goal_words?: number;
+  book_status?: BookStatus;
+  page_size?: string;
+  page_margin_mm?: number;
+  body_px?: number;
+  body_leading?: number;
+  body_font?: string;
+  daily_goal_words?: number;
+  deadline?: string;
+}
+
+export interface CreateNotebookInput extends NotebookBookFields {
+  id?: string;
+  name: string;
+  color: string;
+  kind?: 'notes' | 'book';
+}
+
+export interface UpdateNotebookInput extends NotebookBookFields {
+  name?: string;
+  color?: string;
+  kind?: 'notes' | 'book';
 }
 
 /** Nota (corpo rico) de uma entrada. `document` e o JSON de blocos do BlockNote. */
@@ -548,6 +669,44 @@ export interface ServerAttachment {
 
 function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.trim().replace(/\/+$/, '');
+}
+
+/** Remove chaves indefinidas: o corpo carrega so o que o chamador definiu. */
+function omitUndefined(value: object): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (item !== undefined) out[key] = item;
+  }
+  return out;
+}
+
+function isEntityKindValue(value: unknown): value is EntityKind {
+  return value === 'person' || value === 'place' || value === 'theme' || value === 'decision';
+}
+
+/** Le a memoria de rejeicoes do catalogo, aceitando a forma snake_case. */
+function parseEntityRejection(value: unknown): EntityRejection | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (!isEntityKindValue(record.kind)) return null;
+  const name = typeof record.name === 'string' ? record.name.trim() : '';
+  if (name === '') return null;
+  const nameKey =
+    typeof record.name_key === 'string' && record.name_key.trim() !== ''
+      ? record.name_key.trim()
+      : entityNameKey(name);
+  const updatedAt = typeof record.updated_at === 'string' ? record.updated_at : '';
+  return { kind: record.kind, name, nameKey, updatedAt };
+}
+
+function parseEntityRejections(value: unknown): EntityRejection[] {
+  if (!Array.isArray(value)) return [];
+  const out: EntityRejection[] = [];
+  for (const item of value) {
+    const rejection = parseEntityRejection(item);
+    if (rejection) out.push(rejection);
+  }
+  return out;
 }
 
 export class DyariumApi {
@@ -641,20 +800,70 @@ export class DyariumApi {
 
   /** Configuracao de autor da instancia (nome do dono e padrao das notas). */
   async getAuthorSettings(): Promise<{ owner_name: string; all_notes_mine: boolean }> {
+    const settings = await this.getSettings();
+    return {
+      owner_name: settings.owner_name ?? '',
+      // Chave ausente numa instancia nova significa o padrao ligado.
+      all_notes_mine: settings.all_notes_mine !== false,
+    };
+  }
+
+  /**
+   * Configuracao da instancia. As chaves nunca vem no corpo: o servidor so diz
+   * se cada uma esta definida (`deepgram_api_key_set`, `analyze_api_key_set`).
+   */
+  async getSettings(): Promise<ServerSettings> {
     const res = await this.fetchImpl(this.url('/api/v1/settings'), {
       method: 'GET',
       headers: this.authHeaders(),
     });
     if (!res.ok) throw await this.parseError(res);
-    const parsed = JSON.parse(await res.text()) as {
-      owner_name?: unknown;
-      all_notes_mine?: unknown;
-    };
+    const parsed = JSON.parse(await res.text()) as Record<string, unknown>;
+    const text = (key: string) => (typeof parsed[key] === 'string' ? (parsed[key] as string) : '');
+    const bool = (key: string) => parsed[key] === true;
     return {
-      owner_name: typeof parsed.owner_name === 'string' ? parsed.owner_name : '',
-      // Chave ausente numa instancia nova significa o padrao ligado.
+      owner_name: text('owner_name'),
       all_notes_mine: parsed.all_notes_mine !== false,
+      trim_silence: bool('trim_silence'),
+      whisper_model: text('whisper_model'),
+      whisper_language: text('whisper_language'),
+      transcribe_provider: text('transcribe_provider') || 'whisper',
+      deepgram_model: text('deepgram_model') || 'nova-2',
+      deepgram_api_key_set: bool('deepgram_api_key_set'),
+      analyze_enabled: bool('analyze_enabled'),
+      analyze_provider: text('analyze_provider'),
+      analyze_local_runtime: text('analyze_local_runtime'),
+      analyze_base_url: text('analyze_base_url'),
+      analyze_model: text('analyze_model'),
+      analyze_api_key_set: bool('analyze_api_key_set'),
+      analysis_themes: text('analysis_themes'),
+      review_enabled: bool('review_enabled'),
+      literal_transcript: bool('literal_transcript'),
     };
+  }
+
+  /** Grava a configuracao da instancia; chaves vao em texto e nunca voltam. */
+  async putSettings(body: Record<string, unknown>): Promise<void> {
+    const res = await this.fetchImpl(this.url('/api/v1/settings'), {
+      method: 'PUT',
+      headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw await this.parseError(res);
+  }
+
+  /**
+   * Pede ao servidor uma transcricao nova para a entrada. Usado quando o
+   * usuario escolhe o servidor depois que o audio ja subiu com a transcricao
+   * marcada como responsabilidade do aparelho.
+   */
+  async retranscribe(entryId: string): Promise<{ status: string }> {
+    const res = await this.fetchImpl(this.url(`/api/v1/entries/${entryId}/retranscribe`), {
+      method: 'POST',
+      headers: this.authHeaders(),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    return JSON.parse(await res.text());
   }
 
   /**
@@ -692,12 +901,15 @@ export class DyariumApi {
   }
 
   /**
-   * Catalogo completo: entidades e as grafias "sou eu". O app usa as duas
-   * coisas juntas para nao mostrar como pessoa quem o painel ja fundiu no dono.
+   * Catalogo completo: entidades, as grafias "sou eu" e a memoria de rejeicoes.
+   * O app usa as tres coisas juntas para nao mostrar como pessoa quem o painel
+   * fundiu no dono e para filtrar a extracao com a mesma curadoria.
    */
-  async getEntityCatalog(
-    kind?: EntityKind,
-  ): Promise<{ entities: EntitySummary[]; ownerAliases: string[] }> {
+  async getEntityCatalog(kind?: EntityKind): Promise<{
+    entities: EntitySummary[];
+    ownerAliases: string[];
+    rejections: EntityRejection[];
+  }> {
     const query = kind ? `?kind=${encodeURIComponent(kind)}` : '';
     const res = await this.fetchImpl(this.url(`/api/v1/entities${query}`), {
       method: 'GET',
@@ -707,11 +919,16 @@ export class DyariumApi {
     const parsed = JSON.parse(await res.text()) as {
       entities?: EntitySummary[];
       owner_aliases?: unknown;
+      rejections?: unknown;
     };
     const ownerAliases = Array.isArray(parsed.owner_aliases)
       ? parsed.owner_aliases.filter((value): value is string => typeof value === 'string')
       : [];
-    return { entities: parsed.entities ?? [], ownerAliases };
+    return {
+      entities: parsed.entities ?? [],
+      ownerAliases,
+      rejections: parseEntityRejections(parsed.rejections),
+    };
   }
 
   async getEntity(kind: EntityKind, name: string): Promise<EntityDetail> {
@@ -759,6 +976,98 @@ export class DyariumApi {
     );
     if (!res.ok) throw await this.parseError(res);
     return JSON.parse(await res.text()) as EntitySummary;
+  }
+
+  /** Rotulo livre de exibicao; vazio limpa. Nao muda tipo, metrica nem sync. */
+  async setEntityLabel(
+    kind: EntityKind,
+    name: string,
+    label: string,
+  ): Promise<EntitySummary> {
+    const res = await this.fetchImpl(
+      this.url(`/api/v1/entities/${kind}/${encodeURIComponent(name)}/label`),
+      {
+        method: 'PUT',
+        headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ label }),
+      },
+    );
+    if (!res.ok) throw await this.parseError(res);
+    return JSON.parse(await res.text()) as EntitySummary;
+  }
+
+  /**
+   * Troca o tipo da entidade. Move vinculos, mescla se ja existir no destino e
+   * grava a rejeicao do tipo antigo.
+   */
+  async changeEntityKind(
+    kind: EntityKind,
+    name: string,
+    newKind: EntityKind,
+  ): Promise<EntitySummary> {
+    const res = await this.fetchImpl(
+      this.url(`/api/v1/entities/${kind}/${encodeURIComponent(name)}/kind`),
+      {
+        method: 'POST',
+        headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ kind: newKind }),
+      },
+    );
+    if (!res.ok) throw await this.parseError(res);
+    return JSON.parse(await res.text()) as EntitySummary;
+  }
+
+  /** Exclui a entidade e grava a rejeicao do tipo; devolve o id do desfazer. */
+  async deleteEntity(kind: EntityKind, name: string): Promise<EntityRejectionResult> {
+    const res = await this.fetchImpl(
+      this.url(`/api/v1/entities/${kind}/${encodeURIComponent(name)}`),
+      { method: 'DELETE', headers: this.authHeaders() },
+    );
+    if (!res.ok) throw await this.parseError(res);
+    const body = JSON.parse(await res.text()) as {
+      status?: unknown;
+      rejection?: unknown;
+      edit_id?: unknown;
+    };
+    const rejection = parseEntityRejection(body.rejection);
+    return {
+      status: typeof body.status === 'string' ? body.status : 'ok',
+      ...(rejection ? { rejection } : {}),
+      ...(typeof body.edit_id === 'string' ? { edit_id: body.edit_id } : {}),
+    };
+  }
+
+  /** Diz que o nome nunca e entidade daquele tipo; aplicado antes de persistir. */
+  async addEntityRejection(
+    kind: EntityKind,
+    name: string,
+  ): Promise<EntityRejectionResult> {
+    const res = await this.fetchImpl(this.url('/api/v1/entity-rejections'), {
+      method: 'POST',
+      headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ kind, name }),
+    });
+    if (!res.ok) throw await this.parseError(res);
+    const body = JSON.parse(await res.text()) as {
+      status?: unknown;
+      rejection?: unknown;
+      edit_id?: unknown;
+    };
+    const rejection = parseEntityRejection(body.rejection);
+    return {
+      status: typeof body.status === 'string' ? body.status : 'ok',
+      ...(rejection ? { rejection } : {}),
+      ...(typeof body.edit_id === 'string' ? { edit_id: body.edit_id } : {}),
+    };
+  }
+
+  /** Libera o nome rejeitado; um nome que nao estava rejeitado e no-op. */
+  async removeEntityRejection(kind: EntityKind, name: string): Promise<void> {
+    const res = await this.fetchImpl(
+      this.url(`/api/v1/entity-rejections/${kind}/${encodeURIComponent(name)}`),
+      { method: 'DELETE', headers: this.authHeaders() },
+    );
+    if (!res.ok) throw await this.parseError(res);
   }
 
   async createUpload(body: CreateUploadBody): Promise<CreateUploadResponse> {
@@ -929,17 +1238,24 @@ export class DyariumApi {
     return new ConflictError(res.status, error.code, error.message, fields, versions);
   }
 
-  /** Sobe uma imagem como anexo da entrada (bytes crus, Content-Type image/*). */
+  /**
+   * Sobe uma imagem como anexo da entrada (bytes crus, Content-Type image/*).
+   * `sha256`, quando informado, e enviado em `X-Content-Sha256` para o servidor
+   * recusar conteudo corrompido antes de gravar.
+   */
   async uploadAttachment(
     entryId: string,
     bytes: Uint8Array,
     contentType: string,
     attachmentId?: string,
+    sha256?: string,
   ): Promise<ServerAttachment> {
     const headers = this.authHeaders({ 'Content-Type': contentType });
     // Id do criador: o mesmo anexo vale em todos os ambientes, entao o corpo
     // que referencia `attachment:<id>` nao precisa ser reescrito ao sincronizar.
     if (attachmentId) headers['X-Attachment-Id'] = attachmentId;
+    // Hash permite o servidor rejeitar bytes corrompidos antes de escrever em disco.
+    if (sha256) headers['X-Content-Sha256'] = sha256;
     const res = await this.fetchImpl(this.url(`/api/v1/entries/${entryId}/attachments`), {
       method: 'POST',
       headers,
@@ -1187,29 +1503,22 @@ export class DyariumApi {
   }
 
   /** Cria um caderno. O id do app (offline) e preservado quando enviado. */
-  async createNotebook(notebook: {
-    id?: string;
-    name: string;
-    color: string;
-  }): Promise<ServerNotebook> {
+  async createNotebook(notebook: CreateNotebookInput): Promise<ServerNotebook> {
     const res = await this.fetchImpl(this.url('/api/v1/notebooks'), {
       method: 'POST',
       headers: this.authHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify(notebook),
+      body: JSON.stringify(omitUndefined(notebook)),
     });
     if (!res.ok) throw await this.parseError(res);
     return JSON.parse(await res.text());
   }
 
-  /** Renomeia e/ou recolore um caderno. */
-  async updateNotebook(
-    id: string,
-    body: { name?: string; color?: string },
-  ): Promise<ServerNotebook> {
+  /** Renomeia/recolore um caderno e/ou grava os metadados do livro. */
+  async updateNotebook(id: string, body: UpdateNotebookInput): Promise<ServerNotebook> {
     const res = await this.fetchImpl(this.url(`/api/v1/notebooks/${id}`), {
       method: 'PATCH',
       headers: this.authHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify(body),
+      body: JSON.stringify(omitUndefined(body)),
     });
     if (!res.ok) throw await this.parseError(res);
     return JSON.parse(await res.text());

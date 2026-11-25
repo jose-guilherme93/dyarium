@@ -4,7 +4,7 @@
  * O servidor expoe o mesmo recorte em `/api/v1/analysis/runs/summary`.
  */
 
-export type AnalysisRuntime = 'local' | 'server';
+export type AnalysisRuntime = 'local' | 'online' | 'server';
 
 /**
  * `partial` e uma passada que leu alguns blocos e parou: a analise existe e o

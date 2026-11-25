@@ -29,6 +29,7 @@
 .brand {
   font-family: var(--font-serif);
   font-size: 17px;
+  font-weight: 600;
   letter-spacing: 0.02em;
   padding: calc(var(--space) * 1) calc(var(--space) * 2);
 }
@@ -266,7 +267,7 @@
 .editor-actions .primary {
   background: var(--color-accent);
   border-color: var(--color-accent);
-  color: #fff;
+  color: var(--color-bg);
 }
 
 .icon-button {
@@ -281,10 +282,6 @@
 .icon-button.danger {
   color: var(--color-danger);
   border-color: transparent;
-}
-
-.save-state {
-  font-size: 12px;
 }
 
 /* The audio and its transcription flow inside the same text area, no card. */
@@ -623,6 +620,46 @@
   background: var(--color-surface);
 }
 
+/* Anexo sob demanda: o byte vem do cofre quando a nota abre. A linha ocupa o
+   lugar do player para a transcricao nao pular quando ele entra. */
+.audio-fetch {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 2);
+  min-height: 46px;
+  padding: calc(var(--space) * 2) calc(var(--space) * 3);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-muted);
+  font-size: 13px;
+}
+
+.audio-fetch > span:first-child:not(.spinner) {
+  flex: 1;
+  min-width: 0;
+}
+
+.audio-fetch--error {
+  color: var(--color-danger);
+}
+
+.audio-fetch-retry {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-left: auto;
+  border-radius: 50%;
+  color: inherit;
+  background: transparent;
+}
+
+.audio-fetch-retry:hover {
+  background: var(--color-surface-2);
+}
+
 /* Play/pause que acompanha a leitura de uma transcricao longa: fica preso no
    meio da tela enquanto o bloco de audio estiver visivel. */
 .audio-play-slot {
@@ -647,7 +684,7 @@
   height: 42px;
   border-radius: 50%;
   background: var(--color-accent);
-  color: #fff;
+  color: var(--color-bg);
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
 }
 
@@ -669,7 +706,7 @@
   height: 34px;
   border-radius: 50%;
   background: var(--color-accent);
-  color: #fff;
+  color: var(--color-bg);
 }
 
 .player-time {
@@ -1048,12 +1085,18 @@
   padding: calc(var(--space) * 4) 0;
 }
 
+/* A primeira linha e o estado em si; as seguintes explicam. A primeira usa o
+   texto cheio para o contraste nao cair no degrau tonal do chrome. */
+.empty-state p:first-child {
+  color: var(--color-text);
+}
+
 .error {
   color: var(--color-danger);
 }
 
 .ok {
-  color: #2e7d32;
+  color: var(--color-ok);
 }
 
 .danger {
@@ -1064,7 +1107,7 @@
 .primary {
   background: var(--color-accent);
   border-color: var(--color-accent);
-  color: #fff;
+  color: var(--color-bg);
 }
 
 .link-button {
@@ -1118,7 +1161,7 @@
 }
 
 .mood-pos {
-  background: #2e7d32;
+  background: var(--color-ok);
 }
 
 .mood-neg {
@@ -1242,7 +1285,9 @@
   display: inline-block;
   width: 12px;
   height: 12px;
-  border: 2px solid var(--color-border);
+  /* A hairline da borda sumia no papel: um degrau acima em cima do texto
+     mudo, sem competir com o acento do topo. */
+  border: 2px solid color-mix(in srgb, var(--color-muted) 42%, transparent);
   border-top-color: var(--color-accent);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
@@ -1266,10 +1311,6 @@
 @media (max-width: 900px) {
   .app {
     grid-template-columns: 64px 1fr;
-  }
-
-  .brand {
-    display: none;
   }
 }
 
@@ -1365,6 +1406,29 @@
   font-size: 14px;
 }
 
+/* O tipo do aviso precisa mudar a aparencia: erro tinha a mesma cara de um
+   aviso informativo e passava despercebido. Barra a esquerda na cor do tipo,
+   sem virar bloco colorido. */
+.toast {
+  border-left-width: 3px;
+}
+
+.toast--error {
+  border-left-color: var(--danger);
+}
+
+.toast--success {
+  border-left-color: var(--ok);
+}
+
+.toast--info {
+  border-left-color: var(--info);
+}
+
+.toast--warning {
+  border-left-color: var(--warn);
+}
+
 /* Acao do aviso (ex.: "Desfazer"): texto, nao um botao pesado. */
 .toast-action {
   flex: 0 0 auto;
@@ -1389,17 +1453,19 @@
   right: 0;
   z-index: 200;
   background: var(--color-danger);
-  color: #fff;
+  color: var(--color-bg);
   text-align: center;
   padding: calc(var(--space) * 2);
   font-size: 13px;
 }
 
-/* ---------- settings cards ---------- */
-
-.settings-page {
-  max-width: 760px;
+/* O aviso e fixo: sem reservar a altura dele o texto cobre a marca da sidebar
+   e o titulo da tela. O grid encolhe pelo padding (box-sizing: border-box). */
+.app:has(> .offline-banner) {
+  padding-top: calc(var(--space) * 8);
 }
+
+/* ---------- settings cards ---------- */
 
 .card {
   border: 1px solid var(--color-border);
@@ -1426,7 +1492,7 @@
 
 /* Atalho para o console do provedor: criar a chave e conferir os modelos. */
 .key-links {
-  grid-column: 2 / -1;
+  grid-column: 1 / -1;
   display: flex;
   flex-wrap: wrap;
   gap: calc(var(--space) * 3);
@@ -1479,66 +1545,6 @@
   opacity: 1;
 }
 
-.field {
-  display: grid;
-  grid-template-columns: 160px 1fr;
-  gap: calc(var(--space) * 3);
-  align-items: start;
-  padding: calc(var(--space) * 2) 0;
-  border-top: 1px solid var(--color-border);
-}
-
-.field:first-of-type {
-  border-top: none;
-}
-
-.field-label {
-  color: var(--color-muted);
-  font-size: 14px;
-  padding-top: calc(var(--space));
-}
-
-.field-control {
-  display: flex;
-  align-items: center;
-  gap: calc(var(--space) * 2);
-  flex-wrap: wrap;
-}
-
-.field > .hint {
-  grid-column: 2 / -1;
-}
-
-.field input[type="text"],
-.field input[type="password"],
-.field input[type="number"],
-.field select {
-  width: 100%;
-  max-width: 360px;
-  padding: calc(var(--space) * 2) calc(var(--space) * 3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-bg);
-  color: var(--color-text);
-}
-
-.field input[type="number"] {
-  max-width: 110px;
-}
-
-.card .model-item {
-  display: grid;
-  grid-template-columns: 160px 1fr auto;
-  gap: calc(var(--space) * 3);
-  align-items: center;
-  padding: calc(var(--space) * 2) 0;
-}
-
-.card .model-item .ram-track,
-.card .model-item .error {
-  grid-column: 1 / -1;
-}
-
 .switch {
   display: inline-flex;
   align-items: center;
@@ -1552,13 +1558,6 @@
   display: inline-flex;
   align-items: center;
   gap: calc(var(--space));
-}
-
-@media (max-width: 560px){
-  .field {
-    grid-template-columns: 1fr;
-    gap: calc(var(--space));
-  }
 }
 
 /* ---------- apple-style toggle ---------- */
@@ -1608,7 +1607,7 @@
 }
 
 .toggle input:focus-visible + .toggle-track {
-  outline: 2px solid var(--focus-ring);
+  outline: var(--dy-focus-width) solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -1682,6 +1681,128 @@
   overflow: hidden;
 }
 
+/* Com abas, a area do editor vira duas linhas: a barra de 34 e o editor.
+   Sem abas, nada muda no layout das telas que nao abrem nota. */
+.editor-pane--tabs {
+  display: grid;
+  grid-template-rows: var(--dy-toolbar) minmax(0, 1fr);
+}
+
+.editor-pane--tabs > .note {
+  height: 100%;
+  min-height: 0;
+}
+
+/* ---------- abas de notas abertas ---------- */
+/* Barra de 34, abas de 26. A ativa leva degrau tonal e a barra de 2 na borda
+   de ataque; a inativa revela o "x" no hover e no foco. Muitas abas rolam na
+   horizontal, sem empurrar o editor. */
+.note-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: var(--dy-space-2);
+  height: var(--dy-toolbar);
+  padding: 0 var(--dy-space-8);
+  border-bottom: 1px solid var(--dy-line);
+  background: var(--dy-surface);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+.note-tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  align-self: flex-end;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 240px;
+  height: var(--dy-tab);
+}
+
+.note-tab-open {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 100%;
+  padding: 0 var(--dy-space-8);
+  border: 0;
+  border-radius: var(--dy-radius-control) var(--dy-radius-control) 0 0;
+  background: transparent;
+  color: var(--dy-text-muted);
+  font-family: var(--dy-font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.32;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.note-tab-open:hover {
+  color: var(--dy-text);
+}
+
+.note-tab-open:focus-visible {
+  outline: var(--dy-focus-width) solid var(--dy-primary);
+  outline-offset: calc(var(--dy-focus-offset) * -1);
+}
+
+.note-tab-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.note-tab--active {
+  background: var(--dy-surface-alt);
+}
+
+.note-tab--active::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--dy-state-bar);
+  background: var(--dy-primary);
+}
+
+.note-tab--active .note-tab-open {
+  color: var(--dy-text);
+}
+
+.note-tab-close {
+  display: grid;
+  place-items: center;
+  width: var(--dy-row-dense);
+  height: var(--dy-row-dense);
+  margin-right: var(--dy-space-2);
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dy-radius-control);
+  background: transparent;
+  color: var(--dy-text-muted);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.note-tab--active .note-tab-close,
+.note-tab:hover .note-tab-close,
+.note-tab:focus-within .note-tab-close {
+  opacity: 1;
+}
+
+.note-tab-close:hover {
+  background: var(--dy-surface-raised);
+  color: var(--dy-text);
+}
+
+.note-tab-close:focus-visible {
+  outline: var(--dy-focus-width) solid var(--dy-primary);
+  outline-offset: calc(var(--dy-focus-offset) * -1);
+}
+
 .note {
   position: relative;
   height: 100%;
@@ -1723,28 +1844,29 @@
   align-items: center;
   justify-content: space-between;
   gap: calc(var(--space) * 3);
-  min-height: 30px;
+  min-height: var(--dy-row-dense);
   margin-bottom: calc(var(--space) * 2);
 }
 
 .note-title {
   width: 100%;
-  min-height: 44px;
+  min-height: 26px;
   resize: none;
   border: none;
   background: none;
   color: inherit;
-  font-family: var(--font-serif);
-  font-size: 40px;
-  line-height: 1.12;
+  font-family: var(--dy-font-sans);
+  font-size: 21px;
   font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
   padding: 0;
   outline: none;
   overflow: hidden;
 }
 
 .note-title::placeholder {
-  color: var(--color-muted);
+  color: var(--dy-text-muted);
 }
 
 .note-head-actions {
@@ -1775,8 +1897,13 @@
   display: flex;
   flex-wrap: wrap;
   gap: calc(var(--space) * 3);
-  color: var(--color-muted);
-  font-size: 13px;
+  color: var(--dy-text-muted);
+  font-family: var(--dy-font-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
   margin: calc(var(--space) * 2) auto calc(var(--space) * 7);
 }
 
@@ -2006,8 +2133,12 @@
    duas superficies (um painel branco sobre o fundo creme). A variavel precisa de
    especificidade maior que a do proprio BlockNote. */
 
-.note .bn-container {
+.note .bn-container.bn-root {
   --bn-colors-editor-background: transparent;
+  /* O tema do BlockNote traz texto proprio (#3f3f3f no claro, #cfcfcf no
+     escuro). O corpo da nota usa a cor de texto do sistema nos dois temas. */
+  --bn-colors-editor-text: var(--dy-text);
+  --bn-border-radius: var(--dy-radius-control);
   background: transparent;
 }
 
@@ -2147,8 +2278,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: var(--dy-control-md);
+  height: var(--dy-control-md);
   border-radius: var(--radius-sm);
   color: var(--color-muted);
 }
@@ -2446,12 +2577,14 @@
 .list-search {
   flex: 1 1 0;
   min-width: 0;
+  min-height: var(--dy-row-dense);
   display: flex;
   align-items: center;
   gap: calc(var(--space) * 1.5);
-  padding: calc(var(--space) * 1.25) calc(var(--space) * 2);
+  padding: 0 calc(var(--space) * 2);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
-  background: var(--color-surface-2);
+  background: var(--color-surface);
   color: var(--color-muted);
 }
 
@@ -2697,14 +2830,26 @@
   background: var(--color-accent);
 }
 
+/* Com 365 dias no filtro "ano" cada rotulo e uma coluna: sem min-width zero
+   o texto define a largura minima e a serie estoura o cartao, abrindo rolagem
+   horizontal na pagina inteira. */
+.chart-card,
+.chart-grid > * {
+  min-width: 0;
+}
+
 .chart-labels {
   display: flex;
+  justify-content: space-between;
   gap: 2px;
   margin-top: calc(var(--space));
+  min-width: 0;
+  overflow: hidden;
 }
 
 .chart-label {
-  flex: 1;
+  flex: none;
+  white-space: nowrap;
   font-size: 10px;
   color: var(--color-muted);
   text-align: center;
@@ -2791,6 +2936,7 @@
   gap: calc(var(--space) * 2);
   margin: 0;
   padding: 0;
+  min-width: 0;
 }
 
 .chip {
@@ -2799,6 +2945,11 @@
   padding: calc(var(--space)) calc(var(--space) * 3);
   font-size: 12px;
   background: var(--color-bg);
+  /* Palavra longa sem espaco (URL, sequencia de teste) estourava o cartao e a
+     pagina: a pílula quebra por qualquer ponto e nunca passa da largura. */
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .chip--swatch {
@@ -2971,8 +3122,10 @@
   padding: calc(var(--space) * 1.5) calc(var(--space) * 2);
   border-radius: var(--radius-sm);
   color: var(--color-text);
-  font-family: var(--font-serif);
-  font-size: 16px;
+  font-family: var(--font-sans);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
   text-align: left;
 }
 
@@ -2982,15 +3135,12 @@
 }
 
 .notebook-current-name {
-  display: -webkit-box;
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   line-height: 1.25;
-  white-space: normal;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
 }
 
 .notebook-dot {
@@ -3000,48 +3150,75 @@
   flex: none;
 }
 
+/* Menu do seletor: topo fixo, meio rolavel, rodape fixo. Linhas de uma so
+   linha, sem wrap e sem shift de layout: check e "…" tem slot proprio. */
 .notebook-menu {
   position: absolute;
   z-index: 20;
   top: calc(100% + 4px);
   left: 0;
   right: 0;
-  list-style: none;
+  display: flex;
+  flex-direction: column;
+  min-width: 264px;
+  max-width: 100%;
   margin: 0;
-  padding: calc(var(--space) * 1.5);
+  padding: 0;
   background: var(--color-bg);
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
-  max-height: 340px;
-  overflow: auto;
+  max-height: min(460px, calc(100vh - 96px));
+  overflow: hidden;
+}
+
+.notebook-menu-top {
+  flex: none;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.notebook-menu-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.notebook-menu-foot {
+  flex: none;
+  border-top: 1px solid var(--color-border);
+  padding: calc(var(--space)) 0;
 }
 
 .notebook-menu-row {
   display: flex;
   align-items: center;
-  gap: calc(var(--space));
-}
-
-.notebook-menu-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
   gap: calc(var(--space) * 1.5);
-  padding: calc(var(--space) * 1.25) calc(var(--space) * 1.5);
-  border-radius: var(--radius-sm);
+  flex-wrap: nowrap;
+  min-height: 40px;
+  padding: calc(var(--space)) calc(var(--space) * 2);
   color: var(--color-text);
   text-align: left;
+  cursor: pointer;
+  user-select: none;
 }
 
-.notebook-menu-main:hover,
-.notebook-menu-main--on {
+.notebook-menu-row:hover {
   background: var(--color-accent-soft);
 }
 
+.notebook-menu-row--on {
+  background: var(--color-surface-2);
+}
+
+.notebook-menu-mark {
+  display: flex;
+  align-items: center;
+  flex: none;
+  color: var(--color-muted);
+}
+
 .notebook-menu-name {
-  flex: 1;
+  display: block;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3050,20 +3227,138 @@
 }
 
 .notebook-menu-count {
+  flex: none;
   font-size: 11px;
   color: var(--color-muted);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-.notebook-menu-actions {
+/* Slots fixos: nada desloca quando o "…" aparece no hover. */
+.notebook-menu-check {
+  flex: none;
+  width: 16px;
   display: flex;
-  gap: 2px;
+  align-items: center;
+  color: var(--color-accent);
+  visibility: hidden;
+}
+
+.notebook-menu-row--on .notebook-menu-check {
+  visibility: visible;
+}
+
+.notebook-menu-more {
+  flex: none;
+  width: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.notebook-menu-more .icon-button {
+  opacity: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-muted);
+}
+
+.notebook-menu-more .icon-button:hover {
+  background: var(--color-surface-2);
+  color: var(--color-text);
+}
+
+.notebook-menu-row:hover .notebook-menu-more .icon-button,
+.notebook-menu-row:focus-within .notebook-menu-more .icon-button {
+  opacity: 1;
+}
+
+.notebook-menu-meter {
+  display: block;
+  height: 2px;
+  margin-top: 3px;
+  border-radius: 1px;
+  background: var(--color-surface-2);
+  overflow: hidden;
+}
+
+.notebook-menu-meter i {
+  display: block;
+  height: 100%;
+  background: var(--color-accent);
 }
 
 .icon-button--small {
   width: 24px;
   height: 24px;
   font-size: 13px;
+}
+
+/* Submenu do "…": acoes da linha, exclusao por ultimo e em vermelho. */
+.notebook-submenu {
+  position: fixed;
+  z-index: 60;
+  padding: calc(var(--space) / 2) 0;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.16);
+}
+
+.notebook-submenu button {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 2);
+  width: 100%;
+  min-height: 34px;
+  padding: 0 calc(var(--space) * 3) 0 calc(var(--space) * 2);
+  color: var(--color-text);
+  font-size: 13px;
+  text-align: left;
+}
+
+.notebook-submenu button:hover,
+.notebook-submenu button:focus-visible {
+  background: var(--color-accent-soft);
+}
+
+.notebook-submenu button svg {
+  color: var(--color-muted);
+}
+
+.notebook-submenu-danger {
+  color: var(--color-danger);
+}
+
+.notebook-submenu-danger svg {
+  color: var(--color-danger) !important;
+}
+
+/* Submenu do "Novo": mesmo cartao das acoes da linha, com as duas opcoes de
+   criacao. */
+.notebook-submenu--new {
+  min-width: 176px;
+}
+
+/* Estreito (<=900px): o cartao vira uma faixa opaca que preenche a regiao da
+   lista, do topo rolavel ate o rodape, com as opcoes no topo. Sem raio nem
+   borda para a lista nao espiar pelas margens nem pelo canto. */
+.notebook-submenu--fill {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* Em toque o "…" fica sempre visivel e as linhas ganham altura de alvo. */
+@media (max-width: 900px) {
+  .notebook-menu-row,
+  .notebook-menu-new {
+    min-height: 44px;
+  }
+
+  .notebook-menu-more .icon-button {
+    opacity: 1;
+  }
 }
 
 /* ---------- filtro de tags ---------- */
@@ -3366,7 +3661,7 @@
   border: 1px solid var(--color-accent);
   border-radius: var(--radius-sm);
   background: var(--color-accent);
-  color: #fff;
+  color: var(--color-bg);
   font-size: 13px;
   font-weight: 600;
 }
@@ -3485,7 +3780,7 @@
 }
 
 .note-row--active {
-  background: var(--color-surface-2);
+  background: var(--color-bg);
   border-left-color: var(--color-accent);
 }
 
@@ -3519,18 +3814,6 @@
   font-size: 11.5px;
 }
 
-.note-row-kind {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.note-row-notebook::before {
-  content: "·";
-  margin-right: calc(var(--space) * 1.5);
-  color: var(--color-border);
-}
-
 .note-row-failed {
   color: var(--color-danger);
 }
@@ -3540,17 +3823,8 @@
   font-size: 12.5px;
   line-height: 1.45;
   overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-}
-
-.note-row-tags {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: calc(var(--space) * 1.5);
-  margin-top: 1px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mini-tag {
@@ -3609,8 +3883,8 @@
 /* ---------- botoes ---------- */
 
 .button--primary {
-  background: var(--color-text);
-  border-color: var(--color-text);
+  background: var(--color-accent);
+  border-color: var(--color-accent);
   color: var(--color-bg);
 }
 
@@ -3623,9 +3897,14 @@
   color: var(--color-accent);
 }
 
-:where(.button, .icon-button, .foot-item, .note-row-open, .tag-filter-chip, .tag-filter-all, .notebook-menu-main, .menu-item):focus-visible {
-  outline: 2px solid var(--focus-ring);
+:where(.button, .icon-button, .foot-item, .note-row-open, .tag-filter-chip, .tag-filter-all, .notebook-menu-row, .notebook-current, .menu-item):focus-visible {
+  outline: var(--dy-focus-width) solid var(--focus-ring);
   outline-offset: 2px;
+}
+
+.notebook-current:focus-visible {
+  outline: var(--dy-focus-width) solid var(--color-accent);
+  outline-offset: var(--dy-focus-offset);
 }
 
 /* O navegador desenha o proprio anel azul em botoes que nao usam .button
@@ -3634,7 +3913,7 @@
 .note [role="button"]:focus-visible,
 .note input:focus-visible,
 .note select:focus-visible {
-  outline: 2px solid var(--focus-ring);
+  outline: var(--dy-focus-width) solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -3683,7 +3962,7 @@
 .note-archived {
   color: var(--color-muted);
   border: 1px solid var(--color-border);
-  border-radius: 999px;
+  border-radius: var(--dy-radius-control);
   padding: 0 8px;
   font-size: 11px;
 }
@@ -3726,25 +4005,14 @@
 }
 
 .notebook-menu {
-  padding: calc(var(--space) * 1.5);
   border-radius: calc(var(--space) * 2.5);
   box-shadow: 0 14px 40px rgba(0, 0, 0, 0.16), 0 1px 2px rgba(0, 0, 0, 0.08);
 }
 
-.notebook-menu-rule {
-  height: 1px;
-  margin: calc(var(--space)) calc(var(--space) * 1.5);
-  background: var(--color-border);
-  list-style: none;
-}
-
-.notebook-menu-main {
-  gap: calc(var(--space) * 2);
-  padding: calc(var(--space) * 1.5) calc(var(--space) * 2);
-}
-
-.notebook-menu-main--on {
-  background: var(--color-surface-2);
+.notebook-menu-row:focus-visible,
+.notebook-submenu button:focus-visible {
+  outline: var(--dy-focus-width) solid var(--focus-ring);
+  outline-offset: -2px;
 }
 
 /* ---------- paginas: cabecalho e abas ---------- */
@@ -3795,10 +4063,10 @@
 
 .segmented button[aria-selected="true"],
 .segmented button[aria-pressed="true"] {
-  background: #fff;
-  color: #1b1b1b;
+  background: var(--color-surface-2);
+  color: var(--color-text);
   font-weight: 600;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.14);
+  box-shadow: none;
 }
 
 .view-header h1 {
@@ -3863,8 +4131,8 @@
 
 /* Barra da nota: acoes sem caixa, agrupadas por assunto. */
 .note-head-actions .icon-button {
-  width: 30px;
-  height: 30px;
+  width: var(--dy-control-md);
+  height: var(--dy-control-md);
   padding: 0;
   border: none;
   color: var(--color-muted);
@@ -3924,7 +4192,7 @@
 }
 
 .note-picker-card input:focus {
-  outline: 2px solid var(--focus-ring);
+  outline: var(--dy-focus-width) solid var(--focus-ring);
   outline-offset: 1px;
 }
 
@@ -3962,36 +4230,6 @@
 .note-picker-empty {
   padding: calc(var(--space) * 3);
   font-size: 13px;
-}
-
-/* Configuracoes: coluna centrada e acoes secundarias como botoes. */
-.settings-page {
-  max-width: 880px;
-  margin-inline: auto;
-}
-
-.settings-page .card {
-  background: var(--color-surface);
-  border-radius: calc(var(--space) * 2.5);
-  padding: calc(var(--space) * 6);
-}
-
-.settings-page .card + .card {
-  margin-top: calc(var(--space) * 5);
-}
-
-.settings-page .card-head h2 {
-  font-size: 20px;
-}
-
-.card .model-item {
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  padding: calc(var(--space) * 2.25) 0;
-  border-top: 1px solid var(--color-border);
-}
-
-.model-list .model-item:first-child {
-  border-top: none;
 }
 
 .model-name {
@@ -4041,11 +4279,26 @@
     border-color: transparent;
   }
 
+  /* A unica acao preenchida da barra: rotulo de 10 em caixa alta, alvo de 26,
+     como o botao do sistema. */
+  .mobile-bar .button--primary {
+    height: var(--dy-control-md);
+    padding: 0 var(--dy-control-pad-sm);
+    gap: var(--dy-space-4);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
   .mobile-bar-title {
     flex: 1;
     min-width: 0;
-    font-family: var(--font-serif);
-    font-size: 15px;
+    font-family: var(--font-sans);
+    font-size: 17px;
+    font-weight: 600;
+    line-height: 1.3;
+    letter-spacing: -0.005em;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -4074,7 +4327,7 @@
     position: fixed;
     inset: 0;
     z-index: 70;
-    background: rgba(0, 0, 0, 0.32);
+    background: var(--dy-overlay);
   }
 
   .app--collapsed .sidebar-backdrop {
@@ -4105,7 +4358,7 @@
   }
 
   .note-title {
-    font-size: 30px;
+    font-size: 21px;
   }
 
   .note-aside {
@@ -4144,14 +4397,6 @@
   cursor: default;
 }
 
-@media (prefers-color-scheme: dark) {
-  .button--primary {
-    background: var(--color-accent);
-    border-color: var(--color-accent);
-    color: var(--color-bg);
-  }
-}
-
 /* O Chrome desenha um "x" proprio no input type=search; o nosso ja existe. */
 .list-search input::-webkit-search-cancel-button,
 .note-picker-card input::-webkit-search-cancel-button {
@@ -4175,6 +4420,28 @@
   border-radius: var(--radius);
   color: var(--color-muted);
   font-size: 13px;
+}
+
+.doc-details {
+  margin: calc(var(--space) * 3) 0;
+  padding: calc(var(--space) * 2) calc(var(--space) * 3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+
+.doc-details summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.doc-details-body {
+  margin: calc(var(--space) * 2) 0 0;
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--color-muted);
 }
 
 /* O BlockNote desenha uma caixa azul em volta do no selecionado. Na imagem ela
@@ -4480,8 +4747,8 @@
 }
 
 .notebook-current {
-  font-size: 15px;
-  padding: calc(var(--space) * 1.5) calc(var(--space) * 1.75);
+  min-height: var(--dy-row-dense);
+  padding: 0 var(--dy-space-6);
 }
 
 .notebook-menu-new {
@@ -4489,22 +4756,48 @@
   align-items: center;
   gap: calc(var(--space) * 2);
   width: 100%;
-  margin-top: calc(var(--space));
-  padding: calc(var(--space) * 1.5) calc(var(--space) * 1.5);
-  border-radius: var(--radius-sm);
+  min-height: 40px;
+  padding: calc(var(--space)) calc(var(--space) * 2);
   color: var(--color-muted);
   font-size: 13px;
   text-align: left;
 }
 
-.notebook-menu-new:hover {
-  background: var(--color-surface-2);
+.notebook-menu-new svg {
+  flex: none;
+}
+
+/* Sinal do submenu no "Novo": chevron para a direita; quando aberto, vira
+   para cima porque o submenu aparece acima/ao lado do rodape. */
+.notebook-menu-caret {
+  margin-left: auto;
+  display: flex;
+  color: var(--color-muted);
+  transform: rotate(-90deg);
+  transition: transform 120ms ease;
+}
+
+.notebook-menu-new[aria-expanded="true"] .notebook-menu-caret {
+  transform: rotate(-180deg);
+}
+
+.notebook-menu-new:hover,
+.notebook-menu-new:focus-visible {
+  background: var(--color-accent-soft);
   color: var(--color-text);
 }
 
+/* Refeito depois do min-height compacto: a regra da "Coluna compacta" acima
+   desta seção viria perdendo por ordem de fonte em telas de toque. */
+@media (max-width: 900px) {
+  .notebook-menu-new {
+    min-height: 44px;
+  }
+}
+
 .sidebar-toggle {
-  width: 28px;
-  height: 28px;
+  width: var(--dy-control-md);
+  height: var(--dy-control-md);
   flex: none;
 }
 
@@ -4515,8 +4808,8 @@
 }
 
 .list-head .icon-button {
-  width: 28px;
-  height: 28px;
+  width: var(--dy-control-md);
+  height: var(--dy-control-md);
   padding: 0;
   border: none;
   border-radius: var(--radius-sm);
@@ -4859,40 +5152,25 @@
   min-width: 0;
 }
 
-.note-row-dot {
-  width: 6px;
-  height: 6px;
-  flex: none;
-  border-radius: 50%;
-}
-
 .note-row-title {
   display: block;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 14.5px;
-  line-height: 1.4;
+  font-size: 13px;
+  line-height: 1.32;
 }
 
 .note-row-line {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: calc(var(--space) * 1.5);
   min-width: 0;
   color: var(--color-muted);
-  font-size: 11px;
-  line-height: 1.4;
-}
-
-.note-row-kind {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  font-size: 10.5px;
-  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+  line-height: 1.32;
 }
 
 .note-row-preview {
@@ -4911,14 +5189,10 @@
 
 .note-row-date {
   flex: none;
-  margin-left: auto;
-  font-size: 10.5px;
+  font-family: var(--dy-font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
   font-variant-numeric: tabular-nums;
-}
-
-.note-row-tags {
-  gap: calc(var(--space));
-  margin-top: 1px;
 }
 
 .mini-tag {
@@ -4994,6 +5268,13 @@
 
 .rail-expand svg {
   transform: rotate(-90deg);
+}
+
+.rail-sep {
+  width: var(--dy-icon-box);
+  height: 1px;
+  margin: var(--dy-space-4) 0;
+  background: var(--color-border);
 }
 
 .rail-foot {
@@ -5165,7 +5446,7 @@
 .rail-action:focus-visible,
 .active-filter:focus-visible,
 .active-filters-clear:focus-visible {
-  outline: 2px solid var(--focus-ring);
+  outline: var(--dy-focus-width) solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -5280,6 +5561,7 @@
   min-width: 0;
   overflow: hidden;
   padding: calc(var(--space) * 5) calc(var(--space) * 6);
+  animation: fade-in 400ms ease-out;
 }
 
 .map-view {
@@ -5305,6 +5587,13 @@
   flex: 0 0 auto;
 }
 
+.map-actions .button {
+  height: var(--dy-control-md);
+  padding: 0 var(--dy-control-pad-md);
+  font-size: 13px;
+  font-weight: 500;
+}
+
 .map-title {
   display: flex;
   align-items: baseline;
@@ -5315,8 +5604,11 @@
 
 .map-title h1 {
   margin: 0;
-  font-family: var(--font-serif);
-  font-size: 22px;
+  font-family: var(--font-sans);
+  font-size: 21px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
 }
 
 .map-stats {
@@ -5357,40 +5649,44 @@
 .map-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
+  gap: var(--dy-space-4);
+  height: var(--dy-row-dense);
+  padding: 0 var(--dy-space-8);
+  border: 1px solid var(--dy-line);
+  border-radius: var(--dy-radius-control);
   background: transparent;
-  color: var(--ink-soft);
+  color: var(--dy-text-muted);
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
   cursor: pointer;
 }
 
 .map-chip--on {
-  background: #fff;
-  border-color: #fff;
-  color: #1b1b1b;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  background: var(--dy-primary-soft);
+  border-color: var(--dy-primary-soft);
+  color: var(--dy-text);
+  box-shadow: none;
 }
 
 .map-chip--on .map-chip-count {
-  color: rgba(0, 0, 0, 0.55);
+  color: var(--dy-text);
 }
 
 .map-chip:hover {
-  color: var(--ink);
-  border-color: var(--ink-soft);
+  color: var(--dy-text);
+  border-color: var(--dy-text-muted);
 }
 
 .map-chip--on:hover {
-  color: #1b1b1b;
-  border-color: #fff;
+  color: var(--dy-text);
+  border-color: var(--dy-primary);
 }
 
 .map-chip-count {
-  color: var(--ink-soft);
+  color: var(--dy-text-muted);
+  font-family: var(--dy-font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
   font-variant-numeric: tabular-nums;
 }
 
@@ -5422,22 +5718,22 @@
 }
 
 .map-select {
-  height: 30px;
-  padding: 0 8px;
+  height: var(--dy-control-md);
+  padding: 0 var(--dy-space-8);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--paper);
   color: var(--ink);
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .map-search {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  height: 30px;
-  padding: 0 9px;
+  gap: var(--dy-space-6);
+  height: var(--dy-control-md);
+  padding: 0 var(--dy-control-pad-md);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--paper);
@@ -5451,7 +5747,7 @@
   background: transparent;
   color: var(--ink);
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .map-body {
@@ -5544,6 +5840,12 @@
   gap: 2px;
 }
 
+/* Sem relacoes nao ha grafo para mostrar: esconder as camadas evita que o
+   desenho de fundo (o no central) apareca por baixo do texto do estado vazio. */
+.map-layers--empty {
+  visibility: hidden;
+}
+
 .map-overlay--empty strong {
   font-size: 34px;
   font-weight: 400;
@@ -5578,6 +5880,11 @@
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--paper-2);
+  animation: fade-in 240ms ease-out;
+}
+
+.map-detail--focus {
+  animation: fade-in 320ms ease-out;
 }
 
 /* Insights vive no trilho direito do mapa: a lista some quando uma bola e
@@ -5612,37 +5919,45 @@
 
 .map-insights-total,
 .map-insights-tab-count {
-  color: var(--ink-soft);
-  font-size: 11px;
+  color: var(--dy-text-muted);
+  font-family: var(--dy-font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
   font-variant-numeric: tabular-nums;
 }
 
 .map-insights-tabs {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  margin-bottom: calc(var(--space) * 2);
+  gap: var(--dy-space-4);
+  margin-bottom: var(--dy-space-8);
 }
 
 .map-insights-tab {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 3px 7px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
+  gap: var(--dy-space-4);
+  height: var(--dy-row-dense);
+  padding: 0 var(--dy-space-8);
+  border: 1px solid var(--dy-line);
+  border-radius: var(--dy-radius-control);
   background: transparent;
-  color: var(--ink-soft);
-  font-size: 12px;
+  color: var(--dy-text-muted);
+  font-size: 13px;
 }
 
 .map-insights-tab:hover {
-  color: var(--ink);
+  color: var(--dy-text);
 }
 
 .map-insights-tab--on {
-  border-color: var(--ink);
-  color: var(--ink);
+  background: var(--dy-primary-soft);
+  border-color: var(--dy-primary-soft);
+  color: var(--dy-text);
+}
+
+.map-insights-tab--on .map-insights-tab-count {
+  color: var(--dy-text);
 }
 
 .map-insights-list {
@@ -6124,7 +6439,7 @@
 
 .map-icon-choice--on {
   border-color: var(--ink);
-  background: #fff;
+  background: var(--color-surface-2);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
 }
 
@@ -6172,6 +6487,259 @@
   color: var(--ink);
   font: inherit;
   font-size: 12px;
+}
+
+/* ---------- curadoria de entidades (lapis, editor e memoria) ----------
+   Tudo com os tokens de tinta e papel: nada de cor nova, nada de emoji. */
+
+.map-detail-label {
+  margin: -4px 0 8px;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+/* Ficha: lapis colado no nome da entidade. Compacto, inline, sem fundo. */
+.entity-edit {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-soft);
+  vertical-align: baseline;
+}
+
+.entity-edit:hover {
+  color: var(--accent);
+}
+
+/* Grafo: "nao e isso?" com a interrogacao no circulo, discreto sob o nome. */
+.map-not-this {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0 0 10px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-soft);
+  font-size: 11.5px;
+}
+
+.map-not-this:hover {
+  color: var(--accent);
+}
+
+/* O chip com lapis vira uma linha: nome e icone lado a lado no mesmo papel. */
+.chips li:has(.entity-edit) {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.map-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 0 12px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper-2);
+}
+
+.map-editor-field,
+.map-editor-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--ink-soft);
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.map-editor-field .map-title-input,
+.map-editor-field .map-rename-select {
+  margin: 0;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.map-editor-kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.map-kind-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.map-kind-pill--on {
+  border-color: var(--ink);
+  background: var(--paper-3);
+  color: var(--ink);
+}
+
+.map-kind-pill:disabled {
+  opacity: 0.45;
+}
+
+.map-editor-aliases {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.map-alias-chip {
+  padding: 1px 7px;
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  color: var(--ink-soft);
+  font-size: 11px;
+}
+
+.map-editor-icons {
+  max-width: 194px;
+}
+
+.map-editor-icons:focus-visible {
+  outline: none;
+}
+
+.map-kind-pill:focus-visible,
+.map-editor-icons button:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Memoria: rejeicoes, nomes reais e a previa do que a IA le. */
+.map-memory {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.map-memory-count {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--paper-3);
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.map-memory-chips {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+}
+
+.map-reject-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px 2px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  font-size: 12px;
+}
+
+.map-memory-kind {
+  color: var(--ink-soft);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.map-reject-remove {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--ink-soft);
+  font-size: 13px;
+  line-height: 1;
+}
+
+.map-reject-remove:hover:not(:disabled) {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+.map-memory-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  margin-top: 4px;
+}
+
+.map-memory-add .map-rename-select {
+  flex: 1 1 90px;
+  min-width: 0;
+}
+
+.map-memory-names {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+}
+
+.map-memory-names li {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 12px;
+}
+
+.map-memory-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-wrap: anywhere;
+}
+
+.map-memory-names .muted {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.map-memory-preview {
+  max-height: 180px;
+  margin: 0;
+  padding: 8px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--paper-2);
+  color: var(--ink-soft);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* ---------- importacao do Notion ---------- */
@@ -7349,7 +7917,10 @@
 .note-header {
   flex: none;
   z-index: 5;
-  padding: calc(var(--space) * 1.5) calc(var(--space) * 8);
+  display: flex;
+  align-items: center;
+  height: var(--dy-toolbar);
+  padding: 0 calc(var(--space) * 8);
   border-bottom: 1px solid var(--color-border);
   background: var(--color-bg);
 }
@@ -7358,7 +7929,7 @@
   width: 100%;
   max-width: 720px;
   margin-inline: auto;
-  min-height: 32px;
+  min-height: var(--dy-row-dense);
   margin-bottom: 0;
 }
 
@@ -7869,8 +8440,8 @@
 }
 
 .status-dot--draft { background: transparent; }
-.status-dot--revising { background: var(--color-warning, #b8860b); border-color: var(--color-warning, #b8860b); }
-.status-dot--done { background: var(--color-success, #3f7d4f); border-color: var(--color-success, #3f7d4f); }
+.status-dot--revising { background: var(--warn, #b8860b); border-color: var(--warn, #b8860b); }
+.status-dot--done { background: var(--ok, #3f7d4f); border-color: var(--ok, #3f7d4f); }
 
 .chapter-add {
   display: flex;
@@ -8022,15 +8593,67 @@
   font-size: 0.8rem;
 }
 
-.save-state {
-  font-size: 0.72rem;
-  color: var(--color-muted);
-  text-transform: lowercase;
+/* Glifo de salvamento: um so, no canto do cabecalho. As formas carregam o
+   estado; o texto mora no aria-label, no title e na regiao sr-only. */
+.save-glyph-wrap {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  margin-left: calc(var(--space) * 2);
 }
 
-.save-state--saving { color: var(--color-accent); }
-.save-state--offline { color: var(--color-warning, #b8860b); }
-.save-state--conflict { color: var(--color-danger); }
+.save-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-sm);
+  color: var(--color-muted);
+}
+
+button.save-glyph:hover,
+button.save-glyph:focus-visible {
+  background: var(--color-surface-2);
+}
+
+.save-glyph--saved {
+  color: var(--color-accent);
+}
+
+.save-glyph--warn {
+  color: var(--warn, #8a5a16);
+}
+
+.save-glyph-spin {
+  transform-origin: 50% 50%;
+  animation: save-glyph-spin 1s linear infinite;
+}
+
+@keyframes save-glyph-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .save-glyph-spin {
+    animation-duration: 2.4s;
+  }
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
 
 .chapter-columns {
   display: grid;
@@ -8180,7 +8803,7 @@
   line-height: 1.6;
 }
 
-.conflict-diff mark { background: color-mix(in srgb, var(--color-success, #3f7d4f) 25%, transparent); }
+.conflict-diff mark { background: color-mix(in srgb, var(--ok, #3f7d4f) 25%, transparent); }
 .conflict-diff del { color: var(--color-danger); }
 
 .book-dialog,
@@ -8426,7 +9049,7 @@
   line-height: 1.5;
 }
 
-.revision-diff mark { background: color-mix(in srgb, var(--color-success, #3f7d4f) 25%, transparent); }
+.revision-diff mark { background: color-mix(in srgb, var(--ok, #3f7d4f) 25%, transparent); }
 .revision-diff del { color: var(--color-danger); }
 
 .notebook-menu-name { display: inline-flex; align-items: center; gap: 6px; }
@@ -8440,8 +9063,8 @@
   margin-top: 2px;
   color: var(--color-muted);
   font-family: var(--font-sans);
-  font-size: 9px;
-  font-weight: 400;
+  font-size: 10px;
+  font-weight: 500;
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
@@ -8528,7 +9151,7 @@
 .pending-link {
   border: 0;
   background: transparent;
-  color: var(--color-warning, #8a5a16);
+  color: var(--warn, #8a5a16);
   font: inherit;
   font-size: 10px;
   cursor: pointer;
@@ -8741,9 +9364,6 @@
 .chapter-count { color: var(--color-muted); font-size: 10.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .save-state { display: inline-flex; align-items: center; gap: 5px; color: var(--color-muted); font-size: 10px; white-space: nowrap; }
 .save-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--color-ok, var(--ok)); }
-.save-state--saving .save-dot { background: var(--color-accent); }
-.save-state--offline .save-dot { background: var(--color-warning, var(--warn)); }
-.save-state--conflict .save-dot { background: var(--color-danger); }
 .chapter-today { display: inline-flex; align-items: center; gap: 6px; color: var(--color-muted); font-size: 10.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .chapter-meter { display: inline-block; width: 44px; height: 3px; border-radius: 2px; background: var(--color-surface-2); overflow: hidden; }
 .chapter-meter b { display: block; height: 100%; background: var(--color-accent); }
@@ -9262,7 +9882,7 @@
 }
 .state-line:last-of-type { border-bottom: 0; }
 .state-line b { font-weight: 600; }
-.state-locked { color: var(--color-warning, var(--warn)); font-weight: 600; }
+.state-locked { color: var(--warn, var(--warn)); font-weight: 600; }
 .state-toggle {
   position: relative;
   width: 26px;
@@ -9420,6 +10040,47 @@
   font-size: 13px;
   line-height: 1.45;
   resize: vertical;
+}
+
+/* Criacao do livro: so titulo mais um bloco "Mais opcoes" recolhido. O resto
+   (capa, formato, letra, cor) mora nas configuracoes do livro depois. */
+.book-create {
+  grid-template-columns: 1fr;
+}
+.book-advanced-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space) * 1.5);
+  align-self: start;
+  margin-top: calc(var(--space) * 2);
+  padding: calc(var(--space)) 0;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+.book-advanced-toggle:hover,
+.book-advanced-toggle:focus-visible { color: var(--color-text); }
+.book-advanced-toggle svg { transition: transform 0.12s ease; }
+.book-advanced-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+.book-advanced {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space) * 3);
+  border-top: 1px solid var(--color-border);
+  padding-top: calc(var(--space) * 3);
+}
+.book-advanced-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 14px;
+}
+.book-advanced-grid > * { min-width: 0; }
+.book-advanced-hint {
+  color: var(--color-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+@media (max-width: 640px) {
+  .book-advanced-grid { grid-template-columns: 1fr; }
 }
 .book-section {
   display: flex;
@@ -10057,3 +10718,2609 @@
 }
 .book-side-add:hover { border-color: var(--color-muted); color: var(--color-text); }
 .book-side-empty { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 8px 2px; }
+
+/* ============ Configuracoes: secoes, provedores, modelos ============ */
+
+/* A barra sticky ancora no topo do scrollport: o padding do .page sairia
+   como uma faixa por onde o conteudo apareceria por cima dela. O respiro
+   superior passa para dentro da propria barra. */
+.page:has(.settings-page) {
+  padding-top: 0;
+  /* A largura util da pagina manda: no desktop ela comporta a linha de
+     secoes; no estreito, nao. Consultar a janela erraria quando a barra
+     lateral aberta rouba ~300px. */
+  container-type: inline-size;
+  container-name: settings;
+}
+
+.settings-page {
+  max-width: 460px;
+  text-align: left;
+}
+
+/* Cabecalho: voltar + "Configurações" curto + faixa de secoes, tudo numa linha
+   pegajosa no topo da pagina. O titulo grande e a frase de apoio sairam. */
+.settings-page .settings-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(var(--space) * 3);
+  margin-bottom: calc(var(--space) * 4);
+  padding: calc(var(--space) * 5) 0 calc(var(--space) * 2);
+  /* Opaco de verdade: o conteudo rola por baixo sem aparecer na barra. */
+  background-color: var(--color-bg);
+  background-image: linear-gradient(var(--color-bg), var(--color-bg));
+  border-bottom: 1px solid var(--color-border);
+  isolation: isolate;
+}
+
+.settings-page .header-title {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--color-text);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+/* No largo o padding antigo do .page era 32px; ele passa para a barra. */
+@media (min-width: 901px) {
+  .settings-page .settings-header {
+    padding-top: calc(var(--space) * 8);
+  }
+}
+
+/* A faixa de secoes fica na mesma linha do titulo; no estreito quebra abaixo. */
+.settings-page .settings-nav {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.settings-page .card {
+  border-radius: calc(var(--space) * 2.5);
+  padding: calc(var(--space) * 6);
+  margin-bottom: calc(var(--space) * 2.5);
+}
+
+.settings-page .card + .card {
+  margin-top: calc(var(--space) * 2.5);
+}
+
+.settings-page .card-head h2 {
+  font-size: 20px;
+}
+
+/* Links de apoio da tela: acento discreto e sublinhado fino, nunca o azul do
+   navegador. Escopado para nao vazar para o resto do app. */
+.settings-page .lnk,
+.settings-page .key-links a {
+  color: var(--color-accent);
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  white-space: nowrap;
+}
+
+.settings-page .lnk:hover,
+.settings-page .key-links a:hover {
+  color: var(--color-text);
+  text-decoration-thickness: 2px;
+}
+
+/* Abaixo da largura da pagina, principal e secundaria seguem empilhadas. */
+.settings-columns,
+.settings-main,
+.settings-side {
+  min-width: 0;
+}
+
+.settings-side {
+  margin-top: calc(var(--space) * 4);
+}
+
+/* Faixa horizontal de secoes: cada aba e uma linha clicavel, com estado
+   distinguido por fundo/peso, nao so cor de texto. */
+.settings-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  padding: calc(var(--space)) 0 0;
+}
+
+.settings-nav-item {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space) * 1.5);
+  padding: calc(var(--space) * 1.5) calc(var(--space) * 2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--color-muted);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 400;
+  white-space: nowrap;
+  position: relative;
+  z-index: 1;
+}
+
+.settings-nav-item:hover {
+  color: var(--color-text);
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+}
+
+.settings-nav-item--on {
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent) 35%, transparent);
+  color: var(--color-accent);
+  font-weight: 650;
+}
+
+.settings-nav-item svg {
+  opacity: 0.9;
+  flex: none;
+}
+
+.settings-nav-item--on svg {
+  opacity: 1;
+}
+
+/* ---------- acordeao: uma linha por secao, a ativa abre embaixo ---------- */
+
+/* Linha das secoes. No estreito cada uma ocupa a largura toda, empilhada. */
+.settings-sections {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* Cada secao e uma linha com nome, resumo, pill de estado e chevron. O
+   conteudo aberto aparece logo abaixo da propria linha, em largura total. */
+.section-row {
+  border-bottom: 1px solid var(--color-border);
+  /* A barra pegajosa pode ocupar duas linhas no estreito; 140px deixam a
+     secao inteira abaixo dela com folga nos dois breakpoints. */
+  scroll-margin-top: calc(var(--space) * 35);
+}
+
+.section-row:last-child {
+  border-bottom: none;
+}
+
+.section-toggle {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 2);
+  width: 100%;
+  padding: calc(var(--space) * 2.5) calc(var(--space) * 1.5);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-muted);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.section-toggle:hover {
+  background: color-mix(in srgb, var(--color-accent) 6%, transparent);
+}
+
+.section-toggle:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+.section-row--open > .section-toggle {
+  color: var(--color-text);
+}
+
+.section-label {
+  flex: none;
+  width: 130px;
+  font-weight: 650;
+  color: var(--color-text);
+}
+
+.section-row--open .section-label {
+  color: var(--color-accent);
+}
+
+.section-summary {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.state-pill {
+  flex: none;
+  font-size: 11px;
+  font-weight: 650;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-muted);
+  white-space: nowrap;
+}
+
+.state-pill--ok {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 40%, transparent);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+}
+
+.state-pill--warn {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 40%, transparent);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
+
+.chevron {
+  flex: none;
+  color: var(--color-muted);
+  transition: transform 0.15s ease;
+}
+
+.chevron--open {
+  transform: rotate(90deg);
+}
+
+.section-content {
+  padding: 0 calc(var(--space) * 1.5) calc(var(--space) * 3);
+}
+
+/* No desktop a secao ativa e a coluna larga e as recolhidas viram colunas
+   estreitas ao lado dela, preenchendo a largura util. O gatilho e a largura
+   da pagina (container), nao a da janela: com a barra lateral aberta, uma
+   janela de 1000px ainda nao comporta as quatro colunas. */
+@container settings (min-width: 900px) {
+  .settings-page {
+    max-width: 934px;
+  }
+
+  .settings-sections {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .section-row {
+    flex: 0 0 148px;
+    min-width: 0;
+    border-bottom: none;
+  }
+
+  /* A secao ativa usa a largura toda; as recolhidas viram uma faixa de cartas
+     na linha seguinte, em vez de espremer o conteudo numa coluna estreita. */
+  .section-row--open {
+    order: -1;
+    flex: 1 0 100%;
+    max-width: none;
+  }
+
+  /* Inativa: nome e estado empilhados, sem controle nenhum. Fica presa logo
+     abaixo da barra para nao sumir ao rolar a secao ativa. */
+  .section-row:not(.section-row--open) {
+    position: static;
+    min-height: 108px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-surface);
+  }
+
+  .section-row:not(.section-row--open):hover {
+    border-color: color-mix(in srgb, var(--color-accent) 35%, var(--color-border));
+  }
+
+  .section-row:not(.section-row--open) > .section-toggle {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    padding: calc(var(--space) * 2.5) calc(var(--space) * 3);
+  }
+
+  .section-row:not(.section-row--open) .section-label {
+    width: auto;
+  }
+
+  .section-row:not(.section-row--open) .section-summary {
+    display: block;
+    overflow: visible;
+    white-space: normal;
+    overflow-wrap: break-word;
+    line-height: 1.35;
+  }
+
+  .section-row:not(.section-row--open) .state-pill {
+    margin-top: calc(var(--space) * 1.5);
+  }
+
+  .section-row:not(.section-row--open) .chevron {
+    display: none;
+  }
+}
+
+.section-block {
+  padding-top: calc(var(--space) * 3);
+  border-top: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
+}
+
+.section-block:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.section-block + .section-block {
+  margin-top: calc(var(--space) * 3);
+}
+
+/* Provedores em 2 colunas dentro da largura estreita. */
+.settings-page .providers {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.settings-page .providers--2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.toggle-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.toggle-label {
+  font-size: 12px;
+  color: var(--color-muted);
+}
+
+/* Cartoes de provedor */
+.providers {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+}
+
+.pv {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  border-radius: 8px;
+  padding: 7px 8px;
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.pv:hover {
+  border-color: var(--color-accent);
+}
+
+.pv--on {
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 15%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
+
+.pv--disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.pv-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  margin: 0;
+}
+
+.ico {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  background: var(--color-surface-2);
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  font-weight: 750;
+  color: var(--color-accent);
+  flex: none;
+  letter-spacing: -0.02em;
+}
+
+.txt {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+}
+
+.nm {
+  font-size: 13px;
+  font-weight: 650;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* Linhas de modelo */
+.listhead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.meta {
+  font-size: 11px;
+  color: var(--color-muted);
+}
+
+/* Erro acionavel da busca de modelos. */
+.error-banner {
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 35%, transparent);
+  border-radius: 6px;
+  padding: 4px 6px;
+  margin-top: 4px;
+}
+
+.refresh {
+  margin-left: auto;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  border-radius: 5px;
+  padding: 2px 6px;
+  font-size: 11px;
+  color: var(--color-muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.refresh:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.rows {
+  border-top: 1px solid var(--color-border);
+  margin-top: 5px;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 5px;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border) 40%, transparent);
+  min-width: 0;
+}
+
+/* Conexao do MCP: um formato por vez, com o snippet em largura total. */
+.mcp-settings {
+  max-width: none;
+}
+
+.mcp-connection {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: calc(var(--space) * 5);
+}
+
+.mcp-connection-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--space) * 3);
+  flex-wrap: wrap;
+}
+
+.mcp-connection-label {
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--color-text);
+}
+
+.mcp-snippet {
+  margin: 0;
+  padding: calc(var(--space) * 2) calc(var(--space) * 3);
+  max-height: 320px;
+  overflow: auto;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.mcp-projects-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: calc(var(--space) * 2);
+}
+
+.mcp-projects {
+  display: flex;
+  flex-direction: column;
+}
+
+.mcp-project {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 3);
+  padding: calc(var(--space) * 2.5) 0;
+  border-top: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
+}
+
+.mcp-project-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.mcp-project .segmented {
+  flex: none;
+}
+
+
+
+/* Uma linha por projeto na secao de resumos MCP. */
+.summary-detail-row {
+  justify-content: space-between;
+}
+
+.summary-detail-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.summary-detail-row .segmented {
+  flex: none;
+}
+
+/* Nome curto e previsivel: o medidor e a adequacao ficam ao lado, nao na
+   outra ponta da tela. */
+.row > .ram-track,
+.row > .error {
+  flex: 0 0 100%;
+  max-width: none;
+}
+
+.row--selected {
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+  border-bottom-color: transparent;
+  border-radius: 6px;
+  margin-top: 2px;
+}
+
+.radio {
+  width: 13px;
+  height: 13px;
+  border: 1.5px solid var(--color-border);
+  border-radius: 50%;
+  flex: none;
+  background: transparent;
+  appearance: none;
+  cursor: pointer;
+  position: relative;
+}
+
+.radio:checked {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+}
+
+.radio:checked::before {
+  content: "";
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--color-bg);
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.row--selected .radio {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+}
+
+.row--selected .radio::before {
+  background: var(--color-bg);
+}
+
+.radio:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.mname {
+  min-width: 0;
+  /* Sem crescer: o medidor e a adequacao comecam logo depois do nome, e a
+     sobra da linha fica no fim, nunca entre os dois. */
+  flex: 0 1 auto;
+  max-width: 240px;
+}
+
+.n {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.n-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.s {
+  font-size: 11px;
+  color: var(--color-muted);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.reco {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  border-radius: 3px;
+  padding: 1px 4px;
+  flex: none;
+}
+
+.meter {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  flex: none;
+}
+
+.meter i {
+  width: 3px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--color-border) 50%, transparent);
+  display: block;
+}
+
+.meter i.f {
+  background: var(--color-accent);
+}
+
+.meter i:nth-child(1) { height: 5px; }
+.meter i:nth-child(2) { height: 8px; }
+.meter i:nth-child(3) { height: 11px; }
+
+.qual {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--color-accent);
+  white-space: nowrap;
+  flex: none;
+}
+
+.settings-page .chip {
+  font-size: 10px;
+  color: var(--color-muted);
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  padding: 1px 4px;
+  flex: none;
+  background: var(--color-bg);
+  white-space: nowrap;
+}
+
+.settings-page .chip.warn {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 40%, transparent);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
+
+.more {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--color-accent);
+  font-weight: 650;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+
+.more:hover {
+  text-decoration: underline;
+}
+
+.caption {
+  font-size: 11px;
+  color: var(--color-muted);
+  margin-top: 6px;
+}
+
+/* Passos numerados */
+.step {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 7px;
+}
+
+.num {
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  color: var(--color-bg);
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  flex: none;
+}
+
+.t {
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.step-note {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--color-muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+/* Campos: so existem dentro das configuracoes; escopados para nao vazar. */
+.settings-page .fields {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.settings-page .field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: calc(var(--space) * 2);
+  align-items: start;
+  padding: calc(var(--space) * 2.5) 0;
+  border-top: 1px solid var(--color-border);
+  text-align: left;
+}
+
+.settings-page .field:first-child {
+  border-top: none;
+}
+
+.settings-page .field-label {
+  color: var(--color-muted);
+  font-size: 13px;
+  font-weight: 600;
+  padding-top: 0;
+  text-align: left;
+}
+
+.settings-page .field-control {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 2);
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.settings-page .field input[type="text"],
+.settings-page .field input[type="password"],
+.settings-page .field input[type="number"],
+.settings-page .field select {
+  width: 100%;
+  max-width: 320px;
+  padding: calc(var(--space) * 2) calc(var(--space) * 3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  text-align: left;
+}
+
+.settings-page .field input[type="number"] { max-width: 130px; }
+
+.settings-page .field-hint {
+  grid-column: 1 / -1;
+  color: var(--color-muted);
+  font-size: 12px;
+  text-align: left;
+}
+
+.settings-page .field-full { grid-column: 1 / -1; }
+
+/* Chave: campo e atalhos do console logo abaixo do provedor. */
+.settings-page .key-field {
+  padding-top: 0;
+  border-top: none;
+}
+
+/* Runtime local: separado por uma linha, sem virar cartao dentro do cartao. */
+.runtime-box {
+  margin-top: calc(var(--space) * 4);
+  padding-top: calc(var(--space) * 4);
+  border-top: 1px solid var(--color-border);
+}
+
+.runtime-box .card-head {
+  margin-bottom: calc(var(--space) * 2);
+}
+
+/* Toggle custom (interruptor) */
+.settings-page .toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-muted);
+  cursor: pointer;
+  position: relative;
+}
+
+.settings-page .toggle input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  margin: 0;
+}
+
+.settings-page .sw {
+  width: 28px;
+  height: 16px;
+  border-radius: 99px;
+  background: var(--color-border);
+  position: relative;
+  flex: none;
+}
+
+.settings-page .toggle--on .sw {
+  background: var(--ok);
+}
+
+.settings-page .sw::after {
+  content: "";
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--color-bg);
+  top: 2px;
+  left: 2px;
+  transition: transform 0.15s;
+}
+
+.settings-page .toggle--on .sw::after {
+  left: 14px;
+}
+
+/* Secoes colapsadas (avancado) */
+.collapsible-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--space) * 2);
+  padding: calc(var(--space) * 4);
+  background: transparent;
+  border: none;
+  text-align: left;
+  width: 100%;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.collapsible-head:focus {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+.collapsible-head h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.collapsible-head .hint {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.collapsive-icon {
+  font-size: 11px;
+  color: var(--color-muted);
+  flex-shrink: 0;
+}
+
+.collapsible-body {
+  padding: calc(var(--space) * 4);
+  border-top: 1px solid var(--color-border);
+}
+
+/* Botoes das configuracoes: discretos ao lado dos campos. */
+.settings-page .button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--space));
+  padding: calc(var(--space) * 1.75) calc(var(--space) * 3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.settings-page .button:hover { border-color: var(--color-accent); color: var(--color-accent); }
+
+.settings-page .button--ghost {
+  background: transparent;
+  color: var(--color-text);
+  border-color: var(--color-border);
+}
+
+.settings-page .button--ghost:hover { border-color: var(--color-muted); color: var(--color-text); }
+
+.settings-page .button--small { padding: calc(var(--space)) calc(var(--space) * 2); font-size: 11.5px; }
+
+.settings-page .button:disabled { opacity: 0.5; cursor: default; }
+
+/* Skeleton de busca */
+.settings-page .skeleton-row {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: calc(var(--space) * 2);
+  padding: calc(var(--space) * 2) 0;
+  align-items: center;
+}
+
+.settings-page .skeleton-cell {
+  border-radius: var(--radius-sm);
+  background: linear-gradient(90deg, var(--color-surface), var(--color-bg), var(--color-surface));
+  background-size: 200% 100%;
+  animation: shimmer 1.2s ease-in-out infinite;
+}
+
+.settings-page .skeleton-title { width: 55%; height: 14px; }
+.settings-page .skeleton-line { width: 40%; height: 10px; }
+
+@keyframes shimmer {
+  to { background-position: -200% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-page .skeleton-cell { animation: none; }
+}
+
+/* ---------- narrow screens ---------- */
+@media (max-width: 600px) {
+  .settings-page .settings-header {
+    gap: calc(var(--space) * 2);
+  }
+
+  .settings-page .settings-nav {
+    order: 3;
+    flex-basis: 100%;
+    flex-direction: row;
+    overflow-x: auto;
+  }
+
+  .settings-page .settings-nav-item { white-space: nowrap; }
+  .section-label { width: auto; }
+  .section-toggle { flex-wrap: wrap; }
+  .settings-page .providers,
+  .settings-page .providers--2 { grid-template-columns: 1fr; }
+  .row { flex-direction: column; align-items: flex-start; gap: 4px; }
+  .row .mname { flex: none; width: 100%; max-width: 100%; }
+  .settings-page .qual,
+  .settings-page .chip { width: auto; min-width: 0; }
+}
+
+/* seletor de emoji */
+.pj-pop {
+  position: fixed;
+  z-index: 60;
+  width: 296px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px;
+}
+
+.pj-pop input {
+  width: 100%;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--paper-2);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 0 9px;
+}
+
+.pj-pop input::placeholder {
+  color: var(--ink-soft);
+}
+
+.pj-pop .pj-pg {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 2px;
+  margin-top: 8px;
+  max-height: 216px;
+  overflow: auto;
+}
+
+.pj-pop .pj-pg button {
+  height: 32px;
+  font-size: 17px;
+  border-radius: var(--radius-sm);
+  display: grid;
+  place-items: center;
+}
+
+.pj-pop .pj-pg button:hover {
+  background: var(--paper-2);
+}
+
+.pj-pop .pj-pg button[aria-pressed="true"] {
+  background: var(--accent-soft);
+}
+
+/* ---------- calendario ---------- */
+
+/* A view inteira vira o mes: a grade ocupa a coluna da area de trabalho e o
+   painel do dia fica ao lado, como o calendario do Trilium. */
+.page--calendar {
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  min-width: 0;
+}
+
+.calendar-page {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.calendar-error {
+  padding: calc(var(--space) * 3) calc(var(--space) * 4) 0;
+}
+
+.calendar-loading {
+  padding: calc(var(--space) * 6);
+}
+
+.calendar {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 372px;
+  min-height: 0;
+}
+
+.calendar-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.calendar-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 2.5);
+  padding: calc(var(--space) * 3.5) calc(var(--space) * 4.5) calc(var(--space) * 3);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.calendar-month {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 21px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
+
+.calendar-month span {
+  color: var(--color-muted);
+  font-weight: 500;
+}
+
+.calendar-count {
+  font-family: var(--dy-font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  color: var(--color-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.calendar-nav {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.calendar-nav-button {
+  width: var(--dy-control-md);
+  height: var(--dy-control-md);
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  color: var(--color-muted);
+  transition: background 120ms, color 120ms;
+}
+
+.calendar-nav-button:first-child svg {
+  transform: rotate(90deg);
+}
+
+.calendar-nav-button:nth-child(2) svg {
+  transform: rotate(-90deg);
+}
+
+.calendar-nav-button:hover {
+  background: var(--color-surface-2);
+  color: var(--color-text);
+}
+
+.calendar-today {
+  height: var(--dy-control-md);
+  padding: 0 var(--dy-control-pad-md);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--color-muted);
+  transition: background 120ms, color 120ms;
+}
+
+.calendar-today:hover {
+  background: var(--color-surface-2);
+  color: var(--color-text);
+}
+
+.calendar-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  border-bottom: 1px solid var(--color-border);
+}
+
+.calendar-weekdays span {
+  padding: calc(var(--space) * 1.8) calc(var(--space) * 2.2) calc(var(--space) * 1.5);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  font-weight: 500;
+}
+
+.calendar-weekdays span + span {
+  border-left: 1px solid color-mix(in srgb, var(--color-border) 55%, transparent);
+}
+
+.calendar-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-auto-rows: minmax(96px, 1fr);
+  gap: 1px;
+  background: color-mix(in srgb, var(--color-border) 72%, transparent);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.calendar-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  min-width: 0;
+  padding: calc(var(--space) * 1.2) calc(var(--space) * 1.8) calc(var(--space) * 1.5);
+  background: var(--color-bg);
+  text-align: left;
+  overflow: hidden;
+  transition: background 120ms;
+}
+
+.calendar-cell:hover {
+  background: var(--color-surface);
+}
+
+.calendar-cell--weekend {
+  background: color-mix(in srgb, var(--color-surface) 76%, var(--color-bg));
+}
+
+.calendar-cell--today {
+  background: color-mix(in srgb, var(--color-accent-soft) 62%, var(--color-bg));
+}
+
+.calendar-cell--today:hover {
+  background: color-mix(in srgb, var(--color-accent-soft) 82%, var(--color-bg));
+}
+
+.calendar-cell--selected {
+  box-shadow: inset 0 0 0 var(--dy-state-bar) var(--color-accent);
+}
+
+.calendar-cell--out {
+  color: color-mix(in srgb, var(--color-muted) 40%, transparent);
+  background: var(--color-bg);
+}
+
+.calendar-daynum {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 20px;
+  font-family: var(--dy-font-mono);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-muted);
+  flex: none;
+}
+
+.calendar-cell--today .calendar-daynum {
+  color: var(--color-text);
+  font-weight: 500;
+}
+
+.calendar-today-dot {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-left: -3px;
+  border-radius: 50%;
+  background: var(--color-text);
+  color: var(--color-bg);
+  font-family: var(--dy-font-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.calendar-daycount {
+  font-size: 10px;
+  color: color-mix(in srgb, var(--color-muted) 80%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+
+.calendar-line {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--color-text);
+}
+
+.calendar-line i {
+  flex: none;
+  width: 2px;
+  height: 9px;
+  border-radius: 1px;
+  transform: translateY(-1px);
+}
+
+.calendar-line span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calendar-more {
+  font-size: 10px;
+  color: var(--color-muted);
+  padding-left: 7px;
+}
+
+.calendar-dots {
+  display: none;
+}
+
+.calendar-dots-more {
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  background: none;
+  font-size: 8.5px;
+  color: var(--color-muted);
+  line-height: 4px;
+}
+
+.calendar-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--color-border);
+}
+
+.calendar-panel-head {
+  display: flex;
+  align-items: flex-end;
+  gap: calc(var(--space) * 2.5);
+  padding: calc(var(--space) * 3.8) calc(var(--space) * 4.5) calc(var(--space) * 3.2);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.calendar-panel-weekday {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  font-weight: 500;
+}
+
+.calendar-panel-date {
+  margin-top: 2px;
+  font-size: 21px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+
+.calendar-panel-count {
+  margin-left: auto;
+  padding-bottom: 3px;
+  font-family: var(--dy-font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  color: var(--color-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.calendar-panel-close {
+  display: none;
+}
+
+.calendar-panel-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.calendar-notes {
+  padding: calc(var(--space) * 2) calc(var(--space) * 2.5) calc(var(--space) * 3);
+}
+
+.calendar-empty {
+  margin: 0;
+  padding: calc(var(--space) * 6) 0;
+  text-align: center;
+  color: color-mix(in srgb, var(--color-muted) 70%, transparent);
+  font-size: 13px;
+}
+
+.calendar-note {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  border-radius: var(--radius-sm);
+  transition: background 120ms;
+}
+
+.calendar-note:hover {
+  background: var(--color-surface-2);
+}
+
+.calendar-note-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 6px;
+  padding: calc(var(--space) * 1.8) calc(var(--space) * 1) calc(var(--space) * 1.8) calc(var(--space) * 2);
+  text-align: left;
+  align-items: start;
+}
+
+.calendar-note-time {
+  padding-top: 2px;
+  font-family: var(--dy-font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  color: var(--color-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.calendar-note-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.calendar-note-title {
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--color-text);
+}
+
+.calendar-note-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--color-muted);
+}
+
+.calendar-note-meta i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.calendar-note-meta svg {
+  opacity: 0.6;
+}
+
+.calendar-note-open {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 28px;
+  margin-right: 2px;
+  border-radius: var(--radius-sm);
+  color: var(--color-muted);
+  opacity: 0.45;
+  transition: opacity 120ms, background 120ms, color 120ms;
+}
+
+.calendar-note:hover .calendar-note-open {
+  opacity: 1;
+}
+
+.calendar-note-open:hover {
+  background: var(--color-surface-2);
+  color: var(--color-text);
+}
+
+.calendar-note-open:focus-visible {
+  opacity: 1;
+}
+
+.calendar-compose {
+  padding: 0 calc(var(--space) * 3) calc(var(--space) * 3);
+}
+
+.calendar-compose textarea {
+  width: 100%;
+  min-height: 34px;
+  resize: none;
+  padding: calc(var(--space) * 2) calc(var(--space) * 2.2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+.calendar-compose textarea::placeholder {
+  color: var(--color-muted);
+}
+
+.calendar-compose textarea:focus {
+  border-color: var(--color-accent);
+}
+
+.calendar-compose-cta {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 2);
+  width: calc(100% - var(--space) * 6);
+  min-height: var(--dy-row-dense);
+  margin: 0 calc(var(--space) * 3);
+  padding: 0 calc(var(--space) * 2);
+  border-top: 1px dashed var(--color-border);
+  color: var(--color-muted);
+  font-size: 13px;
+  transition: color 120ms;
+}
+
+.calendar-compose-cta:hover {
+  color: var(--color-text);
+}
+
+.calendar-compose-cta svg {
+  opacity: 0.7;
+}
+
+.calendar-years {
+  padding: calc(var(--space) * 3) calc(var(--space) * 4.5) calc(var(--space) * 5);
+  border-top: 1px solid var(--color-border);
+}
+
+.calendar-years h2 {
+  margin: 0 0 var(--space);
+  font-family: var(--font-sans);
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  font-weight: 500;
+}
+
+.calendar-timeline {
+  position: relative;
+  padding-left: 15px;
+}
+
+.calendar-timeline::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 8px;
+  bottom: 10px;
+  width: 1px;
+  background: color-mix(in srgb, var(--color-muted) 38%, transparent);
+}
+
+.calendar-timeline-year {
+  position: relative;
+}
+
+.calendar-timeline-label {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: calc(var(--space) * 2.2) 0 var(--space);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.calendar-timeline-label::before {
+  content: "";
+  position: absolute;
+  left: -16px;
+  top: calc(var(--space) * 2.2 + 4px);
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-bg);
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--color-muted) 75%, transparent);
+}
+
+.calendar-timeline-count {
+  margin-left: auto;
+  font-size: 10.5px;
+  font-weight: 400;
+  color: var(--color-muted);
+}
+
+.calendar-timeline-note {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  width: 100%;
+  padding: 3px 0;
+  text-align: left;
+  font-size: 11.5px;
+  color: var(--color-muted);
+  transition: color 120ms;
+}
+
+.calendar-timeline-note:hover {
+  color: var(--color-text);
+}
+
+.calendar-timeline-note::before {
+  content: "";
+  position: absolute;
+  left: -14.5px;
+  top: 8px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--color-muted);
+}
+
+.calendar-timeline-time {
+  flex: none;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+
+.calendar-timeline-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calendar-backdrop {
+  display: none;
+}
+
+@media (max-width: 1080px) {
+  .calendar {
+    grid-template-columns: minmax(0, 1fr) 324px;
+  }
+}
+
+@media (max-width: 900px) {
+  .calendar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .calendar-cell {
+    align-items: center;
+    justify-content: center;
+    padding: 3px;
+    gap: 0;
+  }
+
+  .calendar-daynum {
+    justify-content: center;
+    width: 100%;
+    height: 24px;
+  }
+
+  .calendar-today-dot {
+    margin: 0;
+  }
+
+  .calendar-daycount,
+  .calendar-line,
+  .calendar-more {
+    display: none;
+  }
+
+  .calendar-dots {
+    display: flex;
+    gap: 2.5px;
+    justify-content: center;
+    flex-wrap: wrap;
+    padding: 0 2px;
+  }
+
+  .calendar-dots i {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    opacity: 0.85;
+  }
+
+  .calendar-grid {
+    grid-auto-rows: minmax(64px, 1fr);
+  }
+
+  .calendar-panel {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 40;
+    height: min(66vh, 520px);
+    border-left: 0;
+    border-top: 1px solid var(--color-border);
+    border-radius: var(--dy-radius-surface) var(--dy-radius-surface) 0 0;
+    background: var(--dy-surface-raised);
+    box-shadow: none;
+    transform: translateY(102%);
+    transition: transform var(--dy-motion-base) var(--dy-motion-ease);
+  }
+
+  .calendar--sheet .calendar-panel {
+    transform: translateY(0);
+  }
+
+  .calendar-panel-head {
+    position: relative;
+    padding: calc(var(--space) * 3.4) calc(var(--space) * 4) calc(var(--space) * 2.6);
+  }
+
+  .calendar-panel-head::before {
+    content: "";
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    width: 26px;
+    height: 2px;
+    margin-left: -13px;
+    border-radius: 1px;
+    background: var(--color-border);
+  }
+
+  .calendar-panel-close {
+    display: grid;
+    place-items: center;
+    width: var(--dy-control-md);
+    height: var(--dy-control-md);
+    border-radius: var(--radius-sm);
+    color: var(--color-muted);
+  }
+
+  .calendar-panel-count {
+    margin-left: 0;
+    padding-bottom: 3px;
+  }
+
+  .calendar-panel-close {
+    margin-left: auto;
+  }
+
+  .calendar-note-open {
+    opacity: 0.55;
+    margin-right: 0;
+  }
+
+  .calendar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 35;
+    border: 0;
+    background: var(--dy-overlay);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--dy-motion-base) var(--dy-motion-ease);
+  }
+
+  .calendar-backdrop--on {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .calendar-panel,
+  .calendar-backdrop,
+  .calendar-cell,
+  .calendar-note,
+  .calendar-nav-button,
+  .calendar-today {
+    transition: none;
+  }
+}
+
+/* ---------- abrindo o cofre (VaultBoot) ----------
+   Desenho aprovado em web/prototypes/vault-boot.html, na paleta desta folha:
+   o mesmo circulo de 12 px do carregamento de nota (acento e trilho iguais aos
+   do .spinner), a linha de 14 px, o detalhe da etapa em 13 px e o medidor de
+   2 px so quando ha contagem. Sem card, sombra ou emoji. */
+
+/* A primeira tela continua montada (e guarda a linha de erro do Drive)
+   enquanto a tela de carregamento ocupa o lugar dela. */
+.vault-boot-underlay {
+  height: 100%;
+}
+
+.vault-boot-page {
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  padding-block: calc(var(--space) * 10);
+  padding-inline: clamp(calc(var(--space) * 5), 5vw, calc(var(--space) * 16));
+}
+
+/* A coluna e a mesma do texto: quando a nota entra, o texto comeca onde o
+   circulo estava. */
+.vault-boot-column {
+  width: 100%;
+  max-width: var(--note-measure, 760px);
+  margin-inline: auto;
+}
+
+.vault-boot {
+  width: min(320px, 100%);
+  display: flex;
+  flex-direction: column;
+}
+
+/* "pronto" fica na tela por 0,9 s e o bloco sai em 0,3 s: o App desmonta
+   depois de ~1,2 s, entao a saida cabe no tempo dele. */
+.vault-boot[data-done="true"] {
+  animation: vault-boot-out 0.3s ease 0.9s forwards;
+}
+
+@keyframes vault-boot-out {
+  to {
+    opacity: 0;
+  }
+}
+
+.vault-boot-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 2);
+  /* Reserva a altura da linha: no "pronto" o texto sai e o circulo nao pula. */
+  min-height: 18px;
+  margin: 0;
+  color: var(--color-text);
+  font-size: 14px;
+  line-height: 1.3;
+}
+
+/* Mesmo circulo do .spinner, inclusive o trilho um degrau acima da borda. */
+.vault-boot-glyph {
+  position: relative;
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border: 2px solid color-mix(in srgb, var(--color-muted) 42%, transparent);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+/* Fim: disco cheio com o traco, no mesmo 12 px. */
+.vault-boot-glyph.is-done {
+  animation: none;
+  border: 0;
+  background: var(--color-accent);
+}
+
+.vault-boot-glyph.is-done::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 2.5px;
+  width: 3px;
+  height: 6px;
+  border-right: 1.5px solid var(--color-bg);
+  border-bottom: 1.5px solid var(--color-bg);
+  transform: rotate(42deg);
+}
+
+.vault-boot-detail {
+  margin: calc(var(--space) * 3) 0 0;
+  min-height: 17px;
+  color: var(--color-muted);
+  font-size: 13px;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: break-word;
+}
+
+.vault-boot-detail b {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+/* A linha da etapa entra sem quicar: so um aceno de opacidade. */
+.vault-boot-fresh {
+  display: inline;
+  animation: vault-detail-in 0.22s ease-out;
+}
+
+@keyframes vault-detail-in {
+  from {
+    opacity: 0.3;
+  }
+}
+
+.vault-boot-meter {
+  margin-top: calc(var(--space) * 2);
+  height: 2px;
+  background: var(--color-border);
+  overflow: hidden;
+}
+
+/* Sem contagem o medidor sai da vista, mas o espaco fica. */
+.vault-boot-meter[data-idle="true"] {
+  visibility: hidden;
+}
+
+.vault-boot-meter span {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: var(--color-accent);
+  transition: width 0.12s linear;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vault-boot,
+  .vault-boot-glyph,
+  .vault-boot-fresh {
+    animation: none;
+  }
+
+  .vault-boot-meter span {
+    transition: none;
+  }
+}
+
+/* ---------- reconectar o Drive (linha acima da area das notas) ----------
+   Mesma peca do `.cfg-item` das Configuracoes: marca, nome, o numero que
+   importa e um botao. A area das notas e uma coluna; a linha fica no topo dela
+   para a pessoa ver que a sessao do Google morreu sem sair da nota. */
+
+.notes-shell {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+/* O editor rola por dentro; a linha fica parada acima dele. */
+.notes-shell > .editor-pane {
+  height: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.drive-reconnect {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--dy-space-4);
+  padding: var(--dy-space-6) calc(var(--space) * 3) var(--dy-space-8);
+  border-bottom: 1px solid var(--color-border);
+  font-family: var(--dy-font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.32;
+  color: var(--dy-text);
+}
+
+.drive-reconnect :focus-visible {
+  outline: var(--dy-focus-width) solid var(--dy-primary);
+  outline-offset: var(--dy-focus-offset);
+}
+
+/* A linha herda a peca das Configuracoes; a borda e a do bloco, nao a da
+   ultima linha da lista. */
+.drive-reconnect .cfg-item {
+  padding: 0;
+  border-bottom: 0;
+}
+
+.drive-reconnect .cfg-grow {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drive-reconnect-num {
+  white-space: nowrap;
+}
+
+.drive-reconnect-error {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--dy-danger);
+}
+
+/* O `VaultBoot` aprovado, sem a pagina: circulo, linha da etapa e medidor
+   cabem abaixo da linha do Drive durante o trabalho. Recuado da marca para
+   alinhar com o nome, como uma continuacao da mesma linha. */
+.drive-reconnect-boot {
+  padding-left: calc(var(--dy-mark-size) + var(--dy-space-8));
+}
+
+.drive-reconnect-boot .vault-boot-page {
+  min-height: 0;
+  padding: 0;
+  display: block;
+}
+
+.drive-reconnect-boot .vault-boot-column {
+  max-width: none;
+  margin: 0;
+}
+
+.drive-reconnect-boot .vault-boot {
+  width: 100%;
+}
+
+.drive-reconnect-boot .vault-boot-head {
+  min-height: 0;
+  font-size: 12.5px;
+}
+
+.drive-reconnect-boot .vault-boot-detail {
+  margin-top: var(--dy-space-4);
+  font-size: 12.5px;
+}
+
+.drive-reconnect-boot .vault-boot-meter {
+  margin-top: var(--dy-space-6);
+}
+
+/* ---------- importacao do servidor (faixa abaixo da linha do Drive) ----------
+   A tarefa roda fora do dialogo; esta linha e o unico lugar que conta o
+   progresso sem prender a tela. Mesma peca das Configuracoes, como a linha do
+   Drive: marca, o que esta acontecendo e o numero que importa. O medidor e o do
+   VaultBoot (2 px, `--color-accent`), so que rente a linha. */
+
+.import-job-strip {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--dy-space-4);
+  padding: var(--dy-space-6) calc(var(--space) * 3) var(--dy-space-8);
+  border-bottom: 1px solid var(--color-border);
+  font-family: var(--dy-font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.32;
+  color: var(--dy-text);
+}
+
+.import-job-strip :focus-visible {
+  outline: var(--dy-focus-width) solid var(--dy-primary);
+  outline-offset: var(--dy-focus-offset);
+}
+
+.import-job-strip .cfg-item {
+  padding: 0;
+  border-bottom: 0;
+}
+
+.import-job-strip .cfg-grow {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.import-job-num {
+  white-space: nowrap;
+}
+
+.import-job-error {
+  color: var(--dy-danger);
+}
+
+/* Enquanto trabalha a marca gira como o circulo do carregamento da nota; no fim
+   ela fica preenchida e, se parou, vira a marca de aviso das Configuracoes. */
+.import-job-mark[data-state="run"] {
+  border-color: var(--color-accent);
+  border-top-color: transparent;
+  animation: import-job-spin 0.9s linear infinite;
+}
+
+@keyframes import-job-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* O medidor acompanha o texto, como a contagem do VaultBoot na linha do Drive. */
+.import-job-strip .import-job-meter {
+  margin-top: 0;
+  margin-left: calc(var(--dy-mark-size) + var(--dy-space-8));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .import-job-mark[data-state="run"] {
+    animation: none;
+  }
+}
+
+/* A faixa da importacao fica acima de qualquer tela: o conteudo continua
+   ocupando o resto do espaco, sem a faixa empurrar o layout quando some. */
+.workspace-stack {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Ponte ate a lista migrar: o "+" da coluna usa o sistema, nao o azul antigo. */
+.list-head .icon-button.list-new,
+.list-head .icon-button.list-new:hover {
+  background: var(--dy-primary);
+  color: var(--dy-surface);
+  border-radius: var(--dy-radius-control);
+}
+
+/* ---------- conta do Google ---------- */
+/* Avatar 26, raio de superficie, marca de estado de 8: cheio e sessao viva,
+   anel e sessao vencida, tracejado e sem conta. */
+.account-avatar-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--dy-control-md);
+  height: var(--dy-control-md);
+  flex: none;
+  padding: 0;
+  border: 1px solid var(--dy-line);
+  border-radius: var(--dy-radius-surface);
+  background: var(--dy-surface-raised);
+  color: var(--dy-text-muted);
+  overflow: visible;
+}
+.account-avatar-button:hover {
+  border-color: var(--dy-text-muted);
+  color: var(--dy-text);
+}
+.account-avatar-button:focus-visible {
+  outline: var(--dy-focus-width) solid var(--dy-primary);
+  outline-offset: var(--dy-focus-offset);
+}
+.account-avatar-button[aria-expanded="true"] {
+  border-color: var(--dy-primary);
+  color: var(--dy-text);
+}
+.account-avatar-img {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+}
+.account-avatar-initials {
+  line-height: 1;
+}
+.account-avatar-glyph {
+  display: grid;
+  place-items: center;
+}
+.account-state-mark {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  width: var(--dy-mark-size);
+  height: var(--dy-mark-size);
+  border-radius: 50%;
+  background: var(--dy-surface);
+  border: var(--dy-mark-stroke) solid var(--dy-surface);
+}
+.account-state-mark--connected {
+  background: var(--dy-success);
+  border-color: var(--dy-surface);
+}
+.account-state-mark--expired {
+  background: transparent;
+  border-color: var(--dy-warning);
+}
+.account-state-mark--none {
+  background: transparent;
+  border-color: var(--dy-text-muted);
+  border-style: dashed;
+}
+
+/* Marca da linha do Drive: estatica no contexto da linha (com o gap de 6), e
+   nao absoluta como a do avatar — senao ela sobe ate o menu e vira um ponto
+   solto no canto. */
+.account-menu-data-row .account-state-mark {
+  position: static;
+  right: auto;
+  bottom: auto;
+}
+
+/* ---------- menu da conta (ancorado no avatar) ---------- */
+/* Folha ancorada: hairline, sem veu e sem sombra difusa; nasce acima do
+   gatilho, encostada na borda do trilho (left 34) e por cima do conteudo. */
+.account-menu {
+  position: fixed;
+  z-index: var(--dy-layer-sheet);
+  display: flex;
+  flex-direction: column;
+  padding: var(--dy-space-4);
+  background: var(--dy-surface-raised);
+  border: 1px solid var(--dy-line);
+  border-radius: var(--dy-radius-surface);
+  box-shadow: none;
+  filter: none;
+  color: var(--dy-text);
+  font-family: var(--dy-font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.32;
+}
+.account-menu :focus-visible {
+  outline: var(--dy-focus-width) solid var(--dy-primary);
+  outline-offset: var(--dy-focus-offset);
+}
+.account-menu-id {
+  display: flex;
+  align-items: center;
+  gap: var(--dy-space-8);
+  min-width: 0;
+  padding: var(--dy-space-4) var(--dy-space-4) var(--dy-space-6);
+}
+.account-menu-photo {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--dy-line);
+  border-radius: var(--dy-radius-surface);
+  background: var(--dy-surface);
+  color: var(--dy-text-muted);
+  object-fit: cover;
+}
+.account-menu-photo--initials {
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+.account-menu-idtext {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--dy-space-2);
+}
+.account-menu-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.account-menu-mail {
+  color: var(--dy-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.account-menu-sep {
+  flex: none;
+  height: 1px;
+  margin: var(--dy-space-6) 0;
+  background: var(--dy-line);
+}
+.account-menu-data {
+  display: flex;
+  flex-direction: column;
+}
+.account-menu-data-row {
+  display: flex;
+  align-items: center;
+  gap: var(--dy-space-6);
+  min-width: 0;
+  height: var(--dy-row-dense);
+  /* A linha usa toda a largura interna do menu (o respiro de 4 fica no
+     padding), para "1,1 GB · 128 notas" caber inteiro ao lado da marca. */
+  margin: 0 calc(var(--dy-space-4) * -1);
+  padding: 0 var(--dy-space-4);
+}
+.account-menu-label {
+  flex: none;
+  white-space: nowrap;
+}
+.account-menu-val {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--dy-text-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+.account-menu-row {
+  display: flex;
+  align-items: center;
+  gap: var(--dy-space-8);
+  width: 100%;
+  height: var(--dy-row-dense);
+  padding: 0 var(--dy-space-4);
+  border: 0;
+  border-radius: var(--dy-radius-control);
+  background: transparent;
+  color: var(--dy-text);
+  text-align: left;
+  cursor: pointer;
+}
+.account-menu-row .dy-icon {
+  color: var(--dy-text-muted);
+}
+.account-menu-row:hover {
+  background: var(--dy-surface);
+}
+.account-menu-note {
+  margin: 0 0 var(--dy-space-4);
+  padding: 0 var(--dy-space-4);
+  font-size: 13px;
+  line-height: 1.32;
+  color: var(--dy-danger);
+}
+.account-menu-row--danger {
+  color: var(--dy-danger);
+}
+.account-menu-row--danger .account-menu-glyph {
+  color: var(--dy-text-muted);
+}
+.account-menu-glyph {
+  display: inline-flex;
+  flex: none;
+  color: var(--dy-text-muted);
+}
+.account-menu-glyph--end {
+  margin-left: auto;
+}
+.account-menu-footlink {
+  display: flex;
+  align-items: center;
+  gap: var(--dy-space-4);
+  height: var(--dy-row-dense);
+  padding: 0 var(--dy-space-4);
+  border-radius: var(--dy-radius-control);
+  color: var(--dy-text-muted);
+  text-decoration: none;
+}
+.account-menu-footlink:hover {
+  background: var(--dy-surface);
+  color: var(--dy-text);
+}
+
+/* ============================================================
+   Casca do sistema (nov/2026)
+
+   Trilho de 34 sempre visivel + sidebar de 238 + conteudo, com a
+   sidebar recolhivel. O trilho guarda a navegacao global (novo,
+   buscar, importar, telas e conta); a sidebar guarda o caderno e a
+   lista. Em telas de ate 900 o trilho sai de cena e a sidebar vira
+   a gaveta, como antes, com a barra do celular por cima.
+   ============================================================ */
+
+.app {
+  display: grid;
+  grid-template-columns: var(--dy-rail) var(--dy-sidebar) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  height: 100%;
+  overflow: hidden;
+}
+
+.app--collapsed {
+  grid-template-columns: var(--dy-rail) minmax(0, 1fr);
+}
+
+/* ---------- trilho ---------- */
+
+.side-rail {
+  grid-column: 1;
+  position: relative;
+  z-index: var(--dy-layer-rail);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--dy-space-2);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  /* O respiro de 6 ate a borda inferior e do botao da conta (abaixo), para o
+     avatar inteiro caber na altura da janela sem encostar no corte do trilho. */
+  padding: var(--dy-space-4) 0 0;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.side-rail .rail-action,
+.side-rail .foot-item {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--dy-row-dense);
+  height: var(--dy-row-dense);
+  flex: none;
+  padding: 0;
+  gap: 0;
+  border-radius: var(--dy-radius-control);
+  background: transparent;
+  color: var(--color-muted);
+}
+
+.side-rail .rail-action:hover,
+.side-rail .foot-item:hover {
+  background: var(--color-surface-2);
+  color: var(--color-text);
+}
+
+.side-rail .rail-action--new,
+.side-rail .rail-action--new:hover {
+  background: var(--color-accent);
+  color: var(--color-bg);
+}
+
+.side-rail .rail-action--new {
+  margin-bottom: var(--dy-space-2);
+}
+
+.side-rail .rail-action--new:hover {
+  opacity: 0.9;
+}
+
+/* Tela ativa: degrau tonal e barra de 2px na borda de ataque. */
+.side-rail .foot-item--active {
+  background: var(--color-surface-2);
+  color: var(--color-text);
+}
+
+.side-rail .foot-item--active::before {
+  content: "";
+  position: absolute;
+  left: calc(var(--dy-space-4) * -1);
+  top: var(--dy-space-4);
+  bottom: var(--dy-space-4);
+  width: var(--dy-state-bar);
+  background: var(--color-accent);
+}
+
+/* O cofre aberto no trilho usa o mesmo degrau da tela ativa do rodape. */
+.side-rail .rail-action--active {
+  background: var(--color-surface-2);
+  color: var(--color-text);
+}
+
+.side-rail .rail-action--active::before {
+  content: "";
+  position: absolute;
+  left: calc(var(--dy-space-4) * -1);
+  top: var(--dy-space-4);
+  bottom: var(--dy-space-4);
+  width: var(--dy-state-bar);
+  background: var(--color-accent);
+}
+
+/* Ponto de aviso da nuvem: sessao vencida ou envio que falhou. E o unico
+   sinal que sobra na area de notas, sem faixa nem linha ocupando espaco. */
+.rail-dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--color-warn);
+}
+
+.rail-expand svg {
+  transform: rotate(-90deg);
+}
+
+.app:not(.app--collapsed) .rail-expand svg {
+  transform: rotate(90deg);
+}
+
+.rail-foot {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--dy-space-2);
+}
+
+.side-rail .account-avatar-button--rail {
+  margin: var(--dy-space-6) auto var(--dy-space-6);
+}
+
+/* ---------- sidebar ---------- */
+
+.sidebar {
+  grid-column: 2;
+  position: relative;
+  z-index: var(--dy-layer-content);
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  padding: var(--dy-space-12) var(--dy-space-8) var(--dy-space-8);
+  gap: var(--dy-space-8);
+  border-right: 1px solid var(--color-border);
+  background: var(--color-surface);
+  overflow: hidden;
+  box-shadow: none;
+}
+
+/* ---------- conteudo ---------- */
+
+.workspace {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  background: var(--color-bg);
+}
+
+/* ---------- navegador estreito: a gaveta de sempre ---------- */
+
+@media (max-width: 900px) {
+  .app,
+  .app--collapsed {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .side-rail {
+    display: none;
+  }
+
+  .workspace {
+    padding-top: 52px;
+  }
+
+  .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 80;
+    width: min(320px, 88vw);
+    height: 100%;
+    transform: translateX(-100%);
+    transition: transform var(--dy-motion-base) var(--dy-motion-ease);
+    box-shadow: none;
+  }
+
+  .app:not(.app--collapsed) .sidebar {
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar {
+    transition: none;
+  }
+}

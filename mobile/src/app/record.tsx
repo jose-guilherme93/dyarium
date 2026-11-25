@@ -1,11 +1,8 @@
-import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams } from 'expo-router';
 import { back, replace } from '@/services/appNavigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  View,
-} from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { Text } from '@/components/AppText';
 import { Press } from '@/components/Press';
 
@@ -19,18 +16,27 @@ import { clearPendingInsert, takePendingInsert } from '@/services/noteInsert';
 import { audioFileName, deleteSessionFiles, moveAudio, sessionDirUri } from '@/services/files';
 import { useLibrary } from '@/state/LibraryContext';
 import { useRecording, useRecordingLive } from '@/state/RecordingContext';
-import { baseColors, fontSize, spacing } from '@/theme/tokens';
-import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
-import { defineStyles } from '@/theme/themedStyles';
+import {
+  designIcon,
+  designSpace,
+  designState,
+  designType,
+} from '@/theme/design';
+
+import { Icon } from '@/ui/icons';
+import { useDesign } from '@/ui/useDesign';
 
 /**
  * Tela de gravacao em tela cheia, com a waveform animada pelo microfone.
  * Ao parar: se veio da nota (`noteId`), o audio e anexado a ela; se veio da
  * home, vira uma nota nova. Em ambos os casos, volta para a nota.
+ *
+ * A tela mostra, como antes: fechar, rotulo, hora e data de agora, onda ao
+ * vivo, relogio decorrido, dica de estado, erro, pausar/retomar, parar e a
+ * dica "pausar · parar". So a forma mudou para os tokens do sistema.
  */
 export default function RecordScreen() {
-  const styles = useThemedStyles(baseStyles);
-  const { colors } = useTheme();
+  const colors = useDesign();
 
   const { noteId, from } = useLocalSearchParams<{
     noteId?: string;
@@ -64,46 +70,55 @@ export default function RecordScreen() {
       return;
     }
     if (noteId) {
-      // Se a nota sumiu no meio do caminho, o audio nao pode ser perdido: o
-      // anexo falha e a gravacao vira uma nota propria logo abaixo.
-      const movedPath = await moveAudio(finished.id, noteId, audioFileName(finished.id)).catch(
-        (error) => {
-          console.warn('[dyarium] falha ao mover o audio da gravacao', String(error));
-          return null;
-        },
-      );
-      const attached: Recording = {
-        ...finished,
-        dir: movedPath ? sessionDirUri(noteId) : finished.dir,
-        filePath: movedPath ?? finished.filePath,
-      };
-      // A posicao vem guardada pela tela da nota: o no de texto e o offset
-      // do cursor, para o audio entrar no lugar certo.
-      const position = takePendingInsert(noteId);
-      const kept = await attachAudio(noteId, attached, position).catch((error) => {
-        console.warn('[dyarium] falha ao anexar o audio na nota', String(error));
-        return false;
-      });
-      if (kept) {
-        await deleteRecordingRow(finished.id);
-        // A nota nasceu como rascunho (ou ja existia): garante que ela saia do
-        // status invisivel `draft` mesmo se a tela da nota nao abrir agora.
-        await submitNote(noteId);
-        await refresh();
-        // Se a gravacao veio da propria nota, voltar evita duas telas da mesma
-        // nota. Se veio da home, abre a nota para o audio nao ficar escondido
-        // atras de um rascunho sem caderno visivel.
-        if (from === 'note') back();
-        else replace({ pathname: '/note/[id]', params: { id: noteId } });
-        return;
-      }
-      console.warn('[dyarium] nota de destino sumiu; guardando a gravacao como nota');
-      await enqueue(attached);
-      replace({ pathname: '/note/[id]', params: { id: finished.id } });
+      // Navega assim que a gravacao parou: anexar e atualizar a biblioteca
+      // rodam em segundo plano e nao travam o toque em "Parar".
+      if (from === 'note') back();
+      else replace({ pathname: '/note/[id]', params: { id: noteId } });
+
+      void (async () => {
+        try {
+          const movedPath = await moveAudio(finished.id, noteId, audioFileName(finished.id)).catch(
+            (error) => {
+              console.warn('[dyarium] falha ao mover o audio da gravacao', String(error));
+              return null;
+            },
+          );
+          const attached: Recording = {
+            ...finished,
+            dir: movedPath ? sessionDirUri(noteId) : finished.dir,
+            filePath: movedPath ?? finished.filePath,
+          };
+          // A posicao vem guardada pela tela da nota: o no de texto e o offset
+          // do cursor, para o audio entrar no lugar certo.
+          const position = takePendingInsert(noteId);
+          const kept = await attachAudio(noteId, attached, position).catch((error) => {
+            console.warn('[dyarium] falha ao anexar o audio na nota', String(error));
+            return false;
+          });
+          if (kept) {
+            await deleteRecordingRow(finished.id);
+            // A nota nasceu como rascunho (ou ja existia): garante que ela saia do
+            // status invisivel `draft` mesmo se a tela da nota nao abrir agora.
+            await submitNote(noteId);
+            await refresh();
+            return;
+          }
+          console.warn('[dyarium] nota de destino sumiu; guardando a gravacao como nota');
+          setFinishError('A nota ficou sem áudio.');
+          await enqueue(attached);
+          replace({ pathname: '/note/[id]', params: { id: finished.id } });
+        } catch (error) {
+          console.warn('[dyarium] falha ao finalizar a gravacao em segundo plano', String(error));
+          setFinishError('A nota ficou sem áudio.');
+        }
+      })();
       return;
     }
-    await enqueue(finished);
     replace({ pathname: '/note/[id]', params: { id: finished.id } });
+    void enqueue(finished).catch((error) => {
+      console.warn('[dyarium] falha ao guardar a gravacao', String(error));
+      setFinishError('Não foi possível guardar esta gravação. Tente de novo.');
+    });
   }, [stop, noteId, from, attachAudio, enqueue, refresh, submitNote]);
 
   const handleStop = useCallback(async () => {
@@ -150,13 +165,28 @@ export default function RecordScreen() {
     }
   }, [finishing, noteId, stop, refresh]);
 
+  const hint = paused
+    ? 'Pausado'
+    : active
+      ? 'Gravando com a tela bloqueada'
+      : starting || busy
+        ? 'Preparando...'
+        : '...';
+
   return (
-    <View style={styles.screen}>
+    <View style={[styles.screen, { backgroundColor: colors.surface }]}>
       <View style={styles.top}>
-        <Press onPress={() => void handleDiscard()} accessibilityLabel="Cancelar" hitSlop={12}>
-          <Ionicons name="close" size={26} color={colors.textSecondary} />
+        <Press
+          onPress={() => void handleDiscard()}
+          accessibilityLabel="Cancelar"
+          hitSlop={12}
+          style={styles.close}
+        >
+          <Icon name="close" size={designIcon.lg} color={colors.textMuted} />
         </Press>
-        <Text style={styles.label}>{noteId ? 'Gravando na nota' : 'Nova gravação'}</Text>
+        <Text style={[styles.label, { color: colors.textMuted }]}>
+          {noteId ? 'Gravando na nota' : 'Nova gravação'}
+        </Text>
         <View style={styles.spacer} />
       </View>
 
@@ -169,41 +199,47 @@ export default function RecordScreen() {
           // 40% mais alta que as 100 dp originais: a diferenca entre silencio
           // (traco minimo) e fala fica visivel sem esforco.
           height={140}
-          color={colors.accent}
+          color={colors.primary}
         />
         <RecordTimer />
-        <Text style={styles.hint}>
-          {paused
-            ? 'Pausado'
-            : active
-              ? 'Gravando com a tela bloqueada'
-              : starting || busy
-                ? 'Preparando...'
-                : '...'}
-        </Text>
-        {finishError ?? error ? <Text style={styles.error}>{finishError ?? error}</Text> : null}
+        <Text style={[styles.hint, { color: colors.textMuted }]}>{hint}</Text>
+        {finishError ?? error ? (
+          <Text style={[styles.error, { color: colors.danger }]}>{finishError ?? error}</Text>
+        ) : null}
       </View>
 
       <View style={styles.bottom}>
         <View style={styles.controls}>
           <Press
-            style={[styles.pause, !active && styles.stopDisabled]}
+            style={[
+              styles.pause,
+              { backgroundColor: colors.surfaceAlt, borderColor: colors.line },
+              (!active || finishing) && { opacity: designState.disabled },
+            ]}
             onPress={() => (paused ? unpause() : pause())}
             disabled={!active || finishing}
             accessibilityLabel={paused ? 'Retomar gravação' : 'Pausar gravação'}
           >
-            <Ionicons name={paused ? 'play' : 'pause'} size={26} color={colors.text} />
+            <Icon
+              name={paused ? 'play' : 'pause'}
+              size={20}
+              color={active ? colors.text : colors.textMuted}
+            />
           </Press>
           <Press
-            style={[styles.stop, finishing && styles.stopDisabled]}
+            style={[
+              styles.stop,
+              { backgroundColor: colors.danger, borderColor: colors.danger },
+              finishing && { opacity: designState.disabled },
+            ]}
             onPress={() => void handleStop()}
             disabled={finishing || !active}
             accessibilityLabel="Parar gravação"
           >
-            <Ionicons name="stop" size={30} color={colors.onAccent} />
+            <Icon name="stop" size={22} color={colors.surface} />
           </Press>
         </View>
-        <Text style={styles.bottomHint}>Pausar · Parar</Text>
+        <Text style={[styles.bottomHint, { color: colors.textMuted }]}>Pausar · Parar</Text>
       </View>
     </View>
   );
@@ -214,61 +250,93 @@ export default function RecordScreen() {
  * onda nao re-renderizam a cada meio segundo por causa do relogio.
  */
 function RecordTimer() {
-  const styles = useThemedStyles(baseStyles);
+  const colors = useDesign();
   const { elapsedMs } = useRecordingLive();
   return (
-    <Text style={styles.timer} testID="record-timer">
+    <Text
+      testID="record-timer"
+      style={[styles.timer, { color: colors.text }]}
+    >
       {formatDuration(elapsedMs)}
     </Text>
   );
 }
 
-const baseStyles = defineStyles({
-  screen: { flex: 1, backgroundColor: baseColors.bg },
+const styles = StyleSheet.create({
+  screen: { flex: 1 },
   top: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: spacing.xl,
-    paddingTop: spacing.xxxl,
-    paddingBottom: spacing.lg,
+    paddingHorizontal: designSpace.s16,
+    paddingTop: designSpace.s16,
+    paddingBottom: designSpace.s8,
   },
-  label: { color: baseColors.textSecondary, fontSize: fontSize.sm, fontWeight: '600' },
-  spacer: { width: 26 },
+  close: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: -designSpace.s12,
+  },
+  label: {
+    fontSize: designType.label.size,
+    fontWeight: '500',
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+  },
+  spacer: { width: 44 },
   center: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: spacing.lg,
-    paddingHorizontal: spacing.xl,
+    gap: designSpace.s12,
+    paddingHorizontal: designSpace.s16,
   },
   timer: {
-    color: baseColors.text,
-    fontSize: fontSize.display,
-    fontWeight: '300',
+    fontSize: designType.display.size,
+    fontWeight: '600',
+    letterSpacing: 0.4,
     fontVariant: ['tabular-nums'],
-    letterSpacing: 1,
   },
-  hint: { color: baseColors.textSecondary, fontSize: fontSize.sm },
-  error: { color: baseColors.danger, fontSize: fontSize.sm, textAlign: 'center' },
-  bottom: { alignItems: 'center', gap: spacing.lg, paddingBottom: spacing.xxxl },
-  controls: { flexDirection: 'row', alignItems: 'center', gap: spacing.xxl },
+  hint: {
+    fontSize: designType.mono.size,
+    fontWeight: '500',
+    letterSpacing: 0.2,
+    textAlign: 'center',
+  },
+  error: {
+    fontSize: designType.body.size,
+    fontWeight: '500',
+    lineHeight: designType.body.size * designType.body.lineHeight,
+    textAlign: 'center',
+  },
+  bottom: {
+    alignItems: 'center',
+    gap: designSpace.s12,
+    paddingBottom: designSpace.s24,
+  },
+  controls: { flexDirection: 'row', alignItems: 'center', gap: designSpace.s24 },
   pause: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: baseColors.surface,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
   stop: {
-    width: 84,
-    height: 84,
-    borderRadius: 42,
-    backgroundColor: baseColors.danger,
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  stopDisabled: { opacity: 0.5 },
-  bottomHint: { color: baseColors.textTertiary, fontSize: fontSize.xs },
+  bottomHint: {
+    fontSize: designType.label.size,
+    fontWeight: '500',
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+  },
 });

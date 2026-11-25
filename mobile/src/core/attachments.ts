@@ -33,6 +33,15 @@ export function attachmentIdFromUrl(ref: string): string | undefined {
   return ATTACHMENT_URL.exec(ref)?.[1];
 }
 
+/**
+ * Id do anexo quando a referencia aponta para um (`attachment:<id>` ou URL da
+ * API). `local:` nao tem id: o arquivo ainda so existe no aparelho.
+ */
+export function attachmentRefTarget(ref: string): string | undefined {
+  if (ref.startsWith(ATTACHMENT_PREFIX)) return attachmentRefId(ref);
+  return attachmentIdFromUrl(ref);
+}
+
 /** Content-Type estimado pela extensao do arquivo. */
 export function mimeFromName(name: string): string {
   const ext = name.split('.').pop()?.toLowerCase();

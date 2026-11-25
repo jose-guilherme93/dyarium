@@ -1,0 +1,618 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dyarium — abrindo o cofre (protótipo)</title>
+<!--
+  Protótipo descartável de aprovação. Não faz parte do bundle.
+
+  A linguagem vem do carregamento de nota em web/src/App.css
+  (.analysis-loading / .analysis-loading-head / .spinner): círculo de 12 px
+  girando, uma linha de status, sem card, sem gradiente, sem sombra.
+  Cor, tipo, espaço e medidor saem de web/src/ui/tokens.css (variáveis --dy-*).
+  As etapas seguem o caminho real de local/vaultCloud.ts: key.txt, backup.enc,
+  openSnapshot, applySnapshot, anexos, runVaultSync.
+
+  Anda sozinho: um setInterval faz as seis etapas passarem; o andaime no rodapé
+  só serve para pausar, recomeçar, alternar tema e tirar a moldura do app.
+-->
+<style>
+/* ---------- tokens (copiados de web/src/ui/tokens.css) ---------- */
+
+@font-face {
+  font-family: "Schibsted Grotesk";
+  src: url("../public/fonts/schibsted-grotesk.woff2") format("woff2");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Schibsted Grotesk";
+  src: url("../public/fonts/schibsted-grotesk-ext.woff2") format("woff2");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: light dark;
+
+  --dy-surface: #eceee9;
+  --dy-surface-alt: #e3e6e0;
+  --dy-surface-raised: #dadfd7;
+  --dy-line: #d2d6cf;
+  --dy-text: #232622;
+  --dy-text-muted: #6a6f68;
+  --dy-primary: #5b6f66;
+  --dy-primary-soft: #dce3e0;
+  --dy-danger: #9c6259;
+  --dy-success: #5c7a63;
+  --dy-warning: #8b7444;
+  --dy-info: #5a6f80;
+
+  --dy-space-2: 2px;
+  --dy-space-4: 4px;
+  --dy-space-6: 6px;
+  --dy-space-8: 8px;
+  --dy-space-12: 12px;
+  --dy-space-16: 16px;
+
+  --dy-radius-control: 2px;
+  --dy-focus-width: 1px;
+  --dy-focus-offset: 2px;
+  --dy-control-md: 26px;
+  --dy-meter-height: 2px;
+  --dy-icon-sm: 12px;
+
+  --dy-font-sans: "Schibsted Grotesk", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --dy-font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --dy-surface: #171a18;
+    --dy-surface-alt: #1f2320;
+    --dy-surface-raised: #272c28;
+    --dy-line: #2f3431;
+    --dy-text: #e4e8e3;
+    --dy-text-muted: #a1a8a2;
+    --dy-primary: #a2b8ae;
+    --dy-primary-soft: #2a3431;
+    --dy-danger: #c78f85;
+    --dy-success: #94b09a;
+    --dy-warning: #c6ab77;
+    --dy-info: #9ab3c4;
+  }
+}
+
+[data-dy-theme="light"] {
+  color-scheme: light;
+  --dy-surface: #eceee9;
+  --dy-surface-alt: #e3e6e0;
+  --dy-surface-raised: #dadfd7;
+  --dy-line: #d2d6cf;
+  --dy-text: #232622;
+  --dy-text-muted: #6a6f68;
+  --dy-primary: #5b6f66;
+  --dy-primary-soft: #dce3e0;
+  --dy-danger: #9c6259;
+  --dy-success: #5c7a63;
+  --dy-warning: #8b7444;
+  --dy-info: #5a6f80;
+}
+
+[data-dy-theme="dark"] {
+  color-scheme: dark;
+  --dy-surface: #171a18;
+  --dy-surface-alt: #1f2320;
+  --dy-surface-raised: #272c28;
+  --dy-line: #2f3431;
+  --dy-text: #e4e8e3;
+  --dy-text-muted: #a1a8a2;
+  --dy-primary: #a2b8ae;
+  --dy-primary-soft: #2a3431;
+  --dy-danger: #c78f85;
+  --dy-success: #94b09a;
+  --dy-warning: #c6ab77;
+  --dy-info: #9ab3c4;
+}
+
+/* ---------- base ---------- */
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--dy-surface);
+  color: var(--dy-text);
+  font-family: var(--dy-font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.32;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+:focus-visible {
+  outline: var(--dy-focus-width) solid var(--dy-primary);
+  outline-offset: var(--dy-focus-offset);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------- moldura do app (só para julgar a área do conteúdo) ---------- */
+
+.frame {
+  height: 100%;
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+}
+
+.rail {
+  min-width: 0;
+  background: var(--dy-surface-alt);
+  border-right: 1px solid var(--dy-line);
+  padding: var(--dy-space-16);
+  display: flex;
+  align-items: flex-start;
+}
+
+.brand {
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.005em;
+  color: var(--dy-text);
+}
+
+.content {
+  min-width: 0;
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  padding-inline: clamp(
+    calc(var(--dy-space-16) * 1.25),
+    5vw,
+    calc(var(--dy-space-16) * 4)
+  );
+  padding-block: calc(var(--dy-space-16) * 2.5);
+}
+
+/* A coluna de texto do app tem 760 px e fica centralizada (--note-measure em
+   App.css). O carregamento nasce na mesma coluna: quando a nota entra, o texto
+   começa exatamente onde o círculo estava. */
+.column {
+  width: 100%;
+  max-width: 760px;
+  margin-inline: auto;
+}
+
+body[data-frame="off"] .frame { grid-template-columns: minmax(0, 1fr); }
+body[data-frame="off"] .rail { display: none; }
+
+/* ---------- a tela que interessa: carregando o cofre ---------- */
+
+.boot {
+  width: min(320px, 100%);
+  display: flex;
+  flex-direction: column;
+  transition: opacity 0.3s ease;
+}
+
+.boot.is-out { opacity: 0; }
+/* O display:flex vence o [hidden] do navegador; sem esta regra o "pronto" fica. */
+.boot[hidden] { display: none; }
+
+/* Mesmo círculo de .spinner: 12 px, 2 px de borda, topo no acento. O trilho
+   sobe um degrau de contraste (a hairline pura desaparecia no papel). */
+.boot-spinner {
+  position: relative;
+  flex: none;
+  width: var(--dy-icon-sm);
+  height: var(--dy-icon-sm);
+  border: 2px solid color-mix(in srgb, var(--dy-text-muted) 42%, transparent);
+  border-top-color: var(--dy-primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+/* Terminou: disco preenchido com o traço, no mesmo 12 px (nada pula). */
+.boot-spinner.is-done {
+  animation: none;
+  border: 0;
+  background: var(--dy-primary);
+}
+.boot-spinner.is-done::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 2.5px;
+  width: 3px;
+  height: 6px;
+  border-right: 1.5px solid var(--dy-surface);
+  border-bottom: 1.5px solid var(--dy-surface);
+  transform: rotate(42deg);
+}
+
+.boot-head {
+  display: flex;
+  align-items: center;
+  gap: var(--dy-space-8);
+  color: var(--dy-text);
+  font-size: 14px;
+  line-height: 1.3;
+}
+
+.boot-detail {
+  margin: var(--dy-space-12) 0 0;
+  min-height: 17px;
+  color: var(--dy-text-muted);
+  line-height: 1.3;
+  overflow-wrap: break-word;
+}
+
+.boot-detail b {
+  color: var(--dy-text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.boot-meter {
+  margin-top: var(--dy-space-8);
+  height: var(--dy-meter-height);
+  background: var(--dy-line);
+  overflow: hidden;
+}
+
+.boot-meter[data-idle="true"] { visibility: hidden; }
+
+.boot-meter span {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--dy-primary);
+  transition: width 0.12s linear;
+}
+
+/* Andaime: pausar congela também o círculo, para conferir o quadro parado. */
+body[data-paused="true"] .boot-spinner { animation-play-state: paused; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* A linha da etapa entra sem quicar: só um aceno de opacidade. */
+@keyframes detail-in { from { opacity: 0.3; } to { opacity: 1; } }
+.boot-detail.is-fresh { animation: detail-in 0.22s ease-out; }
+
+@media (max-width: 720px) {
+  .frame {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 44px minmax(0, 1fr);
+  }
+  .rail {
+    align-items: center;
+    padding: 0 var(--dy-space-16);
+    border-right: 0;
+    border-bottom: 1px solid var(--dy-line);
+  }
+  .content { padding-block: calc(var(--dy-space-16) * 2); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .boot-spinner { animation: none; }
+  .boot-detail.is-fresh { animation: none; }
+  .boot { transition: none; }
+  .boot-meter span { transition: none; }
+}
+
+/* ---------- andaime do protótipo (não é o desenho) ---------- */
+
+.scaffold {
+  position: fixed;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  z-index: 20;
+  max-width: calc(100vw - 20px);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--dy-space-2) var(--dy-space-6);
+  padding: 5px 10px;
+  border: 1px dashed var(--dy-text-muted);
+  border-radius: 999px;
+  background: var(--dy-surface);
+  color: var(--dy-text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.scaffold .tag {
+  font-family: var(--dy-font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.scaffold button {
+  font: inherit;
+  color: var(--dy-text-muted);
+  background: none;
+  border: 0;
+  padding: 1px 4px;
+  border-radius: var(--dy-radius-control);
+  cursor: pointer;
+}
+.scaffold button:hover { color: var(--dy-text); background: var(--dy-surface-alt); }
+.scaffold button[aria-pressed="true"] { color: var(--dy-text); }
+
+@media (max-width: 380px) {
+  .scaffold { padding: 4px 8px; font-size: 10px; gap: 0 var(--dy-space-4); }
+  .scaffold #frame { display: none; }
+}
+</style>
+</head>
+<body data-frame="on">
+
+<div class="frame">
+  <aside class="rail">
+    <span class="brand">dyarium</span>
+  </aside>
+
+  <main class="content" id="content" aria-busy="true">
+    <div class="column">
+      <div class="boot" id="boot">
+        <p class="boot-head">
+          <span class="boot-spinner" id="glyph" aria-hidden="true"></span>
+          <span id="headline">Carregando…</span>
+        </p>
+
+        <p class="boot-detail" id="detail">
+          <span id="detail-words">entrando com o Google</span>
+          <span id="detail-count" hidden><b id="count">0</b><span id="count-rest"></span></span>
+        </p>
+
+        <div class="boot-meter" id="meter" aria-hidden="true">
+          <span id="fill"></span>
+        </div>
+
+        <p class="sr-only" id="say" aria-live="polite"></p>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="scaffold" role="group" aria-label="Andaime do protótipo">
+  <span class="tag" id="step-label">etapa 1/6</span>
+  <button type="button" id="pause">pausar</button>
+  <button type="button" id="again">recomeçar</button>
+  <button type="button" id="theme">tema auto</button>
+  <button type="button" id="frame">moldura</button>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var NOTAS = 400;
+  var ANEXOS = 218;
+
+  /* As seis etapas reais de local/vaultCloud.ts + driveSession. */
+  var STEPS = [
+    { say: "entrando com o Google", line: "entrando com o Google", ms: 1600 },
+    { say: "lendo o cofre", line: "lendo o cofre", ms: 1800 },
+    { say: "abrindo o retrato", line: "abrindo o retrato", ms: 1200 },
+    { say: "aplicando as notas", total: NOTAS, unit: "notas", ms: 4200 },
+    { say: "guardando os anexos", total: ANEXOS, unit: "anexos", ms: 2600 },
+    { say: "gravando o que mudou", line: "gravando o que mudou", ms: 1400 }
+  ];
+
+  var TICK = 100;
+
+  var boot = document.getElementById("boot");
+  var glyph = document.getElementById("glyph");
+  var headline = document.getElementById("headline");
+  var detail = document.getElementById("detail");
+  var words = document.getElementById("detail-words");
+  var countWrap = document.getElementById("detail-count");
+  var count = document.getElementById("count");
+  var countRest = document.getElementById("count-rest");
+  var meter = document.getElementById("meter");
+  var fill = document.getElementById("fill");
+  var say = document.getElementById("say");
+  var content = document.getElementById("content");
+  var stepLabel = document.getElementById("step-label");
+  var pauseBtn = document.getElementById("pause");
+  var themeBtn = document.getElementById("theme");
+  var frameBtn = document.getElementById("frame");
+
+  var index = 0;
+  var elapsed = 0;
+  var phase = "run"; // run | done | fade | off
+  var hold = 0;
+  var paused = false;
+  var shown = -1;
+  var progressShown = -1;
+
+  function fresh() {
+    detail.classList.remove("is-fresh");
+    void detail.offsetWidth;
+    detail.classList.add("is-fresh");
+  }
+
+  function label(text) {
+    words.textContent = text;
+    words.hidden = false;
+    countWrap.hidden = true;
+  }
+
+  function counter(step, value) {
+    var n = Math.min(step.total, Math.round(value));
+    if (n === shown) return;
+    shown = n;
+    count.textContent = String(n);
+    countRest.textContent = " de " + step.total + " " + step.unit;
+    words.hidden = true;
+    countWrap.hidden = false;
+  }
+
+  function paint(step, part) {
+    var p = Math.max(0, Math.min(1, part));
+    // A contagem chega rápido e assenta no fim, como o apply real.
+    var eased = 1 - Math.pow(1 - p, 2.2);
+    var value = p >= 0.97 ? step.total : step.total * eased;
+    counter(step, value);
+
+    var pct = Math.round((Math.min(1, value / step.total)) * 1000) / 10;
+    if (pct !== progressShown) {
+      progressShown = pct;
+      fill.style.width = pct + "%";
+    }
+  }
+
+  function enter(i) {
+    var step = STEPS[i];
+    shown = -1;
+    progressShown = -1;
+    stepLabel.textContent = "etapa " + (i + 1) + "/" + STEPS.length;
+
+    if (step.total) {
+      meter.dataset.idle = "false";
+      fill.style.width = "0%";
+      counter(step, 0);
+    } else {
+      meter.dataset.idle = "true";
+      fill.style.width = "0%";
+      label(step.line);
+    }
+
+    say.textContent = step.say;
+    fresh();
+  }
+
+  function finish() {
+    phase = "done";
+    hold = 0;
+    headline.textContent = "pronto";
+    glyph.classList.add("is-done");
+    content.setAttribute("aria-busy", "false");
+    meter.dataset.idle = "true";
+    fill.style.width = "0%";
+    words.hidden = false;
+    countWrap.hidden = true;
+    words.textContent = NOTAS + " notas, " + ANEXOS + " anexos";
+    stepLabel.textContent = "pronto";
+    say.textContent = "pronto";
+    fresh();
+  }
+
+  function fadeOut() {
+    phase = "fade";
+    hold = 0;
+    boot.classList.add("is-out");
+  }
+
+  function clock() {
+    if (paused) return;
+
+    if (phase === "run") {
+      elapsed += TICK;
+      var step = STEPS[index];
+      if (step.total) paint(step, elapsed / step.ms);
+
+      if (elapsed >= step.ms) {
+        elapsed = 0;
+        index += 1;
+        if (index >= STEPS.length) finish();
+        else enter(index);
+      }
+      return;
+    }
+
+    if (phase === "done") {
+      hold += TICK;
+      if (hold >= 1300) fadeOut();
+      return;
+    }
+
+    if (phase === "fade") {
+      hold += TICK;
+      if (hold >= 380) {
+        phase = "off";
+        boot.hidden = true;
+        stepLabel.textContent = "fim";
+      }
+    }
+  }
+
+  function restart() {
+    paused = false;
+    pauseBtn.textContent = "pausar";
+    pauseBtn.setAttribute("aria-pressed", "false");
+    delete document.body.dataset.paused;
+    phase = "run";
+    hold = 0;
+    index = 0;
+    elapsed = 0;
+    shown = -1;
+    progressShown = -1;
+    boot.hidden = false;
+    boot.classList.remove("is-out");
+    glyph.classList.remove("is-done");
+    headline.textContent = "Carregando…";
+    content.setAttribute("aria-busy", "true");
+    enter(0);
+  }
+
+  window.setInterval(clock, TICK);
+
+  document.getElementById("again").addEventListener("click", restart);
+
+  pauseBtn.addEventListener("click", function () {
+    paused = !paused;
+    document.body.dataset.paused = String(paused);
+    pauseBtn.textContent = paused ? "seguir" : "pausar";
+    pauseBtn.setAttribute("aria-pressed", String(paused));
+  });
+
+  var theme = "auto";
+
+  function setTheme(next) {
+    theme = next;
+    themeBtn.textContent = "tema " + theme;
+    if (theme === "auto") document.documentElement.removeAttribute("data-dy-theme");
+    else document.documentElement.setAttribute("data-dy-theme", theme === "claro" ? "light" : "dark");
+  }
+
+  themeBtn.addEventListener("click", function () {
+    setTheme(theme === "auto" ? "claro" : theme === "claro" ? "escuro" : "auto");
+  });
+
+  // ?tema=escuro abre direto no escuro, para conferir os dois sem clicar.
+  var wanted = new URLSearchParams(window.location.search).get("tema");
+  if (wanted === "claro" || wanted === "escuro") setTheme(wanted);
+
+  var framed = true;
+  frameBtn.setAttribute("aria-pressed", "true");
+  frameBtn.addEventListener("click", function () {
+    framed = !framed;
+    document.body.dataset.frame = framed ? "on" : "off";
+    frameBtn.setAttribute("aria-pressed", String(framed));
+  });
+
+  restart();
+})();
+</script>
+</body>
+</html>

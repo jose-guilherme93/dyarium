@@ -1,6 +1,19 @@
 import { cacheClear, cacheGet, cacheSet } from "./lib/idb";
+import * as local from "./local/notes";
+import * as localFiles from "./local/attachments";
+import * as localSettings from "./local/settings";
+import * as localBooks from "./local/notebooks";
+import * as localChapters from "./local/chapters";
+import * as localCovers from "./local/covers";
+import * as localLinks from "./local/links";
+import * as localAudio from "./local/audio";
+import { importEntryLocally } from "./local/notionClient";
+import * as localProvider from "./local/providerTranscribe";
+import * as localAnalyze from "./local/analyze";
 import { shrinkImage } from "./lib/image";
 import { setOffline } from "./lib/offline";
+import { buildWebSnapshot, recordingFromEntry, webDeviceId, type EntryWithText } from "./lib/metrics";
+import { listRecordings } from "../../mobile/src/core/repo";
 import type {
   Activity,
   Analysis,
@@ -11,13 +24,16 @@ import type {
   ChapterKind,
   ChapterStatus,
   EntityDetail,
+  EntityKind,
   EntityMention,
+  EntityRejection,
   EntitySummary,
   Entry,
   GraphResponse,
   Link,
   LocalAnalysis,
   LocalAnalysisSetup,
+  McpProject,
   MetricsResponse,
   ModelInfo,
   MoodPoint,
@@ -27,6 +43,7 @@ import type {
   Revision,
   Segment,
   Settings,
+  SummaryDetail,
   Tag,
   Transcript,
   WritingRhythm,
@@ -124,6 +141,27 @@ export async function getSetupState(): Promise<{ required: boolean }> {
     return { required: Boolean(body.required) };
   } catch {
     return { required: false };
+  }
+}
+
+/**
+ * A instancia respondeu como servidor? Site estatico nao tem /setup/state: o
+ * fetch cai, ou o host devolve o index.html do SPA com content-type de HTML.
+ * So JSON de verdade conta como servidor.
+ */
+export async function probeServer(): Promise<boolean> {
+  try {
+    const res = await fetch("/setup/state", { headers: { Accept: "application/json" } });
+    if (!res.ok) return false;
+    const type = res.headers?.get?.("content-type") ?? "";
+    // Host de SPA devolve o index.html na mesma rota; HTML nao e servidor.
+    if (type && !type.includes("application/json")) return false;
+    const body = res.json
+      ? await res.json().catch(() => null)
+      : await res.text().then((text) => JSON.parse(text)).catch(() => null);
+    return body !== null && typeof body === "object";
+  } catch {
+    return false;
   }
 }
 
@@ -366,6 +404,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const url = `/api/v1${path}`;
   if (isGet) {
     const text = await getText(url, headers);
+    // Site estatico devolve o index.html em qualquer rota; sem esta guarda o
+    // JSON.parse estoura com "unexpected character".
+    if (text && /^\s*</.test(text)) {
+      throw new ApiError("Sem servidor para esta acao.", 503, "no_server");
+    }
     return (text ? JSON.parse(text) : {}) as T;
   }
   return (await mutate<T>(path, init)).data;
@@ -387,6 +430,8 @@ export interface EntryFilters {
   exclude_books?: boolean;
   /** Pede a contagem de palavras por entrada (lista de um livro). */
   include_words?: boolean;
+  /** Pede o corpo completo (`text`) e a transcricao (`transcript`) por entrada. */
+  include_text?: boolean;
 }
 
 /** Campo que briguou quando o servidor recusou a gravacao. */
@@ -439,8 +484,55 @@ function entriesPath(filters?: EntryFilters): string {
   if (filters?.include_words) {
     params.set("include_words", "1");
   }
+  if (filters?.include_text) {
+    params.set("include_text", "1");
+  }
   const query = params.toString();
   return `/entries${query ? `?${query}` : ""}`;
+}
+
+/**
+ * Todas as paginas com o texto completo, para a analise do dashboard. O
+ * `include_text=1` e opt-in: a lista normal continua sem corpo e sem
+ * transcricao. O teto de 20 paginas evita um laco se o servidor repetir o
+ * cursor.
+ */
+async function listAllEntriesWithText(filters?: EntryFilters): Promise<EntryWithText[]> {
+  const entries: EntryWithText[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < 20; page += 1) {
+    const result = await request<{ entries: EntryWithText[]; next_cursor?: string }>(
+      entriesPath({ ...filters, limit: 1000, cursor, include_text: true }),
+    );
+    entries.push(...(result.entries ?? []));
+    cursor = result.next_cursor;
+    if (!cursor) break;
+  }
+  return entries;
+}
+
+/**
+ * Analise do dashboard, calculada neste cliente nos dois modos. Sem token le o
+ * cofre do navegador; com token le as entradas com texto do servidor. Cofre
+ * vazio devolve `snapshots: []` — a tela so mostra o estado vazio quando nao
+ * existe nota nenhuma.
+ */
+export async function computeWebMetrics(): Promise<MetricsResponse> {
+  const now = new Date();
+  const deviceId = webDeviceId();
+
+  if (isLocalMode()) {
+    const recordings = await listRecordings(false);
+    if (recordings.length === 0) return { snapshots: [], schema: 2 };
+    return { snapshots: [buildWebSnapshot(recordings, { deviceId, now })], schema: 2 };
+  }
+
+  const entries = await listAllEntriesWithText();
+  if (entries.length === 0) return { snapshots: [], schema: 2 };
+  return {
+    snapshots: [buildWebSnapshot(entries.map(recordingFromEntry), { deviceId, now })],
+    schema: 2,
+  };
 }
 
 // analysisMisses remembers entries that answered 404 for analysis in this
@@ -462,7 +554,7 @@ async function requestAnalysis(id: string): Promise<Analysis> {
   }
 }
 
-export const api = {
+const remoteApi = {
   listEntries: (filters?: EntryFilters) =>
     request<{ entries: Entry[]; next_cursor?: string }>(entriesPath(filters)),
   /** Todas as paginas, para a lista não parar em silêncio no limite do servidor. */
@@ -586,12 +678,23 @@ export const api = {
       chapter_synopsis?: string;
       chapter_beats?: string;
       chapter_notes?: string;
+      summary_detail?: SummaryDetail;
       versions?: { title?: string; recorded_at?: string };
     },
   ) => request<{ status: string; versions: { title?: string; recorded_at?: string } }>(
     `/entries/${id}`,
     { method: "PATCH", body: JSON.stringify(patch) },
   ),
+  /**
+   * Patch de campo simples da entrada: hoje so o icone do projeto (emoji).
+   * O campo entra no backend em lane propria, entao o chamador trata a falha
+   * sem quebrar a tela.
+   */
+  updateEntry: (id: string, patch: { icon?: string }) =>
+    request<{ status: string }>(`/entries/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    }),
   listNotes: (id: string) => request<{ notes: Note[] }>(`/entries/${id}/notes`),
   listNotesCached: (id: string) => cachedGet<{ notes: Note[] }>(`/entries/${id}/notes`),
   /** Cria a nota a partir do markdown do corpo. `noteId` torna o POST idempotente. */
@@ -732,6 +835,8 @@ export const api = {
   getSettings: () => request<Settings>("/settings"),
   putSettings: (patch: Record<string, unknown>) =>
     request<{ status: string }>("/settings", { method: "PUT", body: JSON.stringify(patch) }),
+  /** Projetos do MCP com contagem e estado das sessoes. */
+  mcpProjects: () => request<{ projects: McpProject[] }>("/mcp/projects"),
   listModels: () => request<{ models: ModelInfo[] }>("/models"),
   downloadModel: (name: string) =>
     request<{ status: string }>("/models/download", { method: "POST", body: JSON.stringify({ name }) }),
@@ -746,7 +851,13 @@ export const api = {
       body: JSON.stringify({ runtime, model }),
     }),
   listEntities: (kind?: string) =>
-    request<{ entities: EntitySummary[] }>(`/entities${kind ? `?kind=${encodeURIComponent(kind)}` : ""}`),
+    request<{
+      entities: EntitySummary[];
+      /** Grafias que o dono marcou como ele mesmo. */
+      owner_aliases?: string[];
+      /** Nomes que nunca sao entidade daquele tipo (memoria de curadoria). */
+      rejections?: EntityRejection[];
+    }>(`/entities${kind ? `?kind=${encodeURIComponent(kind)}` : ""}`),
   getEntity: (kind: string, name: string) =>
     request<EntityDetail>(`/entities/${kind}/${encodeURIComponent(name)}`),
   /** Trechos da transcricao ou do texto que provam a entidade no mapa. */
@@ -766,13 +877,43 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ icon }),
     }),
+  /** Rotulo livre exibido junto do nome (escola, gata); so exibicao. */
+  setEntityLabel: (kind: string, name: string, label: string) =>
+    request<EntitySummary>(`/entities/${kind}/${encodeURIComponent(name)}/label`, {
+      method: "PUT",
+      body: JSON.stringify({ label }),
+    }),
+  /** Troca o tipo; mescla com a entidade destino se ela ja existir e rejeita o tipo antigo. */
+  changeEntityKind: (kind: string, name: string, nextKind: string) =>
+    request<EntitySummary>(`/entities/${kind}/${encodeURIComponent(name)}/kind`, {
+      method: "POST",
+      body: JSON.stringify({ kind: nextKind }),
+    }),
+  /** Apaga entidade, vinculos e aliases, e grava a rejeicao do tipo; o edit_id desfaz tudo. */
+  deleteEntity: (kind: string, name: string) =>
+    request<{ status: string; edit_id?: string; rejection?: EntityRejection }>(
+      `/entities/${kind}/${encodeURIComponent(name)}`,
+      { method: "DELETE" },
+    ),
+  /** Memoria: grava que um nome nunca e entidade de um tipo. */
+  addEntityRejection: (kind: string, name: string) =>
+    request<{ status: string; rejection?: EntityRejection; edit_id?: string }>("/entity-rejections", {
+      method: "POST",
+      body: JSON.stringify({ kind, name }),
+    }),
+  /** Libera o nome: uma analise futura pode extrai-lo de novo. */
+  removeEntityRejection: (kind: string, name: string) =>
+    request<{ status: string; edit_id?: string }>(
+      `/entity-rejections/${kind}/${encodeURIComponent(name)}`,
+      { method: "DELETE" },
+    ),
   /** "Sou eu": funde a pessoa com o dono e usa o nome das configuracoes. */
   claimSelf: (name: string) =>
     request<{ status: string; owner: string; edit_id?: string }>(
       `/entities/person/${encodeURIComponent(name)}/self`,
       { method: "POST" },
     ),
-  /** Desfaz a ultima edicao de entidade (renomear, mesclar, icone ou "sou eu"). */
+  /** Desfaz a ultima edicao de entidade (nome, rotulo, tipo, icone, exclusao ou "sou eu"). */
   undoEntityEdit: (id: string) =>
     request<{ status: string; action?: string; label?: string }>(
       `/entities/edits/${encodeURIComponent(id)}/undo`,
@@ -809,7 +950,7 @@ export const api = {
     const query = params.toString();
     return request<GraphResponse>(`/graph${query ? `?${query}` : ""}`);
   },
-  getMetrics: () => request<MetricsResponse>("/metrics"),
+  getMetrics: () => computeWebMetrics(),
   /** Processos concluidos (transcricoes e analises), do mais recente ao antigo. */
   listActivities: () => request<{ activities: Activity[] }>("/activities"),
   listAttachments: (entryId: string) =>
@@ -823,6 +964,223 @@ export const api = {
   deleteLink: (id: string) => request<void>(`/links/${id}`, { method: "DELETE" }),
 };
 
+/**
+ * Sem token nao existe servidor: a interface fala com o cofre do navegador.
+ * As assinaturas sao as mesmas, entao nenhuma tela sabe a diferenca.
+ *
+ * Em desenvolvimento (`VITE_LOCAL_ONLY=1`) o cofre do navegador vale mesmo
+ * com um token guardado: sem isto a tela mostrava as notas do servidor e o
+ * cofre do Drive era montado do banco local vazio — tudo "0 gravadas".
+ */
+export function isLocalMode(): boolean {
+  if (import.meta.env.VITE_LOCAL_ONLY === "1") return true;
+  return !getToken();
+}
+
+/** Carrega o construtor do mapa so quando alguem abre o mapa. */
+let graphLocalModulo: Promise<typeof import("./local/graphLocal")> | null = null;
+
+function graphLocal(): Promise<typeof import("./local/graphLocal")> {
+  graphLocalModulo ??= import("./local/graphLocal");
+  return graphLocalModulo;
+}
+
+const localApi: Partial<typeof remoteApi> = {
+  listEntries: async (filters) => ({ entries: await local.listEntries(filters) }),
+  listAllEntries: async (filters) => ({ entries: await local.listEntries(filters) }),
+  listEntriesCached: async (filters) => ({ entries: await local.listEntries(filters) }),
+  listDeletedEntries: async () => ({ entries: await local.listDeletedEntries() }),
+  createEntry: async (title, _parentId, notebookId, chapterKind) =>
+    local.createEntry({ title, notebookId, kind: chapterKind }),
+  createImportEntry: (input) => importEntryLocally(input),
+  getEntry: async (id) => {
+    const entry = await local.getEntry(id);
+    if (!entry) throw new ApiError("Nota nao encontrada.", 404, "not_found");
+    // Os audios moram no IndexedDB; a ficha da nota os recebe aqui, como o
+    // servidor faz na resposta de detalhe.
+    return { ...entry, audios: await localAudio.entryAudios(id) };
+  },
+  getEntryCached: async (id) => (await local.getEntry(id)) ?? undefined,
+  patchEntry: async (id, patch) => {
+    const entry = await local.patchEntry(id, patch as unknown as local.EntryPatch);
+    if (!entry) throw new ApiError("Nota nao encontrada.", 404, "not_found");
+    return { status: "ok", versions: {} };
+  },
+  updateEntry: async (id, patch) => {
+    await local.patchEntry(id, patch);
+    return { status: "ok" };
+  },
+  deleteEntry: (id) => local.deleteEntry(id),
+  restoreEntry: async (id) => {
+    const entry = await local.restoreEntry(id);
+    if (!entry) throw new ApiError("Nota nao encontrada.", 404, "not_found");
+    return entry;
+  },
+  listNotes: async (id) => ({ notes: await local.listNotes(id) }),
+  listNotesCached: async (id) => ({ notes: await local.listNotes(id) }),
+  createNote: async (id, title, markdown) => {
+    const note = await local.createNote(id, title, markdown);
+    if (!note) throw new ApiError("Nota nao encontrada.", 404, "not_found");
+    return note;
+  },
+  updateNote: async (id, markdown) => {
+    const note = await local.saveNote(id, markdown);
+    if (!note) throw new ApiError("Nota nao encontrada.", 404, "not_found");
+    return { status: "ok", versions: { body: note.body_version } };
+  },
+  listRevisions: async () => ({ revisions: [] }),
+  listTags: async () => ({ tags: await local.listTags() }),
+  listEntryTags: async (entryId) => ({
+    tags: (await local.entryTags(entryId)).map((name) => ({
+      id: name,
+      name,
+      color: "",
+      entry_count: 1,
+    })),
+  }),
+  setEntryTags: async (entryId, tags) => {
+    await local.setEntryTags(entryId, tags);
+    return { status: "ok" };
+  },
+  listNotebooks: async () => ({ notebooks: await localBooks.listLocalNotebooks() }),
+  createNotebook: (notebook) => localBooks.createLocalNotebook(notebook),
+  updateNotebook: (id, patch) => localBooks.updateLocalNotebook(id, patch),
+  deleteNotebook: (id) => localBooks.deleteLocalNotebook(id),
+  getWritingRhythm: (bookId, days) => localChapters.writingRhythm(bookId, days),
+  reorderChapters: async (notebookId, chapters) => {
+    await localChapters.reorderChapters(notebookId, chapters);
+    return { status: "ok" };
+  },
+  getCover: (bookId) => localCovers.localCoverBlob(bookId),
+  uploadCover: async (bookId, image) => {
+    const { updated_at } = await localCovers.saveLocalCover(bookId, image);
+    await localBooks.markBookCover(bookId, updated_at);
+  },
+  deleteCover: async (bookId) => {
+    await localCovers.deleteLocalCover(bookId);
+    await localBooks.markBookCover(bookId, null);
+  },
+  listLinks: async (entryId) => ({ links: await localLinks.listLocalLinks(entryId) }),
+  createLink: (entryId, body) => localLinks.createLocalLink(entryId, body),
+  deleteLink: (id) => localLinks.deleteLocalLink(id),
+  getBookEntities: async () => ({ entities: [] }),
+  getMetrics: () => computeWebMetrics(),
+  getSettings: () => localSettings.loadLocalSettings(),
+  putSettings: async (patch) => {
+    await localSettings.saveLocalSettings(patch);
+    return { status: "ok" };
+  },
+  // O MCP depende do servidor; no modo local a tela mostra o bloco vazio.
+  mcpProjects: async () => ({ projects: [] }),
+  listModels: async () => ({ models: localSettings.localWhisperModels() }),
+  listAnalyzeModels: async () => ({ models: await localSettings.localAnalyzeModels() }),
+  getTranscript: async (id) => {
+    const transcript = await transcriptOfEntry(id);
+    if (!transcript) throw new ApiError("Nota sem transcricao.", 404, "not_found");
+    return transcript;
+  },
+  listSegments: async (id) => ({ segments: await transcriptSegmentsOf(id) }),
+  // Transcricao no cofre local: sempre pelo provedor com a chave salva em
+  // Configuracoes. O motor no navegador ficou desligado no site (o runtime do
+  // ONNX passa do limite de asset do Cloudflare).
+  retranscribe: async (id) => {
+    await localProvider.transcribeWithProvider(id);
+    return { status: "ok" };
+  },
+  // Analise sem servidor: o provedor configurado le a nota e o resultado fica
+  // no IndexedDB, no mesmo formato que a tela ja desenha.
+  analyze: async (id) => {
+    await localAnalyze.analyzeEntryLocally(id);
+    return { status: "ok" };
+  },
+  getAnalysis: async (id) => {
+    const analysis = await localAnalyze.readLocalAnalysis(id);
+    if (!analysis) throw new ApiError("Sem analise ainda.", 404, "not_found");
+    return analysis;
+  },
+  getAnalysisCached: async (id) => (await localAnalyze.readLocalAnalysis(id)) ?? undefined,
+  invalidateAnalysis: (id) => {
+    void localAnalyze.clearLocalAnalysis(id);
+  },
+  listAttachments: async (entryId) => ({ attachments: await localFiles.listLocalAttachments(entryId) }),
+  listAttachmentsCached: async (entryId) => ({
+    attachments: await localFiles.listLocalAttachments(entryId),
+  }),
+  deleteAttachment: (id) => localFiles.deleteLocalAttachment(id),
+  // O grafo do cofre e derivado das analises locais; sem elas o mapa fica
+  // vazio, nunca um erro de rede. O import e tardio para a tela de notas nao
+  // carregar o construtor do mapa so por abrir.
+  getGraph: (
+    options: {
+      notebookId?: string;
+      from?: string;
+      to?: string;
+      focus?: string;
+      excludeBooks?: boolean;
+    } = {},
+  ) =>
+    graphLocal().then((modulo) =>
+      modulo.buildLocalGraph({
+        notebookId: options.notebookId,
+        period: options.from,
+        focus: options.focus,
+        excludeBooks: options.excludeBooks,
+      }),
+    ),
+  getEntity: async (kind, name) => {
+    const detail = await (await graphLocal()).buildLocalEntityDetail(kind as EntityKind, name);
+    if (!detail) throw new ApiError("Entidade nao encontrada.", 404, "not_found");
+    return detail;
+  },
+  getEntityMentions: async (kind, name) => ({
+    mentions: await (await graphLocal()).buildLocalEntityMentions(kind as EntityKind, name),
+  }),
+  getMood: async () => ({ mood: [] }),
+  listActivities: async () => ({ activities: [] }),
+  getLocalAnalysis: async (runtime = "ollama") => ({
+    runtime,
+    available: false,
+    base_url: "",
+    models: [],
+    model: "",
+  }),
+};
+
+/**
+ * Leitura da transcricao ja gravada no cofre, sem carregar o motor de
+ * inferencia (que fica fora do pacote).
+ */
+async function transcriptOfEntry(id: string) {
+  const { transcriptOf } = await import("./local/transcribe");
+  return transcriptOf(id);
+}
+
+async function transcriptSegmentsOf(id: string) {
+  const { segmentsOf } = await import("./local/transcribe");
+  return segmentsOf(id);
+}
+
+/** Metodo que so existe com instancia conectada. */
+function semServidor(): Promise<never> {
+  return Promise.reject(new ApiError("Disponivel apenas com uma instancia.", 503, "no_server"));
+}
+
+/**
+ * O roteamento acontece no acesso, nao no boot: entrar com token no meio da
+ * sessao volta a falar com o servidor sem recarregar a pagina.
+ */
+export const api: typeof remoteApi = new Proxy(remoteApi, {
+  get(target, prop, receiver) {
+    if (isLocalMode() && typeof prop === "string") {
+      const localFn = localApi[prop as keyof typeof localApi];
+      if (localFn) return localFn;
+      // Sem servidor, o resto falha com mensagem clara em vez de buscar HTML.
+      return semServidor;
+    }
+    return Reflect.get(target, prop, receiver);
+  },
+});
+
 // audioUrl builds a playable URL for the decrypted original audio. The token
 // goes in the query because an <audio> element cannot set headers.
 export function audioUrl(entryId: string): string {
@@ -830,11 +1188,13 @@ export function audioUrl(entryId: string): string {
 }
 
 export function attachmentUrl(id: string): string {
+  if (isLocalMode()) return localFiles.localAttachmentUrl(id);
   return `/api/v1/attachments/${id}?token=${encodeURIComponent(getToken())}`;
 }
 
 /** URL da capa do livro; a versao evita reaproveitar a imagem antiga. */
 export function coverUrl(bookId: string, version?: string | null): string {
+  if (isLocalMode()) return localCovers.localCoverUrl(bookId, version);
   const params = new URLSearchParams({ token: getToken() });
   if (version) params.set("v", version);
   return `/api/v1/notebooks/${bookId}/cover?${params.toString()}`;
@@ -855,6 +1215,11 @@ export function blobToDataURL(blob: Blob): Promise<string> {
 // are what every note open has to decrypt.
 export async function uploadAttachment(entryId: string, file: File): Promise<Attachment> {
   const upload = await shrinkImage(file);
+  if (isLocalMode()) {
+    // Sem servidor, o byte fica no IndexedDB; o markdown guarda o mesmo
+    // `attachment:<id>` que o ambiente servidor usaria.
+    return localFiles.saveLocalAttachment(entryId, upload);
+  }
   const res = await fetch(`/api/v1/entries/${entryId}/attachments`, {
     method: "POST",
     headers: {
@@ -886,6 +1251,11 @@ export async function uploadFile(
   onProgress?: (sent: number, total: number) => void,
   entryId?: string,
 ): Promise<{ entry_id: string; attachment_id: string }> {
+  // Sem servidor, o audio nao viaja: ele vira anexo do cofre do navegador e a
+  // nota nasce aqui mesmo.
+  if (isLocalMode()) {
+    return localAudio.uploadLocalAudio(file, { onProgress, entryId });
+  }
   const buffer = await file.arrayBuffer();
   const sha256 = await sha256Hex(buffer);
   const start = await request<{ id: string }>("/uploads", {

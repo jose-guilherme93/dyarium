@@ -120,12 +120,50 @@ function renderList(notebookId: string, activeId: string | null = null) {
   );
 }
 
+function renderListOpen(onOpen: (id: string) => void) {
+  return render(
+    <NoteList
+      refreshKey={0}
+      activeId={null}
+      failures={{}}
+      notebookId={ALL_NOTEBOOKS}
+      notebooks={NOTEBOOKS}
+      onOpen={onOpen}
+      onCreate={() => undefined}
+      onManageTags={() => undefined}
+    />,
+  );
+}
+
 describe("NoteList", () => {
-  it("mostra a previa e as tags da nota aberta", async () => {
+  it("nota sem titulo nao repete a previa na linha", () => {
+    const entry: Entry = {
+      ...ENTRIES[0],
+      id: "sem-titulo",
+      title: "",
+      preview: "Escopo da sessao com texto no corpo.",
+    } as Entry;
+    vi.mocked(api.listAllEntries).mockResolvedValueOnce({ entries: [entry] } as never);
+    renderList("trabalho");
+
+    return waitFor(() => {
+      expect(screen.getAllByText("Escopo da sessao com texto no corpo.")).toHaveLength(1);
+    });
+  });
+
+  it("mostra a previa da nota aberta sem tags na linha", async () => {
     renderList("trabalho", "e1");
     await waitFor(() => expect(screen.getByText("Reunião de segunda")).toBeInTheDocument());
     expect(screen.getByText("Falamos sobre o contrato e o prazo da entrega.")).toBeInTheDocument();
-    expect(screen.getAllByText("contrato").length).toBeGreaterThan(0);
+    expect(screen.queryByText("contrato")).not.toBeInTheDocument();
+  });
+
+  it("limpa a linha: sem bolinha, hora e data, previa unica", async () => {
+    const { container } = renderList("trabalho", "e1");
+    await waitFor(() => expect(screen.getByText("Reunião de segunda")).toBeInTheDocument());
+    expect(container.querySelectorAll(".note-row-dot")).toHaveLength(0);
+    expect(screen.getByText(/\d{2}:\d{2} · 19 out/)).toBeInTheDocument();
+    expect(container.querySelectorAll(".note-row-preview")).toHaveLength(1);
   });
 
   it("limita a lista ao caderno escolhido", async () => {
@@ -174,6 +212,32 @@ describe("NoteList", () => {
     expect(screen.getByRole("button", { name: "Remover filtro contrato" })).toBeInTheDocument();
   });
 
+  it("showSearch={false} esconde a lupa mas autoSearch abre a busca", async () => {
+    render(
+      <NoteList
+        refreshKey={0}
+        activeId={null}
+        failures={{}}
+        notebookId={ALL_NOTEBOOKS}
+        notebooks={NOTEBOOKS}
+        autoSearch
+        showSearch={false}
+        onOpen={() => undefined}
+        onCreate={() => undefined}
+        onManageTags={() => undefined}
+      />,
+    );
+    await waitFor(() => expect(screen.getByText("Viagem de fim de ano")).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Buscar nas notas" })).not.toBeInTheDocument();
+    expect(screen.getByRole("searchbox", { name: "Buscar nas notas" })).toBeInTheDocument();
+  });
+
+  it("sem showSearch o botao Buscar nas notas continua", async () => {
+    renderList(ALL_NOTEBOOKS);
+    await waitFor(() => expect(screen.getByText("Viagem de fim de ano")).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Buscar nas notas" })).toBeInTheDocument();
+  });
+
   it("busca sem acento encontra a nota acentuada", async () => {
     renderList(ALL_NOTEBOOKS);
     await waitFor(() => expect(screen.getByText("Viagem de fim de ano")).toBeInTheDocument());
@@ -217,6 +281,34 @@ describe("NoteList", () => {
     expect(screen.getByRole("menuitem", { name: "Selecionar todas" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Arquivar" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Apagar nota" })).toBeInTheDocument();
+    // Sem o dono das abas, a acao de nova aba nem aparece.
+    expect(screen.queryByRole("menuitem", { name: "Abrir em nova aba" })).not.toBeInTheDocument();
+  });
+
+  it("o menu oferece Abrir em nova aba e entrega a nota ao dono do estado", async () => {
+    const onOpen = vi.fn();
+    const onOpenInNewTab = vi.fn();
+    render(
+      <NoteList
+        refreshKey={0}
+        activeId={null}
+        failures={{}}
+        notebookId={ALL_NOTEBOOKS}
+        notebooks={NOTEBOOKS}
+        onOpen={onOpen}
+        onOpenInNewTab={onOpenInNewTab}
+        onCreate={() => undefined}
+        onManageTags={() => undefined}
+      />,
+    );
+    fireEvent.contextMenu(await screen.findByText("Viagem de fim de ano"), {
+      clientX: 40,
+      clientY: 60,
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Abrir em nova aba" }));
+
+    expect(onOpenInNewTab).toHaveBeenCalledWith("e3", "Viagem de fim de ano");
+    expect(onOpen).not.toHaveBeenCalled();
   });
 
   it("seleciona todas as notas visiveis e apaga em lote", async () => {
@@ -271,5 +363,172 @@ describe("NoteList", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Desarquivar" }));
 
     await waitFor(() => expect(api.patchEntry).toHaveBeenCalledWith("e2", { archived: false }));
+  });
+
+  it("entra no modo de selecao pelo botao e marca duas notas sem abrir", async () => {
+    const onOpen = vi.fn();
+    renderListOpen(onOpen);
+    await waitFor(() => expect(screen.getByText("Reunião de segunda")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Selecionar notas" }));
+    expect(screen.getByRole("button", { name: "Cancelar seleção" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Reunião de segunda"));
+    fireEvent.click(screen.getByText("Viagem de fim de ano"));
+
+    expect(screen.getByText("2 notas")).toBeInTheDocument();
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it("alterna notas no modo de selecao sem substituir a selecao", async () => {
+    renderListOpen(vi.fn());
+    await waitFor(() => expect(screen.getByText("Reunião de segunda")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Selecionar notas" }));
+
+    const reuniao = screen.getByRole("button", { name: /Reunião de segunda/ });
+    const viagem = screen.getByRole("button", { name: /Viagem de fim de ano/ });
+
+    fireEvent.click(screen.getByText("Reunião de segunda"));
+    expect(reuniao).toHaveAttribute("aria-selected", "true");
+
+    fireEvent.click(screen.getByText("Viagem de fim de ano"));
+    expect(screen.getByText("2 notas")).toBeInTheDocument();
+    expect(reuniao).toHaveAttribute("aria-selected", "true");
+    expect(viagem).toHaveAttribute("aria-selected", "true");
+
+    // Clicar de novo numa marcada remove sem substituir a selecao.
+    fireEvent.click(screen.getByText("Reunião de segunda"));
+    expect(reuniao).toHaveAttribute("aria-selected", "false");
+    expect(viagem).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("1 nota")).toBeInTheDocument();
+  });
+
+  it("arquiva duas notas selecionadas e sai do modo", async () => {
+    vi.mocked(api.patchEntry).mockClear();
+    renderListOpen(vi.fn());
+    await waitFor(() => expect(screen.getByText("Reunião de segunda")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Selecionar notas" }));
+    fireEvent.click(screen.getByText("Reunião de segunda"));
+    fireEvent.click(screen.getByText("Viagem de fim de ano"));
+    expect(screen.getByText("2 notas")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Arquivar" }));
+
+    await waitFor(() => expect(api.patchEntry).toHaveBeenCalledTimes(2));
+    expect(api.patchEntry).toHaveBeenCalledWith("e1", { archived: true });
+    expect(api.patchEntry).toHaveBeenCalledWith("e3", { archived: true });
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Apagar" })).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole("button", { name: "Selecionar notas" })).toBeInTheDocument();
+  });
+
+  it("apaga duas notas selecionadas e sai do modo", async () => {
+    vi.mocked(api.deleteEntry).mockClear();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const onMutated = vi.fn();
+    render(
+      <NoteList
+        refreshKey={0}
+        activeId={null}
+        failures={{}}
+        notebookId={ALL_NOTEBOOKS}
+        notebooks={NOTEBOOKS}
+        onOpen={vi.fn()}
+        onCreate={() => undefined}
+        onManageTags={() => undefined}
+        onMutated={onMutated}
+      />,
+    );
+    await waitFor(() => expect(screen.getByText("Reunião de segunda")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Selecionar notas" }));
+    fireEvent.click(screen.getByText("Reunião de segunda"));
+    fireEvent.click(screen.getByText("Viagem de fim de ano"));
+    fireEvent.click(screen.getByRole("button", { name: "Apagar" }));
+
+    await waitFor(() => expect(api.deleteEntry).toHaveBeenCalledTimes(2));
+    expect(api.deleteEntry).toHaveBeenCalledWith("e1");
+    expect(api.deleteEntry).toHaveBeenCalledWith("e3");
+    expect(onMutated).toHaveBeenCalledWith(["e1", "e3"]);
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Apagar" })).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole("button", { name: "Selecionar notas" })).toBeInTheDocument();
+    confirmSpy.mockRestore();
+  });
+
+  it("Escape sai do modo e limpa a selecao", async () => {
+    renderListOpen(vi.fn());
+    await waitFor(() => expect(screen.getByText("Reunião de segunda")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Selecionar notas" }));
+    fireEvent.click(screen.getByText("Reunião de segunda"));
+    expect(screen.getByText("1 nota")).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    expect(screen.getByRole("button", { name: "Selecionar notas" })).toBeInTheDocument();
+    expect(screen.queryByText("1 nota")).not.toBeInTheDocument();
+  });
+
+  it("o item Selecionar do menu de contexto entra no modo", async () => {
+    renderListOpen(vi.fn());
+    await waitFor(() => expect(screen.getByText("Viagem de fim de ano")).toBeInTheDocument());
+    fireEvent.contextMenu(screen.getByText("Viagem de fim de ano"), {
+      clientX: 10,
+      clientY: 10,
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Selecionar" }));
+
+    expect(screen.getByRole("button", { name: "Cancelar seleção" })).toBeInTheDocument();
+    expect(screen.getByText("1 nota")).toBeInTheDocument();
+  });
+
+  it("Selecionar todas entra no modo", async () => {
+    renderListOpen(vi.fn());
+    await waitFor(() => expect(screen.getByText("Viagem de fim de ano")).toBeInTheDocument());
+    fireEvent.contextMenu(screen.getByText("Viagem de fim de ano"), {
+      clientX: 10,
+      clientY: 10,
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Selecionar todas" }));
+
+    expect(screen.getByRole("button", { name: "Cancelar seleção" })).toBeInTheDocument();
+    expect(screen.getByText("2 notas")).toBeInTheDocument();
+  });
+
+  it("Limpar selecao apos Selecionar todas sai do modo", async () => {
+    const { container } = renderListOpen(vi.fn());
+    await waitFor(() => expect(screen.getByText("Viagem de fim de ano")).toBeInTheDocument());
+    fireEvent.contextMenu(screen.getByText("Viagem de fim de ano"), {
+      clientX: 10,
+      clientY: 10,
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Selecionar todas" }));
+    expect(screen.getByText("2 notas")).toBeInTheDocument();
+    expect(container.querySelectorAll(".note-row-check").length).toBeGreaterThan(0);
+
+    // Reabre o menu: com tudo marcado a acao vira "Limpar seleção".
+    fireEvent.contextMenu(screen.getByText("Viagem de fim de ano"), {
+      clientX: 10,
+      clientY: 10,
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Limpar seleção" }));
+
+    expect(screen.getByRole("button", { name: "Selecionar notas" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(screen.queryByRole("button", { name: "Cancelar seleção" })).not.toBeInTheDocument();
+    expect(screen.queryByText("2 notas")).not.toBeInTheDocument();
+    expect(container.querySelectorAll(".note-row-check").length).toBe(0);
+  });
+
+  it("Ctrl+clique a partir do modo normal entra no modo", async () => {
+    renderListOpen(vi.fn());
+    await waitFor(() => expect(screen.getByText("Viagem de fim de ano")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("Viagem de fim de ano"), { ctrlKey: true });
+
+    expect(screen.getByRole("button", { name: "Cancelar seleção" })).toBeInTheDocument();
+    expect(screen.getByText("1 nota")).toBeInTheDocument();
   });
 });

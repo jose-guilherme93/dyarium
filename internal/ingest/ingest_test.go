@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -472,6 +473,184 @@ func TestCompleteKeepsDifferentAudioSeparate(t *testing.T) {
 
 // O audio enviado pelo app cria a entrada com a origem do aparelho; sem a
 // origem explicita, o criador e o proprio ambiente.
+// --- Suite de ataque ---
+
+func TestAttackOffsetOutOfOrderNegativeGreater(t *testing.T) {
+	svc, _, _ := newService(t)
+	ctx := context.Background()
+	plain := []byte("conteudo")
+	up, err := svc.Start(ctx, Meta{Filename: "a.wav", SizeBytes: int64(len(plain))})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	// negativo
+	_, err = svc.Append(ctx, up.ID, -1, bytes.NewReader(plain))
+	assertStatus(t, err, 409)
+	// maior que o esperado
+	_, err = svc.Append(ctx, up.ID, 100, bytes.NewReader(plain))
+	assertStatus(t, err, 409)
+	// fora de ordem apos receber parte
+	if _, err := svc.Append(ctx, up.ID, 0, bytes.NewReader(plain[:4])); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	_, err = svc.Append(ctx, up.ID, 0, bytes.NewReader(plain[4:]))
+	assertStatus(t, err, 409)
+}
+
+func TestAttackSizeMismatchIncomplete(t *testing.T) {
+	svc, _, _ := newService(t)
+	ctx := context.Background()
+	plain := []byte("conteudo real")
+	up, err := svc.Start(ctx, Meta{Filename: "a.wav", SizeBytes: int64(len(plain))})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if _, err := svc.Append(ctx, up.ID, 0, bytes.NewReader(plain[:5])); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	_, err = svc.Complete(ctx, up.ID)
+	assertStatus(t, err, 422)
+	// repetir complete continua falhando, sem crash
+	_, err = svc.Complete(ctx, up.ID)
+	assertStatus(t, err, 422)
+}
+
+func TestAttackSHA256Divergent(t *testing.T) {
+	svc, _, _ := newService(t)
+	ctx := context.Background()
+	plain := []byte("conteudo real do audio")
+	bogus := sha256hex([]byte("outro"))
+	up, err := svc.Start(ctx, Meta{Filename: "a.wav", SizeBytes: int64(len(plain)), SHA256: bogus})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if _, err := svc.Append(ctx, up.ID, 0, bytes.NewReader(plain)); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	_, err = svc.Complete(ctx, up.ID)
+	assertStatus(t, err, 422)
+}
+
+func TestAttackTruncatedCiphertext(t *testing.T) {
+	svc, _, dir := newService(t)
+	ctx := context.Background()
+	plain := []byte("conteudo real do audio")
+	up, err := svc.Start(ctx, Meta{Filename: "a.wav", SizeBytes: int64(len(plain))})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if _, err := svc.Append(ctx, up.ID, 0, bytes.NewReader(plain)); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	// trunca o objeto cifrado
+	path := filepath.Join(dir, up.StorageKey)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if err := os.WriteFile(path, data[:len(data)-5], 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_, err = svc.Complete(ctx, up.ID)
+	var apiErr *Error
+	if !errors.As(err, &apiErr) || apiErr.Status != 422 {
+		t.Fatalf("expected 422 corrupt, got %v", err)
+	}
+}
+
+func TestAttackInvalidGCMTag(t *testing.T) {
+	svc, _, dir := newService(t)
+	ctx := context.Background()
+	plain := []byte("conteudo real do audio")
+	up, err := svc.Start(ctx, Meta{Filename: "a.wav", SizeBytes: int64(len(plain))})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if _, err := svc.Append(ctx, up.ID, 0, bytes.NewReader(plain)); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	path := filepath.Join(dir, up.StorageKey)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	// corrompe um byte no meio do ciphertext
+	if len(data) > 20 {
+		data[20] ^= 0xFF
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_, err = svc.Complete(ctx, up.ID)
+	var apiErr *Error
+	if !errors.As(err, &apiErr) || apiErr.Status != 422 {
+		t.Fatalf("expected 422 corrupt, got %v", err)
+	}
+}
+
+func TestAttackZeroByteAndTooLarge(t *testing.T) {
+	svc, _, _ := newService(t)
+	ctx := context.Background()
+	// zero byte
+	_, err := svc.Start(ctx, Meta{Filename: "a.wav", SizeBytes: 0})
+	var apiErr *Error
+	if !errors.As(err, &apiErr) || apiErr.Status != 400 {
+		t.Fatalf("expected 400 invalid_size, got %v", err)
+	}
+	// acima do limite
+	_, err = svc.Start(ctx, Meta{Filename: "a.wav", SizeBytes: (1 << 20) + 10})
+	if !errors.As(err, &apiErr) || apiErr.Status != 413 {
+		t.Fatalf("expected 413 too_large, got %v", err)
+	}
+}
+
+func TestAttackNoPlaintextLeftover(t *testing.T) {
+	svc, _, dir := newService(t)
+	ctx := context.Background()
+	plain := []byte("conteudo real do audio")
+	up, err := svc.Start(ctx, Meta{Filename: "a.wav", SizeBytes: int64(len(plain)), SHA256: sha256hex(plain)})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if _, err := svc.Append(ctx, up.ID, 0, bytes.NewReader(plain)); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	if _, err := svc.Complete(ctx, up.ID); err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	assertNoPlaintextTemp(t)
+
+	// falha
+	up2, _ := svc.Start(ctx, Meta{Filename: "b.wav", SizeBytes: int64(len(plain)), SHA256: sha256hex([]byte("outro"))})
+	if _, err := svc.Append(ctx, up2.ID, 0, bytes.NewReader(plain)); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	_, _ = svc.Complete(ctx, up2.ID)
+	assertNoPlaintextTemp(t)
+	_ = dir
+}
+
+func assertStatus(t *testing.T, err error, status int) {
+	t.Helper()
+	var apiErr *Error
+	if !errors.As(err, &apiErr) || apiErr.Status != status {
+		t.Fatalf("expected status %d, got %v", status, err)
+	}
+}
+
+func assertNoPlaintextTemp(t *testing.T) {
+	t.Helper()
+	entries, err := os.ReadDir(os.TempDir())
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "dyarium-verify-") || strings.HasPrefix(e.Name(), "dyarium-audio-") {
+			t.Fatalf("temporario em claro sobrou: %s", e.Name())
+		}
+	}
+}
+
 func TestCompleteRecordsEntryOrigin(t *testing.T) {
 	svc, st, _ := newService(t)
 	ctx := context.Background()

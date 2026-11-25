@@ -102,12 +102,16 @@ type Upload struct {
 	ExpiresAt     time.Time
 }
 
-// Quem criou um objeto. `Kind` e `device` (um aparelho com o app) ou `server`
-// (o proprio ambiente, pelo dashboard ou pela API). Proveniencia apenas: nao
-// muda permissao nem impede edicao em nenhum ambiente.
+// Quem criou um objeto. `Kind` e `device` (um aparelho com o app), `server`
+// (o proprio ambiente, pelo dashboard ou pela API) ou `mcp` (uma pasta de
+// projeto registrada pelo servidor MCP). Proveniencia apenas: nao muda
+// permissao nem impede edicao em nenhum ambiente.
 const (
 	OriginKindDevice = "device"
 	OriginKindServer = "server"
+	// OriginKindMCP marks an entry created by the MCP server for a project
+	// folder (one entry per machine and path).
+	OriginKindMCP = "mcp"
 )
 
 // Origin identifies who created an object. Empty means the row predates the
@@ -177,6 +181,14 @@ type Entry struct {
 	// WordCount is the prose word count, filled only when the caller asks for it
 	// (the book list and the book home).
 	WordCount int
+	// SummaryDetail controls how MCP project summaries are rendered for a
+	// project entry: concise (one line per item) or full (detail and commits).
+	// Entries that are not MCP projects keep the default "concise".
+	SummaryDetail string
+	// Icon e o icone de pagina escolhido para o projeto (emoji ou texto curto).
+	// Vazio significa que o cliente decide o fallback. O servidor nao
+	// interpreta o valor.
+	Icon string
 
 	// Versoes dos campos editaveis, como o cliente leu (so preenchidas nas
 	// leituras que as trazem). Sao os valores **exatos** gravados no banco: o
@@ -325,11 +337,15 @@ type NoteRevision struct {
 	CreatedAt time.Time
 }
 
-// Notebook kinds. A notebook is either a regular collection of notes or a
-// book: its entries are chapters and the dashboard opens the writer workspace.
+// Notebook kinds. A notebook is a regular collection of notes, a book (its
+// entries are chapters and the dashboard opens the writer workspace) or the
+// internal MCP notebook (its entries are projects). The MCP kind is never
+// accepted from a client; it exists so the store can protect and recognize the
+// notebook the server owns.
 const (
 	NotebookKindNotes = "notes"
 	NotebookKindBook  = "book"
+	NotebookKindMCP   = "mcp"
 )
 
 // Book statuses.
@@ -355,9 +371,11 @@ const (
 	ChapterDone     = "done"
 )
 
-// ValidNotebookKind reports whether kind is a known notebook kind.
+// ValidNotebookKind reports whether kind is a known notebook kind. The MCP kind
+// is internal: it is valid here so the store can create and protect its own
+// notebook, but the API rejects it before reaching this check.
 func ValidNotebookKind(kind string) bool {
-	return kind == NotebookKindNotes || kind == NotebookKindBook
+	return kind == NotebookKindNotes || kind == NotebookKindBook || kind == NotebookKindMCP
 }
 
 // ValidBookStatus reports whether status is a known book status.
@@ -527,19 +545,33 @@ type EntityLink struct {
 
 // EntitySummary aggregates one entity across entries.
 type EntitySummary struct {
-	ID        string
-	Kind      string
-	Name      string
+	ID   string
+	Kind string
+	Name string
+	// Label e o rotulo livre escolhido pelo dono (escola, gata, personagem).
+	// So exibicao: nao muda tipo, metrica, cor nem sync.
+	Label     string
 	Icon      string
 	Entries   int
 	Mentions  int
 	Sentiment float64
 	LastSeen  time.Time
-	// UpdatedAt e o relogio do servidor para o nome, o icone e o "sou eu".
-	// O app compara com a propria copia para decidir qual escrita vence.
+	// UpdatedAt e o relogio do servidor para o nome, o rotulo, o icone e o
+	// "sou eu". O app compara com a propria copia para decidir qual escrita vence.
 	UpdatedAt time.Time
 	// Aliases sao as grafias antigas que ainda resolvem para esta entidade.
 	Aliases []string
+}
+
+// EntityRejection says a name is never an entity of a kind. It is the owner's
+// curation over the AI extraction, applied by script before persisting: the
+// rejected link never reaches the database.
+type EntityRejection struct {
+	Kind      string
+	Name      string
+	NameKey   string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // EntityEntry is an entry that mentions an entity.

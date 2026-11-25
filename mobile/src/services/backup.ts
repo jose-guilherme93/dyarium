@@ -21,23 +21,33 @@ import Constants from 'expo-constants';
 
 import {
   BACKUP_MANIFEST,
+  backupEntryKeys,
   backupMediaName,
   baseName,
   buildManifest,
   bytesToBase64,
+  filterKnowledge,
   isBackupMediaName,
   nameFromDocumentUri,
   orderForBackup,
   orderNotesForRestore,
   parseManifest,
   toRestoredRecording,
+  validateRestoreEntry,
   type BackupFile,
   type BackupNote,
 } from '@/core/backup';
+import { sha256Hex } from '@/core/sha256';
 import { DEFAULT_NOTEBOOK_ID } from '@/core/notebooks';
 import type { Recording } from '@/core/types';
 
-import { listRecordings, upsertRecording } from './db';
+import { clockNow } from './clock';
+import {
+  exportBackupKnowledge,
+  importBackupKnowledge,
+  listRecordings,
+  upsertRecording,
+} from './db';
 import { sessionDirectory, sessionDirUri } from './files';
 import { listNotebooks, restoreLocalNotebook } from './notebooks';
 
@@ -45,6 +55,8 @@ export interface BackupSummary {
   notes: number;
   files: number;
   bytes: number;
+  /** Analises levadas para (ou trazidas de) o manifesto. */
+  analyses?: number;
 }
 
 export interface BackupInfo extends BackupSummary {
@@ -187,6 +199,7 @@ export async function readManifestSummary(folderUri: string): Promise<BackupInfo
     notes: manifest.notes.length,
     files,
     bytes,
+    analyses: manifest.knowledge?.analyses.length ?? 0,
     createdAt: manifest.createdAt,
     appVersion: manifest.appVersion,
   };
@@ -232,6 +245,7 @@ export async function runBackup(
       // Sem os caminhos absolutos: serao refeitos no restore.
       recording: { ...recording, dir: '', filePath: undefined },
       audioFile: baseName(recording.filePath),
+      textSha256: recording.text ? sha256Hex(new TextEncoder().encode(recording.text)) : undefined,
       files: backed,
     });
     onProgress?.(i + 1, recordings.length);
@@ -240,6 +254,12 @@ export async function runBackup(
   // Manifesto por ultimo: so fica valido quando tudo ja foi escrito. Parar
   // antes disso mantem o manifesto anterior intacto.
   if (options.shouldStop?.()) throw new BackupError('cancelled');
+  // Analises e mapa do aparelho: o app e um cliente independente, entao a
+  // pasta de backup e o unico lugar onde esse estado sobrevive a reinstalacao.
+  const knowledge = filterKnowledge(
+    await exportBackupKnowledge(),
+    backupEntryKeys(notes),
+  );
   await removeChild(existing, BACKUP_MANIFEST);
   const manifestUri = await Legacy.StorageAccessFramework.createFileAsync(
     folderUri,
@@ -248,7 +268,9 @@ export async function runBackup(
   );
   await Legacy.writeAsStringAsync(
     manifestUri,
-    JSON.stringify(buildManifest(notes, new Date(), appVersion(), notebooks)),
+    JSON.stringify(
+      buildManifest(notes, new Date(), appVersion(), notebooks, knowledge),
+    ),
   );
   existing.set(BACKUP_MANIFEST, manifestUri);
 
@@ -260,7 +282,12 @@ export async function runBackup(
     }
   }
 
-  return { notes: notes.length, files, bytes };
+  return {
+    notes: notes.length,
+    files,
+    bytes,
+    analyses: knowledge.analyses.length,
+  };
 }
 
 /** Restaura as notas da pasta para o aparelho, na ordem, conferindo cada arquivo. */
@@ -295,6 +322,9 @@ export async function runRestore(
     // So entre notas: uma nota em restauracao termina inteira.
     if (options.shouldStop?.()) throw new BackupError('cancelled');
     const entry = notes[i];
+    // Nomes vindos do manifesto viram caminho de arquivo. Um `..` ou uma barra
+    // aqui escaparia da pasta da nota; trata como backup corrompido.
+    if (validateRestoreEntry(entry) !== 'ok') throw new BackupError('corrupt');
     const recording = entry.recording;
     const stage = new Directory(stageRoot, recording.id);
     stage.create({ intermediates: true, idempotent: true });
@@ -309,6 +339,15 @@ export async function runRestore(
       if (md5Of(staged.uri) !== file.md5) throw new BackupError('corrupt');
     }
 
+    // 3) Confere integridade do texto: hash armazenado vs hash do texto no aparelho.
+    // Um backup antigo nao traz `textSha256`; entao sem ele apenas ignora (compatibilidade).
+    if (entry.textSha256 !== undefined && recording.text !== undefined) {
+      const actual = sha256Hex(new TextEncoder().encode(recording.text));
+      if (actual !== entry.textSha256) {
+        throw new BackupError('corrupt');
+      }
+    }
+
     // 2) So depois de conferir tudo, poe na pasta da nota e grava no banco.
     const destination = sessionDirectory(recording.id);
     for (const file of entry.files) {
@@ -318,16 +357,16 @@ export async function runRestore(
       await staged.move(target);
     }
     stage.delete();
-    // `updatedAt` = agora: a restauracao e uma mudanca local. Marca tambem que
-    // esta nota e mais nova que qualquer exclusao antiga do servidor (uma nota
-    // apagada e trazida de volta nao pode ser apagada de novo por causa disso).
+    // `updatedAt` fica o do backup: restaurar nao e editar. O carimbo HLC e
+    // refeito agora, entao a nota restaurada continua mais nova que qualquer
+    // exclusao antiga do servidor sem parecer uma edicao para a reconciliacao.
     await upsertRecording({
       ...toRestoredRecording(recording, sessionDirUri(recording.id), entry.audioFile),
       notebookId:
         recording.notebookId && knownNotebooks.has(recording.notebookId)
           ? recording.notebookId
           : DEFAULT_NOTEBOOK_ID,
-      updatedAt: new Date().toISOString(),
+      updatedHlc: await clockNow(),
     });
     files += entry.files.length;
     bytes += entry.files.reduce((sum, file) => sum + file.size, 0);
@@ -335,5 +374,14 @@ export async function runRestore(
   }
 
   if (stageRoot.exists) stageRoot.delete();
-  return { notes: total, files, bytes };
+
+  // Por ultimo, o que a nota nao carrega: analises, blocos e o mapa. Backups
+  // v2 nao tem esse bloco e seguem restaurando so as notas.
+  let analyses = 0;
+  if (manifest.knowledge) {
+    const knowledge = filterKnowledge(manifest.knowledge, backupEntryKeys(notes));
+    await importBackupKnowledge(knowledge);
+    analyses = knowledge.analyses.length;
+  }
+  return { notes: total, files, bytes, analyses };
 }

@@ -11,6 +11,7 @@ import {
 import type { StoredAnalysisChunk } from '../db';
 
 const mockCompletion = jest.fn();
+const mockCompleteOnline = jest.fn();
 const mockListAnalysisChunks = jest.fn<Promise<StoredAnalysisChunk[]>, [string]>();
 const mockSaveAnalysisChunks = jest.fn<Promise<void>, [StoredAnalysisChunk[]]>();
 const mockDeleteAnalysisChunks = jest.fn<Promise<void>, [string]>();
@@ -36,6 +37,9 @@ jest.mock('llama.rn', () => ({
 }));
 jest.mock('../analysisModels', () => ({
   analysisModelFilePath: () => 'file:///model.gguf',
+}));
+jest.mock('../onlineCompletion', () => ({
+  completeOnline: (...args: unknown[]) => mockCompleteOnline(...args),
 }));
 jest.mock('../authorSettings', () => ({
   loadAuthorSettings: async () => ({ ownerName: '', allNotesMine: true }),
@@ -195,6 +199,41 @@ describe('analyzeNote', () => {
     expect(result.doc.moments[0].text).toBe('Fui ao enterro da Ana');
     expect(result.doc.sentence).toBe('Uma despedida anunciada, sobre Ana.');
     expect(result.doc.sentenceSource).toBe('model');
+  });
+
+  it('usa o provedor online quando a etapa foi escolhida la, sem carregar llama', async () => {
+    mockCompleteOnline.mockImplementation(async (messages: { role: string; content: string }[]) => {
+      const system = messages[0]?.content ?? '';
+      if (system.includes('UMA frase')) {
+        return {
+          text: JSON.stringify({ frase: 'Uma despedida anunciada, sobre Ana.' }),
+          promptTokens: 10,
+          completionTokens: 5,
+          predictedMs: 100,
+          wallMs: 100,
+        };
+      }
+      return {
+        text: JSON.stringify(CHUNK),
+        promptTokens: 20,
+        completionTokens: 8,
+        predictedMs: 200,
+        wallMs: 200,
+      };
+    });
+
+    const result = await analyzeNote(recording(noteText), null, {
+      entryKey: 'e2',
+      title: 'Online',
+      online: true,
+      engineKey: 'online:groq:llama-3.3-70b-versatile',
+    });
+
+    expect(result.complete).toBe(true);
+    expect(mockCompleteOnline).toHaveBeenCalled();
+    expect(mockCompletion).not.toHaveBeenCalled();
+    const saved = mockSaveAnalysisChunks.mock.calls[0][0][0];
+    expect(saved.model).toBe('online:groq:llama-3.3-70b-versatile');
   });
 
   it('informa o progresso por bloco sem callback de token', async () => {

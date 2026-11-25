@@ -1,5 +1,13 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, api, cachedGet, clearToken, getToken, setToken } from "./api";
+import * as graphLocal from "./local/graphLocal";
+import type { GraphResponse } from "./types";
+
+vi.mock("./local/graphLocal", () => ({
+  buildLocalGraph: vi.fn(),
+  buildLocalEntityDetail: vi.fn(),
+  buildLocalEntityMentions: vi.fn(),
+}));
 
 describe("token sem storage", () => {
   afterEach(() => {
@@ -27,7 +35,13 @@ describe("token sem storage", () => {
 });
 
 describe("GET cache", () => {
+  // Com token o `api` fala com o servidor; sem token ele roteia para o cofre
+  // local e nao haveria HTTP para medir.
+  beforeEach(() => setToken("token-de-teste"));
+
   afterEach(() => {
+    // Sem `clearToken()`: ele limpa o cache HTTP, e um teste deste bloco
+    // depende da copia guardada pelo anterior.
     vi.unstubAllGlobals();
     vi.useRealTimers();
   });
@@ -128,5 +142,59 @@ describe("GET cache", () => {
     const failure = api.deleteEntry("e1");
     await expect(failure).rejects.toBeInstanceOf(ApiError);
     await expect(failure).rejects.toMatchObject({ status: 503 });
+  });
+});
+
+describe("VITE_LOCAL_ONLY na camada de dados", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    clearToken();
+  });
+
+  it("com a flag ligada, o token guardado nao manda a interface para o servidor", async () => {
+    // O bug que isso cobre: a tela mostrava as 400 notas do servidor, mas o
+    // cofre do Drive era montado do banco local vazio e subia "0 gravadas".
+    vi.stubEnv("VITE_LOCAL_ONLY", "1");
+    setToken("token-de-teste");
+    const { isLocalMode } = await import("./api");
+    expect(isLocalMode()).toBe(true);
+  });
+
+  it("sem a flag, o token guardado continua valendo", async () => {
+    vi.stubEnv("VITE_LOCAL_ONLY", "");
+    setToken("token-de-teste");
+    const { isLocalMode } = await import("./api");
+    expect(isLocalMode()).toBe(false);
+  });
+});
+
+describe("grafo do cofre no modo local", () => {
+  afterEach(() => clearToken());
+
+  it("api.getGraph devolve o grafo do builder em vez de falhar sem servidor", async () => {
+    clearToken();
+    const graph: GraphResponse = {
+      center: { id: "user", kind: "user", label: "Você", mentions: 0, notes: 0 },
+      nodes: [{ id: "person:marina", kind: "person", label: "Marina", mentions: 2, notes: 2 }],
+      edges: [{ source: "user", target: "person:marina", kind: "relation", weight: 2 }],
+      total_nodes: 1,
+      total_edges: 1,
+      truncated: false,
+    };
+    vi.mocked(graphLocal.buildLocalGraph).mockResolvedValueOnce(graph);
+
+    const result = await api.getGraph({
+      notebookId: "n1",
+      from: "2026-01-01T00:00:00Z",
+      excludeBooks: true,
+    });
+
+    expect(result).toBe(graph);
+    expect(graphLocal.buildLocalGraph).toHaveBeenCalledWith({
+      notebookId: "n1",
+      period: "2026-01-01T00:00:00Z",
+      focus: undefined,
+      excludeBooks: true,
+    });
   });
 });

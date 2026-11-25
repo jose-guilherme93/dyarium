@@ -105,6 +105,29 @@ export interface Recording {
   author?: AuthorRole;
   /** Escolha local ainda nao enviada ao servidor. */
   authorDirty?: boolean;
+  /** Detalhe do resumo automatico do projeto (entrada MCP). */
+  summaryDetail?: SummaryDetail;
+  /** Escolha local ainda nao enviada ao servidor. */
+  summaryDetailDirty?: boolean;
+  /** Icone de pagina da entrada (emoji ou texto curto); vazio usa o fallback. */
+  icon?: string;
+  /** Icone alterado localmente e ainda nao enviado ao servidor. */
+  iconDirty?: boolean;
+  /* Modo escritor: a nota pode ser um capitulo de um livro. */
+  /** Tipo do capitulo (abertura, cena, interludio); vazio nao classifica. */
+  chapterKind?: string;
+  /** Posicao do capitulo no livro; 0 quando ainda nao foi ordenado. */
+  chapterPosition?: number;
+  /** Estado do capitulo (planejado, escrito, revisado); vazio nao classifica. */
+  chapterStatus?: string;
+  /** Meta de palavras do capitulo. */
+  chapterGoalWords?: number;
+  /** Sinopse do capitulo: planejamento, nao entra no texto. */
+  chapterSynopsis?: string;
+  /** Beats do capitulo, uma linha por beat. */
+  chapterBeats?: string;
+  /** Anotacoes do autor sobre o capitulo. */
+  chapterNotes?: string;
   /**
    * Nota apagada, esperando o fim da janela da lixeira (7 dias). Enquanto
    * existir, a nota nao aparece em lista nenhuma; o audio local fica guardado
@@ -157,10 +180,16 @@ export interface Recording {
   updatedAt: string;
 }
 
+export type SummaryDetail = 'concise' | 'full';
+
 export type TranscriptStatus = 'pending' | 'ready' | 'failed';
 
-/** Origem da transcricao: feita no aparelho ou recebida do servidor. */
-export type TranscriptOrigin = 'local' | 'server';
+/**
+ * Origem da transcricao: feita no aparelho (`local`), recebida do servidor
+ * (`server`) ou pedida a um provedor de transcricao no navegador (`provider`,
+ * o caminho do build hospedado, onde o motor local nao cabe).
+ */
+export type TranscriptOrigin = 'local' | 'server' | 'provider';
 
 /** Trecho da transcricao com a marcacao de tempo no audio original. */
 export interface TranscriptSegment {
@@ -250,7 +279,11 @@ export function needsTranscript(r: Recording): boolean {
     Boolean(r.entryId) &&
     r.status === 'completed' &&
     r.transcriptOrigin !== 'local' &&
-    r.transcriptStatus !== 'ready'
+    r.transcriptStatus !== 'ready' &&
+    // Nota cujo texto vem do servidor so entra na fila quando existe um
+    // `pending` explicito (houve transcript_at a buscar). Sem isto ela pedia
+    // /transcript para sempre quando o servidor nao transcrevia.
+    (r.transcriptOrigin !== 'server' || r.transcriptStatus === 'pending')
   );
 }
 

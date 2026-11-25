@@ -22,18 +22,18 @@ import type { NoteProperty } from '@/components/NoteMenu';
 import { NotebookPicker } from '@/components/NotebookPicker';
 import { RecordingCard } from '@/components/RecordingCard';
 import { Screen } from '@/components/Screen';
+import { DriveExpiredBanner } from '@/components/DriveExpiredBanner';
 import { STATUS_LABELS } from '@/components/StatusChip';
 import { TagFilterRow } from '@/components/TagFilterRow';
+import { RecentCard } from '@/components/RecentCard';
 import { NoteOrderSheet } from '@/components/NoteOrderSheet';
-import { sortByCreation } from '@/core/noteOrder';
 import { formatBytes, formatDateTime, noteDateIso } from '@/core/format';
 import {
-  notesInNotebook,
-  recentNotes,
   recordingNotebookId,
   tagCountsForFilter,
 } from '@/core/notebookFilter';
-import { DEFAULT_NOTEBOOK_ID, bookNotebookIds, noteNotebooks } from '@/core/notebooks';
+import { DEFAULT_NOTEBOOK_ID, noteNotebooks } from '@/core/notebooks';
+import { buildRecentItems, filterRecent, sortRecent, type RecentItem } from '@/core/recent';
 import { noteStats } from '@/core/noteStats';
 import { markdownToPlain } from '@/core/richText';
 import { displayTitle } from '@/core/title';
@@ -41,11 +41,15 @@ import { needsNoteSync, type Recording } from '@/core/types';
 import { useRenderCount } from '@/dev/perf';
 import { directoryBytes, sessionDirectory } from '@/services/files';
 import { useLibrary } from '@/state/LibraryContext';
+import { useDrive } from '@/state/useDrive';
 import { useRecording } from '@/state/RecordingContext';
 import { useSettings } from '@/state/SettingsContext';
 import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
 import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
 import { defineStyles } from '@/theme/themedStyles';
+import { Button, Icon, type IconName } from '@/ui';
+import { designRadius, designRow, designSpace, designType } from '@/theme/design';
+import { useDesign } from '@/ui/useDesign';
 
 const PENDING_STATUSES = ['recorded', 'queued', 'uploading', 'failed'];
 
@@ -89,12 +93,19 @@ interface NoteRowProps {
   item: Recording;
   swipeDelete: boolean;
   notebookLabel?: string;
+  glyphIcon?: IconName;
+  glyphColor?: string;
   onOpen(id: string): void;
   onLongPress(item: Recording, anchor: { x: number; y: number }): void;
   onRemove(id: string): void;
   onArchive(id: string): void;
   onUnarchive(id: string): void;
-  busy?: { kind: 'transcription' | 'analysis'; percent?: number; queued?: boolean } | null;
+  busy?: {
+    kind: 'transcription' | 'analysis';
+    percent?: number;
+    queued?: boolean;
+    remote?: boolean;
+  } | null;
 }
 
 // Linha memoizada: a home re-renderiza quando a fila muda; sem isto, todas as
@@ -103,6 +114,8 @@ const NoteRow = memo(function NoteRow({
   item,
   swipeDelete,
   notebookLabel,
+  glyphIcon,
+  glyphColor,
   onOpen,
   onLongPress,
   onRemove,
@@ -126,6 +139,8 @@ const NoteRow = memo(function NoteRow({
         dense
         notebookLabel={notebookLabel}
         busy={busy}
+        glyphIcon={glyphIcon}
+        glyphColor={glyphColor}
         onOpen={onOpen}
         onLongPress={onLongPress}
       />
@@ -134,13 +149,16 @@ const NoteRow = memo(function NoteRow({
 });
 
 // Identidade estavel: evita re-render dos cards a cada atualizacao da lista.
-function keyExtractor(item: Recording) {
-  return item.id;
+function keyExtractor(item: RecentItem) {
+  if (item.kind === 'note') return `note:${item.recording.id}`;
+  if (item.kind === 'book') return `book:${item.notebook.id}`;
+  return `project:${item.mcpId}:${item.name}`;
 }
 
 export default function NotebookScreen() {
   const styles = useThemedStyles(baseStyles);
   const { colors } = useTheme();
+  const designColors = useDesign();
 
   const {
     recordings,
@@ -157,13 +175,19 @@ export default function NotebookScreen() {
   const { start: startRecording } = useRecording();
   const { swipeAction, lastNotebookId, setLastNotebookId, noteOrder, setNoteOrder } =
     useSettings();
+  const drive = useDrive();
   useRenderCount('NotebookScreen');
   // Trabalho pesado em andamento por nota: o card mostra icone e porcentagem.
   const activities = useActivities();
   const busyByNote = useMemo(() => {
     const map = new Map<
       string,
-      { kind: 'transcription' | 'analysis'; percent?: number; queued?: boolean }
+      {
+        kind: 'transcription' | 'analysis';
+        percent?: number;
+        queued?: boolean;
+        remote?: boolean;
+      }
     >();
     for (const activity of activities) {
       if (activity.status !== 'running') continue;
@@ -175,6 +199,7 @@ export default function NotebookScreen() {
         kind: activity.kind,
         percent: activity.progress,
         queued: activity.progress === undefined,
+        remote: activity.detail === 'No servidor',
       };
       // O trabalho mais recente da nota aparece; os demais seguem no centro.
       if (!current || (next.percent ?? 0) >= (current.percent ?? 0)) {
@@ -187,6 +212,11 @@ export default function NotebookScreen() {
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  // A lista vazia por filtro oferece a saida em um toque, sem paragrafo.
+  const clearFilters = useCallback(() => {
+    setQuery('');
+    setSelectedTags([]);
+  }, []);
   const [refreshing, setRefreshing] = useState(false);
   const [newMenuOpen, setNewMenuOpen] = useState(false);
   const [notebookPickerOpen, setNotebookPickerOpen] = useState(false);
@@ -198,12 +228,17 @@ export default function NotebookScreen() {
   const [actionsProps, setActionsProps] = useState<NoteProperty[]>([]);
   const [actionsAnchor, setActionsAnchor] = useState<{ x: number; y: number } | null>(null);
 
-  // Livros ficam fora do app no v1: nem o caderno, nem as notas dele aparecem.
+  // Livros e o caderno MCP ficam fora da lista de notas: livros viram linhas
+  // proprias e o MCP vira projetos. O picker de caderno continua mostrando o
+  // MCP, porque seleciona-lo abre a superficie Projetos.
   const shownNotebooks = useMemo(() => noteNotebooks(notebooks), [notebooks]);
-  const bookIds = useMemo(() => bookNotebookIds(notebooks), [notebooks]);
+  const noteNotebookIds = useMemo(
+    () => new Set(notebooks.filter((n) => n.kind !== 'book' && n.kind !== 'mcp').map((n) => n.id)),
+    [notebooks],
+  );
   const diaryRecordings = useMemo(
-    () => recordings.filter((recording) => !bookIds.has(recordingNotebookId(recording))),
-    [recordings, bookIds],
+    () => recordings.filter((recording) => noteNotebookIds.has(recordingNotebookId(recording))),
+    [recordings, noteNotebookIds],
   );
   const scopeNotebook = scopeId
     ? shownNotebooks.find((notebook) => notebook.id === scopeId)
@@ -240,19 +275,21 @@ export default function NotebookScreen() {
       ? 'syncing'
       : 'ok';
 
-  const noteList = useMemo(
+  const recentItems = useMemo(
+    () => buildRecentItems({ recordings, notebooks }),
+    [recordings, notebooks],
+  );
+  const itemList = useMemo(
     () =>
-      sortByCreation(
-        scopeNotebook
-          ? notesInNotebook(diaryRecordings, {
-              notebookId: scopeNotebook.id,
-              tags: selectedTags,
-              query,
-            })
-          : recentNotes(diaryRecordings, { tags: selectedTags, query }),
+      sortRecent(
+        filterRecent(recentItems, {
+          query,
+          tags: selectedTags,
+          notebookId: scopeNotebook?.id ?? null,
+        }),
         noteOrder,
       ),
-    [diaryRecordings, scopeNotebook, selectedTags, query, noteOrder],
+    [recentItems, query, selectedTags, scopeNotebook, noteOrder],
   );
   const notebookNames = useMemo(
     () => new Map(notebooks.map((notebook) => [notebook.id, notebook.name])),
@@ -381,6 +418,16 @@ export default function NotebookScreen() {
 
   const selectScope = useCallback(
     (id: string | null) => {
+      // O caderno de projetos nao e uma lista de notas: no app ele abre a
+      // superficie Projetos, com as abas Itens e Projetos (docs/projetos.md).
+      if (id) {
+        const target = notebooksRef.current.find((notebook) => notebook.id === id);
+        if (target?.kind === 'mcp') {
+          setNotebookPickerOpen(false);
+          push({ pathname: '/projects', params: { notebook: id } });
+          return;
+        }
+      }
       setScopeId(id);
       setNotebookPickerOpen(false);
       setQuery('');
@@ -390,24 +437,32 @@ export default function NotebookScreen() {
     [setLastNotebookId],
   );
 
-  const renderNote = useCallback(
-    ({ item }: { item: Recording }) => (
-      <NoteRow
-        item={item}
-        swipeDelete={swipeDelete}
-        notebookLabel={
-          scopeNotebook
-            ? undefined
-            : (notebookNames.get(recordingNotebookId(item)) ?? 'Notas ao acaso')
-        }
-        onOpen={openNote}
-        onLongPress={openActions}
-        onRemove={removeNote}
-        onArchive={archive}
-        onUnarchive={unarchive}
-        busy={busyByNote.get(item.id) ?? null}
-      />
-    ),
+  const renderRecentItem = useCallback(
+    ({ item }: { item: RecentItem }) => {
+      if (item.kind === 'note') {
+        const recording = item.recording;
+        return (
+          <NoteRow
+            item={recording}
+            swipeDelete={swipeDelete}
+            notebookLabel={
+              scopeNotebook
+                ? undefined
+                : (notebookNames.get(recordingNotebookId(recording)) ?? 'Notas ao acaso')
+            }
+            glyphIcon="doc"
+            glyphColor={designColors.textMuted}
+            onOpen={openNote}
+            onLongPress={openActions}
+            onRemove={removeNote}
+            onArchive={archive}
+            onUnarchive={unarchive}
+            busy={busyByNote.get(recording.id) ?? null}
+          />
+        );
+      }
+      return <RecentCard item={item} />;
+    },
     [
       swipeDelete,
       scopeNotebook,
@@ -418,6 +473,7 @@ export default function NotebookScreen() {
       removeNote,
       archive,
       unarchive,
+      designColors.textMuted,
     ],
   );
 
@@ -435,8 +491,18 @@ export default function NotebookScreen() {
       onOpenNotebooks={() => setNotebookPickerOpen(true)}
       onOpenSync={() => push('/sync')}
       onOpenMap={() => push('/map')}
+      onOpenCalendar={() => push('/calendar')}
       onOpenActivity={() => setActivityOpen(true)}
       onOpenSettings={() => push('/settings')}
+      profile={drive.profile}
+      accountState={
+        drive.status === 'connected'
+          ? 'connected'
+          : drive.status === 'expired'
+            ? 'expired'
+            : 'off'
+      }
+      onOpenProfile={() => push('/perfil')}
     />
   );
 
@@ -454,15 +520,23 @@ export default function NotebookScreen() {
     <Screen style={styles.screen}>
       {header}
 
+      <DriveExpiredBanner />
+
       {interrupted > 0 ? (
-        <Press style={styles.alert} onPress={() => push('/recovery')}>
-          <Ionicons name="warning" size={18} color={colors.warning} />
-          <Text style={styles.alertText}>
+        <Press
+          style={[
+            styles.alert,
+            { borderColor: designColors.warning, backgroundColor: designColors.surfaceAlt },
+          ]}
+          onPress={() => push('/recovery')}
+        >
+          <Icon name="alert" size={12} color={designColors.warning} />
+          <Text style={[styles.alertText, { color: designColors.text }]}>
             {interrupted === 1
               ? 'Uma gravação foi interrompida'
               : `${interrupted} gravações interrompidas`}
           </Text>
-          <Ionicons name="chevron-forward" size={16} color={colors.warning} />
+          <Icon name="forward" size={12} color={designColors.warning} />
         </Press>
       ) : null}
 
@@ -479,11 +553,18 @@ export default function NotebookScreen() {
       </View>
 
       <FlatList
-        data={noteList}
+        data={itemList}
         keyExtractor={keyExtractor}
         contentContainerStyle={styles.list}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        // A home abre com 10 linhas, nao com a tela inteira de cards: cada card
+        // monta um Swipeable e o icone da capa. Montar 50 no boot segurava o
+        // primeiro toque do usuario.
+        initialNumToRender={10}
+        maxToRenderPerBatch={8}
+        windowSize={7}
+        updateCellsBatchingPeriod={50}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -491,22 +572,20 @@ export default function NotebookScreen() {
             tintColor={colors.textSecondary}
           />
         }
-        renderItem={renderNote}
+        renderItem={renderRecentItem}
         ListEmptyComponent={
           <View style={styles.empty}>
-            <View style={styles.emptyIcon}>
-              <Ionicons
-                name={
-                  query || selectedTags.length > 0
-                    ? 'funnel-outline'
-                    : scopeNotebook
-                      ? 'book-outline'
-                      : 'time-outline'
-                }
-                size={30}
-                color={colors.textTertiary}
-              />
-            </View>
+            <Icon
+              name={
+                query || selectedTags.length > 0
+                  ? 'search'
+                  : scopeNotebook
+                    ? 'book'
+                    : 'clock'
+              }
+              size={24}
+              color={designColors.textMuted}
+            />
             <Text style={styles.emptyTitle}>
               {query || selectedTags.length > 0
                 ? 'Nenhuma nota com esse filtro'
@@ -514,22 +593,20 @@ export default function NotebookScreen() {
                   ? 'Nenhuma nota neste caderno'
                   : 'Nenhuma nota ainda'}
             </Text>
-            <Text style={styles.emptyText}>
-              {query || selectedTags.length > 0
-                ? scopeNotebook
-                  ? 'Limpe a busca ou as tags para ver o caderno inteiro.'
-                  : 'Limpe a busca ou as tags para ver todas as notas.'
-                : scopeNotebook
-                  ? 'Toque em + para criar a primeira nota deste caderno.'
-                  : 'Toque em + para criar uma nota de texto, imagem, áudio ou link.'}
-            </Text>
+            <View style={styles.emptyAction}>
+              {query || selectedTags.length > 0 ? (
+                <Button title="limpar filtros" variant="secondary" onPress={clearFilters} />
+              ) : (
+                <Button title="nova nota" onPress={() => setNewMenuOpen(true)} />
+              )}
+            </View>
           </View>
         }
       />
 
       {newMenuOpen ? (
         <Press
-          style={styles.fabBackdrop}
+          style={[styles.fabBackdrop, { backgroundColor: designColors.overlay }]}
           onPress={() => setNewMenuOpen(false)}
           feedback={false}
           accessibilityLabel="Fechar menu"
@@ -539,26 +616,18 @@ export default function NotebookScreen() {
       <View style={styles.fabWrap} pointerEvents="box-none">
         {newMenuOpen ? (
           <View style={styles.fabMenu}>
-            <NewMenuItem icon="link-outline" label="Link" onPress={() => void startNote('link')} />
-            <NewMenuItem
-              icon="image-outline"
-              label="Imagem"
-              onPress={() => void startNote('image')}
-            />
-            <NewMenuItem icon="mic-outline" label="Áudio" onPress={() => void startAudio()} />
-            <NewMenuItem
-              icon="document-text-outline"
-              label="Texto"
-              onPress={() => void startNote('text')}
-            />
+            <NewMenuItem icon="link" label="Link" onPress={() => void startNote('link')} />
+            <NewMenuItem icon="image" label="Imagem" onPress={() => void startNote('image')} />
+            <NewMenuItem icon="mic" label="Áudio" onPress={() => void startAudio()} />
+            <NewMenuItem icon="doc" label="Texto" onPress={() => void startNote('text')} />
           </View>
         ) : null}
         <Press
-          style={styles.fab}
+          style={[styles.fab, { backgroundColor: designColors.primary }]}
           onPress={() => setNewMenuOpen((value) => !value)}
           accessibilityLabel={newMenuOpen ? 'Fechar menu' : 'Nova nota'}
         >
-          <Ionicons name={newMenuOpen ? 'close' : 'add'} size={28} color={colors.onAccent} />
+          <Icon name={newMenuOpen ? 'close' : 'plus'} size={22} color={designColors.surface} />
         </Press>
       </View>
 
@@ -606,18 +675,24 @@ function NewMenuItem({
   label,
   onPress,
 }: {
-  icon: keyof typeof Ionicons.glyphMap;
+  icon: 'link' | 'image' | 'mic' | 'doc';
   label: string;
   onPress: () => void;
 }) {
+  const colors = useDesign();
   const styles = useThemedStyles(baseStyles);
-  const { colors } = useTheme();
-
   return (
-    <Press style={styles.fabItem} onPress={onPress} accessibilityLabel={label}>
-      <Text style={styles.fabItemLabel}>{label}</Text>
-      <View style={styles.fabItemIcon}>
-        <Ionicons name={icon} size={18} color={colors.text} />
+    <Press
+      style={[
+        styles.fabItem,
+        { backgroundColor: colors.surfaceRaised, borderColor: colors.line },
+      ]}
+      onPress={onPress}
+      accessibilityLabel={label}
+    >
+      <Text style={[styles.fabItemLabel, { color: colors.text }]}>{label}</Text>
+      <View style={[styles.fabItemIcon, { borderColor: colors.line }]}>
+        <Icon name={icon} size={12} color={colors.text} />
       </View>
     </Press>
   );
@@ -685,23 +760,14 @@ const baseStyles = defineStyles({
     borderRadius: radius.sm,
     padding: spacing.sm,
   },
-  alertText: { flex: 1, color: baseColors.warning, fontSize: fontSize.sm, fontWeight: '600' },
-  empty: { alignItems: 'center', gap: spacing.md, paddingTop: spacing.xxxl },
-  emptyIcon: {
-    width: 68,
-    height: 68,
-    borderRadius: 34,
-    backgroundColor: baseColors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  emptyTitle: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
-  emptyText: {
-    color: baseColors.textSecondary,
-    fontSize: fontSize.sm,
-    textAlign: 'center',
-    paddingHorizontal: spacing.xl,
-    lineHeight: 20,
+  alertText: { flex: 1, fontSize: designType.body.size, fontWeight: '500' },
+  empty: { alignItems: 'center', gap: designSpace.s8, paddingTop: designSpace.s32 },
+  emptyAction: { alignSelf: 'center', marginTop: designSpace.s4 },
+  emptyTitle: {
+    color: baseColors.text,
+    fontSize: designType.title.size,
+    fontWeight: '600',
+    letterSpacing: -0.085,
   },
   fabBackdrop: {
     position: 'absolute',
@@ -709,41 +775,40 @@ const baseStyles = defineStyles({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.3)',
   },
   fabWrap: {
     position: 'absolute',
-    right: spacing.xl,
-    bottom: spacing.xl,
+    right: designSpace.s16,
+    bottom: designSpace.s16,
     alignItems: 'flex-end',
-    gap: spacing.md,
+    gap: designSpace.s8,
   },
-  fabMenu: { alignItems: 'flex-end', gap: spacing.sm },
+  fabMenu: { alignItems: 'flex-end', gap: designSpace.s4 },
   fabItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.sm,
+    gap: designSpace.s6,
     backgroundColor: baseColors.surface,
-    borderRadius: radius.pill,
-    paddingLeft: spacing.lg,
-    paddingRight: spacing.sm,
-    paddingVertical: spacing.sm,
-    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: designRadius.control,
+    paddingLeft: designSpace.s8,
+    paddingRight: designSpace.s4,
+    paddingVertical: designSpace.s4,
+    borderWidth: 1,
     borderColor: baseColors.borderStrong,
   },
-  fabItemLabel: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600' },
+  fabItemLabel: { fontSize: designType.body.size, fontWeight: '500' },
   fabItemIcon: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: baseColors.surfaceElevated,
+    width: 22,
+    height: 22,
+    borderRadius: designRadius.control,
+    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
   fab: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: designRow.touch,
+    height: designRow.touch,
+    borderRadius: designRow.touch / 2,
     backgroundColor: baseColors.accent,
     alignItems: 'center',
     justifyContent: 'center',

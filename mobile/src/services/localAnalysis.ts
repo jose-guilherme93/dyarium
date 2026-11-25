@@ -32,6 +32,8 @@ import {
 import { planAnalysis, type AnalysisBlock, type AnalysisPlan } from '@/core/analysisPlan';
 import type { AnalysisStage } from '@/core/analysisStages';
 import { analysisContentHash } from '@/core/analysisPrompt';
+import { completeOnline } from './onlineCompletion';
+import { buildEntityMemory, type EntityMemoryEntry } from '@/core/entities';
 import {
   SUMMARY_SCHEMA,
   acceptSummary,
@@ -56,6 +58,9 @@ import {
   deleteAnalysisChunks,
   listAnalysisChunks,
   listCachedAnalyses,
+  listEntityAliases,
+  listEntityRejections,
+  listLocalEntities,
   saveAnalysisChunks,
   type StoredAnalysisChunk,
 } from './db';
@@ -387,6 +392,39 @@ export async function runAnalysis(
   };
 }
 
+/** Uma completion pronta para o pipeline, local ou online. */
+async function completeForAnalysis(
+  model: AnalysisModelInfo | null,
+  messages: ReturnType<typeof buildChunkMessages>,
+  options: AnalysisPassOptions & AnalysisRunOptions,
+): Promise<{
+  text: string;
+  promptTokens: number;
+  completionTokens: number;
+  predictedMs: number;
+  wallMs: number;
+}> {
+  if (options.online) {
+    const run = await completeOnline(messages, { maxTokens: options.maxTokens });
+    return {
+      text: run.text,
+      promptTokens: run.promptTokens,
+      completionTokens: run.completionTokens,
+      predictedMs: run.predictedMs,
+      wallMs: run.wallMs,
+    };
+  }
+  if (!model) throw new Error('modelo de analise indisponivel');
+  const run = await runAnalysis(model, messages, options);
+  return {
+    text: run.text,
+    promptTokens: run.timings?.promptTokens ?? 0,
+    completionTokens: run.timings?.predictedTokens ?? 0,
+    predictedMs: run.timings?.predictedMs ?? run.wallMs,
+    wallMs: run.wallMs,
+  };
+}
+
 export interface AnalysisPassProgress {
   /** Blocos com resultado aceito (lidos agora ou retomados do cache). */
   read: number;
@@ -400,6 +438,12 @@ export interface AnalysisPassProgress {
 
 export interface AnalysisPassOptions {
   lowPower?: boolean;
+  /** Analise no provedor online, sem carregar modelo local. */
+  online?: boolean;
+  /** Chave de cache do motor online (provedor + modelo). */
+  engineKey?: string;
+  /** Dicionario do diario recuperado para o bloco; a passada carrega uma vez. */
+  memory?: readonly EntityMemoryEntry[];
   /** Recomeca do zero: apaga os blocos ja lidos desta nota. */
   restart?: boolean;
   /** Gravacao de cada bloco para retomada; desligado no benchmark. */
@@ -462,15 +506,47 @@ async function loadKnownEntities(
 }
 
 /**
+ * Monta o dicionario que o prompt le: nome real, rotulo, apelidos e rejeicoes.
+ * Carregado uma vez por passada; uma falha de banco nao impede a analise.
+ */
+async function loadEntityMemory(): Promise<EntityMemoryEntry[]> {
+  try {
+    const [entities, aliases, rejections] = await Promise.all([
+      listLocalEntities(),
+      listEntityAliases(),
+      listEntityRejections(),
+    ]);
+    return buildEntityMemory(
+      entities.map((entity) => ({
+        kind: entity.kind,
+        name: entity.name,
+        label: entity.label,
+        aliases: aliases[entity.id] ?? [],
+      })),
+      rejections,
+    );
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Analisa uma nota inteira. Le so os blocos que ainda nao tem resultado valido
  * para o modelo e o prompt atuais; cada bloco fica gravado, entao parar e
  * continuar nao perde trabalho.
  */
 export async function analyzeNote(
   recording: Pick<Recording, 'id' | 'text' | 'transcript' | 'transcriptSegments' | 'author'>,
-  model: AnalysisModelInfo,
+  model: AnalysisModelInfo | null,
   options: AnalysisPassOptions & { entryKey: string; title: string },
 ): Promise<AnalysisPassResult> {
+  const online = options.online === true;
+  if (!online && !model) throw new Error('modelo de analise indisponivel');
+  // Chave de cache e de composicao: o modelo local ou o par provedor/modelo
+  // online. Trocar de motor nao reaproveita bloco lido por outro.
+  const engineKey = online
+    ? (options.engineKey ?? 'online')
+    : (model as AnalysisModelInfo).id;
   const entryKey = options.entryKey;
   const persist = options.persist !== false;
   const plan = planAnalysis(recording);
@@ -509,6 +585,7 @@ export async function analyzeNote(
     await deleteAnalysisChunks(entryKey).catch(() => undefined);
   }
   const known = await loadKnownEntities(entryKey);
+  const memory = await loadEntityMemory();
 
   const total = plan.blocks.length;
   const passId = ++passSeq;
@@ -535,12 +612,14 @@ export async function analyzeNote(
   const lease: HeavyLease = await acquireHeavyWork('analysis');
   updateActivity(activity, { detail: total > 0 ? `Preparando ${total} blocos` : 'Preparando' });
   // O primeiro bloco inclui carregar o modelo; se ele ja esta quente, pula a
-  // fase de carga.
-  options.onStage?.(isAnalysisModelLoaded(model.id) ? 'reading' : 'loading');
+  // fase de carga. Online nao carrega nada no aparelho.
+  options.onStage?.(
+    !online && isAnalysisModelLoaded((model as AnalysisModelInfo).id) ? 'reading' : 'loading',
+  );
 
   try {
     const compose = (): ComposedAnalysis =>
-      composeAnalysis({ blocks: plan.blocks, facts, model: model.id, known });
+      composeAnalysis({ blocks: plan.blocks, facts, model: engineKey, known });
     let emittedReading = false;
     const report = (blockIndex: number) => {
       const read = facts.length;
@@ -573,7 +652,7 @@ export async function analyzeNote(
         cached.status === 'ok' &&
         cached.blockHash === block.hash &&
         cached.promptVersion === CHUNK_PROMPT_VERSION &&
-        cached.model === model.id;
+        cached.model === engineKey;
       if (valid && cached) {
         facts.push({ block, extraction: cached.extraction });
         report(block.index);
@@ -581,7 +660,7 @@ export async function analyzeNote(
         continue;
       }
 
-      const attempt = await readBlock(block, model, options, options.title, passId);
+      const attempt = await readBlock(block, model, { ...options, memory }, options.title, passId);
       if (attempt) {
         promptTokens += attempt.promptTokens;
         completionTokens += attempt.completionTokens;
@@ -597,7 +676,7 @@ export async function analyzeNote(
                 blockIndex: block.index,
                 blockHash: block.hash,
                 promptVersion: CHUNK_PROMPT_VERSION,
-                model: model.id,
+                model: engineKey,
                 status: 'ok',
                 dropped: attempt.dropped,
                 extraction: attempt.extraction,
@@ -615,7 +694,7 @@ export async function analyzeNote(
                 blockIndex: block.index,
                 blockHash: block.hash,
                 promptVersion: CHUNK_PROMPT_VERSION,
-                model: model.id,
+                model: engineKey,
                 status: 'rejected',
                 dropped: 0,
                 extraction: emptyExtraction(),
@@ -729,7 +808,7 @@ interface BlockAttempt {
  */
 async function readBlock(
   block: AnalysisBlock,
-  model: AnalysisModelInfo,
+  model: AnalysisModelInfo | null,
   options: AnalysisPassOptions,
   title: string,
   passId: number,
@@ -751,24 +830,25 @@ async function readBlock(
   for (const attempt of attempts) {
     generatingPass = passId;
     try {
-      const run = await runAnalysis(
+      const run = await completeForAnalysis(
         model,
         buildChunkMessages(
           {
             title,
             block: { text: block.text, context: block.context },
           },
-          { compact: attempt.compact },
+          { compact: attempt.compact, memory: options.memory },
         ),
         {
           lowPower: options.lowPower,
+          online: options.online,
           maxTokens: attempt.maxTokens,
           schema: CHUNK_SCHEMA,
         },
       );
-      promptTokens += run.timings?.promptTokens ?? 0;
-      completionTokens += run.timings?.predictedTokens ?? 0;
-      predictedMs += run.timings?.predictedMs ?? run.wallMs;
+      promptTokens += run.promptTokens;
+      completionTokens += run.completionTokens;
+      predictedMs += run.predictedMs;
       const parsed = parseChunkJson(run.text);
       if (!parsed) continue;
       const grounded = groundChunk(parsed, block.text);
@@ -827,7 +907,7 @@ async function writeSentence(
   doc: ComposedAnalysis,
   blocks: AnalysisBlock[],
   input: { title: string; author: string },
-  model: AnalysisModelInfo,
+  model: AnalysisModelInfo | null,
   options: AnalysisPassOptions,
 ): Promise<{
   text: string;
@@ -839,16 +919,17 @@ async function writeSentence(
   const digest = summaryDigest(doc, blocks, input);
   const empty = { promptTokens: 0, completionTokens: 0, predictedMs: 0 };
   try {
-    const run = await runAnalysis(model, buildSummaryMessages({ digest }), {
+    const run = await completeForAnalysis(model, buildSummaryMessages({ digest }), {
       lowPower: options.lowPower,
+      online: options.online,
       maxTokens: 120,
       schema: SUMMARY_SCHEMA,
     });
     const source = [digest.trecho, ...digest.momentos.map((moment) => moment.texto)].join(' ');
     const timing = {
-      promptTokens: run.timings?.promptTokens ?? 0,
-      completionTokens: run.timings?.predictedTokens ?? 0,
-      predictedMs: run.timings?.predictedMs ?? run.wallMs,
+      promptTokens: run.promptTokens,
+      completionTokens: run.completionTokens,
+      predictedMs: run.predictedMs,
     };
     const sentence = parseSummaryJson(run.text);
     if (sentence && acceptSummary(sentence, source, digest)) {

@@ -348,6 +348,93 @@ function buildFocusGraph(
   };
 }
 
+/**
+ * Previa da entidade: ela no centro e so as relacoes dela.
+ *
+ * As relacoes saem das notas da propria entidade, sem passar pelo corte de
+ * parceiros do mapa (`edgesPerNode`): aqui cabem ate 25, porque o desenho da
+ * previa e feito para ler nome, nao para navegar o mapa inteiro.
+ */
+export function buildEntityPreview(
+  source: GraphSource,
+  focusId: string,
+  maxRelations = 25,
+): GraphData {
+  const parsed = splitNodeId(focusId);
+  const userCenter = userNode(source.centerLabel);
+  const empty: GraphData = {
+    center: userCenter,
+    nodes: [],
+    edges: [],
+    totalNodes: 0,
+    totalEdges: 0,
+  };
+  if (!parsed || !isEntityKind(parsed.kind)) return empty;
+
+  const entities = new Map(source.entities.map((entity) => [entity.id, entity]));
+  const focusEntity = entities.get(parsed.id);
+  if (!focusEntity) return empty;
+
+  const entryIds = new Set<string>();
+  for (const link of source.links) {
+    if (link.entityId === focusEntity.id) entryIds.add(link.entryId);
+  }
+
+  const aggregates = new Map<string, { node: GraphNode; mentions: number }>();
+  for (const link of source.links) {
+    if (!entryIds.has(link.entryId) || link.entityId === focusEntity.id) continue;
+    const entity = entities.get(link.entityId);
+    if (!entity) continue;
+    const current = aggregates.get(entity.id);
+    if (current) {
+      current.mentions += Math.max(1, link.count);
+      current.node.mentions = current.mentions;
+      current.node.notes += 1;
+      continue;
+    }
+    aggregates.set(entity.id, {
+      node: {
+        id: nodeId(entity.kind, entity.id),
+        kind: entity.kind,
+        label: entity.name,
+        icon: entity.icon || undefined,
+        mentions: Math.max(1, link.count),
+        notes: 1,
+      },
+      mentions: Math.max(1, link.count),
+    });
+  }
+
+  const relations = [...aggregates.values()]
+    .map((item) => item.node)
+    .sort((a, b) => b.mentions - a.mentions || a.label.localeCompare(b.label, 'pt-BR'))
+    .slice(0, Math.max(1, maxRelations));
+
+  const focusMentions = [...entryIds].length;
+  const focusNode: GraphNode = {
+    id: nodeId(focusEntity.kind, focusEntity.id),
+    kind: focusEntity.kind,
+    label: focusEntity.name,
+    icon: focusEntity.icon || undefined,
+    mentions: focusMentions,
+    notes: entryIds.size,
+  };
+  const edges: GraphEdge[] = relations.map((node) => ({
+    source: focusNode.id,
+    target: node.id,
+    kind: 'relation',
+    weight: Math.max(1, node.mentions),
+  }));
+
+  return {
+    center: focusNode,
+    nodes: relations,
+    edges,
+    totalNodes: relations.length + 1,
+    totalEdges: edges.length,
+  };
+}
+
 /** Notas analisadas e notas totais; o vazio do mapa precisa de contexto. */
 export function analyzedCount(entries: GraphEntry[]): { analyzed: number; total: number } {
   let analyzed = 0;

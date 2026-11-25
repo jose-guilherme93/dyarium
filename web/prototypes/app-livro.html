@@ -1,0 +1,964 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dyarium — livro no app (protótipo)</title>
+<!--
+  Protótipo descartável de aprovação. Não faz parte do bundle de produção.
+  Tokens copiados de docs/design/tokens.json (commit conhecido do repo).
+  Fonte pela pilha local do projeto sem @font-face remoto.
+-->
+<style>
+:root {
+  color-scheme: dark;
+  /* ---------- tokens: docs/design/tokens.json ---------- */
+  --font-sans: "Schibsted Grotesk", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+  --space-2: 2px;
+  --space-4: 4px;
+  --space-6: 6px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+
+  --radius-control: 2px;
+  --radius-surface: 3px;
+  --row-touch: 44px;
+
+  --type-display-size: 21px;
+  --type-display-weight: 600;
+  --type-display-line: 1.2;
+  --type-display-spacing: -0.01em;
+
+  --type-title-size: 17px;
+  --type-title-weight: 600;
+  --type-title-line: 1.3;
+  --type-title-spacing: -0.005em;
+
+  --type-body-size: 13px;
+  --type-body-weight: 500;
+  --type-body-line: 1.32;
+
+  --type-label-size: 10px;
+  --type-label-weight: 500;
+  --type-label-line: 1.2;
+  --type-label-spacing: 0.12em;
+
+  --type-mono-size: 11.5px;
+  --type-mono-weight: 500;
+  --type-mono-line: 1.2;
+  --type-mono-spacing: 0.02em;
+
+  --meter-height: 2px;
+  --meter-gap: 8px;
+  --icon-sm: 12px;
+  --icon-md: 14px;
+  --icon-lg: 24px;
+  --icon-stroke: 1.5;
+  --mark-size: 8px;
+}
+
+body[data-theme="light"] {
+  color-scheme: light;
+  --bg: #eceee9;
+  --bg-alt: #e3e6e0;
+  --bg-raised: #dadfd7;
+  --line: #d2d6cf;
+  --text: #232622;
+  --text-muted: #5c615a;
+  --primary: #5b6f66;
+  --primary-soft: #dce3e0;
+  --success: #5c7a63;
+  --warning: #8b7444;
+  --info: #5a6f80;
+  --danger: #9c6259;
+}
+
+:root, body[data-theme="amoled"] {
+  color-scheme: dark;
+  --bg: #000000;
+  --bg-alt: #0b0d0c;
+  --bg-raised: #151817;
+  --line: #242826;
+  --text: #e4e8e3;
+  --text-muted: #9aa198;
+  --primary: #a2b8ae;
+  --primary-soft: #1e2624;
+  --success: #94b09a;
+  --warning: #c6ab77;
+  --info: #9ab3c4;
+  --danger: #c78f85;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
+  font-weight: var(--type-body-weight);
+  -webkit-font-smoothing: antialiased;
+}
+
+button, input, textarea {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+}
+button { cursor: pointer; }
+
+:focus-visible { outline: 1px solid var(--primary); outline-offset: 2px; }
+
+/* ---------- andaime da página ---------- */
+.scaffold {
+  position: fixed;
+  top: var(--space-12);
+  right: var(--space-12);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-6) var(--space-12);
+  border: 1px dashed color-mix(in srgb, var(--text-muted) 45%, transparent);
+  border-radius: 999px;
+  font-size: var(--type-mono-size);
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--bg) 85%, transparent);
+}
+.scaffold .tag {
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  letter-spacing: var(--type-label-spacing);
+  text-transform: uppercase;
+  opacity: 0.9;
+}
+.pills { display: flex; gap: var(--space-2); align-items: center; }
+.pill {
+  padding: var(--space-4) var(--space-12);
+  border-radius: 999px;
+  font-size: var(--type-body-size);
+  color: var(--text-muted);
+}
+.pill:hover { background: var(--bg-raised); }
+.pill[aria-pressed="true"] { background: var(--primary-soft); color: var(--primary); font-weight: 600; }
+
+.page {
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 72px var(--space-16) var(--space-16);
+}
+
+/* ---------- moldura do celular ---------- */
+.phone {
+  width: 390px;
+  height: 844px;
+  flex: none;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 40px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+.phone-notch {
+  height: 28px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.phone-notch::before {
+  content: "";
+  width: 96px;
+  height: 18px;
+  background: var(--bg-raised);
+  border-radius: 0 0 12px 12px;
+}
+.phone-scroll {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: var(--space-16);
+}
+
+/* ---------- tipografia ---------- */
+.display {
+  font-size: var(--type-display-size);
+  font-weight: var(--type-display-weight);
+  line-height: var(--type-display-line);
+  letter-spacing: var(--type-display-spacing);
+}
+.title {
+  font-size: var(--type-title-size);
+  font-weight: var(--type-title-weight);
+  line-height: var(--type-title-line);
+  letter-spacing: var(--type-title-spacing);
+}
+.label {
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  line-height: var(--type-label-line);
+  letter-spacing: var(--type-label-spacing);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--type-mono-size);
+  font-weight: var(--type-mono-weight);
+  line-height: var(--type-mono-line);
+  letter-spacing: var(--type-mono-spacing);
+  font-variant-numeric: tabular-nums;
+}
+.muted { color: var(--text-muted); }
+
+/* ---------- componentes ---------- */
+.status-dot {
+  width: var(--mark-size);
+  height: var(--mark-size);
+  border-radius: 50%;
+  flex: none;
+  background: var(--text-muted);
+}
+.status-dot--done { background: var(--success); }
+.status-dot--revising { background: var(--warning); }
+.status-dot--draft { background: transparent; border: 1.5px solid var(--text-muted); }
+.status-dot--empty { background: transparent; border: 1.5px dashed var(--text-muted); }
+
+.meter {
+  display: flex;
+  align-items: center;
+  gap: var(--meter-gap);
+}
+.track {
+  display: block;
+  flex: 1;
+  height: var(--meter-height);
+  background: var(--line);
+  border-radius: var(--meter-height);
+  overflow: hidden;
+}
+.fill { display: block; height: 100%; background: var(--primary); border-radius: var(--meter-height); }
+
+.icon-btn {
+  width: var(--row-touch);
+  height: var(--row-touch);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-surface);
+}
+.icon-btn:hover { background: var(--bg-raised); }
+
+.back-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: var(--row-touch);
+  margin: calc(var(--space-8) * -1) calc(var(--space-16) * -1) var(--space-12);
+  padding: 0 var(--space-16);
+  color: var(--primary);
+}
+.back-row svg { flex: none; }
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  height: 36px;
+  padding: 0 var(--space-12);
+  background: var(--bg-raised);
+  border-radius: 999px;
+  margin-bottom: var(--space-16);
+  color: var(--text-muted);
+}
+.search span { flex: 1; }
+
+.section-label {
+  margin: var(--space-16) 0 var(--space-8);
+}
+
+.row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  min-height: var(--row-touch);
+  padding: var(--space-12);
+  background: var(--bg-raised);
+  border-radius: var(--radius-surface);
+  text-align: left;
+}
+.row + .row { margin-top: var(--space-8); }
+.row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.row-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row-meta { color: var(--text-muted); }
+.row-meta .dot-sep { opacity: 0.6; }
+
+/* ---------- telas ---------- */
+.screen { display: none; flex-direction: column; }
+body[data-screen="notebooks"] #screen-notebooks,
+body[data-screen="book"] #screen-book,
+body[data-screen="chapter"] #screen-chapter { display: flex; }
+
+/* tela 1: cadernos */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: var(--row-touch);
+  margin-bottom: var(--space-4);
+}
+.header-actions { display: flex; gap: var(--space-4); }
+
+.book-thumb {
+  width: 36px;
+  height: 54px;
+  flex: none;
+  border-radius: var(--radius-control);
+  background: #b8c4c8;
+  color: #2d3333;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8px;
+  font-weight: 600;
+  text-align: center;
+  line-height: 1.1;
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #2d3333 10%, transparent);
+}
+.book-row .row-title { font-weight: 600; }
+.book-row .row-meta { display: flex; align-items: center; gap: var(--space-8); }
+
+.notebook-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: none;
+}
+.dot-default { background: var(--text-muted); }
+.dot-work { background: var(--info); }
+.dot-projects { background: var(--warning); }
+
+/* tela 2: livro */
+.book-cover {
+  width: 132px;
+  aspect-ratio: 14 / 21;
+  margin: 0 auto var(--space-16);
+  border-radius: var(--radius-surface);
+  background: #b8c4c8;
+  color: #2d3333;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: var(--space-12);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #2d3333 10%, transparent);
+}
+.book-cover-kind {
+  font-size: var(--type-label-size);
+  font-weight: var(--type-label-weight);
+  letter-spacing: var(--type-label-spacing);
+  text-transform: uppercase;
+  opacity: 0.8;
+  margin-bottom: auto;
+}
+.book-cover-title {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  margin: auto 0;
+}
+.book-cover-foot {
+  font-size: var(--type-mono-size);
+  opacity: 0.85;
+  margin-top: auto;
+}
+
+.book-head { text-align: center; margin-bottom: var(--space-16); }
+.book-head .display { margin-bottom: var(--space-4); }
+.book-byline { color: var(--text-muted); margin-bottom: var(--space-12); }
+
+.book-stats {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--space-8) var(--space-12);
+  margin-bottom: var(--space-12);
+}
+.book-stat { display: flex; align-items: baseline; gap: var(--space-4); }
+.book-stat b { font-weight: 600; }
+
+.continue {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  min-height: var(--row-touch);
+  padding: var(--space-12);
+  background: var(--bg-raised);
+  border-radius: var(--radius-surface);
+  margin-bottom: var(--space-16);
+  text-align: left;
+}
+.continue-main { flex: 1; min-width: 0; }
+.continue-label { color: var(--text-muted); }
+.continue-title { font-weight: 600; }
+.continue svg { flex: none; color: var(--primary); }
+
+.chapter-group + .chapter-group { margin-top: var(--space-16); }
+.part-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-12) var(--space-12) var(--space-8);
+  color: var(--text-muted);
+}
+.part-row .label { margin: 0; }
+.part-row b { color: var(--text); font-weight: 600; }
+
+.chapter {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-12);
+  min-height: var(--row-touch);
+  padding: var(--space-8) var(--space-12);
+  background: var(--bg-raised);
+  border-radius: var(--radius-surface);
+  text-align: left;
+}
+.chapter + .chapter { margin-top: var(--space-6); }
+.chapter-num {
+  width: 22px;
+  flex: none;
+  text-align: right;
+  color: var(--text-muted);
+  padding-top: 1px;
+}
+.chapter-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.chapter-top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+.chapter-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.chapter.empty .chapter-title { color: var(--text-muted); }
+.chapter-meta { color: var(--text-muted); }
+.chapter-synopsis {
+  color: var(--text-muted);
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.add-chapter {
+  width: 100%;
+  min-height: var(--row-touch);
+  margin-top: var(--space-12);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-6);
+  color: var(--text-muted);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-surface);
+}
+.add-chapter:hover { background: var(--bg-raised); }
+
+/* tela 3: capítulo como nota */
+.chapter-screen .phone-scroll { padding-top: var(--space-8); }
+.chapter-title-input {
+  width: 100%;
+  font-size: var(--type-display-size);
+  font-weight: var(--type-display-weight);
+  line-height: var(--type-display-line);
+  letter-spacing: var(--type-display-spacing);
+  margin: var(--space-8) 0 var(--space-12);
+  background: transparent;
+  cursor: text;
+}
+.chapter-title-input:empty::before {
+  content: attr(data-placeholder);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.chapter-meta-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  margin-bottom: var(--space-16);
+  color: var(--text-muted);
+}
+
+.body-text {
+  font-size: var(--type-body-size);
+  line-height: 1.48;
+  color: var(--text);
+}
+.body-text p {
+  margin: 0 0 var(--space-12) 0;
+}
+.chapter-cursor {
+  display: inline-block;
+  width: 1.5px;
+  height: 1.3em;
+  background: var(--primary);
+  vertical-align: text-bottom;
+  animation: blink 1.1s step-end infinite;
+}
+@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+.body-text .drop-cap::first-letter {
+  float: left;
+  font-size: 2.6em;
+  line-height: 0.9;
+  font-weight: 600;
+  margin-right: var(--space-6);
+  color: var(--primary);
+}
+
+.save-state {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-6);
+  margin-top: var(--space-16);
+  color: var(--text-muted);
+}
+
+/* ---------- responsividade da página ---------- */
+@media (max-width: 420px) {
+  .page { padding: 64px var(--space-8) var(--space-8); }
+  .phone {
+    width: 100%;
+    max-width: 360px;
+    height: 720px;
+    border-radius: 32px;
+  }
+  .scaffold { top: var(--space-8); right: var(--space-8); }
+  .scaffold .tag { display: none; }
+}
+
+@media (max-width: 360px) {
+  .phone { border-radius: 24px; }
+  .phone-scroll { padding: var(--space-12); }
+}
+
+@media (min-width: 1280px) {
+  .page { padding: 84px var(--space-16) var(--space-16); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+</style>
+</head>
+<body data-theme="amoled" data-screen="notebooks">
+
+<div class="scaffold" aria-label="Andaime do protótipo">
+  <span class="tag">Protótipo</span>
+  <div class="pills" role="group" aria-label="Tema">
+    <button class="pill" data-theme-toggle="amoled" aria-pressed="true">AMOLED</button>
+    <span aria-hidden="true">·</span>
+    <button class="pill" data-theme-toggle="light" aria-pressed="false">Claro</button>
+  </div>
+  <div class="pills" role="group" aria-label="Tela">
+    <button class="pill" data-go="notebooks" aria-pressed="true">1</button>
+    <span aria-hidden="true">·</span>
+    <button class="pill" data-go="book" aria-pressed="false">2</button>
+    <span aria-hidden="true">·</span>
+    <button class="pill" data-go="chapter" aria-pressed="false">3</button>
+  </div>
+</div>
+
+<main class="page">
+  <div class="phone" aria-label="Moldura do app">
+    <div class="phone-notch" aria-hidden="true"></div>
+    <div class="phone-scroll">
+
+      <!-- ==================== TELA 1: CADERNOS ==================== -->
+      <section class="screen" id="screen-notebooks" aria-label="Cadernos">
+        <header class="header">
+          <h1 class="title">Cadernos</h1>
+          <div class="header-actions">
+            <button class="icon-btn" aria-label="Ordenar">
+              <svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+                <path d="M5 4h6M3 8h10M7 12h6"/>
+              </svg>
+            </button>
+            <button class="icon-btn" aria-label="Novo caderno">
+              <svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+                <path d="M8 3v10M3 8h10"/>
+              </svg>
+            </button>
+          </div>
+        </header>
+
+        <div class="search" aria-hidden="true">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+            <circle cx="7" cy="7" r="5"/>
+            <path d="m12 12 2.5 2.5"/>
+          </svg>
+          <span>Buscar</span>
+        </div>
+
+        <div class="label section-label">Livros</div>
+        <button class="row book-row" data-go="book" aria-label="O nome do vento, 8 capítulos, 17.315 palavras">
+          <div class="book-thumb" aria-hidden="true">
+            <span>LIVRO</span>
+          </div>
+          <div class="row-main">
+            <div class="row-title">O nome do vento</div>
+            <div class="row-meta">
+              <span class="mono">8</span> capítulos
+              <span class="dot-sep">·</span>
+              <span class="mono">17.315</span> palavras
+            </div>
+            <div class="meter" style="margin-top: 6px; max-width: 220px;">
+              <span class="track"><span class="fill" style="width: 19%"></span></span>
+              <span class="mono">19%</span>
+            </div>
+          </div>
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M6 3l5 5-5 5"/>
+          </svg>
+        </button>
+
+        <div class="label section-label">Cadernos</div>
+        <button class="row" aria-label="Notas ao acaso, 12 notas">
+          <span class="notebook-dot dot-default" aria-hidden="true"></span>
+          <div class="row-main">
+            <div class="row-title">Notas ao acaso</div>
+            <div class="row-meta"><span class="mono">12</span> notas · última hoje</div>
+          </div>
+          <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="color: var(--primary)">
+            <path d="M3 8.5 6.3 12 13 4.8"/>
+          </svg>
+        </button>
+        <button class="row" aria-label="Trabalho, 4 notas">
+          <span class="notebook-dot dot-work" aria-hidden="true"></span>
+          <div class="row-main">
+            <div class="row-title">Trabalho</div>
+            <div class="row-meta"><span class="mono">4</span> notas</div>
+          </div>
+        </button>
+        <button class="row" aria-label="Projetos, abre Projetos">
+          <span class="notebook-dot dot-projects" aria-hidden="true"></span>
+          <div class="row-main">
+            <div class="row-title">Projetos</div>
+            <div class="row-meta">MCP</div>
+          </div>
+        </button>
+      </section>
+
+      <!-- ==================== TELA 2: LIVRO ==================== -->
+      <section class="screen" id="screen-book" aria-label="Livro">
+        <button class="back-row" data-go="notebooks" aria-label="Voltar para cadernos">
+          <svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 3 4 8l5 5"/>
+          </svg>
+          Cadernos
+        </button>
+
+        <div class="book-cover" aria-hidden="true">
+          <span class="book-cover-kind">Livro</span>
+          <span class="book-cover-title">O nome<br>do vento</span>
+          <span class="book-cover-foot">Volume I</span>
+        </div>
+
+        <div class="book-head">
+          <div class="display">O nome do vento</div>
+          <div class="book-byline">por Ana Ribeiro · Volume I</div>
+        </div>
+
+        <div class="book-stats">
+          <div class="book-stat">
+            <b class="mono">8</b>
+            <span class="muted">capítulos</span>
+          </div>
+          <span class="muted" aria-hidden="true">·</span>
+          <div class="book-stat">
+            <b class="mono">17.315</b>
+            <span class="muted">palavras</span>
+          </div>
+          <span class="muted" aria-hidden="true">·</span>
+          <div class="book-stat">
+            <b class="mono">≈58</b>
+            <span class="muted">páginas</span>
+          </div>
+        </div>
+
+        <div class="meter" style="margin-bottom: var(--space-16);">
+          <span class="track"><span class="fill" style="width: 19%"></span></span>
+          <span class="mono">19%</span>
+          <span class="muted">da meta de 90.000</span>
+        </div>
+
+        <button class="continue" data-go="chapter" data-chapter="ponte" aria-label="Continuar no Capítulo 6, A ponte de pedra">
+          <span class="status-dot status-dot--draft" aria-hidden="true"></span>
+          <div class="continue-main">
+            <div class="continue-label">Continuar no</div>
+            <div class="continue-title">Capítulo 6 · A ponte de pedra</div>
+          </div>
+          <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M6 3 11 8l-5 5"/>
+          </svg>
+        </button>
+
+        <div class="chapter-group">
+          <button class="chapter" data-go="chapter" data-chapter="mapa" aria-label="Capítulo 1, O mapa do celeiro, 4.210 palavras, finalizado">
+            <span class="chapter-num mono">1</span>
+            <div class="chapter-main">
+              <div class="chapter-top">
+                <span class="chapter-title">O mapa do celeiro</span>
+                <span class="status-dot status-dot--done" aria-hidden="true"></span>
+              </div>
+              <div class="chapter-meta"><span class="mono">4.210</span> palavras</div>
+            </div>
+          </button>
+          <button class="chapter" data-go="chapter" data-chapter="hospedaria" aria-label="Capítulo 2, A hospedaria, 3.880 palavras, revisão">
+            <span class="chapter-num mono">2</span>
+            <div class="chapter-main">
+              <div class="chapter-top">
+                <span class="chapter-title">A hospedaria</span>
+                <span class="status-dot status-dot--revising" aria-hidden="true"></span>
+              </div>
+              <div class="chapter-meta"><span class="mono">3.880</span> palavras</div>
+            </div>
+          </button>
+          <button class="chapter" data-go="chapter" data-chapter="pedras" aria-label="Capítulo 3, Pedras que falam, 2.140 palavras, rascunho">
+            <span class="chapter-num mono">3</span>
+            <div class="chapter-main">
+              <div class="chapter-top">
+                <span class="chapter-title">Pedras que falam</span>
+                <span class="status-dot status-dot--draft" aria-hidden="true"></span>
+              </div>
+              <div class="chapter-meta"><span class="mono">2.140</span> palavras</div>
+            </div>
+          </button>
+        </div>
+
+        <div class="chapter-group">
+          <div class="part-row" aria-label="Parte II, A cidade de vidro">
+            <span class="label">Parte II</span>
+            <span aria-hidden="true">·</span>
+            <b>A cidade de vidro</b>
+          </div>
+          <button class="chapter" data-go="chapter" data-chapter="mercado" aria-label="Capítulo 4, O mercado dos nomes, 1.980 palavras, rascunho">
+            <span class="chapter-num mono">4</span>
+            <div class="chapter-main">
+              <div class="chapter-top">
+                <span class="chapter-title">O mercado dos nomes</span>
+                <span class="status-dot status-dot--draft" aria-hidden="true"></span>
+              </div>
+              <div class="chapter-meta"><span class="mono">1.980</span> palavras</div>
+            </div>
+          </button>
+          <button class="chapter" data-go="chapter" data-chapter="casa" aria-label="Capítulo 5, A casa sem janelas, 640 palavras, rascunho">
+            <span class="chapter-num mono">5</span>
+            <div class="chapter-main">
+              <div class="chapter-top">
+                <span class="chapter-title">A casa sem janelas</span>
+                <span class="status-dot status-dot--draft" aria-hidden="true"></span>
+              </div>
+              <div class="chapter-meta"><span class="mono">640</span> palavras</div>
+            </div>
+          </button>
+          <button class="chapter" data-go="chapter" data-chapter="ponte" aria-label="Capítulo 6, A ponte de pedra, 3.260 palavras, rascunho">
+            <span class="chapter-num mono">6</span>
+            <div class="chapter-main">
+              <div class="chapter-top">
+                <span class="chapter-title">A ponte de pedra</span>
+                <span class="status-dot status-dot--draft" aria-hidden="true"></span>
+              </div>
+              <div class="chapter-meta"><span class="mono">3.260</span> palavras · meta <span class="mono">2.000</span></div>
+              <div class="chapter-synopsis">Kael atravessa a ponte e encontra a mulher do casaco cinza. A cidade começa a fechar as janelas.</div>
+            </div>
+          </button>
+          <button class="chapter" data-go="chapter" data-chapter="vento" aria-label="Capítulo 7, O nome do vento, 1.205 palavras, rascunho">
+            <span class="chapter-num mono">7</span>
+            <div class="chapter-main">
+              <div class="chapter-top">
+                <span class="chapter-title">O nome do vento</span>
+                <span class="status-dot status-dot--draft" aria-hidden="true"></span>
+              </div>
+              <div class="chapter-meta"><span class="mono">1.205</span> palavras</div>
+            </div>
+          </button>
+          <button class="chapter empty" data-go="chapter" data-chapter="texto" aria-label="Capítulo 8, Texto, vazio">
+            <span class="chapter-num mono">8</span>
+            <div class="chapter-main">
+              <div class="chapter-top">
+                <span class="chapter-title">Texto</span>
+                <span class="status-dot status-dot--empty" aria-hidden="true"></span>
+              </div>
+              <div class="chapter-meta">vazio</div>
+            </div>
+          </button>
+        </div>
+
+        <button class="add-chapter" aria-label="Adicionar capítulo">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+            <path d="M8 3v10M3 8h10"/>
+          </svg>
+          Capítulo
+        </button>
+      </section>
+
+      <!-- ==================== TELA 3: CAPÍTULO COMO NOTA ==================== -->
+      <section class="screen chapter-screen" id="screen-chapter" aria-label="Capítulo">
+        <div class="back-row">
+          <button data-go="book" aria-label="Voltar para o livro" style="display:flex;align-items:center;gap:var(--space-4);color:inherit;">
+            <svg width="20" height="20" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 3 4 8l5 5"/>
+            </svg>
+            O nome do vento
+          </button>
+          <button class="icon-btn" style="margin-left:auto" aria-label="Opções do capítulo">
+            <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+              <circle cx="8" cy="4" r="1" fill="currentColor"/>
+              <circle cx="8" cy="8" r="1" fill="currentColor"/>
+              <circle cx="8" cy="12" r="1" fill="currentColor"/>
+            </svg>
+          </button>
+        </div>
+
+        <div class="chapter-title-input" contenteditable="true" role="textbox" data-placeholder="Título do capítulo" aria-label="Título do capítulo">A ponte de pedra</div>
+
+        <div class="chapter-meta-row">
+          <span class="status-dot status-dot--draft" aria-hidden="true"></span>
+          <span>Capítulo <span class="mono">6</span></span>
+          <span aria-hidden="true">·</span>
+          <span>rascunho</span>
+          <span aria-hidden="true">·</span>
+          <span><span class="mono">3.260</span> / <span class="mono">2.000</span> palavras</span>
+        </div>
+
+        <article class="body-text" aria-label="Texto do capítulo">
+          <p class="drop-cap">A neblina subia do rio como se o mundo tivesse esquecido de respirar. Kael parou na cabeceira da ponte e contou as pedras: doze, como no mapa do celeiro, mas a décima terceira estava fora do lugar.</p>
+          <p>O rio corria sem pressa, carregando folhas que pareciam cartas rasgadas. Do outro lado, a cidade erguia-se em fileiras de telhados cinzentos, nenhuma janela acesa ainda. Era cedo demais até para os padeiros.</p>
+          <p>Kael encostou a palma na pedra fria. O desenho gravado estava gasto, quase apagado pela chuva de anos, mas ainda legível: uma espiral com um trono no centro. Ele reconheceu o símbolo do velho celeiro e sentiu o peso do papel dobrado no bolso.</p>
+          <p>— Você não deveria estar aqui — disse uma voz atrás dele.</p>
+          <p>A mulher do casaco cinza segurava um guarda-chuva fechado como se fosse uma bengala. Seus olhos eram da cor do céu antes da tempestade.</p>
+          <p>— As janelas já estão se fechando — ela continuou. — Quando a última se apagar, a ponte não vai mais levar ninguém de volta.</p>
+          <p>Kael olhou para a cidade. Uma a uma, as janelas começavam a sumir por detrás de tábuas de madeira escura. Nenhum martelo soava. Era como se a própria pedra decidisse que já tinha visto o suficiente.</p>
+          <p>— Então eu atravesso agora — disse ele.</p>
+          <p>A mulher assentiu, quase triste.</p>
+          <p>— Conte as pedras de novo. Desta vez, pare na décima segunda.</p>
+        </article>
+
+        <div class="save-state" aria-label="Salvo">
+          <svg width="12" height="12" viewBox="0 0 14 14" aria-hidden="true">
+            <circle cx="7" cy="7" r="3.5" fill="currentColor"/>
+          </svg>
+          <span class="mono">salvo</span>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  var body = document.body;
+  var scrollHost = document.querySelector(".phone-scroll");
+
+  var CHAPTERS = {
+    mapa: { number: 1, title: "O mapa do celeiro", words: "4.210", status: "done", statusLabel: "finalizado", goal: "", body: "<p>O celeiro aparecia no desenho como um quadrado torto, mas as medidas não batiam com o terreno. Kael dobrou o papel e guardou no bolso.</p>" },
+    hospedaria: { number: 2, title: "A hospedaria", words: "3.880", status: "revising", statusLabel: "revisão", goal: "", body: "<p>A hospedaria tinha portas baixas e um cheiro de cera de vela. A dona não olhou nos olhos dele quando entregou a chave.</p>" },
+    pedras: { number: 3, title: "Pedras que falam", words: "2.140", status: "draft", statusLabel: "rascunho", goal: "", body: "<p>As pedras não faziam som, mas vibravam sob a palma da mão. Kael percebeu que já tinha sentido isso antes, em outro lugar.</p>" },
+    mercado: { number: 4, title: "O mercado dos nomes", words: "1.980", status: "draft", statusLabel: "rascunho", goal: "", body: "<p>O mercado começava antes do amanhecer. Os vendedores sussurravam nomes como se fossem mercadoria.</p>" },
+    casa: { number: 5, title: "A casa sem janelas", words: "640", status: "draft", statusLabel: "rascunho", goal: "", body: "<p>A casa ficava no fim da rua. Não havia janelas, só uma porta pintada de azul.</p>" },
+    ponte: { number: 6, title: "A ponte de pedra", words: "3.260", status: "draft", statusLabel: "rascunho", goal: "2.000", body: document.querySelector(".body-text").innerHTML },
+    vento: { number: 7, title: "O nome do vento", words: "1.205", status: "draft", statusLabel: "rascunho", goal: "", body: "<p>O vento parou de repente. Naquele silêncio, Kael ouviu alguém chamar o nome dele.</p>" },
+    texto: { number: 8, title: "Texto", words: "0", status: "draft", statusLabel: "rascunho", goal: "", body: "" }
+  };
+
+  function setScreen(name) {
+    body.dataset.screen = name;
+    if (scrollHost) scrollHost.scrollTop = 0;
+    document.querySelectorAll("[data-go]").forEach(function (el) {
+      if (el.classList.contains("pill")) {
+        el.setAttribute("aria-pressed", String(el.dataset.go === name));
+      }
+    });
+  }
+
+  function setTheme(name) {
+    body.dataset.theme = name;
+    document.querySelectorAll("[data-theme-toggle]").forEach(function (el) {
+      el.setAttribute("aria-pressed", String(el.dataset.themeToggle === name));
+    });
+  }
+
+  function renderChapter(key) {
+    var ch = CHAPTERS[key];
+    if (!ch) return;
+    var titleEl = document.querySelector(".chapter-title-input");
+    var metaRow = document.querySelector(".chapter-meta-row");
+    var bodyEl = document.querySelector(".body-text");
+    titleEl.textContent = ch.title;
+    var dotClass = key === "texto" ? "empty" : ch.status;
+    var wordsMeta = ch.goal
+      ? '<span class="mono">' + ch.words + '</span> / <span class="mono">' + ch.goal + '</span> palavras'
+      : '<span class="mono">' + ch.words + '</span> palavras';
+    metaRow.innerHTML =
+      '<span class="status-dot status-dot--' + dotClass + '" aria-hidden="true"></span>' +
+      '<span>Capítulo <span class="mono">' + ch.number + '</span></span>' +
+      '<span aria-hidden="true">·</span>' +
+      '<span>' + ch.statusLabel + '</span>' +
+      '<span aria-hidden="true">·</span>' +
+      wordsMeta;
+    bodyEl.innerHTML = ch.body || '<div class="chapter-cursor" aria-hidden="true"></div>';
+  }
+
+  document.querySelectorAll("[data-chapter]").forEach(function (el) {
+    el.addEventListener("click", function () { renderChapter(el.dataset.chapter); });
+  });
+
+  document.querySelectorAll("[data-go]").forEach(function (el) {
+    el.addEventListener("click", function () { setScreen(el.dataset.go); });
+  });
+
+  document.querySelectorAll("[data-theme-toggle]").forEach(function (el) {
+    el.addEventListener("click", function () { setTheme(el.dataset.themeToggle); });
+  });
+
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") {
+      var screen = body.dataset.screen;
+      if (screen === "chapter") setScreen("book");
+      else if (screen === "book") setScreen("notebooks");
+    }
+  });
+})();
+</script>
+</body>
+</html>

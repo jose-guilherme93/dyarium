@@ -1,11 +1,11 @@
-import { Ionicons } from '@expo/vector-icons';
-import { View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
 import { Press } from '@/components/Press';
 import { useActivities } from '@/state/useActivities';
-import { baseColors } from '@/theme/tokens';
-import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
-import { defineStyles } from '@/theme/themedStyles';
+import { designFocus, designIcon, designRadius, designRow, designSpace } from '@/theme/design';
+
+import { Icon } from '@/ui/icons';
+import { useDesign } from '@/ui/useDesign';
 
 interface HomeActivityButtonProps {
   onPress(): void;
@@ -17,9 +17,7 @@ interface HomeActivityButtonProps {
  * re-renderizar a lista de notas inteira.
  */
 export function HomeActivityButton({ onPress }: HomeActivityButtonProps) {
-  const styles = useThemedStyles(baseStyles);
-  const { colors } = useTheme();
-
+  const colors = useDesign();
   const activities = useActivities();
   const running = activities.filter((item) => item.status === 'running').length;
   const unread = activities.filter(
@@ -33,17 +31,25 @@ export function HomeActivityButton({ onPress }: HomeActivityButtonProps) {
         : 'Atividade';
 
   return (
-    <Press style={styles.button} onPress={onPress} accessibilityLabel={label}>
-      <Ionicons
-        name="notifications-outline"
-        size={22}
-        color={running > 0 ? colors.accent : colors.text}
+    <Press
+      style={styles.button}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+    >
+      <Icon
+        name="bell"
+        size={designIcon.box}
+        color={running > 0 ? colors.primary : colors.text}
       />
       {running > 0 || unread > 0 ? (
         <View
           style={[
             styles.dot,
-            { backgroundColor: running > 0 ? colors.accent : colors.success },
+            {
+              backgroundColor: running > 0 ? colors.primary : colors.success,
+              borderColor: colors.surface,
+            },
           ]}
         />
       ) : null}
@@ -51,16 +57,20 @@ export function HomeActivityButton({ onPress }: HomeActivityButtonProps) {
   );
 }
 
-const baseStyles = defineStyles({
-  button: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center' },
+const styles = StyleSheet.create({
+  button: {
+    width: designRow.touch,
+    height: designRow.touch,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   dot: {
     position: 'absolute',
-    top: 7,
-    right: 7,
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    borderWidth: 1.5,
-    borderColor: baseColors.bg,
+    top: designSpace.s8 + designSpace.s2,
+    right: designSpace.s8 + designSpace.s2,
+    width: designSpace.s6,
+    height: designSpace.s6,
+    borderRadius: designRadius.surface,
+    borderWidth: designFocus.width,
   },
 });

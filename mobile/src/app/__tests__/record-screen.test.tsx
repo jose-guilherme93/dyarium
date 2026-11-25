@@ -193,6 +193,21 @@ describe('tela de gravacao', () => {
     });
   });
 
+  it('navega antes de o audio ser anexado', async () => {
+    mockParams = { noteId: 'note-1', from: 'note' };
+    // O anexo nunca resolve: a navegacao nao pode esperar por ele.
+    mockAttachAudio.mockImplementation(() => new Promise(() => undefined));
+
+    render(<RecordScreen />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    await pressStop();
+
+    expect(router.back).toHaveBeenCalled();
+  });
+
   it('mantem a tela e o aviso quando nada foi capturado', async () => {
     mockStop.mockResolvedValue(null);
     mockError = 'Nenhum áudio foi capturado. Verifique o microfone e tente de novo.';

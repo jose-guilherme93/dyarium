@@ -67,6 +67,62 @@ func analyzeConfigFromSettings(ctx context.Context, st *store.Store, cfg config.
 	return analyze.ConfigFromSettings(base, settings)
 }
 
+// loadEntityMemory reads the owner's curation memory from the store and turns
+// it into the shape the analyzer consumes. It is best-effort: a database error
+// leaves the memory empty and the analysis runs without it.
+func loadEntityMemory(ctx context.Context, st *store.Store) []analyze.MemoryEntry {
+	entities, err := st.ListEntities(ctx, "")
+	if err != nil {
+		return nil
+	}
+	rejections, _ := st.ListEntityRejections(ctx)
+
+	memory := make([]analyze.MemoryEntry, 0, len(entities))
+	indexByNameKey := make(map[string][]int)
+	for _, entity := range entities {
+		entry := analyze.MemoryEntry{
+			Kind:     entity.Kind,
+			Name:     entity.Name,
+			Label:    entity.Label,
+			Aliases:  append([]string(nil), entity.Aliases...),
+			Rejected: []string{},
+		}
+		memory = append(memory, entry)
+		idx := len(memory) - 1
+		key := store.EntityRejectionKey(entity.Name)
+		indexByNameKey[key] = append(indexByNameKey[key], idx)
+		for _, alias := range entity.Aliases {
+			aliasKey := store.EntityRejectionKey(alias)
+			indexByNameKey[aliasKey] = append(indexByNameKey[aliasKey], idx)
+		}
+	}
+
+	seenRejected := make(map[string]map[string]bool)
+	for i := range memory {
+		seenRejected[memory[i].Name] = make(map[string]bool)
+	}
+
+	for _, rejection := range rejections {
+		key := store.EntityRejectionKey(rejection.Name)
+		indices := indexByNameKey[key]
+		if len(indices) == 0 {
+			memory = append(memory, analyze.MemoryEntry{
+				Name:     rejection.Name,
+				Rejected: []string{rejection.Kind},
+			})
+			continue
+		}
+		for _, idx := range indices {
+			if seenRejected[memory[idx].Name][rejection.Kind] {
+				continue
+			}
+			seenRejected[memory[idx].Name][rejection.Kind] = true
+			memory[idx].Rejected = append(memory[idx].Rejected, rejection.Kind)
+		}
+	}
+	return memory
+}
+
 // transcribeHandler runs the transcription pipeline and, on success, either
 // enqueues analysis or marks the entry ready.
 func transcribeHandler(st *store.Store, cfg config.Config, pipeline *transcribe.Pipeline, queue *jobs.Queue, bus *events.Bus, logger *slog.Logger, localAI llm.Runner) jobs.Handler {
@@ -116,7 +172,9 @@ func transcribeHandler(st *store.Store, cfg config.Config, pipeline *transcribe.
 					bus.Publish("entry.status", map[string]string{"entry_id": payload.EntryID, "status": store.EntryTranscribed})
 				} else {
 					_ = st.UpdateEntryStatus(ctx, payload.EntryID, store.EntryFailed)
-					bus.Publish("entry.failed", map[string]string{"entry_id": payload.EntryID, "reason": err.Error()})
+					// O motivo vai direto para o toast e para a faixa da nota: so a
+					// mensagem generica, nunca o texto do banco ou da biblioteca.
+					bus.Publish("entry.failed", map[string]string{"entry_id": payload.EntryID, "reason": "falha ao transcrever a nota"})
 				}
 			}
 			return err
@@ -242,6 +300,7 @@ func analyzeHandler(st *store.Store, cfg config.Config, bus *events.Bus, logger 
 		// A nota manda; sem escolha explicita, o padrao do app decide (dono ou
 		// sem autor). O prompt e o unico consumidor do rotulo.
 		analysisCfg.Author = store.EffectiveAuthor(input.Author, analysisCfg.AllNotesMine)
+		analysisCfg.Memory = loadEntityMemory(ctx, st)
 
 		client := analyze.New(analysisCfg)
 		metrics := analysisMetrics{

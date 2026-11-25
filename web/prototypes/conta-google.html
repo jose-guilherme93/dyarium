@@ -1,0 +1,1704 @@
+<!doctype html>
+<html lang="pt-BR" data-dy-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dyarium — conta Google (protótipo)</title>
+<!--
+  PROTÓTIPO DESCARTÁVEL DE APROVAÇÃO. Não faz parte do bundle de produção.
+  Nenhum arquivo de web/src ou mobile/ é usado ou alterado.
+
+  Contrato: docs/design/tokens.json, docs/design/icons.json, docs/design/index.html
+  e docs/design/system.md. Cores, tipos, espaços, raios, alturas, camadas e
+  desenhos vêm dos tokens; as fontes vêm de web/public/fonts por caminho relativo.
+
+  Cenas:
+    1. desktop 1440 — casca do app (trilho 34 + sidebar 238 + notas) com a
+       superfície da conta ABERTA, ancorada no avatar do pé da sidebar;
+    2. estados da mesma superfície — sincronizado, sessão vencida, sem conta;
+    3. celular — cabeçalho da home (6 ações + avatar, nome do caderno inteiro)
+       e a tela de perfil inteira;
+    4. primeiro acesso — Google > pasta > navegador.
+
+  Captura: ?shot=desktop  |  ?shot=phone&screen=home  |  ?shot=phone&screen=perfil
+-->
+<style>
+@font-face {
+  font-family: "Schibsted Grotesk";
+  src: url("../public/fonts/schibsted-grotesk.woff2") format("woff2");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191,
+    U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Schibsted Grotesk";
+  src: url("../public/fonts/schibsted-grotesk-ext.woff2") format("woff2");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7,
+    U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F,
+    U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+    U+A720-A7FF;
+}
+@font-face {
+  font-family: "Newsreader";
+  src: url("../public/fonts/newsreader-roman-400-700.woff2") format("woff2");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ---------- tokens (docs/design/tokens.json) ---------- */
+:root {
+  --dy-surface: #eceee9;
+  --dy-surface-alt: #e3e6e0;
+  --dy-surface-raised: #dadfd7;
+  --dy-line: #d2d6cf;
+  --dy-text: #232622;
+  --dy-text-muted: #6a6f68;
+  --dy-primary: #5b6f66;
+  --dy-primary-soft: #dce3e0;
+  --dy-danger: #9c6259;
+  --dy-success: #5c7a63;
+  --dy-warning: #8b7444;
+  --dy-info: #5a6f80;
+  --dy-overlay: rgba(0,0,0,0.18);
+
+  --dy-space-2: 2px;
+  --dy-space-4: 4px;
+  --dy-space-6: 6px;
+  --dy-space-8: 8px;
+  --dy-space-12: 12px;
+  --dy-space-16: 16px;
+  --dy-space-24: 24px;
+  --dy-space-32: 32px;
+
+  --dy-radius-control: 2px;
+  --dy-radius-surface: 3px;
+  --dy-focus-width: 1px;
+  --dy-focus-offset: 2px;
+  --dy-control-sm: 20px;
+  --dy-control-md: 26px;
+  --dy-control-lg: 30px;
+  --dy-control-pad-sm: 7px;
+  --dy-control-pad-md: 9px;
+  --dy-control-pad-lg: 12px;
+  --dy-row-touch: 44px;
+  --dy-row-dense: 26px;
+  --dy-mark-size: 8px;
+  --dy-mark-stroke: 1.5px;
+  --dy-icon-sm: 12px;
+  --dy-icon-md: 14px;
+  --dy-icon-lg: 24px;
+  --dy-icon-box: 16px;
+  --dy-icon-stroke: 1.5;
+  --dy-icon-stroke-detail: 1.3;
+
+  --dy-font-sans: "Schibsted Grotesk", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --dy-font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  --dy-font-reading: "Newsreader", Georgia, serif;
+
+  --dy-sidebar: 238px;
+  --dy-rail: 34px;
+  --dy-toolbar: 34px;
+  --dy-tab: 26px;
+  --dy-page: 420px;
+  --dy-measure: 58ch;
+  --dy-phone: 324px;
+  --dy-reading-size: 15px;
+  --dy-reading-line-height: 1.45;
+  --dy-reading-measure: 44ch;
+  --dy-layer-rail: 1;
+  --dy-layer-toolbar: 2;
+  --dy-layer-sheet: 40;
+  --dy-layer-dialog: 50;
+  --dy-layer-notice: 60;
+  --dy-layer-tooltip: 70;
+  --dy-motion-fast: 90ms;
+  --dy-motion-base: 160ms;
+  --dy-motion-ease: cubic-bezier(0.2, 0, 0, 1);
+  --dy-state-disabled: 0.45;
+}
+
+[data-dy-theme="dark"] {
+  --dy-surface: #171a18;
+  --dy-surface-alt: #1f2320;
+  --dy-surface-raised: #272c28;
+  --dy-line: #2f3431;
+  --dy-text: #e4e8e3;
+  --dy-text-muted: #a1a8a2;
+  --dy-primary: #a2b8ae;
+  --dy-primary-soft: #2a3431;
+  --dy-danger: #c78f85;
+  --dy-success: #94b09a;
+  --dy-warning: #c6ab77;
+  --dy-info: #9ab3c4;
+  --dy-overlay: rgba(0,0,0,0.45);
+}
+
+[data-dy-theme="amoled"] {
+  --dy-surface: #000000;
+  --dy-surface-alt: #0b0d0c;
+  --dy-surface-raised: #151817;
+  --dy-line: #242826;
+  --dy-text: #e4e8e3;
+  --dy-text-muted: #9aa198;
+  --dy-primary: #a2b8ae;
+  --dy-primary-soft: #1e2624;
+  --dy-danger: #c78f85;
+  --dy-success: #94b09a;
+  --dy-warning: #c6ab77;
+  --dy-info: #9ab3c4;
+  --dy-overlay: rgba(0,0,0,0.55);
+}
+
+/* ---------- base e tipos (galeria) ---------- */
+* { box-sizing: border-box; }
+html { background: var(--dy-surface); }
+body {
+  margin: 0;
+  background: var(--dy-surface);
+  color: var(--dy-text);
+  font-family: var(--dy-font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.32;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+button { font: inherit; color: inherit; }
+a { color: inherit; }
+b, strong { font-weight: 600; }
+[hidden] { display: none !important; }
+:focus-visible {
+  outline: var(--dy-focus-width) solid var(--dy-primary);
+  outline-offset: var(--dy-focus-offset);
+}
+
+.dy-display {
+  font-size: 21px; font-weight: 600; line-height: 1.2; letter-spacing: -0.01em;
+}
+.dy-title {
+  font-size: 17px; font-weight: 600; line-height: 1.3; letter-spacing: -0.005em;
+}
+.dy-body { font-size: 13px; font-weight: 500; line-height: 1.32; letter-spacing: 0; }
+.dy-label {
+  font-size: 10px; font-weight: 500; line-height: 1.2;
+  letter-spacing: 0.12em; text-transform: uppercase;
+}
+.dy-mono {
+  font-size: 11.5px; font-weight: 500; line-height: 1.2; letter-spacing: 0.02em;
+  font-family: var(--dy-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+.dy-reading {
+  font-family: var(--dy-font-reading);
+  font-size: var(--dy-reading-size);
+  font-weight: 400;
+  line-height: var(--dy-reading-line-height);
+  letter-spacing: 0;
+  max-width: var(--dy-reading-measure);
+}
+.muted { color: var(--dy-text-muted); }
+
+/* botão do sistema (mesmas regras da galeria) */
+.dy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--dy-space-6);
+  max-width: 100%;
+  border: 1px solid transparent;
+  border-radius: var(--dy-radius-control);
+  white-space: nowrap;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  transition: background var(--dy-motion-fast) var(--dy-motion-ease),
+    border-color var(--dy-motion-fast) var(--dy-motion-ease),
+    color var(--dy-motion-fast) var(--dy-motion-ease);
+}
+.dy-btn--lg { height: var(--dy-control-lg); padding: 0 var(--dy-control-pad-lg); }
+.dy-btn--md { height: var(--dy-control-md); padding: 0 var(--dy-control-pad-md); }
+.dy-btn--primary { background: var(--dy-primary); border-color: var(--dy-primary); color: var(--dy-surface); }
+.dy-btn--primary:hover { background: var(--dy-primary-soft); border-color: var(--dy-primary); color: var(--dy-text); }
+.dy-btn--secondary { background: var(--dy-surface-alt); border-color: var(--dy-line); color: var(--dy-text); }
+.dy-btn--secondary:hover { background: var(--dy-surface-raised); }
+.dy-btn--ghost { background: transparent; border-color: transparent; color: var(--dy-text); }
+.dy-btn--ghost:hover { background: var(--dy-surface-alt); }
+.dy-btn:disabled { opacity: var(--dy-state-disabled); cursor: default; }
+
+/* ícones: viewBox 14, traço 1.5, canto quadrado */
+.ico {
+  display: block;
+  width: var(--dy-icon-box);
+  height: var(--dy-icon-box);
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: var(--dy-icon-stroke);
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+}
+.ico--sm { width: var(--dy-icon-sm); height: var(--dy-icon-sm); }
+.ico--md { width: var(--dy-icon-md); height: var(--dy-icon-md); }
+.ico--lg { width: var(--dy-icon-lg); height: var(--dy-icon-lg); }
+
+/* marca de estado: forma antes de cor */
+.mark {
+  width: var(--dy-mark-size);
+  height: var(--dy-mark-size);
+  flex: none;
+  border: var(--dy-mark-stroke) solid var(--dy-line);
+  border-radius: 50%;
+  position: relative;
+}
+.mark[data-state="on"],
+.mark[data-state="done"] { background: var(--dy-success); border-color: var(--dy-success); }
+.mark[data-state="expired"] { background: transparent; border-color: var(--dy-warning); }
+.mark[data-state="off"] { background: transparent; border-color: var(--dy-text-muted); border-style: dashed; }
+.mark[data-state="out"] { background: transparent; border-color: var(--dy-warning); }
+.mark[data-state="out"]::after {
+  content: "";
+  position: absolute;
+  left: 50%; top: 50%;
+  width: 100%; height: var(--dy-focus-width);
+  background: var(--dy-warning);
+  transform: translate(-50%, -50%) rotate(-45deg);
+}
+
+/* avatar quadrado: raio de superfície, mesmo recorte em todos os tamanhos */
+.avatar {
+  --avatar-bg: var(--dy-surface);
+  position: relative;
+  display: block;
+  width: var(--dy-control-md);
+  height: var(--dy-control-md);
+  flex: none;
+  border: 1px solid var(--dy-line);
+  border-radius: var(--dy-radius-surface);
+  background: var(--dy-surface-raised);
+  color: var(--dy-text-muted);
+}
+.avatar--lg {
+  width: var(--dy-row-touch);
+  height: var(--dy-row-touch);
+}
+.avatar--alt { --avatar-bg: var(--dy-surface-alt); }
+.avatar--raised { --avatar-bg: var(--dy-surface-raised); }
+.avatar--paper { --avatar-bg: var(--dy-surface); }
+.avatar-crop {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+}
+.avatar-crop .photo { display: block; width: 100%; height: 100%; }
+.avatar--empty {
+  display: grid;
+  place-items: center;
+  border-style: dashed;
+  border-color: var(--dy-text-muted);
+  background: transparent;
+}
+.status-mark { position: absolute; right: var(--dy-space-2); bottom: var(--dy-space-2); }
+
+/* ---------- andaime e prancha ---------- */
+.scaffold {
+  position: sticky;
+  top: 0;
+  z-index: var(--dy-layer-tooltip);
+  display: flex;
+  align-items: center;
+  gap: var(--dy-space-8);
+  padding: var(--dy-space-8) var(--dy-space-16);
+  border-bottom: 1px solid var(--dy-line);
+  background: var(--dy-surface);
+}
+.scaffold .tag {
+  color: var(--dy-text-muted);
+  border: 1px solid var(--dy-line);
+  border-radius: var(--dy-radius-control);
+  padding: var(--dy-space-4) var(--dy-space-6);
+}
+.scaffold .pills { display: flex; gap: var(--dy-space-2); margin-left: auto; }
+.pill {
+  height: var(--dy-control-sm);
+  padding: 0 var(--dy-space-8);
+  border: 1px solid var(--dy-line);
+  border-radius: var(--dy-radius-control);
+  background: transparent;
+  color: var(--dy-text-muted);
+  cursor: pointer;
+}
+.pill[aria-pressed="true"] { background: var(--dy-surface-alt); color: var(--dy-text); }
+.pill + .pill { margin-left: -1px; }
+
+.board {
+  max-width: 1500px;
+  margin: 0 auto;
+  padding: var(--dy-space-24) var(--dy-space-24) calc(var(--dy-space-32) * 3);
+  display: grid;
+  gap: calc(var(--dy-space-32) + var(--dy-space-24));
+}
+.stage { display: grid; gap: var(--dy-space-12); min-width: 0; }
+.stage-head { display: flex; align-items: baseline; gap: var(--dy-space-12); flex-wrap: wrap; }
+.stage-title { color: var(--dy-text); }
+.stage-note { color: var(--dy-text-muted); }
+.stage-note .dy-mono { color: var(--dy-text); }
+
+/* ---------- casca do app (1440) ---------- */
+.app {
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--dy-rail) var(--dy-sidebar) minmax(0, 1fr);
+  height: 660px;
+  background: var(--dy-surface);
+  border: 1px solid var(--dy-line);
+  border-radius: var(--dy-radius-surface);
+  overflow: hidden;
+}
+.app--rail { grid-template-columns: var(--dy-rail) minmax(0, 1fr); }
+
+.rail {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--dy-space-4);
+  padding: var(--dy-space-4) 0 var(--dy-space-6);
+  border-right: 1px solid var(--dy-line);
+  background: var(--dy-surface-alt);
+  z-index: var(--dy-layer-rail);
+}
+.rail-btn {
+  position: relative;
+  width: var(--dy-row-dense);
+  height: var(--dy-row-dense);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dy-radius-control);
+  background: transparent;
+  color: var(--dy-text-muted);
+  cursor: pointer;
+}
+.rail-btn:hover { background: var(--dy-surface-raised); color: var(--dy-text); }
+.rail-btn[aria-pressed="true"] { background: var(--dy-surface-raised); color: var(--dy-text); }
+.rail-btn[aria-pressed="true"]::before {
+  content: "";
+  position: absolute;
+  left: calc(var(--dy-space-4) * -1);
+  top: var(--dy-space-4);
+  bottom: var(--dy-space-4);
+  width: 2px;
+  background: var(--dy-primary);
+}
+.rail-sep { width: 16px; height: 1px; background: var(--dy-line); margin: var(--dy-space-4) 0; }
+.rail-foot {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  height: var(--dy-row-touch);
+}
+.rail-avatar {
+  width: 100%;
+  height: var(--dy-row-touch);
+  display: grid;
+  place-items: end center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  border-radius: var(--dy-radius-surface);
+  cursor: pointer;
+}
+.rail-avatar .avatar { width: var(--dy-control-md); height: var(--dy-control-md); }
+
+.side {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--dy-line);
+  background: var(--dy-surface-alt);
+  z-index: var(--dy-layer-rail);
+}
+.side-head {
+  flex: none;
+  height: var(--dy-toolbar);
+  display: flex;
+  align-items: center;
+  gap: var(--dy-space-6);
+  padding: 0 var(--dy-space-8);
+  border-bottom: 1px solid var(--dy-line);
+}
+.side-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.side-count { color: var(--dy-text-muted); }
+.side-scroll { flex: 1; min-height: 0; overflow: auto; padding: var(--dy-space-4) 0 var(--dy-space-8); }
+.side-group { padding: var(--dy-space-6) var(--dy-space-8) var(--dy-space-2); }
+.side-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--dy-space-6);
+  height: var(--dy-row-dense);
+  padding: 0 var(--dy-space-8);
+  color: var(--dy-text);
+  text-decoration: none;
+  cursor: pointer;
+}
+.side-row:hover { background: var(--dy-surface-raised); }
+.side-row[aria-current="page"] { background: var(--dy-surface); }
+.side-row[aria-current="page"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--dy-primary);
+}
+.side-row .label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.side-row .at { color: var(--dy-text-muted); }
+.doc { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--dy-surface); }
+.toolbar {
+  flex: none;
+  height: var(--dy-toolbar);
+  display: flex;
+  align-items: center;
+  gap: var(--dy-space-6);
+  padding: 0 var(--dy-space-8);
+  border-bottom: 1px solid var(--dy-line);
+  z-index: var(--dy-layer-toolbar);
+}
+.crumb { display: flex; align-items: center; gap: var(--dy-space-6); color: var(--dy-text-muted); min-width: 0; }
+.crumb b { font-weight: 600; color: var(--dy-text); }
+.toolbar-actions { margin-left: auto; display: flex; align-items: center; gap: var(--dy-space-2); }
+.tabbar {
+  flex: none;
+  height: var(--dy-tab);
+  display: flex;
+  align-items: stretch;
+  gap: var(--dy-space-2);
+  padding: 0 var(--dy-space-8);
+  border-bottom: 1px solid var(--dy-line);
+}
+.tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--dy-space-6);
+  padding: 0 var(--dy-space-8);
+  border: 0;
+  background: transparent;
+  color: var(--dy-text-muted);
+  cursor: pointer;
+}
+.tab:hover { color: var(--dy-text); }
+.tab[aria-selected="true"] { color: var(--dy-text); background: var(--dy-surface-alt); }
+.tab[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--dy-primary);
+}
+.tab-close {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin-left: var(--dy-space-2);
+  color: var(--dy-text-muted);
+  border-radius: var(--dy-radius-control);
+}
+.page-scroll { flex: 1; min-height: 0; overflow: auto; padding: var(--dy-space-24) var(--dy-space-24) calc(var(--dy-space-32) * 2); }
+.page { width: 100%; max-width: var(--dy-page); margin: 0 auto; }
+.note-meta { display: flex; align-items: center; gap: var(--dy-space-8); margin-bottom: var(--dy-space-8); }
+.note-title { margin: 0 0 var(--dy-space-6); }
+.note-sub { display: flex; align-items: center; gap: var(--dy-space-8); color: var(--dy-text-muted); margin-bottom: var(--dy-space-24); }
+.note-rule { height: 1px; background: var(--dy-line); margin: 0 0 var(--dy-space-24); }
+.page p.dy-reading { margin: 0 0 var(--dy-space-16); }
+.page p.dy-reading:last-child { margin-bottom: 0; }
+.note-quote {
+  margin: 0 0 var(--dy-space-16);
+  padding-left: var(--dy-space-12);
+  border-left: 2px solid var(--dy-primary);
+  color: var(--dy-text-muted);
+}
+.note-foot { margin-top: var(--dy-space-32); padding-top: var(--dy-space-12); border-top: 1px solid var(--dy-line); display: flex; gap: var(--dy-space-12); color: var(--dy-text-muted); }
+
+/* ---------- superfície da conta: menu ancorado no avatar ---------- */
+.acct {
+  position: absolute;
+  left: var(--dy-rail);
+  bottom: calc(var(--dy-row-touch) + var(--dy-space-6));
+  z-index: var(--dy-layer-sheet);
+  width: var(--dy-sidebar);
+  padding: var(--dy-space-4);
+  background: var(--dy-surface-raised);
+  border: 1px solid var(--dy-line);
+  border-radius: var(--dy-radius-surface);
+  box-shadow: none;
+  filter: none;
+}
+.acct--static { position: static; z-index: auto; }
+
+.acct-id { display: flex; align-items: center; gap: var(--dy-space-8); padding: var(--dy-space-4) var(--dy-space-4) var(--dy-space-6); }
+.acct-idtext { min-width: 0; display: flex; flex-direction: column; gap: var(--dy-space-2); }
+.acct-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.acct-mail { color: var(--dy-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.acct-sep { flex: none; height: 1px; background: var(--dy-line); margin: var(--dy-space-6) 0; }
+.acct-data { display: flex; flex-direction: column; }
+.acct-data-row { display: flex; align-items: center; gap: var(--dy-space-6); height: var(--dy-row-dense); padding: 0 var(--dy-space-4); }
+.acct-data-row .mark { flex: none; }
+.acct-data-label { color: var(--dy-text); white-space: nowrap; }
+.acct-data-val { margin-left: auto; color: var(--dy-text-muted); white-space: nowrap; }
+
+.acct-rows { display: flex; flex-direction: column; }
+.acct-row {
+  display: flex;
+  align-items: center;
+  gap: var(--dy-space-8);
+  width: 100%;
+  height: var(--dy-row-dense);
+  padding: 0 var(--dy-space-4);
+  border: 0;
+  border-radius: var(--dy-radius-control);
+  background: transparent;
+  color: var(--dy-text);
+  text-align: left;
+  cursor: pointer;
+}
+.acct-row:hover { background: var(--dy-surface); }
+.acct-row .ico { color: var(--dy-text-muted); }
+.acct-row .val { margin-left: auto; color: var(--dy-text-muted); }
+.acct-row--primary { background: var(--dy-primary); color: var(--dy-surface); }
+.acct-row--primary .ico, .acct-row--primary .val { color: var(--dy-surface); }
+.acct-row--primary:hover { background: var(--dy-primary-soft); color: var(--dy-text); }
+.acct-row--primary:hover .ico, .acct-row--primary:hover .val { color: var(--dy-text); }
+.acct-row--danger { color: var(--dy-danger); }
+.acct-row--danger .ico { color: var(--dy-danger); }
+.acct-footlink {
+  display: flex;
+  align-items: center;
+  gap: var(--dy-space-4);
+  height: var(--dy-row-dense);
+  padding: 0 var(--dy-space-4);
+  border-radius: var(--dy-radius-control);
+  color: var(--dy-text-muted);
+  text-decoration: none;
+}
+.acct-footlink:hover { background: var(--dy-surface); color: var(--dy-text); }
+
+/* cartões de estado: só o menu, sem gatilho duplicado */
+.states { display: grid; grid-template-columns: repeat(3, 262px); gap: var(--dy-space-16); align-items: start; }
+.state-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dy-space-8);
+  padding: var(--dy-space-12);
+  border: 1px solid var(--dy-line);
+  border-radius: var(--dy-radius-surface);
+  background: var(--dy-surface-alt);
+}
+.state-card .dy-label { color: var(--dy-text-muted); }
+/* ---------- celular ---------- */
+.phones { display: flex; gap: var(--dy-space-32); align-items: flex-start; flex-wrap: wrap; }
+.phone-frame { display: flex; flex-direction: column; gap: var(--dy-space-8); min-width: 0; }
+.phone-cap { display: flex; align-items: baseline; gap: var(--dy-space-8); }
+.phone {
+  width: 360px;
+  height: 760px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--dy-surface);
+  border: 1px solid var(--dy-line);
+  border-radius: var(--dy-radius-surface);
+}
+.ph-status {
+  flex: none;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 max(18px, calc((100% - 324px) / 2));
+  color: var(--dy-text-muted);
+}
+.ph-status .sys { display: flex; align-items: center; gap: var(--dy-space-4); }
+.ph-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 max(18px, calc((100% - 324px) / 2)) var(--dy-space-16);
+}
+.ph-head { display: flex; flex-direction: column; gap: var(--dy-space-2); padding-top: var(--dy-space-8); }
+.ph-notebook {
+  display: flex;
+  align-items: center;
+  gap: var(--dy-space-6);
+  width: 100%;
+  min-height: var(--dy-row-touch);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--dy-text);
+  text-align: left;
+  cursor: pointer;
+}
+.ph-notebook .name {
+  flex: 1;
+  min-width: 0;
+}
+.ph-notebook .ico { color: var(--dy-text-muted); }
+.ph-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 -7px 0 -15px;
+}
+.ph-act {
+  width: var(--dy-row-touch);
+  height: var(--dy-row-touch);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dy-radius-control);
+  background: transparent;
+  color: var(--dy-text);
+  cursor: pointer;
+  position: relative;
+}
+.ph-act:hover { background: var(--dy-surface-alt); }
+.ph-act[aria-pressed="true"] { background: var(--dy-surface-alt); color: var(--dy-primary); }
+.ph-avatar-btn {
+  width: var(--dy-row-touch);
+  height: var(--dy-row-touch);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  border-radius: var(--dy-radius-control);
+  cursor: pointer;
+}
+.ph-avatar-btn:hover { background: var(--dy-surface-alt); }
+.ph-avatar-btn .avatar { width: var(--dy-control-md); height: var(--dy-control-md); }
+
+.ph-section {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--dy-space-8);
+  margin: var(--dy-space-24) 0 var(--dy-space-4);
+}
+.ph-tags { display: flex; gap: var(--dy-space-4); overflow-x: auto; padding-top: var(--dy-space-8); }
+.ph-tag {
+  flex: none;
+  height: var(--dy-control-lg);
+  padding: 0 var(--dy-control-pad-lg);
+  border: 1px solid var(--dy-line);
+  border-radius: var(--dy-radius-control);
+  background: transparent;
+  color: var(--dy-text-muted);
+  cursor: pointer;
+}
+.ph-tag[aria-pressed="true"] { background: var(--dy-surface-alt); border-color: var(--dy-primary); color: var(--dy-text); }
+.ph-section .dy-label { color: var(--dy-text-muted); }
+.ph-list { display: flex; flex-direction: column; }
+.ph-row {
+  display: flex;
+  align-items: center;
+  gap: var(--dy-space-8);
+  min-height: var(--dy-row-touch);
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--dy-line);
+  background: transparent;
+  color: var(--dy-text);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+.ph-row:last-child { border-bottom: 0; }
+.ph-row .name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ph-row .at { color: var(--dy-text-muted); }
+.ph-row .mark { order: 2; }
+
+.fab {
+  position: absolute;
+  right: max(18px, calc((100% - 324px) / 2));
+  bottom: var(--dy-space-24);
+  width: var(--dy-row-touch);
+  height: var(--dy-row-touch);
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: var(--dy-primary);
+  color: var(--dy-surface);
+  cursor: pointer;
+}
+.fab:hover { background: var(--dy-primary-soft); color: var(--dy-text); }
+.fab .ico { width: 20px; height: 20px; }
+.phone { position: relative; }
+
+/* tela de perfil no padrão das telas */
+.ph-top {
+  flex: none;
+  height: var(--dy-row-touch);
+  display: grid;
+  grid-template-columns: var(--dy-row-touch) minmax(0, 1fr) var(--dy-row-touch);
+  align-items: center;
+  padding: 0 max(18px, calc((100% - 324px) / 2));
+  border-bottom: 1px solid var(--dy-line);
+}
+.ph-top .title { text-align: center; }
+.ph-top .spacer { width: var(--dy-row-touch); height: var(--dy-row-touch); flex: none; }
+.ph-back {
+  width: var(--dy-row-touch);
+  height: var(--dy-row-touch);
+  display: grid;
+  place-items: center;
+  margin-left: -12px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--dy-text);
+  border-radius: var(--dy-radius-control);
+  cursor: pointer;
+}
+.ph-back:hover { background: var(--dy-surface-alt); }
+.ph-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 max(18px, calc((100% - 324px) / 2)) var(--dy-space-16);
+  display: flex;
+  flex-direction: column;
+  gap: var(--dy-space-8);
+}
+.ph-id { display: flex; align-items: center; gap: var(--dy-space-12); padding: var(--dy-space-12) 0 var(--dy-space-8); }
+.ph-id .who { min-width: 0; display: flex; flex-direction: column; gap: var(--dy-space-2); }
+.ph-id .mail { color: var(--dy-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ph-card {
+  border: 1px solid var(--dy-line);
+  border-radius: var(--dy-radius-surface);
+  background: var(--dy-surface-alt);
+  padding: 0 var(--dy-space-12);
+}
+.ph-kv {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--dy-space-12);
+  min-height: var(--dy-row-touch);
+  border-bottom: 1px solid var(--dy-line);
+}
+.ph-kv:last-child { border-bottom: 0; }
+.ph-kv .k { display: flex; align-items: center; gap: var(--dy-space-6); color: var(--dy-text-muted); }
+.ph-kv .v { display: flex; align-items: center; gap: var(--dy-space-6); text-align: right; }
+
+.ph-actions-col { display: grid; gap: var(--dy-space-8); margin-top: var(--dy-space-8); }
+.ph-btn {
+  height: var(--dy-row-touch);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--dy-space-6);
+  border: 1px solid var(--dy-line);
+  border-radius: var(--dy-radius-control);
+  background: var(--dy-surface-alt);
+  color: var(--dy-text);
+  cursor: pointer;
+}
+.ph-btn--primary { background: var(--dy-primary); border-color: var(--dy-primary); color: var(--dy-surface); }
+.ph-btn--primary:hover { background: var(--dy-primary-soft); border-color: var(--dy-primary); color: var(--dy-text); }
+.ph-btn--secondary:hover { background: var(--dy-surface-raised); }
+.ph-danger {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: var(--dy-row-touch);
+  margin-top: auto;
+  padding: 0;
+  border: 0;
+  border-top: 1px solid var(--dy-line);
+  background: transparent;
+  color: var(--dy-danger);
+  text-align: left;
+  cursor: pointer;
+}
+
+/* ---------- primeiro acesso ---------- */
+.first-screen {
+  display: grid;
+  place-items: center;
+  min-height: 420px;
+  padding: var(--dy-space-32) var(--dy-space-16);
+  border: 1px solid var(--dy-line);
+  border-radius: var(--dy-radius-surface);
+  background: var(--dy-surface);
+}
+.first {
+  width: 100%;
+  max-width: 400px;
+  padding: var(--dy-space-16);
+  border: 1px solid var(--dy-line);
+  border-radius: var(--dy-radius-surface);
+  background: var(--dy-surface-alt);
+}
+.first-head { display: flex; align-items: center; gap: var(--dy-space-8); margin-bottom: var(--dy-space-12); }
+.first-head .dy-display { flex: 1; }
+.first-steps { display: flex; flex-direction: column; }
+.step {
+  display: grid;
+  grid-template-columns: var(--dy-control-md) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--dy-space-12);
+  min-height: 52px;
+  padding: var(--dy-space-6) 0;
+  border-bottom: 1px solid var(--dy-line);
+}
+.step:last-child { border-bottom: 0; }
+.step-num {
+  width: var(--dy-control-md);
+  height: var(--dy-control-md);
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--dy-line);
+  border-radius: var(--dy-radius-control);
+  color: var(--dy-text-muted);
+}
+.step[data-state="done"] .step-num { background: var(--dy-primary); border-color: var(--dy-primary); color: var(--dy-surface); }
+.step[data-state="now"] .step-num { border-color: var(--dy-primary); color: var(--dy-primary); }
+.step[data-state="next"] .step-num { border-style: dashed; }
+.step .t { display: flex; align-items: center; gap: var(--dy-space-6); font-weight: 600; }
+.step .s { margin-top: var(--dy-space-2); color: var(--dy-text-muted); }
+.step .s .dy-mono { color: var(--dy-text); }
+.step .go { justify-self: end; }
+
+/* ---------- captura (?shot=) ---------- */
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+body[data-shot] { height: 100vh; overflow: hidden; }
+body[data-shot] .scaffold { display: none; }
+body[data-shot] .board { padding: 0; max-width: none; gap: 0; }
+body[data-shot] .stage { display: none; }
+body[data-shot="desktop"] .stage[data-stage="desktop"] { display: block; }
+body[data-shot="rail"] .stage[data-stage="rail"] { display: block; }
+body[data-shot="phone"] .stage[data-stage="phone"] { display: block; }
+body[data-shot] .stage-head { display: none; }
+body[data-shot] .phone-cap { display: none; }
+body[data-shot="desktop"] .app,
+body[data-shot="rail"] .app { height: 100vh; border: 0; border-radius: 0; }
+body[data-shot="phone"] .phones { display: block; height: 100vh; }
+body[data-shot="phone"] .phone-frame { display: none; }
+body[data-shot="phone"] .phone-frame.is-picked { display: flex; width: 100%; height: 100vh; gap: 0; }
+body[data-shot="phone"] .phone { width: 100%; height: 100%; border: 0; border-radius: 0; }
+
+@media (max-width: 900px) {
+  .board { padding: var(--dy-space-16) var(--dy-space-12) calc(var(--dy-space-32) * 2); gap: calc(var(--dy-space-32) + var(--dy-space-8)); }
+  .app { height: auto; min-height: 560px; grid-template-columns: var(--dy-rail) minmax(0, 1fr); }
+  .side { display: none; }
+  .states { grid-template-columns: minmax(0, 1fr); }
+  .phones { gap: var(--dy-space-16); }
+  body:not([data-shot]) .phone { width: 100%; max-width: 360px; }
+}
+
+</style>
+</head>
+<body>
+
+<svg class="sprite" aria-hidden="true" focusable="false" style="position:absolute;width:0;height:0;overflow:hidden">
+  <defs>
+    <!-- retrato de exemplo: ilustração plana nos degraus tonais do sistema,
+         no lugar de uma foto de terceiro. O recorte é o que o protótipo julga. -->
+    <symbol id="portrait" viewBox="0 0 96 96">
+      <rect width="96" height="96" fill="var(--dy-surface-raised)"/>
+      <path d="M8 96c4-17 18-27 40-27s36 10 40 27z" fill="var(--dy-surface-alt)" stroke="var(--dy-line)" stroke-width="1"/>
+      <path d="M41 60h14v12H41z" fill="var(--dy-surface)" stroke="var(--dy-line)" stroke-width="1"/>
+      <ellipse cx="48" cy="42" rx="15" ry="20" fill="var(--dy-surface)" stroke="var(--dy-line)" stroke-width="1"/>
+      <path d="M31 46c-2-17 5-31 17-31s19 14 17 31c-2-9-5-14-9-18-6 4-14 5-20 4-2 1-4 7-5 14z" fill="var(--dy-text)"/>
+      <path d="M39 41h4M53 41h4" stroke="var(--dy-text-muted)" stroke-width="1.5" stroke-linecap="round"/>
+      <path d="M48 44l-1 6h3" fill="none" stroke="var(--dy-text-muted)" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M43 54h10" stroke="var(--dy-text-muted)" stroke-width="1.5" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="i-menu" viewBox="0 0 14 14"><path d="M2 4h10M2 7h10M2 10h10"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 14 14"><path d="M7 2v10M2 7h10"/></symbol>
+    <symbol id="i-back" viewBox="0 0 14 14"><path d="M9 2 4 7l5 5"/></symbol>
+    <symbol id="i-forward" viewBox="0 0 14 14"><path d="M5 2l5 5-5 5"/></symbol>
+    <symbol id="i-search" viewBox="0 0 14 14"><path d="M6 2.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7ZM8.6 8.6 12 12"/></symbol>
+    <symbol id="i-mic" viewBox="0 0 14 14"><path d="M5 3.5a2 2 0 0 1 4 0v2a2 2 0 0 1-4 0zM3 6.5a4 4 0 0 0 8 0M7 10.5V13M4.5 13h5"/></symbol>
+    <symbol id="i-panel" viewBox="0 0 14 14"><path d="M1.5 2h11v10h-11zM9 2v10"/></symbol>
+    <symbol id="i-theme" viewBox="0 0 14 14"><path d="M7 2a5 5 0 1 0 0 10 5 5 0 0 0 0-10ZM7 2v10"/></symbol>
+    <symbol id="i-more" viewBox="0 0 14 14"><path d="M2.5 7a1 1 0 1 0 2 0 1 1 0 1 0-2 0M6 7a1 1 0 1 0 2 0 1 1 0 1 0-2 0M9.5 7a1 1 0 1 0 2 0 1 1 0 1 0-2 0" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-tree" viewBox="0 0 14 14"><path d="M3 2v10M3 4.5h4M3 9.5h4M9.5 3a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3ZM9.5 8a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3Z"/></symbol>
+    <symbol id="i-book" viewBox="0 0 14 14"><path d="M2 3c2-1 3.5-1 5 0 1.5-1 3-1 5 0v8c-2-1-3.5-1-5 0-1.5-1-3-1-5 0zM7 3v8"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 14 14"><path d="M1.5 1.5h4.5v4.5h-4.5zM8 1.5h4.5v4.5h-4.5zM1.5 8h4.5v4.5h-4.5zM8 8h4.5v4.5h-4.5z"/></symbol>
+    <symbol id="i-sync" viewBox="0 0 14 14"><path d="M11.5 6A4.5 4.5 0 0 0 3 4M2.5 8A4.5 4.5 0 0 0 11 10M11.5 2.5v3h-3M2.5 11.5v-3h3"/></symbol>
+    <symbol id="i-close" viewBox="0 0 14 14"><path d="M3 3l8 8M11 3l-8 8"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 14 14"><path d="M4 5.5 7 8.5l3-3"/></symbol>
+    <symbol id="i-check" viewBox="0 0 14 14"><path d="M2 7.5 5.5 11 12 3.5"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 14 14"><path d="M5 1.5h4l-1 3.5 2.5 3h-8L5 5zM7 7.5V13"/></symbol>
+    <symbol id="i-tag" viewBox="0 0 14 14"><path d="M1.5 2.5h5l6 6-4.5 4.5-6-6zM4.5 4.5v.5"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 14 14"><path d="M7 1.5 13 12.5H1zM7 5v3.5M7 10v.5"/></symbol>
+    <symbol id="i-cloud" viewBox="0 0 14 14"><path d="M4 11.5h6.5a2.2 2.2 0 0 0 .3-4.4A3.6 3.6 0 0 0 4 6.6 2.4 2.4 0 0 0 4 11.5z"/></symbol>
+    <symbol id="i-server" viewBox="0 0 14 14"><path d="M2 2h10v4h-10zM2 8h10v4h-10zM4 3.5v1M4 9.5v1"/></symbol>
+    <symbol id="i-sort" viewBox="0 0 14 14"><path d="M3 2v10M1.5 10.5 3 12l1.5-1.5M7 4h5M7 7.5h4M7 11h3"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 14 14"><path d="M2 12V7M6 12V3M10 12V9M1 12h12"/></symbol>
+    <symbol id="i-image" viewBox="0 0 14 14"><path d="M1.5 2.5h11v9h-11zM3.5 8l2.5-2.5 3 3 1.5-1.5 2 2M5 5.5v.5"/></symbol>
+    <symbol id="i-link" viewBox="0 0 14 14"><path d="M6.5 9.5 9.5 6.5M6 4.5 7.5 3a2.5 2.5 0 0 1 3.5 3.5L9.5 8M10 11.5 8.5 13A2.5 2.5 0 0 1 5 9.5L6.5 8"/></symbol>
+    <symbol id="i-doc" viewBox="0 0 14 14"><path d="M3.5 1.5h5l3 3v8h-11zM8.5 1.5v3h3M5.5 8h5M5.5 10.5h5"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 14 14"><path d="M7 1.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11ZM7 4.5V7l2 1.5"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 14 14"><path d="M3 11h8l-1-2.5V6.5a3 3 0 0 0-6 0V8.5zM6 12.5h2"/></symbol>
+    <symbol id="i-calendar" viewBox="0 0 14 14"><path d="M1.5 3h11v9h-11zM1.5 6h11M4 1.5V4M10 1.5V4"/></symbol>
+    <symbol id="i-network" viewBox="0 0 14 14"><path d="M7 1.5a1.8 1.8 0 1 0 0 3.6 1.8 1.8 0 0 0 0-3.6ZM2.5 9.4a1.8 1.8 0 1 0 0 3.6 1.8 1.8 0 0 0 0-3.6ZM11.5 9.4a1.8 1.8 0 1 0 0 3.6 1.8 1.8 0 0 0 0-3.6ZM7 5.1v2.6M7 7.7 3.6 9.8M7 7.7l3.4 2.1"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 14 14"><path d="M2.5 4h9M5.5 4V2.5h3V4M4 4l.5 8.5h5L10 4"/></symbol>
+    <symbol id="i-play" viewBox="0 0 14 14"><path d="M4.5 3l6 4-6 4z" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 14 14"><path d="M5 3v8M9 3v8"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 14 14"><path d="M4 4h6v6H4z" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 14 14"><path d="M7 2.4a4.6 4.6 0 1 0 0 9.2 4.6 4.6 0 0 0 0-9.2ZM7 5.4a1.6 1.6 0 1 0 0 3.2 1.6 1.6 0 0 0 0-3.2ZM7 .8v1.6M7 11.6v1.6M.8 7h1.6M11.6 7h1.6M2.6 2.6l1.1 1.1M10.3 10.3l1.1 1.1M11.4 2.6l-1.1 1.1M3.7 10.3l-1.1 1.1"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 14 14"><path d="M1.5 3.5h4L7 5.5h5.5v6h-11z"/></symbol>
+    <symbol id="i-user" viewBox="0 0 14 14"><path d="M7 1.5a2.2 2.2 0 1 0 0 4.4 2.2 2.2 0 0 0 0-4.4ZM2.8 12.5c.4-2.4 2-3.8 4.2-3.8s3.8 1.4 4.2 3.8"/></symbol>
+    <symbol id="i-logout" viewBox="0 0 14 14"><path d="M8.5 2H3v10h5.5M6.5 7H12M9.5 4.5 12 7l-2.5 2.5"/></symbol>
+    <symbol id="i-external" viewBox="0 0 14 14"><path d="M6 2H2v10h10V8M8.5 2H12v3.5M12 2 7 7"/></symbol>
+    <symbol id="i-battery" viewBox="0 0 22 10"><rect x="0.5" y="0.5" width="18" height="9" rx="1" fill="none"/><rect x="2" y="2" width="11" height="6" fill="currentColor" stroke="none"/><path d="M20 3.5v3"/></symbol>
+    <symbol id="i-signal" viewBox="0 0 14 10"><path d="M1 8.5v1M4.5 6.5v3M8 4v5.5M11.5 1.5v8"/></symbol>
+    <symbol id="i-wifi" viewBox="0 0 14 10"><path d="M1 3.5a9 9 0 0 1 12 0M3.5 5.8a5.5 5.5 0 0 1 7 0M6 8.2a2 2 0 0 1 2 0M7 9v.5"/></symbol>
+    <symbol id="i-steps" viewBox="0 0 14 14"><path d="M2 12V8.5h3V5.5h3V2.5h3.5"/></symbol>
+    <symbol id="i-window" viewBox="0 0 14 14"><path d="M1.5 2.5h11v9h-11zM1.5 5.5h11M4 4h.5"/></symbol>
+  </defs>
+</svg>
+
+<header class="scaffold">
+  <span class="tag dy-label">Protótipo</span>
+  <span class="stage-note dy-mono">conta Google · densidade D3</span>
+  <div class="pills" role="group" aria-label="Tema">
+    <button class="pill dy-label" type="button" data-theme="light" aria-pressed="true">claro</button>
+    <button class="pill dy-label" type="button" data-theme="dark" aria-pressed="false">escuro</button>
+    <button class="pill dy-label" type="button" data-theme="amoled" aria-pressed="false">amoled</button>
+  </div>
+</header>
+
+<main class="board">
+  <section class="stage" data-stage="desktop">
+    <div class="stage-head">
+      <h2 class="stage-title dy-label">Desktop · sidebar aberta</h2>
+      <span class="stage-note dy-mono">34 + 238 · conta no pé do trilho · menu ancorado</span>
+    </div>
+    <div class="app">
+    <nav class="rail" aria-label="Trilho">
+      <button class="rail-btn" type="button" aria-label="Menu"><svg class="ico" aria-hidden="true"><use href="#i-menu"/></svg></button>
+      <span class="rail-sep" aria-hidden="true"></span>
+      <button class="rail-btn" type="button" aria-label="Notas" aria-pressed="true"><svg class="ico" aria-hidden="true"><use href="#i-book"/></svg></button>
+      <button class="rail-btn" type="button" aria-label="Busca"><svg class="ico" aria-hidden="true"><use href="#i-search"/></svg></button>
+      <button class="rail-btn" type="button" aria-label="Árvore"><svg class="ico" aria-hidden="true"><use href="#i-tree"/></svg></button>
+      <button class="rail-btn" type="button" aria-label="Rede"><svg class="ico" aria-hidden="true"><use href="#i-network"/></svg></button>
+      <div class="rail-foot">
+        <button class="rail-avatar" type="button" aria-label="Conta" aria-expanded="true" aria-haspopup="menu">
+          <span class="avatar avatar--alt">
+            <span class="avatar-crop"><svg class="photo" viewBox="0 0 96 96" aria-hidden="true"><use href="#portrait"/></svg></span>
+          </span>
+        </button>
+      </div>
+    </nav>
+      <aside class="side" aria-label="Caderno">
+        <div class="side-head">
+          <svg class="ico ico--sm" aria-hidden="true" style="color:var(--dy-text-muted)"><use href="#i-book"/></svg>
+          <span class="side-name dy-body">Caderno de campo</span>
+          <span class="side-count dy-mono">128</span>
+          <svg class="ico ico--sm" aria-hidden="true" style="color:var(--dy-text-muted)"><use href="#i-chevron"/></svg>
+        </div>
+        <div class="side-scroll">
+          <div class="side-group"><span class="dy-label">Hoje · 4</span></div>
+          <a class="side-row" href="#" aria-current="page">
+            <span class="mark" data-state="done" aria-hidden="true"></span>
+            <span class="label dy-body">Reunião com a Marina</span>
+            <span class="at dy-mono">16:40</span>
+          </a>
+          <a class="side-row" href="#">
+            <span class="mark" data-state="off" aria-hidden="true"></span>
+            <span class="label dy-body">Ideia para o capítulo 3</span>
+            <span class="at dy-mono">14:02</span>
+          </a>
+          <a class="side-row" href="#">
+            <span class="mark" data-state="done" aria-hidden="true"></span>
+            <span class="label dy-body">Feira de domingo</span>
+            <span class="at dy-mono">11:18</span>
+          </a>
+          <a class="side-row" href="#">
+            <span class="mark" data-state="expired" aria-hidden="true"></span>
+            <span class="label dy-body">Caminhada no parque</span>
+            <span class="at dy-mono">09:05</span>
+          </a>
+          <div class="side-group"><span class="dy-label">Esta semana</span></div>
+          <a class="side-row" href="#">
+            <span class="mark" data-state="done" aria-hidden="true"></span>
+            <span class="label dy-body">Café com o Pedro</span>
+            <span class="at dy-mono">ter</span>
+          </a>
+          <a class="side-row" href="#">
+            <span class="mark" data-state="off" aria-hidden="true"></span>
+            <span class="label dy-body">Mudança de casa</span>
+            <span class="at dy-mono">seg</span>
+          </a>
+          <a class="side-row" href="#">
+            <span class="mark" data-state="done" aria-hidden="true"></span>
+            <span class="label dy-body">Lista de compras</span>
+            <span class="at dy-mono">seg</span>
+          </a>
+          <a class="side-row" href="#">
+            <span class="mark" data-state="off" aria-hidden="true"></span>
+            <span class="label dy-body">A cidade e as serras</span>
+            <span class="at dy-mono">dom</span>
+          </a>
+        </div>
+      </aside>
+<div class="doc">
+      <div class="toolbar">
+        <button class="rail-btn" type="button" aria-label="Voltar"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-back"/></svg></button>
+        <button class="rail-btn" type="button" aria-label="Avançar"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-forward"/></svg></button>
+        <span class="crumb">
+          <svg class="ico ico--sm" aria-hidden="true"><use href="#i-book"/></svg>
+          <span>Caderno de campo</span>
+          <span aria-hidden="true">/</span>
+          <b>Reunião com a Marina</b>
+        </span>
+        <span class="toolbar-actions">
+          <button class="rail-btn" type="button" aria-label="Fixar"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-pin"/></svg></button>
+          <button class="rail-btn" type="button" aria-label="Tags"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-tag"/></svg></button>
+          <button class="rail-btn" type="button" aria-label="Mais"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-more"/></svg></button>
+        </span>
+      </div>
+      <div class="tabbar" role="tablist" aria-label="Notas abertas">
+        <button class="tab" type="button" role="tab" aria-selected="true">
+          <span class="mark" data-state="done" aria-hidden="true"></span>
+          Reunião com a Marina
+        </button>
+        <button class="tab" type="button" role="tab" aria-selected="false">
+          <span class="mark" data-state="off" aria-hidden="true"></span>
+          Ideia para o capítulo 3
+          <span class="tab-close" aria-hidden="true"><svg class="ico ico--sm"><use href="#i-close"/></svg></span>
+        </button>
+      </div>
+      <div class="page-scroll">
+        <article class="page">
+          <div class="note-meta">
+            <span class="dy-mono muted">Nota</span>
+            <span class="mark" data-state="done" aria-hidden="true"></span>
+            <span class="dy-mono muted">16:40</span>
+          </div>
+          <h1 class="note-title dy-display">Reunião com a Marina</h1>
+          <div class="note-sub">
+            <span class="dy-mono">12 nov 2026</span>
+            <span aria-hidden="true">·</span>
+            <span class="dy-mono">12:04</span>
+            <span aria-hidden="true">·</span>
+            <span class="dy-mono">1,2 MB</span>
+          </div>
+          <div class="note-rule" aria-hidden="true"></div>
+          <p class="dy-reading">A Marina chegou com o mapa da cidade aberto na mesa. Queria decidir onde ficam as três primeiras caminhadas do caderno, e o que entra em cada uma antes de virar áudio.</p>
+          <p class="dy-reading">Ficou combinado começar pela praça, seguir até o rio e voltar pelo mercado. A ideia é gravar sem roteiro e deixar o texto nascer depois, quando a memória já tiver escolhido o que importa.</p>
+          <blockquote class="dy-reading note-quote">O caderno não guarda o caminho. Guarda o que o caminho fez com a gente.</blockquote>
+          <p class="dy-reading">Ela pediu que a primeira nota fosse curta, quase um recado, e que a segunda pudesse ter voz de quem está cansado. O resto a gente resolve na edição, sem pressa.</p>
+          <div class="note-foot">
+            <span class="dy-mono">3 tags</span>
+            <span class="dy-mono">trabalho</span>
+            <span class="dy-mono">marina</span>
+            <span class="dy-mono">produto</span>
+          </div>
+        </article>
+      </div>
+    </div>
+<div class="acct" role="menu" aria-label="Conta Google">
+        <div class="acct-id">
+          <span class="avatar avatar--lg avatar--raised">
+            <span class="avatar-crop"><svg class="photo" viewBox="0 0 96 96" aria-hidden="true"><use href="#portrait"/></svg></span>
+          </span>
+          <span class="acct-idtext">
+            <span class="acct-name dy-body">Marina Duarte</span>
+            <span class="acct-mail dy-mono">marina.duarte@gmail.com</span>
+          </span>
+        </div>
+        <div class="acct-sep" aria-hidden="true"></div>
+        <div class="acct-data">
+          <div class="acct-data-row">
+            <span class="acct-data-label dy-body">Google Drive</span>
+            <span class="mark" data-state="on" aria-hidden="true"></span>
+            <span class="acct-data-val dy-mono">1,2 GB · 128 notas</span>
+          </div>
+          <div class="acct-data-row">
+            <span class="acct-data-label dy-body">Último envio</span>
+            <span class="acct-data-val dy-mono">há 4 min</span>
+          </div>
+        </div>
+        <div class="acct-sep" aria-hidden="true"></div>
+        <button class="acct-row dy-body" type="button" role="menuitem">
+          <svg class="ico ico--sm" aria-hidden="true"><use href="#i-sync"/></svg>
+          <span>Sincronizar</span>
+        </button>
+        <div class="acct-sep" aria-hidden="true"></div>
+        <button class="acct-row acct-row--danger dy-body" type="button" role="menuitem">
+          <svg class="ico ico--sm" aria-hidden="true"><use href="#i-logout"/></svg>
+          <span>Sair</span>
+        </button>
+        <div class="acct-sep" aria-hidden="true"></div>
+        <a class="acct-footlink dy-mono" href="#">
+          <svg class="ico ico--sm" aria-hidden="true"><use href="#i-user"/></svg>
+          <span>foto e nome no Google</span>
+          <svg class="ico ico--sm" aria-hidden="true" style="margin-left:auto"><use href="#i-external"/></svg>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <section class="stage" data-stage="rail">
+    <div class="stage-head">
+      <h2 class="stage-title dy-label">Desktop · trilho recolhido</h2>
+      <span class="stage-note dy-mono">34 · conta no pé do trilho · menu ancorado</span>
+    </div>
+    <div class="app app--rail">
+    <nav class="rail" aria-label="Trilho">
+      <button class="rail-btn" type="button" aria-label="Menu"><svg class="ico" aria-hidden="true"><use href="#i-menu"/></svg></button>
+      <span class="rail-sep" aria-hidden="true"></span>
+      <button class="rail-btn" type="button" aria-label="Notas" aria-pressed="true"><svg class="ico" aria-hidden="true"><use href="#i-book"/></svg></button>
+      <button class="rail-btn" type="button" aria-label="Busca"><svg class="ico" aria-hidden="true"><use href="#i-search"/></svg></button>
+      <button class="rail-btn" type="button" aria-label="Árvore"><svg class="ico" aria-hidden="true"><use href="#i-tree"/></svg></button>
+      <button class="rail-btn" type="button" aria-label="Rede"><svg class="ico" aria-hidden="true"><use href="#i-network"/></svg></button>
+      <div class="rail-foot">
+        <button class="rail-avatar" type="button" aria-label="Conta" aria-expanded="true" aria-haspopup="menu">
+          <span class="avatar avatar--alt">
+            <span class="avatar-crop"><svg class="photo" viewBox="0 0 96 96" aria-hidden="true"><use href="#portrait"/></svg></span>
+          </span>
+        </button>
+      </div>
+    </nav>
+<div class="doc">
+      <div class="toolbar">
+        <button class="rail-btn" type="button" aria-label="Voltar"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-back"/></svg></button>
+        <button class="rail-btn" type="button" aria-label="Avançar"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-forward"/></svg></button>
+        <span class="crumb">
+          <svg class="ico ico--sm" aria-hidden="true"><use href="#i-book"/></svg>
+          <span>Caderno de campo</span>
+          <span aria-hidden="true">/</span>
+          <b>Reunião com a Marina</b>
+        </span>
+        <span class="toolbar-actions">
+          <button class="rail-btn" type="button" aria-label="Fixar"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-pin"/></svg></button>
+          <button class="rail-btn" type="button" aria-label="Tags"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-tag"/></svg></button>
+          <button class="rail-btn" type="button" aria-label="Mais"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-more"/></svg></button>
+        </span>
+      </div>
+      <div class="tabbar" role="tablist" aria-label="Notas abertas">
+        <button class="tab" type="button" role="tab" aria-selected="true">
+          <span class="mark" data-state="done" aria-hidden="true"></span>
+          Reunião com a Marina
+        </button>
+        <button class="tab" type="button" role="tab" aria-selected="false">
+          <span class="mark" data-state="off" aria-hidden="true"></span>
+          Ideia para o capítulo 3
+          <span class="tab-close" aria-hidden="true"><svg class="ico ico--sm"><use href="#i-close"/></svg></span>
+        </button>
+      </div>
+      <div class="page-scroll">
+        <article class="page">
+          <div class="note-meta">
+            <span class="dy-mono muted">Nota</span>
+            <span class="mark" data-state="done" aria-hidden="true"></span>
+            <span class="dy-mono muted">16:40</span>
+          </div>
+          <h1 class="note-title dy-display">Reunião com a Marina</h1>
+          <div class="note-sub">
+            <span class="dy-mono">12 nov 2026</span>
+            <span aria-hidden="true">·</span>
+            <span class="dy-mono">12:04</span>
+            <span aria-hidden="true">·</span>
+            <span class="dy-mono">1,2 MB</span>
+          </div>
+          <div class="note-rule" aria-hidden="true"></div>
+          <p class="dy-reading">A Marina chegou com o mapa da cidade aberto na mesa. Queria decidir onde ficam as três primeiras caminhadas do caderno, e o que entra em cada uma antes de virar áudio.</p>
+          <p class="dy-reading">Ficou combinado começar pela praça, seguir até o rio e voltar pelo mercado. A ideia é gravar sem roteiro e deixar o texto nascer depois, quando a memória já tiver escolhido o que importa.</p>
+          <blockquote class="dy-reading note-quote">O caderno não guarda o caminho. Guarda o que o caminho fez com a gente.</blockquote>
+          <p class="dy-reading">Ela pediu que a primeira nota fosse curta, quase um recado, e que a segunda pudesse ter voz de quem está cansado. O resto a gente resolve na edição, sem pressa.</p>
+          <div class="note-foot">
+            <span class="dy-mono">3 tags</span>
+            <span class="dy-mono">trabalho</span>
+            <span class="dy-mono">marina</span>
+            <span class="dy-mono">produto</span>
+          </div>
+        </article>
+      </div>
+    </div>
+<div class="acct" role="menu" aria-label="Conta Google">
+        <div class="acct-id">
+          <span class="avatar avatar--lg avatar--raised">
+            <span class="avatar-crop"><svg class="photo" viewBox="0 0 96 96" aria-hidden="true"><use href="#portrait"/></svg></span>
+          </span>
+          <span class="acct-idtext">
+            <span class="acct-name dy-body">Marina Duarte</span>
+            <span class="acct-mail dy-mono">marina.duarte@gmail.com</span>
+          </span>
+        </div>
+        <div class="acct-sep" aria-hidden="true"></div>
+        <div class="acct-data">
+          <div class="acct-data-row">
+            <span class="acct-data-label dy-body">Google Drive</span>
+            <span class="mark" data-state="on" aria-hidden="true"></span>
+            <span class="acct-data-val dy-mono">1,2 GB · 128 notas</span>
+          </div>
+          <div class="acct-data-row">
+            <span class="acct-data-label dy-body">Último envio</span>
+            <span class="acct-data-val dy-mono">há 4 min</span>
+          </div>
+        </div>
+        <div class="acct-sep" aria-hidden="true"></div>
+        <button class="acct-row dy-body" type="button" role="menuitem">
+          <svg class="ico ico--sm" aria-hidden="true"><use href="#i-sync"/></svg>
+          <span>Sincronizar</span>
+        </button>
+        <div class="acct-sep" aria-hidden="true"></div>
+        <button class="acct-row acct-row--danger dy-body" type="button" role="menuitem">
+          <svg class="ico ico--sm" aria-hidden="true"><use href="#i-logout"/></svg>
+          <span>Sair</span>
+        </button>
+        <div class="acct-sep" aria-hidden="true"></div>
+        <a class="acct-footlink dy-mono" href="#">
+          <svg class="ico ico--sm" aria-hidden="true"><use href="#i-user"/></svg>
+          <span>foto e nome no Google</span>
+          <svg class="ico ico--sm" aria-hidden="true" style="margin-left:auto"><use href="#i-external"/></svg>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <section class="stage" data-stage="states">
+    <div class="stage-head">
+      <h2 class="stage-title dy-label">Estados da conta</h2>
+      <span class="stage-note dy-mono">a forma distingue os três · disco cheio, anel, tracejado</span>
+    </div>
+    <div class="states">
+      <div class="state-card">
+        <span class="dy-label">Sincronizado</span>
+        <div class="acct acct--static" role="group" aria-label="Conta sincronizada">
+          <div class="acct-id">
+            <span class="avatar avatar--lg avatar--raised">
+            <span class="avatar-crop"><svg class="photo" viewBox="0 0 96 96" aria-hidden="true"><use href="#portrait"/></svg></span>
+          </span>
+            <span class="acct-idtext">
+              <span class="acct-name dy-body">Marina Duarte</span>
+              <span class="acct-mail dy-mono">marina.duarte@gmail.com</span>
+            </span>
+          </div>
+        <div class="acct-sep" aria-hidden="true"></div>
+        <div class="acct-data">
+          <div class="acct-data-row">
+            <span class="acct-data-label dy-body">Google Drive</span>
+            <span class="mark" data-state="on" aria-hidden="true"></span>
+            <span class="acct-data-val dy-mono">1,2 GB · 128 notas</span>
+          </div>
+          <div class="acct-data-row">
+            <span class="acct-data-label dy-body">Último envio</span>
+            <span class="acct-data-val dy-mono">há 4 min</span>
+          </div>
+        </div>
+        <div class="acct-sep" aria-hidden="true"></div>
+          <button class="acct-row dy-body" type="button"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-sync"/></svg><span>Sincronizar</span></button>
+          <div class="acct-sep" aria-hidden="true"></div>
+          <button class="acct-row acct-row--danger dy-body" type="button"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-logout"/></svg><span>Sair</span></button>
+        <div class="acct-sep" aria-hidden="true"></div>
+        <a class="acct-footlink dy-mono" href="#">
+          <svg class="ico ico--sm" aria-hidden="true"><use href="#i-user"/></svg>
+          <span>foto e nome no Google</span>
+          <svg class="ico ico--sm" aria-hidden="true" style="margin-left:auto"><use href="#i-external"/></svg>
+        </a>
+        </div>
+      </div>
+
+      <div class="state-card">
+        <span class="dy-label">Sessão vencida</span>
+        <div class="acct acct--static" role="group" aria-label="Sessão vencida">
+          <div class="acct-id">
+            <span class="avatar avatar--lg avatar--raised">
+            <span class="avatar-crop"><svg class="photo" viewBox="0 0 96 96" aria-hidden="true"><use href="#portrait"/></svg></span>
+          </span>
+            <span class="acct-idtext">
+              <span class="acct-name dy-body">Marina Duarte</span>
+              <span class="acct-mail dy-mono">marina.duarte@gmail.com</span>
+            </span>
+          </div>
+        <div class="acct-sep" aria-hidden="true"></div>
+        <div class="acct-data">
+          <div class="acct-data-row">
+            <span class="acct-data-label dy-body">Google Drive</span>
+            <span class="mark" data-state="expired" aria-hidden="true"></span>
+            <span class="acct-data-val dy-mono">1,2 GB · 128 notas</span>
+          </div>
+          <div class="acct-data-row">
+            <span class="acct-data-label dy-body">Último envio</span>
+            <span class="acct-data-val dy-mono">há 2 d</span>
+          </div>
+        </div>
+        <div class="acct-sep" aria-hidden="true"></div>
+          <button class="acct-row acct-row--primary dy-body" type="button"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-sync"/></svg><span>Reconectar</span></button>
+          <div class="acct-sep" aria-hidden="true"></div>
+          <button class="acct-row acct-row--danger dy-body" type="button"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-logout"/></svg><span>Sair</span></button>
+        <div class="acct-sep" aria-hidden="true"></div>
+        <a class="acct-footlink dy-mono" href="#">
+          <svg class="ico ico--sm" aria-hidden="true"><use href="#i-user"/></svg>
+          <span>foto e nome no Google</span>
+          <svg class="ico ico--sm" aria-hidden="true" style="margin-left:auto"><use href="#i-external"/></svg>
+        </a>
+        </div>
+      </div>
+
+      <div class="state-card">
+        <span class="dy-label">Sem conta</span>
+        <div class="acct acct--static" role="group" aria-label="Sem conta">
+          <div class="acct-id">
+            <span class="avatar avatar--lg avatar--empty">
+              <svg class="ico" aria-hidden="true"><use href="#i-user"/></svg>
+            </span>
+            <span class="acct-idtext">
+              <span class="acct-name dy-body">Sem conta</span>
+              <span class="acct-mail dy-mono">—</span>
+            </span>
+          </div>
+        <div class="acct-sep" aria-hidden="true"></div>
+        <div class="acct-data">
+          <div class="acct-data-row">
+            <span class="acct-data-label dy-body">Google Drive</span>
+            <span class="mark" data-state="off" aria-hidden="true"></span>
+            <span class="acct-data-val dy-mono">— notas</span>
+          </div>
+          <div class="acct-data-row">
+            <span class="acct-data-label dy-body">Último envio</span>
+            <span class="acct-data-val dy-mono">—</span>
+          </div>
+        </div>
+        <div class="acct-sep" aria-hidden="true"></div>
+          <button class="acct-row acct-row--primary dy-body" type="button"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-cloud"/></svg><span>Conectar Google</span></button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="stage" data-stage="phone">
+  <div class="stage-head">
+    <h2 class="stage-title dy-label">Celular 360</h2>
+    <span class="stage-note dy-mono">conteúdo 324 · toque 44 · seis ações e avatar · nome do caderno inteiro</span>
+  </div>
+  <div class="phones">
+    <div class="phone-frame" data-screen="home">
+      <div class="phone-cap"><span class="dy-label">Home</span><span class="stage-note dy-mono">cabeçalho</span></div>
+      <div class="phone">
+        <div class="ph-status dy-mono" aria-hidden="true">
+          <span>9:41</span>
+          <span class="sys">
+            <svg class="ico" style="width:14px;height:10px" aria-hidden="true"><use href="#i-signal"/></svg>
+            <svg class="ico" style="width:14px;height:10px" aria-hidden="true"><use href="#i-wifi"/></svg>
+            <svg class="ico" style="width:22px;height:10px" aria-hidden="true"><use href="#i-battery"/></svg>
+          </span>
+        </div>
+        <div class="ph-scroll">
+          <div class="ph-head">
+            <button class="ph-notebook" type="button" aria-label="Caderno de campo. Trocar de caderno">
+              <svg class="ico" aria-hidden="true"><use href="#i-book"/></svg>
+              <span class="name dy-title">Caderno de campo</span>
+              <svg class="ico ico--sm" aria-hidden="true"><use href="#i-chevron"/></svg>
+            </button>
+            <div class="ph-actions">
+              <button class="ph-act" type="button" aria-label="Sincronização">
+                <svg class="ico" aria-hidden="true"><use href="#i-cloud"/></svg>
+              </button>
+              <button class="ph-act" type="button" aria-label="Atividade">
+                <svg class="ico" aria-hidden="true"><use href="#i-bell"/></svg>
+              </button>
+              <button class="ph-act" type="button" aria-label="Calendário">
+                <svg class="ico" aria-hidden="true"><use href="#i-calendar"/></svg>
+              </button>
+              <button class="ph-act" type="button" aria-label="Mapa de relações">
+                <svg class="ico" aria-hidden="true"><use href="#i-network"/></svg>
+              </button>
+              <button class="ph-act" type="button" aria-label="Buscar notas">
+                <svg class="ico" aria-hidden="true"><use href="#i-search"/></svg>
+              </button>
+              <button class="ph-act" type="button" aria-label="Opções">
+                <svg class="ico" aria-hidden="true"><use href="#i-gear"/></svg>
+              </button>
+              <button class="ph-avatar-btn" type="button" aria-label="Perfil">
+                <span class="avatar avatar--paper avatar--status">
+                  <span class="avatar-crop"><svg class="photo" viewBox="0 0 96 96" aria-hidden="true"><use href="#portrait"/></svg></span>
+                  <span class="mark status-mark" data-state="on"></span>
+                </span>
+              </button>
+            </div>
+            <div class="ph-tags" role="group" aria-label="Tags">
+              <button class="ph-tag dy-body" type="button" aria-pressed="true">todas</button>
+              <button class="ph-tag dy-body" type="button" aria-pressed="false">trabalho</button>
+              <button class="ph-tag dy-body" type="button" aria-pressed="false">casa</button>
+              <button class="ph-tag dy-body" type="button" aria-pressed="false">leituras</button>
+            </div>
+          </div>
+
+          <div class="ph-section">
+            <span class="dy-label">Recentes</span>
+            <span class="dy-mono muted">12</span>
+          </div>
+          <div class="ph-list">
+            <a class="ph-row" href="#">
+              <span class="mark" data-state="done" aria-hidden="true"></span>
+              <span class="name dy-body">Reunião com a Marina</span>
+              <span class="at dy-mono">16:40</span>
+            </a>
+            <a class="ph-row" href="#">
+              <span class="mark" data-state="off" aria-hidden="true"></span>
+              <span class="name dy-body">Ideia para o capítulo 3</span>
+              <span class="at dy-mono">14:02</span>
+            </a>
+            <a class="ph-row" href="#">
+              <span class="mark" data-state="done" aria-hidden="true"></span>
+              <span class="name dy-body">Feira de domingo</span>
+              <span class="at dy-mono">11:18</span>
+            </a>
+            <a class="ph-row" href="#">
+              <span class="mark" data-state="expired" aria-hidden="true"></span>
+              <span class="name dy-body">Caminhada no parque</span>
+              <span class="at dy-mono">09:05</span>
+            </a>
+            <a class="ph-row" href="#">
+              <span class="mark" data-state="done" aria-hidden="true"></span>
+              <span class="name dy-body">Café com o Pedro</span>
+              <span class="at dy-mono">ter</span>
+            </a>
+            <a class="ph-row" href="#">
+              <span class="mark" data-state="off" aria-hidden="true"></span>
+              <span class="name dy-body">Mudança de casa</span>
+              <span class="at dy-mono">seg</span>
+            </a>
+            <a class="ph-row" href="#">
+              <span class="mark" data-state="done" aria-hidden="true"></span>
+              <span class="name dy-body">Lista de compras</span>
+              <span class="at dy-mono">seg</span>
+            </a>
+            <a class="ph-row" href="#">
+              <span class="mark" data-state="off" aria-hidden="true"></span>
+              <span class="name dy-body">A cidade e as serras</span>
+              <span class="at dy-mono">dom</span>
+            </a>
+          </div>
+
+          <div class="ph-section">
+            <span class="dy-label">Cadernos</span>
+            <span class="dy-mono muted">3</span>
+          </div>
+          <div class="ph-list">
+            <a class="ph-row" href="#">
+              <svg class="ico ico--sm" aria-hidden="true" style="color:var(--dy-text-muted)"><use href="#i-book"/></svg>
+              <span class="name dy-body">Caderno de campo</span>
+              <span class="at dy-mono">128</span>
+            </a>
+            <a class="ph-row" href="#">
+              <svg class="ico ico--sm" aria-hidden="true" style="color:var(--dy-text-muted)"><use href="#i-book"/></svg>
+              <span class="name dy-body">Viagens</span>
+              <span class="at dy-mono">24</span>
+            </a>
+            <a class="ph-row" href="#">
+              <svg class="ico ico--sm" aria-hidden="true" style="color:var(--dy-text-muted)"><use href="#i-book"/></svg>
+              <span class="name dy-body">Leituras</span>
+              <span class="at dy-mono">41</span>
+            </a>
+          </div>
+        </div>
+        <button class="fab" type="button" aria-label="Nova nota">
+          <svg class="ico" aria-hidden="true"><use href="#i-plus"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="phone-frame" data-screen="perfil">
+      <div class="phone-cap"><span class="dy-label">Perfil</span><span class="stage-note dy-mono">tela inteira</span></div>
+      <div class="phone">
+        <div class="ph-status dy-mono" aria-hidden="true">
+          <span>9:41</span>
+          <span class="sys">
+            <svg class="ico" style="width:14px;height:10px" aria-hidden="true"><use href="#i-signal"/></svg>
+            <svg class="ico" style="width:14px;height:10px" aria-hidden="true"><use href="#i-wifi"/></svg>
+            <svg class="ico" style="width:22px;height:10px" aria-hidden="true"><use href="#i-battery"/></svg>
+          </span>
+        </div>
+        <div class="ph-top">
+          <button class="ph-back" type="button" aria-label="Voltar">
+            <svg class="ico" aria-hidden="true"><use href="#i-back"/></svg>
+          </button>
+          <span class="title dy-title">Perfil</span>
+          <span class="spacer" aria-hidden="true"></span>
+        </div>
+        <div class="ph-body">
+          <div class="ph-id">
+            <span class="avatar avatar--lg avatar--paper">
+              <span class="avatar-crop"><svg class="photo" viewBox="0 0 96 96" aria-hidden="true"><use href="#portrait"/></svg></span>
+            </span>
+            <span class="who">
+              <span class="name dy-title">Marina Duarte</span>
+              <span class="mail dy-mono">marina.duarte@gmail.com</span>
+            </span>
+          </div>
+
+          <div class="ph-card">
+            <div class="ph-kv">
+              <span class="k dy-body"><span>Google Drive</span><span class="mark" data-state="on" aria-hidden="true"></span></span>
+              <span class="v dy-mono">1,2 GB · 128 notas</span>
+            </div>
+            <div class="ph-kv">
+              <span class="k dy-body">Último envio</span>
+              <span class="v dy-mono">há 4 min</span>
+            </div>
+            <div class="ph-kv">
+              <span class="k dy-body">No aparelho</span>
+              <span class="v dy-mono">132</span>
+            </div>
+          </div>
+
+          <div class="ph-actions-col">
+            <button class="ph-btn ph-btn--primary dy-label" type="button">Sincronizar</button>
+            <button class="ph-btn ph-btn--secondary dy-label" type="button">Trocar de conta</button>
+          </div>
+          <button class="ph-danger dy-body" type="button">Sair desta conta</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+  <section class="stage" data-stage="first">
+  <div class="stage-head">
+    <h2 class="stage-title dy-label">Primeiro acesso</h2>
+    <span class="stage-note dy-mono">Google antes da pasta, pasta antes do navegador</span>
+  </div>
+  <div class="first-screen">
+    <div class="first">
+      <div class="first-head">
+        <svg class="ico" aria-hidden="true" style="color:var(--dy-primary)"><use href="#i-steps"/></svg>
+        <h3 class="dy-display">Primeiro acesso</h3>
+      </div>
+      <div class="first-steps">
+        <div class="step" data-state="done">
+          <span class="step-num dy-mono" aria-hidden="true">1</span>
+          <span>
+            <span class="t dy-body"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-cloud"/></svg>Google</span>
+            <span class="s dy-mono"><span class="dy-mono">marina.duarte@gmail.com</span></span>
+          </span>
+          <button class="dy-btn dy-btn--secondary dy-btn--md dy-label go" type="button">Trocar</button>
+        </div>
+        <div class="step" data-state="now">
+          <span class="step-num dy-mono" aria-hidden="true">2</span>
+          <span>
+            <span class="t dy-body"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-folder"/></svg>Pasta</span>
+            <span class="s dy-mono"><span class="dy-mono">dyarium</span> · <span class="dy-mono">1,2 GB</span></span>
+          </span>
+          <button class="dy-btn dy-btn--primary dy-btn--lg dy-label go" type="button">Escolher</button>
+        </div>
+        <div class="step" data-state="next">
+          <span class="step-num dy-mono" aria-hidden="true">3</span>
+          <span>
+            <span class="t dy-body"><svg class="ico ico--sm" aria-hidden="true"><use href="#i-window"/></svg>Navegador</span>
+            <span class="s dy-mono"><span class="dy-mono">dyarium.app</span></span>
+          </span>
+          <button class="dy-btn dy-btn--secondary dy-btn--md dy-label go" type="button" disabled>Abrir</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+</main>
+
+<script>
+(() => {
+  const root = document.documentElement;
+  const params = new URLSearchParams(location.search);
+  const pills = Array.from(document.querySelectorAll('.pill'));
+
+  function setTheme(name) {
+    root.dataset.dyTheme = name;
+    for (const pill of pills) {
+      pill.setAttribute('aria-pressed', String(pill.dataset.theme === name));
+    }
+  }
+
+  for (const pill of pills) {
+    pill.addEventListener('click', () => setTheme(pill.dataset.theme));
+  }
+
+  const theme = params.get('theme');
+  if (theme && ['light', 'dark', 'amoled'].includes(theme)) setTheme(theme);
+
+  const shot = params.get('shot');
+  if (shot === 'desktop' || shot === 'rail' || shot === 'phone') {
+    document.body.dataset.shot = shot;
+    if (shot === 'phone') {
+      const screen = params.get('screen') === 'perfil' ? 'perfil' : 'home';
+      document.body.dataset.screen = screen;
+      const frame = document.querySelector(`.phone-frame[data-screen="${screen}"]`);
+      if (frame) frame.classList.add('is-picked');
+    }
+  }
+
+  for (const shell of document.querySelectorAll('.app')) {
+    const trigger = shell.querySelector('.rail-avatar');
+    const sheet = shell.querySelector('.acct');
+    if (!trigger || !sheet) continue;
+    const setOpen = (open) => {
+      trigger.setAttribute('aria-expanded', String(open));
+      sheet.hidden = !open;
+    };
+    trigger.addEventListener('click', (event) => {
+      event.stopPropagation();
+      setOpen(trigger.getAttribute('aria-expanded') !== 'true');
+    });
+    document.addEventListener('click', (event) => {
+      if (!sheet.hidden && !sheet.contains(event.target) && !trigger.contains(event.target)) {
+        setOpen(false);
+      }
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && !sheet.hidden) {
+        setOpen(false);
+        trigger.focus();
+      }
+    });
+  }
+})();
+</script>
+</body>
+</html>

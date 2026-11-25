@@ -75,6 +75,15 @@ func (s *Store) ListAudios(ctx context.Context, entryID string) ([]Attachment, e
 	return out, rows.Err()
 }
 
+// SetAttachmentDuration records the measured duration of an attachment.
+func (s *Store) SetAttachmentDuration(ctx context.Context, id string, duration float64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE attachments SET duration_seconds = ? WHERE id = ?`, duration, id)
+	if err != nil {
+		return fmt.Errorf("store: set attachment duration: %w", err)
+	}
+	return nil
+}
+
 // SyncEntryDuration updates the entry duration with the sum of its audios.
 func (s *Store) SyncEntryDuration(ctx context.Context, entryID string) error {
 	_, err := s.db.ExecContext(ctx, `

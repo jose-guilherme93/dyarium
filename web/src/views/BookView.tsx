@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, blobToDataURL, coverUrl } from "../api";
+import { api, blobToDataURL } from "../api";
 import { ChapterEditor } from "../components/ChapterEditor";
 import { ExportDialog } from "../components/ExportDialog";
 import { ReadingView } from "../components/ReadingView";
@@ -33,6 +33,7 @@ import {
   type ExportChapter,
 } from "../lib/bookExport";
 import { markdownToPlain } from "../editor/blocknoteMarkdown";
+import { useCoverUrl } from "../lib/useCover";
 import { SettingsIcon } from "../components/icons";
 import type { ChapterKind, Entry, Notebook, WritingRhythm } from "../types";
 
@@ -48,6 +49,8 @@ interface BookViewProps {
   onCreateChapterAfter?: (currentId: string) => void;
   onReorderChapter?: (sourceId: string, targetId: string) => void;
   onChanged: () => void;
+  /** So a contagem de um capitulo mudou; a lista nao deve ser recarregada. */
+  onWordsSaved?: (entryId: string, words: number) => void;
   onOpenSettings: () => void;
 }
 
@@ -63,6 +66,7 @@ export function BookView({
   onCreateChapterAfter,
   onReorderChapter,
   onChanged,
+  onWordsSaved,
   onOpenSettings,
 }: BookViewProps) {
   const [reading, setReading] = useState<BookExportInput | null>(null);
@@ -74,6 +78,8 @@ export function BookView({
   const [tab, setTab] = useState<"cover" | "structure">("cover");
   const [rhythm, setRhythm] = useState<WritingRhythm | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
+  // A capa vem do cofre local de forma assincrona: o hook repinta quando chega.
+  const coverSrc = useCoverUrl(book.has_cover ? book.id : null, book.cover_updated_at);
 
   useEffect(() => {
     try {
@@ -258,6 +264,7 @@ export function BookView({
             onCreateAfter={onCreateChapterAfter ? () => onCreateChapterAfter(active.id) : undefined}
             onFocusChange={setFocus}
             onChanged={onChanged}
+            onWordsSaved={onWordsSaved}
             onDeleted={() => {
               onCloseChapter();
               onChanged();
@@ -336,10 +343,10 @@ export function BookView({
                     color: book.color ? coverInk(book.color) : "var(--color-bg)",
                   }}
                 >
-                  {book.has_cover ? (
+                  {book.has_cover && coverSrc ? (
                     <img
                       className="book-plate-cover-photo"
-                      src={coverUrl(book.id, book.cover_updated_at)}
+                      src={coverSrc}
                       alt=""
                     />
                   ) : (

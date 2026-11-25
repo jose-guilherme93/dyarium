@@ -60,6 +60,24 @@ export function formatShortDate(value?: string | null): string {
     : `${label} ${date.getFullYear()}`;
 }
 
+/**
+ * Data e hora curtas para a linha de nota ("07:00 · 19 out" ou
+ * "07:00 · 19 out 2019"). O ano so aparece quando a nota nao e deste ano.
+ */
+export function formatShortDateTime(value?: string | null): string {
+  if (!value) {
+    return "";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  const hh = String(date.getHours()).padStart(2, "0");
+  const mm = String(date.getMinutes()).padStart(2, "0");
+  const datePart = formatShortDate(value);
+  return `${hh}:${mm} · ${datePart}`;
+}
+
 // dayLabel groups notes in the list ("Hoje", "Ontem" or a date).
 export function dayLabel(value?: string | null): string {
   if (!value) {
@@ -93,6 +111,37 @@ export function dayKey(value?: string | null): string {
   return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
 }
 
+/**
+ * Tempo curto desde um instante ("há 4 min"), para a linha do último envio.
+ * Sem data legível, devolve vazio em vez de inventar.
+ */
+export function formatRelativeTime(value?: string | null, agora = Date.now()): string {
+  if (!value) {
+    return "";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  const diff = Math.max(0, agora - date.getTime());
+  const minutos = Math.floor(diff / 60000);
+  if (minutos < 1) {
+    return "agora";
+  }
+  if (minutos < 60) {
+    return `há ${minutos} min`;
+  }
+  const horas = Math.floor(minutos / 60);
+  if (horas < 24) {
+    return `há ${horas} h`;
+  }
+  const dias = Math.floor(horas / 24);
+  if (dias < 30) {
+    return `há ${dias} d`;
+  }
+  return formatShortDate(value);
+}
+
 /** Tamanho legivel para o painel da nota ("95 KB"), sem "0.09 MB". */
 export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) {
@@ -106,5 +155,9 @@ export function formatBytes(bytes: number): string {
     return `${Math.round(kb)} KB`;
   }
   const mb = kb / 1024;
-  return `${mb.toFixed(mb < 10 ? 1 : 0).replace(".", ",")} MB`;
+  if (mb < 1024) {
+    return `${mb.toFixed(mb < 10 ? 1 : 0).replace(".", ",")} MB`;
+  }
+  const gb = mb / 1024;
+  return `${gb.toFixed(gb < 10 ? 1 : 0).replace(".", ",")} GB`;
 }

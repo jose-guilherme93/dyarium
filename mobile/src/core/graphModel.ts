@@ -18,6 +18,8 @@ export interface GraphEntity {
   id: string;
   kind: EntityKind;
   name: string;
+  /** Rotulo livre de exibicao (escola, gata, personagem); so exibicao. */
+  label?: string;
   icon: string;
   /** Relogio do servidor; vazio nas entidades criadas antes da coluna. */
   updatedAt: string;

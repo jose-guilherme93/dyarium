@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PartialBlock } from "@blocknote/core";
-import { api, isConflict } from "../api";
+import { api, isConflict, isLocalMode } from "../api";
 import { AudioTrack } from "./AudioTrack";
 import { NotesEditor, type NotesEditorHandle } from "../editor/NotesEditor";
 import { markdownToPlain, noteBlocksToMarkdown, normalizeLegacyAttachmentImages, audioAttachmentIds } from "../editor/blocknoteMarkdown";
@@ -50,7 +50,7 @@ interface NoteEditorProps {
   progress?: { stage: string; done: number; total: number };
   onChanged: () => void;
   onDeleted: () => void;
-  onOpenEntity: (kind: EntityKind, name: string) => void;
+  onOpenEntity: (kind: EntityKind, name: string, edit?: "kind") => void;
   onOpenEntry: (id: string) => void;
   notebooks: Notebook[];
   /** Abre o processamento (laboratorio) e deixa Voltar trazer a nota de volta. */
@@ -307,6 +307,14 @@ export function NoteEditor({
   const titleVersionRef = useRef("");
   // Markdown cru: fonte da verdade e a segunda visualizacao da nota.
   const [rawMarkdown, setRawMarkdown] = useState("");
+  const titleStateRef = useRef(title);
+  titleStateRef.current = title;
+  const entryStateRef = useRef(entry);
+  entryStateRef.current = entry;
+  const imagesStateRef = useRef(images);
+  imagesStateRef.current = images;
+  const rawMarkdownStateRef = useRef(rawMarkdown);
+  rawMarkdownStateRef.current = rawMarkdown;
   const [rawOpen, setRawOpen] = useState(() => readNoteViewState(entryId).rawOpen);
   const [revisionsCursor, setRevisionsCursor] = useState<string | undefined>(undefined);
   const lastQueuedRef = useRef<string>("");
@@ -357,7 +365,7 @@ export function NoteEditor({
       return;
     }
     el.style.height = "auto";
-    el.style.height = `${Math.max(el.scrollHeight, 44)}px`;
+    el.style.height = `${Math.max(el.scrollHeight, 26)}px`;
   }, [title, entry]);
 
   const applyNoteData = useCallback(
@@ -790,12 +798,22 @@ export function NoteEditor({
   const retranscribe = async () => {
     setBusy("retranscribe");
     setError("");
+    const local = isLocalMode();
     try {
+      if (local) notify("Transcrevendo...", "info");
       await api.retranscribe(entryId);
-      notify("Transcrição enfileirada", "info");
+      // No cofre a transcricao termina antes da resposta; recarrega a ficha para
+      // o texto aparecer sem esperar o proximo evento.
+      if (local) onChanged();
+      notify(local ? "Transcrição pronta" : "Transcrição enfileirada", "info");
     } catch (err) {
       setError(err instanceof Error ? err.message : "falha");
-      notify("Não foi possível retranscrever", "error");
+      // A mensagem do cofre ja diz o que fazer (motor indisponivel, chave
+      // faltando); o toast generico escondia essa acao.
+      notify(
+        local && err instanceof Error ? err.message : local ? "Não foi possível transcrever" : "Não foi possível retranscrever",
+        "error",
+      );
     } finally {
       // O trabalho continua no servidor (ou neste PC); quem mostra o andamento
       // e o status da nota. Sem soltar o botao, o painel ficava girando.
@@ -814,7 +832,10 @@ export function NoteEditor({
       local = await beginWorkerEntry(entryId);
       if (local) replaceWorkerEntry(entryId);
       await api.analyze(entryId);
-      notify("Análise iniciada", "info");
+      // Sem servidor a analise termina antes da resposta: recarrega a ficha para
+      // o painel abrir com o texto em vez de esperar um evento que nao vem.
+      if (isLocalMode()) onChanged();
+      notify(isLocalMode() ? "Análise pronta" : "Análise iniciada", "info");
     } catch (err) {
       if (local) await cancelWorkerEntry(entryId);
       if (err instanceof Error && err.message.includes("desligada")) {
@@ -1104,7 +1125,11 @@ export function NoteEditor({
                           void retranscribe();
                         }}
                       >
-                        <span>Transcrever novamente</span>
+                        <span>
+                          {entry?.audios?.some((audio) => audio.transcript)
+                            ? "Transcrever novamente"
+                            : "Transcrever"}
+                        </span>
                         {busy === "retranscribe" ? <Spinner /> : <MicIcon size={14} />}
                       </button>
                     )}

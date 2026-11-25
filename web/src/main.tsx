@@ -1,16 +1,46 @@
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import AdminView from "./views/AdminView";
+import PrivacyView from "./views/PrivacyView";
 import { ToastProvider } from "./components/Toasts";
+import { connectLocal } from "./local/boot";
+import { initTelemetry, reportUnknownRoute } from "./lib/telemetry";
+import { BRAND, iconHref } from "./lib/brand";
 import "./index.css";
+import "./ui/tokens.css";
+import "./ui/ui.css";
 
 const rootElement = document.getElementById("root");
 if (!rootElement) {
   throw new Error("elemento root nao encontrado no documento");
 }
 
+const initialPath = window.location.pathname.replace(/\/+$/, "") || "/";
+const isAdmin = initialPath === "/admin";
+const isPrivacy = initialPath === "/privacidade";
+
+// O cofre do navegador abre em paralelo com a primeira pintura; toda consulta
+// local espera esta mesma promessa. /admin e /privacidade nao precisam do cofre.
+if (!isAdmin && !isPrivacy) {
+  void connectLocal();
+}
+
+// A aba acompanha a marca: no build de desenvolvimento o nome leva o sufixo e
+// o icone troca para a cor de desenvolvimento.
+document.title = BRAND.name;
+const iconLink = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+if (iconLink) {
+  iconLink.href = iconHref(BRAND.dev);
+}
+
+// O diagnostico respeita a opcao salva; sem DSN configurada nao inicia.
+// A rota inicial e lida antes do app normalizar a URL: rota que o app nao
+// atende vira aviso no painel em vez de passar calada.
+void initTelemetry().then(() => reportUnknownRoute(initialPath));
+
 createRoot(rootElement).render(
   <ToastProvider>
-    <App />
+    {isAdmin ? <AdminView /> : isPrivacy ? <PrivacyView /> : <App />}
   </ToastProvider>,
 );
 

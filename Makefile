@@ -37,7 +37,7 @@ COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
 
-.PHONY: help dev dev-llama dev-opencode down build test test-go test-web lint lint-go lint-web fmt dedupe bench-transcricao models tailscale tailscale-off clean mobile-dev mobile-test mobile-lint ai
+.PHONY: help dev dev-llama dev-opencode down build test test-go test-web lint lint-go lint-web test-tokens tokens fmt dedupe bench-transcricao models tailscale tailscale-off clean mobile-dev mobile-test mobile-lint ai
 
 help: ## Lista os alvos disponiveis
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -74,7 +74,7 @@ test-go:
 test-web:
 	NODE_OPTIONS="--max-old-space-size=$(NODE_MAX_OLD_SPACE)" $(PNPM) -C web test
 
-lint: lint-go lint-web ## Roda go vet, gofmt e o lint do frontend
+lint: lint-go lint-web test-tokens ## Roda go vet, gofmt e o lint do frontend
 
 lint-go:
 	$(GO) vet ./...
@@ -82,6 +82,12 @@ lint-go:
 
 lint-web:
 	NODE_OPTIONS="--max-old-space-size=$(NODE_MAX_OLD_SPACE)" $(PNPM) -C web lint
+
+tokens: ## Regenera tokens.css, design.ts e a galeria a partir de docs/design/tokens.json
+	node scripts/design-tokens.mjs
+
+test-tokens: ## Falha se algum arquivo gerado estiver fora de sincronia
+	node --test scripts/design-tokens.test.mjs
 
 fmt: ## Formata o codigo Go
 	gofmt -w .

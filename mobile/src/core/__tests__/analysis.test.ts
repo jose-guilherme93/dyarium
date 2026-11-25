@@ -1,6 +1,7 @@
 import type { ServerAnalysis } from '../api';
 import { simplifiedAnalysis, toNoteAnalysis, toServerAnalysis } from '../analysis';
 import type { ComposedAnalysis } from '../analysisCompose';
+import { entityNameMapKey } from '../entities';
 
 function analysis(partial: Partial<ServerAnalysis>): ServerAnalysis {
   return {
@@ -229,6 +230,37 @@ describe('toNoteAnalysis', () => {
     expect(toNoteAnalysis(analysis({ summary: '   ' }))).toBeNull();
     expect(toNoteAnalysis(null)).toBeNull();
   });
+
+  it('descarta nomes rejeitados e resolve o nome canonico', () => {
+    const view = toNoteAnalysis(
+      analysis({
+        summary: 'resumo',
+        people: ['Paulo Ramos', 'Mari'],
+        people_detail: [
+          { name: 'Paulo Ramos', count: 2 },
+          { name: 'Mari', count: 1 },
+        ],
+        places: ['Paulo Ramos'],
+        themes: [{ name: 'trabalho', confidence: 0.7 }],
+        decisions: ['Paulo Ramos'],
+      }),
+      {
+        rejections: [
+          { kind: 'person', name: 'Paulo Ramos', nameKey: 'paulo ramos', updatedAt: '' },
+          { kind: 'theme', name: 'trabalho', nameKey: 'trabalho', updatedAt: '' },
+          { kind: 'decision', name: 'Paulo Ramos', nameKey: 'paulo ramos', updatedAt: '' },
+        ],
+        canonical: { [entityNameMapKey('person', 'Mari')]: 'Mariana' },
+      },
+    );
+
+    expect(view?.people).toEqual(['Mariana']);
+    expect(view?.peopleDetail).toEqual([{ name: 'Mariana', count: 1 }]);
+    // O mesmo nome continua valendo como lugar: a rejeicao e por tipo.
+    expect(view?.places).toEqual(['Paulo Ramos']);
+    expect(view?.themes).toEqual([]);
+    expect(view?.decisions).toEqual([]);
+  });
 });
 
 describe('toServerAnalysis', () => {
@@ -315,6 +347,37 @@ describe('toServerAnalysis', () => {
     expect(result.people).toEqual([]);
     expect(result.people_detail).toEqual([]);
     expect(result.comprehension).toBe(-1);
+  });
+
+  it('remove rejeitados e grava o nome canonico no documento', () => {
+    const result = toServerAnalysis(
+      composed({
+        people: [{ name: 'Mari', mentions: 2, blocks: 1, tone: 0, firstMs: null, lastMs: null }],
+        places: [{ name: 'Praia', mentions: 1, blocks: 1, firstMs: null, lastMs: null }],
+        themes: [{ name: 'familia', blocks: 1 }],
+        decisions: [{ text: 'vou viajar em julho', blocks: 1, startMs: null }],
+      }),
+      'm',
+      {
+        rejections: [
+          { kind: 'place', name: 'Praia', nameKey: 'praia', updatedAt: '' },
+          { kind: 'theme', name: 'familia', nameKey: 'familia', updatedAt: '' },
+          {
+            kind: 'decision',
+            name: 'vou viajar em julho',
+            nameKey: 'vou viajar em julho',
+            updatedAt: '',
+          },
+        ],
+        canonical: { [entityNameMapKey('person', 'Mari')]: 'Mariana' },
+      },
+    );
+
+    expect(result.people).toEqual(['Mariana']);
+    expect(result.people_detail).toEqual([{ name: 'Mariana', count: 2, sentiment: 0 }]);
+    expect(result.places).toEqual([]);
+    expect(result.themes).toEqual([]);
+    expect(result.decisions).toEqual([]);
   });
 });
 

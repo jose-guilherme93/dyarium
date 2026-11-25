@@ -19,6 +19,11 @@ import {
 } from './analysisPrompt';
 import type { AnalysisBlock } from './analysisPlan';
 import { toAnalysisText } from './analysisText';
+import {
+  retrieveMemoryForText,
+  type EntityKind,
+  type EntityMemoryEntry,
+} from './entities';
 
 /** Versao do contrato do documento. Muda junto com o servidor. */
 export const ANALYSIS_CONTRACT_VERSION = 2;
@@ -322,12 +327,43 @@ export interface ChunkMessage {
   content: string;
 }
 
+const MEMORY_KIND: Record<EntityKind, string> = {
+  person: 'pessoa',
+  place: 'lugar',
+  theme: 'tema',
+  decision: 'decisao',
+};
+
+/** Uma linha objetiva por entrada recuperada; nada que nao caiba no bloco. */
+function memoryLine(entry: EntityMemoryEntry): string {
+  const rejected =
+    entry.rejected && entry.rejected.length > 0
+      ? `nunca ${entry.rejected.map((kind) => MEMORY_KIND[kind]).join(' nem ')}`
+      : '';
+  // Rejeicao sem entidade (ou de outro tipo): "Paulo Ramos: nunca pessoa" e
+  // melhor que repetir o tipo duas vezes.
+  if (rejected && !entry.label && (!entry.aliases || entry.aliases.length === 0)) {
+    return `- ${entry.name}: ${rejected}.`;
+  }
+  const parts = [`- ${entry.name}: ${MEMORY_KIND[entry.kind]}`];
+  if (entry.label) parts.push(`rotulo "${entry.label}"`);
+  if (entry.aliases && entry.aliases.length > 0) {
+    parts.push(`apelidos: ${entry.aliases.join(', ')}`);
+  }
+  if (rejected) parts.push(rejected);
+  return parts.join('; ') + '.';
+}
+
 export function buildChunkMessages(
   input: {
     title: string;
     block: Pick<AnalysisBlock, 'text' | 'context'>;
   },
-  options: { compact?: boolean } = {},
+  options: {
+    compact?: boolean;
+    /** Dicionario do diario; so as entradas que aparecem no bloco entram. */
+    memory?: readonly EntityMemoryEntry[];
+  } = {},
 ): ChunkMessage[] {
   const title = toAnalysisText(input.title).replace(/\n+/g, ' ').trim();
   const context = input.block.context.trim();
@@ -337,7 +373,17 @@ export function buildChunkMessages(
   ]
     .filter(Boolean)
     .join('\n');
-  const user = `${header}${header !== '' ? '\n\n' : ''}<bloco>
+  const retrieved =
+    options.memory && options.memory.length > 0
+      ? retrieveMemoryForText(input.block.text, options.memory)
+      : [];
+  const memory =
+    retrieved.length > 0
+      ? `Memoria do diario (use so para nao repetir erro; nao extraia nome que nao esteja no bloco):\n${retrieved
+          .map(memoryLine)
+          .join('\n')}\n\n`
+      : '';
+  const user = `${header}${header !== '' ? '\n\n' : ''}${memory}<bloco>
 ${input.block.text}
 </bloco>
 

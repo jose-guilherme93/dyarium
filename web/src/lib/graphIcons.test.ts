@@ -5,7 +5,7 @@ describe("graphIcons", () => {
   it("usa o icone do tipo quando a entidade nao escolheu um", () => {
     expect(iconKeyFor("person", "")).toBe("person");
     expect(iconKeyFor("place", undefined)).toBe("home");
-    expect(iconKeyFor("theme", "")).toBe("hash");
+    expect(iconKeyFor("theme", "")).toBe("puzzle");
     expect(iconKeyFor("decision", "")).toBe("check");
     expect(iconKeyFor("note", "")).toBe("document");
     expect(iconKeyFor("user", "")).toBe("person");

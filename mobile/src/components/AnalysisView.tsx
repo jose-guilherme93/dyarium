@@ -59,7 +59,11 @@ export interface AnalysisViewProps {
   /** Fecha a analise e abre os interruptores de processamento. */
   onOpenProcessing?(): void;
   /** Abre a entidade no mapa (pessoa, lugar ou tema citado na analise). */
-  onOpenEntity?(kind: 'person' | 'place' | 'theme', name: string): void;
+  onOpenEntity?(kind: 'person' | 'place' | 'theme' | 'decision', name: string, section?: string): void;
+  /** Abre o editor da entidade ja no tipo (lapis). */
+  onEditEntity?(kind: 'person' | 'place' | 'theme' | 'decision', name: string): void;
+  onEntityEdit?(kind: 'person' | 'place' | 'theme' | 'decision', name: string): void;
+  onEdit?(kind: 'person' | 'place' | 'theme' | 'decision', name: string): void;
   onClose(): void;
 }
 
@@ -67,11 +71,26 @@ export interface AnalysisViewProps {
 function AnalysisContent({
   analysis,
   onOpenEntity,
+  onEditEntity,
+  onEntityEdit,
+  onEdit,
 }: {
   analysis: NoteAnalysisView;
   onOpenEntity?: AnalysisViewProps['onOpenEntity'];
+  onEditEntity?: AnalysisViewProps['onEditEntity'];
+  onEntityEdit?: AnalysisViewProps['onEntityEdit'];
+  onEdit?: AnalysisViewProps['onEdit'];
 }) {
+  const editEntity = (kind: 'person' | 'place' | 'theme' | 'decision', name: string) => {
+    onEditEntity?.(kind, name);
+    onEntityEdit?.(kind, name);
+    onEdit?.(kind, name);
+    if (!onEditEntity && !onEntityEdit && !onEdit) {
+      onOpenEntity?.(kind, name, 'kind');
+    }
+  };
   const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
   const open = (kind: 'person' | 'place' | 'theme', name: string) => () =>
     onOpenEntity?.(kind, name);
 
@@ -172,16 +191,25 @@ function AnalysisContent({
           <Text style={styles.analysisBlockTitle}>Temas</Text>
           <View style={styles.chips}>
             {analysis.themes.map((theme, index) => (
-              <Press
-                key={`${theme}-${index}`}
-                style={styles.chipPress}
-                onPress={open('theme', theme)}
-                disabled={!onOpenEntity}
-                accessibilityRole="button"
-                accessibilityLabel={`Abrir ${theme} no mapa`}
-              >
-                <Text style={styles.chip}>{theme}</Text>
-              </Press>
+              <View key={`${theme}-${index}`} style={styles.entityChipRow}>
+                <Press
+                  style={styles.chipPress}
+                  onPress={open('theme', theme)}
+                  disabled={!onOpenEntity}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Abrir ${theme} no mapa`}
+                >
+                  <Text style={styles.chip}>{theme}</Text>
+                </Press>
+                <Press
+                  style={styles.entityEdit}
+                  onPress={() => editEntity('theme', theme)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Editar entidade"
+                >
+                  <Ionicons name="pencil" size={12} color={colors.textTertiary} />
+                </Press>
+              </View>
             ))}
           </View>
         </View>
@@ -192,20 +220,29 @@ function AnalysisContent({
           <Text style={styles.analysisBlockTitle}>Pessoas</Text>
           <View style={styles.chips}>
             {analysis.peopleDetail.map((person) => (
-              <Press
-                key={person.name}
-                style={styles.chipPress}
-                onPress={open('person', person.name)}
-                disabled={!onOpenEntity}
-                accessibilityRole="button"
-                accessibilityLabel={`Abrir ${person.name} no mapa, ${person.count} ${
-                  person.count === 1 ? 'menção' : 'menções'
-                }.`}
-              >
-                <Text style={styles.chip}>
-                  {person.name} {person.count}
-                </Text>
-              </Press>
+              <View key={person.name} style={styles.entityChipRow}>
+                <Press
+                  style={styles.chipPress}
+                  onPress={open('person', person.name)}
+                  disabled={!onOpenEntity}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Abrir ${person.name} no mapa, ${person.count} ${
+                    person.count === 1 ? 'menção' : 'menções'
+                  }.`}
+                >
+                  <Text style={styles.chip}>
+                    {person.name} {person.count}
+                  </Text>
+                </Press>
+                <Press
+                  style={styles.entityEdit}
+                  onPress={() => editEntity('person', person.name)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Editar entidade"
+                >
+                  <Ionicons name="pencil" size={12} color={colors.textTertiary} />
+                </Press>
+              </View>
             ))}
           </View>
         </View>
@@ -216,20 +253,29 @@ function AnalysisContent({
           <Text style={styles.analysisBlockTitle}>Lugares</Text>
           <View style={styles.chips}>
             {analysis.placesDetail.map((place) => (
-              <Press
-                key={place.name}
-                style={styles.chipPress}
-                onPress={open('place', place.name)}
-                disabled={!onOpenEntity}
-                accessibilityRole="button"
-                accessibilityLabel={`Abrir ${place.name} no mapa, ${place.count} ${
-                  place.count === 1 ? 'menção' : 'menções'
-                }.`}
-              >
-                <Text style={styles.chip}>
-                  {place.name} {place.count}
-                </Text>
-              </Press>
+              <View key={place.name} style={styles.entityChipRow}>
+                <Press
+                  style={styles.chipPress}
+                  onPress={open('place', place.name)}
+                  disabled={!onOpenEntity}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Abrir ${place.name} no mapa, ${place.count} ${
+                    place.count === 1 ? 'menção' : 'menções'
+                  }.`}
+                >
+                  <Text style={styles.chip}>
+                    {place.name} {place.count}
+                  </Text>
+                </Press>
+                <Press
+                  style={styles.entityEdit}
+                  onPress={() => editEntity('place', place.name)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Editar entidade"
+                >
+                  <Ionicons name="pencil" size={12} color={colors.textTertiary} />
+                </Press>
+              </View>
             ))}
           </View>
         </View>
@@ -382,6 +428,9 @@ export function AnalysisView({
   onChangeAnalysisModel,
   onOpenProcessing,
   onOpenEntity,
+  onEditEntity,
+  onEntityEdit,
+  onEdit,
   onClose,
 }: AnalysisViewProps) {
   const styles = useThemedStyles(baseStyles);
@@ -492,7 +541,13 @@ export function AnalysisView({
           {analysisLoading && !analysis ? (
             <AnalysisSkeleton />
           ) : analysis ? (
-            <AnalysisContent analysis={analysis} onOpenEntity={onOpenEntity} />
+            <AnalysisContent
+              analysis={analysis}
+              onOpenEntity={onOpenEntity}
+              onEditEntity={onEditEntity}
+              onEntityEdit={onEntityEdit}
+              onEdit={onEdit}
+            />
           ) : (
             <Text style={styles.muted}>Sem análise para esta nota.</Text>
           )}
@@ -504,7 +559,7 @@ export function AnalysisView({
                   style={[styles.analyzeButton, analysisBusy && styles.analyzeButtonDisabled]}
                   onPress={onAnalyzeLocal}
                   disabled={analysisBusy}
-                  accessibilityLabel="Analisar nota no aparelho"
+                  accessibilityLabel="Analisar nota"
                 >
                   {analysisBusy ? (
                     <ActivityIndicator size="small" color={colors.text} />
@@ -780,6 +835,14 @@ const baseStyles = defineStyles({
   analysisSectionTitle: { fontSize: fontSize.sm, fontWeight: '600', color: baseColors.text },
   analysisSummary: { color: baseColors.text, fontSize: fontSize.md, lineHeight: 22 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
+  entityChipRow: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  entityEdit: {
+    width: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.pill,
+  },
   chipPress: {
     borderRadius: radius.pill,
     backgroundColor: baseColors.surfaceElevated,

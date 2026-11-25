@@ -105,3 +105,10 @@ export function observeHlc(last: Hlc | null, remote: Hlc): Hlc | null {
   if (!last) return remote;
   return compareHlc(remote, last) > 0 ? remote : last;
 }
+
+/** Nome curto do aparelho para a versao de um campo. */
+export function nodeFrom(identityId: string): string {
+  // O formato da versao usa `-` como separador; o id do aparelho (`dev_...`) ja
+  // e alfanumerico.
+  return identityId.replace(/[^A-Za-z0-9_]/g, '');
+}

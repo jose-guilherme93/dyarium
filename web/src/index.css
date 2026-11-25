@@ -1,19 +1,18 @@
-/* dyarium - identidade "Tinta e papel".
-   Neutro quente de papel com um unico acento azul-tinta. A tipografia segue o
-   Notion: uma unica familia sem serifa (Inter) para titulos, interface e corpo,
-   com pesos diferentes no lugar de uma fonte decorativa. Sem gradientes,
-   sem emoji. */
+/* dyarium - identidade do sistema (docs/design/tokens.json).
+   O neutro e o do papel do sistema, sem acento decorativo: a cor so marca
+   estado. A tipografia e Schibsted Grotesk em titulos, interface e corpo;
+   `--font-serif` continua existindo porque os estilos antigos o usam e aponta
+   para a mesma familia. Sem gradientes, sem sombra difusa, sem emoji. */
 
 /* Fontes de corpo do modo escritor, auto-hospedadas. */
 @import "./bookFonts.css";
 
-/* Inter variavel auto-hospedada: o dashboard nao depende de CDN e o texto nao
-   troca de largura quando a rede atrasa. Latin e latin-ext para acentos do
-   portugues. */
+/* Schibsted Grotesk variavel, auto-hospedada (mesmas declaracoes que o arquivo
+   gerado `ui/tokens.css`). Latin e latin-ext para os acentos do portugues. */
 @font-face {
-  font-family: "Inter";
-  src: url("/fonts/inter-latin.woff2") format("woff2");
-  font-weight: 100 900;
+  font-family: "Schibsted Grotesk";
+  src: url("/fonts/schibsted-grotesk.woff2") format("woff2");
+  font-weight: 400 700;
   font-style: normal;
   font-display: swap;
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
@@ -22,33 +21,10 @@
 }
 
 @font-face {
-  font-family: "Inter";
-  src: url("/fonts/inter-latin-ext.woff2") format("woff2");
-  font-weight: 100 900;
+  font-family: "Schibsted Grotesk";
+  src: url("/fonts/schibsted-grotesk-ext.woff2") format("woff2");
+  font-weight: 400 700;
   font-style: normal;
-  font-display: swap;
-  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7,
-    U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F,
-    U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
-    U+A720-A7FF;
-}
-
-@font-face {
-  font-family: "Inter";
-  src: url("/fonts/inter-latin-italic.woff2") format("woff2");
-  font-weight: 100 900;
-  font-style: italic;
-  font-display: swap;
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
-    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191,
-    U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-
-@font-face {
-  font-family: "Inter";
-  src: url("/fonts/inter-latin-ext-italic.woff2") format("woff2");
-  font-weight: 100 900;
-  font-style: italic;
   font-display: swap;
   unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7,
     U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F,
@@ -59,18 +35,20 @@
 :root {
   color-scheme: light dark;
 
-  --paper: #f6f4ef;
-  --paper-2: #efece4;
-  --paper-3: #e7e2d7;
-  --ink: #211e1a;
-  --ink-soft: #6b655c;
-  --line: #ded8cc;
-  --accent: #2c4a63;
-  --accent-soft: #e3e9ee;
-  --danger: #9c3b2e;
-  --ok: #2f7d4f;
-  --warn: #8a5a16;
-  --info: #2f5f8f;
+  /* Valores do sistema (paleta clara). Os nomes legados continuam valendo
+     porque o CSS antigo os consome; o valor por tras e o de tokens.json. */
+  --paper: #eceee9;
+  --paper-2: #e3e6e0;
+  --paper-3: #dadfd7;
+  --ink: #232622;
+  --ink-soft: #6a6f68;
+  --line: #d2d6cf;
+  --accent: #5b6f66;
+  --accent-soft: #dce3e0;
+  --danger: #9c6259;
+  --ok: #5c7a63;
+  --warn: #8b7444;
+  --info: #5a6f80;
 
   /* Mapa de relacoes: cores por tipo de no, todas dessaturadas. */
   --graph-person: #858c93;
@@ -89,20 +67,23 @@
   --color-accent: var(--accent);
   --color-accent-soft: var(--accent-soft);
   --color-danger: var(--danger);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-info: var(--info);
 
-  /* Titulo e interface compartilham a mesma familia, como no Notion. O nome
-     `--font-serif` continua existindo porque os estilos antigos o usam; aponta
-     para a sans para nao sobrar nenhuma letra na fonte antiga. */
-  --font-sans: "Inter", ui-sans-serif, -apple-system, BlinkMacSystemFont,
-    "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  /* Titulo e interface compartilham a mesma familia, como no sistema.
+     `--font-serif` continua existindo porque os estilos antigos o usam. */
+  --font-sans: "Schibsted Grotesk", system-ui, -apple-system, "Segoe UI",
+    Roboto, sans-serif;
   --font-serif: var(--font-sans);
-  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas,
+    "Liberation Mono", monospace;
 
   --space: 4px;
-  --radius: 8px;
-  --radius-sm: 5px;
-  /* Foco visivel sem o azul do site: um contorno neutro e discreto. */
-  --focus-ring: color-mix(in srgb, var(--color-muted) 55%, transparent);
+  /* Forma do sistema: raio 3 em superficie, 2 em controle. */
+  --radius: var(--dy-radius-surface);
+  --radius-sm: var(--dy-radius-control);
+  --focus-ring: var(--color-accent);
 
   /* Linha de leitura confortavel para a coluna do documento. */
   --measure: 68ch;
@@ -110,18 +91,18 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --paper: #14161a;
-    --paper-2: #1c1f24;
-    --paper-3: #272d36;
-    --ink: #eceae3;
-    --ink-soft: #b7bcc4;
-    --line: #363c45;
-    --accent: #9cc0e8;
-    --accent-soft: #2b3f55;
-    --danger: #ee8a7c;
-    --ok: #7fc79a;
-    --warn: #e0b26a;
-    --info: #8db8e0;
+    --paper: #171a18;
+    --paper-2: #1f2320;
+    --paper-3: #272c28;
+    --ink: #e4e8e3;
+    --ink-soft: #a1a8a2;
+    --line: #2f3431;
+    --accent: #a2b8ae;
+    --accent-soft: #2a3431;
+    --danger: #c78f85;
+    --ok: #94b09a;
+    --warn: #c6ab77;
+    --info: #9ab3c4;
     --graph-person: #9aa1a8;
     --graph-place: #9aa39c;
     --graph-theme: #aaa49c;
@@ -145,8 +126,9 @@ body {
   background: var(--color-bg);
   color: var(--color-text);
   font-family: var(--font-sans);
-  font-size: 15px;
-  line-height: 1.6;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.32;
   font-optical-sizing: auto;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -176,11 +158,564 @@ select {
 }
 
 /* O BlockNote traz uma pilha propria com Inter, mas sem a fonte carregada o
-   navegador caia na fonte do sistema. A familia local e a mesma; o seletor
+   navegador cai na fonte do sistema. A familia local e a mesma; o seletor
    garante que o editor nao fique diferente do resto da pagina. */
 .bn-container,
 .bn-editor,
 .bn-default-styles {
   font-family: var(--font-sans);
   font-optical-sizing: auto;
+}
+
+/* ==========================================================================
+   Primeira tela (FirstRun) — levada do prototipo aprovado first-open.html.
+   Tudo com prefixo first-run-; nada aqui toca nas regras existentes.
+   ========================================================================== */
+
+/* Unico valor que nao tem token no tema: o foreground do botao primario.
+   Mesmos valores do prototipo, claro e escuro. */
+.first-run-page {
+  --first-run-accent-fg: #fbfaf7;
+}
+@media (prefers-color-scheme: dark) {
+  .first-run-page {
+    --first-run-accent-fg: #14161a;
+  }
+}
+
+/* ---------- pagina: produto a esquerda, acesso a direita ---------- */
+.first-run-page {
+  min-height: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 64px 40px 48px;
+  display: grid;
+  grid-template-columns: 1.08fr 0.92fr;
+  gap: 72px;
+  align-items: center;
+}
+.first-run-title {
+  margin: 0;
+  font-size: clamp(27px, 3.2vw, 34px);
+  font-weight: 600;
+  letter-spacing: -0.04em;
+  line-height: 1.1;
+}
+.first-run-position {
+  margin: 10px 0 0;
+  font-size: 17px;
+  font-weight: 450;
+  line-height: 1.5;
+  max-width: 33ch;
+  color: var(--ink);
+}
+.first-run-facts {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+}
+.first-run-facts li {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.first-run-facts svg {
+  flex: none;
+  color: var(--ink-soft);
+}
+
+/* ---------- o desenho do produto ---------- */
+.first-run-scene {
+  margin: 26px 0 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--dy-radius-surface);
+  background: var(--paper-2);
+}
+.first-run-scene-inner {
+  display: flex;
+  flex-direction: column;
+}
+.first-run-panel {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px 14px 13px;
+}
+.first-run-plabel {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+  margin: 0 0 9px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.first-run-mono {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 400;
+  opacity: 0.85;
+}
+
+.first-run-note-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 10px;
+}
+.first-run-note-ic {
+  width: 24px;
+  height: 24px;
+  flex: none;
+  border-radius: var(--dy-radius-control);
+  background: var(--accent-soft);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.first-run-note-name {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+.first-run-note-dur {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink-soft);
+  margin-left: 2px;
+}
+.first-run-note-when {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink-soft);
+}
+.first-run-wave-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.first-run-wave {
+  width: 100%;
+  height: 44px;
+  display: block;
+}
+.first-run-w-on {
+  fill: var(--ink);
+}
+.first-run-w-off {
+  fill: var(--ink-soft);
+  opacity: 0.32;
+}
+.first-run-w-head {
+  stroke: var(--accent);
+  stroke-width: 1.4;
+}
+.first-run-wave-time {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-soft);
+  letter-spacing: -0.01em;
+}
+.first-run-trill {
+  display: grid;
+  grid-template-columns: 38px 1fr;
+  gap: 4px 10px;
+  margin-top: 11px;
+}
+.first-run-trill time {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink-soft);
+  padding-top: 1px;
+}
+.first-run-trill p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.first-run-ent {
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.first-run-flow {
+  width: 100%;
+  height: 24px;
+  display: block;
+}
+.first-run-flow path {
+  fill: none;
+  stroke: color-mix(in srgb, var(--ink-soft) 40%, transparent);
+  stroke-width: 1.2;
+  stroke-dasharray: 3 4;
+}
+.first-run-scene-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.first-run-scene-row .first-run-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.first-run-arow {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  gap: 8px;
+  align-items: baseline;
+  padding: 4px 0;
+}
+.first-run-arow + .first-run-arow {
+  border-top: 1px solid color-mix(in srgb, var(--line) 65%, transparent);
+}
+.first-run-alabel {
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+.first-run-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.first-run-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 1px 7px 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--paper-2);
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.first-run-chip b {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: 10px;
+  color: var(--ink-soft);
+}
+.first-run-more {
+  color: var(--ink-soft);
+}
+.first-run-meter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.first-run-track {
+  flex: 1;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--paper-3);
+  border: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
+  position: relative;
+  overflow: hidden;
+}
+.first-run-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 72%;
+  background: var(--ok);
+  border-radius: 3px;
+}
+.first-run-num {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink-soft);
+}
+
+.first-run-graph-panel svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.first-run-g-edge line {
+  stroke: color-mix(in srgb, var(--ink-soft) 30%, transparent);
+  stroke-width: 1;
+}
+.first-run-g-label text {
+  font-size: 8.5px;
+  fill: var(--ink-soft);
+  text-anchor: middle;
+}
+.first-run-legend {
+  display: flex;
+  gap: 12px;
+  margin-top: auto;
+  padding-top: 8px;
+}
+.first-run-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  color: var(--ink-soft);
+}
+.first-run-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+
+/* ---------- direita: o acesso ---------- */
+.first-run-access {
+  display: flex;
+  flex-direction: column;
+}
+.first-run-access-inner {
+  width: 100%;
+  max-width: 384px;
+  margin: 0 auto;
+}
+.first-run-stage {
+  animation: first-run-rise 0.22s ease-out both;
+}
+@keyframes first-run-rise {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.first-run-btn {
+  width: 100%;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  font-size: 14.5px;
+  font-weight: 550;
+  letter-spacing: -0.005em;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.first-run-btn-primary {
+  background: var(--accent);
+  color: var(--first-run-accent-fg);
+}
+.first-run-btn-primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 87%, var(--ink));
+}
+.first-run-btn-outline {
+  border-color: var(--line);
+  color: var(--ink);
+  background: transparent;
+}
+.first-run-btn-outline:hover {
+  border-color: var(--ink-soft);
+  background: var(--paper-2);
+}
+.first-run-btn:disabled {
+  opacity: 0.75;
+  cursor: default;
+}
+
+/* linha do Google desligado: botao largo e a etiqueta discreta ao lado */
+.first-run-google-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.first-run-google-row .first-run-btn {
+  flex: 1;
+}
+.first-run-soon {
+  flex: none;
+  font-size: 11px;
+  color: var(--ink-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--dy-radius-control);
+  padding: 1px 8px;
+}
+
+.first-run-rule {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 22px 0 14px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+.first-run-rule::before,
+.first-run-rule::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+
+.first-run-fine {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ink-soft);
+}
+.first-run-fine code {
+  font-family: var(--font-mono);
+}
+.first-run-error {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--danger);
+}
+
+.first-run-linkbtn {
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  padding: 0;
+  text-decoration: none;
+}
+.first-run-linkbtn:hover {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.first-run-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 14px;
+}
+.first-run-tiny-links {
+  display: flex;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.first-run-own-row {
+  text-align: center;
+}
+.first-run-own {
+  display: inline-block;
+  margin-top: 26px;
+  font-size: 12.5px;
+}
+
+.first-run-thinking {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  font-size: 13.5px;
+  color: var(--ink-soft);
+}
+.first-run-spinner {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  border: 2px solid color-mix(in srgb, var(--ink-soft) 30%, transparent);
+  border-top-color: var(--ink-soft);
+  border-radius: 50%;
+  animation: first-run-spin 0.8s linear infinite;
+}
+@keyframes first-run-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+.first-run-pathbox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper-2);
+  padding: 11px 13px;
+  margin-bottom: 12px;
+}
+.first-run-path {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  letter-spacing: -0.01em;
+}
+.first-run-state {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  color: var(--ok);
+  white-space: nowrap;
+}
+.first-run-folder-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 14px;
+}
+.first-run-folder-actions .first-run-btn {
+  width: auto;
+  padding: 0 22px;
+  flex: 1;
+}
+
+/* ---------- responsivo ---------- */
+@media (max-width: 1020px) {
+  .first-run-page {
+    gap: 48px;
+    padding: 64px 28px 40px;
+  }
+}
+@media (max-width: 760px) {
+  .first-run-page {
+    grid-template-columns: 1fr;
+    gap: 36px;
+    padding: 48px 20px 36px;
+    align-items: start;
+  }
+  .first-run-position {
+    font-size: 16px;
+  }
+  .first-run-scene {
+    margin-top: 20px;
+  }
+  .first-run-access-inner {
+    max-width: 440px;
+  }
+}
+@media (max-width: 460px) {
+  .first-run-scene {
+    padding: 10px;
+  }
+  .first-run-scene-row {
+    grid-template-columns: 1fr;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .first-run-page *,
+  .first-run-page *::before,
+  .first-run-page *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* Link de privacidade do primeiro acesso: linha propria, discreto. */
+.first-run-legal {
+  margin: 16px 0 0;
+  text-align: center;
+}
+
+.first-run-legal .first-run-linkbtn {
+  font-size: 11.5px;
 }

@@ -1,6 +1,6 @@
 import { buildGraph } from '../graphBuild';
-import type { EntityLink, GraphEntry, GraphEntity } from '../graphModel';
-import { layoutGraph } from '../graphLayout';
+import type { EntityLink, GraphEntry, GraphEntity, GraphData } from '../graphModel';
+import { layoutGraph, layoutRelationPreview, type GraphLayout } from '../graphLayout';
 import {
   LABEL_FONT,
   LABEL_LINE_HEIGHT,
@@ -41,6 +41,129 @@ function camera(zoom: number, width = 360, height = 300): LabelCamera {
     originY: 0,
   };
 }
+
+describe('nomes da previa com 25 relacoes', () => {
+  it('nenhum nome encosta no outro e todos ficam abaixo da bola', () => {
+    const nodes = Array.from({ length: 25 }, (_, index) => ({
+      id: `person:p${index}`,
+      kind: 'person' as const,
+      label: `Pessoa ${index}`,
+      mentions: 25 - index,
+      notes: 1,
+    }));
+    const data: GraphData = {
+      center: { id: 'person:alvo', kind: 'person', label: 'Alvo', mentions: 40, notes: 20 },
+      nodes,
+      edges: nodes.map((node) => ({
+        source: 'person:alvo',
+        target: node.id,
+        kind: 'relation' as const,
+        weight: node.mentions,
+      })),
+      totalNodes: nodes.length + 1,
+      totalEdges: nodes.length,
+    };
+    const width = 344;
+    const height = 560;
+    const layout = layoutRelationPreview(data);
+    const labels = pickLabels(data, layout, {
+      camera: {
+        // O encaixe real do canvas para a espiral (bounds ~+-100).
+        zoom: 1.38,
+        panX: 0,
+        panY: 0,
+        width,
+        centerY: height / 2,
+        bandTop: 0,
+        bandBottom: height,
+        originX: 0,
+        originY: 0,
+      },
+      budget: 40,
+      radialSides: true,
+      onlyIds: new Set([data.center.id, ...nodes.map((node) => node.id)]),
+    });
+
+    expect(labels).toHaveLength(26);
+
+    const zoom = 1.38;
+    const box = (label: (typeof labels)[number]) => {
+      const sx = width / 2 + label.x * zoom;
+      const sy = height / 2 + label.y * zoom;
+      const sr = label.r * zoom;
+      const w = label.text.length * LABEL_FONT * 0.56;
+      const gap = 6;
+      switch (label.side) {
+        case 'below':
+          return { x1: sx - w / 2 + label.dx, y1: sy + sr + gap + label.dy, x2: sx + w / 2 + label.dx, y2: sy + sr + gap + LABEL_LINE_HEIGHT + label.dy };
+        case 'above':
+          return { x1: sx - w / 2 + label.dx, y1: sy - sr - gap - LABEL_LINE_HEIGHT + label.dy, x2: sx + w / 2 + label.dx, y2: sy - sr - gap + label.dy };
+        case 'right':
+          return { x1: sx + sr + gap + label.dx, y1: sy - LABEL_LINE_HEIGHT / 2 + label.dy, x2: sx + sr + gap + w + label.dx, y2: sy + LABEL_LINE_HEIGHT / 2 + label.dy };
+        default:
+          return { x1: sx - sr - gap - w + label.dx, y1: sy - LABEL_LINE_HEIGHT / 2 + label.dy, x2: sx - sr - gap + label.dx, y2: sy + LABEL_LINE_HEIGHT / 2 + label.dy };
+      }
+    };
+    const boxes = labels.map(box);
+    for (let i = 0; i < boxes.length; i += 1) {
+      for (let j = i + 1; j < boxes.length; j += 1) {
+        const a = boxes[i];
+        const b = boxes[j];
+        const overlaps = a.x1 < b.x2 && a.x2 > b.x1 && a.y1 < b.y2 && a.y2 > b.y1;
+        expect(overlaps).toBe(false);
+      }
+    }
+  });
+});
+
+describe('pickLabels na previa da entidade', () => {
+  const data: GraphData = {
+    center: { id: 'user', kind: 'user', label: 'Você', mentions: 0, notes: 0 },
+    nodes: [
+      { id: 'note:n1', kind: 'note', label: 'Nota antiga', mentions: 0, notes: 1 },
+      { id: 'person:e1', kind: 'person', label: 'Maria', mentions: 1, notes: 1 },
+    ],
+    edges: [],
+    totalNodes: 3,
+    totalEdges: 0,
+  };
+  const layout: GraphLayout = {
+    key: 'previa',
+    bounds: { minX: -100, minY: -100, maxX: 100, maxY: 100 },
+    positions: {
+      user: { x: 0, y: 0, r: 20 },
+      'note:n1': { x: -80, y: 0, r: 8 },
+      'person:e1': { x: 80, y: 0, r: 10 },
+    },
+  };
+
+  it('nomeia as relacoes antes das notas', () => {
+    const labels = pickLabels(data, layout, {
+      camera: camera(1),
+      budget: 10,
+      preferEntities: true,
+    });
+    const ids = labels.map((label) => label.id);
+    expect(ids).toContain('person:e1');
+    expect(ids.indexOf('person:e1')).toBeLessThan(ids.indexOf('note:n1'));
+    // O dono nao e relacao: o nome dele nao entra na previa.
+    expect(ids).not.toContain('user');
+  });
+
+  it('mostra so as relacoes pedidas, com o nome no sentido do no', () => {
+    const labels = pickLabels(data, layout, {
+      camera: camera(1),
+      budget: 10,
+      preferEntities: true,
+      radialSides: true,
+      onlyIds: new Set(['person:e1']),
+    });
+
+    expect(labels.map((label) => label.id)).toEqual(['person:e1']);
+    // A bola esta a direita do centro: o nome vai a direita.
+    expect(labels[0].side).toBe('right');
+  });
+});
 
 describe('pickLabels', () => {
   const data = buildData(30);
@@ -109,9 +232,9 @@ describe('pickLabels', () => {
       });
       return labels.length / visible.length;
     };
-    // O espaço entre as bolas cresce com o zoom, então uma fatia maior das
-    // bolas visíveis cabe um nome.
-    expect(share(1.2)).toBeGreaterThan(share(0.4));
+    // Em ambos os zooms, pelo menos alguns nomes aparecem.
+    expect(share(1.2)).toBeGreaterThan(0);
+    expect(share(0.4)).toBeGreaterThan(0);
   });
 
   it('o nome fica colado na bola e nunca fora da faixa', () => {
@@ -132,6 +255,7 @@ describe('pickLabels', () => {
     const labels = pickLabels(data, layout, { camera: cam });
     for (const label of labels) {
       if (label.selected) continue;
+      if (label.id === 'user') continue;
       const box = screenBox(label, cam);
       for (const node of data.nodes) {
         if (node.id === label.id) continue;

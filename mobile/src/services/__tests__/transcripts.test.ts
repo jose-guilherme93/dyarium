@@ -1,16 +1,28 @@
 import type { Recording } from '@/core/types';
 
-import { fetchTranscriptsOnce, refreshServerTranscript, syncServerTranscripts } from '../transcripts';
+import {
+  fetchTranscriptsOnce,
+  refreshServerTranscript,
+  requestServerTranscript,
+  sendPendingTranscriptsToServer,
+  syncServerTranscripts,
+  transcribeRecordingOnServer,
+} from '../transcripts';
+import { ApiError } from '@/core/api';
 
 const mockListRecordings = jest.fn<Promise<Recording[]>, []>();
 const mockGetRecording = jest.fn<Promise<Recording | null>, [string]>();
 const mockUpsertRecording = jest.fn<Promise<void>, [Recording]>();
 const mockGetTranscript = jest.fn();
+const mockRetranscribe = jest.fn();
 const mockLoadServerConfig = jest.fn();
 const mockEmitRecording = jest.fn();
 const mockNotify = jest.fn();
 const mockGetTranscriptSyncAt = jest.fn<Promise<string | null>, [string]>();
 const mockSetTranscriptSyncAt = jest.fn<Promise<void>, [string, string]>();
+const mockTrackServer = jest.fn();
+const mockFinishServer = jest.fn();
+const mockFailServer = jest.fn();
 
 jest.mock('../db', () => ({
   listRecordings: () => mockListRecordings(),
@@ -24,6 +36,12 @@ jest.mock('../secure', () => ({
   loadServerConfig: () => mockLoadServerConfig(),
 }));
 
+jest.mock('../remoteTranscription', () => ({
+  trackServerTranscription: (...args: [Recording]) => mockTrackServer(...args),
+  finishServerTranscription: (...args: [string]) => mockFinishServer(...args),
+  failServerTranscription: (...args: [string, string]) => mockFailServer(...args),
+}));
+
 jest.mock('../uploaderLoop', () => ({
   emitRecording: (...args: [Recording]) => mockEmitRecording(...args),
 }));
@@ -35,14 +53,24 @@ jest.mock('../notifications', () => ({
 jest.mock('@/core/api', () => ({
   ApiError: class ApiError extends Error {
     status: number;
-    constructor(message: string, status: number) {
-      super(message);
-      this.status = status;
+    code?: string;
+    constructor(statusOrMessage: number | string, codeOrStatus?: string | number, message?: string) {
+      if (typeof statusOrMessage === 'number') {
+        super(message ?? (typeof codeOrStatus === 'string' ? codeOrStatus : 'erro'));
+        this.status = statusOrMessage;
+        this.code = typeof codeOrStatus === 'string' ? codeOrStatus : undefined;
+      } else {
+        super(statusOrMessage);
+        this.status = typeof codeOrStatus === 'number' ? codeOrStatus : 0;
+      }
     }
   },
   DyariumApi: class {
     getTranscript(...args: unknown[]): Promise<unknown> {
       return mockGetTranscript(...args);
+    }
+    retranscribe(...args: unknown[]): Promise<unknown> {
+      return mockRetranscribe(...args);
     }
   },
 }));
@@ -269,9 +297,158 @@ describe('syncServerTranscripts', () => {
     expect(mockGetTranscript).not.toHaveBeenCalled();
   });
 
+  it('copia local sem marcador e carimbada sem baixar de novo', async () => {
+    mockGetTranscriptSyncAt.mockResolvedValue(null);
+
+    await expect(
+      syncServerTranscripts(
+        [serverEntry],
+        [
+          {
+            ...recording,
+            transcript: 'ja tenho esta transcricao',
+            transcriptStatus: 'ready',
+            transcriptOrigin: 'server',
+            hasTranscript: true,
+          },
+        ],
+      ),
+    ).resolves.toBe(0);
+    expect(mockGetTranscript).not.toHaveBeenCalled();
+    expect(mockSetTranscriptSyncAt).toHaveBeenCalledWith('e1', serverEntry.transcript_at);
+  });
+
+  it('marcador antigo com copia local ainda busca a versao nova do servidor', async () => {
+    mockGetTranscriptSyncAt.mockResolvedValue('2026-10-20T10:30:00.000Z');
+    mockGetTranscript.mockResolvedValue({
+      model: 'whisper',
+      language: 'pt',
+      text: 'texto revisado',
+      segments: [],
+    });
+
+    await syncServerTranscripts(
+      [serverEntry],
+      [
+        {
+          ...recording,
+          transcript: 'texto antigo',
+          transcriptStatus: 'ready',
+          transcriptOrigin: 'server',
+          hasTranscript: true,
+        },
+      ],
+    );
+    expect(mockGetTranscript).toHaveBeenCalledWith('e1');
+  });
+
   it('falha de rede mantem o sinal para o proximo pull', async () => {
     mockGetTranscript.mockRejectedValue(new Error('network'));
     await syncServerTranscripts([serverEntry], [recording]);
     expect(mockSetTranscriptSyncAt).not.toHaveBeenCalled();
+  });
+});
+
+describe('pedir transcricao ao servidor', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockLoadServerConfig.mockResolvedValue({ baseUrl: 'https://dyarium.test', token: 't' });
+    mockUpsertRecording.mockResolvedValue(undefined);
+  });
+
+  it('cria a fila do servidor para uma nota que subiu sem ela', async () => {
+    mockRetranscribe.mockResolvedValue({ status: 'queued' });
+
+    await requestServerTranscript('e1');
+
+    expect(mockRetranscribe).toHaveBeenCalledWith('e1');
+  });
+
+  it('sem servidor, nao chama a rede', async () => {
+    mockLoadServerConfig.mockResolvedValue(null);
+
+    await expect(requestServerTranscript('e1')).rejects.toMatchObject({ code: 'no_server' });
+    expect(mockRetranscribe).not.toHaveBeenCalled();
+  });
+
+  it('move so as notas pendentes que ja tem entrada no servidor', async () => {
+    mockRetranscribe.mockResolvedValue({ status: 'queued' });
+    mockListRecordings.mockResolvedValue([
+      { ...recording, filePath: '/audio/rec_1.aac' },
+      {
+        ...recording,
+        id: 'rec_2',
+        entryId: undefined,
+        filePath: '/audio/rec_2.aac',
+        transcriptStatus: 'pending',
+      },
+    ]);
+
+    const result = await sendPendingTranscriptsToServer();
+
+    expect(result).toEqual({ sent: 1, failed: 0 });
+    expect(mockRetranscribe).toHaveBeenCalledTimes(1);
+    expect(mockUpsertRecording).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'rec_1', transcriptOrigin: 'server', transcriptStatus: 'pending' }),
+    );
+  });
+});
+
+class ApiErrorLike extends ApiError {
+  constructor(status: number, message: string) {
+    super(status, 'conflict', message);
+  }
+}
+
+describe('transcrever no servidor a pedido', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockLoadServerConfig.mockResolvedValue({ baseUrl: 'https://dyarium.test', token: 't' });
+    mockUpsertRecording.mockResolvedValue(undefined);
+  });
+
+  it('usa o texto que o servidor ja entregou, sem criar fila nova', async () => {
+    mockGetTranscript.mockResolvedValue({
+      model: 'whisper',
+      language: 'pt',
+      text: 'ja estava pronto',
+      segments: [{ start_ms: 0, end_ms: 1000, text: 'ja estava pronto' }],
+    });
+    const ready = { ...recording, transcriptStatus: 'ready' as const };
+
+    const result = await transcribeRecordingOnServer(ready);
+
+    expect(result).toEqual({ status: 'ready' });
+    expect(mockRetranscribe).not.toHaveBeenCalled();
+    expect(mockFinishServer).toHaveBeenCalledWith('rec_1');
+  });
+
+  it('cria a fila e marca a nota como pending do servidor', async () => {
+    mockRetranscribe.mockResolvedValue({ status: 'queued' });
+    mockGetRecording.mockResolvedValue({ ...recording, transcriptStatus: 'pending' });
+
+    const result = await transcribeRecordingOnServer({ ...recording, transcriptStatus: 'pending' });
+
+    expect(result).toEqual({ status: 'queued' });
+    expect(mockTrackServer).toHaveBeenCalled();
+    expect(mockUpsertRecording).toHaveBeenCalledWith(
+      expect.objectContaining({ transcriptOrigin: 'server', transcriptStatus: 'pending' }),
+    );
+  });
+
+  it('servidor recusando devolve o codigo, sem transcrever aqui', async () => {
+    mockRetranscribe.mockRejectedValue(new ApiErrorLike(409, 'conflict'));
+
+    const result = await transcribeRecordingOnServer({ ...recording, transcriptStatus: 'pending' });
+
+    expect(result).toEqual({ status: 'rejected', code: 409 });
+    expect(mockFailServer).toHaveBeenCalled();
+  });
+
+  it('nota sem entrada no servidor nao chama a rede', async () => {
+    const result = await transcribeRecordingOnServer({ ...recording, entryId: undefined });
+
+    expect(result).toEqual({ status: 'no_entry' });
+    expect(mockRetranscribe).not.toHaveBeenCalled();
   });
 });

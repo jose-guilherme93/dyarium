@@ -6,9 +6,12 @@ import { PlaybackProvider, usePlayAt } from '@/state/PlaybackContext';
 const mockPlayer = {
   currentTime: 0,
   duration: 120,
+  isLoaded: true,
   currentStatus: { isLoaded: true },
   replace: jest.fn(),
-  seekTo: jest.fn(async () => undefined),
+  seekTo: jest.fn(async (seconds: number) => {
+    mockPlayer.currentTime = seconds;
+  }),
   play: jest.fn(),
   pause: jest.fn(),
 };

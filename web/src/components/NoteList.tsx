@@ -5,18 +5,32 @@ import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 import { NotificationsMenu } from "./NotificationsMenu";
 import { ListSkeleton } from "./Skeleton";
 import { ALL_NOTEBOOKS } from "../lib/notebooks";
+
+const NOTE_ORDER_KEY = "dyarium.noteOrder";
+
+function readNoteOrder(): NoteOrder {
+  try {
+    const value = localStorage.getItem(NOTE_ORDER_KEY);
+    return value === "oldest" ? "oldest" : "newest";
+  } catch {
+    return "newest";
+  }
+}
 import { normalizeSearch } from "../lib/search";
-import { formatDuration, formatShortDate } from "../lib/format";
+import { formatShortDateTime } from "../lib/format";
 import { tagColor } from "../lib/tags";
+import { noteTitle } from "../lib/noteTitle";
+import { noteDate, sortNotesByDate, type NoteOrder } from "../lib/noteOrder";
 import { useEscape } from "../lib/useEscape";
 import type { Entry, Notebook } from "../types";
 import {
   ArchiveIcon,
   CheckIcon,
   CloseIcon,
-  MicIcon,
   PlusIcon,
   SearchIcon,
+  SelectIcon,
+  SortIcon,
   TagIcon,
 } from "./icons";
 import { useToast } from "./Toasts";
@@ -30,28 +44,23 @@ interface NoteListProps {
   notebooks: Notebook[];
   /** A faixa recolhida pediu a busca: abre o campo assim que a lista montar. */
   autoSearch?: boolean;
+  /** Mostra o botao de lupa no cabecalho da lista. Padrao true. */
+  showSearch?: boolean;
   onSearchOpened?: () => void;
-  onOpen: (id: string) => void;
+  onOpen: (id: string, title?: string) => void;
+  /** Abre a nota numa aba nova; ausente, a acao nao aparece no menu. */
+  onOpenInNewTab?: (id: string, title?: string) => void;
   onCreate: (event: ReactMouseEvent<HTMLButtonElement>) => void;
   onManageTags: () => void;
-  /** Apagou notas: o dono do estado fecha a nota aberta que sumiu e recarrega. */
+  /** Notas apagadas ou arquivadas: o dono do estado fecha a aba delas. */
   onMutated?: (removedIds: string[]) => void;
 }
 
-// displayTitle hides the date older automatic titles carried; the date is shown
-// separately, small, below the title.
-function displayTitle(entry: Entry): string {
-  const raw = entry.title || entry.original_filename || "Nota";
-  return raw.replace(/\s·\s\d{2}\/\d{2}\/\d{4}\s\d{2}:\d{2}$/, "");
-}
-
-function noteDate(entry: Entry): string {
-  return entry.recorded_at ?? entry.created_at;
-}
-
+// A busca usa o mesmo titulo que a linha mostra (o automatico antigo trazia a
+// data no fim; ela aparece separada, pequena, abaixo).
 function matches(entry: Entry, query: string): boolean {
   return normalizeSearch(
-    `${displayTitle(entry)} ${entry.original_filename ?? ""} ${entry.preview ?? ""} ${(
+    `${noteTitle(entry)} ${entry.original_filename ?? ""} ${entry.preview ?? ""} ${(
       entry.tags ?? []
     ).join(" ")}`,
   ).includes(query);
@@ -94,8 +103,10 @@ export function NoteList({
   notebookId,
   notebooks,
   autoSearch = false,
+  showSearch = true,
   onSearchOpened,
   onOpen,
+  onOpenInNewTab,
   onCreate,
   onManageTags,
   onMutated,
@@ -110,7 +121,9 @@ export function NoteList({
   const [searchingOpen, setSearchingOpen] = useState(false);
   const [tagsOpen, setTagsOpen] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [selecting, setSelecting] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number; id: string } | null>(null);
+  const [noteOrder, setNoteOrder] = useState<NoteOrder>(() => readNoteOrder());
   const [busy, setBusy] = useState(false);
   const tagMenu = useRef<HTMLDivElement | null>(null);
 
@@ -142,6 +155,7 @@ export function NoteList({
     setQuery("");
     setTagsOpen(false);
     setSelected(new Set());
+    setSelecting(false);
     setMenu(null);
   }, [notebookId, archived]);
 
@@ -151,6 +165,14 @@ export function NoteList({
       onSearchOpened?.();
     }
   }, [autoSearch, onSearchOpened]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(NOTE_ORDER_KEY, noteOrder);
+    } catch {
+      // sem localStorage: a ordem vale so para esta sessao
+    }
+  }, [noteOrder]);
 
   useEffect(() => {
     if (!tagsOpen) return;
@@ -174,10 +196,11 @@ export function NoteList({
   }, []);
 
   const allNotebooks = notebookId === ALL_NOTEBOOKS;
-  const notebookById = useMemo(
-    () => new Map(notebooks.map((notebook) => [notebook.id, notebook])),
-    [notebooks],
+  const activeNotebook = useMemo(
+    () => notebooks.find((notebook) => notebook.id === notebookId),
+    [notebooks, notebookId],
   );
+  const isMcp = activeNotebook?.kind === "mcp";
 
   // Escopo: caderno (ou tudo) + a aba de arquivadas.
   const inScope = useMemo(
@@ -200,15 +223,8 @@ export function NoteList({
   }, [inScope, selectedTags]);
   const visible = useMemo(() => {
     const filtered = term ? withTags.filter((entry) => matches(entry, term)) : withTags;
-    // Comparador consistente: com a mesma data, o id decide (antes dois itens
-    // "iguais" podiam trocar de lugar a cada render).
-    return [...filtered].sort((a, b) => {
-      if (a.updated_at === b.updated_at) {
-        return a.id < b.id ? 1 : -1;
-      }
-      return a.updated_at < b.updated_at ? 1 : -1;
-    });
-  }, [withTags, term]);
+    return sortNotesByDate(filtered, noteOrder);
+  }, [withTags, term, noteOrder]);
 
   const counts = useMemo(() => tagCounts(inScope, selectedTags), [inScope, selectedTags]);
 
@@ -227,7 +243,17 @@ export function NoteList({
     [visible, selected],
   );
 
+  // Sair do modo de selecao sempre limpa a selecao; entrar deixa o conjunto
+  // vazio para o usuario marcar a partir de um estado previsivel.
+  const clearSelection = useCallback(() => {
+    setSelected(new Set());
+    setSelecting(false);
+  }, []);
+
   const toggleSelected = (id: string) => {
+    // Selecionar por atalho, menu ou clique deixa o modo ativo: assim os
+    // quadradinhos ficam visiveis e o toque (sem modificador) alterna.
+    setSelecting(true);
     setSelected((current) => {
       const next = new Set(current);
       if (next.has(id)) next.delete(id);
@@ -236,22 +262,24 @@ export function NoteList({
     });
   };
 
-  useEscape(selected.size > 0 && menu === null, () => setSelected(new Set()));
+  useEscape(selecting && menu === null, clearSelection);
 
   const archiveEntries = async (targets: Entry[], next: boolean) => {
     if (targets.length === 0) return;
     setBusy(true);
     let changed = 0;
+    const changedIds: string[] = [];
     for (const entry of targets) {
       try {
         await api.patchEntry(entry.id, { archived: next });
         changed += 1;
+        changedIds.push(entry.id);
       } catch {
         // segue com as demais; o aviso no fim diz quantas falharam
       }
     }
     setBusy(false);
-    setSelected(new Set());
+    clearSelection();
     if (changed > 0) {
       notify(
         changed === 1
@@ -265,7 +293,9 @@ export function NoteList({
     if (changed < targets.length) {
       notify(`Não foi possível arquivar ${targets.length - changed}`, "error");
     }
-    onMutated?.([]);
+    // Arquivar tira a nota da lista: a aba dela fecha junto. Desarquivar nao
+    // fecha nada, porque a nota volta para a lista.
+    onMutated?.(next ? changedIds : []);
     if (!onMutated) void load();
   };
 
@@ -287,7 +317,7 @@ export function NoteList({
       }
     }
     setBusy(false);
-    setSelected(new Set());
+    clearSelection();
     if (removed.length > 0) {
       notify(removed.length === 1 ? "Nota apagada" : `${removed.length} notas apagadas`, "success");
     }
@@ -299,17 +329,30 @@ export function NoteList({
   };
 
   const menuItems = (entry: Entry): ContextMenuItem[] => {
-    const targets = selected.has(entry.id) && selected.size > 1 ? selectedEntries : [entry];
+    const targets = selected.size > 1 ? selectedEntries : [entry];
     const allSelected = visible.length > 0 && selected.size === visible.length;
     return [
       {
         key: "open",
         label: "Abrir",
         onSelect: () => {
-          setSelected(new Set());
-          onOpen(entry.id);
+          clearSelection();
+          onOpen(entry.id, noteTitle(entry));
         },
       },
+      // A unica acao que cria aba: o clique normal abre a nota sozinha.
+      ...(onOpenInNewTab
+        ? [
+            {
+              key: "open-tab",
+              label: "Abrir em nova aba",
+              onSelect: () => {
+                clearSelection();
+                onOpenInNewTab(entry.id, noteTitle(entry));
+              },
+            },
+          ]
+        : []),
       {
         key: "select",
         label: selected.has(entry.id) ? "Desmarcar" : "Selecionar",
@@ -319,8 +362,14 @@ export function NoteList({
         key: "select-all",
         label: allSelected ? "Limpar seleção" : "Selecionar todas",
         disabled: visible.length === 0,
-        onSelect: () =>
-          setSelected(allSelected ? new Set() : new Set(visible.map((item) => item.id))),
+        onSelect: () => {
+          if (allSelected) {
+            clearSelection();
+          } else {
+            setSelecting(true);
+            setSelected(new Set(visible.map((item) => item.id)));
+          }
+        },
       },
       {
         key: "archive",
@@ -353,9 +402,7 @@ export function NoteList({
   };
 
   const row = (entry: Entry) => {
-    const isAudio = entry.source !== "text";
-    const notebook = notebookById.get(entry.notebook_id ?? "");
-    const tags = entry.tags ?? [];
+    const title = noteTitle(entry);
     const isSelected = selected.has(entry.id);
     const className = [
       "note-row",
@@ -370,9 +417,9 @@ export function NoteList({
           className={className}
           onContextMenu={(event) => {
             event.preventDefault();
-            // O clique direito seleciona a nota sem desfazer uma selecao que ja
-            // a contem: as acoes do menu valem para o conjunto.
-            if (!isSelected) setSelected(new Set([entry.id]));
+            // O clique direito so abre o menu: não seleciona a nota nem
+            // desfaz a selecao existente. As acoes valem para o conjunto ja
+            // selecionado quando a nota clicada esta nele.
             setMenu({ x: event.clientX, y: event.clientY, id: entry.id });
           }}
         >
@@ -383,36 +430,16 @@ export function NoteList({
             aria-selected={isSelected}
             onClick={(event) => {
               const additive = event.metaKey || event.ctrlKey || event.shiftKey;
-              if (additive) {
+              if (selecting || additive) {
                 toggleSelected(entry.id);
                 return;
               }
-              if (selected.size > 0) {
-                // Clicar de novo na unica nota selecionada abre; em qualquer
-                // outra, o clique troca a selecao para ela.
-                if (selected.size === 1 && isSelected) {
-                  setSelected(new Set());
-                  onOpen(entry.id);
-                  return;
-                }
-                setSelected(new Set([entry.id]));
-                return;
-              }
-              onOpen(entry.id);
+              onOpen(entry.id, title);
             }}
           >
             <span className="note-row-head">
-              {allNotebooks && notebook && (
-                <span
-                  className="note-row-dot"
-                  style={{ backgroundColor: notebook.color || "var(--color-muted)" }}
-                  role="img"
-                  aria-label={`Caderno ${notebook.name}`}
-                  title={notebook.name}
-                />
-              )}
-              <span className="note-row-title">{displayTitle(entry)}</span>
-              {selected.size > 0 && (
+              <span className="note-row-title">{title}</span>
+              {selecting && (
                 <span
                   className={isSelected ? "note-row-check note-row-check--on" : "note-row-check"}
                   aria-hidden
@@ -421,36 +448,17 @@ export function NoteList({
                 </span>
               )}
             </span>
+            {/* Sem titulo, a linha usa a previa como titulo: repetir o mesmo
+                trecho logo abaixo duplicava o texto na lista. */}
+            {entry.preview && entry.preview !== title ? (
+              <span className="note-row-preview">{entry.preview}</span>
+            ) : null}
             <span className="note-row-line">
-              {isAudio && (
-                <span className="note-row-kind" title="Áudio">
-                  <MicIcon size={11} />
-                  {entry.duration_seconds > 0
-                    ? formatDuration(entry.duration_seconds)
-                    : "áudio"}
-                </span>
-              )}
-              {entry.preview && <span className="note-row-preview">{entry.preview}</span>}
               {(failures[entry.id] || entry.status === "failed") && (
                 <span className="note-row-failed">falhou</span>
               )}
-              <span className="note-row-date">{formatShortDate(noteDate(entry))}</span>
+              <span className="note-row-date">{formatShortDateTime(noteDate(entry))}</span>
             </span>
-            {tags.length > 0 && entry.id === activeId && (
-              <span className="note-row-tags">
-                {tags.slice(0, 4).map((tag) => (
-                  <span key={tag} className="mini-tag">
-                    <span
-                      className="mini-tag-dot"
-                      style={{ backgroundColor: tagColor(tag) }}
-                      aria-hidden
-                    />
-                    {tag}
-                  </span>
-                ))}
-                {tags.length > 4 && <span className="mini-tag-more">+{tags.length - 4}</span>}
-              </span>
-            )}
           </button>
         </div>
       </li>
@@ -489,15 +497,17 @@ export function NoteList({
         ) : (
           <>
             <div className="list-tools">
-              <button
-                type="button"
-                className="icon-button"
-                onClick={() => setSearchingOpen(true)}
-                aria-label="Buscar nas notas"
-                title="Buscar"
-              >
-                <SearchIcon size={16} />
-              </button>
+              {showSearch && (
+                <button
+                  type="button"
+                  className="icon-button"
+                  onClick={() => setSearchingOpen(true)}
+                  aria-label="Buscar nas notas"
+                  title="Buscar"
+                >
+                  <SearchIcon size={16} />
+                </button>
+              )}
               <button
                 type="button"
                 className={archived ? "icon-button icon-button--active" : "icon-button"}
@@ -507,6 +517,19 @@ export function NoteList({
                 title={archived ? "Voltar para as notas" : "Arquivadas"}
               >
                 <ArchiveIcon size={16} />
+              </button>
+              <button
+                type="button"
+                className={selecting ? "icon-button icon-button--active" : "icon-button"}
+                onClick={() => {
+                  if (selecting) clearSelection();
+                  else setSelecting(true);
+                }}
+                aria-pressed={selecting}
+                aria-label={selecting ? "Cancelar seleção" : "Selecionar notas"}
+                title={selecting ? "Cancelar seleção" : "Selecionar notas"}
+              >
+                <SelectIcon size={16} />
               </button>
               <div className="tag-menu" ref={tagMenu}>
                 <button
@@ -584,17 +607,41 @@ export function NoteList({
                   </div>
                 )}
               </div>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() =>
+                  setNoteOrder((value) => (value === "newest" ? "oldest" : "newest"))
+                }
+                aria-pressed={noteOrder === "oldest"}
+                // Rotulo e dica dizem a mesma coisa (a acao do clique); antes o
+                // title descrevia o estado atual e contradizia o aria-label.
+                aria-label={
+                  noteOrder === "newest"
+                    ? "Ordenar notas: mais antigas primeiro"
+                    : "Ordenar notas: mais recentes primeiro"
+                }
+                title={
+                  noteOrder === "newest"
+                    ? "Ordenar notas: mais antigas primeiro"
+                    : "Ordenar notas: mais recentes primeiro"
+                }
+              >
+                <SortIcon size={16} />
+              </button>
               <NotificationsMenu refreshKey={refreshKey} onOpen={onOpen} />
             </div>
-            <button
-              type="button"
-              className="icon-button list-new"
-              onClick={onCreate}
-              aria-label="Nova nota"
-              title="Nova nota"
-            >
-              <PlusIcon size={16} />
-            </button>
+            {!isMcp && (
+              <button
+                type="button"
+                className="icon-button list-new"
+                onClick={onCreate}
+                aria-label="Nova nota"
+                title="Nova nota"
+              >
+                <PlusIcon size={16} />
+              </button>
+            )}
           </>
         )}
       </div>
@@ -604,6 +651,21 @@ export function NoteList({
           <span className="list-selection-count" aria-live="polite">
             {selected.size} {selected.size === 1 ? "nota" : "notas"}
           </span>
+          {selected.size === 1 && (
+            <button
+              type="button"
+              className="button button--ghost button--small"
+              onClick={() => {
+                const id = [...selected][0];
+                const entrada = entries.find((item) => item.id === id);
+                clearSelection();
+                onOpen(id, entrada ? noteTitle(entrada) : "");
+              }}
+              disabled={busy}
+            >
+              Abrir
+            </button>
+          )}
           <button
             type="button"
             className="button button--ghost button--small"
@@ -688,6 +750,10 @@ export function NoteList({
               <>
                 <p>Nenhuma nota com essas tags.</p>
                 <p>Limpe o filtro para ver o escopo inteiro.</p>
+              </>
+            ) : isMcp ? (
+              <>
+                <p>Nenhum projeto ainda.</p>
               </>
             ) : (
               <>

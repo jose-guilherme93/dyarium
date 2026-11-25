@@ -82,3 +82,32 @@ export const TRANSCRIPTION_LANGUAGES: { value: TranscriptionLanguage; label: str
 export function whisperLanguage(language: TranscriptionLanguage | undefined): string {
   return language === 'auto' ? 'auto' : 'pt';
 }
+
+/**
+ * Modelo que a proxima passada vai usar: o escolhido quando esta instalado,
+ * senao o primeiro arquivo instalado. Sem arquivo, null — quem chama diz o que
+ * falta em vez de tratar como "sem modelo" quando o disco tem um.
+ */
+export function pickInstalledModel(
+  preferred: string | undefined,
+  installed: readonly string[],
+): TranscriptionModelInfo | null {
+  const selected = modelById(preferred);
+  if (selected && installed.includes(selected.id)) return selected;
+  for (const info of TRANSCRIPTION_MODELS) {
+    if (installed.includes(info.id)) return info;
+  }
+  return null;
+}
+
+/**
+ * Sobra de audio curta demais para virar uma janela de transcricao. Tentar
+ * transcrever os ultimos milissegundos travava a nota em "pendente" com o
+ * checkpoint a 99%: o whisper nao devolve nada util e a passada nunca fecha.
+ */
+export const MIN_TRANSCRIBE_TAIL_MS = 500;
+
+/** Ainda ha audio suficiente depois do checkpoint para uma janela? */
+export function hasTranscribableTail(checkpointMs: number, durationMs: number): boolean {
+  return durationMs - checkpointMs >= MIN_TRANSCRIBE_TAIL_MS;
+}

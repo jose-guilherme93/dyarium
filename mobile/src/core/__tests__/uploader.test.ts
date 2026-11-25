@@ -153,4 +153,20 @@ describe('uploadRecording', () => {
       uploadRecording(input, { api: server.asApi(), file: memFile(payload(10)), chunkSize: 4 }),
     ).rejects.toMatchObject({ status: 500 });
   });
+
+  it('envia o sha256 quando informado', async () => {
+    const server = new FakeApi(10);
+    const sha256 = 'aaaa1111bbbb2222cccc3333dddd4444eeee5555';
+    await uploadRecording({ ...input, sha256 }, { api: server.asApi(), file: memFile(payload(10)) });
+
+    expect(server.createUpload.mock.calls[0][0]).toMatchObject({ sha256 });
+  });
+
+  it('nao envia a chave sha256 quando ausente', async () => {
+    const server = new FakeApi(10);
+    await uploadRecording(input, { api: server.asApi(), file: memFile(payload(10)) });
+
+    const body = server.createUpload.mock.calls[0][0];
+    expect(body).not.toHaveProperty('sha256');
+  });
 });

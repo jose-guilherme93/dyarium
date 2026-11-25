@@ -158,6 +158,11 @@ function EnabledAnalysisModelsSection() {
     // Um download por vez: dois arquivos grandes concorrendo no mesmo link
     // enchem o buffer e ainda disputam a RAM com o app.
     if (downloading) return;
+    // Modelo maior que a RAM do aparelho nao e Analise lenta: e o processo
+    // encerrado pelo Android. O aviso ja aparece no card; aqui o download
+    // nao comeca.
+    const target = analysisModelById(id);
+    if (!target || modelFitsDevice(target, Device.totalMemory) === false) return;
     setError(null);
     setDownloading(id);
     setProgress(0);
@@ -218,6 +223,7 @@ function EnabledAnalysisModelsSection() {
       {ANALYSIS_MODEL_FAMILIES.map((family) => {
         const variant = variantFor(family.id);
         const model = family[variant];
+        const fits = modelFitsDevice(model, Device.totalMemory);
         const isInstalled = installed.includes(model.id);
         const isSelected = selected?.id === model.id;
         const isDownloading = downloading === model.id;
@@ -248,7 +254,7 @@ function EnabledAnalysisModelsSection() {
                   {model.license}
                   {isInstalled ? ' · baixado' : ''}
                 </Text>
-                {modelFitsDevice(model, Device.totalMemory) === false ? (
+                {fits === false ? (
                   <Text style={styles.ramWarning}>
                     Este aparelho tem {formatBytes(Device.totalMemory ?? 0)}; esta versão pode ser
                     encerrada pelo sistema.
@@ -319,12 +325,24 @@ function EnabledAnalysisModelsSection() {
               </View>
             ) : (
               <Press
-                style={styles.downloadButton}
+                style={[styles.downloadButton, !fits && styles.downloadDisabled]}
                 onPress={() => void handleDownload(model.id)}
-                accessibilityLabel={`Baixar e usar ${family.label}, ${variant === 'fast' ? 'rápida' : 'qualidade'}`}
+                disabled={!fits}
+                accessibilityState={{ disabled: !fits }}
+                accessibilityLabel={
+                  fits
+                    ? `Baixar e usar ${family.label}, ${variant === 'fast' ? 'rápida' : 'qualidade'}`
+                    : `${family.label} não cabe na memória deste aparelho`
+                }
               >
-                <Ionicons name="download-outline" size={16} color={colors.text} />
-                <Text style={styles.downloadText}>Baixar e usar</Text>
+                <Ionicons
+                  name={fits ? 'download-outline' : 'warning-outline'}
+                  size={16}
+                  color={colors.text}
+                />
+                <Text style={styles.downloadText}>
+                  {fits ? 'Baixar e usar' : 'RAM insuficiente'}
+                </Text>
               </Press>
             )}
           </Card>
@@ -561,6 +579,7 @@ const baseStyles = defineStyles({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
+  downloadDisabled: { opacity: 0.55 },
   downloadText: { color: baseColors.text, fontSize: fontSize.sm, fontWeight: '600' },
   useButton: {
     backgroundColor: baseColors.accentSoft,

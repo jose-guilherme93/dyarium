@@ -5,28 +5,37 @@ import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import * as SystemUI from 'expo-system-ui';
 import { useEffect } from 'react';
+import { AppState } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { startPerfReport, useRenderCount } from '@/dev/perf';
 import { stopForegroundTask } from '../../modules/foreground-task';
 import { loadStoredActivities } from '@/services/activity';
-import { registerUploadTask } from '@/services/background';
+import { registerUploadTask, registerBackupTaskFromPrefs } from '@/services/background';
+import { runScheduledBackupIfDue } from '@/services/backupScheduler';
+import { startDriveAutoSync } from '@/services/driveAutoSync';
 import { configureNotifications } from '@/services/notifications';
 import { LibraryProvider } from '@/state/LibraryContext';
 import { PlaybackProvider } from '@/state/PlaybackContext';
 import { RecordingProvider, useRecording } from '@/state/RecordingContext';
 import { SettingsProvider } from '@/state/SettingsContext';
 import { useWritingReminders } from '@/state/useWritingReminders';
+import { initDiagnostics } from '@/services/diagnostics';
 import { useTheme, ThemeProvider } from '@/theme/ThemeContext';
 
 SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
+// Antes do primeiro render: sem DSN ou com a opcao desligada ele nao faz nada.
+void initDiagnostics();
+
 /**
- * Inter e a familia do app inteiro. Os arquivos ficam no bundle: carregar da
- * rede deixaria o primeiro frame com a fonte do sistema e trocaria o texto
- * depois. A splash so sai quando as fontes estao prontas (ou falharam, para
- * nao prender o app num build sem o arquivo).
+ * Fontes do bundle. A Schibsted Grotesk e a familia da interface; a Inter
+ * continua carregada porque e a opcao `system` do editor de notas, e a
+ * Newsreader e a leitura longa dos livros. Carregar da rede deixaria o
+ * primeiro frame com a fonte do sistema e trocaria o texto depois. A splash
+ * so sai quando as fontes estao prontas (ou falharam, para nao prender o app
+ * num build sem o arquivo).
  */
 const FONT_SOURCES = {
   Inter_300Light: require('../../assets/fonts/Inter-Light.ttf'),
@@ -36,6 +45,16 @@ const FONT_SOURCES = {
   Inter_600SemiBold: require('../../assets/fonts/Inter-SemiBold.ttf'),
   Inter_700Bold: require('../../assets/fonts/Inter-Bold.ttf'),
   Inter_800ExtraBold: require('../../assets/fonts/Inter-ExtraBold.ttf'),
+  // Familias do design: a chave e o proprio `fontFamily` dos tokens em
+  // `src/theme/design.ts`, por isso o hifen.
+  'SchibstedGrotesk-Medium': require('../../assets/fonts/SchibstedGrotesk-Medium.ttf'),
+  'SchibstedGrotesk-SemiBold': require('../../assets/fonts/SchibstedGrotesk-SemiBold.ttf'),
+  // Fonte do corpo dos livros (Newsreader, a mesma do dashboard). O texto do
+  // capitulo em paginas usa esta familia; as outras opcoes do escritor ainda
+  // nao viajam no bundle.
+  Newsreader: require('../../assets/fonts/Newsreader-Regular.ttf'),
+  'Newsreader-Italic': require('../../assets/fonts/Newsreader-Italic.ttf'),
+  'Newsreader-SemiBold': require('../../assets/fonts/Newsreader-SemiBold.ttf'),
 } as const;
 
 /** Agenda os lembretes de escrita (precisa dos providers de biblioteca/config). */
@@ -77,6 +96,8 @@ function ThemedRoot() {
               {/* Desliza pro lado (como antes), mas na variante rapida do Android
                   (`ios_from_right` = 150 ms); o `slide_from_*` e fixo em 300 ms. */}
               <Stack.Screen name="note/[id]" options={{ animation: 'ios_from_right' }} />
+              <Stack.Screen name="perfil" options={{ animation: 'ios_from_right' }} />
+              <Stack.Screen name="books/[id]" options={{ animation: 'ios_from_right' }} />
               <Stack.Screen name="transcript/[id]" options={{ animation: 'ios_from_right' }} />
               <Stack.Screen name="record" options={{ animation: 'slide_from_bottom' }} />
               <Stack.Screen name="map" options={{ animation: 'slide_from_bottom' }} />
@@ -107,6 +128,7 @@ export default function RootLayout() {
     configureNotifications();
     startPerfReport();
     void registerUploadTask();
+    void registerBackupTaskFromPrefs();
     // Historico do centro de atividade: o que rodou antes continua la, e o que
     // morreu no meio aparece como interrompido.
     void loadStoredActivities();
@@ -115,6 +137,24 @@ export default function RootLayout() {
     // rodando: limpar aqui evita o aviso fantasma de "Transcrevendo nota".
     stopForegroundTask();
   }, []);
+
+  // Backup "de meia-noite": roda no primeiro momento em que o app abre ou o
+  // sistema acorda depois do limite (00:00 local). O SO nao garante hora
+  // exata, entao so confere "ja passou do limite?".
+  useEffect(() => {
+    if (AppState.currentState === 'active') {
+      void runScheduledBackupIfDue().catch(() => undefined);
+    }
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void runScheduledBackupIfDue().catch(() => undefined);
+    });
+    return () => subscription.remove();
+  }, []);
+
+  // Drive: envio automatico com debounce depois de uma mudanca local e ao
+  // voltar ao primeiro plano (que tambem aplica o retrato remoto). Sessao
+  // vencida so mantem o banner; o cache local nunca e apagado por aqui.
+  useEffect(() => startDriveAutoSync(), []);
 
   if (!fontsLoaded && !fontError) {
     return null;

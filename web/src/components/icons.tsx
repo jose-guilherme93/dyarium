@@ -146,6 +146,16 @@ export function CheckIcon({ size = 18 }: IconProps) {
   );
 }
 
+/** Quadrado com check: entra/sai do modo de selecao de notas. */
+export function SelectIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <rect x="4" y="4" width="16" height="16" rx="3" />
+      <path d="m8 12 3 3 5-6" />
+    </svg>
+  );
+}
+
 export function SparkIcon({ size = 18 }: IconProps) {
   return (
     <svg {...svgProps(size)}>
@@ -286,12 +296,120 @@ export function MapIcon({ size = 18 }: IconProps) {
   );
 }
 
+export function CalendarIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <rect x="3.5" y="5" width="17" height="15.5" rx="2" />
+      <path d="M3.5 9.5h17M8 3v4M16 3v4" />
+      <path d="M8 13.5h.01M12 13.5h.01" strokeWidth="2.2" />
+    </svg>
+  );
+}
+
+export function ArrowUpRightIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M7 17 17 7M9 7h8v8" />
+    </svg>
+  );
+}
+
 export function CpuIcon({ size = 18 }: IconProps) {
   return (
     <svg {...svgProps(size)}>
       <rect x="6" y="6" width="12" height="12" rx="2" />
       <path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4" />
       <rect x="10" y="10" width="4" height="4" rx="1" />
+    </svg>
+  );
+}
+
+/** Ordena a lista: duas setas (cima/baixo) para alternar mais recentes/antigas. */
+export function SortIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M7 4v16" />
+      <path d="m4 7 3-3 3 3" />
+      <path d="M17 20V4" />
+      <path d="m20 17-3 3-3-3" />
+    </svg>
+  );
+}
+
+/** Escudo: o que sai e o que fica no servidor. */
+export function ShieldIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M12 3l7 4v5c0 4-3 7-7 9-4-2-7-5-7-9V7l7-4z" />
+      <path d="m9 12 2 2 4-4" />
+    </svg>
+  );
+}
+
+/** Seta circular: buscar a lista de modelos de novo. */
+export function RefreshIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M20 12a8 8 0 1 1-2.3-5.7" />
+      <path d="M20 4v4h-4" />
+    </svg>
+  );
+}
+
+/** Pessoa: autor das notas. */
+export function UserIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <circle cx="12" cy="8" r="3.2" />
+      <path d="M5 21c0-4 3-7 7-7s7 3 7 7" />
+    </svg>
+  );
+}
+
+/** Onda de audio: a etapa de transcricao. */
+export function WaveIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M3 12h2l2-6 3 12 3-9 2 6 2-3h4" />
+    </svg>
+  );
+}
+
+/** Seta saindo da caixa: abre o commit ou link no remoto. */
+export function ExternalIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+      <path d="M15 3h6v6" />
+      <path d="M10 14 21 3" />
+    </svg>
+  );
+}
+
+/** Funil: abre um filtro entre os itens. */
+export function FilterIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" />
+    </svg>
+  );
+}
+
+/** Controles deslizantes: abre a barra de personalizacao. */
+export function SlidersIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3" />
+      <path d="M1 14h6M9 8h6M17 16h6" />
+    </svg>
+  );
+}
+
+export function KeyIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...svgProps(size)}>
+      <circle cx="8" cy="12" r="3.4" />
+      <path d="M11.4 12H20M17 12v3M14.6 12v2.2" />
     </svg>
   );
 }

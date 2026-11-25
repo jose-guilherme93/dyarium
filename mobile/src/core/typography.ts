@@ -90,8 +90,9 @@ const NATIVE_FAMILIES: Record<Exclude<NoteFontFamily, 'system'>, string> = {
 };
 
 /**
- * Familia nativa do editor. `system` agora e a Inter, a mesma da interface; o
- * peso entra pela familia porque cada peso e um arquivo separado.
+ * Familia nativa do editor. `system` continua a Inter, a opcao neutra que o
+ * menu de tipografia oferece; o peso entra pela familia porque cada peso e um
+ * arquivo separado.
  */
 export function fontFamilyNative(
   family: NoteFontFamily,

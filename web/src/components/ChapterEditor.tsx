@@ -45,6 +45,11 @@ interface ChapterEditorProps {
   onCreateAfter?: () => void;
   onFocusChange?: (focus: boolean) => void;
   onChanged: () => void;
+  /**
+   * Avisa a lista que so a contagem deste capitulo mudou. O corpo nao pode
+   * pedir a recarga da lista inteira: digitar nao muda estrutura nem titulo.
+   */
+  onWordsSaved?: (entryId: string, words: number) => void;
   onDeleted: () => void;
 }
 
@@ -61,6 +66,13 @@ const STATUS_ORDER: Array<{ value: Exclude<ChapterStatus, "">; label: string }> 
   { value: "revising", label: "Revisão" },
   { value: "done", label: "Final" },
 ];
+
+/**
+ * Salvamento de fundo: a cada minuto o texto mais recente vai ao servidor mesmo
+ * que o debounce seja reiniciado a cada tecla. Sem rede, o rascunho local fica
+ * no navegador e o proximo tique tenta de novo.
+ */
+const BACKGROUND_SAVE_MS = 60_000;
 
 function words(markdown: string): number {
   const plain = markdownToPlain(markdown);
@@ -113,6 +125,70 @@ function RedoGlyph() {
   );
 }
 
+type GlyphShape = "saved" | "saving" | "pending" | "offline" | "warn";
+
+/** Glifo de 14px do estado de salvamento; as formas se distinguem sem texto. */
+function SaveGlyphShape({ shape }: { shape: GlyphShape }) {
+  if (shape === "saving") {
+    return (
+      <svg className="save-glyph-spin" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+        <circle
+          cx="7"
+          cy="7"
+          r="5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeDasharray="20 12"
+          strokeLinecap="round"
+        />
+      </svg>
+    );
+  }
+  if (shape === "saved") {
+    return (
+      <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+        <circle cx="7" cy="7" r="3.5" fill="currentColor" />
+      </svg>
+    );
+  }
+  if (shape === "pending") {
+    return (
+      <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+        <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      </svg>
+    );
+  }
+  if (shape === "offline") {
+    return (
+      <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+        <circle
+          cx="7"
+          cy="7"
+          r="4.5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeDasharray="2.2 2.2"
+        />
+      </svg>
+    );
+  }
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+      <path
+        d="M7 1.8 12.8 12H1.2L7 1.8Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+      <path d="M7 6v2.6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <circle cx="7" cy="10.2" r="0.7" fill="currentColor" />
+    </svg>
+  );
+}
+
 /** Editor do capitulo: folha do livro, autosave, rascunho offline e painel. */
 export function ChapterEditor({
   book,
@@ -124,6 +200,7 @@ export function ChapterEditor({
   onCreateAfter,
   onFocusChange,
   onChanged,
+  onWordsSaved,
   onDeleted,
 }: ChapterEditorProps) {
   const { notify } = useToast();
@@ -328,7 +405,8 @@ export function ChapterEditor({
         await clearDraft(entry.id);
         refreshRhythm();
         window.setTimeout(() => setSaving((current) => (current === "saved" ? "idle" : current)), 1500);
-        onChanged();
+        // So a contagem deste capitulo mudou: nada de recarregar a lista.
+        onWordsSaved?.(entry.id, words(text));
       } catch (err) {
         if (isConflict(err) && noteIdRef.current) {
           // No livro o conflito nunca e resolvido em silencio: o texto local e o
@@ -362,7 +440,7 @@ export function ChapterEditor({
         notify("Sem rede. O capítulo está guardado neste navegador.", "error");
       }
     },
-    [entry.id, notify, onChanged, persistDraft, refreshRhythm, title],
+    [entry.id, notify, onWordsSaved, persistDraft, refreshRhythm, title],
   );
 
   useEffect(() => {
@@ -401,25 +479,31 @@ export function ChapterEditor({
     };
   }, [persistDraft]);
 
-  // Reproducao da fila: ao voltar a rede e a cada 30 s enquanto houver pendencia.
+  // Salvamento de fundo: a cada minuto, mesmo que o debounce esteja sendo
+  // reiniciado pela digitacao. Uma falha deixa o rascunho local; o proximo
+  // tique rearma a fila e tenta outra vez, sem depender de uma tecla nova.
   useEffect(() => {
-    const retry = () => {
+    const saveLatest = () => {
       if (conflictRef.current || !dirtyRef.current) return;
+      if (!navigator.onLine) {
+        persistDraft(latestMarkdown.current, "offline");
+        setSaving("offline");
+        return;
+      }
+      autosaveRef.current?.schedule(latestMarkdown.current);
       void autosaveRef.current?.flush();
     };
     const online = () => {
       setSaving("idle");
-      retry();
+      saveLatest();
     };
     window.addEventListener("online", online);
-    const timer = window.setInterval(() => {
-      if (navigator.onLine) retry();
-    }, 30000);
+    const timer = window.setInterval(saveLatest, BACKGROUND_SAVE_MS);
     return () => {
       window.removeEventListener("online", online);
       window.clearInterval(timer);
     };
-  }, []);
+  }, [persistDraft]);
 
   const page = bookPage(book);
 
@@ -598,7 +682,7 @@ export function ChapterEditor({
       setSaving("saved");
       setDraftState(null);
       await clearDraft(entry.id);
-      onChanged();
+      onWordsSaved?.(entry.id, words(conflict.local));
     } catch {
       notify("Não foi possível gravar o seu texto.", "error");
     }
@@ -657,6 +741,55 @@ export function ChapterEditor({
   const dailyGoal = book.daily_goal_words ?? rhythm?.daily_goal ?? 0;
   const today = rhythm?.today ?? 0;
 
+  // Estado do salvamento vira um unico glifo no canto do cabecalho: disco
+  // cheio = salvo, arco girando = salvando, anel vazio = pendente, anel
+  // tracejado = sem rede, triangulo = conflito ou erro. Sem rede e erro
+  // reagem ao clique e tentam de novo; conflito se resolve na faixa.
+  const networkDown = typeof navigator !== "undefined" && !navigator.onLine;
+  const glyph: { shape: GlyphShape; label: string; tip: string; retry: boolean } =
+    saving === "conflict"
+      ? {
+          shape: "warn",
+          label: "Conflito ao salvar",
+          tip: "O texto mudou em outro lugar. Resolva no aviso.",
+          retry: false,
+        }
+      : saving === "saving"
+        ? { shape: "saving", label: "Salvando", tip: "Gravando agora.", retry: false }
+        : saving === "offline"
+          ? networkDown
+            ? {
+                shape: "offline",
+                label: "Sem rede",
+                tip: "Sem rede. Guardado neste navegador. Clique para tentar de novo.",
+                retry: true,
+              }
+            : {
+                shape: "warn",
+                label: "Erro ao salvar",
+                tip: "Falha ao gravar. Clique para tentar de novo.",
+                retry: true,
+              }
+          : saving === "saved" || (draftState !== "local" && draftState !== "offline")
+            ? {
+                shape: "saved",
+                label: "Salvo",
+                tip: "Grava sozinho a cada 1 minuto.",
+                retry: false,
+              }
+            : {
+                shape: "pending",
+                label: "Alterações pendentes",
+                tip: "Alterações ainda não gravadas. Grava sozinho a cada 1 minuto.",
+                retry: false,
+              };
+
+  const retrySave = () => {
+    if (conflictRef.current) return;
+    autosaveRef.current?.schedule(latestMarkdown.current);
+    void autosaveRef.current?.flush();
+  };
+
   return (
     <div className={focus ? "chapter-workspace chapter-workspace--focus" : "chapter-workspace"}>
       <header className="chapter-top">
@@ -673,20 +806,6 @@ export function ChapterEditor({
           </button>
         ) : null}
         <span className="chapter-book-title">{book.name}</span>
-        <span className={"save-state save-state--" + saving} aria-live="polite">
-          <i className="save-dot" />
-          {saving === "saving"
-            ? "salvando"
-            : saving === "saved"
-              ? "salvo"
-              : saving === "offline"
-                ? "sem rede"
-                : saving === "conflict"
-                  ? "conflito"
-                  : draftState === "local"
-                    ? "local"
-                    : "salvo"}
-        </span>
         <span className="spacer" />
         {dailyGoal > 0 ? (
           <span className="chapter-today" title="Palavras escritas hoje e a meta diária do livro">
@@ -702,6 +821,31 @@ export function ChapterEditor({
           <span className="chapter-pages-count">
             {" · "}
             {pageTotal} {pageTotal === 1 ? "página" : "páginas"}
+          </span>
+        </span>
+        <span className="save-glyph-wrap">
+          {glyph.retry ? (
+            <button
+              type="button"
+              className={"save-glyph save-glyph--" + glyph.shape}
+              aria-label={glyph.label}
+              title={glyph.tip}
+              onClick={retrySave}
+            >
+              <SaveGlyphShape shape={glyph.shape} />
+            </button>
+          ) : (
+            <span
+              className={"save-glyph save-glyph--" + glyph.shape}
+              role="img"
+              aria-label={glyph.label}
+              title={glyph.tip}
+            >
+              <SaveGlyphShape shape={glyph.shape} />
+            </span>
+          )}
+          <span className="sr-only" aria-live="polite">
+            {glyph.label}
           </span>
         </span>
         <span className="chapter-nav">

@@ -36,7 +36,7 @@ func ownerDisplayName(ctx context.Context, ex execer) (string, error) {
 // theme), ordered by number of mentions. An empty kind lists all kinds.
 func (s *Store) ListEntities(ctx context.Context, kind string) ([]EntitySummary, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT en.id, en.kind, en.name, COALESCE(en.icon, ''),
+		SELECT en.id, en.kind, en.name, COALESCE(en.label, ''), COALESCE(en.icon, ''),
 			COUNT(DISTINCT ee.entry_id),
 			COALESCE(SUM(ee.count), 0),
 			COALESCE(AVG(ee.sentiment), 0),
@@ -56,7 +56,7 @@ func (s *Store) ListEntities(ctx context.Context, kind string) ([]EntitySummary,
 	for rows.Next() {
 		var summary EntitySummary
 		var lastSeen, updatedAt string
-		if err := rows.Scan(&summary.ID, &summary.Kind, &summary.Name, &summary.Icon, &summary.Entries,
+		if err := rows.Scan(&summary.ID, &summary.Kind, &summary.Name, &summary.Label, &summary.Icon, &summary.Entries,
 			&summary.Mentions, &summary.Sentiment, &lastSeen, &updatedAt); err != nil {
 			return nil, fmt.Errorf("store: scan entity: %w", err)
 		}
@@ -155,7 +155,7 @@ func (s *Store) GetEntity(ctx context.Context, kind, name string) (EntitySummary
 	var summary EntitySummary
 	var lastSeen, updatedAt string
 	err = s.db.QueryRowContext(ctx, `
-		SELECT en.id, en.kind, en.name, COALESCE(en.icon, ''),
+		SELECT en.id, en.kind, en.name, COALESCE(en.label, ''), COALESCE(en.icon, ''),
 			COUNT(DISTINCT ee.entry_id),
 			COALESCE(SUM(ee.count), 0),
 			COALESCE(AVG(ee.sentiment), 0),
@@ -166,7 +166,7 @@ func (s *Store) GetEntity(ctx context.Context, kind, name string) (EntitySummary
 		JOIN entries e ON e.id = ee.entry_id AND e.deleted_at IS NULL
 		WHERE en.id = ?
 		GROUP BY en.id`, id).Scan(
-		&summary.ID, &summary.Kind, &summary.Name, &summary.Icon, &summary.Entries, &summary.Mentions, &summary.Sentiment, &lastSeen, &updatedAt)
+		&summary.ID, &summary.Kind, &summary.Name, &summary.Label, &summary.Icon, &summary.Entries, &summary.Mentions, &summary.Sentiment, &lastSeen, &updatedAt)
 	if err == sql.ErrNoRows {
 		return EntitySummary{}, nil, false, nil
 	}
@@ -202,6 +202,70 @@ func (s *Store) GetEntity(ctx context.Context, kind, name string) (EntitySummary
 		entries = append(entries, entry)
 	}
 	return summary, entries, true, rows.Err()
+}
+
+// ListEntityRejections returns every name the owner rejected, ordered by kind
+// and name. The app pulls them with the entities to rebuild its local memory
+// after a sync.
+func (s *Store) ListEntityRejections(ctx context.Context) ([]EntityRejection, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT kind, name, name_key, created_at, COALESCE(updated_at, '')
+		FROM entity_rejections ORDER BY kind, name`)
+	if err != nil {
+		return nil, fmt.Errorf("store: list entity rejections: %w", err)
+	}
+	defer rows.Close()
+	out := make([]EntityRejection, 0)
+	for rows.Next() {
+		var item EntityRejection
+		var createdAt, updatedAt string
+		if err := rows.Scan(&item.Kind, &item.Name, &item.NameKey, &createdAt, &updatedAt); err != nil {
+			return nil, fmt.Errorf("store: scan entity rejection: %w", err)
+		}
+		item.CreatedAt = parseTS(createdAt)
+		item.UpdatedAt = parseTS(updatedAt)
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+// rejectionKey is the normalized lookup key of one rejection. It is shared by
+// the analysis filter and the snapshot so both read the same memory.
+type rejectionKey struct {
+	kind    string
+	nameKey string
+}
+
+// entityRejectionKeys loads the rejected (kind, name_key) pairs inside a
+// transaction. One query per analysis run, never one per link.
+func entityRejectionKeys(ctx context.Context, ex execer) (map[rejectionKey]bool, error) {
+	rows, err := ex.QueryContext(ctx, `SELECT kind, name_key FROM entity_rejections`)
+	if err != nil {
+		return nil, fmt.Errorf("store: entity rejection keys: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[rejectionKey]bool)
+	for rows.Next() {
+		var key rejectionKey
+		if err := rows.Scan(&key.kind, &key.nameKey); err != nil {
+			return nil, fmt.Errorf("store: scan entity rejection key: %w", err)
+		}
+		out[key] = true
+	}
+	return out, rows.Err()
+}
+
+// EntityRejected reports whether (kind, name) was rejected by the owner. The
+// lookup uses name_key, the same normalization the app applies.
+func (s *Store) EntityRejected(ctx context.Context, ex execer, kind, name string) (bool, error) {
+	var count int
+	err := ex.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM entity_rejections WHERE kind = ? AND name_key = ?`,
+		strings.TrimSpace(kind), EntityRejectionKey(name)).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("store: entity rejected: %w", err)
+	}
+	return count > 0, nil
 }
 
 // EntityAliases returns the old spellings registered for an entity after a
@@ -409,6 +473,16 @@ func normalizeAlias(name string) string {
 	return strings.TrimFunc(value, func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
 	})
+}
+
+// EntityRejectionKey normalizes a rejected name exactly like the app does:
+// lowercase, accents removed, whitespace collapsed and the ends trimmed. It is
+// the `name_key` of entity_rejections; an empty name stays empty.
+func EntityRejectionKey(name string) string {
+	// A mesma normalizacao do alias (minusculas, sem acento, espacos
+	// colapsados, pontas aparadas) para o app e o servidor casarem a mesma
+	// rejeicao sem depender de detalhe de implementacao de cada lado.
+	return normalizeAlias(name)
 }
 
 // RewritableAlias reports whether an old spelling may be replaced in free text

@@ -1,14 +1,20 @@
 /**
  * Card de audio do corpo da nota.
  *
- * O audio e nativo e fica entre os trechos, com a transcricao logo abaixo. Quem
- * toca e o player unico do app, passado pela tela da nota: o card nao cria um
- * player proprio (dois players tocavam o mesmo audio e cada um tinha o seu
+ * Uma faixa de altura fixa: o card mede 182 dp em qualquer estado, entao a nota
+ * nao pula quando a transcricao chega, quando o player abre ou quando a
+ * transcricao falha. Sao tres faixas com altura reservada: topo (38), onda ou
+ * transporte (40) e texto (63).
+ *
+ * A transcricao sincronizada nao aparece aqui: ela vive atras de
+ * `onOpenTranscript`, e o card mostra so as tres primeiras linhas do texto.
+ * Quem toca e o player unico do app, passado pela tela da nota: o card nao cria
+ * um player proprio (dois players tocavam o mesmo audio e cada um tinha o seu
  * botao de play).
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import type { AudioPlayer } from 'expo-audio';
+import { useAudioPlayerStatus, type AudioPlayer } from 'expo-audio';
 import {
   ActivityIndicator,
   View,
@@ -18,7 +24,6 @@ import { Text } from '@/components/AppText';
 import { AudioTransport } from '@/components/AudioTransport';
 import { AudioWaveform } from '@/components/AudioWaveform';
 import { Press } from '@/components/Press';
-import { SyncedTranscript } from '@/components/SyncedTranscript';
 import { formatDuration } from '@/core/format';
 import type { NoteAudioNode } from '@/core/noteDocument';
 import type { TranscriptSegment } from '@/core/types';
@@ -26,11 +31,20 @@ import { baseColors, radius, spacing } from '@/theme/tokens';
 import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
 import { defineStyles } from '@/theme/themedStyles';
 
+/** Altura do card e das faixas que a compoem. */
+const CARD_HEIGHT = 182;
+const TOP_ROW_HEIGHT = 38;
+const CONTROL_BAND_HEIGHT = 40;
+const TEXT_BAND_HEIGHT = 63;
+/** Linhas da previa (13/19) que cabem na faixa de texto. */
+const PREVIEW_LINES = 3;
+const PREVIEW_LINE_HEIGHT = 19;
+
 export interface NoteAudioCardProps {
   node: NoteAudioNode;
   /** Transcricao do audio, quando houver. */
   transcript?: string;
-  /** Segmentos com minutagem: ligam a previa sincronizada e a edicao. */
+  /** Segmentos com minutagem: alimentam a onda e o transporte. */
   segments?: TranscriptSegment[];
   /** Este e o audio que esta no player agora. */
   active?: boolean;
@@ -38,10 +52,16 @@ export interface NoteAudioCardProps {
   player?: AudioPlayer | null;
   /** Trecho inicial quando a reproducao comecou pela transcricao. */
   startMs?: number | null;
+  /** O anexo esta sendo buscado (Drive/servidor): o play vira giro. */
+  loading?: boolean;
+  /** A ultima tentativa de abrir o audio falhou: o play vira aviso e tenta de novo. */
+  loadFailed?: boolean;
   /** Progresso (0..100) da transcricao, enquanto ela roda. */
   transcribingPercent?: number;
   /** Transcricao pedida e ainda sem andamento (ex.: feita no servidor). */
   transcribingWait?: boolean;
+  /** A ultima tentativa de transcricao falhou: mostra o aviso e o tentar de novo. */
+  transcribeError?: boolean;
   /** Ha modelo local e a nota ainda nao tem transcricao? */
   canTranscribe?: boolean;
   onTranscribe?: () => void;
@@ -55,6 +75,24 @@ export interface NoteAudioCardProps {
   onRemove?: () => void;
 }
 
+/**
+ * Tempo do audio no topo do card.
+ *
+ * Componente proprio para o tick do player re-renderizar so este texto, e nao o
+ * card inteiro (que arrastaria a onda junto varias vezes por segundo).
+ */
+function AudioClock({ player, durationMs }: { player: AudioPlayer; durationMs: number }) {
+  const styles = useThemedStyles(baseStyles);
+  const status = useAudioPlayerStatus(player);
+  const total = status.duration > 0 ? status.duration : Math.max(0, durationMs) / 1000;
+
+  return (
+    <Text style={styles.audioDuration} numberOfLines={1} testID="audio-clock">
+      {`${formatDuration((status.currentTime || 0) * 1000)} / ${formatDuration(total * 1000)}`}
+    </Text>
+  );
+}
+
 /** Audio do documento: player entre os trechos de texto. */
 export function NoteAudioCard({
   node,
@@ -63,8 +101,11 @@ export function NoteAudioCard({
   active = false,
   player,
   startMs,
+  loading = false,
+  loadFailed = false,
   transcribingPercent,
   transcribingWait = false,
+  transcribeError = false,
   canTranscribe,
   onTranscribe,
   onStopTranscribe,
@@ -77,134 +118,226 @@ export function NoteAudioCard({
   const styles = useThemedStyles(baseStyles);
   const { colors } = useTheme();
 
-  const transcribing = transcribingPercent !== undefined || transcribingWait;
-  const hasSegments = Boolean(segments && segments.length > 0);
+  const running = transcribingPercent !== undefined;
+  const waiting = transcribingWait && !running;
+  const transcribing = running || waiting;
+  // O erro cede o lugar ao progresso: uma nova tentativa ja esta rodando.
+  const failed = transcribeError && !transcribing;
+  // O transporte so existe com o player, mesmo que o card esteja ativo (o
+  // player e criado pela tela da nota).
+  const attached = active ? player ?? null : null;
+
+  // Sem o texto final, os segmentos ainda dizem o que foi falado: a previa nao
+  // fica vazia so porque a transcricao chegou em outro campo.
+  const preview =
+    transcript?.trim() ||
+    segments
+      ?.map((segment) => (segment.revised ?? segment.text).trim())
+      .filter(Boolean)
+      .join(' ') ||
+    null;
+
+  const percent =
+    transcribingPercent !== undefined
+      ? Math.min(100, Math.max(0, Math.round(transcribingPercent)))
+      : null;
 
   return (
-    <View style={styles.audioCard}>
-      <View style={styles.audioRow}>
-        {active ? null : (
-          <Press style={styles.audioPlay} onPress={onPlay} accessibilityLabel="Tocar áudio">
+    <View testID="audio-card" style={styles.audioCard}>
+      <View style={styles.audioRow} testID="audio-band-top">
+        {active ? (
+          // Tocando, o play sai de cena e vira so indicacao de estado: o unico
+          // controle fica no transporte, logo abaixo.
+          <View
+            style={[styles.audioPlay, styles.audioIndicator]}
+            testID="audio-indicator"
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+          >
+            <Ionicons name="pulse" size={18} color={colors.textSecondary} />
+          </View>
+        ) : loading ? (
+          // O anexo do Drive ainda esta chegando: o card mostra que esta indo,
+          // sem texto e sem deixar o toque sem resposta.
+          <View style={styles.audioPlay} testID="audio-loading">
+            <ActivityIndicator size="small" color={colors.textSecondary} />
+          </View>
+        ) : (
+          <Press
+            style={styles.audioPlay}
+            onPress={onPlay}
+            accessibilityLabel={loadFailed ? 'Tentar abrir o áudio de novo' : 'Tocar áudio'}
+          >
             <Ionicons
-              name="play"
+              name={loadFailed ? 'cloud-offline-outline' : 'play'}
               size={18}
-              color={colors.text}
-              style={{ marginLeft: 2 }}
+              color={loadFailed ? colors.danger : colors.text}
+              style={loadFailed ? undefined : { marginLeft: 2 }}
             />
           </Press>
         )}
         <View style={styles.audioInfo}>
-          <Text style={styles.audioTitle}>Áudio</Text>
-          {active ? null : (
-            <Text style={styles.audioDuration}>
+          <Text style={styles.audioTitle} numberOfLines={1}>Áudio</Text>
+          {attached ? (
+            <AudioClock player={attached} durationMs={node.durationMs} />
+          ) : (
+            <Text style={styles.audioDuration} numberOfLines={1}>
               {node.durationMs > 0 ? formatDuration(node.durationMs) : 'Duração desconhecida'}
             </Text>
           )}
         </View>
-        {transcribing ? (
-          <Press onPress={onStopTranscribe} accessibilityLabel="Parar transcrição" hitSlop={8}>
-            <Ionicons name="stop-circle-outline" size={18} color={colors.textSecondary} />
+        <View style={styles.audioActions}>
+          {failed ? null : waiting ? (
+            // No servidor nao ha o que parar daqui: so mostrar que segue la.
+            <View style={styles.iconButton} accessibilityLabel="Transcrevendo no servidor">
+              <ActivityIndicator size="small" color={colors.textSecondary} />
+            </View>
+          ) : running ? (
+            <Press
+              style={styles.iconButton}
+              onPress={onStopTranscribe}
+              accessibilityLabel="Parar transcrição"
+              hitSlop={6}
+            >
+              <Ionicons name="stop-circle-outline" size={18} color={colors.textSecondary} />
+            </Press>
+          ) : canTranscribe && onTranscribe ? (
+            <Press
+              style={styles.iconButton}
+              onPress={onTranscribe}
+              accessibilityLabel="Transcrever áudio"
+              hitSlop={6}
+            >
+              <Ionicons name="text-outline" size={18} color={colors.textSecondary} />
+            </Press>
+          ) : (
+            <View style={styles.iconButton}>
+              <Ionicons name="mic-outline" size={17} color={colors.textTertiary} />
+            </View>
+          )}
+          <Press
+            style={styles.iconButton}
+            onPress={onRemove}
+            accessibilityLabel="Remover áudio"
+            hitSlop={6}
+          >
+            <Ionicons name="trash-outline" size={17} color={colors.textTertiary} />
           </Press>
-        ) : canTranscribe && onTranscribe ? (
-          <Press onPress={onTranscribe} accessibilityLabel="Transcrever áudio" hitSlop={8}>
-            <Ionicons name="text-outline" size={17} color={colors.textSecondary} />
-          </Press>
-        ) : (
-          <Ionicons name="mic-outline" size={17} color={colors.textTertiary} />
-        )}
-        <Press onPress={onRemove} accessibilityLabel="Remover áudio" hitSlop={8}>
-          <Ionicons name="trash-outline" size={17} color={colors.textTertiary} />
-        </Press>
+        </View>
       </View>
 
-      {active && player ? (
-        <AudioTransport
-          player={player}
-          seed={node.ref}
-          durationMs={node.durationMs}
-          startMs={startMs}
-          segments={segments}
-          transcript={transcript}
-          onOpenTranscript={onOpenTranscript}
-          onEditTranscript={onEditTranscript}
-        />
-      ) : (
-        // Parado, a onda continua ali: tocar nela ja toca o audio dali, sem
-        // precisar abrir a transcricao so para escolher um ponto.
-        <AudioWaveform
-          seed={node.ref}
-          current={0}
-          duration={node.durationMs / 1000}
-          segments={segments}
-          label="Ouvir a partir de"
-          onSeek={(seconds) => onPlayFrom?.(Math.round(seconds * 1000))}
-        />
-      )}
-
-      {active && player ? null : hasSegments ? (
-        <SyncedTranscript
-          segments={segments ?? []}
-          onSeek={onPlayFrom}
-          onOpen={onOpenTranscript}
-          onEdit={onEditTranscript}
-        />
-      ) : transcript ? (
-        onOpenTranscript ? (
-          // O texto e o proprio atalho para a transcricao completa (onde cada
-          // frase e a minutagem podem ser editadas), como era antes.
-          <Press onPress={onOpenTranscript} accessibilityLabel="Abrir transcrição completa">
-            <Text style={styles.audioTranscript} numberOfLines={3} testID="audio-transcript">
-              {transcript}
-            </Text>
-          </Press>
-        ) : (
-          <Text style={styles.audioTranscript} numberOfLines={3} testID="audio-transcript">
-            {transcript}
-          </Text>
-        )
-      ) : null}
-
-      {transcribing ? (
-        <View style={styles.transcribing} testID="audio-transcribing">
-          <ActivityIndicator size="small" color={colors.textSecondary} />
-          <Text style={styles.audioHint}>
-            Transcrevendo
-            {transcribingPercent && transcribingPercent > 0
-              ? ` ${Math.round(transcribingPercent)}%`
-              : '...'}
-          </Text>
-        </View>
-      ) : null}
-      {transcribing && transcribingPercent !== undefined ? (
-        <View style={styles.progressTrack}>
-          <View
-            style={[styles.progressFill, { width: `${Math.min(100, Math.max(0, transcribingPercent))}%` }]}
+      <View style={styles.controlBand} testID="audio-band-control">
+        {attached ? (
+          <AudioTransport
+            compact
+            player={attached}
+            seed={node.ref}
+            durationMs={node.durationMs}
+            startMs={startMs}
+            segments={segments}
+            transcript={transcript}
+            onOpenTranscript={onOpenTranscript}
+            onEditTranscript={onEditTranscript}
           />
-        </View>
-      ) : null}
+        ) : (
+          // Parado, a onda continua ali: tocar nela ja toca o audio dali, sem
+          // precisar abrir a transcricao so para escolher um ponto.
+          <AudioWaveform
+            seed={node.ref}
+            current={0}
+            duration={node.durationMs / 1000}
+            segments={segments}
+            height={CONTROL_BAND_HEIGHT}
+            label="Ouvir a partir de"
+            onSeek={(seconds) => onPlayFrom?.(Math.round(seconds * 1000))}
+          />
+        )}
+      </View>
+
+      <View style={styles.textBand} testID="audio-band-text">
+        {failed ? (
+          <View style={styles.statusRow} testID="audio-transcribe-error">
+            <Ionicons name="alert-circle-outline" size={16} color={colors.danger} />
+            <Text style={[styles.statusText, styles.statusTextDanger]} numberOfLines={1}>
+              Falha na transcrição
+            </Text>
+            <Press
+              style={[styles.retry, !onTranscribe && styles.retryDisabled]}
+              onPress={onTranscribe}
+              disabled={!onTranscribe}
+              accessibilityLabel="Tentar de novo"
+              hitSlop={6}
+            >
+              <Ionicons name="refresh" size={16} color={colors.danger} />
+              <Text style={styles.retryText}>Tentar</Text>
+            </Press>
+          </View>
+        ) : transcribing ? (
+          <View style={styles.progressBlock}>
+            <View style={styles.transcribing} testID="audio-transcribing">
+              <ActivityIndicator size="small" color={colors.textSecondary} />
+              <Text style={styles.audioHint} numberOfLines={1}>
+                {waiting
+                  ? 'Transcrevendo no servidor'
+                  : `Transcrevendo${percent !== null && percent > 0 ? ` ${percent}%` : '...'}`}
+              </Text>
+            </View>
+            {percent !== null ? (
+              <View style={styles.progressTrack} testID="audio-transcribing-progress">
+                <View style={[styles.progressFill, { width: `${percent}%` }]} />
+              </View>
+            ) : null}
+          </View>
+        ) : preview ? (
+          onOpenTranscript ? (
+            // O texto e o proprio atalho para a transcricao completa (onde cada
+            // frase e a minutagem podem ser editadas), como era antes.
+            <Press onPress={onOpenTranscript} accessibilityLabel="Abrir transcrição completa">
+              <Text
+                style={styles.audioTranscript}
+                numberOfLines={PREVIEW_LINES}
+                testID="audio-transcript"
+              >
+                {preview}
+              </Text>
+            </Press>
+          ) : (
+            <Text
+              style={styles.audioTranscript}
+              numberOfLines={PREVIEW_LINES}
+              testID="audio-transcript"
+            >
+              {preview}
+            </Text>
+          )
+        ) : (
+          <View style={styles.emptyRow} testID="audio-empty">
+            <Ionicons name="text-outline" size={16} color={colors.textTertiary} />
+            <Text style={styles.emptyText} numberOfLines={1}>Sem transcrição</Text>
+          </View>
+        )}
+      </View>
     </View>
   );
 }
 
 const baseStyles = defineStyles({
   audioCard: {
-    // Reserva o espaco da previa da transcricao: sem isso, a nota inteira
-    // pulava quando o texto chegava ou o player abria.
-    minHeight: 128,
+    // Uma altura so: as tres faixas abaixo somam exatamente o que fica
+    // reservado, entao nada muda de tamanho entre os estados.
+    height: CARD_HEIGHT,
     backgroundColor: baseColors.surface,
     borderRadius: radius.md,
     padding: spacing.md,
     gap: spacing.sm,
-  },
-  audioRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
-  transcribing: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  progressTrack: {
-    height: 2,
-    borderRadius: 1,
-    backgroundColor: baseColors.surfaceElevated,
     overflow: 'hidden',
   },
-  progressFill: { height: 2, backgroundColor: baseColors.accent },
+  audioRow: {
+    height: TOP_ROW_HEIGHT,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
   audioPlay: {
     width: 38,
     height: 38,
@@ -213,9 +346,52 @@ const baseStyles = defineStyles({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  audioInfo: { flex: 1, gap: 2 },
+  audioIndicator: { opacity: 0.7 },
+  audioInfo: { flex: 1, minWidth: 0, gap: 2 },
+  audioActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
+  iconButton: {
+    width: 32,
+    height: 32,
+    borderRadius: radius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  controlBand: { height: CONTROL_BAND_HEIGHT, justifyContent: 'center' },
+  textBand: { height: TEXT_BAND_HEIGHT, justifyContent: 'center', overflow: 'hidden' },
+  statusRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  statusText: { flexShrink: 1, color: baseColors.textSecondary, fontSize: 13 },
+  statusTextDanger: { color: baseColors.danger },
+  retry: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    height: 28,
+    paddingHorizontal: 6,
+    borderRadius: radius.sm,
+  },
+  retryDisabled: { opacity: 0.4 },
+  retryText: { color: baseColors.danger, fontSize: 12, fontWeight: '700' },
   audioTitle: { color: baseColors.text, fontSize: 15, fontWeight: '600' },
-  audioDuration: { color: baseColors.textSecondary, fontSize: 12 },
+  audioDuration: {
+    color: baseColors.textSecondary,
+    fontSize: 12,
+    fontVariant: ['tabular-nums'],
+  },
+  progressBlock: { gap: spacing.xs },
+  transcribing: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   audioHint: { color: baseColors.textSecondary, fontSize: 12 },
-  audioTranscript: { color: baseColors.textSecondary, fontSize: 13, lineHeight: 19 },
+  progressTrack: {
+    height: 2,
+    borderRadius: 1,
+    backgroundColor: baseColors.surfaceElevated,
+    overflow: 'hidden',
+  },
+  progressFill: { height: 2, backgroundColor: baseColors.accent },
+  emptyRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  emptyText: { color: baseColors.textSecondary, fontSize: 13 },
+  audioTranscript: {
+    color: baseColors.textSecondary,
+    fontSize: 13,
+    lineHeight: PREVIEW_LINE_HEIGHT,
+  },
 });

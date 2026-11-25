@@ -7,10 +7,61 @@
  * conseguir recusar uma gravacao que sobrescreveria trabalho de outro lugar.
  */
 
-import type { ServerEntry, ServerNote } from './api';
+import type { ServerEntry, ServerNote, SyncManifestEntry } from './api';
 import { latestVersion, versionAfter, versionTime } from './hlc';
 import { DEFAULT_NOTEBOOK_ID } from './notebooks';
 import type { Recording, RecordingSource } from './types';
+
+/** Planejamento do capitulo como a nota local guarda. */
+export interface ServerChapterFields {
+  chapterKind?: string;
+  chapterPosition?: number;
+  chapterStatus?: string;
+  chapterGoalWords?: number;
+  chapterSynopsis?: string;
+  chapterBeats?: string;
+  chapterNotes?: string;
+}
+
+/** O que a nota local pode ter de planejamento (vazio/zero sao os defaults). */
+export type LocalChapterFields = Partial<ServerChapterFields>;
+
+/**
+ * Copia o planejamento do capitulo do servidor. Ausente continua ausente; vazio
+ * continua vazio (o dashboard e quem decide o valor canonico).
+ */
+export function chapterFieldsOf(
+  entry: ServerEntry | SyncManifestEntry,
+): ServerChapterFields {
+  return {
+    chapterKind: entry.chapter_kind,
+    chapterPosition: entry.chapter_position,
+    chapterStatus: entry.chapter_status,
+    chapterGoalWords: entry.chapter_goal_words,
+    chapterSynopsis: entry.chapter_synopsis,
+    chapterBeats: entry.chapter_beats,
+    chapterNotes: entry.chapter_notes,
+  };
+}
+
+/**
+ * O planejamento do servidor difere do que esta no aparelho? Vazio e ausente
+ * sao o mesmo default, para nota comum nao gerar escrita.
+ */
+export function chapterFieldsDiffer(
+  local: LocalChapterFields,
+  fields: ServerChapterFields,
+): boolean {
+  return (
+    (local.chapterKind ?? '') !== (fields.chapterKind ?? '') ||
+    (local.chapterPosition ?? 0) !== (fields.chapterPosition ?? 0) ||
+    (local.chapterStatus ?? '') !== (fields.chapterStatus ?? '') ||
+    (local.chapterGoalWords ?? 0) !== (fields.chapterGoalWords ?? 0) ||
+    (local.chapterSynopsis ?? '') !== (fields.chapterSynopsis ?? '') ||
+    (local.chapterBeats ?? '') !== (fields.chapterBeats ?? '') ||
+    (local.chapterNotes ?? '') !== (fields.chapterNotes ?? '')
+  );
+}
 
 function toSource(entry: ServerEntry): RecordingSource {
   // O servidor guarda `share` para audio importado; sem isso, audio e microfone
@@ -82,6 +133,7 @@ export function duplicateEntryRecordings(local: Recording[]): Recording[] {
         !recording.notebookDirty &&
         !recording.tagsDirty &&
         !recording.archivedDirty &&
+        !recording.summaryDetailDirty &&
         (recording.syncConflict?.length ?? 0) === 0,
     );
     if (clean.length < 2) continue;
@@ -123,19 +175,23 @@ export function entryToRecording(entry: ServerEntry, note?: ServerNote): Recordi
     serverAttachmentId: entry.primary_attachment_id ?? entry.audios?.[0]?.id,
     durationMs: entry.duration_seconds > 0 ? Math.round(entry.duration_seconds * 1000) : undefined,
     sizeBytes: entry.size_bytes > 0 ? entry.size_bytes : undefined,
-    // O servidor ainda pode estar transcrevendo; `services/transcripts` busca o
-    // texto quando ele estiver pronto. Nota escrita (sem audio) nao tem
-    // transcricao: marcar como pendente faria o app pedir /transcript para
-    // sempre.
-    transcriptStatus: entry.content_type.startsWith('audio/') ? 'pending' : undefined,
+    // Transcricao de nota puxada do servidor NAO e pendente no aparelho: quem
+    // avisa que o texto ficou pronto e o `transcript_at` da entrada, e o
+    // `services/transcripts.syncServerTranscripts` busca uma vez por mudanca.
+    // Marcar `pending` aqui fazia o app pedir /transcript para sempre (e a nota
+    // ficava em "Transcrevendo 0%") quando o servidor nao transcreve.
+    transcriptStatus: undefined,
     // Nota importada do servidor: o texto, quando existir, e de la. O app nao
     // deve reenviar a transcricao como se a tivesse produzido.
     transcriptOrigin: 'server',
     text: note?.content_markdown ?? '',
     archived: entry.archived,
     author: entry.author ?? '',
+    summaryDetail: entry.summary_detail === 'full' ? 'full' : 'concise',
+    icon: entry.icon ?? '',
     notebookId: entry.notebook_id || DEFAULT_NOTEBOOK_ID,
     tags: entry.tags && entry.tags.length > 0 ? entry.tags : undefined,
+    ...chapterFieldsOf(entry),
     titleVersion: entry.versions?.title,
     recordedAtVersion: entry.versions?.recorded_at,
     bodyVersion: note?.body_version,
@@ -201,6 +257,13 @@ export function mergeServerNote(
   // ultima gravacao do servidor entra.
   const serverAuthor = entry.author ?? '';
   const authorMoved = !local.authorDirty && serverAuthor !== (local.author ?? '');
+  const serverSummaryDetail = entry.summary_detail === 'full' ? 'full' : 'concise';
+  const summaryDetailMoved =
+    !local.summaryDetailDirty && serverSummaryDetail !== (local.summaryDetail ?? 'concise');
+  // O icone nao tem edicao local no app: qualquer valor do servidor entra,
+  // menos quando uma escolha local estiver pendente (reenvio em andamento).
+  const serverIcon = entry.icon ?? '';
+  const iconMoved = !local.iconDirty && serverIcon !== (local.icon ?? '');
   const serverNotebook = entry.notebook_id || DEFAULT_NOTEBOOK_ID;
   const notebookMoved = !local.notebookDirty && serverNotebook !== (local.notebookId || DEFAULT_NOTEBOOK_ID);
   const serverTags = entry.tags ?? [];
@@ -236,6 +299,8 @@ export function mergeServerNote(
     !applyRecorded &&
     !archivedMoved &&
     !authorMoved &&
+    !summaryDetailMoved &&
+    !iconMoved &&
     !notebookMoved &&
     !tagsMoved &&
     !attachmentMoved
@@ -268,6 +333,8 @@ export function mergeServerNote(
       : {}),
     ...(archivedMoved ? { archived: entry.archived } : {}),
     ...(authorMoved ? { author: serverAuthor, authorDirty: undefined } : {}),
+    ...(summaryDetailMoved ? { summaryDetail: serverSummaryDetail, summaryDetailDirty: undefined } : {}),
+    ...(iconMoved ? { icon: serverIcon, iconDirty: undefined } : {}),
     ...(notebookMoved ? { notebookId: serverNotebook, notebookDirty: undefined } : {}),
     ...(tagsMoved ? { tags: serverTags.length > 0 ? serverTags : undefined, tagsDirty: undefined } : {}),
     // Se o corpo veio do servidor, a pendencia local (texto e conflito) acabou.

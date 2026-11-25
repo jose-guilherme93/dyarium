@@ -54,7 +54,7 @@ func (s *Server) handleAnalysisRunsSummary(w http.ResponseWriter, r *http.Reques
 	since := time.Now().UTC().AddDate(0, 0, -days)
 	summary, err := s.deps.Store.AnalysisRunSummary(r.Context(), since)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	models := make([]analysisRunAggregateResponse, 0, len(summary.Models))

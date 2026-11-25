@@ -98,11 +98,16 @@ describe('entryToRecording', () => {
     expect(rec.recordedAt).toBe(ENTRY.created_at);
   });
 
-  it('marca audio como microfone com transcricao pendente', () => {
+  it('audio puxado do servidor nao nasce pendente no aparelho', () => {
+    // Antes marcava 'pending' e o app pedia /transcript a cada 8 s para sempre
+    // quando o servidor nao transcrevia (nota presa em "Transcrevendo 0%").
+    // Agora quem avisa que o texto ficou pronto e o `transcript_at` da entrada,
+    // buscado uma vez por mudanca em syncServerTranscripts.
     const rec = entryToRecording({ ...ENTRY, content_type: 'audio/aac' });
     expect(rec.source).toBe('microphone');
     expect(rec.contentType).toBe('audio/aac');
-    expect(rec.transcriptStatus).toBe('pending');
+    expect(rec.transcriptStatus).toBeUndefined();
+    expect(rec.transcriptOrigin).toBe('server');
     expect(rec.text).toBe('');
   });
 
@@ -140,6 +145,18 @@ describe('entryToRecording', () => {
     expect(entryToRecording({ ...ENTRY, archived: true }).archived).toBe(true);
     expect(entryToRecording({ ...ENTRY, archived: false }).archived).toBe(false);
     expect(entryToRecording({ ...ENTRY, author: 'other' }).author).toBe('other');
+  });
+
+  it('traz o detalhe do resumo do projeto (entry summary_detail)', () => {
+    expect(entryToRecording({ ...ENTRY, summary_detail: 'full' }).summaryDetail).toBe('full');
+    expect(entryToRecording({ ...ENTRY, summary_detail: 'concise' }).summaryDetail).toBe('concise');
+    expect(entryToRecording({ ...ENTRY }).summaryDetail).toBe('concise');
+  });
+
+  it('traz o icone da entry; sem icone fica vazio', () => {
+    expect(entryToRecording({ ...ENTRY, icon: '🌿' }).icon).toBe('🌿');
+    expect(entryToRecording({ ...ENTRY, icon: '' }).icon).toBe('');
+    expect(entryToRecording({ ...ENTRY }).icon).toBe('');
   });
 
   it('traz o primeiro audio do servidor como referencia para o player', () => {
@@ -417,6 +434,18 @@ describe('mergeServerNote', () => {
   it('nao aplica versao de corpo sem o texto (espera o proximo pull)', () => {
     const merged = mergeServerNote(clean(), serverEntry({ versions: { body: 'b2' } }), undefined);
     expect(merged).toBeNull();
+  });
+
+  it('pull aplica o icone da entry sem tocar no resto da nota', () => {
+    const merged = mergeServerNote(clean({ icon: '📘' }), serverEntry({ icon: '🌿' }), undefined);
+    expect(merged?.icon).toBe('🌿');
+    expect(merged?.title).toBe('titulo local');
+    expect(merged?.text).toBe('texto local');
+  });
+
+  it('mantem o icone local enquanto houver escolha pendente', () => {
+    const local = clean({ icon: '📘', iconDirty: true });
+    expect(mergeServerNote(local, serverEntry({ icon: '🌿' }), undefined)).toBeNull();
   });
 
   it('adota caderno e tags do servidor quando nao ha mudanca local pendente', () => {

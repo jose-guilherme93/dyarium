@@ -46,6 +46,9 @@ jobs:
         run: pnpm test
       - name: Build
         run: pnpm build
+        env:
+          # Ausente em PRs de fork: o build segue sem enviar source maps.
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
   mobile:
     runs-on: ubuntu-latest

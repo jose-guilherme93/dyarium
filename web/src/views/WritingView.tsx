@@ -13,9 +13,10 @@ import type {
 } from "../types";
 
 /**
- * Painel "Estatísticas": mostra as métricas que o app calcula offline. O celular
- * envia o documento pronto (contrato em docs/api.md); aqui so desenhamos, sem
- * recalcular nada, para os numeros baterem exatamente com o app.
+ * Painel "Estatísticas": a análise é calculada aqui mesmo, sobre as notas que
+ * este cliente tem (cofre do navegador ou entradas do servidor). O documento
+ * schema 2 vem pronto do núcleo puro do app; a tela só escolhe a janela e
+ * desenha. Nada chega calculado de fora.
  */
 
 const WEEKDAY_INITIALS = ["D", "S", "T", "Q", "Q", "S", "S"];
@@ -172,13 +173,6 @@ function number(value: number): string {
   return value.toLocaleString("pt-BR");
 }
 
-function shortDate(iso: string): string {
-  if (!iso) return "";
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  return date.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
-}
-
 /** Parte sobre o total, em porcentagem inteira e sem passar de 100. */
 function percentOf(part: number, total: number): number {
   if (total <= 0) return 0;
@@ -232,7 +226,15 @@ function BarSeries({
     <div className="chart-card">
       <h3 className="chart-title">{title}</h3>
       {caption ? <p className="muted">{caption}</p> : null}
-      <div className="chart-bars" role="img" aria-label={title}>
+      {/* Com centenas de dias o gap de 2px entre colunas ocupa mais largura que
+          as proprias barras e o grafico some; acima de 60 pontos as barras
+          encostam. */}
+      <div
+        className="chart-bars"
+        role="img"
+        aria-label={title}
+        style={points.length > 60 ? { gap: 0 } : undefined}
+      >
         {points.map((point, index) => (
           <span className="chart-slot" key={index} title={`${point.label}: ${number(point.value)}`}>
             <span
@@ -244,11 +246,16 @@ function BarSeries({
       </div>
       {labelEvery > 0 ? (
         <div className="chart-labels" aria-hidden="true">
-          {points.map((point, index) => (
-            <span className="chart-label" key={index}>
-              {index % labelEvery === 0 ? point.label : ""}
-            </span>
-          ))}
+          {/* Um rotulo a cada passo, e nunca mais que ~10 na largura: 365 dias
+              de um ano nao cabem como 365 <span>, e o texto estourava o cartao. */}
+          {points
+            .map((point, index) => ({ point, index }))
+            .filter(({ index }) => index % Math.max(labelEvery, Math.ceil(points.length / 10)) === 0)
+            .map(({ point, index }) => (
+              <span className="chart-label" key={index}>
+                {point.label}
+              </span>
+            ))}
         </div>
       ) : null}
     </div>
@@ -266,7 +273,6 @@ function heatColor(value: number, max: number): string {
 
 export function WritingView({ refreshKey }: { refreshKey: number }) {
   const [snapshots, setSnapshots] = useState<MetricsSnapshot[]>([]);
-  const [selected, setSelected] = useState<string>("");
   const [windowKey, setWindowKey] = useState<WindowKey>("30d");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -288,8 +294,7 @@ export function WritingView({ refreshKey }: { refreshKey: number }) {
     void load();
   }, [load, refreshKey]);
 
-  const snapshot =
-    snapshots.find((item) => item.device_id === selected) ?? snapshots[0];
+  const snapshot = snapshots[0];
 
   if (loading && snapshots.length === 0) {
     return (
@@ -311,9 +316,6 @@ export function WritingView({ refreshKey }: { refreshKey: number }) {
       <header className="page-head">
         <div>
           <h1>Estatísticas</h1>
-          <p>
-            Métricas calculadas no aparelho, sobre as suas notas. O dashboard só desenha os números.
-          </p>
         </div>
         <button type="button" className="button button--ghost" onClick={() => void load()}>
           Atualizar
@@ -324,17 +326,11 @@ export function WritingView({ refreshKey }: { refreshKey: number }) {
 
       {!snapshot ? (
         <div className="empty-state">
-          <p>Nenhuma métrica recebida ainda.</p>
-          <p>
-            Abra o app no aparelho com o servidor configurado: as métricas de escrita são
-            calculadas no próprio celular e enviadas para cá.
-          </p>
+          <p>Nenhuma métrica ainda.</p>
         </div>
       ) : (
         <WritingBody
           snapshot={snapshot}
-          devices={snapshots}
-          onSelect={setSelected}
           windowKey={windowKey}
           onWindow={setWindowKey}
         />
@@ -345,14 +341,10 @@ export function WritingView({ refreshKey }: { refreshKey: number }) {
 
 function WritingBody({
   snapshot,
-  devices,
-  onSelect,
   windowKey,
   onWindow,
 }: {
   snapshot: MetricsSnapshot;
-  devices: MetricsSnapshot[];
-  onSelect: (deviceId: string) => void;
   windowKey: WindowKey;
   onWindow: (key: WindowKey) => void;
 }) {
@@ -368,27 +360,6 @@ function WritingBody({
 
   return (
     <>
-      <div className="writing-meta">
-        {devices.length > 1 ? (
-          <label className="writing-device">
-            <span className="muted">Aparelho</span>
-            <select value={snapshot.device_id} onChange={(event) => onSelect(event.target.value)}>
-              {devices.map((item) => (
-                <option key={item.device_id} value={item.device_id}>
-                  {item.device_name || item.device_id}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : (
-          <span className="muted">{snapshot.device_name || snapshot.device_id}</span>
-        )}
-        <span className="muted">
-          Calculado no aparelho em {shortDate(snapshot.generated_at)} · recebido em{" "}
-          {shortDate(snapshot.received_at)} · schema {snapshot.schema}
-        </span>
-      </div>
-
       {snapshot.schema === 2 ? (
         <div className="window-filter" role="group" aria-label="Janela">
           {WINDOW_KEYS.map((key) => (

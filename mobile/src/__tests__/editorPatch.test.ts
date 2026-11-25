@@ -18,10 +18,21 @@ const { existsSync, readFileSync } = require('node:fs') as {
 const { join } = require('node:path') as { join(...parts: string[]): string };
 
 const PATCH = join(__dirname, '../../patches/react-native-enriched-html@1.1.1.patch');
+const WORKSPACE = join(__dirname, '../../pnpm-workspace.yaml');
 
 describe('patch do editor rico', () => {
   it('esta no repositorio, na versao do pacote', () => {
     expect(existsSync(PATCH)).toBe(true);
+  });
+
+  it('esta declarado no pnpm, senao o install nao aplica o patch', () => {
+    // O patch so entra no node_modules se patchedDependencies continuar no
+    // pnpm-workspace.yaml. Sem esta trava, remover o bloco nao quebrava teste
+    // nenhum e o bug de medicao voltava so no build nativo.
+    const workspace = readFileSync(WORKSPACE, 'utf8');
+    expect(workspace).toContain(
+      'react-native-enriched-html@1.1.1: patches/react-native-enriched-html@1.1.1.patch',
+    );
   });
 
   it('so emite o estado de estilo quando ele muda de verdade', () => {

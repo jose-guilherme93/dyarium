@@ -14,7 +14,7 @@
  */
 
 import { BlockNoteEditor } from "@blocknote/core";
-import { AUDIO_PLACEHOLDER, audioMarker, createNoteSchema } from "./schema";
+import { AUDIO_PLACEHOLDER, DETAILS_PLACEHOLDER, audioMarker, createNoteSchema } from "./schema";
 
 /** Editor sem tipo de schema: aqui so interessa ler e escrever markdown. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -103,31 +103,54 @@ export function blocksToNoteMarkdown(
     const id = String(block.props?.attachmentId ?? "");
     if (id) audioById.set(id, block);
   }
-  if (images.length === 0 && audioById.size === 0) return base;
+  const detailsBlocks = savable.filter((block) => block.type === "details");
+  if (images.length === 0 && audioById.size === 0 && detailsBlocks.length === 0) return base;
 
   const lines = base.split("\n");
+  const out: string[] = [];
   let image = 0;
+  const detailsQueue = [...detailsBlocks];
   for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i].trim();
-    if (line.startsWith(AUDIO_PLACEHOLDER)) {
+    const trimmed = lines[i].trim();
+    if (trimmed === DETAILS_PLACEHOLDER) {
+      const block = detailsQueue.shift();
+      if (block) {
+        const summary = String(block.props?.summary ?? "Detalhes técnicos");
+        const open = Boolean(block.props?.open);
+        const body = String(block.props?.body ?? "");
+        out.push(open ? `:::details open ${summary}` : `:::details ${summary}`);
+        if (body !== "") out.push(...body.split("\n"));
+        out.push(":::");
+        continue;
+      }
+    }
+    if (trimmed.startsWith(AUDIO_PLACEHOLDER)) {
       // So troca quando o paragrafo veio do bloco de audio de verdade: um texto
       // do usuario que por acaso comece com o prefixo fica como esta.
-      const audio = audioById.get(line.slice(AUDIO_PLACEHOLDER.length));
+      const audio = audioById.get(trimmed.slice(AUDIO_PLACEHOLDER.length));
       if (audio) {
-        lines[i] = audioMarker(
-          String(audio.props?.attachmentId ?? ""),
-          String(audio.props?.duration ?? ""),
+        out.push(
+          audioMarker(
+            String(audio.props?.attachmentId ?? ""),
+            String(audio.props?.duration ?? ""),
+          ),
         );
+        continue;
       }
+      out.push(lines[i]);
       continue;
     }
-    if (!/^!\[[^\]]*\]\([^)\s]+\)\s*$/.test(lines[i])) continue;
-    const current = images[image];
-    image += 1;
-    const marker = imageMarker(current?.width ?? 0, current?.color ?? "");
-    if (marker) lines[i] = `${lines[i].trimEnd()}${marker}`;
+    if (/^!\[[^\]]*\]\([^)\s]+\)\s*$/.test(lines[i])) {
+      const current = images[image];
+      image += 1;
+      const marker = imageMarker(current?.width ?? 0, current?.color ?? "");
+      if (marker) out.push(`${lines[i].trimEnd()}${marker}`);
+      else out.push(lines[i]);
+      continue;
+    }
+    out.push(lines[i]);
   }
-  return lines.join("\n");
+  return out.join("\n");
 }
 
 /**
@@ -143,30 +166,44 @@ export function noteMarkdownToBlocks(
   editor: AnyEditor,
   markdown: string,
 ): PartialBlock[] {
+  const normalized = normalizeLegacyAttachmentImages(markdown);
   const out: AnyBlock[] = [];
-  for (const part of splitMediaLines(normalizeLegacyAttachmentImages(markdown))) {
-    if (part.kind === "image") {
-      const props: Record<string, string> = {
-        attachmentId: part.src.replace(/^attachment:/, ""),
-        caption: part.alt,
-      };
-      if (part.width > 0) props.width = String(part.width);
-      if (part.color) props.color = part.color;
-      out.push({ type: "image", props } as AnyBlock);
-      continue;
-    }
-    if (part.kind === "audio") {
+  for (const segment of splitDetailsFences(normalized)) {
+    if (segment.kind === "details") {
       out.push({
-        type: "audio",
+        type: "details",
         props: {
-          attachmentId: part.src.replace(/^attachment:/, ""),
-          duration: part.duration,
+          summary: segment.summary,
+          body: segment.body,
+          open: segment.open,
         },
       } as AnyBlock);
       continue;
     }
-    if (!part.text.trim()) continue;
-    out.push(...(editor.tryParseMarkdownToBlocks(part.text.replace(MARKER, "")) as AnyBlock[]));
+    for (const part of splitMediaLines(segment.text)) {
+      if (part.kind === "image") {
+        const props: Record<string, string> = {
+          attachmentId: part.src.replace(/^attachment:/, ""),
+          caption: part.alt,
+        };
+        if (part.width > 0) props.width = String(part.width);
+        if (part.color) props.color = part.color;
+        out.push({ type: "image", props } as AnyBlock);
+        continue;
+      }
+      if (part.kind === "audio") {
+        out.push({
+          type: "audio",
+          props: {
+            attachmentId: part.src.replace(/^attachment:/, ""),
+            duration: part.duration,
+          },
+        } as AnyBlock);
+        continue;
+      }
+      if (!part.text.trim()) continue;
+      out.push(...(editor.tryParseMarkdownToBlocks(part.text.replace(MARKER, "")) as AnyBlock[]));
+    }
   }
   return out as PartialBlock[];
 }
@@ -241,6 +278,64 @@ export function normalizeLegacyAttachmentImages(markdown: string): string {
       /!\[([^\]]*)\]\(\/api\/v1\/attachments\/([A-Za-z0-9]+)[^)\s]*\)/g,
       (_match, alt: string, id: string) => `![${alt}](attachment:${id})`,
     );
+}
+
+type DetailsSegment =
+  | { kind: "text"; text: string }
+  | { kind: "details"; summary: string; body: string; open: boolean };
+
+/** Extrai blocos `:::details` do markdown, preservando o texto ao redor. */
+function splitDetailsFences(markdown: string): DetailsSegment[] {
+  const lines = markdown.split("\n");
+  const result: DetailsSegment[] = [];
+  let buffer: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const trimmed = lines[i].trim();
+    const opening = /^:::details(?:\s+(.*))?$/.exec(trimmed);
+    if (!opening) {
+      buffer.push(lines[i]);
+      i += 1;
+      continue;
+    }
+    const rest = (opening[1] ?? "").trim();
+    const tokens = rest.split(/\s+/).filter(Boolean);
+    let open = false;
+    let summaryTokens = tokens;
+    if (tokens[0] === "open") {
+      open = true;
+      summaryTokens = tokens.slice(1);
+    }
+    const summary = summaryTokens.join(" ") || "Detalhes técnicos";
+
+    // Procura o fechamento `:::`.
+    let j = i + 1;
+    const bodyLines: string[] = [];
+    let found = false;
+    while (j < lines.length) {
+      if (lines[j].trim() === ":::") {
+        found = true;
+        break;
+      }
+      bodyLines.push(lines[j]);
+      j += 1;
+    }
+    if (!found) {
+      buffer.push(lines[i]);
+      i += 1;
+      continue;
+    }
+    if (buffer.length > 0) {
+      result.push({ kind: "text", text: buffer.join("\n") });
+      buffer = [];
+    }
+    result.push({ kind: "details", summary, body: bodyLines.join("\n"), open });
+    i = j + 1;
+  }
+  if (buffer.length > 0 || result.length === 0) {
+    result.push({ kind: "text", text: buffer.join("\n") });
+  }
+  return result;
 }
 
 /** Quebra o markdown nas linhas de midia, preservando a ordem. */

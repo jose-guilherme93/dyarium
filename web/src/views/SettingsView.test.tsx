@@ -1,301 +1,344 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { SettingsView } from "./SettingsView";
 import { api } from "../api";
-import type { Settings } from "../types";
+import { readTelemetryEnabled, setTelemetryEnabled, telemetryConfigured } from "../lib/telemetry";
+import type { McpProject, Settings } from "../types";
 
-// `getToken` vazio desliga o EventSource do painel nos testes.
 vi.mock("../api", () => ({
-  getToken: () => "",
+  getToken: () => "token-de-teste",
   api: {
     getSettings: vi.fn(),
+    putSettings: vi.fn(async () => ({ status: "ok" })),
     listModels: vi.fn(async () => ({ models: [] })),
+    listAnalyzeModels: vi.fn(async () => ({ models: [] })),
     getLocalAnalysis: vi.fn(),
     setupLocalAnalysis: vi.fn(),
-    putSettings: vi.fn(async () => ({ status: "ok" })),
+    downloadModel: vi.fn(async () => ({ status: "ok" })),
+    mcpProjects: vi.fn(async () => ({ projects: [] })),
     listDeletedEntries: vi.fn(async () => ({ entries: [] })),
     restoreEntry: vi.fn(async () => ({})),
+    listNotebooks: vi.fn(async () => ({ notebooks: [] })),
+    listAllEntries: vi.fn(async () => ({ entries: [] })),
+    listEntries: vi.fn(async () => ({ entries: [] })),
+    patchEntry: vi.fn(async () => ({ status: "ok", versions: {} })),
+    updateNotebook: vi.fn(async () => ({})),
   },
 }));
 
-const settings: Settings = {
-  owner_name: "",
+vi.mock("../lib/telemetry", () => ({
+  readTelemetryEnabled: vi.fn(async () => true),
+  setTelemetryEnabled: vi.fn(async () => undefined),
+  telemetryConfigured: vi.fn(() => true),
+}));
+
+const drive = vi.hoisted(() => ({
+  configured: vi.fn(() => false),
+  state: vi.fn(() => "off" as "off" | "connected" | "expired"),
+  onChange: vi.fn((cb: () => void) => {
+    void cb;
+    return () => undefined;
+  }),
+  connect: vi.fn(async () => undefined),
+  disconnect: vi.fn(),
+}));
+const cloud = vi.hoisted(() => ({
+  sync: vi.fn(async () => ({ written: 2, deleted: 0, unchanged: 1, at: new Date().toISOString() })),
+  restore: vi.fn(async () => ({ created: 1, updated: 0, skipped: 0 })),
+  exists: vi.fn(async () => true),
+}));
+const conta = vi.hoisted(() => ({
+  connect: vi.fn(async () => ({
+    restored: null,
+    synced: null,
+    summary: { notes: 0, attachments: 0, bytes: 0 },
+    background: null,
+  })),
+}));
+
+vi.mock("../local/driveSession", () => ({
+  driveConfigured: () => drive.configured(),
+  driveSessionState: () => drive.state(),
+  onDriveSessionChange: (cb: () => void) => drive.onChange(cb),
+  connectDrive: () => drive.connect(),
+  disconnectDrive: () => drive.disconnect(),
+}));
+vi.mock("../local/vaultCloud", () => ({
+  syncVaultToDrive: () => cloud.sync(),
+  restoreVaultFromDrive: (...args: unknown[]) => cloud.restore(...(args as [])),
+  driveVaultExists: () => cloud.exists(),
+}));
+vi.mock("../local/accountConnect", () => ({
+  connectAccount: (...args: unknown[]) => conta.connect(...(args as [])),
+}));
+
+const baseSettings: Settings = {
+  owner_name: "joseti",
   all_notes_mine: true,
   trim_silence: false,
   max_whisper_rss_mb: 0,
   whisper_model: "models/ggml-small-q5_1.bin",
-  whisper_language: "",
+  whisper_language: "pt",
   transcribe_provider: "whisper",
   deepgram_model: "nova-2",
   deepgram_api_key_set: false,
   analyze_enabled: true,
   analyze_provider: "openai",
-  analyze_local_runtime: "ollama",
-  analyze_base_url: "http://ollama:11434/v1",
-  analyze_model: "qwen2.5:0.5b",
-  analyze_api_key_set: false,
-  analysis_themes: "",
-  review_enabled: false,
-  literal_transcript: false,
+  analyze_local_runtime: "",
+  analyze_base_url: "https://opencode.ai/inference/go/openai/v1",
+  analyze_model: "longcat-2.5-free",
+  analyze_api_key_set: true,
+  analyze_concurrency: 0,
+  analysis_themes: "trabalho, saúde",
+  review_enabled: true,
+  literal_transcript: true,
+  mcp_paused: false,
+  mcp_idle_hours: 12,
+  mcp_history_sessions: 3,
+  mcp_include_commits: true,
+  mcp_include_links: true,
+  mcp_store_full_path: false,
+  mcp_machine_alias: "",
 };
+
+const project: McpProject = {
+  id: "entry-1",
+  title: "dyarium",
+  path: "projetos/dyarium",
+  sessions: 12,
+  last_session_at: new Date().toISOString(),
+  state: "open",
+  summary_detail: "concise",
+  archived: false,
+};
+
+const whisperModels = [
+  { name: "ggml-small-q5_1.bin", filename: "ggml-small-q5_1.bin", size_mb: 182, path: "models/ggml-small-q5_1.bin", downloaded: true, local_bytes: 1 },
+  { name: "ggml-medium-q5_0.bin", filename: "ggml-medium-q5_0.bin", size_mb: 515, path: "models/ggml-medium-q5_0.bin", downloaded: true, local_bytes: 1 },
+];
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(api.getSettings).mockResolvedValue(settings);
-  vi.mocked(api.getLocalAnalysis).mockResolvedValue({
-    runtime: "ollama",
-    available: true,
-    base_url: "http://ollama:11434/v1",
-    models: ["qwen2.5:0.5b"],
-    model: "qwen2.5:0.5b",
+  drive.configured.mockReturnValue(false);
+  drive.state.mockReturnValue("off");
+  vi.mocked(api.getSettings).mockResolvedValue(baseSettings);
+  vi.mocked(api.listModels).mockResolvedValue({ models: whisperModels });
+  vi.mocked(api.listAnalyzeModels).mockResolvedValue({ models: ["longcat-2.5-free", "glm-5.3"] });
+  vi.mocked(api.mcpProjects).mockResolvedValue({ projects: [project] });
+  vi.mocked(api.listNotebooks).mockResolvedValue({ notebooks: [] });
+  vi.mocked(api.getLocalAnalysis).mockResolvedValue(undefined as never);
+  vi.mocked(telemetryConfigured).mockReturnValue(true);
+  vi.mocked(readTelemetryEnabled).mockResolvedValue(true);
+});
+
+async function renderSettings() {
+  render(<SettingsView />);
+  await screen.findByRole("tab", { name: "Análise" }, { timeout: 10000 });
+}
+
+describe("SettingsView navegação", () => {
+  it("abre em Análise e marca uma única aba ativa", async () => {
+    await renderSettings();
+
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs.map((tab) => tab.textContent)).toEqual([
+      "Transcrição",
+      "Análise",
+      "Projetos",
+      "Autor",
+      "Cofre",
+      "Lixeira",
+    ]);
+    expect(screen.getByRole("tab", { name: "Análise" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Transcrição" })).toHaveAttribute("aria-selected", "false");
   });
-  vi.mocked(api.setupLocalAnalysis).mockResolvedValue({
-    runtime: "ollama",
-    status: "ready",
-    model: "qwen2.5:0.5b",
-    base_url: "http://ollama:11434/v1",
-    installed: true,
+
+  it("troca o conteúdo sem acordeão nem segunda navegação", async () => {
+    await renderSettings();
+    fireEvent.click(screen.getByRole("tab", { name: "Transcrição" }));
+
+    expect(await screen.findByRole("radiogroup", { name: "Modelo de transcrição" })).toBeTruthy();
+    expect(document.querySelector(".section-row, .settings-nav")).toBeNull();
   });
 });
 
-describe("SettingsView análise local", () => {
-  it("mostra o estado do Ollama e configura em um clique", async () => {
-    render(<SettingsView />);
+describe("SettingsView provedor e modelos", () => {
+  it("lista os provedores com estado da chave e salva o escolhido", async () => {
+    await renderSettings();
 
-    expect(await screen.findByText(/Ollama no ar em http:\/\/ollama:11434\/v1/)).toBeTruthy();
-    const button = screen.getByRole("button", { name: "Usar análise local" });
-    fireEvent.click(button);
+    fireEvent.click(screen.getByRole("button", { name: "Provedor" }));
+    const list = await screen.findByRole("listbox", { name: "Provedor" });
+    const groq = within(list).getByRole("option", { name: /Groq/ });
+    expect(groq).toHaveAttribute("aria-selected", "false");
+    expect(within(list).getByRole("option", { name: /OpenCode Go/ })).toHaveAttribute("aria-selected", "true");
 
-    await waitFor(() => expect(api.setupLocalAnalysis).toHaveBeenCalledWith("ollama", "qwen2.5:0.5b"));
-    expect(api.putSettings).not.toHaveBeenCalled();
-  });
-
-  it("avisa quando o Ollama não esta no ar", async () => {
-    vi.mocked(api.getLocalAnalysis).mockResolvedValue({
-      runtime: "ollama",
-      available: false,
-      base_url: "http://ollama:11434/v1",
-      models: [],
-      model: "qwen2.5:0.5b",
-    });
-
-    render(<SettingsView />);
-
-    expect(await screen.findByText(/Ollama não encontrado em http:\/\/ollama:11434\/v1/)).toBeTruthy();
-  });
-
-  it("esquece o runtime local ao escolher um provedor externo", async () => {
-    render(<SettingsView />);
-
-    const select = await screen.findByLabelText("Provedor da análise");
-    fireEvent.change(select, { target: { value: "deepseek" } });
-
-    await waitFor(() =>
-      expect(api.putSettings).toHaveBeenCalledWith(
-        expect.objectContaining({
-          analyze_local_runtime: "",
-          analyze_base_url: "https://api.deepseek.com/v1",
-        }),
-      ),
-    );
-  });
-
-  it("oferece o llama.cpp embutido e configura em um clique", async () => {
-    vi.mocked(api.getSettings).mockResolvedValue({
-      ...settings,
-      analyze_local_runtime: "embedded",
-      analyze_base_url: "http://127.0.0.1:11435/v1",
-      analyze_model: "qwen2.5-0.5b-instruct-q4_k_m",
-    });
-    vi.mocked(api.getLocalAnalysis).mockImplementation(async (runtime) => {
-      if (runtime === "embedded") {
-        return {
-          runtime: "embedded",
-          available: true,
-          base_url: "http://127.0.0.1:11435/v1",
-          models: ["qwen2.5-0.5b-instruct-q4_k_m"],
-          model: "qwen2.5-0.5b-instruct-q4_k_m",
-          downloaded: true,
-          running: false,
-          size_mb: 469,
-        };
-      }
-      return {
-        runtime: "ollama",
-        available: false,
-        base_url: "http://ollama:11434/v1",
-        models: [],
-        model: "qwen2.5:0.5b",
-      };
-    });
-
-    render(<SettingsView />);
-
-    expect(await screen.findByText("llama.cpp pronto; carrega na primeira análise.")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Usar análise local" }));
-
-    await waitFor(() =>
-      expect(api.setupLocalAnalysis).toHaveBeenCalledWith("embedded", "qwen2.5-0.5b-instruct-q4_k_m"),
-    );
-  });
-
-  it("liga a revisao da transcricao e mostra a opcao literal", async () => {
-    let reviewEnabled = false;
-    vi.mocked(api.getSettings).mockImplementation(async () => ({
-      ...settings,
-      review_enabled: reviewEnabled,
-    }));
-    vi.mocked(api.putSettings).mockImplementation(async () => {
-      reviewEnabled = true;
-      return { status: "ok" };
-    });
-
-    render(<SettingsView />);
-
-    const toggle = await screen.findByLabelText("Revisar a transcrição com IA");
-    fireEvent.click(toggle);
-
-    await waitFor(() =>
-      expect(api.putSettings).toHaveBeenCalledWith(
-        expect.objectContaining({ review_enabled: true }),
-      ),
-    );
-    // A sub-opcao so aparece quando a revisao esta ligada.
-    expect(await screen.findByLabelText("Transcrição literal")).toBeTruthy();
-  });
-
-  it("oferece o OpenCode Zen com a base e o modelo certos", async () => {
-    render(<SettingsView />);
-
-    const select = await screen.findByLabelText("Provedor da análise");
-    fireEvent.change(select, { target: { value: "opencodeZen" } });
+    fireEvent.click(groq);
 
     await waitFor(() =>
       expect(api.putSettings).toHaveBeenCalledWith(
         expect.objectContaining({
           analyze_provider: "openai",
-          analyze_base_url: "https://opencode.ai/inference/openai/v1",
-          // O padrao nao e modelo de raciocinio: responde direto.
-          analyze_model: "glm-5.3-flash-free",
-          analyze_enabled: true,
-        }),
-      ),
-    );
-  });
-});
-
-describe("SettingsView chaves de provedores", () => {
-  it("mostra o atalho para criar a chave do OpenRouter", async () => {
-    vi.mocked(api.getSettings).mockResolvedValue({
-      ...settings,
-      analyze_provider: "openai",
-      analyze_local_runtime: "",
-      analyze_base_url: "https://openrouter.ai/api/v1",
-      analyze_model: "google/gemini-2.5-flash",
-    });
-
-    render(<SettingsView />);
-
-    const link = await screen.findByRole("link", { name: "Criar chave" });
-    expect(link.getAttribute("href")).toBe("https://openrouter.ai/keys");
-    expect(link.getAttribute("target")).toBe("_blank");
-    expect(screen.getByPlaceholderText("sk-or-v1-...")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Modelos" }).getAttribute("href")).toBe(
-      "https://openrouter.ai/models",
-    );
-  });
-
-  it("escolhe o OpenRouter com base e modelo prontos", async () => {
-    render(<SettingsView />);
-
-    const select = await screen.findByLabelText("Provedor da análise");
-    fireEvent.change(select, { target: { value: "openrouter" } });
-
-    await waitFor(() =>
-      expect(api.putSettings).toHaveBeenCalledWith(
-        expect.objectContaining({
-          analyze_provider: "openai",
-          analyze_base_url: "https://openrouter.ai/api/v1",
-          analyze_model: "google/gemini-2.5-flash",
-          analyze_local_runtime: "",
-          analyze_enabled: true,
+          analyze_base_url: "https://api.groq.com/openai/v1",
         }),
       ),
     );
   });
 
-  it("monta a chave da Deepgram com o modelo e o link", async () => {
-    let current: Settings = { ...settings, transcribe_provider: "deepgram" };
-    vi.mocked(api.getSettings).mockImplementation(async () => current);
-    vi.mocked(api.putSettings).mockImplementation(async (patch) => {
-      current = { ...current, ...(patch as unknown as Partial<Settings>) };
-      return { status: "ok" };
-    });
+  it("escolher modelo salva analyze_model", async () => {
+    await renderSettings();
 
-    render(<SettingsView />);
+    fireEvent.click(screen.getByRole("button", { name: "atualizar" }));
+    fireEvent.click(await screen.findByRole("radio", { name: "glm-5.3" }));
 
-    const link = await screen.findByRole("link", { name: "Criar chave na Deepgram" });
-    expect(link.getAttribute("href")).toBe("https://console.deepgram.com/");
-
-    fireEvent.change(screen.getByLabelText("Modelo Deepgram"), { target: { value: "nova-3" } });
-    await waitFor(() => expect(api.putSettings).toHaveBeenCalledWith({ deepgram_model: "nova-3" }));
-
-    fireEvent.change(screen.getByLabelText("Chave da Deepgram"), { target: { value: "dg-key" } });
-    fireEvent.click(screen.getByRole("button", { name: "Salvar chave da Deepgram" }));
-    await waitFor(() => expect(api.putSettings).toHaveBeenCalledWith({ deepgram_api_key: "dg-key" }));
+    await waitFor(() => expect(api.putSettings).toHaveBeenCalledWith(expect.objectContaining({ analyze_model: "glm-5.3" })));
   });
 
-  it("mostra a chave guardada como definida, sem revelar o valor", async () => {
-    vi.mocked(api.getSettings).mockResolvedValue({
-      ...settings,
-      analyze_provider: "openai",
-      analyze_local_runtime: "",
-      analyze_base_url: "https://openrouter.ai/api/v1",
-      analyze_model: "google/gemini-2.5-flash",
-      analyze_api_key_set: true,
-    });
+  it("escolher modelo do Whisper salva whisper_model", async () => {
+    await renderSettings();
+    fireEvent.click(screen.getByRole("tab", { name: "Transcrição" }));
+    fireEvent.click(await screen.findByRole("radio", { name: "medium" }));
 
-    render(<SettingsView />);
+    await waitFor(() =>
+      expect(api.putSettings).toHaveBeenCalledWith(expect.objectContaining({ whisper_model: "models/ggml-medium-q5_0.bin" })),
+    );
+  });
 
-    expect(await screen.findByText("definida")).toBeTruthy();
-    expect((screen.getByLabelText("Chave da API de análise") as HTMLInputElement).value).toBe("");
+  it("filtra modelos pelo nome", async () => {
+    await renderSettings();
+    fireEvent.click(screen.getByRole("button", { name: "atualizar" }));
+    await screen.findByRole("radio", { name: "glm-5.3" });
+    fireEvent.change(screen.getByLabelText("Filtrar modelos"), { target: { value: "glm" } });
+
+    expect(screen.queryByRole("radio", { name: "longcat-2.5-free" })).toBeNull();
+    expect(screen.getByRole("radio", { name: "glm-5.3" })).toBeTruthy();
   });
 });
 
-describe("SettingsView autor", () => {
-  it("salva o nome do dono ao sair do campo", async () => {
-    render(<SettingsView />);
+describe("SettingsView projetos do MCP", () => {
+  it("lista projeto com sessões, última e estado", async () => {
+    await renderSettings();
+    fireEvent.click(screen.getByRole("tab", { name: "Projetos" }));
 
-    const input = await screen.findByLabelText("Seu nome");
-    fireEvent.change(input, { target: { value: "Ana" } });
-    fireEvent.blur(input);
-
-    await waitFor(() => expect(api.putSettings).toHaveBeenCalledWith({ owner_name: "Ana" }));
+    const row = await screen.findByText("dyarium");
+    const projectRow = row.closest(".cfg-project");
+    expect(projectRow).toBeTruthy();
+    expect(within(projectRow as HTMLElement).getByText("projetos/dyarium")).toBeTruthy();
+    expect(within(projectRow as HTMLElement).getByText("12")).toBeTruthy();
+    expect(within(projectRow as HTMLElement).getByLabelText("sessão aberta")).toBeTruthy();
   });
 
-  it("desliga o padrao de todas as notas serem do dono", async () => {
-    render(<SettingsView />);
+  it("troca o detalhe do resumo por projeto", async () => {
+    await renderSettings();
+    fireEvent.click(screen.getByRole("tab", { name: "Projetos" }));
+    const group = await screen.findByRole("group", { name: "Resumo de dyarium" });
 
-    const toggle = await screen.findByLabelText("Todas as notas são minhas");
-    fireEvent.click(toggle);
+    fireEvent.click(within(group).getByRole("button", { name: "Completo" }));
+
+    await waitFor(() => expect(api.patchEntry).toHaveBeenCalledWith("entry-1", { summary_detail: "full" }));
+  });
+
+  it("pausar o MCP salva mcp_paused", async () => {
+    await renderSettings();
+    fireEvent.click(screen.getByRole("tab", { name: "Projetos" }));
+
+    fireEvent.click(await screen.findByRole("switch", { name: "Pausar MCP" }));
+
+    await waitFor(() => expect(api.putSettings).toHaveBeenCalledWith({ mcp_paused: true }));
+  });
+
+  it("mantém a explicação atrás do botão de ajuda", async () => {
+    await renderSettings();
+    fireEvent.click(screen.getByRole("tab", { name: "Projetos" }));
+    await screen.findByText("dyarium");
+
+    // Nenhuma explicação fica aberta por padrao.
+    const details = [...document.querySelectorAll<HTMLDetailsElement>("details.cfg-why")];
+    expect(details.length).toBeGreaterThan(0);
+    const pause = details.find((item) => item.textContent?.includes("Pausado, o endpoint"));
+    expect(pause).toBeTruthy();
+    expect(pause!.open).toBe(false);
+
+    fireEvent.click(pause!.querySelector("summary") as HTMLElement);
+    expect(pause!.open).toBe(true);
+  });
+});
+
+describe("SettingsView cofre no Drive", () => {
+  async function abrirCofre() {
+    await renderSettings();
+    fireEvent.click(screen.getByRole("tab", { name: "Cofre" }));
+    const linha = (await screen.findByText("Google Drive")).closest(".cfg-item") as HTMLElement;
+    return linha;
+  }
+
+  it("sem VITE_GOOGLE_CLIENT_ID o botao do Drive fica desabilitado", async () => {
+    drive.configured.mockReturnValue(false);
+    const linha = await abrirCofre();
+
+    expect(within(linha).getByText("sem client id")).toBeTruthy();
+    expect(within(linha).getByRole("button", { name: "conectar" })).toBeDisabled();
+    expect(within(linha).getByRole("button", { name: "salvar" })).toBeDisabled();
+    expect(within(linha).getByRole("button", { name: "restaurar" })).toBeDisabled();
+  });
+
+  it("com sessao conectada, salvar envia o cofre ao Drive", async () => {
+    drive.configured.mockReturnValue(true);
+    drive.state.mockReturnValue("connected");
+    const linha = await abrirCofre();
+
+    expect(within(linha).getByText("conectado")).toBeTruthy();
+    const salvar = within(linha).getByRole("button", { name: "salvar" });
+    expect(salvar).not.toBeDisabled();
+    fireEvent.click(salvar);
+
+    await waitFor(() => expect(cloud.sync).toHaveBeenCalledTimes(1));
+  });
+
+  it("conectar aqui usa o caminho rapido", async () => {
+    drive.configured.mockReturnValue(true);
+    drive.state.mockReturnValue("off");
+    const linha = await abrirCofre();
+
+    fireEvent.click(within(linha).getByRole("button", { name: "conectar" }));
 
     await waitFor(() =>
-      expect(api.putSettings).toHaveBeenCalledWith({ all_notes_mine: false }),
+      expect(conta.connect).toHaveBeenCalledWith({ attachments: "skip", sync: "background" }),
+    );
+  });
+
+  it("restaurar aqui continua sendo o caminho completo, com os anexos", async () => {
+    drive.configured.mockReturnValue(true);
+    drive.state.mockReturnValue("connected");
+    const linha = await abrirCofre();
+
+    fireEvent.click(within(linha).getByRole("button", { name: "restaurar" }));
+
+    await waitFor(() =>
+      expect(cloud.restore).toHaveBeenCalledWith(undefined, { attachments: "all" }),
     );
   });
 });
 
-describe("SettingsView chave da Deepgram", () => {
-  it("mantem a chave no campo quando o salvamento falha", async () => {
-    vi.mocked(api.getSettings).mockResolvedValue({ ...settings, transcribe_provider: "deepgram" });
-    vi.mocked(api.putSettings).mockRejectedValueOnce(new Error("rede"));
-    render(<SettingsView />);
+describe("SettingsView diagnóstico", () => {
+  it("renderiza o switch e chama o setter ao alternar", async () => {
+    await renderSettings();
+    fireEvent.click(screen.getByRole("tab", { name: "Lixeira" }));
 
-    const input = await screen.findByLabelText("Chave da Deepgram");
-    fireEvent.change(input, { target: { value: "segredo" } });
-    fireEvent.click(screen.getByRole("button", { name: "Salvar chave da Deepgram" }));
+    const sw = await screen.findByRole("switch", { name: "Enviar diagnóstico" });
+    expect(sw).toBeTruthy();
 
-    await waitFor(() => expect(api.putSettings).toHaveBeenCalled());
-    expect(input).toHaveValue("segredo");
+    fireEvent.click(sw);
+
+    await waitFor(() => expect(setTelemetryEnabled).toHaveBeenCalledWith(false));
+  });
+
+  it("sem DSN configurado, renderiza desabilitado e sem explicação", async () => {
+    vi.mocked(telemetryConfigured).mockReturnValue(false);
+    await renderSettings();
+    fireEvent.click(screen.getByRole("tab", { name: "Lixeira" }));
+
+    const sw = await screen.findByRole("switch", { name: "Enviar diagnóstico" });
+    expect(sw).toBeDisabled();
+    expect(screen.queryByText(/Manda erro e versão/)).toBeNull();
   });
 });

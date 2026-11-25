@@ -2,6 +2,7 @@ import { act, render, screen } from '@testing-library/react-native';
 import { useEffect } from 'react';
 import { Text } from 'react-native';
 
+import { runUploadQueueOnce } from '@/services/uploaderLoop';
 import type { Recording } from '@/core/types';
 
 import { LibraryProvider, useLibrary } from '../LibraryContext';
@@ -54,7 +55,7 @@ jest.mock('@/services/files', () => ({
   deleteSessionFiles: jest.fn(async () => undefined),
 }));
 jest.mock('@/services/clock', () => ({ clockNode: jest.fn(async () => 'dev_teste') }));
-jest.mock('@/services/noteVisibility', () => ({ noteIsOpen: () => false }));
+jest.mock('@/services/noteVisibility', () => ({ backgroundPaused: () => false, noteIsOpen: () => false }));
 jest.mock('@/services/pull', () => ({ pullServerEntries: jest.fn(async () => 0) }));
 jest.mock('@/services/transcripts', () => ({ fetchTranscriptsOnce: jest.fn(async () => 0) }));
 jest.mock('@/dev/perf', () => ({ bumpRender: jest.fn() }));
@@ -177,5 +178,38 @@ describe('LibraryProvider.refresh', () => {
     expect(returned[0]).toBe(changed);
     expect(latest!.recordings[0]).toBe(changed);
     expect(screen.getByText('dois')).toBeTruthy();
+  });
+
+  it('sem servidor nao tenta enviar a fila a cada 15 s', async () => {
+    jest.useFakeTimers();
+    try {
+      const queued = note({
+        id: 'fila',
+        status: 'queued',
+        source: 'microphone',
+        filePath: 'file:///nota/original.m4a',
+        sizeBytes: 1024,
+      });
+      await mount([queued]);
+
+      const upload = runUploadQueueOnce as jest.Mock;
+      // Deixa a cadeia do boot (6 s) e a espera do trabalho pesado (10 s)
+      // terminarem: ela roda uma vez mesmo sem servidor para retomar a fila do
+      // aparelho. O que este teste mede e o worker de 15 s depois disso.
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(17_000);
+      });
+      upload.mockClear();
+
+      await act(async () => {
+        jest.advanceTimersByTime(60_000);
+      });
+
+      // Sem config o worker nao tem para onde enviar: nada de reler o SQLite
+      // e re-renderizar a home a cada ciclo.
+      expect(upload).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

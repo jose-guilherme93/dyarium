@@ -84,14 +84,14 @@ func (s *Server) handlePutMetrics(w http.ResponseWriter, r *http.Request) {
 	body["schema"] = json.RawMessage(strconv.Itoa(schema))
 	generatedRaw, err := json.Marshal(generatedAt)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	body["generated_at"] = generatedRaw
 
 	payload, err := json.Marshal(body)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	if len(payload) > maxMetricsPayloadBytes {
@@ -109,7 +109,7 @@ func (s *Server) handlePutMetrics(w http.ResponseWriter, r *http.Request) {
 		Payload:       string(payload),
 	}
 	if err := s.deps.Store.SaveMetricsSnapshot(r.Context(), snapshot); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -189,7 +189,7 @@ func (s *Server) handleListMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 	snapshots, err := s.deps.Store.ListMetricsSnapshots(r.Context(), limit)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	out := make([]map[string]any, 0, len(snapshots))
@@ -224,7 +224,7 @@ func (s *Server) handleDeleteMetrics(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "aparelho sem metricas")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

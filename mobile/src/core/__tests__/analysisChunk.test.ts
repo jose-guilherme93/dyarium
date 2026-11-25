@@ -221,6 +221,26 @@ describe('mensagem do bloco e cache', () => {
     expect(messages[1].content).toContain('<bloco>\ntexto do bloco\n</bloco>');
   });
 
+  it('injeta so a memoria que aparece no bloco', () => {
+    const memory = [
+      { kind: 'place' as const, name: 'Paulo Ramos', label: 'escola', rejected: ['person' as const] },
+      { kind: 'person' as const, name: 'Ana' },
+    ];
+    const withName = buildChunkMessages(
+      { title: 'Escola', block: { text: 'hoje fui ao Paulo Ramos', context: '' } },
+      { memory },
+    );
+    expect(withName[1].content).toContain('Memoria do diario');
+    expect(withName[1].content).toContain('Paulo Ramos: lugar; rotulo "escola"; nunca pessoa');
+    expect(withName[1].content).not.toContain('Ana: pessoa');
+
+    const without = buildChunkMessages(
+      { title: 'Escola', block: { text: 'hoje fui a padaria', context: '' } },
+      { memory },
+    );
+    expect(without[1].content).not.toContain('Memoria do diario');
+  });
+
   it('o prompt curto mantem o contrato e as listas fechadas', () => {
     const input = { title: 'Um dia', block: { text: 'texto do bloco', context: '' } };
     const full = buildChunkMessages(input)[0].content;

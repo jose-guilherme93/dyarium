@@ -1,0 +1,241 @@
+/* Primitivas do dashboard. Todo valor sai de tokens.css (gerado por
+   scripts/design-tokens.mjs); aqui nao existe cor, tamanho de tipo, espaco,
+   raio nem foco escrito a mao. Largura de borda e geometria de layout ficam em
+   px. A galeria docs/design/index.html e o contrato visual destas regras. */
+
+/* botao */
+
+.dy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 100%;
+  border: 1px solid transparent;
+  border-radius: var(--dy-radius-control);
+  font-family: var(--dy-font-sans);
+  white-space: nowrap;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+/* O texto do botao e rotulo: a classe .dy-label vem junto do componente. */
+.dy-btn.dy-label {
+  font-family: var(--dy-font-sans);
+}
+
+.dy-btn--sm {
+  height: var(--dy-control-sm);
+  padding: 0 var(--dy-control-pad-sm);
+}
+
+.dy-btn--md {
+  height: var(--dy-control-md);
+  padding: 0 var(--dy-control-pad-md);
+}
+
+.dy-btn--lg {
+  height: var(--dy-control-lg);
+  padding: 0 var(--dy-control-pad-lg);
+}
+
+.dy-btn:disabled {
+  cursor: not-allowed;
+}
+
+.dy-btn--primary {
+  background: var(--dy-primary);
+  border-color: var(--dy-primary);
+  color: var(--dy-surface);
+}
+
+.dy-btn--primary:hover:not(:disabled) {
+  background: var(--dy-primary-soft);
+  border-color: var(--dy-primary);
+  color: var(--dy-text);
+}
+
+.dy-btn--primary:disabled {
+  background: var(--dy-primary-soft);
+  border-color: var(--dy-line);
+  color: var(--dy-text-muted);
+}
+
+.dy-btn--secondary {
+  background: var(--dy-surface-alt);
+  border-color: var(--dy-line);
+  color: var(--dy-text);
+}
+
+.dy-btn--secondary:hover:not(:disabled) {
+  background: var(--dy-surface-raised);
+  border-color: var(--dy-line);
+  color: var(--dy-text);
+}
+
+.dy-btn--secondary:disabled {
+  background: var(--dy-surface);
+  border-color: var(--dy-line);
+  color: var(--dy-text-muted);
+}
+
+.dy-btn--ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--dy-text);
+}
+
+.dy-btn--ghost:hover:not(:disabled) {
+  background: var(--dy-surface-alt);
+  border-color: transparent;
+  color: var(--dy-text);
+}
+
+.dy-btn--ghost:disabled {
+  background: transparent;
+  border-color: transparent;
+  color: var(--dy-text-muted);
+}
+
+.dy-btn:focus-visible {
+  outline: var(--dy-focus-width) solid var(--dy-primary);
+  outline-offset: var(--dy-focus-offset);
+}
+
+/* campo */
+
+.dy-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dy-space-2);
+  min-width: 0;
+}
+
+.dy-field__label {
+  color: var(--dy-text-muted);
+}
+
+.dy-field__input {
+  width: 100%;
+  height: var(--dy-control-md);
+  padding: 0 var(--dy-control-pad-md);
+  background: var(--dy-surface-alt);
+  border: 1px solid var(--dy-line);
+  border-radius: var(--dy-radius-control);
+  color: var(--dy-text);
+  font-family: var(--dy-font-sans);
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.dy-field__input:focus-visible {
+  outline: var(--dy-focus-width) solid var(--dy-primary);
+  outline-offset: var(--dy-focus-offset);
+}
+
+.dy-field__input:disabled {
+  background: var(--dy-surface);
+  color: var(--dy-text-muted);
+  cursor: not-allowed;
+}
+
+/* medidor */
+
+.dy-meter {
+  display: flex;
+  align-items: center;
+  gap: var(--dy-meter-gap);
+}
+
+.dy-meter__track {
+  flex: 1;
+  height: var(--dy-meter-height);
+  background: var(--dy-line);
+}
+
+.dy-meter__fill {
+  height: var(--dy-meter-height);
+  background: var(--dy-primary);
+}
+
+.dy-meter__value {
+  flex: none;
+}
+
+/* icone */
+
+.dy-icon {
+  display: block;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: var(--dy-icon-stroke);
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+}
+
+.dy-icon[data-fill="true"] {
+  stroke: none;
+}
+
+/* marca de estado */
+
+.dy-mark {
+  display: inline-block;
+  flex: none;
+  width: var(--dy-mark-size);
+  height: var(--dy-mark-size);
+  border-radius: 50%;
+  border: var(--dy-mark-stroke) solid var(--dy-text-muted);
+}
+
+.dy-mark[data-state="done"] {
+  background: var(--dy-success);
+  border-color: var(--dy-success);
+}
+
+.dy-mark[data-state="out"] {
+  border-color: var(--dy-warning);
+  position: relative;
+}
+
+.dy-mark[data-state="out"]::after {
+  content: "";
+  position: absolute;
+  left: var(--dy-space-2);
+  right: var(--dy-space-2);
+  top: 50%;
+  border-top: var(--dy-mark-stroke) solid var(--dy-warning);
+  transform: translateY(-50%) rotate(-45deg);
+}
+
+/* onda */
+
+.dy-wave {
+  display: flex;
+  align-items: center;
+  gap: var(--dy-wave-gap);
+  width: 100%;
+  height: var(--dy-wave-height);
+  overflow: hidden;
+}
+
+.dy-wave b {
+  flex: 1;
+  min-width: var(--dy-wave-bar);
+  border-radius: 0.5px;
+  background: var(--dy-text);
+  opacity: var(--dy-wave-idle);
+}
+
+.dy-wave b[data-played="true"] {
+  background: var(--dy-primary);
+  opacity: var(--dy-wave-played);
+}
+
+/* Marca em desenvolvimento: o nome ganha o sufixo "dev" e a cor `dev` da
+   paleta. So o build de desenvolvimento aplica a classe. A classe aparece
+   duas vezes para vencer a cor que cada porta define no proprio titulo. */
+.dy-dev.dy-dev {
+  color: var(--dy-dev);
+}

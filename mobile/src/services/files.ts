@@ -10,7 +10,9 @@
  */
 
 import { Directory, File, FileMode, Paths } from 'expo-file-system';
+import * as Legacy from 'expo-file-system/legacy';
 
+import { isAdtsHeader } from '@/core/concat';
 import type { ConcatIO } from '@/core/concat';
 import { storageFileKind } from '@/core/storage';
 import type { UploadFileIO } from '@/core/uploader';
@@ -64,38 +66,48 @@ export function outputFileUri(sessionId: string): string {
  * (uri file://); se falhar, cai para copia por bytes, que tambem funciona para
  * uris content:// (SAF). Retorna o uri local e o tamanho em bytes.
  */
+/**
+ * Copia o arquivo compartilhado para o diretorio da sessao, preservando os
+ * bytes (o audio original e imutavel). A API nova (`File.copy`) funciona para
+ * URIs `file://`; para `content://` (SAF do Android) ela nao le o conteudo, por
+ * isso caimos para `expo-file-system/legacy` (`copyAsync`), que suporta essas
+ * URIs. Se a copia pela API nova falhar por outro motivo, tentamos o mesmo
+ * caminho legado antes de desistir.
+ */
 export async function copySharedAudio(
   sourceUri: string,
   sessionId: string,
   extension: string,
+  options?: { onProgress?: (copied: number, total: number, name: string) => void },
 ): Promise<{ uri: string; size: number }> {
-  const source = new File(sourceUri);
-  const suffix = extension.startsWith('.') ? extension : `.${extension}`;
+  // A extensao nunca vem do nome do arquivo: so caracteres alfanumericos.
+  const safeExt = (extension || '').replace(/[^a-zA-Z0-9]/g, '');
+  const suffix = safeExt ? `.${safeExt}` : '';
   const destination = new File(sessionDirectory(sessionId), `original${suffix}`);
   if (destination.exists) destination.delete();
-  try {
-    await source.copy(destination);
-  } catch {
-    destination.create({ intermediates: true, overwrite: true });
-    const chunkSize = 1 << 20;
-    const input = source.open(FileMode.ReadOnly);
-    const output = destination.open(FileMode.Append);
+
+  const isContentUri = sourceUri.startsWith('content://');
+
+  // content:// nao e lido pela API nova: vai direto para o caminho suportado.
+  if (!isContentUri) {
     try {
-      let chunk = input.readBytes(chunkSize);
-      while (chunk.length > 0) {
-        output.writeBytes(chunk);
-        chunk = input.readBytes(chunkSize);
-      }
-    } finally {
-      input.close();
-      output.close();
+      const source = new File(sourceUri);
+      await source.copy(destination);
+      return { uri: destination.uri, size: destination.size };
+    } catch {
+      // cai para o caminho legado
     }
   }
+
+  await Legacy.copyAsync({ from: sourceUri, to: destination.uri });
   return { uri: destination.uri, size: destination.size };
 }
 
 /** Data de modificacao do arquivo em ms, quando disponivel. */
 export function fileModifiedMs(uri: string): number | undefined {
+  // URIs content:// nao sao lidas pela API nova; devolve undefined em vez de
+  // lancar (a data de modificacao nao e essencial para a revisao).
+  if (uri.startsWith('content://')) return undefined;
   try {
     const value = new File(uri).lastModified;
     return typeof value === 'number' && value > 0 ? value : undefined;
@@ -137,7 +149,7 @@ function recorderFiles(): File[] {
   return files;
 }
 
-function newestRecorderFile(): File | null {
+export function newestRecorderFile(): File | null {
   const files = recorderFiles();
   if (files.length === 0) return null;
   files.sort((a, b) => (b.info().modificationTime ?? 0) - (a.info().modificationTime ?? 0));
@@ -149,15 +161,25 @@ function newestRecorderFile(): File | null {
  * existir ou estiver zerado, procura o mais recente em Audio/. Tenta algumas
  * vezes porque o arquivo pode levar um instante para ser finalizado.
  */
-async function findRecording(sourceUri: string | undefined): Promise<File | null> {
+async function findRecording(
+  sourceUri: string | undefined,
+  allowFallback = true,
+): Promise<File | null> {
+  if (!sourceUri && !allowFallback) return null;
   for (let attempt = 0; attempt < 30; attempt += 1) {
     if (sourceUri) {
       const candidate = new File(sourceUri);
       if (candidate.exists && candidate.size > 0) return candidate;
     }
-    const newest = newestRecorderFile();
-    if (newest) return newest;
+    if (allowFallback) {
+      const newest = newestRecorderFile();
+      if (newest) return newest;
+    }
     await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  if (sourceUri) {
+    const candidate = new File(sourceUri);
+    if (candidate.exists && candidate.size > 0) return candidate;
   }
   return null;
 }
@@ -167,8 +189,9 @@ export async function storeSegment(
   sessionId: string,
   index: number,
   sourceUri: string | undefined,
+  allowFallback = true,
 ): Promise<string | null> {
-  const file = await findRecording(sourceUri);
+  const file = await findRecording(sourceUri, allowFallback);
   if (!file) return null;
   const destination = new File(sessionDirectory(sessionId), segmentFileName(index));
   if (destination.exists) destination.delete();
@@ -208,6 +231,27 @@ export function sessionFiles(sessionId: string): File[] {
   const dir = existingSessionDirectory(sessionId);
   if (!dir) return [];
   return dir.list().filter((entry): entry is File => entry instanceof File);
+}
+
+/** Verifica que a sessao tem ao menos um segmento de audio valido (ADTS). */
+export function verifySessionAudio(sessionId: string): { files: number; bytes: number } {
+  const dir = existingSessionDirectory(sessionId);
+  if (!dir) throw new Error('nenhum segmento de audio na sessao');
+  const segments = dir.list().filter(
+    (entry): entry is File => entry instanceof File && entry.name.startsWith('seg-') && entry.name.endsWith(FILE_EXTENSION),
+  );
+  if (segments.length === 0) throw new Error('nenhum segmento de audio na sessao');
+  let files = 0;
+  let bytes = 0;
+  for (const entry of segments) {
+    const size = entry.size;
+    if (size <= 0) throw new Error('segmento vazio: ' + entry.name);
+    const header = readBytesAt(entry.uri, 0, 2);
+    if (!isAdtsHeader(header[0], header[1])) throw new Error('cabecalho ADTS invalido em: ' + entry.name);
+    files += 1;
+    bytes += size;
+  }
+  return { files, bytes };
 }
 
 export interface FreedAudio {

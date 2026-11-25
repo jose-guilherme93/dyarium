@@ -671,7 +671,9 @@ export async function importNotionSource(
 
       try {
         const markdown = renderNotionMarkdown(page, imageIds);
-        await client.createNote(entry.id, "", markdown);
+        // O titulo vai junto: no cofre local a nota e a propria entrada, e um
+        // titulo vazio apagaria o nome que acabou de ser importado.
+        await client.createNote(entry.id, page.title, markdown);
         imported += 1;
         commentCount += page.blocks.filter((block) => block.kind === "comment").length;
         firstEntryId ??= entry.id;

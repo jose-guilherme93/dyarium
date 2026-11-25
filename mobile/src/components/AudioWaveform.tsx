@@ -114,6 +114,11 @@ export function AudioWaveform({
     scrubRef.current = null;
     setScrub(null);
     onScrubChange?.(null);
+    if (__DEV__ && value !== null) {
+      console.log(
+        `[audio] onda soltou ${value.toFixed(1)}s (largura ${width.toFixed(0)} origem ${originX.current ?? 'n/d'})`,
+      );
+    }
     if (value !== null) onSeek(value);
   };
 

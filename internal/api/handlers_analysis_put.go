@@ -78,7 +78,7 @@ func (s *Server) handlePutAnalysis(w http.ResponseWriter, r *http.Request) {
 	if !req.Replace {
 		existing, ok, err := s.deps.Store.GetAnalysis(ctx, entryID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			s.writeInternal(w, r, "internal", err)
 			return
 		}
 		if ok {
@@ -163,7 +163,7 @@ func (s *Server) handlePutAnalysis(w http.ResponseWriter, r *http.Request) {
 		analysis.DeviceName = sanitizeDeviceField(req.DeviceName, 120)
 	}
 	if err := s.deps.Store.SaveRichAnalysis(ctx, analysis, links); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		s.writeInternal(w, r, "internal", err)
 		return
 	}
 	s.deps.Events.Publish("analysis.ready", map[string]string{"entry_id": entryID})

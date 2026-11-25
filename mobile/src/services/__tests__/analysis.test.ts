@@ -208,6 +208,15 @@ describe('syncServerAnalyses', () => {
     expect(mockSetAnalysisSyncAt).toHaveBeenCalledWith('e1', entry.analysis_at);
   });
 
+  it('analise do servidor ja guardada sem marcador e carimbada sem baixar', async () => {
+    mockGetAnalysisSyncAt.mockResolvedValue(null);
+    mockGetCachedAnalysis.mockResolvedValue({ origin: 'server' });
+
+    await expect(syncServerAnalyses([entry])).resolves.toBe(0);
+    expect(mockGetAnalysis).not.toHaveBeenCalled();
+    expect(mockSetAnalysisSyncAt).toHaveBeenCalledWith('e1', entry.analysis_at);
+  });
+
   it('404 apaga a copia e nao retenta o mesmo sinal', async () => {
     mockGetAnalysisSyncAt.mockResolvedValue(null);
     mockGetAnalysis.mockRejectedValue(new ApiError(404, 'not_found', 'analise indisponivel'));

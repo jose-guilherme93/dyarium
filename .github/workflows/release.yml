@@ -83,6 +83,7 @@ jobs:
             COMMIT=${{ github.sha }}
             DATE=${{ steps.meta.outputs.date }}
             BUILD_JOBS=4
+            SENTRY_AUTH_TOKEN=${{ secrets.SENTRY_AUTH_TOKEN }}
           provenance: true
           sbom: true
 

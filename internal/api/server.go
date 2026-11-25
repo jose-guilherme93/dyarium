@@ -46,6 +46,9 @@ type Deps struct {
 	// Presence tracks the optional browser workers. Nil means an empty
 	// registry, so the default behavior (server processes everything) holds.
 	Presence *jobs.Presence
+	// MCP is the streamable HTTP handler of the MCP server. Nil disables the
+	// /mcp route, keeping tests and builds without it unchanged.
+	MCP http.Handler
 }
 
 // Server holds the HTTP handlers and their dependencies.
@@ -133,6 +136,11 @@ func (s *Server) Handler() http.Handler {
 	protected.HandleFunc("PATCH /api/v1/entities/{kind}/{name}", s.handleRenameEntity)
 	protected.HandleFunc("POST /api/v1/entities/person/{name}/self", s.handleClaimSelf)
 	protected.HandleFunc("PUT /api/v1/entities/{kind}/{name}/icon", s.handleSetEntityIcon)
+	protected.HandleFunc("PUT /api/v1/entities/{kind}/{name}/label", s.handleSetEntityLabel)
+	protected.HandleFunc("POST /api/v1/entities/{kind}/{name}/kind", s.handleChangeEntityKind)
+	protected.HandleFunc("DELETE /api/v1/entities/{kind}/{name}", s.handleDeleteEntity)
+	protected.HandleFunc("POST /api/v1/entity-rejections", s.handleAddEntityRejection)
+	protected.HandleFunc("DELETE /api/v1/entity-rejections/{kind}/{name}", s.handleRemoveEntityRejection)
 	protected.HandleFunc("POST /api/v1/entities/edits/{id}/undo", s.handleUndoEntityEdit)
 	protected.HandleFunc("GET /api/v1/graph", s.handleGraph)
 	protected.HandleFunc("GET /api/v1/mood", s.handleMood)
@@ -174,6 +182,7 @@ func (s *Server) Handler() http.Handler {
 
 	protected.HandleFunc("GET /api/v1/settings", s.handleGetSettings)
 	protected.HandleFunc("PUT /api/v1/settings", s.handlePutSettings)
+	protected.HandleFunc("GET /api/v1/mcp/projects", s.handleMCPProjects)
 	protected.HandleFunc("GET /api/v1/analyze/models", s.handleListAnalyzeModels)
 	protected.HandleFunc("GET /api/v1/analyze/local", s.handleLocalAnalysis)
 	protected.HandleFunc("POST /api/v1/analyze/local", s.handleSetupLocalAnalysis)
@@ -201,7 +210,16 @@ func (s *Server) Handler() http.Handler {
 
 	mux.Handle("/api/v1/", s.requireAuth(protected))
 	mux.Handle("/", s.spaHandler())
-	return s.withLogging(s.withResponseCache(mux))
+
+	// MCP streams responses as SSE; the cache wrapper would buffer and gzip it,
+	// so the route is mounted outside withResponseCache while the rest of the
+	// server keeps the existing cache behavior.
+	root := http.NewServeMux()
+	if s.deps.MCP != nil {
+		root.Handle("/mcp", s.requireAuth(s.deps.MCP))
+	}
+	root.Handle("/", s.withCORS(s.withResponseCache(mux)))
+	return s.withLogging(root)
 }
 
 // instanceOrigin identifies this environment in tombstones and versions. Tests
@@ -472,6 +490,15 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, map[string]any{
 		"error": map[string]string{"code": code, "message": message},
 	})
+}
+
+// writeInternal registers the detail and answers the generic message: the
+// client never sees a database error, a file path or a library message.
+func (s *Server) writeInternal(w http.ResponseWriter, r *http.Request, code string, err error) {
+	if s.deps.Logger != nil {
+		s.deps.Logger.Error("erro interno", "method", r.Method, "path", r.URL.Path, "code", code, "err", err)
+	}
+	writeError(w, http.StatusInternalServerError, code, "erro interno")
 }
 
 func decodeJSON(r *http.Request, out any) error {

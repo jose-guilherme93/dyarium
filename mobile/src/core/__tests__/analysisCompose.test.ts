@@ -1,6 +1,7 @@
 import type { AnalysisBlock } from '../analysisPlan';
 import { canonicalEntityKey, composeAnalysis, toneLabelFor } from '../analysisCompose';
 import type { ChunkExtraction } from '../analysisChunk';
+import { entityNameMapKey } from '../entities';
 
 function block(
   index: number,
@@ -267,5 +268,57 @@ describe('cobertura', () => {
     const doc = composeAnalysis({ blocks: [a, b], facts: [fact(a)], model: 'm' });
     expect(doc.audioCoveredMs).toBe(2000);
     expect(doc.audioTotalMs).toBe(5000);
+  });
+});
+
+describe('memoria de curadoria', () => {
+  it('descarta a pessoa rejeitada e mantem o lugar de mesmo nome', () => {
+    const a = block(0, 'Paulo Ramos voltou da escola.');
+    const doc = composeAnalysis({
+      blocks: [a],
+      facts: [fact(a, { people: ['Paulo Ramos'], places: ['Paulo Ramos'] })],
+      model: 'm',
+      rejections: [
+        { kind: 'person', name: 'Paulo Ramos', nameKey: 'paulo ramos', updatedAt: '' },
+      ],
+    });
+    expect(doc.people).toEqual([]);
+    expect(doc.places.map((place) => place.name)).toEqual(['Paulo Ramos']);
+  });
+
+  it('resolve o nome canonico antes de agrupar', () => {
+    const a = block(0, 'Mari chegou.');
+    const doc = composeAnalysis({
+      blocks: [a],
+      facts: [fact(a, { people: ['Mari'] })],
+      model: 'm',
+      canonical: { [entityNameMapKey('person', 'Mari')]: 'Mariana' },
+    });
+    expect(doc.people.map((person) => person.name)).toEqual(['Mariana']);
+  });
+
+  it('descarta tema e decisao rejeitados', () => {
+    const a = block(0, 'trabalho e familia; decidi que vou viajar em julho');
+    const doc = composeAnalysis({
+      blocks: [a],
+      facts: [
+        fact(a, {
+          themes: ['trabalho', 'familia'],
+          decisions: ['vou viajar em julho'],
+        }),
+      ],
+      model: 'm',
+      rejections: [
+        { kind: 'theme', name: 'trabalho', nameKey: 'trabalho', updatedAt: '' },
+        {
+          kind: 'decision',
+          name: 'vou viajar em julho',
+          nameKey: 'vou viajar em julho',
+          updatedAt: '',
+        },
+      ],
+    });
+    expect(doc.themes.map((theme) => theme.name)).toEqual(['familia']);
+    expect(doc.decisions).toEqual([]);
   });
 });

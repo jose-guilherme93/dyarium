@@ -174,6 +174,11 @@ aprende que a nota foi apagada e nao a ressuscita.
   cabecalho (dashboard/API) o criador e o proprio ambiente. E proveniencia: nao
   muda permissao e nao impede editar a nota em nenhum ambiente. Linha criada
   antes do campo vem com os dois vazios.
+- `summary_detail` e o nivel do resumo do projeto MCP daquela entrada:
+  `concise` (padrao) ou `full`. Nas notas comuns permanece `concise`.
+- `icon` e o icone de pagina escolhido para a entrada (emoji ou texto curto), do
+  painel de projetos. Vazio e o padrao: o cliente decide o fallback. O servidor
+  nao interpreta o valor.
 - `analysis_at` e quando a analise mais nova foi gravada no servidor (vazio quando
   nao ha analise). E o sinal de atualizacao do app: quando o valor muda, ele busca
   a analise uma vez e guarda no banco; a ficha mostra sempre a copia local, sem
@@ -185,6 +190,11 @@ aprende que a nota foi apagada e nao a ressuscita.
   markdown vira texto, imagens, marcadores de audio e escapes somem e a frase nao
   e cortada no meio de uma palavra. E so para desenhar a lista; o corpo continua
   em `notes`.
+- Com `include_text=1` cada entrada traz tambem `text` (o corpo completo em
+  markdown, sem passar pela previa) e `transcript` (o texto da transcricao mais
+  nova). E opt-in: sem o parametro os dois campos ficam de fora e o payload
+  continua pequeno. O dashboard usa esses campos para calcular a propria analise
+  localmente, sem pedir nota por nota.
 - Em um livro, cada entrada traz `chapter_kind` (`chapter`, `part`, `front` ou
   `back`), `chapter_position`, `chapter_status` (`draft`, `revising`, `done`),
   `chapter_goal_words`, `chapter_synopsis`, `chapter_beats` (um beat por linha)
@@ -260,6 +270,8 @@ Atualiza campos editaveis com versao por campo.
   "notebook_id": "nb_...",
   "archived": true,
   "author": "mixed",
+  "summary_detail": "full",
+  "icon": "🌿",
   "versions": { "title": "...", "recorded_at": "..." }
 }
 ```
@@ -291,6 +303,13 @@ Resposta 200: `{ "status": "ok", "versions": { "title": "...", "recorded_at": ".
   `chapter_goal_words`, `chapter_synopsis`, `chapter_beats` e `chapter_notes`
   alimentam o painel do capitulo. Fora de um livro, `chapter_kind` responde 422
   `not_a_book`.
+- `summary_detail` (`concise` ou `full`) muda o nivel do resumo do projeto MCP
+  daquela entrada; outro valor responde 422 `invalid_summary_detail`. Nao tem
+  versao: a ultima gravacao vence.
+- `icon` troca o icone de pagina da entrada (emoji ou texto curto; vazio limpa).
+  O campo so e gravado quando enviado: um PATCH sem `icon` preserva o valor. Nao
+  tem versao: a ultima gravacao vence. Conteudo com caractere de controle ou
+  acima do limite de tamanho responde 422 `invalid_icon`.
 - Nao altera o audio.
 
 ### POST /api/v1/entries
@@ -354,6 +373,8 @@ Manifesto compacto para reconciliacao. Parametros: `kind` (`entries`, `deleted` 
       "chapter_synopsis": "",
       "chapter_beats": "",
       "chapter_notes": "",
+      "summary_detail": "concise",
+      "icon": "",
       "tags": ["..."]
     }
   ],
@@ -527,7 +548,10 @@ Lista os anexos de midia (imagens) da entrada.
 ### POST /api/v1/entries/{id}/attachments
 Envia uma imagem. O corpo e os bytes da imagem e o `Content-Type` deve comecar com
 `image/`. `X-Attachment-Id` (opcional) usa o id do criador, com a mesma regra de
-idempotencia/conflito do complete do upload. Resposta 201 com
+idempotencia/conflito do complete do upload. `X-Content-Sha256` (opcional) leva o
+SHA-256 em hex dos bytes enviados: quando presente, o servidor recalcula sobre o
+conteudo recebido, apaga o objeto cifrado e responde 422 `integrity` se divergir;
+hash fora do formato de 64 hex responde 400 `invalid_sha256`. Resposta 201 com
 `{ id, entry_id, kind, content_type, size_bytes, sha256, created_at }`.
 
 ### GET /api/v1/attachments/{id}
@@ -919,14 +943,19 @@ Configura a analise para usar um runtime local em uma requisicao. Corpo:
 Lista as entidades extraidas, ordenadas por mencoes. Filtro opcional `kind` (`person`,
 `place`, `theme` ou `decision`; outro valor retorna 400).
 ```json
-{ "entities": [ { "id": "01J...", "kind": "person", "name": "Maria", "icon": "",
+{ "entities": [ { "id": "01J...", "kind": "person", "name": "Maria", "label": "gata", "icon": "",
   "entries": 2, "mentions": 5, "sentiment": 0.4, "last_seen": "2026-10-10T21:05:00Z",
   "updated_at": "2026-10-10T21:05:00Z", "aliases": ["Mariana"] } ],
-  "owner_aliases": ["Ze"] }
+  "owner_aliases": ["Ze"],
+  "rejections": [ { "kind": "person", "name": "você", "name_key": "voce",
+    "updated_at": "2026-10-10T21:05:00Z" } ] }
 ```
-`updated_at` e o relogio do servidor para nome, icone e "sou eu"; `aliases` sao as grafias
+`label` e o rotulo livre do dono (escola, gata, personagem); so exibicao.
+`updated_at` e o relogio do servidor para nome, rotulo, icone e "sou eu"; `aliases` sao as grafias
 antigas que ainda resolvem para a entidade. `owner_aliases` traz as grafias que o dono
 marcou como ele mesmo, para o app tirar a pessoa duplicada do mapa local.
+`rejections` e a memoria de nomes que nunca sao entidade daquele tipo, com a chave
+normalizada `name_key` (minusculas, sem acento, espacos colapsados, pontas aparadas).
 
 ### GET /api/v1/entities/{kind}/{name}
 Retorna a entidade (mesmos campos) mais a lista de entradas que a mencionam. Nomes antigos
@@ -987,6 +1016,53 @@ Escolhe o icone monocromatico desenhado dentro da bola. Corpo:
 - Retorna a entidade com `icon` ja atualizado e o `edit_id` da edicao. O mapa recebe a
   chave em `nodes[].icon`.
 
+### PUT /api/v1/entities/{kind}/{name}/label
+Escolhe o rotulo livre exibido junto do nome. Corpo:
+```json
+{ "label": "escola" }
+```
+- Texto aparado, no maximo 80 caracteres; vazio limpa o rotulo. 400 `invalid_label`
+  para texto longo e 404 se a entidade nao existe.
+- O rotulo e so exibicao: nao muda tipo, metrica, cor nem sync.
+- Retorna a entidade com `label` atualizado e o `edit_id`.
+
+### POST /api/v1/entities/{kind}/{name}/kind
+Troca o tipo de uma entidade. Corpo:
+```json
+{ "kind": "place" }
+```
+- Os dois tipos precisam ser validos e diferentes (`person`, `place`, `theme` ou
+  `decision`); caso contrario responde 400 `invalid_kind`.
+- Se ja existir uma entidade do tipo destino com o mesmo nome (ou alias), as duas sao
+  mescladas: notas e mencoes passam para a sobrevivente e o nome vira alias.
+- Caso contrario, a entidade muda de tipo e os aliases acompanham.
+- O tipo antigo vira rejeicao `(kind, name)`, entao uma analise futura nao recria a
+  entidade ali. A resposta traz a entidade ja no tipo novo e o `edit_id`.
+
+### DELETE /api/v1/entities/{kind}/{name}
+Apaga a entidade, seus vinculos e aliases, e grava a rejeicao do tipo. Resposta:
+```json
+{ "status": "ok", "edit_id": "01J...",
+  "rejection": { "kind": "person", "name": "Maria", "name_key": "maria",
+    "updated_at": "2026-10-10T21:05:00Z" } }
+```
+- 404 se a entidade nao existe. O `edit_id` restaura entidade, vinculos, aliases e a
+  rejeicao anterior.
+
+### POST /api/v1/entity-rejections
+Grava que um nome nunca e entidade de um tipo (tela de memoria). Corpo:
+```json
+{ "kind": "person", "name": "você" }
+```
+- A chave e `(kind, name_key)`, com o mesmo `name_key` normalizado da listagem. Retorna
+  `{ "status": "ok", "rejection": { ... }, "edit_id": "..." }`.
+- 400 `invalid_kind` ou `invalid_name` para entrada invalida.
+
+### DELETE /api/v1/entity-rejections/{kind}/{name}
+Libera o nome: uma analise futura pode extrai-lo de novo. Resposta
+`{ "status": "ok", "edit_id": "..." }`. Remover uma rejeicao inexistente tambem
+responde 200.
+
 ### POST /api/v1/entities/person/{name}/self
 Marca uma pessoa como **o dono do diario** ("sou eu"). Usado quando a IA tratou uma
 grafia do nome do dono como outra pessoa.
@@ -1000,15 +1076,19 @@ grafia do nome do dono como outra pessoa.
   nao existir.
 
 ### POST /api/v1/entities/edits/{id}/undo
-Desfaz a edicao de entidade mais recente (renomear, mesclar, icone ou "sou eu").
-- O servidor guarda, antes da escrita, as linhas afetadas (entidade, aliases, vinculos e
-  a lista de grafias do dono), porque mesclar apaga a origem e soma os vinculos: desfazer
-  nao e so voltar o nome, e restaurar as contagens originais.
+Desfaz a edicao de entidade mais recente (renomear, mesclar, rotulo, icone, tipo,
+exclusao ou "sou eu").
+- O servidor guarda, antes da escrita, as linhas afetadas (entidade, rotulo, aliases,
+  vinculos, rejeicoes e a lista de grafias do dono), porque mesclar apaga a origem e
+  soma os vinculos: desfazer nao e so voltar o nome, e restaurar as contagens originais.
+- A troca de tipo restaura o tipo antigo, os vinculos e remove a rejeicao criada. Excluir
+  uma entidade restaura entidade, vinculos, aliases e a rejeicao anterior; se ela nao
+  existia, o desfazer apenas apaga a rejeicao nova.
 - So a edicao **mais recente ainda de pe** pode ser desfeita; uma mais nova responde 409
   `edit_not_latest` (reverter apagaria a mudanca recente).
 - A restauracao marca `updated_at` como agora: o desfazer e uma mudanca nova e vence a
   copia antiga que outro cliente ainda tenha.
-- Resposta: `{"status":"ok","action":"rename|merge|icon|self","label":"..."}`. 404 para
+- Resposta: `{"status":"ok","action":"rename|merge|icon|self|label|kind|delete|reject|unreject","label":"..."}`. 404 para
   id inexistente ou ja desfeito.
 
 ### GET /api/v1/mood
@@ -1062,8 +1142,11 @@ entidade, as notas dela (ate 100), as entidades dessas notas e as arestas
 ## Metricas de escrita
 
 O app calcula as metricas da escrita **offline** (as mesmas do Painel no celular) e
-envia o documento pronto. O servidor guarda o ultimo snapshot de cada aparelho e o
-painel web desenha exatamente o que o aparelho calculou — sem recalcular nada.
+envia o documento pronto. O servidor guarda o ultimo snapshot de cada aparelho;
+esse endpoint continua sendo o caminho do app. O dashboard **nao consome** esses
+snapshots: ele calcula a propria analise sobre as notas que tem (cofre local ou
+`GET /entries?include_text=1`), com o mesmo nucleo puro de metricas. Cada cliente
+faz a sua analise.
 
 O contrato tem duas versoes aceitas:
 - **schema 1** (legado): `writing` com todas as notas + `history`.
@@ -1192,7 +1275,9 @@ Lista cadernos em ordem de criacao, com o padrao no fim:
   "chapter_count": 12, "words": 48320,
   "entry_count": 12, "created_at": "...", "updated_at": "..." } ] }
 ```
-- `kind` e `notes` ou `book`; cadernos antigos ficam `notes`.
+- `kind` e `notes`, `book` ou `mcp`; cadernos antigos ficam `notes`. `mcp` e o
+  caderno interno "Projetos" do servidor MCP: os clientes o recebem na lista, mas
+  nao o criam nem trocam o tipo.
 - `book_status` e `drafting`, `revising` ou `done`.
 - `page_size` e um formato de livro: `11x18` (bolso), `14x21` (romance, padrao),
   `a5`, `5x8` ou `6x9`. `a4` continua aceito para livros antigos e para o
@@ -1227,7 +1312,8 @@ Cria um caderno ou um livro:
   id ja existir, responde 200 com o caderno existente (idempotente).
 - Um livro nasce vazio, entao a regra de ativacao vale por construcao.
 - Nome vazio: 400 `invalid_name`; nome duplicado (case-insensitive): 409
-  `conflict`; `kind` ou `book_status` invalidos: 422; pagina fora da faixa: 422
+  `conflict`; `kind` ou `book_status` invalidos: 422 (o `kind` interno `mcp`
+  responde 422 `invalid_kind`); pagina fora da faixa: 422
   `invalid_page`; prazo fora de `AAAA-MM-DD`: 422 `invalid_deadline`.
 
 ### PATCH /api/v1/notebooks/{id}
@@ -1244,6 +1330,10 @@ Aceita `name`, `color`, `kind` e os metadados do livro (`subtitle`, `author`,
   mantem os textos como notas e limpa `chapter_kind`, `chapter_position` e os
   metadados do livro na mesma transacao.
 - Metadados em caderno que nao e livro respondem 422 `not_a_book`.
+- O caderno interno do MCP (`projetos-mcp`) recusa troca de tipo e exclusao com
+  409 `protected`; renomear e recolorir continuam permitidos.
+- `kind: "mcp"` vindo de um cliente responde 422 `invalid_kind`: esse tipo e
+  interno do servidor.
 - O padrao responde 409 `protected`; nome duplicado 409 `conflict`.
 
 ### PUT /api/v1/notebooks/{id}/chapters/order
@@ -1391,10 +1481,23 @@ com "sou eu" no mapa resolvem para esse nome na leitura, mesmo depois de trocar 
 ligado) resolve o autor das notas sem escolha manual: ligado, o autor efetivo e o dono;
 desligado, a nota fica sem autor. A escolha da nota (`author`) sempre vence.
 
+**Segredo nunca volta por aqui.** As chaves aparecem apenas como booleanos
+(`deepgram_api_key_set`, `analyze_api_key_set`). O app importa provedor, modelo, idioma e
+preferencias de revisao do servidor; a chave fica onde foi digitada. Para a mesma chave
+valer nos dois lados, o app envia a chave digitada no `PUT` (nunca uma chave ausente, que
+apagaria a do servidor).
+
 `review_enabled` liga a revisao da transcricao por IA antes da analise (padrao desligado;
 sem ela a analise continua, so perde precisao). `literal_transcript` mantem hesitacoes e
 gagueira no texto revisado. As duas sao por instancia: o app tem preferencias separadas, e
 ligar em um lado nao liga no outro.
+
+`analyze_concurrency` limita quantas chamadas de analise rodam ao mesmo tempo (inteiro de 0
+a 16; padrao 0). Zero escolhe o padrao do runtime: uma chamada para o llama.cpp embutido,
+Ollama ou o servidor OpenCode, e tres para uma API hospedada. O valor 1 restaura a execucao
+estritamente sequencial. A ordem do merge nao depende da ordem de chegada: cada secao e
+janela escreve no proprio indice. O limite vale para a execucao inteira, inclusive quando
+uma secao longa e dividida em janelas dentro de uma nota com varias secoes.
 
 `analyze_provider` escolhe o formato da API de analise:
 - `openai` (padrao): endpoint compativel com OpenAI (`/chat/completions`) autenticado por
@@ -1421,7 +1524,221 @@ precisa alcancar a URL informada (o OpenCode escuta em `127.0.0.1` por padrao).
 
 ### PUT /api/v1/settings
 Atualiza configuracoes. Alterar `trim_silence` invalida o artefato derivado em cache
-(regenerado na proxima transcricao).
+(regenerado na proxima transcricao). `analyze_concurrency` aceita inteiro de 0 a 16; fora
+desse intervalo a requisicao responde 400 e nenhuma configuracao e gravada.
+
+As chaves `mcp_*` configuram o servidor MCP; os padroes e os limites vivem em
+`internal/mcpserver`, entao a tela e as ferramentas leem os mesmos numeros:
+
+- `mcp_paused` (booleano, padrao `false`): pausado, `session_open`, `session_close` e
+  `record_project_summary` respondem erro de ferramenta "MCP pausado nas configurações"
+  sem gravar nada.
+- `mcp_idle_hours` (inteiro de 1 a 168, padrao 12): janela sem atividade em que uma
+  sessao aberta ainda aparece como `open`; depois dela o estado derivado vira
+  `interrupted`.
+- `mcp_history_sessions` (inteiro de 0 a 10, padrao 3): quantas sessoes anteriores o
+  `session_open` lista; 0 desliga o historico, os totais continuam.
+- `mcp_include_commits` e `mcp_include_links` (booleanos, padrao `true`): desligados,
+  a secao correspondente some do bloco tecnico, sem cabecalho vazio. O fence JSON
+  continua completo para os clientes.
+- `mcp_store_full_path` (booleano, padrao `false`): ligado, o relatorio, o historico e
+  a lista de projetos mostram o caminho absoluto; desligado, so o nome da pasta. A nota
+  gravada sempre guarda o caminho completo.
+- `mcp_machine_alias` (texto, ate 80 caracteres, padrao vazio): quando nao vazio,
+  substitui o host sanitizado no cabecalho e no fence de `record_project_summary`.
+  Valor fora do contrato responde 400 `invalid_value` e nada e gravado.
+
+### GET /api/v1/mcp/projects
+Lista as entradas do caderno interno "Projetos" (`projetos-mcp`) com o que a tela de
+Configuracoes > Projetos mostra. O formato do fence de sessao e a derivacao do estado
+ficam em `internal/mcpserver`; o handler so serializa.
+
+```json
+{
+  "projects": [
+    {
+      "id": "0f3...",
+      "title": "/home/usuario/projetos/dyarium",
+      "path": "dyarium",
+      "sessions": 4,
+      "last_session_at": "2026-11-19T10:12:00Z",
+      "state": "closed",
+      "summary_detail": "concise",
+      "archived": false
+    }
+  ]
+}
+```
+
+- `sessions` conta as notas da entrada que carregam um fence de sessao valido.
+- `last_session_at` e o RFC3339 da nota de sessao mais recente; vazio quando nao ha
+  sessao.
+- `state` e `open`, `closed`, `interrupted` ou vazio (sem sessao); `interrupted` usa a
+  janela de `mcp_idle_hours` e nunca e gravado na nota.
+- `path` respeita `mcp_store_full_path` e cai no titulo da entrada quando a sessao nao
+  registrou caminho.
+- Resposta 401 sem Bearer, como o resto de `/api/v1`.
+
+## Servidor MCP
+
+### POST /mcp
+Endpoint do Model Context Protocol em Streamable HTTP. Autenticacao por Bearer,
+igual ao resto de `/api/v1`: sem token responde 401. O transporte e stateless e
+responde em SSE ou JSON conforme o `Accept` do cliente (`application/json` e
+`text/event-stream` sao obrigatorios no POST). Nao passa pelo cache/gzip da API.
+
+Na inicializacao o servidor envia instrucoes em pt-BR: e o diario central de
+projetos do dono, e depois de concluir uma unidade de trabalho relevante o
+agente chama a ferramenta, sem pedir confirmacao.
+
+#### Ferramenta `record_project_summary`
+```json
+{
+  "name": "record_project_summary",
+  "arguments": {
+    "project": "dyarium",
+    "summary": "resumo curto da sessao",
+    "date": "2026-11-09",
+    "items": [
+      { "kind": "feat", "title": "servidor mcp", "detail": "texto do item",
+        "commit": "abc1234", "url": "https://..." }
+    ],
+    "commits": [ { "hash": "def5678", "message": "teste", "url": "https://..." } ],
+    "links":   [ { "label": "spec", "url": "https://..." } ]
+  }
+}
+```
+- `project` (obrigatorio, ate 100 caracteres) e o nome do projeto. O servidor
+  procura uma entrada com esse titulo, sem diferenciar maiusculas, dentro do
+  caderno interno "Projetos" (`projetos-mcp`); se nao existir, cria a entrada do
+  projeto. Nao existe um caderno por projeto.
+- `items` tem no maximo 100 entradas; `title` e obrigatorio, `detail` aceita ate
+  8192 caracteres e `kind` vazio vira `chore`.
+- `commits` aceita ate 100 e `links` ate 50. So URLs `http` e `https` sao
+  renderizadas.
+- `date` (`AAAA-MM-DD`) e o dia do trabalho; vazio usa hoje em UTC. A data entra
+  no cabecalho do bloco, porque varias sessoes e varios dias se acumulam na mesma
+  entrada do projeto.
+- A entrada do projeto guarda uma unica nota, e cada chamada anexa um bloco de
+  sessao a ela. O cabecalho do bloco e `## AAAA-MM-DD HH:MM · <computador>`; o
+  computador vem do header `X-Dyarium-Host`, sanitizado para `[A-Za-z0-9_-]`
+  (maximo 64) ou `unknown`.
+- O bloco sempre abre pelo resumo objetivo, logo depois do cabecalho: e onde o
+  agente poe os numeros e versoes que importam (performance, bugs corrigidos,
+  versao da aplicacao, versao do agente), tambem no modo enxuto.
+- Depois do resumo vem uma linha por item. Os detalhes tecnicos, os commits
+  extras e os links ficam dentro de um bloco recolhivel:
+  ```
+  :::details Detalhes técnicos
+  ...
+  :::
+  ```
+  O nivel de detalhe e uma preferencia da **entrada do projeto**
+  (`summary_detail` no `PATCH /api/v1/entries/{id}`), nao do caderno nem da
+  chamada: `concise` grava o bloco recolhido (`:::details`) e `full` grava
+  aberto (`:::details open`). O conteudo interno e texto simples, sem markdown.
+  O projeto nasce em `concise`.
+- Uma chamada identica (mesmo projeto, dia, conteudo e computador) nao duplica:
+  o bloco carrega um marcador invisivel `<!-- mcp:<sha256-12> -->` e a segunda
+  chamada responde sem escrever.
+
+`record_project_summary` continua sendo o caminho para trabalho sem diretorio.
+Sessao que acontece numa pasta usa `session_open` e `session_close`.
+
+#### Ferramenta `session_open`
+```json
+{
+  "name": "session_open",
+  "arguments": {
+    "directory": "/home/joseti/projects/syncwin",
+    "name": "pfsense manda metricas para um html",
+    "summary": "o que a sessao vai fazer, em uma ou duas linhas"
+  }
+}
+```
+- `directory` (obrigatorio) e o caminho absoluto da pasta aberta no cliente: ate
+  512 caracteres, normalizado, sem `..` e sem caractere de controle. A pasta e a
+  chave do projeto junto com a maquina.
+- A maquina vem do header `X-Dyarium-Host`. Sem o header o projeto fica sem
+  maquina e nao entra na arvore por maquina.
+- O id da sessao vem de `_meta["ai.opencode/sessionID"]` quando o cliente manda
+  (o OpenCode manda em toda chamada de ferramenta); senao, do argumento
+  `session` (ate 64 caracteres, `[A-Za-z0-9_-]`); senao, o servidor gera
+  `ses_<12 hex>`.
+- O servidor cria a entrada do projeto (uma por maquina + caminho, titulo = o
+  caminho completo) se ela nao existir, e uma **nota por sessao** (titulo = o
+  nome da sessao). Reabrir a mesma sessao nao duplica: atualiza nome e resumo e
+  toca a nota.
+- O resultado abre com `sessao <id> aberta em <caminho>` — e o unico jeito de
+  um cliente que nao manda `_meta` saber o id para fechar a mesma sessao — e
+  segue com o historico da pasta, para o agente ja saber o que foi feito ali: as
+  3 ultimas sessoes, uma linha cada (`AAAA-MM-DD nome (N itens)`), com o total.
+  A mensagem tem teto de 2048 bytes.
+
+#### Ferramenta `session_close`
+```json
+{
+  "name": "session_close",
+  "arguments": {
+    "directory": "/home/joseti/projects/syncwin",
+    "summary": "resumo objetivo do que foi feito",
+    "date": "2026-11-14",
+    "items": [ { "kind": "feat", "title": "coletor de metricas", "commit": "abc1234" } ],
+    "commits": [ { "hash": "def5678", "message": "teste" } ],
+    "links": [ { "label": "spec", "url": "https://..." } ]
+  }
+}
+```
+- Fecha a sessao daquele id e responde `sessao <id> fechada` (ou `sessao <id>
+  criada e fechada`, quando criou a nota). Sem `session_open` correspondente e
+  com `directory`, cria a nota ja fechada (um cliente pode so relatar no fim);
+  sem `directory`, responde erro acionavel.
+- Resumo, itens, commits e links vazios preservam o que a nota ja tem; nao vazios
+  vencem. Os limites sao os mesmos de `record_project_summary` (100 itens, 100
+  commits, 50 links, `kind` vazio vira `chore`).
+- O estado vira `closed` com o horario real do fechamento; `date` e o dia
+  relatado, como no outro caminho.
+
+#### Estado da sessao
+`open` na abertura e `closed` no fechamento. Sessao `open` com mais de **12
+horas** sem atividade le como **interrompida**: a atividade e a data de
+atualizacao da nota, e qualquer chamada com o mesmo id de sessao toca a nota sem
+reescrever o corpo. Nao existe rotina periodica no servidor; o estado e derivado
+na leitura, pelo cliente.
+
+#### Conexao do cliente
+No OpenCode de cada maquina, registre o servidor remoto uma vez. O token e o
+mesmo do login; `X-Dyarium-Host` identifica a maquina no bloco de sessao.
+
+Caminho curto, com o CLI do OpenCode (o `$(hostname -s)` vira o nome da maquina
+onde o comando roda):
+
+```sh
+opencode mcp add dyarium --global \
+  --url https://seu-dyarium/mcp \
+  --header "Authorization=Bearer $DIARY_TOKEN" \
+  --header "X-Dyarium-Host=$(hostname -s)"
+```
+
+Alternativa por arquivo, util para desligar OAuth explicitamente:
+
+```jsonc
+{
+  "mcp": {
+    "servers": {
+      "dyarium": {
+        "type": "remote",
+        "url": "https://seu-dyarium/mcp",
+        "oauth": false,
+        "headers": {
+          "Authorization": "Bearer <DIARY_TOKEN>",
+          "X-Dyarium-Host": "nome-da-maquina"
+        }
+      }
+    }
+  }
+}
+```
 
 ## Eventos (SSE)
 

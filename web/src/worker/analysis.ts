@@ -22,6 +22,7 @@ import {
   type ComposedAnalysis,
 } from "../../../mobile/src/core/analysisCompose";
 import { toServerAnalysis } from "../../../mobile/src/core/analysis";
+import type { EntityMemoryEntry } from "../../../mobile/src/core/entities";
 import {
   SUMMARY_SCHEMA,
   acceptSummary,
@@ -194,6 +195,8 @@ export async function analyzeNoteInBrowser(
     onProgress?: (progress: AnalysisProgress) => void;
     /** Devolve true para parar antes do proximo bloco. */
     shouldStop?: () => boolean;
+    /** Dicionario do diario; so as entradas que aparecem no bloco entram. */
+    memory?: readonly EntityMemoryEntry[];
   } = {},
 ): Promise<WorkerAnalysis> {
   const startedAt = Date.now();
@@ -265,7 +268,7 @@ export async function analyzeNoteInBrowser(
         const run = await generate({
           messages: buildChunkMessages(
             { title: note.title, block: { text: block.text, context: block.context } },
-            { compact: attempt.compact },
+            { compact: attempt.compact, memory: options.memory },
           ),
           schema: CHUNK_SCHEMA as unknown as Record<string, unknown>,
           maxTokens: attempt.maxTokens,

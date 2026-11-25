@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import MapScreen from '../map';
+import { back, push } from '@/services/appNavigation';
 
 const mockLoadSnapshot = jest.fn();
 const mockPanel = jest.fn();
@@ -63,6 +64,14 @@ jest.mock('@/services/db', () => ({
   claimLocalSelf: () => mockClaim(),
   renameLocalEntity: () => mockRename(),
   setLocalEntityIcon: () => mockSetIcon(),
+  changeEntityKind: jest.fn(async () => ({})),
+  setEntityLabel: jest.fn(async () => ({})),
+  deleteEntityAndReject: jest.fn(async () => undefined),
+  snapshotEntityForUndo: jest.fn(async () => null),
+  restoreEntitySnapshot: jest.fn(async () => undefined),
+  listEntityRejections: jest.fn(async () => []),
+  addEntityRejection: jest.fn(async () => undefined),
+  removeEntityRejection: jest.fn(async () => undefined),
 }));
 
 jest.mock('@/services/graphData', () => ({
@@ -82,9 +91,38 @@ jest.mock('@/services/graphData', () => ({
 jest.mock('@/components/graph/GraphCanvas', () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { forwardRef } = require('react');
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { Pressable, Text, View } = require('react-native');
   return {
-    GraphCanvas: forwardRef(function MockGraphCanvas() {
-      return null;
+    GraphCanvas: forwardRef(function MockGraphCanvas({
+      data,
+      onSelect,
+      kinds: mockKinds,
+    }: {
+      data: { nodes: Array<{ id: string; label: string; kind: string }> };
+      kinds?: Set<string>;
+      onSelect: (id: string) => void;
+    }) {
+      return (
+        <View>
+          {data.nodes
+            .filter(
+              (node) =>
+                node.kind !== 'user' &&
+                node.kind !== 'note' &&
+                (!mockKinds || mockKinds.has(node.kind)),
+            )
+            .map((node) => (
+              <Pressable
+                key={node.id}
+                accessibilityLabel={`Abrir ${node.label}`}
+                onPress={() => onSelect(node.id)}
+              >
+                <Text>{node.label}</Text>
+              </Pressable>
+            ))}
+        </View>
+      );
     }),
   };
 });
@@ -203,31 +241,19 @@ describe('tela do mapa', () => {
   it('abre no repouso com os numeros do recorte', async () => {
     await renderMap();
 
-    expect(screen.getByText('2 entidades · 1 notas')).toBeTruthy();
     expect(screen.getByLabelText('Pessoa: 1')).toBeTruthy();
     expect(screen.getByLabelText('Lugar: 1')).toBeTruthy();
-    expect(screen.getByLabelText('Maria, 2 menções')).toBeTruthy();
-    expect(screen.getByLabelText('Praia, 3 menções')).toBeTruthy();
   });
 
-  it('abre a bola e mostra os trechos da relação', async () => {
+  it('abre a entidade em tela propria', async () => {
     await renderMap();
 
     await act(async () => {
-      fireEvent.press(screen.getByLabelText('Maria, 2 menções'));
-      await Promise.resolve();
+      fireEvent.press(screen.getByLabelText('Abrir Maria'));
       await Promise.resolve();
     });
 
-    expect(screen.getByText('A Maria chegou cedo.')).toBeTruthy();
-    expect(screen.getByText('0:01')).toBeTruthy();
-    expect(screen.getByText('Fala sobre a amiga.')).toBeTruthy();
-
-    await act(async () => {
-      fireEvent.press(screen.getByLabelText('Sou eu'));
-      await Promise.resolve();
-    });
-    expect(mockClaim).toHaveBeenCalled();
+    expect(push).toHaveBeenCalledWith('/map/person:e1');
   });
 
   it('esconder um tipo e so desenho: nao refaz o grafo nem o layout', async () => {
@@ -243,63 +269,24 @@ describe('tela do mapa', () => {
     // O mesmo conjunto: quem some e so o desenho das bolas de lugar.
     expect(mockGraph.mock.calls.length).toBe(grafoAntes);
     expect(mockLayout.mock.calls.length).toBe(layoutAntes);
-    expect(screen.queryByLabelText('Praia, 3 menções')).toBeNull();
-    expect(screen.getByLabelText('Maria, 2 menções')).toBeTruthy();
+    expect(screen.queryByLabelText('Abrir Praia')).toBeNull();
+    expect(screen.getByLabelText('Abrir Maria')).toBeTruthy();
   });
 
-  it('a lista fica em ordem alfabetica, nao por mencoes', async () => {
+  it('aba Humor mostra o painel de tom', async () => {
     await renderMap();
 
-    // Praia tem mais mencoes, mas a lista e para procurar: Maria vem antes.
-    const rows = screen.getAllByLabelText(/, \d+ menções$/);
-    expect(rows.map((row) => row.props.accessibilityLabel)).toEqual([
-      'Maria, 2 menções',
-      'Praia, 3 menções',
-    ]);
+    fireEvent.press(screen.getByText('Humor'));
+
+    expect(screen.getByTestId('map-mood-panel')).toBeTruthy();
   });
 
-  it('no Humor, a serie fala da entidade aberta', async () => {
+  it('o Voltar do cabeçalho volta para a tela anterior', async () => {
     await renderMap();
 
-    await act(async () => {
-      fireEvent.press(screen.getByLabelText('Maria, 2 menções'));
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    await act(async () => {
-      fireEvent.press(screen.getByText('Humor'));
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    fireEvent.press(screen.getByLabelText('Voltar'));
 
-    expect(screen.getByText('Tom sobre Maria (1)')).toBeTruthy();
-  });
-
-  it('abrir uma bola deixa so ela e as relacoes dela no desenho', async () => {
-    await renderMap();
-    const focos = () =>
-      mockGraph.mock.calls.map(([, options]) => (options as { focus?: string }).focus);
-    expect(focos().every((focus) => !focus)).toBe(true);
-
-    await act(async () => {
-      fireEvent.press(screen.getByLabelText('Maria, 2 menções'));
-      // O desenho troca atras do escurecido; a troca tem um compasso de espera.
-      await new Promise((resolve) => setTimeout(resolve, 200));
-    });
-
-    // O desenho passa a ser o foco: a entidade e as relacoes dela.
-    expect(focos()).toContain('person:e1');
-  });
-
-  it('troca para a aba de humor', async () => {
-    await renderMap();
-
-    await act(async () => {
-      fireEvent.press(screen.getByText('Humor'));
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    expect(screen.getByText('Tom médio (0)')).toBeTruthy();
+    expect(back).toHaveBeenCalled();
   });
 
   it('abre os filtros por período', async () => {

@@ -13,9 +13,14 @@ import * as Crypto from 'expo-crypto';
 import { File } from 'expo-file-system';
 
 import { DyariumApi, type FetchLike, type ServerNotebook, type SyncManifestEntry } from '@/core/api';
-import { DEFAULT_NOTEBOOK_ID } from '@/core/notebooks';
+import { DEFAULT_NOTEBOOK_ID, type Notebook } from '@/core/notebooks';
 import { syncNoteWith, applySyncResult } from '@/core/noteSync';
-import { entryToRecording, isBlankServerEntry, mergeServerNote } from '@/core/pull';
+import {
+  chapterFieldsOf,
+  entryToRecording,
+  isBlankServerEntry,
+  mergeServerNote,
+} from '@/core/pull';
 import { stableAttachmentId } from '@/core/id';
 import { planReconcile, type LocalNote } from '@/core/sync';
 import type { Recording } from '@/core/types';
@@ -25,6 +30,7 @@ import {
   getCachedAnalysis,
   getRecording,
   listRecordings,
+  updateChapterFields,
   upsertRecording,
   acquireLock,
   releaseLock,
@@ -33,14 +39,23 @@ import { observeVersion } from '@/services/clock';
 import { syncEntitiesFor } from '@/services/entitySync';
 import { uploadFileIO } from '@/services/files';
 import { publishMetricsTo } from '@/services/metricsSync';
-import { listNotebooks, deleteLocalNotebook, upsertNotebookFromServer } from '@/services/notebooks';
+import {
+  listNotebooks,
+  deleteLocalNotebook,
+  notebookBookPayload,
+  notebookFromServer,
+  upsertNotebookFromServer,
+} from '@/services/notebooks';
 import { clientOwnsAnalysis } from '@/services/processing';
 import { loadServers, saveServers, type StoredServer } from '@/services/secure';
 import { clientOwnsTranscription } from '@/services/whisper';
+import { trackServerTranscription } from '@/services/remoteTranscription';
 import { pushTranscriptToServer } from '@/services/transcriptSync';
 import { syncServerTranscriptsFor } from '@/services/transcripts';
 import { pushAnalysisToServer, syncServerAnalysesFor } from '@/services/analysis';
+import { fileSha256 } from '@/services/hash';
 
+import { planChapterUpdates } from './chapters';
 import { ensureBodyAttachments, uploadAudioFromPeer } from './media';
 
 import {
@@ -52,6 +67,7 @@ import {
   removeTombstone,
   touchServerSync,
   upsertEntrySync,
+  upsertEntrySyncMany,
   upsertNotebookSync,
   upsertServer,
   type EntrySyncRow,
@@ -164,7 +180,9 @@ export async function reconcileServer(server: StoredServer): Promise<SyncSummary
         recording.notebookDirty ||
         recording.tagsDirty ||
         recording.archivedDirty ||
-        recording.authorDirty,
+        recording.authorDirty ||
+        recording.summaryDetailDirty ||
+        recording.iconDirty,
     );
     // Sem linha de sync, a nota e nova naquele ambiente: o plano a coloca em
     // `push` pelo proprio id. Com linha, qualquer mudanca depois do ultimo
@@ -212,6 +230,19 @@ export async function reconcileServer(server: StoredServer): Promise<SyncSummary
   };
   const byRemoteId = new Map(remote.map((entry) => [entry.id, entry]));
   const byLocalId = new Map(local.map((recording) => [recording.id, recording]));
+
+  // Estrutura do livro que o manifesto ja traz. A versao nao mudou, entao o
+  // plano nao pede pull, mas o capitulo ainda pode faltar no SQLite local.
+  for (const update of planChapterUpdates(remote, local, (recording) => {
+    const sync = syncByRecording.get(recording.id);
+    return sync?.remoteEntryId ?? recording.entryId ?? recording.id;
+  })) {
+    try {
+      await updateChapterFields(update.recordingId, update.fields);
+    } catch {
+      summary.failed += 1;
+    }
+  }
 
   for (const remoteId of plan.pull) {
     const entry = byRemoteId.get(remoteId);
@@ -388,6 +419,7 @@ async function backfillSyncRows(
 ): Promise<void> {
   const known = new Set(rows.map((row) => row.recordingId));
   const byId = new Map(remote.map((entry) => [entry.id, entry]));
+  const pending: EntrySyncRow[] = [];
   for (const recording of local) {
     if (!recording.entryId || recording.status !== 'completed' || known.has(recording.id)) {
       continue;
@@ -417,8 +449,9 @@ async function backfillSyncRows(
       syncedAt: entry.updated_at,
     };
     rows.push(row);
-    await upsertEntrySync(row);
+    pending.push(row);
   }
+  await upsertEntrySyncMany(pending);
 }
 
 async function fetchManifest(
@@ -437,6 +470,31 @@ async function fetchManifest(
   // exclusao ficam incompletas. Melhor falhar o ambiente e tentar de novo do
   // que criar duplicatas ou apagar nota por omissao.
   throw new Error('manifesto de sync truncado; tente novamente');
+}
+
+/** `kind` e os metadados do livro so viajam quando o caderno e livro. */
+function bookCreateFields(notebook: Notebook) {
+  if (notebook.kind !== 'book') return {};
+  return { kind: 'book' as const, ...notebookBookPayload(notebook) };
+}
+
+/** Compara os metadados que o PATCH de livro pode gravar. */
+function sameBookMetadata(exists: ServerNotebook, notebook: Notebook): boolean {
+  return (
+    (exists.subtitle ?? '') === (notebook.subtitle ?? '') &&
+    (exists.author ?? '') === (notebook.author ?? '') &&
+    (exists.synopsis ?? '') === (notebook.synopsis ?? '') &&
+    (exists.language ?? '') === (notebook.language ?? '') &&
+    (exists.goal_words ?? 0) === (notebook.goalWords ?? 0) &&
+    (exists.book_status ?? 'drafting') === (notebook.bookStatus ?? 'drafting') &&
+    (exists.page_size ?? '') === (notebook.pageSize ?? '') &&
+    (exists.page_margin_mm ?? 0) === (notebook.pageMarginMm ?? 0) &&
+    (exists.body_px ?? 0) === (notebook.bodyPx ?? 0) &&
+    (exists.body_leading ?? 0) === (notebook.bodyLeading ?? 0) &&
+    (exists.body_font ?? '') === (notebook.bodyFont ?? '') &&
+    (exists.daily_goal_words ?? 0) === (notebook.dailyGoalWords ?? 0) &&
+    (exists.deadline ?? '') === (notebook.deadline ?? '')
+  );
 }
 
 /**
@@ -484,16 +542,7 @@ async function syncNotebooks(api: DyariumApi, serverId: string): Promise<void> {
       });
       continue;
     }
-    await upsertNotebookFromServer({
-      id: item.id,
-      name: item.name,
-      color: item.color,
-      isDefault: item.is_default,
-      createdAt: item.created_at,
-      updatedAt: item.updated_at,
-      dirty: false,
-      synced: true,
-    });
+    await upsertNotebookFromServer(notebookFromServer(item));
     if (tomb) await removeTombstone(item.id, 'notebook');
   }
 
@@ -512,7 +561,12 @@ async function syncNotebooks(api: DyariumApi, serverId: string): Promise<void> {
       continue;
     }
     if (Date.parse(notebook.updatedAt) > Date.parse(tomb.deleted_at)) {
-      await api.createNotebook({ id: notebook.id, name: notebook.name, color: notebook.color });
+      await api.createNotebook({
+        id: notebook.id,
+        name: notebook.name,
+        color: notebook.color,
+        ...bookCreateFields(notebook),
+      });
       await removeTombstone(tomb.id, 'notebook');
       continue;
     }
@@ -543,19 +597,27 @@ async function syncNotebooks(api: DyariumApi, serverId: string): Promise<void> {
     });
   }
 
-  // 4. Cadernos locais: cria no ambiente ou atualiza nome/cor.
+  // 4. Cadernos locais: cria no ambiente ou atualiza nome, cor e metadados do livro.
   for (const notebook of local) {
     if (notebook.isDefault || deletedLocally.has(notebook.id)) continue;
     const exists = remoteById.get(notebook.id);
     if (exists) {
-      if (exists.name !== notebook.name || exists.color !== notebook.color) {
-        await api.updateNotebook(notebook.id, { name: notebook.name, color: notebook.color });
+      const isBook = notebook.kind === 'book';
+      const metadataMoved = isBook && !sameBookMetadata(exists, notebook);
+      const kindMoved = isBook && exists.kind !== 'book';
+      if (exists.name !== notebook.name || exists.color !== notebook.color || metadataMoved || kindMoved) {
+        await api.updateNotebook(notebook.id, {
+          name: notebook.name,
+          color: notebook.color,
+          ...bookCreateFields(notebook),
+        });
       }
     } else {
       await api.createNotebook({
         id: notebook.id,
         name: notebook.name,
         color: notebook.color,
+        ...bookCreateFields(notebook),
       });
     }
     await upsertNotebookSync({
@@ -617,6 +679,7 @@ async function pullEntry(
   if (!existing) {
     const recording = entryToRecording(detail, note);
     await upsertRecording(recording);
+    await updateChapterFields(recording.id, chapterFieldsOf(detail));
     await upsertEntrySync({ ...sync, recordingId: recording.id });
     return true;
   }
@@ -676,6 +739,7 @@ async function pushRecording(
         clientOwnsTranscription(),
         clientOwnsAnalysis(),
       ]);
+      const sha256 = await fileSha256(recording.filePath);
       const result = await uploadRecording(
         {
           clientKey: recording.id,
@@ -695,10 +759,12 @@ async function pushRecording(
           entryId: remoteId,
           attachmentId,
           author: recording.author ?? '',
+          sha256,
         },
         { api, file: uploadFileIO },
       );
       primaryAttachmentId = result.attachmentId ?? attachmentId;
+      if (!localTranscribe) trackServerTranscription(recording);
       if (primaryAttachmentId) existingAttachments.add(primaryAttachmentId);
     } else if (
       recording.serverAttachmentId &&
@@ -747,6 +813,10 @@ async function pushRecording(
     tagsDirty: true,
     archivedDirty: true,
     authorDirty: true,
+    summaryDetailDirty: true,
+    // O icone nao tem edicao local no app: ele viaja com o estado da nota para
+    // outro ambiente e nunca e zerado por um PATCH de outro campo.
+    iconDirty: true,
   };
   const result = await syncNoteWith(api, view, async () => ({
     markdown,
@@ -845,6 +915,7 @@ function contentChanged(a: Recording, b: Recording): boolean {
     JSON.stringify(a.tags ?? []) !== JSON.stringify(b.tags ?? []) ||
     Boolean(a.archived) !== Boolean(b.archived) ||
     (a.author ?? '') !== (b.author ?? '') ||
+    (a.icon ?? '') !== (b.icon ?? '') ||
     a.serverAttachmentId !== b.serverAttachmentId
   );
 }

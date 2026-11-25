@@ -5,6 +5,7 @@ import type { Recording } from '@/core/types';
 import {
   maybeTranscribeLocally,
   releaseTranscriptionContexts,
+  stopTranscription,
   transcribeLocally,
   transcribePendingLocally,
 } from '../localTranscription';
@@ -18,20 +19,51 @@ const mockWillTranscribeLocally = jest.fn<Promise<boolean>, []>();
 const mockLoadWhisper = jest.fn();
 const mockDecode = jest.fn();
 
-jest.mock('expo-file-system', () => ({
-  Directory: class {
+jest.mock('expo-file-system', () => {
+  const WAV_MS = 60_000;
+  class MockFile {
+    uri: string;
     exists = true;
+    constructor(base: string | { uri: string }, name?: string) {
+      this.uri = typeof base === 'string' ? base : `${base.uri}/${name ?? ''}`;
+    }
+    get size() {
+      // WAV de trabalho simulado com tres janelas de um minuto.
+      return this.uri.endsWith('.chunk.wav') ? 0 : 44 + 3 * WAV_MS * 32;
+    }
+    open() {
+      return {
+        offset: 0,
+        get size() {
+          return 0;
+        },
+        readBytes: (length: number) => new Uint8Array(Math.max(0, length)),
+        writeBytes: () => undefined,
+        close: () => undefined,
+      };
+    }
     create() {}
-  },
-  File: class {
-    exists = true;
     delete() {
       this.exists = false;
     }
-  },
-  FileMode: {},
-  Paths: {},
-}));
+  }
+  return {
+    Directory: class {
+      uri: string;
+      exists = true;
+      constructor(base: string | { uri: string }, name: string) {
+        this.uri = typeof base === 'string' ? `${base}/${name}` : `${base.uri}/${name}`;
+      }
+      create() {}
+      list() {
+        return [];
+      }
+    },
+    File: MockFile,
+    FileMode: { ReadOnly: 'r', Append: 'wa' },
+    Paths: { document: '/doc', cache: '/cache' },
+  };
+});
 
 jest.mock('../../../modules/audio-decode', () => ({
   audioDecodeAvailable: () => true,
@@ -66,7 +98,11 @@ jest.mock('../notifications', () => ({
 
 jest.mock('../uploaderLoop', () => ({ emitRecording: jest.fn() }));
 jest.mock('../secure', () => ({ loadPrefs: () => mockLoadPrefs() }));
-jest.mock('../transcriptionModels', () => ({ modelFilePath: () => '/models/tiny.bin' }));
+jest.mock('../transcriptionModels', () => ({
+  modelFilePath: () => '/models/tiny.bin',
+  resolveTranscriptionModel: () => ({ id: 'tiny', label: 'Tiny', fileName: 'ggml-tiny.bin', sizeBytes: 1, rank: 1 }),
+  installedModels: () => [{ id: 'tiny', bytes: 1 }],
+}));
 jest.mock('../transcriptSync', () => ({ pushTranscript: jest.fn(async () => true) }));
 
 // Sem o modulo nativo a transcricao para antes de tocar no audio: o teste
@@ -75,6 +111,15 @@ jest.mock('../whisper', () => ({
   loadWhisper: () => mockLoadWhisper(),
   localTranscriptionAvailable: () => true,
   willTranscribeLocally: () => mockWillTranscribeLocally(),
+  transcriptionPlace: async () => ({
+    place: 'device',
+    runsHere: true,
+    runsOnDevice: true,
+    needsModel: false,
+    needsKey: false,
+    needsServer: false,
+    blocked: false,
+  }),
 }));
 
 function base(overrides: Partial<Recording> = {}): Recording {
@@ -124,6 +169,7 @@ beforeEach(() => {
   resetHeavyWorkForTests();
   mockWillTranscribeLocally.mockResolvedValue(true);
   mockLoadWhisper.mockReturnValue(null);
+  mockDecode.mockReset();
   mockLoadPrefs.mockResolvedValue({ transcriptionModel: 'tiny' });
   mockGetRecording.mockImplementation(async (id) => byId[id] ?? null);
   mockListRecordings.mockResolvedValue([serverNote, readyWithoutFlag, localPending, notUploaded]);
@@ -173,6 +219,26 @@ describe('transcribePendingLocally', () => {
 });
 
 describe('transcribeLocally', () => {
+  it('parada manual nao e refeita sozinha no boot da mesma sessao', async () => {
+    mockListRecordings.mockResolvedValue([localPending]);
+
+    // O usuario parou a passada: o boot nao pode reabrir a mesma nota em loop.
+    await stopTranscription('loc');
+    await transcribePendingLocally();
+
+    expect(mockLoadPrefs).not.toHaveBeenCalled();
+  });
+
+  it('o botao Transcrever vence a parada manual anterior', async () => {
+    mockLoadWhisper.mockReturnValue({});
+    mockDecode.mockRejectedValueOnce(new Error('sem audio'));
+
+    await stopTranscription('loc');
+    await transcribeLocally('loc');
+
+    expect(mockLoadPrefs).toHaveBeenCalled();
+  });
+
   it('retomar a passada nao apaga o texto que ja estava na nota', async () => {
     const withText = { ...localPending, transcript: 'texto antigo' };
     mockGetRecording.mockResolvedValue(withText);
@@ -200,5 +266,59 @@ describe('maybeTranscribeLocally', () => {
     await maybeTranscribeLocally('novo');
 
     expect(mockLoadPrefs).toHaveBeenCalled();
+  });
+});
+
+describe('audio longo', () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it('nao para por prazo total: tres janelas passam de cinco minutos e concluem', async () => {
+    jest.useFakeTimers();
+    let chunks = 0;
+    mockLoadWhisper.mockReturnValue({
+      initWhisper: async () => ({
+        transcribe: (_path: string, options: { onProgress?: (value: number) => void }) => {
+          chunks += 1;
+          const promise = new Promise<{
+            result: string;
+            language: string;
+            segments: { text: string; t0: number; t1: number }[];
+          }>((resolve) => {
+            // Cada janela leva 120 s e segue reportando progresso: antes disso
+            // o watchdog total de 5 min matava a passada no terceiro trecho.
+            let tick = 0;
+            const progress = setInterval(() => {
+              tick += 1;
+              options.onProgress?.(Math.min(90, tick * 10));
+            }, 20_000);
+            setTimeout(() => {
+              clearInterval(progress);
+              resolve({
+                result: 'trecho',
+                language: 'pt',
+                segments: [{ text: `trecho ${chunks}`, t0: 0, t1: 1000 }],
+              });
+            }, 120_000);
+          });
+          return { promise, stop: async () => undefined };
+        },
+        release: async () => undefined,
+      }),
+    });
+    mockLoadPrefs.mockResolvedValue({ transcriptionModel: 'tiny', transcriptionLanguage: 'pt' });
+    mockGetRecording.mockResolvedValue(
+      base({ transcriptStatus: 'pending', transcriptCheckpointMs: 0 }),
+    );
+
+    const pending = transcribeLocally('r1');
+    await jest.advanceTimersByTimeAsync(400_000);
+    const outcome = await pending;
+    expect(outcome.status).toBe('ready');
+    expect(chunks).toBe(3);
+    expect(mockUpsertRecording).toHaveBeenCalledWith(
+      expect.objectContaining({ transcriptStatus: 'ready', hasTranscript: true }),
+    );
   });
 });

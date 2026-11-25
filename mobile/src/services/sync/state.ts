@@ -174,10 +174,7 @@ export async function listEntrySync(serverId: string): Promise<EntrySyncRow[]> {
   return rows.map(toEntrySync);
 }
 
-export async function upsertEntrySync(row: EntrySyncRow): Promise<void> {
-  const db = await getDatabase();
-  await db.runAsync(
-    `INSERT INTO entry_sync (
+const ENTRY_SYNC_UPSERT = `INSERT INTO entry_sync (
       server_id, recording_id, remote_entry_id, note_id,
       title_version, recorded_at_version, body_version,
       upload_id, upload_offset, attachment_refs, primary_attachment_id,
@@ -205,32 +202,57 @@ export async function upsertEntrySync(row: EntrySyncRow): Promise<void> {
       synced_at = excluded.synced_at,
       last_error = excluded.last_error,
       deleted_at = excluded.deleted_at,
-      tombstone_pushed_at = excluded.tombstone_pushed_at`,
-    [
-      row.serverId,
-      row.recordingId,
-      row.remoteEntryId ?? null,
-      row.noteId ?? null,
-      row.titleVersion ?? null,
-      row.recordedAtVersion ?? null,
-      row.bodyVersion ?? null,
-      row.uploadId ?? null,
-      row.uploadOffset ?? 0,
-      row.attachmentRefs ?? null,
-      row.primaryAttachmentId ?? null,
-      row.syncedTitle ?? null,
-      row.syncedRecordedAt ?? null,
-      row.syncedBodyHash ?? null,
-      row.syncedNotebookId ?? null,
-      row.syncedTags ?? null,
-      row.syncedArchived ?? null,
-      row.syncedAuthor ?? null,
-      row.syncedAt ?? null,
-      row.lastError ?? null,
-      row.deletedAt ?? null,
-      row.tombstonePushedAt ?? null,
-    ],
-  );
+      tombstone_pushed_at = excluded.tombstone_pushed_at`;
+
+function entrySyncParams(row: EntrySyncRow): (string | number | null)[] {
+  return [
+    row.serverId,
+    row.recordingId,
+    row.remoteEntryId ?? null,
+    row.noteId ?? null,
+    row.titleVersion ?? null,
+    row.recordedAtVersion ?? null,
+    row.bodyVersion ?? null,
+    row.uploadId ?? null,
+    row.uploadOffset ?? 0,
+    row.attachmentRefs ?? null,
+    row.primaryAttachmentId ?? null,
+    row.syncedTitle ?? null,
+    row.syncedRecordedAt ?? null,
+    row.syncedBodyHash ?? null,
+    row.syncedNotebookId ?? null,
+    row.syncedTags ?? null,
+    row.syncedArchived ?? null,
+    row.syncedAuthor ?? null,
+    row.syncedAt ?? null,
+    row.lastError ?? null,
+    row.deletedAt ?? null,
+    row.tombstonePushedAt ?? null,
+  ];
+}
+
+type SyncDb = Awaited<ReturnType<typeof getDatabase>>;
+
+async function runEntrySyncUpsert(db: SyncDb, row: EntrySyncRow): Promise<void> {
+  await db.runAsync(ENTRY_SYNC_UPSERT, entrySyncParams(row));
+}
+
+export async function upsertEntrySync(row: EntrySyncRow): Promise<void> {
+  const db = await getDatabase();
+  await runEntrySyncUpsert(db, row);
+}
+
+/**
+ * Grava um lote na mesma transacao. A primeira reconciliacao depois de uma
+ * restauracao cria uma linha por nota ja conhecida; cada gravacao sozinha
+ * custava um fsync e o inicio do sync ficava em segundos.
+ */
+export async function upsertEntrySyncMany(rows: EntrySyncRow[]): Promise<void> {
+  if (rows.length === 0) return;
+  const db = await getDatabase();
+  await db.withTransactionAsync(async () => {
+    for (const row of rows) await runEntrySyncUpsert(db, row);
+  });
 }
 
 export async function deleteEntrySync(serverId: string, recordingId: string): Promise<void> {

@@ -8,7 +8,13 @@
  * abertura) e ainda gravava o token da API no conteudo.
  */
 
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { BlockNoteSchema, defaultBlockSpecs, defaultInlineContentSpecs } from "@blocknote/core";
 import {
@@ -19,9 +25,10 @@ import {
 import { attachmentUrl } from "../api";
 import { AudioTrack } from "../components/AudioTrack";
 import { MoreIcon } from "../components/icons";
+import { useAttachmentFetch, useAttachmentUrl } from "../lib/useAttachment";
 import { useEscape } from "../lib/useEscape";
 import type { Audio } from "../types";
-import { AUDIO_PLACEHOLDER, audioPropSchema } from "./schema";
+import { AUDIO_PLACEHOLDER, DETAILS_PLACEHOLDER, audioPropSchema } from "./schema";
 
 // MediaContext gives the media blocks access to the audios (with transcript)
 // and to navigation between notes, without going through BlockNote internals.
@@ -185,6 +192,10 @@ function aspectValue(value: string): number | undefined {
  * continua sendo o mesmo `{w=N}` que o app le e escreve.
  */
 function ImageBlockView({ block, editor }: ImageRenderProps) {
+  // No cofre local a URL nasce de um blob lido do IndexedDB. O hook assina a
+  // chegada do byte e, quando ele nao esta aqui, pede so este anexo ao Drive.
+  const url = useAttachmentUrl(block.props.attachmentId);
+  const fetch = useAttachmentFetch(block.props.attachmentId);
   const { imageDefault } = useContext(MediaContext);
   // A excecao explicita da imagem vence o padrao do editor; sem marcador, o
   // livro mostra preto e branco e a nota comum mostra cor.
@@ -268,7 +279,8 @@ function ImageBlockView({ block, editor }: ImageRenderProps) {
     editor.updateBlock(block, { props: { ...block.props, caption } });
   };
 
-  const busy = pending || !loaded;
+  const busy = pending || (!loaded && fetch.status !== "error");
+  const fetchFailed = !failed && attachmentId !== "" && fetch.status === "error";
 
   return (
     <figure
@@ -292,7 +304,7 @@ function ImageBlockView({ block, editor }: ImageRenderProps) {
           <img
             className={loaded ? "doc-image doc-image--loaded" : "doc-image"}
             style={grayscale ? { filter: "grayscale(1)" } : undefined}
-            src={attachmentUrl(attachmentId)}
+            src={url || undefined}
             alt={block.props.caption || "Imagem da nota"}
             loading="lazy"
             onLoad={(event) => {
@@ -305,15 +317,21 @@ function ImageBlockView({ block, editor }: ImageRenderProps) {
             onError={() => setLoadedId(attachmentId)}
           />
         ) : null}
-        {failed ? (
+        {failed || fetchFailed ? (
           <div className="doc-image-error" role="status">
-            <span>Não foi possível enviar a foto.</span>
+            <span>{failed ? "Não foi possível enviar a foto." : "Imagem fora deste navegador."}</span>
             <button
               type="button"
               className="doc-image-error-remove"
-              onClick={() => editor.removeBlocks([block])}
+              onClick={() => {
+                if (failed) {
+                  editor.removeBlocks([block]);
+                  return;
+                }
+                fetch.retry();
+              }}
             >
-              Remover
+              {failed ? "Remover" : "Tentar de novo"}
             </button>
           </div>
         ) : busy ? (
@@ -449,8 +467,29 @@ function ImageBlockView({ block, editor }: ImageRenderProps) {
   );
 }
 
+const detailsBlock = createReactBlockSpec(
+  {
+    type: "details",
+    propSchema: {
+      summary: { default: "Detalhes técnicos" },
+      body: { default: "" },
+      open: { default: false },
+    },
+    content: "none",
+  },
+  {
+    render: (props) => (
+      <details className="doc-details" open={props.block.props.open}>
+        <summary className="doc-details-summary">{props.block.props.summary || "Detalhes técnicos"}</summary>
+        <pre className="doc-details-body">{props.block.props.body}</pre>
+      </details>
+    ),
+    toExternalHTML: () => <p>{DETAILS_PLACEHOLDER}</p>,
+  },
+);
+
 const schema = BlockNoteSchema.create({
-  blockSpecs: { ...defaultBlockSpecs, audio: audioBlock(), image: imageBlock() },
+  blockSpecs: { ...defaultBlockSpecs, audio: audioBlock(), image: imageBlock(), details: detailsBlock() },
   inlineContentSpecs: { ...defaultInlineContentSpecs, noteMention },
 });
 

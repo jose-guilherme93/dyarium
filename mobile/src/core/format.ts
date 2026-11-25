@@ -44,19 +44,22 @@ export function formatDateTime(iso: string): string {
 }
 
 /**
- * Data curta para o canto do card (estilo mensagem): hoje mostra so a hora,
- * no mesmo ano mostra dia/mes e hora, senao a data completa.
+ * Data curta para o canto do card (estilo mensagem): hoje e ontem falam em
+ * palavra, no mesmo ano mostra dia/mes e hora, senao a data completa.
  */
 export function formatStamp(iso: string, now: Date = new Date()): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return '';
   const pad = (n: number) => (n < 10 ? `0${n}` : String(n));
   const time = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
-  const sameDay =
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate();
-  if (sameDay) return time;
+  const sameDay = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate();
+  if (sameDay(date, now)) return `hoje ${time}`;
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (sameDay(date, yesterday)) return `ontem ${time}`;
   const day = `${pad(date.getDate())}/${pad(date.getMonth() + 1)}`;
   if (date.getFullYear() === now.getFullYear()) return `${day} ${time}`;
   return `${day}/${date.getFullYear()}`;

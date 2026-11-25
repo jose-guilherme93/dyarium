@@ -16,6 +16,8 @@
 
 import { DyariumApi, type FetchLike, type ServerEntry } from '@/core/api';
 import {
+  chapterFieldsDiffer,
+  chapterFieldsOf,
   duplicateEntryRecordings,
   entryToRecording,
   isBlankServerEntry,
@@ -25,7 +27,12 @@ import {
 import type { Recording } from '@/core/types';
 
 import { observeVersion } from './clock';
-import { deleteRecordingRow, listRecordings, upsertRecording } from './db';
+import {
+  deleteRecordingRow,
+  listRecordings,
+  updateChapterFields,
+  upsertRecording,
+} from './db';
 import { refreshAuthorSettings } from './authorSettings';
 import { syncServerAnalyses } from './analysis';
 import { syncServerTranscripts } from './transcripts';
@@ -90,7 +97,6 @@ async function pullOnce(): Promise<number> {
   // nunca chegavam ao aparelho.
   const entriesPage = await listAllPages((cursor) => api.listEntriesPage(PULL_PAGE_SIZE, cursor));
   const entries = entriesPage.items;
-  // Inclui a lixeira local: uma nota apagada aqui nao pode ser recriada pelo
   // pull enquanto o servidor ainda nao confirmou a exclusao.
   const local = await listRecordings(true);
 
@@ -129,12 +135,14 @@ async function pullOnce(): Promise<number> {
   }
 
   const known = new Set<string>();
+  const localById = new Map<string, Recording>();
   const localByEntry = new Map<string, Recording>();
   for (const recording of local) {
     if (removed.has(recording.id)) continue;
     // Notas na lixeira entram no `known` para o pull nao criar uma copia ativa,
     // mas nao sao mescladas: quem manda nelas e a restauracao do usuario.
     known.add(recording.id);
+    localById.set(recording.id, recording);
     if (recording.entryId) {
       known.add(recording.entryId);
       if (!recording.deletedAt) localByEntry.set(recording.entryId, recording);
@@ -152,7 +160,21 @@ async function pullOnce(): Promise<number> {
       entry.updated_at,
     );
 
-    const existing = localByEntry.get(entry.id);
+    let existing = localByEntry.get(entry.id);
+    let adopted = false;
+    if (!existing) {
+      // Nota que veio de um cofre do Drive: o id local e o id da entrada no
+      // servidor, mas o vinculo `entryId` nunca existiu. Sem adotar aqui, o
+      // `known.has(entry.id)` abaixo pulava a entrada para sempre e a nota
+      // ficava sem transcricao nem analise do servidor.
+      const candidate = localById.get(entry.id);
+      if (candidate && !candidate.deletedAt && !candidate.entryId) {
+        existing = { ...candidate, entryId: entry.id };
+        localByEntry.set(entry.id, existing);
+        localById.set(existing.id, existing);
+        adopted = true;
+      }
+    }
     if (existing) {
       let note;
       // A listagem traz a versao do corpo; so busca o texto quando ela mudou.
@@ -164,14 +186,29 @@ async function pullOnce(): Promise<number> {
         }
       }
       const merged = mergeServerNote(existing, entry, note);
-      if (merged) {
-        await upsertRecording(merged);
+      const chapterFields = chapterFieldsOf(entry);
+      // Nota adotada: mesmo sem merge de campo, o vinculo precisa ser gravado
+      // para o sync buscar transcricao e analise nas proximas passadas.
+      const next = merged ?? (adopted ? { ...existing, noteId: existing.noteId ?? note?.id } : null);
+      if (next) {
+        await upsertRecording(next);
+        // O planejamento do capitulo e editado no dashboard: o servidor vence.
+        if (chapterFieldsDiffer(next, chapterFields)) {
+          await updateChapterFields(next.id, chapterFields);
+        }
+        changed += 1;
+      } else if (chapterFieldsDiffer(existing, chapterFields)) {
+        // Instalacao antiga: a versao da entrada nao mudou, mas o capitulo
+        // nunca chegou ao SQLite. Grava so quando o planejamento difere.
+        await updateChapterFields(existing.id, chapterFields);
         changed += 1;
       }
       continue;
     }
 
-    if (known.has(entry.id)) continue;
+    if (known.has(entry.id)) {
+      continue;
+    }
     let note;
     try {
       const notes = await api.listNotes(entry.id);
@@ -179,15 +216,19 @@ async function pullOnce(): Promise<number> {
     } catch {
       // sem nota associada: segue so com o titulo
     }
-    if (isBlankServerEntry(entry, note)) continue;
-    await upsertRecording(entryToRecording(entry, note));
+    if (isBlankServerEntry(entry, note)) {
+      continue;
+    }
+    const recording = entryToRecording(entry, note);
+    await upsertRecording(recording);
+    await updateChapterFields(recording.id, chapterFieldsOf(entry));
     changed += 1;
   }
 
   // Transcricoes e analises novas do servidor: `transcript_at` e `analysis_at`
   // sao os sinais. Guarda no banco e avisa a nota aberta; nao e o caminho de
   // exibicao.
-  await syncServerTranscripts(entries, local).catch(() => undefined);
+  await syncServerTranscripts(entries, [...localById.values()]).catch(() => undefined);
   await syncServerAnalyses(entries).catch(() => undefined);
 
   return changed;

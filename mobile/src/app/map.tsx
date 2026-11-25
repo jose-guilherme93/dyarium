@@ -9,6 +9,7 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams } from 'expo-router';
+import { router } from 'expo-router';
 import {
   Profiler,
   memo,
@@ -23,7 +24,6 @@ import {
   ActivityIndicator,
   FlatList,
   BackHandler,
-  InteractionManager,
   ScrollView,
   StyleSheet,
   useWindowDimensions,
@@ -38,25 +38,23 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Text } from '@/components/AppText';
+import { Text, TextInput } from '@/components/AppText';
+import { BottomSheet } from '@/components/BottomSheet';
 import { Press } from '@/components/Press';
 import { TagStrip } from '@/components/TagStrip';
-import { EntityDetail } from '@/components/graph/EntityDetail';
+import { EntityActionSheet } from '@/components/graph/EntityActionSheet';
 import { EntityEditor } from '@/components/graph/EntityEditor';
 import { GraphCanvas, type GraphCanvasHandle } from '@/components/graph/GraphCanvas';
 import { GraphIcon } from '@/components/graph/GraphIcon';
 import { MapFilters, type MapPeriod } from '@/components/graph/MapFilters';
-import { MapSheet, SNAP_DETAIL, SNAP_REST, type MapSheetHandle } from '@/components/graph/MapSheet';
 import { MoodPanel } from '@/components/graph/MoodPanel';
 import type { EntityKind, GraphData, GraphNodeKind } from '@/core/graphModel';
 import { kindLabel, splitNodeId } from '@/core/graphModel';
-import type { EntityPanel } from '@/core/graphPanel';
 import {
   graphFromSnapshot,
   kindCounts,
   layoutForGraph,
   layoutSeeded,
-  loadEntityPanel,
   loadGraphSnapshot,
   loadMoodSeries,
   noteKeyFromNode,
@@ -68,13 +66,22 @@ import {
 import { buildEntityMood } from '@/core/graphMood';
 import type { MoodPoint } from '@/core/graphMood';
 import {
+  addEntityRejection,
+  changeEntityKind,
   claimLocalSelf,
-  ensureEntityDerivation,
+  deleteEntityAndReject,
+  listEntityRejections,
+  removeEntityRejection,
   renameLocalEntity,
+  restoreEntitySnapshot,
+  setEntityLabel,
   setLocalEntityIcon,
+  snapshotEntityForUndo,
+  type LocalEntitySnapshot,
 } from '@/services/db';
 import { syncEntities } from '@/services/entitySync';
 import { back, push } from '@/services/appNavigation';
+import { enterInteractiveView, leaveInteractiveView } from '@/services/noteVisibility';
 import { listNotebooks } from '@/services/notebooks';
 import { noteNotebooks, type Notebook } from '@/core/notebooks';
 import { mark, useRenderCount } from '@/dev/perf';
@@ -230,7 +237,12 @@ export default function MapScreen() {
   const graphColors = GRAPH_PALETTES[themeName];
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
-  const params = useLocalSearchParams<{ focusKind?: string; focusName?: string }>();
+  const params = useLocalSearchParams<{
+    focusKind?: string;
+    focusName?: string;
+    /** "kind" abre o menu da entidade ja no seletor de tipo (lapis da nota). */
+    edit?: string;
+  }>();
   const [notebooks, setNotebooks] = useState<Notebook[]>([]);
 
   const [snapshot, setSnapshot] = useState<GraphSnapshot | null>(null);
@@ -241,30 +253,36 @@ export default function MapScreen() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [period, setPeriod] = useState('all');
   const [notebookId, setNotebookId] = useState('');
-  const [sheetSnap, setSheetSnap] = useState(SNAP_REST);
   const [tab, setTab] = useState<'detail' | 'mood'>('detail');
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorBusy, setEditorBusy] = useState(false);
   const [editorError, setEditorError] = useState<string | null>(null);
+  const [actionSheetOpen, setActionSheetOpen] = useState(false);
+  const [actionSheetExpandedType, setActionSheetExpandedType] = useState(false);
+  const [memoryOpen, setMemoryOpen] = useState(false);
+  const [rejections, setRejections] = useState<
+    { kind: EntityKind; name: string; nameKey: string; updatedAt: string }[]
+  >([]);
+  const [rejectionName, setRejectionName] = useState('');
+  const [rejectionKind, setRejectionKind] = useState<EntityKind>('person');
+  const [undoSnapshot, setUndoSnapshot] = useState<LocalEntitySnapshot | LocalEntitySnapshot[] | null>(null);
+  const [undoVisible, setUndoVisible] = useState(false);
+  const [undoLabel, setUndoLabel] = useState('Excluído');
+  const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // O desenho que esta na tela. Quando o conjunto muda (abrir um no, filtrar),
   // o anterior fica ate a posicao nova chegar: trocar para um quadro vazio
   // faria a tela piscar no meio do toque.
   const [shown, setShown] = useState<{ data: GraphData; layout: GraphLayout } | null>(null);
-  const [selectedPanel, setSelectedPanel] = useState<EntityPanel | null>(null);
-  const [panelLoading, setPanelLoading] = useState(false);
 
   const [mood, setMood] = useState<MoodPoint[]>([]);
   const [moodLoading, setMoodLoading] = useState(false);
 
-  const sheetRef = useRef<MapSheetHandle>(null);
   const canvasRef = useRef<GraphCanvasHandle>(null);
   const focusApplied = useRef(false);
   const selectedRef = useRef<string | null>(null);
-  const panelSeq = useRef(0);
   const moodSeq = useRef(0);
   const tabRef = useRef<'detail' | 'mood'>('detail');
-  const loadRef = useRef<() => Promise<void>>(async () => undefined);
   const loadedOnce = useRef(false);
   const mounted = useRef(true);
 
@@ -294,27 +312,6 @@ export default function MapScreen() {
   );
   const visible = data ? (focusLayout ? { data, layout: focusLayout } : shown) : null;
 
-  const hydratePanel = useCallback(async (snap: GraphSnapshot, id: string | null) => {
-    const parsed = id ? splitNodeId(id) : null;
-    const entityId =
-      parsed && parsed.kind !== 'note' && parsed.kind !== 'user' ? parsed.id : null;
-    const seq = panelSeq.current + 1;
-    panelSeq.current = seq;
-    if (!entityId) {
-      setSelectedPanel(null);
-      setPanelLoading(false);
-      return;
-    }
-    try {
-      const panel = await loadEntityPanel(snap, entityId);
-      if (panelSeq.current === seq) setSelectedPanel(panel);
-    } catch {
-      if (panelSeq.current === seq) setSelectedPanel(null);
-    } finally {
-      if (panelSeq.current === seq) setPanelLoading(false);
-    }
-  }, []);
-
   const hydrateMood = useCallback(async (snap: GraphSnapshot) => {
     const seq = moodSeq.current + 1;
     moodSeq.current = seq;
@@ -329,7 +326,15 @@ export default function MapScreen() {
     }
   }, []);
 
-  const load = useCallback(async () => {
+  // Recorte que ja esta na tela. Abrir/fechar uma bola muda a identidade dos
+  // params do router; sem esta guarda o mapa relia a biblioteca e refazia o
+  // layout a cada ida e volta -- era o travamento de segundos ao voltar.
+  const loadedDataKey = useRef<string | null>(null);
+
+  const load = useCallback(async (force = false) => {
+    const dataKey = `${notebookId}|${period}`;
+    if (!force && loadedOnce.current && loadedDataKey.current === dataKey) return;
+    loadedDataKey.current = dataKey;
     const cacheKey = `${notebookId}|${period}|${params.focusKind ?? ''}|${params.focusName ?? ''}`;
     const cached = snapshotCache?.key === cacheKey ? snapshotCache : null;
     if (!loadedOnce.current && cached) {
@@ -366,7 +371,8 @@ export default function MapScreen() {
       if (!mounted.current) return;
       if (__DEV__) {
         console.log(
-          `[map] snapshot ${next.entries.length} notas ${next.links.length} vinculos ${Date.now() - started}ms`,
+          `[map] snapshot ${next.entries.length} notas ${next.links.length} vinculos ` +
+            `${next.analyzed} analisadas ${Date.now() - started}ms`,
         );
       }
       const previous = cached?.snapshot;
@@ -388,13 +394,8 @@ export default function MapScreen() {
             (entity) => entity.kind === parsed.kind && entity.id === parsed.id,
           );
         if (!exists) {
-          panelSeq.current += 1;
           selectedRef.current = null;
           setSelectedId(null);
-          setSelectedPanel(null);
-          setPanelLoading(false);
-        } else {
-          void hydratePanel(next, current);
         }
       }
       setFocusId((currentFocus) =>
@@ -423,7 +424,10 @@ export default function MapScreen() {
             selectedRef.current = id;
             setFocusId(id);
             setSelectedId(id);
-            void hydratePanel(next, id);
+            if (params.edit === 'kind') {
+              setActionSheetExpandedType(true);
+              setActionSheetOpen(true);
+            }
           }
         }
       }
@@ -433,55 +437,24 @@ export default function MapScreen() {
       loadedOnce.current = true;
       setLoading(false);
     }
-  }, [notebookId, period, params.focusKind, params.focusName, hydratePanel, hydrateMood]);
+  }, [notebookId, period, params.focusKind, params.focusName, params.edit, hydrateMood]);
 
   useEffect(() => {
     mounted.current = true;
+    // Enquanto o mapa esta na frente o trabalho de fundo espera: um pull que
+    // le a biblioteca inteira no meio do arrasto segurava a thread de JS por
+    // centenas de ms (era o engasgo de 20 fps no gesto).
+    enterInteractiveView();
     return () => {
       mounted.current = false;
+      leaveInteractiveView();
     };
   }, []);
-
-  useEffect(() => {
-    loadRef.current = load;
-  }, [load]);
 
   useEffect(() => {
     const timer = setTimeout(() => void load(), 0);
     return () => clearTimeout(timer);
   }, [load]);
-
-  // A derivacao das analises antigas so comeca depois que o mapa esta
-  // desenhado: enquanto ele abre, a leitura do layout tem o banco so para ela.
-  const drawn = Boolean(visible);
-  useEffect(() => {
-    if (!drawn) return undefined;
-    let alive = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    // So depois que a tela e o primeiro gesto terminam: o mapa abre sem
-    // disputar a thread com a derivacao das analises antigas.
-    const interaction = InteractionManager.runAfterInteractions(() => {
-      timer = setTimeout(() => {
-        const started = Date.now();
-        void ensureEntityDerivation()
-          .then((processed) => {
-            if (__DEV__) {
-              console.log(`[map] backfill ${processed} ${Date.now() - started}ms`);
-            }
-            if (alive && processed > 0) void loadRef.current();
-          })
-          .catch(() => undefined);
-      }, 2500);
-    });
-    return () => {
-      alive = false;
-      // O timer nasce dentro da interacao; `cancel()` para a interacao pendente,
-      // mas nao um timer ja agendado. Sem isto, a tela desmontada ainda acordava
-      // 2,5 s depois para derivar analises (e logar) sem ninguem olhando.
-      interaction.cancel();
-      if (timer !== undefined) clearTimeout(timer);
-    };
-  }, [drawn]);
 
   useEffect(() => {
     // O foco ja trouxe o layout no proprio toque; o caminho do banco e do mapa
@@ -618,11 +591,8 @@ export default function MapScreen() {
 
   /** Volta ao mapa inteiro: nada escolhido, nada em foco. */
   const resetToMap = useCallback(() => {
-    panelSeq.current += 1;
     selectedRef.current = null;
     setSelectedId(null);
-    setSelectedPanel(null);
-    setPanelLoading(false);
     if (focusId) {
       if (transition.current === 'slide') switchScene(() => setFocusId(null), -1);
       else fadeScene(() => setFocusId(null));
@@ -630,9 +600,7 @@ export default function MapScreen() {
   }, [focusId, switchScene, fadeScene]);
 
   /**
-   * Abre uma bola: ela vira a raiz da propria visao. Todo o resto sai de cena
-   * e ficam so ela, as relacoes dela e as notas que a citam. Tocar no dono
-   * ("Você") devolve o mapa inteiro.
+   * Abre uma bola: navega para a tela de detalhe da entidade.
    */
   const openEntity = useCallback(
     (id: string, from: 'graph' | 'list') => {
@@ -641,24 +609,11 @@ export default function MapScreen() {
         openNote(noteKeyFromNode(id));
         return;
       }
-      selectedRef.current = id;
-      setSelectedId(id);
-      // So troca o desenho se a bola ainda nao esta aberta: tocar de novo na
-      // mesma bola nao pode piscar a tela.
-      if (id !== focusId) {
-        if (from === 'list') switchScene(() => setFocusId(id), 1);
-        else fadeScene(() => setFocusId(id));
+      if (parsed?.kind && parsed.kind !== 'user') {
+        push(`/map/${entityNodeId(parsed.kind as EntityKind, parsed.id)}`);
       }
-      tabRef.current = 'detail';
-      setTab('detail');
-      // A folha fica onde o usuario deixou (50%): ele sobe se quiser ler mais.
-      // Os numeros vem do snapshot na hora; so os trechos chegam depois.
-      const instant = snapshot && parsed ? panelForEntity(snapshot, parsed.id) : null;
-      setSelectedPanel(instant);
-      setPanelLoading(!instant);
-      if (snapshot) void hydratePanel(snapshot, id);
     },
-    [openNote, snapshot, hydratePanel, focusId, switchScene, fadeScene],
+    [openNote],
   );
 
   /** Toque no desenho: troca escurecendo. Tocar no dono/vazio volta ao mapa. */
@@ -670,24 +625,15 @@ export default function MapScreen() {
     [openEntity, resetToMap],
   );
 
-  /** Toque na lista: e navegacao, entao o desenho desliza. */
-  const selectFromList = useCallback(
-    (id: string) => openEntity(id, 'list'),
-    [openEntity],
-  );
 
-  // Voltar do Android desfaz o estado do mapa antes de sair dele: Humor volta
-  // para Detalhe, a folha desce para o repouso e o foco volta ao mapa inteiro.
-  // So no repouso, com a lista embaixo, e que sai para a biblioteca.
+
+  // Voltar do Android: se houver foco, volta ao mapa inteiro.
+  // Caso contrario, sai para a biblioteca.
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
       if (tabRef.current === 'mood') {
         tabRef.current = 'detail';
         setTab('detail');
-        return true;
-      }
-      if (sheetSnap > SNAP_REST + 0.01) {
-        sheetRef.current?.snapTo(SNAP_REST);
         return true;
       }
       if (focusId) {
@@ -697,32 +643,10 @@ export default function MapScreen() {
       return false;
     });
     return () => subscription.remove();
-  }, [sheetSnap, focusId, resetToMap]);
+  }, [focusId, resetToMap]);
 
   // A lista e para procurar, nao para ranquear: ordem alfabetica e mais simples
   // de achar um nome do que a ordem por mencoes do desenho.
-  const overviewNodes = useMemo(
-    () =>
-      data
-        ? data.nodes
-            .filter((node) => node.kind !== 'note')
-            .filter((node) => kinds.has(node.kind as EntityKind) || node.id === selectedId)
-            .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'))
-        : [],
-    [data, kinds, selectedId],
-  );
-
-  const renderOverview = useCallback(
-    ({ item }: ListRenderItemInfo<GraphData['nodes'][number]>) => (
-      <OverviewRow
-        node={item}
-        color={item.kind === 'user' ? theme.neutralSoft : graphColors[item.kind as EntityKind]}
-        onPress={selectFromList}
-      />
-    ),
-    [theme.neutralSoft, graphColors, selectFromList],
-  );
-
   const toggleKind = useCallback((kind: EntityKind) => {
     setKinds((current) => {
       const next = new Set(current);
@@ -738,15 +662,14 @@ export default function MapScreen() {
       setEditorError(null);
       try {
         await action();
-        const next = await reloadSnapshot();
-        if (next) await hydratePanel(next, selectedRef.current);
+        await reloadSnapshot();
       } catch (cause) {
         setEditorError(cause instanceof Error ? cause.message : 'Não foi possível salvar.');
       } finally {
         setEditorBusy(false);
       }
     },
-    [reloadSnapshot, hydratePanel],
+    [reloadSnapshot],
   );
 
   const onRename = useCallback(
@@ -757,7 +680,6 @@ export default function MapScreen() {
         const nextId = entityNodeId(renamed.kind, renamed.id);
         selectedRef.current = nextId;
         setSelectedId(nextId);
-        setSelectedPanel(null);
         if (focusId) setFocusId(nextId);
         setEditorOpen(false);
         void syncEntities().catch(() => undefined);
@@ -781,25 +703,158 @@ export default function MapScreen() {
     if (!selectedEntity) return;
     void editEntity(async () => {
       await claimLocalSelf(selectedEntity.name);
-      panelSeq.current += 1;
       selectedRef.current = null;
       setSelectedId(null);
-      setSelectedPanel(null);
       setFocusId(null);
       setEditorOpen(false);
       void syncEntities().catch(() => undefined);
     });
   }, [editEntity, selectedEntity]);
 
+  const showUndo = useCallback((snapshot: LocalEntitySnapshot | LocalEntitySnapshot[], label = 'Excluído') => {
+    if (undoTimer.current) clearTimeout(undoTimer.current);
+    setUndoSnapshot(snapshot);
+    setUndoLabel(label);
+    setUndoVisible(true);
+    undoTimer.current = setTimeout(() => {
+      setUndoVisible(false);
+      setUndoSnapshot(null);
+    }, 5000);
+  }, []);
+
+  const onKind = useCallback(
+    (kind: EntityKind) => {
+      if (!selectedEntity) return;
+      void (async () => {
+        const snap = await snapshotEntityForUndo(selectedEntity.kind, selectedEntity.name);
+        setEditorBusy(true);
+        setEditorError(null);
+        try {
+          await changeEntityKind(selectedEntity.kind, selectedEntity.name, kind);
+          await reloadSnapshot();
+          if (snap) showUndo(snap, 'Tipo alterado');
+          setEditorOpen(false);
+          setActionSheetOpen(false);
+          void syncEntities().catch(() => undefined);
+        } catch (cause) {
+          setEditorError(cause instanceof Error ? cause.message : 'Não foi possível salvar.');
+        } finally {
+          setEditorBusy(false);
+        }
+      })();
+    },
+    [selectedEntity, reloadSnapshot, showUndo],
+  );
+
+  const onLabel = useCallback(
+    (label: string) => {
+      if (!selectedEntity) return;
+      void editEntity(async () => {
+        await setEntityLabel(selectedEntity.kind, selectedEntity.name, label);
+        void syncEntities().catch(() => undefined);
+      });
+    },
+    [editEntity, selectedEntity],
+  );
+
+  const onDelete = useCallback(() => {
+    if (!selectedEntity) return;
+    void (async () => {
+      const snap = await snapshotEntityForUndo(selectedEntity.kind, selectedEntity.name);
+      setEditorBusy(true);
+      setEditorError(null);
+      try {
+        await deleteEntityAndReject(selectedEntity.kind, selectedEntity.name);
+        await reloadSnapshot();
+        if (snap) showUndo(snap, 'Excluído');
+        setEditorOpen(false);
+        setActionSheetOpen(false);
+        selectedRef.current = null;
+        setSelectedId(null);
+        setFocusId(null);
+        void syncEntities().catch(() => undefined);
+      } catch (cause) {
+        setEditorError(cause instanceof Error ? cause.message : 'Não foi possível salvar.');
+      } finally {
+        setEditorBusy(false);
+      }
+    })();
+  }, [selectedEntity, reloadSnapshot, showUndo]);
+
+  const onUndo = useCallback(() => {
+    if (!undoSnapshot) return;
+    if (undoTimer.current) clearTimeout(undoTimer.current);
+    void (async () => {
+      try {
+        await restoreEntitySnapshot(undoSnapshot);
+        await reloadSnapshot();
+        void syncEntities().catch(() => undefined);
+      } catch {
+        // ignore
+      } finally {
+        setUndoVisible(false);
+        setUndoSnapshot(null);
+      }
+    })();
+  }, [undoSnapshot, reloadSnapshot]);
+
+  const loadRejections = useCallback(async () => {
+    try {
+      const list = await listEntityRejections();
+      setRejections(
+        list.map((r) => ({ kind: r.kind, name: r.name, nameKey: r.nameKey, updatedAt: r.updatedAt })),
+      );
+    } catch {
+      setRejections([]);
+    }
+  }, []);
+
+  // rejeicoes carregadas ao abrir a memoria (chamado no onPress)
+
+  const onAddRejection = useCallback(() => {
+    const name = rejectionName.trim();
+    if (!name) return;
+    void (async () => {
+      try {
+        await addEntityRejection(rejectionKind, name);
+        setRejectionName('');
+        await loadRejections();
+        void syncEntities().catch(() => undefined);
+      } catch {
+        // ignore
+      }
+    })();
+  }, [rejectionName, rejectionKind, loadRejections]);
+
+  const onRemoveRejection = useCallback(
+    (kind: EntityKind, name: string) => {
+      void (async () => {
+        try {
+          await removeEntityRejection(kind, name);
+          await loadRejections();
+          void syncEntities().catch(() => undefined);
+        } catch {
+          // ignore
+        }
+      })();
+    },
+    [loadRejections],
+  );
+
   const sheetHeader = (
     <View style={styles.sheetHeader}>
       <View style={styles.sheetTitleRow}>
         {selectedEntity ? (
-          <View
+          <Press
             style={[
               styles.entityDot,
               { backgroundColor: graphColors[selectedEntity.kind] },
             ]}
+            onPress={() => {
+              setActionSheetExpandedType(false);
+              setActionSheetOpen(true);
+            }}
+            accessibilityLabel="Editar entidade"
           >
             <GraphIcon
               kind={selectedEntity.kind}
@@ -807,7 +862,7 @@ export default function MapScreen() {
               size={16}
               color={theme.bg}
             />
-          </View>
+          </Press>
         ) : null}
         <View style={styles.sheetTitleText}>
           <Text style={styles.sheetTitle} numberOfLines={1}>
@@ -840,7 +895,7 @@ export default function MapScreen() {
           onPress={() => {
             tabRef.current = 'mood';
             setTab('mood');
-            if (sheetSnap < SNAP_DETAIL) sheetRef.current?.snapTo(SNAP_DETAIL);
+            // A folha fica onde o usuario deixou: nao muda o espaco do grafo.
             if (snapshot) void hydrateMood(snapshot);
           }}
           accessibilityRole="tab"
@@ -869,7 +924,7 @@ export default function MapScreen() {
                 width={width}
                 height={height}
                 viewportTop={insets.top + (focusId ? 72 : 50)}
-                viewportBottom={Math.round(height * (1 - SNAP_REST))}
+                viewportBottom={Math.round(height)}
                 selectedId={selectedId}
                 focusMode={Boolean(focusId)}
                 kinds={kinds}
@@ -884,12 +939,12 @@ export default function MapScreen() {
         pointerEvents="none"
         style={[
           styles.veil,
-          { bottom: Math.round(height * (1 - SNAP_REST)), backgroundColor: theme.bg },
+          { bottom: 0, backgroundColor: theme.bg },
           veilStyle,
         ]}
       />
 
-      <View style={[styles.chrome, { paddingTop: insets.top + spacing.xs }]}>
+      <View style={[styles.chrome, { paddingTop: insets.top + spacing.xs }]} pointerEvents="box-none">
         <View style={styles.topBar}>
           <Press onPress={() => back()} style={styles.iconButton} accessibilityLabel="Voltar">
             <Ionicons name="chevron-back" size={24} color={theme.text} />
@@ -921,6 +976,16 @@ export default function MapScreen() {
             })}
           </TagStrip>
           <Press
+            onPress={() => {
+              setMemoryOpen(true);
+              void loadRejections();
+            }}
+            style={styles.iconButton}
+            accessibilityLabel="Memória"
+          >
+            <Ionicons name="book-outline" size={20} color={theme.text} />
+          </Press>
+          <Press
             onPress={() => setFiltersOpen(true)}
             style={styles.iconButton}
             accessibilityLabel="Filtros do mapa"
@@ -933,11 +998,24 @@ export default function MapScreen() {
           </Press>
         </View>
 
+        {sheetHeader}
+
+        {tab === 'mood' ? (
+          <View style={styles.moodPanel} testID="map-mood-panel">
+            {moodBusy ? (
+              <View style={styles.moodLoading}>
+                <ActivityIndicator color={theme.accent} />
+              </View>
+            ) : (
+              <MoodPanel series={moodSeries} colors={graphColors} subject={moodSubject} />
+            )}
+          </View>
+        ) : null}
       </View>
 
       {selectedId || focusId ? (
         <Press
-          style={[styles.mapBack, { bottom: Math.round(height * SNAP_REST) + spacing.sm }]}
+          style={[styles.mapBack, { bottom: spacing.sm }]}
           onPress={resetToMap}
           accessibilityRole="button"
           accessibilityLabel="Voltar ao mapa inteiro"
@@ -947,7 +1025,7 @@ export default function MapScreen() {
         </Press>
       ) : null}
 
-      <View style={[styles.zoom, { bottom: Math.round(height * SNAP_REST) + spacing.sm }]}>
+      <View style={[styles.zoom, { bottom: spacing.sm }]}>
         <Press
           style={styles.zoomButton}
           onPress={() => canvasRef.current?.zoomIn()}
@@ -977,7 +1055,7 @@ export default function MapScreen() {
             styles.graphLoading,
             {
               top: insets.top + 50,
-              bottom: Math.round(height * (1 - SNAP_REST)),
+              bottom: Math.round(height * (1 - 0)),
             },
           ]}
           pointerEvents="none"
@@ -991,79 +1069,6 @@ export default function MapScreen() {
         </View>
       ) : null}
 
-      <MapSheet
-        ref={sheetRef}
-        header={sheetHeader}
-        onSnapChange={setSheetSnap}
-        initialSnap={SNAP_REST}
-      >
-        {(snap) =>
-          tab === 'mood' ? (
-            <ScrollView
-              style={styles.sheetScroll}
-              showsVerticalScrollIndicator={false}
-              scrollEnabled
-              contentContainerStyle={styles.moodScroll}
-            >
-              {moodBusy ? (
-                <View style={styles.panelLoading}>
-                  <ActivityIndicator color={theme.accent} />
-                </View>
-              ) : (
-                <MoodPanel series={moodSeries} colors={graphColors} subject={moodSubject} />
-              )}
-            </ScrollView>
-          ) : selectedEntity ? (
-            panelLoading || !selectedPanel ? (
-              <View style={styles.panelLoading}>
-                <ActivityIndicator color={theme.accent} />
-              </View>
-            ) : (
-              <EntityDetail
-                panel={selectedPanel}
-                colors={graphColors}
-                snap={snap}
-                onOpenNote={openNote}
-                onRename={() => {
-                  setEditorError(null);
-                  setEditorOpen(true);
-                }}
-                onIcon={() => {
-                  setEditorError(null);
-                  setEditorOpen(true);
-                }}
-                onClaimSelf={onClaimSelf}
-              />
-            )
-          ) : (
-            <FlatList
-              data={overviewNodes}
-              keyExtractor={(node) => node.id}
-              renderItem={renderOverview}
-              style={styles.sheetScroll}
-              contentContainerStyle={styles.overview}
-              showsVerticalScrollIndicator={false}
-              initialNumToRender={10}
-              maxToRenderPerBatch={6}
-              updateCellsBatchingPeriod={40}
-              windowSize={5}
-              // Altura fixa da linha: a lista sabe onde cada nome comeca sem
-              // medir nada, entao rolar nao paga layout por linha.
-              getItemLayout={(_, index) => ({
-                length: OVERVIEW_ROW,
-                offset: OVERVIEW_ROW * index,
-                index,
-              })}
-              removeClippedSubviews
-              ListEmptyComponent={
-                <Text style={styles.empty}>
-                  {snapshot?.total ? 'Sem relações' : 'Sem notas'}
-                </Text>
-              }
-            />
-          )
-        }
-      </MapSheet>
 
       <MapFilters
         visible={filtersOpen}
@@ -1092,7 +1097,104 @@ export default function MapScreen() {
         onRename={onRename}
         onIcon={onIcon}
         onClaimSelf={onClaimSelf}
+        onKind={onKind}
+        onLabel={onLabel}
+        onDelete={onDelete}
       />
+
+      <EntityActionSheet
+        entity={selectedEntity}
+        visible={actionSheetOpen}
+        busy={editorBusy}
+        error={editorError}
+        onClose={() => setActionSheetOpen(false)}
+        onOpenName={() => {
+          setActionSheetOpen(false);
+          setEditorOpen(true);
+        }}
+        onOpenIcon={() => {
+          setActionSheetOpen(false);
+          setEditorOpen(true);
+        }}
+        onClaimSelf={onClaimSelf}
+        onKind={onKind}
+        onLabel={onLabel}
+        onDelete={onDelete}
+        initialExpandedType={actionSheetExpandedType}
+      />
+
+      {undoVisible ? (
+        <View style={styles.snackbar}>
+          <Text style={styles.snackbarText}>{undoLabel}</Text>
+          <Press onPress={onUndo} accessibilityLabel="Desfazer">
+            <Text style={styles.snackbarAction}>Desfazer</Text>
+          </Press>
+        </View>
+      ) : null}
+
+      <BottomSheet visible={memoryOpen} onClose={() => setMemoryOpen(false)} cardStyle={styles.memoryCard}>
+        <View style={styles.memoryHeader}>
+          <Text style={styles.memoryTitle}>Memória</Text>
+        </View>
+        <Text style={styles.memoryNote}>O script barra antes de gravar.</Text>
+        <View style={styles.memoryAddRow}>
+          <View style={styles.memoryPills}>
+            {(['person', 'place', 'theme', 'decision'] as EntityKind[]).map((k) => (
+              <Press
+                key={k}
+                style={[styles.memoryPill, rejectionKind === k ? styles.memoryPillActive : null]}
+                onPress={() => setRejectionKind(k)}
+                accessibilityRole="button"
+                accessibilityLabel={kindLabel(k)}
+              >
+                <Text
+                  style={[
+                    styles.memoryPillText,
+                    rejectionKind === k ? styles.memoryPillTextActive : null,
+                  ]}
+                >
+                  {kindLabel(k)}
+                </Text>
+              </Press>
+            ))}
+          </View>
+          <TextInput
+            style={styles.memoryInput}
+            value={rejectionName}
+            onChangeText={setRejectionName}
+            placeholder="nome"
+            placeholderTextColor={theme.textTertiary}
+            selectionColor={theme.accent}
+            autoCorrect={false}
+            returnKeyType="done"
+            onSubmitEditing={onAddRejection}
+            accessibilityLabel="Nome rejeitado"
+          />
+          <Press
+            style={styles.memoryAdd}
+            onPress={onAddRejection}
+            accessibilityLabel="Adicionar rejeição"
+          >
+            <Text style={styles.memoryAddText}>Adicionar</Text>
+          </Press>
+        </View>
+        <Text style={styles.memoryNote}>nunca é {kindLabel(rejectionKind).toLowerCase()}</Text>
+        <ScrollView style={styles.memoryList}>
+          {rejections.map((r) => (
+            <View key={`${r.kind}:${r.nameKey}`} style={styles.memoryRow}>
+              <Text style={styles.memoryRowText}>
+                {r.name} · {kindLabel(r.kind)}
+              </Text>
+              <Press
+                onPress={() => onRemoveRejection(r.kind, r.name)}
+                accessibilityLabel={`Remover ${r.name}`}
+              >
+                <Text style={styles.memoryRemove}>Remover</Text>
+              </Press>
+            </View>
+          ))}
+        </ScrollView>
+      </BottomSheet>
     </View>
   );
 }
@@ -1196,6 +1298,15 @@ const baseStyles = defineStyles({
   },
   error: { color: baseColors.danger, fontSize: fontSize.sm },
   sheetHeader: { gap: spacing.xs },
+  moodPanel: {
+    marginTop: spacing.xs,
+    backgroundColor: baseColors.bg,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: baseColors.border,
+    overflow: 'hidden',
+  },
+  moodLoading: { paddingVertical: spacing.xxl, alignItems: 'center' },
   sheetTitleRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   entityDot: {
     width: 28,
@@ -1251,10 +1362,65 @@ const baseStyles = defineStyles({
     paddingVertical: spacing.xxl,
   },
   moodScroll: { paddingTop: spacing.md },
-  panelLoading: {
-    flex: 1,
+  snackbar: {
+    position: 'absolute',
+    left: spacing.md,
+    right: spacing.md,
+    bottom: spacing.xl,
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: spacing.xxl,
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: baseColors.surfaceElevated,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: baseColors.borderStrong,
   },
+  snackbarText: { color: baseColors.text, fontSize: fontSize.sm },
+  snackbarAction: { color: baseColors.accent, fontSize: fontSize.sm, fontWeight: '700' },
+  memoryCard: { gap: spacing.sm, maxHeight: '82%' },
+  memoryHeader: { flexDirection: 'row', alignItems: 'center' },
+  memoryTitle: { color: baseColors.text, fontSize: fontSize.lg, fontWeight: '700' },
+  memoryNote: { color: baseColors.textTertiary, fontSize: fontSize.xs },
+  memoryAddRow: { gap: spacing.xs },
+  memoryPills: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
+  memoryPill: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    backgroundColor: baseColors.neutralSoft,
+  },
+  memoryPillActive: { backgroundColor: baseColors.accentSoft },
+  memoryPillText: { color: baseColors.textSecondary, fontSize: fontSize.xs, fontWeight: '600' },
+  memoryPillTextActive: { color: baseColors.accent },
+  memoryInput: {
+    height: 40,
+    borderRadius: radius.md,
+    backgroundColor: baseColors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: baseColors.borderStrong,
+    paddingHorizontal: spacing.md,
+    color: baseColors.text,
+    fontSize: fontSize.sm,
+  },
+  memoryAdd: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    backgroundColor: baseColors.accentSoft,
+  },
+  memoryAddText: { color: baseColors.accent, fontSize: fontSize.xs, fontWeight: '700' },
+  memoryList: { maxHeight: 240 },
+  memoryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: spacing.xs,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: baseColors.border,
+  },
+  memoryRowText: { color: baseColors.text, fontSize: fontSize.sm },
+  memoryRemove: { color: baseColors.accent, fontSize: fontSize.xs, fontWeight: '600' },
 });

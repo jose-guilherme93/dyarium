@@ -28,8 +28,19 @@ func TestDefaultNotebookExistsAndOwnsExistingNotes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list notebooks: %v", err)
 	}
-	if len(notebooks) != 1 || notebooks[0].ID != DefaultNotebookID || !notebooks[0].IsDefault {
-		t.Fatalf("caderno padrao = %+v", notebooks)
+	// The default notebook and the internal MCP project notebook are created by
+	// the migrations.
+	if len(notebooks) != 2 {
+		t.Fatalf("cadernos = %d, want 2: %+v", len(notebooks), notebooks)
+	}
+	var foundDefault bool
+	for _, notebook := range notebooks {
+		if notebook.ID == DefaultNotebookID {
+			foundDefault = notebook.IsDefault
+		}
+	}
+	if !foundDefault {
+		t.Fatalf("caderno padrao ausente: %+v", notebooks)
 	}
 
 	now := time.Now().UTC()

@@ -190,11 +190,19 @@ texto, guarda local, enfileira e envia para o servidor self-hosted.
   notas ja sincronizadas; o audio continua no servidor). Migracoes do banco versionadas e
   trava de fila para nao ter dois workers ao mesmo tempo.
 - **Backup local** (nas Opcoes): escolhe uma pasta do aparelho e copia tudo para la — notas,
-  audio, imagens e links — num manifesto em ordem. Cada midia leva o **md5 do conteudo** no
+  audio, imagens, transcricao, **analises e o mapa** (entidades, aliases, vinculos, "sou eu",
+  rejeicoes e posicoes) e **o que ja foi trocado com cada servidor** — num manifesto em ordem.
+  Cada midia leva o **md5 do conteudo** no
   nome, entao reexecutar nao reescreve o que ja existe e nada e perdido; o manifesto e escrito
   por ultimo (um backup interrompido nao invalida o anterior). "Restaurar backup" **confere o
   md5 de cada arquivo** antes de entrar na nota e aborta se algo nao bate; notas com o mesmo id
-  sao atualizadas e as demais ficam. Nao depende do servidor nem de nuvem (sem cifra).
+  sao atualizadas e as demais ficam, e o que ja existe no aparelho nunca e sobrescrito.
+  Restaurar **nao e editar**: a nota volta com a data real da ultima mudanca e nao entra na
+  fila de envio; a primeira sincronizacao troca so o que falta, sem rebaixar transcricao ou
+  analise que o aparelho ja tem. Ficha e mapa voltam da pasta, sem sincronizar: o app e um
+  cliente independente. Backups
+  v2 (manifesto antigo) continuam legiveis, mas trazem so as notas, porque o estado do
+  conhecimento nunca esteve no arquivo. Nao depende do servidor nem de nuvem (sem cifra).
   Ao restaurar, cada nota volta **tambem no servidor**, antes de qualquer sincronizacao: o app
   desfaz a exclusao logica da entrada (`POST /entries/{id}/restore`) e, se o servidor ja nao a
   conhece mais, recria com o mesmo id e reenvia titulo/corpo. E o que impede a nota restaurada

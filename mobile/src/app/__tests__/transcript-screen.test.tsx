@@ -35,6 +35,14 @@ jest.mock('@/services/audioFocus', () => ({
   releaseAudioFocus: jest.fn(),
 }));
 
+jest.mock('@/services/driveAuth', () => ({
+  driveSessionState: () => 'off',
+}));
+
+jest.mock('@/services/driveVault', () => ({
+  ensureAttachmentFromDrive: jest.fn(async () => ({ downloaded: 0, failed: 0, uri: null })),
+}));
+
 jest.mock('@/services/db', () => ({
   getRecording: jest.fn(),
   upsertRecording: jest.fn(async () => undefined),

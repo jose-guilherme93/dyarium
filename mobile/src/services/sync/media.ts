@@ -13,6 +13,7 @@
 import { Directory, File, FileMode, Paths } from 'expo-file-system';
 
 import { DyariumApi } from '@/core/api';
+import { sha256Hex } from '@/core/sha256';
 import { uploadRecording } from '@/core/uploader';
 import type { Recording } from '@/core/types';
 
@@ -198,6 +199,7 @@ export async function ensureBodyAttachments(
             sizeBytes: media.bytes.length,
             entryId,
             attachmentId: id,
+            sha256: sha256Hex(media.bytes),
           },
           { api, file: uploadFileIO },
         );
@@ -205,7 +207,13 @@ export async function ensureBodyAttachments(
         deleteTemp(path);
       }
     } else {
-      await api.uploadAttachment(entryId, media.bytes, media.contentType, id);
+      await api.uploadAttachment(
+        entryId,
+        media.bytes,
+        media.contentType,
+        id,
+        sha256Hex(media.bytes),
+      );
     }
     existing.add(id);
   }
@@ -240,6 +248,7 @@ export async function uploadAudioFromPeer(
         entryId,
         attachmentId,
         author: recording.author ?? '',
+        sha256: sha256Hex(media.bytes),
       },
       { api, file: uploadFileIO },
     );

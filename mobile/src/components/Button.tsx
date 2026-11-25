@@ -1,6 +1,7 @@
 import {
   ActivityIndicator,
   StyleSheet,
+  View,
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
@@ -37,6 +38,7 @@ export function Button({
   return (
     <Press
       accessibilityRole="button"
+      accessibilityState={{ disabled: isDisabled, busy: loading }}
       onPress={onPress}
       disabled={isDisabled}
       style={({ pressed }) => [
@@ -48,7 +50,15 @@ export function Button({
       ]}
     >
       {loading ? (
-        <ActivityIndicator color={variant === 'primary' ? colors.onAccent : colors.text} />
+        // O rotulo fica: sem ele o botao virava um card vazio com um ponto
+        // girando e o usuario perdia a unica pista do que estava acontecendo.
+        <View style={styles.loadingRow}>
+          <ActivityIndicator
+            size="small"
+            color={variant === 'primary' ? colors.onAccent : colors.text}
+          />
+          <Text style={[styles.label, variant === 'primary' && styles.labelOnAccent]}>{label}</Text>
+        </View>
       ) : (
         <Text style={[styles.label, variant === 'primary' && styles.labelOnAccent]}>{label}</Text>
       )}
@@ -76,4 +86,10 @@ const baseStyles = defineStyles({
   pressed: { opacity: 0.85, transform: [{ scale: 0.99 }] },
   label: { color: baseColors.text, fontSize: fontSize.md, fontWeight: '600', letterSpacing: 0.2 },
   labelOnAccent: { color: baseColors.onAccent },
+  loadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
 });

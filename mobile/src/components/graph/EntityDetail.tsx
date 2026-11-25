@@ -7,6 +7,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useMemo, type ComponentProps } from 'react';
 import {
+  ActivityIndicator,
   FlatList,
   StyleSheet,
   View,
@@ -30,6 +31,10 @@ interface EntityDetailProps {
   onRename(): void;
   onIcon(): void;
   onClaimSelf(): void;
+  scrollEnabled?: boolean;
+  hasMore?: boolean;
+  onLoadMore?(): void;
+  loadingMore?: boolean;
 }
 
 /** Marca a grafia que fez o trecho casar com a entidade. */
@@ -82,8 +87,13 @@ export function EntityDetail({
   onRename,
   onIcon,
   onClaimSelf,
+  scrollEnabled = true,
+  hasMore,
+  onLoadMore,
+  loadingMore,
 }: EntityDetailProps) {
   const styles = useThemedStyles(baseStyles);
+  const { colors: theme } = useTheme();
   const entity = panel.entity;
 
   const groupsWithExcerpts = useMemo(
@@ -192,14 +202,31 @@ export function EntityDetail({
         ) : null
       }
       ListFooterComponent={
-        otherNotes.length > 0 ? (
-          <View style={styles.otherNotes}>
-            <Text style={styles.sectionLabel}>Notas</Text>
-            {otherNotes.map((note) => renderOtherNote({ item: note } as ListRenderItemInfo<EntityNote>))}
-          </View>
-        ) : null
+        <>
+          {otherNotes.length > 0 ? (
+            <View style={styles.otherNotes}>
+              <Text style={styles.sectionLabel}>Notas</Text>
+              {otherNotes.map((note) => renderOtherNote({ item: note } as ListRenderItemInfo<EntityNote>))}
+            </View>
+          ) : null}
+          {hasMore ? (
+            <Press
+              style={styles.loadMore}
+              onPress={onLoadMore}
+              disabled={loadingMore}
+              accessibilityRole="button"
+              accessibilityLabel="Ver mais referências"
+            >
+              {loadingMore ? (
+                <ActivityIndicator color={theme.accent} />
+              ) : (
+                <Text style={styles.loadMoreText}>Ver mais</Text>
+              )}
+            </Press>
+          ) : null}
+        </>
       }
-      style={styles.list}
+      style={scrollEnabled ? styles.list : styles.listStatic}
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
       keyboardShouldPersistTaps="handled"
@@ -207,12 +234,14 @@ export function EntityDetail({
       maxToRenderPerBatch={3}
       windowSize={5}
       removeClippedSubviews
+      scrollEnabled={scrollEnabled}
     />
   );
 }
 
 const baseStyles = defineStyles({
   list: { flex: 1 },
+  listStatic: { minHeight: 200 },
   content: { paddingHorizontal: spacing.xl, paddingBottom: spacing.xxxl },
   headerBlock: { gap: spacing.sm, paddingBottom: spacing.sm },
   stats: { flexDirection: 'row', gap: spacing.sm },
@@ -298,5 +327,16 @@ const baseStyles = defineStyles({
     fontSize: fontSize.sm,
     paddingVertical: spacing.xl,
     textAlign: 'center',
+  },
+  loadMore: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
+    paddingVertical: spacing.md,
+  },
+  loadMoreText: {
+    color: baseColors.accent,
+    fontSize: fontSize.md,
+    fontWeight: '600',
   },
 });

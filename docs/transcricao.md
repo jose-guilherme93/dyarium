@@ -111,28 +111,78 @@ e nada e reprocessado automaticamente; refazer e acao explicita do usuario.
 
 ### Quem processa
 
-Tres interruptores em Opcoes > Processamento decidem, e o mesmo conjunto aparece na folha
-do icone de IA dentro da nota:
+Cada etapa tem **um** lugar, escolhido em Opcoes > Processamento: desligada, no aparelho,
+no servidor ou online direto. As duas etapas (transcricao e analise) tem a escolha propria.
 
-- **Transcricao**: ligada/desligada.
-- **Analise**: ligada/desligada.
-- **Processar no servidor**: exige servidor configurado. Desligado, o trabalho roda no
-  aparelho.
+- **Desligada**: notas novas nao entram na fila.
+- **Aparelho**: whisper.cpp (transcricao) ou llama.cpp (analise), com modelo baixado.
+- **Servidor**: o servidor executa com o provedor configurado la (Whisper ou Deepgram,
+  analise OpenAI-compatible). O app so pede e recebe; nao transcreve nem analisa aqui.
+- **Online**: o aparelho chama o provedor direto, com a chave do cofre do aparelho —
+  Deepgram na transcricao e um provedor OpenAI-compatible na analise.
 
-O lado escolhido e o unico que **comeca** a etapa; o outro apenas recebe o resultado pelo
-sync. Instalacao nova nasce com os tres desligados, e nada e cobrado do usuario: a folha
-se apresenta uma vez e pode ser ocultada para sempre (a marca fica em `app_flags`, fora de
-qualquer backup, entao reinstalar o app reabre a conversa). O icone de IA continua na barra
-da nota e sempre abre os tres interruptores.
+O lugar escolhido e o unico que **comeca** a etapa; os outros apenas recebem o resultado
+pelo sync. Nada troca de motor em silencio: sem modelo, sem chave ou sem servidor a etapa
+fica **bloqueada** e a tela diz o que falta. Servidor escolhido e offline nao cai para o
+aparelho; aparelho escolhido sem modelo nao cai para o servidor.
 
-Com a etapa desligada ou no aparelho, o upload leva `local_transcribe`/`local_analysis` e o
-servidor nao enfileira nada. Sem modelo baixado a nota fica **pendente** — nunca cai para o
-servidor sem o usuario escolher. Servidor escolhido e offline tambem nao cai para o
-aparelho: a nota espera na fila do servidor.
+Quando a escolha do servidor chega depois do upload (o audio subiu com a etapa nas maos do
+aparelho), o app pede `POST /entries/{id}/retranscribe` em vez de transcrever aqui. O botao
+de transcrever de uma nota nao executa o motor errado.
 
-A transcricao no aparelho comeca logo depois que a gravacao e enfileirada, e nao so no
-proximo boot. A fila automatica (boot, com o app na frente) pega apenas audio sem texto e
-sem dono no servidor.
+### Provedores e a web
+
+A tela de Processamento mostra o mesmo conjunto de provedores da web:
+
+- **Transcricao no servidor**: `transcribe_provider` (`whisper` ou `deepgram`),
+  `deepgram_model`, `whisper_language` e `trim_silence`.
+- **Analise no servidor**: `analyze_provider`, `analyze_base_url`, `analyze_model`,
+  `review_enabled` e `literal_transcript`.
+- **Online no aparelho**: Deepgram (modelo e chave no cofre) e os presets OpenAI-compatible
+  (OpenRouter, Groq, Google, DeepSeek, Mistral, xAI e personalizado).
+
+`GET /settings` nunca devolve chave: so `deepgram_api_key_set` e `analyze_api_key_set`.
+**Importar do servidor** traz provedor, modelo, idioma e revisao sem copiar segredo;
+**Enviar para o servidor** leva a escolha do aparelho e, quando existir aqui, a chave
+digitada — nunca um segredo ausente, para nao apagar o que o servidor ja tinha.
+
+### Feedback de quem esta rodando
+
+Trabalho pesado e visivel em quatro lugares, sem abrir a nota:
+
+- **Card da nota**: porcentagem real do motor e, no servidor, "Transcrevendo no
+  servidor" sem numero; o badge da home usa o mesmo estado.
+- **Centro de atividade**: progresso, etapa e o botao de parar. A atividade nasce
+  antes da fila de trabalho pesado, com "Na fila" enquanto espera a vez. Uma
+  atividade interrompida que voltou do banco ainda oferece **Continuar** (o id
+  da atividade carrega a nota; o banco nao guarda funcoes).
+- **Fila em Processamento**: o que esta rodando com a porcentagem, o que espera o
+  servidor sem inventar numero e o que ainda nao comecou.
+- **Notificacao** (servico em primeiro plano) durante a passada no aparelho.
+
+A porcentagem so existe quando o motor reporta: local em tempo real, online por
+janela (a Deepgram responde a janela inteira, nao em streaming). No servidor o
+estado e de espera, nunca uma barra falsa.
+
+### Checkpoint, retomada e audio longo
+
+- A transcricao roda em janelas de 60 s; ao fim de cada janela o checkpoint e gravado
+  (duravel) antes da proxima.
+- **Nao existe prazo para a passada inteira.** O unico limite e por janela: o motor que
+  para de reportar progresso por 90 s tem a janela cancelada. Um audio de 41 minutos tem
+  41 janelas e cada uma vale por si.
+- Se o processo morrer (Android sem memoria/reinicio), a proxima abertura retoma do
+  checkpoint. O WAV de trabalho fica em documentos (nao no cache, que o sistema pode
+  limpar) e e apagado no fim.
+- O modelo efetivo e resolvido pelos **arquivos instalados**, nao pelo id salvo: uma
+  preferencia apontando para um modelo ausente usa o instalado; sem nenhum, a nota fica
+  pendente com o caminho do download, nunca com "sem modelo" por leitura ruim.
+- A transcricao online usa as mesmas janelas, o mesmo checkpoint e a mesma retomada;
+  falha passageira (429, 5xx, rede) tenta de novo dentro da passada.
+
+A transcricao no aparelho (ou online) comeca logo depois que a gravacao e enfileirada, e
+nao so no proximo boot. A fila automatica (boot e volta ao app, com o app na frente) roda
+mesmo sem servidor e pega apenas audio sem texto e sem dono no servidor.
 
 - Quem e o dono fica em `transcriptOrigin` (`local` ou `server`), gravado no envio pelo
   `local_transcribe` e mantido no pull.

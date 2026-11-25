@@ -33,6 +33,8 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Platform,
+  TextInput,
   useWindowDimensions,
   View,
   type LayoutChangeEvent,
@@ -57,11 +59,13 @@ import {
   serializeNoteDocument,
   setWidthInNoteNodes,
   type NoteAudioNode,
+  type NoteDetailsNode,
   type NoteImageNode,
   type NoteNode,
+  type NoteTableNode,
   type NoteTextNode,
 } from '@/core/noteDocument';
-import { htmlToMarkdown, markdownToHtml, noteImages } from '@/core/noteHtml';
+import { htmlToMarkdown, markdownToHtml, noteImages, tableBlockEnd } from '@/core/noteHtml';
 import { fontFamilyNative, fontWeightNative, noteLineHeight, NOTE_LETTER_SPACING } from '@/core/typography';
 import type { TranscriptSegment } from '@/core/types';
 import { mark } from '@/dev/perf';
@@ -71,6 +75,7 @@ import { baseColors, radius, spacing } from '@/theme/tokens';
 
 import { FastModal } from './FastModal';
 import { NoteAudioCard } from './NoteAudioCard';
+import { NoteTable } from './NoteTable';
 import { noteHtmlStyle } from './noteHtmlStyle';
 import type { FormatType, NoteBodyHandle, NoteBodyProps } from './noteBodyTypes';
 import { defineStyles } from '@/theme/themedStyles';
@@ -145,6 +150,8 @@ const NativeNoteBody = memo(
       activeAudioRef,
       audioPlayer,
       audioStartMs,
+      audioLoadingRef,
+      audioFailedRef,
       ownAudioRefs = EMPTY_REFS,
       ownTranscript,
       ownSegments,
@@ -199,6 +206,8 @@ const NativeNoteBody = memo(
      * cursor): ela entra quando o primeiro trecho recebe o foco.
      */
     const pendingFormat = useRef<FormatType | null>(null);
+    /** Link pedido sem um trecho em foco: entra quando o trecho receber o foco. */
+    const pendingLink = useRef<string | null>(null);
     const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const widthRef = useRef(Math.max(1, window.width));
     const [mountedAt] = useState(() => Date.now());
@@ -266,6 +275,29 @@ const NativeNoteBody = memo(
       [],
     );
 
+    /**
+     * Aplica formatacao e link pedidos antes do foco. Os dois usam a selecao
+     * do trecho quando ela existe; sem selecao, o link entra no cursor.
+     */
+    const applyPending = useCallback((instance: EnrichedTextInputInstance) => {
+      const type = pendingFormat.current;
+      if (type) {
+        pendingFormat.current = null;
+        applyFormat(instance, type);
+      }
+      const link = pendingLink.current;
+      if (!link) return;
+      pendingLink.current = null;
+      const id = activeId.current;
+      const selection = id ? selections.current.get(id) : null;
+      instance.setLink(
+        selection?.start ?? 0,
+        selection?.end ?? 0,
+        selection?.text.trim() || link,
+        link,
+      );
+    }, []);
+
     const registerEditor = useCallback(
       (id: string, instance: EnrichedTextInputInstance | null) => {
         if (!instance) {
@@ -280,13 +312,10 @@ const NativeNoteBody = memo(
         setTimeout(() => {
           if (editors.current.get(id) !== instance) return;
           instance.focus();
-          const type = pendingFormat.current;
-          if (!type) return;
-          pendingFormat.current = null;
-          applyFormat(instance, type);
+          applyPending(instance);
         }, 0);
       },
-      [],
+      [applyPending],
     );
 
     /**
@@ -434,6 +463,44 @@ const NativeNoteBody = memo(
      */
     /** Foto com as opcoes abertas (tamanho e remover). */
     const [imageMenuId, setImageMenuId] = useState<string | null>(null);
+    /** Tabela sendo editada como markdown puro. */
+    const [editingTableId, setEditingTableId] = useState<string | null>(null);
+    const [editingTableDraft, setEditingTableDraft] = useState('');
+
+    const saveTableEdit = useCallback(async () => {
+      if (!editingTableId) return;
+      await flushNodes([...dirty.current]);
+      const draft = editingTableDraft;
+      const lines = draft.replace(/\r\n/g, '\n').split('\n');
+      const valid = tableBlockEnd(lines, 0) !== null && lines.length >= 2;
+      const next = nodesRef.current.map((node) => {
+        if (node.kind !== 'table' || node.id !== editingTableId) return node;
+        if (valid) {
+          return {
+            kind: 'table',
+            id: node.id,
+            markdown: draft,
+            body: draft,
+            breakAfter: node.breakAfter,
+          } as NoteTableNode;
+        }
+        return {
+          kind: 'text',
+          id: node.id,
+          markdown: draft,
+          breakAfter: node.breakAfter,
+        } as NoteTextNode;
+      });
+      nodesRef.current = next;
+      selections.current.clear();
+      dirty.current.clear();
+      setNodes(next);
+      setRevealed(next.length);
+      setVersion((current) => current + 1);
+      emit(next);
+      setEditingTableId(null);
+    }, [editingTableDraft, editingTableId, emit, flushNodes]);
+
     const imageMenu = nodes.find(
       (node): node is NoteImageNode => node.kind === 'image' && node.id === imageMenuId,
     );
@@ -570,12 +637,9 @@ const NativeNoteBody = memo(
         const editor = editorFor(id);
         if (editor) {
           editor.focus();
-          // Formato pedido antes do foco (barra de acoes sem cursor): aplica
-          // agora que o campo esta em edicao.
-          const type = pendingFormat.current;
-          if (!type) return;
-          pendingFormat.current = null;
-          applyFormat(editor, type);
+          // Formato/link pedidos antes do foco (barra de acoes sem cursor):
+          // aplica agora que o campo esta em edicao.
+          applyPending(editor);
           return;
         }
         // O trecho ainda nao montou (midia acabou de dividir o texto): o foco
@@ -584,13 +648,10 @@ const NativeNoteBody = memo(
           const mounted = editorFor(id);
           if (!mounted) return;
           mounted.focus();
-          const type = pendingFormat.current;
-          if (!type) return;
-          pendingFormat.current = null;
-          applyFormat(mounted, type);
+          applyPending(mounted);
         }, 60);
       },
-      [editorFor],
+      [applyPending, editorFor],
     );
 
     const format = useCallback(
@@ -709,7 +770,17 @@ const NativeNoteBody = memo(
         insertLink(url) {
           const id = activeId.current;
           const editor = editorFor(id);
-          if (!editor) return;
+          if (!editor) {
+            // Barra de acoes sem um trecho em foco: o primeiro trecho recebe o
+            // foco e o link, em vez de o botao nao fazer nada.
+            const first = nodesRef.current.find(
+              (node): node is NoteTextNode => node.kind === 'text',
+            );
+            if (!first) return;
+            pendingLink.current = url;
+            focusNode(first.id);
+            return;
+          }
           const selection = id ? selections.current.get(id) : null;
           const start = selection?.start ?? 0;
           const end = selection?.end ?? 0;
@@ -737,8 +808,8 @@ const NativeNoteBody = memo(
           typography?.weight ?? 'regular',
         ),
         fontSize: typography?.size ?? 16,
-        // A familia Inter ja carrega o peso no proprio arquivo. Deixar o peso
-        // sintetico ligado engrossa a letra de novo no iOS.
+        // A familia de sistema ja carrega o peso no proprio arquivo. Deixar o
+        // peso sintetico ligado engrossa a letra de novo no iOS.
         fontWeight:
           (typography?.family ?? 'system') === 'system'
             ? ('normal' as const)
@@ -787,6 +858,24 @@ const NativeNoteBody = memo(
         );
       }
 
+      if (node.kind === 'details') {
+        return <NoteDetails key={`${version}-${node.id}`} node={node} />;
+      }
+
+      if (node.kind === 'table') {
+        return (
+          <NoteTable
+            key={`${version}-${node.id}`}
+            node={node as NoteTableNode}
+            typography={typography}
+            onEditMarkdown={() => {
+              setEditingTableDraft((node as NoteTableNode).markdown);
+              setEditingTableId(node.id);
+            }}
+          />
+        );
+      }
+
       const own = ownAudioRefs.includes(node.ref);
       // O no pode ter uma referencia que nao casa com o mapa (audio antigo,
       // `local:` virou `attachment:` em outro aparelho). Para o audio da
@@ -803,6 +892,8 @@ const NativeNoteBody = memo(
           active={activeAudioRef === node.ref}
           player={activeAudioRef === node.ref ? audioPlayer : null}
           startMs={activeAudioRef === node.ref ? audioStartMs : null}
+          loading={audioLoadingRef === node.ref}
+          loadFailed={audioFailedRef === node.ref}
           transcribingPercent={own ? transcribingPercent : undefined}
           transcribingWait={own && transcribingWait}
           canTranscribe={own && canTranscribe}
@@ -850,6 +941,43 @@ const NativeNoteBody = memo(
               />
             ))}
           </View>
+        ) : null}
+
+        {/* Edicao de tabela como markdown puro (nunca passa pelo conversor HTML). */}
+        {editingTableId ? (
+          <FastModal visible transparent onRequestClose={() => setEditingTableId(null)}>
+            <Press style={styles.sheetBackdrop} onPress={() => setEditingTableId(null)} feedback={false}>
+              <View style={styles.sheet}>
+                <Text style={styles.sheetTitle}>Tabela</Text>
+                <TextInput
+                  testID="note-table-editor"
+                  value={editingTableDraft}
+                  onChangeText={setEditingTableDraft}
+                  multiline
+                  style={[
+                    styles.sheetText,
+                    {
+                      fontFamily: fontFamilyNative('mono'),
+                      minHeight: 120,
+                      textAlignVertical: 'top',
+                    },
+                  ]}
+                />
+                <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: spacing.sm }}>
+                  <Press style={styles.sheetRow} onPress={() => setEditingTableId(null)}>
+                    <Text style={styles.sheetText}>Cancelar</Text>
+                  </Press>
+                  <Press
+                    style={styles.sheetRow}
+                    onPress={() => void saveTableEdit()}
+                    testID="note-table-save"
+                  >
+                    <Text style={styles.sheetText}>Salvar</Text>
+                  </Press>
+                </View>
+              </View>
+            </Press>
+          </FastModal>
         ) : null}
 
         {/* Opcoes da foto: tamanho e, por ultimo, remover. Um menu proprio (e
@@ -938,9 +1066,15 @@ const TextNodeEditor = memo(function TextNodeEditor({
   );
 
   useEffect(() => {
+    // O `defaultValue` nao aplica os estilos do HTML no Android (bug conhecido
+    // da lib: software-mansion/react-native-enriched-html#265). Reparseia o
+    // HTML depois que a view nativa esta pronta, quando o htmlStyle ja vale.
+    // Sem isso, negrito/italico/titulo salvos apareciam como texto simples ao
+    // reabrir a nota.
+    if (Platform.OS === 'android') ref.current?.setValue(html);
     onReady(id, ref.current);
     return () => onReady(id, null);
-  }, [id, onReady]);
+  }, [html, id, onReady]);
 
   // Os callbacks sao fixos por trecho: o editor e memoizado e nao pode
   // remontar (a view nativa e cara) por causa de uma funcao nova.
@@ -954,7 +1088,9 @@ const TextNodeEditor = memo(function TextNodeEditor({
   return (
     <EnrichedTextInput
       ref={ref}
-      defaultValue={html}
+      // No Android o HTML entra pelo setValue do efeito (unica passada). Nas
+      // outras plataformas o defaultValue ja aplica os estilos.
+      defaultValue={Platform.OS === 'android' ? '' : html}
       placeholder={placeholder}
       placeholderTextColor={colors.textTertiary}
       cursorColor={colors.accent}
@@ -1064,6 +1200,36 @@ function ImageBlock({
       >
         <Ionicons name="information-circle-outline" size={18} color={colors.text} />
       </Press>
+    </View>
+  );
+}
+
+/** Bloco colapsavel de detalhes tecnicos (MCP). */
+function NoteDetails({ node }: { node: NoteDetailsNode }) {
+  const styles = useThemedStyles(baseStyles);
+  const { colors } = useTheme();
+  const [open, setOpen] = useState(node.open);
+
+  return (
+    <View style={styles.details} testID="note-details">
+      <Press
+        style={styles.detailsHeader}
+        onPress={() => setOpen((value) => !value)}
+        accessibilityRole="button"
+        accessibilityLabel={node.summary}
+      >
+        <Text style={styles.detailsSummary}>{node.summary}</Text>
+        <Ionicons
+          name={open ? 'chevron-up' : 'chevron-down'}
+          size={18}
+          color={colors.textSecondary}
+        />
+      </Press>
+      {open ? (
+        <Text style={styles.detailsBody} testID="note-details-body">
+          {node.body}
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -1180,5 +1346,28 @@ const baseStyles = defineStyles({
     backgroundColor: baseColors.surfaceElevated,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  details: {
+    backgroundColor: baseColors.surface,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    gap: spacing.sm,
+  },
+  detailsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+  },
+  detailsSummary: {
+    color: baseColors.text,
+    fontSize: 15,
+    fontWeight: '600',
+    flex: 1,
+  },
+  detailsBody: {
+    color: baseColors.textSecondary,
+    fontSize: 13,
+    lineHeight: 19,
   },
 });

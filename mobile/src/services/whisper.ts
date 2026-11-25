@@ -1,14 +1,18 @@
 /**
- * Carregamento do whisper.rn e disponibilidade da transcricao local.
+ * Carregamento do whisper.rn e onde a transcricao roda.
  *
  * Modulo leve (sem React e sem depender do loop de upload) para poder ser usado
  * de varios lugares sem criar ciclos de import.
  */
 
 import { audioDecodeAvailable } from '../../modules/audio-decode';
-import { clientOwnsStage, decideProcessing } from '@/core/processing';
-import { loadPrefs, loadServerConfig } from './secure';
-import { isModelInstalled } from './transcriptionModels';
+import {
+  clientOwnsStage,
+  decideProcessing,
+  type ProcessingDecision,
+} from '@/core/processing';
+import { loadPrefs, loadProviderKey, loadServerConfig } from './secure';
+import { resolveTranscriptionModel } from './transcriptionModels';
 
 export interface WhisperSegment {
   text: string;
@@ -59,30 +63,35 @@ export function localTranscriptionAvailable(): boolean {
 }
 
 /** Onde a transcricao desta instalacao roda (ou se esta desligada). */
-export async function transcriptionPlace() {
-  const [prefs, server] = await Promise.all([loadPrefs(), loadServerConfig()]);
-  const modelId = prefs.transcriptionModel;
+export async function transcriptionPlace(): Promise<ProcessingDecision> {
+  const [prefs, server, key] = await Promise.all([
+    loadPrefs(),
+    loadServerConfig(),
+    loadProviderKey('transcription'),
+  ]);
+  // O modelo vem do disco, nao do id salvo: se a preferencia aponta para um
+  // arquivo que nao esta la, o instalado resolve. Sem arquivo, `needsModel`.
+  const installed = resolveTranscriptionModel(prefs.transcriptionModel);
   return decideProcessing({
-    enabled: prefs.transcriptionEnabled === true,
-    serverProcessing: prefs.serverProcessing === true,
+    place: prefs.transcriptionPlace ?? 'off',
     hasServer: Boolean(server),
     deviceCapable: localTranscriptionAvailable(),
-    deviceReady: Boolean(modelId && isModelInstalled(modelId)),
+    deviceReady: Boolean(installed),
+    onlineReady: Boolean(key) && prefs.transcriptionProvider === 'deepgram',
   });
 }
 
 /**
- * O app vai transcrever no aparelho agora? So quando a etapa esta ligada,
- * escolhida para o aparelho e com o modelo baixado. Sem modelo a nota fica
- * pendente — nunca cai para o servidor sem o usuario pedir.
+ * O app vai transcrever agora? Vale para o aparelho e para o provedor online:
+ * os dois sao este cliente comecando a etapa.
  */
 export async function willTranscribeLocally(): Promise<boolean> {
-  return (await transcriptionPlace()).runsOnDevice;
+  return (await transcriptionPlace()).runsHere;
 }
 
 /**
  * O cliente se responsabiliza pela transcricao? Usado no upload: com o
- * aparelho responsavel (ou a etapa desligada) o servidor nao enfileira nada.
+ * aparelho (ou online, ou desligada) o servidor nao enfileira nada.
  */
 export async function clientOwnsTranscription(): Promise<boolean> {
   return clientOwnsStage((await transcriptionPlace()).place);

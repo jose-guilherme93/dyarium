@@ -7,13 +7,15 @@
  * aba fecha ou o modo e desligado.
  */
 
-import { ApiError, getToken } from "../api";
+import { ApiError, api, getToken } from "../api";
 import { authorLabel } from "../../../mobile/src/core/author";
+import { buildEntityMemory } from "../../../mobile/src/core/entities";
 import type { Settings } from "../types";
 import {
   planDownloadBytes,
   type BrowserPlan,
 } from "./browserModels";
+import { decodeAudio, toMono16k } from "./audioDecode";
 import { EngineClient } from "./engineClient";
 import type { DeviceIdentity } from "./deviceIdentity";
 import {
@@ -136,28 +138,6 @@ function workerId(): string {
   } catch {
     return `tab-${randomToken()}`;
   }
-}
-
-async function decodeAudio(data: ArrayBuffer): Promise<AudioBuffer> {
-  const context = new AudioContext();
-  try {
-    return await context.decodeAudioData(data.slice(0));
-  } finally {
-    await context.close();
-  }
-}
-
-/** Audio decodificado para mono 16 kHz, o formato que o Whisper espera. */
-async function toMono16k(buffer: AudioBuffer): Promise<Float32Array> {
-  const seconds = buffer.duration * 16000;
-  const length = Math.max(1, Math.ceil(seconds));
-  const offline = new OfflineAudioContext(1, length, 16000);
-  const source = offline.createBufferSource();
-  source.buffer = buffer;
-  source.connect(offline.destination);
-  source.start(0);
-  const rendered = await offline.startRendering();
-  return rendered.getChannelData(0).slice();
 }
 
 function genericFailure(error: unknown): string {
@@ -622,6 +602,24 @@ export class BrowserProcessor {
       text: segment.text,
       revised: segment.revised,
     }));
+    // A memoria de curadoria vai junta para o prompt: so as entradas que
+    // aparecem no bloco entram, mas a lista inteira precisa chegar ao worker.
+    // Falha de rede nao impede a analise; o filtro de rejeicoes continua no
+    // nucleo e o pior caso e a LLM nao receber a dica.
+    const memory = await api
+      .listEntities()
+      .then((catalog) =>
+        buildEntityMemory(
+          (catalog.entities ?? []).map((entity) => ({
+            kind: entity.kind,
+            name: entity.name,
+            label: entity.label,
+            aliases: entity.aliases ?? [],
+          })),
+          catalog.rejections ?? [],
+        ),
+      )
+      .catch(() => []);
     const result = await this.engine.analyze(
       {
         entryId,
@@ -636,6 +634,7 @@ export class BrowserProcessor {
         ),
       },
       this.state.plan?.llm.id ?? "",
+      memory,
     );
     if (this.lostJob) return;
     // Fecha a versao viva com o documento completo antes do PUT; o servidor

@@ -7,6 +7,7 @@ var GraphIconKeys = []string{
 	"person",
 	"home",
 	"hash",
+	"puzzle",
 	"check",
 	"heart",
 	"star",

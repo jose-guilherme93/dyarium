@@ -1,12 +1,49 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, getToken } from "../api";
-import { BrowserProcessing } from "../components/BrowserProcessing";
-import { ChevronIcon } from "../components/icons";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import "./settings.css";
+import { api, getToken, isLocalMode } from "../api";
+import { readTelemetryEnabled, setTelemetryEnabled, telemetryConfigured } from "../lib/telemetry";
+import {
+  AllNotebooksIcon,
+  CpuIcon,
+  KeyIcon,
+  SparkIcon,
+  TrashIcon,
+  UserIcon,
+  WaveIcon,
+} from "../components/icons";
+import { lastSyncSummary } from "../local/folderSync";
+import { connectAccount } from "../local/accountConnect";
+import { restoreVaultFromDrive, syncVaultToDrive } from "../local/vaultCloud";
+import {
+  disconnectDrive,
+  driveConfigured,
+  driveSessionState,
+  onDriveSessionChange,
+  type DriveSessionState,
+} from "../local/driveSession";
 import { ListSkeleton } from "../components/Skeleton";
-import { Toggle } from "../components/Toggle";
 import { TrashSection } from "../components/TrashSection";
+import { VaultBackup } from "../components/VaultBackup";
 import { useToast } from "../components/Toasts";
-import type { LocalAnalysis, ModelInfo, Settings } from "../types";
+import {
+  canSearchModels,
+  DEEPGRAM_KEY_URL,
+  DEEPGRAM_MODELS,
+  FALLBACK_MODELS,
+  LOCAL_PROVIDER_IDS,
+  CLOUD_PROVIDER_IDS,
+  localRuntimeOf,
+  providerFromSettings,
+  PROVIDER_PRESETS,
+  qualityOf,
+  recommendedModel,
+  TRANSCRIBE_PROVIDERS,
+  whisperModelLabel,
+  whisperQuality,
+  WHISPER_CATALOG_URL,
+} from "../lib/modelCatalog";
+import type { LocalAnalysis, McpProject, ModelInfo, Settings, SummaryDetail } from "../types";
 
 interface DownloadProgress {
   received: number;
@@ -15,326 +52,156 @@ interface DownloadProgress {
   error: string;
 }
 
-interface ProviderPreset {
-  label: string;
-  baseUrl: string;
-  model: string;
-  /** analyze_provider value stored on the server. */
-  kind: string;
-  /** Prefixo esperado da chave, mostrado no campo vazio. */
-  keyPlaceholder?: string;
-  /** Atalhos para criar a chave e ver os modelos no console do provedor. */
-  links?: { label: string; href: string }[];
-}
+type TabId = "transcricao" | "analise" | "projetos" | "autor" | "cofre" | "dados";
 
-const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
-  opencodeZen: {
-    label: "OpenCode Zen (chave)",
-    baseUrl: "https://opencode.ai/inference/openai/v1",
-    model: "glm-5.3-flash-free",
-    kind: "openai",
-    keyPlaceholder: "chave do OpenCode Console",
-    links: [
-      { label: "Criar chave", href: "https://opencode.ai/auth" },
-      { label: "Modelos", href: "https://opencode.ai/docs/zen/" },
-    ],
-  },
-  opencodeGo: {
-    label: "OpenCode Go (assinatura)",
-    baseUrl: "https://opencode.ai/inference/go/openai/v1",
-    // Nao e modelo de raciocinio: responde direto, sem gastar o teto pensando.
-    model: "glm-5.3-flash",
-    kind: "openai",
-    keyPlaceholder: "chave do OpenCode Console",
-    links: [
-      { label: "Criar chave", href: "https://opencode.ai/auth" },
-      { label: "Modelos", href: "https://opencode.ai/docs/go/" },
-    ],
-  },
-  opencodeLocal: {
-    label: "opencode local (login)",
-    baseUrl: "http://127.0.0.1:49374",
-    model: "opencode-go/qwen3.8-flash",
-    kind: "opencode",
-    links: [{ label: "Como conectar", href: "https://opencode.ai/docs/server/" }],
-  },
-  openrouter: {
-    label: "OpenRouter (chave)",
-    baseUrl: "https://openrouter.ai/api/v1",
-    // Modelo comum e barato: responde sem gastar tokens raciocinando.
-    model: "google/gemini-2.5-flash",
-    kind: "openai",
-    keyPlaceholder: "sk-or-v1-...",
-    links: [
-      { label: "Criar chave", href: "https://openrouter.ai/keys" },
-      { label: "Modelos", href: "https://openrouter.ai/models" },
-    ],
-  },
-  google: {
-    label: "Google Gemini (chave)",
-    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
-    model: "gemini-2.5-flash",
-    kind: "openai",
-    keyPlaceholder: "AIza...",
-    links: [
-      { label: "Criar chave", href: "https://aistudio.google.com/app/apikey" },
-      { label: "Modelos", href: "https://ai.google.dev/gemini-api/docs/models" },
-    ],
-  },
-  groq: {
-    label: "Groq (chave)",
-    baseUrl: "https://api.groq.com/openai/v1",
-    model: "llama-3.3-70b-versatile",
-    kind: "openai",
-    keyPlaceholder: "gsk_...",
-    links: [
-      { label: "Criar chave", href: "https://console.groq.com/keys" },
-      { label: "Modelos", href: "https://console.groq.com/docs/models" },
-    ],
-  },
-  deepseek: {
-    label: "DeepSeek (chave)",
-    baseUrl: "https://api.deepseek.com/v1",
-    model: "deepseek-chat",
-    kind: "openai",
-    keyPlaceholder: "sk-...",
-    links: [
-      { label: "Criar chave", href: "https://platform.deepseek.com/api_keys" },
-      { label: "Modelos", href: "https://api-docs.deepseek.com/quick_start/pricing" },
-    ],
-  },
-  mistral: {
-    label: "Mistral (chave)",
-    baseUrl: "https://api.mistral.ai/v1",
-    model: "mistral-small-latest",
-    kind: "openai",
-    links: [
-      { label: "Criar chave", href: "https://console.mistral.ai/api-keys/" },
-      { label: "Modelos", href: "https://docs.mistral.ai/getting-started/models/models_overview/" },
-    ],
-  },
-  xai: {
-    label: "xAI Grok (chave)",
-    baseUrl: "https://api.x.ai/v1",
-    model: "grok-3-mini",
-    kind: "openai",
-    keyPlaceholder: "xai-...",
-    links: [
-      { label: "Criar chave", href: "https://console.x.ai/" },
-      { label: "Modelos", href: "https://docs.x.ai/docs/models" },
-    ],
-  },
-  ollama: {
-    label: "Ollama local",
-    baseUrl: "http://ollama:11434/v1",
-    model: "qwen2.5:0.5b",
-    kind: "openai",
-    links: [{ label: "Modelos", href: "https://ollama.com/library" }],
-  },
-  llamaLocal: {
-    label: "llama.cpp embutido",
-    baseUrl: "",
-    model: "qwen2.5-0.5b-instruct-q4_k_m",
-    kind: "openai",
-    links: [{ label: "Modelos GGUF", href: "https://huggingface.co/models?library=gguf" }],
-  },
-  custom: { label: "Personalizado", baseUrl: "", model: "", kind: "openai" },
-};
+type FetchStatus = "idle" | "loading" | "ready" | "error" | "needs-key";
 
-const DEEPGRAM_MODELS = ["nova-3", "nova-2", "nova-1", "enhanced", "base"];
-const DEEPGRAM_KEY_URL = "https://console.deepgram.com/";
-const DEEPGRAM_MODELS_URL = "https://developers.deepgram.com/docs/models-languages-overview";
-const WHISPER_CATALOG_URL = "https://huggingface.co/ggerganov/whisper.cpp/tree/main";
+const MODEL_PREVIEW = 6;
 
-// A análise fala o formato /chat/completions. Google Gemini entra pelo endpoint
-// compatível com OpenAI; provedores com formato próprio (Anthropic, Responses)
-// só aparecem através de um gateway como OpenRouter ou OpenCode. Por isso a
-// lista de modelos é curada onde o /models não diz o formato de cada um.
-// Modelos que pensam antes de responder. Nao servem de padrao para analisar
-// notas: gastam o teto de tokens raciocinando e demoram mais. A interface os
-// marca para o usuario escolher com o custo na frente.
-const REASONING_MODELS = new Set([
-  "deepseek-v4.1-flash-free",
-  "deepseek-v4.1-flash",
-  "deepseek-v4-pro",
-  "glm-5.3",
-  "longcat-2.0",
-  "qwen3.8-max",
-  "minimax-m3",
-  "hy3",
-]);
-
-function isReasoningModel(model: string): boolean {
-  return REASONING_MODELS.has(model);
-}
-
-const ZEN_MODELS = [
-  "glm-5.3-flash-free",
-  "glm-5.3-flash",
-  "kimi-k2.7-code",
-  "space-bunny-free",
-  "deepseek-v4.1-flash-free",
-  "deepseek-v4.1-flash",
-  "qwen3.8-max",
-  "minimax-m3",
+const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
+  { id: "transcricao", label: "Transcrição", icon: <WaveIcon size={12} /> },
+  { id: "analise", label: "Análise", icon: <SparkIcon size={12} /> },
+  { id: "projetos", label: "Projetos", icon: <AllNotebooksIcon size={12} /> },
+  { id: "autor", label: "Autor", icon: <UserIcon size={12} /> },
+  { id: "cofre", label: "Cofre", icon: <KeyIcon size={12} /> },
+  { id: "dados", label: "Lixeira", icon: <TrashIcon size={12} /> },
 ];
 
-const GO_MODELS = [
-  "glm-5.3-flash",
-  "kimi-k2.7-code",
-  "space-bunny",
-  "deepseek-v4.1-flash",
-  "deepseek-v4-pro",
-  "glm-5.3",
-  "longcat-2.0",
-  "hy3",
+const SUMMARY_DETAIL_OPTIONS: { value: SummaryDetail; label: string }[] = [
+  { value: "concise", label: "Enxuto" },
+  { value: "full", label: "Completo" },
 ];
 
-const OPENCODE_MODELS = [
-  "opencode-go/qwen3.8-flash",
-  "opencode-go/glm-5.3-flash",
-  "opencode-go/claude-haiku-5-5",
-  "opencode-go/gpt-6-luna",
-  "deepseek/deepseek-chat",
-];
+const IDLE_HOURS = [6, 12, 24, 48];
 
-const FALLBACK_MODELS: Record<string, string[]> = {
-  opencodeZen: ZEN_MODELS,
-  opencodeGo: GO_MODELS,
-  opencodeLocal: OPENCODE_MODELS,
-  openrouter: [
-    "google/gemini-2.5-flash",
-    "openai/gpt-4.1-mini",
-    "anthropic/claude-sonnet-4",
-    "deepseek/deepseek-chat-v3.1",
-  ],
-  google: ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"],
-  groq: ["llama-3.3-70b-versatile", "openai/gpt-oss-120b", "qwen/qwen3-32b"],
-  deepseek: ["deepseek-chat", "deepseek-reasoner"],
-  mistral: ["mistral-small-latest", "mistral-large-latest", "open-mistral-nemo"],
-  xai: ["grok-3-mini", "grok-3", "grok-4-fast"],
-  llamaLocal: [],
-  ollama: [],
-  custom: [],
-};
-
-function providerFromSettings(kind: string, baseUrl: string, localRuntime: string): string {
-  if (localRuntime === "embedded") {
-    return "llamaLocal";
-  }
-  if (localRuntime === "ollama") {
-    return "ollama";
-  }
-  if (kind === "opencode") {
-    return "opencodeLocal";
-  }
-  if (baseUrl.includes("opencode.ai/inference/go/")) {
-    return "opencodeGo";
-  }
-  if (baseUrl.includes("opencode.ai/inference/")) {
-    return "opencodeZen";
-  }
-  if (baseUrl.includes("openrouter.ai")) {
-    return "openrouter";
-  }
-  if (baseUrl.includes("generativelanguage.googleapis.com")) {
-    return "google";
-  }
-  if (baseUrl.includes("api.groq.com")) {
-    return "groq";
-  }
-  if (baseUrl.includes("deepseek")) {
-    return "deepseek";
-  }
-  if (baseUrl.includes("api.mistral.ai")) {
-    return "mistral";
-  }
-  if (baseUrl.includes("api.x.ai")) {
-    return "xai";
-  }
-  if (baseUrl.includes("ollama") || baseUrl.includes("11434")) {
-    return "ollama";
-  }
-  return "custom";
-}
-
-/** Modelos do OpenCode vem de uma lista curada: o /models deles não diz o formato de cada um. */
-function canSearchModels(provider: string): boolean {
-  return provider !== "opencodeZen" && provider !== "opencodeGo" && provider !== "ollama" && provider !== "llamaLocal";
-}
-
-/** Runtime local de um provedor, ou vazio quando a análise usa a nuvem. */
-function localRuntimeOf(provider: string): "ollama" | "embedded" | null {
-  if (provider === "llamaLocal") {
-    return "embedded";
-  }
-  if (provider === "ollama") {
-    return "ollama";
-  }
-  return null;
-}
-
-/** Estado da chave em uma linha: preenchido quando ja existe uma guardada. */
-function KeyState({ defined }: { defined: boolean }) {
-  return <span className={`key-state${defined ? " key-state--on" : ""}`}>{defined ? "definida" : "ausente"}</span>;
-}
-
-/** Atalhos do console do provedor, abertos em outra aba. */
-function KeyLinks({ links }: { links?: { label: string; href: string }[] }) {
-  if (!links?.length) {
-    return null;
-  }
-  return (
-    <span className="key-links">
-      {links.map((link) => (
-        <a key={link.href} href={link.href} target="_blank" rel="noreferrer">
-          {link.label}
-        </a>
-      ))}
-    </span>
-  );
-}
-
-export function SettingsView({ refreshKey = 0, onBack }: { refreshKey?: number; onBack?: () => void }) {
+export function SettingsView({
+  refreshKey = 0,
+  onBack,
+  onOpenLab,
+  onOpenProject,
+}: {
+  refreshKey?: number;
+  onBack?: () => void;
+  /** Abre a tela de processamento local (fila, modelos e perfil do worker). */
+  onOpenLab?: () => void;
+  /** Abre o projeto do MCP no caderno Projetos. */
+  onOpenProject?: (notebookId: string, entryId: string) => void;
+}) {
   const { notify } = useToast();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [ownerName, setOwnerName] = useState("");
+
+
+  // A sessao do Drive vive fora do React: ouvir mantem botao e marcas em dia
+  // quando conecta, vence ou desconecta.
+  useEffect(() => onDriveSessionChange(() => setDriveState(driveSessionState())), []);
+
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [progress, setProgress] = useState<Record<string, DownloadProgress>>({});
   const [ceiling, setCeiling] = useState("0");
   const [apiKey, setApiKey] = useState("");
+  const [keyEditing, setKeyEditing] = useState(false);
   const [deepgramKey, setDeepgramKey] = useState("");
-  const [themes, setThemes] = useState("");
+  const [themes, setThemes] = useState<string[]>([]);
+  const [themeDraft, setThemeDraft] = useState("");
   const [provider, setProvider] = useState("custom");
   const [providerModels, setProviderModels] = useState<string[]>([]);
   const [modelsNote, setModelsNote] = useState("");
   const [local, setLocal] = useState<LocalAnalysis | null>(null);
   const [localBusy, setLocalBusy] = useState(false);
   const [error, setError] = useState("");
+  const [projects, setProjects] = useState<McpProject[] | null>(null);
+  const [projectsError, setProjectsError] = useState("");
+  const [mcpNotebook, setMcpNotebook] = useState("");
+  const [copied, setCopied] = useState<"command" | "file" | "token" | "endpoint" | "code" | null>(null);
+  const [mcpSnippet, setMcpSnippet] = useState<"command" | "file">("command");
+  const [projectErrors, setProjectErrors] = useState<Record<string, string>>({});
+  const [showArchived, setShowArchived] = useState(false);
 
-  const searchable = canSearchModels(provider);
+  // UI state
+  const [activeTab, setActiveTab] = useState<TabId>("analise");
+  const [modelFilter, setModelFilter] = useState("");
+  const [driveState, setDriveState] = useState<DriveSessionState>(() => driveSessionState());
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [backupStatus, setBackupStatus] = useState("");
+  const [fetchStatus, setFetchStatus] = useState<FetchStatus>("idle");
+  const [fetchError, setFetchError] = useState("");
+  const [deepgramBusy, setDeepgramBusy] = useState(false);
+  const [showAllModels, setShowAllModels] = useState(false);
+  const [savedOn, setSavedOn] = useState(false);
+  const [diagnosticsOn, setDiagnosticsOn] = useState(true);
+  const savedTimer = useRef<number | undefined>(undefined);
+
+  useEffect(() => {
+    void readTelemetryEnabled().then(setDiagnosticsOn);
+  }, []);
+
+  // Id da requisicao em andamento, para descartar respostas obsoletas.
+  const fetchReqId = useRef(0);
+
   const localRuntime = localRuntimeOf(provider);
   const preset = PROVIDER_PRESETS[provider];
   const currentLocal = localRuntime && local?.runtime === localRuntime ? local : null;
+
+  const flashSaved = useCallback(() => {
+    setSavedOn(true);
+    window.clearTimeout(savedTimer.current);
+    savedTimer.current = window.setTimeout(() => setSavedOn(false), 1400);
+  }, []);
+
+  useEffect(() => () => window.clearTimeout(savedTimer.current), []);
+
+  const whisperModels = useMemo(() => {
+    const bySize = [...models].sort((a, b) => a.size_mb - b.size_mb);
+    const seen = new Set<string>();
+    return bySize.filter((m) => {
+      if (seen.has(m.name)) return false;
+      seen.add(m.name);
+      return true;
+    });
+  }, [models]);
+
+  const analysisModels = useMemo(() => {
+    if (localRuntime) {
+      const localModels = currentLocal?.models?.length ? currentLocal.models : currentLocal?.model ? [currentLocal.model] : [];
+      return [...new Set([...localModels, settings?.analyze_model ?? ""])].filter((m) => m !== "");
+    }
+    if (providerModels.length > 0) return providerModels;
+    const fallback = FALLBACK_MODELS[provider] ?? [];
+    return [...new Set([...fallback, settings?.analyze_model ?? ""])].filter((m) => m !== "");
+  }, [provider, providerModels, localRuntime, currentLocal, settings?.analyze_model]);
+
+  const filteredModels = useMemo(() => {
+    const needle = modelFilter.trim().toLowerCase();
+    const list = needle === "" ? analysisModels : analysisModels.filter((m) => m.toLowerCase().includes(needle));
+    if (showAllModels || list.length <= MODEL_PREVIEW) return list;
+    const preview = list.slice(0, MODEL_PREVIEW);
+    const selected = settings?.analyze_model ?? "";
+    return selected && list.includes(selected) && !preview.includes(selected) ? [...preview, selected] : preview;
+  }, [analysisModels, modelFilter, settings?.analyze_model, showAllModels]);
+
   const deepgramModels = useMemo(() => {
     const current = settings?.deepgram_model ?? "";
     return [...new Set([...DEEPGRAM_MODELS, current])].filter((model) => model !== "");
   }, [settings?.deepgram_model]);
-  const modelOptions = useMemo(() => {
-    const fallback = localRuntime
-      ? (currentLocal?.models?.length ? currentLocal.models : currentLocal?.model ? [currentLocal.model] : [])
-      : FALLBACK_MODELS[provider] ?? [];
-    const remote = !localRuntime && searchable ? providerModels : [];
-    const list = remote.length > 0 ? remote : fallback;
-    const current = settings?.analyze_model ?? "";
-    return [...new Set([...list, current])].filter((model) => model !== "");
-  }, [provider, providerModels, settings?.analyze_model, currentLocal, searchable, localRuntime]);
+
+  const modelCountNote = (() => {
+    if (fetchStatus === "loading") return "buscando";
+    if (localRuntime) return `${analysisModels.length} locais`;
+    if (fetchStatus === "ready") return `${analysisModels.length} do provedor`;
+    return `${analysisModels.length} no catálogo`;
+  })();
 
   const loadSettings = useCallback(async () => {
     const value = await api.getSettings();
     setSettings(value);
     setCeiling(String(value.max_whisper_rss_mb));
-    setThemes(value.analysis_themes ?? "");
+    setThemes(
+      (value.analysis_themes ?? "")
+        .split(",")
+        .map((theme) => theme.trim())
+        .filter((theme) => theme !== ""),
+    );
     setProvider(providerFromSettings(value.analyze_provider, value.analyze_base_url, value.analyze_local_runtime ?? ""));
   }, []);
 
@@ -351,11 +218,25 @@ export function SettingsView({ refreshKey = 0, onBack }: { refreshKey?: number; 
     }
   }, []);
 
+  const loadProjects = useCallback(async () => {
+    try {
+      const [result, notebooks] = await Promise.all([api.mcpProjects(), api.listNotebooks(false)]);
+      setProjectsError("");
+      setProjects(result.projects ?? []);
+      const mcp = (notebooks.notebooks ?? []).find((notebook) => notebook.kind === "mcp");
+      setMcpNotebook(mcp?.id ?? "");
+    } catch {
+      setProjects([]);
+      setProjectsError("Falha ao carregar os projetos.");
+    }
+  }, []);
+
   useEffect(() => {
     loadSettings().catch((err: unknown) => setError(err instanceof Error ? err.message : "falha ao carregar"));
     loadModels().catch((err: unknown) => setError(err instanceof Error ? err.message : "falha ao carregar"));
     void loadLocal("ollama");
-  }, [loadSettings, loadModels, loadLocal]);
+    void loadProjects();
+  }, [loadSettings, loadModels, loadLocal, loadProjects, refreshKey]);
 
   useEffect(() => {
     if (localRuntime) {
@@ -398,7 +279,8 @@ export function SettingsView({ refreshKey = 0, onBack }: { refreshKey?: number; 
       await api.putSettings(patch);
       await loadSettings();
       setError("");
-      notify(message, "success");
+      flashSaved();
+      if (message !== "") notify(message, "success");
       return true;
     } catch (err) {
       notify(err instanceof Error ? err.message : "falha ao salvar", "error");
@@ -406,29 +288,114 @@ export function SettingsView({ refreshKey = 0, onBack }: { refreshKey?: number; 
     }
   };
 
-  const fetchModels = useCallback(async () => {
-    setModelsNote("Buscando modelos...");
+  /** Troca o detalhe do resumo MCP de um projeto, otimista e com volta em erro. */
+  const setProjectDetail = async (project: McpProject, value: SummaryDetail) => {
+    const previous = project.summary_detail ?? "concise";
+    if (previous === value) return;
+    setProjectErrors((current) => {
+      const next = { ...current };
+      delete next[project.id];
+      return next;
+    });
+    setProjects((current) => current?.map((p) => (p.id === project.id ? { ...p, summary_detail: value } : p)) ?? current);
+    try {
+      await api.patchEntry(project.id, { summary_detail: value });
+      flashSaved();
+    } catch {
+      setProjects((current) => current?.map((p) => (p.id === project.id ? { ...p, summary_detail: previous } : p)) ?? current);
+      setProjectErrors((current) => ({ ...current, [project.id]: "Falha ao salvar." }));
+    }
+  };
+
+  const setProjectArchived = async (project: McpProject, archived: boolean) => {
+    setProjects((current) => current?.map((p) => (p.id === project.id ? { ...p, archived } : p)) ?? current);
+    try {
+      await api.patchEntry(project.id, { archived });
+      flashSaved();
+    } catch {
+      setProjects((current) => current?.map((p) => (p.id === project.id ? { ...p, archived: !archived } : p)) ?? current);
+      setProjectErrors((current) => ({ ...current, [project.id]: "Falha ao salvar." }));
+    }
+  };
+
+  /** Busca a lista de modelos do provedor, salvando primeiro quando e preciso. */
+  const fetchAnalyzeModels = useCallback(async () => {
+    const reqId = ++fetchReqId.current;
+    setFetchStatus("loading");
+    setFetchError("");
     try {
       const result = await api.listAnalyzeModels();
+      if (reqId !== fetchReqId.current) return;
       const list = result.models ?? [];
       setProviderModels(list);
-      setModelsNote(
-        list.length > 0 ? `${list.length} modelos encontrados.` : "Nenhum modelo retornado pelo provedor.",
-      );
+      setFetchStatus(list.length > 0 ? "ready" : "error");
+      setModelsNote(list.length > 0 ? "" : "Nenhum modelo retornado.");
     } catch (err) {
+      if (reqId !== fetchReqId.current) return;
       setProviderModels([]);
-      setModelsNote(err instanceof Error ? err.message : "falha ao buscar modelos");
+      setFetchStatus("error");
+      setFetchError(err instanceof Error ? err.message : "falha ao buscar modelos");
+      setModelsNote("");
     }
   }, []);
 
-  useEffect(() => {
-    if (settings?.analyze_base_url && searchable) {
-      void fetchModels();
-    }
-  }, [settings?.analyze_base_url, searchable, fetchModels]);
+  const selectProvider = async (id: string) => {
+    setProvider(id);
+    setProviderModels([]);
+    setApiKey("");
+    setShowAllModels(false);
+    setModelFilter("");
+    setFetchStatus("idle");
+    setFetchError("");
+    setModelsNote("");
+    const p = PROVIDER_PRESETS[id];
+    if (!p) return;
 
-  // Enquanto o modelo baixa, o painel acompanha pelo mesmo endpoint que iniciou
-  // o download; quando termina, recarrega as configurações para refletir o modelo.
+    if (id === "llamaLocal" || id === "ollama") {
+      void installLocal(id === "llamaLocal" ? "embedded" : "ollama");
+      return;
+    }
+
+    const ok = await save(
+      {
+        analyze_provider: p.kind,
+        analyze_base_url: p.baseUrl,
+        analyze_model: p.model,
+        analyze_local_runtime: "",
+        analyze_enabled: true,
+      },
+      "Provedor atualizado",
+    );
+    if (!ok) {
+      await loadSettings();
+      return;
+    }
+
+    if (p.keyRequired && !(settings?.analyze_api_key_set ?? false)) {
+      setFetchStatus("needs-key");
+      return;
+    }
+    if (canSearchModels(id)) {
+      void fetchAnalyzeModels();
+    } else {
+      setFetchStatus("ready");
+    }
+  };
+
+  /** Salva a chave e, quando o provedor permite, ja testa a busca de modelos. */
+  const saveAnalyzeKey = async () => {
+    const key = apiKey.trim();
+    if (key === "") return;
+    const saved = await save({ analyze_api_key: key }, "Chave salva");
+    if (!saved) return;
+    setApiKey("");
+    setKeyEditing(false);
+    if (preset?.searchable) {
+      setFetchStatus("idle");
+      await fetchAnalyzeModels();
+    }
+  };
+
   const pulling = Boolean(currentLocal?.pull && !currentLocal.pull.done && !currentLocal.pull.error);
   useEffect(() => {
     if (!pulling || !localRuntime) {
@@ -447,12 +414,11 @@ export function SettingsView({ refreshKey = 0, onBack }: { refreshKey?: number; 
     }
   }, [pullDone, loadSettings, loadLocal, localRuntime]);
 
-  /** Um clique: configura o runtime local e baixa o modelo se ainda faltar. */
   const installLocal = async (runtime: "ollama" | "embedded", model?: string) => {
-    const preset = runtime === "embedded" ? PROVIDER_PRESETS.llamaLocal : PROVIDER_PRESETS.ollama;
+    const p = runtime === "embedded" ? PROVIDER_PRESETS.llamaLocal : PROVIDER_PRESETS.ollama;
     const saved = localRuntime === runtime ? settings?.analyze_model?.trim() : "";
     const current = local?.runtime === runtime ? local : null;
-    const target = model || saved || current?.model || preset.model;
+    const target = model || saved || current?.model || p.model;
     setLocalBusy(true);
     try {
       const result = await api.setupLocalAnalysis(runtime, target);
@@ -467,34 +433,12 @@ export function SettingsView({ refreshKey = 0, onBack }: { refreshKey?: number; 
         result.status === "ready" ? "success" : "info",
       );
     } catch (err) {
-      // O seletor ja mudou na tela; volta para o provedor que esta salvo.
       await loadSettings();
       notify(err instanceof Error ? err.message : "não foi possível configurar a análise local", "error");
     } finally {
       setLocalBusy(false);
     }
   };
-
-  const localHint = (() => {
-    if (!currentLocal) {
-      return provider === "llamaLocal" ? "Verificando o llama.cpp..." : "Verificando o Ollama local...";
-    }
-    if (provider === "llamaLocal") {
-      if (!currentLocal.available) {
-        return "llama.cpp não está disponível nesta imagem; use o Ollama local ou um provedor.";
-      }
-      if (!currentLocal.downloaded) {
-        return currentLocal.size_mb ? `Modelo local ausente (~${currentLocal.size_mb} MB).` : "Modelo local ausente.";
-      }
-      return currentLocal.running
-        ? "llama.cpp pronto e rodando."
-        : "llama.cpp pronto; carrega na primeira análise.";
-    }
-    if (currentLocal.available) {
-      return `Ollama no ar em ${currentLocal.base_url}, com ${currentLocal.models.length} modelo(s) instalado(s).`;
-    }
-    return `Ollama não encontrado em ${currentLocal.base_url}. Confira se o serviço ollama está no ar.`;
-  })();
 
   const download = async (name: string) => {
     try {
@@ -509,157 +453,189 @@ export function SettingsView({ refreshKey = 0, onBack }: { refreshKey?: number; 
     }
   };
 
-  return (
-    <section className="settings-page">
-      <header className="page-head">
-        {onBack && (
-          <button type="button" className="page-back" onClick={onBack} aria-label="Voltar" title="Voltar">
-            <ChevronIcon size={16} />
-          </button>
-        )}
-        <div>
-          <h1>Configurações</h1>
-          <p>Transcrição, análise por IA e o que fica guardado no servidor.</p>
+  const localHint = (() => {
+    if (!currentLocal) {
+      return provider === "llamaLocal" ? "Verificando o llama.cpp..." : "Verificando o Ollama local...";
+    }
+    if (provider === "llamaLocal") {
+      if (!currentLocal.available) return "llama.cpp indisponível nesta imagem.";
+      if (!currentLocal.downloaded) return currentLocal.size_mb ? `Modelo ausente (~${currentLocal.size_mb} MB).` : "Modelo ausente.";
+      return currentLocal.running ? "llama.cpp pronto e rodando." : "llama.cpp pronto; carrega na primeira análise.";
+    }
+    if (currentLocal.available) return `Ollama no ar · ${currentLocal.models.length} modelo(s)`;
+    return `Ollama fora do ar em ${currentLocal.base_url}`;
+  })();
+
+  // ---------- derivados de estado ----------
+  const transcribeProvider = settings?.transcribe_provider ?? "whisper";
+  const tpPreset = TRANSCRIBE_PROVIDERS[transcribeProvider as keyof typeof TRANSCRIBE_PROVIDERS];
+  const analyzeProviderId = providerFromSettings(
+    settings?.analyze_provider ?? "openai",
+    settings?.analyze_base_url ?? "",
+    settings?.analyze_local_runtime ?? "",
+  );
+  const analyzePreset = PROVIDER_PRESETS[analyzeProviderId];
+  const analyzeLabel = analyzePreset ? analyzePreset.short : (settings?.analyze_provider ?? "");
+  const visibleProjects = (projects ?? []).filter((project) => showArchived || !project.archived);
+  const archivedCount = (projects ?? []).filter((project) => project.archived).length;
+  const openSessions = (projects ?? []).filter((project) => project.state === "open").length;
+
+  const mcpEndpoint = `${window.location.origin}/mcp`;
+  const mcpCommand = (token: string) =>
+    `opencode mcp add dyarium --global --url "${mcpEndpoint}" --header "Authorization=Bearer ${token}" --header "X-Dyarium-Host=$(hostname -s)"`;
+  const mcpFile = (token: string) => `{
+  "mcp": {
+    "servers": {
+      "dyarium": {
+        "type": "remote",
+        "url": "${mcpEndpoint}",
+        "oauth": false,
+        "headers": {
+          "Authorization": "Bearer ${token}",
+          "X-Dyarium-Host": "nome-da-maquina"
+        }
+      }
+    }
+  }
+}`;
+
+  const copy = async (kind: "command" | "file" | "token" | "endpoint", text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(kind);
+      window.setTimeout(() => setCopied(null), 1500);
+    } catch {
+      notify("Não foi possível copiar", "error");
+    }
+  };
+
+  const providerOptions = useMemo(() => {
+    if (!settings) return [];
+    return [...LOCAL_PROVIDER_IDS, ...CLOUD_PROVIDER_IDS].map((id) => {
+      const p = PROVIDER_PRESETS[id];
+      const local = Boolean(p.localRuntime);
+      const service = id === "opencodeLocal";
+      const missing = Boolean(p.keyRequired) && !settings.analyze_api_key_set;
+      const meta = local ? "local" : service ? "serviço" : p.keyRequired ? (missing ? "sem chave" : "chave ok") : "URL";
+      return { value: id, label: p.short, meta, missing };
+    });
+  }, [settings]);
+
+  // ---------- conteudo ----------
+  const renderTranscription = (s: Settings) => (
+    <>
+      <div className="cfg-block">
+        <div className="cfg-field">
+          <span className="cfg-name">Provedor</span>
+          <ProviderSelect
+            label={tpPreset?.short ?? transcribeProvider}
+            meta={
+              transcribeProvider === "deepgram"
+                ? s.deepgram_api_key_set
+                  ? "nuvem · chave ok"
+                  : "nuvem · chave ausente"
+                : "local · 5 modelos"
+            }
+            value={transcribeProvider}
+            options={[
+              { value: "whisper", label: TRANSCRIBE_PROVIDERS.whisper.short, meta: "local" },
+              {
+                value: "deepgram",
+                label: TRANSCRIBE_PROVIDERS.deepgram.short,
+                meta: s.deepgram_api_key_set ? "chave ok" : "sem chave",
+                missing: !s.deepgram_api_key_set,
+              },
+            ]}
+            onChange={(value) => void save({ transcribe_provider: value }, "Provedor atualizado")}
+          />
         </div>
-      </header>
-      {error && <p className="error">{error}</p>}
+      </div>
 
-      {!settings && <ListSkeleton rows={4} />}
-
-      {settings && (
+      {s.transcribe_provider === "whisper" ? (
         <>
-          <div className="card">
-            <div className="card-head">
-              <h2>Modelos de transcrição</h2>
-              <p className="hint">
-                Modelos ggml do whisper. O modelo ativo vale para as próximas transcrições.{" "}
-                <a href={WHISPER_CATALOG_URL} target="_blank" rel="noreferrer">
-                  Catálogo
-                </a>
-              </p>
-            </div>
-            <ul className="model-list stagger-in">
-              {models.map((model) => {
+          <div className="cfg-block">
+            <p className="cfg-label">
+              Modelo
+              <span className="n">
+                {whisperModels.filter((m) => m.downloaded).length} de {whisperModels.length} baixados
+              </span>
+              <a className="cfg-link" style={{ marginLeft: 8 }} href={WHISPER_CATALOG_URL} target="_blank" rel="noreferrer">
+                catálogo
+              </a>
+              <button
+                type="button"
+                className="cfg-link"
+                style={{ marginLeft: 8 }}
+                onClick={() => void loadModels()}
+                aria-label="Atualizar lista de modelos"
+              >
+                atualizar
+              </button>
+            </p>
+            <div className="cfg-table" role="radiogroup" aria-label="Modelo de transcrição">
+              <div className="cfg-row-head" aria-hidden="true">
+                <span />
+                <span>Tamanho</span>
+                <span>Qualidade</span>
+              </div>
+              {whisperModels.map((model) => {
                 const p = progress[model.name];
-                const percent =
-                  p && p.total > 0 ? Math.min(100, Math.round((p.received / p.total) * 100)) : 0;
+                const percent = p && p.total > 0 ? Math.min(100, Math.round((p.received / p.total) * 100)) : 0;
+                const quality = whisperQuality(whisperModelLabel(model.name));
+                const selected = s.whisper_model === model.path;
                 return (
-                  <li key={model.name} className="model-item">
-                    <label className="model-name">
+                  <div key={model.name} className="cfg-model-row" data-on={selected ? "1" : undefined}>
+                    <span className="cfg-pick">
                       <input
                         type="radio"
-                        name="active-model"
-                        checked={settings.whisper_model === model.path}
+                        name="whisper-model"
+                        value={model.path}
+                        checked={selected}
                         disabled={!model.downloaded}
                         onChange={() => void save({ whisper_model: model.path }, "Modelo ativo atualizado")}
+                        aria-label={whisperModelLabel(model.name)}
                       />
-                      <span>{model.name}</span>
-                    </label>
-                    <span className="muted">
-                      ~{model.size_mb} MB{" "}
-                      {model.downloaded ? `(${Math.round(model.local_bytes / 1048576)} MB baixados)` : "(ausente)"}
+                      <b>{whisperModelLabel(model.name)}</b>
+                      {selected && <span className="cfg-pick-tag">escolhido</span>}
+                    </span>
+                    <span className="cfg-row-num">
+                      {model.size_mb} MB{model.downloaded ? "" : " · ausente"}
+                    </span>
+                    <span className="cfg-row-q">
+                      <Meter level={quality.score} />
+                      {quality.label.toLowerCase()}
                     </span>
                     {!model.downloaded && (
-                      <button
-                        type="button"
-                        className="button button--ghost button--small"
-                        onClick={() => void download(model.name)}
-                        disabled={p && !p.done}
-                      >
-                        {p && !p.done ? "Baixando..." : "Baixar"}
-                      </button>
-                    )}
-                    {p && !p.done && (
-                      <span className="ram-track" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}>
-                        <span className="ram-fill" style={{ width: `${percent}%` }} />
+                      <span className="cfg-download">
+                        <button
+                          type="button"
+                          className="cfg-btn cfg-btn--quiet"
+                          onClick={() => void download(model.name)}
+                          disabled={Boolean(p && !p.done)}
+                        >
+                          {p && !p.done ? "baixando" : "baixar"}
+                        </button>
+                        {p && !p.done && (
+                          <span className="cfg-meter" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}>
+                            <i className="f" style={{ width: `${percent}%` }} />
+                          </span>
+                        )}
+                        {p && p.error && <span className="cfg-state" data-state="bad">{p.error}</span>}
                       </span>
                     )}
-                    {p && p.error && <span className="error">Falha no download: {p.error}</span>}
-                  </li>
+                  </div>
                 );
               })}
-            </ul>
+            </div>
           </div>
 
-          <div className="card">
-            <div className="card-head">
-              <h2>Transcrição</h2>
-              <p className="hint">Como o audio vira texto.</p>
-            </div>
-            <div className="field">
-              <span className="field-label">Provedor</span>
-              <select
-                aria-label="Provedor de transcrição"
-                value={settings.transcribe_provider}
-                onChange={(event) => void save({ transcribe_provider: event.target.value })}
-              >
-                <option value="whisper">Whisper local</option>
-                <option value="deepgram">Deepgram (API na nuvem)</option>
-              </select>
-            </div>
-            {settings.transcribe_provider === "deepgram" && (
-              <>
-                <div className="field">
-                  <span className="field-label">Modelo Deepgram</span>
-                  <select
-                    aria-label="Modelo Deepgram"
-                    value={settings.deepgram_model}
-                    onChange={(event) => void save({ deepgram_model: event.target.value })}
-                  >
-                    {deepgramModels.map((model) => (
-                      <option key={model} value={model}>
-                        {model}
-                      </option>
-                    ))}
-                  </select>
-                  <span className="key-links">
-                    <a href={DEEPGRAM_MODELS_URL} target="_blank" rel="noreferrer">
-                      Modelos e preços
-                    </a>
-                  </span>
-                </div>
-                <div className="field">
-                  <span className="field-label">
-                    Chave da Deepgram <KeyState defined={settings.deepgram_api_key_set} />
-                  </span>
-                  <div className="field-control">
-                    <input
-                      type="password"
-                      aria-label="Chave da Deepgram"
-                      placeholder={settings.deepgram_api_key_set ? "definida (deixe vazio para manter)" : "cole a chave da Deepgram"}
-                      value={deepgramKey}
-                      onChange={(event) => setDeepgramKey(event.target.value)}
-                    />
-                    <button
-                      type="button"
-                      className="button button--ghost button--small"
-                      onClick={() => {
-                        const key = deepgramKey.trim();
-                        if (key === "") return;
-                        // So limpa o campo quando o servidor confirmou; antes, uma
-                        // falha de rede apagava a chave digitada.
-                        void save({ deepgram_api_key: key }, "Chave da Deepgram salva").then((ok) => {
-                          if (ok) setDeepgramKey("");
-                        });
-                      }}
-                    >
-                      Salvar chave da Deepgram
-                    </button>
-                  </div>
-                  <span className="key-links">
-                    <a href={DEEPGRAM_KEY_URL} target="_blank" rel="noreferrer">
-                      Criar chave na Deepgram
-                    </a>
-                  </span>
-                </div>
-              </>
-            )}
-            <div className="field">
-              <span className="field-label">Idioma</span>
+          <div className="cfg-block">
+            <div className="cfg-field">
+              <span className="cfg-name">Idioma</span>
               <select
                 aria-label="Idioma da transcrição"
-                value={settings.whisper_language}
-                onChange={(event) => void save({ whisper_language: event.target.value })}
+                value={s.whisper_language}
+                onChange={(event) => void save({ whisper_language: event.target.value }, "")}
               >
                 <option value="">Detectar automaticamente</option>
                 <option value="pt">Português</option>
@@ -675,322 +651,1039 @@ export function SettingsView({ refreshKey = 0, onBack }: { refreshKey?: number; 
                 <option value="hi">Hindi</option>
               </select>
             </div>
-            <div className="field">
-              <span className="field-label">Corte de silêncio</span>
-              <Toggle
-                checked={settings.trim_silence}
-                onChange={(value) => void save({ trim_silence: value })}
-                label={settings.trim_silence ? "Ligado" : "Desligado"}
-              />
-            </div>
-            <div className="field">
-              <span className="field-label">Limite de RAM (MB)</span>
-              <div className="field-control">
-                <input
-                  type="number"
-                  min={0}
-                  aria-label="Limite de RAM da transcrição em MB"
-                  value={ceiling}
-                  onChange={(event) => setCeiling(event.target.value)}
-                />
-                <button
-                  type="button"
-                  className="button button--ghost button--small"
-                  onClick={() => void save({ max_whisper_rss_mb: Math.max(0, Math.floor(Number(ceiling) || 0)) })}
-                >
-                  Salvar
-                </button>
-                <span className="hint">0 significa sem limite</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="card">
-            <div className="card-head">
-              <h2>Autor</h2>
-              <p className="hint">
-                O nome que a IA e o centro do mapa usam. O interruptor vale para notas sem escolha manual;
-                o seletor de cada nota sempre vence.
-              </p>
-            </div>
-            <div className="field">
-              <span className="field-label">Seu nome</span>
+            <div className="cfg-field">
+              <span className="cfg-name">Limite de RAM</span>
               <input
-                type="text"
-                aria-label="Seu nome"
-                value={ownerName}
-                maxLength={80}
-                placeholder="Você"
-                onChange={(event) => setOwnerName(event.target.value)}
+                type="number"
+                min={0}
+                aria-label="Limite de RAM da transcrição em MB"
+                value={ceiling}
+                onChange={(event) => setCeiling(event.target.value)}
                 onBlur={() => {
-                  const next = ownerName.trim();
-                  if (next !== (settings.owner_name ?? "")) {
-                    void save({ owner_name: next }, "Nome salvo");
-                  }
+                  const next = Math.max(0, Math.floor(Number(ceiling) || 0));
+                  if (next !== s.max_whisper_rss_mb) void save({ max_whisper_rss_mb: next }, "");
                 }}
               />
-            </div>
-            <div className="field">
-              <span className="field-label">Todas as notas são minhas</span>
-              <Toggle
-                checked={settings.all_notes_mine}
-                onChange={(value) => void save({ all_notes_mine: value })}
-                label={settings.all_notes_mine ? "Ligado" : "Desligado"}
-                ariaLabel="Todas as notas são minhas"
-              />
-              <span className="hint">
-                Desligado, uma nota sem escolha manual fica sem autor. O seletor da nota sempre vence.
-              </span>
+              <span className="cfg-meta">MB</span>
+              <span className="cfg-state">0 = sem limite</span>
             </div>
           </div>
-
-          <div className="card">
-            <div className="card-head">
-              <h2>Análise por IA</h2>
-              <p className="hint">
-                Escolha o provedor, cole a chave e selecione o modelo. A lista de modelos e buscada do provedor;
-                use Personalizado para informar a base manualmente.
-              </p>
-            </div>
-            <BrowserProcessing embedded />
-            <div className="field">
-              <span className="field-label">Ativar análise</span>
-              <Toggle
-                checked={settings.analyze_enabled}
-                onChange={(value) => void save({ analyze_enabled: value })}
-                label={settings.analyze_enabled ? "Ligada" : "Desligada"}
-              />
-            </div>
-            <div className="field">
-              <span className="field-label">Revisar a transcrição com IA</span>
-              <Toggle
-                checked={settings.review_enabled}
-                onChange={(value) => void save({ review_enabled: value })}
-                label={settings.review_enabled ? "Ligada" : "Desligada"}
-                ariaLabel="Revisar a transcrição com IA"
-              />
-              <span className="hint">
-                Corrige concordância, pontuação e siglas antes de analisar. Desligada, a análise
-                continua funcionando, mas perde precisão sobre o que foi falado. Vale só para este
-                dashboard: a escolha no app é separada.
-              </span>
-            </div>
-            {settings.review_enabled && (
-              <div className="field">
-                <span className="field-label">Transcrição literal</span>
-                <Toggle
-                  checked={settings.literal_transcript}
-                  onChange={(value) => void save({ literal_transcript: value })}
-                  label={settings.literal_transcript ? "Ligada" : "Desligada"}
-                  ariaLabel="Transcrição literal"
-                />
-                <span className="hint">
-                  Mantém hesitações ("éé", "hum") e repetições de gagueira, para quem quer acompanhar
-                  como fala. Desligada, a revisão remove só o que não tem significado; "tipo", "né"
-                  e gírias ficam sempre.
-                </span>
-              </div>
-            )}
-            <div className="field">
-              <span className="field-label">Provedor</span>
+        </>
+      ) : (
+        <>
+          <div className="cfg-block">
+            <div className="cfg-field">
+              <span className="cfg-name">Modelo</span>
               <select
-                aria-label="Provedor da análise"
-                value={provider}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  setProvider(value);
-                  setProviderModels([]);
-                  setModelsNote("");
-                  const preset = PROVIDER_PRESETS[value];
-                  if (value === "ollama" || value === "llamaLocal") {
-                    // O runtime local ja se configura e baixa o modelo em um
-                    // clique; nao salvar a base URL antes de o servico responder.
-                    void installLocal(value === "llamaLocal" ? "embedded" : "ollama");
-                  } else if (preset && value !== "custom") {
-                    void save(
-                      {
-                        analyze_provider: preset.kind,
-                        analyze_base_url: preset.baseUrl,
-                        analyze_model: preset.model,
-                        // Sair do runtime local: a base URL e o runtime antigos
-                        // nao podem continuar valendo.
-                        analyze_local_runtime: "",
-                        // Escolher o provedor ja e a decisao de ligar a análise.
-                        analyze_enabled: true,
-                      },
-                      "Provedor atualizado",
-                    );
-                  } else if (value === "custom") {
-                    void save(
-                      { analyze_provider: "openai", analyze_local_runtime: "" },
-                      "Provedor atualizado",
-                    );
-                  }
-                }}
+                aria-label="Modelo Deepgram"
+                value={s.deepgram_model}
+                onChange={(event) => void save({ deepgram_model: event.target.value }, "")}
               >
-                {Object.entries(PROVIDER_PRESETS).map(([id, preset]) => (
-                  <option key={id} value={id}>
-                    {preset.label}
+                {deepgramModels.map((model) => (
+                  <option key={model} value={model}>
+                    {model}
                   </option>
                 ))}
               </select>
             </div>
-            {localRuntime && (
-              <div className="field">
-                <span className="field-label">
-                  {provider === "llamaLocal" ? "llama.cpp embutido" : "Ollama local"}
-                </span>
-                <div className="field-control">
-                  <button
-                    type="button"
-                    className="primary"
-                    onClick={() => void installLocal(localRuntime)}
-                    disabled={localBusy}
-                  >
-                    {localBusy ? "Configurando..." : "Usar análise local"}
-                  </button>
-                  {currentLocal?.pull && !currentLocal.pull.done && !currentLocal.pull.error && (
-                    <span
-                      className="ram-track"
-                      role="progressbar"
-                      aria-valuenow={currentLocal.pull.percent}
-                      aria-valuemin={0}
-                      aria-valuemax={100}
-                    >
-                      <span className="ram-fill" style={{ width: `${currentLocal.pull.percent}%` }} />
-                    </span>
-                  )}
-                </div>
-                <span className="hint">
-                  {currentLocal?.pull && !currentLocal.pull.done && !currentLocal.pull.error
-                    ? `Baixando ${currentLocal.pull.model} (${currentLocal.pull.percent}%)...`
-                    : localHint}
-                </span>
-                <KeyLinks links={preset?.links} />
-                {currentLocal?.pull?.error && <span className="error">{currentLocal.pull.error}</span>}
-              </div>
-            )}
-            {!localRuntime && (
-              <div className="field">
-                <span className="field-label">
-                  {provider === "opencodeLocal" ? "Senha do opencode" : "Chave da API"}{" "}
-                  <KeyState defined={settings.analyze_api_key_set} />
-                </span>
-                <div className="field-control">
-                  <input
-                    type="password"
-                    aria-label="Chave da API de análise"
-                    placeholder={
-                      settings.analyze_api_key_set
-                        ? "definida (deixe vazio para manter)"
-                        : provider === "opencodeLocal"
-                          ? "senha de ~/.config/opencode/service.json"
-                          : preset?.keyPlaceholder ?? "cole a chave do provedor"
-                    }
-                    value={apiKey}
-                    onChange={(event) => setApiKey(event.target.value)}
-                  />
-                  <button
-                    type="button"
-                    className="button button--ghost button--small"
-                    onClick={() => {
-                      void (async () => {
-                        if (apiKey.trim() !== "") {
-                          await save({ analyze_api_key: apiKey }, "Chave salva");
-                          setApiKey("");
-                        }
-                        if (searchable) {
-                          await fetchModels();
-                        }
-                      })();
-                    }}
-                  >
-                    {searchable ? "Salvar e testar" : "Salvar chave"}
-                  </button>
-                </div>
-                <KeyLinks links={preset?.links} />
-                {provider === "opencodeLocal" && (
-                  <span className="hint">
-                    Usa o opencode já logado na sua máquina. O modelo usa o formato provedor/modelo.
-                  </span>
-                )}
-              </div>
-            )}
-            <div className="field">
-              <span className="field-label">Modelo</span>
-              <div className="field-control">
-                <select
-                  aria-label="Modelo da análise"
-                  value={settings.analyze_model}
-                  onChange={(event) => void save({ analyze_model: event.target.value }, "Modelo atualizado")}
-                >
-                  {settings.analyze_model === "" && <option value="">(nenhum)</option>}
-                  {modelOptions.map((model) => (
-                    <option key={model} value={model}>
-                      {isReasoningModel(model) ? `${model} · raciocínio` : model}
-                    </option>
-                  ))}
-                </select>
-                {searchable && (
-                  <button type="button" className="button button--ghost button--small" onClick={() => void fetchModels()}>
-                    Buscar modelos
-                  </button>
-                )}
-              </div>
-              {modelsNote && <span className="hint">{modelsNote}</span>}
-              {isReasoningModel(settings.analyze_model) && (
-                <span className="hint">
-                  Modelo de raciocínio: pensa antes de responder, demora mais e gasta mais tokens.
-                  Um modelo comum entrega a mesma análise mais rápido.
-                </span>
-              )}
-              {!searchable && !localRuntime && (
-                <span className="hint">Lista curada de modelos compativeis; a lista completa esta no console.</span>
-              )}
-              {localRuntime && (
-                <span className="hint">
-                  {provider === "llamaLocal"
-                    ? "Modelo GGUF executado pelo proprio servidor."
-                    : "Modelo instalado no servico Ollama."}
-                </span>
-              )}
-            </div>
-            <div className="field">
-              <span className="field-label">Base URL</span>
+          </div>
+          <div className="cfg-block">
+            <p className="cfg-label">
+              Chave
+              <span className="n" data-state={s.deepgram_api_key_set ? "on" : "warn"}>
+                {s.deepgram_api_key_set ? "definida" : "ausente"}
+              </span>
+            </p>
+            <div className="cfg-field">
               <input
-                key={settings.analyze_base_url}
-                type="text"
-                aria-label="Base URL da análise"
-                defaultValue={settings.analyze_base_url}
-                onBlur={(event) => void save({ analyze_base_url: event.target.value })}
+                className="cfg-grow"
+                type="password"
+                aria-label="Chave da Deepgram"
+                placeholder={s.deepgram_api_key_set ? "definida (deixe vazio para manter)" : "cole a chave da Deepgram"}
+                value={deepgramKey}
+                onChange={(event) => setDeepgramKey(event.target.value)}
+                disabled={deepgramBusy}
               />
+              <button
+                type="button"
+                className="cfg-btn cfg-btn--solid"
+                onClick={() => {
+                  const key = deepgramKey.trim();
+                  if (key === "") return;
+                  setDeepgramBusy(true);
+                  void save({ deepgram_api_key: key }, "Chave da Deepgram salva").then((ok) => {
+                    if (ok) setDeepgramKey("");
+                    setDeepgramBusy(false);
+                  });
+                }}
+                disabled={deepgramBusy || deepgramKey.trim() === ""}
+              >
+                {deepgramBusy ? "salvando" : "Salvar"}
+              </button>
+              <a className="cfg-link" href={DEEPGRAM_KEY_URL} target="_blank" rel="noreferrer">
+                criar chave
+              </a>
             </div>
-            <div className="field">
-              <span className="field-label">Temas</span>
-              <div className="field-control">
+          </div>
+        </>
+      )}
+
+      <div className="cfg-block">
+        <div className="cfg-field">
+          <span className="cfg-name">Cortar silêncio</span>
+          <Switch
+            checked={s.trim_silence}
+            ariaLabel="Corte de silêncio"
+            onChange={(value) => void save({ trim_silence: value }, "")}
+          />
+          <Why>Remove trechos sem fala antes de enviar para o provedor. O áudio original não muda.</Why>
+        </div>
+      </div>
+
+      {onOpenLab && (
+        <div className="cfg-block">
+          <button type="button" className="cfg-link" onClick={onOpenLab}>
+            <CpuIcon size={12} /> Processamento neste computador
+          </button>
+        </div>
+      )}
+    </>
+  );
+
+  const renderAnalysis = (s: Settings) => {
+    const recommended = recommendedModel(provider);
+    return (
+      <>
+        <div className="cfg-block">
+          <div className="cfg-field">
+            <Switch
+              checked={s.analyze_enabled}
+              ariaLabel="Análise por IA"
+              onChange={(value) => void save({ analyze_enabled: value }, "")}
+            />
+            <span className="cfg-state">Análise por IA</span>
+            <Why>Desligada, a nota guarda só a transcrição. O provedor e o modelo ficam como estão.</Why>
+          </div>
+        </div>
+
+        <div className="cfg-block">
+          <div className="cfg-field">
+            <span className="cfg-name">Provedor</span>
+            <ProviderSelect
+              label={analyzeLabel}
+              value={analyzeProviderId}
+              options={providerOptions}
+              meta={
+                localRuntime
+                  ? "local"
+                  : preset?.keyRequired
+                    ? s.analyze_api_key_set
+                      ? "chave ok"
+                      : "sem chave"
+                    : analyzeProviderId === "opencodeLocal"
+                      ? "serviço"
+                      : "URL"
+              }
+              onChange={(value) => void selectProvider(value)}
+            />
+          </div>
+          {localRuntime && (
+            <div className="cfg-field" style={{ marginTop: 6 }}>
+              <span className="cfg-name" />
+              <span className="cfg-state">{localHint}</span>
+              <span className="cfg-grow" />
+              <button
+                type="button"
+                className="cfg-btn cfg-btn--quiet"
+                onClick={() => void installLocal(localRuntime)}
+                disabled={localBusy}
+              >
+                {localBusy ? "configurando" : "usar análise local"}
+              </button>
+              {currentLocal?.pull && !currentLocal.pull.done && !currentLocal.pull.error && (
+                <span className="cfg-meter" role="progressbar" aria-valuenow={currentLocal.pull.percent} aria-valuemin={0} aria-valuemax={100}>
+                  <i className="f" style={{ width: `${currentLocal.pull.percent}%` }} />
+                </span>
+              )}
+              {currentLocal?.pull?.error && <span className="cfg-state" data-state="bad">{currentLocal.pull.error}</span>}
+            </div>
+          )}
+        </div>
+
+        <div className="cfg-block">
+          <p className="cfg-label">
+            Modelo
+            <span className="n">{modelCountNote}</span>
+            {preset?.searchable && (
+              <button
+                type="button"
+                className="cfg-link"
+                style={{ marginLeft: 8 }}
+                onClick={() => void fetchAnalyzeModels()}
+                disabled={fetchStatus === "loading" || (Boolean(preset?.keyRequired) && !s.analyze_api_key_set)}
+              >
+                atualizar
+              </button>
+            )}
+          </p>
+          <div className="cfg-field" style={{ marginBottom: 8 }}>
+            <input
+              className="cfg-grow"
+              type="text"
+              placeholder="filtrar por nome"
+              aria-label="Filtrar modelos"
+              value={modelFilter}
+              onChange={(event) => setModelFilter(event.target.value)}
+            />
+          </div>
+          {fetchStatus === "error" && (
+            <p className="cfg-field">
+              <span className="cfg-state" data-state="bad">{fetchError}</span>
+              <span className="cfg-grow" />
+              <button type="button" className="cfg-btn cfg-btn--quiet" onClick={() => void fetchAnalyzeModels()}>
+                tentar de novo
+              </button>
+            </p>
+          )}
+          <div className="cfg-table" role="radiogroup" aria-label="Modelo de análise">
+            <div className="cfg-row-head" aria-hidden="true">
+              <span />
+              <span>Custo</span>
+              <span>Qualidade</span>
+            </div>
+            {fetchStatus === "loading" ? (
+              <ListSkeleton rows={2} />
+            ) : (
+              filteredModels.map((model) => {
+                const q = qualityOf(provider, model);
+                const selected = s.analyze_model === model;
+                return (
+                  <div key={model} className="cfg-model-row" data-on={selected ? "1" : undefined}>
+                    <span className="cfg-pick">
+                      <input
+                        type="radio"
+                        name="analysis-model"
+                        value={model}
+                        checked={selected}
+                        onChange={() => void save({ analyze_model: model }, "Modelo atualizado")}
+                        aria-label={model}
+                      />
+                      <b>{model}</b>
+                      {selected && <span className="cfg-pick-tag">escolhido</span>}
+                      {model === recommended && !selected && <span className="cfg-state">· recomendado</span>}
+                    </span>
+                    <span className="cfg-row-num">{q.cost === "local" ? "local" : q.cost}</span>
+                    <span className="cfg-row-q">
+                      <Meter level={q.score} />
+                      {q.label.toLowerCase()}
+                    </span>
+                  </div>
+                );
+              })
+            )}
+            {filteredModels.length === 0 && fetchStatus !== "loading" && (
+              <p className="cfg-state" style={{ padding: "8px 0" }}>
+                Nenhum modelo com esse nome.
+              </p>
+            )}
+          </div>
+          {modelsNote && <p className="cfg-state">{modelsNote}</p>}
+          {analysisModels.length > MODEL_PREVIEW && modelFilter.trim() === "" && (
+            <div className="cfg-field" style={{ marginTop: 8 }}>
+              <button type="button" className="cfg-link" onClick={() => setShowAllModels((value) => !value)}>
+                {showAllModels ? "mostrar menos" : `mostrar os ${analysisModels.length}`}
+              </button>
+            </div>
+          )}
+        </div>
+
+        {!localRuntime && (
+          <div className="cfg-block">
+            <p className="cfg-label">
+              Chave
+              <span className="n" data-state={s.analyze_api_key_set ? "on" : "warn"}>
+                {s.analyze_api_key_set ? "definida" : "ausente"}
+              </span>
+            </p>
+            {(s.analyze_api_key_set && !keyEditing) ? (
+              <div className="cfg-field">
+                <span className="cfg-grow cfg-meta">••••••••••••</span>
+                <button type="button" className="cfg-btn cfg-btn--quiet" onClick={() => setKeyEditing(true)}>
+                  trocar
+                </button>
+                <button type="button" className="cfg-btn cfg-btn--quiet" onClick={() => void save({ analyze_api_key: "" }, "Chave removida").then(() => setKeyEditing(false))}>
+                  remover
+                </button>
+              </div>
+            ) : (
+              <div className="cfg-field">
                 <input
-                  type="text"
-                  aria-label="Temas da análise"
-                  value={themes}
-                  onChange={(event) => setThemes(event.target.value)}
+                  className="cfg-grow"
+                  type="password"
+                  aria-label="Chave da API de análise"
+                  placeholder={
+                    provider === "opencodeLocal" ? "senha de ~/.config/opencode/service.json" : (preset?.keyPlaceholder ?? "cole a chave do provedor")
+                  }
+                  value={apiKey}
+                  onChange={(event) => setApiKey(event.target.value)}
                 />
                 <button
                   type="button"
-                  className="button button--ghost button--small"
-                  onClick={() => void save({ analysis_themes: themes }, "Temas salvos")}
+                  className="cfg-btn cfg-btn--solid"
+                  onClick={() => void saveAnalyzeKey()}
+                  disabled={apiKey.trim() === ""}
                 >
-                  Salvar
+                  {preset?.searchable ? "Salvar e testar" : "Salvar"}
                 </button>
               </div>
-              <span className="hint">Temas preferidos na análise, separados por vírgulas.</span>
+            )}
+            {preset?.links?.length ? (
+              <div className="cfg-field" style={{ marginTop: 4 }}>
+                {preset.links.map((link) => (
+                  <a key={link.href} className="cfg-link" href={link.href} target="_blank" rel="noreferrer">
+                    {link.label}
+                  </a>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        )}
+
+        <div className="cfg-block">
+          <div className="cfg-field">
+            <span className="cfg-name">Concorrência</span>
+            <input
+              type="number"
+              min={0}
+              max={16}
+              value={s.analyze_concurrency ?? 0}
+              aria-label="Concorrência da análise"
+              onChange={(event) => {
+                const next = Math.max(0, Math.min(16, Math.floor(Number(event.target.value) || 0)));
+                void save({ analyze_concurrency: next }, "");
+              }}
+            />
+            <span className="cfg-state">{(s.analyze_concurrency ?? 0) === 0 ? "automático" : "notas ao mesmo tempo"}</span>
+            <Why>Quantas notas a análise processa ao mesmo tempo. 0 deixa o servidor decidir pela memória livre.</Why>
+          </div>
+        </div>
+
+        <div className="cfg-block">
+          <div className="cfg-field">
+            <Switch
+              checked={s.review_enabled}
+              ariaLabel="Revisar a transcrição com IA"
+              onChange={(value) => void save({ review_enabled: value }, "")}
+            />
+            <span className="cfg-state">Revisar transcrição</span>
+            <Why>Corrige concordância, pontuação e siglas antes de analisar. Vale só para este dashboard; o app tem a sua escolha.</Why>
+          </div>
+          {s.review_enabled && (
+            <div className="cfg-field">
+              <Switch
+                checked={s.literal_transcript}
+                ariaLabel="Transcrição literal"
+                onChange={(value) => void save({ literal_transcript: value }, "")}
+              />
+              <span className="cfg-state">Transcrição literal</span>
+              <Why>Mantém hesitações e repetições. Desligada, a revisão remove só o que não tem significado; gírias ficam.</Why>
+            </div>
+          )}
+        </div>
+
+        <div className="cfg-block">
+          <p className="cfg-label">Avançado</p>
+          <div className="cfg-field">
+            <span className="cfg-name">Base URL</span>
+            <input
+              key={s.analyze_base_url}
+              className="cfg-grow"
+              type="text"
+              aria-label="Base URL da análise"
+              defaultValue={s.analyze_base_url}
+              onBlur={(event) => {
+                if (event.target.value !== s.analyze_base_url) void save({ analyze_base_url: event.target.value }, "");
+              }}
+            />
+          </div>
+          <div className="cfg-field" style={{ alignItems: "flex-start" }}>
+            <span className="cfg-name">Temas</span>
+            <div className="cfg-chips cfg-grow">
+              {themes.map((theme) => (
+                <span key={theme} className="cfg-chip">
+                  {theme}
+                  <button
+                    type="button"
+                    aria-label={`Remover ${theme}`}
+                    onClick={() => {
+                      const next = themes.filter((value) => value !== theme);
+                      setThemes(next);
+                      void save({ analysis_themes: next.join(", ") }, "");
+                    }}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+              <input
+                type="text"
+                placeholder="novo tema"
+                aria-label="Novo tema"
+                style={{ width: 104 }}
+                value={themeDraft}
+                onChange={(event) => setThemeDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter") return;
+                  event.preventDefault();
+                  const value = themeDraft.trim();
+                  if (value === "" || themes.includes(value)) return;
+                  const next = [...themes, value];
+                  setThemes(next);
+                  setThemeDraft("");
+                  void save({ analysis_themes: next.join(", ") }, "");
+                }}
+              />
             </div>
           </div>
+        </div>
+      </>
+    );
+  };
 
-          <TrashSection refreshKey={refreshKey} />
-        </>
+  const renderProjects = () => (
+    <>
+      <div className="cfg-block">
+        <p className="cfg-label">
+          Conexão
+          <span className="n" data-state={settings?.mcp_paused ? "warn" : "on"}>
+            {settings?.mcp_paused ? "pausada" : "ativa"}
+          </span>
+        </p>
+        <div className="cfg-field">
+          <span className="cfg-name">Endpoint</span>
+          <code className="cfg-grow cfg-meta">{mcpEndpoint}</code>
+          <button type="button" className="cfg-btn" onClick={() => void copy("endpoint", mcpEndpoint)}>
+            {copied === "endpoint" ? "copiado" : "copiar"}
+          </button>
+        </div>
+        <div className="cfg-field">
+          <span className="cfg-name">Token</span>
+          <span className="cfg-grow cfg-meta">••••••••••••</span>
+          <button
+            type="button"
+            className="cfg-btn"
+            title="Copia o token real"
+            onClick={() => void copy("token", getToken())}
+          >
+            {copied === "token" ? "copiado" : "copiar"}
+          </button>
+          <Why>O botão copia o token real desta sessão; o trecho abaixo mostra SEU_TOKEN só como exemplo.</Why>
+        </div>
+        <div className="cfg-field">
+          <span className="cfg-name">Máquina</span>
+          <input
+            className="cfg-grow"
+            type="text"
+            maxLength={80}
+            aria-label="Apelido da máquina"
+            value={settings?.mcp_machine_alias ?? ""}
+            placeholder="nome da máquina"
+            onChange={(event) => {
+              const value = event.target.value;
+              setSettings((current) => (current ? { ...current, mcp_machine_alias: value } : current));
+            }}
+            onBlur={() => {
+              const next = (settings?.mcp_machine_alias ?? "").trim();
+              void save({ mcp_machine_alias: next }, "");
+            }}
+          />
+          <span className="cfg-meta">X-Dyarium-Host</span>
+        </div>
+      </div>
+
+      <div className="cfg-block">
+        <div className="cfg-snippet-head">
+          <div className="cfg-seg" role="group" aria-label="Formato da conexão">
+            <button type="button" aria-pressed={mcpSnippet === "command"} onClick={() => setMcpSnippet("command")}>
+              Comando
+            </button>
+            <button type="button" aria-pressed={mcpSnippet === "file"} onClick={() => setMcpSnippet("file")}>
+              Arquivo
+            </button>
+          </div>
+          <button
+            type="button"
+            className="cfg-btn"
+            onClick={() => void copy(mcpSnippet, mcpSnippet === "command" ? mcpCommand(getToken() || "SEU_TOKEN") : mcpFile(getToken() || "SEU_TOKEN"))}
+          >
+            {copied === mcpSnippet ? "copiado" : "copiar"}
+          </button>
+        </div>
+        <pre>{mcpSnippet === "command" ? mcpCommand("SEU_TOKEN") : mcpFile("SEU_TOKEN")}</pre>
+      </div>
+
+      <div className="cfg-block">
+        <div className="cfg-field">
+          <span className="cfg-name">Pausar MCP</span>
+          <Switch
+            checked={settings?.mcp_paused ?? false}
+            ariaLabel="Pausar MCP"
+            onChange={(value) => void save({ mcp_paused: value }, value ? "MCP pausado" : "MCP ativo")}
+          />
+          <span className="cfg-state">{settings?.mcp_paused ? "recusando chamadas" : "aceitando chamadas"}</span>
+          <Why>Pausado, o endpoint recusa novas chamadas sem apagar nada.</Why>
+        </div>
+      </div>
+
+      <div className="cfg-block">
+        <p className="cfg-label">
+          Projetos
+          <span className="n">
+            {(projects ?? []).length} · {archivedCount} arquivado{archivedCount === 1 ? "" : "s"}
+          </span>
+          {archivedCount > 0 && (
+            <button type="button" className="cfg-link" style={{ marginLeft: 8 }} onClick={() => setShowArchived((value) => !value)}>
+              {showArchived ? "ocultar arquivados" : "mostrar arquivados"}
+            </button>
+          )}
+        </p>
+        {projectsError && <p className="cfg-state" data-state="bad">{projectsError}</p>}
+        {projects === null && <ListSkeleton rows={3} />}
+        {projects !== null && visibleProjects.length === 0 && !projectsError && (
+          <p className="cfg-state">Nenhum projeto ainda. Abra uma sessão com o MCP para criar o primeiro.</p>
+        )}
+        {visibleProjects.length > 0 && (
+          <div className="cfg-table">
+            <div className="cfg-projects-head" aria-hidden="true">
+              <span />
+              <span>Projeto</span>
+              <span>Sessões</span>
+              <span>Última</span>
+              <span>Resumo</span>
+              <span />
+            </div>
+            {visibleProjects.map((project) => (
+              <div key={project.id} className="cfg-project">
+                <span className="cfg-mark" data-state={projectState(project)} aria-label={stateLabel(project)} />
+                <span className="cfg-project-cell">
+                  <button
+                    type="button"
+                    title={project.title}
+                    onClick={() => {
+                      if (mcpNotebook && onOpenProject) onOpenProject(mcpNotebook, project.id);
+                    }}
+                  >
+                    {project.title}
+                  </button>
+                  {project.path && project.path.toLowerCase() !== project.title.toLowerCase() && (
+                    <span className="cfg-meta">{project.path}</span>
+                  )}
+                </span>
+                <span className="cfg-stats">
+                  <span className="cfg-row-num">
+                    {project.sessions}
+                    <span className="cfg-unit">{project.sessions === 1 ? " sessão" : " sessões"}</span>
+                  </span>
+                  <span className="cfg-row-num">{relativeTime(project.last_session_at)}</span>
+                </span>
+                <div className="cfg-seg cfg-seg--sm" role="group" aria-label={`Resumo de ${project.title}`}>
+                  {SUMMARY_DETAIL_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      aria-pressed={(project.summary_detail ?? "concise") === option.value}
+                      onClick={() => void setProjectDetail(project, option.value)}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+                <details className="cfg-project-menu">
+                  <summary aria-label={`Ações de ${project.title}`}>⋯</summary>
+                  <div>
+                    {onOpenProject && mcpNotebook && (
+                      <button type="button" onClick={() => onOpenProject(mcpNotebook, project.id)}>
+                        abrir no caderno
+                      </button>
+                    )}
+                    <button type="button" onClick={() => void setProjectArchived(project, !project.archived)}>
+                      {project.archived ? "desarquivar" : "arquivar"}
+                    </button>
+                  </div>
+                </details>
+                {projectErrors[project.id] && <span className="cfg-state cfg-row-error" data-state="bad">{projectErrors[project.id]}</span>}
+              </div>
+            ))}
+          </div>
+        )}
+        <p className="cfg-meta" style={{ marginTop: 8 }}>
+          {openSessions} aberta{openSessions === 1 ? "" : "s"} agora
+        </p>
+      </div>
+
+      <div className="cfg-block">
+        <p className="cfg-label">Regras da sessão</p>
+        <div className="cfg-field">
+          <span className="cfg-name">Interrompida após</span>
+          <select
+            aria-label="Janela de inatividade"
+            value={settings?.mcp_idle_hours ?? 12}
+            onChange={(event) => void save({ mcp_idle_hours: Number(event.target.value) }, "")}
+          >
+            {[...new Set([...IDLE_HOURS, settings?.mcp_idle_hours ?? 12])].sort((a, b) => a - b).map((hours) => (
+              <option key={hours} value={hours}>
+                {hours} h
+              </option>
+            ))}
+          </select>
+          <Why>Sessão aberta sem atividade por esse tempo passa a ler como interrompida. O estado é derivado na leitura.</Why>
+        </div>
+        <div className="cfg-field">
+          <span className="cfg-name">Histórico</span>
+          <input
+            type="number"
+            min={0}
+            max={10}
+            aria-label="Sessões no histórico"
+            value={settings?.mcp_history_sessions ?? 3}
+            onChange={(event) => {
+              const next = Math.max(0, Math.min(10, Math.floor(Number(event.target.value) || 0)));
+              void save({ mcp_history_sessions: next }, "");
+            }}
+          />
+          <span className="cfg-state">sessões que o agente vê ao abrir</span>
+        </div>
+        <div className="cfg-field">
+          <span className="cfg-name">Commits</span>
+          <Switch
+            checked={settings?.mcp_include_commits ?? true}
+            ariaLabel="Incluir commits no resumo"
+            onChange={(value) => void save({ mcp_include_commits: value }, "")}
+          />
+          <span className="cfg-state">entram no resumo</span>
+        </div>
+        <div className="cfg-field">
+          <span className="cfg-name">Links</span>
+          <Switch
+            checked={settings?.mcp_include_links ?? true}
+            ariaLabel="Incluir links no resumo"
+            onChange={(value) => void save({ mcp_include_links: value }, "")}
+          />
+          <span className="cfg-state">entram no resumo</span>
+        </div>
+      </div>
+
+      <div className="cfg-block">
+        <p className="cfg-label">Privacidade</p>
+        <div className="cfg-field">
+          <span className="cfg-name">Caminho completo</span>
+          <Switch
+            checked={settings?.mcp_store_full_path ?? false}
+            ariaLabel="Gravar caminho completo"
+            onChange={(value) => void save({ mcp_store_full_path: value }, "")}
+          />
+          <span className="cfg-state">{(settings?.mcp_store_full_path ?? false) ? "caminho absoluto" : "só o nome da pasta"}</span>
+          <Why>Desligado, o projeto guarda e mostra só o nome da pasta.</Why>
+        </div>
+      </div>
+    </>
+  );
+
+  const renderAuthor = (s: Settings) => (
+    <div className="cfg-block">
+      <div className="cfg-field">
+        <span className="cfg-name">Nome</span>
+        <input
+          className="cfg-grow"
+          type="text"
+          aria-label="Seu nome"
+          value={ownerName}
+          maxLength={80}
+          placeholder="Você"
+          onChange={(event) => setOwnerName(event.target.value)}
+          onBlur={() => {
+            const next = ownerName.trim();
+            if (next !== (s.owner_name ?? "")) {
+              void save({ owner_name: next }, "Nome salvo");
+            }
+          }}
+        />
+      </div>
+      <div className="cfg-field">
+        <Switch
+          checked={s.all_notes_mine}
+          ariaLabel="Todas as notas são minhas"
+          onChange={(value) => void save({ all_notes_mine: value }, "")}
+        />
+        <span className="cfg-state">Minhas notas por padrão</span>
+        <Why>Desligado, a nota sem escolha manual fica sem autor. O seletor da nota sempre vence.</Why>
+      </div>
+    </div>
+  );
+
+
+  const driveConfigurado = driveConfigured();
+  const driveConectado = driveState === "connected";
+  const driveMark = !driveConfigurado
+    ? "warn"
+    : driveConectado
+      ? "on"
+      : driveState === "expired"
+        ? "warn"
+        : "off";
+  const driveLabel = !driveConfigurado
+    ? "sem client id"
+    : driveConectado
+      ? "conectado"
+      : driveState === "expired"
+        ? "sessão vencida"
+        : "desconectado";
+
+  const describe = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+  const connectDriveNow = async () => {
+    setBackupBusy(true);
+    setBackupStatus("");
+    try {
+      // Mesma entrada da primeira tela e do menu: login, uniao e sync. Aqui o
+      // caminho e o rapido: a lista aparece e o sync termina em segundo plano.
+      const aberto = await connectAccount({ attachments: "skip", sync: "background" });
+      setBackupStatus(
+        `conectado · ${aberto.summary.notes} ${aberto.summary.notes === 1 ? "nota" : "notas"}`,
+      );
+    } catch (error) {
+      setBackupStatus(describe(error));
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
+  const disconnectDriveNow = () => {
+    disconnectDrive();
+    setBackupStatus("");
+  };
+
+  const saveToDrive = async () => {
+    setBackupBusy(true);
+    setBackupStatus("");
+    try {
+      const resultado = await syncVaultToDrive();
+      const resumo = lastSyncSummary() ?? resultado;
+      if (resumo && resumo.written === 0 && resumo.deleted === 0 && resumo.unchanged === 0) {
+        // Plano vazio: nao ha nota neste navegador. Dizer "0 gravadas" sem
+        // explicar mandaria o dono procurar defeito no Drive.
+        setBackupStatus(isLocalMode() ? "cofre vazio neste navegador · nada para gravar" : "nada para gravar");
+      } else {
+        setBackupStatus(
+          resumo
+            ? `${resumo.written} gravadas · ${resumo.deleted} apagadas · ${resumo.unchanged} sem mudança`
+            : "cofre salvo",
+        );
+      }
+    } catch (error) {
+      setBackupStatus(describe(error));
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
+  const restoreDriveVault = async () => {
+    setBackupBusy(true);
+    setBackupStatus("");
+    try {
+      // Restauracao manual pede o cofre inteiro agora, anexos inclusive: e o
+      // caminho completo, ao contrario do login rapido.
+      const resumo = await restoreVaultFromDrive(undefined, { attachments: "all" });
+      setBackupStatus(
+        `${resumo.created} novas · ${resumo.updated} atualizadas · ${resumo.skipped} mantidas`,
+      );
+    } catch (error) {
+      setBackupStatus(describe(error));
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
+  const renderVault = () => (
+    <>
+      <div className="cfg-block">
+        <p className="cfg-label">Backup</p>
+        <VaultBackup />
+        <div className="cfg-item">
+          <span className="cfg-mark" data-state={driveMark} />
+          <span className="cfg-grow">Google Drive</span>
+          <span className="cfg-meta">{driveLabel}</span>
+          <button
+            type="button"
+            className="cfg-btn cfg-btn--quiet"
+            disabled={backupBusy || (!driveConectado && !driveConfigurado)}
+            onClick={() => void (driveConectado ? disconnectDriveNow() : connectDriveNow())}
+          >
+            {driveConectado ? "desconectar" : "conectar"}
+          </button>
+          <button type="button" className="cfg-btn cfg-btn--quiet" disabled={backupBusy || !driveConectado} onClick={() => void saveToDrive()}>
+            salvar
+          </button>
+          <button type="button" className="cfg-btn cfg-btn--quiet" disabled={backupBusy || !driveConectado} onClick={() => void restoreDriveVault()}>
+            restaurar
+          </button>
+        </div>
+        {backupStatus && <p className="cfg-meta" style={{ marginTop: 8 }}>{backupStatus}</p>}
+      </div>
+    </>
+  );
+
+  const renderSectionContent = (tab: TabId, s: Settings) => {
+    if (tab === "transcricao") return renderTranscription(s);
+    if (tab === "analise") return renderAnalysis(s);
+    if (tab === "projetos") return renderProjects();
+    if (tab === "autor") return renderAuthor(s);
+    if (tab === "cofre") return renderVault();
+    return (
+      <>
+        <div className="cfg-block">
+          <TrashSection refreshKey={refreshKey} bare />
+        </div>
+        <div className="cfg-block">
+          <div className="cfg-field">
+            <Switch
+              checked={diagnosticsOn}
+              ariaLabel="Enviar diagnóstico"
+              disabled={!telemetryConfigured()}
+              onChange={(value) => {
+                setDiagnosticsOn(value);
+                void setTelemetryEnabled(value);
+              }}
+            />
+            <span className="cfg-state">Enviar diagnóstico</span>
+            {telemetryConfigured() && (
+              <Why>Manda erro e versão, sem nota, sem usuário. O app tem a sua própria opção.</Why>
+            )}
+          </div>
+          <a className="cfg-link cfg-privacy-link" href="/privacidade">
+            Privacidade
+          </a>
+        </div>
+      </>
+    );
+  };
+
+  return (
+    <section className="cfg-page">
+      <header className="cfg-head">
+        {onBack && (
+          <button type="button" className="cfg-back" onClick={onBack} aria-label="Voltar">
+            <ChevronIcon size={12} />
+          </button>
+        )}
+        <h1 className="cfg-title">Configurações</h1>
+        <span className="cfg-saved" data-on={savedOn ? "1" : "0"} aria-live="polite">
+          salvo
+        </span>
+        <nav className="cfg-tabs" role="tablist" aria-label="Seções de configurações">
+          {TABS.map((tab) => {
+            const active = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                aria-controls={`cfg-${tab.id}`}
+                className="cfg-tab"
+                onClick={() => setActiveTab(tab.id)}
+              >
+                {tab.icon}
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+      </header>
+
+      {error && (
+        <p className="cfg-state" data-state="bad">
+          {error}
+        </p>
+      )}
+
+      {!settings && <ListSkeleton rows={4} />}
+
+      {settings && (
+        <main className="cfg-body" id={`cfg-${activeTab}`} role="tabpanel">
+          {renderSectionContent(activeTab, settings)}
+        </main>
       )}
     </section>
   );
 }
 
-export default SettingsView;
+/** Tempo relativo curto para a ultima sessao de um projeto. */
+function relativeTime(iso: string): string {
+  if (!iso) return "nunca";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "nunca";
+  const minutes = Math.floor((Date.now() - then) / 60000);
+  if (minutes < 1) return "agora";
+  if (minutes < 60) return `há ${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `há ${hours} h`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "ontem";
+  if (days < 30) return `há ${days} d`;
+  return `há ${Math.floor(days / 30)} m`;
+}
+
+function projectState(project: McpProject): "on" | "warn" | "off" {
+  if (project.state === "open") return "on";
+  if (project.state === "interrupted") return "warn";
+  return "off";
+}
+
+function stateLabel(project: McpProject): string {
+  if (project.state === "open") return "sessão aberta";
+  if (project.state === "interrupted") return "sessão interrompida";
+  if (project.state === "closed") return "sessão fechada";
+  return "sem sessão";
+}
+
+function ChevronIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M15 6l-6 6 6 6" />
+    </svg>
+  );
+}
+
+function ChevronDownIcon() {
+  return (
+    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+      <path d="M6 9l6 6 6-6" />
+    </svg>
+  );
+}
+
+/** Interruptor: quadrado preenchido quando ligado, contorno quando desligado. */
+function Switch({
+  checked,
+  onChange,
+  ariaLabel,
+  disabled = false,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  ariaLabel: string;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={ariaLabel}
+      className="cfg-sw"
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+    >
+      <i />
+    </button>
+  );
+}
+
+/** Estado da chave: preenchido quando ja existe uma guardada. */
+function Why({ children }: { children: React.ReactNode }) {
+  return (
+    <details className="cfg-why">
+      <summary aria-label="Explicação">?</summary>
+      <p>{children}</p>
+    </details>
+  );
+}
+
+function Meter({ level }: { level: number }) {
+  return (
+    <span className="cfg-meter" aria-hidden="true">
+      {[1, 2, 3].map((step) => (
+        <i key={step} className={step <= level ? "f" : ""} />
+      ))}
+    </span>
+  );
+}
+
+interface ProviderOption {
+  value: string;
+  label: string;
+  meta: string;
+  missing?: boolean;
+}
+
+/** Seletor de provedor: fechado mostra nome e natureza, aberto lista com estado. */
+function ProviderSelect({
+  label,
+  meta,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  meta: string;
+  value: string;
+  options: ProviderOption[];
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (event: MouseEvent) => {
+      if (!ref.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="cfg-sel" data-open={open ? "1" : "0"} ref={ref}>
+      <button
+        type="button"
+        className="cfg-sel-btn"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label="Provedor"
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span>{label}</span>
+        <span className="cfg-meta">{meta}</span>
+        <ChevronDownIcon />
+      </button>
+      {open && (
+        <div className="cfg-sel-menu" role="listbox" aria-label="Provedor">
+          {options.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              role="option"
+              aria-selected={option.value === value}
+              onClick={() => {
+                setOpen(false);
+                if (option.value !== value) onChange(option.value);
+              }}
+            >
+              <i />
+              <span>{option.label}</span>
+              <em data-state={option.missing ? "missing" : undefined}>{option.meta}</em>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}

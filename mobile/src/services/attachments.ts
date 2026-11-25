@@ -29,10 +29,12 @@ import {
 } from '@/core/attachments';
 import { newId, stableAttachmentId } from '@/core/id';
 import { extractImageUrls } from '@/core/richText';
+import { sha256Hex } from '@/core/sha256';
 import { uploadRecording } from '@/core/uploader';
 
 import { uploadFileIO, sessionDirectory } from './files';
 import { loadServerConfig, loadServers } from './secure';
+import { fileSha256 } from './hash';
 
 const doFetch = globalThis.fetch as unknown as FetchLike;
 
@@ -99,6 +101,62 @@ async function cacheLocalCopy(noteId: string, name: string, id: string): Promise
     // cache best-effort: sem ele a exibicao cai no arquivo local ou no download
   }
 }
+
+const EXTENSION_BY_TYPE: Record<string, string> = {
+  'audio/aac': 'aac',
+  'audio/adts': 'aac',
+  'audio/flac': 'flac',
+  'audio/mp4': 'm4a',
+  'audio/mpeg': 'mp3',
+  'audio/ogg': 'ogg',
+  'audio/wav': 'wav',
+  'audio/webm': 'weba',
+  'audio/x-wav': 'wav',
+  'image/avif': 'avif',
+  'image/gif': 'gif',
+  'image/heic': 'heic',
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+};
+
+/**
+ * Guarda no cache um byte (imagem ou audio) vindo do cofre ou do servidor.
+ *
+ * O markdown do web referencia `attachment:<id>`; com o arquivo no cache o app
+ * mostra a imagem ou toca o audio sem servidor. A escrita vai para um `.tmp` e
+ * so entra no nome final depois de completa, para uma queda no meio nao deixar
+ * um arquivo truncado que a UI trataria como valido.
+ */
+export async function saveCachedAttachment(
+  id: string,
+  bytes: Uint8Array,
+  contentType: string,
+): Promise<void> {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(id) || id.includes('..')) {
+    throw new Error('id de anexo invalido');
+  }
+  if (bytes.length === 0) throw new Error('anexo vazio');
+  const extension = EXTENSION_BY_TYPE[contentType.split(';')[0]?.trim().toLowerCase() ?? ''];
+  if (!extension) throw new Error('tipo de anexo desconhecido');
+
+  const dir = attachmentsDir();
+  const destination = new File(dir, `${id}.${extension}`);
+  if (destination.exists) return;
+
+  const temporary = new File(dir, `${id}.${extension}.tmp`);
+  if (temporary.exists) temporary.delete();
+  temporary.create({ intermediates: true, overwrite: true });
+  const handle = temporary.open(FileMode.Append);
+  try {
+    handle.writeBytes(bytes);
+  } finally {
+    handle.close();
+  }
+  await temporary.move(destination);
+  invalidateAttachmentIndex();
+}
+
 
 // Extensoes que o app grava no cache. A busca e por arquivo direto (poucos
 // `exists`), nunca por `Directory.list()`: listar a pasta inteira na thread de
@@ -209,11 +267,13 @@ export async function uploadLocalImage(entryId: string, noteId: string, name: st
   if (!config) throw new Error('sem servidor configurado');
   const api = new DyariumApi(config, doFetch);
   const bytes = await readLocalImage(noteId, name);
+  const sha256 = sha256Hex(bytes);
   const attachment = await api.uploadAttachment(
     entryId,
     bytes,
     mimeFromName(name),
     stableAttachmentId(noteId, name),
+    sha256,
   );
   // Deixa a copia local acessivel por id, para exibir sem baixar depois.
   await cacheLocalCopy(noteId, name, attachment.id);
@@ -288,6 +348,7 @@ export async function uploadLocalAudio(
   const api = new DyariumApi(config, doFetch);
   const now = new Date().toISOString();
   const sizeBytes = new File(uri).size;
+  const sha256 = await fileSha256(uri);
   const result = await uploadRecording(
     {
       clientKey: `audio:${noteId}:${name}`,
@@ -301,6 +362,7 @@ export async function uploadLocalAudio(
       durationSeconds: durationMs > 0 ? durationMs / 1000 : undefined,
       entryId,
       attachmentId: stableAttachmentId(noteId, name),
+      sha256,
     },
     { api, file: uploadFileIO },
   );
@@ -354,21 +416,21 @@ export function resolveImageSourcesLocal(
 }
 
 /**
- * Fonte exibivel de um audio do documento: arquivo local da nota ou anexo do
- * servidor (cache local e, se faltar, download). Devolve null quando o audio
- * nao esta disponivel.
+ * Fonte de audio que ja esta no aparelho, sem tocar na rede: arquivo da nota,
+ * arquivo local ja enviado (mapeado em `attachments`) ou cache por id. O
+ * player usa isto para decidir se precisa buscar o anexo (Drive/servidor).
  */
-export async function resolveAudioSource(
+export function localAudioSource(
   noteId: string,
   ref: string,
   attachments: Record<string, string> = {},
-): Promise<string | null> {
+): string | null {
   const local = localAudioName(ref);
   if (local) {
     const uri = localAudioUri(noteId, local);
     if (uri) return uri;
     const uploaded = attachments[local];
-    return uploaded ? attachmentUri(uploaded) : null;
+    return uploaded ? cachedAttachmentUri(uploaded) : null;
   }
   if (ref.startsWith(ATTACHMENT_PREFIX)) {
     const id = attachmentRefId(ref);
@@ -379,21 +441,48 @@ export async function resolveAudioSource(
       const local = localAudioUri(noteId, name);
       if (local) return local;
     }
-    return attachmentUri(id);
+    return cachedAttachmentUri(id);
   }
+  const id = attachmentIdFromUrl(ref);
+  return id ? cachedAttachmentUri(id) : null;
+}
+
+/**
+ * Fonte exibivel de um audio do documento: arquivo local da nota ou anexo do
+ * servidor (cache local e, se faltar, download). Devolve null quando o audio
+ * nao esta disponivel.
+ */
+export async function resolveAudioSource(
+  noteId: string,
+  ref: string,
+  attachments: Record<string, string> = {},
+): Promise<string | null> {
+  const local = localAudioSource(noteId, ref, attachments);
+  if (local) return local;
+  const uploaded = localAudioName(ref);
+  if (uploaded) {
+    const id = attachments[uploaded];
+    return id ? attachmentUri(id) : null;
+  }
+  if (ref.startsWith(ATTACHMENT_PREFIX)) return attachmentUri(attachmentRefId(ref));
   const id = attachmentIdFromUrl(ref);
   return id ? attachmentUri(id) : null;
 }
 
+/** Busca um anexo que nao esta no aparelho, quando o chamador tem outra fonte. */
+export type MissingAttachmentSource = (id: string) => Promise<string | null>;
+
 /**
  * Baixa em segundo plano as imagens que ainda nao estao no aparelho e avisa o
  * chamador a cada uma que chega, para o editor trocar o placeholder na hora.
+ * `missing` cobre a fonte que nao e o servidor (o cofre do Drive).
  */
 export async function downloadMissingImageSources(
   noteId: string,
   markdown: string,
   attachments: Record<string, string>,
   onFound: (ref: string, uri: string) => void,
+  missing?: MissingAttachmentSource,
 ): Promise<void> {
   const wanted = new Map<string, string[]>(); // attachment id -> refs
   for (const ref of extractImageUrls(markdown)) {
@@ -414,7 +503,7 @@ export async function downloadMissingImageSources(
   }
   await Promise.all(
     [...wanted.entries()].map(async ([id, refs]) => {
-      const uri = await attachmentUri(id);
+      const uri = (await attachmentUri(id)) ?? (missing ? await missing(id) : null);
       if (!uri) return;
       for (const ref of refs) onFound(ref, uri);
     }),
@@ -430,10 +519,17 @@ export async function resolveImageSources(
   noteId: string,
   markdown: string,
   attachments: Record<string, string> = {},
+  missing?: MissingAttachmentSource,
 ): Promise<Record<string, string>> {
   const map = resolveImageSourcesLocal(noteId, markdown, attachments);
-  await downloadMissingImageSources(noteId, markdown, attachments, (ref, uri) => {
-    map[ref] = uri;
-  });
+  await downloadMissingImageSources(
+    noteId,
+    markdown,
+    attachments,
+    (ref, uri) => {
+      map[ref] = uri;
+    },
+    missing,
+  );
   return map;
 }

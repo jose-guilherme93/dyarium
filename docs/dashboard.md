@@ -18,8 +18,9 @@
 
 ## Layout base
 
-- Barra lateral a esquerda: a lista de notas e, no rodape, Mapa, Estatísticas, Processamento e
-  Configuracoes, com estado selecionado e recolhimento opcional.
+- Barra lateral a esquerda: a lista de notas e, no rodape, Mapa, Estatísticas, Calendário e
+  Configuracoes, com estado selecionado e recolhimento opcional. O processamento no PC
+  deixou o rodape e abre por Configurações > Transcrição.
 - Area central: conteudo da tela atual.
 - Painel recolhivel a direita: contexto da entrada aberta (analise, metadados, notas).
 - Cabecalho discreto com titulo da tela e acoes contextuais.
@@ -34,6 +35,8 @@ Layout responsivo:
 ### 1. Lista de entradas
 - Cabecalho com acao primaria (Enviar audio) e filtros (status, tag, intervalo de datas).
 - Itens com titulo, data do evento, duracao, status e trecho inicial da transcricao.
+- A seta de ordenacao alterna entre mais recente e mais antiga usando a data do evento
+  (`recorded_at`, com `created_at` de reserva): editar uma nota antiga nao a sobe na lista.
 - Clique direito na nota abre o menu do proprio dashboard: abrir, selecionar, selecionar
   todas, arquivar e apagar. A selecao multipla mostra a barra de acoes no topo da lista e
   permite arquivar ou apagar em lote, sem sair da tela.
@@ -188,7 +191,18 @@ Layout responsivo:
 - Diagnostico: nenhuma frase solta; os numeros ficam na grade e a explicacao de cada
   aviso aparece no `title` do item.
 
-### 9. Livro (modo escritor)
+### 9. Calendário das notas
+- O rodape abre o calendario no lugar da lista: a area inteira vira o mes, com as notas
+  de cada dia, a contagem por dia e o mes de hoje destacado.
+- A data e a do evento (`recorded_at`), com `created_at` como reserva, no fuso do
+  navegador. O escopo e o caderno escolhido na barra lateral.
+- O painel do dia lista as notas com hora, caderno e audio; a seta diagonal abre a nota
+  no editor. "escrever" existe apenas no dia de hoje: toda nota nasce com a data de
+  geracao dela, e dias anteriores so recebem nota vinda de audio gravado antes ou de
+  importacao (que guardam a data original).
+- "outros anos" mostra o mesmo dia nos anos anteriores numa linha do tempo.
+
+### 10. Livro (modo escritor)
 
 O seletor compacto da sidebar abre a biblioteca em dois grupos, "Cadernos"
 (Todos, o padrao e os demais, com contagem) e "Livros" (ponto de status e mini
