@@ -1,5 +1,6 @@
 import { Component } from "react";
 import type { ErrorInfo, ReactNode } from "react";
+import { captureException } from "@sentry/react";
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -22,6 +23,8 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
     console.error("Erro na interface:", error, info);
+    // Sem cliente iniciado (diagnostico desligado ou sem DSN) isto e inerte.
+    captureException(error, { contexts: { react: { componentStack: info.componentStack } } });
   }
 
   componentDidUpdate(previous: ErrorBoundaryProps): void {

@@ -16,6 +16,7 @@
     "@blocknote/mantine": "^0.55.0",
     "@blocknote/react": "^0.55.0",
     "@huggingface/transformers": "4.3.2",
+    "@sentry/react": "^11.17.0",
     "@wllama/wllama": "3.8.1",
     "fflate": "^0.8.3",
     "prosemirror-state": "^1.4.4",
@@ -26,6 +27,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@sentry/vite-plugin": "^11.17.0",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
     "@types/node": "^26.6.5",

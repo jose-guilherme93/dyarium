@@ -54,6 +54,7 @@ import type { StepProgress } from "./local/backup";
 import { TokenGate } from "./components/TokenGate";
 import { SetupGate } from "./components/SetupGate";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { trackView } from "./lib/telemetry";
 import { NoteList } from "./components/NoteList";
 import { NoteEditor } from "./components/NoteEditor";
 import { HomeStart } from "./views/HomeStart";
@@ -270,6 +271,12 @@ export function App() {
     if (window.location.pathname !== path) {
       window.history.replaceState(null, "", path);
     }
+  }, [view]);
+
+  // Cada tela virada vira log e metrica do diagnostico (nome tecnico, sem
+  // conteudo). A primeira tambem conta: o modulo guarda a pendente.
+  useEffect(() => {
+    trackView(view);
   }, [view]);
 
   const [entryProgress, setEntryProgress] = useState<Record<string, { stage: string; done: number; total: number }>>({});
