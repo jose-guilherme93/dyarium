@@ -940,7 +940,7 @@ Dyarium/
   key.txt                    codigo de recuperacao (26 caracteres), claro
   manifest.json              caminho, id, kind, sha256 do conteudo, tamanho e data; claro
   backup.enc                 retrato v1, so as notas: o formato que app e web entendem
-  state.enc                  retrato v2 do web: notas ricas, cadernos, analises e ajustes
+  state.enc                  retrato v2: notas ricas, cadernos, analises e ajustes
   notes/<AAAA-MM-DD>-<slug>.md.enc
   books/<livro>/<NNN>-<capitulo>.md.enc
   books/<livro>/capa.bin.enc
@@ -953,12 +953,26 @@ conteudo em claro: e o que permite saber, entre uma sincronizacao e outra, o que
 sem decifrar nada. Titulo e corpo nunca aparecem em claro fora do nome do arquivo.
 
 **Dois retratos, um por cliente.** `backup.enc` e o contrato que app e web entendem (versao
-1: notas com titulo, datas, caderno, tags e texto) e o app o le com validador estrito. O
-estado completo do web vai em `state.enc` (versao 2: notas com transcricao e capitulo,
-cadernos, analises e configuracoes), selado com a mesma chave. Restaurar prefere `state.enc`
-e cai para `backup.enc` quando o cofre e antigo, sem erro. A separacao existe porque os dois
-clientes escrevem na mesma pasta: um formato unico faria o app apagar o que nao conhece, e o
-web quebrar a restauracao do app. Pasta e `.zip` seguem a mesma divisao.
+1: notas com titulo, datas, caderno, tags e texto) e os dois o leem com validador estrito. O
+estado completo vai em `state.enc` (versao 2: notas com transcricao e capitulo, cadernos,
+analises e configuracoes), selado com a mesma chave. Restaurar prefere `state.enc` e cai para
+`backup.enc` quando o cofre e antigo, sem erro. A separacao existe porque os dois clientes
+escrevem na mesma pasta: um formato unico faria um cliente apagar o que nao conhece, e o
+outro quebrar a restauracao. Pasta e `.zip` seguem a mesma divisao.
+
+**Os dois clientes gravam o v2.** O app le `state.enc` quando existe e sobe a uniao por id:
+nota e caderno com `updated_at` mais novo vencem, ids diferentes coexistem. Ele regrava as
+notas ricas e os cadernos que entende e devolve intactas as analises e as configuracoes que
+nao interpreta — ausencia nunca apaga. O `backup.enc` v1 continua sendo escrito com a mesma
+uniao projetada, para uma versao antiga do app nao ficar de fora. No aparelho, o envio
+automatico e debounced depois de uma edicao e roda tambem ao voltar ao primeiro plano; o
+botao "sincronizar" faz o mesmo caminho.
+
+**Sair apaga o cache da conta.** O "sair" do Drive no app sobe o retrato completo, le de
+volta e confere que toda nota e caderno locais chegaram; so entao apaga o SQLite, os audios,
+as imagens e as capas em cache, e limpa a sessao e o perfil. Sem sessao e com dados
+pendentes, ele recusa e pede para reconectar: expiracao de token nunca apaga nada. Sem
+conta, o app abre vazio no modo local-first, sem tela de login.
 
 **A chave nao aparece na interface.** O `key.txt` guarda o codigo de 26 caracteres que
 deriva a chave, e ele existe para o login abrir o mesmo cofre em outro aparelho — nao para
@@ -1000,13 +1014,28 @@ nada subia. Com o gancho de snapshot, o retrato e reescrito na mesma passada em 
 muda; uma vez que o banco local tem as notas, elas e o retrato que as descreve estao no
 Drive.
 
+**Sem conta e com conta.** Sem conta Google, o navegador e local-first: banco local, sem
+Drive e sem login. Com conta, o Drive e o banco e o cache local e copia de trabalho: a marca
+`localStorage["dyarium.drive"]` decide o modo. Entrar pela conta passa por um unico caminho
+(`connectAccount`): abre o Drive, aplica o retrato mantendo a nota local mais nova, sobe a
+uniao e grava a marca. O mesmo caminho vale para o primeiro acesso, Configuracoes, a linha de
+reconectar e o menu da conta — nenhum deles sobe o local sem abrir o Drive.
+
 **Sessao e reconexao.** O token dura cerca de uma hora e nao sobrevive ao reload (nao ha
-refresh token sem servidor); a renovacao silenciosa acima cobre o caso comum. O navegador
-guarda apenas uma marca de que o cofre mora no Drive (`localStorage["dyarium.drive"]`) e o
-ultimo resumo (bytes, notas), nunca a credencial. Se a renovacao silenciosa falhar (Google
-desconectado naquele navegador), uma linha acima da area das notas mostra `Google Drive`, o
-tamanho do cofre e um botao `conectar`: um toque refaz o login, abre o cofre e grava o
-pendente (`flushVaultSync`) na mesma passada. Com sessao viva a linha nao aparece.
+refresh token no navegador). O navegador guarda a marca e o ultimo resumo (bytes, notas),
+nunca a credencial. O reload nao mostra a primeira tela nem abre o Google: se a conta esta
+marcada, o cache da conta aparece e o primeiro gesto tenta o token em silencio
+(`prompt: "none"`). Se falhar, nada de tela automatica: uma linha acima das notas mostra
+`Google Drive` e `conectar`, que refaz o login interativo e a uniao. A foto vem do userinfo;
+o `scope` real do Google traz email/profile como URLs de userinfo, e so um consentimento
+explicito e pedido quando eles faltam de verdade.
+
+**Sair da conta.** O sair grava o cofre inteiro e confere os tres snapshots no Drive; se a
+gravacao falhar, nada e apagado e a folha oferece tentar de novo ou descartar explicitamente.
+Depois apaga o cache local da conta (SQLite/OPFS, anexos e capas do IndexedDB; os modelos
+ficam), limpa perfil e marca e recarrega no modo local-first vazio. O sair **nao revoga** a
+concessao Google: revogar derrubaria a sessao do app, e web e app sao clientes independentes.
+Expiracao de token nunca apaga nada; so o sair explicito apaga.
 
 **App.** O cliente mobile nao depende do navegador para continuar logado: o refresh token
 fica no `expo-secure-store` e a sessao e restaurada no boot. O login pede os mesmos
