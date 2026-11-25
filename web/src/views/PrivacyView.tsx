@@ -33,6 +33,14 @@ export function PrivacyView() {
         </section>
 
         <section className="privacy-section">
+          <p className="privacy-label">Conta Google</p>
+          <p className="privacy-text">
+            Ao entrar com Google, o e-mail da conta identifica a sua sessão no
+            Dyarium. Não usamos para publicidade nem repassamos a terceiros.
+          </p>
+        </section>
+
+        <section className="privacy-section">
           <p className="privacy-label">O que não coletamos</p>
           <p className="privacy-text">
             Conteúdo de nota, áudio, transcrição, contatos, localização, histórico
