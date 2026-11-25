@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.1](https://github.com/jose-guilherme93/dyarium/compare/v0.7.0...v0.7.1) (2026-11-25)
+
+
+### Bug Fixes
+
+* **deploy:** compila llama-server sem baixar a Web UI ([470637d](https://github.com/jose-guilherme93/dyarium/commit/470637d7cd7ec75e541df82ae5ae6fa1a7e782c3))
+* **deploy:** compila llama-server sem baixar a Web UI ([05bdec3](https://github.com/jose-guilherme93/dyarium/commit/05bdec3cf9f3dbae418ddb51bdc4fbb8b2d58169))
+
 ## [0.7.0](https://github.com/jose-guilherme93/dyarium/compare/v0.6.0...v0.7.0) (2026-11-25)
 
 
