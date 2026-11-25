@@ -24,7 +24,7 @@ import {
 } from "./backup";
 import { driveVaultRoot } from "./driveSession";
 import { BACKUP_FILE, KEY_FILE, STATE_FILE } from "./folder";
-import { runVaultSync, type SyncResult } from "./folderSync";
+import { runVaultSync, setVaultWriteHook, type SyncResult } from "./folderSync";
 import { ATTACHMENTS_STORE, storeGet } from "../lib/idb";
 import { saveAttachmentBlob, type StoredAttachment } from "./attachments";
 import {
@@ -108,12 +108,29 @@ async function escrever(
 }
 
 /**
+ * Re-sela os snapshots do cofre (key.txt, backup.enc, state.enc) na pasta
+ * indicada. Extraido de `syncVaultToDrive` para que o backup automatico do
+ * layout (folderSync) possa re-selar apos uma escrita, sem duplicar a ordem
+ * das operacoes.
+ */
+export async function writeVaultSnapshots(folder: VaultFolderLike): Promise<void> {
+  const codigo = await ensureVaultCode();
+  const chave = await vaultKeyFromCode(codigo);
+  const vaultId = await vaultIdFromCode(codigo);
+  await escrever(folder, KEY_FILE, formatRecoveryCode(codigo));
+  // O v1 e o arquivo de compatibilidade com o app; o v2 e o estado do web.
+  await escrever(folder, BACKUP_FILE, await sealSnapshot(await buildNotesSnapshot(vaultId), chave));
+  await escrever(folder, STATE_FILE, await sealSnapshot(await buildSnapshot(vaultId), chave));
+}
+
+/**
  * Grava o cofre na pasta do Drive e garante a chave ao lado.
  *
  * O `backup.enc` leva o retrato v1 (so notas) que o app tambem le; o
  * `state.enc` leva o retrato v2 completo do web. Os tres arquivos sao escritos
- * quando o layout mudou ou quando a pasta ainda nao os tem: um sync sem mudanca
- * nao reescreve nada.
+ * quando a pasta ainda nao os tem: um sync sem mudanca (com os tres presentes)
+ * nao reescreve nada; as mudancas de layout sao seladas pelo gancho do
+ * folderSync.
  */
 export async function syncVaultToDrive(
   root?: VaultFolderLike,
@@ -126,14 +143,8 @@ export async function syncVaultToDrive(
     (await arquivoExiste(alvo, KEY_FILE)) &&
     (await arquivoExiste(alvo, BACKUP_FILE)) &&
     (await arquivoExiste(alvo, STATE_FILE));
-  if ((resultado && resultado.written > 0) || !completo) {
-    const codigo = await ensureVaultCode();
-    const chave = await vaultKeyFromCode(codigo);
-    const vaultId = await vaultIdFromCode(codigo);
-    await escrever(alvo, KEY_FILE, formatRecoveryCode(codigo));
-    // O v1 e o arquivo de compatibilidade com o app; o v2 e o estado do web.
-    await escrever(alvo, BACKUP_FILE, await sealSnapshot(await buildNotesSnapshot(vaultId), chave));
-    await escrever(alvo, STATE_FILE, await sealSnapshot(await buildSnapshot(vaultId), chave));
+  if (!completo) {
+    await writeVaultSnapshots(alvo);
   }
   return resultado;
 }
@@ -317,3 +328,7 @@ export async function driveVaultExists(root?: VaultFolderLike): Promise<boolean>
   const alvo = root ?? (await driveVaultRoot());
   return arquivoExiste(alvo, KEY_FILE);
 }
+
+// O backup automatico do layout (folderSync) re-sela os snapshots na mesma
+// pasta, para Drive e para a pasta do File System Access, sem sessao extra.
+setVaultWriteHook((folder) => writeVaultSnapshots(folder));

@@ -81,6 +81,7 @@ import {
   syncVaultToDrive,
   vaultSummary,
 } from "./vaultCloud";
+import { runVaultSync } from "./folderSync";
 
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
@@ -755,5 +756,46 @@ describe("restauracao de anexos do cofre", () => {
     expect(await getLocalNotebook(caderno.id)).toBeNull();
     expect(await readLocalAnalysis(nota.id)).toBeNull();
     expect((await loadLocalSettings()).owner_name).toBe("");
+  });
+});
+
+describe("sync automatico e snapshots", () => {
+  it("runVaultSync com o gancho registrado reescreve state.enc com a contagem atual de notas", async () => {
+    const pasta = pastaEmMemoria();
+    await novaNota("nota auto", "texto");
+
+    await runVaultSync(pasta);
+
+    const codigo = normalizeRecoveryCode(decoder.decode(pasta.arquivos.get(KEY_FILE)!));
+    const chave = await vaultKeyFromCode(codigo);
+    const retrato = await openSnapshot(pasta.arquivos.get(STATE_FILE)!, chave);
+    expect(retrato.version).toBe(2);
+    expect(retrato.notes).toHaveLength(1);
+  });
+
+  it("syncVaultToDrive em pasta vazia cria key.txt, backup.enc e state.enc", async () => {
+    const pasta = pastaEmMemoria();
+
+    await syncVaultToDrive(pasta);
+
+    expect(pasta.arquivos.has(KEY_FILE)).toBe(true);
+    expect(pasta.arquivos.has(BACKUP_FILE)).toBe(true);
+    expect(pasta.arquivos.has(STATE_FILE)).toBe(true);
+  });
+
+  it("o snapshot e escrito uma unica vez por sync, nao duplicado", async () => {
+    const pasta = pastaEmMemoria();
+    await novaNota("nota unica", "texto");
+
+    let escritasState = 0;
+    const setOriginal = pasta.arquivos.set.bind(pasta.arquivos);
+    pasta.arquivos.set = (chave, valor) => {
+      if (chave === STATE_FILE) escritasState += 1;
+      return setOriginal(chave, valor);
+    };
+
+    await syncVaultToDrive(pasta);
+
+    expect(escritasState).toBe(1);
   });
 });

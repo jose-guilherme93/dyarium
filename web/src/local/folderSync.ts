@@ -29,9 +29,13 @@ export interface SyncResult {
 let timer: number | null = null;
 /** Ha escrita desde o ultimo backup bem-sucedido. */
 let dirty = false;
+/** Snapshot (key.txt/backup.enc/state.enc) ficou pendente de regravar. */
+let snapshotDirty = false;
 let primeiraSujeira = 0;
 let emAndamento: Promise<SyncResult | null> | null = null;
 let ultimo: SyncResult | null = null;
+/** Gancho que re-sela os snapshots apos uma escrita do layout. */
+let vaultWriteHook: ((folder: VaultFolderLike) => Promise<void>) | null = null;
 /**
  * De onde vem a pasta quando ninguem passa uma: o File System Access (pasta
  * lembrada) ou um provedor de nuvem, como a sessao do Drive. O provedor pode
@@ -44,6 +48,22 @@ export function setVaultTarget(
   provider: (() => Promise<VaultFolderLike | null>) | null,
 ): void {
   targetProvider = provider;
+  // Trocar de alvo nao deve carregar sujeira de uma sessao anterior.
+  dirty = false;
+  snapshotDirty = false;
+  primeiraSujeira = 0;
+  limparTimer();
+}
+
+/** Registra o gancho que re-sela os snapshots apos uma escrita do layout. */
+export function setVaultWriteHook(
+  hook: ((folder: VaultFolderLike) => Promise<void>) | null,
+): void {
+  vaultWriteHook = hook;
+  dirty = false;
+  snapshotDirty = false;
+  primeiraSujeira = 0;
+  limparTimer();
 }
 
 function agora(): string {
@@ -134,6 +154,7 @@ export function runVaultSync(folder?: VaultFolderLike | null): Promise<SyncResul
       // gravar. Limpar a sujeira evita que a proxima abertura do app agende
       // uma escrita que nunca teria para onde ir.
       dirty = false;
+      snapshotDirty = false;
       primeiraSujeira = 0;
       limparTimer();
       return null;
@@ -142,25 +163,62 @@ export function runVaultSync(folder?: VaultFolderLike | null): Promise<SyncResul
     try {
       const previous = await readVaultManifest(alvo);
       const plan = await planVaultLayout(previous);
-      if (plan.writes.length === 0 && plan.deletes.length === 0) {
+      const temMudancaLayout = plan.writes.length > 0 || plan.deletes.length > 0;
+
+      // Escrita do layout so quando ha mudanca: um sync sem mudanca nao toca
+      // em arquivo nenhum.
+      if (temMudancaLayout) {
+        await writeVaultLayout(alvo, plan);
+      }
+
+      // Sem mudanca de layout e sem snapshot pendente: nada a fazer alem de
+      // limpar a sujeira. O gancho nao roda (nao ha o que re-selar).
+      if (!temMudancaLayout && !snapshotDirty) {
         dirty = false;
+        snapshotDirty = false;
         limparTimer();
         return { written: 0, deleted: 0, unchanged: plan.unchanged, at: agora() };
       }
-      await writeVaultLayout(alvo, plan);
-      const result: SyncResult = {
-        written: plan.writes.length,
-        deleted: plan.deletes.length,
-        unchanged: plan.unchanged,
-        at: agora(),
-      };
+
+      // Re-sela os snapshots quando houve mudanca de layout ou quando um
+      // snapshot anterior falhou. Roda dentro da fila (emAndamento), sem
+      // sobreposicao.
+      if (vaultWriteHook && (temMudancaLayout || snapshotDirty)) {
+        try {
+          await vaultWriteHook(alvo);
+        } catch (error) {
+          // Snapshot falhou: o layout pode ter ido, mas o cofre continua sujo
+          // e o snapshot fica pendente para a proxima tentativa.
+          dirty = true;
+          snapshotDirty = true;
+          if (timer === null) {
+            timer = window.setTimeout(() => {
+              timer = null;
+              void runVaultSync();
+            }, SILENCE_MS);
+          }
+          throw error;
+        }
+      }
+
+      const result: SyncResult = temMudancaLayout
+        ? {
+            written: plan.writes.length,
+            deleted: plan.deletes.length,
+            unchanged: plan.unchanged,
+            at: agora(),
+          }
+        : { written: 0, deleted: 0, unchanged: plan.unchanged, at: agora() };
       dirty = false;
+      snapshotDirty = false;
       primeiraSujeira = 0;
-      ultimo = result;
-      try {
-        localStorage.setItem(LAST_KEY, JSON.stringify(result));
-      } catch {
-        // sem localStorage o resumo vive so nesta sessao
+      if (temMudancaLayout) {
+        ultimo = result;
+        try {
+          localStorage.setItem(LAST_KEY, JSON.stringify(result));
+        } catch {
+          // sem localStorage o resumo vive so nesta sessao
+        }
       }
       limparTimer();
       return result;

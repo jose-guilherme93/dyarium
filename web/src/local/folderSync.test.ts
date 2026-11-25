@@ -20,11 +20,13 @@ import {
   markVaultDirty,
   runVaultSync,
   setVaultTarget,
+  setVaultWriteHook,
 } from "./folderSync";
 
 beforeEach(() => {
   vi.useFakeTimers();
   setVaultTarget(null);
+  setVaultWriteHook(null);
   localStorage.clear();
   remember.mockReset();
   plano.mockReset();
@@ -185,5 +187,59 @@ describe("backup automatico na pasta", () => {
     expect(plano).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(120_000);
     expect(plano).not.toHaveBeenCalled();
+  });
+
+  it("apos sync que escreve, o gancho e chamado com a mesma pasta", async () => {
+    const gancho = vi.fn().mockResolvedValue(undefined);
+    setVaultWriteHook(gancho);
+    plano.mockResolvedValueOnce({
+      manifest: {},
+      writes: [{ path: "notes/a.md.enc", bytes: new Uint8Array() }],
+      deletes: [],
+      unchanged: 0,
+    } as never);
+
+    await runVaultSync(pasta);
+
+    expect(gancho).toHaveBeenCalledTimes(1);
+    expect(gancho).toHaveBeenCalledWith(pasta);
+  });
+
+  it("com zero escritas e sem snapshot pendente, o gancho nao e chamado", async () => {
+    const gancho = vi.fn().mockResolvedValue(undefined);
+    setVaultWriteHook(gancho);
+
+    await runVaultSync(pasta);
+
+    expect(gancho).not.toHaveBeenCalled();
+  });
+
+  it("falha do gancho deixa o cofre sujo e rejeita; proximo run com zero escritas chama o gancho e limpa", async () => {
+    const gancho = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("snapshot quebrou"))
+      .mockResolvedValue(undefined);
+    setVaultWriteHook(gancho);
+    plano.mockResolvedValueOnce({
+      manifest: {},
+      writes: [{ path: "notes/a.md.enc", bytes: new Uint8Array() }],
+      deletes: [],
+      unchanged: 0,
+    } as never);
+
+    await expect(runVaultSync(pasta)).rejects.toThrow("snapshot quebrou");
+    expect(isVaultDirty()).toBe(true);
+
+    plano.mockResolvedValueOnce({
+      manifest: {},
+      writes: [],
+      deletes: [],
+      unchanged: 0,
+    } as never);
+
+    await runVaultSync(pasta);
+
+    expect(gancho).toHaveBeenCalledTimes(2);
+    expect(isVaultDirty()).toBe(false);
   });
 });
