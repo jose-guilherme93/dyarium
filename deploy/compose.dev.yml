@@ -50,6 +50,9 @@ services:
       - "${DIARY_WEB_PORT:-5173}:5173"
     volumes:
       - ..:/src
+      # Volume proprio: mudar dependencia no package.json exige reiniciar o
+      # servico (o comando roda `pnpm install` de novo). Sem reiniciar, o Vite
+      # quebra com "Failed to resolve import" mesmo com o pacote no host.
       - web-node-modules:/src/web/node_modules
     depends_on:
       - api
