@@ -243,8 +243,9 @@ saudação pela hora do aparelho (05–11 bom dia, 12–17 boa tarde, 18–04 bo
 até duas frases do resumo que já é calculado sem LLM, e no máximo quatro números
 (notas do mês, palavra, assunto, palavras). Ações: nova nota e análise.
 
-As opções de importação não ficam no vazio: vivem no trilho esquerdo, abaixo do
-menu, como ícones com dica.
+As opções de importação não ficam no vazio: o importador do Notion vive no
+`+` (texto, áudio, Notion), o de servidor continua no trilho, e a nuvem do
+trilho abre o cofre, com números e backup.
 
 ## Paridade
 
@@ -281,8 +282,8 @@ estados:     pronto, carregando (esqueleto), vazio, offline, busca ativa
 ```
 tela:        início do web (sem nota aberta)
 mostra:      saudação, até duas frases do resumo, quatro números,
-             nova nota, análise, importar do Notion, importar de servidor,
-             ver mapa (importações no trilho), estado de sync e fila
+             nova nota (texto, áudio, Notion), importar de servidor,
+             ver mapa, estado do cofre (nuvem do trilho) e fila
 estados:     com notas, caderno vazio, primeira vez
 ```
 

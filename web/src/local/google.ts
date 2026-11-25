@@ -61,6 +61,8 @@ export interface DriveTokenOptions {
   silent?: boolean;
   /** Sobrepoe o prompt do Google, para o consentimento de identidade. */
   prompt?: string;
+  /** Prazo do pedido, em ms. O silencioso automatico usa um curto. */
+  timeoutMs?: number;
 }
 
 let carregando: Promise<void> | null = null;
@@ -106,7 +108,7 @@ export async function requestDriveToken(options?: DriveTokenOptions): Promise<Dr
       if (encerrado) return;
       encerrado = true;
       reject(new Error("o login do Google nao respondeu; a janela foi bloqueada ou fechada"));
-    }, 120_000);
+    }, options?.timeoutMs ?? 120_000);
     const encerrar = (): void => {
       encerrado = true;
       clearTimeout(prazo);

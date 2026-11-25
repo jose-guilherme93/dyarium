@@ -4,7 +4,14 @@ import App from "./App";
 import { api } from "./api";
 import type { ImportResult } from "./local/import";
 import { registerNodeDatabase } from "./local/__fixtures__/nodeDb";
-import { connectDrive, driveVaultRoot, signOutAccount } from "./local/driveSession";
+import {
+  connectDrive,
+  disconnectDrive,
+  driveVaultRoot,
+  restoreDriveSession,
+  signOutAccount,
+  DRIVE_SESSION_KEY,
+} from "./local/driveSession";
 import { openDriveVault } from "./local/vaultCloud";
 import { reloadPage } from "./lib/page";
 
@@ -70,6 +77,10 @@ vi.mock("./local/importJob", () => ({
 
 beforeEach(async () => {
   localStorage.clear();
+  sessionStorage.clear();
+  // A sessao do Drive vive fora do React: sem limpar, um teste conectado
+  // atravessa para o proximo.
+  disconnectDrive();
   jobDuble.limpar();
   // Sem token o app usa o cofre do navegador; no teste ele e em memoria.
   await registerNodeDatabase();
@@ -201,6 +212,24 @@ describe("App", () => {
       await screen.findByRole("complementary", { name: /Navegação principal/ }),
     ).toBeInTheDocument();
     vi.unstubAllGlobals();
+  });
+
+  it("o icone de nuvem abre o cofre e a lupa fica so no trilho", async () => {
+    vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "");
+    localStorage.setItem("dyarium.onboarded", "1");
+    render(<App />);
+    await waitFor(() => expect(screen.getByText("Nenhuma nota ainda.")).toBeInTheDocument());
+
+    // Uma lupa so: o trilho. A faixa da lista nao repete o botao no desktop.
+    expect(screen.getAllByRole("button", { name: "Buscar nas notas" })).toHaveLength(1);
+
+    // A area das notas nao carrega mais a linha do Google Drive.
+    expect(screen.queryByText("Google Drive")).not.toBeInTheDocument();
+
+    // A nuvem do trilho e o menu do cofre.
+    fireEvent.click(screen.getByRole("button", { name: "Google Drive" }));
+    expect(await screen.findByRole("heading", { name: "Google Drive" })).toBeInTheDocument();
+    expect(screen.getByText("Google não configurado")).toBeInTheDocument();
   });
 
   it("rejeita token invalido e permanece na tela de acesso", async () => {
@@ -349,7 +378,41 @@ describe("App trava da conta", () => {
     vi.mocked(reloadPage).mockClear();
   });
 
+  it("a sessao guardada na aba abre o app no F5 sem passar pela trava", async () => {
+    sessionStorage.setItem(
+      DRIVE_SESSION_KEY,
+      JSON.stringify({
+        accessToken: "tok",
+        expiresAt: Date.now() + 3_600_000,
+        scope: "openid email profile https://www.googleapis.com/auth/drive.file",
+      }),
+    );
+    // O carregamento do modulo restaura a sessao antes do primeiro render.
+    restoreDriveSession();
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Nenhuma nota ainda.")).toBeInTheDocument());
+    expect(screen.queryByRole("main", { name: "Conta Google" })).not.toBeInTheDocument();
+    // Nenhum login: a aba ja tinha a sessao.
+    expect(connectDrive).not.toHaveBeenCalled();
+    expect(openDriveVault).not.toHaveBeenCalled();
+  });
+
+  it("sem sessao mas com o Google ativo, tenta sozinho e destrava", async () => {
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Nenhuma nota ainda.")).toBeInTheDocument());
+    expect(connectDrive).toHaveBeenCalledWith(
+      expect.objectContaining({ silent: true }),
+    );
+    expect(openDriveVault).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("main", { name: "Conta Google" })).not.toBeInTheDocument();
+  });
+
   it("com marca e sem sessão, a tela trava a conta e nenhuma nota aparece", async () => {
+    // O silencioso automatico falha (janela bloqueada sem gesto): a trava fica.
+    vi.mocked(connectDrive).mockRejectedValueOnce(new Error("sem gesto"));
     render(<App />);
 
     const trava = await screen.findByRole("main", { name: "Conta Google" });
@@ -372,13 +435,14 @@ describe("App trava da conta", () => {
   });
 
   it("o primeiro toque renova em silêncio e destrava quando o cofre abre", async () => {
+    vi.mocked(connectDrive).mockRejectedValueOnce(new Error("sem gesto"));
     render(<App />);
     const trava = await screen.findByRole("main", { name: "Conta Google" });
     vi.mocked(connectDrive).mockClear();
 
     fireEvent.pointerDown(trava);
 
-    await waitFor(() => expect(connectDrive).toHaveBeenCalledWith({ silent: true }));
+    await waitFor(() => expect(connectDrive).toHaveBeenCalledWith(expect.objectContaining({ silent: true })));
     await waitFor(() => expect(openDriveVault).toHaveBeenCalledTimes(1));
     // O login pela trava usa o caminho rapido: metadado e sync em segundo plano.
     expect(openDriveVault).toHaveBeenCalledWith(
@@ -443,6 +507,7 @@ describe("App trava da conta", () => {
     });
     vi.mocked(openDriveVault).mockResolvedValue({ ...aberto, background: segundoPlano });
 
+    vi.mocked(connectDrive).mockRejectedValueOnce(new Error("sem gesto"));
     render(<App />);
     fireEvent.pointerDown(await screen.findByRole("main", { name: "Conta Google" }));
 
@@ -460,7 +525,7 @@ describe("App trava da conta", () => {
 
     fireEvent.pointerDown(trava);
 
-    await waitFor(() => expect(connectDrive).toHaveBeenCalledWith({ silent: true }));
+    await waitFor(() => expect(connectDrive).toHaveBeenCalledWith(expect.objectContaining({ silent: true })));
     await waitFor(() =>
       expect(screen.getByRole("main", { name: "Conta Google" })).toBeInTheDocument(),
     );
@@ -470,6 +535,7 @@ describe("App trava da conta", () => {
   });
 
   it("Entrar com Google faz o caminho interativo e destrava", async () => {
+    vi.mocked(connectDrive).mockRejectedValueOnce(new Error("sem gesto"));
     render(<App />);
     const trava = await screen.findByRole("main", { name: "Conta Google" });
     vi.mocked(connectDrive).mockClear();
@@ -496,6 +562,7 @@ describe("App trava da conta", () => {
       return { ok: true };
     });
     const confirmar = vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.mocked(connectDrive).mockRejectedValueOnce(new Error("sem gesto"));
     const vista = render(<App />);
     const trava = await screen.findByRole("main", { name: "Conta Google" });
 

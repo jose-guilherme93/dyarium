@@ -17,7 +17,7 @@ function readNoteOrder(): NoteOrder {
   }
 }
 import { normalizeSearch } from "../lib/search";
-import { formatDuration, formatShortDate } from "../lib/format";
+import { formatShortDateTime } from "../lib/format";
 import { tagColor } from "../lib/tags";
 import { noteTitle } from "../lib/noteTitle";
 import { noteDate, sortNotesByDate, type NoteOrder } from "../lib/noteOrder";
@@ -27,7 +27,6 @@ import {
   ArchiveIcon,
   CheckIcon,
   CloseIcon,
-  MicIcon,
   PlusIcon,
   SearchIcon,
   SelectIcon,
@@ -45,6 +44,8 @@ interface NoteListProps {
   notebooks: Notebook[];
   /** A faixa recolhida pediu a busca: abre o campo assim que a lista montar. */
   autoSearch?: boolean;
+  /** Mostra o botao de lupa no cabecalho da lista. Padrao true. */
+  showSearch?: boolean;
   onSearchOpened?: () => void;
   onOpen: (id: string, title?: string) => void;
   /** Abre a nota numa aba nova; ausente, a acao nao aparece no menu. */
@@ -102,6 +103,7 @@ export function NoteList({
   notebookId,
   notebooks,
   autoSearch = false,
+  showSearch = true,
   onSearchOpened,
   onOpen,
   onOpenInNewTab,
@@ -199,10 +201,6 @@ export function NoteList({
     [notebooks, notebookId],
   );
   const isMcp = activeNotebook?.kind === "mcp";
-  const notebookById = useMemo(
-    () => new Map(notebooks.map((notebook) => [notebook.id, notebook])),
-    [notebooks],
-  );
 
   // Escopo: caderno (ou tudo) + a aba de arquivadas.
   const inScope = useMemo(
@@ -404,10 +402,7 @@ export function NoteList({
   };
 
   const row = (entry: Entry) => {
-    const isAudio = entry.source !== "text";
     const title = noteTitle(entry);
-    const notebook = notebookById.get(entry.notebook_id ?? "");
-    const tags = entry.tags ?? [];
     const isSelected = selected.has(entry.id);
     const className = [
       "note-row",
@@ -443,15 +438,6 @@ export function NoteList({
             }}
           >
             <span className="note-row-head">
-              {allNotebooks && notebook && (
-                <span
-                  className="note-row-dot"
-                  style={{ backgroundColor: notebook.color || "var(--color-muted)" }}
-                  role="img"
-                  aria-label={`Caderno ${notebook.name}`}
-                  title={notebook.name}
-                />
-              )}
               <span className="note-row-title">{title}</span>
               {selecting && (
                 <span
@@ -462,40 +448,17 @@ export function NoteList({
                 </span>
               )}
             </span>
+            {/* Sem titulo, a linha usa a previa como titulo: repetir o mesmo
+                trecho logo abaixo duplicava o texto na lista. */}
+            {entry.preview && entry.preview !== title ? (
+              <span className="note-row-preview">{entry.preview}</span>
+            ) : null}
             <span className="note-row-line">
-              {isAudio && (
-                <span className="note-row-kind" title="Áudio">
-                  <MicIcon size={11} />
-                  {entry.duration_seconds > 0
-                    ? formatDuration(entry.duration_seconds)
-                    : "áudio"}
-                </span>
-              )}
-              {/* Sem titulo, a linha usa a previa como titulo: repetir o mesmo
-                  trecho logo abaixo duplicava o texto na lista. */}
-              {entry.preview && entry.preview !== title ? (
-                <span className="note-row-preview">{entry.preview}</span>
-              ) : null}
               {(failures[entry.id] || entry.status === "failed") && (
                 <span className="note-row-failed">falhou</span>
               )}
-              <span className="note-row-date">{formatShortDate(noteDate(entry))}</span>
+              <span className="note-row-date">{formatShortDateTime(noteDate(entry))}</span>
             </span>
-            {tags.length > 0 && entry.id === activeId && (
-              <span className="note-row-tags">
-                {tags.slice(0, 4).map((tag) => (
-                  <span key={tag} className="mini-tag">
-                    <span
-                      className="mini-tag-dot"
-                      style={{ backgroundColor: tagColor(tag) }}
-                      aria-hidden
-                    />
-                    {tag}
-                  </span>
-                ))}
-                {tags.length > 4 && <span className="mini-tag-more">+{tags.length - 4}</span>}
-              </span>
-            )}
           </button>
         </div>
       </li>
@@ -534,15 +497,17 @@ export function NoteList({
         ) : (
           <>
             <div className="list-tools">
-              <button
-                type="button"
-                className="icon-button"
-                onClick={() => setSearchingOpen(true)}
-                aria-label="Buscar nas notas"
-                title="Buscar"
-              >
-                <SearchIcon size={16} />
-              </button>
+              {showSearch && (
+                <button
+                  type="button"
+                  className="icon-button"
+                  onClick={() => setSearchingOpen(true)}
+                  aria-label="Buscar nas notas"
+                  title="Buscar"
+                >
+                  <SearchIcon size={16} />
+                </button>
+              )}
               <button
                 type="button"
                 className={archived ? "icon-button icon-button--active" : "icon-button"}

@@ -907,10 +907,14 @@ por usuario no backend, e o Worker nao ve conteudo de nota.
 **Login.** Modelo de token do Google Identity Services (`google.accounts.oauth2`), pedindo
 `openid email profile` junto do escopo `drive.file`: o app so enxerga os arquivos que ele
 mesmo criou, e recebe do userinfo (`oauth2/v3/userinfo`) nome, e-mail e foto. O navegador
-recebe um access token de cerca de uma hora e o guarda apenas em memoria
-(`web/src/local/driveSession.ts`). Nao ha refresh token, client secret nem credencial em
-disco: quando o token vence, o app tenta de novo sem tela de login. O client ID fica em
-`VITE_GOOGLE_CLIENT_ID` (`web/.env.example`); ele e publico.
+recebe um access token de cerca de uma hora e o guarda na sessao da aba
+(`sessionStorage`, `dyarium.drive.session`) e na memoria do modulo
+(`web/src/local/driveSession.ts`): o F5 abre o app ja conectado, sem passar pelo login, e a
+credencial some quando a aba fecha. Nunca vai para `localStorage`, IndexedDB, cookie ou log.
+Nao ha refresh token nem client secret: quando o token vence, o app pede um novo sem tela
+(`prompt: "none"`) ao carregar a pagina e no proximo gesto antes de vencer; se o Google
+recusar (usuario deslogado, janela bloqueada), a tela de conta oferece o Entrar. O client ID
+fica em `VITE_GOOGLE_CLIENT_ID` (`web/.env.example`); ele e publico.
 
 **Primeiro acesso.** O Google e a acao principal da primeira tela; escolher uma pasta ou
 seguir so naquele navegador sao caminhos secundarios, em link discreto. Quem entra com Google
@@ -1022,9 +1026,9 @@ pequenos.
 **Abrir o cofre: casca agora, cofre depois.** `openDriveVault` restaura quando ha `key.txt`,
 aplica o retrato e le o resumo do `manifest.json`, e so entao devolve: a lista ja pode
 aparecer. As opcoes sao explicitas — `attachments: "skip" | "all"` e
-`sync: "background" | "now"`. O login (primeira tela, tela travada, linha de reconectar,
+`sync: "background" | "now"`. O login (primeira tela, tela travada, pagina do cofre,
 Configuracoes e menu da conta) usa `skip` + `background`: anexo nenhum desce e o sync
-termina atras, como sinal discreto na linha do Drive, sem overlay; uma falha ali vira uma
+termina atras, como sinal discreto na pagina do cofre, sem overlay; uma falha ali vira uma
 linha e nao derruba a tela. Cofre novo e a excecao, porque e o sync que cria `key.txt`.
 Restaurar sem sincronizar deixava as notas locais fora do Drive, entao o sync continua
 acontecendo em toda abertura; a restauracao manual das Configuracoes pede `all` e baixa os
@@ -1035,8 +1039,26 @@ depois de conferir os tres snapshots e esperar o segundo plano.
 Drive e sem login. Com conta, o Drive e o banco e o cache local e copia de trabalho: a marca
 `localStorage["dyarium.drive"]` decide o modo. Entrar pela conta passa por um unico caminho
 (`connectAccount`): abre o Drive, aplica o retrato mantendo a nota local mais nova, sobe a
-uniao e grava a marca. O mesmo caminho vale para o primeiro acesso, Configuracoes, a linha de
-reconectar e o menu da conta — nenhum deles sobe o local sem abrir o Drive.
+uniao e grava a marca. O mesmo caminho vale para o primeiro acesso, Configuracoes, a pagina
+do cofre e o menu da conta — nenhum deles sobe o local sem abrir o Drive.
+
+**O cofre tem uma tela propria (25/11).** No web, a nuvem do trilho abre a pagina do Google
+Drive: coluna de 420 px centrada no espaco, com contagem de notas, anexos e tamanho do cofre
+local, audios e duracao, conta, pasta, ultimo envio e o bloco de backup (pasta e `.zip`). A
+linha que ficava acima da lista saiu: quando a sessao vence ou um envio falha, o aviso e um
+ponto no icone de nuvem mais a propria pagina, e nada ocupa a area de leitura. O importador
+do Notion passa a viver so no `+`, junto com o texto e o audio. No app, o mesmo conteudo ja
+vive na tela do Drive.
+
+**Painel do dono (25/11).** O site hospedado manda um pulso anonimo para um
+Worker separado (`worker/`, D1 `dyarium-admin`): id aleatorio de instalacao,
+evento do dia, versao, navegador, contagem de notas/tamanho e, SO no login com
+Google, o e-mail da conta. Nada de conteudo, token ou IP. O e-mail e o unico
+dado pessoal e fica no D1 ate ser removido pelo `/admin`; a pagina
+`/privacidade` diz isso. O painel le `/admin-api/stats` com Bearer (segredo do
+Worker); a chave fica so na sessao da aba. O Google nao entrega a lista de
+usuarios ao dono: e o app que manda o e-mail quando a pessoa entra. O app mobile
+ainda nao pulsa; quando pulsar, entra como `platform: "android"|"ios"`.
 
 **Sessao e reconexao.** O token dura cerca de uma hora e nao sobrevive ao reload (nao ha
 refresh token no navegador). O navegador guarda a marca e o ultimo resumo (bytes, notas),

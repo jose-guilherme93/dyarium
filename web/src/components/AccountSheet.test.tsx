@@ -24,8 +24,8 @@ vi.mock("../local/accountConnect", () => ({
   })),
 }));
 
-vi.mock("./DriveReconnect", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./DriveReconnect")>();
+vi.mock("../local/driveMark", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../local/driveMark")>();
   return {
     ...actual,
     cachedSummary: vi.fn(() => ({ notes: 400, attachments: 1, bytes: 13_000_000 })),

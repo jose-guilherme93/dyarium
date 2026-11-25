@@ -3,6 +3,9 @@
   // criou ao conectar o repositorio). O build roda no repositorio inteiro
   // porque `web/` importa `mobile/src/core`.
   //
+  // A API do /admin (pulso e painel) vive no Worker separado `worker/`, com o
+  // proprio wrangler.jsonc; este arquivo publica so os assets do site.
+  //
   // Painel > Workers & Pages > dyarium > Settings > Build:
   //   Build command:  corepack enable && cd web && pnpm install --frozen-lockfile && pnpm build
   //   Deploy command: npx wrangler deploy

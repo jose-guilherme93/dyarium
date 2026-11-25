@@ -3814,18 +3814,6 @@
   font-size: 11.5px;
 }
 
-.note-row-kind {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.note-row-notebook::before {
-  content: "·";
-  margin-right: calc(var(--space) * 1.5);
-  color: var(--color-border);
-}
-
 .note-row-failed {
   color: var(--color-danger);
 }
@@ -3835,17 +3823,8 @@
   font-size: 12.5px;
   line-height: 1.45;
   overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-}
-
-.note-row-tags {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: calc(var(--space) * 1.5);
-  margin-top: 1px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mini-tag {
@@ -5173,13 +5152,6 @@
   min-width: 0;
 }
 
-.note-row-dot {
-  width: 6px;
-  height: 6px;
-  flex: none;
-  border-radius: 50%;
-}
-
 .note-row-title {
   display: block;
   min-width: 0;
@@ -5193,20 +5165,12 @@
 .note-row-line {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: calc(var(--space) * 1.5);
   min-width: 0;
   color: var(--color-muted);
   font-size: 11.5px;
   line-height: 1.32;
-}
-
-.note-row-kind {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  font-size: 11.5px;
-  font-variant-numeric: tabular-nums;
 }
 
 .note-row-preview {
@@ -5225,16 +5189,10 @@
 
 .note-row-date {
   flex: none;
-  margin-left: auto;
   font-family: var(--dy-font-mono);
   font-size: 11.5px;
   letter-spacing: 0.02em;
   font-variant-numeric: tabular-nums;
-}
-
-.note-row-tags {
-  gap: calc(var(--space));
-  margin-top: 1px;
 }
 
 .mini-tag {
@@ -13253,6 +13211,34 @@ button.save-glyph:focus-visible {
   bottom: var(--dy-space-4);
   width: var(--dy-state-bar);
   background: var(--color-accent);
+}
+
+/* O cofre aberto no trilho usa o mesmo degrau da tela ativa do rodape. */
+.side-rail .rail-action--active {
+  background: var(--color-surface-2);
+  color: var(--color-text);
+}
+
+.side-rail .rail-action--active::before {
+  content: "";
+  position: absolute;
+  left: calc(var(--dy-space-4) * -1);
+  top: var(--dy-space-4);
+  bottom: var(--dy-space-4);
+  width: var(--dy-state-bar);
+  background: var(--color-accent);
+}
+
+/* Ponto de aviso da nuvem: sessao vencida ou envio que falhou. E o unico
+   sinal que sobra na area de notas, sem faixa nem linha ocupando espaco. */
+.rail-dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--color-warn);
 }
 
 .rail-expand svg {

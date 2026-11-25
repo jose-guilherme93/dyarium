@@ -98,7 +98,7 @@ export function telemetryEnabled(): boolean {
 }
 
 /** Caminhos que o app atende; qualquer outro e rota inexistente. */
-const ROTAS = new Set(["/", "/lab"]);
+const ROTAS = new Set(["/", "/lab", "/admin", "/privacidade"]);
 
 /**
  * Avisa no painel quando a URL nao existe.

@@ -1,0 +1,27 @@
+{
+  // Worker da API do /admin: pulso anonimo, painel e cadastro de contas.
+  // O site (assets) continua no wrangler.jsonc da raiz; este Worker e separado
+  // para o painel funcionar sem republicar o site.
+  //
+  //   npx wrangler -c worker/wrangler.jsonc d1 migrations apply dyarium-admin --remote
+  //   npx wrangler -c worker/wrangler.jsonc secret put ADMIN_TOKEN
+  //   npx wrangler -c worker/wrangler.jsonc deploy
+  "name": "dyarium-admin",
+  "main": "index.ts",
+  "compatibility_date": "2026-11-13",
+  "observability": {
+    "enabled": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "dyarium-admin",
+      "database_id": "4fb04979-a968-45e0-b6c8-691f21f7ac44",
+      "migrations_dir": "./migrations"
+    }
+  ],
+  "triggers": {
+    // Limpeza diaria dos eventos de uso com mais de 180 dias (UTC).
+    "crons": ["17 4 * * *"]
+  }
+}

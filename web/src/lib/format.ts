@@ -60,6 +60,24 @@ export function formatShortDate(value?: string | null): string {
     : `${label} ${date.getFullYear()}`;
 }
 
+/**
+ * Data e hora curtas para a linha de nota ("07:00 · 19 out" ou
+ * "07:00 · 19 out 2019"). O ano so aparece quando a nota nao e deste ano.
+ */
+export function formatShortDateTime(value?: string | null): string {
+  if (!value) {
+    return "";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  const hh = String(date.getHours()).padStart(2, "0");
+  const mm = String(date.getMinutes()).padStart(2, "0");
+  const datePart = formatShortDate(value);
+  return `${hh}:${mm} · ${datePart}`;
+}
+
 // dayLabel groups notes in the list ("Hoje", "Ontem" or a date).
 export function dayLabel(value?: string | null): string {
   if (!value) {

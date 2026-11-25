@@ -12,31 +12,9 @@ import {
   UserIcon,
   WaveIcon,
 } from "../components/icons";
-import {
-  ensureVaultCode,
-  setVaultCode as adoptVaultCode,
-  vaultKeyFromCode,
-} from "../local/vault";
-import {
-  applySnapshot,
-  buildNotesSnapshot,
-  buildSnapshot,
-  openSnapshot,
-  sealSnapshot,
-  vaultIdFromCode,
-} from "../local/backup";
 import { lastSyncSummary } from "../local/folderSync";
 import { connectAccount } from "../local/accountConnect";
 import { restoreVaultFromDrive, syncVaultToDrive } from "../local/vaultCloud";
-import { downloadBytes, packVault, unpackVault } from "../local/bundle";
-import {
-  pickFolder,
-  readVaultFromFolder,
-  rememberFolder,
-  supportsFolder,
-  writeVaultToFolder,
-  type FolderLike,
-} from "../local/folder";
 import {
   disconnectDrive,
   driveConfigured,
@@ -46,6 +24,7 @@ import {
 } from "../local/driveSession";
 import { ListSkeleton } from "../components/Skeleton";
 import { TrashSection } from "../components/TrashSection";
+import { VaultBackup } from "../components/VaultBackup";
 import { useToast } from "../components/Toasts";
 import {
   canSearchModels,
@@ -112,23 +91,10 @@ export function SettingsView({
   const [settings, setSettings] = useState<Settings | null>(null);
   const [ownerName, setOwnerName] = useState("");
 
-  useEffect(() => {
-    void ensureVaultCode()
-      .then(setVaultCode)
-      .catch(() => undefined);
-    // A pasta escolhida antes volta se o navegador ainda der permissao.
-    void rememberFolder()
-      .then(setFolder)
-      .catch(() => undefined);
-  }, []);
 
   // A sessao do Drive vive fora do React: ouvir mantem botao e marcas em dia
   // quando conecta, vence ou desconecta.
   useEffect(() => onDriveSessionChange(() => setDriveState(driveSessionState())), []);
-
-  useEffect(() => {
-    void readTelemetryEnabled().then(setDiagnosticsOn);
-  }, []);
 
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [progress, setProgress] = useState<Record<string, DownloadProgress>>({});
@@ -155,13 +121,9 @@ export function SettingsView({
   // UI state
   const [activeTab, setActiveTab] = useState<TabId>("analise");
   const [modelFilter, setModelFilter] = useState("");
-  /** Codigo de recuperacao do cofre local (a chave e derivada dele). */
-  const [vaultCode, setVaultCode] = useState("");
   const [driveState, setDriveState] = useState<DriveSessionState>(() => driveSessionState());
   const [backupBusy, setBackupBusy] = useState(false);
   const [backupStatus, setBackupStatus] = useState("");
-  const [folder, setFolder] = useState<FolderLike | null>(null);
-  const backupFileRef = useRef<HTMLInputElement | null>(null);
   const [fetchStatus, setFetchStatus] = useState<FetchStatus>("idle");
   const [fetchError, setFetchError] = useState("");
   const [deepgramBusy, setDeepgramBusy] = useState(false);
@@ -169,6 +131,10 @@ export function SettingsView({
   const [savedOn, setSavedOn] = useState(false);
   const [diagnosticsOn, setDiagnosticsOn] = useState(true);
   const savedTimer = useRef<number | undefined>(undefined);
+
+  useEffect(() => {
+    void readTelemetryEnabled().then(setDiagnosticsOn);
+  }, []);
 
   // Id da requisicao em andamento, para descartar respostas obsoletas.
   const fetchReqId = useRef(0);
@@ -1355,101 +1321,6 @@ export function SettingsView({
     </div>
   );
 
-  const codigoDoCofre = async (): Promise<string> => {
-    const codigo = vaultCode || (await ensureVaultCode());
-    if (!codigo || codigo !== vaultCode) setVaultCode(codigo);
-    return codigo;
-  };
-
-  const backupToFolder = async () => {
-    setBackupBusy(true);
-    setBackupStatus("");
-    try {
-      const codigo = await codigoDoCofre();
-      const alvo = folder ?? (await pickFolder());
-      setFolder(alvo);
-      const chave = await vaultKeyFromCode(codigo);
-      const vaultId = await vaultIdFromCode(codigo);
-      // `backup.enc` fica v1 (o app tambem le); o estado completo vai ao lado.
-      const notas = await buildNotesSnapshot(vaultId);
-      const estado = await buildSnapshot(vaultId);
-      await writeVaultToFolder(
-        alvo,
-        codigo,
-        await sealSnapshot(notas, chave),
-        await sealSnapshot(estado, chave),
-      );
-      setBackupStatus(`pasta "${alvo.name}" · ${notas.notes.length} notas`);
-    } catch (error) {
-      setBackupStatus(describe(error));
-    } finally {
-      setBackupBusy(false);
-    }
-  };
-
-  const restoreFromFolder = async () => {
-    setBackupBusy(true);
-    setBackupStatus("");
-    try {
-      const alvo = folder ?? (await pickFolder());
-      setFolder(alvo);
-      const { code, sealed, state } = await readVaultFromFolder(alvo);
-      // A pasta manda: a chave dela substitui a que este navegador criou.
-      setVaultCode(await adoptVaultCode(code));
-      const chave = await vaultKeyFromCode(code);
-      // `state.enc` quando existe; pasta antiga cai no v1 sem erro.
-      const retrato = await openSnapshot(state ?? sealed, chave);
-      const resumo = await applySnapshot(retrato);
-      setBackupStatus(`${resumo.created} novas · ${resumo.updated} atualizadas · ${resumo.skipped} mantidas`);
-    } catch (error) {
-      setBackupStatus(describe(error));
-    } finally {
-      setBackupBusy(false);
-    }
-  };
-
-  /** Download do pacote: o caminho que funciona em Firefox e Safari. */
-  const downloadBackup = async () => {
-    setBackupBusy(true);
-    setBackupStatus("");
-    try {
-      const codigo = await codigoDoCofre();
-      const vaultId = await vaultIdFromCode(codigo);
-      const chave = await vaultKeyFromCode(codigo);
-      // Mesma divisao da pasta e do Drive: v1 no `backup.enc`, v2 no `state.enc`.
-      const notas = await buildNotesSnapshot(vaultId);
-      const estado = await buildSnapshot(vaultId);
-      downloadBytes(
-        `dyarium-${vaultId}.zip`,
-        packVault(codigo, await sealSnapshot(notas, chave), await sealSnapshot(estado, chave)),
-      );
-      setBackupStatus(`${notas.notes.length} notas · arquivo baixado`);
-    } catch (error) {
-      setBackupStatus(describe(error));
-    } finally {
-      setBackupBusy(false);
-    }
-  };
-
-  const restoreFromFile = async (file: File) => {
-    setBackupBusy(true);
-    setBackupStatus("");
-    try {
-      const { code, sealed, state } = await unpackVault(new Uint8Array(await file.arrayBuffer()));
-      setVaultCode(await adoptVaultCode(code));
-      const chave = await vaultKeyFromCode(code);
-      // Zip novo traz `state.enc`; zip antigo so tem o v1 e abre igual.
-      const retrato = await openSnapshot(state ?? sealed, chave);
-      const resumo = await applySnapshot(retrato);
-      setBackupStatus(`${resumo.created} novas · ${resumo.updated} atualizadas · ${resumo.skipped} mantidas`);
-    } catch (error) {
-      setBackupStatus(describe(error));
-    } finally {
-      setBackupBusy(false);
-    }
-  };
-
-  const describe = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
   const driveConfigurado = driveConfigured();
   const driveConectado = driveState === "connected";
@@ -1467,6 +1338,8 @@ export function SettingsView({
       : driveState === "expired"
         ? "sessão vencida"
         : "desconectado";
+
+  const describe = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
   const connectDriveNow = async () => {
     setBackupBusy(true);
@@ -1521,10 +1394,6 @@ export function SettingsView({
       // Restauracao manual pede o cofre inteiro agora, anexos inclusive: e o
       // caminho completo, ao contrario do login rapido.
       const resumo = await restoreVaultFromDrive(undefined, { attachments: "all" });
-      const codigo = await ensureVaultCode().catch(() => "");
-      if (codigo) {
-        setVaultCode(codigo);
-        }
       setBackupStatus(
         `${resumo.created} novas · ${resumo.updated} atualizadas · ${resumo.skipped} mantidas`,
       );
@@ -1539,39 +1408,7 @@ export function SettingsView({
     <>
       <div className="cfg-block">
         <p className="cfg-label">Backup</p>
-        <div className="cfg-item">
-          <span className="cfg-mark" data-state={folder ? "on" : "off"} />
-          <span className="cfg-grow">Pasta</span>
-          <span className="cfg-meta">{folder ? folder.name : "não escolhida"}</span>
-          <button type="button" className="cfg-btn cfg-btn--quiet" disabled={backupBusy || !supportsFolder()} onClick={() => void backupToFolder()}>
-            enviar
-          </button>
-          <button type="button" className="cfg-btn cfg-btn--quiet" disabled={backupBusy || !supportsFolder()} onClick={() => void restoreFromFolder()}>
-            restaurar
-          </button>
-        </div>
-        <div className="cfg-item">
-          <span className="cfg-mark" />
-          <span className="cfg-grow">Arquivo .zip</span>
-          <span className="cfg-meta">manual</span>
-          <button type="button" className="cfg-btn cfg-btn--quiet" disabled={backupBusy} onClick={() => void downloadBackup()}>
-            baixar
-          </button>
-          <button type="button" className="cfg-btn cfg-btn--quiet" disabled={backupBusy} onClick={() => backupFileRef.current?.click()}>
-            restaurar
-          </button>
-          <input
-            ref={backupFileRef}
-            type="file"
-            accept=".zip,application/zip"
-            hidden
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              event.target.value = "";
-              if (file) void restoreFromFile(file);
-            }}
-          />
-        </div>
+        <VaultBackup />
         <div className="cfg-item">
           <span className="cfg-mark" data-state={driveMark} />
           <span className="cfg-grow">Google Drive</span>
@@ -1622,6 +1459,9 @@ export function SettingsView({
             {telemetryConfigured() && (
               <Why>Manda erro e versão, sem nota, sem usuário. O app tem a sua própria opção.</Why>
             )}
+            <a className="cfg-link" href="/privacidade" style={{ marginLeft: 8 }}>
+              privacidade
+            </a>
           </div>
         </div>
       </>

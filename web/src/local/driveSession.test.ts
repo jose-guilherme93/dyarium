@@ -31,6 +31,7 @@ import {
   onDriveSessionChange,
   signOutAccount,
   tokenTemIdentidade,
+  DRIVE_SESSION_KEY,
 } from "./driveSession";
 import { cachedProfile } from "./account";
 import { driveMarked, rememberDriveVault } from "./driveMark";
@@ -68,6 +69,7 @@ function fakeDrive() {
 
 beforeEach(() => {
   disconnectDrive();
+  sessionStorage.clear();
   google.token.mockReset();
   idb.storeSet.mockClear();
   setItem.mockClear();
@@ -95,7 +97,7 @@ describe("sessao do Drive", () => {
     expect(google.token).not.toHaveBeenCalled();
   });
 
-  it("connect guarda o token apenas em memoria", async () => {
+  it("connect guarda a sessao na aba, nunca no localStorage", async () => {
     vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-id-de-teste");
     google.token.mockResolvedValue({ accessToken: "tok", expiresAt: Date.now() + 3_600_000, scope: SCOPE });
 
@@ -109,7 +111,11 @@ describe("sessao do Drive", () => {
     expect(driveClient()).toBe(client);
     expect(driveSessionState()).toBe("connected");
     expect(avisos).toEqual(["connected"]);
-    expect(setItem).not.toHaveBeenCalled();
+    // A sessao desta aba sobrevive ao F5, mas nunca vai para o localStorage
+    // nem para o IndexedDB.
+    const guardado = JSON.parse(sessionStorage.getItem(DRIVE_SESSION_KEY) ?? "null");
+    expect(guardado).toMatchObject({ accessToken: "tok", scope: SCOPE });
+    expect(localStorage.getItem(DRIVE_SESSION_KEY)).toBeNull();
     expect(idb.storeSet).not.toHaveBeenCalled();
     sair();
   });
@@ -178,6 +184,17 @@ describe("sessao do Drive", () => {
     expect(driveClient()).toBeNull();
     expect(avisos).toHaveBeenCalledTimes(1);
     sair();
+  });
+
+  it("disconnect apaga a sessao guardada", async () => {
+    vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-id-de-teste");
+    google.token.mockResolvedValue({ accessToken: "tok", expiresAt: Date.now() + 3_600_000, scope: SCOPE });
+    await connectDrive();
+    expect(sessionStorage.getItem(DRIVE_SESSION_KEY)).not.toBeNull();
+
+    disconnectDrive();
+
+    expect(sessionStorage.getItem(DRIVE_SESSION_KEY)).toBeNull();
   });
 
   it("expoe o perfil vindo do userinfo e o guarda no cache", async () => {

@@ -151,11 +151,19 @@ describe("NoteList", () => {
     });
   });
 
-  it("mostra a previa e as tags da nota aberta", async () => {
+  it("mostra a previa da nota aberta sem tags na linha", async () => {
     renderList("trabalho", "e1");
     await waitFor(() => expect(screen.getByText("Reunião de segunda")).toBeInTheDocument());
     expect(screen.getByText("Falamos sobre o contrato e o prazo da entrega.")).toBeInTheDocument();
-    expect(screen.getAllByText("contrato").length).toBeGreaterThan(0);
+    expect(screen.queryByText("contrato")).not.toBeInTheDocument();
+  });
+
+  it("limpa a linha: sem bolinha, hora e data, previa unica", async () => {
+    const { container } = renderList("trabalho", "e1");
+    await waitFor(() => expect(screen.getByText("Reunião de segunda")).toBeInTheDocument());
+    expect(container.querySelectorAll(".note-row-dot")).toHaveLength(0);
+    expect(screen.getByText(/\d{2}:\d{2} · 19 out/)).toBeInTheDocument();
+    expect(container.querySelectorAll(".note-row-preview")).toHaveLength(1);
   });
 
   it("limita a lista ao caderno escolhido", async () => {
@@ -202,6 +210,32 @@ describe("NoteList", () => {
     fireEvent.click(screen.getByRole("button", { name: /^contrato/ }));
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.getByRole("button", { name: "Remover filtro contrato" })).toBeInTheDocument();
+  });
+
+  it("showSearch={false} esconde a lupa mas autoSearch abre a busca", async () => {
+    render(
+      <NoteList
+        refreshKey={0}
+        activeId={null}
+        failures={{}}
+        notebookId={ALL_NOTEBOOKS}
+        notebooks={NOTEBOOKS}
+        autoSearch
+        showSearch={false}
+        onOpen={() => undefined}
+        onCreate={() => undefined}
+        onManageTags={() => undefined}
+      />,
+    );
+    await waitFor(() => expect(screen.getByText("Viagem de fim de ano")).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Buscar nas notas" })).not.toBeInTheDocument();
+    expect(screen.getByRole("searchbox", { name: "Buscar nas notas" })).toBeInTheDocument();
+  });
+
+  it("sem showSearch o botao Buscar nas notas continua", async () => {
+    renderList(ALL_NOTEBOOKS);
+    await waitFor(() => expect(screen.getByText("Viagem de fim de ano")).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Buscar nas notas" })).toBeInTheDocument();
   });
 
   it("busca sem acento encontra a nota acentuada", async () => {

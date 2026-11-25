@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { cachedSummary, tamanho } from "./DriveReconnect";
+import { cachedSummary } from "../local/driveMark";
+import { tamanho } from "../local/vaultStats";
 import { flushVaultSync, lastSyncSummary } from "../local/folderSync";
 import {
   driveSessionState,

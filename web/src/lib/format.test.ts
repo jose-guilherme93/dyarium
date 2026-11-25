@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatBytes, formatRelativeTime, formatShortDate } from "./format";
+import { formatBytes, formatRelativeTime, formatShortDate, formatShortDateTime } from "./format";
 
 describe("formatBytes", () => {
   it("mostra bytes, KB e MB sem casas desnecessarias", () => {
@@ -34,6 +34,23 @@ describe("formatShortDate", () => {
   it("nao inventa data para valor invalido", () => {
     expect(formatShortDate("")).toBe("");
     expect(formatShortDate("nao-e-data")).toBe("");
+  });
+});
+
+describe("formatShortDateTime", () => {
+  it("mostra hora e data curtas, sem o ano corrente", () => {
+    const noon = new Date(new Date().getFullYear(), 9, 19, 7, 0, 0).toISOString();
+    expect(formatShortDateTime(noon)).toBe("07:00 · 19 out");
+  });
+
+  it("inclui o ano quando a nota nao e deste ano", () => {
+    expect(formatShortDateTime("2019-10-19T12:00:00")).toBe("12:00 · 19 out 2019");
+  });
+
+  it("nao inventa data para valor invalido", () => {
+    expect(formatShortDateTime("")).toBe("");
+    expect(formatShortDateTime("nao-e-data")).toBe("");
+    expect(formatShortDateTime(null)).toBe("");
   });
 });
 

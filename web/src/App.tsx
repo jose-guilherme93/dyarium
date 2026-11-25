@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import {
   api,
@@ -33,8 +33,10 @@ const WorkerKeepAlive = LAB_ENABLED
   : null;
 import { FirstRun, describeDriveError } from "./components/FirstRun";
 import { VaultBoot } from "./components/VaultBoot";
+import { PulseBoot } from "./components/PulseBoot";
 import { AccountGate } from "./components/AccountGate";
-import { DriveReconnect, rememberDriveVault } from "./components/DriveReconnect";
+import { VaultView } from "./views/VaultView";
+import { subscribeVaultActivity, vaultActivity } from "./local/vaultActivity";
 import { AccountAvatar, AccountSheet, accountState } from "./components/AccountSheet";
 import { NoteTabs } from "./components/NoteTabs";
 import { readTabs, writeTabs, openInNewTab, activateTab, closeTab, closeTabs, reconcileTabs, setTabTitle, EMPTY_TABS, type TabsState } from "./lib/tabs";
@@ -43,10 +45,10 @@ import { ImportJobStrip } from "./components/ImportJobStrip";
 import { importJobState, subscribeImportJob, type ImportJobState } from "./local/importJob";
 import { markVaultDirty, runVaultSync, setVaultTarget, flushVaultSync } from "./local/folderSync";
 import { rememberFolder } from "./local/folder";
-import { connectDrive, driveClient, driveConfigured, driveProfile, driveSessionState, driveVaultRoot, onDriveSessionChange, signOutAccount } from "./local/driveSession";
+import { connectDrive, driveClient, driveConfigured, driveProfile, driveSessionExpiresAt, driveSessionState, driveVaultRoot, onDriveSessionChange, signOutAccount } from "./local/driveSession";
 import { cachedProfile as cachedAccountProfile, onAccountChange } from "./local/account";
 import { preloadGoogle } from "./local/google";
-import { driveMarked } from "./local/driveMark";
+import { driveMarked, rememberDriveVault } from "./local/driveMark";
 import { connectAccount } from "./local/accountConnect";
 import { openDriveVault, type VaultStage } from "./local/vaultCloud";
 import { reloadPage } from "./lib/page";
@@ -94,7 +96,7 @@ import { BookView } from "./views/BookView";
 import type { ChapterKind, EntityKind, Entry, Notebook, ServerEvent } from "./types";
 import "./App.css";
 
-type ViewId = "notes" | "map" | "calendar" | "writing" | "settings" | "lab";
+type ViewId = "notes" | "map" | "calendar" | "writing" | "settings" | "vault" | "lab";
 
 const ACTIVE_NOTEBOOK_KEY = "dyarium.notebook";
 
@@ -147,6 +149,18 @@ export function App() {
   });
   const [account, setAccount] = useState(() => driveProfile() ?? cachedAccountProfile());
   /**
+   * Sessao do Google como o React ve. A pagina do cofre e o sinal do trilho
+   * dependem dela: sem esta copia, o icone de nuvem so saberia da sessao no
+   * proximo render por outro motivo.
+   */
+  const [driveLive, setDriveLive] = useState(() => driveSessionState());
+  /** Trabalho de segundo plano do cofre, o mesmo sinal da pagina. */
+  const vaultWork = useSyncExternalStore(
+    subscribeVaultActivity,
+    vaultActivity,
+    vaultActivity,
+  );
+  /**
    * Conta lembrada neste navegador: a marca do Drive mais o perfil em cache.
    * O reload nunca volta a primeira tela nesse caso; abre o cache e tenta o
    * Google em silencio.
@@ -169,6 +183,10 @@ export function App() {
   const unlockInFlight = useRef(false);
   /** O primeiro toque da tela travada tenta o Google uma vez. */
   const silentTried = useRef(false);
+  /** A tentativa silenciosa de carregamento roda uma vez por pagina. */
+  const autoSilentTried = useRef(false);
+  /** Aponta para `renovarContaEmSilencio`, definida junto do resto da trava. */
+  const renovarSilenciosoRef = useRef<((auto?: boolean) => void) | null>(null);
   const [gateError, setGateError] = useState("");
   const [accountSheetOpen, setAccountSheetOpen] = useState(false);
   // "Ja tenho uma instalacao propria" troca a apresentacao pelo portao do token.
@@ -179,7 +197,16 @@ export function App() {
     stage: VaultStage;
     progress?: StepProgress;
     done: boolean;
-  } | null>(null);
+  } | null>(() => {
+    // Conta lembrada sem sessao viva: ja comeca contando a tentativa
+    // silenciosa, para a trava nao piscar antes de o Google responder.
+    const tentandoSozinho =
+      driveMarked() &&
+      driveSessionState() !== "connected" &&
+      driveConfigured() &&
+      Boolean(cachedAccountProfile()?.picture);
+    return tentandoSozinho ? { stage: "conectando", done: false } : null;
+  });
   const [serverAvailable, setServerAvailable] = useState(false);
   const [view, setView] = useState<ViewId>(() =>
     typeof window !== "undefined" && window.location.pathname === "/lab" ? "lab" : "notes",
@@ -453,6 +480,7 @@ export function App() {
       onDriveSessionChange(() => {
         if (driveSessionState() === "connected") rememberDriveVault();
         setAccount(driveProfile() ?? cachedAccountProfile());
+        setDriveLive(driveSessionState());
         // Durante uma abertura, o cofre ainda nao esta pronto: quem destrava e
         // o fim de `openDriveVault`, nao o token que acabou de chegar.
         if (unlockInFlight.current) return;
@@ -477,8 +505,9 @@ export function App() {
     if (locked) silentTried.current = false;
   }, [locked]);
 
-  // Renovacao silenciosa da sessao do Google: ao primeiro gesto do usuario, tenta
-  // recuperar o token sem popup. Falha nao faz nada; a linha de reconectar segue.
+  // Renovacao silenciosa da sessao do Google: perto de vencer (ou ja vencida),
+  // o proximo gesto pede um token novo sem tela. E o que mantem a aba aberta
+  // por horas sem passar pelo login; falha nao muda nada na tela.
   useEffect(() => {
     if (locked) return;
     if (!onboarded && !accountRemembered) return;
@@ -487,29 +516,54 @@ export function App() {
     // O script precisa chegar antes do gesto: baixar durante o clique gasta a
     // ativacao do usuario e o pedido silencioso morre bloqueado.
     void preloadGoogle();
-    if (driveSessionState() === "connected") return;
     let encerrado = false;
+    let tentando = false;
+    let proxima = 0;
+    const precisa = () => {
+      const expira = driveSessionExpiresAt();
+      return expira === null || expira - Date.now() < 10 * 60_000;
+    };
     const tentar = async () => {
-      if (encerrado) return;
-      encerrado = true;
-      limpar();
+      if (encerrado || tentando || !precisa() || Date.now() < proxima) return;
+      tentando = true;
       try {
-        await connectDrive({ silent: true });
+        await connectDrive({ silent: true, timeoutMs: 8000 });
         await flushVaultSync();
         refresh();
       } catch {
-        // Nada: a linha de reconectar continua como fallback.
+        // Sem gesto valido ou sem sessao no Google: tenta de novo mais tarde,
+        // sem insistir a cada clique.
+        proxima = Date.now() + 60_000;
+      } finally {
+        tentando = false;
       }
-    };
-    const limpar = () => {
-      document.removeEventListener("pointerdown", tratador, true);
-      document.removeEventListener("keydown", tratador, true);
     };
     const tratador = () => void tentar();
     document.addEventListener("pointerdown", tratador, true);
     document.addEventListener("keydown", tratador, true);
-    return limpar;
+    return () => {
+      encerrado = true;
+      document.removeEventListener("pointerdown", tratador, true);
+      document.removeEventListener("keydown", tratador, true);
+    };
   }, [onboarded, accountRemembered, locked]);
+
+  // Carregamento com conta lembrada e sem sessao: tenta o silencioso sozinho
+  // antes de mostrar a trava. Sem gesto o navegador pode recusar; ai a trava
+  // oferece o Entrar, e o primeiro toque tenta o silencioso de novo.
+  useLayoutEffect(() => {
+    if (!locked) return;
+    // A referencia para a rotina da trava so existe depois do portao do
+    // servidor; nesse primeiro render o app ainda nem desenhou.
+    if (!serverChecked) return;
+    if (!driveConfigured()) return;
+    if (!cachedAccountProfile()?.picture) return;
+    if (autoSilentTried.current) return;
+    const tentar = renovarSilenciosoRef.current;
+    if (!tentar) return;
+    autoSilentTried.current = true;
+    tentar(true);
+  }, [locked, serverChecked]);
 
   // A token already stored may be stale (rotated on the server) or simply
   // wrong; validate it on load and fall back to the gate. A network failure
@@ -809,19 +863,24 @@ export function App() {
    * identidade, entao sem perfil a foto nunca chegaria. Esse caso e do Entrar
    * com Google, que pede o consentimento uma vez e guarda o perfil.
    */
-  const renovarContaEmSilencio = () => {
-    if (silentTried.current || unlockInFlight.current) return;
+  const renovarContaEmSilencio = (auto = false) => {
+    if (unlockInFlight.current) return;
+    if (!auto && silentTried.current) return;
     if (!driveConfigured()) return;
     // Sem foto em cache o consentimento de identidade nunca foi dado; destravar
     // em silencio aqui pularia o unico momento em que a foto pode chegar.
     if (!cachedAccountProfile()?.picture) return;
-    silentTried.current = true;
+    if (!auto) silentTried.current = true;
     unlockInFlight.current = true;
     setGateError("");
     setVaultBoot({ stage: "conectando", done: false });
     void (async () => {
       try {
-        await connectDrive({ silent: true });
+        // Sem gesto, a janela do Google pode ser bloqueada: o prazo curto faz a
+        // trava voltar em segundos em vez de deixar a tela em "conectando".
+        await connectDrive(
+          auto ? { silent: true, timeoutMs: 8000 } : { silent: true },
+        );
         const raiz = await driveVaultRoot();
         const aberto = await openDriveVault(raiz, {
           // Mesmo caminho rapido do Entrar: a lista aparece com o apply.
@@ -835,13 +894,17 @@ export function App() {
         desbloquear();
       } catch {
         // Sem token ou sem cofre: continua na tela, sem tela do Google e sem
-        // erro parado. O botao Entrar refaz o caminho com a janela.
+        // erro parado. O botao Entrar refaz o caminho com a janela; a falha do
+        // silencioso nao vira mensagem.
         setVaultBoot(null);
       } finally {
         unlockInFlight.current = false;
       }
     })();
   };
+  // Referencia mais nova para o efeito de carregamento, que roda antes desta
+  // definicao no codigo mas depois dela no render.
+  renovarSilenciosoRef.current = renovarContaEmSilencio;
 
   if (!token && (serverAvailable || forceTokenGate)) {
     return (
@@ -1327,17 +1390,26 @@ export function App() {
           ? "Estatísticas"
           : view === "settings"
             ? "Configurações"
-            : view === "lab"
-              ? "Laboratório"
-              : activeNotebookId === ALL_NOTEBOOKS
-                ? "Notas recentes"
-                : (notebooks.find((notebook) => notebook.id === activeNotebookId)?.name ??
-                  "Notas ao acaso");
+            : view === "vault"
+              ? "Google Drive"
+              : view === "lab"
+                ? "Laboratório"
+                : activeNotebookId === ALL_NOTEBOOKS
+                  ? "Notas recentes"
+                  : (notebooks.find((notebook) => notebook.id === activeNotebookId)?.name ??
+                    "Notas ao acaso");
 
   // A barra de abas so vale com duas ou mais, e so na superficie de notas
   // comuns: com uma aba e so o editor, e livro/caderno de projetos abrem a nota
   // dentro da propria tela, sem aba.
   const showTabs = view === "notes" && !isBook && !isMcp && tabsState.tabs.length > 1;
+
+  // O icone de nuvem so pede atencao quando ha o que reconectar ou um envio
+  // que falhou. Trabalho em curso aparece na propria pagina do cofre.
+  const vaultNeedsYou =
+    driveMarked() &&
+    driveConfigured() &&
+    (driveLive !== "connected" || vaultWork.error !== "");
 
   const footerItems = [
     {
@@ -1391,6 +1463,7 @@ export function App() {
           <WorkerKeepAlive />
         </Suspense>
       )}
+      <PulseBoot />
       <header className="mobile-bar">
         <button
           type="button"
@@ -1475,12 +1548,14 @@ export function App() {
           {!isMcp && (
             <button
               type="button"
-              className="rail-action"
-              onClick={openNotionImport}
-              aria-label="Importar do Notion"
-              title="Importar do Notion"
+              className={view === "vault" ? "rail-action rail-action--active" : "rail-action"}
+              onClick={() => openView("vault")}
+              aria-label="Google Drive"
+              aria-pressed={view === "vault"}
+              title="Google Drive"
             >
               <Icon name="cloud" size={16} />
+              {vaultNeedsYou && <span className="rail-dot" data-state="warn" aria-hidden="true" />}
             </button>
           )}
           {!isMcp && (
@@ -1607,6 +1682,7 @@ export function App() {
               failures={failures}
               notebookId={activeNotebookId}
               notebooks={notebooks}
+              showSearch={compact}
               autoSearch={pendingSearch}
               onSearchOpened={() => setPendingSearch(false)}
               onOpen={(id) => openNote(id)}
@@ -1629,6 +1705,16 @@ export function App() {
               sidebar nao as repete. */}
           {compact && (
             <nav className="sidebar-foot" aria-label="Telas do dyarium">
+              <button
+                type="button"
+                className={view === "vault" ? "foot-item foot-item--active" : "foot-item"}
+                onClick={() => openView("vault")}
+                aria-label="Google Drive"
+                aria-pressed={view === "vault"}
+                title="Google Drive"
+              >
+                <Icon name="cloud" size={16} />
+              </button>
               {footerItems.map((item) => (
                 <button
                   key={item.key}
@@ -1674,10 +1760,6 @@ export function App() {
             />
           ) : view === "notes" ? (
             <div className="notes-shell">
-              {/* A linha de reconectar fica acima da area das notas, na area
-                  principal: e aqui que a pessoa esta olhando as notas quando a
-                  sessao do Google morre, nao dentro das Configuracoes. */}
-              {!isMcp && <DriveReconnect />}
               <div
                 className={
                   showTabs
@@ -1769,6 +1851,8 @@ export function App() {
                 )}
               </div>
             </div>
+          ) : view === "vault" ? (
+            <VaultView onBack={goBack} />
           ) : view === "map" ? (
             <div className="page page--map">
               <MapView
