@@ -926,12 +926,16 @@ marca do Drive e revoga o token em melhor esforco. Nome e foto so mudam na conta
 folha tem o link para la.
 
 **Renovacao silenciosa.** O Google exige gesto para emitir token: nao existe refresh em
-segundo plano no navegador. Entao, quando este navegador ja tem cofre no Drive e a sessao
-morreu, o primeiro `pointerdown`/`keydown` da pagina pede o token com `prompt: "none"` —
-sem tela, sem escolha de conta. Se o Google estiver ativo naquele navegador, a sessao volta e
-o sync pendente sobe (`flushVaultSync`); se nao estiver, o pedido falha em silencio e a linha
-`conectar` continua como fallback. O script do GIS e pre-carregado para o gesto nao gastar
-ativacao do usuario baixando script.
+segundo plano no navegador. Entao, quando este navegador ja tem cofre no Drive, perfil
+guardado e a sessao morreu, a tela travada da conta pede o token no primeiro toque com
+`prompt: "none"` — sem tela, sem escolha de conta. Se o Google estiver ativo naquele
+navegador, a sessao volta e o cofre abre antes de o app aparecer; se nao estiver, o pedido
+falha em silencio e o botao `Entrar com Google` continua ali para o login interativo. Sem
+perfil guardado o primeiro toque nao tenta nada: o silencioso nao pede consentimento de
+identidade, entao a foto nunca chegaria — esse caso e do `Entrar com Google`, que pede o
+consentimento uma vez, busca o userinfo e deixa o perfil em cache para os proximos
+silenciosos. O script do GIS e pre-carregado para o gesto nao gastar ativacao do usuario
+baixando script.
 
 **Layout.** A pasta `Dyarium/` na raiz do Drive e o cofre, sem subpasta por cofre:
 
@@ -999,20 +1003,33 @@ ler e selar o acervo uma vez por rajada, o mesmo custo do "salvar" manual.
 **Outro aparelho.** Entrar com o Google num navegador novo le `key.txt`, adota o codigo,
 baixa `state.enc` (ou `backup.enc`, no cofre antigo), decifra com a chave derivada e aplica
 com `applySnapshot`, que nunca sobrescreve nota local mais nova que o retrato, nem analise
-feita aqui, nem configuracao ja alterada. Cadernos voltam com nome, tipo e ordem; a capa dos
-livros vem de `books/<livro>/capa.bin.enc`. O cofre por tipo serve para inspecao e para
-restauracao futura arquivo a arquivo; o retrato e o caminho de restauracao completa, porque
-carrega titulo, datas, caderno e texto de cada nota. Os anexos (audio e imagem) voltam de
-`attachments/<id>.<ext>.enc`, guiados por `entry_id` e `content_type` no `manifest.json`
-(versao 4); o que ja existe no IndexedDB e pulado, e um arquivo corrompido nao interrompe o
-resto.
+feita aqui, nem configuracao ja alterada. Cadernos voltam com nome, tipo e ordem. O cofre por
+tipo serve para inspecao e para restauracao futura arquivo a arquivo; o retrato e o caminho
+de restauracao completa, porque carrega titulo, datas, caderno e texto de cada nota.
 
-**Abrir o cofre e restaurar e sincronizar.** `openDriveVault` restaura quando ha `key.txt`
-e, em seguida, sempre sincroniza. Restaurar sem sincronizar deixava as notas locais fora do
-Drive quando o retrato remoto estava vazio ou mais antigo — o cofre nunca ficava "sujo" e
-nada subia. Com o gancho de snapshot, o retrato e reescrito na mesma passada em que o layout
-muda; uma vez que o banco local tem as notas, elas e o retrato que as descreve estao no
-Drive.
+**Anexo nao segura o login.** O retrato so tem metadado: o que o login guarda de cada anexo
+(ou de cada capa) e id, nota dona, tipo, tamanho e o caminho do `.enc`, sem baixar byte
+nenhum. A nota aberta ja mostra o player e a imagem como pendentes; o audio ou a imagem
+desce quando o usuario toca nela (`attachmentFetch`, em `web/src/local/attachmentFetch.ts`),
+guiado pelo `manifest.json` v4 (`entry_id` e `content_type`), e o byte fica no IndexedDB como
+qualquer anexo local. Um arquivo corrompido falha so naquele anexo, e a proxima abertura
+tenta de novo. O metadado com caminho tambem e o que impede o sync de tratar "ainda nao
+baixado" como "apagado": o plano preserva a entrada remota enquanto o registro local
+existir, e so apaga quando o anexo (ou a nota dona) sai de verdade do banco. Capas seguem a
+mesma regra de metadado; os bytes voltam no fim do segundo plano, porque sao poucos e
+pequenos.
+
+**Abrir o cofre: casca agora, cofre depois.** `openDriveVault` restaura quando ha `key.txt`,
+aplica o retrato e le o resumo do `manifest.json`, e so entao devolve: a lista ja pode
+aparecer. As opcoes sao explicitas — `attachments: "skip" | "all"` e
+`sync: "background" | "now"`. O login (primeira tela, tela travada, linha de reconectar,
+Configuracoes e menu da conta) usa `skip` + `background`: anexo nenhum desce e o sync
+termina atras, como sinal discreto na linha do Drive, sem overlay; uma falha ali vira uma
+linha e nao derruba a tela. Cofre novo e a excecao, porque e o sync que cria `key.txt`.
+Restaurar sem sincronizar deixava as notas locais fora do Drive, entao o sync continua
+acontecendo em toda abertura; a restauracao manual das Configuracoes pede `all` e baixa os
+bytes. O botao "sincronizar" e o sair seguem o caminho completo — o sair so apaga o cache
+depois de conferir os tres snapshots e esperar o segundo plano.
 
 **Sem conta e com conta.** Sem conta Google, o navegador e local-first: banco local, sem
 Drive e sem login. Com conta, o Drive e o banco e o cache local e copia de trabalho: a marca
@@ -1023,12 +1040,17 @@ reconectar e o menu da conta — nenhum deles sobe o local sem abrir o Drive.
 
 **Sessao e reconexao.** O token dura cerca de uma hora e nao sobrevive ao reload (nao ha
 refresh token no navegador). O navegador guarda a marca e o ultimo resumo (bytes, notas),
-nunca a credencial. O reload nao mostra a primeira tela nem abre o Google: se a conta esta
-marcada, o cache da conta aparece e o primeiro gesto tenta o token em silencio
-(`prompt: "none"`). Se falhar, nada de tela automatica: uma linha acima das notas mostra
-`Google Drive` e `conectar`, que refaz o login interativo e a uniao. A foto vem do userinfo;
-o `scope` real do Google traz email/profile como URLs de userinfo, e so um consentimento
-explicito e pedido quando eles faltam de verdade.
+nunca a credencial. O reload com a conta marcada e sem sessao viva abre a tela travada da
+conta, no lugar do cofre: o perfil em cache pinta nome, e-mail e foto, e, quando ele existe,
+o primeiro toque tenta o token em silencio (`prompt: "none"`). So quando o cofre abre o app
+entra; se o pedido falhar, a tela continua travada, sem janela do Google e sem erro parado.
+Sem perfil guardado nao ha primeiro toque silencioso (o silencioso nao pede identidade e a
+foto nunca viria): o botao `Entrar com Google` faz o login interativo (`connectAccount`),
+pede o consentimento de identidade uma vez e guarda o perfil, e `Sair desta conta` segue o
+fluxo de saida que grava, confere e apaga o cache. Sem a marca, o navegador continua
+local-first e nenhuma trava aparece. A foto vem do userinfo; o `scope` real do Google traz
+email/profile como URLs de userinfo, e so um consentimento explicito e pedido quando eles
+faltam de verdade.
 
 **Sair da conta.** O sair grava o cofre inteiro e confere os tres snapshots no Drive; se a
 gravacao falhar, nada e apagado e a folha oferece tentar de novo ou descartar explicitamente.
@@ -1045,6 +1067,13 @@ de estado do web. A tela `/perfil` mostra nome, e-mail, tamanho do cofre, ultimo
 acoes sincronizar/conectar, trocar de conta e sair. O Drive sobe sozinho: ao voltar para o
 primeiro plano, se a sessao esta viva e o ultimo envio tem mais de dez minutos, o app abre o
 cofre em silencio (restaura o que veio e empurra o que mudou). Sem sessao, nada e tentado.
+O login nao espera o cofre inteiro: `openDriveVault` le chave, backup e `state.enc`, aplica
+notas e cadernos e volta; anexo nenhum e baixado e o envio do retrato segue no auto-sync
+(o resumo atualiza quando ele termina). Audio e imagem de uma nota chegam sob demanda
+(`ensureAttachmentFromDrive`), quando o usuario toca no audio ou abre a imagem, e a falha de
+um anexo fica so naquela nota — a proxima abertura tenta de novo. O "sincronizar" explicito
+faz o caminho completo (aplica e espera o envio); o "sair" continua esperando o envio
+conferido antes de apagar o cache.
 
 **Custo.** O acervo ocupa a cota do Drive de cada usuario (15 GB no plano gratuito); o app
 nao paga armazenamento e nao cobra nada.
@@ -1058,12 +1087,16 @@ abaixo de 900 o trilho sai e a barra do celular leva a gaveta com as mesmas acoe
 mora no pe do trilho, num menu ancorado (camada de folha, hairline, sem veu nem sombra) com
 os estados conectado, sessao vencida e sem conta.
 
-**Abas de notas.** Cada nota comum aberta vira uma aba de 26 na barra de 34 no topo do
-editor; a ativa usa degrau tonal e barra de 2 na borda de ataque. Abrir de novo nao duplica,
-fechar a ativa ativa a vizinha da direita (senao a da esquerda, senao o inicio) e nota
-apagada/arquivada fecha a aba. As abas e a ativa ficam em `localStorage["dyarium.tabs"]`;
-ids que nao existem mais caem fora quando a lista chega. Livro e caderno de projetos abrem na
-propria superficie, sem aba.
+**Abas de notas.** Aba não nasce de clique: toda nota aberta pela lista, mapa, calendário,
+busca, Notion ou por um link interno chega em visão única, e um clique normal fecha as abas
+que houvessem. A única ação que cria aba é **Abrir em nova aba**, no menu da nota: sem abas,
+a nota que estava aberta (quando for outra) vira a primeira e a escolhida a segunda; com
+abas, a escolhida entra no fim, ou só é ativada se já for aba — nunca duplica. A barra de 34
+só aparece com **duas ou mais** abas: com uma, é só o editor. Fechar a ativa ativa a vizinha
+da direita (senão a da esquerda); sobrando uma, a barra sai e a nota fica; fechando a última,
+o editor volta ao início. Nota apagada/arquivada fecha a aba dela. As abas e a ativa ficam em
+`localStorage["dyarium.tabs"]`; ids que não existem mais caem fora quando a lista chega.
+Livro e caderno de projetos abrem na própria superfície, sem aba.
 
 **App.** O cabecalho da home tem duas linhas: o caderno (nome inteiro) e, abaixo, as seis
 acoes mais o avatar no canto. O FAB de nova nota e o circulo de 44 previsto no sistema; o
