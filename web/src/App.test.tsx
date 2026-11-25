@@ -325,7 +325,11 @@ describe("App trava da conta", () => {
     background: null,
   };
 
-  const perfil = { name: "Ada Lovelace", email: "ada@example.com", picture: "" };
+  const perfil = {
+    name: "Ada Lovelace",
+    email: "ada@example.com",
+    picture: "https://exemplo/foto.png",
+  };
 
   beforeEach(() => {
     vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-id-de-teste");
@@ -389,6 +393,21 @@ describe("App trava da conta", () => {
     expect(
       vi.mocked(connectDrive).mock.calls.every(([opcoes]) => opcoes?.silent === true),
     ).toBe(true);
+  });
+
+  it("perfil sem foto tambem nao destrava em silencio", async () => {
+    localStorage.setItem(
+      "dyarium.account",
+      JSON.stringify({ name: "Ada", email: "ada@example.com", picture: "" }),
+    );
+    render(<App />);
+    const trava = await screen.findByRole("main", { name: "Conta Google" });
+    vi.mocked(connectDrive).mockClear();
+
+    fireEvent.pointerDown(trava);
+
+    expect(connectDrive).not.toHaveBeenCalled();
+    expect(screen.getByRole("main", { name: "Conta Google" })).toBeInTheDocument();
   });
 
   it("sem perfil guardado o primeiro toque não tenta o silencioso", async () => {

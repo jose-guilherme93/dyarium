@@ -804,7 +804,9 @@ export function App() {
   const renovarContaEmSilencio = () => {
     if (silentTried.current || unlockInFlight.current) return;
     if (!driveConfigured()) return;
-    if (!cachedAccountProfile()) return;
+    // Sem foto em cache o consentimento de identidade nunca foi dado; destravar
+    // em silencio aqui pularia o unico momento em que a foto pode chegar.
+    if (!cachedAccountProfile()?.picture) return;
     silentTried.current = true;
     unlockInFlight.current = true;
     setGateError("");
