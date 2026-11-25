@@ -4,6 +4,7 @@ import {
   activateTab,
   closeTab,
   closeTabs,
+  openInNewTab,
   openTab,
   readTabs,
   reconcileTabs,
@@ -73,6 +74,35 @@ describe("abas de notas", () => {
     const atual = setTabTitle(estado(["a", "b"], "a"), "b", "Novo nome");
     expect(atual.tabs[1].title).toBe("Novo nome");
     expect(atual.activeId).toBe("a");
+  });
+
+  it("abrir em nova aba sem nota aberta deixa a escolhida sozinha", () => {
+    const aberto = openInNewTab(estado([], null), "a", "Primeira", null);
+    expect(aberto).toEqual({ tabs: [{ id: "a", title: "Primeira" }], activeId: "a" });
+  });
+
+  it("abrir em nova aba com outra nota aberta poe a aberta na frente", () => {
+    const aberto = openInNewTab(estado([], null), "b", "Segunda", "a");
+    expect(aberto.tabs.map((tab) => tab.id)).toEqual(["a", "b"]);
+    expect(aberto.activeId).toBe("b");
+  });
+
+  it("abrir em nova aba da propria nota aberta nao duplica", () => {
+    const aberto = openInNewTab(estado([], null), "a", "Primeira", "a");
+    expect(aberto.tabs.map((tab) => tab.id)).toEqual(["a"]);
+    expect(aberto.activeId).toBe("a");
+  });
+
+  it("com abas, abrir em nova aba acrescenta ou ativa, nunca duplica", () => {
+    const duas = estado(["a", "b"], "a");
+    expect(openInNewTab(duas, "c", "Terceira", "a").tabs.map((tab) => tab.id)).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+    const volta = openInNewTab(duas, "b", "Nota b", "a");
+    expect(volta.tabs.map((tab) => tab.id)).toEqual(["a", "b"]);
+    expect(volta.activeId).toBe("b");
   });
 
   it("restauracao descarta id que nao existe mais", () => {

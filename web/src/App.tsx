@@ -30,12 +30,13 @@ const WorkerKeepAlive = LAB_ENABLED
       import("./components/WorkerKeepAlive").then((mod) => ({ default: mod.WorkerKeepAlive })),
     )
   : null;
-import { FirstRun } from "./components/FirstRun";
+import { FirstRun, describeDriveError } from "./components/FirstRun";
 import { VaultBoot } from "./components/VaultBoot";
+import { AccountGate } from "./components/AccountGate";
 import { DriveReconnect, rememberDriveVault } from "./components/DriveReconnect";
 import { AccountAvatar, AccountSheet, accountState } from "./components/AccountSheet";
 import { NoteTabs } from "./components/NoteTabs";
-import { readTabs, writeTabs, openTab, activateTab, closeTab, closeTabs, reconcileTabs, setTabTitle, type TabsState } from "./lib/tabs";
+import { readTabs, writeTabs, openInNewTab, activateTab, closeTab, closeTabs, reconcileTabs, setTabTitle, EMPTY_TABS, type TabsState } from "./lib/tabs";
 import { noteTitle } from "./lib/noteTitle";
 import { ImportJobStrip } from "./components/ImportJobStrip";
 import { importJobState, subscribeImportJob, type ImportJobState } from "./local/importJob";
@@ -46,7 +47,8 @@ import { cachedProfile as cachedAccountProfile, onAccountChange } from "./local/
 import { preloadGoogle } from "./local/google";
 import { driveMarked } from "./local/driveMark";
 import { connectAccount } from "./local/accountConnect";
-import type { VaultStage } from "./local/vaultCloud";
+import { openDriveVault, type VaultStage } from "./local/vaultCloud";
+import { reloadPage } from "./lib/page";
 import type { StepProgress } from "./local/backup";
 import { TokenGate } from "./components/TokenGate";
 import { SetupGate } from "./components/SetupGate";
@@ -118,12 +120,6 @@ function writeActiveNotebook(id: string): void {
   }
 }
 
-/** Caderno da nota: livro e projetos abrem na propria superficie, sem aba. */
-function aceitaAba(notebooks: Notebook[], notebookId: string): boolean {
-  const caderno = notebooks.find((notebook) => notebook.id === notebookId);
-  return !caderno || caderno.kind === "notes";
-}
-
 export function App() {
   /**
    * Desenvolvimento preso ao cofre do navegador (`VITE_LOCAL_ONLY=1`):
@@ -154,6 +150,24 @@ export function App() {
    * Google em silencio.
    */
   const accountRemembered = driveMarked() && account !== null;
+  /**
+   * Conta travada: a marca do Drive diz que este navegador tem cofre na conta,
+   * mas a sessao do Google (que vive so na memoria) nao esta viva. Sem token,
+   * o cache da conta nao pode virar o app: a tela trava ate entrar ou sair.
+   */
+  const [accountLocked, setAccountLocked] = useState(
+    () => driveMarked() && driveSessionState() !== "connected",
+  );
+  /**
+   * Com token de servidor as notas vem da API, nao do cache da conta: a trava
+   * e do modo local-first. O token tem o proprio portao (TokenGate).
+   */
+  const locked = !token && accountLocked;
+  /** Tentativa de abertura em curso: a sessao nao destrava antes do cofre. */
+  const unlockInFlight = useRef(false);
+  /** O primeiro toque da tela travada tenta o Google uma vez. */
+  const silentTried = useRef(false);
+  const [gateError, setGateError] = useState("");
   const [accountSheetOpen, setAccountSheetOpen] = useState(false);
   // "Ja tenho uma instalacao propria" troca a apresentacao pelo portao do token.
   const [forceTokenGate, setForceTokenGate] = useState(false);
@@ -407,8 +421,11 @@ export function App() {
   }, [localOnly]);
 
   // Cofre em pasta: grava o pendente ao abrir e ao fechar a aba. O alvo e o
-  // Drive quando ha sessao viva; sem sessao, cai na pasta lembrada.
+  // Drive quando ha sessao viva; sem sessao, cai na pasta lembrada. Enquanto a
+  // conta esta travada nada e gravado: o alvo e o proprio Drive, e o sync so
+  // volta quando o cofre abrir.
   useEffect(() => {
+    if (locked) return;
     if (!onboarded && !accountRemembered) return;
     setVaultTarget(async () => (driveClient() ? driveVaultRoot() : rememberFolder()));
     const flush = () => {
@@ -417,7 +434,7 @@ export function App() {
     flush();
     window.addEventListener("pagehide", flush);
     return () => window.removeEventListener("pagehide", flush);
-  }, [onboarded, accountRemembered]);
+  }, [onboarded, accountRemembered, locked]);
 
   // A sessao do Google vive so na memoria e morre no reload. Todo login que
   // termina — da primeira tela, das Configuracoes ou da linha de reconectar —
@@ -428,15 +445,34 @@ export function App() {
       onDriveSessionChange(() => {
         if (driveSessionState() === "connected") rememberDriveVault();
         setAccount(driveProfile() ?? cachedAccountProfile());
+        // Durante uma abertura, o cofre ainda nao esta pronto: quem destrava e
+        // o fim de `openDriveVault`, nao o token que acabou de chegar.
+        if (unlockInFlight.current) return;
+        setAccountLocked(driveMarked() && driveSessionState() !== "connected");
       }),
     [],
   );
 
   useEffect(() => onAccountChange((p) => setAccount(p ?? driveProfile())), []);
 
+  // Na tela travada o gesto nao pode renovar por fora: o cofre precisa abrir
+  // antes de o app aparecer. O script do GIS chega antes do primeiro toque.
+  useEffect(() => {
+    if (!locked) return;
+    if (!driveConfigured()) return;
+    void preloadGoogle();
+  }, [locked]);
+
+  // Uma trava nova (expiracao depois de um periodo conectado) volta a aceitar
+  // a primeira tentativa silenciosa; a falha da mesma trava nao repete sozinha.
+  useEffect(() => {
+    if (locked) silentTried.current = false;
+  }, [locked]);
+
   // Renovacao silenciosa da sessao do Google: ao primeiro gesto do usuario, tenta
   // recuperar o token sem popup. Falha nao faz nada; a linha de reconectar segue.
   useEffect(() => {
+    if (locked) return;
     if (!onboarded && !accountRemembered) return;
     if (!driveMarked()) return;
     if (!driveConfigured()) return;
@@ -465,7 +501,7 @@ export function App() {
     document.addEventListener("pointerdown", tratador, true);
     document.addEventListener("keydown", tratador, true);
     return limpar;
-  }, [onboarded, accountRemembered]);
+  }, [onboarded, accountRemembered, locked]);
 
   // A token already stored may be stale (rotated on the server) or simply
   // wrong; validate it on load and fall back to the gate. A network failure
@@ -686,6 +722,153 @@ export function App() {
     setOnboarded(true);
   };
 
+  /**
+   * Sair da conta: grava o pendente, apaga o cache local e recarrega vazio. Se
+   * a gravacao falhar, so a confirmacao destrutiva passa.
+   */
+  const sairDaConta = async () => {
+    if (!account && !driveMarked()) return;
+    const confirmado = window.confirm(
+      "Sair da conta? O cofre continua no Drive. O cache deste navegador será apagado.",
+    );
+    if (!confirmado) return;
+    let resultado = await signOutAccount();
+    if (!resultado.ok) {
+      const descartar = window.confirm(
+        `${resultado.message}. Sair mesmo assim? O que não subiu será perdido.`,
+      );
+      if (!descartar) return;
+      resultado = await signOutAccount({ discard: true });
+    }
+    if (resultado.ok) {
+      reloadPage();
+      return;
+    }
+    notify(resultado.message, "error");
+  };
+
+  /**
+   * O cofre abriu: a tela travada sai e o app entra com o banco ja restaurado.
+   * O onboarding fica gravado como em qualquer entrada pela conta.
+   */
+  const desbloquear = () => {
+    // O alvo volta a ser o Drive antes de o app aparecer: nenhuma gravacao
+    // pendente pode cair na pasta lembrada por causa da trava.
+    setVaultTarget(async () => driveVaultRoot());
+    setVaultBoot(null);
+    setGateError("");
+    setAccountLocked(false);
+    setAccount(driveProfile() ?? cachedAccountProfile());
+    finishOnboarding();
+  };
+
+  /**
+   * Entrada interativa da tela travada: o mesmo caminho unico de sempre
+   * (`connectAccount`), com a janela do Google quando ela for necessaria.
+   */
+  const entrarPelaContaTravada = async () => {
+    if (unlockInFlight.current) return;
+    unlockInFlight.current = true;
+    setGateError("");
+    setVaultBoot({ stage: "conectando", done: false });
+    try {
+      await connectAccount({
+        // Login da trava: a tela destrava no fim do apply, e o resto (sync e
+        // capas) segue no sinal discreto da linha do Drive.
+        attachments: "skip",
+        sync: "background",
+        onStage: (stage: VaultStage) => setVaultBoot({ stage, done: false }),
+        onProgress: (progress: StepProgress) =>
+          setVaultBoot((atual) => (atual ? { ...atual, progress } : atual)),
+      });
+      desbloquear();
+    } catch (causa) {
+      // O motivo tecnico fica no console; na tela, uma linha acionavel.
+      console.error("[drive] falha ao entrar pela conta", causa);
+      setVaultBoot(null);
+      setGateError(describeDriveError(causa));
+    } finally {
+      unlockInFlight.current = false;
+    }
+  };
+
+  /**
+   * Primeiro toque na tela travada: tenta a sessao sem tela (`prompt: none`) e
+   * so destrava quando o cofre abre. Falha em silencio; o Entrar faz o caminho
+   * interativo e a tela continua sendo a mesma.
+   *
+   * So vale quando ha perfil guardado: o silencioso nao pede consentimento de
+   * identidade, entao sem perfil a foto nunca chegaria. Esse caso e do Entrar
+   * com Google, que pede o consentimento uma vez e guarda o perfil.
+   */
+  const renovarContaEmSilencio = () => {
+    if (silentTried.current || unlockInFlight.current) return;
+    if (!driveConfigured()) return;
+    if (!cachedAccountProfile()) return;
+    silentTried.current = true;
+    unlockInFlight.current = true;
+    setGateError("");
+    setVaultBoot({ stage: "conectando", done: false });
+    void (async () => {
+      try {
+        await connectDrive({ silent: true });
+        const raiz = await driveVaultRoot();
+        const aberto = await openDriveVault(raiz, {
+          // Mesmo caminho rapido do Entrar: a lista aparece com o apply.
+          attachments: "skip",
+          sync: "background",
+          onStage: (stage: VaultStage) => setVaultBoot({ stage, done: false }),
+          onProgress: (progress: StepProgress) =>
+            setVaultBoot((atual) => (atual ? { ...atual, progress } : atual)),
+        });
+        rememberDriveVault(aberto.summary);
+        desbloquear();
+      } catch {
+        // Sem token ou sem cofre: continua na tela, sem tela do Google e sem
+        // erro parado. O botao Entrar refaz o caminho com a janela.
+        setVaultBoot(null);
+      } finally {
+        unlockInFlight.current = false;
+      }
+    })();
+  };
+
+  if (!token && (serverAvailable || forceTokenGate)) {
+    return (
+      <TokenGate
+        onSubmit={(value) => void handleLogin(value)}
+        error={authError}
+        checking={checkingToken}
+      />
+    );
+  }
+
+  // Marca do Drive sem sessao viva: o cache da conta nao vira o app. A trava
+  // vem antes da apresentacao para quem ja tem conta nunca ver a primeira tela.
+  if (locked) {
+    if (vaultBoot) {
+      return (
+        <div className="account-gate-boot">
+          <VaultBoot
+            stage={vaultBoot.stage}
+            progress={vaultBoot.progress}
+            done={vaultBoot.done}
+          />
+        </div>
+      );
+    }
+    return (
+      <AccountGate
+        profile={account}
+        configured={driveConfigured()}
+        error={gateError}
+        onFirstTouch={renovarContaEmSilencio}
+        onConnect={() => void entrarPelaContaTravada()}
+        onSignOut={() => void sairDaConta()}
+      />
+    );
+  }
+
   // Site estatico ainda sem cofre escolhido: a primeira tela apresenta o
   // produto e pergunta onde as notas vao morar. Com conta lembrada (marca do
   // Drive + perfil), o reload abre o cache em vez de voltar a apresentacao.
@@ -711,8 +894,11 @@ export function App() {
               try {
                 // Entrada unica: login, abertura (Drive + local unidos, sem
                 // passar por cima do mais novo) e o sync da uniao. A marca do
-                // Drive nasce aqui, no fim.
+                // Drive nasce aqui, no fim. O caminho e o rapido: a primeira
+                // tela sai com o retrato aplicado, e o sync/capas continuam.
                 await connectAccount({
+                  attachments: "skip",
+                  sync: "background",
                   // Cada etapa chega sem o progresso da anterior: a contagem
                   // de notas nao pode aparecer no passo dos anexos.
                   onStage: (stage: VaultStage) => setVaultBoot({ stage, done: false }),
@@ -747,27 +933,29 @@ export function App() {
     );
   }
 
-
-  if (!token && (serverAvailable || forceTokenGate)) {
-    return (
-      <TokenGate
-        onSubmit={(value) => void handleLogin(value)}
-        error={authError}
-        checking={checkingToken}
-      />
-    );
-  }
-
   const closeDrawer = () => {
     if (window.innerWidth <= 900) setNavOpen(false);
   };
 
   /**
-   * Abre uma nota comum no editor. Todo caminho que mostra uma nota passa por
-   * aqui: a aba nasce (ou e reativada, sem duplicar) junto com o editor.
+   * Abre uma nota comum em visao unica. Todo clique normal — lista, mapa,
+   * calendario, busca, Notion, link interno — passa por aqui e nao cria aba:
+   * se havia abas, elas fecham e a nota escolhida fica sozinha no editor.
    */
-  const openNote = (id: string, title = "") => {
-    atualizarAbas((atual) => openTab(atual, id, title));
+  const openNote = (id: string) => {
+    if (tabsRef.current.tabs.length > 0) atualizarAbas(() => EMPTY_TABS);
+    setOpenEntryId(id);
+    setView("notes");
+    closeDrawer();
+  };
+
+  /**
+   * "Abrir em nova aba" (menu da lista) e o unico gesto que cria aba. Sem abas,
+   * a nota aberta vira a primeira e a escolhida a segunda; com abas, a escolhida
+   * entra no fim (ou so e ativada, se ja for aba).
+   */
+  const openNoteInNewTab = (id: string, title = "") => {
+    atualizarAbas((atual) => openInNewTab(atual, id, title, openEntryRef.current));
     setOpenEntryId(id);
     setView("notes");
     closeDrawer();
@@ -831,7 +1019,7 @@ export function App() {
   // O calendario cria a nota de hoje (data de geracao) e abre no editor.
   const createCalendarNote = async (title: string) => {
     const entry = await api.createEntry(title, null, targetNotebookId());
-    openNote(entry.id, title);
+    openNote(entry.id);
     refresh();
   };
 
@@ -1136,34 +1324,10 @@ export function App() {
                 : (notebooks.find((notebook) => notebook.id === activeNotebookId)?.name ??
                   "Notas ao acaso");
 
-  // Barra de abas so na superficie de notas comuns: livro e caderno de
-  // projetos abrem a nota dentro da propria tela, sem aba.
-  const showTabs = view === "notes" && !isBook && !isMcp && tabsState.tabs.length > 0;
-
-  /**
-   * Sair da conta no site estatico: grava o pendente, apaga o cache local e
-   * recarrega vazio. Se a gravacao falhar, so a confirmacao destrutiva passa.
-   */
-  const sairDaConta = async () => {
-    if (!account && !driveMarked()) return;
-    const confirmado = window.confirm(
-      "Sair da conta? O cofre continua no Drive. O cache deste navegador será apagado.",
-    );
-    if (!confirmado) return;
-    let resultado = await signOutAccount();
-    if (!resultado.ok) {
-      const descartar = window.confirm(
-        `${resultado.message}. Sair mesmo assim? O que não subiu será perdido.`,
-      );
-      if (!descartar) return;
-      resultado = await signOutAccount({ discard: true });
-    }
-    if (resultado.ok) {
-      window.location.reload();
-      return;
-    }
-    notify(resultado.message, "error");
-  };
+  // A barra de abas so vale com duas ou mais, e so na superficie de notas
+  // comuns: com uma aba e so o editor, e livro/caderno de projetos abrem a nota
+  // dentro da propria tela, sem aba.
+  const showTabs = view === "notes" && !isBook && !isMcp && tabsState.tabs.length > 1;
 
   const footerItems = [
     {
@@ -1435,7 +1599,10 @@ export function App() {
               notebooks={notebooks}
               autoSearch={pendingSearch}
               onSearchOpened={() => setPendingSearch(false)}
-              onOpen={(id, title) => openNote(id, title)}
+              onOpen={(id) => openNote(id)}
+              onOpenInNewTab={
+                isMcp ? undefined : (id, title) => openNoteInNewTab(id, title)
+              }
               onCreate={openCompose}
               onManageTags={() => {
                 closeDrawer();
@@ -1630,12 +1797,9 @@ export function App() {
                 onOpenProject={(notebookId, entryId) => {
                   setActiveNotebookId(notebookId);
                   writeActiveNotebook(notebookId);
-                  if (aceitaAba(notebooks, notebookId)) {
-                    openNote(entryId);
-                    return;
-                  }
-                  setOpenEntryId(entryId);
-                  setView("notes");
+                  // Qualquer nota aberta por fora da lista chega em visao unica:
+                  // abas nascem so pelo menu da lista.
+                  openNote(entryId);
                 }}
               />
             </div>
@@ -1711,7 +1875,7 @@ export function App() {
           profile={account}
           anchor={accountAnchor}
           onSync={refresh}
-          onSignedOut={() => window.location.reload()}
+          onSignedOut={() => reloadPage()}
         />
       )}
     </div>

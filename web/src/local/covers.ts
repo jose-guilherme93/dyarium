@@ -16,9 +16,12 @@ import { COVERS_STORE, storeDelete, storeGet, storeSet } from "../lib/idb";
 
 export interface StoredCover {
   book_id: string;
-  blob: Blob;
+  /** Byte da capa; ausente quando o retrato trouxe so o caminho do cofre. */
+  blob?: Blob;
   content_type: string;
   updated_at: string;
+  /** Caminho do `.enc` no cofre, para o sync nao apagar a capa remota. */
+  vault_path?: string;
 }
 
 /** Chave do cache: livro e versao, com null e "" como a mesma versao. */
@@ -94,15 +97,28 @@ export async function saveLocalCover(bookId: string, image: Blob): Promise<{ upd
     content_type: image.type || "application/octet-stream",
     updated_at: new Date().toISOString(),
   };
-  await storeSet(COVERS_STORE, bookId, capa);
-  esquecer(bookId);
-  const url = URL.createObjectURL(image);
-  // Sem versao e com a versao recem-criada: quem acabou de salvar ja tem URL,
-  // com ou sem o `cover_updated_at` novo em maos.
-  urls.set(chaveDe(bookId), url);
-  urls.set(chaveDe(bookId, capa.updated_at), url);
-  avisar();
+  await saveCoverBlob(capa);
   return { updated_at: capa.updated_at };
+}
+
+/**
+ * Grava a capa inteira preservando a versao de quem a mandou. O restore do
+ * cofre usa o `updated_at` do manifest: e ele que o livro consulta para pedir
+ * a URL certa.
+ */
+export async function saveCoverBlob(capa: StoredCover): Promise<void> {
+  await storeSet(COVERS_STORE, capa.book_id, capa);
+  esquecer(capa.book_id);
+  if (!capa.blob) {
+    avisar();
+    return;
+  }
+  const url = URL.createObjectURL(capa.blob);
+  // Sem versao e com a versao do cofre: quem abriu o livro ja tem URL, com ou
+  // sem o `cover_updated_at` novo em maos.
+  urls.set(chaveDe(capa.book_id), url);
+  urls.set(chaveDe(capa.book_id, capa.updated_at), url);
+  avisar();
 }
 
 /** Byte da capa, para exportacao e backup. */

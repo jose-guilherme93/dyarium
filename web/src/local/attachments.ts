@@ -21,7 +21,13 @@ import {
 import type { Attachment } from "../types";
 
 export interface StoredAttachment extends Attachment {
-  blob: Blob;
+  /** Byte do anexo; ausente quando o login trouxe so o metadado. */
+  blob?: Blob;
+  /**
+   * Caminho do `.enc` no cofre. O retrato de metadados guarda o caminho para o
+   * sync nao apagar do Drive o anexo que ainda nao esta neste navegador.
+   */
+  vault_path?: string;
 }
 
 const urls = new Map<string, string>();
@@ -90,7 +96,7 @@ function novoId(): string {
 /** Grava um anexo inteiro (metadados + byte) no store local. */
 export async function saveAttachmentBlob(anexo: StoredAttachment): Promise<void> {
   await storeSet(ATTACHMENTS_STORE, anexo.id, anexo);
-  lembrar(anexo.id, anexo.blob);
+  if (anexo.blob) lembrar(anexo.id, anexo.blob);
   avisar();
 }
 
@@ -114,6 +120,11 @@ export async function listLocalAttachments(entryId: string): Promise<Attachment[
     .map(([, anexo]) => anexo)
     .filter((anexo) => anexo.entry_id === entryId)
     .map(metadataOf);
+}
+
+/** O byte do anexo esteja ou nao neste navegador, para quem decide buscar. */
+export async function localAttachment(id: string): Promise<StoredAttachment | undefined> {
+  return storeGet<StoredAttachment>(ATTACHMENTS_STORE, id);
 }
 
 export async function deleteLocalAttachment(id: string): Promise<void> {

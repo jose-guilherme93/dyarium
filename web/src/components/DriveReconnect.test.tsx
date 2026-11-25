@@ -1,9 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, act } from "@testing-library/react";
 import { DriveReconnect, DRIVE_MARK_KEY, rememberDriveVault } from "./DriveReconnect";
 import { connectDrive, driveSessionState, driveVaultRoot } from "../local/driveSession";
 import { openDriveVault } from "../local/vaultCloud";
 import { flushVaultSync } from "../local/folderSync";
+import {
+  beginVaultActivity,
+  endVaultActivity,
+  resetVaultActivity,
+  updateVaultActivity,
+} from "../local/vaultActivity";
 
 // A sessao do Google e a abertura do cofre nunca vao a rede: o teste dubla o
 // login, a pasta e o `openDriveVault`. O resto do modulo fica como esta
@@ -38,15 +44,17 @@ const aberto = {
     notebooks: { created: 0, updated: 0, skipped: 0 },
     analyses: 0,
     settings: false,
-    attachments: { restored: 218, skipped: 0 },
+    attachments: { restored: 0, skipped: 0 },
     source: "backup" as const,
   },
   synced: null,
   summary: RESUMO,
+  background: null,
 };
 
 beforeEach(() => {
   localStorage.clear();
+  resetVaultActivity();
   vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-de-teste");
   vi.mocked(connectDrive).mockResolvedValue(undefined as never);
   vi.mocked(driveVaultRoot).mockResolvedValue(undefined as never);
@@ -56,6 +64,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  resetVaultActivity();
   vi.unstubAllEnvs();
   vi.mocked(connectDrive).mockReset();
   vi.mocked(driveVaultRoot).mockReset();
@@ -97,6 +106,45 @@ describe("DriveReconnect", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
+  it("com sessao viva e o cofre trabalhando, a linha mostra a etapa sem botao", () => {
+    rememberDriveVault(RESUMO);
+    vi.mocked(driveSessionState).mockReturnValue("connected");
+    const token = beginVaultActivity("sincronizando");
+
+    render(<DriveReconnect />);
+
+    // Sinal discreto do segundo plano: a mesma linha, sem tela de carregamento.
+    expect(screen.getByText("gravando o que mudou")).toBeInTheDocument();
+    expect(screen.queryByText("Carregando…")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "conectar" })).not.toBeInTheDocument();
+
+    act(() => updateVaultActivity(token, { stage: "anexos", progress: { done: 2, total: 8 } }));
+    expect(screen.getByText("2")).toBeInTheDocument();
+    expect(screen.getByText(/de 8 anexos/)).toBeInTheDocument();
+
+    act(() => endVaultActivity(token));
+    expect(screen.queryByText("gravando o que mudou")).not.toBeInTheDocument();
+  });
+
+  it("falha do segundo plano volta na linha com o motivo e um tentar", async () => {
+    rememberDriveVault(RESUMO);
+    vi.mocked(driveSessionState).mockReturnValue("connected");
+    const token = beginVaultActivity("sincronizando");
+    act(() => endVaultActivity(token, "não foi possível concluir o Drive"));
+
+    render(<DriveReconnect />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("não foi possível concluir o Drive");
+    const tentar = screen.getByRole("button", { name: "tentar" });
+    expect(screen.queryByRole("button", { name: "conectar" })).not.toBeInTheDocument();
+
+    fireEvent.click(tentar);
+    await waitFor(() => expect(flushVaultSync).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(screen.queryByText("não foi possível concluir o Drive")).not.toBeInTheDocument(),
+    );
+  });
+
   it("clicar conecta, conta a etapa no VaultBoot e some ao terminar", async () => {
     rememberDriveVault(RESUMO);
 
@@ -132,6 +180,8 @@ describe("DriveReconnect", () => {
     expect(openDriveVault).toHaveBeenCalledWith(
       undefined,
       expect.objectContaining({
+        attachments: "skip",
+        sync: "background",
         onStage: expect.any(Function),
         onProgress: expect.any(Function),
       }),

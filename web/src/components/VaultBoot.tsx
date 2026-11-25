@@ -21,6 +21,11 @@ interface VaultBootProps {
   progress?: StepProgress;
   /** O cofre abriu: disco com traco e a linha "pronto". */
   done?: boolean;
+  /**
+   * Sinal discreto do segundo plano: sem a linha "Carregando…", so o circulo,
+   * a etapa e o medidor. A tela ja abriu; isto e um aviso, nao uma espera.
+   */
+  quiet?: boolean;
 }
 
 /** O que a tela diz em cada etapa, tres palavras por linha. */
@@ -46,7 +51,7 @@ function contaItens(stage: VaultStage): boolean {
   return stage === "aplicando" || stage === "anexos";
 }
 
-export function VaultBoot({ stage, progress, done = false }: VaultBootProps) {
+export function VaultBoot({ stage, progress, done = false, quiet = false }: VaultBootProps) {
   const total = progress?.total ?? 0;
   const conta = !done && contaItens(stage) && total > 0;
   const feito = conta ? Math.min(Math.max(progress?.done ?? 0, 0), total) : 0;
@@ -62,7 +67,7 @@ export function VaultBoot({ stage, progress, done = false }: VaultBootProps) {
               className={done ? "vault-boot-glyph is-done" : "vault-boot-glyph"}
               aria-hidden="true"
             />
-            {!done && <span>Carregando…</span>}
+            {!done && !quiet && <span>Carregando…</span>}
           </p>
           <p className="vault-boot-detail" aria-live="polite">
             {/* A chave troca so quando a etapa muda: a linha entra com um

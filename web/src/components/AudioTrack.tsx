@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
 import { api } from "../api";
-import { useAttachmentUrl } from "../lib/useAttachment";
+import { useAttachment } from "../lib/useAttachment";
 import { formatDuration } from "../lib/format";
 import { rememberAudioTime } from "../lib/noteViewState";
 import { useEscape } from "../lib/useEscape";
@@ -21,6 +21,7 @@ import {
   PauseIcon,
   PencilIcon,
   PlayIcon,
+  RefreshIcon,
   SparkIcon,
 } from "./icons";
 import { Spinner } from "./Status";
@@ -62,7 +63,11 @@ export function AudioTrack({
   initialTime = 0,
   onDelete,
 }: AudioTrackProps) {
-  const src = useAttachmentUrl(audio.id);
+  const {
+    url: src,
+    status: attachmentStatus,
+    retry: retryAttachment,
+  } = useAttachment(audio.id);
   const localRef = useRef<AudioPlayerHandle | null>(null);
   const ref = playerRef ?? localRef;
   const [currentTime, setCurrentTime] = useState(0);
@@ -271,19 +276,41 @@ export function AudioTrack({
   return (
     <div className="audio-block">
       <div className="audio-player-wrap" ref={playerWrapRef}>
-        <AudioPlayer
-          ref={ref}
-          src={src}
-          initialTime={initialTime}
-          onDelete={onDelete}
-          onTime={(seconds) => {
-            setCurrentTime(seconds);
-            if (entryId) {
-              rememberAudioTime(entryId, audio.id, seconds);
-            }
-          }}
-          onPlaying={setPlaying}
-        />
+        {attachmentStatus === "loading" ? (
+          // O byte do cofre esta a caminho: a transcricao ja pode ser lida e o
+          // player entra no lugar quando o anexo chega.
+          <div className="audio-fetch" role="status" aria-label="Carregando áudio">
+            <Spinner />
+          </div>
+        ) : attachmentStatus === "error" ? (
+          // Falha isolada: a nota abre, o texto fica, e reabrir tenta de novo.
+          <div className="audio-fetch audio-fetch--error" role="status">
+            <span>Áudio fora deste navegador</span>
+            <button
+              type="button"
+              className="audio-fetch-retry"
+              aria-label="Tentar de novo"
+              title="Tentar de novo"
+              onClick={retryAttachment}
+            >
+              <RefreshIcon size={14} />
+            </button>
+          </div>
+        ) : (
+          <AudioPlayer
+            ref={ref}
+            src={src}
+            initialTime={initialTime}
+            onDelete={onDelete}
+            onTime={(seconds) => {
+              setCurrentTime(seconds);
+              if (entryId) {
+                rememberAudioTime(entryId, audio.id, seconds);
+              }
+            }}
+            onPlaying={setPlaying}
+          />
+        )}
       </div>
       {showFull && floatVisible && (
         <span className="audio-play-slot">

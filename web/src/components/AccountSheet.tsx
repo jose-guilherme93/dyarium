@@ -24,7 +24,8 @@ export function accountState(profile: GoogleProfile | null): AccountState {
   return "expired";
 }
 
-function iniciais(profile: GoogleProfile | null): string {
+/** Iniciais da conta: compartilhadas pelo menu e pela tela travada. */
+export function accountInitials(profile: GoogleProfile | null): string {
   const base = (profile?.name?.trim() || profile?.email?.trim() || "").trim();
   if (!base) return "";
   const partes = base.split(/\s+/).filter(Boolean);
@@ -44,7 +45,7 @@ export function AccountAvatar({
   profile: GoogleProfile | null;
   state: AccountState;
 }) {
-  const letras = iniciais(profile);
+  const letras = accountInitials(profile);
   return (
     <>
       {profile?.picture ? (
@@ -191,7 +192,7 @@ export function AccountSheet({
       try {
         // Sem sessao, entrar pela conta: login, uniao com o Drive e sync. Com
         // sessao, o Sincronizar continua sendo so a gravacao do pendente.
-        if (!conectado) await connectAccount();
+        if (!conectado) await connectAccount({ attachments: "skip", sync: "background" });
         else await flushVaultSync();
       } catch {
         // A linha de reconectar na area das notas continua sendo o aviso.
@@ -275,13 +276,13 @@ export function AccountSheet({
             height={40}
             referrerPolicy="no-referrer"
           />
-        ) : estado === "none" || !iniciais(profile) ? (
+        ) : estado === "none" || !accountInitials(profile) ? (
           <span className="account-menu-photo account-menu-photo--empty" aria-hidden="true">
             <UserIcon size={18} />
           </span>
         ) : (
           <span className="account-menu-photo account-menu-photo--initials" aria-hidden="true">
-            {iniciais(profile)}
+            {accountInitials(profile)}
           </span>
         )}
         <span className="account-menu-idtext">

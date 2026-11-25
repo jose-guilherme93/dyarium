@@ -1,12 +1,14 @@
 /**
  * Abas de notas do web.
  *
- * Cada nota comum aberta vira uma aba, como no prototipo aprovado; livro e
- * caderno de projetos continuam abrindo na propria superficie, sem aba. O
- * estado inteiro (abas e a ativa) mora em localStorage para o recarregamento
- * devolver a mesma mesa de trabalho. O titulo fica junto da aba para a barra
- * pintar antes de qualquer lista carregar; quando a lista chega, o titulo e
- * atualizado e os ids que nao existem mais caem fora.
+ * Nenhuma nota vira aba ao ser clicada: o clique normal abre a nota sozinha no
+ * editor. Aba nasce so pelo menu da lista ("Abrir em nova aba"), e a barra so
+ * aparece com duas ou mais — com uma, e so o editor. Livro e caderno de
+ * projetos continuam abrindo na propria superficie, sem aba. O estado inteiro
+ * (abas e a ativa) mora em localStorage para o recarregamento devolver a mesma
+ * mesa de trabalho. O titulo fica junto da aba para a barra pintar antes de
+ * qualquer lista carregar; quando a lista chega, o titulo e atualizado e os ids
+ * que nao existem mais caem fora.
  */
 
 export interface NoteTab {
@@ -82,6 +84,25 @@ export function openTab(state: TabsState, id: string, title = ""): TabsState {
     };
   }
   return { tabs: [...state.tabs, { id, title }], activeId: id };
+}
+
+/**
+ * "Abrir em nova aba": a unica acao que cria aba.
+ *
+ * Sem abas, a nota que estava aberta (quando for outra) vira a primeira e a
+ * escolhida a segunda; sem nota aberta, a escolhida fica sozinha. Com abas,
+ * acrescenta a escolhida ao fim, ou so ativa a que ja existe — nunca duplica.
+ */
+export function openInNewTab(
+  state: TabsState,
+  id: string,
+  title = "",
+  currentId: string | null = null,
+): TabsState {
+  if (state.tabs.length === 0 && currentId && currentId !== id) {
+    return { tabs: [{ id: currentId, title: "" }, { id, title }], activeId: id };
+  }
+  return openTab(state, id, title);
 }
 
 export function activateTab(state: TabsState, id: string): TabsState {

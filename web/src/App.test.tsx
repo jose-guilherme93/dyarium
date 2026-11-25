@@ -4,8 +4,9 @@ import App from "./App";
 import { api } from "./api";
 import type { ImportResult } from "./local/import";
 import { registerNodeDatabase } from "./local/__fixtures__/nodeDb";
-import { connectDrive, driveVaultRoot } from "./local/driveSession";
+import { connectDrive, driveVaultRoot, signOutAccount } from "./local/driveSession";
 import { openDriveVault } from "./local/vaultCloud";
+import { reloadPage } from "./lib/page";
 
 // O cofre no Drive nunca vai a rede: a sessao do Google e a abertura do cofre
 // sao dubladas. O resto do modulo fica como esta (driveConfigured ainda
@@ -16,6 +17,7 @@ vi.mock("./local/driveSession", async (importOriginal) => {
     ...actual,
     connectDrive: vi.fn(async () => undefined),
     driveVaultRoot: vi.fn(async () => undefined),
+    signOutAccount: vi.fn(async () => ({ ok: true as const })),
   };
 });
 
@@ -26,6 +28,10 @@ vi.mock("./local/vaultCloud", async (importOriginal) => {
     openDriveVault: vi.fn(),
   };
 });
+
+// A saida recarrega o documento de verdade no navegador; no teste ela e um
+// duble para provar que o fluxo terminou sem navegar no jsdom.
+vi.mock("./lib/page", () => ({ reloadPage: vi.fn() }));
 
 // A tarefa de importacao vive fora do React; no teste do App ela e um duble
 // para o fim poder ser entregue na hora certa, sem rede nem banco.
@@ -95,19 +101,6 @@ describe("App", () => {
     // Site estatico: nenhuma tela de token, o banco do navegador assume.
     await waitFor(() => expect(screen.getByText("Nenhuma nota ainda.")).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: "Entrar" })).not.toBeInTheDocument();
-  });
-
-  it("com conta ja usada, o primeiro gesto renova o Google em silencio", async () => {
-    vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-id-de-teste");
-    localStorage.setItem("dyarium.onboarded", "1");
-    localStorage.setItem("dyarium.drive", "1");
-    render(<App />);
-    await waitFor(() => expect(screen.getByText("Nenhuma nota ainda.")).toBeInTheDocument());
-    vi.mocked(connectDrive).mockClear();
-
-    fireEvent.pointerDown(document.body);
-
-    await waitFor(() => expect(connectDrive).toHaveBeenCalledWith({ silent: true }));
   });
 
   it("VITE_LOCAL_ONLY ignora o token guardado e nem pergunta pelo servidor", async () => {
@@ -306,31 +299,6 @@ describe("App conta no trilho", () => {
     expect(gatilho.querySelector(".account-state-mark--none")).not.toBeNull();
   });
 
-  it("com marca e perfil, o reload abre o cache e so tenta o Google em silencio", async () => {
-    vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-id-de-teste");
-    localStorage.setItem("dyarium.drive", "1");
-    localStorage.setItem(
-      "dyarium.account",
-      JSON.stringify({ name: "Ada Lovelace", email: "ada@example.com", picture: "" }),
-    );
-    // Sem `dyarium.onboarded`: a marca e o perfil ja provam que a conta existe.
-    render(<App />);
-
-    await waitFor(() => expect(screen.getByText("Nenhuma nota ainda.")).toBeInTheDocument());
-    expect(
-      screen.queryByRole("button", { name: /Continuar com Google/ }),
-    ).not.toBeInTheDocument();
-
-    vi.mocked(connectDrive).mockClear();
-    fireEvent.pointerDown(document.body);
-
-    await waitFor(() => expect(connectDrive).toHaveBeenCalledWith({ silent: true }));
-    // Nenhum caminho automatico pede tela do Google: so o silencioso.
-    expect(
-      vi.mocked(connectDrive).mock.calls.every(([opcoes]) => opcoes?.silent === true),
-    ).toBe(true);
-  });
-
   it("com conta salva e sessao vencida, o avatar pede reconexao", async () => {
     localStorage.setItem("dyarium.onboarded", "1");
     localStorage.setItem(
@@ -346,6 +314,195 @@ describe("App conta no trilho", () => {
     fireEvent.click(gatilho);
     fireEvent.click(await screen.findByRole("menuitem", { name: /Conectar/ }));
     expect(screen.queryByRole("menu", { name: "Conta Google" })).not.toBeInTheDocument();
+  });
+});
+
+describe("App trava da conta", () => {
+  const aberto = {
+    restored: null,
+    synced: null,
+    summary: { notes: 400, attachments: 218, bytes: 13_000_000 },
+    background: null,
+  };
+
+  const perfil = { name: "Ada Lovelace", email: "ada@example.com", picture: "" };
+
+  beforeEach(() => {
+    vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-id-de-teste");
+    vi.mocked(openDriveVault).mockResolvedValue(aberto);
+    vi.mocked(driveVaultRoot).mockResolvedValue(undefined as never);
+    vi.mocked(connectDrive).mockResolvedValue(undefined as never);
+    vi.mocked(signOutAccount).mockResolvedValue({ ok: true });
+    localStorage.setItem("dyarium.drive", "1");
+    localStorage.setItem("dyarium.account", JSON.stringify(perfil));
+  });
+
+  afterEach(() => {
+    vi.mocked(openDriveVault).mockReset();
+    vi.mocked(driveVaultRoot).mockReset();
+    vi.mocked(connectDrive).mockReset();
+    vi.mocked(signOutAccount).mockReset();
+    vi.mocked(reloadPage).mockClear();
+  });
+
+  it("com marca e sem sessão, a tela trava a conta e nenhuma nota aparece", async () => {
+    render(<App />);
+
+    const trava = await screen.findByRole("main", { name: "Conta Google" });
+    expect(within(trava).getByText("Ada Lovelace")).toBeInTheDocument();
+    expect(within(trava).getByText("ada@example.com")).toBeInTheDocument();
+    expect(
+      within(trava).getByRole("button", { name: "Entrar com Google" }),
+    ).toBeInTheDocument();
+    expect(
+      within(trava).getByRole("button", { name: "Sair desta conta" }),
+    ).toBeInTheDocument();
+
+    // Nada do cofre atras da trava: nem lista vazia, nem navegacao.
+    expect(screen.queryByText("Nenhuma nota ainda.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
+    // A marca e o perfil nao voltam para a primeira tela.
+    expect(
+      screen.queryByRole("button", { name: /Continuar com Google/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("o primeiro toque renova em silêncio e destrava quando o cofre abre", async () => {
+    render(<App />);
+    const trava = await screen.findByRole("main", { name: "Conta Google" });
+    vi.mocked(connectDrive).mockClear();
+
+    fireEvent.pointerDown(trava);
+
+    await waitFor(() => expect(connectDrive).toHaveBeenCalledWith({ silent: true }));
+    await waitFor(() => expect(openDriveVault).toHaveBeenCalledTimes(1));
+    // O login pela trava usa o caminho rapido: metadado e sync em segundo plano.
+    expect(openDriveVault).toHaveBeenCalledWith(
+      undefined,
+      expect.objectContaining({ attachments: "skip", sync: "background" }),
+    );
+    // O cofre abriu: o app entra e as notas locais aparecem.
+    await waitFor(() => expect(screen.getByText("Nenhuma nota ainda.")).toBeInTheDocument());
+    expect(screen.getByRole("navigation")).toBeInTheDocument();
+    expect(screen.queryByRole("main", { name: "Conta Google" })).not.toBeInTheDocument();
+    // Nenhum caminho automatico pede tela do Google: so o silencioso.
+    expect(
+      vi.mocked(connectDrive).mock.calls.every(([opcoes]) => opcoes?.silent === true),
+    ).toBe(true);
+  });
+
+  it("sem perfil guardado o primeiro toque não tenta o silencioso", async () => {
+    // Perfil apagado, marca do Drive de pe: nao ha identidade para mostrar e o
+    // silencioso nao pede consentimento, entao a foto nunca chegaria.
+    localStorage.removeItem("dyarium.account");
+    render(<App />);
+    const trava = await screen.findByRole("main", { name: "Conta Google" });
+    vi.mocked(connectDrive).mockClear();
+    expect(document.querySelector(".account-gate-person")).not.toBeNull();
+
+    fireEvent.pointerDown(trava);
+
+    // Nada de login automatico nem de tela de carregamento: a trava fica.
+    expect(connectDrive).not.toHaveBeenCalled();
+    expect(openDriveVault).not.toHaveBeenCalled();
+    expect(screen.queryByText("Carregando…")).not.toBeInTheDocument();
+    expect(screen.getByRole("main", { name: "Conta Google" })).toBeInTheDocument();
+
+    // O caminho e o Entrar: interativo, que pede o consentimento de identidade
+    // uma vez e deixa o perfil guardado para os proximos silenciosos.
+    fireEvent.click(within(trava).getByRole("button", { name: "Entrar com Google" }));
+
+    await waitFor(() => expect(connectDrive).toHaveBeenCalledWith());
+    await waitFor(() => expect(screen.getByText("Nenhuma nota ainda.")).toBeInTheDocument());
+    expect(screen.queryByRole("main", { name: "Conta Google" })).not.toBeInTheDocument();
+  });
+
+  it("o app aparece sem esperar o segundo plano do cofre", async () => {
+    let liberar!: () => void;
+    const segundoPlano = new Promise<void>((resolve) => {
+      liberar = resolve;
+    });
+    vi.mocked(openDriveVault).mockResolvedValue({ ...aberto, background: segundoPlano });
+
+    render(<App />);
+    fireEvent.pointerDown(await screen.findByRole("main", { name: "Conta Google" }));
+
+    // O sync ainda esta rodando e a lista ja esta na tela.
+    await waitFor(() => expect(screen.getByText("Nenhuma nota ainda.")).toBeInTheDocument());
+    expect(screen.getByRole("navigation")).toBeInTheDocument();
+    liberar();
+    await segundoPlano;
+  });
+
+  it("falha silenciosa mantém a trava, sem tela do Google e sem erro parado", async () => {
+    vi.mocked(connectDrive).mockRejectedValue(new Error("login bloqueado"));
+    render(<App />);
+    const trava = await screen.findByRole("main", { name: "Conta Google" });
+
+    fireEvent.pointerDown(trava);
+
+    await waitFor(() => expect(connectDrive).toHaveBeenCalledWith({ silent: true }));
+    await waitFor(() =>
+      expect(screen.getByRole("main", { name: "Conta Google" })).toBeInTheDocument(),
+    );
+    expect(openDriveVault).not.toHaveBeenCalled();
+    expect(screen.queryByText("Nenhuma nota ainda.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("Entrar com Google faz o caminho interativo e destrava", async () => {
+    render(<App />);
+    const trava = await screen.findByRole("main", { name: "Conta Google" });
+    vi.mocked(connectDrive).mockClear();
+
+    fireEvent.click(within(trava).getByRole("button", { name: "Entrar com Google" }));
+
+    await waitFor(() => expect(connectDrive).toHaveBeenCalledWith());
+    await waitFor(() => expect(openDriveVault).toHaveBeenCalledTimes(1));
+    expect(openDriveVault).toHaveBeenCalledWith(
+      undefined,
+      expect.objectContaining({ attachments: "skip", sync: "background" }),
+    );
+    await waitFor(() => expect(screen.getByText("Nenhuma nota ainda.")).toBeInTheDocument());
+    expect(screen.queryByRole("main", { name: "Conta Google" })).not.toBeInTheDocument();
+  });
+
+  it("Sair desta conta apaga o cache e volta ao modo local", async () => {
+    // O signOut real apaga banco, anexos, perfil e marca; aqui basta o efeito
+    // observavel no localStorage para provar que o App seguiu o fluxo de saida.
+    vi.mocked(signOutAccount).mockImplementation(async () => {
+      localStorage.removeItem("dyarium.drive");
+      localStorage.removeItem("dyarium.account");
+      localStorage.setItem("dyarium.onboarded", "1");
+      return { ok: true };
+    });
+    const confirmar = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const vista = render(<App />);
+    const trava = await screen.findByRole("main", { name: "Conta Google" });
+
+    fireEvent.click(within(trava).getByRole("button", { name: "Sair desta conta" }));
+
+    await waitFor(() => expect(signOutAccount).toHaveBeenCalledTimes(1));
+    expect(confirmar).toHaveBeenCalledTimes(1);
+    expect(localStorage.getItem("dyarium.drive")).toBeNull();
+    expect(localStorage.getItem("dyarium.account")).toBeNull();
+    expect(reloadPage).toHaveBeenCalledTimes(1);
+
+    // O recarregamento (jsdom nao navega) abre o cofre local vazio, sem trava.
+    vista.unmount();
+    render(<App />);
+    await waitFor(() => expect(screen.getByText("Nenhuma nota ainda.")).toBeInTheDocument());
+    expect(screen.queryByRole("main", { name: "Conta Google" })).not.toBeInTheDocument();
+  });
+
+  it("sem a marca do Drive o cofre local abre direto, sem trava", async () => {
+    localStorage.removeItem("dyarium.drive");
+    localStorage.setItem("dyarium.account", JSON.stringify(perfil));
+    localStorage.setItem("dyarium.onboarded", "1");
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Nenhuma nota ainda.")).toBeInTheDocument());
+    expect(screen.queryByRole("main", { name: "Conta Google" })).not.toBeInTheDocument();
   });
 });
 
@@ -536,11 +693,12 @@ describe("App cofre no Drive", () => {
       notebooks: { created: 0, updated: 0, skipped: 0 },
       analyses: 0,
       settings: false,
-      attachments: { restored: 218, skipped: 0 },
+      attachments: { restored: 0, skipped: 0 },
       source: "backup" as const,
     },
     synced: null,
     summary: { notes: 400, attachments: 218, bytes: 13_000_000 },
+    background: null,
   };
 
   beforeEach(() => {
@@ -555,7 +713,7 @@ describe("App cofre no Drive", () => {
     vi.mocked(driveVaultRoot).mockReset();
   });
 
-  it("abre o cofre do Drive restaurando e sincronizando numa chamada so", async () => {
+  it("abre o cofre do Drive e deixa o sync em segundo plano", async () => {
     vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-de-teste");
 
     // Duas paradas para a tela ser lida no meio do caminho: o estado
@@ -586,10 +744,13 @@ describe("App cofre no Drive", () => {
     expect(await screen.findByText("lendo o cofre")).toBeInTheDocument();
     expect(screen.getByText("Carregando…")).toBeInTheDocument();
     expect(connectDrive).toHaveBeenCalled();
-    // Uma chamada so: o bug era escolher entre restaurar e sincronizar.
+    // Uma chamada so, com o caminho rapido pedido: metadado agora, anexo e
+    // sync depois da casca.
     expect(openDriveVault).toHaveBeenCalledWith(
       undefined,
       expect.objectContaining({
+        attachments: "skip",
+        sync: "background",
         onStage: expect.any(Function),
         onProgress: expect.any(Function),
       }),

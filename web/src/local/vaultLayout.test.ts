@@ -30,6 +30,9 @@ const idb = vi.hoisted(() => {
     storeSet: async (store: string, key: string, value: unknown) => {
       loja(store).set(key, value);
     },
+    storeSetMany: async (store: string, entries: Array<[string, unknown]>) => {
+      for (const [key, value] of entries) loja(store).set(key, value);
+    },
     storeDelete: async (store: string, key: string) => {
       loja(store).delete(key);
     },
@@ -45,6 +48,7 @@ import { registerNodeDatabase } from "./__fixtures__/nodeDb";
 import type { FolderLike } from "./folder";
 
 import { saveLocalAttachment } from "./attachments";
+import { saveLocalCover } from "./covers";
 import { createLocalNotebook } from "./notebooks";
 import * as local from "./notes";
 import { ensureVaultCode, vaultKeyFromCode } from "./vault";
@@ -336,6 +340,90 @@ describe("layout do cofre em pasta", () => {
     expect(entrada?.sha256).toBe(anterior?.sha256);
     expect(entrada?.sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(entrada?.entry_id).toBe(id);
+  });
+
+  it("anexo so com metadado (login rapido) fica no manifest sem write nem delete", async () => {
+    const id = await novaNota("Com voz", "texto");
+    const anexo = await saveLocalAttachment(
+      id,
+      new File([new Uint8Array([1, 2, 3])], "voz.aac", { type: "audio/aac" }),
+    );
+    const pasta = pastaEmMemoria();
+    await writeVaultLayout(pasta as unknown as FolderLike, await planVaultLayout());
+    const manifest = await readVaultManifest(pasta);
+    const entrada = manifest!.files.find((arquivo) => arquivo.id === anexo.id)!;
+
+    // Login rapido: o byte sai do IndexedDB e so o caminho do `.enc` fica.
+    idb.loja("attachments").set(anexo.id, {
+      id: anexo.id,
+      entry_id: id,
+      kind: "original",
+      content_type: "audio/aac",
+      size_bytes: 3,
+      created_at: entrada.updated_at,
+      vault_path: entrada.path,
+    });
+
+    const deNovo = await planVaultLayout(manifest);
+
+    // Sem byte local nao ha o que selar, e o arquivo remoto nao pode sumir.
+    expect(deNovo.writes).toEqual([]);
+    expect(deNovo.deletes).toEqual([]);
+    const preservada = deNovo.manifest.files.find((arquivo) => arquivo.id === anexo.id);
+    expect(preservada).toMatchObject({
+      path: entrada.path,
+      entry_id: id,
+      content_type: "audio/aac",
+      sha256: entrada.sha256,
+    });
+  });
+
+  it("capa so com metadado tambem continua no manifest depois do sync", async () => {
+    const livro = await createLocalNotebook({ name: "Livro", color: "", kind: "book" });
+    const capa = new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xe0])], { type: "image/jpeg" });
+    await saveLocalCover(livro.id, capa);
+    const pasta = pastaEmMemoria();
+    await writeVaultLayout(pasta as unknown as FolderLike, await planVaultLayout());
+    const manifest = await readVaultManifest(pasta);
+    const entrada = manifest!.files.find((arquivo) => arquivo.kind === "cover")!;
+
+    idb.loja("covers").set(livro.id, {
+      book_id: livro.id,
+      content_type: "image/jpeg",
+      updated_at: entrada.updated_at,
+      vault_path: entrada.path,
+    });
+
+    const deNovo = await planVaultLayout(manifest);
+
+    expect(deNovo.writes).toEqual([]);
+    expect(deNovo.deletes).toEqual([]);
+    expect(deNovo.manifest.files.find((arquivo) => arquivo.kind === "cover")).toMatchObject({
+      path: entrada.path,
+      id: livro.id,
+    });
+  });
+
+  it("capa trocada reescreve o arquivo dela no cofre", async () => {
+    const livro = await createLocalNotebook({ name: "Livro", color: "", kind: "book" });
+    await saveLocalCover(
+      livro.id,
+      new File([new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1])], "a.jpg", { type: "image/jpeg" }),
+    );
+    const pasta = pastaEmMemoria();
+    await writeVaultLayout(pasta as unknown as FolderLike, await planVaultLayout());
+    const manifest = await readVaultManifest(pasta);
+
+    await saveLocalCover(
+      livro.id,
+      new File([new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 2])], "b.jpg", { type: "image/jpeg" }),
+    );
+    const deNovo = await planVaultLayout(manifest);
+
+    // A capa e mutavel: o sha muda e o arquivo precisa ser reescrito.
+    const escritas = deNovo.writes.filter((write) => write.path.endsWith(".bin.enc"));
+    expect(escritas).toHaveLength(1);
+    expect(deNovo.deletes).toEqual([]);
   });
 
   it("plano com 2 anexos nao le os blobs; a escrita le um por vez", async () => {

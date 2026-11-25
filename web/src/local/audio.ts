@@ -164,11 +164,21 @@ export async function uploadLocalAudio(
   return { entry_id: entryId, attachment_id: anexo.id };
 }
 
+/**
+ * Byte do audio para transcrever. Quando o login trouxe so o metadado (cofre
+ * sob demanda), o anexo desce agora — antes, ele nunca estaria aqui e a nota
+ * pareceria muda para a transcricao.
+ */
 export async function audioBlobOf(entryId: string): Promise<Blob | null> {
   const alvo = (await listLocalAttachments(entryId)).find(ehAudio);
   if (!alvo) return null;
   const guardado = await storeGet<StoredAttachment>(ATTACHMENTS_STORE, alvo.id);
-  return guardado?.blob ?? null;
+  if (guardado?.blob) return guardado.blob;
+  if (!guardado) return null;
+  const { ensureAttachment } = await import("./attachmentFetch");
+  await ensureAttachment(alvo.id);
+  const depois = await storeGet<StoredAttachment>(ATTACHMENTS_STORE, alvo.id);
+  return depois?.blob ?? null;
 }
 
 /** Atalho sincrono: o `src` do player e lido no render, sem esperar o blob. */

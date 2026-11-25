@@ -247,6 +247,34 @@ describe("NoteList", () => {
     expect(screen.getByRole("menuitem", { name: "Selecionar todas" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Arquivar" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Apagar nota" })).toBeInTheDocument();
+    // Sem o dono das abas, a acao de nova aba nem aparece.
+    expect(screen.queryByRole("menuitem", { name: "Abrir em nova aba" })).not.toBeInTheDocument();
+  });
+
+  it("o menu oferece Abrir em nova aba e entrega a nota ao dono do estado", async () => {
+    const onOpen = vi.fn();
+    const onOpenInNewTab = vi.fn();
+    render(
+      <NoteList
+        refreshKey={0}
+        activeId={null}
+        failures={{}}
+        notebookId={ALL_NOTEBOOKS}
+        notebooks={NOTEBOOKS}
+        onOpen={onOpen}
+        onOpenInNewTab={onOpenInNewTab}
+        onCreate={() => undefined}
+        onManageTags={() => undefined}
+      />,
+    );
+    fireEvent.contextMenu(await screen.findByText("Viagem de fim de ano"), {
+      clientX: 40,
+      clientY: 60,
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Abrir em nova aba" }));
+
+    expect(onOpenInNewTab).toHaveBeenCalledWith("e3", "Viagem de fim de ano");
+    expect(onOpen).not.toHaveBeenCalled();
   });
 
   it("seleciona todas as notas visiveis e apaga em lote", async () => {

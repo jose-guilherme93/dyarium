@@ -1466,8 +1466,9 @@ export function SettingsView({
     setBackupBusy(true);
     setBackupStatus("");
     try {
-      // Mesma entrada da primeira tela e do menu: login, uniao e sync.
-      const aberto = await connectAccount();
+      // Mesma entrada da primeira tela e do menu: login, uniao e sync. Aqui o
+      // caminho e o rapido: a lista aparece e o sync termina em segundo plano.
+      const aberto = await connectAccount({ attachments: "skip", sync: "background" });
       setBackupStatus(
         `conectado · ${aberto.summary.notes} ${aberto.summary.notes === 1 ? "nota" : "notas"}`,
       );
@@ -1511,7 +1512,9 @@ export function SettingsView({
     setBackupBusy(true);
     setBackupStatus("");
     try {
-      const resumo = await restoreVaultFromDrive();
+      // Restauracao manual pede o cofre inteiro agora, anexos inclusive: e o
+      // caminho completo, ao contrario do login rapido.
+      const resumo = await restoreVaultFromDrive(undefined, { attachments: "all" });
       const codigo = await ensureVaultCode().catch(() => "");
       if (codigo) {
         setVaultCode(codigo);

@@ -2,6 +2,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const banco = new Map<string, unknown>();
 
+// O anexo sob demanda e um modulo de Drive: no teste do cofre local ele e um
+// duble que so preenche o byte quando o teste pedir.
+const fetchByte = vi.hoisted(() => ({
+  ensure: vi.fn(async (id: string) => {
+    void id;
+  }),
+}));
+
+vi.mock("./attachmentFetch", () => ({
+  ensureAttachment: (id: string) => fetchByte.ensure(id),
+}));
+
 vi.mock("../lib/idb", () => ({
   ATTACHMENTS_STORE: "attachments",
   storeSet: async (_store: string, key: string, value: unknown) => {
@@ -25,7 +37,7 @@ import {
   saveLocalAudio,
   uploadLocalAudio,
 } from "./audio";
-import { saveLocalAttachment } from "./attachments";
+import { saveLocalAttachment, type StoredAttachment } from "./attachments";
 import * as local from "./notes";
 
 beforeEach(async () => {
@@ -120,6 +132,22 @@ describe("audio local", () => {
     expect(blob).not.toBeNull();
     expect(blob?.type).toBe("audio/mp4");
     expect(blob?.size).toBe(3);
+  });
+
+  it("audioBlobOf busca no cofre o audio que veio so como metadado", async () => {
+    const resultado = await uploadLocalAudio(arquivo());
+    const id = resultado.attachment_id;
+    const guardado = banco.get(id) as StoredAttachment;
+    // Login rapido: o metadado fica no IndexedDB e o byte so existe no cofre.
+    banco.set(id, { ...guardado, blob: undefined, vault_path: "attachments/voz.m4a.enc" });
+    fetchByte.ensure.mockImplementationOnce(async (alvo: string) => {
+      banco.set(alvo, { ...(banco.get(alvo) as object), blob: arquivo() });
+    });
+
+    const blob = await audioBlobOf(resultado.entry_id);
+
+    expect(fetchByte.ensure).toHaveBeenCalledWith(id);
+    expect(blob?.type).toBe("audio/mp4");
   });
 
   it("anexo de imagem nao entra em entryAudios", async () => {

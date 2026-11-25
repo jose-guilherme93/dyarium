@@ -40,6 +40,14 @@ const cloud = vi.hoisted(() => ({
   restore: vi.fn(async () => ({ created: 1, updated: 0, skipped: 0 })),
   exists: vi.fn(async () => true),
 }));
+const conta = vi.hoisted(() => ({
+  connect: vi.fn(async () => ({
+    restored: null,
+    synced: null,
+    summary: { notes: 0, attachments: 0, bytes: 0 },
+    background: null,
+  })),
+}));
 
 vi.mock("../local/driveSession", () => ({
   driveConfigured: () => drive.configured(),
@@ -50,15 +58,11 @@ vi.mock("../local/driveSession", () => ({
 }));
 vi.mock("../local/vaultCloud", () => ({
   syncVaultToDrive: () => cloud.sync(),
-  restoreVaultFromDrive: () => cloud.restore(),
+  restoreVaultFromDrive: (...args: unknown[]) => cloud.restore(...(args as [])),
   driveVaultExists: () => cloud.exists(),
 }));
 vi.mock("../local/accountConnect", () => ({
-  connectAccount: async () => ({
-    restored: null,
-    synced: null,
-    summary: { notes: 0, attachments: 0, bytes: 0 },
-  }),
+  connectAccount: (...args: unknown[]) => conta.connect(...(args as [])),
 }));
 
 const baseSettings: Settings = {
@@ -279,5 +283,29 @@ describe("SettingsView cofre no Drive", () => {
     fireEvent.click(salvar);
 
     await waitFor(() => expect(cloud.sync).toHaveBeenCalledTimes(1));
+  });
+
+  it("conectar aqui usa o caminho rapido", async () => {
+    drive.configured.mockReturnValue(true);
+    drive.state.mockReturnValue("off");
+    const linha = await abrirCofre();
+
+    fireEvent.click(within(linha).getByRole("button", { name: "conectar" }));
+
+    await waitFor(() =>
+      expect(conta.connect).toHaveBeenCalledWith({ attachments: "skip", sync: "background" }),
+    );
+  });
+
+  it("restaurar aqui continua sendo o caminho completo, com os anexos", async () => {
+    drive.configured.mockReturnValue(true);
+    drive.state.mockReturnValue("connected");
+    const linha = await abrirCofre();
+
+    fireEvent.click(within(linha).getByRole("button", { name: "restaurar" }));
+
+    await waitFor(() =>
+      expect(cloud.restore).toHaveBeenCalledWith(undefined, { attachments: "all" }),
+    );
   });
 });

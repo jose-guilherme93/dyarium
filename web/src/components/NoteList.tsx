@@ -47,6 +47,8 @@ interface NoteListProps {
   autoSearch?: boolean;
   onSearchOpened?: () => void;
   onOpen: (id: string, title?: string) => void;
+  /** Abre a nota numa aba nova; ausente, a acao nao aparece no menu. */
+  onOpenInNewTab?: (id: string, title?: string) => void;
   onCreate: (event: ReactMouseEvent<HTMLButtonElement>) => void;
   onManageTags: () => void;
   /** Notas apagadas ou arquivadas: o dono do estado fecha a aba delas. */
@@ -102,6 +104,7 @@ export function NoteList({
   autoSearch = false,
   onSearchOpened,
   onOpen,
+  onOpenInNewTab,
   onCreate,
   onManageTags,
   onMutated,
@@ -339,6 +342,19 @@ export function NoteList({
           onOpen(entry.id, noteTitle(entry));
         },
       },
+      // A unica acao que cria aba: o clique normal abre a nota sozinha.
+      ...(onOpenInNewTab
+        ? [
+            {
+              key: "open-tab",
+              label: "Abrir em nova aba",
+              onSelect: () => {
+                clearSelection();
+                onOpenInNewTab(entry.id, noteTitle(entry));
+              },
+            },
+          ]
+        : []),
       {
         key: "select",
         label: selected.has(entry.id) ? "Desmarcar" : "Selecionar",

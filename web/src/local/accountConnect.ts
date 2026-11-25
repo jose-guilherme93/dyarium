@@ -17,7 +17,14 @@ import { openDriveVault, type OpenDriveVaultResult, type VaultOptions } from "./
 export async function connectAccount(options: VaultOptions = {}): Promise<OpenDriveVaultResult> {
   await connectDrive();
   const root = await driveVaultRoot();
-  const aberto = await openDriveVault(root, options);
+  // Caminho rapido por padrao: metadado e lista agora, sync e anexos depois.
+  // Quem precisa do cofre inteiro (restauracao manual) passa `attachments` e
+  // `sync` explicitos.
+  const aberto = await openDriveVault(root, {
+    attachments: "skip",
+    sync: "background",
+    ...options,
+  });
   rememberDriveVault(aberto.summary);
   return aberto;
 }

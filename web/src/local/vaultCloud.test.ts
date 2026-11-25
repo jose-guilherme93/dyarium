@@ -30,6 +30,9 @@ const idb = vi.hoisted(() => {
     storeSet: async (store: string, key: string, value: unknown) => {
       loja(store).set(key, value);
     },
+    storeSetMany: async (store: string, entries: Array<[string, unknown]>) => {
+      for (const [key, value] of entries) loja(store).set(key, value);
+    },
     storeDelete: async (store: string, key: string) => {
       loja(store).delete(key);
     },
@@ -68,16 +71,21 @@ import * as local from "./notes";
 import {
   MANIFEST_FILE,
   planVaultLayout,
+  slugify,
   writeVaultLayout,
+  type VaultFileEntry,
   type VaultFolderLike,
   type VaultManifest,
 } from "./vaultLayout";
 import { saveLocalAttachment, type StoredAttachment } from "./attachments";
+import { saveLocalCover, type StoredCover } from "./covers";
+import { cachedSummary } from "./driveMark";
 import type { Analysis, Notebook } from "../types";
 import {
   driveVaultExists,
   openDriveVault,
   restoreAttachmentsFromVault,
+  restoreCoversFromVault,
   restoreVaultFromDrive,
   syncVaultToDrive,
   vaultSummary,
@@ -86,6 +94,12 @@ import { runVaultSync } from "./folderSync";
 
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
+
+/** Sha256 do conteudo em claro, como o manifest guarda. */
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(bytes)));
+  return [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
 
 /** Pasta em memoria: Map de caminho -> bytes, com subpasta e remocao. */
 function pastaEmMemoria(): VaultFolderLike & { arquivos: Map<string, Uint8Array> } {
@@ -347,12 +361,17 @@ describe("abrir o cofre do Drive", () => {
       attachments: { restored: 0, skipped: 0 },
       source: "backup",
     });
-    expect(aberto.synced).toMatchObject({ written: 3 });
+    // A abertura volta antes do sync: o app aparece e o sync segue atras.
+    expect(aberto.synced).toBeNull();
+    expect(aberto.background).not.toBeNull();
     expect(stages).toContain("decifrando");
     expect(stages).toContain("aplicando");
-    expect(stages).toContain("sincronizando");
+    // O segundo plano nao repassa etapa nenhuma: a tela de carregamento ja saiu.
+    expect(stages).not.toContain("sincronizando");
     // "lendo" e so da restauracao; o sync no fim nao repete a etapa.
     expect(stages.filter((stage) => stage === "lendo")).toHaveLength(1);
+
+    await aberto.background;
 
     // O retrato no Drive agora tem o que o dono esta vendo no app.
     const retrato = await openSnapshot(pasta.arquivos.get(BACKUP_FILE)!, chave);
@@ -366,11 +385,15 @@ describe("abrir o cofre do Drive", () => {
     ) as VaultManifest;
     expect(manifest.files).toHaveLength(3);
     expect(manifest.files.map((arquivo) => arquivo.kind)).toEqual(["note", "note", "note"]);
-    expect(aberto.summary).toEqual({
+    // A abertura leu o cofre que existia: sem manifest, o resumo e zero. O
+    // segundo plano corrige o numero guardado assim que o sync grava o cofre.
+    expect(aberto.summary).toEqual({ notes: 0, attachments: 0, bytes: 0 });
+    expect(await vaultSummary(pasta)).toEqual({
       notes: 3,
       attachments: 0,
       bytes: manifest.files.reduce((soma, arquivo) => soma + arquivo.size, 0),
     });
+    expect(cachedSummary()?.notes).toBe(3);
   });
 
   it("une local e Drive por id: o mais novo vence e ids diferentes coexistem", async () => {
@@ -425,6 +448,7 @@ describe("abrir o cofre do Drive", () => {
     pasta.arquivos.set(STATE_FILE, await sealSnapshot(retrato, chave));
 
     const aberto = await openDriveVault(pasta);
+    await aberto.background;
 
     expect(aberto.restored).toMatchObject({
       created: 1,
@@ -474,6 +498,126 @@ describe("abrir o cofre do Drive", () => {
     expect(stages).toContain("sincronizando");
     expect(stages).not.toContain("lendo");
     expect(await driveVaultExists(pasta)).toBe(true);
+  });
+
+  it("abre cofre com 400 notas e 218 anexos sem baixar anexo e sem esperar o sync", async () => {
+    const pasta = pastaEmMemoria();
+    const codigo = await newRecoveryCode();
+    const chave = await vaultKeyFromCode(codigo);
+    const vaultId = await vaultIdFromCode(codigo);
+    const notas = Array.from({ length: 400 }, (_, indice) => ({
+      id: `nota-${indice}`,
+      title: `Nota ${indice}`,
+      recordedAt: "2026-01-01",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      text: `corpo ${indice}`,
+    }));
+    const arquivos: VaultFileEntry[] = [];
+    for (const nota of notas) {
+      const texto = encoder.encode(nota.text);
+      arquivos.push({
+        path: `notes/2026-01-01-${slugify(nota.title)}.md.enc`,
+        id: nota.id,
+        kind: "note",
+        sha256: await sha256Hex(texto),
+        size: texto.length + 28,
+        updated_at: nota.updatedAt,
+      });
+    }
+    for (let indice = 0; indice < 218; indice++) {
+      arquivos.push({
+        path: `attachments/att_${indice}.aac.enc`,
+        id: `att_${indice}`,
+        kind: "attachment",
+        sha256: "0".repeat(64),
+        size: 128,
+        updated_at: "2026-01-01T00:00:00.000Z",
+        entry_id: `nota-${indice}`,
+        content_type: "audio/aac",
+      });
+    }
+    const manifest: VaultManifest = {
+      version: 4,
+      vault_id: vaultId,
+      updated_at: "2026-01-01T00:00:00.000Z",
+      files: arquivos,
+    };
+    pasta.arquivos.set(KEY_FILE, encoder.encode(formatRecoveryCode(codigo)));
+    pasta.arquivos.set(
+      BACKUP_FILE,
+      await sealSnapshot({ version: 1, vaultId, createdAt: "2026-01-01T00:00:00.000Z", notes: notas }, chave),
+    );
+    pasta.arquivos.set(
+      STATE_FILE,
+      await sealSnapshot(
+        { version: 2, vaultId, createdAt: "2026-01-01T00:00:00.000Z", notes: notas, notebooks: [], analyses: [] },
+        chave,
+      ),
+    );
+    pasta.arquivos.set(MANIFEST_FILE, encoder.encode(JSON.stringify(manifest)));
+
+    // O sync do segundo plano fica parado na segunda leitura do manifest (a
+    // primeira e a da abertura). Se a abertura esperasse o sync, travaria aqui.
+    let leituras = 0;
+    let liberar!: () => void;
+    const trava = new Promise<void>((resolve) => {
+      liberar = resolve;
+    });
+    const leituraOriginal = pasta.getFileHandle.bind(pasta);
+    pasta.getFileHandle = async (nome, opcoes) => {
+      if (nome === MANIFEST_FILE && !opcoes?.create) {
+        leituras += 1;
+        if (leituras === 2) await trava;
+      }
+      return leituraOriginal(nome, opcoes);
+    };
+    // Toda leitura de `.enc` de anexo passa pela subpasta: conta uma a uma.
+    const leiturasDeAnexo: string[] = [];
+    const pastaOriginal = pasta.getDirectoryHandle!.bind(pasta);
+    pasta.getDirectoryHandle = async (nome, opcoes) => {
+      const dir = (await pastaOriginal(nome, opcoes))!;
+      const arquivoOriginal = dir.getFileHandle.bind(dir);
+      return {
+        ...dir,
+        async getFileHandle(arquivo, opcoesArquivo) {
+          if (!opcoesArquivo?.create) leiturasDeAnexo.push(`${nome}/${arquivo}`);
+          return arquivoOriginal(arquivo, opcoesArquivo);
+        },
+      };
+    };
+
+    const aberto = await openDriveVault(pasta);
+
+    // A casca e a lista ja estao prontas: o retorno nao espera sync nem anexo.
+    expect(aberto.synced).toBeNull();
+    expect(aberto.background).not.toBeNull();
+    expect(aberto.restored?.attachments).toEqual({ restored: 0, skipped: 0 });
+    expect(aberto.summary).toEqual({
+      notes: 400,
+      attachments: 218,
+      bytes: arquivos.reduce((soma, arquivo) => soma + arquivo.size, 0),
+    });
+    expect((await local.listEntries()).length).toBe(400);
+    expect(leiturasDeAnexo).toEqual([]);
+
+    // Nenhum byte veio: o anexo entrou como metadado, com o caminho do cofre.
+    const metadado = idb.loja("attachments").get("att_0") as StoredAttachment;
+    expect(metadado.blob).toBeUndefined();
+    expect(metadado.vault_path).toBe("attachments/att_0.aac.enc");
+    expect(metadado.entry_id).toBe("nota-0");
+    expect(metadado.content_type).toBe("audio/aac");
+    expect(metadado.size_bytes).toBe(100);
+    expect(idb.loja("attachments").size).toBe(218);
+
+    liberar();
+    await aberto.background;
+    expect(leiturasDeAnexo).toEqual([]);
+    // O sync do segundo plano nao apagou do manifest o anexo que ainda nao
+    // esta neste navegador.
+    const depois = JSON.parse(
+      decoder.decode(pasta.arquivos.get(MANIFEST_FILE)!),
+    ) as VaultManifest;
+    expect(depois.files.filter((arquivo) => arquivo.kind === "attachment")).toHaveLength(218);
   });
 
   it("vaultSummary conta notas, capitulos e anexos e soma os tamanhos do manifest", async () => {
@@ -554,7 +698,7 @@ describe("restauracao de anexos do cofre", () => {
       content_type: "audio/aac",
       size_bytes: 4,
     });
-    const bytes = new Uint8Array(await guardado.blob.arrayBuffer());
+    const bytes = new Uint8Array(await guardado.blob!.arrayBuffer());
     expect([...bytes]).toEqual([1, 2, 3, 4]);
 
     expect(await restoreAttachmentsFromVault(pasta)).toEqual({ restored: 0, skipped: 1 });
@@ -605,7 +749,7 @@ describe("restauracao de anexos do cofre", () => {
     expect(await restoreAttachmentsFromVault(pasta)).toEqual({ restored: 0, skipped: 0 });
   });
 
-  it("restore avisa lendo, decifrando, aplicando e anexos, nessa ordem", async () => {
+  it("restore com anexos all avisa lendo, decifrando, aplicando e anexos, nessa ordem", async () => {
     const pasta = pastaEmMemoria();
     const id = await novaNota("Com audio", "texto do drive");
     await saveLocalAttachment(
@@ -617,11 +761,35 @@ describe("restauracao de anexos do cofre", () => {
 
     const stages: string[] = [];
     const resumo = await restoreVaultFromDrive(pasta, {
+      attachments: "all",
       onStage: (stage) => stages.push(stage),
     });
 
     expect(stages).toEqual(["lendo", "decifrando", "aplicando", "anexos"]);
     expect(resumo.attachments).toEqual({ restored: 1, skipped: 0 });
+  });
+
+  it("no login, o restore guarda so o metadado do anexo, sem baixar o byte", async () => {
+    const pasta = pastaEmMemoria();
+    const id = await novaNota("Com audio", "texto do drive");
+    const anexo = await saveLocalAttachment(
+      id,
+      new File([new Uint8Array([4, 5, 6])], "voz.aac", { type: "audio/aac" }),
+    );
+    await escreverCofreCompleto(pasta);
+    idb.loja("attachments").clear();
+
+    const stages: string[] = [];
+    const resumo = await restoreVaultFromDrive(pasta, {
+      onStage: (stage) => stages.push(stage),
+    });
+
+    expect(stages).toEqual(["lendo", "decifrando", "aplicando"]);
+    expect(resumo.attachments).toEqual({ restored: 0, skipped: 0 });
+    const guardado = idb.loja("attachments").get(anexo.id) as StoredAttachment;
+    expect(guardado.blob).toBeUndefined();
+    expect(guardado.vault_path).toMatch(/^attachments\//);
+    expect(guardado.content_type).toBe("audio/aac");
   });
 
   it("emite a contagem real de notas e de anexos durante a restauracao", async () => {
@@ -643,6 +811,7 @@ describe("restauracao de anexos do cofre", () => {
     let stage = "";
     const eventos: { stage: string; done: number; total: number }[] = [];
     const resumo = await restoreVaultFromDrive(pasta, {
+      attachments: "all",
       onStage: (novo) => {
         stage = novo;
       },
@@ -668,6 +837,35 @@ describe("restauracao de anexos do cofre", () => {
       { done: 2, total: 2 },
     ]);
     expect(resumo.attachments).toEqual({ restored: 2, skipped: 0 });
+  });
+
+  it("capa do livro volta do cofre com a versao do manifest", async () => {
+    const pasta = pastaEmMemoria();
+    const livro = await createLocalNotebook({ name: "Livro", kind: "book", color: "" });
+    await saveLocalCover(
+      livro.id,
+      new File([new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2])], "capa.jpg", {
+        type: "image/jpeg",
+      }),
+    );
+    await escreverCofreCompleto(pasta);
+    idb.loja("covers").clear();
+
+    const resumo = await restoreCoversFromVault(pasta);
+
+    expect(resumo).toEqual({ restored: 1, skipped: 0 });
+    const capa = idb.loja("covers").get(livro.id) as StoredCover;
+    expect(capa.blob).toBeInstanceOf(Blob);
+    // O manifest nao guarda o tipo da capa: ele sai da assinatura do byte.
+    expect(capa.content_type).toBe("image/jpeg");
+    const manifest = JSON.parse(
+      decoder.decode(pasta.arquivos.get(MANIFEST_FILE)!),
+    ) as VaultManifest;
+    const entrada = manifest.files.find((arquivo) => arquivo.kind === "cover");
+    expect(capa.updated_at).toBe(entrada?.updated_at);
+    expect(capa.vault_path).toBe(entrada?.path);
+    // A segunda passada nao baixa de novo.
+    expect(await restoreCoversFromVault(pasta)).toEqual({ restored: 0, skipped: 1 });
   });
 
   it("sync do cofre inteiro sobe 3 notas e 2 anexos, e o restore devolve os audios", async () => {
@@ -697,8 +895,8 @@ describe("restauracao de anexos do cofre", () => {
     expect(await restoreAttachmentsFromVault(pasta)).toEqual({ restored: 2, skipped: 0 });
     const voltouA = idb.loja("attachments").get(a.id) as StoredAttachment;
     const voltouB = idb.loja("attachments").get(b.id) as StoredAttachment;
-    expect([...new Uint8Array(await voltouA.blob.arrayBuffer())]).toEqual([1, 1, 1]);
-    expect([...new Uint8Array(await voltouB.blob.arrayBuffer())]).toEqual([2, 2]);
+    expect([...new Uint8Array(await voltouA.blob!.arrayBuffer())]).toEqual([1, 1, 1]);
+    expect([...new Uint8Array(await voltouB.blob!.arrayBuffer())]).toEqual([2, 2]);
   });
 
   it("onStage que lanca nao interrompe a restauracao", async () => {

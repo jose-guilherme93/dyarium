@@ -20,6 +20,7 @@ vi.mock("../local/accountConnect", () => ({
     restored: null,
     synced: null,
     summary: { notes: 400, attachments: 1, bytes: 13_000_000 },
+    background: null,
   })),
 }));
 

@@ -194,6 +194,8 @@ interface StoredAttachmentLike {
   content_type: string;
   created_at: string;
   blob?: Blob;
+  /** Caminho do `.enc` quando so o metadado veio do cofre (login rapido). */
+  vault_path?: string;
 }
 
 interface StoredCoverLike {
@@ -201,6 +203,7 @@ interface StoredCoverLike {
   content_type: string;
   updated_at: string;
   blob?: Blob;
+  vault_path?: string;
 }
 
 interface ArquivoPlano {
@@ -335,17 +338,20 @@ export async function planVaultLayout(previous?: VaultManifest | null): Promise<
     }
   }
 
-  // Capas de livro: um byte por livro no IndexedDB, vira capa.bin.enc.
+  // Capas de livro: um byte por livro no IndexedDB, vira capa.bin.enc. Sem o
+  // byte (so o caminho veio no login), a capa remota continua no manifest.
   for (const caderno of notebooks) {
     if (caderno.kind !== "book") continue;
     const capa = await storeGet<StoredCoverLike>(COVERS_STORE, caderno.id);
-    if (!capa?.blob) continue;
+    if (!capa || (!capa.blob && !capa.vault_path)) continue;
     const dir = pastaDo(caderno, "books");
     arquivos.push({
-      path: `${dir}/${alocar(dir, "capa", ".bin.enc")}`,
+      path: capa.vault_path ?? `${dir}/${alocar(dir, "capa", ".bin.enc")}`,
       id: caderno.id,
       kind: "cover",
-      plain: new Uint8Array(await capa.blob.arrayBuffer()),
+      // A capa muda quando o dono troca a imagem, entao o sha sai do conteudo
+      // atual. Metadado sem byte (login rapido) so preserva a entrada anterior.
+      plain: capa.blob ? new Uint8Array(await capa.blob.arrayBuffer()) : undefined,
       updatedAt: capa.updated_at,
       titulo: caderno.name,
     });
@@ -355,10 +361,15 @@ export async function planVaultLayout(previous?: VaultManifest | null): Promise<
   const vivos = new Set(recordings.map((recording) => recording.id));
   const anexos = await storeList<StoredAttachmentLike>(ATTACHMENTS_STORE);
   for (const [, anexo] of anexos) {
-    if (!vivos.has(anexo.entry_id) || !anexo.blob) continue;
+    if (!vivos.has(anexo.entry_id)) continue;
+    // Sem byte local nao ha o que selar, e o arquivo remoto nao pode ser
+    // apagado por causa disso: ele continua no manifest pelo caminho guardado.
+    if (!anexo.blob && !anexo.vault_path) continue;
     const ext = extForContentType(anexo.content_type);
     arquivos.push({
-      path: `attachments/${alocar("attachments", `${anexo.id}.${ext}`, ".enc")}`,
+      path:
+        anexo.vault_path ??
+        `attachments/${alocar("attachments", `${anexo.id}.${ext}`, ".enc")}`,
       id: anexo.id,
       kind: "attachment",
       // O blob nao e lido aqui: so `load`, um anexo por vez na escrita.
@@ -389,6 +400,9 @@ export async function planVaultLayout(previous?: VaultManifest | null): Promise<
   let unchanged = 0;
   for (const arquivo of arquivos.sort((a, b) => a.path.localeCompare(b.path))) {
     const anterior = anteriores.get(arquivo.path);
+    // Sem byte local nem entrada anterior nao ha o que gravar (nem o que
+    // apagar): so acontece com metadado de outro cofre, e o arquivo fica fora.
+    if (!arquivo.plain && !arquivo.blob && !anterior) continue;
     // O anexo e imutavel e o caminho carrega o id, entao o sha do manifest
     // anterior continua valendo: nao ha por que abrir o audio so para conferir.
     // Texto e capa ja estao em memoria, e o sha sai do conteudo atual.

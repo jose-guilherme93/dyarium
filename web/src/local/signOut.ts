@@ -19,9 +19,14 @@ import { wipeLocalVault } from "../storage/db";
 
 /** Grava o cofre inteiro e so aceita se os tres snapshots ficaram no Drive. */
 async function gravarPendente(): Promise<boolean> {
-  const { syncVaultToDrive, vaultSnapshotsWritten } = await import("./vaultCloud");
+  const { syncVaultToDrive, vaultSnapshotsWritten, waitVaultBackground } = await import(
+    "./vaultCloud"
+  );
   const raiz = await driveVaultRoot();
   await syncVaultToDrive(raiz);
+  // O segundo plano do login ainda pode estar guardando capas: o cache so e
+  // apagado depois que ele termina, para nada da conta voltar depois do sair.
+  await waitVaultBackground();
   return vaultSnapshotsWritten(raiz);
 }
 

@@ -620,6 +620,46 @@
   background: var(--color-surface);
 }
 
+/* Anexo sob demanda: o byte vem do cofre quando a nota abre. A linha ocupa o
+   lugar do player para a transcricao nao pular quando ele entra. */
+.audio-fetch {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 2);
+  min-height: 46px;
+  padding: calc(var(--space) * 2) calc(var(--space) * 3);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-muted);
+  font-size: 13px;
+}
+
+.audio-fetch > span:first-child:not(.spinner) {
+  flex: 1;
+  min-width: 0;
+}
+
+.audio-fetch--error {
+  color: var(--color-danger);
+}
+
+.audio-fetch-retry {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-left: auto;
+  border-radius: 50%;
+  color: inherit;
+  background: transparent;
+}
+
+.audio-fetch-retry:hover {
+  background: var(--color-surface-2);
+}
+
 /* Play/pause que acompanha a leitura de uma transcricao longa: fica preso no
    meio da tela enquanto o bloco de audio estiver visivel. */
 .audio-play-slot {

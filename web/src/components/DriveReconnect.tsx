@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 // A linha e a mesma peca das Configuracoes; a folha vem junto para o desenho do
 // `.cfg-item`/`.cfg-mark`/`.cfg-btn` nao depender de a tela de Configuracoes
 // estar no bundle.
@@ -15,6 +15,11 @@ import {
 import { connectAccount } from "../local/accountConnect";
 import type { VaultStage, VaultSummary } from "../local/vaultCloud";
 import { flushVaultSync } from "../local/folderSync";
+import {
+  clearVaultActivityError,
+  subscribeVaultActivity,
+  vaultActivity,
+} from "../local/vaultActivity";
 import {
   DRIVE_MARK_KEY,
   driveMarked,
@@ -68,6 +73,15 @@ export function DriveReconnect() {
   const [progress, setProgress] = useState<StepProgress | undefined>();
   const [error, setError] = useState("");
   const alive = useRef(true);
+  /**
+   * O cofre continua trabalhando depois de o app aparecer (sync e capas). E o
+   * mesmo sinal discreto, sem overlay: a linha ja esta a vista.
+   */
+  const atividade = useSyncExternalStore(
+    subscribeVaultActivity,
+    vaultActivity,
+    vaultActivity,
+  );
 
   useEffect(() => {
     alive.current = true;
@@ -84,9 +98,9 @@ export function DriveReconnect() {
   );
 
   if (!marked || !driveConfigured()) return null;
-  // Sessao viva e sync em dia nao precisam de linha. Erro ainda precisa: e o
-  // unico jeito de a pessoa saber o que consertar depois de tentar.
-  if (!working && !error && fresh) return null;
+  // Sessao viva e sync em dia nao precisam de linha. Erro e trabalho em curso
+  // ainda precisam: sao o unico sinal depois que a tela ja abriu.
+  if (!working && !error && !atividade.running && !atividade.error && fresh) return null;
 
   const reconectar = async () => {
     setError("");
@@ -94,8 +108,11 @@ export function DriveReconnect() {
     setStage("conectando");
     setProgress(undefined);
     try {
-      // Um unico caminho: login, abertura com uniao e marca do Drive.
+      // Um unico caminho: login, abertura com uniao e marca do Drive. O login
+      // pede o caminho rapido: metadado agora, sync e capas em segundo plano.
       const aberto = await connectAccount({
+        attachments: "skip",
+        sync: "background",
         onStage: (proxima) => {
           setStage(proxima);
           setProgress(undefined);
@@ -119,30 +136,48 @@ export function DriveReconnect() {
     }
   };
 
+  /** Segunda tentativa do trabalho que falhou depois da abertura. */
+  const repetir = async () => {
+    setError("");
+    try {
+      await flushVaultSync();
+      clearVaultActivityError();
+    } catch {
+      // A linha continua com o motivo; o `folderSync` agenda a proxima.
+    }
+  };
+
+  const causa = error || atividade.error;
+
   return (
     <section className="drive-reconnect" aria-label="Google Drive">
       <div className="cfg-item">
         <span className="cfg-mark" data-state="warn" aria-hidden="true" />
         <span className="cfg-grow">Google Drive</span>
         <span className="cfg-meta drive-reconnect-num">{tamanho(summary)}</span>
-        {!working && (
+        {!working && (!fresh || causa) && (
           <button
             type="button"
             className="cfg-btn cfg-btn--quiet"
-            onClick={() => void reconectar()}
+            onClick={() => void (fresh && causa ? repetir() : reconectar())}
           >
-            conectar
+            {fresh && causa ? "tentar" : "conectar"}
           </button>
         )}
       </div>
-      {working && (
+      {working ? (
         <div className="drive-reconnect-boot">
           <VaultBoot stage={stage} progress={progress} />
         </div>
-      )}
-      {!working && error && (
+      ) : atividade.running ? (
+        <div className="drive-reconnect-boot">
+          {/* Sinal discreto: sem "Carregando…", sem cobrir a tela. */}
+          <VaultBoot quiet stage={atividade.stage} progress={atividade.progress ?? undefined} />
+        </div>
+      ) : null}
+      {!working && causa && (
         <p className="drive-reconnect-error" role="alert">
-          {error}
+          {causa}
         </p>
       )}
     </section>

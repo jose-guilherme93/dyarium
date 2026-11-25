@@ -60,6 +60,22 @@ async function writeRaw(store: string, key: string, value: unknown): Promise<voi
   }
 }
 
+async function writeManyRaw(store: string, entries: Array<[string, unknown]>): Promise<void> {
+  try {
+    const db = await open();
+    await new Promise<void>((resolve) => {
+      const tx = db.transaction(store, "readwrite");
+      const objectStore = tx.objectStore(store);
+      for (const [key, value] of entries) objectStore.put(value, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+      tx.onabort = () => resolve();
+    });
+  } catch {
+    // caching is best-effort
+  }
+}
+
 async function clearStore(store: string): Promise<void> {
   try {
     const db = await open();
@@ -120,6 +136,18 @@ export function storeGet<T>(store: string, key: string): Promise<T | undefined> 
 
 export function storeSet(store: string, key: string, value: unknown): Promise<void> {
   return writeRaw(store, key, value);
+}
+
+/**
+ * Grava varias entradas numa transacao so.
+ *
+ * O login de um cofre grande guarda o metadado de centenas de anexos de uma
+ * vez; uma transacao por anexo abriria o banco centenas de vezes no caminho
+ * que precisa ser curto.
+ */
+export function storeSetMany(store: string, entries: Array<[string, unknown]>): Promise<void> {
+  if (entries.length === 0) return Promise.resolve();
+  return writeManyRaw(store, entries);
 }
 
 export function storeDelete(store: string, key: string): Promise<void> {
