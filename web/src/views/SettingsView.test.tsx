@@ -53,6 +53,13 @@ vi.mock("../local/vaultCloud", () => ({
   restoreVaultFromDrive: () => cloud.restore(),
   driveVaultExists: () => cloud.exists(),
 }));
+vi.mock("../local/accountConnect", () => ({
+  connectAccount: async () => ({
+    restored: null,
+    synced: null,
+    summary: { notes: 0, attachments: 0, bytes: 0 },
+  }),
+}));
 
 const baseSettings: Settings = {
   owner_name: "joseti",

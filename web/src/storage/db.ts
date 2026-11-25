@@ -13,6 +13,8 @@ import {
 } from "../../../mobile/src/core/port";
 import { applyMigrations, type RunResult } from "../../../mobile/src/core/schema";
 
+import { ATTACHMENTS_STORE, COVERS_STORE, storeClear } from "../lib/idb";
+
 import type { Op, Request, Reply } from "./protocol";
 
 export interface Transport {
@@ -124,12 +126,16 @@ export function webDeviceIdentity(): { id: string; name: string } {
   return novo;
 }
 
+/** Worker vivo nesta pagina; o sair da conta precisa fecha-lo antes de apagar. */
+let activeWorker: Worker | null = null;
+
 /**
  * Abre o banco do navegador, aplica as migracoes do nucleo e liga as portas.
  * Devolve o mesmo `Database` que o app usa.
  */
 export function openWebDatabase(): Promise<Database> {
   const worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
+  activeWorker = worker;
   const db = createDatabase(workerTransport(worker));
 
   // As portas sao ligadas antes de qualquer `await`: uma consulta disparada no
@@ -143,4 +149,81 @@ export function openWebDatabase(): Promise<Database> {
   registerDatabase(() => opening);
   registerDeviceIdentity(async () => webDeviceIdentity());
   return opening;
+}
+
+/** Encerra o worker que mantem o SQLite aberto sobre OPFS. */
+export function closeWebDatabase(): void {
+  activeWorker?.terminate();
+  activeWorker = null;
+}
+
+export interface OpfsRootLike {
+  removeEntry(name: string, options?: { recursive?: boolean }): Promise<void>;
+}
+
+export interface OpfsStorageLike {
+  getDirectory(): Promise<OpfsRootLike>;
+}
+
+function opfsStorage(): OpfsStorageLike | null {
+  const storage = typeof navigator !== "undefined" ? navigator.storage : undefined;
+  if (!storage || typeof storage.getDirectory !== "function") return null;
+  return storage as unknown as OpfsStorageLike;
+}
+
+/** Pasta ausente nao e falha; qualquer outro erro do OPFS precisa aparecer. */
+function isNotFound(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { name?: string }).name === "NotFoundError"
+  );
+}
+
+/**
+ * Apaga o banco SQLite/OPFS desta conta. O diretorio do VFS e isolado, entao
+ * os pesos de modelo guardados pelo motor continuam onde estao.
+ *
+ * NotFoundError quer dizer que ja nao havia banco; os demais erros sobem para
+ * o sair falhar em vez de seguir como se o cache tivesse sumido.
+ */
+export async function removeWebDatabaseFiles(
+  storage: OpfsStorageLike | null = opfsStorage(),
+): Promise<void> {
+  if (!storage) return;
+  let raiz: OpfsRootLike;
+  try {
+    raiz = await storage.getDirectory();
+  } catch (error) {
+    if (isNotFound(error)) return;
+    throw error;
+  }
+  try {
+    await raiz.removeEntry("dyarium", { recursive: true });
+  } catch (error) {
+    if (isNotFound(error)) return;
+    throw error;
+  }
+}
+
+/** Anexos e capas da conta vivem no IndexedDB; o banco de modelos e outro. */
+export async function clearVaultIndexedDb(): Promise<void> {
+  await Promise.all([storeClear(ATTACHMENTS_STORE), storeClear(COVERS_STORE)]);
+}
+
+export interface WipeLocalVaultDeps {
+  closeDatabase?: () => void | Promise<void>;
+  removeDatabaseFiles?: () => Promise<void>;
+  clearIndexedDb?: () => Promise<void>;
+}
+
+/**
+ * Apaga o cache local do cofre da conta. Fecha o banco antes de remover os
+ * arquivos para o worker nao recriar o SQLite; os modelos ficam intactos.
+ * Testavel por fakes para a ordem e as chamadas serem verificadas sem browser.
+ */
+export async function wipeLocalVault(deps: WipeLocalVaultDeps = {}): Promise<void> {
+  await (deps.closeDatabase ?? closeWebDatabase)();
+  await (deps.removeDatabaseFiles ?? removeWebDatabaseFiles)();
+  await (deps.clearIndexedDb ?? clearVaultIndexedDb)();
 }

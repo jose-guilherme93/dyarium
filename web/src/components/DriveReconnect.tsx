@@ -8,13 +8,12 @@ import { VaultBoot } from "./VaultBoot";
 import { formatBytes } from "../lib/format";
 import type { StepProgress } from "../local/backup";
 import {
-  connectDrive,
   driveConfigured,
   driveSessionState,
-  driveVaultRoot,
   onDriveSessionChange,
 } from "../local/driveSession";
-import { openDriveVault, type VaultStage, type VaultSummary } from "../local/vaultCloud";
+import { connectAccount } from "../local/accountConnect";
+import type { VaultStage, VaultSummary } from "../local/vaultCloud";
 import { flushVaultSync } from "../local/folderSync";
 import {
   DRIVE_MARK_KEY,
@@ -95,20 +94,15 @@ export function DriveReconnect() {
     setStage("conectando");
     setProgress(undefined);
     try {
-      await connectDrive();
-      // O login deu certo: este navegador agora tem cofre no Drive. A marca
-      // vale mesmo que a abertura falhe; a linha volta para tentar de novo.
-      rememberDriveVault();
-      setMarked(true);
-      const root = await driveVaultRoot();
-      const aberto = await openDriveVault(root, {
+      // Um unico caminho: login, abertura com uniao e marca do Drive.
+      const aberto = await connectAccount({
         onStage: (proxima) => {
           setStage(proxima);
           setProgress(undefined);
         },
         onProgress: (contagem) => setProgress(contagem),
       });
-      rememberDriveVault(aberto.summary);
+      setMarked(true);
       setSummary(aberto.summary);
       // O que ficou pendente local (nota criada antes da reconexao) sobe agora,
       // sem esperar os dois minutos do proximo silencio.

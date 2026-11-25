@@ -4,7 +4,12 @@ import { preloadGoogle, requestDriveToken, tokenIsFresh } from "./google";
 
 interface TokenConfig {
   scope: string;
-  callback: (response: { access_token?: string; expires_in?: number; error?: string }) => void;
+  callback: (response: {
+    access_token?: string;
+    expires_in?: number;
+    scope?: string;
+    error?: string;
+  }) => void;
   error_callback: (error: { message?: string; type?: string }) => void;
 }
 
@@ -76,6 +81,30 @@ describe("login do Drive", () => {
       accessToken: "token-do-drive",
       expiresAt: expect.any(Number),
     });
+  });
+
+  it("devolve os escopos concedidos junto do token", async () => {
+    const gis = installGis();
+    const pedido = requestDriveToken();
+    const config = await aguardarConfig(gis);
+    config.callback({
+      access_token: "token-do-drive",
+      expires_in: 3600,
+      scope: "openid email profile https://www.googleapis.com/auth/drive.file",
+    });
+    await expect(pedido).resolves.toMatchObject({
+      accessToken: "token-do-drive",
+      scope: "openid email profile https://www.googleapis.com/auth/drive.file",
+    });
+  });
+
+  it("pedido de consentimento usa prompt consent", async () => {
+    const gis = installGis();
+    const pedido = requestDriveToken({ prompt: "consent" });
+    await aguardarConfig(gis);
+    expect(gis.prompts()).toEqual(["consent"]);
+    gis.config().callback({ access_token: "t", expires_in: 3600 });
+    await pedido;
   });
 
   it("erro do Google (janela bloqueada) vira rejeicao, nao espera eterna", async () => {

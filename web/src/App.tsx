@@ -45,7 +45,8 @@ import { connectDrive, driveClient, driveConfigured, driveProfile, driveSessionS
 import { cachedProfile as cachedAccountProfile, onAccountChange } from "./local/account";
 import { preloadGoogle } from "./local/google";
 import { driveMarked } from "./local/driveMark";
-import { openDriveVault, type VaultStage } from "./local/vaultCloud";
+import { connectAccount } from "./local/accountConnect";
+import type { VaultStage } from "./local/vaultCloud";
 import type { StepProgress } from "./local/backup";
 import { TokenGate } from "./components/TokenGate";
 import { SetupGate } from "./components/SetupGate";
@@ -147,6 +148,12 @@ export function App() {
     }
   });
   const [account, setAccount] = useState(() => driveProfile() ?? cachedAccountProfile());
+  /**
+   * Conta lembrada neste navegador: a marca do Drive mais o perfil em cache.
+   * O reload nunca volta a primeira tela nesse caso; abre o cache e tenta o
+   * Google em silencio.
+   */
+  const accountRemembered = driveMarked() && account !== null;
   const [accountSheetOpen, setAccountSheetOpen] = useState(false);
   // "Ja tenho uma instalacao propria" troca a apresentacao pelo portao do token.
   const [forceTokenGate, setForceTokenGate] = useState(false);
@@ -402,7 +409,7 @@ export function App() {
   // Cofre em pasta: grava o pendente ao abrir e ao fechar a aba. O alvo e o
   // Drive quando ha sessao viva; sem sessao, cai na pasta lembrada.
   useEffect(() => {
-    if (!onboarded) return;
+    if (!onboarded && !accountRemembered) return;
     setVaultTarget(async () => (driveClient() ? driveVaultRoot() : rememberFolder()));
     const flush = () => {
       void runVaultSync().catch(() => undefined);
@@ -410,7 +417,7 @@ export function App() {
     flush();
     window.addEventListener("pagehide", flush);
     return () => window.removeEventListener("pagehide", flush);
-  }, [onboarded]);
+  }, [onboarded, accountRemembered]);
 
   // A sessao do Google vive so na memoria e morre no reload. Todo login que
   // termina — da primeira tela, das Configuracoes ou da linha de reconectar —
@@ -430,7 +437,7 @@ export function App() {
   // Renovacao silenciosa da sessao do Google: ao primeiro gesto do usuario, tenta
   // recuperar o token sem popup. Falha nao faz nada; a linha de reconectar segue.
   useEffect(() => {
-    if (!onboarded) return;
+    if (!onboarded && !accountRemembered) return;
     if (!driveMarked()) return;
     if (!driveConfigured()) return;
     // O script precisa chegar antes do gesto: baixar durante o clique gasta a
@@ -458,7 +465,7 @@ export function App() {
     document.addEventListener("pointerdown", tratador, true);
     document.addEventListener("keydown", tratador, true);
     return limpar;
-  }, [onboarded]);
+  }, [onboarded, accountRemembered]);
 
   // A token already stored may be stale (rotated on the server) or simply
   // wrong; validate it on load and fall back to the gate. A network failure
@@ -680,8 +687,9 @@ export function App() {
   };
 
   // Site estatico ainda sem cofre escolhido: a primeira tela apresenta o
-  // produto e pergunta onde as notas vao morar.
-  if (!token && !serverAvailable && !onboarded && !forceTokenGate) {
+  // produto e pergunta onde as notas vao morar. Com conta lembrada (marca do
+  // Drive + perfil), o reload abre o cache em vez de voltar a apresentacao.
+  if (!token && !serverAvailable && !onboarded && !forceTokenGate && !accountRemembered) {
     return (
       <>
         {/* A primeira tela fica montada e escondida enquanto o cofre abre: e
@@ -701,27 +709,18 @@ export function App() {
               // carregamento nao espera o Google responder para aparecer.
               setVaultBoot({ stage: "conectando", done: false });
               try {
-                await connectDrive();
-                // Login deu certo: a partir daqui este navegador tem cofre no
-                // Drive, e a linha de reconectar passa a valer quando a sessao
-                // (que so vive na memoria) morrer no proximo reload.
-                rememberDriveVault();
-                const root = await driveVaultRoot();
-                const options = {
+                // Entrada unica: login, abertura (Drive + local unidos, sem
+                // passar por cima do mais novo) e o sync da uniao. A marca do
+                // Drive nasce aqui, no fim.
+                await connectAccount({
                   // Cada etapa chega sem o progresso da anterior: a contagem
                   // de notas nao pode aparecer no passo dos anexos.
-                  onStage: (stage: VaultStage) =>
-                    setVaultBoot({ stage, done: false }),
+                  onStage: (stage: VaultStage) => setVaultBoot({ stage, done: false }),
                   onProgress: (progress: StepProgress) =>
                     setVaultBoot((current) =>
                       current ? { ...current, progress } : current,
                     ),
-                };
-                // Restaura o cofre que ja existe e SEMPRE sobe o banco local:
-                // restaurar sem sincronizar era o que deixava as notas locais
-                // fora do Drive quando o `backup.enc` ainda estava vazio.
-                const aberto = await openDriveVault(root, options);
-                rememberDriveVault(aberto.summary);
+                });
                 setVaultTarget(() => driveVaultRoot().catch(() => null));
                 setVaultBoot((current) => (current ? { ...current, done: true } : current));
                 await aguardar(VAULT_READY_HOLD_MS);
@@ -1141,6 +1140,31 @@ export function App() {
   // projetos abrem a nota dentro da propria tela, sem aba.
   const showTabs = view === "notes" && !isBook && !isMcp && tabsState.tabs.length > 0;
 
+  /**
+   * Sair da conta no site estatico: grava o pendente, apaga o cache local e
+   * recarrega vazio. Se a gravacao falhar, so a confirmacao destrutiva passa.
+   */
+  const sairDaConta = async () => {
+    if (!account && !driveMarked()) return;
+    const confirmado = window.confirm(
+      "Sair da conta? O cofre continua no Drive. O cache deste navegador será apagado.",
+    );
+    if (!confirmado) return;
+    let resultado = await signOutAccount();
+    if (!resultado.ok) {
+      const descartar = window.confirm(
+        `${resultado.message}. Sair mesmo assim? O que não subiu será perdido.`,
+      );
+      if (!descartar) return;
+      resultado = await signOutAccount({ discard: true });
+    }
+    if (resultado.ok) {
+      window.location.reload();
+      return;
+    }
+    notify(resultado.message, "error");
+  };
+
   const footerItems = [
     {
       key: "map",
@@ -1179,10 +1203,9 @@ export function App() {
         if (token) {
           clearToken();
           setTokenState("");
-        } else {
-          signOutAccount();
-          setAccount(null);
+          return;
         }
+        void sairDaConta();
       },
     },
   ];
@@ -1688,6 +1711,7 @@ export function App() {
           profile={account}
           anchor={accountAnchor}
           onSync={refresh}
+          onSignedOut={() => window.location.reload()}
         />
       )}
     </div>

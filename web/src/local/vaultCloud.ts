@@ -235,6 +235,24 @@ export async function openDriveVault(
 }
 
 /**
+ * Confere que os tres snapshots existem e nao estao vazios. O sair da conta so
+ * apaga o cache local depois desta resposta; arquivo presente e vazio nao serve.
+ */
+export async function vaultSnapshotsWritten(root?: VaultFolderLike): Promise<boolean> {
+  const alvo = root ?? (await driveVaultRoot());
+  for (const nome of [KEY_FILE, BACKUP_FILE, STATE_FILE]) {
+    try {
+      const handle = await alvo.getFileHandle(nome);
+      const bytes = await (await handle.getFile()).arrayBuffer();
+      if (bytes.byteLength === 0) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
  * Le o `manifest.json` e devolve o tamanho do cofre para a tela: notas (com
  * capitulos), anexos e a soma dos tamanhos gravados. Pasta sem manifest ainda
  * nao tem cofre, entao tudo zero.

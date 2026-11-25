@@ -25,6 +25,7 @@ import {
   vaultIdFromCode,
 } from "../local/backup";
 import { lastSyncSummary } from "../local/folderSync";
+import { connectAccount } from "../local/accountConnect";
 import { restoreVaultFromDrive, syncVaultToDrive } from "../local/vaultCloud";
 import { downloadBytes, packVault, unpackVault } from "../local/bundle";
 import {
@@ -36,7 +37,6 @@ import {
   type FolderLike,
 } from "../local/folder";
 import {
-  connectDrive,
   disconnectDrive,
   driveConfigured,
   driveSessionState,
@@ -1466,7 +1466,11 @@ export function SettingsView({
     setBackupBusy(true);
     setBackupStatus("");
     try {
-      await connectDrive();
+      // Mesma entrada da primeira tela e do menu: login, uniao e sync.
+      const aberto = await connectAccount();
+      setBackupStatus(
+        `conectado · ${aberto.summary.notes} ${aberto.summary.notes === 1 ? "nota" : "notas"}`,
+      );
     } catch (error) {
       setBackupStatus(describe(error));
     } finally {

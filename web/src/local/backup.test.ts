@@ -35,6 +35,7 @@ import {
   updateChapterFields,
   upsertRecording,
 } from "../../../mobile/src/core/repo";
+import { getDb } from "../../../mobile/src/core/port";
 
 import { registerNodeDatabase } from "./__fixtures__/nodeDb";
 
@@ -500,6 +501,83 @@ describe("backup do cofre", () => {
     expect(resultado).toMatchObject({ updated: 0, skipped: 1 });
     expect((await local.getEntry(nota.id))?.title).toBe("Local, mais nova");
     expect((await getRecording(nota.id))?.transcript).toBeUndefined();
+  });
+
+  it("une o retrato e o banco por id: o mais novo vence e ids diferentes coexistem", async () => {
+    const soLocal = await local.createEntry({ id: "nota-a", title: "A local" });
+    const comum = await local.createEntry({ id: "nota-b", title: "B local" });
+    await local.saveNote(comum.id, "texto local");
+    const base = await getRecording(comum.id);
+    if (!base) throw new Error("nota nao gravada");
+    await upsertRecording({ ...base, updatedAt: "2020-01-01T00:00:00.000Z" });
+
+    const resultado = await applySnapshot({
+      version: 1,
+      vaultId: "v",
+      createdAt: "2026-01-01T00:00:00Z",
+      notes: [
+        {
+          id: "nota-b",
+          title: "B do Drive",
+          recordedAt: "2026-01-02T10:00:00Z",
+          updatedAt: "2030-01-01T00:00:00.000Z",
+          text: "texto do drive",
+        },
+        {
+          id: "nota-c",
+          title: "C do Drive",
+          recordedAt: "2026-02-01T10:00:00Z",
+          updatedAt: "2030-01-01T00:00:00.000Z",
+          text: "texto c",
+        },
+      ],
+    });
+
+    // B existia dos dois lados: entra a versao mais nova, sem duplicar.
+    expect(resultado).toMatchObject({ created: 1, updated: 1, skipped: 0 });
+    const notas = await local.listEntries();
+    expect(notas.map((nota) => nota.id).sort()).toEqual(["nota-a", "nota-b", "nota-c"]);
+    expect((await getRecording("nota-b"))?.title).toBe("B do Drive");
+    expect((await local.listNotes("nota-b"))[0].content_markdown).toBe("texto do drive");
+    expect((await getRecording("nota-a"))?.title).toBe("A local");
+    expect(soLocal.id).toBe("nota-a");
+  });
+
+  it("caderno de mesmo id fica com o mais novo e o que so existe de um lado permanece", async () => {
+    const comum = await createLocalNotebook({ id: "nb-comum", name: "Local", color: "" });
+    const soLocal = await createLocalNotebook({ id: "nb-local", name: "So local", color: "" });
+    const db = await getDb();
+    await db.runAsync("UPDATE notebooks SET updated_at = ? WHERE id = ?", [
+      "2020-01-01T00:00:00.000Z",
+      comum.id,
+    ]);
+
+    const resultado = await applySnapshot({
+      version: 2,
+      vaultId: "v",
+      createdAt: "2026-01-01T00:00:00Z",
+      notes: [],
+      notebooks: [
+        cadernoDoRetrato({
+          id: "nb-comum",
+          name: "Do Drive",
+          updated_at: "2030-01-01T00:00:00.000Z",
+          created_at: "2030-01-01T00:00:00.000Z",
+        }),
+        cadernoDoRetrato({
+          id: "nb-drive",
+          name: "Novo do Drive",
+          updated_at: "2030-01-01T00:00:00.000Z",
+          created_at: "2030-01-01T00:00:00.000Z",
+        }),
+      ],
+    });
+
+    expect(resultado.notebooks).toEqual({ created: 1, updated: 1, skipped: 0 });
+    expect((await getLocalNotebook("nb-comum"))?.name).toBe("Do Drive");
+    expect((await getLocalNotebook("nb-drive"))?.name).toBe("Novo do Drive");
+    expect((await getLocalNotebook("nb-local"))?.name).toBe("So local");
+    expect(soLocal.id).toBe("nb-local");
   });
 
   it("listLocalAnalyses so devolve as chaves de analise", async () => {

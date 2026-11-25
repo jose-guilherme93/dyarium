@@ -25,7 +25,6 @@ import {
   clearAccountCache,
   fetchProfile,
 } from "./account";
-import { clearDriveMark } from "./driveMark";
 
 export type DriveSessionState = "off" | "connected" | "expired";
 
@@ -59,28 +58,72 @@ export function driveConfigured(): boolean {
   return googleClientId().length > 0;
 }
 
-/**
- * Pede o token ao Google e guarda a sessao em memoria. Precisa de gesto do
- * usuario: a janela do GIS nao abre por script.
- */
-export async function connectDrive(options?: { silent?: boolean }): Promise<DriveClient> {
-  const novo = await requestDriveToken(options);
+function aplicarToken(novo: DriveToken): void {
   token = novo;
   client = new DriveClient(novo.accessToken);
   expiracaoAvisada = false;
-  // A foto entra quando o userinfo responde: o login nao espera a rede de
-  // identidade para liberar o Drive.
+}
+
+/**
+ * O token veio com os escopos de identidade? O Google pode liberar o Drive com
+ * consentimento granular sem email/profile; nesse caso a foto nao vem pelo
+ * userinfo e o avatar fica nas iniciais ate um consentimento explicito.
+ */
+export function tokenTemIdentidade(scope: string | undefined): boolean {
+  if (!scope) return false;
+  const concedidos = new Set(scope.split(/[\s,]+/).filter(Boolean));
+  // O Google devolve `email`/`profile` como URLs de userinfo na resposta real;
+  // os nomes curtos continuam aceitos para o token que os trouxer assim.
+  const tem = (nome: "email" | "profile"): boolean =>
+    concedidos.has(nome) ||
+    concedidos.has(`https://www.googleapis.com/auth/userinfo.${nome}`);
+  return tem("email") && tem("profile");
+}
+
+/** Busca a identidade sem segurar o Drive; so aplica se a sessao ainda for a mesma. */
+async function buscarPerfil(novo: DriveToken): Promise<void> {
+  const obtido = await fetchProfile(novo.accessToken).catch(() => null);
+  if (!obtido || token?.accessToken !== novo.accessToken) return;
+  profile = obtido;
+  notificar();
+}
+
+/**
+ * Pede o token ao Google e guarda a sessao em memoria. Precisa de gesto do
+ * usuario: a janela do GIS nao abre por script.
+ *
+ * O pedido de consentimento de identidade so acontece no login interativo. No
+ * silencioso e no carregamento automatico, nada de tela do Google: sem
+ * email/profile o avatar continua com o que estiver no cache.
+ */
+export async function connectDrive(options?: { silent?: boolean }): Promise<DriveClient> {
+  let atual = await requestDriveToken(options);
+  aplicarToken(atual);
   profile = accountCachedProfile();
   notificar();
-  const alvo = novo.accessToken;
-  void fetchProfile(alvo)
-    .then((obtido) => {
-      if (!obtido || token?.accessToken !== alvo) return;
-      profile = obtido;
-      notificar();
-    })
-    .catch(() => undefined);
-  return client;
+
+  if (tokenTemIdentidade(atual.scope)) {
+    // A foto entra quando o userinfo responde: o login nao espera a rede de
+    // identidade para liberar o Drive.
+    void buscarPerfil(atual);
+  } else if (!options?.silent) {
+    try {
+      const consentido = await requestDriveToken({ prompt: "consent" });
+      if (token?.accessToken === atual.accessToken) {
+        aplicarToken(consentido);
+        notificar();
+      }
+      atual = consentido;
+      await buscarPerfil(consentido);
+    } catch {
+      // O cofre segue com o token do Drive; a foto fica nas iniciais.
+    }
+  } else {
+    // Mesmo sem escopo de identidade, o userinfo pode ter o que ja foi
+    // consentido antes; e so rede, nunca tela.
+    void buscarPerfil(atual);
+  }
+  return client ?? new DriveClient(atual.accessToken);
 }
 
 /** Cliente usavel agora, ou null sem token/token vencido. */
@@ -103,26 +146,51 @@ export function disconnectDrive(): void {
   if (tinhaSessao) notificar();
 }
 
-/**
- * Sai da conta Google neste navegador: encerra a sessao do Drive, apaga a
- * identidade exibida e a marca de que aqui existe cofre no Drive.
- */
-export function signOutAccount(): void {
+/** Revoga o token vivo, best effort: ele ja sai da memoria de qualquer forma. */
+export function revokeDriveToken(): void {
   const atual = token;
-  disconnectDrive();
-  clearDriveMark();
-  // Revogar o acesso e best effort: o token ja saiu da memoria e morre sozinho.
-  if (atual) {
-    try {
-      void fetch("https://oauth2.googleapis.com/revoke", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ token: atual.accessToken }).toString(),
-      }).catch(() => undefined);
-    } catch {
-      // Sem rede, nada a revogar agora.
-    }
+  if (!atual) return;
+  try {
+    void fetch("https://oauth2.googleapis.com/revoke", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ token: atual.accessToken }).toString(),
+    }).catch(() => undefined);
+  } catch {
+    // Sem rede, nada a revogar agora.
   }
+}
+
+export interface SignOutOptions {
+  /** Sair sem tentar gravar o pendente (acao destrutiva e explicita). */
+  discard?: boolean;
+  /** Grava o cofre e devolve se o snapshot foi confirmado. */
+  save?: () => Promise<boolean>;
+  /** Ha alteracao local que ainda nao subiu. */
+  hasPending?: () => boolean | Promise<boolean>;
+  /** Apaga o cache local; injetavel para o teste nao tocar em OPFS/IndexedDB. */
+  wipe?: () => Promise<void>;
+}
+
+export interface SignOutFailure {
+  ok: false;
+  reason: "save-failed" | "pending" | "wipe-failed";
+  message: string;
+}
+
+export type SignOutResult = { ok: true } | SignOutFailure;
+
+/**
+ * Sai da conta Google neste navegador.
+ *
+ * Com sessao, grava o pendente e confirma o retrato antes de apagar. Sem
+ * sessao e com pendencia, nao apaga: o cache e o unico lugar das mudancas.
+ * So o `discard` explicito passa por cima. A limpeza real (banco, OPFS e
+ * stores de anexos/capas) fica em `signOut` para nao criar ciclo de imports.
+ */
+export async function signOutAccount(options?: SignOutOptions): Promise<SignOutResult> {
+  const { leaveAccount } = await import("./signOut");
+  return leaveAccount(options);
 }
 
 export function driveProfile(): GoogleProfile | null {

@@ -2,7 +2,12 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { cachedSummary, tamanho } from "./DriveReconnect";
 import { flushVaultSync, lastSyncSummary } from "../local/folderSync";
-import { connectDrive, driveSessionState, signOutAccount } from "../local/driveSession";
+import {
+  driveSessionState,
+  signOutAccount,
+  type SignOutFailure,
+} from "../local/driveSession";
+import { connectAccount } from "../local/accountConnect";
 import type { GoogleProfile } from "../local/account";
 import { formatRelativeTime } from "../lib/format";
 import { useEscape } from "../lib/useEscape";
@@ -71,6 +76,8 @@ interface AccountSheetProps {
    *  recebe o foco de volta ao fechar. */
   anchor?: HTMLElement | null;
   onSync?: () => void | Promise<void>;
+  /** Chamado depois que o cache local foi apagado: o App recarrega em modo local. */
+  onSignedOut?: () => void;
 }
 
 const LARGURA = 238;
@@ -116,9 +123,18 @@ function posicionar(anchor: HTMLElement | null | undefined): Posicao {
  * o link no pe leva ao unico lugar onde eles mudam. Nada aqui explica o que a
  * tela ja mostra.
  */
-export function AccountSheet({ open, onClose, profile, anchor, onSync }: AccountSheetProps) {
+export function AccountSheet({
+  open,
+  onClose,
+  profile,
+  anchor,
+  onSync,
+  onSignedOut,
+}: AccountSheetProps) {
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [pos, setPos] = useState<Posicao>({ left: ALTURA_BARRA, width: LARGURA, bottom: 8 });
+  const [saindo, setSaindo] = useState(false);
+  const [erroSaida, setErroSaida] = useState<SignOutFailure | null>(null);
   const estado = accountState(profile);
   const conectado = estado === "connected";
   const resumo = cachedSummary();
@@ -129,6 +145,13 @@ export function AccountSheet({ open, onClose, profile, anchor, onSync }: Account
   }, [anchor, open]);
 
   useEscape(open, onClose);
+
+  // Reabrir o menu depois de uma falha comeca limpo, sem erro antigo na tela.
+  useEffect(() => {
+    if (open) return;
+    setSaindo(false);
+    setErroSaida(null);
+  }, [open]);
 
   // Clique fora fecha; o gatilho fica de fora da regra para o proprio clique
   // poder alternar o menu sem fechar e reabrir no mesmo gesto.
@@ -166,8 +189,10 @@ export function AccountSheet({ open, onClose, profile, anchor, onSync }: Account
     onClose();
     void (async () => {
       try {
-        if (!conectado) await connectDrive();
-        await flushVaultSync();
+        // Sem sessao, entrar pela conta: login, uniao com o Drive e sync. Com
+        // sessao, o Sincronizar continua sendo so a gravacao do pendente.
+        if (!conectado) await connectAccount();
+        else await flushVaultSync();
       } catch {
         // A linha de reconectar na area das notas continua sendo o aviso.
       }
@@ -179,9 +204,45 @@ export function AccountSheet({ open, onClose, profile, anchor, onSync }: Account
     })();
   };
 
-  const sair = () => {
-    signOutAccount();
-    onClose();
+  const sair = async (opcoes?: { discard?: boolean }) => {
+    if (
+      !opcoes?.discard &&
+      !window.confirm(
+        "Sair da conta? O cofre continua no Drive. O cache deste navegador será apagado.",
+      )
+    ) {
+      return;
+    }
+    setSaindo(true);
+    setErroSaida(null);
+    try {
+      const resultado = await signOutAccount(opcoes);
+      if (resultado.ok) {
+        onClose();
+        onSignedOut?.();
+        return;
+      }
+      setErroSaida(resultado);
+    } catch {
+      setErroSaida({
+        ok: false,
+        reason: "save-failed",
+        message: "não foi possível sair",
+      });
+    } finally {
+      setSaindo(false);
+    }
+  };
+
+  const descartarESair = () => {
+    if (
+      !window.confirm(
+        "Sair sem enviar o que falta? O que não subiu para o Drive será perdido.",
+      )
+    ) {
+      return;
+    }
+    void sair({ discard: true });
   };
 
   return createPortal(
@@ -260,17 +321,48 @@ export function AccountSheet({ open, onClose, profile, anchor, onSync }: Account
       {estado !== "none" && (
         <>
           <div className="account-menu-sep" aria-hidden="true" />
-          <button
-            type="button"
-            role="menuitem"
-            className="account-menu-row account-menu-row--danger dy-body"
-            onClick={sair}
-          >
-            <span className="account-menu-glyph" aria-hidden="true">
-              <ExitIcon size={12} />
-            </span>
-            <span>Sair</span>
-          </button>
+          {erroSaida ? (
+            <>
+              <p className="account-menu-note" role="alert">
+                {erroSaida.message}
+              </p>
+              <button
+                type="button"
+                role="menuitem"
+                className="account-menu-row dy-body"
+                disabled={saindo}
+                onClick={() => void sair()}
+              >
+                <Icon name="sync" size={12} />
+                <span>{saindo ? "Tentando…" : "Tentar de novo"}</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="account-menu-row account-menu-row--danger dy-body"
+                disabled={saindo}
+                onClick={descartarESair}
+              >
+                <span className="account-menu-glyph" aria-hidden="true">
+                  <ExitIcon size={12} />
+                </span>
+                <span>Sair descartando</span>
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              role="menuitem"
+              className="account-menu-row account-menu-row--danger dy-body"
+              disabled={saindo}
+              onClick={() => void sair()}
+            >
+              <span className="account-menu-glyph" aria-hidden="true">
+                <ExitIcon size={12} />
+              </span>
+              <span>{saindo ? "Saindo…" : "Sair"}</span>
+            </button>
+          )}
         </>
       )}
 

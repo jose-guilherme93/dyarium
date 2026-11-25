@@ -60,6 +60,21 @@ async function writeRaw(store: string, key: string, value: unknown): Promise<voi
   }
 }
 
+async function clearStore(store: string): Promise<void> {
+  try {
+    const db = await open();
+    await new Promise<void>((resolve) => {
+      const tx = db.transaction(store, "readwrite");
+      tx.objectStore(store).clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
+    db.close();
+  } catch {
+    // best-effort
+  }
+}
+
 async function deleteRaw(store: string, key: string): Promise<void> {
   try {
     const db = await open();
@@ -109,6 +124,11 @@ export function storeSet(store: string, key: string, value: unknown): Promise<vo
 
 export function storeDelete(store: string, key: string): Promise<void> {
   return deleteRaw(store, key);
+}
+
+/** Esvazia um store inteiro (sair da conta apaga anexos e capas). */
+export function storeClear(store: string): Promise<void> {
+  return clearStore(store);
 }
 
 /** Todas as entradas de um store, como pares chave/valor. */

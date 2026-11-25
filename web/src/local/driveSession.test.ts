@@ -2,14 +2,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // O token do Drive so pode viver na memoria do modulo `driveSession`: qualquer
 // gravacao em localStorage ou no IndexedDB falha este teste.
-const idb = vi.hoisted(() => ({ storeSet: vi.fn(async () => undefined) }));
+const idb = vi.hoisted(() => ({
+  storeSet: vi.fn(async () => undefined),
+  storeClear: vi.fn(async () => undefined),
+}));
 vi.mock("../lib/idb", () => idb);
 
 // O login do Google abre a janela do GIS: aqui ele devolve um token de mentira.
 const google = vi.hoisted(() => ({ token: vi.fn() }));
 vi.mock("./google", async (importOriginal) => {
   const original = await importOriginal<typeof import("./google")>();
-  return { ...original, requestDriveToken: (options?: { silent?: boolean }) => google.token(options) };
+  return {
+    ...original,
+    requestDriveToken: (options?: { silent?: boolean; prompt?: string }) => google.token(options),
+  };
 });
 
 import { DriveClient } from "./drive";
@@ -24,13 +30,20 @@ import {
   driveVaultRoot,
   onDriveSessionChange,
   signOutAccount,
+  tokenTemIdentidade,
 } from "./driveSession";
 import { cachedProfile } from "./account";
 import { driveMarked, rememberDriveVault } from "./driveMark";
+import { removeWebDatabaseFiles, wipeLocalVault } from "../storage/db";
 
 const setItem = vi.spyOn(Storage.prototype, "setItem");
 
 const FOLDER_MIME = "application/vnd.google-apps.folder";
+/** Escopos completos: identidade e Drive no mesmo consentimento. */
+const SCOPE = "openid email profile https://www.googleapis.com/auth/drive.file";
+/** Resposta real do Google: identidade vem como URL de userinfo. */
+const SCOPE_URL =
+  "openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/drive.file";
 
 function fakeDrive() {
   const arquivos = new Map<string, { id: string; name: string; parent: string; mimeType: string }>();
@@ -84,7 +97,7 @@ describe("sessao do Drive", () => {
 
   it("connect guarda o token apenas em memoria", async () => {
     vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-id-de-teste");
-    google.token.mockResolvedValue({ accessToken: "tok", expiresAt: Date.now() + 3_600_000 });
+    google.token.mockResolvedValue({ accessToken: "tok", expiresAt: Date.now() + 3_600_000, scope: SCOPE });
 
     const avisos: string[] = [];
     const sair = onDriveSessionChange(() => avisos.push(driveSessionState()));
@@ -103,7 +116,7 @@ describe("sessao do Drive", () => {
 
   it("token perto de vencer vira expired, some do cliente e avisa uma vez", async () => {
     vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-id-de-teste");
-    google.token.mockResolvedValue({ accessToken: "tok", expiresAt: Date.now() + 30_000 });
+    google.token.mockResolvedValue({ accessToken: "tok", expiresAt: Date.now() + 30_000, scope: SCOPE });
     const avisos = vi.fn();
     const sair = onDriveSessionChange(avisos);
 
@@ -122,7 +135,7 @@ describe("sessao do Drive", () => {
 
   it("a raiz do cofre e a pasta Dyarium na raiz do Drive", async () => {
     vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-id-de-teste");
-    google.token.mockResolvedValue({ accessToken: "tok", expiresAt: Date.now() + 3_600_000 });
+    google.token.mockResolvedValue({ accessToken: "tok", expiresAt: Date.now() + 3_600_000, scope: SCOPE });
     const drive = fakeDrive();
     drive.arquivos.set("pasta-dyarium", {
       id: "pasta-dyarium",
@@ -153,7 +166,7 @@ describe("sessao do Drive", () => {
 
   it("disconnect limpa a sessao e avisa quem escuta", async () => {
     vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-id-de-teste");
-    google.token.mockResolvedValue({ accessToken: "tok", expiresAt: Date.now() + 3_600_000 });
+    google.token.mockResolvedValue({ accessToken: "tok", expiresAt: Date.now() + 3_600_000, scope: SCOPE });
     await connectDrive();
 
     const avisos = vi.fn();
@@ -169,7 +182,7 @@ describe("sessao do Drive", () => {
 
   it("expoe o perfil vindo do userinfo e o guarda no cache", async () => {
     vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-id-de-teste");
-    google.token.mockResolvedValue({ accessToken: "tok", expiresAt: Date.now() + 3_600_000 });
+    google.token.mockResolvedValue({ accessToken: "tok", expiresAt: Date.now() + 3_600_000, scope: SCOPE });
     const perfil = { name: "Ada", email: "ada@example.com", picture: "https://x/p.png" };
     vi.stubGlobal(
       "fetch",
@@ -186,8 +199,53 @@ describe("sessao do Drive", () => {
     expect(cachedProfile()).toEqual(perfil);
   });
 
-  it("sair apaga perfil, cache e a marca do cofre no Drive", async () => {    vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-id-de-teste");
-    google.token.mockResolvedValue({ accessToken: "tok", expiresAt: Date.now() + 3_600_000 });
+  it("o pedido silencioso chega ao Google sem tela de login", async () => {
+    vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-id-de-teste");
+    google.token.mockResolvedValue({ accessToken: "tok", expiresAt: Date.now() + 3_600_000, scope: SCOPE });
+
+    await connectDrive({ silent: true });
+
+    expect(google.token).toHaveBeenCalledWith({ silent: true });
+  });
+
+  it("token sem email/profile faz um unico pedido interativo e cacheia o perfil", async () => {
+    vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-id-de-teste");
+    google.token
+      .mockResolvedValueOnce({
+        accessToken: "tok-drive",
+        expiresAt: Date.now() + 3_600_000,
+        scope: "openid https://www.googleapis.com/auth/drive.file",
+      })
+      .mockResolvedValueOnce({
+        accessToken: "tok-identidade",
+        expiresAt: Date.now() + 3_600_000,
+        scope: SCOPE,
+      });
+    const perfil = { name: "Ada", email: "ada@example.com", picture: "https://x/p.png" };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) =>
+        String(input).includes("/userinfo")
+          ? new Response(JSON.stringify(perfil), { status: 200 })
+          : new Response("", { status: 500 }),
+      ) as unknown as typeof fetch,
+    );
+
+    await connectDrive();
+
+    expect(google.token).toHaveBeenNthCalledWith(1, undefined);
+    expect(google.token).toHaveBeenNthCalledWith(2, { prompt: "consent" });
+    expect(cachedProfile()).toEqual(perfil);
+    expect(driveProfile()).toEqual(perfil);
+  });
+
+  it("token com email/profile nao pede consentimento de novo", async () => {
+    vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-id-de-teste");
+    google.token.mockResolvedValue({
+      accessToken: "tok",
+      expiresAt: Date.now() + 3_600_000,
+      scope: SCOPE,
+    });
     const perfil = { name: "Ada", email: "ada@example.com", picture: "" };
     vi.stubGlobal(
       "fetch",
@@ -197,24 +255,242 @@ describe("sessao do Drive", () => {
           : new Response("", { status: 500 }),
       ) as unknown as typeof fetch,
     );
+
+    await connectDrive();
+
+    expect(google.token).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(cachedProfile()).toEqual(perfil));
+  });
+
+  it("reconhece email/profile tanto pelo nome curto quanto pela URL do userinfo", () => {
+    expect(tokenTemIdentidade(SCOPE)).toBe(true);
+    expect(tokenTemIdentidade(SCOPE_URL)).toBe(true);
+    expect(
+      tokenTemIdentidade(
+        "openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/drive.file",
+      ),
+    ).toBe(false);
+    expect(
+      tokenTemIdentidade(
+        "openid https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/drive.file",
+      ),
+    ).toBe(false);
+    expect(tokenTemIdentidade("openid https://www.googleapis.com/auth/drive.file")).toBe(false);
+    expect(tokenTemIdentidade(undefined)).toBe(false);
+  });
+
+  it("token com identidade em URL nao pede consentimento", async () => {
+    vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-id-de-teste");
+    google.token.mockResolvedValue({
+      accessToken: "tok",
+      expiresAt: Date.now() + 3_600_000,
+      scope: SCOPE_URL,
+    });
+    const perfil = { name: "Ada", email: "ada@example.com", picture: "" };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) =>
+        String(input).includes("/userinfo")
+          ? new Response(JSON.stringify(perfil), { status: 200 })
+          : new Response("", { status: 500 }),
+      ) as unknown as typeof fetch,
+    );
+
+    await connectDrive();
+
+    expect(google.token).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(cachedProfile()).toEqual(perfil));
+  });
+
+  it("so pede consentimento quando falta email ou profile de verdade", async () => {
+    vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-id-de-teste");
+    google.token
+      .mockResolvedValueOnce({
+        accessToken: "tok-sem-profile",
+        expiresAt: Date.now() + 3_600_000,
+        scope:
+          "openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/drive.file",
+      })
+      .mockResolvedValue({
+        accessToken: "tok-completo",
+        expiresAt: Date.now() + 3_600_000,
+        scope: SCOPE_URL,
+      });
+
+    await connectDrive();
+
+    expect(google.token).toHaveBeenNthCalledWith(2, { prompt: "consent" });
+  });
+
+  it("pedido silencioso sem email/profile nao abre tela de consentimento", async () => {
+    vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-id-de-teste");
+    google.token.mockResolvedValue({
+      accessToken: "tok",
+      expiresAt: Date.now() + 3_600_000,
+      scope: "openid https://www.googleapis.com/auth/drive.file",
+    });
+
+    await connectDrive({ silent: true });
+
+    expect(google.token).toHaveBeenCalledTimes(1);
+    expect(google.token).toHaveBeenCalledWith({ silent: true });
+  });
+});
+
+describe("sair da conta", () => {
+  beforeEach(() => {
+    vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-id-de-teste");
+    google.token.mockResolvedValue({
+      accessToken: "tok",
+      expiresAt: Date.now() + 3_600_000,
+      scope: SCOPE,
+    });
+  });
+
+  it("grava e confirma o pendente antes de apagar o cache", async () => {
+    const save = vi.fn(async () => true);
+    const wipe = vi.fn(async () => undefined);
+    localStorage.setItem("dyarium.onboarded", "1");
     rememberDriveVault();
     await connectDrive();
-    await vi.waitFor(() => expect(cachedProfile()).toEqual(perfil));
 
-    signOutAccount();
+    const resultado = await signOutAccount({ save, hasPending: () => true, wipe });
 
+    expect(resultado).toEqual({ ok: true });
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(wipe).toHaveBeenCalledTimes(1);
     expect(driveSessionState()).toBe("off");
     expect(driveProfile()).toBeNull();
     expect(cachedProfile()).toBeNull();
     expect(driveMarked()).toBe(false);
+    // O proximo carregamento abre o cofre local vazio, sem a primeira tela.
+    expect(localStorage.getItem("dyarium.onboarded")).toBe("1");
   });
 
-  it("o pedido silencioso chega ao Google sem tela de login", async () => {
-    vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-id-de-teste");
-    google.token.mockResolvedValue({ accessToken: "tok", expiresAt: Date.now() + 3_600_000 });
+  it("sair nao revoga o token no Google", async () => {
+    const save = vi.fn(async () => true);
+    const wipe = vi.fn(async () => undefined);
+    rememberDriveVault();
+    await connectDrive();
 
-    await connectDrive({ silent: true });
+    await signOutAccount({ save, wipe });
 
-    expect(google.token).toHaveBeenCalledWith({ silent: true });
+    const pedidos = vi.mocked(globalThis.fetch).mock.calls.map(([url]) => String(url));
+    expect(pedidos.some((url) => url.includes("/revoke"))).toBe(false);
+  });
+
+  it("falha ao apagar o cache vira wipe-failed e nao encerra a sessao", async () => {
+    const save = vi.fn(async () => true);
+    const wipe = vi.fn(async () => {
+      throw new Error("OPFS falhou");
+    });
+    rememberDriveVault();
+    await connectDrive();
+
+    const resultado = await signOutAccount({ save, wipe });
+
+    expect(resultado).toMatchObject({ ok: false, reason: "wipe-failed" });
+    expect(driveSessionState()).toBe("connected");
+    expect(driveMarked()).toBe(true);
+  });
+
+  it("falha ao gravar nao apaga o cache nem encerra a sessao", async () => {
+    const wipe = vi.fn(async () => undefined);
+    const save = vi.fn(async () => {
+      throw new Error("sem rede");
+    });
+    rememberDriveVault();
+    await connectDrive();
+
+    const resultado = await signOutAccount({ save, wipe });
+
+    expect(resultado).toMatchObject({ ok: false, reason: "save-failed" });
+    expect(wipe).not.toHaveBeenCalled();
+    expect(driveSessionState()).toBe("connected");
+    expect(driveMarked()).toBe(true);
+  });
+
+  it("snapshot nao confirmado tambem bloqueia a saida", async () => {
+    const wipe = vi.fn(async () => undefined);
+    const save = vi.fn(async () => false);
+    rememberDriveVault();
+    await connectDrive();
+
+    const resultado = await signOutAccount({ save, wipe });
+
+    expect(resultado).toMatchObject({ ok: false, reason: "save-failed" });
+    expect(wipe).not.toHaveBeenCalled();
+    expect(driveSessionState()).toBe("connected");
+  });
+
+  it("sem sessao e com pendencia nao apaga nada", async () => {
+    const wipe = vi.fn(async () => undefined);
+    rememberDriveVault();
+    await connectDrive();
+    disconnectDrive();
+
+    const resultado = await signOutAccount({ hasPending: () => true, wipe });
+
+    expect(resultado).toMatchObject({ ok: false, reason: "pending" });
+    expect(wipe).not.toHaveBeenCalled();
+    expect(driveMarked()).toBe(true);
+  });
+
+  it("sair descartando apaga o cache sem tentar gravar", async () => {
+    const save = vi.fn(async () => {
+      throw new Error("sem rede");
+    });
+    const wipe = vi.fn(async () => undefined);
+    rememberDriveVault();
+    await connectDrive();
+
+    const resultado = await signOutAccount({ discard: true, save, wipe });
+
+    expect(resultado).toEqual({ ok: true });
+    expect(save).not.toHaveBeenCalled();
+    expect(wipe).toHaveBeenCalledTimes(1);
+    expect(driveSessionState()).toBe("off");
+    expect(driveMarked()).toBe(false);
+  });
+});
+
+describe("wipeLocalVault", () => {
+  it("fecha o banco, remove os arquivos e limpa o IndexedDB, nessa ordem", async () => {
+    const ordem: string[] = [];
+    await wipeLocalVault({
+      closeDatabase: () => {
+        ordem.push("fechar");
+      },
+      removeDatabaseFiles: async () => {
+        ordem.push("remover");
+      },
+      clearIndexedDb: async () => {
+        ordem.push("limpar");
+      },
+    });
+    expect(ordem).toEqual(["fechar", "remover", "limpar"]);
+  });
+});
+
+describe("removeWebDatabaseFiles", () => {
+  it("NotFoundError no diretorio do OPFS significa nada a apagar", async () => {
+    const removeEntry = vi.fn(async () => {
+      throw Object.assign(new Error("sumiu"), { name: "NotFoundError" });
+    });
+
+    await expect(
+      removeWebDatabaseFiles({ getDirectory: async () => ({ removeEntry }) }),
+    ).resolves.toBeUndefined();
+    expect(removeEntry).toHaveBeenCalledWith("dyarium", { recursive: true });
+  });
+
+  it("erro real ao remover o OPFS propaga em vez de sumir", async () => {
+    const removeEntry = vi.fn(async () => {
+      throw new Error("disco falhou");
+    });
+
+    await expect(
+      removeWebDatabaseFiles({ getDirectory: async () => ({ removeEntry }) }),
+    ).rejects.toThrow("disco falhou");
   });
 });

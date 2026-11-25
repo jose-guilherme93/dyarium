@@ -10,11 +10,18 @@ vi.mock("../local/driveSession", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../local/driveSession")>();
   return {
     ...actual,
-    connectDrive: vi.fn(async () => undefined),
-    signOutAccount: vi.fn(),
+    signOutAccount: vi.fn(async () => ({ ok: true as const })),
     driveSessionState: vi.fn(() => "connected" as const),
   };
 });
+
+vi.mock("../local/accountConnect", () => ({
+  connectAccount: vi.fn(async () => ({
+    restored: null,
+    synced: null,
+    summary: { notes: 400, attachments: 1, bytes: 13_000_000 },
+  })),
+}));
 
 vi.mock("./DriveReconnect", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./DriveReconnect")>();
@@ -25,7 +32,8 @@ vi.mock("./DriveReconnect", async (importOriginal) => {
 });
 
 import { AccountSheet } from "./AccountSheet";
-import { connectDrive, driveSessionState, signOutAccount } from "../local/driveSession";
+import { driveSessionState, signOutAccount } from "../local/driveSession";
+import { connectAccount } from "../local/accountConnect";
 import { flushVaultSync, lastSyncSummary } from "../local/folderSync";
 
 const PERFIL = { name: "Ada Lovelace", email: "ada@example.com", picture: "" };
@@ -86,13 +94,13 @@ describe("AccountSheet (menu da conta)", () => {
     expect(screen.getByRole("menuitem", { name: /^Sair$/ })).toBeInTheDocument();
   });
 
-  it("sessao vencida troca Sincronizar por Conectar", async () => {
+  it("sessao vencida troca Sincronizar por Conectar e abre o cofre pela conta", async () => {
     vi.mocked(driveSessionState).mockReturnValue("expired");
     const onClose = vi.fn();
     menu({ onClose });
     fireEvent.click(screen.getByRole("menuitem", { name: /Conectar/ }));
-    await waitFor(() => expect(connectDrive).toHaveBeenCalledTimes(1));
-    expect(flushVaultSync).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(connectAccount).toHaveBeenCalledTimes(1));
+    expect(flushVaultSync).not.toHaveBeenCalled();
     expect(onClose).toHaveBeenCalled();
   });
 
@@ -112,17 +120,58 @@ describe("AccountSheet (menu da conta)", () => {
     menu({ onSync, onClose });
     fireEvent.click(screen.getByRole("menuitem", { name: /Sincronizar/ }));
     await waitFor(() => expect(flushVaultSync).toHaveBeenCalledTimes(1));
-    expect(connectDrive).not.toHaveBeenCalled();
+    expect(connectAccount).not.toHaveBeenCalled();
     expect(onSync).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalled();
   });
 
-  it("sair encerra a conta e fecha", () => {
+  it("sair pede confirmacao, encerra a conta, fecha e deixa o app recarregar", async () => {
     const onClose = vi.fn();
+    const onSignedOut = vi.fn();
+    const confirmar = vi.spyOn(window, "confirm").mockReturnValue(true);
+    menu({ onClose, onSignedOut });
+    fireEvent.click(screen.getByRole("menuitem", { name: /^Sair$/ }));
+    await waitFor(() => expect(signOutAccount).toHaveBeenCalledTimes(1));
+    expect(confirmar).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalled();
+    expect(onSignedOut).toHaveBeenCalled();
+  });
+
+  it("cancelar a confirmacao nao sai da conta", async () => {
+    const onClose = vi.fn();
+    vi.spyOn(window, "confirm").mockReturnValue(false);
     menu({ onClose });
     fireEvent.click(screen.getByRole("menuitem", { name: /^Sair$/ }));
-    expect(signOutAccount).toHaveBeenCalledTimes(1);
+    expect(signOutAccount).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("falha ao sair oferece tentar de novo e sair descartando", async () => {
+    vi.mocked(signOutAccount).mockResolvedValueOnce({
+      ok: false,
+      reason: "save-failed",
+      message: "não foi possível gravar o cofre no Drive",
+    });
+    const onClose = vi.fn();
+    const onSignedOut = vi.fn();
+    const confirmar = vi.spyOn(window, "confirm").mockReturnValue(true);
+    menu({ onClose, onSignedOut });
+
+    fireEvent.click(screen.getByRole("menuitem", { name: /^Sair$/ }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "não foi possível gravar o cofre no Drive",
+    );
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole("menuitem", { name: /Tentar de novo/ })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("menuitem", { name: /Sair descartando/ }));
+
+    await waitFor(() => expect(signOutAccount).toHaveBeenLastCalledWith({ discard: true }));
+    // Uma confirmacao para sair e outra, destrutiva, para descartar.
+    expect(confirmar).toHaveBeenCalledTimes(2);
     expect(onClose).toHaveBeenCalled();
+    expect(onSignedOut).toHaveBeenCalled();
   });
 
   it("Escape fecha", () => {

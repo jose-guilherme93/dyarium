@@ -82,7 +82,8 @@ describe("signOut through the session", () => {
     const { signOutAccount } = await import("./driveSession");
     localStorage.setItem("dyarium.drive", "1");
     cacheProfile({ name: "Ada", email: "a@b.com", picture: "" });
-    signOutAccount();
+    const resultado = await signOutAccount();
+    expect(resultado).toEqual({ ok: true });
     expect(cachedProfile()).toBeNull();
     expect(localStorage.getItem("dyarium.drive")).toBeNull();
   });

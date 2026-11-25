@@ -306,6 +306,31 @@ describe("App conta no trilho", () => {
     expect(gatilho.querySelector(".account-state-mark--none")).not.toBeNull();
   });
 
+  it("com marca e perfil, o reload abre o cache e so tenta o Google em silencio", async () => {
+    vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-id-de-teste");
+    localStorage.setItem("dyarium.drive", "1");
+    localStorage.setItem(
+      "dyarium.account",
+      JSON.stringify({ name: "Ada Lovelace", email: "ada@example.com", picture: "" }),
+    );
+    // Sem `dyarium.onboarded`: a marca e o perfil ja provam que a conta existe.
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Nenhuma nota ainda.")).toBeInTheDocument());
+    expect(
+      screen.queryByRole("button", { name: /Continuar com Google/ }),
+    ).not.toBeInTheDocument();
+
+    vi.mocked(connectDrive).mockClear();
+    fireEvent.pointerDown(document.body);
+
+    await waitFor(() => expect(connectDrive).toHaveBeenCalledWith({ silent: true }));
+    // Nenhum caminho automatico pede tela do Google: so o silencioso.
+    expect(
+      vi.mocked(connectDrive).mock.calls.every(([opcoes]) => opcoes?.silent === true),
+    ).toBe(true);
+  });
+
   it("com conta salva e sessao vencida, o avatar pede reconexao", async () => {
     localStorage.setItem("dyarium.onboarded", "1");
     localStorage.setItem(

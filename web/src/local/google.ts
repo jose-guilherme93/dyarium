@@ -19,6 +19,8 @@ const GIS_SRC = "https://accounts.google.com/gsi/client";
 interface TokenResponse {
   access_token?: string;
   expires_in?: number;
+  /** Escopos concedidos, separados por espaco. */
+  scope?: string;
   error?: string;
   error_description?: string;
 }
@@ -50,6 +52,15 @@ export interface DriveToken {
   accessToken: string;
   /** Epoch em ms. */
   expiresAt: number;
+  /** Escopos concedidos; ausente quando o Google nao devolve `scope`. */
+  scope?: string;
+}
+
+export interface DriveTokenOptions {
+  /** Pedido sem tela: `prompt: "none"`. */
+  silent?: boolean;
+  /** Sobrepoe o prompt do Google, para o consentimento de identidade. */
+  prompt?: string;
 }
 
 let carregando: Promise<void> | null = null;
@@ -79,7 +90,7 @@ function loadGis(): Promise<void> {
  * Pede o token do Drive. Precisa de um gesto do usuario (clique): o navegador
  * bloqueia a janela do Google aberta por script.
  */
-export async function requestDriveToken(options?: { silent?: boolean }): Promise<DriveToken> {
+export async function requestDriveToken(options?: DriveTokenOptions): Promise<DriveToken> {
   const clientId = googleClientId();
   if (!clientId) throw new Error("falta configurar VITE_GOOGLE_CLIENT_ID");
   await loadGis();
@@ -112,7 +123,11 @@ export async function requestDriveToken(options?: { silent?: boolean }): Promise
           return;
         }
         const segundos = response.expires_in ?? 3600;
-        resolve({ accessToken: token, expiresAt: Date.now() + segundos * 1000 });
+        resolve({
+          accessToken: token,
+          expiresAt: Date.now() + segundos * 1000,
+          scope: typeof response.scope === "string" ? response.scope : undefined,
+        });
       },
       error_callback: (error) => {
         if (encerrado) return;
@@ -120,7 +135,9 @@ export async function requestDriveToken(options?: { silent?: boolean }): Promise
         reject(new Error(error.message || error.type || "login cancelado"));
       },
     });
-    client.requestAccessToken({ prompt: options?.silent ? "none" : "" });
+    client.requestAccessToken({
+      prompt: options?.prompt ?? (options?.silent ? "none" : ""),
+    });
   });
 }
 

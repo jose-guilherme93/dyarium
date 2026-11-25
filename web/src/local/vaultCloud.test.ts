@@ -42,6 +42,7 @@ vi.mock("../lib/idb", () => idb);
 
 import { registerNodeDatabase } from "./__fixtures__/nodeDb";
 
+import { getDb } from "../../../mobile/src/core/port";
 import { getRecording, upsertRecording } from "../../../mobile/src/core/repo";
 
 import { readLocalAnalysis, saveAnalysisSnapshot } from "./analyze";
@@ -72,7 +73,7 @@ import {
   type VaultManifest,
 } from "./vaultLayout";
 import { saveLocalAttachment, type StoredAttachment } from "./attachments";
-import type { Analysis } from "../types";
+import type { Analysis, Notebook } from "../types";
 import {
   driveVaultExists,
   openDriveVault,
@@ -146,6 +147,27 @@ async function novaNota(titulo: string, texto: string): Promise<string> {
   const entrada = await local.createEntry({ title: titulo, recordedAt: "2026-11-18" });
   await local.saveNote(entrada.id, texto);
   return entrada.id;
+}
+
+/** Caderno minimo do retrato, com o id e a data que o teste controla. */
+function cadernoDoRetrato(id: string, name: string, updatedAt: string): Notebook {
+  return {
+    id,
+    name,
+    color: "",
+    is_default: false,
+    kind: "notes",
+    subtitle: "",
+    author: "",
+    synopsis: "",
+    language: "",
+    goal_words: 0,
+    book_status: "drafting",
+    entry_count: 0,
+    chapter_count: 0,
+    created_at: updatedAt,
+    updated_at: updatedAt,
+  };
 }
 
 /** Escreve o layout e os arquivos de chave/retrato que o restore procura. */
@@ -349,6 +371,88 @@ describe("abrir o cofre do Drive", () => {
       attachments: 0,
       bytes: manifest.files.reduce((soma, arquivo) => soma + arquivo.size, 0),
     });
+  });
+
+  it("une local e Drive por id: o mais novo vence e ids diferentes coexistem", async () => {
+    const pasta = pastaEmMemoria();
+    const codigo = await newRecoveryCode();
+    const chave = await vaultKeyFromCode(codigo);
+
+    // Banco local: A so existe aqui, B existe dos dois lados (mais antiga) e o
+    // caderno comum tambem existe no Drive com versao mais nova.
+    const comum = await createLocalNotebook({ id: "nb-comum", name: "Local", color: "" });
+    const soLocal = await createLocalNotebook({ id: "nb-local", name: "So local", color: "" });
+    const db = await getDb();
+    await db.runAsync("UPDATE notebooks SET updated_at = ? WHERE id = ?", [
+      "2020-01-01T00:00:00.000Z",
+      comum.id,
+    ]);
+    const a = await local.createEntry({ id: "nota-a", title: "A local", recordedAt: "2026-01-01" });
+    await local.saveNote(a.id, "A");
+    const b = await local.createEntry({ id: "nota-b", title: "B local", recordedAt: "2026-01-01" });
+    await local.saveNote(b.id, "B local");
+    const base = await getRecording(b.id);
+    if (!base) throw new Error("nota nao gravada");
+    await upsertRecording({ ...base, updatedAt: "2020-01-01T00:00:00.000Z" });
+
+    const retrato: VaultSnapshot = {
+      version: 2,
+      vaultId: await vaultIdFromCode(codigo),
+      createdAt: "2030-01-01T00:00:00.000Z",
+      notes: [
+        {
+          id: "nota-b",
+          title: "B do Drive",
+          recordedAt: "2026-01-01",
+          updatedAt: "2030-01-01T00:00:00.000Z",
+          text: "B do Drive",
+        },
+        {
+          id: "nota-c",
+          title: "C do Drive",
+          recordedAt: "2026-02-01",
+          updatedAt: "2030-01-01T00:00:00.000Z",
+          text: "C do Drive",
+        },
+      ],
+      notebooks: [
+        cadernoDoRetrato("nb-comum", "Do Drive", "2030-01-01T00:00:00.000Z"),
+        cadernoDoRetrato("nb-drive", "Novo do Drive", "2030-01-01T00:00:00.000Z"),
+      ],
+      analyses: [],
+    };
+    pasta.arquivos.set(KEY_FILE, encoder.encode(formatRecoveryCode(codigo)));
+    pasta.arquivos.set(STATE_FILE, await sealSnapshot(retrato, chave));
+
+    const aberto = await openDriveVault(pasta);
+
+    expect(aberto.restored).toMatchObject({
+      created: 1,
+      updated: 1,
+      skipped: 0,
+      notebooks: { created: 1, updated: 1, skipped: 0 },
+    });
+
+    const notas = await local.listEntries();
+    expect(notas.map((nota) => nota.id).sort()).toEqual(["nota-a", "nota-b", "nota-c"]);
+    expect((await getRecording("nota-b"))?.title).toBe("B do Drive");
+    expect((await local.listNotes("nota-b"))[0].content_markdown).toBe("B do Drive");
+    expect((await getRecording("nota-a"))?.title).toBe("A local");
+    expect((await getLocalNotebook("nb-comum"))?.name).toBe("Do Drive");
+    expect((await getLocalNotebook("nb-drive"))?.name).toBe("Novo do Drive");
+    expect((await getLocalNotebook("nb-local"))?.name).toBe("So local");
+
+    // O retrato final e a uniao: nenhum id duplicado de nenhum dos lados.
+    const final = await openSnapshot(pasta.arquivos.get(STATE_FILE)!, chave);
+    const ids = final.notes.map((nota) => nota.id);
+    expect(ids.sort()).toEqual(["nota-a", "nota-b", "nota-c"]);
+    expect(new Set(ids).size).toBe(ids.length);
+    const idsCadernos = final.notebooks?.map((caderno) => caderno.id) ?? [];
+    expect(idsCadernos).toEqual(
+      expect.arrayContaining(["nb-comum", "nb-drive", "nb-local"]),
+    );
+    expect(new Set(idsCadernos).size).toBe(idsCadernos.length);
+    expect(soLocal.id).toBe("nb-local");
   });
 
   it("cofre novo, sem key.txt, nao restaura e ja grava o banco local", async () => {
