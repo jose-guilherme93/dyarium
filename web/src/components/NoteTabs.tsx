@@ -64,7 +64,7 @@ export function NoteTabs({ tabs, activeId, onSelect, onClose }: NoteTabsProps) {
               title={`Fechar ${nome}`}
               onClick={() => onClose(tab.id)}
             >
-              <CloseIcon size={11} />
+              <CloseIcon size={12} />
             </button>
           </div>
         );

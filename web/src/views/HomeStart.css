@@ -36,7 +36,7 @@
   margin: 0 0 var(--dy-space-16);
   max-width: 38ch;
   color: var(--dy-text-muted);
-  line-height: 1.5;
+  line-height: 1.32;
 }
 
 .hs__facts {
@@ -57,7 +57,7 @@
 }
 
 .hs__fact-value {
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .hs__actions {

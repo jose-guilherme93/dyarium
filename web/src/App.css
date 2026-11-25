@@ -1272,10 +1272,6 @@
   .app {
     grid-template-columns: 64px 1fr;
   }
-
-  .brand {
-    display: none;
-  }
 }
 
 @media (max-width: 720px){
@@ -1678,7 +1674,7 @@
   position: relative;
   display: flex;
   align-items: center;
-  align-self: center;
+  align-self: flex-end;
   flex: 0 1 auto;
   min-width: 0;
   max-width: 240px;
@@ -1738,8 +1734,8 @@
 .note-tab-close {
   display: grid;
   place-items: center;
-  width: var(--dy-icon-box);
-  height: var(--dy-icon-box);
+  width: var(--dy-row-dense);
+  height: var(--dy-row-dense);
   margin-right: var(--dy-space-2);
   flex: none;
   padding: 0;
@@ -1808,7 +1804,7 @@
   align-items: center;
   justify-content: space-between;
   gap: calc(var(--space) * 3);
-  min-height: 30px;
+  min-height: var(--dy-row-dense);
   margin-bottom: calc(var(--space) * 2);
 }
 
@@ -2097,8 +2093,12 @@
    duas superficies (um painel branco sobre o fundo creme). A variavel precisa de
    especificidade maior que a do proprio BlockNote. */
 
-.note .bn-container {
+.note .bn-container.bn-root {
   --bn-colors-editor-background: transparent;
+  /* O tema do BlockNote traz texto proprio (#3f3f3f no claro, #cfcfcf no
+     escuro). O corpo da nota usa a cor de texto do sistema nos dois temas. */
+  --bn-colors-editor-text: var(--dy-text);
+  --bn-border-radius: var(--dy-radius-control);
   background: transparent;
 }
 
@@ -2238,8 +2238,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: var(--dy-control-md);
+  height: var(--dy-control-md);
   border-radius: var(--radius-sm);
   color: var(--color-muted);
 }
@@ -2537,12 +2537,14 @@
 .list-search {
   flex: 1 1 0;
   min-width: 0;
+  min-height: var(--dy-row-dense);
   display: flex;
   align-items: center;
   gap: calc(var(--space) * 1.5);
-  padding: calc(var(--space) * 1.25) calc(var(--space) * 2);
+  padding: 0 calc(var(--space) * 2);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
-  background: var(--color-surface-2);
+  background: var(--color-surface);
   color: var(--color-muted);
 }
 
@@ -3080,8 +3082,10 @@
   padding: calc(var(--space) * 1.5) calc(var(--space) * 2);
   border-radius: var(--radius-sm);
   color: var(--color-text);
-  font-family: var(--font-serif);
-  font-size: 16px;
+  font-family: var(--font-sans);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
   text-align: left;
 }
 
@@ -3860,8 +3864,8 @@
 /* ---------- botoes ---------- */
 
 .button--primary {
-  background: var(--color-text);
-  border-color: var(--color-text);
+  background: var(--color-accent);
+  border-color: var(--color-accent);
   color: var(--color-bg);
 }
 
@@ -3880,8 +3884,8 @@
 }
 
 .notebook-current:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
+  outline: var(--dy-focus-width) solid var(--color-accent);
+  outline-offset: var(--dy-focus-offset);
 }
 
 /* O navegador desenha o proprio anel azul em botoes que nao usam .button
@@ -3939,7 +3943,7 @@
 .note-archived {
   color: var(--color-muted);
   border: 1px solid var(--color-border);
-  border-radius: 999px;
+  border-radius: var(--dy-radius-control);
   padding: 0 8px;
   font-size: 11px;
 }
@@ -4043,7 +4047,7 @@
   background: var(--color-surface-2);
   color: var(--color-text);
   font-weight: 600;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.14);
+  box-shadow: none;
 }
 
 .view-header h1 {
@@ -4108,8 +4112,8 @@
 
 /* Barra da nota: acoes sem caixa, agrupadas por assunto. */
 .note-head-actions .icon-button {
-  width: 30px;
-  height: 30px;
+  width: var(--dy-control-md);
+  height: var(--dy-control-md);
   padding: 0;
   border: none;
   color: var(--color-muted);
@@ -4256,11 +4260,26 @@
     border-color: transparent;
   }
 
+  /* A unica acao preenchida da barra: rotulo de 10 em caixa alta, alvo de 26,
+     como o botao do sistema. */
+  .mobile-bar .button--primary {
+    height: var(--dy-control-md);
+    padding: 0 var(--dy-control-pad-sm);
+    gap: var(--dy-space-4);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
   .mobile-bar-title {
     flex: 1;
     min-width: 0;
-    font-family: var(--font-serif);
-    font-size: 15px;
+    font-family: var(--font-sans);
+    font-size: 17px;
+    font-weight: 600;
+    line-height: 1.3;
+    letter-spacing: -0.005em;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -4289,7 +4308,7 @@
     position: fixed;
     inset: 0;
     z-index: 70;
-    background: rgba(0, 0, 0, 0.32);
+    background: var(--dy-overlay);
   }
 
   .app--collapsed .sidebar-backdrop {
@@ -4357,14 +4376,6 @@
 .primary:disabled {
   opacity: 0.5;
   cursor: default;
-}
-
-@media (prefers-color-scheme: dark) {
-  .button--primary {
-    background: var(--color-accent);
-    border-color: var(--color-accent);
-    color: var(--color-bg);
-  }
 }
 
 /* O Chrome desenha um "x" proprio no input type=search; o nosso ja existe. */
@@ -4717,8 +4728,8 @@
 }
 
 .notebook-current {
-  font-size: 15px;
-  padding: calc(var(--space) * 1.5) calc(var(--space) * 1.75);
+  min-height: var(--dy-row-dense);
+  padding: 0 var(--dy-space-6);
 }
 
 .notebook-menu-new {
@@ -4766,8 +4777,8 @@
 }
 
 .sidebar-toggle {
-  width: 28px;
-  height: 28px;
+  width: var(--dy-control-md);
+  height: var(--dy-control-md);
   flex: none;
 }
 
@@ -4778,8 +4789,8 @@
 }
 
 .list-head .icon-button {
-  width: 28px;
-  height: 28px;
+  width: var(--dy-control-md);
+  height: var(--dy-control-md);
   padding: 0;
   border: none;
   border-radius: var(--radius-sm);
@@ -5135,8 +5146,8 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 14.5px;
-  line-height: 1.4;
+  font-size: 13px;
+  line-height: 1.32;
 }
 
 .note-row-line {
@@ -5145,8 +5156,8 @@
   gap: calc(var(--space) * 1.5);
   min-width: 0;
   color: var(--color-muted);
-  font-size: 11px;
-  line-height: 1.4;
+  font-size: 11.5px;
+  line-height: 1.32;
 }
 
 .note-row-kind {
@@ -5154,7 +5165,7 @@
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  font-size: 10.5px;
+  font-size: 11.5px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -5175,7 +5186,9 @@
 .note-row-date {
   flex: none;
   margin-left: auto;
-  font-size: 10.5px;
+  font-family: var(--dy-font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
   font-variant-numeric: tabular-nums;
 }
 
@@ -5576,6 +5589,13 @@
   flex: 0 0 auto;
 }
 
+.map-actions .button {
+  height: var(--dy-control-md);
+  padding: 0 var(--dy-control-pad-md);
+  font-size: 13px;
+  font-weight: 500;
+}
+
 .map-title {
   display: flex;
   align-items: baseline;
@@ -5586,8 +5606,11 @@
 
 .map-title h1 {
   margin: 0;
-  font-family: var(--font-serif);
-  font-size: 22px;
+  font-family: var(--font-sans);
+  font-size: 21px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
 }
 
 .map-stats {
@@ -5628,40 +5651,44 @@
 .map-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
+  gap: var(--dy-space-4);
+  height: var(--dy-row-dense);
+  padding: 0 var(--dy-space-8);
+  border: 1px solid var(--dy-line);
+  border-radius: var(--dy-radius-control);
   background: transparent;
-  color: var(--ink-soft);
+  color: var(--dy-text-muted);
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
   cursor: pointer;
 }
 
 .map-chip--on {
-  background: var(--color-surface-2);
-  border-color: var(--color-border);
-  color: var(--color-text);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  background: var(--dy-primary-soft);
+  border-color: var(--dy-primary-soft);
+  color: var(--dy-text);
+  box-shadow: none;
 }
 
 .map-chip--on .map-chip-count {
-  color: rgba(0, 0, 0, 0.55);
+  color: var(--dy-text);
 }
 
 .map-chip:hover {
-  color: var(--ink);
-  border-color: var(--ink-soft);
+  color: var(--dy-text);
+  border-color: var(--dy-text-muted);
 }
 
 .map-chip--on:hover {
-  color: #1b1b1b;
-  border-color: #fff;
+  color: var(--dy-text);
+  border-color: var(--dy-primary);
 }
 
 .map-chip-count {
-  color: var(--ink-soft);
+  color: var(--dy-text-muted);
+  font-family: var(--dy-font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
   font-variant-numeric: tabular-nums;
 }
 
@@ -5693,22 +5720,22 @@
 }
 
 .map-select {
-  height: 30px;
-  padding: 0 8px;
+  height: var(--dy-control-md);
+  padding: 0 var(--dy-space-8);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--paper);
   color: var(--ink);
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .map-search {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  height: 30px;
-  padding: 0 9px;
+  gap: var(--dy-space-6);
+  height: var(--dy-control-md);
+  padding: 0 var(--dy-control-pad-md);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--paper);
@@ -5722,7 +5749,7 @@
   background: transparent;
   color: var(--ink);
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .map-body {
@@ -5894,37 +5921,45 @@
 
 .map-insights-total,
 .map-insights-tab-count {
-  color: var(--ink-soft);
-  font-size: 11px;
+  color: var(--dy-text-muted);
+  font-family: var(--dy-font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
   font-variant-numeric: tabular-nums;
 }
 
 .map-insights-tabs {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  margin-bottom: calc(var(--space) * 2);
+  gap: var(--dy-space-4);
+  margin-bottom: var(--dy-space-8);
 }
 
 .map-insights-tab {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 3px 7px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
+  gap: var(--dy-space-4);
+  height: var(--dy-row-dense);
+  padding: 0 var(--dy-space-8);
+  border: 1px solid var(--dy-line);
+  border-radius: var(--dy-radius-control);
   background: transparent;
-  color: var(--ink-soft);
-  font-size: 12px;
+  color: var(--dy-text-muted);
+  font-size: 13px;
 }
 
 .map-insights-tab:hover {
-  color: var(--ink);
+  color: var(--dy-text);
 }
 
 .map-insights-tab--on {
-  border-color: var(--ink);
-  color: var(--ink);
+  background: var(--dy-primary-soft);
+  border-color: var(--dy-primary-soft);
+  color: var(--dy-text);
+}
+
+.map-insights-tab--on .map-insights-tab-count {
+  color: var(--dy-text);
 }
 
 .map-insights-list {
@@ -7884,7 +7919,10 @@
 .note-header {
   flex: none;
   z-index: 5;
-  padding: calc(var(--space) * 1.5) calc(var(--space) * 8);
+  display: flex;
+  align-items: center;
+  height: var(--dy-toolbar);
+  padding: 0 calc(var(--space) * 8);
   border-bottom: 1px solid var(--color-border);
   background: var(--color-bg);
 }
@@ -7893,7 +7931,7 @@
   width: 100%;
   max-width: 720px;
   margin-inline: auto;
-  min-height: 32px;
+  min-height: var(--dy-row-dense);
   margin-bottom: 0;
 }
 
@@ -9027,8 +9065,8 @@ button.save-glyph:focus-visible {
   margin-top: 2px;
   color: var(--color-muted);
   font-family: var(--font-sans);
-  font-size: 9px;
-  font-weight: 400;
+  font-size: 10px;
+  font-weight: 500;
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
@@ -11849,10 +11887,10 @@ button.save-glyph:focus-visible {
 .calendar-month {
   margin: 0;
   font-family: var(--font-sans);
-  font-size: 20px;
+  font-size: 21px;
   font-weight: 600;
   letter-spacing: -0.01em;
-  line-height: 1.1;
+  line-height: 1.2;
 }
 
 .calendar-month span {
@@ -11861,7 +11899,9 @@ button.save-glyph:focus-visible {
 }
 
 .calendar-count {
+  font-family: var(--dy-font-mono);
   font-size: 11.5px;
+  letter-spacing: 0.02em;
   color: var(--color-muted);
   font-variant-numeric: tabular-nums;
 }
@@ -11874,8 +11914,8 @@ button.save-glyph:focus-visible {
 }
 
 .calendar-nav-button {
-  width: 28px;
-  height: 28px;
+  width: var(--dy-control-md);
+  height: var(--dy-control-md);
   display: grid;
   place-items: center;
   border-radius: var(--radius-sm);
@@ -11897,10 +11937,10 @@ button.save-glyph:focus-visible {
 }
 
 .calendar-today {
-  height: 28px;
-  padding: 0 calc(var(--space) * 2.5);
+  height: var(--dy-control-md);
+  padding: 0 var(--dy-control-pad-md);
   border-radius: var(--radius-sm);
-  font-size: 12px;
+  font-size: 13px;
   color: var(--color-muted);
   transition: background 120ms, color 120ms;
 }
@@ -11919,7 +11959,7 @@ button.save-glyph:focus-visible {
 .calendar-weekdays span {
   padding: calc(var(--space) * 1.8) calc(var(--space) * 2.2) calc(var(--space) * 1.5);
   font-size: 10px;
-  letter-spacing: 0.09em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--color-muted);
   font-weight: 500;
@@ -11970,7 +12010,7 @@ button.save-glyph:focus-visible {
 }
 
 .calendar-cell--selected {
-  box-shadow: inset 0 0 0 1.5px var(--color-accent);
+  box-shadow: inset 0 0 0 var(--dy-state-bar) var(--color-accent);
 }
 
 .calendar-cell--out {
@@ -11983,6 +12023,7 @@ button.save-glyph:focus-visible {
   align-items: center;
   justify-content: space-between;
   height: 20px;
+  font-family: var(--dy-font-mono);
   font-size: 11.5px;
   font-variant-numeric: tabular-nums;
   color: var(--color-muted);
@@ -11991,7 +12032,7 @@ button.save-glyph:focus-visible {
 
 .calendar-cell--today .calendar-daynum {
   color: var(--color-text);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .calendar-today-dot {
@@ -12003,12 +12044,13 @@ button.save-glyph:focus-visible {
   border-radius: 50%;
   background: var(--color-text);
   color: var(--color-bg);
-  font-size: 11px;
-  font-weight: 600;
+  font-family: var(--dy-font-mono);
+  font-size: 11.5px;
+  font-weight: 500;
 }
 
 .calendar-daycount {
-  font-size: 9.5px;
+  font-size: 10px;
   color: color-mix(in srgb, var(--color-muted) 80%, transparent);
   font-variant-numeric: tabular-nums;
 }
@@ -12074,7 +12116,7 @@ button.save-glyph:focus-visible {
 
 .calendar-panel-weekday {
   font-size: 10px;
-  letter-spacing: 0.09em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--color-muted);
   font-weight: 500;
@@ -12082,15 +12124,18 @@ button.save-glyph:focus-visible {
 
 .calendar-panel-date {
   margin-top: 2px;
-  font-size: 19px;
+  font-size: 21px;
   font-weight: 600;
+  line-height: 1.2;
   letter-spacing: -0.01em;
 }
 
 .calendar-panel-count {
   margin-left: auto;
   padding-bottom: 3px;
-  font-size: 11px;
+  font-family: var(--dy-font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
   color: var(--color-muted);
   font-variant-numeric: tabular-nums;
 }
@@ -12114,7 +12159,7 @@ button.save-glyph:focus-visible {
   padding: calc(var(--space) * 6) 0;
   text-align: center;
   color: color-mix(in srgb, var(--color-muted) 70%, transparent);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .calendar-note {
@@ -12142,7 +12187,9 @@ button.save-glyph:focus-visible {
 
 .calendar-note-time {
   padding-top: 2px;
-  font-size: 11px;
+  font-family: var(--dy-font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
   color: var(--color-muted);
   font-variant-numeric: tabular-nums;
 }
@@ -12164,7 +12211,7 @@ button.save-glyph:focus-visible {
   align-items: center;
   gap: 5px;
   margin-top: 3px;
-  font-size: 10.5px;
+  font-size: 11.5px;
   color: var(--color-muted);
 }
 
@@ -12235,11 +12282,12 @@ button.save-glyph:focus-visible {
   align-items: center;
   gap: calc(var(--space) * 2);
   width: calc(100% - var(--space) * 6);
+  min-height: var(--dy-row-dense);
   margin: 0 calc(var(--space) * 3);
-  padding: calc(var(--space) * 2.2) calc(var(--space) * 2);
+  padding: 0 calc(var(--space) * 2);
   border-top: 1px dashed var(--color-border);
   color: var(--color-muted);
-  font-size: 12.5px;
+  font-size: 13px;
   transition: color 120ms;
 }
 
@@ -12423,11 +12471,11 @@ button.save-glyph:focus-visible {
     height: min(66vh, 520px);
     border-left: 0;
     border-top: 1px solid var(--color-border);
-    border-radius: 14px 14px 0 0;
-    background: var(--color-bg);
-    box-shadow: 0 -14px 34px rgb(0 0 0 / 0.16);
+    border-radius: var(--dy-radius-surface) var(--dy-radius-surface) 0 0;
+    background: var(--dy-surface-raised);
+    box-shadow: none;
     transform: translateY(102%);
-    transition: transform 220ms cubic-bezier(0.32, 0.72, 0, 1);
+    transition: transform var(--dy-motion-base) var(--dy-motion-ease);
   }
 
   .calendar--sheet .calendar-panel {
@@ -12444,18 +12492,18 @@ button.save-glyph:focus-visible {
     position: absolute;
     top: 6px;
     left: 50%;
-    width: 34px;
-    height: 3px;
-    margin-left: -17px;
-    border-radius: 2px;
+    width: 26px;
+    height: 2px;
+    margin-left: -13px;
+    border-radius: 1px;
     background: var(--color-border);
   }
 
   .calendar-panel-close {
     display: grid;
     place-items: center;
-    width: 28px;
-    height: 28px;
+    width: var(--dy-control-md);
+    height: var(--dy-control-md);
     border-radius: var(--radius-sm);
     color: var(--color-muted);
   }
@@ -12480,10 +12528,10 @@ button.save-glyph:focus-visible {
     inset: 0;
     z-index: 35;
     border: 0;
-    background: rgb(0 0 0 / 0.22);
+    background: var(--dy-overlay);
     opacity: 0;
     pointer-events: none;
-    transition: opacity 200ms;
+    transition: opacity var(--dy-motion-base) var(--dy-motion-ease);
   }
 
   .calendar-backdrop--on {
@@ -12876,8 +12924,6 @@ button.save-glyph:focus-visible {
   object-fit: cover;
 }
 .account-avatar-initials {
-  font-size: 11px;
-  letter-spacing: 0.04em;
   line-height: 1;
 }
 .account-avatar-glyph {
@@ -12963,7 +13009,7 @@ button.save-glyph:focus-visible {
 }
 .account-menu-photo--initials {
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: 0.02em;
 }
 .account-menu-idtext {
@@ -13037,6 +13083,13 @@ button.save-glyph:focus-visible {
 }
 .account-menu-row:hover {
   background: var(--dy-surface);
+}
+.account-menu-note {
+  margin: 0 0 var(--dy-space-4);
+  padding: 0 var(--dy-space-4);
+  font-size: 13px;
+  line-height: 1.32;
+  color: var(--dy-danger);
 }
 .account-menu-row--danger {
   color: var(--dy-danger);
