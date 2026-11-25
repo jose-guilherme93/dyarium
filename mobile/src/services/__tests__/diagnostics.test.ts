@@ -10,6 +10,8 @@ const mockFlags = new Map<string, string>();
 jest.mock('@sentry/react-native', () => ({
   init: (options: unknown) => mockInit(options),
   close: () => mockClose(),
+  logger: { info: jest.fn() },
+  metrics: { count: jest.fn() },
 }));
 
 jest.mock('expo-constants', () => ({
@@ -58,13 +60,17 @@ describe('diagnostico anonimo', () => {
       sendDefaultPii: boolean;
       maxBreadcrumbs: number;
       tracesSampleRate: number;
+      environment: string;
+      enableLogs: boolean;
       beforeBreadcrumb: () => null;
       beforeSend: (event: Record<string, unknown>) => Record<string, unknown> | null;
     };
     expect(options.dsn).toBe('https://public@sentry.example/1');
     expect(options.sendDefaultPii).toBe(false);
     expect(options.maxBreadcrumbs).toBe(0);
-    expect(options.tracesSampleRate).toBe(0);
+    expect(options.tracesSampleRate).toBe(1);
+    expect(options.environment).toBe('development');
+    expect(options.enableLogs).toBe(true);
     expect(options.beforeBreadcrumb()).toBeNull();
 
     const event = options.beforeSend({

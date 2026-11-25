@@ -1,10 +1,10 @@
 // Configuracao do Metro.
 // expo-sqlite no web carrega um modulo .wasm; sem isto o bundle web falha com
 // "Unable to resolve module ./wa-sqlite/wa-sqlite.wasm". Nao afeta o Android.
-const { getDefaultConfig } = require('expo/metro-config');
+const { getSentryExpoConfig } = require('@sentry/react-native/metro');
 
 /** @type {import('expo/metro-config').MetroConfig} */
-const config = getDefaultConfig(__dirname);
+const config = getSentryExpoConfig(__dirname);
 
 config.resolver.assetExts.push('wasm');
 

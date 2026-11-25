@@ -111,7 +111,14 @@
         }
       ],
       "./plugins/withLlamaBaseLib",
-      "expo-asset"
+      "expo-asset",
+      [
+        "@sentry/react-native/expo",
+        {
+          "organization": "josetilabs",
+          "project": "dyarium"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

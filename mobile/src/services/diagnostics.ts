@@ -48,8 +48,13 @@ export async function initDiagnostics(): Promise<void> {
 
   Sentry.init({
     dsn: projectDsn,
+    // Erro de desenvolvimento nao se mistura com o de producao no painel.
+    environment: __DEV__ ? 'development' : 'production',
+    // Performance: amostra total em dev, parcial em producao.
+    tracesSampleRate: __DEV__ ? 1 : 0.1,
+    // Log tecnico do proprio SDK (nunca conteudo de nota).
+    enableLogs: true,
     sendDefaultPii: false,
-    tracesSampleRate: 0,
     maxBreadcrumbs: 0,
     enableAutoSessionTracking: true,
     enableNativeCrashHandling: true,
@@ -65,6 +70,9 @@ export async function initDiagnostics(): Promise<void> {
     },
   });
   started = true;
+  Sentry.logger.info('diagnostico iniciado', {
+    version: Constants.expoConfig?.version ?? '',
+  });
 }
 
 /** Liga/desliga o envio. Desligar fecha o cliente desta execucao. */
