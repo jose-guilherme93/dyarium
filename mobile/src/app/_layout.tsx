@@ -4,7 +4,7 @@ import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import * as SystemUI from 'expo-system-ui';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { AppState } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -14,6 +14,8 @@ import { stopForegroundTask } from '../../modules/foreground-task';
 import { loadStoredActivities } from '@/services/activity';
 import { registerUploadTask, registerBackupTaskFromPrefs } from '@/services/background';
 import { runScheduledBackupIfDue } from '@/services/backupScheduler';
+import { driveSessionState, loadDriveSession } from '@/services/driveAuth';
+import { openDriveVault, readVaultSummary } from '@/services/driveVault';
 import { configureNotifications } from '@/services/notifications';
 import { LibraryProvider } from '@/state/LibraryContext';
 import { PlaybackProvider } from '@/state/PlaybackContext';
@@ -29,10 +31,12 @@ SplashScreen.preventAutoHideAsync().catch(() => undefined);
 void initDiagnostics();
 
 /**
- * Inter e a familia do app inteiro. Os arquivos ficam no bundle: carregar da
- * rede deixaria o primeiro frame com a fonte do sistema e trocaria o texto
- * depois. A splash so sai quando as fontes estao prontas (ou falharam, para
- * nao prender o app num build sem o arquivo).
+ * Fontes do bundle. A Schibsted Grotesk e a familia da interface; a Inter
+ * continua carregada porque e a opcao `system` do editor de notas, e a
+ * Newsreader e a leitura longa dos livros. Carregar da rede deixaria o
+ * primeiro frame com a fonte do sistema e trocaria o texto depois. A splash
+ * so sai quando as fontes estao prontas (ou falharam, para nao prender o app
+ * num build sem o arquivo).
  */
 const FONT_SOURCES = {
   Inter_300Light: require('../../assets/fonts/Inter-Light.ttf'),
@@ -93,6 +97,7 @@ function ThemedRoot() {
               {/* Desliza pro lado (como antes), mas na variante rapida do Android
                   (`ios_from_right` = 150 ms); o `slide_from_*` e fixo em 300 ms. */}
               <Stack.Screen name="note/[id]" options={{ animation: 'ios_from_right' }} />
+              <Stack.Screen name="perfil" options={{ animation: 'ios_from_right' }} />
               <Stack.Screen name="books/[id]" options={{ animation: 'ios_from_right' }} />
               <Stack.Screen name="transcript/[id]" options={{ animation: 'ios_from_right' }} />
               <Stack.Screen name="record" options={{ animation: 'slide_from_bottom' }} />
@@ -143,6 +148,42 @@ export default function RootLayout() {
     }
     const subscription = AppState.addEventListener('change', (state) => {
       if (state === 'active') void runScheduledBackupIfDue().catch(() => undefined);
+    });
+    return () => subscription.remove();
+  }, []);
+
+  const driveSyncing = useRef(false);
+  const driveLastAttempt = useRef(0);
+  useEffect(() => {
+    const TEN_MIN = 10 * 60 * 1000;
+    const runForeground = async () => {
+      if (driveSyncing.current) return;
+      if (Date.now() - driveLastAttempt.current < TEN_MIN) return;
+      // No boot o SecureStore ainda nao respondeu: sem esperar a hidratacao a
+      // sessao pareceria desligada e o primeiro plano nunca sincronizaria.
+      await loadDriveSession();
+      if (driveSessionState() !== 'connected') return;
+      let lastSync = 0;
+      try {
+        const summary = await readVaultSummary();
+        if (summary?.at) lastSync = Date.parse(summary.at);
+      } catch {
+        lastSync = 0;
+      }
+      if (Number.isFinite(lastSync) && Date.now() - lastSync < TEN_MIN) return;
+      driveSyncing.current = true;
+      driveLastAttempt.current = Date.now();
+      try {
+        await openDriveVault();
+      } catch {
+        // Erros esperados ja atualizam o estado do Drive.
+      } finally {
+        driveSyncing.current = false;
+      }
+    };
+    if (AppState.currentState === 'active') void runForeground();
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void runForeground();
     });
     return () => subscription.remove();
   }, []);

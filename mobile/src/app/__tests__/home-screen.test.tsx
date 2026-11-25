@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { StyleSheet } from 'react-native';
 
 import type { Notebook } from '@/core/notebooks';
 import type { Recording } from '@/core/types';
@@ -243,5 +244,26 @@ describe('home misturada (Recentes)', () => {
       pathname: '/note/[id]',
       params: { id: 'note-common' },
     });
+  });
+
+  it('usa o FAB circular de 44 e mantem o menu de nova nota', async () => {
+    await renderScreen();
+
+    const fab = screen.getByLabelText('Nova nota');
+    const fabStyle = StyleSheet.flatten(fab.props.style) as {
+      width: number;
+      height: number;
+      borderRadius: number;
+    };
+    expect(fabStyle.width).toBe(44);
+    expect(fabStyle.height).toBe(44);
+    expect(fabStyle.borderRadius).toBe(22);
+
+    fireEvent.press(fab);
+
+    expect(screen.getByLabelText('Link')).toBeTruthy();
+    expect(screen.getByLabelText('Imagem')).toBeTruthy();
+    expect(screen.getByLabelText('Áudio')).toBeTruthy();
+    expect(screen.getByLabelText('Texto')).toBeTruthy();
   });
 });

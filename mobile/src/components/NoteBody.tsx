@@ -806,8 +806,8 @@ const NativeNoteBody = memo(
           typography?.weight ?? 'regular',
         ),
         fontSize: typography?.size ?? 16,
-        // A familia Inter ja carrega o peso no proprio arquivo. Deixar o peso
-        // sintetico ligado engrossa a letra de novo no iOS.
+        // A familia de sistema ja carrega o peso no proprio arquivo. Deixar o
+        // peso sintetico ligado engrossa a letra de novo no iOS.
         fontWeight:
           (typography?.family ?? 'system') === 'system'
             ? ('normal' as const)

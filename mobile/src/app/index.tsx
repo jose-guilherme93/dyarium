@@ -41,13 +41,14 @@ import { needsNoteSync, type Recording } from '@/core/types';
 import { useRenderCount } from '@/dev/perf';
 import { directoryBytes, sessionDirectory } from '@/services/files';
 import { useLibrary } from '@/state/LibraryContext';
+import { useDrive } from '@/state/useDrive';
 import { useRecording } from '@/state/RecordingContext';
 import { useSettings } from '@/state/SettingsContext';
 import { baseColors, fontSize, radius, spacing } from '@/theme/tokens';
 import { useTheme, useThemedStyles } from '@/theme/ThemeContext';
 import { defineStyles } from '@/theme/themedStyles';
 import { Button, Icon, type IconName } from '@/ui';
-import { designRadius, designSpace, designType } from '@/theme/design';
+import { designRadius, designRow, designSpace, designType } from '@/theme/design';
 import { useDesign } from '@/ui/useDesign';
 
 const PENDING_STATUSES = ['recorded', 'queued', 'uploading', 'failed'];
@@ -174,6 +175,7 @@ export default function NotebookScreen() {
   const { start: startRecording } = useRecording();
   const { swipeAction, lastNotebookId, setLastNotebookId, noteOrder, setNoteOrder } =
     useSettings();
+  const drive = useDrive();
   useRenderCount('NotebookScreen');
   // Trabalho pesado em andamento por nota: o card mostra icone e porcentagem.
   const activities = useActivities();
@@ -492,6 +494,15 @@ export default function NotebookScreen() {
       onOpenCalendar={() => push('/calendar')}
       onOpenActivity={() => setActivityOpen(true)}
       onOpenSettings={() => push('/settings')}
+      profile={drive.profile}
+      accountState={
+        drive.status === 'connected'
+          ? 'connected'
+          : drive.status === 'expired'
+            ? 'expired'
+            : 'off'
+      }
+      onOpenProfile={() => push('/perfil')}
     />
   );
 
@@ -795,9 +806,9 @@ const baseStyles = defineStyles({
     justifyContent: 'center',
   },
   fab: {
-    width: 40,
-    height: 40,
-    borderRadius: designRadius.surface,
+    width: designRow.touch,
+    height: designRow.touch,
+    borderRadius: designRow.touch / 2,
     backgroundColor: baseColors.accent,
     alignItems: 'center',
     justifyContent: 'center',

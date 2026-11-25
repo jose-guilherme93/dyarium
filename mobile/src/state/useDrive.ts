@@ -19,10 +19,12 @@ import {
 import {
   connectDrive,
   disconnectDrive,
+  driveProfile,
   driveSessionState,
   loadDriveSession,
   onDriveSessionChange,
   type DriveSessionState,
+  type GoogleProfile,
 } from '@/services/driveAuth';
 import { driveConfigured } from '@/services/driveConfig';
 import { useLibrary } from '@/state/LibraryContext';
@@ -42,6 +44,7 @@ export interface DriveValue {
   stage: DriveStage | null;
   progress: DriveProgress | null;
   summary: VaultSummary | null;
+  profile: GoogleProfile | null;
   restored: VaultRestoreCounts | null;
   /** O Drive nao tinha `key.txt` e o cofre foi criado neste login. */
   created: boolean;
@@ -83,6 +86,7 @@ export function useDrive(): DriveValue {
   const [stage, setStage] = useState<DriveStage | null>(null);
   const [progress, setProgress] = useState<DriveProgress | null>(null);
   const [summary, setSummary] = useState<VaultSummary | null>(null);
+  const [profile, setProfile] = useState<GoogleProfile | null>(null);
   const [restored, setRestored] = useState<VaultRestoreCounts | null>(null);
   const [created, setCreated] = useState(false);
   const [error, setError] = useState('');
@@ -104,14 +108,20 @@ export function useDrive(): DriveValue {
 
   useEffect(() => {
     void loadDriveSession().then(() => {
-      if (alive.current) setStatus(driveSessionState());
+      if (alive.current) {
+        setStatus(driveSessionState());
+        setProfile(driveProfile());
+      }
     });
   }, []);
 
   useEffect(
     () =>
       onDriveSessionChange(() => {
-        if (alive.current) setStatus(driveSessionState());
+        if (alive.current) {
+          setStatus(driveSessionState());
+          setProfile(driveProfile());
+        }
       }),
     [],
   );
@@ -140,6 +150,7 @@ export function useDrive(): DriveValue {
           setRestored(opened.restored);
           setCreated(opened.created);
           setStatus(driveSessionState());
+          setProfile(driveProfile());
         }
         await refresh();
         await refreshNotebooks();
@@ -147,6 +158,7 @@ export function useDrive(): DriveValue {
         if (alive.current) {
           setError(describe(caught));
           setStatus(driveSessionState());
+          setProfile(driveProfile());
         }
       } finally {
         if (alive.current) {
@@ -178,6 +190,7 @@ export function useDrive(): DriveValue {
     try {
       await disconnectDrive();
       setSummary(null);
+      setProfile(null);
       setRestored(null);
       setCreated(false);
       await setAppFlag(SUMMARY_FLAG, '').catch(() => undefined);
@@ -201,6 +214,7 @@ export function useDrive(): DriveValue {
     stage,
     progress,
     summary,
+    profile,
     restored,
     created,
     error,

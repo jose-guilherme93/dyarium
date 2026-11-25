@@ -45,6 +45,7 @@ jest.mock('expo-crypto', () => ({
 
 jest.mock('../driveConfig', () => ({
   DRIVE_SCOPE: 'https://www.googleapis.com/auth/drive.file',
+  GOOGLE_SCOPES: 'https://www.googleapis.com/auth/drive.file openid email profile',
   googleClientId: () => mockConfig.clientId,
   driveConfigured: () => mockConfig.clientId !== '',
   driveRedirectUri: () => 'dyarium://oauth',
@@ -157,7 +158,7 @@ describe('connectDrive', () => {
     expect(query?.get('access_type')).toBe('offline');
     expect(query?.get('prompt')).toBe('consent');
     expect(query?.get('include_granted_scopes')).toBe('true');
-    expect(query?.get('scope')).toBe('https://www.googleapis.com/auth/drive.file');
+    expect(query?.get('scope')).toBe('https://www.googleapis.com/auth/drive.file openid email profile');
     expect(query?.get('redirect_uri')).toBe('dyarium://oauth');
     expect(query?.get('code_challenge_method')).toBe('S256');
     expect(query?.get('code_challenge')).toBeTruthy();
@@ -169,7 +170,7 @@ describe('connectDrive', () => {
     expect([...mockSecret.values()]).not.toContain('access-1');
     expect(auth.driveSessionState()).toBe('connected');
     await expect(auth.getDriveAccessToken()).resolves.toBe('access-1');
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it('recusa state diferente sem falar com o endpoint de token', async () => {
@@ -247,7 +248,7 @@ describe('getDriveAccessToken', () => {
     });
 
     await expect(auth.getDriveAccessToken()).resolves.toBe('access-2');
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(auth.driveSessionState()).toBe('connected');
     expect(mockSecret.get(REFRESH_KEY)).toBe('refresh-old');
     expect([...mockSecret.values()]).not.toContain('access-2');
@@ -342,5 +343,70 @@ describe('sigilo', () => {
       .flatMap((spy) => spy.mock.calls.flat().map((value) => String(value)))
       .join(' ');
     expect(printed).not.toMatch(/access-|refresh-|code-1|accounts\.google\.com|oauth2/);
+  });
+});
+
+describe('perfil Google', () => {
+  it('fetchGoogleProfile sucesso e falha', async () => {
+    const auth = freshAuth();
+    installFetch(async () =>
+      tokenResponse({ name: 'Ana', email: 'a@b.com', picture: 'pic' }),
+    );
+    await expect(auth.fetchGoogleProfile('tok')).resolves.toEqual({
+      name: 'Ana',
+      email: 'a@b.com',
+      picture: 'pic',
+    });
+
+    installFetch(async () => tokenResponse({}, 400));
+    await expect(auth.fetchGoogleProfile('tok')).resolves.toBeNull();
+  });
+
+  it('connectDrive persiste o perfil e driveProfile devolve apos hidratacao', async () => {
+    const auth = freshAuth();
+    mockOpenAuth.mockImplementationOnce(async (url: string) => {
+      const state = new URL(url).searchParams.get('state');
+      return { type: 'success', url: `dyarium://oauth?state=${state}&code=code-1` };
+    });
+    installFetch(async (url: string) => {
+      if (url === TOKEN_ENDPOINT) {
+        return tokenResponse({
+          access_token: 'access-1',
+          refresh_token: 'refresh-1',
+          expires_in: 3600,
+        });
+      }
+      return tokenResponse({ name: 'Ana', email: 'a@b.com', picture: 'pic' });
+    });
+
+    await auth.connectDrive();
+    expect(auth.driveProfile()).toEqual({ name: 'Ana', email: 'a@b.com', picture: 'pic' });
+
+    const hydrated = freshAuth();
+    await hydrated.loadDriveSession();
+    expect(hydrated.driveProfile()).toEqual({ name: 'Ana', email: 'a@b.com', picture: 'pic' });
+  });
+
+  it('disconnect limpa o perfil', async () => {
+    const auth = freshAuth();
+    mockOpenAuth.mockImplementationOnce(async (url: string) => {
+      const state = new URL(url).searchParams.get('state');
+      return { type: 'success', url: `dyarium://oauth?state=${state}&code=code-1` };
+    });
+    installFetch(async (url: string) => {
+      if (url === TOKEN_ENDPOINT) {
+        return tokenResponse({
+          access_token: 'access-1',
+          refresh_token: 'refresh-1',
+          expires_in: 3600,
+        });
+      }
+      return tokenResponse({ name: 'Ana', email: 'a@b.com', picture: 'pic' });
+    });
+    await auth.connectDrive();
+
+    installFetch(async () => tokenResponse({}, 200));
+    await auth.disconnectDrive();
+    expect(auth.driveProfile()).toBeNull();
   });
 });

@@ -16,6 +16,8 @@ import { driveRedirectUriFor } from '@/core/driveRedirect';
 
 export const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 
+export const GOOGLE_SCOPES = [DRIVE_SCOPE, 'openid', 'email', 'profile'].join(' ');
+
 /** Valor que veio no binario nativo (app.config.js), independente do Metro. */
 function extraClientId(key: string): string {
   const extra = Constants.expoConfig?.extra as Record<string, unknown> | undefined;

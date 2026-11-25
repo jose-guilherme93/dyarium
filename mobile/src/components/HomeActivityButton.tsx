@@ -2,7 +2,7 @@ import { StyleSheet, View } from 'react-native';
 
 import { Press } from '@/components/Press';
 import { useActivities } from '@/state/useActivities';
-import { designIcon } from '@/theme/design';
+import { designFocus, designIcon, designRadius, designRow, designSpace } from '@/theme/design';
 
 import { Icon } from '@/ui/icons';
 import { useDesign } from '@/ui/useDesign';
@@ -31,7 +31,12 @@ export function HomeActivityButton({ onPress }: HomeActivityButtonProps) {
         : 'Atividade';
 
   return (
-    <Press style={styles.button} hitSlop={4} onPress={onPress} accessibilityLabel={label}>
+    <Press
+      style={styles.button}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+    >
       <Icon
         name="bell"
         size={designIcon.box}
@@ -53,14 +58,19 @@ export function HomeActivityButton({ onPress }: HomeActivityButtonProps) {
 }
 
 const styles = StyleSheet.create({
-  button: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+  button: {
+    width: designRow.touch,
+    height: designRow.touch,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   dot: {
     position: 'absolute',
-    top: 6,
-    right: 6,
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    borderWidth: 1,
+    top: designSpace.s8 + designSpace.s2,
+    right: designSpace.s8 + designSpace.s2,
+    width: designSpace.s6,
+    height: designSpace.s6,
+    borderRadius: designRadius.surface,
+    borderWidth: designFocus.width,
   },
 });

@@ -538,7 +538,9 @@ const baseStyles = defineStyles({
   daynumText: { color: baseColors.text, fontSize: fontSize.xs },
   daynumTextToday: { color: baseColors.bg, fontWeight: '600' },
   dot: { width: 5, height: 5, borderRadius: 2.5 },
-  cellCount: { color: baseColors.textSecondary, fontSize: 9.5, lineHeight: 11 },
+  // A Schibsted precisa de 1.23em de entrelinha; 11px cortava o descendente
+  // dos numeros pequenos da celula.
+  cellCount: { color: baseColors.textSecondary, fontSize: 9.5, lineHeight: 12 },
   panel: { flex: 1, borderTopWidth: 0.5, borderColor: baseColors.border },
   panelHead: {
     flexDirection: 'row',

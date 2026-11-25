@@ -17,12 +17,19 @@ import * as SecureStore from 'expo-secure-store';
 import * as WebBrowser from 'expo-web-browser';
 import { Platform } from 'react-native';
 
-import { DRIVE_SCOPE, driveConfigured, driveRedirectUri, googleClientId } from './driveConfig';
+import { GOOGLE_SCOPES, driveConfigured, driveRedirectUri, googleClientId } from './driveConfig';
 
 export type DriveSessionState = 'off' | 'connected' | 'expired' | 'unsupported';
 
+export interface GoogleProfile {
+  name: string;
+  email: string;
+  picture: string;
+}
+
 const REFRESH_KEY = 'dyarium.drive.refresh';
 const CLIENT_KEY = 'dyarium.drive.client';
+const PROFILE_KEY = 'dyarium.drive.profile';
 
 const AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
@@ -50,6 +57,7 @@ class InvalidGrant extends Error {}
 let refresh: string | null = null;
 let access: { value: string; expiresAt: number } | null = null;
 let expired = false;
+let profile: GoogleProfile | null = null;
 
 const listeners = new Set<() => void>();
 
@@ -114,21 +122,53 @@ let ready: Promise<void> | null = null;
  * antigo nao serve mais e vai fora; sem client id configurado, o valor fica
  * guardado para quando a configuracao existir.
  */
+function isValidProfile(value: unknown): value is GoogleProfile {
+  if (!value || typeof value !== 'object') return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.name === 'string' &&
+    typeof v.email === 'string' &&
+    typeof v.picture === 'string'
+  );
+}
+
 function hydrate(): Promise<void> {
   ready ??= (async () => {
     if (!persistent()) return;
     const stored = await readSecret(REFRESH_KEY);
-    if (!stored) return;
     const current = googleClientId();
-    if (current === '') return;
-    const usedClient = await readSecret(CLIENT_KEY);
-    if (usedClient !== current) {
-      await deleteSecret(REFRESH_KEY);
-      await deleteSecret(CLIENT_KEY);
-      return;
+    if (stored && current !== '') {
+      const usedClient = await readSecret(CLIENT_KEY);
+      if (usedClient !== current) {
+        await deleteSecret(REFRESH_KEY);
+        await deleteSecret(CLIENT_KEY);
+        await deleteSecret(PROFILE_KEY);
+        refresh = null;
+        profile = null;
+        return;
+      }
+      refresh = stored;
+    } else if (!stored) {
+      refresh = null;
     }
-    refresh = stored;
-    scheduleNotify();
+    // Perfil e dado de exibicao: hidrata junto, sem quebrar se corrompido.
+    const storedProfile = await readSecret(PROFILE_KEY);
+    if (storedProfile) {
+      try {
+        const parsed = JSON.parse(storedProfile) as unknown;
+        if (isValidProfile(parsed)) profile = parsed;
+        else {
+          profile = null;
+          await deleteSecret(PROFILE_KEY);
+        }
+      } catch {
+        profile = null;
+        await deleteSecret(PROFILE_KEY);
+      }
+    } else {
+      profile = null;
+    }
+    if (refresh) scheduleNotify();
   })().catch(() => undefined);
   return ready;
 }
@@ -221,7 +261,8 @@ function applyAccess(grant: TokenGrant): void {
 async function clearSession(): Promise<void> {
   refresh = null;
   access = null;
-  await Promise.all([deleteSecret(REFRESH_KEY), deleteSecret(CLIENT_KEY)]);
+  profile = null;
+  await Promise.all([deleteSecret(REFRESH_KEY), deleteSecret(CLIENT_KEY), deleteSecret(PROFILE_KEY)]);
 }
 
 export function driveSessionState(): DriveSessionState {
@@ -264,7 +305,7 @@ export async function connectDrive(): Promise<void> {
     client_id: clientId,
     redirect_uri: driveRedirectUri(),
     response_type: 'code',
-    scope: DRIVE_SCOPE,
+    scope: GOOGLE_SCOPES,
     access_type: 'offline',
     prompt: 'consent',
     include_granted_scopes: 'true',
@@ -306,6 +347,19 @@ export async function connectDrive(): Promise<void> {
   expired = false;
   await writeSecret(REFRESH_KEY, grant.refreshToken);
   await writeSecret(CLIENT_KEY, clientId);
+
+  // Identidade e best-effort: nunca bloqueia nem quebra o login.
+  profile = null;
+  await deleteSecret(PROFILE_KEY);
+  try {
+    const fetched = await fetchGoogleProfile(grant.accessToken);
+    if (fetched) {
+      profile = fetched;
+      await writeSecret(PROFILE_KEY, JSON.stringify(fetched));
+    }
+  } catch {
+    // Ignorado de proposito.
+  }
   notify();
 }
 
@@ -318,6 +372,18 @@ export async function getDriveAccessToken(forceRefresh = false): Promise<string>
   await hydrate();
 
   if (!forceRefresh && access && access.expiresAt - Date.now() > FRESH_MS) {
+    if (!profile) {
+      try {
+        const fetched = await fetchGoogleProfile(access.value);
+        if (fetched) {
+          profile = fetched;
+          await writeSecret(PROFILE_KEY, JSON.stringify(fetched));
+          scheduleNotify();
+        }
+      } catch {
+        // best-effort
+      }
+    }
     return access.value;
   }
 
@@ -336,6 +402,18 @@ export async function getDriveAccessToken(forceRefresh = false): Promise<string>
       refresh = grant.refreshToken;
       await writeSecret(REFRESH_KEY, grant.refreshToken);
     }
+    if (!profile) {
+      try {
+        const fetched = await fetchGoogleProfile(grant.accessToken);
+        if (fetched) {
+          profile = fetched;
+          await writeSecret(PROFILE_KEY, JSON.stringify(fetched));
+          scheduleNotify();
+        }
+      } catch {
+        // best-effort
+      }
+    }
     return grant.accessToken;
   } catch (error) {
     if (error instanceof InvalidGrant) {
@@ -352,6 +430,35 @@ export async function getDriveAccessToken(forceRefresh = false): Promise<string>
  * Encerra a sessao. A revogacao vai no corpo do POST (nunca na URL) e uma
  * falha de rede nao impede limpar o que esta guardado aqui.
  */
+/**
+ * Busca a identidade do usuario no Google. Defensivo: qualquer falha vira
+ * `null`, sem quebrar o login nem vazar detalhe.
+ */
+export async function fetchGoogleProfile(accessToken: string): Promise<GoogleProfile | null> {
+  try {
+    const res = await (globalThis.fetch as typeof fetch)('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as unknown;
+    if (!data || typeof data !== 'object') return null;
+    const v = data as Record<string, unknown>;
+    const name = typeof v.name === 'string' ? v.name : '';
+    const email = typeof v.email === 'string' ? v.email : '';
+    const picture = typeof v.picture === 'string' ? v.picture : '';
+    // Se nada veio, trata como falha de parse.
+    if (name === '' && email === '' && picture === '') return null;
+    return { name, email, picture };
+  } catch {
+    return null;
+  }
+}
+
+/** Perfil atualmente conhecido (ou null). */
+export function driveProfile(): GoogleProfile | null {
+  return profile;
+}
+
 export async function disconnectDrive(): Promise<void> {
   await hydrate();
   const stored = refresh;
