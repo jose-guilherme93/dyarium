@@ -904,12 +904,34 @@ O web e um cliente local-first: o banco vive no navegador (wa-sqlite sobre OPFS)
 Drive do proprio usuario e a copia que sobrevive a troca de aparelho. Nao existe banco
 por usuario no backend, e o Worker nao ve conteudo de nota.
 
-**Login.** Modelo de token do Google Identity Services (`google.accounts.oauth2`), com o
-escopo `drive.file`: o app so enxerga os arquivos que ele mesmo criou. O navegador recebe
-um access token de cerca de uma hora e o guarda apenas em memoria (`web/src/local/driveSession.ts`).
-Nao ha refresh token, client secret nem credencial em disco: quando o token vence, a tela
-pede um toque em "Conectar" e o Google devolve outro sem passar pelo consentimento. O
-client ID fica em `VITE_GOOGLE_CLIENT_ID` (`web/.env.example`); ele e publico.
+**Login.** Modelo de token do Google Identity Services (`google.accounts.oauth2`), pedindo
+`openid email profile` junto do escopo `drive.file`: o app so enxerga os arquivos que ele
+mesmo criou, e recebe do userinfo (`oauth2/v3/userinfo`) nome, e-mail e foto. O navegador
+recebe um access token de cerca de uma hora e o guarda apenas em memoria
+(`web/src/local/driveSession.ts`). Nao ha refresh token, client secret nem credencial em
+disco: quando o token vence, o app tenta de novo sem tela de login. O client ID fica em
+`VITE_GOOGLE_CLIENT_ID` (`web/.env.example`); ele e publico.
+
+**Primeiro acesso.** O Google e a acao principal da primeira tela; escolher uma pasta ou
+seguir so naquele navegador sao caminhos secundarios, em link discreto. Quem entra com Google
+ganha identidade e cofre no Drive na mesma passada.
+
+**Identidade.** O perfil (`name`, `email`, `picture`) e so exibicao, nunca autorizacao: fica
+no `localStorage` (`dyarium.account`) para a foto pintar antes de qualquer rede e e apagado
+ao sair. A foto vive no canto (rodape da barra lateral, trilho recolhido e barra do celular)
+com um ponto de estado — cheio: Drive conectado; anel: sessao vencida; tracejado: sem conta.
+Tocar abre a folha da conta, com nome, e-mail, tamanho do cofre, ultima sincronizacao e as
+duas acoes deste navegador: sincronizar e sair. Sair encerra a sessao, apaga o perfil, a
+marca do Drive e revoga o token em melhor esforco. Nome e foto so mudam na conta Google; a
+folha tem o link para la.
+
+**Renovacao silenciosa.** O Google exige gesto para emitir token: nao existe refresh em
+segundo plano no navegador. Entao, quando este navegador ja tem cofre no Drive e a sessao
+morreu, o primeiro `pointerdown`/`keydown` da pagina pede o token com `prompt: "none"` —
+sem tela, sem escolha de conta. Se o Google estiver ativo naquele navegador, a sessao volta e
+o sync pendente sobe (`flushVaultSync`); se nao estiver, o pedido falha em silencio e a linha
+`conectar` continua como fallback. O script do GIS e pre-carregado para o gesto nao gastar
+ativacao do usuario baixando script.
 
 **Layout.** A pasta `Dyarium/` na raiz do Drive e o cofre, sem subpasta por cofre:
 
@@ -951,6 +973,15 @@ quinze). O mesmo plano serve para a pasta do computador (File System Access) e p
 (`DriveFolder`, em `web/src/local/driveFolder.ts`), porque as duas superficies expoem a mesma
 interface de pastas e arquivos. Nada e reescrito quando nada mudou.
 
+**Retrato acompanha o layout.** Depois de toda gravacao que escreve ou apaga arquivo,
+`folderSync` chama o gancho registrado por `vaultCloud` e re-sela `key.txt`, `backup.enc` e
+`state.enc` na mesma pasta. Sem isso o layout ficava novo e o retrato velho: a restauracao
+em outro aparelho lia `state.enc` e nao via a nota recem-criada; pior, o plano seguinte
+comparava o manifest do Drive com o banco local e apagava o arquivo que nao tinha restaurado.
+Se o selo falhar, o cofre continua sujo e uma flag de snapshot pendente faz a proxima
+sincronizacao re-selar mesmo sem mudanca de layout. Escrever o retrato a cada rajada custa
+ler e selar o acervo uma vez por rajada, o mesmo custo do "salvar" manual.
+
 **Outro aparelho.** Entrar com o Google num navegador novo le `key.txt`, adota o codigo,
 baixa `state.enc` (ou `backup.enc`, no cofre antigo), decifra com a chave derivada e aplica
 com `applySnapshot`, que nunca sobrescreve nota local mais nova que o retrato, nem analise
@@ -965,15 +996,46 @@ resto.
 **Abrir o cofre e restaurar e sincronizar.** `openDriveVault` restaura quando ha `key.txt`
 e, em seguida, sempre sincroniza. Restaurar sem sincronizar deixava as notas locais fora do
 Drive quando o retrato remoto estava vazio ou mais antigo — o cofre nunca ficava "sujo" e
-nada subia. O `manifest.json` e o `backup.enc` sao reescritos quando o plano muda, entao
-uma vez que o banco local tem as notas, elas estao no Drive.
+nada subia. Com o gancho de snapshot, o retrato e reescrito na mesma passada em que o layout
+muda; uma vez que o banco local tem as notas, elas e o retrato que as descreve estao no
+Drive.
 
 **Sessao e reconexao.** O token dura cerca de uma hora e nao sobrevive ao reload (nao ha
-refresh token sem servidor). Por isso o navegador guarda apenas uma marca de que o cofre
-mora no Drive (`localStorage["dyarium.drive"]`) e o ultimo resumo (bytes, notas), nunca a
-credencial. Sem sessao, uma linha acima da area das notas mostra `Google Drive`, o tamanho
-do cofre e um botao `conectar`: um toque refaz o login, abre o cofre e grava o pendente
-(`flushVaultSync`) na mesma passada. Com sessao viva a linha nao aparece.
+refresh token sem servidor); a renovacao silenciosa acima cobre o caso comum. O navegador
+guarda apenas uma marca de que o cofre mora no Drive (`localStorage["dyarium.drive"]`) e o
+ultimo resumo (bytes, notas), nunca a credencial. Se a renovacao silenciosa falhar (Google
+desconectado naquele navegador), uma linha acima da area das notas mostra `Google Drive`, o
+tamanho do cofre e um botao `conectar`: um toque refaz o login, abre o cofre e grava o
+pendente (`flushVaultSync`) na mesma passada. Com sessao viva a linha nao aparece.
+
+**App.** O cliente mobile nao depende do navegador para continuar logado: o refresh token
+fica no `expo-secure-store` e a sessao e restaurada no boot. O login pede os mesmos
+`openid email profile` + `drive.file`; a identidade e guardada ao lado do refresh token (dado
+de exibicao, nunca credencial) e aparece como avatar no canto do cabecalho, com o mesmo ponto
+de estado do web. A tela `/perfil` mostra nome, e-mail, tamanho do cofre, ultimo envio e as
+acoes sincronizar/conectar, trocar de conta e sair. O Drive sobe sozinho: ao voltar para o
+primeiro plano, se a sessao esta viva e o ultimo envio tem mais de dez minutos, o app abre o
+cofre em silencio (restaura o que veio e empurra o que mudou). Sem sessao, nada e tentado.
 
 **Custo.** O acervo ocupa a cota do Drive de cada usuario (15 GB no plano gratuito); o app
 nao paga armazenamento e nao cobra nada.
+
+## Casca e navegacao
+
+A interface dos dois clientes segue `docs/design`: Schibsted Grotesk (exceto leitura longa,
+em Newsreader), a paleta do sistema em claro e escuro, densidade de 26 no web e toque de 44
+no app. No web, o trilho de 34 fica **sempre** visivel e a sidebar de 238 abre ao lado dele;
+abaixo de 900 o trilho sai e a barra do celular leva a gaveta com as mesmas acoes. A conta
+mora no pe do trilho, num menu ancorado (camada de folha, hairline, sem veu nem sombra) com
+os estados conectado, sessao vencida e sem conta.
+
+**Abas de notas.** Cada nota comum aberta vira uma aba de 26 na barra de 34 no topo do
+editor; a ativa usa degrau tonal e barra de 2 na borda de ataque. Abrir de novo nao duplica,
+fechar a ativa ativa a vizinha da direita (senao a da esquerda, senao o inicio) e nota
+apagada/arquivada fecha a aba. As abas e a ativa ficam em `localStorage["dyarium.tabs"]`;
+ids que nao existem mais caem fora quando a lista chega. Livro e caderno de projetos abrem na
+propria superficie, sem aba.
+
+**App.** O cabecalho da home tem duas linhas: o caderno (nome inteiro) e, abaixo, as seis
+acoes mais o avatar no canto. O FAB de nova nota e o circulo de 44 previsto no sistema; o
+perfil segue a mesma linguagem do menu do web e a linha destrutiva so aparece quando ha conta.
