@@ -16,56 +16,25 @@ import {
 } from "../local/driveSession";
 import { openDriveVault, type VaultStage, type VaultSummary } from "../local/vaultCloud";
 import { flushVaultSync } from "../local/folderSync";
+import {
+  DRIVE_MARK_KEY,
+  driveMarked,
+  rememberDriveVault,
+  clearDriveMark,
+  cachedSummary,
+} from "../local/driveMark";
 
-/**
- * Marca local de que este navegador tem cofre no Drive. Nao e segredo: diz so
- * que o cofre mora no Drive, para a linha de reconectar saber que ha o que
- * reconectar quando a sessao do Google (que vive so na memoria) se perde.
- */
-export const DRIVE_MARK_KEY = "dyarium.drive";
-
-const DRIVE_SUMMARY_KEY = "dyarium.drive.summary";
-
-export function driveMarked(): boolean {
-  try {
-    return localStorage.getItem(DRIVE_MARK_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-/** O ultimo tamanho conhecido do cofre; serve ao numero da linha sem sessao. */
-export function rememberDriveVault(summary?: VaultSummary): void {
-  try {
-    localStorage.setItem(DRIVE_MARK_KEY, "1");
-    if (summary) localStorage.setItem(DRIVE_SUMMARY_KEY, JSON.stringify(summary));
-  } catch {
-    // Sem localStorage a linha nao aparece na proxima abertura; o cofre em si
-    // continua no Drive e a sessao viva nao depende disto.
-  }
-}
-
-function cachedSummary(): VaultSummary | null {
-  try {
-    const bruto = localStorage.getItem(DRIVE_SUMMARY_KEY);
-    if (!bruto) return null;
-    const guardado = JSON.parse(bruto) as VaultSummary;
-    if (
-      typeof guardado?.notes !== "number" ||
-      typeof guardado?.bytes !== "number" ||
-      !Number.isFinite(guardado.notes) ||
-      !Number.isFinite(guardado.bytes)
-    ) {
-      return null;
-    }
-    return guardado;
-  } catch {
-    return null;
-  }
-}
+// Re-exporta para manter imports/testes antigos funcionando.
+export {
+  DRIVE_MARK_KEY,
+  driveMarked,
+  rememberDriveVault,
+  clearDriveMark,
+  cachedSummary,
+};
 
 /** "12,4 MB · 400 notas"; sem tamanho ainda, so a contagem. */
-function tamanho(resumo: VaultSummary | null): string {
+export function tamanho(resumo: VaultSummary | null): string {
   if (!resumo) return "sessão vencida";
   const notas =
     resumo.notes === 1 ? "1 nota" : `${resumo.notes.toLocaleString("pt-BR")} notas`;

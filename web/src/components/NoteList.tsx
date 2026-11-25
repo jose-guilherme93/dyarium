@@ -19,6 +19,7 @@ function readNoteOrder(): NoteOrder {
 import { normalizeSearch } from "../lib/search";
 import { formatDuration, formatShortDate } from "../lib/format";
 import { tagColor } from "../lib/tags";
+import { noteTitle } from "../lib/noteTitle";
 import { noteDate, sortNotesByDate, type NoteOrder } from "../lib/noteOrder";
 import { useEscape } from "../lib/useEscape";
 import type { Entry, Notebook } from "../types";
@@ -45,40 +46,18 @@ interface NoteListProps {
   /** A faixa recolhida pediu a busca: abre o campo assim que a lista montar. */
   autoSearch?: boolean;
   onSearchOpened?: () => void;
-  onOpen: (id: string) => void;
+  onOpen: (id: string, title?: string) => void;
   onCreate: (event: ReactMouseEvent<HTMLButtonElement>) => void;
   onManageTags: () => void;
-  /** Apagou notas: o dono do estado fecha a nota aberta que sumiu e recarrega. */
+  /** Notas apagadas ou arquivadas: o dono do estado fecha a aba delas. */
   onMutated?: (removedIds: string[]) => void;
 }
 
-// displayTitle hides the date older automatic titles carried; the date is shown
-// separately, small, below the title.
-function displayTitle(entry: Entry): string {
-  const rawTitle = (entry.title || "").trim();
-  const isAutomatic =
-    rawTitle.toLowerCase() === "texto" ||
-    rawTitle.toLowerCase() === "audio" ||
-    rawTitle.toLowerCase() === "áudio";
-  if (rawTitle && !isAutomatic) {
-    return rawTitle.replace(/\s·\s\d{2}\/\d{2}\/\d{4}\s\d{2}:\d{2}$/, "");
-  }
-  const preview = (entry.preview || "").trim();
-  if (preview) {
-    return preview.split("\n")[0].trim();
-  }
-  if (entry.original_filename) {
-    return entry.original_filename;
-  }
-  if (entry.source !== "text") {
-    return "Áudio";
-  }
-  return "Sem título";
-}
-
+// A busca usa o mesmo titulo que a linha mostra (o automatico antigo trazia a
+// data no fim; ela aparece separada, pequena, abaixo).
 function matches(entry: Entry, query: string): boolean {
   return normalizeSearch(
-    `${displayTitle(entry)} ${entry.original_filename ?? ""} ${entry.preview ?? ""} ${(
+    `${noteTitle(entry)} ${entry.original_filename ?? ""} ${entry.preview ?? ""} ${(
       entry.tags ?? []
     ).join(" ")}`,
   ).includes(query);
@@ -288,10 +267,12 @@ export function NoteList({
     if (targets.length === 0) return;
     setBusy(true);
     let changed = 0;
+    const changedIds: string[] = [];
     for (const entry of targets) {
       try {
         await api.patchEntry(entry.id, { archived: next });
         changed += 1;
+        changedIds.push(entry.id);
       } catch {
         // segue com as demais; o aviso no fim diz quantas falharam
       }
@@ -311,7 +292,9 @@ export function NoteList({
     if (changed < targets.length) {
       notify(`Não foi possível arquivar ${targets.length - changed}`, "error");
     }
-    onMutated?.([]);
+    // Arquivar tira a nota da lista: a aba dela fecha junto. Desarquivar nao
+    // fecha nada, porque a nota volta para a lista.
+    onMutated?.(next ? changedIds : []);
     if (!onMutated) void load();
   };
 
@@ -353,7 +336,7 @@ export function NoteList({
         label: "Abrir",
         onSelect: () => {
           clearSelection();
-          onOpen(entry.id);
+          onOpen(entry.id, noteTitle(entry));
         },
       },
       {
@@ -406,7 +389,7 @@ export function NoteList({
 
   const row = (entry: Entry) => {
     const isAudio = entry.source !== "text";
-    const title = displayTitle(entry);
+    const title = noteTitle(entry);
     const notebook = notebookById.get(entry.notebook_id ?? "");
     const tags = entry.tags ?? [];
     const isSelected = selected.has(entry.id);
@@ -440,7 +423,7 @@ export function NoteList({
                 toggleSelected(entry.id);
                 return;
               }
-              onOpen(entry.id);
+              onOpen(entry.id, title);
             }}
           >
             <span className="note-row-head">
@@ -693,8 +676,9 @@ export function NoteList({
               className="button button--ghost button--small"
               onClick={() => {
                 const id = [...selected][0];
+                const entrada = entries.find((item) => item.id === id);
                 clearSelection();
-                onOpen(id);
+                onOpen(id, entrada ? noteTitle(entrada) : "");
               }}
               disabled={busy}
             >

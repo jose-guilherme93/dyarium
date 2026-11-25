@@ -444,7 +444,7 @@ export function FirstRun({
                 {folderCapable ? (
                   <button
                     type="button"
-                    className="first-run-btn first-run-btn-outline"
+                    className="first-run-linkbtn"
                     onClick={chooseFolder}
                   >
                     Escolher pasta…
@@ -452,7 +452,7 @@ export function FirstRun({
                 ) : (
                   <button
                     type="button"
-                    className="first-run-btn first-run-btn-outline"
+                    className="first-run-linkbtn"
                     onClick={() => setView("browser")}
                   >
                     Seguir neste navegador

@@ -11,6 +11,9 @@
 
 import { DRIVE_SCOPE } from "./drive";
 
+/** Escopos pedidos ao Google: identidade (nome, e-mail, foto) + acesso ao Drive. */
+export const WEB_GOOGLE_SCOPES = `openid email profile ${DRIVE_SCOPE}`;
+
 const GIS_SRC = "https://accounts.google.com/gsi/client";
 
 interface TokenResponse {
@@ -76,7 +79,7 @@ function loadGis(): Promise<void> {
  * Pede o token do Drive. Precisa de um gesto do usuario (clique): o navegador
  * bloqueia a janela do Google aberta por script.
  */
-export async function requestDriveToken(): Promise<DriveToken> {
+export async function requestDriveToken(options?: { silent?: boolean }): Promise<DriveToken> {
   const clientId = googleClientId();
   if (!clientId) throw new Error("falta configurar VITE_GOOGLE_CLIENT_ID");
   await loadGis();
@@ -99,7 +102,7 @@ export async function requestDriveToken(): Promise<DriveToken> {
     };
     const client = oauth2.initTokenClient({
       client_id: clientId,
-      scope: DRIVE_SCOPE,
+      scope: WEB_GOOGLE_SCOPES,
       callback: (response) => {
         if (encerrado) return;
         encerrar();
@@ -117,7 +120,7 @@ export async function requestDriveToken(): Promise<DriveToken> {
         reject(new Error(error.message || error.type || "login cancelado"));
       },
     });
-    client.requestAccessToken({ prompt: "" });
+    client.requestAccessToken({ prompt: options?.silent ? "none" : "" });
   });
 }
 

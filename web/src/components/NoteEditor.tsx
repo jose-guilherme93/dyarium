@@ -365,7 +365,7 @@ export function NoteEditor({
       return;
     }
     el.style.height = "auto";
-    el.style.height = `${Math.max(el.scrollHeight, 44)}px`;
+    el.style.height = `${Math.max(el.scrollHeight, 26)}px`;
   }, [title, entry]);
 
   const applyNoteData = useCallback(

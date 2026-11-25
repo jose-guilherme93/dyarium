@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { preloadGoogle, requestDriveToken, tokenIsFresh } from "./google";
 
 interface TokenConfig {
+  scope: string;
   callback: (response: { access_token?: string; expires_in?: number; error?: string }) => void;
   error_callback: (error: { message?: string; type?: string }) => void;
 }
@@ -11,14 +12,19 @@ interface TokenConfig {
  * GIS de mentira: guarda a configuracao que o app montou e nao abre janela.
  * O teste decide quando (e se) o Google responde.
  */
-function installGis(): { config: () => TokenConfig } {
+function installGis(): { config: () => TokenConfig; prompts: () => string[] } {
   let guardada: TokenConfig | null = null;
+  const pedidos: string[] = [];
   (window as unknown as { google: unknown }).google = {
     accounts: {
       oauth2: {
         initTokenClient: (config: TokenConfig) => {
           guardada = config;
-          return { requestAccessToken: () => undefined };
+          return {
+            requestAccessToken: (options?: { prompt?: string }) => {
+              pedidos.push(options?.prompt ?? "(sem prompt)");
+            },
+          };
         },
       },
     },
@@ -28,6 +34,7 @@ function installGis(): { config: () => TokenConfig } {
       if (!guardada) throw new Error("o app nao iniciou o cliente do GIS");
       return guardada;
     },
+    prompts: () => pedidos,
   };
 }
 
@@ -92,5 +99,35 @@ describe("login do Drive", () => {
     expect(tokenIsFresh({ accessToken: "x", expiresAt: Date.now() + 30_000 })).toBe(false);
     expect(tokenIsFresh({ accessToken: "x", expiresAt: Date.now() + 600_000 })).toBe(true);
     expect(tokenIsFresh(null)).toBe(false);
+  });
+
+  it("pedido normal deixa o Google decidir a tela (prompt vazio)", async () => {
+    const gis = installGis();
+    const pedido = requestDriveToken();
+    await aguardarConfig(gis);
+    expect(gis.prompts()).toEqual([""]);
+    gis.config().callback({ access_token: "t", expires_in: 3600 });
+    await pedido;
+  });
+
+  it("pedido silencioso usa prompt none e nao abre tela", async () => {
+    const gis = installGis();
+    const pedido = requestDriveToken({ silent: true });
+    await aguardarConfig(gis);
+    expect(gis.prompts()).toEqual(["none"]);
+    gis.config().callback({ access_token: "t", expires_in: 3600 });
+    await pedido;
+  });
+
+  it("pede identidade e Drive no mesmo consentimento", async () => {
+    const gis = installGis();
+    const pedido = requestDriveToken();
+    const config = await aguardarConfig(gis);
+    expect(config.scope).toContain("openid");
+    expect(config.scope).toContain("email");
+    expect(config.scope).toContain("profile");
+    expect(config.scope).toContain("drive.file");
+    config.callback({ access_token: "t", expires_in: 3600 });
+    await pedido;
   });
 });

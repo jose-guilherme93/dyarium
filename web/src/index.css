@@ -1,19 +1,18 @@
-/* dyarium - identidade "Tinta e papel".
-   Neutro quente de papel com um unico acento azul-tinta. A tipografia segue o
-   Notion: uma unica familia sem serifa (Inter) para titulos, interface e corpo,
-   com pesos diferentes no lugar de uma fonte decorativa. Sem gradientes,
-   sem emoji. */
+/* dyarium - identidade do sistema (docs/design/tokens.json).
+   O neutro e o do papel do sistema, sem acento decorativo: a cor so marca
+   estado. A tipografia e Schibsted Grotesk em titulos, interface e corpo;
+   `--font-serif` continua existindo porque os estilos antigos o usam e aponta
+   para a mesma familia. Sem gradientes, sem sombra difusa, sem emoji. */
 
 /* Fontes de corpo do modo escritor, auto-hospedadas. */
 @import "./bookFonts.css";
 
-/* Inter variavel auto-hospedada: o dashboard nao depende de CDN e o texto nao
-   troca de largura quando a rede atrasa. Latin e latin-ext para acentos do
-   portugues. */
+/* Schibsted Grotesk variavel, auto-hospedada (mesmas declaracoes que o arquivo
+   gerado `ui/tokens.css`). Latin e latin-ext para os acentos do portugues. */
 @font-face {
-  font-family: "Inter";
-  src: url("/fonts/inter-latin.woff2") format("woff2");
-  font-weight: 100 900;
+  font-family: "Schibsted Grotesk";
+  src: url("/fonts/schibsted-grotesk.woff2") format("woff2");
+  font-weight: 400 700;
   font-style: normal;
   font-display: swap;
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
@@ -22,33 +21,10 @@
 }
 
 @font-face {
-  font-family: "Inter";
-  src: url("/fonts/inter-latin-ext.woff2") format("woff2");
-  font-weight: 100 900;
+  font-family: "Schibsted Grotesk";
+  src: url("/fonts/schibsted-grotesk-ext.woff2") format("woff2");
+  font-weight: 400 700;
   font-style: normal;
-  font-display: swap;
-  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7,
-    U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F,
-    U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
-    U+A720-A7FF;
-}
-
-@font-face {
-  font-family: "Inter";
-  src: url("/fonts/inter-latin-italic.woff2") format("woff2");
-  font-weight: 100 900;
-  font-style: italic;
-  font-display: swap;
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
-    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191,
-    U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-
-@font-face {
-  font-family: "Inter";
-  src: url("/fonts/inter-latin-ext-italic.woff2") format("woff2");
-  font-weight: 100 900;
-  font-style: italic;
   font-display: swap;
   unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7,
     U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F,
@@ -59,18 +35,20 @@
 :root {
   color-scheme: light dark;
 
-  --paper: #f6f4ef;
-  --paper-2: #efece4;
-  --paper-3: #e7e2d7;
-  --ink: #211e1a;
-  --ink-soft: #6b655c;
-  --line: #ded8cc;
-  --accent: #2c4a63;
-  --accent-soft: #e3e9ee;
-  --danger: #9c3b2e;
-  --ok: #2f7d4f;
-  --warn: #8a5a16;
-  --info: #2f5f8f;
+  /* Valores do sistema (paleta clara). Os nomes legados continuam valendo
+     porque o CSS antigo os consome; o valor por tras e o de tokens.json. */
+  --paper: #eceee9;
+  --paper-2: #e3e6e0;
+  --paper-3: #dadfd7;
+  --ink: #232622;
+  --ink-soft: #6a6f68;
+  --line: #d2d6cf;
+  --accent: #5b6f66;
+  --accent-soft: #dce3e0;
+  --danger: #9c6259;
+  --ok: #5c7a63;
+  --warn: #8b7444;
+  --info: #5a6f80;
 
   /* Mapa de relacoes: cores por tipo de no, todas dessaturadas. */
   --graph-person: #858c93;
@@ -89,20 +67,23 @@
   --color-accent: var(--accent);
   --color-accent-soft: var(--accent-soft);
   --color-danger: var(--danger);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-info: var(--info);
 
-  /* Titulo e interface compartilham a mesma familia, como no Notion. O nome
-     `--font-serif` continua existindo porque os estilos antigos o usam; aponta
-     para a sans para nao sobrar nenhuma letra na fonte antiga. */
-  --font-sans: "Inter", ui-sans-serif, -apple-system, BlinkMacSystemFont,
-    "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  /* Titulo e interface compartilham a mesma familia, como no sistema.
+     `--font-serif` continua existindo porque os estilos antigos o usam. */
+  --font-sans: "Schibsted Grotesk", system-ui, -apple-system, "Segoe UI",
+    Roboto, sans-serif;
   --font-serif: var(--font-sans);
-  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas,
+    "Liberation Mono", monospace;
 
   --space: 4px;
-  --radius: 8px;
-  --radius-sm: 5px;
-  /* Foco visivel sem o azul do site: um contorno neutro e discreto. */
-  --focus-ring: color-mix(in srgb, var(--color-muted) 55%, transparent);
+  /* Forma do sistema: raio 3 em superficie, 2 em controle. */
+  --radius: var(--dy-radius-surface);
+  --radius-sm: var(--dy-radius-control);
+  --focus-ring: var(--color-accent);
 
   /* Linha de leitura confortavel para a coluna do documento. */
   --measure: 68ch;
@@ -110,18 +91,18 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --paper: #14161a;
-    --paper-2: #1c1f24;
-    --paper-3: #272d36;
-    --ink: #eceae3;
-    --ink-soft: #b7bcc4;
-    --line: #363c45;
-    --accent: #9cc0e8;
-    --accent-soft: #2b3f55;
-    --danger: #ee8a7c;
-    --ok: #7fc79a;
-    --warn: #e0b26a;
-    --info: #8db8e0;
+    --paper: #171a18;
+    --paper-2: #1f2320;
+    --paper-3: #272c28;
+    --ink: #e4e8e3;
+    --ink-soft: #a1a8a2;
+    --line: #2f3431;
+    --accent: #a2b8ae;
+    --accent-soft: #2a3431;
+    --danger: #c78f85;
+    --ok: #94b09a;
+    --warn: #c6ab77;
+    --info: #9ab3c4;
     --graph-person: #9aa1a8;
     --graph-place: #9aa39c;
     --graph-theme: #aaa49c;
@@ -145,8 +126,9 @@ body {
   background: var(--color-bg);
   color: var(--color-text);
   font-family: var(--font-sans);
-  font-size: 15px;
-  line-height: 1.6;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.32;
   font-optical-sizing: auto;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -176,7 +158,7 @@ select {
 }
 
 /* O BlockNote traz uma pilha propria com Inter, mas sem a fonte carregada o
-   navegador caia na fonte do sistema. A familia local e a mesma; o seletor
+   navegador cai na fonte do sistema. A familia local e a mesma; o seletor
    garante que o editor nao fique diferente do resto da pagina. */
 .bn-container,
 .bn-editor,
@@ -215,7 +197,7 @@ select {
 .first-run-title {
   margin: 0;
   font-size: clamp(27px, 3.2vw, 34px);
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: -0.04em;
   line-height: 1.1;
 }
@@ -252,7 +234,7 @@ select {
   margin: 26px 0 0;
   padding: 14px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--dy-radius-surface);
   background: var(--paper-2);
 }
 .first-run-scene-inner {
@@ -292,7 +274,7 @@ select {
   width: 24px;
   height: 24px;
   flex: none;
-  border-radius: 6px;
+  border-radius: var(--dy-radius-control);
   background: var(--accent-soft);
   color: var(--accent);
   display: flex;
@@ -560,7 +542,7 @@ select {
   font-size: 11px;
   color: var(--ink-soft);
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: var(--dy-radius-control);
   padding: 1px 8px;
 }
 

@@ -97,6 +97,19 @@ describe("App", () => {
     expect(screen.queryByRole("button", { name: "Entrar" })).not.toBeInTheDocument();
   });
 
+  it("com conta ja usada, o primeiro gesto renova o Google em silencio", async () => {
+    vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-id-de-teste");
+    localStorage.setItem("dyarium.onboarded", "1");
+    localStorage.setItem("dyarium.drive", "1");
+    render(<App />);
+    await waitFor(() => expect(screen.getByText("Nenhuma nota ainda.")).toBeInTheDocument());
+    vi.mocked(connectDrive).mockClear();
+
+    fireEvent.pointerDown(document.body);
+
+    await waitFor(() => expect(connectDrive).toHaveBeenCalledWith({ silent: true }));
+  });
+
   it("VITE_LOCAL_ONLY ignora o token guardado e nem pergunta pelo servidor", async () => {
     // Dev com a API de pe: a flag prende o app ao cofre do navegador, senao o
     // portao do token esconde o caminho que se quer testar.
@@ -152,6 +165,48 @@ describe("App", () => {
     await waitFor(() => expect(screen.getByRole("navigation")).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: "Insights" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Mapa" })).toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
+
+  it("o trilho fica de pe com a sidebar aberta e sozinho quando ela recolhe", async () => {
+    localStorage.setItem("dyarium.token", "token-de-teste");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => ({
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify(String(url).includes("/api/v1/version") ? { version: "test" } : { entries: [] }),
+      })),
+    );
+    render(<App />);
+
+    const rail = await screen.findByRole("navigation", { name: "Trilho" });
+    const sidebar = await screen.findByRole("complementary", {
+      name: /Navegação principal/,
+    });
+
+    // A sidebar aberta nao repete a conta nem as telas do trilho: a navegacao
+    // global e uma so, e o avatar continua no pe do trilho.
+    expect(within(sidebar).queryByRole("button", { name: "Conta" })).not.toBeInTheDocument();
+    expect(within(rail).getByRole("button", { name: "Conta" })).toBeInTheDocument();
+    for (const nome of ["Mapa", "Estatísticas", "Calendário", "Configurações", "Sair"]) {
+      expect(within(rail).getByRole("button", { name: nome })).toBeInTheDocument();
+    }
+
+    // Recolher desmonta a sidebar e deixa o trilho; expandir traz de volta.
+    fireEvent.click(within(rail).getByRole("button", { name: "Recolher menu" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("complementary", { name: /Navegação principal/ }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole("navigation", { name: "Trilho" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Expandir menu" }));
+    expect(
+      await screen.findByRole("complementary", { name: /Navegação principal/ }),
+    ).toBeInTheDocument();
     vi.unstubAllGlobals();
   });
 
@@ -212,6 +267,60 @@ describe("App", () => {
     await waitFor(() => expect(screen.getByRole("navigation")).toBeInTheDocument());
     expect(localStorage.getItem("dyarium.token")).toBe("bom");
     vi.unstubAllGlobals();
+  });
+});
+
+describe("App conta no trilho", () => {
+  it("o avatar do pe do trilho abre o menu acima dele e fecha com Escape", async () => {
+    localStorage.setItem("dyarium.onboarded", "1");
+    render(<App />);
+
+    const rail = await screen.findByRole("navigation", { name: "Trilho" });
+    const gatilho = within(rail).getByRole("button", { name: "Conta" });
+    expect(gatilho).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(gatilho);
+
+    const menu = await screen.findByRole("menu", { name: "Conta Google" });
+    expect(gatilho).toHaveAttribute("aria-expanded", "true");
+    // O menu nasce encostado na borda do trilho: nao cobre a navegacao.
+    expect(menu).toHaveStyle({ left: "34px", width: "238px" });
+    // O avatar continua na tela, no pe do trilho.
+    expect(within(rail).getByRole("button", { name: "Conta" })).toBeInTheDocument();
+
+    fireEvent.keyDown(menu, { key: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByRole("menu", { name: "Conta Google" })).not.toBeInTheDocument(),
+    );
+    expect(gatilho).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("sem conta o avatar usa o glifo de pessoa em vez de interrogação", async () => {
+    localStorage.setItem("dyarium.onboarded", "1");
+    render(<App />);
+
+    const rail = await screen.findByRole("navigation", { name: "Trilho" });
+    const gatilho = within(rail).getByRole("button", { name: "Conta" });
+    expect(gatilho.querySelector(".account-avatar-glyph")).not.toBeNull();
+    expect(gatilho.textContent).not.toContain("?");
+    expect(gatilho.querySelector(".account-state-mark--none")).not.toBeNull();
+  });
+
+  it("com conta salva e sessao vencida, o avatar pede reconexao", async () => {
+    localStorage.setItem("dyarium.onboarded", "1");
+    localStorage.setItem(
+      "dyarium.account",
+      JSON.stringify({ name: "Ada Lovelace", email: "ada@example.com", picture: "" }),
+    );
+    render(<App />);
+
+    const rail = await screen.findByRole("navigation", { name: "Trilho" });
+    const gatilho = within(rail).getByRole("button", { name: "Conta" });
+    expect(gatilho.querySelector(".account-state-mark--expired")).not.toBeNull();
+
+    fireEvent.click(gatilho);
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Conectar/ }));
+    expect(screen.queryByRole("menu", { name: "Conta Google" })).not.toBeInTheDocument();
   });
 });
 

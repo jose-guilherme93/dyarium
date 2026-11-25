@@ -9,7 +9,7 @@ vi.mock("../lib/idb", () => idb);
 const google = vi.hoisted(() => ({ token: vi.fn() }));
 vi.mock("./google", async (importOriginal) => {
   const original = await importOriginal<typeof import("./google")>();
-  return { ...original, requestDriveToken: () => google.token() };
+  return { ...original, requestDriveToken: (options?: { silent?: boolean }) => google.token(options) };
 });
 
 import { DriveClient } from "./drive";
@@ -19,10 +19,14 @@ import {
   disconnectDrive,
   driveClient,
   driveConfigured,
+  driveProfile,
   driveSessionState,
   driveVaultRoot,
   onDriveSessionChange,
+  signOutAccount,
 } from "./driveSession";
+import { cachedProfile } from "./account";
+import { driveMarked, rememberDriveVault } from "./driveMark";
 
 const setItem = vi.spyOn(Storage.prototype, "setItem");
 
@@ -54,6 +58,11 @@ beforeEach(() => {
   google.token.mockReset();
   idb.storeSet.mockClear();
   setItem.mockClear();
+  // O userinfo nunca vai a rede num teste: sem perfil, o login segue.
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response("", { status: 401 })) as unknown as typeof fetch,
+  );
 });
 
 afterEach(() => {
@@ -128,7 +137,15 @@ describe("sessao do Drive", () => {
 
     expect(raiz).toBeInstanceOf(DriveFolder);
     expect(raiz.name).toBe("Dyarium");
-    const url = new URL(String(drive.fetchImpl.mock.calls[0][0]));
+    const chamadaDyarium = drive.fetchImpl.mock.calls.find(([input]) => {
+      try {
+        return new URL(String(input)).searchParams.get("q")?.includes("name = 'Dyarium'") ?? false;
+      } catch {
+        return false;
+      }
+    });
+    expect(chamadaDyarium).toBeDefined();
+    const url = new URL(String(chamadaDyarium![0]));
     const consulta = url.searchParams.get("q") ?? "";
     expect(consulta).toContain("name = 'Dyarium'");
     expect(consulta).toContain("'root' in parents");
@@ -148,5 +165,56 @@ describe("sessao do Drive", () => {
     expect(driveClient()).toBeNull();
     expect(avisos).toHaveBeenCalledTimes(1);
     sair();
+  });
+
+  it("expoe o perfil vindo do userinfo e o guarda no cache", async () => {
+    vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-id-de-teste");
+    google.token.mockResolvedValue({ accessToken: "tok", expiresAt: Date.now() + 3_600_000 });
+    const perfil = { name: "Ada", email: "ada@example.com", picture: "https://x/p.png" };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) =>
+        String(input).includes("/userinfo")
+          ? new Response(JSON.stringify(perfil), { status: 200 })
+          : new Response("", { status: 500 }),
+      ) as unknown as typeof fetch,
+    );
+
+    await connectDrive();
+    // A identidade chega depois: o login nao espera a rede de identidade.
+    await vi.waitFor(() => expect(driveProfile()).toEqual(perfil));
+    expect(cachedProfile()).toEqual(perfil);
+  });
+
+  it("sair apaga perfil, cache e a marca do cofre no Drive", async () => {    vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-id-de-teste");
+    google.token.mockResolvedValue({ accessToken: "tok", expiresAt: Date.now() + 3_600_000 });
+    const perfil = { name: "Ada", email: "ada@example.com", picture: "" };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) =>
+        String(input).includes("/userinfo")
+          ? new Response(JSON.stringify(perfil), { status: 200 })
+          : new Response("", { status: 500 }),
+      ) as unknown as typeof fetch,
+    );
+    rememberDriveVault();
+    await connectDrive();
+    await vi.waitFor(() => expect(cachedProfile()).toEqual(perfil));
+
+    signOutAccount();
+
+    expect(driveSessionState()).toBe("off");
+    expect(driveProfile()).toBeNull();
+    expect(cachedProfile()).toBeNull();
+    expect(driveMarked()).toBe(false);
+  });
+
+  it("o pedido silencioso chega ao Google sem tela de login", async () => {
+    vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-id-de-teste");
+    google.token.mockResolvedValue({ accessToken: "tok", expiresAt: Date.now() + 3_600_000 });
+
+    await connectDrive({ silent: true });
+
+    expect(google.token).toHaveBeenCalledWith({ silent: true });
   });
 });

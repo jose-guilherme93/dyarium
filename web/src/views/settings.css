@@ -219,6 +219,14 @@
 .cfg-btn:hover { border-color: var(--dy-primary); color: var(--dy-primary); }
 .cfg-btn:disabled { opacity: 0.45; cursor: default; color: var(--dy-text-muted); border-color: var(--dy-line); }
 
+/* Desabilitado nao mantem o preenchimento da primaria: o texto mudo sobre o
+   verde ficava ilegivel. Vira um controle neutro, ainda apagado. */
+.cfg-btn--solid:disabled {
+  background: var(--dy-surface-raised);
+  border-color: var(--dy-line);
+  color: var(--dy-text-muted);
+}
+
 .cfg-btn--solid {
   background: var(--dy-primary);
   border-color: var(--dy-primary);

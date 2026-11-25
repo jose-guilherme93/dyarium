@@ -29,6 +29,7 @@
 .brand {
   font-family: var(--font-serif);
   font-size: 17px;
+  font-weight: 600;
   letter-spacing: 0.02em;
   padding: calc(var(--space) * 1) calc(var(--space) * 2);
 }
@@ -266,7 +267,7 @@
 .editor-actions .primary {
   background: var(--color-accent);
   border-color: var(--color-accent);
-  color: #fff;
+  color: var(--color-bg);
 }
 
 .icon-button {
@@ -643,7 +644,7 @@
   height: 42px;
   border-radius: 50%;
   background: var(--color-accent);
-  color: #fff;
+  color: var(--color-bg);
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
 }
 
@@ -665,7 +666,7 @@
   height: 34px;
   border-radius: 50%;
   background: var(--color-accent);
-  color: #fff;
+  color: var(--color-bg);
 }
 
 .player-time {
@@ -1044,12 +1045,18 @@
   padding: calc(var(--space) * 4) 0;
 }
 
+/* A primeira linha e o estado em si; as seguintes explicam. A primeira usa o
+   texto cheio para o contraste nao cair no degrau tonal do chrome. */
+.empty-state p:first-child {
+  color: var(--color-text);
+}
+
 .error {
   color: var(--color-danger);
 }
 
 .ok {
-  color: #2e7d32;
+  color: var(--color-ok);
 }
 
 .danger {
@@ -1060,7 +1067,7 @@
 .primary {
   background: var(--color-accent);
   border-color: var(--color-accent);
-  color: #fff;
+  color: var(--color-bg);
 }
 
 .link-button {
@@ -1114,7 +1121,7 @@
 }
 
 .mood-pos {
-  background: #2e7d32;
+  background: var(--color-ok);
 }
 
 .mood-neg {
@@ -1410,7 +1417,7 @@
   right: 0;
   z-index: 200;
   background: var(--color-danger);
-  color: #fff;
+  color: var(--color-bg);
   text-align: center;
   padding: calc(var(--space) * 2);
   font-size: 13px;
@@ -1564,7 +1571,7 @@
 }
 
 .toggle input:focus-visible + .toggle-track {
-  outline: 2px solid var(--focus-ring);
+  outline: var(--dy-focus-width) solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -1638,6 +1645,128 @@
   overflow: hidden;
 }
 
+/* Com abas, a area do editor vira duas linhas: a barra de 34 e o editor.
+   Sem abas, nada muda no layout das telas que nao abrem nota. */
+.editor-pane--tabs {
+  display: grid;
+  grid-template-rows: var(--dy-toolbar) minmax(0, 1fr);
+}
+
+.editor-pane--tabs > .note {
+  height: 100%;
+  min-height: 0;
+}
+
+/* ---------- abas de notas abertas ---------- */
+/* Barra de 34, abas de 26. A ativa leva degrau tonal e a barra de 2 na borda
+   de ataque; a inativa revela o "x" no hover e no foco. Muitas abas rolam na
+   horizontal, sem empurrar o editor. */
+.note-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: var(--dy-space-2);
+  height: var(--dy-toolbar);
+  padding: 0 var(--dy-space-8);
+  border-bottom: 1px solid var(--dy-line);
+  background: var(--dy-surface);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+.note-tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  align-self: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 240px;
+  height: var(--dy-tab);
+}
+
+.note-tab-open {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 100%;
+  padding: 0 var(--dy-space-8);
+  border: 0;
+  border-radius: var(--dy-radius-control) var(--dy-radius-control) 0 0;
+  background: transparent;
+  color: var(--dy-text-muted);
+  font-family: var(--dy-font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.32;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.note-tab-open:hover {
+  color: var(--dy-text);
+}
+
+.note-tab-open:focus-visible {
+  outline: var(--dy-focus-width) solid var(--dy-primary);
+  outline-offset: calc(var(--dy-focus-offset) * -1);
+}
+
+.note-tab-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.note-tab--active {
+  background: var(--dy-surface-alt);
+}
+
+.note-tab--active::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--dy-state-bar);
+  background: var(--dy-primary);
+}
+
+.note-tab--active .note-tab-open {
+  color: var(--dy-text);
+}
+
+.note-tab-close {
+  display: grid;
+  place-items: center;
+  width: var(--dy-icon-box);
+  height: var(--dy-icon-box);
+  margin-right: var(--dy-space-2);
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dy-radius-control);
+  background: transparent;
+  color: var(--dy-text-muted);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.note-tab--active .note-tab-close,
+.note-tab:hover .note-tab-close,
+.note-tab:focus-within .note-tab-close {
+  opacity: 1;
+}
+
+.note-tab-close:hover {
+  background: var(--dy-surface-raised);
+  color: var(--dy-text);
+}
+
+.note-tab-close:focus-visible {
+  outline: var(--dy-focus-width) solid var(--dy-primary);
+  outline-offset: calc(var(--dy-focus-offset) * -1);
+}
+
 .note {
   position: relative;
   height: 100%;
@@ -1685,22 +1814,23 @@
 
 .note-title {
   width: 100%;
-  min-height: 44px;
+  min-height: 26px;
   resize: none;
   border: none;
   background: none;
   color: inherit;
-  font-family: var(--font-serif);
-  font-size: 40px;
-  line-height: 1.12;
+  font-family: var(--dy-font-sans);
+  font-size: 21px;
   font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
   padding: 0;
   outline: none;
   overflow: hidden;
 }
 
 .note-title::placeholder {
-  color: var(--color-muted);
+  color: var(--dy-text-muted);
 }
 
 .note-head-actions {
@@ -1731,8 +1861,13 @@
   display: flex;
   flex-wrap: wrap;
   gap: calc(var(--space) * 3);
-  color: var(--color-muted);
-  font-size: 13px;
+  color: var(--dy-text-muted);
+  font-family: var(--dy-font-mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
   margin: calc(var(--space) * 2) auto calc(var(--space) * 7);
 }
 
@@ -3482,7 +3617,7 @@
   border: 1px solid var(--color-accent);
   border-radius: var(--radius-sm);
   background: var(--color-accent);
-  color: #fff;
+  color: var(--color-bg);
   font-size: 13px;
   font-weight: 600;
 }
@@ -3601,7 +3736,7 @@
 }
 
 .note-row--active {
-  background: var(--color-surface-2);
+  background: var(--color-bg);
   border-left-color: var(--color-accent);
 }
 
@@ -3740,7 +3875,7 @@
 }
 
 :where(.button, .icon-button, .foot-item, .note-row-open, .tag-filter-chip, .tag-filter-all, .notebook-menu-row, .notebook-current, .menu-item):focus-visible {
-  outline: 2px solid var(--focus-ring);
+  outline: var(--dy-focus-width) solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -3755,7 +3890,7 @@
 .note [role="button"]:focus-visible,
 .note input:focus-visible,
 .note select:focus-visible {
-  outline: 2px solid var(--focus-ring);
+  outline: var(--dy-focus-width) solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -3853,7 +3988,7 @@
 
 .notebook-menu-row:focus-visible,
 .notebook-submenu button:focus-visible {
-  outline: 2px solid var(--focus-ring);
+  outline: var(--dy-focus-width) solid var(--focus-ring);
   outline-offset: -2px;
 }
 
@@ -3905,8 +4040,8 @@
 
 .segmented button[aria-selected="true"],
 .segmented button[aria-pressed="true"] {
-  background: #fff;
-  color: #1b1b1b;
+  background: var(--color-surface-2);
+  color: var(--color-text);
   font-weight: 600;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.14);
 }
@@ -4034,7 +4169,7 @@
 }
 
 .note-picker-card input:focus {
-  outline: 2px solid var(--focus-ring);
+  outline: var(--dy-focus-width) solid var(--focus-ring);
   outline-offset: 1px;
 }
 
@@ -4185,7 +4320,7 @@
   }
 
   .note-title {
-    font-size: 30px;
+    font-size: 21px;
   }
 
   .note-aside {
@@ -5124,6 +5259,13 @@
   transform: rotate(-90deg);
 }
 
+.rail-sep {
+  width: var(--dy-icon-box);
+  height: 1px;
+  margin: var(--dy-space-4) 0;
+  background: var(--color-border);
+}
+
 .rail-foot {
   margin-top: auto;
   display: flex;
@@ -5293,7 +5435,7 @@
 .rail-action:focus-visible,
 .active-filter:focus-visible,
 .active-filters-clear:focus-visible {
-  outline: 2px solid var(--focus-ring);
+  outline: var(--dy-focus-width) solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -5498,9 +5640,9 @@
 }
 
 .map-chip--on {
-  background: #fff;
-  border-color: #fff;
-  color: #1b1b1b;
+  background: var(--color-surface-2);
+  border-color: var(--color-border);
+  color: var(--color-text);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
 }
 
@@ -6264,7 +6406,7 @@
 
 .map-icon-choice--on {
   border-color: var(--ink);
-  background: #fff;
+  background: var(--color-surface-2);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
 }
 
@@ -11325,11 +11467,11 @@ button.save-glyph:focus-visible {
   height: 17px;
   border-radius: 50%;
   background: var(--color-accent);
-  color: #fff;
+  color: var(--color-bg);
   display: grid;
   place-items: center;
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 600;
   flex: none;
 }
 
@@ -12695,4 +12837,411 @@ button.save-glyph:focus-visible {
   background: var(--dy-primary);
   color: var(--dy-surface);
   border-radius: var(--dy-radius-control);
+}
+
+/* ---------- conta do Google ---------- */
+/* Avatar 26, raio de superficie, marca de estado de 8: cheio e sessao viva,
+   anel e sessao vencida, tracejado e sem conta. */
+.account-avatar-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--dy-control-md);
+  height: var(--dy-control-md);
+  flex: none;
+  padding: 0;
+  border: 1px solid var(--dy-line);
+  border-radius: var(--dy-radius-surface);
+  background: var(--dy-surface-raised);
+  color: var(--dy-text-muted);
+  overflow: visible;
+}
+.account-avatar-button:hover {
+  border-color: var(--dy-text-muted);
+  color: var(--dy-text);
+}
+.account-avatar-button:focus-visible {
+  outline: var(--dy-focus-width) solid var(--dy-primary);
+  outline-offset: var(--dy-focus-offset);
+}
+.account-avatar-button[aria-expanded="true"] {
+  border-color: var(--dy-primary);
+  color: var(--dy-text);
+}
+.account-avatar-img {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+}
+.account-avatar-initials {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  line-height: 1;
+}
+.account-avatar-glyph {
+  display: grid;
+  place-items: center;
+}
+.account-state-mark {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  width: var(--dy-mark-size);
+  height: var(--dy-mark-size);
+  border-radius: 50%;
+  background: var(--dy-surface);
+  border: var(--dy-mark-stroke) solid var(--dy-surface);
+}
+.account-state-mark--connected {
+  background: var(--dy-success);
+  border-color: var(--dy-surface);
+}
+.account-state-mark--expired {
+  background: transparent;
+  border-color: var(--dy-warning);
+}
+.account-state-mark--none {
+  background: transparent;
+  border-color: var(--dy-text-muted);
+  border-style: dashed;
+}
+
+/* Marca da linha do Drive: estatica no contexto da linha (com o gap de 6), e
+   nao absoluta como a do avatar — senao ela sobe ate o menu e vira um ponto
+   solto no canto. */
+.account-menu-data-row .account-state-mark {
+  position: static;
+  right: auto;
+  bottom: auto;
+}
+
+/* ---------- menu da conta (ancorado no avatar) ---------- */
+/* Folha ancorada: hairline, sem veu e sem sombra difusa; nasce acima do
+   gatilho, encostada na borda do trilho (left 34) e por cima do conteudo. */
+.account-menu {
+  position: fixed;
+  z-index: var(--dy-layer-sheet);
+  display: flex;
+  flex-direction: column;
+  padding: var(--dy-space-4);
+  background: var(--dy-surface-raised);
+  border: 1px solid var(--dy-line);
+  border-radius: var(--dy-radius-surface);
+  box-shadow: none;
+  filter: none;
+  color: var(--dy-text);
+  font-family: var(--dy-font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.32;
+}
+.account-menu :focus-visible {
+  outline: var(--dy-focus-width) solid var(--dy-primary);
+  outline-offset: var(--dy-focus-offset);
+}
+.account-menu-id {
+  display: flex;
+  align-items: center;
+  gap: var(--dy-space-8);
+  min-width: 0;
+  padding: var(--dy-space-4) var(--dy-space-4) var(--dy-space-6);
+}
+.account-menu-photo {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--dy-line);
+  border-radius: var(--dy-radius-surface);
+  background: var(--dy-surface);
+  color: var(--dy-text-muted);
+  object-fit: cover;
+}
+.account-menu-photo--initials {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.account-menu-idtext {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--dy-space-2);
+}
+.account-menu-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.account-menu-mail {
+  color: var(--dy-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.account-menu-sep {
+  flex: none;
+  height: 1px;
+  margin: var(--dy-space-6) 0;
+  background: var(--dy-line);
+}
+.account-menu-data {
+  display: flex;
+  flex-direction: column;
+}
+.account-menu-data-row {
+  display: flex;
+  align-items: center;
+  gap: var(--dy-space-6);
+  min-width: 0;
+  height: var(--dy-row-dense);
+  /* A linha usa toda a largura interna do menu (o respiro de 4 fica no
+     padding), para "1,1 GB · 128 notas" caber inteiro ao lado da marca. */
+  margin: 0 calc(var(--dy-space-4) * -1);
+  padding: 0 var(--dy-space-4);
+}
+.account-menu-label {
+  flex: none;
+  white-space: nowrap;
+}
+.account-menu-val {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--dy-text-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+.account-menu-row {
+  display: flex;
+  align-items: center;
+  gap: var(--dy-space-8);
+  width: 100%;
+  height: var(--dy-row-dense);
+  padding: 0 var(--dy-space-4);
+  border: 0;
+  border-radius: var(--dy-radius-control);
+  background: transparent;
+  color: var(--dy-text);
+  text-align: left;
+  cursor: pointer;
+}
+.account-menu-row .dy-icon {
+  color: var(--dy-text-muted);
+}
+.account-menu-row:hover {
+  background: var(--dy-surface);
+}
+.account-menu-row--danger {
+  color: var(--dy-danger);
+}
+.account-menu-row--danger .account-menu-glyph {
+  color: var(--dy-text-muted);
+}
+.account-menu-glyph {
+  display: inline-flex;
+  flex: none;
+  color: var(--dy-text-muted);
+}
+.account-menu-glyph--end {
+  margin-left: auto;
+}
+.account-menu-footlink {
+  display: flex;
+  align-items: center;
+  gap: var(--dy-space-4);
+  height: var(--dy-row-dense);
+  padding: 0 var(--dy-space-4);
+  border-radius: var(--dy-radius-control);
+  color: var(--dy-text-muted);
+  text-decoration: none;
+}
+.account-menu-footlink:hover {
+  background: var(--dy-surface);
+  color: var(--dy-text);
+}
+
+/* ============================================================
+   Casca do sistema (nov/2026)
+
+   Trilho de 34 sempre visivel + sidebar de 238 + conteudo, com a
+   sidebar recolhivel. O trilho guarda a navegacao global (novo,
+   buscar, importar, telas e conta); a sidebar guarda o caderno e a
+   lista. Em telas de ate 900 o trilho sai de cena e a sidebar vira
+   a gaveta, como antes, com a barra do celular por cima.
+   ============================================================ */
+
+.app {
+  display: grid;
+  grid-template-columns: var(--dy-rail) var(--dy-sidebar) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  height: 100%;
+  overflow: hidden;
+}
+
+.app--collapsed {
+  grid-template-columns: var(--dy-rail) minmax(0, 1fr);
+}
+
+/* ---------- trilho ---------- */
+
+.side-rail {
+  grid-column: 1;
+  position: relative;
+  z-index: var(--dy-layer-rail);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--dy-space-2);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  /* O respiro de 6 ate a borda inferior e do botao da conta (abaixo), para o
+     avatar inteiro caber na altura da janela sem encostar no corte do trilho. */
+  padding: var(--dy-space-4) 0 0;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.side-rail .rail-action,
+.side-rail .foot-item {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--dy-row-dense);
+  height: var(--dy-row-dense);
+  flex: none;
+  padding: 0;
+  gap: 0;
+  border-radius: var(--dy-radius-control);
+  background: transparent;
+  color: var(--color-muted);
+}
+
+.side-rail .rail-action:hover,
+.side-rail .foot-item:hover {
+  background: var(--color-surface-2);
+  color: var(--color-text);
+}
+
+.side-rail .rail-action--new,
+.side-rail .rail-action--new:hover {
+  background: var(--color-accent);
+  color: var(--color-bg);
+}
+
+.side-rail .rail-action--new {
+  margin-bottom: var(--dy-space-2);
+}
+
+.side-rail .rail-action--new:hover {
+  opacity: 0.9;
+}
+
+/* Tela ativa: degrau tonal e barra de 2px na borda de ataque. */
+.side-rail .foot-item--active {
+  background: var(--color-surface-2);
+  color: var(--color-text);
+}
+
+.side-rail .foot-item--active::before {
+  content: "";
+  position: absolute;
+  left: calc(var(--dy-space-4) * -1);
+  top: var(--dy-space-4);
+  bottom: var(--dy-space-4);
+  width: var(--dy-state-bar);
+  background: var(--color-accent);
+}
+
+.rail-expand svg {
+  transform: rotate(-90deg);
+}
+
+.app:not(.app--collapsed) .rail-expand svg {
+  transform: rotate(90deg);
+}
+
+.rail-foot {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--dy-space-2);
+}
+
+.side-rail .account-avatar-button--rail {
+  margin: var(--dy-space-6) auto var(--dy-space-6);
+}
+
+/* ---------- sidebar ---------- */
+
+.sidebar {
+  grid-column: 2;
+  position: relative;
+  z-index: var(--dy-layer-content);
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  padding: var(--dy-space-12) var(--dy-space-8) var(--dy-space-8);
+  gap: var(--dy-space-8);
+  border-right: 1px solid var(--color-border);
+  background: var(--color-surface);
+  overflow: hidden;
+  box-shadow: none;
+}
+
+/* ---------- conteudo ---------- */
+
+.workspace {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  background: var(--color-bg);
+}
+
+/* ---------- navegador estreito: a gaveta de sempre ---------- */
+
+@media (max-width: 900px) {
+  .app,
+  .app--collapsed {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .side-rail {
+    display: none;
+  }
+
+  .workspace {
+    padding-top: 52px;
+  }
+
+  .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 80;
+    width: min(320px, 88vw);
+    height: 100%;
+    transform: translateX(-100%);
+    transition: transform var(--dy-motion-base) var(--dy-motion-ease);
+    box-shadow: none;
+  }
+
+  .app:not(.app--collapsed) .sidebar {
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar {
+    transition: none;
+  }
 }
