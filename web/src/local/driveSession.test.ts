@@ -225,19 +225,35 @@ describe("sessao do Drive", () => {
     expect(google.token).toHaveBeenCalledWith({ silent: true });
   });
 
-  it("token sem email/profile faz um unico pedido interativo e cacheia o perfil", async () => {
+  it("login interativo sem identidade nao abre uma segunda janela", async () => {
     vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-id-de-teste");
-    google.token
-      .mockResolvedValueOnce({
-        accessToken: "tok-drive",
-        expiresAt: Date.now() + 3_600_000,
-        scope: "openid https://www.googleapis.com/auth/drive.file",
-      })
-      .mockResolvedValueOnce({
-        accessToken: "tok-identidade",
-        expiresAt: Date.now() + 3_600_000,
-        scope: SCOPE,
-      });
+    google.token.mockResolvedValueOnce({
+      accessToken: "tok-drive",
+      expiresAt: Date.now() + 3_600_000,
+      scope: "openid https://www.googleapis.com/auth/drive.file",
+    });
+    // Uma segunda chamada abriria outra janela fora do gesto do usuario; o
+    // Chrome bloqueia e a tela fica presa em "entrando com o Google".
+    google.token.mockResolvedValue({
+      accessToken: "tok-identidade",
+      expiresAt: Date.now() + 3_600_000,
+      scope: SCOPE,
+    });
+
+    const client = await connectDrive();
+
+    expect(client).toBeInstanceOf(DriveClient);
+    expect(google.token).toHaveBeenCalledTimes(1);
+    expect(driveClient()).toBe(client);
+  });
+
+  it("busca a identidade pelo userinfo mesmo sem scope no token", async () => {
+    vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-id-de-teste");
+    google.token.mockResolvedValue({
+      accessToken: "tok",
+      expiresAt: Date.now() + 3_600_000,
+      scope: undefined,
+    });
     const perfil = { name: "Ada", email: "ada@example.com", picture: "https://x/p.png" };
     vi.stubGlobal(
       "fetch",
@@ -250,10 +266,8 @@ describe("sessao do Drive", () => {
 
     await connectDrive();
 
-    expect(google.token).toHaveBeenNthCalledWith(1, undefined);
-    expect(google.token).toHaveBeenNthCalledWith(2, { prompt: "consent" });
-    expect(cachedProfile()).toEqual(perfil);
-    expect(driveProfile()).toEqual(perfil);
+    expect(google.token).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(cachedProfile()).toEqual(perfil));
   });
 
   it("token com email/profile nao pede consentimento de novo", async () => {
@@ -319,24 +333,18 @@ describe("sessao do Drive", () => {
     await vi.waitFor(() => expect(cachedProfile()).toEqual(perfil));
   });
 
-  it("so pede consentimento quando falta email ou profile de verdade", async () => {
+  it("nao abre segunda janela quando o token traz so parte da identidade", async () => {
     vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-id-de-teste");
-    google.token
-      .mockResolvedValueOnce({
-        accessToken: "tok-sem-profile",
-        expiresAt: Date.now() + 3_600_000,
-        scope:
-          "openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/drive.file",
-      })
-      .mockResolvedValue({
-        accessToken: "tok-completo",
-        expiresAt: Date.now() + 3_600_000,
-        scope: SCOPE_URL,
-      });
+    google.token.mockResolvedValue({
+      accessToken: "tok-sem-profile",
+      expiresAt: Date.now() + 3_600_000,
+      scope:
+        "openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/drive.file",
+    });
 
     await connectDrive();
 
-    expect(google.token).toHaveBeenNthCalledWith(2, { prompt: "consent" });
+    expect(google.token).toHaveBeenCalledTimes(1);
   });
 
   it("pedido silencioso sem email/profile nao abre tela de consentimento", async () => {

@@ -182,32 +182,17 @@ async function buscarPerfil(novo: DriveToken): Promise<void> {
  * email/profile o avatar continua com o que estiver no cache.
  */
 export async function connectDrive(options?: DriveTokenOptions): Promise<DriveClient> {
-  let atual = await requestDriveToken(options);
+  const atual = await requestDriveToken(options);
   aplicarToken(atual);
   profile = accountCachedProfile();
   notificar();
 
-  if (tokenTemIdentidade(atual.scope)) {
-    // A foto entra quando o userinfo responde: o login nao espera a rede de
-    // identidade para liberar o Drive.
-    void buscarPerfil(atual);
-  } else if (!options?.silent) {
-    try {
-      const consentido = await requestDriveToken({ prompt: "consent" });
-      if (token?.accessToken === atual.accessToken) {
-        aplicarToken(consentido);
-        notificar();
-      }
-      atual = consentido;
-      await buscarPerfil(consentido);
-    } catch {
-      // O cofre segue com o token do Drive; a foto fica nas iniciais.
-    }
-  } else {
-    // Mesmo sem escopo de identidade, o userinfo pode ter o que ja foi
-    // consentido antes; e so rede, nunca tela.
-    void buscarPerfil(atual);
-  }
+  // A identidade (nome, email, foto) e opcional e vem do userinfo com o mesmo
+  // token. Um segundo pedido de consentimento abriria outra janela depois do
+  // gesto do usuario: o Chrome bloqueia e o login fica preso em "entrando com
+  // o Google". Sem identidade, o avatar fica nas iniciais.
+  void buscarPerfil(atual);
+
   return client ?? new DriveClient(atual.accessToken);
 }
 
