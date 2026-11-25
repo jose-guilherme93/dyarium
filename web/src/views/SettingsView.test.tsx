@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { SettingsView } from "./SettingsView";
 import { api } from "../api";
+import { readTelemetryEnabled, setTelemetryEnabled, telemetryConfigured } from "../lib/telemetry";
 import type { McpProject, Settings } from "../types";
 
 vi.mock("../api", () => ({
@@ -23,6 +24,12 @@ vi.mock("../api", () => ({
     patchEntry: vi.fn(async () => ({ status: "ok", versions: {} })),
     updateNotebook: vi.fn(async () => ({})),
   },
+}));
+
+vi.mock("../lib/telemetry", () => ({
+  readTelemetryEnabled: vi.fn(async () => true),
+  setTelemetryEnabled: vi.fn(async () => undefined),
+  telemetryConfigured: vi.fn(() => true),
 }));
 
 const drive = vi.hoisted(() => ({
@@ -120,6 +127,8 @@ beforeEach(() => {
   vi.mocked(api.mcpProjects).mockResolvedValue({ projects: [project] });
   vi.mocked(api.listNotebooks).mockResolvedValue({ notebooks: [] });
   vi.mocked(api.getLocalAnalysis).mockResolvedValue(undefined as never);
+  vi.mocked(telemetryConfigured).mockReturnValue(true);
+  vi.mocked(readTelemetryEnabled).mockResolvedValue(true);
 });
 
 async function renderSettings() {
@@ -307,5 +316,29 @@ describe("SettingsView cofre no Drive", () => {
     await waitFor(() =>
       expect(cloud.restore).toHaveBeenCalledWith(undefined, { attachments: "all" }),
     );
+  });
+});
+
+describe("SettingsView diagnóstico", () => {
+  it("renderiza o switch e chama o setter ao alternar", async () => {
+    await renderSettings();
+    fireEvent.click(screen.getByRole("tab", { name: "Lixeira" }));
+
+    const sw = await screen.findByRole("switch", { name: "Enviar diagnóstico" });
+    expect(sw).toBeTruthy();
+
+    fireEvent.click(sw);
+
+    await waitFor(() => expect(setTelemetryEnabled).toHaveBeenCalledWith(false));
+  });
+
+  it("sem DSN configurado, renderiza desabilitado e sem explicação", async () => {
+    vi.mocked(telemetryConfigured).mockReturnValue(false);
+    await renderSettings();
+    fireEvent.click(screen.getByRole("tab", { name: "Lixeira" }));
+
+    const sw = await screen.findByRole("switch", { name: "Enviar diagnóstico" });
+    expect(sw).toBeDisabled();
+    expect(screen.queryByText(/Manda erro e versão/)).toBeNull();
   });
 });

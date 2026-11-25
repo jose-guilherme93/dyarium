@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import "./settings.css";
 import { api, getToken, isLocalMode } from "../api";
+import { readTelemetryEnabled, setTelemetryEnabled, telemetryConfigured } from "../lib/telemetry";
 import {
   AllNotebooksIcon,
   CpuIcon,
@@ -125,6 +126,10 @@ export function SettingsView({
   // quando conecta, vence ou desconecta.
   useEffect(() => onDriveSessionChange(() => setDriveState(driveSessionState())), []);
 
+  useEffect(() => {
+    void readTelemetryEnabled().then(setDiagnosticsOn);
+  }, []);
+
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [progress, setProgress] = useState<Record<string, DownloadProgress>>({});
   const [ceiling, setCeiling] = useState("0");
@@ -162,6 +167,7 @@ export function SettingsView({
   const [deepgramBusy, setDeepgramBusy] = useState(false);
   const [showAllModels, setShowAllModels] = useState(false);
   const [savedOn, setSavedOn] = useState(false);
+  const [diagnosticsOn, setDiagnosticsOn] = useState(true);
   const savedTimer = useRef<number | undefined>(undefined);
 
   // Id da requisicao em andamento, para descartar respostas obsoletas.
@@ -1597,9 +1603,28 @@ export function SettingsView({
     if (tab === "autor") return renderAuthor(s);
     if (tab === "cofre") return renderVault();
     return (
-      <div className="cfg-block">
-        <TrashSection refreshKey={refreshKey} bare />
-      </div>
+      <>
+        <div className="cfg-block">
+          <TrashSection refreshKey={refreshKey} bare />
+        </div>
+        <div className="cfg-block">
+          <div className="cfg-field">
+            <Switch
+              checked={diagnosticsOn}
+              ariaLabel="Enviar diagnóstico"
+              disabled={!telemetryConfigured()}
+              onChange={(value) => {
+                setDiagnosticsOn(value);
+                void setTelemetryEnabled(value);
+              }}
+            />
+            <span className="cfg-state">Enviar diagnóstico</span>
+            {telemetryConfigured() && (
+              <Why>Manda erro e versão, sem nota, sem usuário. O app tem a sua própria opção.</Why>
+            )}
+          </div>
+        </div>
+      </>
     );
   };
 
@@ -1703,10 +1728,12 @@ function Switch({
   checked,
   onChange,
   ariaLabel,
+  disabled = false,
 }: {
   checked: boolean;
   onChange: (checked: boolean) => void;
   ariaLabel: string;
+  disabled?: boolean;
 }) {
   return (
     <button
@@ -1715,6 +1742,7 @@ function Switch({
       aria-checked={checked}
       aria-label={ariaLabel}
       className="cfg-sw"
+      disabled={disabled}
       onClick={() => onChange(!checked)}
     >
       <i />
