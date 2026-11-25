@@ -1055,7 +1055,7 @@ Worker separado (`worker/`, D1 `dyarium-admin`): id aleatorio de instalacao,
 evento do dia, versao, navegador, contagem de notas/tamanho e, SO no login com
 Google, o e-mail da conta. Nada de conteudo, token ou IP. O e-mail e o unico
 dado pessoal e fica no D1 ate ser removido pelo `/admin`; a pagina
-`/privacidade` fala so do que nao sai do aparelho e nao cita o painel. O painel
+`/privacidade` diz apenas que o e-mail identifica a sessao e nao cita o painel. O painel
 le `/admin-api/stats` com Bearer (segredo do
 Worker); a chave fica so na sessao da aba. O Google nao entrega a lista de
 usuarios ao dono: e o app que manda o e-mail quando a pessoa entra. O app mobile
