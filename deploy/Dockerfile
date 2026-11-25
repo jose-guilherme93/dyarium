@@ -8,6 +8,9 @@ ARG WITH_LLAMA=1
 # ---- Frontend: build the dashboard static assets -------------------------
 FROM node:22-bookworm AS web
 WORKDIR /web
+# DSN publica fica em web/.env.production (versionado). O token de upload do
+# Sentry entra por build-arg; sem ele o build sai igual, so sem source maps.
+ARG SENTRY_AUTH_TOKEN=""
 # Mantem o build do Vite dentro dos 1 GiB, como os alvos do Makefile.
 ENV NODE_OPTIONS=--max-old-space-size=1024 \
     UV_THREADPOOL_SIZE=2
@@ -19,7 +22,7 @@ COPY web/ ./
 # contrato, sem copia). No repositorio ele esta em mobile/src/core; este COPY
 # reproduz o caminho relativo esperado pelo Vite dentro da imagem.
 COPY mobile/src/core /mobile/src/core
-RUN pnpm build
+RUN SENTRY_AUTH_TOKEN="$SENTRY_AUTH_TOKEN" pnpm build
 
 # ---- Backend: build the Go binary with the dashboard embedded ------------
 FROM golang:1.27-bookworm AS gobuild

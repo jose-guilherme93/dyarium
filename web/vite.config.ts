@@ -3,6 +3,7 @@ import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vitest/config";
 import react from "@vitejs/plugin-react";
+import { sentryVitePlugin } from "@sentry/vite-plugin";
 
 /**
  * Os arquivos do ONNX Runtime ficam em public/ort para o build. No dev o Vite
@@ -85,10 +86,31 @@ function ortRuntimeAssets(): Plugin {
   };
 }
 
+/**
+ * Envia os source maps do build ao Sentry e os apaga do `dist`.
+ *
+ * So roda quando `SENTRY_AUTH_TOKEN` esta no ambiente (CI/deploy), entao um
+ * build local nunca depende dele. O token nunca entra no repositorio.
+ */
+function sentrySourceMaps(): Plugin[] {
+  const authToken = (process.env.SENTRY_AUTH_TOKEN ?? "").trim();
+  if (!authToken || process.env.VITEST) return [];
+  return sentryVitePlugin({
+    org: "josetilabs",
+    project: "dyarium",
+    authToken,
+    telemetry: false,
+    sourcemaps: {
+      assets: "./dist/**",
+      filesToDeleteAfterUpload: ["./dist/**/*.map"],
+    },
+  });
+}
+
 // The dev server proxies API and health calls to the Go backend so the SPA and
 // the API share an origin while developing.
 export default defineConfig({
-  plugins: [react(), dropOversizedAssets(), ortRuntimeAssets()],
+  plugins: [react(), dropOversizedAssets(), ortRuntimeAssets(), ...sentrySourceMaps()],
   // O worker importa o nucleo puro de `mobile/src/core`. Sem um tsconfig fixo,
   // o Vite leria `mobile/tsconfig.json`, que estende `expo/tsconfig.base` e nao
   // existe no job do web (que instala so as dependencias do web).
@@ -103,6 +125,10 @@ export default defineConfig({
   define: {
     // `__DEV__` e global no React Native; o nucleo puro o usa num log.
     __DEV__: JSON.stringify(process.env.NODE_ENV !== "production"),
+    // Versao do pacote entra no release do Sentry para separar builds.
+    __APP_VERSION__: JSON.stringify(
+      JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")).version,
+    ),
   },
   server: {
     host: true,
@@ -152,6 +178,8 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
+    // O plugin do Sentry gera os mapas no build e os apaga depois de enviar.
+    sourcemap: process.env.SENTRY_AUTH_TOKEN ? "hidden" : false,
     rollupOptions: {
       // O worker do /lab carrega o onnxruntime, cujo wasm passa de 25 MiB — o
       // limite por arquivo do Cloudflare. No build hospedado o /lab nao existe
