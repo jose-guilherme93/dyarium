@@ -18,5 +18,9 @@
     "directory": "./web/dist",
     // Qualquer rota que nao seja arquivo cai no shell do SPA.
     "not_found_handling": "single-page-application"
-  }
+  },
+  // Habilita `npx wrangler preview`, usado pelo build da branch `develop` para
+  // publicar a previa em develop.preview.josetilabs.com. O bloco pode ficar
+  // vazio: assets e compatibilidade continuam no topo.
+  "previews": {}
 }
