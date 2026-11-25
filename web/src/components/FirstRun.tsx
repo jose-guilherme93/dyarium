@@ -608,10 +608,12 @@ export function FirstRun({
             >
               Já tenho uma instalação própria
             </button>
-            <a className="first-run-linkbtn" href="/privacidade">
-              privacidade
-            </a>
           </div>
+          <p className="first-run-legal">
+            <a className="first-run-linkbtn" href="/privacidade">
+              Privacidade
+            </a>
+          </p>
         </div>
       </section>
     </main>

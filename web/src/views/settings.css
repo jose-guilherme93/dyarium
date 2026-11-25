@@ -678,3 +678,16 @@
   .cfg-unit { display: inline; }
   .cfg-project > .cfg-seg { grid-area: 3 / 2 / 4 / 4; justify-self: start; }
 }
+
+/* Link de privacidade: discreto, na propria linha, sem competir com o switch. */
+.cfg-privacy-link {
+  display: inline-block;
+  margin-top: var(--dy-space-6);
+  color: var(--dy-text-muted);
+  text-decoration: none;
+}
+
+.cfg-privacy-link:hover {
+  color: var(--dy-text);
+  text-decoration: underline;
+}

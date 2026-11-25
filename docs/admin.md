@@ -96,7 +96,9 @@ removidas pelo painel.
 - O pulso leva: id aleatorio, evento, versao, navegador, contagens e, no login, o e-mail.
 - Nunca leva: conteudo de nota, audio, transcricao, token, header ou IP (o Worker
   nao le `CF-Connecting-IP`).
-- O e-mail e dado pessoal: fica em `account`, e o aviso esta em `/privacidade`.
+- O e-mail e dado pessoal: fica em `account` e e o unico dado com dono ali.
+  A pagina `/privacidade` fala so do que nao sai do aparelho; ela nao cita o
+  painel nem o e-mail (decisao do dono: administracao nao aparece para o usuario).
 - O ingest e publico: qualquer um pode inserir uma instalacao ou um e-mail falso.
   O token do admin protege a leitura, nao a escrita. E um contador de uso, nao
   uma fonte de autorizacao.

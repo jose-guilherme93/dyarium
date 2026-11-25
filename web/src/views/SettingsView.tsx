@@ -1459,10 +1459,10 @@ export function SettingsView({
             {telemetryConfigured() && (
               <Why>Manda erro e versão, sem nota, sem usuário. O app tem a sua própria opção.</Why>
             )}
-            <a className="cfg-link" href="/privacidade" style={{ marginLeft: 8 }}>
-              privacidade
-            </a>
           </div>
+          <a className="cfg-link cfg-privacy-link" href="/privacidade">
+            Privacidade
+          </a>
         </div>
       </>
     );
