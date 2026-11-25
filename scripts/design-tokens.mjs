@@ -28,6 +28,8 @@ const PALETTE_KEYS = [
   'danger',
   'success',
   'warning',
+  // Marca o build de desenvolvimento (nome com sufixo). Nao e cor de conteudo.
+  'dev',
   'info',
   'overlay',
 ];

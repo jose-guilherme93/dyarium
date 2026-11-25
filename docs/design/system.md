@@ -115,6 +115,23 @@ link, doc, clock, bell, calendar, network, trash, play, pause, stop, gear.
 Regras da barra: `gravar` é o único botão preenchido; `buscar` é ícone que abre
 campo sobre a lista; painel aberto sai de fantasma para contorno mais claro.
 
+## Marca
+
+Os arquivos ficam em `docs/design/logo/`: `mark.svg` (32×32), `lockup.svg` e
+`lockup-dev.svg`, todos em `currentColor`. Geometria da marca: capa de 21×24 com
+raio 2 em (5,5 / 4), lombada de 1,5 em x 10,5, fio saindo do pé da capa em 8,2 e
+o D da Schibsted Grotesk SemiBold como caminho (maiúscula de 11,7, centro em
+18,8 / 15,7, base em 21,6). A letra é caminho, não texto: a marca não depende da
+fonte instalada.
+
+O fio tem 3 de comprimento: abaixo de 24 px ele some. Ícone mínimo é 24 px.
+Abaixo disso vai o desenho de aba (`web/public/favicon.svg` e `favicon-dev.svg`):
+sem fio, traço 3 e o D maior, porque 1,5 em 16 px vira cinza lavado.
+
+Build de desenvolvimento assina `dyarium - dev` na cor `dev` da paleta
+(`#b3642e` no claro, `#e0a273` no escuro e no amoled), no web e no nome instalado
+do app. Produção não usa a cor `dev` para nada.
+
 ## Peças
 
 Cada peça abaixo tem anatomia, estados e o que muda entre web e app. A galeria

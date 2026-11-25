@@ -17,6 +17,7 @@ export type DesignColors = {
   danger: string;
   success: string;
   warning: string;
+  dev: string;
   info: string;
   overlay: string;
 };
@@ -34,6 +35,7 @@ export const designColors: Record<DesignThemeName, DesignColors> = {
     danger: '#9c6259',
     success: '#5c7a63',
     warning: '#8b7444',
+    dev: '#b3642e',
     info: '#5a6f80',
     overlay: 'rgba(0,0,0,0.18)',
   },
@@ -49,6 +51,7 @@ export const designColors: Record<DesignThemeName, DesignColors> = {
     danger: '#c78f85',
     success: '#94b09a',
     warning: '#c6ab77',
+    dev: '#e0a273',
     info: '#9ab3c4',
     overlay: 'rgba(0,0,0,0.45)',
   },
@@ -64,6 +67,7 @@ export const designColors: Record<DesignThemeName, DesignColors> = {
     danger: '#c78f85',
     success: '#94b09a',
     warning: '#c6ab77',
+    dev: '#e0a273',
     info: '#9ab3c4',
     overlay: 'rgba(0,0,0,0.55)',
   },
