@@ -19,8 +19,9 @@ vi.mock("./google", async (importOriginal) => {
   };
 });
 
-import { DriveClient } from "./drive";
+import { DriveClient, DRIVE_SCOPE } from "./drive";
 import { DriveFolder } from "./driveFolder";
+import { DRIVE_SCOPE_DENIED_KEY } from "./google";
 import {
   connectDrive,
   disconnectDrive,
@@ -31,6 +32,7 @@ import {
   driveVaultRoot,
   onDriveSessionChange,
   signOutAccount,
+  tokenTemDrive,
   tokenTemIdentidade,
   DRIVE_SESSION_KEY,
 } from "./driveSession";
@@ -310,6 +312,27 @@ describe("sessao do Drive", () => {
     ).toBe(false);
     expect(tokenTemIdentidade("openid https://www.googleapis.com/auth/drive.file")).toBe(false);
     expect(tokenTemIdentidade(undefined)).toBe(false);
+  });
+
+  it("reconhece o escopo do Drive; sem scope deixa o Drive decidir", () => {
+    expect(tokenTemDrive(SCOPE)).toBe(true);
+    expect(tokenTemDrive(DRIVE_SCOPE)).toBe(true);
+    expect(tokenTemDrive("openid email profile")).toBe(false);
+    expect(tokenTemDrive(undefined)).toBe(true);
+  });
+
+  it("token sem drive.file nao conecta e pede o consentimento de novo", async () => {
+    vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-id-de-teste");
+    google.token.mockResolvedValue({
+      accessToken: "tok",
+      expiresAt: Date.now() + 3_600_000,
+      scope: "openid email profile",
+    });
+
+    await expect(connectDrive()).rejects.toThrow(/drive_nao_autorizado/);
+
+    expect(driveSessionState()).toBe("off");
+    expect(sessionStorage.getItem(DRIVE_SCOPE_DENIED_KEY)).toBe("1");
   });
 
   it("token com identidade em URL nao pede consentimento", async () => {

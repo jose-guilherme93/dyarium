@@ -53,6 +53,9 @@ function isAbortError(error: unknown): boolean {
  */
 export function describeDriveError(causa: unknown): string {
   const texto = causa instanceof Error ? causa.message : "";
+  if (/drive_nao_autorizado|ACCESS_TOKEN_SCOPE_INSUFFICIENT|insufficient/i.test(texto)) {
+    return "Falta autorizar o Drive. Entre de novo e marque a permissão de ver e editar os arquivos que o app criar.";
+  }
   if (/^Drive 403/.test(texto)) return "Sem permissão no Drive. A Drive API pode estar desligada no projeto.";
   if (/^Drive 401/.test(texto)) return "A sessão do Google venceu. Conecte de novo.";
   if (/nao respondeu|popup|bloquead/i.test(texto)) return "A janela do Google não abriu. Tente de novo.";
