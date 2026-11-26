@@ -13,9 +13,11 @@ import {
   driveSessionState,
   onDriveSessionChange,
   driveProfile,
-  disconnectDrive,
 } from "../local/driveSession";
 import { connectAccount } from "../local/accountConnect";
+import { accountInitials } from "../components/AccountGate";
+import { signOutAccount } from "../local/driveSession";
+import { isVaultDirty } from "../local/folderSync";
 import { syncVaultToDrive } from "../local/vaultCloud";
 import type { VaultStage } from "../local/vaultCloud";
 import { lastSyncSummary, flushVaultSync } from "../local/folderSync";
@@ -42,6 +44,9 @@ export function VaultView({ onBack }: { onBack: () => void }) {
   );
   const [stats, setStats] = useState<LocalVaultStats | null>(null);
   const [profileEmail, setProfileEmail] = useState<string | null>(() => driveProfile()?.email ?? null);
+  const [logoutConfirm, setLogoutConfirm] = useState(false);
+  const logoutCardRef = useRef<HTMLDivElement>(null);
+  const logoutTriggerRef = useRef<HTMLButtonElement>(null);
   const [rememberedFolder, setRememberedFolder] = useState<string | null>(null);
 
   useEffect(() => {
@@ -128,10 +133,6 @@ export function VaultView({ onBack }: { onBack: () => void }) {
     }
   };
 
-  const desconectar = () => {
-    disconnectDrive();
-    setFresh(false);
-  };
 
   const driveStateWord = !configured
     ? "sem Google"
@@ -146,6 +147,21 @@ export function VaultView({ onBack }: { onBack: () => void }) {
     : fresh
       ? "on"
       : "warn";
+
+  useEffect(() => {
+    if (!logoutConfirm) return;
+    const card = logoutCardRef.current;
+    const first = card?.querySelector<HTMLButtonElement>("button");
+    first?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setLogoutConfirm(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      logoutTriggerRef.current?.focus();
+    };
+  }, [logoutConfirm]);
 
   const causa = error || atividade.error;
 
@@ -177,6 +193,13 @@ export function VaultView({ onBack }: { onBack: () => void }) {
           </span>
         </header>
 
+        <div className="vault-identity">
+          <span className="vault-identity-avatar">{accountInitials(driveProfile()) || "—"}</span>
+          <div className="vault-identity-text">
+            <span className="vault-identity-name">{driveProfile()?.name ?? "Sem conta"}</span>
+            <span className="vault-identity-mail">{profileEmail ?? "—"}</span>
+          </div>
+        </div>
         <div className="vault-numbers">
           <div className="vault-number">
             <span className="vault-number-value">{stats?.notes ?? 0}</span>
@@ -260,9 +283,41 @@ export function VaultView({ onBack }: { onBack: () => void }) {
 
         {fresh && (
           <div className="vault-footer">
-            <button type="button" className="cfg-btn cfg-btn--quiet" onClick={desconectar}>
-              desconectar
+            <button ref={logoutTriggerRef} type="button" className="cfg-btn cfg-btn--quiet" onClick={() => setLogoutConfirm(true)}>
+              Deslogar
             </button>
+          </div>
+        )}
+        {logoutConfirm && (
+          <div className="vault-logout-confirm" role="dialog" aria-modal="true">
+            <div ref={logoutCardRef} className="vault-logout-card" tabIndex={-1}>
+              <div className="vault-logout-id">
+                <span className="vault-logout-name">{driveProfile()?.name ?? profileEmail ?? "—"}</span>
+                <span className="vault-logout-mail">{profileEmail ?? "—"}</span>
+              </div>
+              {isVaultDirty() && (
+                <p className="vault-logout-pending">
+                  <Icon name="cloud-off" size={14} className="note-row-sync--off" /> sem envio
+                </p>
+              )}
+              <div className="vault-logout-actions">
+                <button type="button" className="cfg-btn cfg-btn--quiet" onClick={() => setLogoutConfirm(false)}>
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  className="cfg-btn cfg-btn--solid"
+                  onClick={() => {
+                    setLogoutConfirm(false);
+                    void signOutAccount().then(() => {
+                      window.location.reload();
+                    });
+                  }}
+                >
+                  Deslogar
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>

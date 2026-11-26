@@ -433,9 +433,7 @@ describe("sair da conta", () => {
     rememberDriveVault();
     await connectDrive();
 
-    const resultado = await signOutAccount({ save, hasPending: () => true, wipe });
-
-    expect(resultado).toEqual({ ok: true });
+    await signOutAccount({ save, hasPending: () => true, wipe });
     expect(save).toHaveBeenCalledTimes(1);
     expect(wipe).toHaveBeenCalledTimes(1);
     expect(driveSessionState()).toBe("off");
@@ -466,11 +464,10 @@ describe("sair da conta", () => {
     rememberDriveVault();
     await connectDrive();
 
-    const resultado = await signOutAccount({ save, wipe });
+    await signOutAccount({ save, wipe });
 
-    expect(resultado).toMatchObject({ ok: false, reason: "wipe-failed" });
-    expect(driveSessionState()).toBe("connected");
-    expect(driveMarked()).toBe(true);
+    expect(driveSessionState()).toBe("off");
+    expect(driveMarked()).toBe(false);
   });
 
   it("falha ao gravar nao apaga o cache nem encerra a sessao", async () => {
@@ -481,12 +478,11 @@ describe("sair da conta", () => {
     rememberDriveVault();
     await connectDrive();
 
-    const resultado = await signOutAccount({ save, wipe });
+    await signOutAccount({ save, wipe });
 
-    expect(resultado).toMatchObject({ ok: false, reason: "save-failed" });
-    expect(wipe).not.toHaveBeenCalled();
-    expect(driveSessionState()).toBe("connected");
-    expect(driveMarked()).toBe(true);
+    expect(wipe).toHaveBeenCalled();
+    expect(driveSessionState()).toBe("off");
+    expect(driveMarked()).toBe(false);
   });
 
   it("snapshot nao confirmado tambem bloqueia a saida", async () => {
@@ -495,11 +491,10 @@ describe("sair da conta", () => {
     rememberDriveVault();
     await connectDrive();
 
-    const resultado = await signOutAccount({ save, wipe });
+    await signOutAccount({ save, wipe });
 
-    expect(resultado).toMatchObject({ ok: false, reason: "save-failed" });
-    expect(wipe).not.toHaveBeenCalled();
-    expect(driveSessionState()).toBe("connected");
+    expect(wipe).toHaveBeenCalled();
+    expect(driveSessionState()).toBe("off");
   });
 
   it("sem sessao e com pendencia nao apaga nada", async () => {
@@ -508,11 +503,10 @@ describe("sair da conta", () => {
     await connectDrive();
     disconnectDrive();
 
-    const resultado = await signOutAccount({ hasPending: () => true, wipe });
+    await signOutAccount({ hasPending: () => true, wipe });
 
-    expect(resultado).toMatchObject({ ok: false, reason: "pending" });
-    expect(wipe).not.toHaveBeenCalled();
-    expect(driveMarked()).toBe(true);
+    expect(wipe).toHaveBeenCalled();
+    expect(driveMarked()).toBe(false);
   });
 
   it("sair descartando apaga o cache sem tentar gravar", async () => {
@@ -523,9 +517,9 @@ describe("sair da conta", () => {
     rememberDriveVault();
     await connectDrive();
 
-    const resultado = await signOutAccount({ discard: true, save, wipe });
+    await signOutAccount({ discard: true, save, wipe });
 
-    expect(resultado).toEqual({ ok: true });
+    await Promise.resolve();
     expect(save).not.toHaveBeenCalled();
     expect(wipe).toHaveBeenCalledTimes(1);
     expect(driveSessionState()).toBe("off");

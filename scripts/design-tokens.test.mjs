@@ -133,7 +133,7 @@ test('icones declaram desenho unico para os dois clientes', () => {
 test('icones gerados para o web batem com docs/design/icons.json', () => {
   const generated = read('web/src/ui/iconGlyphs.ts');
   for (const name of Object.keys(icons.glyphs)) {
-    assert.match(generated, new RegExp(`\\b${name}:`), `icone ${name} ausente no web`);
+    assert.match(generated, new RegExp(`"?${name}"?:`), `icone ${name} ausente no web`);
   }
   assert.match(generated, /export type IconName/);
 });

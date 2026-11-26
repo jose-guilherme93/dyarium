@@ -13324,3 +13324,5 @@ button.save-glyph:focus-visible {
     transition: none;
   }
 }
+
+.rail-cloud--off, .note-row-sync--off { color: var(--dy-danger); }

@@ -84,6 +84,10 @@ export const iconGlyphs = {
     d: "M4 11.5h6.5a2.2 2.2 0 0 0 .3-4.4A3.6 3.6 0 0 0 4 6.6 2.4 2.4 0 0 0 4 11.5z",
     fill: false,
   },
+  "cloud-off": {
+    d: "M4 11.5h6.5a2.2 2.2 0 0 0 .3-4.4A3.6 3.6 0 0 0 4 6.6 2.4 2.4 0 0 0 4 11.5zM2.4 12.2 11.6 1.8",
+    fill: false,
+  },
   server: {
     d: "M2 2h10v4h-10zM2 8h10v4h-10zM4 3.5v1M4 9.5v1",
     fill: false,
@@ -169,6 +173,7 @@ export const iconNames = [
   'tag',
   'alert',
   'cloud',
+  'cloud-off',
   'server',
   'sort',
   'chart',

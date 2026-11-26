@@ -30,6 +30,7 @@ import {
   subscribeWorker,
 } from "../lib/browserWorker";
 import { useToast } from "./Toasts";
+import { Icon as UiIcon } from "../ui";
 import {
   ArchiveIcon,
   CheckIcon,
@@ -1007,7 +1008,11 @@ export function NoteEditor({
         <header className="note-header">
           <div className="note-topbar">
           <span className="save-state muted" aria-live="polite">
-            {saving === "saving" ? "salvando" : saving === "saved" ? "salvo" : ""}
+            {saving === "saving" ? (
+              <UiIcon name="cloud" size={12} label="salvando" />
+            ) : saving === "saved" ? (
+              <UiIcon name="check" size={12} label="salvo neste aparelho" />
+            ) : null}
           </span>
           <div className="note-head-actions">
             <button

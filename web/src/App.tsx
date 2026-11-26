@@ -37,7 +37,7 @@ import { PulseBoot } from "./components/PulseBoot";
 import { AccountGate } from "./components/AccountGate";
 import { VaultView } from "./views/VaultView";
 import { subscribeVaultActivity, vaultActivity } from "./local/vaultActivity";
-import { AccountAvatar, AccountSheet, accountState } from "./components/AccountSheet";
+
 import { NoteTabs } from "./components/NoteTabs";
 import { readTabs, writeTabs, openInNewTab, activateTab, closeTab, closeTabs, reconcileTabs, setTabTitle, EMPTY_TABS, type TabsState } from "./lib/tabs";
 import { noteTitle } from "./lib/noteTitle";
@@ -74,7 +74,6 @@ import { useToast } from "./components/Toasts";
 import {
   CalendarIcon,
   ChevronIcon,
-  ExitIcon,
   MapIcon,
   MenuIcon,
   PlusIcon,
@@ -188,7 +187,6 @@ export function App() {
   /** Aponta para `renovarContaEmSilencio`, definida junto do resto da trava. */
   const renovarSilenciosoRef = useRef<((auto?: boolean) => void) | null>(null);
   const [gateError, setGateError] = useState("");
-  const [accountSheetOpen, setAccountSheetOpen] = useState(false);
   // "Ja tenho uma instalacao propria" troca a apresentacao pelo portao do token.
   const [forceTokenGate, setForceTokenGate] = useState(false);
   // Cofre do Drive abrindo: em vez do botao parado, a tela conta a etapa.
@@ -246,7 +244,6 @@ export function App() {
   // antes de a lista chegar nao pode ser confundido com id invalido.
   const abasReconciliadas = useRef(false);
   /** Conta aberta no pe do trilho: guarda o botao para ancorar e devolver foco. */
-  const [accountAnchor, setAccountAnchor] = useState<HTMLElement | null>(null);
   // Voltar de uma tela aberta por dentro de outra (processamento a partir da
   // nota, por exemplo) precisa devolver para onde o usuario estava, e nao para
   // a primeira tela do menu.
@@ -790,23 +787,8 @@ export function App() {
    */
   const sairDaConta = async () => {
     if (!account && !driveMarked()) return;
-    const confirmado = window.confirm(
-      "Sair da conta? O cofre continua no Drive. O cache deste navegador será apagado.",
-    );
-    if (!confirmado) return;
-    let resultado = await signOutAccount();
-    if (!resultado.ok) {
-      const descartar = window.confirm(
-        `${resultado.message}. Sair mesmo assim? O que não subiu será perdido.`,
-      );
-      if (!descartar) return;
-      resultado = await signOutAccount({ discard: true });
-    }
-    if (resultado.ok) {
-      reloadPage();
-      return;
-    }
-    notify(resultado.message, "error");
+    await signOutAccount();
+    reloadPage();
   };
 
   /**
@@ -1055,10 +1037,6 @@ export function App() {
     }
   };
 
-  const toggleAccountMenu = (event: ReactMouseEvent<HTMLButtonElement>) => {
-    setAccountAnchor(event.currentTarget);
-    setAccountSheetOpen((aberto) => !aberto);
-  };
 
   const selectNotebook = (id: string) => {
     setActiveNotebookId(id);
@@ -1440,20 +1418,6 @@ export function App() {
       icon: <SettingsIcon size={16} />,
       onPress: () => openView("settings"),
     },
-    {
-      key: "logout",
-      label: "Sair",
-      active: false,
-      icon: <ExitIcon size={16} />,
-      onPress: () => {
-        if (token) {
-          clearToken();
-          setTokenState("");
-          return;
-        }
-        void sairDaConta();
-      },
-    },
   ];
 
   return (
@@ -1486,17 +1450,17 @@ export function App() {
             {isBook ? "Capítulo" : "Nova nota"}
           </button>
         )}
-        <button
-          type="button"
-          className="account-avatar-button account-avatar-button--bar"
-          aria-label="Conta"
-          title="Conta"
-          aria-haspopup="menu"
-          aria-expanded={accountSheetOpen}
-          onClick={toggleAccountMenu}
-        >
-          <AccountAvatar profile={account} state={accountState(account)} />
-        </button>
+        {compact && !isMcp && (
+          <button
+            type="button"
+            className="icon-button"
+            onClick={() => openView("vault")}
+            aria-label="Google Drive"
+            title="Google Drive"
+          >
+            <Icon name={vaultNeedsYou ? "cloud-off" : "cloud"} size={18} className={vaultNeedsYou ? "rail-cloud--off" : undefined} />
+          </button>
+        )}
       </header>
       {navOpen && (
         <button
@@ -1554,7 +1518,7 @@ export function App() {
               aria-pressed={view === "vault"}
               title="Google Drive"
             >
-              <Icon name="cloud" size={16} />
+              <Icon name={vaultNeedsYou ? "cloud-off" : "cloud"} size={16} className={vaultNeedsYou ? "rail-cloud--off" : undefined} />
               {vaultNeedsYou && <span className="rail-dot" data-state="warn" aria-hidden="true" />}
             </button>
           )}
@@ -1584,17 +1548,6 @@ export function App() {
               </button>
             ))}
           </div>
-          <button
-            type="button"
-            className="account-avatar-button account-avatar-button--rail"
-            aria-label="Conta"
-            title="Conta"
-            aria-haspopup="menu"
-            aria-expanded={accountSheetOpen}
-            onClick={toggleAccountMenu}
-          >
-            <AccountAvatar profile={account} state={accountState(account)} />
-          </button>
         </nav>
       )}
 
@@ -1605,15 +1558,6 @@ export function App() {
                 {BRAND.name}
                 <small>tinta e papel</small>
               </div>
-              <button
-                type="button"
-                className="sidebar-toggle"
-                onClick={() => setNavOpen(false)}
-                aria-label="Recolher menu"
-                title="Recolher menu"
-              >
-                <ChevronIcon size={16} />
-              </button>
             </div>
             <div className="sidebar-top">
               <NotebookSwitcher
@@ -1683,6 +1627,7 @@ export function App() {
               notebookId={activeNotebookId}
               notebooks={notebooks}
               showSearch={compact}
+              unsynced={vaultNeedsYou}
               autoSearch={pendingSearch}
               onSearchOpened={() => setPendingSearch(false)}
               onOpen={(id) => openNote(id)}
@@ -1713,7 +1658,7 @@ export function App() {
                 aria-pressed={view === "vault"}
                 title="Google Drive"
               >
-                <Icon name="cloud" size={16} />
+                <Icon name={vaultNeedsYou ? "cloud-off" : "cloud"} size={16} className={vaultNeedsYou ? "rail-cloud--off" : undefined} />
               </button>
               {footerItems.map((item) => (
                 <button
@@ -1960,16 +1905,6 @@ export function App() {
           onClose={() => setImportOpen(false)}
           onFinished={finishNotionImport}
           onOpenEntry={openNotionEntry}
-        />
-      )}
-      {accountSheetOpen && (
-        <AccountSheet
-          open
-          onClose={() => setAccountSheetOpen(false)}
-          profile={account}
-          anchor={accountAnchor}
-          onSync={refresh}
-          onSignedOut={() => reloadPage()}
         />
       )}
     </div>

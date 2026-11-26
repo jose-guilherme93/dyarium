@@ -9,7 +9,7 @@ import "./HomeStart.css";
 export interface HomeStartProps {
   /** Notas que este cliente ja tem na lista, quando a tela sabe contar. */
   noteCount?: number;
-  onNewNote(): void;
+  onNewNote?(): void;
   onOpenAnalysis(): void;
 }
 
@@ -21,7 +21,7 @@ export interface HomeStartProps {
  * duas frases de resumo e quatro numeros. As importacoes nao ficam aqui; elas
  * vivem no trilho esquerdo.
  */
-export function HomeStart({ noteCount, onNewNote, onOpenAnalysis }: HomeStartProps) {
+export function HomeStart({ noteCount, onOpenAnalysis }: HomeStartProps) {
   const [snapshot, setSnapshot] = useState<MetricsSnapshot | null>(null);
 
   useEffect(() => {
@@ -77,7 +77,6 @@ export function HomeStart({ noteCount, onNewNote, onOpenAnalysis }: HomeStartPro
           </div>
         ) : null}
         <div className="hs__actions">
-          <Button onClick={onNewNote}>nova nota</Button>
           <Button variant="secondary" onClick={onOpenAnalysis}>
             análise
           </Button>

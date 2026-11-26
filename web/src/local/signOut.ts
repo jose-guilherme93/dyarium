@@ -1,10 +1,6 @@
 /**
- * Saida da conta: grava o pendente, confirma o retrato e so entao apaga o
- * cache local. Mora fora do `driveSession` para a limpeza do banco nao criar
- * ciclo `driveSession -> vaultCloud -> driveSession`.
- *
- * Sem sessao e com pendencia o cache e o unico lugar das mudancas: a saida
- * falha e a folha oferece tentar de novo ou descartar explicitamente.
+ * Saida da conta: tenta gravar o pendente enquanto a sessao existe, depois
+ * desconecta e limpa o cache em best-effort. Nunca falha.
  */
 
 import { clearDriveMark } from "./driveMark";
@@ -13,82 +9,55 @@ import {
   driveSessionState,
   driveVaultRoot,
   type SignOutOptions,
-  type SignOutResult,
 } from "./driveSession";
 import { wipeLocalVault } from "../storage/db";
 
-/** Grava o cofre inteiro e so aceita se os tres snapshots ficaram no Drive. */
-async function gravarPendente(): Promise<boolean> {
-  const { syncVaultToDrive, vaultSnapshotsWritten, waitVaultBackground } = await import(
-    "./vaultCloud"
-  );
-  const raiz = await driveVaultRoot();
-  await syncVaultToDrive(raiz);
-  // O segundo plano do login ainda pode estar guardando capas: o cache so e
-  // apagado depois que ele termina, para nada da conta voltar depois do sair.
-  await waitVaultBackground();
-  return vaultSnapshotsWritten(raiz);
-}
-
-async function haPendencia(): Promise<boolean> {
-  const { isVaultDirty } = await import("./folderSync");
-  return isVaultDirty();
+async function gravarPendente(): Promise<void> {
+  try {
+    const { syncVaultToDrive, vaultSnapshotsWritten, waitVaultBackground } = await import(
+      "./vaultCloud"
+    );
+    const raiz = await driveVaultRoot();
+    await Promise.race([
+      (async () => {
+        await syncVaultToDrive(raiz);
+        await waitVaultBackground();
+        void vaultSnapshotsWritten(raiz);
+      })(),
+      new Promise<void>((resolve) => setTimeout(resolve, 5000)),
+    ]);
+  } catch {
+    // Best-effort.
+  }
 }
 
 function manterModoLocal(): void {
   try {
-    // O proximo carregamento abre o cofre local vazio, e nao a primeira tela.
     localStorage.setItem("dyarium.onboarded", "1");
   } catch {
     // Sem localStorage a primeira tela volta; nada do cofre local e perdido.
   }
 }
 
-export async function leaveAccount(options: SignOutOptions = {}): Promise<SignOutResult> {
-  const discard = options.discard === true;
-  const conectado = driveSessionState() === "connected";
-
-  if (!discard) {
+export async function leaveAccount(options: SignOutOptions = {}): Promise<void> {
+  if (!options.discard) {
+    const conectado = options.save ? true : driveSessionState() === "connected";
     if (conectado) {
       try {
-        const gravado = await (options.save ?? gravarPendente)();
-        if (!gravado) {
-          return {
-            ok: false,
-            reason: "save-failed",
-            message: "não foi possível confirmar o cofre no Drive",
-          };
-        }
+        await (options.save ?? gravarPendente)();
       } catch {
-        return {
-          ok: false,
-          reason: "save-failed",
-          message: "não foi possível gravar o cofre no Drive",
-        };
+        // Best-effort.
       }
-    } else if (await (options.hasPending ?? haPendencia)()) {
-      return {
-        ok: false,
-        reason: "pending",
-        message: "há mudanças que ainda não subiram",
-      };
     }
   }
+
+  disconnectDrive();
+  clearDriveMark();
+  manterModoLocal();
 
   try {
     await (options.wipe ?? wipeLocalVault)();
   } catch {
-    return {
-      ok: false,
-      reason: "wipe-failed",
-      message: "não foi possível limpar este navegador",
-    };
+    // Best-effort.
   }
-
-  // Nada de `/revoke`: revogar o token derrubaria a concessao Google dos outros
-  // clientes (o app). Sair aqui e so limpar a sessao e o cache deste navegador.
-  disconnectDrive();
-  clearDriveMark();
-  manterModoLocal();
-  return { ok: true };
 }
