@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor, act } from "@testing-library/react"
 import { VaultView } from "./VaultView";
 import { connectAccount } from "../local/accountConnect";
 import { syncVaultToDrive } from "../local/vaultCloud";
-import { disconnectDrive, driveSessionState, driveProfile } from "../local/driveSession";
+import { driveSessionState, driveProfile } from "../local/driveSession";
 import { flushVaultSync, lastSyncSummary } from "../local/folderSync";
 import {
   beginVaultActivity,
@@ -133,9 +133,9 @@ describe("VaultView", () => {
     vi.mocked(driveSessionState).mockReturnValue("connected");
     vi.mocked(driveProfile).mockReturnValue({ name: "Ada", email: "ada@example.com", picture: "" });
     render(<VaultView onBack={() => undefined} />);
-    const botao = await screen.findByRole("button", { name: "desconectar" });
+    const botao = await screen.findByRole("button", { name: "Deslogar" });
     fireEvent.click(botao);
-    expect(disconnectDrive).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("Cancelar")).toBeInTheDocument();
   });
 
   it("atividade de sync mostra gravando o que mudou e o medidor", async () => {

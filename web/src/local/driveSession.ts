@@ -283,35 +283,24 @@ export function revokeDriveToken(): void {
 }
 
 export interface SignOutOptions {
-  /** Sair sem tentar gravar o pendente (acao destrutiva e explicita). */
+  /** Sair sem tentar gravar o pendente. */
   discard?: boolean;
-  /** Grava o cofre e devolve se o snapshot foi confirmado. */
-  save?: () => Promise<boolean>;
+  /** Grava o cofre; best-effort. */
+  save?: () => Promise<boolean | void>;
   /** Ha alteracao local que ainda nao subiu. */
   hasPending?: () => boolean | Promise<boolean>;
   /** Apaga o cache local; injetavel para o teste nao tocar em OPFS/IndexedDB. */
   wipe?: () => Promise<void>;
 }
 
-export interface SignOutFailure {
-  ok: false;
-  reason: "save-failed" | "pending" | "wipe-failed";
-  message: string;
-}
-
-export type SignOutResult = { ok: true } | SignOutFailure;
+export type SignOutResult = void;
 
 /**
- * Sai da conta Google neste navegador.
- *
- * Com sessao, grava o pendente e confirma o retrato antes de apagar. Sem
- * sessao e com pendencia, nao apaga: o cache e o unico lugar das mudancas.
- * So o `discard` explicito passa por cima. A limpeza real (banco, OPFS e
- * stores de anexos/capas) fica em `signOut` para nao criar ciclo de imports.
+ * Sai da conta Google neste navegador. Nunca falha.
  */
-export async function signOutAccount(options?: SignOutOptions): Promise<SignOutResult> {
+export async function signOutAccount(options?: SignOutOptions): Promise<void> {
   const { leaveAccount } = await import("./signOut");
-  return leaveAccount(options);
+  await leaveAccount(options);
 }
 
 export function driveProfile(): GoogleProfile | null {

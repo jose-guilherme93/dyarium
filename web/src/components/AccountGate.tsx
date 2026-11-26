@@ -1,7 +1,15 @@
 import { useRef, useState } from "react";
 import { Button } from "../ui";
 import type { GoogleProfile } from "../local/account";
-import { accountInitials } from "./AccountSheet";
+export function accountInitials(profile: GoogleProfile | null): string {
+  const nome = profile?.name?.trim() ?? "";
+  if (!nome) return "";
+  return nome
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((parte) => parte[0]?.toUpperCase() ?? "")
+    .join("");
+}
 import { BRAND, brandClass } from "../lib/brand";
 import { ExitIcon, UserIcon } from "./icons";
 import "./AccountGate.css";

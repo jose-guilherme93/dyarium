@@ -24,7 +24,7 @@ vi.mock("./local/driveSession", async (importOriginal) => {
     ...actual,
     connectDrive: vi.fn(async () => undefined),
     driveVaultRoot: vi.fn(async () => undefined),
-    signOutAccount: vi.fn(async () => ({ ok: true as const })),
+    signOutAccount: vi.fn(async () => undefined),
   };
 });
 
@@ -103,14 +103,14 @@ describe("App", () => {
     expect(
       screen.getByRole("button", { name: /(Usar só neste navegador|Seguir neste navegador)/ }),
     ).toBeInTheDocument();
-    expect(screen.queryByText("Nenhuma nota ainda.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Nenhuma nota")).not.toBeInTheDocument();
   });
 
   it("abre o cofre local quando nao ha servidor nem token", async () => {
     localStorage.setItem("dyarium.onboarded", "1");
     render(<App />);
     // Site estatico: nenhuma tela de token, o banco do navegador assume.
-    await waitFor(() => expect(screen.getByText("Nenhuma nota ainda.")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Nenhuma nota")).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: "Entrar" })).not.toBeInTheDocument();
   });
 
@@ -132,7 +132,7 @@ describe("App", () => {
     });
     vi.stubGlobal("fetch", fetchSpy);
     render(<App />);
-    await waitFor(() => expect(screen.getByText("Nenhuma nota ainda.")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Nenhuma nota")).toBeInTheDocument());
     expect(screen.queryByLabelText("Token de acesso")).not.toBeInTheDocument();
     expect(fetchSpy.mock.calls.some(([url]) => String(url).includes("/setup/state"))).toBe(false);
   });
@@ -148,7 +148,7 @@ describe("App", () => {
       })),
     );
     render(<App />);
-    await waitFor(() => expect(screen.getByText("Nenhuma nota ainda.")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Nenhuma nota")).toBeInTheDocument());
     expect(screen.getByRole("navigation")).toBeInTheDocument();
     vi.unstubAllGlobals();
   });
@@ -186,15 +186,8 @@ describe("App", () => {
     render(<App />);
 
     const rail = await screen.findByRole("navigation", { name: "Trilho" });
-    const sidebar = await screen.findByRole("complementary", {
-      name: /Navegação principal/,
-    });
 
-    // A sidebar aberta nao repete a conta nem as telas do trilho: a navegacao
-    // global e uma so, e o avatar continua no pe do trilho.
-    expect(within(sidebar).queryByRole("button", { name: "Conta" })).not.toBeInTheDocument();
-    expect(within(rail).getByRole("button", { name: "Conta" })).toBeInTheDocument();
-    for (const nome of ["Mapa", "Estatísticas", "Calendário", "Configurações", "Sair"]) {
+    for (const nome of ["Mapa", "Estatísticas", "Calendário", "Configurações"]) {
       expect(within(rail).getByRole("button", { name: nome })).toBeInTheDocument();
     }
 
@@ -218,7 +211,7 @@ describe("App", () => {
     vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "");
     localStorage.setItem("dyarium.onboarded", "1");
     render(<App />);
-    await waitFor(() => expect(screen.getByText("Nenhuma nota ainda.")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Nenhuma nota")).toBeInTheDocument());
 
     // Uma lupa so: o trilho. A faixa da lista nao repete o botao no desktop.
     expect(screen.getAllByRole("button", { name: "Buscar nas notas" })).toHaveLength(1);
@@ -292,60 +285,6 @@ describe("App", () => {
   });
 });
 
-describe("App conta no trilho", () => {
-  it("o avatar do pe do trilho abre o menu acima dele e fecha com Escape", async () => {
-    localStorage.setItem("dyarium.onboarded", "1");
-    render(<App />);
-
-    const rail = await screen.findByRole("navigation", { name: "Trilho" });
-    const gatilho = within(rail).getByRole("button", { name: "Conta" });
-    expect(gatilho).toHaveAttribute("aria-expanded", "false");
-
-    fireEvent.click(gatilho);
-
-    const menu = await screen.findByRole("menu", { name: "Conta Google" });
-    expect(gatilho).toHaveAttribute("aria-expanded", "true");
-    // O menu nasce encostado na borda do trilho: nao cobre a navegacao.
-    expect(menu).toHaveStyle({ left: "34px", width: "238px" });
-    // O avatar continua na tela, no pe do trilho.
-    expect(within(rail).getByRole("button", { name: "Conta" })).toBeInTheDocument();
-
-    fireEvent.keyDown(menu, { key: "Escape" });
-    await waitFor(() =>
-      expect(screen.queryByRole("menu", { name: "Conta Google" })).not.toBeInTheDocument(),
-    );
-    expect(gatilho).toHaveAttribute("aria-expanded", "false");
-  });
-
-  it("sem conta o avatar usa o glifo de pessoa em vez de interrogação", async () => {
-    localStorage.setItem("dyarium.onboarded", "1");
-    render(<App />);
-
-    const rail = await screen.findByRole("navigation", { name: "Trilho" });
-    const gatilho = within(rail).getByRole("button", { name: "Conta" });
-    expect(gatilho.querySelector(".account-avatar-glyph")).not.toBeNull();
-    expect(gatilho.textContent).not.toContain("?");
-    expect(gatilho.querySelector(".account-state-mark--none")).not.toBeNull();
-  });
-
-  it("com conta salva e sessao vencida, o avatar pede reconexao", async () => {
-    localStorage.setItem("dyarium.onboarded", "1");
-    localStorage.setItem(
-      "dyarium.account",
-      JSON.stringify({ name: "Ada Lovelace", email: "ada@example.com", picture: "" }),
-    );
-    render(<App />);
-
-    const rail = await screen.findByRole("navigation", { name: "Trilho" });
-    const gatilho = within(rail).getByRole("button", { name: "Conta" });
-    expect(gatilho.querySelector(".account-state-mark--expired")).not.toBeNull();
-
-    fireEvent.click(gatilho);
-    fireEvent.click(await screen.findByRole("menuitem", { name: /Conectar/ }));
-    expect(screen.queryByRole("menu", { name: "Conta Google" })).not.toBeInTheDocument();
-  });
-});
-
 describe("App trava da conta", () => {
   const aberto = {
     restored: null,
@@ -365,7 +304,7 @@ describe("App trava da conta", () => {
     vi.mocked(openDriveVault).mockResolvedValue(aberto);
     vi.mocked(driveVaultRoot).mockResolvedValue(undefined as never);
     vi.mocked(connectDrive).mockResolvedValue(undefined as never);
-    vi.mocked(signOutAccount).mockResolvedValue({ ok: true });
+    vi.mocked(signOutAccount).mockResolvedValue(undefined as never);
     localStorage.setItem("dyarium.drive", "1");
     localStorage.setItem("dyarium.account", JSON.stringify(perfil));
   });
@@ -392,7 +331,7 @@ describe("App trava da conta", () => {
 
     render(<App />);
 
-    await waitFor(() => expect(screen.getByText("Nenhuma nota ainda.")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Nenhuma nota")).toBeInTheDocument());
     expect(screen.queryByRole("main", { name: "Conta Google" })).not.toBeInTheDocument();
     // Nenhum login: a aba ja tinha a sessao.
     expect(connectDrive).not.toHaveBeenCalled();
@@ -402,7 +341,7 @@ describe("App trava da conta", () => {
   it("sem sessao mas com o Google ativo, tenta sozinho e destrava", async () => {
     render(<App />);
 
-    await waitFor(() => expect(screen.getByText("Nenhuma nota ainda.")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Nenhuma nota")).toBeInTheDocument());
     expect(connectDrive).toHaveBeenCalledWith(
       expect.objectContaining({ silent: true }),
     );
@@ -426,7 +365,7 @@ describe("App trava da conta", () => {
     ).toBeInTheDocument();
 
     // Nada do cofre atras da trava: nem lista vazia, nem navegacao.
-    expect(screen.queryByText("Nenhuma nota ainda.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Nenhuma nota")).not.toBeInTheDocument();
     expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
     // A marca e o perfil nao voltam para a primeira tela.
     expect(
@@ -450,7 +389,7 @@ describe("App trava da conta", () => {
       expect.objectContaining({ attachments: "skip", sync: "background" }),
     );
     // O cofre abriu: o app entra e as notas locais aparecem.
-    await waitFor(() => expect(screen.getByText("Nenhuma nota ainda.")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Nenhuma nota")).toBeInTheDocument());
     expect(screen.getByRole("navigation")).toBeInTheDocument();
     expect(screen.queryByRole("main", { name: "Conta Google" })).not.toBeInTheDocument();
     // Nenhum caminho automatico pede tela do Google: so o silencioso.
@@ -496,7 +435,7 @@ describe("App trava da conta", () => {
     fireEvent.click(within(trava).getByRole("button", { name: "Entrar com Google" }));
 
     await waitFor(() => expect(connectDrive).toHaveBeenCalledWith({ redirect: true }));
-    await waitFor(() => expect(screen.getByText("Nenhuma nota ainda.")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Nenhuma nota")).toBeInTheDocument());
     expect(screen.queryByRole("main", { name: "Conta Google" })).not.toBeInTheDocument();
   });
 
@@ -512,7 +451,7 @@ describe("App trava da conta", () => {
     fireEvent.pointerDown(await screen.findByRole("main", { name: "Conta Google" }));
 
     // O sync ainda esta rodando e a lista ja esta na tela.
-    await waitFor(() => expect(screen.getByText("Nenhuma nota ainda.")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Nenhuma nota")).toBeInTheDocument());
     expect(screen.getByRole("navigation")).toBeInTheDocument();
     liberar();
     await segundoPlano;
@@ -530,7 +469,7 @@ describe("App trava da conta", () => {
       expect(screen.getByRole("main", { name: "Conta Google" })).toBeInTheDocument(),
     );
     expect(openDriveVault).not.toHaveBeenCalled();
-    expect(screen.queryByText("Nenhuma nota ainda.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Nenhuma nota")).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
@@ -548,7 +487,7 @@ describe("App trava da conta", () => {
       undefined,
       expect.objectContaining({ attachments: "skip", sync: "background" }),
     );
-    await waitFor(() => expect(screen.getByText("Nenhuma nota ainda.")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Nenhuma nota")).toBeInTheDocument());
     expect(screen.queryByRole("main", { name: "Conta Google" })).not.toBeInTheDocument();
   });
 
@@ -559,9 +498,8 @@ describe("App trava da conta", () => {
       localStorage.removeItem("dyarium.drive");
       localStorage.removeItem("dyarium.account");
       localStorage.setItem("dyarium.onboarded", "1");
-      return { ok: true };
+      return undefined;
     });
-    const confirmar = vi.spyOn(window, "confirm").mockReturnValue(true);
     vi.mocked(connectDrive).mockRejectedValueOnce(new Error("sem gesto"));
     const vista = render(<App />);
     const trava = await screen.findByRole("main", { name: "Conta Google" });
@@ -569,7 +507,6 @@ describe("App trava da conta", () => {
     fireEvent.click(within(trava).getByRole("button", { name: "Sair desta conta" }));
 
     await waitFor(() => expect(signOutAccount).toHaveBeenCalledTimes(1));
-    expect(confirmar).toHaveBeenCalledTimes(1);
     expect(localStorage.getItem("dyarium.drive")).toBeNull();
     expect(localStorage.getItem("dyarium.account")).toBeNull();
     expect(reloadPage).toHaveBeenCalledTimes(1);
@@ -577,7 +514,7 @@ describe("App trava da conta", () => {
     // O recarregamento (jsdom nao navega) abre o cofre local vazio, sem trava.
     vista.unmount();
     render(<App />);
-    await waitFor(() => expect(screen.getByText("Nenhuma nota ainda.")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Nenhuma nota")).toBeInTheDocument());
     expect(screen.queryByRole("main", { name: "Conta Google" })).not.toBeInTheDocument();
   });
 
@@ -587,7 +524,7 @@ describe("App trava da conta", () => {
     localStorage.setItem("dyarium.onboarded", "1");
     render(<App />);
 
-    await waitFor(() => expect(screen.getByText("Nenhuma nota ainda.")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Nenhuma nota")).toBeInTheDocument());
     expect(screen.queryByRole("main", { name: "Conta Google" })).not.toBeInTheDocument();
   });
 });
@@ -850,7 +787,7 @@ describe("App cofre no Drive", () => {
     expect(await screen.findByText("pronto")).toBeInTheDocument();
 
     // "pronto" fica na tela ~1,2 s antes de o cofre abrir.
-    await waitFor(() => expect(screen.getByText("Nenhuma nota ainda.")).toBeInTheDocument(), {
+    await waitFor(() => expect(screen.getByText("Nenhuma nota")).toBeInTheDocument(), {
       timeout: 4000,
     });
     expect(screen.queryByText("pronto")).not.toBeInTheDocument();

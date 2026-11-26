@@ -191,7 +191,7 @@ export const designIcon = {
   box: 16,
   stroke: 1.5,
   strokeDetail: 1.3,
-  set: ["menu","plus","back","forward","search","mic","panel","theme","more","tree","book","grid","sync","close","chevron","check","pin","tag","alert","cloud","server","sort","chart","image","link","doc","clock","bell","calendar","network","trash","play","pause","stop","gear"],
+  set: ["menu","plus","back","forward","search","mic","panel","theme","more","tree","book","grid","sync","close","chevron","check","pin","tag","alert","cloud","cloud-off","server","sort","chart","image","link","doc","clock","bell","calendar","network","trash","play","pause","stop","gear"],
 } as const;
 
 export const designReading = {

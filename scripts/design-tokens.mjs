@@ -1241,7 +1241,7 @@ function iconGlyphsTs() {
   const entries = Object.entries(icons.glyphs)
     .map(([name, glyph]) => {
       const lines = [
-        `  ${name}: {`,
+        `  ${/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name) ? name : JSON.stringify(name)}: {`,
         `    d: ${JSON.stringify(glyph.d)},`,
         `    fill: ${glyph.fill ? 'true' : 'false'},`,
         '  },',

@@ -27,13 +27,13 @@ import {
   ArchiveIcon,
   CheckIcon,
   CloseIcon,
-  PlusIcon,
   SearchIcon,
   SelectIcon,
   SortIcon,
   TagIcon,
 } from "./icons";
 import { useToast } from "./Toasts";
+import { Icon } from "../ui";
 
 interface NoteListProps {
   refreshKey: number;
@@ -46,6 +46,8 @@ interface NoteListProps {
   autoSearch?: boolean;
   /** Mostra o botao de lupa no cabecalho da lista. Padrao true. */
   showSearch?: boolean;
+  /** Drive nao sincroniza: mostra marca vermelha nas notas locais. */
+  unsynced?: boolean;
   onSearchOpened?: () => void;
   onOpen: (id: string, title?: string) => void;
   /** Abre a nota numa aba nova; ausente, a acao nao aparece no menu. */
@@ -104,10 +106,10 @@ export function NoteList({
   notebooks,
   autoSearch = false,
   showSearch = true,
+  unsynced = false,
   onSearchOpened,
   onOpen,
   onOpenInNewTab,
-  onCreate,
   onManageTags,
   onMutated,
 }: NoteListProps) {
@@ -458,6 +460,9 @@ export function NoteList({
                 <span className="note-row-failed">falhou</span>
               )}
               <span className="note-row-date">{formatShortDateTime(noteDate(entry))}</span>
+              {unsynced && (
+                <Icon name="cloud-off" size={12} className="note-row-sync--off" label="sem envio" />
+              )}
             </span>
           </button>
         </div>
@@ -631,17 +636,6 @@ export function NoteList({
               </button>
               <NotificationsMenu refreshKey={refreshKey} onOpen={onOpen} />
             </div>
-            {!isMcp && (
-              <button
-                type="button"
-                className="icon-button list-new"
-                onClick={onCreate}
-                aria-label="Nova nota"
-                title="Nova nota"
-              >
-                <PlusIcon size={16} />
-              </button>
-            )}
           </>
         )}
       </div>
@@ -757,8 +751,7 @@ export function NoteList({
               </>
             ) : (
               <>
-                <p>Nenhuma nota ainda.</p>
-                <p>Use o + acima para criar a primeira.</p>
+                <p>Nenhuma nota</p>
               </>
             )}
           </div>
