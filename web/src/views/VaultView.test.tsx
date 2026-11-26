@@ -118,6 +118,31 @@ describe("VaultView", () => {
     ));
   });
 
+  it("sem drive.file avisa o App e nao escreve erro", async () => {
+    rememberDriveVault(RESUMO);
+    vi.mocked(connectAccount).mockRejectedValueOnce(new Error("drive_nao_autorizado"));
+    const onScopeDenied = vi.fn();
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    render(<VaultView onBack={() => undefined} onScopeDenied={onScopeDenied} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "entrar com Google" }));
+
+    await waitFor(() => expect(onScopeDenied).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    log.mockRestore();
+  });
+
+  it("conectar com sucesso avisa onConnected", async () => {
+    rememberDriveVault(RESUMO);
+    vi.mocked(connectAccount).mockResolvedValueOnce(aberto as never);
+    const onConnected = vi.fn();
+    render(<VaultView onBack={() => undefined} onConnected={onConnected} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "entrar com Google" }));
+
+    await waitFor(() => expect(onConnected).toHaveBeenCalledTimes(1));
+  });
+
   it("sincronizar chama syncVaultToDrive", async () => {
     rememberDriveVault(RESUMO);
     vi.mocked(driveSessionState).mockReturnValue("connected");

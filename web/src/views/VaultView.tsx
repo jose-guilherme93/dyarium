@@ -30,7 +30,15 @@ import { rememberDriveVault, driveMarked } from "../local/driveMark";
 import { rememberFolder } from "../local/folder";
 import { vaultStats, type LocalVaultStats } from "../local/vaultStats";
 
-export function VaultView({ onBack }: { onBack: () => void }) {
+export function VaultView({
+  onBack,
+  onScopeDenied,
+  onConnected,
+}: {
+  onBack: () => void;
+  onScopeDenied?: () => void;
+  onConnected?: () => void;
+}) {
   const [fresh, setFresh] = useState(() => driveSessionState() === "connected");
   const [working, setWorking] = useState(false);
   const [stage, setStage] = useState<VaultStage>("conectando");
@@ -92,6 +100,7 @@ export function VaultView({ onBack }: { onBack: () => void }) {
       rememberDriveVault(aberto.summary);
       await flushVaultSync();
       clearVaultActivityError();
+      onConnected?.();
       if (!alive.current) return;
       setFresh(true);
       setWorking(false);
@@ -99,7 +108,12 @@ export function VaultView({ onBack }: { onBack: () => void }) {
     } catch (causa) {
       console.error("[drive] falha ao conectar", causa);
       if (!alive.current) return;
-      setError(describeDriveError(causa));
+      const texto = causa instanceof Error ? causa.message : "";
+      if (/drive_nao_autorizado/i.test(texto)) {
+        onScopeDenied?.();
+      } else {
+        setError(describeDriveError(causa));
+      }
       setWorking(false);
     }
   };
@@ -112,6 +126,7 @@ export function VaultView({ onBack }: { onBack: () => void }) {
     try {
       await syncVaultToDrive();
       clearVaultActivityError();
+      onConnected?.();
       if (!alive.current) return;
       void vaultStats().then(setStats);
       setWorking(false);
