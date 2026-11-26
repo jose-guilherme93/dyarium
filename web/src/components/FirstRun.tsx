@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { preloadGoogle } from "../local/google";
+import { takeDriveLoginReturn } from "../local/driveSession";
 import { BRAND, brandClass } from "../lib/brand";
 import { pickFolder, supportsFolder, type FolderLike } from "../local/folder";
 
@@ -150,6 +151,18 @@ export function FirstRun({
       setDriveBusy(false);
     }
   };
+
+  // Voltamos do redirect do Google: o token ja esta na memoria e so falta
+  // abrir o cofre. `takeDriveLoginReturn` limpa o sinal, entao roda uma vez.
+  useEffect(() => {
+    const retorno = takeDriveLoginReturn();
+    if (!retorno) return;
+    if ("erro" in retorno) {
+      setError(describeDriveError(new Error(retorno.erro)));
+      return;
+    }
+    if (onDriveChosen) void chooseDrive();
+  }, [onDriveChosen]);
 
   return (
     <main className="first-run-page">

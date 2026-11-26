@@ -9,12 +9,13 @@ const idb = vi.hoisted(() => ({
 vi.mock("../lib/idb", () => idb);
 
 // O login do Google abre a janela do GIS: aqui ele devolve um token de mentira.
-const google = vi.hoisted(() => ({ token: vi.fn() }));
+const google = vi.hoisted(() => ({ token: vi.fn(), start: vi.fn() }));
 vi.mock("./google", async (importOriginal) => {
   const original = await importOriginal<typeof import("./google")>();
   return {
     ...original,
     requestDriveToken: (options?: { silent?: boolean; prompt?: string }) => google.token(options),
+    startDriveLogin: () => google.start(),
   };
 });
 
@@ -71,6 +72,7 @@ beforeEach(() => {
   disconnectDrive();
   sessionStorage.clear();
   google.token.mockReset();
+  google.start.mockReset();
   idb.storeSet.mockClear();
   setItem.mockClear();
   // O userinfo nunca vai a rede num teste: sem perfil, o login segue.
@@ -359,6 +361,35 @@ describe("sessao do Drive", () => {
 
     expect(google.token).toHaveBeenCalledTimes(1);
     expect(google.token).toHaveBeenCalledWith({ silent: true });
+  });
+
+  it("login interativo com redirect nao abre janela do Google", async () => {
+    vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-id-de-teste");
+
+    void connectDrive({ redirect: true });
+    await Promise.resolve();
+
+    expect(google.start).toHaveBeenCalledTimes(1);
+    expect(google.token).not.toHaveBeenCalled();
+  });
+
+  it("depois do redirect, o token que ja esta na sessao abre o cofre sem pedir de novo", async () => {
+    vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-id-de-teste");
+    google.token.mockResolvedValue({
+      accessToken: "tok",
+      expiresAt: Date.now() + 3_600_000,
+      scope: SCOPE,
+    });
+    // Primeira sessao (equivale ao token que o retorno do redirect aplicou).
+    await connectDrive();
+    google.start.mockClear();
+    google.token.mockClear();
+
+    const client = await connectDrive({ redirect: true });
+
+    expect(client).toBeInstanceOf(DriveClient);
+    expect(google.start).not.toHaveBeenCalled();
+    expect(google.token).not.toHaveBeenCalled();
   });
 });
 
