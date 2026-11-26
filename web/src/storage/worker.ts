@@ -17,6 +17,7 @@ import wasmUrl from "wa-sqlite/dist/wa-sqlite.wasm?url";
 import wasmAsyncUrl from "wa-sqlite/dist/wa-sqlite-async.wasm?url";
 
 import { handle, type Engine, type Reply, type Request } from "./protocol";
+import { comReserva, SQLITE_IDB_NAME } from "./vfs";
 
 type Api = ReturnType<typeof SQLite.Factory>;
 
@@ -31,37 +32,30 @@ async function scalar(api: Api, db: number, sql: string): Promise<number> {
   return 0;
 }
 
-/** Banco sobre IndexedDB: usado quando o navegador recusa o OPFS. */
-async function openIndexedDbApi(): Promise<Api> {
-  const module = await factoryAsync({ locateFile: () => wasmAsyncUrl });
+/** Banco sobre OPFS: o caminho rapido, padrao. */
+async function openOpfsApi(): Promise<Api> {
+  const module = await factory({ locateFile: () => wasmUrl });
   const api: Api = SQLite.Factory(module);
-  const vfs = new IDBBatchAtomicVFS("dyarium");
+  const vfs = new AccessHandlePoolVFS("/dyarium");
+  await vfs.isReady;
+  // O tipo publicado do VFS e a interface completa; o exemplo entrega o
+  // objeto com os mesmos ganchos, so sem a declaracao.
   api.vfs_register(vfs as unknown as Parameters<Api["vfs_register"]>[0], true);
   return api;
 }
 
-async function openEngine(): Promise<Engine> {
-  let api: Api;
-  // `VITE_DB_FORCE_IDB=1` forca o caminho de IndexedDB para testar o fallback
-  // num navegador que tem OPFS. Em producao a variavel nao existe.
-  const forcarIdb = import.meta.env.VITE_DB_FORCE_IDB === "1";
-  try {
-    if (forcarIdb) throw new Error("fallback de IndexedDB forcado");
-    const module = await factory({ locateFile: () => wasmUrl });
-    api = SQLite.Factory(module);
-    const vfs = new AccessHandlePoolVFS("/dyarium");
-    await vfs.isReady;
-    // O tipo publicado do VFS e a interface completa; o exemplo entrega o
-    // objeto com os mesmos ganchos, so sem a declaracao.
-    api.vfs_register(vfs as unknown as Parameters<Api["vfs_register"]>[0], true);
-  } catch {
-    // OPFS indisponivel (privado, politica do navegador, handle recusado): o
-    // IndexedDB guarda o mesmo banco de forma persistente e segue o app.
-    api = await openIndexedDbApi();
-  }
+/** Banco sobre IndexedDB: usado quando o navegador recusa o OPFS. */
+async function openIndexedDbApi(): Promise<Api> {
+  const module = await factoryAsync({ locateFile: () => wasmAsyncUrl });
+  const api: Api = SQLite.Factory(module);
+  // Nome proprio: o IndexedDB do SQLite nao pode ser o mesmo `dyarium` que o
+  // cache do app usa, senao o open estoura VersionError.
+  const vfs = new IDBBatchAtomicVFS(SQLITE_IDB_NAME);
+  api.vfs_register(vfs as unknown as Parameters<Api["vfs_register"]>[0], true);
+  return api;
+}
 
-  const db = await api.open_v2("dyarium.db");
-
+function montarEngine(api: Api, db: number): Engine {
   return {
     exec: async (sql) => {
       await api.exec(db, sql);
@@ -94,6 +88,26 @@ async function openEngine(): Promise<Engine> {
       return [];
     },
   };
+}
+
+async function openEngine(): Promise<Engine> {
+  // `VITE_DB_FORCE_IDB=1` forca o caminho de IndexedDB para testar o fallback
+  // num navegador que tem OPFS. Em producao a variavel nao existe.
+  const forcarIdb = import.meta.env.VITE_DB_FORCE_IDB === "1";
+  // A reserva cobre tanto a criacao do VFS quanto o open: um OPFS que existe
+  // mas recusa a abertura tambem cai no IndexedDB.
+  const { api, db } = await comReserva(
+    async () => {
+      if (forcarIdb) throw new Error("fallback de IndexedDB forcado");
+      const opfs = await openOpfsApi();
+      return { api: opfs, db: await opfs.open_v2("dyarium.db") };
+    },
+    async () => {
+      const idb = await openIndexedDbApi();
+      return { api: idb, db: await idb.open_v2("dyarium.db") };
+    },
+  );
+  return montarEngine(api, db);
 }
 
 const ready = openEngine();
