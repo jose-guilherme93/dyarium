@@ -170,8 +170,31 @@ export function App() {
    * mas a sessao do Google (que vive so na memoria) nao esta viva. Sem token,
    * o cache da conta nao pode virar o app: a tela trava ate entrar ou sair.
    */
+  const readDriveScopeDenied = () => {
+    try {
+      return localStorage.getItem("dyarium.driveScopeDenied") === "1";
+    } catch {
+      return false;
+    }
+  };
+  const writeDriveScopeDenied = (value: boolean) => {
+    try {
+      if (value) localStorage.setItem("dyarium.driveScopeDenied", "1");
+      else localStorage.removeItem("dyarium.driveScopeDenied");
+    } catch {
+      // ignore
+    }
+  };
+  const [driveScopeDenied, setDriveScopeDenied] = useState(() => readDriveScopeDenied());
+  const setDriveScopeDeniedPersisted = (value: boolean) => {
+    setDriveScopeDenied(value);
+    writeDriveScopeDenied(value);
+  };
   const [accountLocked, setAccountLocked] = useState(
-    () => driveMarked() && driveSessionState() !== "connected",
+    () =>
+      driveMarked() &&
+      driveSessionState() !== "connected" &&
+      localStorage.getItem("dyarium.driveScopeDenied") !== "1",
   );
   /**
    * Com token de servidor as notas vem da API, nao do cache da conta: a trava
@@ -802,6 +825,7 @@ export function App() {
     setVaultBoot(null);
     setGateError("");
     setAccountLocked(false);
+    setDriveScopeDeniedPersisted(false);
     setAccount(driveProfile() ?? cachedAccountProfile());
     finishOnboarding();
   };
@@ -827,6 +851,15 @@ export function App() {
       });
       desbloquear();
     } catch (causa) {
+      const texto = causa instanceof Error ? causa.message : "";
+      if (/drive_nao_autorizado/i.test(texto)) {
+        setDriveScopeDeniedPersisted(true);
+        setAccountLocked(false);
+        setVaultBoot(null);
+        finishOnboarding();
+        unlockInFlight.current = false;
+        return;
+      }
       // O motivo tecnico fica no console; na tela, uma linha acionavel.
       console.error("[drive] falha ao entrar pela conta", causa);
       setVaultBoot(null);
@@ -966,8 +999,16 @@ export function App() {
                 setVaultBoot((current) => (current ? { ...current, done: true } : current));
                 await aguardar(VAULT_READY_HOLD_MS);
                 setVaultBoot(null);
+                setDriveScopeDeniedPersisted(false);
                 finishOnboarding();
               } catch (causa) {
+                const texto = causa instanceof Error ? causa.message : "";
+                if (/drive_nao_autorizado/i.test(texto)) {
+                  setDriveScopeDeniedPersisted(true);
+                  setVaultBoot(null);
+                  finishOnboarding();
+                  return;
+                }
                 // De volta a primeira tela, que mostra a causa em uma linha.
                 setVaultBoot(null);
                 throw causa;
@@ -1385,9 +1426,10 @@ export function App() {
   // O icone de nuvem so pede atencao quando ha o que reconectar ou um envio
   // que falhou. Trabalho em curso aparece na propria pagina do cofre.
   const vaultNeedsYou =
-    driveMarked() &&
-    driveConfigured() &&
-    (driveLive !== "connected" || vaultWork.error !== "");
+    driveScopeDenied ||
+    (driveMarked() &&
+      driveConfigured() &&
+      (driveLive !== "connected" || vaultWork.error !== ""));
 
   const footerItems = [
     {
@@ -1797,7 +1839,11 @@ export function App() {
               </div>
             </div>
           ) : view === "vault" ? (
-            <VaultView onBack={goBack} />
+            <VaultView
+              onBack={goBack}
+              onScopeDenied={() => setDriveScopeDeniedPersisted(true)}
+              onConnected={() => setDriveScopeDeniedPersisted(false)}
+            />
           ) : view === "map" ? (
             <div className="page page--map">
               <MapView

@@ -114,6 +114,26 @@ describe("App", () => {
     expect(screen.queryByRole("button", { name: "Entrar" })).not.toBeInTheDocument();
   });
 
+  it("sem drive.file abre o cofre local com a nuvem cortada, sem texto", async () => {
+    vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-de-teste");
+    vi.mocked(connectDrive).mockRejectedValueOnce(new Error("drive_nao_autorizado"));
+    const { unmount } = render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Continuar com Google/ }));
+
+    await waitFor(() => expect(screen.getByRole("navigation", { name: "Trilho" })).toBeInTheDocument());
+    expect(screen.queryByText(/Falta autorizar o Drive/)).not.toBeInTheDocument();
+    expect(localStorage.getItem("dyarium.driveScopeDenied")).toBe("1");
+    expect(document.querySelector(".rail-cloud--off")).not.toBeNull();
+
+    // O F5 (nova montagem) continua mostrando o sync quebrado, sem travar a conta.
+    unmount();
+    render(<App />);
+    await waitFor(() => expect(screen.getByRole("navigation", { name: "Trilho" })).toBeInTheDocument());
+    expect(document.querySelector(".rail-cloud--off")).not.toBeNull();
+    expect(screen.queryByRole("main", { name: "Conta Google" })).not.toBeInTheDocument();
+  });
+
   it("VITE_LOCAL_ONLY ignora o token guardado e nem pergunta pelo servidor", async () => {
     // Dev com a API de pe: a flag prende o app ao cofre do navegador, senao o
     // portao do token esconde o caminho que se quer testar.
