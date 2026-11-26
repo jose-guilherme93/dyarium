@@ -7,9 +7,22 @@ declare module "wa-sqlite/dist/wa-sqlite.mjs" {
   export default factory;
 }
 
+declare module "wa-sqlite/dist/wa-sqlite-async.mjs" {
+  const factory: (options?: {
+    locateFile?: (file: string) => string;
+  }) => Promise<Parameters<typeof import("wa-sqlite").Factory>[0]>;
+  export default factory;
+}
+
 declare module "wa-sqlite/src/examples/AccessHandlePoolVFS.js" {
   export class AccessHandlePoolVFS {
     constructor(directoryPath: string);
     readonly isReady: Promise<void>;
+  }
+}
+
+declare module "wa-sqlite/src/examples/IDBBatchAtomicVFS.js" {
+  export class IDBBatchAtomicVFS {
+    constructor(idbDatabaseName?: string, options?: Record<string, unknown>);
   }
 }

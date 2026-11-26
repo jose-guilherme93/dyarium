@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { preloadGoogle, requestDriveToken, tokenIsFresh } from "./google";
+import {
+  consumeDriveRedirect,
+  DRIVE_REDIRECT_STATE_KEY,
+  preloadGoogle,
+  requestDriveToken,
+  tokenIsFresh,
+} from "./google";
 
 interface TokenConfig {
   scope: string;
@@ -158,5 +164,46 @@ describe("login do Drive", () => {
     expect(config.scope).toContain("drive.file");
     config.callback({ access_token: "t", expires_in: 3600 });
     await pedido;
+  });
+});
+
+describe("retorno do redirect do Google", () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("le o token do fragmento, confere o state e limpa a URL", () => {
+    sessionStorage.setItem(DRIVE_REDIRECT_STATE_KEY, "estado-1");
+    window.location.hash =
+      "#access_token=tok&expires_in=3600&scope=openid%20email&state=estado-1";
+
+    const retorno = consumeDriveRedirect();
+
+    expect(retorno?.token.accessToken).toBe("tok");
+    expect(retorno?.token.scope).toBe("openid email");
+    expect(retorno?.token.expiresAt).toBeGreaterThan(Date.now());
+    // O token nunca fica na barra de endereco nem no historico.
+    expect(window.location.hash).toBe("");
+    expect(sessionStorage.getItem(DRIVE_REDIRECT_STATE_KEY)).toBeNull();
+  });
+
+  it("recusa um state que nao confere", () => {
+    sessionStorage.setItem(DRIVE_REDIRECT_STATE_KEY, "estado-1");
+    window.location.hash = "#access_token=tok&state=outro";
+
+    expect(() => consumeDriveRedirect()).toThrow(/nao confere/);
+    expect(window.location.hash).toBe("");
+  });
+
+  it("erro do Google vira rejeicao acionavel", () => {
+    window.location.hash =
+      "#error=access_denied&error_description=cancelado&state=x";
+
+    expect(() => consumeDriveRedirect()).toThrow(/cancelado/);
+  });
+
+  it("sem fragmento nao e retorno de login", () => {
+    expect(consumeDriveRedirect()).toBeNull();
   });
 });

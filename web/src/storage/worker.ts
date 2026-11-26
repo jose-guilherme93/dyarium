@@ -9,9 +9,12 @@
 
 import * as SQLite from "wa-sqlite";
 import factory from "wa-sqlite/dist/wa-sqlite.mjs";
+import factoryAsync from "wa-sqlite/dist/wa-sqlite-async.mjs";
 import { AccessHandlePoolVFS } from "wa-sqlite/src/examples/AccessHandlePoolVFS.js";
+import { IDBBatchAtomicVFS } from "wa-sqlite/src/examples/IDBBatchAtomicVFS.js";
 
 import wasmUrl from "wa-sqlite/dist/wa-sqlite.wasm?url";
+import wasmAsyncUrl from "wa-sqlite/dist/wa-sqlite-async.wasm?url";
 
 import { handle, type Engine, type Reply, type Request } from "./protocol";
 
@@ -28,15 +31,34 @@ async function scalar(api: Api, db: number, sql: string): Promise<number> {
   return 0;
 }
 
-async function openEngine(): Promise<Engine> {
-  const module = await factory({ locateFile: () => wasmUrl });
+/** Banco sobre IndexedDB: usado quando o navegador recusa o OPFS. */
+async function openIndexedDbApi(): Promise<Api> {
+  const module = await factoryAsync({ locateFile: () => wasmAsyncUrl });
   const api: Api = SQLite.Factory(module);
-
-  const vfs = new AccessHandlePoolVFS("/dyarium");
-  await vfs.isReady;
-  // O tipo publicado do VFS e a interface completa; o exemplo entrega o objeto
-  // com os mesmos ganchos, so sem a declaracao.
+  const vfs = new IDBBatchAtomicVFS("dyarium");
   api.vfs_register(vfs as unknown as Parameters<Api["vfs_register"]>[0], true);
+  return api;
+}
+
+async function openEngine(): Promise<Engine> {
+  let api: Api;
+  // `VITE_DB_FORCE_IDB=1` forca o caminho de IndexedDB para testar o fallback
+  // num navegador que tem OPFS. Em producao a variavel nao existe.
+  const forcarIdb = import.meta.env.VITE_DB_FORCE_IDB === "1";
+  try {
+    if (forcarIdb) throw new Error("fallback de IndexedDB forcado");
+    const module = await factory({ locateFile: () => wasmUrl });
+    api = SQLite.Factory(module);
+    const vfs = new AccessHandlePoolVFS("/dyarium");
+    await vfs.isReady;
+    // O tipo publicado do VFS e a interface completa; o exemplo entrega o
+    // objeto com os mesmos ganchos, so sem a declaracao.
+    api.vfs_register(vfs as unknown as Parameters<Api["vfs_register"]>[0], true);
+  } catch {
+    // OPFS indisponivel (privado, politica do navegador, handle recusado): o
+    // IndexedDB guarda o mesmo banco de forma persistente e segue o app.
+    api = await openIndexedDbApi();
+  }
 
   const db = await api.open_v2("dyarium.db");
 

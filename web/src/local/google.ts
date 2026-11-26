@@ -15,6 +15,9 @@ import { DRIVE_SCOPE } from "./drive";
 export const WEB_GOOGLE_SCOPES = `openid email profile ${DRIVE_SCOPE}`;
 
 const GIS_SRC = "https://accounts.google.com/gsi/client";
+const AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
+/** Estado do redirect no sessionStorage: some assim que o Google responde. */
+export const DRIVE_REDIRECT_STATE_KEY = "dyarium.drive.redirect";
 
 interface TokenResponse {
   access_token?: string;
@@ -59,6 +62,8 @@ export interface DriveToken {
 export interface DriveTokenOptions {
   /** Pedido sem tela: `prompt: "none"`. */
   silent?: boolean;
+  /** Login interativo pela aba inteira (redirect), sem janela do Google. */
+  redirect?: boolean;
   /** Sobrepoe o prompt do Google, para o consentimento de identidade. */
   prompt?: string;
   /** Prazo do pedido, em ms. O silencioso automatico usa um curto. */
@@ -160,5 +165,94 @@ export function tokenIsFresh(token: DriveToken | null): token is DriveToken {
 export function preloadGoogle(): Promise<void> {
   if (!googleClientId()) return Promise.resolve();
   return loadGis().catch(() => undefined);
+}
+
+export interface DriveRedirectReturn {
+  token: DriveToken;
+}
+
+/**
+ * Login sem janela: manda a aba para o Google e volta com o token no fragmento
+ * da URL. O `state` fica no sessionStorage e precisa bater no retorno, para
+ * uma pagina de terceiro nao empurrar um token qualquer.
+ */
+export function startDriveLogin(): void {
+  const clientId = googleClientId();
+  if (!clientId) throw new Error("falta configurar VITE_GOOGLE_CLIENT_ID");
+  const state = randomState();
+  try {
+    sessionStorage.setItem(DRIVE_REDIRECT_STATE_KEY, state);
+  } catch {
+    // Sem sessionStorage o state nao sobrevive ao redirect; o Google recusa
+    // pela conferencia abaixo e o usuario tenta de novo numa janela normal.
+  }
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: redirectUri(),
+    response_type: "token",
+    scope: WEB_GOOGLE_SCOPES,
+    include_granted_scopes: "true",
+    state,
+    prompt: "select_account",
+  });
+  window.location.assign(`${AUTH_ENDPOINT}?${params.toString()}`);
+}
+
+/**
+ * Le o retorno do redirect, se houver. Limpa o fragmento antes de qualquer
+ * outro codigo rodar para o token nao ficar na barra de endereco nem no
+ * historico. Devolve null quando a URL nao e um retorno do Google.
+ */
+export function consumeDriveRedirect(): DriveRedirectReturn | null {
+  const hash = window.location.hash.replace(/^#/, "");
+  if (!hash) return null;
+  const params = new URLSearchParams(hash);
+  const accessToken = params.get("access_token");
+  const error = params.get("error");
+  if (!accessToken && !error) return null;
+
+  // O token nunca fica na URL: sai do historico antes de qualquer render.
+  window.history.replaceState(
+    null,
+    "",
+    `${window.location.pathname}${window.location.search}`,
+  );
+
+  if (error) {
+    throw new Error(params.get("error_description") || error);
+  }
+  if (!accessToken) return null;
+
+  let guardado: string | null;
+  try {
+    guardado = sessionStorage.getItem(DRIVE_REDIRECT_STATE_KEY);
+    sessionStorage.removeItem(DRIVE_REDIRECT_STATE_KEY);
+  } catch {
+    guardado = null;
+  }
+  const state = params.get("state");
+  if (!guardado || state !== guardado) {
+    throw new Error("o retorno do login nao confere; tente de novo");
+  }
+
+  const segundos = Number(params.get("expires_in"));
+  return {
+    token: {
+      accessToken,
+      expiresAt: Date.now() + (Number.isFinite(segundos) ? segundos : 3600) * 1000,
+      scope: params.get("scope") ?? undefined,
+    },
+  };
+}
+
+function redirectUri(): string {
+  // Tem que ser identico ao cadastrado em Authorized redirect URIs.
+  return `${window.location.origin}/`;
+}
+
+function randomState(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
 }
 

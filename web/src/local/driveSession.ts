@@ -17,8 +17,10 @@ import { DriveClient } from "./drive";
 import { pulseConnect } from "../lib/pulse";
 import { DriveFolder } from "./driveFolder";
 import {
+  consumeDriveRedirect,
   googleClientId,
   requestDriveToken,
+  startDriveLogin,
   tokenIsFresh,
   type DriveToken,
   type DriveTokenOptions,
@@ -38,6 +40,9 @@ export const DRIVE_SESSION_KEY = "dyarium.drive.session";
 let token: DriveToken | null = null;
 let client: DriveClient | null = null;
 let profile: GoogleProfile | null = null;
+
+/** Retorno do redirect do Google, lido uma vez no carregamento da pagina. */
+let retornoDoLogin: { erro: string } | { ok: true } | null = null;
 
 const ouvintes = new Set<() => void>();
 /** Evita avisar duas vezes pela mesma expiracao (estado e cliente consultados juntos). */
@@ -182,7 +187,20 @@ async function buscarPerfil(novo: DriveToken): Promise<void> {
  * email/profile o avatar continua com o que estiver no cache.
  */
 export async function connectDrive(options?: DriveTokenOptions): Promise<DriveClient> {
-  const atual = await requestDriveToken(options);
+  let atual: DriveToken;
+  if (options?.redirect) {
+    if (token && tokenIsFresh(token)) {
+      // Voltamos do redirect: o token ja esta na memoria, so falta abrir.
+      atual = token;
+    } else {
+      // Login interativo: a aba vai para o Google e volta com o token. Este
+      // await nao resolve — a pagina e descarregada aqui.
+      startDriveLogin();
+      atual = await new Promise<DriveToken>(() => undefined);
+    }
+  } else {
+    atual = await requestDriveToken(options);
+  }
   aplicarToken(atual);
   profile = accountCachedProfile();
   notificar();
@@ -300,3 +318,30 @@ export async function driveVaultRoot(): Promise<DriveFolder> {
 // F5 nesta aba: o sessionStorage ja tem a sessao, entao o app abre conectado
 // sem falar com o Google. Sem sessao guardada, o estado fica "off".
 restoreDriveSession();
+
+/**
+ * Le o retorno do redirect do Google uma unica vez, no carregamento da pagina.
+ * O token entra na sessao; a UI so precisa saber que houve login para retomar
+ * a abertura do cofre.
+ */
+function lerRetornoDoLogin(): void {
+  try {
+    const retorno = consumeDriveRedirect();
+    if (!retorno) return;
+    aplicarToken(retorno.token);
+    profile = accountCachedProfile();
+    notificar();
+    void buscarPerfil(retorno.token);
+    retornoDoLogin = { ok: true };
+  } catch (erro) {
+    retornoDoLogin = { erro: erro instanceof Error ? erro.message : String(erro) };
+  }
+}
+lerRetornoDoLogin();
+
+/** Uma vez: o retorno do redirect, ou null quando a carga foi normal. */
+export function takeDriveLoginReturn(): { erro: string } | { ok: true } | null {
+  const atual = retornoDoLogin;
+  retornoDoLogin = null;
+  return atual;
+}

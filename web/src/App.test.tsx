@@ -495,7 +495,7 @@ describe("App trava da conta", () => {
     // uma vez e deixa o perfil guardado para os proximos silenciosos.
     fireEvent.click(within(trava).getByRole("button", { name: "Entrar com Google" }));
 
-    await waitFor(() => expect(connectDrive).toHaveBeenCalledWith());
+    await waitFor(() => expect(connectDrive).toHaveBeenCalledWith({ redirect: true }));
     await waitFor(() => expect(screen.getByText("Nenhuma nota ainda.")).toBeInTheDocument());
     expect(screen.queryByRole("main", { name: "Conta Google" })).not.toBeInTheDocument();
   });
@@ -542,7 +542,7 @@ describe("App trava da conta", () => {
 
     fireEvent.click(within(trava).getByRole("button", { name: "Entrar com Google" }));
 
-    await waitFor(() => expect(connectDrive).toHaveBeenCalledWith());
+    await waitFor(() => expect(connectDrive).toHaveBeenCalledWith({ redirect: true }));
     await waitFor(() => expect(openDriveVault).toHaveBeenCalledTimes(1));
     expect(openDriveVault).toHaveBeenCalledWith(
       undefined,

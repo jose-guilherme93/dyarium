@@ -15,7 +15,9 @@ import { connectDrive, driveVaultRoot } from "./driveSession";
 import { openDriveVault, type OpenDriveVaultResult, type VaultOptions } from "./vaultCloud";
 
 export async function connectAccount(options: VaultOptions = {}): Promise<OpenDriveVaultResult> {
-  await connectDrive();
+  // Login interativo pela aba inteira: sem janela do Google. No retorno do
+  // redirect o token ja esta na memoria e a abertura segue normalmente.
+  await connectDrive({ redirect: true });
   const root = await driveVaultRoot();
   // Caminho rapido por padrao: metadado e lista agora, sync e anexos depois.
   // Quem precisa do cofre inteiro (restauracao manual) passa `attachments` e
