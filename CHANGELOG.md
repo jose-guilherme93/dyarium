@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.8.0](https://github.com/jose-guilherme93/dyarium/compare/v0.7.1...v0.8.0) (2026-11-26)
+
+
+### Features
+
+* **web:** conta e Drive no cofre, logout sem falha ([aacc907](https://github.com/jose-guilherme93/dyarium/commit/aacc907bf749d1da59a85058aef2c2710651c5ac))
+* **web:** conta e Drive no cofre, logout sem falha ([768a4f4](https://github.com/jose-guilherme93/dyarium/commit/768a4f4c6d40090455c0bd289cf0d8b35b7a9d60))
+* **web:** login do Google por redirect, sem janela ([8031cdc](https://github.com/jose-guilherme93/dyarium/commit/8031cdc3a5173e460307a1c68ee081e5eaeabef9))
+* **web:** login por redirect + banco em IndexedDB quando o OPFS falha ([c60dbac](https://github.com/jose-guilherme93/dyarium/commit/c60dbac36cef4efe5575e49bf7c2f6a89c34e9a9))
+
+
+### Bug Fixes
+
+* **web:** abre o banco em IndexedDB quando o OPFS falha ([a9563bc](https://github.com/jose-guilherme93/dyarium/commit/a9563bc6d2751adb71ea4d2e7240c5ba99bd77a4))
+* **web:** detecta Drive nao autorizado no consentimento ([7f3db8d](https://github.com/jose-guilherme93/dyarium/commit/7f3db8d4afde007b412b8b46f218383f7877ba7c))
+* **web:** detecta Drive nao autorizado no consentimento ([6b628cf](https://github.com/jose-guilherme93/dyarium/commit/6b628cfded2c7fe963f776851c9f297bfd69fa15))
+* **web:** Drive negado abre o shell local, sem texto ([9f80cae](https://github.com/jose-guilherme93/dyarium/commit/9f80caea9ad141c1a63ffb71f3fabaa74d47044c))
+* **web:** Drive negado abre o shell local, sem texto ([f266fb1](https://github.com/jose-guilherme93/dyarium/commit/f266fb1fe306e5cda9cac6df330e87c98a5ad72f))
+* **web:** login do Google nao abre uma segunda janela ([1fe854d](https://github.com/jose-guilherme93/dyarium/commit/1fe854dfef4687c549c1463eb1b4981913b0ddf4))
+* **web:** login do Google nao abre uma segunda janela ([b42cea2](https://github.com/jose-guilherme93/dyarium/commit/b42cea23ed17e1bf1bc8c25203d1ccb60fdee717))
+* **web:** separa o IndexedDB do SQLite do cache do app ([e1d8337](https://github.com/jose-guilherme93/dyarium/commit/e1d8337931bb008a42af868a1b60aa45fddac336))
+* **web:** separa o IndexedDB do SQLite do cache do app ([569889c](https://github.com/jose-guilherme93/dyarium/commit/569889c0213f30274f673d7e967f7a043dac4b6b))
+
 ## [0.7.1](https://github.com/jose-guilherme93/dyarium/compare/v0.7.0...v0.7.1) (2026-11-25)
 
 
