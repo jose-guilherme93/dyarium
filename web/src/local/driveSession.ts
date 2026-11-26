@@ -13,11 +13,12 @@
  * cofre aqui.
  */
 
-import { DriveClient } from "./drive";
+import { DriveClient, DRIVE_SCOPE } from "./drive";
 import { pulseConnect } from "../lib/pulse";
 import { DriveFolder } from "./driveFolder";
 import {
   consumeDriveRedirect,
+  DRIVE_SCOPE_DENIED_KEY,
   googleClientId,
   requestDriveToken,
   startDriveLogin,
@@ -167,6 +168,26 @@ export function tokenTemIdentidade(scope: string | undefined): boolean {
   return tem("email") && tem("profile");
 }
 
+/**
+ * O Google permite conceder so parte dos escopos. Sem `drive.file` o login
+ * nao serve para nada aqui: o cofre mora no Drive. `undefined` (resposta sem
+ * `scope`) deixa o proprio Drive decidir.
+ */
+export function tokenTemDrive(scope: string | undefined): boolean {
+  if (!scope) return true;
+  const concedidos = new Set(scope.split(/[\s,]+/).filter(Boolean));
+  return concedidos.has(DRIVE_SCOPE) || concedidos.has("drive.file");
+}
+
+/** Marca que o usuario desmarcou o Drive, para o proximo login pedir de novo. */
+function lembrarDriveNegado(): void {
+  try {
+    sessionStorage.setItem(DRIVE_SCOPE_DENIED_KEY, "1");
+  } catch {
+    // Sem storage, o proximo login so nao forca o consentimento.
+  }
+}
+
 /** Busca a identidade sem segurar o Drive; so aplica se a sessao ainda for a mesma. */
 async function buscarPerfil(novo: DriveToken): Promise<void> {
   const obtido = await fetchProfile(novo.accessToken).catch(() => null);
@@ -200,6 +221,11 @@ export async function connectDrive(options?: DriveTokenOptions): Promise<DriveCl
     }
   } else {
     atual = await requestDriveToken(options);
+  }
+  if (!tokenTemDrive(atual.scope)) {
+    // O usuario desmarcou a permissao do Drive no consentimento do Google.
+    lembrarDriveNegado();
+    throw new Error("drive_nao_autorizado");
   }
   aplicarToken(atual);
   profile = accountCachedProfile();
@@ -328,6 +354,10 @@ function lerRetornoDoLogin(): void {
   try {
     const retorno = consumeDriveRedirect();
     if (!retorno) return;
+    if (!tokenTemDrive(retorno.token.scope)) {
+      lembrarDriveNegado();
+      throw new Error("drive_nao_autorizado");
+    }
     aplicarToken(retorno.token);
     profile = accountCachedProfile();
     notificar();

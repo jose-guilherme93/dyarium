@@ -18,6 +18,8 @@ const GIS_SRC = "https://accounts.google.com/gsi/client";
 const AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
 /** Estado do redirect no sessionStorage: some assim que o Google responde. */
 export const DRIVE_REDIRECT_STATE_KEY = "dyarium.drive.redirect";
+/** O usuario desmarcou o acesso ao Drive; o proximo login pede o consentimento. */
+export const DRIVE_SCOPE_DENIED_KEY = "dyarium.drive.scope.negado";
 
 interface TokenResponse {
   access_token?: string;
@@ -180,7 +182,10 @@ export function startDriveLogin(): void {
   const clientId = googleClientId();
   if (!clientId) throw new Error("falta configurar VITE_GOOGLE_CLIENT_ID");
   const state = randomState();
+  let negado = false;
   try {
+    negado = sessionStorage.getItem(DRIVE_SCOPE_DENIED_KEY) === "1";
+    sessionStorage.removeItem(DRIVE_SCOPE_DENIED_KEY);
     sessionStorage.setItem(DRIVE_REDIRECT_STATE_KEY, state);
   } catch {
     // Sem sessionStorage o state nao sobrevive ao redirect; o Google recusa
@@ -193,7 +198,9 @@ export function startDriveLogin(): void {
     scope: WEB_GOOGLE_SCOPES,
     include_granted_scopes: "true",
     state,
-    prompt: "select_account",
+    // Se o usuario desmarcou o Drive, o Google so mostra o checkbox de novo
+    // com consentimento forcado.
+    prompt: negado ? "consent select_account" : "select_account",
   });
   window.location.assign(`${AUTH_ENDPOINT}?${params.toString()}`);
 }

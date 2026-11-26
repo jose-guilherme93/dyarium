@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { FirstRun } from "./FirstRun";
+import { FirstRun, describeDriveError } from "./FirstRun";
 import type { FolderLike } from "../local/folder";
 import { pickFolder, supportsFolder } from "../local/folder";
 
@@ -152,6 +152,21 @@ describe("FirstRun", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Sem permissão no Drive. A Drive API pode estar desligada no projeto.",
+    );
+  });
+});
+
+describe("erros do Drive", () => {
+  it("explica a permissao do Drive desmarcada no consentimento", () => {
+    expect(describeDriveError(new Error("drive_nao_autorizado"))).toBe(
+      "Falta autorizar o Drive. Entre de novo e marque a permissão de ver e editar os arquivos que o app criar.",
+    );
+    expect(
+      describeDriveError(
+        new Error('Drive 403: {"error":{"errors":[{"reason":"insufficientFilePermissions"}]}}'),
+      ),
+    ).toBe(
+      "Falta autorizar o Drive. Entre de novo e marque a permissão de ver e editar os arquivos que o app criar.",
     );
   });
 });
