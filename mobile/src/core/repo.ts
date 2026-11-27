@@ -615,9 +615,17 @@ export async function upsertRecording(r: Recording): Promise<void> {
  */
 let recordingsCache: { at: number; includeDeleted: boolean; list: Recording[] } | null = null;
 const RECORDINGS_CACHE_MS = 1_000;
+/**
+ * Geracao do cache. Uma leitura que comecou antes de uma escrita nao pode
+ * gravar a lista velha quando termina: sem isto, a restauracao inseria notas e
+ * a leitura em voo (a lista vazia do carregamento) sobrescrevia o cache logo
+ * depois, e a tela seguinte lia zero pelo resto da sessao.
+ */
+let recordingsGeneration = 0;
 
 function invalidateRecordingsCache(): void {
   recordingsCache = null;
+  recordingsGeneration += 1;
 }
 
 /**
@@ -646,13 +654,17 @@ export async function listRecordings(includeDeleted = false): Promise<Recording[
     return recordingsCache.list.slice();
   }
   const db = await getDb();
+  const geracao = recordingsGeneration;
   const rows = await db.getAllAsync<Row>(
     includeDeleted
       ? 'SELECT * FROM recordings ORDER BY created_at DESC'
       : 'SELECT * FROM recordings WHERE deleted_at IS NULL ORDER BY created_at DESC',
   );
   const list = rows.map(rowToRecording);
-  recordingsCache = { at: Date.now(), includeDeleted, list };
+  // Escrita no meio da leitura: o resultado desta consulta ja nasceu velho.
+  if (geracao === recordingsGeneration) {
+    recordingsCache = { at: Date.now(), includeDeleted, list };
+  }
   return list;
 }
 
