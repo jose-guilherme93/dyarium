@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.8.1](https://github.com/jose-guilherme93/dyarium/compare/v0.8.0...v0.8.1) (2026-11-27)
+
+
+### Bug Fixes
+
+* **core:** leitura em voo nao grava cache velho depois de uma escrita ([d042a2e](https://github.com/jose-guilherme93/dyarium/commit/d042a2ebe82563e5ef9c328c126a357841656ce7))
+* login mostra as notas do cofre (0.8.1) ([4d0cc16](https://github.com/jose-guilherme93/dyarium/commit/4d0cc16de29aaa0cba8ec0c21bb3f2257f884215))
+* **web:** lista ignora a leitura antiga que resolve por ultimo ([58005f3](https://github.com/jose-guilherme93/dyarium/commit/58005f34f5747aebf6659621fbd93679be0ace35))
+* **web:** login por redirect abre o cofre e recarrega a lista ([d99a020](https://github.com/jose-guilherme93/dyarium/commit/d99a020ef63e7ad296b9a788622bb9a26261b8df))
+
 ## [0.8.0](https://github.com/jose-guilherme93/dyarium/compare/v0.7.1...v0.8.0) (2026-11-26)
 
 
