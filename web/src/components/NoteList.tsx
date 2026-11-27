@@ -129,22 +129,31 @@ export function NoteList({
   const [busy, setBusy] = useState(false);
   const tagMenu = useRef<HTMLDivElement | null>(null);
 
+  const loadSeq = useRef(0);
+
   const load = useCallback(async () => {
+    // A lista pode recarregar enquanto a leitura anterior ainda esta no ar
+    // (login restaurando o cofre, por exemplo). Sem isto, a leitura velha
+    // resolve depois e sobrescreve a nova com o estado vazio.
+    const seq = ++loadSeq.current;
+    const atual = () => seq === loadSeq.current;
     const cached = await api.listEntriesCached({ limit: 1000, exclude_books: true });
-    if (cached) {
+    if (cached && atual()) {
       setEntries(cached.entries ?? []);
       setLoaded(true);
     }
     try {
       const result = await api.listAllEntries({ exclude_books: true });
+      if (!atual()) return;
       setEntries(result.entries ?? []);
       setError("");
     } catch (err) {
+      if (!atual()) return;
       if (!cached) {
         setError(err instanceof Error ? err.message : "falha ao carregar");
       }
     } finally {
-      setLoaded(true);
+      if (atual()) setLoaded(true);
     }
   }, []);
 

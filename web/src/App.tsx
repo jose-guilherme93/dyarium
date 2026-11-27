@@ -45,7 +45,7 @@ import { ImportJobStrip } from "./components/ImportJobStrip";
 import { importJobState, subscribeImportJob, type ImportJobState } from "./local/importJob";
 import { markVaultDirty, runVaultSync, setVaultTarget, flushVaultSync } from "./local/folderSync";
 import { rememberFolder } from "./local/folder";
-import { connectDrive, driveClient, driveConfigured, driveProfile, driveSessionExpiresAt, driveSessionState, driveVaultRoot, onDriveSessionChange, signOutAccount } from "./local/driveSession";
+import { connectDrive, driveClient, driveConfigured, driveProfile, driveSessionExpiresAt, driveSessionState, driveVaultRoot, onDriveSessionChange, signOutAccount, takeDriveLoginReturn } from "./local/driveSession";
 import { cachedProfile as cachedAccountProfile, onAccountChange } from "./local/account";
 import { preloadGoogle } from "./local/google";
 import { driveMarked, rememberDriveVault } from "./local/driveMark";
@@ -209,6 +209,8 @@ export function App() {
   const autoSilentTried = useRef(false);
   /** Aponta para `renovarContaEmSilencio`, definida junto do resto da trava. */
   const renovarSilenciosoRef = useRef<((auto?: boolean) => void) | null>(null);
+  /** Aponta para `entrarPelaContaTravada`, usada quando o redirect volta. */
+  const entrarPelaContaRef = useRef<(() => Promise<void>) | null>(null);
   const [gateError, setGateError] = useState("");
   // "Ja tenho uma instalacao propria" troca a apresentacao pelo portao do token.
   const [forceTokenGate, setForceTokenGate] = useState(false);
@@ -354,6 +356,16 @@ export function App() {
     markVaultDirty();
   };
 
+  /**
+   * Recarrega lista e nota aberta sem marcar o cofre para envio. E o que o
+   * login precisa: o retrato do Drive acabou de entrar no banco, e a lista
+   * montada antes da abertura continuaria mostrando o estado vazio.
+   */
+  const recarregarNotas = () => {
+    setRefreshKey((key) => key + 1);
+    setNoteRefreshKey((key) => key + 1);
+  };
+
   // A importacao do servidor roda fora do dialogo. Quando a tarefa termina —
   // com resultado ou com erro, porque notas podem ter entrado antes de falhar —
   // a lista recarrega, como o antigo `onImported` fazia. O flush do cofre agora
@@ -482,6 +494,10 @@ export function App() {
   useEffect(() => {
     if (locked) return;
     if (!onboarded && !accountRemembered) return;
+    // Voltamos do redirect do Google: o cofre ainda vai abrir. Sincronizar
+    // agora subiria o banco local (vazio) por cima do que esta no Drive, com
+    // uma chave que nem e a do cofre.
+    if (loginReturn.current) return;
     setVaultTarget(async () => (driveClient() ? driveVaultRoot() : rememberFolder()));
     const flush = () => {
       void runVaultSync().catch(() => undefined);
@@ -584,6 +600,26 @@ export function App() {
     autoSilentTried.current = true;
     tentar(true);
   }, [locked, serverChecked]);
+
+  // A volta do login por redirect (a aba inteira foi ao Google) chega com o
+  // token ja na memoria e precisa abrir o cofre ANTES do app aparecer. So a
+  // primeira tela consumia esse sinal; quem ja tinha o app aberto (conta
+  // lembrada, tela do Drive, trava) entrava sem restaurar nada e via a lista
+  // vazia. O sinal e lido uma vez e o caminho e o mesmo da trava.
+  const loginReturn = useRef(takeDriveLoginReturn());
+  useEffect(() => {
+    if (!serverChecked) return;
+    const retorno = loginReturn.current;
+    loginReturn.current = null;
+    if (!retorno) return;
+    if ("erro" in retorno) {
+      const causa = describeDriveError(new Error(retorno.erro));
+      setGateError(causa);
+      notify(causa, "error");
+      return;
+    }
+    void entrarPelaContaRef.current?.();
+  }, [serverChecked, notify]);
 
   // A token already stored may be stale (rotated on the server) or simply
   // wrong; validate it on load and fall back to the gate. A network failure
@@ -828,6 +864,9 @@ export function App() {
     setDriveScopeDeniedPersisted(false);
     setAccount(driveProfile() ?? cachedAccountProfile());
     finishOnboarding();
+    // O retrato entrou no banco agora: a lista que ja estava montada (tela do
+    // Drive, trava ou aba aberta antes do redirect) precisa reler.
+    recarregarNotas();
   };
 
   /**
@@ -863,11 +902,18 @@ export function App() {
       // O motivo tecnico fica no console; na tela, uma linha acionavel.
       console.error("[drive] falha ao entrar pela conta", causa);
       setVaultBoot(null);
-      setGateError(describeDriveError(causa));
+      const motivo = describeDriveError(causa);
+      setGateError(motivo);
+      // Sem a trava na tela (tela do Drive, app aberto) o erro nao teria onde
+      // aparecer; o aviso garante que a falha nao passe em silencio.
+      if (!locked) notify(motivo, "error");
     } finally {
       unlockInFlight.current = false;
     }
   };
+  // A volta do redirect usa a mesma rotina, mesmo quando a conta nao estava
+  // travada (tela do Drive ou app ja aberto).
+  entrarPelaContaRef.current = entrarPelaContaTravada;
 
   /**
    * Primeiro toque na tela travada: tenta a sessao sem tela (`prompt: none`) e
@@ -1842,7 +1888,12 @@ export function App() {
             <VaultView
               onBack={goBack}
               onScopeDenied={() => setDriveScopeDeniedPersisted(true)}
-              onConnected={() => setDriveScopeDeniedPersisted(false)}
+              onConnected={() => {
+                setDriveScopeDeniedPersisted(false);
+                // O login pela tela do Drive tambem restaura notas: a lista
+                // atras precisa reler em vez de ficar no estado vazio.
+                recarregarNotas();
+              }}
             />
           ) : view === "map" ? (
             <div className="page page--map">

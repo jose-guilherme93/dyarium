@@ -93,4 +93,33 @@ describe('cache de listRecordings', () => {
     await listRecordings(true);
     expect(mockGetAllAsync).toHaveBeenCalledTimes(2);
   });
+
+  it('leitura em voo nao guarda a lista velha depois de uma escrita', async () => {
+    // A restauracao do cofre insere notas enquanto a lista do carregamento
+    // ainda esta no ar. Se a leitura antiga gravasse o cache ao terminar, a
+    // lista seguinte lia zero pelo resto do segundo (e, na web, sem nova
+    // recarga, para sempre).
+    let liberar: (rows: unknown[]) => void = () => undefined;
+    mockGetAllAsync.mockImplementationOnce(
+      () =>
+        new Promise<unknown[]>((resolve) => {
+          liberar = resolve;
+        }),
+    );
+
+    const emVoo = listRecordings();
+    for (let i = 0; i < 20 && mockGetAllAsync.mock.calls.length === 0; i += 1) {
+      await Promise.resolve();
+    }
+    expect(mockGetAllAsync).toHaveBeenCalledTimes(1);
+
+    await upsertRecording(note);
+    liberar([]);
+    await emVoo;
+
+    // Com a geracao, o resultado velho nao vira cache: a proxima leitura
+    // consulta o banco de novo (2 chamadas). Sem ela, seria 1.
+    await listRecordings();
+    expect(mockGetAllAsync).toHaveBeenCalledTimes(2);
+  });
 });

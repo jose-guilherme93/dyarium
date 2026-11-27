@@ -10,8 +10,10 @@ import {
   driveVaultRoot,
   restoreDriveSession,
   signOutAccount,
+  takeDriveLoginReturn,
   DRIVE_SESSION_KEY,
 } from "./local/driveSession";
+import * as local from "./local/notes";
 import { openDriveVault } from "./local/vaultCloud";
 import { reloadPage } from "./lib/page";
 
@@ -25,6 +27,7 @@ vi.mock("./local/driveSession", async (importOriginal) => {
     connectDrive: vi.fn(async () => undefined),
     driveVaultRoot: vi.fn(async () => undefined),
     signOutAccount: vi.fn(async () => undefined),
+    takeDriveLoginReturn: vi.fn(() => null),
   };
 });
 
@@ -834,6 +837,59 @@ describe("App cofre no Drive", () => {
     expect(screen.getByRole("button", { name: /Continuar com Google/ })).toBeInTheDocument();
 
     log.mockRestore();
+  });
+});
+
+describe("App abre o cofre que a conta ja tem", () => {
+  const aberto = {
+    restored: null,
+    synced: null,
+    summary: { notes: 1, attachments: 0, bytes: 10 },
+    background: null,
+  };
+
+  beforeEach(() => {
+    vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "client-de-teste");
+    vi.mocked(driveVaultRoot).mockResolvedValue(undefined as never);
+    vi.mocked(connectDrive).mockResolvedValue(undefined as never);
+  });
+
+  afterEach(() => {
+    vi.mocked(openDriveVault).mockReset();
+  });
+
+  it("login pela tela do Drive mostra as notas que vieram do cofre, sem reload", async () => {
+    localStorage.setItem("dyarium.onboarded", "1");
+    vi.mocked(openDriveVault).mockImplementationOnce(async () => {
+      await local.createEntry({ title: "Veio do cofre", recordedAt: "2026-11-18" });
+      return aberto;
+    });
+
+    render(<App />);
+    await waitFor(() => expect(screen.getByText("Nenhuma nota")).toBeInTheDocument());
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Google Drive" })[0]);
+    fireEvent.click(await screen.findByRole("button", { name: /entrar com Google/i }));
+
+    await waitFor(() => expect(screen.getByText("Veio do cofre")).toBeInTheDocument());
+  });
+
+  it("a volta do login por redirect abre o cofre e marca a conta", async () => {
+    localStorage.setItem("dyarium.onboarded", "1");
+    vi.mocked(takeDriveLoginReturn).mockReturnValueOnce({ ok: true });
+    vi.mocked(openDriveVault).mockResolvedValueOnce(aberto);
+
+    render(<App />);
+
+    // Antes do conserto o redirect voltava e o app entrava sem abrir o cofre:
+    // so a primeira tela consumia o sinal.
+    await waitFor(() => expect(openDriveVault).toHaveBeenCalledTimes(1));
+    expect(openDriveVault).toHaveBeenCalledWith(
+      undefined,
+      expect.objectContaining({ attachments: "skip", sync: "background" }),
+    );
+    await waitFor(() => expect(screen.getByRole("navigation")).toBeInTheDocument());
+    expect(localStorage.getItem("dyarium.drive")).toBe("1");
   });
 });
 
